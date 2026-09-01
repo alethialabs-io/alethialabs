@@ -6,11 +6,10 @@
 // env" protection summary, and a right rail (auto-heal + duplicate + delete). Presentational; the
 // mutations are handled by the orchestrator.
 
-import { formatMonthlyRate } from "@repo/format";
+import { formatMonthlyRate, formatRelative } from "@repo/format";
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
 import { Switch } from "@repo/ui/switch";
-import { formatDistanceToNow, parseISO } from "date-fns";
 import { Check, Copy, Trash2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import type { EnvReconcileState } from "@/app/server/actions/reconcile";
@@ -133,7 +132,7 @@ export function EnvironmentCard({
 						</span>
 					)}
 					<span className="opacity-50">·</span>
-					<span>Updated {formatDistanceToNow(parseISO(env.updated_at), { addSuffix: true })}</span>
+					<span>Updated {formatRelative(env.updated_at)}</span>
 				</div>
 
 				{/* classification chips + picker */}

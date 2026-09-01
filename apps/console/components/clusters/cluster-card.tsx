@@ -6,6 +6,7 @@ import type { ClusterData } from "@/app/server/actions/clusters";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import type { AssignedValue } from "@/lib/queries/classification";
 import { getProvider } from "@/lib/cloud-providers";
+import { PageHeader } from "@repo/ui/page-header";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import { Button } from "@repo/ui/button";
 import { StatusBadge, statusTier, type StatusTier } from "@repo/ui/status-badge";
@@ -212,9 +213,10 @@ export function ClusterCard({
 					<ProviderIcon provider={provider} size={20} />
 					<div className="min-w-0">
 						<div className="flex flex-wrap items-center gap-2">
-							<h3 className="text-sm font-semibold text-text-primary">
-								{data.project_name}
-							</h3>
+							{/* The card's own heading rung, through the shared component: the card
+							    used to hand-write an `<h3>` at `text-sm`, one of five sizes the
+							    same rung was typeset at across the console. */}
+							<PageHeader level={3} title={data.project_name} className="min-w-0" />
 							<StatusBadge status={health.tier} tier={health.tier} label={health.name} />
 						</div>
 						<p className="mt-0.5 font-mono text-[11px] text-text-tertiary">

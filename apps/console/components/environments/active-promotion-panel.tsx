@@ -71,7 +71,7 @@ export function ActivePromotionPanel({
 					<span className="font-mono text-[13px] text-text-primary">
 						{detail.targetName}
 					</span>
-					<StatusDot tier={status.tier} label={status.label} className="ml-1.5 text-[11px]" size={9} />
+					<StatusDot tier={status.tier} label={status.label} className="ml-1.5 text-[11px]" />
 				</div>
 				<div className="flex items-center gap-2">
 					{canCancel && (
@@ -94,7 +94,7 @@ export function ActivePromotionPanel({
 						className={cn("flex items-start", i < steps.length - 1 && "flex-1")}
 					>
 						<div className="flex w-[66px] shrink-0 flex-col items-center gap-1.5">
-							<StatusDot tier={s.tier} size={12} />
+							<StatusDot tier={s.tier} />
 							<span className="font-mono text-[10px] uppercase tracking-wider text-text-tertiary">
 								{s.label}
 							</span>

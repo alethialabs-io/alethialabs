@@ -5,8 +5,9 @@
 // Recent promotions — a compact history row per promotion (source → target, when, status). The
 // in-flight one is flagged Active with a View into the detail overlay.
 
+import { formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
-import { formatDistanceToNow, parseISO } from "date-fns";
+import { PageHeader } from "@repo/ui/page-header";
 import type { PromotionRowView } from "./environments-view";
 import { promoStatus, StatusDot } from "./env-ui";
 
@@ -28,9 +29,7 @@ export function PromotionsHistory({
 }) {
 	return (
 		<section>
-			<h2 className="m-0 mb-3 font-display text-[15px] font-semibold tracking-tight text-text-primary">
-				Promotions
-			</h2>
+			<PageHeader className="mb-3" level={2} title="Promotions" />
 			<div className="overflow-hidden rounded-lg border bg-surface shadow-sm">
 				{promotions.slice(0, 8).map((p) => {
 					const status = promoStatus(p.status);
@@ -47,7 +46,7 @@ export function PromotionsHistory({
 										{envName(p.source_environment_id)} → {envName(p.target_environment_id)}
 									</span>
 									<span className="text-[11px] text-text-tertiary">
-										{formatDistanceToNow(parseISO(p.created_at), { addSuffix: true })}
+										{formatRelative(p.created_at)}
 									</span>
 									{active && (
 										<span className="rounded-full border px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-text-tertiary">

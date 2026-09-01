@@ -32,6 +32,8 @@ import { ProtectionRulesDialog } from "@/components/environments/protection-rule
 import { PromoteDialog } from "@/components/environments/promote-dialog";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
+import { PageHeader } from "@repo/ui/page-header";
 import { ActivePromotionPanel } from "./active-promotion-panel";
 import { ConsistencyMatrix } from "./consistency-matrix";
 import { EnvironmentCard } from "./environment-card";
@@ -150,28 +152,27 @@ export function EnvironmentsView({
 
 			{/* Environments spine */}
 			<section className="space-y-4">
-				<div className="flex flex-wrap items-baseline justify-between gap-3">
-					<div className="flex items-baseline gap-2.5">
-						<h2 className="m-0 font-display text-[15px] font-semibold tracking-tight text-text-primary">
-							Environments
-						</h2>
-						<span className="font-mono text-[11px] text-text-tertiary">
-							{envs.length} total
-						</span>
-					</div>
-					<div className="flex gap-2">
-						<Button size="sm" onClick={() => setCreateOpen(true)}>
-							<Plus className="mr-1.5 size-3.5" />
-							New Environment
-						</Button>
-						{envs.length > 1 && (
-							<Button size="sm" variant="outline" onClick={() => setPromoteOpen(true)}>
-								<ArrowUpFromLine className="mr-1.5 size-3.5" />
-								Promote
+				{/* The count rides the header's pill, which is where the console filter standard
+				    puts a result count — it used to be prose ("N total") beside the heading. */}
+				<PageHeader
+					level={2}
+					title="Environments"
+					count={envs.length}
+					actions={
+						<>
+							<Button size="sm" onClick={() => setCreateOpen(true)}>
+								<Plus className="mr-1.5 size-3.5" />
+								New Environment
 							</Button>
-						)}
-					</div>
-				</div>
+							{envs.length > 1 && (
+								<Button size="sm" variant="outline" onClick={() => setPromoteOpen(true)}>
+									<ArrowUpFromLine className="mr-1.5 size-3.5" />
+									Promote
+								</Button>
+							)}
+						</>
+					}
+				/>
 
 				{groups.map((g) => (
 					<div key={g.stage} className="space-y-2.5">
@@ -206,10 +207,11 @@ export function EnvironmentsView({
 				))}
 
 				{envs.length <= 1 && (
-					<div className="rounded-lg border border-dashed border-border-strong p-6 text-center text-[13px] text-text-tertiary">
-						Only one environment. Create another to compare configuration and promote
-						changes up the chain.
-					</div>
+					<EmptyState
+						className="border border-dashed border-border-strong"
+						title="Only one environment"
+						description="Create another to compare configuration and promote changes up the chain."
+					/>
 				)}
 			</section>
 

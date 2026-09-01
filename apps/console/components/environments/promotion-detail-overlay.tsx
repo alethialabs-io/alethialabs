@@ -75,7 +75,7 @@ export function PromotionDetailOverlay({
 								{pipelineSteps(detail.status).map((s, i, arr) => (
 									<div key={s.label} className={cn("flex items-start", i < arr.length - 1 && "flex-1")}>
 										<div className="flex w-[62px] shrink-0 flex-col items-center gap-1.5">
-											<StatusDot tier={s.tier} size={12} />
+											<StatusDot tier={s.tier} />
 											<span className="font-mono text-[10px] uppercase tracking-wider text-text-tertiary">
 												{s.label}
 											</span>

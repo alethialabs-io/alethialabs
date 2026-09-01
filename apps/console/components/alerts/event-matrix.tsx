@@ -61,11 +61,15 @@ export function EventMatrix({
                   const on = set.has(e.key);
                   const locked = isSecurityKey(e.key) && !advancedAlerting;
                   return (
+                    // Not a table and not a grid: one label and one control per row, which is
+                    // what a flex row is for. Spelling the same two tracks out as
+                    // `grid-cols-[1fr_auto]` claimed a column structure that has no header
+                    // row, no third column and nothing for a screen reader to associate.
                     <div
                       key={e.id}
-                      className="grid grid-cols-[1fr_auto] items-center gap-4 px-4 py-2.5 pl-11 hover:bg-muted/30"
+                      className="flex items-center gap-4 px-4 py-2.5 pl-11 hover:bg-muted/30"
                     >
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 text-[13px]">
                           {e.label}
                           <span className="rounded-full border border-border/60 px-1.5 py-0 font-mono text-[8.5px] uppercase tracking-wide text-muted-foreground">
