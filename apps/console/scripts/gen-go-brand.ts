@@ -375,7 +375,17 @@ export function renderGo(
 	};
 	const borders = collapse("border", (t) => `${t} BrandBorder = ${q(t.replace(/^Border/, "").toLowerCase())}`);
 	const emphasis = collapse("emphasis", (t) => `${t} BrandEmphasis = ${q(t.replace(/^Emphasis/, "").toLowerCase())}`);
-	const focus = collapse("focus", (t) => `${t} = ${q(FOCUS_GLYPHS[t] ?? "")}`);
+	const focus = collapse("focus", (t) => {
+		// No `?? ""` fallback: an unglyphed focus constant compiles, renders as nothing, and
+		// makes focus invisible rather than differently drawn. Refuse instead.
+		const glyph = FOCUS_GLYPHS[t];
+		if (glyph === undefined) {
+			throw new Error(
+				`the focus projection names ${t}, which has no glyph in FOCUS_GLYPHS. Decide what the terminal draws for it — an empty constant would make focus invisible, not different.`,
+			);
+		}
+		return `${t} = ${q(glyph)}`;
+	});
 
 	const counts = {
 		exact: tokens.filter((t) => t.projection.kind === "exact").length,
@@ -588,7 +598,18 @@ function main(): void {
 		return;
 	}
 
-	writeFileSync(OUT, renderGo(tokens, decls, pairs), "utf8");
+	let go: string;
+	try {
+		go = renderGo(tokens, decls, pairs);
+	} catch (err) {
+		// The emitter refuses a few things the audit cannot see from the table alone — a focus
+		// constant with no glyph, a duration that is not whole milliseconds. Report them in the
+		// same shape as every other refusal: a bare stack trace renders in the CI log as a crash
+		// in the tooling rather than as a decision somebody has to make.
+		console.error(`::error::${OUT_REL} was not generated — ${err instanceof Error ? err.message : String(err)}`);
+		process.exit(1);
+	}
+	writeFileSync(OUT, go, "utf8");
 	console.log(
 		`wrote ${OUT_REL} — ${tokens.length} tokens (${counts.exact} exact, ${counts.lossy} lossy, ${counts.none} none), ${pairs.size} inks`,
 	);

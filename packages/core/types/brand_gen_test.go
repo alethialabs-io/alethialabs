@@ -281,12 +281,24 @@ func TestBrandDurationsAreNonZero(t *testing.T) {
 // TestBrandFocusMarkersAreDistinctGlyphs pins the ring collapse: focus and invalid-focus are
 // told apart by SHAPE here, because the palette is grayscale and cannot tell them apart by hue.
 func TestBrandFocusMarkersAreDistinctGlyphs(t *testing.T) {
-	if FocusMarker == "" || FocusInvalidMarker == "" {
-		t.Fatal("a focus marker is empty — focus would be invisible rather than differently drawn")
+	if len(BrandFocusMarkers) == 0 {
+		t.Fatal("nothing projects onto a focus marker — this test would pass while covering nothing")
 	}
-	if FocusMarker == FocusInvalidMarker {
-		t.Error("focus and invalid focus are the same glyph, and the grayscale palette has no hue " +
-			"left to tell them apart with")
+	// Swept from the generated map rather than from the two names below, so a THIRD marker
+	// added later is held to the same two rules without anybody remembering to add it here.
+	glyphs := map[string][]string{}
+	for token, glyph := range BrandFocusMarkers {
+		if glyph == "" {
+			t.Errorf("%s projects to an empty marker — focus would be invisible rather than "+
+				"differently drawn", token)
+		}
+		glyphs[glyph] = append(glyphs[glyph], token)
+	}
+	for glyph, tokens := range glyphs {
+		if len(tokens) > 1 {
+			t.Errorf("%v all draw %q, and the grayscale palette has no hue left to tell them apart with",
+				tokens, glyph)
+		}
 	}
 	if BrandFocusMarkers["--ring"] != FocusMarker || BrandFocusMarkers["--ring-invalid"] != FocusInvalidMarker {
 		t.Errorf("BrandFocusMarkers does not match the constants: %v", BrandFocusMarkers)
