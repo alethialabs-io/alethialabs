@@ -70,11 +70,38 @@ const REPORTED_ONLY = ["test/e2e/t2_cli_demo.go"];
  */
 export function issueNumbersIn(source) {
 	const found = new Set();
-	// `Issue:` then optional whitespace then a quoted "#<digits>". gofmt aligns the value, so the
-	// gap is one-or-more spaces or tabs, and a line-anchored match keeps a mention inside a comment
-	// (`// Issue: "#1" was wrong`) out — comments are stripped below before this runs.
-	for (const m of source.matchAll(/^\s*Issue:\s*"#(\d+)"\s*,/gm)) found.add(Number(m[1]));
+	// `Issue:` then optional whitespace then a quoted "#<digits>".
+	//
+	// NOT LINE-ANCHORED, and that is a correction rather than a preference. The first version was
+	// `^\s*Issue:\s*"#(\d+)"\s*,`, which matched the gofmt-aligned multi-line entries this file
+	// happens to contain today and matched NOTHING in a single-line composite literal
+	// (`{Kind: NeedsUserConfig, Issue: "#42"}`) — a shape Go accepts and the test file already uses.
+	// A future single-line entry would have been silently unchecked, which is the same "guard
+	// matches a rendering rather than the thing" failure this guard exists to catch one level down.
+	//
+	// The boundary is kept — a `{`, a `,` or start-of-line before `Issue:` — so an identifier
+	// ending in `Issue` (`TrackingIssue: "#1"`) is not read as this field. The trailing comma is
+	// gone with the anchor: a single-line literal's LAST field has none.
+	for (const m of source.matchAll(/(?:^|[{,])\s*Issue:\s*"#(\d+)"/gm)) found.add(Number(m[1]));
 	return [...found].sort((a, b) => a - b);
+}
+
+/**
+ * Every line that MENTIONS the field, whether or not the scan above could parse a number from it.
+ *
+ * This is the emitter-mirror: the pattern above decides what gets checked, and nothing said what
+ * happened to an `Issue:` it could not read. A field written in a shape the regex misses would be
+ * skipped in exactly the same silence as a file with no exclusions at all — and this guard's whole
+ * argument is that those two must not render alike.
+ *
+ * @param {string} source comment-stripped Go source
+ * @returns {string[]} the trimmed lines carrying an `Issue:` field
+ */
+export function issueFieldLines(source) {
+	return source
+		.split("\n")
+		.filter((line) => /(?:^|[{,])\s*Issue:/.test(line))
+		.map((line) => line.trim());
 }
 
 /**
@@ -175,6 +202,27 @@ if (process.argv.includes("--self-test")) {
 			"[7]",
 		"a number in a COMMENT is not read as a tracking issue",
 	);
+	// THE HOLE THE FIRST VERSION HAD. `^\s*Issue:` matched nothing here, so a single-line entry —
+	// a shape Go accepts, and one the test file already uses — was silently unchecked.
+	t(
+		JSON.stringify(issueNumbersIn('ex := map[string]AddOnExclusion{app: {Kind: K, Issue: "#42"}}\n')) === "[42]",
+		"a SINGLE-LINE composite literal is read (the anchor bug)",
+	);
+	t(
+		JSON.stringify(issueNumbersIn('\t\t{Kind: K, Issue: "#42", Clouds: nil},\n')) === "[42]",
+		"…including one whose Issue is not the last field",
+	);
+	// …without the anchor swallowing a DIFFERENT field that happens to end in "Issue".
+	t(
+		JSON.stringify(issueNumbersIn('\t\tTrackingIssue: "#99",\n\t\tIssue: "#7",\n')) === "[7]",
+		"a longer field name ending in Issue is not read as this field",
+	);
+
+	console.log("\n the emitter mirror");
+	t(issueFieldLines('\t\tIssue: "#7",\n\t\tWhy: "x",\n').length === 1, "counts a readable field line");
+	t(issueFieldLines('\t\tIssue: someConst,\n').length === 1, "counts an UNREADABLE field line too — that is the point");
+	t(issueNumbersIn('\t\tIssue: someConst,\n').length === 0, "…which the number scan does not read, so the counts disagree");
+	t(issueFieldLines('\t\tTrackingIssue: "#99",\n').length === 0, "does not count a different field");
 	// The failure direction that matters: a real field must survive comment-stripping.
 	t(
 		stripLineComments('\t\tIssue: "#7", // was #999\n').includes('Issue: "#7",'),
@@ -215,6 +263,22 @@ if (numbers.length === 0) {
 	console.error("  Either every exclusion has been removed — in which case delete this check in the");
 	console.error("  same PR — or the scan has stopped matching the field. It is an error either way:");
 	console.error("  a guard that silently checks nothing is worse than no guard.");
+	process.exit(1);
+}
+
+// EVERY mention accounted for. A line that names the field but yields no number is a field the
+// scan could not read, and skipping it silently is the one failure mode this guard cannot afford:
+// its own "all clear" would then be a statement about the regex, not about the file.
+const mentions = issueFieldLines(source);
+if (mentions.length !== numbers.length) {
+	console.error(
+		`::error::check-exclusion-issues: ${GUARDED} has ${mentions.length} line(s) naming an Issue field but ` +
+			`${numbers.length} readable issue number(s) — at least one is in a shape this scan cannot read.`,
+	);
+	console.error("  The expected shape is `Issue: \"#<digits>\"`. Lines seen:");
+	for (const line of mentions) console.error(`    ${line}`);
+	console.error("  This is an error rather than a skip: an unreadable field is unchecked, and an");
+	console.error("  unchecked field is indistinguishable from a checked one in the output below.");
 	process.exit(1);
 }
 
