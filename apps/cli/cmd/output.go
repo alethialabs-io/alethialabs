@@ -58,3 +58,26 @@ func requireInteractive() error {
 	}
 	return nil
 }
+
+// errNoTTY is the answer when prompts are enabled but stdout has nowhere to draw them.
+//
+// It is a different statement from errNoInput — nobody passed --no-input and stdin may well be a
+// terminal — and it has a different next step, so it is a different error.
+var errNoTTY = errors.New("interactive input required but stdout is not a terminal (pass the id/name as a flag/argument)")
+
+// requireInteractiveForm is requireInteractive plus the condition a huh form needs to be visible:
+// a terminal on STDOUT, which is where the form draws.
+//
+// noInputMode is derived from stdin alone, so `alethia … -o json > out.json` from an interactive
+// shell left prompts "enabled": the form's ANSI frames went into the redirected file ahead of the
+// payload, the terminal showed nothing, and the command looked hung. interactiveTable already
+// reads stdout for exactly this reason; a picker in the same group must agree with it.
+func requireInteractiveForm() error {
+	if err := requireInteractive(); err != nil {
+		return err
+	}
+	if !stdoutIsTTY() {
+		return errNoTTY
+	}
+	return nil
+}
