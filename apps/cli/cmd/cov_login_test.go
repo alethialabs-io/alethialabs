@@ -726,7 +726,7 @@ func TestAuth_PromptWebOriginHonorsNoInput(t *testing.T) {
 	noInputMode = true
 	t.Cleanup(func() { noInputMode = prev })
 
-	got, err := promptWebOrigin()
+	got, err := promptWebOrigin("")
 	if err != nil {
 		t.Fatalf("promptWebOrigin: %v", err)
 	}
@@ -744,7 +744,7 @@ func TestAuth_PromptWebOriginPrompts(t *testing.T) {
 		authCovTTY(t)
 		authCovForm(t, nil)
 
-		got, err := promptWebOrigin()
+		got, err := promptWebOrigin("")
 		if err != nil {
 			t.Fatalf("promptWebOrigin: %v", err)
 		}
@@ -759,7 +759,7 @@ func TestAuth_PromptWebOriginPrompts(t *testing.T) {
 		authCovTTY(t)
 		authCovForm(t, errors.New("aborted"))
 
-		got, err := promptWebOrigin()
+		got, err := promptWebOrigin("")
 		if err == nil {
 			t.Fatalf("an aborted prompt should error, got %q", got)
 		}

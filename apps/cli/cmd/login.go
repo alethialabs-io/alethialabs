@@ -332,9 +332,24 @@ var (
 	loginWebOrigin string
 )
 
+// `alethia login` takes no interactive field, and that is a decision rather than
+// an omission.
+//
+// Every OTHER leaf in this group that needs a value asks for it. Login needs
+// none: it works with zero input, and the one value it CAN carry — the
+// control-plane URL — is a once-per-machine setting, not a per-login question.
+// Asking for it on every sign-in would put a form in front of the single most
+// frequent command in the product to collect an answer that almost never
+// changes. `alethia init` is the guided form for that value; `--web-origin`
+// below is the flag, so the contract stays complete either way.
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate with the platform",
+	Long: `Authenticate with the Alethia control plane through the browser device-code flow.
+
+Needs no input: it prints a URL and a code, opens the browser, and waits. Use
+'alethia init' for the guided first-run setup that picks a control-plane URL
+first, or 'alethia token create' for a credential a pipeline can use.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// 0. Persist a control-plane URL passed for this login (self-host/dev).
 		if loginWebOrigin != "" {
