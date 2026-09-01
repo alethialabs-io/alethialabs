@@ -741,13 +741,18 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			t.Logf("FT-5 max-config: %d kind(s) are DEFERRED debt on %s (a shipped chart backs them; the mapping is missing): %v",
 				len(proof.Deferred), provider, proof.Deferred)
 		}
-		// (7.6b) The SECOND assertion, for in-cluster cells whose converged Application does not
-		//        itself prove delivery. `secrets` on hetzner is the case that forced it: a SEALED
-		//        Vault's Helm release is Healthy AND Synced, so `addon-secrets-vault` going green is
-		//        fully compatible with the Vault serving nothing. The cell names the object whose
-		//        readiness actually discriminates (its ESO ClusterSecretStore), and this runs it. A
-		//        no-op on every cloud whose cells declare no probe.
-		if perr := AssertMaxConfigClusterProbes(ctx, kc, provider, ArgoAssertTimeout()); perr != nil {
+		// (7.6b) The SECOND assertion, for cells whose PRIMARY evidence does not itself prove
+		//        delivery. `secrets` on hetzner forced it: a SEALED Vault's Helm release is Healthy
+		//        AND Synced, so `addon-secrets-vault` going green is fully compatible with the Vault
+		//        serving nothing.
+		//
+		//        It is no longer hetzner-only. `secrets` on the four MANAGED clouds is a tofu cell,
+		//        and counting an `aws_secretsmanager_secret` in state proves the secret exists, not
+		//        that anything can read it — a workload reads it only through the ESO
+		//        ClusterSecretStore, whose apply failed on aws/full run 32883119943 behind a retry
+		//        that swallowed the error (#2652). Every cloud now names the store whose readiness
+		//        discriminates, so this is a no-op on no cloud that provisions `secrets`.
+		if perr := AssertMaxConfigClusterProbes(ctx, kc, provider, MaxConfigProbeTimeout()); perr != nil {
 			t.Fatalf("FT-5 max-config cluster probe: %v", perr)
 		}
 		t.Logf("FT-5 max-config on %s: %d kind(s) proven in tofu state %v, %d proven as converged ArgoCD Applications %v",
