@@ -179,14 +179,40 @@ just picked disappears, which makes the filter bar un-un-selectable.
 
 No stat-card strips.
 
-`pnpm check:shared-surface` mechanises PART of the first two rows, and the part matters: it fails
-on `toFixed(`, `toLocaleDateString`, `toLocaleTimeString`, a hand-written `$` in front of an
-interpolation, and a byte division by 1024; and on a raw `<h1>` — not on a hand-rolled `<h2>`
-section heading, and not on a direct `date-fns` import. Every exception is a line in
-`apps/console/shared-surface-allowlist.yaml` carrying its reason, and that list only shrinks.
-**Everything else in the table is prose** — `scripts/check-shared-surface.mjs` states exactly which
-token shapes and which console directories it covers, because an unstated exception is how the next
-reader concludes the whole table is enforced.
+`pnpm check:shared-surface` mechanises **five of the seven rows above, plus the stat-card ban**. It
+fails on `toFixed(`, `toLocaleDateString`, `toLocaleTimeString`, a hand-written `$` in front of an
+interpolation (including one built from a variable or taken as a `prefix` prop), and a byte division
+by 1024; on a raw `<h1>` **and now on a hand-rolled `<h2>` through `<h6>` section heading**; on a
+centred one-off empty state (`text-center` with `py-6` or more); on a `<Stat` cell and the `Stat`
+primitive behind it; on a raw stacking level of 40 or more, variant prefix or not; and on a
+`grid-cols-[…]` used as a table.
+
+Two of those are stated precisely on purpose, because the imprecise version is wrong. **The z-index
+rule is not "no bare `z-*`"** — `packages/brand/src/tokens.css` puts its in-flow lifts at 10/20/30
+and its chrome at 100, so `z-10` is a real rung written without its name while `z-40`/`z-50` name a
+level in the gap the scale leaves empty. **And the table rule is a SHAPE test, not a class-name
+match**: a bracketed column template that is NOT behind a breakpoint, plus a row marker. A table's
+columns are the same at every width, so `lg:grid-cols-[280px_1fr]` is a two-pane layout stacking on
+a phone and is not a table.
+
+Where each of those bounds runs to the edge of the rule rather than to the edge of what was measured,
+that is deliberate: a guard whose cheapest escape route is to deepen the defect — demote the `<h2>`,
+raise the padding, add a `md:` prefix — is worse than no guard.
+
+**Two rows stay prose, and the file says why**: `StatusBadge`, which has no negative form to match
+("a page that should have shown a status pill and showed a `<Badge>`" is not a grep), and the filter
+standard's server half, which is a behaviour and needs a unit test. A direct `date-fns` import and a
+bare `.toLocaleString(` are also still unmatched, deliberately — as is a class list split across two
+`cn()` arguments. **Read the omissions in `scripts/check-shared-surface.mjs` rather than inferring
+them from this list**: it states every one of them, with the exact token shape and the exact console
+directories each matcher reaches, because an unstated exception is how the next reader concludes the
+whole table is enforced.
+
+The allowlist carries **two ledgers, and the difference is load-bearing**. `reason:` is a decision —
+this surface is genuinely a different thing — and counts against `baseline`. `lifts:` is measured
+drift that a named board issue will remove, and counts against `debt`. Both are checked in both
+directions, so converting drift into a fix moves two numbers in one diff, and neither list may grow
+silently. A `reason:` that means "we haven't got to it yet" is what the split exists to prevent.
 
 Two further checks back up the section rather than restating it: `pnpm -F console check:dead-code`
 fails on an unreferenced module or an unused dependency, and `pnpm -F console check:action-boundary`
