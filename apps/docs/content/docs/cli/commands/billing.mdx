@@ -54,7 +54,7 @@ alethia usage -o json
 | Field            | Meaning                                                                        |
 | ---------------- | ------------------------------------------------------------------------------ |
 | `Seats`          | Billable seats used **/** purchased cap                                        |
-| `Runner minutes` | Managed-runner minutes consumed this billing period, written for a person: `0 min`, `<1 min`, `47 min`, `2h 15m` |
+| `Runner minutes` | Managed-runner minutes consumed this billing period, written for a person: `0 min`, `47 min`, `2h 15m` |
 | `Projects`       | Projects in the organization                                                   |
 | `AI credits`     | Included AI credits used this week **/** the weekly grant                      |
 
@@ -65,7 +65,9 @@ state an allowance nobody sent. The console's usage page reads the allowance fro
 catalogue; see **Settings → Usage** there for minutes used against minutes included.
 </Callout>
 
-Use `-o json` when a script needs the raw counters: `runner_minutes` is a plain integer of minutes.
+Use `-o json` or `-o csv` when a script needs the raw counters. Only the card is written for a
+person: `runner_minutes` is a plain integer of minutes in the JSON, and the CSV `Runner minutes`
+row carries that same integer rather than `2h 15m`.
 
 ## `alethia fleet`
 

@@ -7,9 +7,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/spf13/cobra"
 )
@@ -88,7 +90,7 @@ func TestCostMoneyRoundsTheWayTheConsoleDoes(t *testing.T) {
 		t.Fatalf(`premise broken: fmt.Sprintf("$%%.2f", 0.125) = %q, want "$0.12" — this test exists `+
 			"because Go rounds half to EVEN there and the console does not", got)
 	}
-	rows := costRows([]api.CostResourceLine{{Address: "a", ResourceType: "t", MonthlyCost: 0.125}}, "USD")
+	rows := costRows([]api.CostResourceLine{{Address: "a", ResourceType: "t", MonthlyCost: 0.125}}, "USD", ui.FormatTable)
 	if got := rows[0][2]; got != "$0.13/mo" {
 		t.Errorf("cost cell for 0.125 = %q, want $0.13/mo — the console shows $0.13", got)
 	}
@@ -100,7 +102,7 @@ func TestCostMoneyRoundsTheWayTheConsoleDoes(t *testing.T) {
 func TestCostRowsRenderInTheEnvironmentsCurrency(t *testing.T) {
 	rows := costRows([]api.CostResourceLine{
 		{Address: "aws_db_instance.main", ResourceType: "aws_db_instance", MonthlyCost: 100},
-	}, "EUR")
+	}, "EUR", ui.FormatTable)
 	if got := rows[0][2]; got != "€100.00/mo" {
 		t.Errorf("EUR row cell = %q, want €100.00/mo", got)
 	}
@@ -111,7 +113,7 @@ func TestCostRowsRenderInTheEnvironmentsCurrency(t *testing.T) {
 func TestCostRowsAndHeadlineUseOneRule(t *testing.T) {
 	line := api.CostResourceLine{Address: "a", ResourceType: "t", MonthlyCost: 0.125}
 	cost := &api.EnvironmentCost{Priced: true, TotalMonthly: f64(0.125), Currency: "USD", Resources: []api.CostResourceLine{line}}
-	cell := costRows(cost.Resources, cost.Currency)[0][2]
+	cell := costRows(cost.Resources, cost.Currency, ui.FormatTable)[0][2]
 	if !strings.Contains(costSummary(cost), cell) {
 		t.Errorf("headline %q does not render the same amount as the row cell %q", costSummary(cost), cell)
 	}
@@ -171,7 +173,7 @@ func TestResolveCostProjectPrefersTheFlag(t *testing.T) {
 		t.Fatalf("parse flags: %v", err)
 	}
 	picked := false
-	got, err := resolveCostProject(c, func() (string, error) { picked = true; return "other", nil })
+	got, err := resolveCostProject(c, true, func() (string, error) { picked = true; return "other", nil })
 	if err != nil || got != "web" {
 		t.Fatalf("resolveCostProject = %q, %v; want web", got, err)
 	}
@@ -181,7 +183,7 @@ func TestResolveCostProjectPrefersTheFlag(t *testing.T) {
 }
 
 func TestResolveCostProjectFallsBackToThePicker(t *testing.T) {
-	got, err := resolveCostProject(newCostTestCmd(), func() (string, error) { return "picked-id", nil })
+	got, err := resolveCostProject(newCostTestCmd(), true, func() (string, error) { return "picked-id", nil })
 	if err != nil || got != "picked-id" {
 		t.Fatalf("resolveCostProject = %q, %v; want picked-id", got, err)
 	}
@@ -190,7 +192,7 @@ func TestResolveCostProjectFallsBackToThePicker(t *testing.T) {
 // TestResolveCostProjectUnderNoInputNamesTheFlag: errNoInput says "interactive input required",
 // which is true and useless in a script. The refusal must name the flag that would have answered it.
 func TestResolveCostProjectUnderNoInputNamesTheFlag(t *testing.T) {
-	_, err := resolveCostProject(newCostTestCmd(), func() (string, error) { return "", errNoInput })
+	_, err := resolveCostProject(newCostTestCmd(), true, func() (string, error) { return "", errNoInput })
 	if err == nil {
 		t.Fatal("expected a refusal under --no-input")
 	}
@@ -203,7 +205,7 @@ func TestResolveCostProjectUnderNoInputNamesTheFlag(t *testing.T) {
 // not a missing flag, and rewriting it as one would send the reader to fix the wrong thing.
 func TestResolveCostProjectSurfacesARealPickerFailure(t *testing.T) {
 	boom := errors.New("failed to fetch projects: connection refused")
-	_, err := resolveCostProject(newCostTestCmd(), func() (string, error) { return "", boom })
+	_, err := resolveCostProject(newCostTestCmd(), true, func() (string, error) { return "", boom })
 	if !errors.Is(err, boom) {
 		t.Errorf("resolveCostProject swallowed the picker's error: %v", err)
 	}
@@ -212,9 +214,64 @@ func TestResolveCostProjectSurfacesARealPickerFailure(t *testing.T) {
 // TestResolveCostProjectRefusesAnEmptySelection: a picker that returns "" with no error would
 // otherwise send an empty project to the API and get back a 404 naming nothing the user typed.
 func TestResolveCostProjectRefusesAnEmptySelection(t *testing.T) {
-	_, err := resolveCostProject(newCostTestCmd(), func() (string, error) { return "", nil })
+	_, err := resolveCostProject(newCostTestCmd(), true, func() (string, error) { return "", nil })
 	if err == nil || !strings.Contains(err.Error(), "--project") {
 		t.Errorf("empty selection = %v, want a refusal naming --project", err)
+	}
+}
+
+// TestResolveCostProjectDoesNotPickForAMachineReadableRun is the reason the picker takes a gate at
+// all. ui.NewForm and ui.RunSpinner both write to os.Stdout, so opening a picker for
+// `alethia cost show -o json > cost.json` puts spinner frames and a rendered select in the file
+// ahead of the JSON document, and the file stops parsing. The caller passes interactiveTable's
+// verdict, which is false for json/csv, for --no-input, and for a redirected stdout.
+func TestResolveCostProjectDoesNotPickForAMachineReadableRun(t *testing.T) {
+	picked := false
+	_, err := resolveCostProject(newCostTestCmd(), false, func() (string, error) { picked = true; return "picked-id", nil })
+	if picked {
+		t.Error("the picker ran for a non-interactive render — its spinner and form would land in the output stream")
+	}
+	if err == nil || !strings.Contains(err.Error(), "--project") {
+		t.Errorf("refusal = %v, want one naming --project", err)
+	}
+}
+
+// TestCostCSVKeepsTheMonthlyCellMachineReadable pins the OTHER half of the shared-Rows problem:
+// ui.Render writes spec.Rows verbatim into the CSV, so the humanised cell would have shipped a
+// `/mo` suffix, `,` thousands separators and a per-environment currency glyph into a column a
+// script parses as a float.
+func TestCostCSVKeepsTheMonthlyCellMachineReadable(t *testing.T) {
+	lines := []api.CostResourceLine{{Address: "a", ResourceType: "t", MonthlyCost: 1234.56}}
+	if got := costRows(lines, "EUR", ui.FormatCSV)[0][2]; got != "1234.56" {
+		t.Errorf("csv Monthly cell = %q, want the bare number 1234.56", got)
+	}
+	// The premise: the table cell for the same amount is NOT parseable as a float, which is why the
+	// two renders had to part company.
+	table := costRows(lines, "EUR", ui.FormatTable)[0][2]
+	if _, err := strconv.ParseFloat(table, 64); err == nil {
+		t.Fatalf("premise broken: the table cell %q parses as a float, so this split guards nothing", table)
+	}
+}
+
+// TestRunCostShowCSVEmitsBareNumbers drives the whole csv render rather than the row builder, so
+// the assertion is about what a script actually receives on stdout.
+func TestRunCostShowCSVEmitsBareNumbers(t *testing.T) {
+	c := &fakeClient{cost: &api.EnvironmentCost{
+		Priced: true, TotalMonthly: f64(1234.56), Currency: "EUR",
+		Resources: []api.CostResourceLine{{Address: "aws_db_instance.main", ResourceType: "aws_db_instance", MonthlyCost: 1234.56}},
+	}}
+	var buf bytes.Buffer
+	if err := runCostShow(c, &buf, ui.FormatCSV, "proj", ""); err != nil {
+		t.Fatalf("runCostShow: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "1234.56") {
+		t.Errorf("csv output does not carry the bare amount:\n%s", out)
+	}
+	for _, unwanted := range []string{"/mo", "1,234", "€"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("csv output carries %q, which a float parser chokes on:\n%s", unwanted, out)
+		}
 	}
 }
 

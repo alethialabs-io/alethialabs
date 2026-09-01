@@ -20,7 +20,7 @@ your [CLI token](/cli/authentication) and operates on the **active organization*
 Show the latest cost for a project environment.
 
 ```bash
-alethia cost show                          # picks the project interactively
+alethia cost show                          # picks the project interactively (terminal, table output)
 alethia cost show --project my-project
 alethia cost show -p my-project -e staging
 alethia cost show -p my-project -o json
@@ -36,6 +36,11 @@ and `project apply`. The flag is the complete contract — it can set anything t
 so `--no-input` never needs a terminal. Under `--no-input` an omitted project is refused with a
 message that names `--project`.
 
+The picker appears **only** for the default table output on a terminal. `-o json`, `-o csv`,
+`--no-input` and a redirected stdout all refuse an omitted `--project` with that same message,
+because the picker draws on stdout and would otherwise put a spinner and a menu in the file you
+redirected the document into.
+
 The command prints a one-line headline — the total monthly cost, or **not priced** when no plan has
 ever costed the environment (an honest "we don't know yet", never a fabricated zero) — followed by a
 table of the priced resources:
@@ -48,7 +53,9 @@ aws_s3_bucket.logs    aws_s3_bucket    $23.45/mo
 ```
 
 Add `-o json` for the full cost object (`priced`, `total_monthly`, `currency`, `captured_at`,
-`plan_job_id`, `environment`, `resources[]`); `-o csv` emits the priced-resource rows. Backing call:
+`plan_job_id`, `environment`, `resources[]`); `-o csv` emits the priced-resource rows, with
+`Monthly` as a bare number (`1234.56`) so a script can parse it — no symbol, no thousands
+separator, no `/mo`. The currency is stated once, in the JSON object's `currency`. Backing call:
 `GET /cli/projects/<project>/cost?env=<env>`.
 
 ### How the amounts are written
@@ -65,8 +72,9 @@ uses, so a cost you read in the terminal and the same cost on the project canvas
 - **`captured` is a date, not a wire timestamp** — `1 Jan 2026, 00:00`, in UTC, so the same record
   reads the same on every machine.
 
-Use `-o json` when a script needs the raw number: `total_monthly` and each `monthly_cost` are plain
-numbers, and `currency` is the ISO code.
+All of that is the **table** render, which is written for a person. Use `-o json` when a script
+needs the raw number: `total_monthly` and each `monthly_cost` are plain numbers, and `currency` is
+the ISO code.
 
 ## See also
 
