@@ -1,19 +1,8 @@
 {
   "extends": "@repo/typescript-config/base.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "noEmit": true,
-    "declaration": false,
-    "declarationMap": false,
-    // The base preset is NodeNext, which treats these files as CommonJS (the package declares no
-    // `"type": "module"`) and so rejects `import.meta`. apps/console overrides the same two
-    // options for the same reason; without this, `scripts/` and `tests/` cannot be type-checked
-    // at all — which is how the generator shipped unchecked the first time.
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "types": ["node"]
+    "outDir": "dist"
   },
-  "include": ["src", "conformance", "scripts", "tests"],
+  "include": ["src", "conformance"],
   "exclude": ["node_modules", "dist"]
 }

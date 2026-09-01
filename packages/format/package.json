@@ -3,12 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./conformance": "./conformance/cases.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",
-    "gen:conformance": "tsx scripts/gen-conformance.ts --write",
-    "check:conformance": "tsx scripts/gen-conformance.ts",
     "check-types": "tsc --noEmit",
     "test": "vitest run --coverage"
   },
@@ -18,10 +17,8 @@
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
-    "@types/node": "^22.10.5",
     "@vitest/coverage-v8": "^2.1.9",
     "eslint": "^9.39.5",
-    "tsx": "^4.23.12",
     "typescript": "5.9.3",
     "vitest": "^2.1.9"
   }

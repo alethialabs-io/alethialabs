@@ -10,22 +10,22 @@
  *
  * The three layers, and how they fail:
  *   1. this suite            — TS changed and the table did not
- *   2. the CI diff-gate      — the table is stale (`pnpm -F @repo/format check:conformance`)
+ *   2. the CI diff-gate      — the table is stale (`pnpm -F console gen:format-conformance:check`)
  *   3. conformance_test.go   — Go disagrees with the table
  *
  * Go cannot write the file, so it has no way to make itself right. Neither side drifts alone.
  */
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import { describe, expect, it } from "vitest";
 
+// Imported rather than read off disk. `node:fs` would drag `@types/node` into this leaf package,
+// and adding a devDependency here re-resolved the lockfile and bumped @better-auth/utils, which
+// broke the console's type-check in an unrelated file. A JSON import needs nothing.
+import caseFile from "../conformance/format-cases.json";
 import { EXCLUDED } from "../conformance/cases.ts";
 import * as fmt from "../src/index.ts";
 
-const FILE = join(dirname(fileURLToPath(import.meta.url)), "../conformance/format-cases.json");
+const FILE = "packages/format/conformance/format-cases.json";
 
 /**
  * A case id must NAME the boundary it pins, because the id is what a diff shows when an
@@ -95,17 +95,17 @@ const DRIVERS: Record<string, { fn: string; run: (r: Row) => string }> = {
 	},
 };
 
-/** Narrow the parsed file without an `any` escaping or a cast. */
+/** Narrow the imported file without an `any` escaping or a cast. */
 function loadTable(): { version: number; cases: Record<string, Row[]> } {
-	const parsed: unknown = JSON.parse(readFileSync(FILE, "utf8"));
-	if (parsed === null || typeof parsed !== "object") throw new TypeError("the case file is not an object");
+	const parsed: unknown = caseFile;
+	if (parsed === null || typeof parsed !== "object") throw new TypeError(`${FILE} is not an object`);
 	const doc: Record<string, unknown> = { ...parsed };
 
 	const version = doc.version;
-	if (typeof version !== "number") throw new TypeError("the case file has no numeric `version`");
+	if (typeof version !== "number") throw new TypeError(`${FILE} has no numeric \`version\``);
 
 	const rawCases = doc.cases;
-	if (rawCases === null || typeof rawCases !== "object") throw new TypeError("the case file has no `cases` object");
+	if (rawCases === null || typeof rawCases !== "object") throw new TypeError(`${FILE} has no \`cases\` object`);
 
 	const cases: Record<string, Row[]> = {};
 	for (const [section, value] of Object.entries({ ...rawCases })) {
