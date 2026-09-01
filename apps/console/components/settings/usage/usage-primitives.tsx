@@ -39,25 +39,44 @@ export function Meter({
 	);
 }
 
-/** A compact resource stat (count + label + optional sub). */
-export function Stat({
+/**
+ * A list of facts about what a scope currently runs. Renders a `<dl>`; put {@link Fact} in it.
+ *
+ * This replaces the `Stat` card and the `grid grid-cols-2 sm:grid-cols-4` strip both usage
+ * panels used to head their cards with. §6 bans stat-card strips with no qualifier, and the
+ * Resources card was the argument for the ban in miniature: three 20px display figures across
+ * the top, and then the number that actually costs somebody money — estimated cloud spend — as
+ * a quiet label-and-value line at the bottom of the same card. Two renderings of the same kind
+ * of fact, one card, and the loud one was the one that mattered least.
+ *
+ * So the card keeps the quiet shape and drops the loud one. A count is now read the way the
+ * spend line was always read, and a `<dl>` says in the accessibility tree what the old grid of
+ * divs only said in pixels: these are terms and their values.
+ */
+export function FactList({ children }: { children: ReactNode }) {
+	return <dl>{children}</dl>;
+}
+
+/** One fact: a term, its value, and an optional qualifier on the term. */
+export function Fact({
 	label,
 	value,
 	sub,
 }: {
 	label: string;
 	value: ReactNode;
+	/** What the value is OF — a time window, a scope note. Reads after the label. */
 	sub?: ReactNode;
 }) {
 	return (
-		<div className="border-r border-border px-6 py-4 last:border-r-0">
-			<div className="font-mono text-[10px] uppercase tracking-[0.1em] text-text-tertiary">
+		<div className="flex items-baseline justify-between gap-4 border-b border-border px-6 py-[11px] last:border-b-0">
+			<dt className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-[12.5px] text-text-secondary">
 				{label}
-			</div>
-			<div className="mt-1.5 font-display text-[20px] font-semibold tracking-[-0.02em] text-text-primary">
-				{value}
-			</div>
-			{sub && <div className="mt-0.5 font-mono text-[10px] text-text-tertiary">{sub}</div>}
+				{sub && (
+					<span className="font-mono text-[10px] text-text-tertiary">{sub}</span>
+				)}
+			</dt>
+			<dd className="shrink-0 font-mono text-[12.5px] text-text-primary">{value}</dd>
 		</div>
 	);
 }

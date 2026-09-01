@@ -23,7 +23,11 @@ import {
 } from "@/app/server/actions/project-usage";
 import { ErrorState } from "@/components/errors/error-state";
 import { SettingsSection } from "@/components/settings/settings-ui";
-import { Bars, Stat } from "@/components/settings/usage/usage-primitives";
+import {
+	Bars,
+	Fact,
+	FactList,
+} from "@/components/settings/usage/usage-primitives";
 import { qk } from "@/lib/query/keys";
 import { globalHref } from "@/lib/routing";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
@@ -146,23 +150,23 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 			{/* Resources — the current scale of what this project runs. */}
 			<SettingsSection title="Resources">
 				<div className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
-					<div className="grid grid-cols-2 sm:grid-cols-4">
-						<Stat
+					<FactList>
+						<Fact
 							label="Jobs"
 							value={overTime.data ? overTime.data.totals.jobs.toLocaleString() : "—"}
 							sub={rangeLabel.toLowerCase()}
 						/>
-						<Stat
+						<Fact
 							label="Running"
 							value={usage.data?.runningJobs ?? "—"}
 							sub="jobs in flight"
 						/>
-						<Stat
+						<Fact
 							label="Clusters"
 							value={counts.data?.clusters ?? "—"}
 							sub="under management"
 						/>
-					</div>
+					</FactList>
 					<div className="flex items-center justify-between border-t border-border bg-surface-sunken px-6 py-[14px] text-[12px] text-text-tertiary">
 						<span className="flex items-center gap-2">
 							<Info size={13} />
@@ -180,12 +184,14 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 			{/* Runner job-minutes + AI credits — the metered, project-attributable units. */}
 			<SettingsSection title="Metered usage this period">
 				<div className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
-					<div className="grid grid-cols-1 sm:grid-cols-2">
-						<Stat
+					<FactList>
+						<Fact
 							label="Runner job-minutes"
 							value={
 								// `jobMinutes` is a float; a local Math.round here was one of the four
 								// disagreeing minutes readouts. formatMinutes owns the rounding now.
+								// No allowance to render against — a project has no quota of its own,
+								// so this is `formatMinutes` and not `formatQuota`.
 								usage.data ? formatMinutes(usage.data.jobMinutes) : "—"
 							}
 							sub={
@@ -194,14 +200,14 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 									: "managed runner usage this period"
 							}
 						/>
-						<Stat
+						<Fact
 							label="AI credits used"
 							value={
 								ai.data ? ai.data.creditsThisPeriod.toLocaleString() : "—"
 							}
 							sub="attributed to this project *"
 						/>
-					</div>
+					</FactList>
 					<div className="flex items-center gap-2 border-t border-border bg-surface-sunken px-6 py-[14px] text-[12px] text-text-tertiary">
 						<Info size={13} />
 						<span>

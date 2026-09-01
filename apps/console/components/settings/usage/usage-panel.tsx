@@ -32,14 +32,20 @@ import {
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
 import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
-import { Bars, Meter, Stat } from "@/components/settings/usage/usage-primitives";
+import {
+	Bars,
+	Fact,
+	FactList,
+	Meter,
+} from "@/components/settings/usage/usage-primitives";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
-import { formatDate, formatMinutes, formatMoney } from "@repo/format";
+import { formatDate, formatMinutes, formatMoney, formatQuota } from "@repo/format";
 import { planMeta } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
+import { PageHeader } from "@repo/ui/page-header";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import {
 	type DateRange,
@@ -125,13 +131,11 @@ export function UsagePanel() {
 	if (!summary.hosted) {
 		return (
 			<Card className="p-6">
-				<h2 className="text-sm font-semibold text-foreground">
-					Self-managed deployment
-				</h2>
-				<p className="mt-1 text-sm text-muted-foreground">
-					This instance isn&apos;t connected to hosted billing, so usage isn&apos;t
-					metered here.
-				</p>
+				<PageHeader
+					level={2}
+					title="Self-managed deployment"
+					description="This instance isn't connected to hosted billing, so usage isn't metered here."
+				/>
 			</Card>
 		);
 	}
@@ -141,11 +145,12 @@ export function UsagePanel() {
 		return (
 			<div>
 				<Card className="p-6">
-					<h2 className="text-sm font-semibold text-foreground">No organization yet</h2>
-					<p className="mt-1 max-w-prose text-sm text-muted-foreground">
-						Usage is metered per organization. Create one to track seats, runner
-						minutes, and AI against a plan.
-					</p>
+					<PageHeader
+						className="max-w-prose"
+						level={2}
+						title="No organization yet"
+						description="Usage is metered per organization. Create one to track seats, runner minutes, and AI against a plan."
+					/>
 					<Button className="mt-4" onClick={() => setCreateOpen(true)}>
 						Create organization
 					</Button>
@@ -216,20 +221,16 @@ export function UsagePanel() {
 						<Meter
 							label="Runner minutes"
 							value={
-								usage ? (
-									<>
-										{/* `usedMinutes` is a FLOAT. Rendered raw it read `0.943` here and
-										    `0` after a local Math.round — the same quantity, two answers.
-										    formatMinutes owns the rounding for every readout in the app;
-										    the allowance stays a plain integer, as it is elsewhere. */}
-										<b className="font-medium text-text-primary">
-											{formatMinutes(usage.usedMinutes)}
-										</b>
-										{` / ${usage.includedMinutes}`}
-									</>
-								) : (
-									<b className="font-medium text-text-primary">—</b>
-								)
+								<b className="font-medium text-text-primary">
+									{/* `formatQuota`, not a locally assembled pair. `usedMinutes` is a
+									    FLOAT — rendered raw it read `0.943` here and `0` after a local
+									    Math.round — and the pair around it is the second half of the
+									    same problem: this file printed `47 min / 200` while the helper
+									    written for exactly this readout prints `47 min / 200 min`.
+									    One function, one answer; the allowance still stays the plain
+									    integer the plan and the pricing page quote. */}
+									{usage ? formatQuota(usage.usedMinutes, usage.includedMinutes) : "—"}
+								</b>
 							}
 							fill={usage ? usage.pct * 100 : 0}
 							sub={
@@ -298,15 +299,15 @@ export function UsagePanel() {
 			{/* Resources — current scale of what the org runs. */}
 			<SettingsSection title="Resources">
 				<div className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
-					<div className="grid grid-cols-2 sm:grid-cols-4">
-						<Stat label="Projects" value={counts?.projects ?? "—"} />
-						<Stat label="Clusters" value={counts?.clusters ?? "—"} sub="under management" />
-						<Stat
+					<FactList>
+						<Fact label="Projects" value={counts?.projects ?? "—"} />
+						<Fact label="Clusters" value={counts?.clusters ?? "—"} sub="under management" />
+						<Fact
 							label="Jobs"
 							value={overTime ? overTime.totals.jobs.toLocaleString() : "—"}
 							sub={rangeLabel.toLowerCase()}
 						/>
-					</div>
+					</FactList>
 					<div className="flex items-center justify-between border-t border-border bg-surface-sunken px-6 py-[14px] text-[12px] text-text-tertiary">
 						<span className="flex items-center gap-2">
 							<Info size={13} />
