@@ -12,7 +12,8 @@ import { ProviderIcon } from "@repo/ui/provider-icon";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { Skeleton } from "@repo/ui/skeleton";
 import type { JobWithMeta } from "@/app/server/actions/jobs";
-import { JOB_TYPES, formatDuration } from "@/lib/jobs/format";
+import { formatDuration } from "@repo/format";
+import { JOB_TYPES } from "@/lib/jobs/format";
 import { globalHref } from "@/lib/routing";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
 

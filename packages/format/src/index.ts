@@ -75,10 +75,19 @@ export function formatQuota(usedMinutes: number, includedMinutes: number): strin
 }
 
 /**
- * An elapsed millisecond span as `42s` or `1m 12s`.
+ * An elapsed millisecond span as `47s`, `3m 20s` or `2h 5m`.
  *
- * Ported verbatim from `apps/console/lib/jobs/format.ts`, which was already the right shape and
- * was duplicated byte-identically inline in the job detail page.
+ * ROLLS INTO HOURS at 60 minutes, and drops the seconds when it does.
+ *
+ * This was the console-vs-CLI disagreement, settled on merit in favour of the CLI's answer
+ * (`apps/cli/cmd/jobs_list.go`, which already rolled). The console rendered a two-hour provision as
+ * `120m 0s` and made the reader divide — and a provision over an hour is ordinary, not an edge
+ * case, so the shape that reads worst was the one covering the common path. The conformance table
+ * pins the boundary in both directions.
+ *
+ * The provenance line this block used to carry — "ported verbatim from
+ * `apps/console/lib/jobs/format.ts`, which was already the right shape" — is deleted rather than
+ * amended. It contradicted the paragraph above it: the console's shape was the one that LOST.
  *
  * @param ms elapsed milliseconds. Negative is clamped to 0.
  */
@@ -87,8 +96,12 @@ export function formatDuration(ms: number): string {
 	const seconds = Math.floor(ms / 1000);
 	if (seconds < 60) return `${seconds}s`;
 	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-	return `${minutes}m ${remainingSeconds}s`;
+	if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+	// At an hour the SECONDS stop being information and start being noise: nobody reading "how long
+	// did this provision take" is served by the difference between 2h 5m 03s and 2h 5m 41s, and the
+	// two extra digits push the useful ones further from the eye. Dropping them is why this rolls
+	// rather than just adding a third field.
+	return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 /** How much of a timestamp to show. */
