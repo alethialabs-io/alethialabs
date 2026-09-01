@@ -290,7 +290,11 @@ func miscReadCommands() [][]string {
 		{"agent", "list"},
 		{"agent", "get", "ag1"},
 		{"cluster", "list"},
-		{"cluster", "get", "web"},
+		// `cluster get` is NOT here. This list is run against an EMPTY envelope by
+		// TestMisc_EmptyResultsAreReported, and an empty collection is not an empty answer for a
+		// get: asking for a cluster that is not there is a miss, and a miss is now fatal rather
+		// than a muted line and exit 0. Its arms — empty, server error, matched, ambiguous, and
+		// no selector with --no-input — are owned end to end by clusters_get_test.go.
 		{"org", "list"},
 		{"addon", "list", "-p", "web", "-e", "production"},
 		{"chart", "list", "-p", "web", "-e", "production"},
@@ -634,15 +638,6 @@ func TestMisc_OpsFailuresExit(t *testing.T) {
 				t.Errorf("%v: expected the fatal path", args)
 			}
 		})
-	}
-}
-
-// TestMisc_ClusterGetUnmatched pins that asking for a project with no cluster reports it
-// plainly instead of rendering an empty card.
-func TestMisc_ClusterGetUnmatched(t *testing.T) {
-	run := miscEnv(t, miscFull)
-	if err := run("cluster", "get", "no-such-project", "--output", "table", "--no-input"); err != nil {
-		t.Fatalf("cluster get: %v", err)
 	}
 }
 
