@@ -5,6 +5,7 @@
 import { ChevronLeft, Loader2, MessageSquarePlus, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { ArtifactSharePopover } from "@/components/agent/artifact-share-popover";
+import { GALLERY_EMPTY } from "@/components/agent/gallery-empty";
 import type { AgentArtifact } from "@/lib/db/schema";
 import { WidgetBody } from "@/components/agent/widgets/widget-card";
 import { Button } from "@repo/ui/button";
@@ -140,7 +141,10 @@ export function AgentArtifactViewer({
 			<ScrollArea className="min-h-0 flex-1">
 				<div className="p-5">
 					{widgets.length === 0 ? (
-						<EmptyState title="This artifact has no widgets." />
+						<EmptyState
+							className={GALLERY_EMPTY}
+							title="This artifact has no widgets."
+						/>
 					) : (
 						<div
 							className="grid grid-cols-5 gap-2"

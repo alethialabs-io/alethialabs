@@ -29,6 +29,19 @@ import { ScrollArea } from "@repo/ui/scroll-area";
 import { Textarea } from "@repo/ui/textarea";
 import { cn } from "@repo/ui/utils";
 
+/**
+ * Density tuning for `@repo/ui/empty`'s `EmptyState` inside the knowledge panel.
+ *
+ * The shared component is sized for a page — `p-6 md:p-12` around a `text-lg` headline over a
+ * `text-sm/relaxed` line. This panel's copy is a 13px headline over a 12px line, so BOTH slots
+ * are tuned: tuning only the title leaves the description at 14px, larger than the headline it
+ * sits under. The border is not in here because it belongs to the boxed docs affordance, not to
+ * the transient loading line — which otherwise renders at a different scale from the state it
+ * flashes before.
+ */
+const KNOWLEDGE_EMPTY =
+	"gap-3 p-8 md:p-8 [&_[data-slot=empty-title]]:text-[13px] [&_[data-slot=empty-title]]:font-normal [&_[data-slot=empty-description]]:text-xs";
+
 /** "2.1k" / "840" — knowledge size reads as a budget, so it's always a bare figure. */
 function size(n: number): string {
 	return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -225,7 +238,7 @@ export function AgentKnowledgePanel({
 			<ScrollArea className="min-h-0 flex-1">
 				<div className="mx-auto max-w-[760px] space-y-7 p-5">
 					{loading ? (
-						<EmptyState title="Loading…" />
+						<EmptyState className={KNOWLEDGE_EMPTY} title="Loading…" />
 					) : (
 						<>
 							{/* Read-only notice: this member can't edit the shared knowledge. */}
@@ -300,7 +313,7 @@ export function AgentKnowledgePanel({
 
 								{docs.length === 0 && !editing && (
 									<EmptyState
-										className="gap-3 border border-border p-8 md:p-8 [&_[data-slot=empty-title]]:text-[13px] [&_[data-slot=empty-title]]:font-normal"
+										className={cn(KNOWLEDGE_EMPTY, "border border-border")}
 										icon={<FileText />}
 										title={
 											canEdit

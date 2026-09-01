@@ -268,7 +268,7 @@ export function WidgetGrid({ className }: { className?: string }) {
 				</div>
 				{widgets.length === 0 && !loading && (
 					<EmptyState
-						className="gap-3 border border-border p-8 md:p-8 [&_[data-slot=empty-title]]:text-[13px] [&_[data-slot=empty-title]]:font-normal"
+						className="gap-3 border border-border p-8 md:p-8 [&_[data-slot=empty-title]]:text-[13px] [&_[data-slot=empty-title]]:font-normal [&_[data-slot=empty-description]]:text-xs"
 						icon={<LayoutDashboard />}
 						title="The grid is empty."
 						description="Ask Elench for your clusters, jobs, usage, or a full dashboard — structured results pin here as widgets."

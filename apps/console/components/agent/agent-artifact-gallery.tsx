@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { listSharedArtifacts } from "@/app/server/actions/artifact-shares";
 import { deleteArtifact, listArtifacts } from "@/app/server/actions/artifacts";
 import { AgentArtifactViewer } from "@/components/agent/agent-artifact-viewer";
+import { GALLERY_EMPTY } from "@/components/agent/gallery-empty";
 import type { AgentArtifact } from "@/lib/db/schema";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
@@ -14,14 +15,6 @@ import { cn } from "@repo/ui/utils";
 import { ScrollArea } from "@repo/ui/scroll-area";
 
 type GalleryTab = "yours" | "shared";
-
-/**
- * The gallery's two "nothing here" states, which were a near-copy of `EmptyState` already —
- * `border-dashed`, a centred icon, a title, a line of copy — differing only in the 420px column
- * and the dashed rule the shared component already carries (it ships `border-dashed` with no
- * border WIDTH, so a caller opts in with `border`). Only that width and the column are local.
- */
-const GALLERY_EMPTY = "mx-auto max-w-[420px] border border-border";
 
 /**
  * The Artifacts library — the modal's main region when the rail's "Artifacts" nav is active.
@@ -136,7 +129,7 @@ export function AgentArtifactGallery({
 			<ScrollArea className="min-h-0 flex-1">
 				<div className="p-5">
 				{items === null ? (
-					<EmptyState title="Loading artifacts…" />
+					<EmptyState className={GALLERY_EMPTY} title="Loading artifacts…" />
 				) : items.length === 0 ? (
 					tab === "shared" ? (
 						<EmptyState

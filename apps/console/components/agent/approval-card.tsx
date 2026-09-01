@@ -92,8 +92,13 @@ export function ApprovalCard({
 					   18px numbers takes the space above the Approve button to tell you what is
 					   countable instead of what you are agreeing to. The same four facts read in
 					   a sentence, at the weight of the sentence beside them. The money goes
-					   through `formatMonthlyRate`, so this card and the plan panel's Est. cannot
-					   disagree about the symbol, the separators or the cents. */
+					   through `formatMonthlyRate` in the `"exact"` register, so this card and the
+					   plan panel's Est. cannot disagree about the symbol, the separators or the
+					   cents. `"exact"` and not the default `"estimate"` because this IS the plan
+					   panel's total — the agent is told to copy `costSummary.totalMonthlyCost`
+					   into `stats.monthly`, and `artifact-panel` renders that same number exact.
+					   On the default the two read `<$1/mo` against `$0.75/mo`, and `$0/mo`
+					   against `$0.00/mo`, for one plan. */
 					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-muted-foreground">
 						<span className="text-foreground">
 							{proposal.stats.add ?? 0} to add
@@ -110,7 +115,7 @@ export function ApprovalCard({
 							<>
 								<span aria-hidden>·</span>
 								<span className="text-foreground">
-									{formatMonthlyRate(proposal.stats.monthly)} est.
+									{formatMonthlyRate(proposal.stats.monthly, "exact")} est.
 								</span>
 							</>
 						)}
