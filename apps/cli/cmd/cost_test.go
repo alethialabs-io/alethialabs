@@ -5,14 +5,21 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -233,6 +240,203 @@ func TestResolveCostProjectDoesNotPickForAMachineReadableRun(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "--project") {
 		t.Errorf("refusal = %v, want one naming --project", err)
+	}
+}
+
+// --- the picker, through the REAL command tree ---
+//
+// The tests above drive resolveCostProject with a `mayPick` the test chose. That leaves the
+// half that actually regressed untested: costShowCmd is what COMPUTES that verdict, and the
+// defect was a `cost show` that prompted whatever the format was. Only the cobra tree pins
+// the composition — and the fake control plane below records the paths it is asked for, so
+// the assertion is "which project did the command go on to price", not "did it exit 0".
+
+// costPickerEnv stands up isolated credentials, an active org and a control plane that
+// RECORDS every path it serves, and returns a runner for the real cobra tree plus a reader
+// for those paths.
+//
+// The recording is the point: `GET /api/cli/projects/<id>/cost` carries the project id in
+// its path, so a test can assert that the picker's answer is what got priced, and that a
+// refused run never asked about a project called "".
+func costPickerEnv(t *testing.T) (func(args ...string) error, func() []string) {
+	t.Helper()
+	credsPath := isolatedHome(t)
+	if err := saveCredentials(credsPath, types.ExchangeResponse{
+		AccessToken: makeToken(t, time.Now().Add(time.Hour)), RefreshToken: "r",
+	}); err != nil {
+		t.Fatalf("save credentials: %v", err)
+	}
+	if err := types.SaveCliConfig(types.CliConfig{
+		ActiveOrgID: "o1", ActiveOrgName: "Acme", ActiveOrgSlug: "acme",
+	}); err != nil {
+		t.Fatalf("save cli config: %v", err)
+	}
+
+	var mu sync.Mutex
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.URL.Path)
+		mu.Unlock()
+
+		enc := json.NewEncoder(w)
+		if r.URL.Path == "/api/cli/configurations" {
+			// Two projects, so "the first one" is a choice the picker made rather than
+			// the only value it could have produced.
+			_ = enc.Encode(map[string]any{"configurations": []map[string]any{
+				{"id": "p-first", "project_name": "web", "environment_stage": "production"},
+				{"id": "p-second", "project_name": "api", "environment_stage": "staging"},
+			}})
+			return
+		}
+		_ = enc.Encode(map[string]any{
+			"priced": true, "total_monthly": 10.0, "currency": "USD",
+			"resources": []map[string]any{
+				{"address": "aws_s3_bucket.logs", "resource_type": "aws_s3_bucket", "monthly_cost": 10.0},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("ALETHIA_WEB_ORIGIN", srv.URL)
+	t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
+
+	run := func(args ...string) error {
+		rootCmd.SetArgs(args)
+		return rootCmd.Execute()
+	}
+	paths := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string{}, seen...)
+	}
+	return run, paths
+}
+
+// costStubPicker replaces the huh form with one that counts its openings and returns without
+// touching the answer.
+//
+// Returning nil is not "the user selected nothing": huh writes the highlighted option into
+// the bound value while the Select is being BUILT (Options() then Value() both call
+// updateValue), so the stub reproduces a user pressing enter on the pre-selected first
+// project. The counter is what lets a test assert the picker did NOT open.
+func costStubPicker(t *testing.T, err error) *int {
+	t.Helper()
+	opened := 0
+	prev := runHuhForm
+	runHuhForm = func(...*huh.Group) error { opened++; return err }
+	t.Cleanup(func() { runHuhForm = prev })
+	return &opened
+}
+
+// costSaw reports whether the fake control plane was asked for a path.
+func costSaw(paths []string, want string) bool {
+	for _, p := range paths {
+		if p == want {
+			return true
+		}
+	}
+	return false
+}
+
+// costArgs is one `cost show` invocation with the sticky flags cleared. --project and --env
+// live on a package-global command and keep whatever the previous test set, so an omitted
+// --project has to be written as `--project=` or this test silently prices "web".
+func costArgs(outFmt string) []string {
+	return []string{"cost", "show", "--project=", "--env=", "--output", outFmt, "--no-input=false"}
+}
+
+// TestCostShowPricesTheProjectThePickerReturned pins the arm the unit tests cannot reach:
+// with --project omitted on a terminal, costShowCmd must open the shared project picker and
+// then price what it chose. Before the picker existed this invocation refused outright.
+func TestCostShowPricesTheProjectThePickerReturned(t *testing.T) {
+	miscTTY(t)
+	t.Cleanup(covListResetFlags)
+	opened := costStubPicker(t, nil)
+	run, paths := costPickerEnv(t)
+
+	if miscTrapExit(t, run)(costArgs("table")...) {
+		t.Fatal("cost show exited fatally with --project omitted on a terminal; the picker should have answered it")
+	}
+	if *opened != 1 {
+		t.Errorf("the project picker opened %d times, want exactly 1", *opened)
+	}
+	// One of the two projects the picker OFFERED, and emphatically not the empty id: a
+	// `cost show` that priced "" would come back as a 404 about a project nobody named.
+	// Which of the two huh pre-highlights is huh's business, not this command's.
+	if !costSaw(paths(), "/api/cli/projects/p-first/cost") && !costSaw(paths(), "/api/cli/projects/p-second/cost") {
+		t.Errorf("cost was fetched for %v, want one of the projects the picker offered", paths())
+	}
+}
+
+// TestCostShowDoesNotPriceAnythingWhenThePickerIsAborted pins the other end of the same
+// path: a picker the user escapes out of must stop the command, not fall through to a cost
+// query for whatever the project variable happens to hold.
+func TestCostShowDoesNotPriceAnythingWhenThePickerIsAborted(t *testing.T) {
+	miscTTY(t)
+	t.Cleanup(covListResetFlags)
+	opened := costStubPicker(t, errors.New("user aborted"))
+	run, paths := costPickerEnv(t)
+
+	if !miscTrapExit(t, run)(costArgs("table")...) {
+		t.Error("an aborted picker must be fatal — the command has no project to price")
+	}
+	if *opened != 1 {
+		t.Errorf("the project picker opened %d times, want exactly 1", *opened)
+	}
+	for _, p := range paths() {
+		if strings.HasSuffix(p, "/cost") {
+			t.Errorf("an aborted picker still priced something: %s", p)
+		}
+	}
+}
+
+// TestCostShowNeverPromptsForAMachineReadableRun is the regression the picker gate exists
+// for. ui.NewForm and ui.RunSpinner both default to os.Stdout, so a picker opened for
+// `alethia cost show -o json > cost.json` writes spinner frames and a rendered select into
+// the file ahead of the document and the file stops parsing. The refusal names --project
+// instead, which is what the invocation did before the picker existed.
+func TestCostShowNeverPromptsForAMachineReadableRun(t *testing.T) {
+	miscTTY(t)
+	t.Cleanup(covListResetFlags)
+	opened := costStubPicker(t, nil)
+	run, paths := costPickerEnv(t)
+	exits := miscTrapExit(t, run)
+
+	for _, outFmt := range []string{"json", "csv"} {
+		if !exits(costArgs(outFmt)...) {
+			t.Errorf("-o %s with no --project: want the refusal that names --project", outFmt)
+		}
+	}
+	if *opened != 0 {
+		t.Errorf("the picker opened %d times for a machine-readable render; its frames would land in the document", *opened)
+	}
+	if costSaw(paths(), "/api/cli/configurations") {
+		t.Error("the picker's project list was fetched — the spinner that fetch runs writes to stdout")
+	}
+}
+
+// TestCostShowNeverPromptsForARedirectedTable pins the case --no-input cannot describe:
+// stdin is still a terminal, so prompting is enabled, but stdout is a file
+// (`alethia cost show > cost.txt`). resolveInputMode reads STDIN only, which is why the gate
+// is interactiveTable's verdict and not noInputMode.
+func TestCostShowNeverPromptsForARedirectedTable(t *testing.T) {
+	prevIn, prevOut := stdinIsTTY, stdoutIsTTY
+	stdinIsTTY = func() bool { return true }
+	stdoutIsTTY = func() bool { return false }
+	t.Cleanup(func() { stdinIsTTY, stdoutIsTTY = prevIn, prevOut })
+	t.Cleanup(covListResetFlags)
+
+	opened := costStubPicker(t, nil)
+	run, paths := costPickerEnv(t)
+
+	if !miscTrapExit(t, run)(costArgs("table")...) {
+		t.Error("a redirected table with no --project: want the refusal that names --project")
+	}
+	if *opened != 0 {
+		t.Errorf("the picker opened %d times for a redirected table; its frames would land in the file", *opened)
+	}
+	if costSaw(paths(), "/api/cli/configurations") {
+		t.Error("the picker's project list was fetched for a redirected table")
 	}
 }
 
