@@ -16,13 +16,28 @@ import (
 var projectGetCmd = &cobra.Command{
 	Use:   "get [project_name]",
 	Short: "Get a specific project by project name",
-	Args:  cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		projectName := args[0]
+	Long: `Print a project's full configuration.
 
+The project is named by its positional NAME. Omit it on a terminal and you are asked, so
+the name never has to be copied out of another command's output.`,
+	Args: cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
+		}
+
+		projectName := ""
+		if len(args) == 1 {
+			projectName = args[0]
+		}
+		if projectName == "" {
+			if !promptsEnabled() {
+				failf("a project name is required (pass it as the argument)")
+			}
+			if projectName, err = promptProjectRef(token); err != nil {
+				fail(err)
+			}
 		}
 
 		format := outputFormat(cmd)
