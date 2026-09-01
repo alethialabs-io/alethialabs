@@ -116,13 +116,41 @@ export function issueFieldLines(source) {
  * @returns {string}
  */
 export function stripLineComments(source) {
-	return source
-		.split("\n")
-		.map((line) => {
-			const i = line.indexOf("//");
-			return i === -1 ? line : line.slice(0, i);
-		})
-		.join("\n");
+	return source.split("\n").map(stripLineComment).join("\n");
+}
+
+/**
+ * Strip one line's `//` comment, ignoring a `//` that falls INSIDE a string literal.
+ *
+ * `line.indexOf("//")` was not enough, and the failure direction is the bad one: a `Why` string
+ * citing a URL truncates its own line, so `{Why: "https://…", Issue: "#5"}` has its `Issue:` deleted
+ * before the scan ever sees it — and the guard reports success over an entry it never read. The
+ * `Why` strings in addon_exclusions.go already cite file paths and are one edit from citing a URL.
+ *
+ * Double quotes and backticks only, which is every string Go has. A rune literal cannot contain
+ * `//` in one character, so `'` is deliberately not tracked — treating it as a quote would swallow
+ * the rest of a line containing an apostrophe in a comment.
+ *
+ * @param {string} line
+ * @returns {string}
+ */
+function stripLineComment(line) {
+	let quote = "";
+	for (let i = 0; i < line.length; i += 1) {
+		const ch = line[i];
+		if (quote) {
+			// Backslash escapes apply inside "..." but NOT inside a raw `...` literal.
+			if (quote === '"' && ch === "\\") i += 1;
+			else if (ch === quote) quote = "";
+			continue;
+		}
+		if (ch === '"' || ch === "`") {
+			quote = ch;
+			continue;
+		}
+		if (ch === "/" && line[i + 1] === "/") return line.slice(0, i);
+	}
+	return line;
 }
 
 /**
@@ -159,9 +187,16 @@ function readState(n) {
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "pipe"],
 		});
-		return out.trim();
-	} catch {
-		return "";
+		return { state: out.trim(), error: "" };
+	} catch (err) {
+		// KEPT, not discarded. A bare `catch` threw away gh's own diagnostic and the caller then
+		// asserted one cause — "needs a token" — that it had not measured. `gh` is missing, the
+		// token lacks `issues: read`, the issue was deleted, the API is rate-limited and the network
+		// is down all land here, and they send an operator to five different places.
+		const e = /** @type {{stderr?: Buffer|string, message?: string}} */ (err);
+		const stderr = typeof e.stderr === "string" ? e.stderr : e.stderr?.toString("utf8");
+		const reason = (stderr || e.message || String(err)).trim().split("\n")[0];
+		return { state: "", error: reason || "gh failed with no diagnostic" };
 	}
 }
 
@@ -228,8 +263,33 @@ if (process.argv.includes("--self-test")) {
 		stripLineComments('\t\tIssue: "#7", // was #999\n').includes('Issue: "#7",'),
 		"stripping a trailing comment leaves the field intact",
 	);
+	// A `//` INSIDE a string must not truncate the line. The Why strings in this file already cite
+	// paths and are one edit from citing a URL, and combined with the single-line literal form that
+	// deletes a real `Issue:` before the scan ever sees it.
+	t(
+		stripLineComments('\t\tWhy: "see https://x/y",') === '\t\tWhy: "see https://x/y",',
+		"a // inside a double-quoted string is not a comment",
+	);
+	t(
+		JSON.stringify(issueNumbersIn(stripLineComments('{Why: "https://x", Issue: "#5"}\n'))) === "[5]",
+		"…so a URL on the same line does not hide the field behind it",
+	);
+	t(
+		stripLineComments("\t\tWhy: `raw//not a comment`,") === "\t\tWhy: `raw//not a comment`,",
+		"a // inside a RAW (backtick) string is not a comment either",
+	);
+	t(
+		stripLineComments('\t\tWhy: "he said \\"//\\" once", // real') === '\t\tWhy: "he said \\"//\\" once", ',
+		"an escaped quote does not end the string early",
+	);
+	t(
+		stripLineComments("\t\t// it's fine") === "\t\t",
+		"an apostrophe in a comment does not open a string (rune literals are not tracked)",
+	);
 
 	console.log("\n the verdict");
+	// verdict() takes states; readState() now returns {state, error} so gh's own words survive. The
+	// bare `catch` that discarded them let the caller assert a cause it had not measured.
 	const v = verdict(new Map([[1, "OPEN"], [2, "CLOSED"], [3, ""], [4, "SOMETHING_ELSE"]]));
 	t(JSON.stringify(v.open) === "[1]", "OPEN is open");
 	t(JSON.stringify(v.closed) === "[2]", "CLOSED is closed");
@@ -251,7 +311,34 @@ if (process.argv.includes("--self-test")) {
 
 // ── the check ─────────────────────────────────────────────────────────────────────────────────────
 
-const source = stripLineComments(readFileSync(path.join(ROOT, GUARDED), "utf8"));
+// TWO MODES, because the two halves have different failure characteristics and belong in different
+// CI steps.
+//
+//   --scan-only   reads the file and validates the SCAN. Pure — no network, no token — so it is the
+//                 BLOCKING step. It was previously reachable only from the network step, which is
+//                 `continue-on-error`, so the "found NO Issue fields" tripwire — the one whose own
+//                 message says "a guard that silently checks nothing is worse than no guard" —
+//                 could never red the build. A regex that stopped matching produced an annotation
+//                 on a green job and nothing else.
+//   (default)     the same scan, then the GitHub call. Advisory in CI: an issue closing is a state
+//                 change in GitHub, not in the diff.
+const scanOnly = process.argv.includes("--scan-only");
+
+let raw;
+try {
+	raw = readFileSync(path.join(ROOT, GUARDED), "utf8");
+} catch (err) {
+	// NAMED, not a raw Node stack. If the file is renamed or moved, "ENOENT ... at Object.readFileSync"
+	// tells a reader nothing about what this guard wanted, and the guard's own contract — that it
+	// must not silently check nothing — is exactly what a crash here would obscure.
+	console.error(`::error::check-exclusion-issues: cannot read ${GUARDED} (${err instanceof Error ? err.message : String(err)}).`);
+	console.error("  If that file was renamed or moved, update GUARDED in this script in the same PR.");
+	console.error("  This is an error rather than a skip: a guard that cannot find its subject has");
+	console.error("  checked nothing, and must not report success.");
+	process.exit(1);
+}
+
+const source = stripLineComments(raw);
 const numbers = issueNumbersIn(source);
 
 // An empty scan is an ERROR. `addOnExclusions` may legitimately become empty — that is the whole
@@ -275,15 +362,22 @@ if (mentions.length !== numbers.length) {
 		`::error::check-exclusion-issues: ${GUARDED} has ${mentions.length} line(s) naming an Issue field but ` +
 			`${numbers.length} readable issue number(s) — at least one is in a shape this scan cannot read.`,
 	);
-	console.error("  The expected shape is `Issue: \"#<digits>\"`. Lines seen:");
+	console.error('  The expected shape is `Issue: "#<digits>"`. Lines seen:');
 	for (const line of mentions) console.error(`    ${line}`);
 	console.error("  This is an error rather than a skip: an unreadable field is unchecked, and an");
 	console.error("  unchecked field is indistinguishable from a checked one in the output below.");
 	process.exit(1);
 }
 
+if (scanOnly) {
+	console.log(`✓ scan: ${numbers.length} tracking issue(s) read from ${GUARDED} (${numbers.map((n) => `#${n}`).join(", ")})`);
+	console.log("  Their STATE is not checked here — that needs the GitHub API. See the step after this one.");
+	process.exit(0);
+}
+
 const states = new Map(numbers.map((n) => [n, readState(n)]));
-const { closed, unreadable, open } = verdict(states);
+const reasons = new Map([...states.entries()].map(([n, r]) => [n, r.error]));
+const { closed, unreadable, open } = verdict(new Map([...states.entries()].map(([n, r]) => [n, r.state])));
 
 for (const n of open) console.log(`  ✓ #${n} is OPEN`);
 
@@ -291,9 +385,15 @@ let bad = false;
 if (unreadable.length > 0) {
 	bad = true;
 	console.error(`::error::check-exclusion-issues: could not read the state of ${unreadable.map((n) => `#${n}`).join(", ")}.`);
-	console.error("  This is NOT a pass. `gh` needs a token with issue read access; without one the");
-	console.error("  check cannot tell an open issue from a closed one, and assuming open is how a");
-	console.error("  stale exclusion survives the guard written to catch it.");
+	// gh's OWN words, per issue. The previous message asserted one cause ("needs a token") that it
+	// had not measured; a missing `gh`, a token without `issues: read`, a deleted issue, a rate
+	// limit and a dead network all land here and send an operator to five different places.
+	for (const n of unreadable) {
+		console.error(`    #${n}: ${reasons.get(n) || "(gh reported no diagnostic)"}`);
+	}
+	console.error("  This is NOT a pass. Without an answer the check cannot tell an open issue from a");
+	console.error("  closed one, and assuming open is how a stale exclusion survives the guard written");
+	console.error("  to catch it. If the diagnostics above mention permissions, the job needs `issues: read`.");
 }
 if (closed.length > 0) {
 	bad = true;

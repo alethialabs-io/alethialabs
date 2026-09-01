@@ -626,6 +626,15 @@ jobs:
   guards:
     name: Authz / open-core guards
     runs-on: ubuntu-latest
+    # `issues: read` for check-exclusion-issues.mjs, the one network step in an otherwise hermetic
+    # job. The workflow-level `permissions: contents: read` makes every unlisted scope NONE, so
+    # without this `gh issue view` fails, the check reports "could not read the state" and — being
+    # continue-on-error — becomes permanent background noise in which a genuinely CLOSED tracker
+    # renders identically to the guard being broken. Every other workflow here that touches the
+    # issues API declares it explicitly (programme.yml, workflow-health.yml, catalog-drift.yml, …).
+    permissions:
+      contents: read
+      issues: read
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -1021,6 +1030,14 @@ jobs:
       - name: Exclusion tracking-issue guard self-test (scan + verdict, no network)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-exclusion-issues.mjs --self-test
+      # …and the same scan against the REAL file, which is also pure. It BLOCKS, because the
+      # tripwires it carries — "found NO Issue fields", and a field in a shape the scan cannot read
+      # — are the ones whose own message says "a guard that silently checks nothing is worse than no
+      # guard". Reachable only from the network step below, they could never red the build: a regex
+      # that stopped matching produced an annotation on a green job and nothing else.
+      - name: Every add-on exclusion's tracking issue is READABLE (no network)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-exclusion-issues.mjs --scan-only
       # …and the live question. `continue-on-error` DELIBERATELY: an issue closing is a state change
       # in GitHub, not in the diff, so this can go red on a PR that touched nothing — and a guard
       # that blocks unrelated work is a guard people route around. It annotates; the self-test above
