@@ -65,39 +65,15 @@ func protectionRows(rules []api.ProtectionRule) [][]string {
 	for i, r := range rules {
 		rows[i] = []string{
 			r.Environment,
-			gateGlyph(r.RequirePredecessor),
-			gateGlyph(r.RequireVerifyPass),
-			gateGlyph(r.RequireApproval),
-			intOrDash(r.MinCount),
-			intOrDash(r.SoakMinutes),
-			floatOrDash(r.CostDeltaThreshold),
+			ui.GateGlyph(r.RequirePredecessor),
+			ui.GateGlyph(r.RequireVerifyPass),
+			ui.GateGlyph(r.RequireApproval),
+			ui.IntOrDash(r.MinCount),
+			ui.IntOrDash(r.SoakMinutes),
+			ui.FloatOrDash(r.CostDeltaThreshold),
 		}
 	}
 	return rows
-}
-
-// gateGlyph renders a protection gate bool as a check mark or the dash glyph.
-func gateGlyph(on bool) string {
-	if on {
-		return ui.SymbolSuccess
-	}
-	return ui.SymbolDash
-}
-
-// intOrDash renders a nullable int, or the dash glyph when unset.
-func intOrDash(v *int) string {
-	if v == nil {
-		return ui.SymbolDash
-	}
-	return fmt.Sprintf("%d", *v)
-}
-
-// floatOrDash renders a nullable USD/mo threshold, or the dash glyph when unset.
-func floatOrDash(v *float64) string {
-	if v == nil {
-		return ui.SymbolDash
-	}
-	return fmt.Sprintf("$%.2f", *v)
 }
 
 // runProtectionList fetches and renders a project's protection rules (non-interactive path).

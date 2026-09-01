@@ -109,7 +109,7 @@ var approvalColumns = []string{"Status", "Approver", "Role", "Decided"}
 func approvalRows(approvals []api.PromotionApproval) [][]string {
 	rows := make([][]string, len(approvals))
 	for i, a := range approvals {
-		rows[i] = []string{a.Status, strOrDash(a.Name), strOrDash(a.RequiredRole), strOrDash(a.DecidedAt)}
+		rows[i] = []string{a.Status, ui.StrOrDash(a.Name), ui.StrOrDash(a.RequiredRole), ui.StrOrDash(a.DecidedAt)}
 	}
 	return rows
 }
@@ -129,7 +129,7 @@ func runPromotionGet(c apiClient, out io.Writer, format, project, promotionID st
 		{"promotion", fmt.Sprintf("%s %s %s", p.Source, ui.SymbolArrow, p.Target)},
 		{"status", p.Status},
 		{"approvals", fmt.Sprintf("%d/%d", p.Approved, p.Required)},
-		{"initiator", strOrDash(p.Initiator)},
+		{"initiator", ui.StrOrDash(p.Initiator)},
 		{"created", p.CreatedAt},
 	}
 	if p.ErrorMessage != nil && *p.ErrorMessage != "" {
