@@ -6,6 +6,14 @@
 #
 #   env-mode.sh <slug> <consolePort> <storagePort> <database> [fresh] [empty|seed|keep]
 #
+# Exit codes — a caller that captures this script's output decides what to re-print from
+# them, so they are part of the contract:
+#
+#   0  the env is up and serving the edition it should be
+#   3  the console is UP but serving COMMUNITY entitlements, and the caller asked for
+#      `keep` (a restart, not an env:up) so the boot did not refuse. See boot_rc().
+#   1  anything else: it did not come up
+#
 # Deliberately outside cloud-init: `env:up` rsyncs it every time, so changing how an
 # env boots never means rebuilding a box.
 #
@@ -184,6 +192,12 @@ scope_verdict() { # <http status of the probe> <ALETHIA_EDITION as seen by the c
 #
 # Echoes "<verdict> <http status> <why>" and always exits 0: WHICH verdicts are fatal differs
 # by caller (a boot refuses DEFECT; a status listing only prints it).
+#
+# THE NAME `scope_probe` IS LOAD-BEARING OUTSIDE THIS FILE. env_scopes in scripts/env.sh greps
+# the SHIPPED copy of this script for it before invoking `--scope`, so that a box running a
+# version that predates the probe is labelled `?-stale-script` rather than blamed for a console
+# that never answered. Renaming it without updating that grep makes every env on a perfectly
+# current box report as stale.
 scope_probe() { # <console port> <path to that env's .env> [attempts] [seconds per attempt]
   local port="$1" envfile="$2" attempts="${3:-3}" timeout="${4:-30}"
   local code="" edition="" out verdict why i
@@ -207,6 +221,30 @@ scope_probe() { # <console port> <path to that env's .env> [attempts] [seconds p
   verdict="${out%% *}"
   why="${out#* }"
   printf '%s %s %s\n' "$verdict" "$code" "$why"
+}
+
+# What the boot EXITS with once the probe has answered — the third of the pure decisions in
+# this file, and the one the callers in scripts/env.sh read.
+#
+# `keep` (a restart, not an env:up) must not report a console that IS running as "did not
+# come back": restart_env_console and restore_live_envs bounce environments this session does
+# not own. But NON-FATAL IS NOT SILENT, and conflating the two is how the diagnostic above
+# got thrown away: restart_env_console captures both streams and re-prints them only when the
+# exit code is non-zero, so exiting 0 here fed the entire `✗ came up in COMMUNITY scope` block
+# to a variable that is discarded and printed `console restarted — 9100MB → 3200MB` instead.
+# 3 is "it is up, and it is serving the wrong edition" — distinct from 1 so a caller can tell
+# a running-but-wrong console from one that never answered, and non-zero so the output that
+# says WHY survives.
+#
+# Decision only, no I/O, so `--self-test` covers it.
+boot_rc() { # <verdict: enterprise|community|DEFECT|unknown> <requested: ''|empty|seed|keep>
+  if [ "$1" != "DEFECT" ]; then
+    echo 0
+  elif [ "$2" = "keep" ]; then
+    echo 3
+  else
+    echo 1
+  fi
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -287,6 +325,29 @@ if [ "${1:-}" = "--self-test" ]; then
   # a verdict, however it got that way.
   scope "a doubled capture is not a verdict"   000000 ""       "unknown"
   scope "garbage is not a verdict"             "curl: (7)" ""  "unknown"
+
+  # boot_rc — what the caller in scripts/env.sh actually reads. The cell that matters is the
+  # `keep` + DEFECT one: it must be NON-ZERO. A 0 there is indistinguishable from a healthy
+  # restart, and restart_env_console only re-prints the boot's output when the code is
+  # non-zero, so a 0 silently discards the diagnostic the boot just wrote.
+  rc_case() { # <case> <verdict> <requested> <expected exit code>
+    local got
+    got="$(boot_rc "$2" "$3")"
+    if [ "$got" = "$4" ]; then
+      pass=$((pass + 1))
+    else
+      fail=$((fail + 1))
+      echo "  ✗ $1: expected '$4', got '$got'"
+    fi
+  }
+  rc_case "an env:up refuses a COMMUNITY console"   DEFECT     ""      1
+  rc_case "--seed refuses it too"                   DEFECT     "seed"  1
+  rc_case "--empty refuses it too"                  DEFECT     "empty" 1
+  # Non-fatal, but NOT 0: 0 is what discards the diagnostic at the caller.
+  rc_case "a restart reports it without refusing"   DEFECT     "keep"  3
+  rc_case "a healthy restart is a clean 0"          enterprise "keep"  0
+  rc_case "a pinned-community restart is a clean 0" community  "keep"  0
+  rc_case "an unanswered probe is not a refusal"    unknown    ""      0
   echo "  ${pass} passed, ${fail} failed"
   [ "$fail" -eq 0 ]
   exit
@@ -735,18 +796,21 @@ for _ in $(seq 1 150); do
       # this caller does not own — the shared `dev` env among them. Exiting 1 there reports
       # a console that IS running and serving as "did not come back", which names the wrong
       # fault and, in a restore, blames an env the caller never touched. The refusal belongs
-      # to the owner's own env:up; a restart says the same thing just as loudly and returns.
-      if [ "$SEED_REQUEST" = "keep" ]; then
-        echo "  (This was a console restart, not env:up — it is left running. Its OWNER" >&2
-        echo "   must fix it: pnpm env:up from that branch's worktree.)" >&2
+      # to the owner's own env:up; a restart says the same thing just as loudly and returns
+      # 3, which is what makes the caller print the block above instead of discarding it.
+      BOOT_RC="$(boot_rc DEFECT "$SEED_REQUEST")"
+      if [ "$BOOT_RC" = 3 ]; then
+        echo "  (This was a console restart, not env:up — it is left running, and this boot" >&2
+        echo "   exits 3 so the caller reports it rather than printing a clean success line." >&2
+        echo "   Its OWNER must fix it: pnpm env:up from that branch's worktree.)" >&2
       else
-        exit 1
+        exit "$BOOT_RC"
       fi
       ;;
     esac
 
     echo "    logs:  pnpm env:logs        (sign-in codes are printed here)"
-    exit 0
+    exit "${BOOT_RC:-0}"
   fi
   sleep 2
 done

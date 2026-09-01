@@ -510,8 +510,18 @@ restore_live_envs() {
     # demo owner's org already holds non-demo projects the seeder throws by design, the
     # boot exits 1, and the restore degrades into "✗ did not come back" for an env that
     # was fine. A restore restarts; it never writes data.
-    ssh_box "test -d $REMOTE/envs/$sl && $REMOTE/bin/env-mode.sh '$sl' '$cport' '$sport' '$db' '' 'keep'" ||
-      echo "      ✗ $sl did not come back — pnpm env:up from its worktree"
+    # Exit 3 is env-mode.sh's "it is UP, and it is serving COMMUNITY entitlements" (boot_rc
+    # there). It is not a failure to come back, and calling it one would name the wrong fault
+    # on an env this restore does not own; it is also not a success, and folding it into the
+    # `||` success path would leave the diagnostic that just printed above with nothing
+    # saying it was a verdict.
+    local restore_rc=0
+    ssh_box "test -d $REMOTE/envs/$sl && $REMOTE/bin/env-mode.sh '$sl' '$cport' '$sport' '$db' '' 'keep'" || restore_rc=$?
+    case "$restore_rc" in
+    0) ;;
+    3) echo "      ⚠ $sl is back but serving COMMUNITY entitlements (see above) — its owner must pnpm env:up" ;;
+    *) echo "      ✗ $sl did not come back — pnpm env:up from its worktree" ;;
+    esac
   done
 }
 
@@ -989,10 +999,30 @@ env_scopes() { # → lines of "<slug> <verdict>"
   # the main checkout and drifts (see the SEED_REQUEST handshake in cmd_up), so a box running
   # an env-mode.sh that predates --scope must say THAT rather than accuse a healthy console of
   # not answering.
+  #
+  # It is ASKED, not inferred from the failure. A catch-all `*) ?-stale-script` labelled every
+  # unparsable answer a drifted checkout — an absent or non-executable bin/env-mode.sh, a
+  # permission error, a future bug in scope_probe itself — and sent the operator to
+  # `git pull --ff-only` on a checkout that is already current, which is the mistake cmd_up's
+  # own handshake is written against ("reading a failure as an ABSENCE is how a guard names the
+  # wrong cause"). So the shipped script is asked ONCE, in the same round trip, whether it
+  # carries the probe, and the three causes get three labels: `?-stale-script` only when the
+  # file was read and the probe is not in it, `?-no-probe` when it could not be read at all,
+  # and `?-probe-failed-rcN` when the probe IS there and still did not produce a verdict —
+  # the one case that is a defect in this code rather than in the box.
   script='
+mode="'"$REMOTE"'/bin/env-mode.sh"
+sup=0
+grep -q scope_probe "$mode" >/dev/null 2>&1 || sup=$?
 probe() {
   s="$1"; p="$2"
-  v=$('"$REMOTE"'/bin/env-mode.sh --scope "$p" "'"$REMOTE"'/envs/$s/.env" 2 10 2>/dev/null) || v=""
+  case "$sup" in
+    0) ;;
+    1) echo "$s ?-stale-script"; return ;;
+    *) echo "$s ?-no-probe"; return ;;
+  esac
+  rc=0
+  v=$("$mode" --scope "$p" "'"$REMOTE"'/envs/$s/.env" 2 10 2>/dev/null) || rc=$?
   set -- $v
   case "${1:-}" in
     enterprise) echo "$s enterprise" ;;
@@ -1003,7 +1033,7 @@ probe() {
         000|"") echo "$s ?-no-answer" ;;
         *)      echo "$s ?-http-${2}" ;;
       esac ;;
-    *)          echo "$s ?-stale-script" ;;
+    *)          echo "$s ?-probe-failed-rc$rc" ;;
   esac
 }'
   while read -r s p; do
@@ -1048,9 +1078,14 @@ cmd_status() {
   resolved the community entitlement baseline: a team/active subscription row on that env is
   still refused with 403 upgrade_required, so EVERY enterprise-scoped verification on it is
   vacuous. Fix it with `pnpm env:up`; `community-pinned` means that env's .env asked for it.
-  A leading `?` is the absence of an answer, never a verdict: `?-no-answer` (the console did
-  not respond), `?-http-NNN` (it answered, but not usefully) and `?-stale-script` (the box is
-  running an env-mode.sh older than the probe — `git -C <main checkout> pull --ff-only`).
+  A leading `?` is the absence of an answer, never a verdict, and each one names the cause it
+  actually measured: `?-no-answer` (the console did not respond), `?-http-NNN` (it answered,
+  but not usefully), `?-stale-script` (the box's env-mode.sh was read and predates the probe —
+  `git -C <main checkout> pull --ff-only`, then any `pnpm env:up` re-ships it), `?-no-probe`
+  (that script could not be read at all — the box is broken, not the checkout stale) and
+  `?-probe-failed-rcN` (the probe is on the box and exited N without producing a verdict; N is
+  the lead — 126/127 mean the file is not runnable and any `pnpm env:up` re-ships it, anything
+  else is a defect in the probe rather than in the box).
 
   Sign-in: OAuth redirect URIs cannot be wildcarded, so social sign-in and the Stripe
   test webhook only work on the PRIMARY env. Branch envs are email-OTP only — the code
@@ -1284,14 +1319,35 @@ restart_env_console() { # <slug>
   # `>/dev/null 2>&1` threw all of it away and told the operator only that the console "did
   # not come back". The bounce itself is still non-fatal (the run it follows has already
   # happened), but the reason it failed has to survive.
+  #
+  # THE EXIT CODE IS READ, not just tested against 0. env-mode.sh exits 3 for "the console is
+  # up, and it is serving COMMUNITY entitlements" (boot_rc there); making that case non-fatal
+  # is what stops a restart from claiming a running console "did not come back", and reading
+  # the 3 here is what stops the same case from printing a clean `console restarted` line and
+  # discarding the diagnostic the boot just wrote. Those two halves were added together and
+  # cancelled each other out until this branch.
   local out rc=0
   out="$(ssh_box "tmux kill-session -t 'alethia-$slug_' 2>/dev/null || true
            $REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db' '' 'keep'" 2>&1)" || rc=$?
+  # 20, and it must stay LARGER than the scope diagnostic env-mode.sh prints: that block is
+  # 16 lines and is followed by the `logs:` line, so a tail shorter than it decapitates the
+  # `✗ … came up in COMMUNITY scope` headline and leaves the operator the supporting detail
+  # with nothing saying what it supports.
   if [ "$rc" != 0 ]; then
-    printf '%s\n' "$out" | tail -n 15 | sed 's/^/  │ /' >&2
+    printf '%s\n' "$out" | tail -n 20 | sed 's/^/  │ /' >&2
+  fi
+  case "$rc" in
+  0) ;;
+  3)
+    echo "  ⚠ the console is back, but it came up serving COMMUNITY entitlements — every" >&2
+    echo "    enterprise-scoped check against '$slug_' is vacuous until its OWNER runs" >&2
+    echo "    pnpm env:up from that branch's worktree." >&2
+    ;;
+  *)
     echo "  ⚠ console did not come back — pnpm env:up to restore it" >&2
     return 0
-  fi
+    ;;
+  esac
   after="$(env_rss_mb "$slug_")"
   if [ -n "$before" ] && [ -n "$after" ]; then
     echo "  console restarted — ${before}MB → ${after}MB"
