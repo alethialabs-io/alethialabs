@@ -7,7 +7,13 @@
 // its own so the mapping stays asserted even in a run where the Postgres tier is not available.
 
 import { describe, expect, it } from "vitest";
-import { ORG_ROLES, toOrgRole, toPdpRole } from "@/lib/authz/org-access-control";
+import {
+	ORG_ROLES,
+	storedRolesFor,
+	toDisplayRole,
+	toOrgRole,
+	toPdpRole,
+} from "@/lib/authz/org-access-control";
 
 describe("toOrgRole — the roles a human may PICK", () => {
 	it("narrows each of Alethia's own roles", () => {
@@ -47,7 +53,35 @@ describe("toPdpRole — what a STORED membership role grants", () => {
 		expect(toPdpRole("billing-contact")).toBeNull();
 		expect(toPdpRole("Member")).toBeNull();
 		expect(toPdpRole("")).toBeNull();
-		expect(toPdpRole("owner ")).toBeNull();
+		expect(toPdpRole(",")).toBeNull();
+		expect(toPdpRole("viewer-ish")).toBeNull();
+	});
+
+	it("mirrors the plugin and TRIMS — a stray space is not a different role", () => {
+		// better-auth reads membership back as `role.split(",").map((r) => r.trim())`, so a value
+		// IT treats as owner must not be denied here over whitespace. Answering null would deny
+		// the member everything, which is the failure this whole map exists to stop.
+		expect(toPdpRole("owner ")).toBe("owner");
+		expect(toPdpRole(" member")).toBe("viewer");
+	});
+
+	it("resolves a comma-joined role list to its most-privileged mapped role", () => {
+		// `parseRoles` joins an invite's `role: string[]` with "," and `acceptInvitation` copies
+		// the string verbatim into the member row, so "admin,viewer" is a legitimate stored value.
+		// It used to answer null — an accepted invitation with zero permissions, #3730's failure
+		// from a second cause.
+		expect(toPdpRole("admin,viewer")).toBe("admin");
+		expect(toPdpRole("viewer,admin")).toBe("admin");
+		expect(toPdpRole("admin, operator")).toBe("admin");
+		expect(toPdpRole("operator,member")).toBe("operator");
+		expect(toPdpRole("owner,admin,operator,viewer")).toBe("owner");
+	});
+
+	it("ignores the components it does not recognise, and grants nothing when none map", () => {
+		// A custom or deleted role in the list contributes no permissions — but it must not veto
+		// the one that does map, or a member the plugin considers an admin is denied everything.
+		expect(toPdpRole("billing-contact,operator")).toBe("operator");
+		expect(toPdpRole("billing-contact,auditor")).toBeNull();
 	});
 
 	it("answers null for Object.prototype keys — the lookup has no inherited members", () => {
@@ -56,6 +90,32 @@ describe("toPdpRole — what a STORED membership role grants", () => {
 		// `if (!resolved)` would let it through and index the role-id table with a non-role.
 		for (const key of ["toString", "constructor", "hasOwnProperty", "__proto__"]) {
 			expect(toPdpRole(key), `"${key}" must not resolve to a role`).toBeNull();
+		}
+	});
+});
+
+describe("the alias must not stop at the PDP", () => {
+	it("displays a stored role under the name of what it grants", () => {
+		// A `member` row that authorizes as a viewer but renders as "member" hands the members
+		// table a role its own <select> cannot offer — the control comes up blank.
+		expect(toDisplayRole("member")).toBe("viewer");
+		expect(toDisplayRole("admin,viewer")).toBe("admin");
+	});
+
+	it("shows an unrecognised role as itself rather than renaming it", () => {
+		// Silently displaying "viewer" for a role that grants NOTHING would be a lie the operator
+		// cannot see through.
+		expect(toDisplayRole("billing-contact")).toBe("billing-contact");
+	});
+
+	it("gives every stored spelling of a role, for the queries that FILTER or BILL on it", () => {
+		// `countBillableSeats` excludes the free role by this list: comparing the raw string would
+		// charge a paid seat for a `member` row that holds exactly the read-only bundle.
+		expect(storedRolesFor("viewer").sort()).toEqual(["member", "viewer"]);
+		for (const role of ORG_ROLES) {
+			expect(storedRolesFor(role), `"${role}" must include itself`).toContain(role);
+			// Every alias must resolve back to the role it was listed under.
+			for (const stored of storedRolesFor(role)) expect(toPdpRole(stored)).toBe(role);
 		}
 	});
 });

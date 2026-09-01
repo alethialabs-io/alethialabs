@@ -65,9 +65,17 @@ export function toOrgRole(value: string): OrgRole | null {
  * treats null as "nothing to grant" and returns. So an accepted invitation wrote a `member` row
  * and NO grant, the PDP (which authorizes from grants, never from `member.role`) denied
  * `project:view`, and `/{org}` threw ForbiddenError out of its server component into the `[org]`
- * error boundary: "Couldn't load this page". The SSO plugin's own comment already asserted this
- * mapping existed — "the PDP then maps it to Alethia's viewer-scoped access" — so every
- * SSO-provisioned user was in the same hole.
+ * error boundary: "Couldn't load this page".
+ *
+ * SSO JIT PROVISIONING IS **NOT** FIXED BY THIS MAP, and the SSO plugin's own comment claiming
+ * otherwise was wrong. `@better-auth/sso`'s `assignOrganization()` writes the member row with the
+ * GENERIC adapter (`ctx.context.adapter.create({ model: "member", … })`), not through the
+ * organization plugin's routes — so no `organizationHooks` fire (`afterAddMember` /
+ * `afterAcceptInvitation` appear nowhere in its dist), `ensureMemberGrant` is never called, and a
+ * JIT-provisioned user still lands on `/{org}` with no grant at all. Nor would a
+ * `databaseHooks.member.create.after` catch it: those run inside `getWithHooks`, which only the
+ * INTERNAL adapter uses, and the core option type has no `member` key. Closing that hole needs an
+ * SSO-side hook of its own; it is a separate defect from the one this map fixes.
  */
 // A Map, not an object literal, and that is not a style choice: an object literal inherits
 // Object.prototype, so `ALIASES["toString"]` answers a FUNCTION rather than undefined — truthy,
@@ -78,16 +86,69 @@ const MEMBERSHIP_ROLE_ALIASES: ReadonlyMap<string, OrgRole> = new Map([
 	["member", "viewer"],
 ]);
 
+/** Resolves ONE role name (already trimmed) — our four, plus Better Auth's aliases. */
+function resolveRoleName(value: string): OrgRole | null {
+	return toOrgRole(value) ?? MEMBERSHIP_ROLE_ALIASES.get(value) ?? null;
+}
+
 /**
  * Resolves a stored membership role (`member.role`) to the PDP role whose permission bundle it
  * grants — our four, plus Better Auth's built-ins that are not spelled the same.
  *
- * Deliberately NOT a fallback. An unrecognised value returns null and the caller writes no
- * grant, because "anything I don't recognise means viewer" would turn a typo, a renamed role or
- * a deleted custom role into read access over the whole org. Use {@link toOrgRole} instead
- * wherever the question is "is this one of the roles a human may pick" (a role <select>), not
- * "what does this stored role grant".
+ * `member.role` is NOT always one role. The org plugin's invite body takes `role: string |
+ * string[]`, `parseRoles` joins an array with `,`, and `acceptInvitation` copies that string
+ * verbatim into the member row — so `"admin,viewer"` is a legitimate stored value, and the plugin
+ * itself reads membership back as `role.split(",").map((r) => r.trim())`. We mirror that split
+ * (trim included, so a value the plugin treats as `owner` is not denied here over a stray space)
+ * and answer the MOST-PRIVILEGED component that maps, by {@link ORG_ROLES} order.
+ *
+ * That is deliberately a subset of the union of the listed bundles, not the union: a grant row
+ * carries one role, and `operator` and `viewer` are incomparable (a viewer may read members and
+ * activity; an operator may deploy). Under-granting is the safe direction — the member is denied
+ * something they could have had, rather than handed something no single stored role gives.
+ *
+ * Deliberately NOT a fallback. A value with no component that maps returns null and the caller
+ * writes no grant, because "anything I don't recognise means viewer" would turn a typo, a renamed
+ * role or a deleted custom role into read access over the whole org. Use {@link toOrgRole}
+ * instead wherever the question is "is this one of the roles a human may pick" (a role <select>),
+ * not "what does this stored role grant".
  */
 export function toPdpRole(value: string): OrgRole | null {
-	return toOrgRole(value) ?? MEMBERSHIP_ROLE_ALIASES.get(value) ?? null;
+	let best: OrgRole | null = null;
+	for (const part of value.split(",")) {
+		const resolved = resolveRoleName(part.trim());
+		if (!resolved) continue;
+		if (!best || ORG_ROLES.indexOf(resolved) < ORG_ROLES.indexOf(best)) {
+			best = resolved;
+		}
+	}
+	return best;
+}
+
+/**
+ * The role name to SHOW for a stored membership or invitation role: the PDP role it grants when
+ * one resolves, the raw string otherwise (an unrecognised value stays visible rather than being
+ * silently renamed to something a reader would trust).
+ *
+ * The alias must not stop at the PDP. A `member` row that authorizes as a viewer but renders as
+ * "member" gives the members table a role its own <select> cannot offer — the control comes up
+ * blank — and gives the role facet two buckets for one role. Normalise where the row is read.
+ */
+export function toDisplayRole(value: string): string {
+	return toPdpRole(value) ?? value;
+}
+
+/**
+ * Every stored spelling that {@link toPdpRole} resolves to `role` — the reverse map, so a query
+ * that FILTERS or BILLS on a PDP role covers its aliases too. Without it a `member` row is a
+ * viewer for authorization but a non-viewer to `countBillableSeats`, and a paid seat is charged
+ * for read-only access. Single-role spellings only: a comma-joined value is normalised on read
+ * (see {@link toDisplayRole}), never matched in SQL.
+ */
+export function storedRolesFor(role: OrgRole): string[] {
+	const aliases: string[] = [];
+	for (const [stored, mapped] of MEMBERSHIP_ROLE_ALIASES) {
+		if (mapped === role) aliases.push(stored);
+	}
+	return [role, ...aliases];
 }
