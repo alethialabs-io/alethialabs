@@ -91,7 +91,7 @@ check "rds_cluster_resource_id_resolvable_when_iam_auth" {
     # unresolvable id to false. The index replaced `one(module.rds_maindb[*]…)` (#3509): the splat
     # reads the module as a whole, and this file's other checks must not order behind it. A renamed
     # output is still caught — it makes the condition FALSE, so the check reports rather than passes.
-    condition     = !var.rds_iam_auth_enabled || try(length(trimspace(module.rds_maindb[0].rds_cluster_resource_id)) > 0, false)
+    condition     = !var.rds_iam_auth_enabled || length(trimspace(try(module.rds_maindb[0].rds_cluster_resource_id, null) != null ? module.rds_maindb[0].rds_cluster_resource_id : "")) > 0
     error_message = "rds_iam_auth_enabled is on but rds_cluster_resource_id is empty; the rds-db:connect ARN cannot be scoped to this cluster."
   }
 }

@@ -71,6 +71,20 @@
  *
  *     try(module.aks[0].client_certificate, null) != null ? base64decode(module.aks[0].client_certificate) : ""
  *
+ * THE FALLBACK MUST BE A VALUE THE TARGET ACCEPTS, and this guard cannot check that — it reads
+ * lines, not provider schemas. It is the one half of the rewrite left to the author, so it is
+ * stated here rather than left to be rediscovered: a bare `null` into a REQUIRED provider argument
+ * trades one abort for another. Measured on 1.9.0 against `azurerm_federated_identity_credential`,
+ * whose `issuer` the schema marks required — `issuer = null` fails the plan with
+ *
+ *     Error: Missing required argument — The argument "issuer" is required, but no definition was found.
+ *
+ * while `issuer = ""` plans clean. So `""` is the fallback wherever the value reaches a required
+ * string; `null` is right only where the consumer accepts it — an OPTIONAL argument (azure's
+ * `firewall_policy_id`, where "" would be an invalid resource id), a `compact([…])` that strips it
+ * (aws/locals.tf), or a root output, which is a leaf and where null IS the "absent" signal the
+ * runner harvests.
+ *
  * Keep the probe on ONE LINE: this guard reads a line at a time and cannot see a probe wrapped
  * onto the line above. Every other counted-module index is a finding, and so is every counted
  * `module.x[*]` splat — nothing in these templates needs one, and reaching for it is what kept
@@ -310,19 +324,71 @@ function isLengthGuarded(line, address) {
 }
 
 /**
- * True when a counted-module reference carries its own single-output existence probe on this line.
+ * The `?` and `:` of the conditional that starts at `from`, at depth 0 relative to it.
+ *
+ * Positional, not structural, and that is all it needs to be: the question is only whether the
+ * reference sits in the TRUE ARM. A reference nested inside `base64decode(…)`, a list literal or a
+ * `${…}` interpolation is still positionally between the two.
+ */
+function ternaryArm(line, from) {
+	let depth = 0;
+	let question = -1;
+	for (let i = from; i < line.length; i++) {
+		const ch = line[i];
+		if ("([{".includes(ch)) depth++;
+		else if (")]}".includes(ch)) {
+			if (depth === 0) break;
+			depth--;
+		} else if (depth === 0 && ch === "?" && question < 0) question = i;
+		else if (depth === 0 && ch === ":" && question >= 0)
+			return { question, colon: i };
+	}
+	// A conditional with no `:` is not one. Fail closed rather than treat the rest of the line as
+	// the true arm — that is how "somewhere before the reference" accepted the false arm.
+	return null;
+}
+
+/** The output name a reference traverses, or null when it traverses none (`module.x[0]` alone). */
+function referencedOutput(line, address, column) {
+	const escaped = address.replaceAll(".", "\\.");
+	const m = new RegExp(`^${escaped}\\[0\\]\\.([a-z0-9_]+)`, "i").exec(
+		line.slice(column),
+	);
+	return m === null ? null : m[1];
+}
+
+/**
+ * True when this reference IS the probe — the occurrence inside `try(module.x[0].out, null)`.
+ *
+ * Needed because the module branch does NOT excuse a `try()`-wrapped reference the way the resource
+ * branch does. A bare `try(module.x[0].out, "")` is the typo-unsafe shape the header rules out, so
+ * only the probe's own occurrence may be skipped, and only when the probe is actually formed.
+ */
+function isProbeItself(line, address, column) {
+	const out = referencedOutput(line, address, column);
+	if (out === null) return false;
+	if (!line.slice(0, column).endsWith(`try(`)) return false;
+	return line.includes(`try(${address}[0].${out}, null) != null`);
+}
+
+/**
+ * True when a counted-module reference sits in the TRUE ARM of its own single-output probe.
  *
  * The accepted shape, and the ONLY one:
  *
  *     try(module.x[0].out, null) != null ? … module.x[0].out … : <fallback>
  *
- * Three things are load-bearing and each rejects a shape that looks equivalent:
+ * Four things are load-bearing and each rejects a shape that looks equivalent:
  *
  *   - the probe names `module.x[0]` — ONE INSTANCE — so the graph edge is as fine as the bare
  *     index. `try(module.x[0], null)` (the whole instance) depends on ALL of that instance's
  *     outputs; it reads as the same guard and is a coarser edge, so it is NOT accepted.
  *   - the probe names THE SAME OUTPUT as the reference it guards. A probe on some other output
  *     proves nothing about this one, so the output name is compared, not just the address.
+ *   - the reference is in the arm the probe proves SAFE. Asserting only that the probe appears
+ *     somewhere earlier on the line accepted `try(module.m[0].a, null) != null ? "" : module.m[0].a`
+ *     — whose false arm is taken exactly when the tuple is empty, i.e. the #3351 abort on a line
+ *     reported green.
  *   - the traversal is repeated OUTSIDE the `try()`, which is what keeps a misspelled output a
  *     validation error rather than a silent null.
  *
@@ -330,16 +396,13 @@ function isLengthGuarded(line, address) {
  * line would be invisible to it. Over-reporting costs one long line and nothing else.
  */
 function isModuleProbeGuarded(line, address, column) {
-	const escaped = address.replaceAll(".", "\\.");
-	const reference = new RegExp(`^${escaped}\\[0\\]\\.([a-z0-9_]+)`, "i").exec(
-		line.slice(column),
-	);
-	// FAIL CLOSED. A reference this cannot parse — `module.x[0]` with no output traversal, which no
-	// per-output probe can guard — is reported, never waved through.
-	if (reference === null) return false;
-	return line
-		.slice(0, column)
-		.includes(`try(${address}[0].${reference[1]}, null) != null ?`);
+	const out = referencedOutput(line, address, column);
+	if (out === null) return false;
+	const probe = `try(${address}[0].${out}, null) != null`;
+	const at = line.lastIndexOf(probe, column);
+	if (at < 0) return false;
+	const arm = ternaryArm(line, at + probe.length);
+	return arm !== null && column > arm.question && column < arm.colon;
 }
 
 /** Every `module.x[*]` splat on a line — the whole-module edge that closes cycles (#3509). */
@@ -443,16 +506,20 @@ function scanRoot(root) {
 					const where = `${path.join(dir, file)}:${i + 1}`;
 					if (isNonEvaluatedContext(lines, i)) continue;
 					if (address.startsWith("module.")) {
-						// The probe is checked BEFORE isInsideTry: the probe's own reference sits
-						// inside `try(…)` and is skipped there, but the guarded reference after it
-						// does not, and must not be excused by a `try()` somewhere else on the line.
+						// NO `isInsideTry` HERE, unlike the resource branch below. A bare
+						// `try(module.x[0].out, "")` IS refresh-safe and IS typo-unsafe, and the
+						// header rules it out for the second reason — excusing it left five live
+						// sites unreported under a success line claiming the class was covered.
+						// Only the probe's own occurrence may be skipped.
+						if (isProbeItself(line, address, ref.index)) continue;
 						if (isModuleProbeGuarded(line, address, ref.index)) continue;
-						if (isInsideTry(line, ref.index)) continue;
-						if (!ZERO_OR_ONE.test(count)) {
-							multiCount.push(`${where}: ${address} (count = ${count})`);
-							continue;
-						}
-						modules.push(`${where}: ${address}[0]`);
+						// NO `ZERO_OR_ONE` HERE either. The resource waiver exists because `one()`
+						// is WRONG on a multi-instance resource — it errors on the second one. The
+						// probe has no such limit: `try(module.many[0].id, null) != null ?
+						// module.many[0].id : f` returns instance 0 exactly as the bare index did.
+						// So the one class the probe could cover was the class being waived, on a
+						// green run, under a message that says "resource".
+						modules.push(`${where}: ${address}[0] — count = ${count}`);
 						continue;
 					}
 					if (isInsideTry(line, ref.index)) continue;
@@ -464,13 +531,20 @@ function scanRoot(root) {
 					findings.push(`${where}: ${address}[0] — count = ${count}`);
 				}
 
-				// A counted-module splat is never acceptable, `try()`-wrapped or not: the hazard is
-				// the WHOLE-MODULE graph edge, not an evaluation error, so try() cannot excuse it.
+				// A splat into a 0-or-1 module is never acceptable, `try()`-wrapped or not: the
+				// hazard is the WHOLE-MODULE graph edge, not an evaluation error, so try() cannot
+				// excuse it.
+				//
+				// A splat into a module counted by anything else is the ONLY correct expression —
+				// `[*]` is how you read every instance, and the probe's `[0]` would silently drop
+				// 1..n. Flagging those would make this gate block the right answer and prescribe a
+				// wrong one, so the count is consulted here exactly as it is for a resource index.
 				MODULE_SPLAT.lastIndex = 0;
 				let splat;
 				while ((splat = MODULE_SPLAT.exec(line))) {
 					const address = splat[1];
 					if (!countedBlocks.has(address)) continue;
+					if (!ZERO_OR_ONE.test(countedBlocks.get(address))) continue;
 					if (isNonEvaluatedContext(lines, i)) continue;
 					splats.push(`${path.join(dir, file)}:${i + 1}: ${address}[*]`);
 				}
@@ -504,6 +578,11 @@ module "cluster" {
   count  = var.provision ? 1 : 0
 }
 
+module "pool" {
+  source = "./mod"
+  count  = var.pool_count
+}
+
 data "example_item" "url" {
   count = var.provision ? 1 : 0
 }
@@ -532,6 +611,12 @@ resource "consumer" "c" {
   mod_othout = try(module.cluster[0].id, null) != null ? module.cluster[0].endpoint : ""
   mod_whole  = try(module.cluster[0], null) != null ? module.cluster[0].id : ""
   mod_object = module.cluster[0]
+  mod_baretry = try(module.cluster[0].id, "")
+  mod_falsearm = try(module.cluster[0].id, null) != null ? "" : module.cluster[0].id
+  mod_many   = module.pool[0].id
+  mod_manysplat = one(module.pool[*].id)
+  mod_nocolon = try(module.cluster[0].id, null) != null ? module.cluster[0].id
+  fallback_on_the_next_line = ""
   url         = "https://\${data.example_item.url[0].id}"
   comparison  = "compare A << B"
   after_text  = var.provision ? example_item.multi[0].id : ""
@@ -602,7 +687,7 @@ function selfTest() {
 
 	check(
 		"a bare, a length()-guarded and a wrong-output-probed module index are all findings",
-		result.modules.length === 5 &&
+		result.modules.length === 10 &&
 			reported("from_mod") &&
 			reported("mod_len") &&
 			reported("mod_othout"),
@@ -620,6 +705,40 @@ function selfTest() {
 		"the whole-instance probe is not accepted, and an unparseable reference fails closed",
 		reported("mod_whole") && reported("mod_object"),
 		`modules: ${JSON.stringify(result.modules)}`,
+	);
+	// The module branch does NOT inherit the resource branch's `try()` waiver. A bare try() is
+	// refresh-safe and typo-UNSAFE, and the header rules it out for the second reason; excusing it
+	// left five live sites unreported under a success line claiming the class was covered.
+	check(
+		"a bare try() around a module output is a finding, unlike the resource branch",
+		reported("mod_baretry"),
+		`modules: ${JSON.stringify(result.modules)}`,
+	);
+	// The arm matters. Asserting only that the probe appears earlier on the line accepted a
+	// reference in the arm taken exactly when the tuple is EMPTY — the #3351 abort, reported green.
+	check(
+		"a reference in the probe's FALSE arm is a finding",
+		reported("mod_falsearm"),
+		`modules: ${JSON.stringify(result.modules)}`,
+	);
+	// A conditional whose `:` wrapped to the next line has no arm this guard can see. It is a
+	// finding, not an open arm running to end-of-line — treating it as open is how "somewhere after
+	// the `?`" would creep back in, and the header already tells authors to keep the probe on one
+	// line, so over-reporting here costs a reflow.
+	check(
+		"a probe whose colon wrapped to the next line is a finding, not an open arm",
+		reported("mod_nocolon"),
+		`modules: ${JSON.stringify(result.modules)}`,
+	);
+	// A multi-instance module: `[0]` still needs the probe (which returns instance 0 exactly as the
+	// bare index did), but `[*]` is the only correct expression and must NOT be blocked.
+	check(
+		"a non-0/1 counted module: [0] is a finding, [*] is left alone",
+		reported("mod_many") &&
+			result.splats.length === 1 &&
+			!result.splats.some((m) => m.includes("module.pool")) &&
+			!result.multiCount.some((m) => m.includes("module.")),
+		`modules: ${JSON.stringify(result.modules)}; splats: ${JSON.stringify(result.splats)}; multiCount: ${JSON.stringify(result.multiCount)}`,
 	);
 	check(
 		"a counted module splat is its own finding",
@@ -641,7 +760,7 @@ function selfTest() {
 	);
 	check(
 		"counts what it examined",
-		result.files === 1 && result.counted === 6,
+		result.files === 1 && result.counted === 7,
 		`${result.files} file(s), ${result.counted} counted block(s)`,
 	);
 
@@ -685,6 +804,22 @@ function selfTest() {
 		.replace(
 			"mod_object = module.cluster[0]",
 			'mod_object = try(module.cluster[0].id, null) != null ? module.cluster[0].id : ""',
+		)
+		.replace(
+			'mod_baretry = try(module.cluster[0].id, "")',
+			'mod_baretry = try(module.cluster[0].id, null) != null ? module.cluster[0].id : ""',
+		)
+		.replace(
+			'mod_falsearm = try(module.cluster[0].id, null) != null ? "" : module.cluster[0].id',
+			'mod_falsearm = try(module.cluster[0].id, null) != null ? module.cluster[0].id : ""',
+		)
+		.replace(
+			"mod_many   = module.pool[0].id",
+			'mod_many   = try(module.pool[0].id, null) != null ? module.pool[0].id : ""',
+		)
+		.replace(
+			"mod_nocolon = try(module.cluster[0].id, null) != null ? module.cluster[0].id\n  fallback_on_the_next_line = \"\"",
+			'mod_nocolon = try(module.cluster[0].id, null) != null ? module.cluster[0].id : ""',
 		);
 	fs.writeFileSync(path.join(dir, "main.tf"), fixed);
 	const after = scanRoot(dir);

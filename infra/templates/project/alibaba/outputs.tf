@@ -42,7 +42,7 @@ output "external_secrets_ram_role_arn" {
 
 output "vpc_id" {
   description = "Id of the VPC (new or existing)"
-  value       = var.provision_network ? try(module.network[0].vpc_id, "") : var.network_id
+  value       = try(module.network[0].vpc_id, null) != null ? module.network[0].vpc_id : var.network_id
 }
 
 output "vswitch_ids" {

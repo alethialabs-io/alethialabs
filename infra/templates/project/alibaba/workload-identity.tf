@@ -34,7 +34,7 @@ resource "alicloud_ram_role" "external_secrets" {
       Principal = { Federated = try(module.cluster[0].rrsa_oidc_provider_arn, null) != null ? [module.cluster[0].rrsa_oidc_provider_arn] : [] }
       Condition = {
         StringEquals = {
-          "oidc:iss" = try(module.cluster[0].rrsa_oidc_issuer_url, null) != null ? module.cluster[0].rrsa_oidc_issuer_url : null
+          "oidc:iss" = try(module.cluster[0].rrsa_oidc_issuer_url, null) != null ? module.cluster[0].rrsa_oidc_issuer_url : ""
           "oidc:aud" = "sts.aliyuncs.com"
           "oidc:sub" = "system:serviceaccount:external-secrets-operator:external-secrets-operator-sa"
         }

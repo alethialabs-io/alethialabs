@@ -67,7 +67,7 @@ module "rds_iam_auth" {
   }
   oidc_providers = {
     main = {
-      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : null
+      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : ""
       namespace_service_accounts = ["default:alethia-app"]
     }
   }
@@ -137,7 +137,7 @@ module "irsa_alethia_agent" {
   }
   oidc_providers = {
     main = {
-      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : null
+      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : ""
       namespace_service_accounts = ["*:*"]
     }
   }
@@ -185,7 +185,7 @@ module "irsa_fluentbit_cloudwatch" {
   }
   oidc_providers = {
     main = {
-      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : null
+      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : ""
       namespace_service_accounts = ["fluent-bit:fluent-bit"]
     }
   }
@@ -320,7 +320,7 @@ module "irsa_karpenter" {
   }
   oidc_providers = {
     main = {
-      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : null
+      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : ""
       namespace_service_accounts = ["${local.karpenter_namespace}:karpenter"]
     }
   }
@@ -347,7 +347,7 @@ module "irsa_ai_bedrock" {
   }
   oidc_providers = {
     main = {
-      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : null
+      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : ""
       namespace_service_accounts = ["*:*"]
     }
   }
@@ -473,7 +473,7 @@ module "irsa_ecr_build" {
   }
   oidc_providers = {
     main = {
-      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : null
+      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : ""
       namespace_service_accounts = ["${local.ecr_build_namespace}:${local.ecr_build_service_account}"]
     }
   }
@@ -497,7 +497,7 @@ module "s3_bucket_irsa_role" {
   }
   oidc_providers = {
     main = {
-      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : null
+      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : ""
       namespace_service_accounts = ["*:*"]
     }
   }
