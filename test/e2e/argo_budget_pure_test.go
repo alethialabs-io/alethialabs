@@ -43,11 +43,16 @@ func TestArgoBudgetNeverBelowTheOldFlatDefault(t *testing.T) {
 	}
 }
 
-// The lean tier must land on today's value. If this drifts, every lean run silently changed its
-// timing characteristics for a change that was only ever about the full bar.
-func TestArgoBudgetLeanTierIsUnchanged(t *testing.T) {
+// A zero-add-on surface must still land on the historical 8m: the floor and the base are equal by
+// construction, and a change to either that broke that equality would move every scenario.
+//
+// This pins argoBudgetFor(0), which is the ARITHMETIC and no longer the lean tier — the lean tier
+// passes len(alwaysRenderedArgoApps), see TestLeanTierBudgetBuysTheChartItPulls. It was named
+// "LeanTierIsUnchanged" while it tested an input the lean tier had stopped supplying, which is how
+// #3580's gap stayed invisible: the test still passed, and it was answering a different question.
+func TestArgoBudgetWithNoAddOnsIsTheHistoricalEightMinutes(t *testing.T) {
 	if got := argoBudgetFor(0); got != 8*time.Minute {
-		t.Errorf("lean budget = %s, want the historical 8m", got)
+		t.Errorf("argoBudgetFor(0) = %s, want the historical 8m", got)
 	}
 }
 
@@ -361,11 +366,48 @@ func TestArgoAddOnCountMatchesTheCatalogWhenFullSurfaceIsOn(t *testing.T) {
 	}
 }
 
-// …and the lean tier must not pay for charts it never seeds.
-func TestArgoAddOnCountIsZeroOnTheLeanTier(t *testing.T) {
+// …and the lean tier must pay for the charts it ACTUALLY pulls — no more, and no longer zero.
+//
+// THIS TEST USED TO ASSERT ZERO, and it was wrong in the way a test and a bug agree with each
+// other: "the lean tier must not pay for charts it never seeds" is true, and the lean tier does
+// seed one. alwaysRenderedArgoApps is rendered on every cloud and every dimension with no gate, so
+// a floor run converges a real upstream Helm chart while argoBudgetBase — by its own docstring —
+// covers only what happens "before any add-on chart is pulled". The gcp floor leg of nightly run
+// 33487970328 lost its verdict in the resulting gap (#3580).
+//
+// It is pinned to len(alwaysRenderedArgoApps) rather than to 1 so that a template which becomes
+// unconditional is paid for by the edit that makes it so, instead of silently re-opening the gap.
+func TestArgoAddOnCountCoversWhatTheLeanTierAlwaysPulls(t *testing.T) {
 	t.Setenv("ALETHIA_E2E_ALL_ADDONS", "")
-	if got := argoAddOnCount(); got != 0 {
-		t.Errorf("argoAddOnCount() = %d on the lean tier, want 0", got)
+	want := len(alwaysRenderedArgoApps)
+	if want == 0 {
+		t.Fatal("alwaysRenderedArgoApps is empty — this test would assert the zero it exists to disprove")
+	}
+	if got := argoAddOnCount(); got != want {
+		t.Errorf("argoAddOnCount() = %d on the lean tier, want %d (len(alwaysRenderedArgoApps))", got, want)
+	}
+}
+
+// The lean tier's budget must be strictly LONGER than the base, or the fix above is arithmetic that
+// changes nothing. Asserts the DERIVED value a lean run actually gets, not argoBudgetFor(0) — the
+// distinction is the whole defect: the old test pinned an input nothing passed any more.
+func TestLeanTierBudgetBuysTheChartItPulls(t *testing.T) {
+	t.Setenv("ALETHIA_E2E_ALL_ADDONS", "")
+	got := ArgoAssertTimeout()
+	want := argoBudgetBase + time.Duration(len(alwaysRenderedArgoApps))*argoBudgetPerAddOn
+	if got != want {
+		t.Errorf("lean budget = %s, want %s (base + %d always-rendered chart(s))",
+			got, want, len(alwaysRenderedArgoApps))
+	}
+	if got <= argoBudgetBase {
+		t.Errorf("lean budget = %s, still <= argoBudgetBase %s — the always-rendered chart is being given nothing",
+			got, argoBudgetBase)
+	}
+	// The measured bound this value exists to clear: on run 33487970328 the 8m deadline fell at
+	// 09:14:05Z, 1m58s before ArgoCD's next reconcile could have refreshed a health that was
+	// already stale. Anything at or below 8m re-opens that.
+	if got < 9*time.Minute+30*time.Second {
+		t.Errorf("lean budget = %s, below the 9m30s that would have cleared run 33487970328", got)
 	}
 }
 
