@@ -4,41 +4,139 @@
 # The route-state ratchet: RUBRIC.md predicates S1-S4 and T1-T4, scored over the private
 # console route set by `node scripts/check-route-states.mjs`.
 #
-# EVERY NUMBER HERE IS CHECKED IN BOTH DIRECTIONS. A count that grows is a regression; a
-# count that falls without this file changing in the SAME commit is also a failure, because
-# a stale baseline has stopped measuring the thing it names and the next regression back up
-# to the old number reports green. `na` is compared exactly for the reason RUBRIC.md gives:
-# an N/A count that can grow silently is a predicate being escaped.
+# EVERY LINE HERE IS CHECKED IN BOTH DIRECTIONS, AS A SET. A route that appears is a
+# regression; a route that stops failing without this file changing in the SAME commit is
+# also a failure, because a stale baseline has stopped measuring the thing it names and the
+# next regression back into that line reports green. The members are recorded rather than
+# the counts because counts cancel: one fix and one new defect in the same predicate leave
+# the integer where it was. `na` carries its reason for the reason RUBRIC.md gives — a
+# predicate being escaped must not be able to happen quietly.
 #
 # `node scripts/check-route-states.mjs --print-baseline` prints what the tree scores today.
 # It prints; it never writes. Regenerating this file over a red run is how a ratchet becomes
-# a rubber stamp — read the diff and only accept numbers your change actually moved.
+# a rubber stamp — read the diff and only accept lines your change actually moved.
 version: 1
 routes: 40
 redirectOnly: 4
 real: 36
 predicates:
   S1:
-    fail: 1
-    na: 4
+    fail:
+      - /cli/login
+    na:
+      - /[org]/[project]/settings: redirect-only
+      - /[org]/[project]: redirect-only
+      - /[org]/~/settings: redirect-only
+      - /dashboard/[[...rest]]: redirect-only
   S2:
-    fail: 17
-    na: 4
+    fail:
+      - /[org]
+      - /[org]/[project]/architecture
+      - /[org]/[project]/clusters
+      - /[org]/[project]/environments
+      - /[org]/[project]/jobs
+      - /[org]/[project]/usage
+      - /[org]/~/alerts
+      - /[org]/~/clusters
+      - /[org]/~/connectors
+      - /[org]/~/evidence
+      - /[org]/~/jobs
+      - /[org]/~/jobs/[id]
+      - /[org]/~/new
+      - /[org]/~/runners
+      - /[org]/~/support
+      - /[org]/~/usage
+      - /cli/login
+    na:
+      - /[org]/[project]/settings: redirect-only
+      - /[org]/[project]: redirect-only
+      - /[org]/~/settings: redirect-only
+      - /dashboard/[[...rest]]: redirect-only
   S3:
-    fail: 4
-    na: 5
+    fail:
+      - /[org]/[project]/environments
+      - /[org]/~/new
+      - /[org]/~/settings/classification
+      - /[org]/~/support
+    na:
+      - /[org]/[project]/settings: redirect-only
+      - /[org]/[project]: redirect-only
+      - /[org]/~/settings: redirect-only
+      - /cli/login: no-loading-boundary
+      - /dashboard/[[...rest]]: redirect-only
   S4:
-    fail: 3
-    na: 4
+    fail:
+      - /[org]/~/alerts
+      - /[org]/~/usage
+    na:
+      - /[org]/[project]/settings: redirect-only
+      - /[org]/[project]: redirect-only
+      - /[org]/~/settings: redirect-only
+      - /dashboard/[[...rest]]: redirect-only
   T1:
-    fail: 4
-    na: 4
+    fail:
+      - /[org]/~/jobs/[id]
+      - /[org]/~/settings/billing/invoices
+      - /[org]/~/settings/classification
+      - /cli/login
+    na:
+      - /[org]/[project]/settings: redirect-only
+      - /[org]/[project]: redirect-only
+      - /[org]/~/settings: redirect-only
+      - /dashboard/[[...rest]]: redirect-only
   T2:
-    fail: 0
-    na: 0
+    fail: []
+    na: []
   T3:
-    fail: 10
-    na: 30
+    fail:
+      - /[org]/[project]/architecture
+      - /[org]/[project]/clusters
+      - /[org]/[project]/environments
+      - /[org]/[project]/jobs
+      - /[org]/[project]/settings/access
+      - /[org]/[project]/settings/activity
+      - /[org]/[project]/settings/general
+      - /[org]/[project]/settings/preview
+      - /[org]/[project]/usage
+      - /[org]/~/support/cases/[id]
+    na:
+      - /[org]/[project]/settings: does-not-call-not-found
+      - /[org]/[project]: does-not-call-not-found
+      - /[org]/~/alerts: does-not-call-not-found
+      - /[org]/~/clusters: does-not-call-not-found
+      - /[org]/~/connectors: does-not-call-not-found
+      - /[org]/~/evidence: does-not-call-not-found
+      - /[org]/~/jobs/[id]: does-not-call-not-found
+      - /[org]/~/jobs: does-not-call-not-found
+      - /[org]/~/new: does-not-call-not-found
+      - /[org]/~/runners: does-not-call-not-found
+      - /[org]/~/settings/access: does-not-call-not-found
+      - /[org]/~/settings/activity: does-not-call-not-found
+      - /[org]/~/settings/billing/invoices: does-not-call-not-found
+      - /[org]/~/settings/billing: does-not-call-not-found
+      - /[org]/~/settings/classification: does-not-call-not-found
+      - /[org]/~/settings/general: does-not-call-not-found
+      - /[org]/~/settings/members: does-not-call-not-found
+      - /[org]/~/settings/roles: does-not-call-not-found
+      - /[org]/~/settings/sso: does-not-call-not-found
+      - /[org]/~/settings/teams: does-not-call-not-found
+      - /[org]/~/settings: does-not-call-not-found
+      - /[org]/~/support/abuse: does-not-call-not-found
+      - /[org]/~/support/ask: does-not-call-not-found
+      - /[org]/~/support/my-cases: does-not-call-not-found
+      - /[org]/~/support/submit: does-not-call-not-found
+      - /[org]/~/support: does-not-call-not-found
+      - /[org]/~/usage: does-not-call-not-found
+      - /[org]: does-not-call-not-found
+      - /cli/login: does-not-call-not-found
+      - /dashboard/[[...rest]]: does-not-call-not-found
   T4:
-    fail: 7
-    na: 0
+    fail:
+      - /[org]/[project]
+      - /[org]/[project]/settings
+      - /[org]/[project]/settings/activity
+      - /[org]/~/settings
+      - /[org]/~/usage
+      - /cli/login
+      - /dashboard/[[...rest]]
+    na: []

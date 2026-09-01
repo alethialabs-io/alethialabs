@@ -12,11 +12,15 @@
 //   node scripts/check-route-states.mjs --self-test     # the fixture suite
 //   node scripts/check-route-states.mjs --help
 //
-// `pnpm check:route-states` DOES NOT EXIST YET. Adding the alias means editing the root
-// `package.json`, which is outside this unit's scope (see #3616's `scope:` line), so the script is
-// runnable as `node scripts/check-route-states.mjs` and whoever owns `package.json` adds the alias
-// and the CI step. Stated here rather than implied, because a check nothing invokes is a check
-// that reports green by never running.
+// `pnpm check:route-states` DOES NOT EXIST YET, and nothing in CI runs this file. Adding the alias
+// means editing the root `package.json`, which is outside this unit's scope (see #3616's `scope:`
+// line), so the script is runnable as `node scripts/check-route-states.mjs` until then.
+//
+// THAT HAND-OFF HAS AN OWNER: **#3759** carries the `package.json` alias and the CI step, and
+// deletes this paragraph. Named rather than left as a caveat, because the risk is not that the
+// check is missing — it is that the baseline below goes stale on `dev` where nobody is watching,
+// and whoever wires the step later inherits a red gate they did not cause and cannot attribute.
+// A check nothing invokes is a check that reports green by never running.
 //
 // ── WHY IT READS THE MANIFEST AND DOES NOT WALK THE TREE ─────────────────────────────────────
 //
@@ -103,12 +107,41 @@ export const NA_REASONS = /** @type {const} */ ({
 
 // ── width resolution ─────────────────────────────────────────────────────────────────────────
 
-/** A centred content container: one class list carrying both `mx-auto` and a `max-w-*`. */
-const CONTAINER = /["`'][^"`']*?["`']/g;
-const MAX_W = /\bmax-w-(?:\[[^\]\s]+\]|[a-z0-9]+)/;
+/**
+ * One string literal — quote-KIND aware, escape aware, and matched WITHIN A SINGLE LINE.
+ *
+ * Both properties are load-bearing, and both are here because the naive `["`'][^"`']*?["`']`
+ * this started as pairs quote CHARACTERS across the whole file: one apostrophe in JSX text
+ * (`You don't have any projects`) shifts the pairing for every literal below it, and every width
+ * after that point disappears. That is a false PASS, not a loud one — a page whose width is
+ * invisible reads as "sets none", which is S4's PASS branch and can be S3's. `console-routes.mjs`
+ * solved the same problem with `quotesClosedBefore()`, which is per-line for the same reason.
+ *
+ * The cost, stated: a class list split ACROSS lines inside one template literal is not seen. It
+ * never was — a `cn("mx-auto", "max-w-4xl")` is two literals and was already invisible — and a
+ * scanner that reads across lines is the one that mis-pairs.
+ */
+const LITERAL = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g;
 
-/** Read a file through the manifest's comment stripper, or null when it does not exist. */
-function readStripped(abs) {
+/**
+ * A centred content container is a class list carrying both of these.
+ *
+ * Each is anchored to a whole class token — `(?:^|\s)` in front, `(?=\s|$)` behind, with any
+ * variant prefixes (`lg:`, `dark:`) skipped — rather than to a `\b`. A `\b`-anchored
+ * `max-w-(?:\[…\]|[a-z0-9]+)` stops at the first `-`, so `max-w-screen-lg` and `max-w-screen-sm`
+ * both read as `max-w-screen` and S3 reports a mismatched skeleton as equal: the one thing S3
+ * exists to catch, failing in the quiet direction. The bracket alternative runs to its `]` rather
+ * than to the first space, so `max-w-[calc(100% - 2rem)]` is one width and not nothing.
+ */
+const MX_AUTO = /(?:^|\s)(?:[\w-]+:)*mx-auto(?=\s|$)/;
+const MAX_W = /(?:^|\s)(?:[\w-]+:)*(max-w-(?:\[[^\]]*\]|[a-z0-9]+(?:-[a-z0-9]+)*))(?=\s|$)/;
+
+/**
+ * Read a file through the manifest's comment stripper as LINES, or null when it does not exist.
+ *
+ * @returns {string[]|null}
+ */
+function readStrippedLines(abs) {
 	if (!existsSync(abs)) return null;
 	const { lines, unterminated } = stripCommentLines(readFileSync(abs, "utf8"));
 	if (unterminated) {
@@ -117,7 +150,13 @@ function readStripped(abs) {
 				`after the opener has been blanked and would silently stop matching`,
 		);
 	}
-	return lines.join("\n");
+	return lines;
+}
+
+/** The same source as one string — for the import scan, which is not width-sensitive. */
+function readStripped(abs) {
+	const lines = readStrippedLines(abs);
+	return lines === null ? null : lines.join("\n");
 }
 
 /**
@@ -127,15 +166,17 @@ function readStripped(abs) {
  * @returns {string[]} deduplicated, in source order
  */
 function widthsIn(abs) {
-	const src = readStripped(abs);
-	if (src === null) return [];
+	const lines = readStrippedLines(abs);
+	if (lines === null) return [];
 	/** @type {string[]} */
 	const out = [];
-	for (const m of src.matchAll(CONTAINER)) {
-		const s = m[0].slice(1, -1);
-		if (!/\bmx-auto\b/.test(s)) continue;
-		const w = s.match(MAX_W);
-		if (w && !out.includes(w[0])) out.push(w[0]);
+	for (const line of lines) {
+		for (const m of line.matchAll(LITERAL)) {
+			const s = m[0].slice(1, -1);
+			if (!MX_AUTO.test(s)) continue;
+			const w = s.match(MAX_W);
+			if (w && !out.includes(w[1])) out.push(w[1]);
+		}
 	}
 	return out;
 }
@@ -248,11 +289,16 @@ function shellInScope(repoRoot, record, shellsByName, dirRel) {
  * @param {string} repoRoot
  */
 export function buildContexts(manifest, repoRoot) {
+	// A shell's width is resolved the SAME way a page's is — its own file, then the modules it
+	// directly imports. Reading the shell file alone made the two halves ask different questions:
+	// a `SettingsShell` refactored to `return <PageContainer>{children}</PageContainer>`, with the
+	// `mx-auto max-w-[1200px]` one import away, would report "declares none" and flip every page
+	// under it to an S2 failure — a large, wrong baseline swing produced by a refactor that broke
+	// nothing.
 	/** @type {Map<string,string|null>} */
 	const shellsByName = new Map();
 	for (const s of manifest.shells) {
-		const w = widthsIn(path.join(repoRoot, s.file));
-		shellsByName.set(s.name, w.length ? w[0] : null);
+		shellsByName.set(s.name, resolveWidth(repoRoot, s.file).width);
 	}
 	/** Every width some known shell owns — the set a page must not hand-roll (S4). */
 	const shellOwnedWidths = new Set([...shellsByName.values()].filter((w) => w !== null));
@@ -295,7 +341,11 @@ export function buildContexts(manifest, repoRoot) {
 			pageWidthSites: page.sites,
 			loadingWidth: loading.width,
 			loadingShellWidth: loadingShell.width,
-			/** undefined = no page owns that directory · true = it only redirects. */
+			/**
+			 * true = the segment that owns that skeleton has a real page of its own, so this route
+			 * is rendering somebody else's. false = no page owns that directory, or the one that
+			 * does only redirects — the skeleton was written for the subtree beneath it.
+			 */
 			loadingOwnerIsOwnPage: loadingOwner === undefined ? false : !loadingOwner.isRedirectOnly,
 			callsNotFound: /\bnotFound\s*\(/.test(pageSrc),
 			innermostParamDir,
@@ -336,8 +386,13 @@ export const CHECKS = {
 
 	S3: (c) => {
 		if (c.record.isRedirectOnly) return NA("redirect-only");
-		// Not "wherever T1 fails" — only where there is no boundary to compare against. A wrong
-		// skeleton still HAS a width, and the widths still either agree or do not.
+		// The declared reason is `no-loading-boundary`, and it means what it says: the double-count
+		// RUBRIC.md forbids is T1's "no loading.tsx anywhere" being charged a second time as "the
+		// skeleton is the wrong width", when there is no skeleton. Where a boundary EXISTS but is
+		// the wrong one, T1 and S3 report two different facts — `~/jobs/[id]` renders the list
+		// skeleton (T1) and that skeleton is unconstrained against a page that is too (S3 PASSes) —
+		// so N/A-ing them would excuse a predicate on 3 routes and shrink its denominator, which is
+		// rule 1's failure, not its remedy. RUBRIC.md's S3 row states this bound.
 		if (c.record.boundaries.loading.file === null) return NA("no-loading-boundary");
 		const page = c.pageWidth ?? c.shellWidth;
 		const skeleton = c.loadingWidth ?? c.loadingShellWidth;
@@ -349,7 +404,13 @@ export const CHECKS = {
 	S4: (c) => {
 		if (c.record.isRedirectOnly) return NA("redirect-only");
 		if (c.pageWidth === null) return PASS();
-		if (c.shellWidth !== null) {
+		// A DUPLICATE, not merely a second width — RUBRIC.md: "the page file and its direct children
+		// declare no `max-w-*` **that a shell above them already sets**". Failing every page-declared
+		// width under a width-owning shell would charge `~/support` (SupportShell 1200px, the page
+		// `max-w-4xl`) twice for one defect: S2 already reports "two widths". S4's own row is the
+		// narrower fact — the page wrote out a number a shell owns — which is the one a lane fixes by
+		// DELETING the class rather than by moving it.
+		if (c.pageWidth === c.shellWidth) {
 			return FAIL(`${c.record.shell} already owns the width; the page re-declares ${c.pageWidth}`);
 		}
 		if (c.shellOwnedWidths.has(c.pageWidth)) {
@@ -427,15 +488,29 @@ export function score(contexts) {
 	return out;
 }
 
-/** Flatten a scoring into the shape the baseline records. */
+/**
+ * Flatten a scoring into the shape the baseline records: the MEMBERS, not the counts.
+ *
+ * A count cancels. One PR that adds `mx-auto max-w-3xl` to `~/evidence` and deletes the hand-rolled
+ * `max-w-[1200px]` from `~/usage` leaves `S2.fail` at 17 and `S4.fail` at 2, so a ratchet reading
+ * integers passes it green with a new defect landed — and the both-directions check that exists to
+ * catch exactly that never sees it. `check-shared-surface.mjs`'s allowlist names its members for
+ * the same reason. The other half of the payment is that a baseline edit becomes a readable diff
+ * instead of eight integers.
+ *
+ * An N/A entry carries its REASON as well as its route (`/x: redirect-only`), because a route
+ * silently changing which escape hatch it uses is the same defect one level down.
+ */
 function tally(scored) {
-	/** @type {Record<string, {pass: number, fail: number, na: number}>} */
+	/** @type {Record<string, {pass: number, fail: string[], na: string[]}>} */
 	const t = {};
 	for (const id of PREDICATES) {
 		t[id] = {
 			pass: scored[id].pass.length,
-			fail: scored[id].fail.length,
-			na: Object.values(scored[id].na).reduce((n, xs) => n + xs.length, 0),
+			fail: scored[id].fail.map((f) => f.route).sort(),
+			na: Object.entries(scored[id].na)
+				.flatMap(([reason, routes]) => routes.map((route) => `${route}: ${reason}`))
+				.sort(),
 		};
 	}
 	return t;
@@ -446,11 +521,11 @@ function tally(scored) {
 /**
  * A deliberately tiny, deliberately STRICT parser for the baseline file — the worktree is
  * de-hydrated, so there is no YAML dependency to reach for, and the format is four scalars plus
- * eight two-key blocks.
+ * eight blocks of two route LISTS.
  *
- * Strict in the loud direction: an unknown key, a missing predicate, a duplicate, a non-integer
- * and an unreadable file all RAISE. A baseline this cannot read must never be read as "no
- * findings" — that is the shape of every silently-green guard this repo has shipped.
+ * Strict in the loud direction: an unknown key, a missing predicate, a duplicate entry, a
+ * malformed list item and an unreadable file all RAISE. A baseline this cannot read must never be
+ * read as "no findings" — that is the shape of every silently-green guard this repo has shipped.
  */
 export function parseBaseline(text, label) {
 	const raise = (msg) => {
@@ -458,10 +533,12 @@ export function parseBaseline(text, label) {
 	};
 	/** @type {Record<string, number>} */
 	const top = {};
-	/** @type {Record<string, {fail?: number, na?: number}>} */
+	/** @type {Record<string, {fail?: string[], na?: string[]}>} */
 	const preds = {};
 	/** @type {string|null} */
 	let current = null;
+	/** @type {"fail"|"na"|null} */
+	let currentList = null;
 	let inPredicates = false;
 	const lines = text.split("\n");
 	for (let i = 0; i < lines.length; i++) {
@@ -469,12 +546,42 @@ export function parseBaseline(text, label) {
 		if (raw.trim() === "") continue;
 		const indent = raw.length - raw.trimStart().length;
 		const line = raw.trim();
+
+		if (line.startsWith("- ")) {
+			if (indent !== 6 || current === null || currentList === null) {
+				raise(`line ${i + 1}: a list item with no "fail:" or "na:" block above it at 4 spaces`);
+			}
+			const entry = line.slice(2).trim();
+			// A `fail` entry is a route; an `na` entry is `route: reason`, so that a route silently
+			// switching escape hatches is a diff and not a no-op. Routes carry no ":" and no space.
+			const shape = currentList === "fail" ? /^\S+$/ : /^\S+: [a-z][a-z0-9-]*$/;
+			if (!shape.test(entry)) {
+				raise(
+					`line ${i + 1}: "${entry}" is not a valid ${current}.${currentList} entry ` +
+						`(expected ${currentList === "fail" ? "a route" : "`<route>: <reason>`"})`,
+				);
+			}
+			if (currentList === "na") {
+				const reason = entry.slice(entry.indexOf(": ") + 2);
+				if (!NA_REASONS[current].includes(reason)) {
+					raise(
+						`line ${i + 1}: ${current} declares no N/A reason "${reason}" ` +
+							`[${NA_REASONS[current].join(", ") || "(none — this predicate is never N/A)"}]`,
+					);
+				}
+			}
+			if (preds[current][currentList].includes(entry)) raise(`line ${i + 1}: "${entry}" appears twice`);
+			preds[current][currentList].push(entry);
+			continue;
+		}
+
 		const m = line.match(/^([A-Za-z][A-Za-z0-9]*):\s*(.*)$/);
 		if (!m) raise(`line ${i + 1}: cannot parse "${line}"`);
 		const [, key, value] = m;
 		if (indent === 0) {
 			inPredicates = key === "predicates";
 			current = null;
+			currentList = null;
 			if (inPredicates) {
 				if (value !== "") raise(`line ${i + 1}: "predicates:" takes a block, not a value`);
 				continue;
@@ -488,16 +595,21 @@ export function parseBaseline(text, label) {
 		if (indent === 2) {
 			if (value !== "") raise(`line ${i + 1}: "${key}:" takes a block, not a value`);
 			if (key in preds) raise(`line ${i + 1}: predicate ${key} appears twice`);
+			if (!PREDICATES.includes(key)) raise(`unknown predicate "${key}"`);
 			preds[key] = {};
 			current = key;
+			currentList = null;
 			continue;
 		}
 		if (indent === 4) {
 			if (current === null) raise(`line ${i + 1}: "${key}" with no predicate above it`);
 			if (key !== "fail" && key !== "na") raise(`line ${i + 1}: unknown predicate key "${key}"`);
-			if (!/^\d+$/.test(value)) raise(`line ${i + 1}: ${current}.${key} must be a non-negative integer`);
+			if (value !== "" && value !== "[]") {
+				raise(`line ${i + 1}: ${current}.${key} takes a list, not "${value}" — "[]" when empty`);
+			}
 			if (key in preds[current]) raise(`line ${i + 1}: ${current}.${key} appears twice`);
-			preds[current][key] = Number(value);
+			preds[current][key] = [];
+			currentList = value === "[]" ? null : key;
 			continue;
 		}
 		raise(`line ${i + 1}: unexpected indentation (${indent} spaces)`);
@@ -522,14 +634,17 @@ export function parseBaseline(text, label) {
 }
 
 /**
- * Compare a tally against the baseline in BOTH directions.
+ * Compare a tally against the baseline in BOTH directions, as SETS.
  *
- * Growing fails, and shrinking without lowering the number fails too. A one-directional ratchet
- * lets a fix land with a stale baseline, and a stale baseline is a gate that has stopped measuring
- * the thing it names — the next regression back up to the old number reports green.
+ * A new member is a regression, and a member the tree no longer has is a failure too until the
+ * baseline drops it in the same commit. A one-directional ratchet lets a fix land with a stale
+ * baseline, and a stale baseline is a gate that has stopped measuring the thing it names — the
+ * next regression back into the old entry reports green.
  *
- * N/A counts are compared EXACTLY, in both directions, for the reason RUBRIC.md gives: an N/A
- * count that can grow silently is a predicate being escaped.
+ * Sets rather than counts because counts CANCEL: one fix and one regression inside the same
+ * predicate leave the integer where it was, and the both-directions check never fires. N/A
+ * membership is compared the same way, and carries its reason, for the reason RUBRIC.md gives: a
+ * predicate being escaped must not be able to happen quietly.
  *
  * @returns {string[]} one line per violation; empty means clean
  */
@@ -543,12 +658,26 @@ export function compareToBaseline(baseline, tallied, totals) {
 				(actual > expected ? `a REGRESSION. ${hint}` : `an IMPROVEMENT. Lower the baseline in the same commit as the fix.`),
 		);
 	};
+	/** Both differences between two entry lists, each reported with what to do about it. */
+	const cmpSet = (label, actual, expected, hint) => {
+		const added = actual.filter((x) => !expected.includes(x));
+		const gone = expected.filter((x) => !actual.includes(x));
+		if (added.length > 0) {
+			problems.push(`${label}: NOT in the baseline — ${added.join(", ")} — a REGRESSION. ${hint}`);
+		}
+		if (gone.length > 0) {
+			problems.push(
+				`${label}: in the baseline, no longer in the tree — ${gone.join(", ")} — an IMPROVEMENT. ` +
+					`Delete the line in the same commit as the fix.`,
+			);
+		}
+	};
 	cmp("routes", totals.routes, baseline.routes, "A new route starts at the current floor: record it.");
 	cmp("redirectOnly", totals.redirectOnly, baseline.redirectOnly, "Record it.");
 	cmp("real", totals.real, baseline.real, "Record it.");
 	for (const id of PREDICATES) {
-		cmp(`${id}.fail`, tallied[id].fail, baseline.predicates[id].fail, "Fix the page, do not raise the number.");
-		cmp(`${id}.na`, tallied[id].na, baseline.predicates[id].na, "An N/A count that grows is a predicate being escaped.");
+		cmpSet(`${id}.fail`, tallied[id].fail, baseline.predicates[id].fail, "Fix the page, do not add the line.");
+		cmpSet(`${id}.na`, tallied[id].na, baseline.predicates[id].na, "An N/A that grows is a predicate being escaped.");
 	}
 	return problems;
 }
@@ -562,15 +691,17 @@ function renderBaseline(tallied, totals) {
 		"# The route-state ratchet: RUBRIC.md predicates S1-S4 and T1-T4, scored over the private",
 		"# console route set by `node scripts/check-route-states.mjs`.",
 		"#",
-		"# EVERY NUMBER HERE IS CHECKED IN BOTH DIRECTIONS. A count that grows is a regression; a",
-		"# count that falls without this file changing in the SAME commit is also a failure, because",
-		"# a stale baseline has stopped measuring the thing it names and the next regression back up",
-		"# to the old number reports green. `na` is compared exactly for the reason RUBRIC.md gives:",
-		"# an N/A count that can grow silently is a predicate being escaped.",
+		"# EVERY LINE HERE IS CHECKED IN BOTH DIRECTIONS, AS A SET. A route that appears is a",
+		"# regression; a route that stops failing without this file changing in the SAME commit is",
+		"# also a failure, because a stale baseline has stopped measuring the thing it names and the",
+		"# next regression back into that line reports green. The members are recorded rather than",
+		"# the counts because counts cancel: one fix and one new defect in the same predicate leave",
+		"# the integer where it was. `na` carries its reason for the reason RUBRIC.md gives — a",
+		"# predicate being escaped must not be able to happen quietly.",
 		"#",
 		"# `node scripts/check-route-states.mjs --print-baseline` prints what the tree scores today.",
 		"# It prints; it never writes. Regenerating this file over a red run is how a ratchet becomes",
-		"# a rubber stamp — read the diff and only accept numbers your change actually moved.",
+		"# a rubber stamp — read the diff and only accept lines your change actually moved.",
 		"version: 1",
 		`routes: ${totals.routes}`,
 		`redirectOnly: ${totals.redirectOnly}`,
@@ -578,7 +709,16 @@ function renderBaseline(tallied, totals) {
 		"predicates:",
 	];
 	for (const id of PREDICATES) {
-		lines.push(`  ${id}:`, `    fail: ${tallied[id].fail}`, `    na: ${tallied[id].na}`);
+		lines.push(`  ${id}:`);
+		for (const key of ["fail", "na"]) {
+			const entries = tallied[id][key];
+			if (entries.length === 0) {
+				lines.push(`    ${key}: []`);
+				continue;
+			}
+			lines.push(`    ${key}:`);
+			for (const entry of entries) lines.push(`      - ${entry}`);
+		}
 	}
 	return lines.join("\n") + "\n";
 }
@@ -739,13 +879,19 @@ export function positiveControl() {
 		expect(p, "probe", "/[org]/wide", "S2", "FAIL"); // the page declares its own as well
 		expect(p, "probe", "/[org]/skew", "S3", "FAIL");
 		expect(p, "probe", "/[org]/inner", "S3", "FAIL"); // the skeleton renders in a wider shell
-		expect(p, "probe", "/[org]/wide", "S4", "FAIL"); // a shell above already owns the width
 		expect(p, "probe", "/plain/copy", "S4", "FAIL"); // the page hand-rolls a shell's own number
-		expect(p, "probe", "/[org]/dup", "S4", "FAIL");
+		expect(p, "probe", "/[org]/dup", "S4", "FAIL"); // the page re-declares its own shell's width
 		expect(p, "probe", "/[org]/list/detail", "T1", "FAIL");
 		expect(p, "probe", "/loose", "T2", "FAIL");
 		expect(p, "probe", "/[org]/[thing]", "T3", "FAIL");
 		expect(p, "probe", "/loose", "T4", "FAIL");
+
+		// S4's BOUNDARY, asserted in the probe tree because that is where the shape lives:
+		// `/[org]/wide` declares `max-w-4xl` under a shell that owns `max-w-[1200px]`. Two widths
+		// govern it, so S2 fails — but `max-w-4xl` is not a width any shell sets, so it is not the
+		// DUPLICATE S4 measures. An S4 that failed here would charge one defect to two predicates,
+		// and the mutation that reintroduces that is caught here and only here.
+		expect(p, "probe", "/[org]/wide", "S4", "PASS");
 
 		// ── the antiProbes: no predicate may fire on a page that does the thing ─────────────
 		for (const id of ["S1", "S2", "S3", "S4", "T1", "T2", "T4"]) expect(a, "antiProbe", "/[org]", id, "PASS");
@@ -776,10 +922,10 @@ function report(run, { routes = false } = {}) {
 	console.log("  id   PASS  FAIL   N/A   score  predicate");
 	for (const id of PREDICATES) {
 		const t = tallied[id];
-		const denom = t.pass + t.fail;
+		const denom = t.pass + t.fail.length;
 		const s = denom === 0 ? "  —  " : (t.pass / denom).toFixed(2);
 		console.log(
-			`  ${id}  ${String(t.pass).padStart(4)}  ${String(t.fail).padStart(4)}  ${String(t.na).padStart(4)}   ${s}   ${TITLES[id]}`,
+			`  ${id}  ${String(t.pass).padStart(4)}  ${String(t.fail.length).padStart(4)}  ${String(t.na.length).padStart(4)}   ${s}   ${TITLES[id]}`,
 		);
 	}
 	for (const id of PREDICATES) {
@@ -890,41 +1036,77 @@ function selfTest() {
 	);
 
 	// ── the baseline parser ─────────────────────────────────────────────────────────────────
-	const good = renderBaseline(
-		Object.fromEntries(PREDICATES.map((id) => [id, { pass: 1, fail: 2, na: 3 }])),
-		{ routes: 40, redirectOnly: 4, real: 36 },
-	);
+	/** A tally in the shape `tally()` returns: two routes failing, one N/A that every predicate allows. */
+	const fixtureTally = () =>
+		Object.fromEntries(
+			PREDICATES.map((id) => [
+				id,
+				{
+					pass: 1,
+					fail: ["/a", "/b"],
+					na: NA_REASONS[id].length === 0 ? [] : [`/c: ${NA_REASONS[id][0]}`],
+				},
+			]),
+		);
+	const good = renderBaseline(fixtureTally(), { routes: 40, redirectOnly: 4, real: 36 });
 	const parsed = parseBaseline(good, "fixture");
-	ok("a well-formed baseline round-trips", parsed.routes === 40 && parsed.predicates.T4.na === 3);
-	raises("a missing predicate RAISES", () => parseBaseline(good.replace(/  T4:\n    fail: 2\n    na: 3\n/, ""), "fixture"), "missing predicate T4");
-	raises("an unknown predicate RAISES", () => parseBaseline(good + "  S9:\n    fail: 0\n    na: 0\n", "fixture"), "unknown predicate");
+	ok(
+		"a well-formed baseline round-trips",
+		parsed.routes === 40 && parsed.predicates.S3.na[0] === "/c: redirect-only" && parsed.predicates.T4.na.length === 0,
+	);
+	raises("a missing predicate RAISES", () => parseBaseline(good.replace(/  T4:\n(?:    \w+: \[\]\n|    \w+:\n(?:      - .*\n)+)+/, ""), "fixture"), "missing predicate T4");
+	raises("an unknown predicate RAISES", () => parseBaseline(good + "  S9:\n    fail: []\n    na: []\n", "fixture"), "unknown predicate");
 	raises("an unknown top-level key RAISES", () => parseBaseline(good + "extra: 1\n", "fixture"), 'unknown key "extra"');
-	raises("a non-integer RAISES", () => parseBaseline(good.replace("fail: 2", "fail: two"), "fixture"), "non-negative integer");
+	raises("a non-integer top-level scalar RAISES", () => parseBaseline(good.replace("routes: 40", "routes: forty"), "fixture"), "non-negative integer");
+	raises("a COUNT where a list belongs RAISES", () => parseBaseline(good.replace("    fail:\n", "    fail: 2\n"), "fixture"), "takes a list");
+	raises("a duplicated route RAISES", () => parseBaseline(good.replace("      - /b\n", "      - /a\n"), "fixture"), 'appears twice');
+	raises(
+		"an N/A reason the predicate does not declare RAISES",
+		() => parseBaseline(good.replace("/c: redirect-only", "/c: this-page-is-hard"), "fixture"),
+		"declares no N/A reason",
+	);
 	raises("a truncated file RAISES rather than defaulting", () => parseBaseline("version: 1\n", "fixture"), 'missing "routes"');
 	raises("an empty file RAISES", () => parseBaseline("", "fixture"), 'missing "version"');
 
 	// ── the ratchet, in BOTH directions ─────────────────────────────────────────────────────
 	const base = parseBaseline(good, "fixture");
-	const flat = Object.fromEntries(PREDICATES.map((id) => [id, { pass: 1, fail: 2, na: 3 }]));
+	const flat = fixtureTally();
 	const totals = { routes: 40, redirectOnly: 4, real: 36 };
 	ok("an unchanged tree is clean", compareToBaseline(base, flat, totals).length === 0);
-	const worse = { ...flat, S2: { pass: 0, fail: 3, na: 3 } };
+	const worse = { ...flat, S2: { pass: 0, fail: ["/a", "/b", "/d"], na: flat.S2.na } };
 	const grewProblems = compareToBaseline(base, worse, totals);
 	ok(
-		"one MORE failure is a REGRESSION",
-		grewProblems.length === 1 && grewProblems[0].includes("S2.fail") && grewProblems[0].includes("REGRESSION"),
+		"one MORE failing route is a REGRESSION, and it is NAMED",
+		grewProblems.length === 1 && grewProblems[0].includes("S2.fail") && grewProblems[0].includes("/d") && grewProblems[0].includes("REGRESSION"),
 	);
-	const better = { ...flat, S2: { pass: 2, fail: 1, na: 3 } };
+	const better = { ...flat, S2: { pass: 2, fail: ["/a"], na: flat.S2.na } };
 	const shrankProblems = compareToBaseline(base, better, totals);
 	ok(
-		"one FEWER failure ALSO fails, demanding the baseline be lowered",
-		shrankProblems.length === 1 && shrankProblems[0].includes("Lower the baseline"),
+		"one FEWER failing route ALSO fails, demanding the line be deleted",
+		shrankProblems.length === 1 && shrankProblems[0].includes("/b") && shrankProblems[0].includes("Delete the line"),
 	);
-	const escaped = { ...flat, T3: { pass: 1, fail: 1, na: 4 } };
+	// THE REASON THE BASELINE NAMES ITS MEMBERS. A count-based ratchet reads this as 2 = 2 and
+	// reports green with a new defect landed; that is the both-directions check being cancelled by
+	// arithmetic, and it is the only assertion here a set is needed for.
+	const swapped = { ...flat, S2: { pass: 1, fail: ["/a", "/d"], na: flat.S2.na } };
+	const swappedProblems = compareToBaseline(base, swapped, totals);
+	ok(
+		"a fix and a regression in the SAME predicate do not cancel",
+		swappedProblems.some((p) => p.includes("REGRESSION") && p.includes("/d")) &&
+			swappedProblems.some((p) => p.includes("IMPROVEMENT") && p.includes("/b")),
+	);
+	const escaped = { ...flat, T3: { pass: 1, fail: ["/a"], na: ["/c: does-not-call-not-found", "/b: does-not-call-not-found"] } };
 	const escapedProblems = compareToBaseline(base, escaped, totals);
 	ok(
-		"an N/A count that GROWS fails, even though the FAIL count fell",
-		escapedProblems.some((p) => p.includes("T3.na")) && escapedProblems.some((p) => p.includes("T3.fail")),
+		"an N/A that GROWS fails, even though the FAIL count fell",
+		escapedProblems.some((p) => p.includes("T3.na") && p.includes("REGRESSION")) &&
+			escapedProblems.some((p) => p.includes("T3.fail")),
+	);
+	// A route keeping its N/A but swapping the reason is the same escape one level down.
+	const rereasoned = { ...flat, S3: { pass: 1, fail: flat.S3.fail, na: ["/c: no-loading-boundary"] } };
+	ok(
+		"an N/A route that CHANGES its reason is not silent",
+		compareToBaseline(base, rereasoned, totals).some((p) => p.includes("S3.na") && p.includes("no-loading-boundary")),
 	);
 	ok(
 		"a route added without recording it fails",
@@ -959,6 +1141,35 @@ function selfTest() {
 		widthsIn(path.join(wRoot, "c.tsx"))[0] === "max-w-4xl",
 	);
 	ok("a commented-out container is not a width", widthsIn(path.join(wRoot, "d.tsx")).length === 0);
+	// An apostrophe in JSX TEXT used to pair with the opening quote of the next `className`, and
+	// every width below it in the file vanished — a page reading as "sets no width" PASSES S4 and
+	// can PASS S3, so the miss is silent. The two files differ in exactly that apostrophe.
+	put(wRoot, "e.tsx", '<p>You don\'t have any projects</p>\n<div className="mx-auto w-full max-w-4xl" />\n');
+	put(wRoot, "f.tsx", '<p>You do not have any projects</p>\n<div className="mx-auto w-full max-w-4xl" />\n');
+	ok(
+		"an apostrophe in JSX text does not hide the widths below it",
+		widthsIn(path.join(wRoot, "e.tsx"))[0] === "max-w-4xl" &&
+			widthsIn(path.join(wRoot, "f.tsx"))[0] === "max-w-4xl",
+	);
+	// A two-part scale collapsing to its first segment made two DIFFERENT widths compare equal,
+	// which is S3 passing the mismatched skeleton it exists to catch.
+	put(wRoot, "g.tsx", 'const x = <div className="mx-auto max-w-screen-lg" />;\n');
+	put(wRoot, "h.tsx", 'const x = <div className="mx-auto max-w-screen-sm" />;\n');
+	ok(
+		"a two-part width scale keeps both of its segments",
+		widthsIn(path.join(wRoot, "g.tsx"))[0] === "max-w-screen-lg" &&
+			widthsIn(path.join(wRoot, "h.tsx"))[0] === "max-w-screen-sm",
+	);
+	put(wRoot, "i.tsx", 'const x = <div className="mx-auto max-w-[calc(100% - 2rem)] p-4" />;\n');
+	ok(
+		"an arbitrary value containing spaces is one width, not none",
+		widthsIn(path.join(wRoot, "i.tsx"))[0] === "max-w-[calc(100% - 2rem)]",
+	);
+	put(wRoot, "j.tsx", 'const x = <div className="mx-auto lg:max-w-[1200px]" />;\n');
+	ok(
+		"a variant prefix is not part of the width",
+		widthsIn(path.join(wRoot, "j.tsx"))[0] === "max-w-[1200px]",
+	);
 	rmSync(wRoot, { recursive: true, force: true });
 
 	console.log(failures === 0 ? "\nself-test: all passed" : `\nself-test: ${failures} FAILED`);
@@ -1069,8 +1280,8 @@ if (invokedDirectly) {
 		console.error(`\ncheck-route-states: ${problems.length} baseline mismatch(es)\n`);
 		for (const line of problems) console.error(`  ${line}`);
 		console.error(
-			`\nThe baseline SHRINKS ONLY, and it is checked in both directions: a lane's PR must move ` +
-				`a number in the same commit as its code (RUBRIC.md, "The scoreboard and the ratchet").` +
+			`\nThe baseline SHRINKS ONLY, and it is checked in both directions, as a SET: a lane's PR ` +
+				`must move a LINE in the same commit as its code (RUBRIC.md, "The scoreboard and the ratchet").` +
 				`\nRun \`node scripts/check-route-states.mjs --print-baseline\` to see what this tree scores.`,
 		);
 		process.exit(1);
