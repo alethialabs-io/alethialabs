@@ -105,13 +105,15 @@ locals {
   # a zone name that does not exist — an apply-time failure on the ONE path that previously worked.
   # (The `tofu test` in checks_ingress_armor.tftest.hcl caught exactly that during this change.)
   #
-  # `length(module.cloud_dns) > 0` rather than a copy of the module's count predicate, for the reason
-  # outputs.tf sets out: a duplicated predicate drifted from the count once already and planned an
-  # "Invalid index" that failed the whole apply.
+  # Guarded on the MODULE INSTANCE rather than on a copy of the module's count predicate, for the
+  # reason outputs.tf sets out: a duplicated predicate drifted from the count once already and
+  # planned an "Invalid index" that failed the whole apply. The probe replaced a
+  # `length(module.cloud_dns) > 0` guard under #3509 — this local is read by module inputs, and
+  # `length()` reads the module as a WHOLE, which is the edge that closes cycles (aws/rds.tf).
   #
   # Derived here rather than inline so `tofu test` can assert on it, and so the output and the IAM
   # grant read ONE value: the two cannot disagree about which zone the project has.
-  external_dns_zone = length(module.cloud_dns) > 0 ? module.cloud_dns[0].zone_name : (var.dns_provider == "native" ? var.cloud_dns_zone_name : "")
+  external_dns_zone = try(module.cloud_dns[0].zone_name, null) != null ? module.cloud_dns[0].zone_name : (var.dns_provider == "native" ? var.cloud_dns_zone_name : "")
 
   # The external-dns GSA this deploy uses: the caller's adopted one, or the one we created.
   # Read by the zone-scoped grant, both Workload Identity bindings (external-dns AND cert-manager,
