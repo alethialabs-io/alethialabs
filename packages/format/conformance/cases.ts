@@ -107,10 +107,16 @@ export const QUOTA: QuotaCase[] = [
 ];
 
 /**
- * `formatDuration` — milliseconds. NOTE it never rolls into hours: 7_200_000ms is `120m 0s`,
- * not `2h`. That is the contract, and `cmd/jobs_list.go` currently disagrees with it. If we
- * ever decide it SHOULD roll to hours, that is a change to the TS with a visible one-line
- * diff in the generated file.
+ * `formatDuration` — milliseconds. It ROLLS INTO HOURS at 60 minutes, and drops the seconds when
+ * it does: 7_200_000ms is `2h 0m`, not `120m 0s`. That is the contract, and it is the answer
+ * `cmd/jobs_list.go` already gave — the console was the half that disagreed, and the disagreement
+ * was settled in the CLI's favour because a provision over an hour is the common path, not an
+ * edge case.
+ *
+ * The rows pin the roll from BOTH sides, which is what a port has to satisfy: one that forgets to
+ * roll fails `EXACTLY-AN-HOUR`, one that rolls a millisecond early fails
+ * `JUST-UNDER-AN-HOUR-DOES-NOT-ROLL`, and one that keeps the seconds past the roll fails
+ * `hours-and-minutes-drop-the-seconds`.
  */
 export const DURATION: NumberCase[] = [
 	{ id: "duration/zero", in: 0 },
