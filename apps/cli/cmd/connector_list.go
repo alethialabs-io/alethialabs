@@ -38,7 +38,7 @@ var connectorListCmd = &cobra.Command{
 
 		if interactiveTable(cmd) {
 			if len(identities) == 0 {
-				ui.Muted("No cloud accounts connected. Connect one with `alethia connector gcp|aws|azure`.")
+				ui.Muted(connectorEmptyStateHint())
 				return
 			}
 			columns := []table.Column{
@@ -64,6 +64,17 @@ var connectorListCmd = &cobra.Command{
 	},
 }
 
+// connectorEmptyStateHint is the one empty-state sentence both renderings show.
+//
+// It was typed out twice and named "gcp|aws|azure" — a hand-written list of the providers,
+// written before Alibaba and Hetzner existed and never revisited, so the empty state told a
+// Hetzner user the CLI could not connect their cloud. The list now comes from the registered
+// subcommands, which is the same place `alethia connector --help` reads it from.
+func connectorEmptyStateHint() string {
+	return "No cloud accounts connected. Connect one with `alethia connector " +
+		strings.Join(connectorProviderNames(), "|") + "`."
+}
+
 // cloudIdentityRows projects each cloud identity into a plain table row.
 func cloudIdentityRows(identities []api.CloudIdentity) [][]string {
 	rows := make([][]string, len(identities))
@@ -80,7 +91,7 @@ func cloudIdentityRows(identities []api.CloudIdentity) [][]string {
 // renderCloudIdentities writes connected cloud accounts to out in the requested format.
 func renderCloudIdentities(out io.Writer, format string, identities []api.CloudIdentity) error {
 	if len(identities) == 0 && format == ui.FormatTable {
-		fmt.Fprintln(out, ui.MutedStyle.Render("No cloud accounts connected. Connect one with `alethia connector gcp|aws|azure`."))
+		fmt.Fprintln(out, ui.MutedStyle.Render(connectorEmptyStateHint()))
 		return nil
 	}
 	return ui.Render(out, format, ui.TableSpec{
