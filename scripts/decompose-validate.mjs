@@ -35,8 +35,10 @@
 //   node scripts/decompose-validate.mjs proposal.json   # validate a file
 //   cat proposal.json | node scripts/decompose-validate.mjs
 //   node scripts/decompose-validate.mjs --self-test     # inline fixtures (no I/O)
+//   node scripts/decompose-validate.mjs --no-board      # deliberately skip live-board comparison
 // Exits 0 on PASS, non-zero on FAIL / bad input.
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 // ── the known board label set ─────────────────────────────────────────────────
@@ -87,6 +89,18 @@ function normalizeGlob(glob) {
 		.replace(/^\.\//, "")
 		.replace(/\/{2,}/g, "/")
 		.replace(/\/+$/, "");
+}
+
+/** Parse a machine-readable scope declaration from a board issue body. */
+function scopeGlobs(body) {
+	const match = String(body ?? "").match(/^[ \t]*scope:[ \t]*(.+)$/im);
+	return match ? match[1].trim().split(/\s+/).filter(Boolean) : [];
+}
+
+/** Parse machine-readable blocked-by issue numbers from a board issue body. */
+function blockedByNumbers(body) {
+	const match = String(body ?? "").match(/^[ \t]*[Bb]locked-by:[ \t]*([^\n]*)$/m);
+	return match ? [...match[1].matchAll(/#(\d+)/g)].map((m) => Number(m[1])) : [];
 }
 
 /** Compile one path SEGMENT (no `/`) into an anchored regex; `*` → any run of non-slash chars. */
@@ -337,6 +351,78 @@ function validate(proposal) {
 	return { errors, warnings };
 }
 
+/** Return whether an open board issue can be claimed alongside a new proposal. */
+function isCoClaimableBoardUnit(issue) {
+	const labels = new Set((issue.labels ?? []).map((label) => label.name));
+	return (
+		["claimed", "blocked", "needs:human", "needs:design", "epic"].every((label) => !labels.has(label)) &&
+		["class:backend", "class:ui", "wave:", "lane:"].some((prefix) =>
+			[...labels].some((label) => label === prefix || label.startsWith(prefix)),
+		)
+	);
+}
+
+/** Validate proposal scopes against co-claimable open board units. */
+function validateAgainstBoard(proposal, board) {
+	const result = validate(proposal);
+	if (!Array.isArray(board) || board.length === 0) {
+		return {
+			...result,
+			errors: [...result.errors, "open board read returned no issues — use --no-board only for a deliberate offline run"],
+		};
+	}
+	if (result.errors.length > 0 || !Array.isArray(proposal)) return result;
+
+	const proposalUnits = proposal.map((unit, index) => ({
+		id: unit.id ?? index + 1,
+		title: unit.title ?? "(untitled)",
+		scope: Array.isArray(unit.scope) ? unit.scope.filter(Boolean) : [],
+		blockedBy: Array.isArray(unit.blockedBy) ? unit.blockedBy : [],
+	}));
+	const boardUnits = board.filter(isCoClaimableBoardUnit);
+	for (const proposed of proposalUnits) {
+		for (const existing of boardUnits) {
+			if (proposed.blockedBy.includes(existing.number)) continue;
+			for (const proposedGlob of proposed.scope) {
+				for (const existingGlob of scopeGlobs(existing.body)) {
+					if (globsOverlap(proposedGlob, existingGlob)) {
+						result.errors.push(
+							`SCOPE COLLISION: proposed #${proposed.id} ("${proposed.title}") glob "${proposedGlob}" overlaps ` +
+								`open board #${existing.number} ("${existing.title ?? "(untitled)"}") glob "${existingGlob}" — ` +
+								"these units are co-claimable, so sharing files is the mega-commit tangle the board forbids",
+						);
+					}
+				}
+			}
+		}
+	}
+	return result;
+}
+
+/** Read the open GitHub issue board, failing closed when the response is unavailable or empty. */
+function readOpenBoard() {
+	let raw;
+	try {
+		raw = execFileSync(
+			"gh",
+			["issue", "list", "--state", "open", "--limit", "300", "--json", "number,title,body,labels"],
+			{ encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+		);
+	} catch (error) {
+		throw new Error(`could not read open board: ${error.message ?? String(error)}; use --no-board for a deliberate offline run`);
+	}
+	let board;
+	try {
+		board = JSON.parse(raw);
+	} catch (error) {
+		throw new Error(`open board response was not valid JSON: ${error.message ?? String(error)}`);
+	}
+	if (!Array.isArray(board) || board.length === 0) {
+		throw new Error("open board read returned no issues; use --no-board for a deliberate offline run");
+	}
+	return board;
+}
+
 /** Print a PASS/FAIL report for a validation result and return the process exit code. */
 function report(proposal, { errors, warnings }) {
 	for (const w of warnings) console.warn(`  ⚠ ${w}`);
@@ -372,6 +458,45 @@ function runSelfTest() {
 			);
 		}
 	};
+	/** Assert a proposal validates against a stubbed open board as expected. */
+	const expectBoard = (name, prop, board, shouldPass) => {
+		const { errors } = validateAgainstBoard(prop, board);
+		const passed = errors.length === 0;
+		if (passed === shouldPass) {
+			console.log(`ok   - ${name}`);
+		} else {
+			fails++;
+			console.error(`FAIL - ${name}: expected ${shouldPass ? "PASS" : "FAIL"} but got ${passed ? "PASS" : "FAIL"}${errors.length ? ` (${errors[0]})` : ""}`);
+		}
+	};
+	const boardIssue = (number, title, scope, labels = ["wave:W1", "lane:server", "class:backend"]) => ({
+		number,
+		title,
+		body: `scope: ${scope}`,
+		labels: labels.map((name) => ({ name })),
+	});
+	const boardOverlapProposal = [
+		{
+			id: 1,
+			title: "seams: new contract",
+			labels: ["wave:W1", "lane:schema", "class:backend"],
+			scope: ["scripts/new-contract.mjs"],
+			blockedBy: [],
+		},
+		{
+			id: 2,
+			title: "new canvas unit",
+			labels: ["wave:W1", "lane:server", "class:backend"],
+			scope: ["apps/console/components/design-project/new/**"],
+			blockedBy: [],
+		},
+	];
+const openBoard = [boardIssue(900, "existing canvas unit", "apps/console/components/design-project/**")];
+expectBoard("open board sibling overlap FAILs", boardOverlapProposal, openBoard, false);
+expectBoard("an existing blocker permits overlapping scope", [boardOverlapProposal[0], { ...boardOverlapProposal[1], blockedBy: [1, 900] }], openBoard, true);
+	const prefixBoard = [boardIssue(901, "existing console unit", "apps/console/components/**")];
+	expectBoard("board prefix subsumption FAILs", boardOverlapProposal, prefixBoard, false);
+	expectBoard("empty board response FAILs closed", boardOverlapProposal, [], false);
 
 	// A clean interface-first set: one seams root, three disjoint lanes blocked-by it.
 	const clean = [
@@ -664,6 +789,7 @@ const args = process.argv.slice(2);
 if (args.includes("--self-test")) {
 	runSelfTest();
 }
+const noBoard = args.includes("--no-board");
 
 let raw;
 const fileArg = args.find((a) => !a.startsWith("-"));
@@ -682,4 +808,15 @@ try {
 	process.exit(2);
 }
 
-process.exit(report(proposal, validate(proposal)));
+if (noBoard) {
+	process.exit(report(proposal, validate(proposal)));
+}
+
+let board;
+try {
+	board = readOpenBoard();
+} catch (error) {
+	console.error(`✗ ${error.message ?? String(error)}`);
+	process.exit(2);
+}
+process.exit(report(proposal, validateAgainstBoard(proposal, board)));
