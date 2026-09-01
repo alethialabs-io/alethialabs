@@ -126,6 +126,17 @@ func ResolveT2Budget(provider, env string) (T2Budget, error) {
 
 	add("deploy-wait", resolveT2WaitTimeout(p))
 	add("argocd-converge", ArgoAssertTimeout())
+	// The max-config cluster probes (#2652). `argocd-converge` above pays for AssertArgoAppsHealthy
+	// and nothing else; the probes are a SECOND, independent wait that used to spend against a ctx
+	// reserving nothing for them. Until #2652 that only touched hetzner, where the store is Ready in
+	// seconds — from there it fires on all four managed clouds, i.e. exactly the clouds where the
+	// store is the thing hypothesised to be missing and the poll therefore runs long.
+	//
+	// Sized from the grid itself, so adding a probed cell moves the ladder without anyone
+	// remembering to.
+	if MaxConfigEnabled() {
+		add("max-config-probe", MaxConfigProbeBudget(provider))
+	}
 
 	soakDur, soakOn, err := parseSoakDuration(os.Getenv("ALETHIA_E2E_SOAK"))
 	if err != nil {
