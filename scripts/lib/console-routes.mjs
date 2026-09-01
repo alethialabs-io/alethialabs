@@ -1,0 +1,655 @@
+#!/usr/bin/env node
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// The ONE definition of "the console's private route set", shared by every consumer in the
+// console-UI conformance wave: the static shared-surface matchers, the route-state gate, the live
+// Playwright audit project, and the scoreboard generator.
+//
+// It is a separate module for the same reason `scripts/lib/ts-coverage-measure.mjs` is: there is
+// more than one consumer, and when two of them define the subject differently, one of them is
+// lying — and here the subject IS the denominator of every score the wave reports. A route the
+// audit never visited and a route that scored zero are indistinguishable in a report whose route
+// list came from somewhere else.
+//
+//   node scripts/lib/console-routes.mjs              # print the manifest as JSON
+//   node scripts/lib/console-routes.mjs --summary    # one line per route, for eyeballing
+//   node scripts/lib/console-routes.mjs --self-test
+//
+// Do NOT pipe it. `node scripts/lib/console-routes.mjs | tail` reports TAIL's exit code, which is
+// always 0, and every raise below becomes invisible.
+//
+// ── WHY IT RAISES INSTEAD OF RETURNING [] ────────────────────────────────────────────────────
+//
+// A scan that finds nothing and a tree with nothing wrong produce the same value, and the whole
+// wave is built on top of this one. If `app/(private)` is renamed, moved into another route group,
+// or simply mistyped by a caller, every downstream check would report a clean bill of health over
+// zero files — the exact failure `scripts/check-shared-surface.mjs` grew census floors to prevent
+// and `apps/console/scripts/check-dead-code.mjs` grew entry-glob assertions to prevent. So:
+// zero routes RAISES, an unreadable directory RAISES, and a page whose segment chain cannot be
+// resolved RAISES. There is no "0 routes, all good" branch in this file, deliberately.
+//
+// ── WHAT IS DERIVED VS. WHAT IS DECLARED ─────────────────────────────────────────────────────
+//
+// Everything about the route tree is derived by walking it. The one thing that could have been a
+// hand-written list — WHICH components count as a page shell — is derived too, by scanning
+// `apps/console/components/**` for an exported `*Shell` and matching the layout chain against
+// what it finds. A typed list of four shell names would stop covering the day a fifth shipped,
+// and it would stop covering SILENTLY, which is the failure mode this repo has paid for most
+// often. `AuthShell` is found and then excluded by scope, not by omission: it wraps `(public)`
+// only, and this manifest is the PRIVATE app.
+
+import {
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+/**
+ * Bumped when a record field changes meaning. A consumer that pins a version cannot silently read
+ * a field that now means something else.
+ */
+export const RECORD_VERSION = 1;
+
+/** Next.js segment-level files whose nearest ancestor-or-self occurrence a page inherits. */
+const BOUNDARY_FILES = /** @type {const} */ ([
+	"layout",
+	"loading",
+	"error",
+	"not-found",
+	"template",
+]);
+
+/** Directories under `app/` that never contribute a URL segment. */
+const isRouteGroup = (seg) => seg.startsWith("(") && seg.endsWith(")");
+/** `@slot` — a parallel route. None exist today; if one appears the caller should know. */
+const isParallelSlot = (seg) => seg.startsWith("@");
+/** `_private` — a Next.js private folder, opted out of routing entirely. */
+const isPrivateFolder = (seg) => seg.startsWith("_");
+
+/**
+ * JSX is present iff the source closes or self-closes a tag. Deliberately NOT `<[A-Za-z]`, which
+ * matches `Array<string>` and every other TypeScript generic — the redirect-only pages this
+ * distinguishes are full of `Promise<{ org: string }>`.
+ */
+const hasJsx = (src) => /<\/[A-Za-z]/.test(src) || /\/>/.test(src);
+
+/**
+ * True when every quote character is closed before `index` on this line — i.e. `index` is NOT
+ * inside a string literal that opened on this line. Deliberately conservative in the LOUD
+ * direction: an apostrophe in JSX text leaves the counts odd, so a comment after it is scanned as
+ * code and can only produce a false positive, never a skipped line.
+ */
+function quotesClosedBefore(line, index) {
+	let dq = 0;
+	let sq = 0;
+	let bt = 0;
+	for (let i = 0; i < index; i++) {
+		const c = line[i];
+		if (c === "\\") {
+			i++;
+			continue;
+		}
+		if (c === '"') dq++;
+		else if (c === "'") sq++;
+		else if (c === "`") bt++;
+	}
+	return dq % 2 === 0 && sq % 2 === 0 && bt % 2 === 0;
+}
+
+/**
+ * Blank every comment, line by line, keeping one output line per input line.
+ *
+ * ── WHY THIS IS A COPY, AND WHAT SHOULD HAPPEN TO IT ─────────────────────────────────────────
+ *
+ * This is the reviewed implementation from `scripts/check-shared-surface.mjs`, not a second
+ * attempt at the problem. A naive `source.replace(/\/\*[\s\S]*?\*\//g, "")` plus a brace count
+ * was written here first and RAISED on `components/agent/agent-knowledge-panel.tsx` — 12 opens
+ * against 13 closes — because a bare `/*` mid-line is indistinguishable from a glob inside a
+ * string (`"apps/*\/**"`), and blanking from there swallows live code. Two definitions of "is this
+ * a comment" means one of them is wrong, and the wrong one here does not report a finding: it
+ * refuses a file, or silently blanks the code a predicate was going to read.
+ *
+ * It is COPIED rather than imported because `scripts/check-shared-surface.mjs` runs its entire
+ * check at import time — it has no entrypoint guard, so `import { stripComments } from` it would
+ * execute the guard and can `process.exit(1)`. This module IS import-safe (see the CLI guard at
+ * the foot of the file).
+ *
+ * **Hand-off:** unit #2 of this wave owns `check-shared-surface.mjs`. It should import
+ * `stripComments` from here and delete its own copy — an edit entirely inside its own scope —
+ * which collapses the two definitions back into one. Until then, a change to either must be made
+ * to both, and that is a debt, not a design.
+ *
+ * @returns {{lines: string[], unterminated: boolean}} `unterminated` when a block comment was
+ *   still open at EOF — the one state in which this has blanked live code, so the caller must
+ *   refuse the file rather than read it.
+ */
+export function stripCommentLines(source) {
+	/** @type {string[]} */
+	const out = [];
+	let inBlock = false;
+	for (const line of source.split("\n")) {
+		if (inBlock) {
+			const end = line.indexOf("*/");
+			if (end === -1) {
+				out.push("");
+				continue;
+			}
+			inBlock = false;
+			out.push(line.slice(end + 2));
+			continue;
+		}
+		const trimmed = line.trimStart();
+		if (trimmed.startsWith("//")) {
+			out.push("");
+			continue;
+		}
+		// `{/*` is taken anywhere on the line PROVIDED the quotes ahead of it are closed: a brace
+		// followed by a block-comment open, outside a string, is a JSX comment and can be nothing
+		// else. A bare `/*` is only taken when it OPENS the line.
+		const jsx = line.indexOf("{/*");
+		const jsxOpen = jsx !== -1 && quotesClosedBefore(line, jsx) ? jsx + 1 : -1;
+		const open = jsxOpen !== -1 ? jsxOpen : trimmed.startsWith("/*") ? line.indexOf("/*") : -1;
+		if (open === -1) {
+			out.push(line);
+			continue;
+		}
+		const end = line.indexOf("*/", open + 2);
+		if (end === -1) {
+			inBlock = true;
+			out.push(line.slice(0, open));
+			continue;
+		}
+		out.push(line.slice(0, open) + line.slice(end + 2));
+	}
+	return { lines: out, unterminated: inBlock };
+}
+
+/** `stripCommentLines`, raising on the one state where it has blanked live code. */
+function stripComments(src, label) {
+	const { lines, unterminated } = stripCommentLines(src);
+	if (unterminated) {
+		throw new Error(
+			`${label}: a block comment is still open at EOF — refusing to read it, because ` +
+				`everything after the opener has been blanked and would silently stop matching`,
+		);
+	}
+	return lines.join("\n");
+}
+
+function readDirOrRaise(dir) {
+	try {
+		return readdirSync(dir, { withFileTypes: true });
+	} catch (err) {
+		// An unreadable directory RAISES. Counting it as empty is how a scan reports green over a
+		// tree it never read.
+		throw new Error(`cannot read ${dir}: ${err.message}`);
+	}
+}
+
+function readFileOrRaise(file) {
+	try {
+		return readFileSync(file, "utf8");
+	} catch (err) {
+		throw new Error(`cannot read ${file}: ${err.message}`);
+	}
+}
+
+/**
+ * Every exported `*Shell` component under `apps/console/components/**`, as
+ * `{ name, file }`. Derived, never typed — see the header.
+ */
+export function discoverShells(componentsDir) {
+	/** @type {{name: string, file: string}[]} */
+	const found = [];
+	const walk = (dir) => {
+		for (const entry of readDirOrRaise(dir)) {
+			const full = path.join(dir, entry.name);
+			if (entry.isDirectory()) {
+				walk(full);
+				continue;
+			}
+			if (!entry.name.endsWith(".tsx")) continue;
+			const src = stripComments(readFileOrRaise(full), full);
+			for (const m of src.matchAll(
+				/export\s+(?:async\s+)?(?:function|const)\s+([A-Z][A-Za-z0-9]*Shell)\b/g,
+			)) {
+				found.push({ name: m[1], file: full });
+			}
+		}
+	};
+	walk(componentsDir);
+	if (found.length === 0) {
+		throw new Error(
+			`no exported *Shell component found under ${componentsDir} — the shell scan is broken, ` +
+				`not the tree (every private page is wrapped by one)`,
+		);
+	}
+	return found;
+}
+
+/**
+ * Resolve one page file into a route record.
+ *
+ * @param {object} args
+ * @param {string} args.appDir      absolute path to `apps/console/app`
+ * @param {string} args.pageFile    absolute path to a `page.tsx`
+ * @param {Map<string, Set<string>>} args.boundaries  dir → set of boundary names present
+ * @param {{name: string, file: string}[]} args.shells
+ * @param {string} args.repoRoot
+ */
+function toRecord({ appDir, pageFile, boundaries, shells, repoRoot }) {
+	const dir = path.dirname(pageFile);
+	const rel = path.relative(appDir, dir);
+	// `path.relative` gives "" for the app root itself; split would then yield [""].
+	const segments = rel === "" ? [] : rel.split(path.sep);
+
+	for (const seg of segments) {
+		if (isParallelSlot(seg)) {
+			throw new Error(
+				`${pageFile}: parallel route slot "${seg}" — no consumer of this manifest handles ` +
+					`slots, and silently flattening one would report a route that does not exist`,
+			);
+		}
+		if (isPrivateFolder(seg)) {
+			throw new Error(`${pageFile}: lives under private folder "${seg}" but declares a page`);
+		}
+	}
+
+	const urlSegments = segments.filter((s) => !isRouteGroup(s));
+	const route = urlSegments.length === 0 ? "/" : `/${urlSegments.join("/")}`;
+
+	// `[org]` → org · `[...rest]` → rest (catch-all) · `[[...rest]]` → rest (optional catch-all)
+	const params = urlSegments
+		.filter((s) => s.startsWith("[") || s.startsWith("[["))
+		.map((s) => ({
+			segment: s,
+			name: s.replace(/^\[+\.{0,3}/, "").replace(/\]+$/, ""),
+			catchAll: s.includes("..."),
+			optional: s.startsWith("[["),
+		}));
+
+	// ── Nearest ancestor-or-self boundary, per Next.js segment semantics ─────────────────────
+	// A `loading.tsx` at a segment covers that segment AND everything nested below it, so the one
+	// a page actually renders is the CLOSEST, not merely "one exists somewhere above". Predicate
+	// T1 turns on that distinction: `~/jobs/[id]` has an ancestor loading and it is the wrong one.
+	/** @type {Record<string, {file: string|null, own: boolean, distance: number|null}>} */
+	const inherited = {};
+	/** @type {string[]} */
+	const layoutChain = [];
+
+	for (const name of BOUNDARY_FILES) {
+		inherited[name] = { file: null, own: false, distance: null };
+	}
+
+	// Walk self → root. `depth` counts segments above the page's own directory.
+	for (let depth = 0; depth <= segments.length; depth++) {
+		const ancestorSegments = segments.slice(0, segments.length - depth);
+		const ancestorDir = path.join(appDir, ...ancestorSegments);
+		const present = boundaries.get(ancestorDir) ?? new Set();
+		for (const name of BOUNDARY_FILES) {
+			if (!present.has(name)) continue;
+			if (inherited[name].file === null) {
+				inherited[name] = {
+					file: path.relative(repoRoot, path.join(ancestorDir, `${name}.tsx`)),
+					own: depth === 0,
+					distance: depth,
+				};
+			}
+			if (name === "layout") {
+				layoutChain.unshift(path.relative(repoRoot, path.join(ancestorDir, "layout.tsx")));
+			}
+		}
+	}
+
+	// ── Which shell owns this page ───────────────────────────────────────────────────────────
+	// The innermost shell mounted anywhere in the layout chain. It is the innermost one that owns
+	// the content width (predicates S1–S4): `[project]/settings/layout.tsx` mounts SettingsShell
+	// inside ProjectShell inside AppShell, and the 1200px belongs to the SettingsShell.
+	/** @type {string[]} */
+	const shellChain = [];
+	for (const layoutRel of layoutChain) {
+		const src = stripComments(
+			readFileOrRaise(path.join(repoRoot, layoutRel)),
+			layoutRel,
+		);
+		for (const shell of shells) {
+			// A JSX mount (`<AppShell`), not a mere import — a layout may import a type or a helper
+			// from the same module without rendering it.
+			if (new RegExp(`<${shell.name}\\b`).test(src) && !shellChain.includes(shell.name)) {
+				shellChain.push(shell.name);
+			}
+		}
+	}
+
+	const pageSrcRaw = readFileOrRaise(pageFile);
+	const pageSrc = stripComments(pageSrcRaw, pageFile);
+
+	return {
+		route,
+		file: path.relative(repoRoot, pageFile),
+		dir: path.relative(repoRoot, dir),
+		segments,
+		urlSegments,
+		params,
+		/** No JSX anywhere and a `redirect()` call: the page renders nothing a user can look at. */
+		isRedirectOnly: /\bredirect\s*\(/.test(pageSrc) && !hasJsx(pageSrc),
+		/** T4. `generateMetadata` may live on a sibling layout for a client page — hence both. */
+		hasMetadata:
+			/\bexport\s+(?:const|async\s+function|function)\s+(?:metadata|generateMetadata)\b/.test(
+				pageSrc,
+			) ||
+			(inherited.layout.own &&
+				/\bexport\s+(?:const|async\s+function|function)\s+(?:metadata|generateMetadata)\b/.test(
+					stripComments(
+						readFileOrRaise(path.join(repoRoot, inherited.layout.file)),
+						inherited.layout.file,
+					),
+				)),
+		boundaries: inherited,
+		layoutChain,
+		shellChain,
+		/** The width owner, or `null` when no known shell wraps the page at all. */
+		shell: shellChain.length ? shellChain[shellChain.length - 1] : null,
+	};
+}
+
+/**
+ * Collect every private console route.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.repoRoot]  repository root; defaults to two levels above this file
+ * @param {string} [opts.scope]     app subdirectory to walk, relative to `apps/console/app`
+ * @returns {{version: number, appDir: string, scope: string, routes: object[], shells: object[]}}
+ */
+export function collectConsoleRoutes(opts = {}) {
+	const here = path.dirname(fileURLToPath(import.meta.url));
+	const repoRoot = opts.repoRoot ?? path.resolve(here, "..", "..");
+	const scope = opts.scope ?? "(private)";
+	const appDir = path.join(repoRoot, "apps", "console", "app");
+	const scopeDir = path.join(appDir, scope);
+	const componentsDir = path.join(repoRoot, "apps", "console", "components");
+
+	// Fail on the SCOPE, not on the app root: `app/` existing proves nothing about `(private)`
+	// still being called that.
+	let scopeStat;
+	try {
+		scopeStat = statSync(scopeDir);
+	} catch {
+		throw new Error(
+			`${scopeDir} does not exist — the private route group has moved or been renamed. Every ` +
+				`consumer of this manifest would otherwise report a clean tree over zero routes.`,
+		);
+	}
+	if (!scopeStat.isDirectory()) throw new Error(`${scopeDir} is not a directory`);
+
+	const shells = discoverShells(componentsDir);
+
+	/** @type {string[]} */
+	const pageFiles = [];
+	/** @type {Map<string, Set<string>>} */
+	const boundaries = new Map();
+
+	// Boundaries are collected from the WHOLE app tree, not just the scope: a page inside
+	// `(private)` inherits `app/error.tsx` and `app/layout.tsx`, which sit above it.
+	const walk = (dir, inScope) => {
+		/** @type {Set<string>} */
+		const here = new Set();
+		for (const entry of readDirOrRaise(dir)) {
+			const full = path.join(dir, entry.name);
+			if (entry.isDirectory()) {
+				walk(full, inScope || full === scopeDir);
+				continue;
+			}
+			const base = entry.name.replace(/\.tsx$/, "");
+			if (entry.name === "page.tsx") {
+				if (inScope) pageFiles.push(full);
+				continue;
+			}
+			if (entry.name.endsWith(".tsx") && BOUNDARY_FILES.includes(base)) here.add(base);
+		}
+		if (here.size) boundaries.set(dir, here);
+	};
+	walk(appDir, false);
+
+	if (pageFiles.length === 0) {
+		throw new Error(
+			`no page.tsx found under ${scopeDir} — this is a broken scan, not an empty app. ` +
+				`Refusing to hand every downstream check a zero-route manifest it would report green over.`,
+		);
+	}
+
+	const routes = pageFiles
+		.sort()
+		.map((pageFile) => toRecord({ appDir, pageFile, boundaries, shells, repoRoot }));
+
+	// Two routes resolving to one URL means the resolver dropped a distinguishing segment.
+	const seen = new Map();
+	for (const r of routes) {
+		if (seen.has(r.route)) {
+			throw new Error(
+				`route "${r.route}" is produced by two page files — ${seen.get(r.route)} and ${r.file}. ` +
+					`The segment resolver has dropped something that distinguishes them.`,
+			);
+		}
+		seen.set(r.route, r.file);
+	}
+
+	return {
+		version: RECORD_VERSION,
+		appDir: path.relative(repoRoot, appDir),
+		scope,
+		routes,
+		shells: shells.map((s) => ({ name: s.name, file: path.relative(repoRoot, s.file) })),
+	};
+}
+
+// ── self-test ────────────────────────────────────────────────────────────────────────────────
+// Fixtures over a real temporary tree, not mocks: the thing under test is filesystem walking and
+// Next.js segment semantics, and a mocked `readdirSync` would prove only that the mock agrees with
+// itself. Every assertion that matters here is about the NEAREST boundary, because that is the
+// distinction predicate T1 rests on and the one an "an ancestor exists" implementation gets wrong.
+
+function selfTest() {
+	let failures = 0;
+	const ok = (label, cond) => {
+		console.log(`${cond ? "ok  " : "FAIL"} - ${label}`);
+		if (!cond) failures++;
+	};
+	const raises = (label, fn, needle) => {
+		try {
+			fn();
+			console.log(`FAIL - ${label} (did not raise)`);
+			failures++;
+		} catch (err) {
+			const hit = !needle || err.message.includes(needle);
+			console.log(`${hit ? "ok  " : "FAIL"} - ${label}${hit ? "" : ` (wrong message: ${err.message})`}`);
+			if (!hit) failures++;
+		}
+	};
+
+	const root = mkdtempSync(path.join(tmpdir(), "console-routes-"));
+	const app = path.join(root, "apps", "console", "app");
+	const components = path.join(root, "apps", "console", "components");
+	const put = (rel, body) => {
+		const full = path.join(root, rel);
+		mkdirSync(path.dirname(full), { recursive: true });
+		writeFileSync(full, body);
+	};
+
+	put("apps/console/components/shell/app-shell.tsx", "export function AppShell() { return null; }");
+	put(
+		"apps/console/components/settings/settings-shell.tsx",
+		"export function SettingsShell() { return null; }",
+	);
+	put("apps/console/app/layout.tsx", "export default function L() { return null; }");
+	put("apps/console/app/error.tsx", "export default function E() { return null; }");
+	put("apps/console/app/(private)/layout.tsx", "export default function P() { return null; }");
+	put(
+		"apps/console/app/(private)/[org]/layout.tsx",
+		"import { AppShell } from '@/components/shell/app-shell';\nexport default function O() { return <AppShell />; }",
+	);
+	put("apps/console/app/(private)/[org]/loading.tsx", "export default function Sk() { return <div />; }");
+	put("apps/console/app/(private)/[org]/page.tsx", "export const metadata = {};\nexport default function Pg() { return <div />; }");
+	// A nested page with NO own loading — must inherit [org]'s at distance 2, not claim its own.
+	put("apps/console/app/(private)/[org]/~/deep/page.tsx", "export default function D() { return <div />; }");
+	// A nested page WITH its own loading — nearest must be itself, distance 0.
+	put("apps/console/app/(private)/[org]/~/near/loading.tsx", "export default function N() { return <div />; }");
+	put("apps/console/app/(private)/[org]/~/near/page.tsx", "export default function N2() { return <div />; }");
+	// Settings subtree: innermost shell must win over the outer AppShell.
+	put(
+		"apps/console/app/(private)/[org]/~/settings/layout.tsx",
+		"import { SettingsShell } from '@/components/settings/settings-shell';\nexport default function S() { return <SettingsShell />; }",
+	);
+	// The generic here is `Record<string, …>`, NOT `Promise<{ … }>`, and the difference is the whole
+	// assertion. `<{` cannot match a naive `/<[A-Za-z]/` JSX detector, so a fixture using only
+	// `Promise<{ org: string }>` passes whether the detector is right or wrong — measured: mutating
+	// `hasJsx` to the naive form left the self-test fully green. `Record<string,` is what the real
+	// `/dashboard/[[...rest]]` page contains and what actually separates the two implementations.
+	put(
+		"apps/console/app/(private)/[org]/~/settings/page.tsx",
+		"import { redirect } from 'next/navigation';\n" +
+			"export default async function SI({ searchParams }: { searchParams: Promise<Record<string, string[] | undefined>> }) {\n" +
+			"  const sp = await searchParams; redirect(`/x/${Object.keys(sp).length}`);\n}",
+	);
+
+	const m = collectConsoleRoutes({ repoRoot: root });
+	const by = (r) => m.routes.find((x) => x.route === r);
+
+	// Four page.tsx are placed above: [org], [org]/~/deep, [org]/~/near, [org]/~/settings.
+	// Asserted against that count and not against whatever the walker returned — a self-test whose
+	// expected value is read back out of the thing under test proves only that it is consistent.
+	ok("walks the private scope and finds every page", m.routes.length === 4);
+	ok("route groups are dropped from the URL", !!by("/[org]"));
+	ok("a literal `~` segment survives", !!by("/[org]/~/deep"));
+	ok("dynamic params are named", by("/[org]").params[0]?.name === "org");
+
+	ok(
+		"a page with NO own loading inherits the NEAREST ancestor's",
+		by("/[org]/~/deep").boundaries.loading.own === false &&
+			by("/[org]/~/deep").boundaries.loading.distance === 2,
+	);
+	ok(
+		"a page WITH its own loading resolves to itself at distance 0",
+		by("/[org]/~/near").boundaries.loading.own === true &&
+			by("/[org]/~/near").boundaries.loading.distance === 0,
+	);
+	ok(
+		"an ancestor error boundary at the app root is found across the route group",
+		by("/[org]").boundaries.error.distance === 2,
+	);
+	ok("a missing boundary is null, not a false positive", by("/[org]").boundaries["not-found"].file === null);
+
+	ok("the innermost shell wins", by("/[org]/~/settings").shell === "SettingsShell");
+	ok("the outer shell is still recorded in the chain", by("/[org]/~/settings").shellChain.includes("AppShell"));
+	ok("shells are discovered, not typed", m.shells.length === 2);
+
+	ok("a redirect-only page is flagged", by("/[org]/~/settings").isRedirectOnly === true);
+	ok("a rendering page is NOT flagged as redirect-only", by("/[org]").isRedirectOnly === false);
+	ok(
+		"a TypeScript generic is not mistaken for JSX",
+		by("/[org]/~/settings").isRedirectOnly === true, // its source is full of `Promise<{ org: string }>`
+	);
+	ok("metadata is detected", by("/[org]").hasMetadata === true);
+	ok("absent metadata is not invented", by("/[org]/~/deep").hasMetadata === false);
+
+	// ── the anti-green controls: each must RAISE, not return empty ──────────────────────────
+	const empty = mkdtempSync(path.join(tmpdir(), "console-routes-empty-"));
+	mkdirSync(path.join(empty, "apps", "console", "app", "(private)"), { recursive: true });
+	mkdirSync(path.join(empty, "apps", "console", "components"), { recursive: true });
+	raises(
+		"an empty components tree RAISES rather than finding no shells",
+		() => collectConsoleRoutes({ repoRoot: empty }),
+		"shell scan is broken",
+	);
+
+	const noShellNeeded = mkdtempSync(path.join(tmpdir(), "console-routes-nopages-"));
+	mkdirSync(path.join(noShellNeeded, "apps", "console", "app", "(private)"), { recursive: true });
+	mkdirSync(path.join(noShellNeeded, "apps", "console", "components"), { recursive: true });
+	writeFileSync(
+		path.join(noShellNeeded, "apps", "console", "components", "s.tsx"),
+		"export function AppShell() { return null; }",
+	);
+	raises(
+		"zero pages RAISES rather than returning an empty manifest",
+		() => collectConsoleRoutes({ repoRoot: noShellNeeded }),
+		"broken scan, not an empty app",
+	);
+
+	raises(
+		"a missing scope directory RAISES and names the rename",
+		() => collectConsoleRoutes({ repoRoot: root, scope: "(nope)" }),
+		"has moved or been renamed",
+	);
+
+	const badComment = mkdtempSync(path.join(tmpdir(), "console-routes-comment-"));
+	mkdirSync(path.join(badComment, "apps", "console", "components"), { recursive: true });
+	writeFileSync(
+		path.join(badComment, "apps", "console", "components", "s.tsx"),
+		"/* opened and never closed\nexport function AppShell() { return null; }",
+	);
+	mkdirSync(path.join(badComment, "apps", "console", "app", "(private)"), { recursive: true });
+	raises(
+		"an unterminated block comment REFUSES its file",
+		() => collectConsoleRoutes({ repoRoot: badComment }),
+		"still open at EOF",
+	);
+
+	// A mutation the real tree cannot exercise: two pages resolving to one URL.
+	const dup = mkdtempSync(path.join(tmpdir(), "console-routes-dup-"));
+	const dupPut = (rel, body) => {
+		const full = path.join(dup, rel);
+		mkdirSync(path.dirname(full), { recursive: true });
+		writeFileSync(full, body);
+	};
+	dupPut("apps/console/components/s.tsx", "export function AppShell() { return null; }");
+	dupPut("apps/console/app/(private)/(a)/x/page.tsx", "export default function A() { return <div />; }");
+	dupPut("apps/console/app/(private)/(b)/x/page.tsx", "export default function B() { return <div />; }");
+	raises(
+		"two pages resolving to one URL RAISES",
+		() => collectConsoleRoutes({ repoRoot: dup }),
+		"produced by two page files",
+	);
+
+	for (const d of [root, empty, noShellNeeded, badComment, dup]) rmSync(d, { recursive: true, force: true });
+
+	console.log(failures === 0 ? "\nself-test: all passed" : `\nself-test: ${failures} FAILED`);
+	return failures === 0 ? 0 : 1;
+}
+
+// ── CLI ──────────────────────────────────────────────────────────────────────────────────────
+const invokedDirectly =
+	process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (invokedDirectly) {
+	const arg = process.argv[2];
+	if (arg === "--self-test") {
+		process.exit(selfTest());
+	}
+	const manifest = collectConsoleRoutes();
+	if (arg === "--summary") {
+		console.log(`${manifest.routes.length} private routes · shells: ${manifest.shells.map((s) => s.name).join(", ")}\n`);
+		for (const r of manifest.routes) {
+			const ld = r.boundaries.loading;
+			const loading = ld.file === null ? "no-loading" : ld.own ? "own" : `inherited+${ld.distance}`;
+			console.log(
+				[
+					r.route.padEnd(42),
+					(r.shell ?? "NO-SHELL").padEnd(15),
+					loading.padEnd(13),
+					r.hasMetadata ? "meta" : "NO-META",
+					r.isRedirectOnly ? " redirect-only" : "",
+				].join(" "),
+			);
+		}
+	} else {
+		console.log(JSON.stringify(manifest, null, "\t"));
+	}
+}
