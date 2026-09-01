@@ -163,6 +163,41 @@ is never reported unwired — there is no variable to set, and a dispatch reache
 maintainer must actually wire can be `unwired`, and a gate the workflow never mentions is
 `no vehicle`, which is a different remedy.
 
+## §5 · The CLI programme — epic #3612
+
+Predicate #4 asks for a `cli-demo` proof row per cloud. Reaching it is not one unit of work, so it
+is decomposed as a programme, and **#3612** is the umbrella: the census it starts from, the rulings
+the maintainer has made, the wave ordering, and the resume protocol.
+
+Two things sit under that predicate, and only the first is obvious:
+
+- **The CLI cannot be driven comfortably.** The bar asks whether `alethia <cmd> --help` exits 0,
+  which the enterprise-demo tutorial satisfies while asking a reader to hand-assemble a four-field
+  colon tuple three times and copy four opaque IDs between commands. So a `cli_ux` ratchet **will
+  join** `cli_gap` — it is not declared yet, and §0's ceiling table is the place it becomes real,
+  in the wave that implements it. Its intended numbers: copied placeholders in the golden-path
+  docs, commands with no interactive path, entries in the CLI surface allowlist, and `Mirrors the
+  Go X` claims with no mechanism behind them. Each may only decrease, and each must fail loudly at
+  a zero census.
+- **The CLI and the console are two implementations of one product.** A census of pure-logic pairs
+  found rules written twice on both sides, several of them disagreeing — including both ends of a
+  fail-closed gate and a path-traversal grammar looser than the shared one beside it. The tally
+  lives on #3612, where closing a lane updates it; a number typed here would be stale the first
+  time a wave lands and nothing would regenerate it.
+
+Sharing is decided by what the thing *is*, not by which language reached it first. Data — enums,
+vocabulary, regexes, limits, tokens — is codegen'd TS to Go and diff-gated. An algorithm gets a
+generated conformance table both sides are tested against, because what must agree is the output.
+A struct crossing the wire gets a fixture plus a strict decode in both directions.
+
+**Direction follows authority.** The console owns formatting, so TypeScript generates the formatter
+table; Go owns the apply gate, so Go generates the compat fixture. And the CLI's own validation is
+a provable subset: it may only ever reject what the server would certainly reject, so drift can
+make it too permissive — which the server catches — but never too strict.
+
+Work is claimed from the board, never hand-picked: `scripts/coordinate.sh --report`, then
+`scripts/claim-work.sh --class backend`.
+
 <!-- BEGIN GENERATED: programme-rollup · tree-derived · DO NOT EDIT BELOW -->
 
 ## Where the programme actually is
