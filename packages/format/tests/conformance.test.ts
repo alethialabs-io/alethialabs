@@ -140,17 +140,33 @@ const REQUIRED_IDS = [
 	// The used side humanises; the allowance never does. And it keeps its separator.
 	"quota/used-exceeds-allowance-is-not-clamped",
 	"quota/ALLOWANCE-KEEPS-THOUSANDS-SEPARATOR",
-	// Duration never rolls into hours — cmd/jobs_list.go disagrees today.
-	"duration/TWO-HOURS-DOES-NOT-ROLL-INTO-HOURS",
+	// Duration ROLLS into hours and drops the seconds. The disagreement with cmd/jobs_list.go is
+	// settled the CLI's way, so what needs pinning is the boundary in both directions: one second
+	// under the hour still reads in minutes, one hour exactly does not.
+	"duration/TWO-HOURS-ROLLS-INTO-HOURS",
+	"duration/JUST-UNDER-AN-HOUR-DOES-NOT-ROLL",
+	"duration/EXACTLY-AN-HOUR",
+	// The two rows the section floor was leaving unprotected: it stayed at 8 while the section grew
+	// to 13, so five rows could be deleted with every layer green — and naming WHICH may not vanish
+	// is stronger than saying how many.
+	"duration/hours-and-minutes-drop-the-seconds",
+	"duration/many-hours",
 	// hourCycle h23, not hour12:false.
 	"date/MIDNIGHT-IS-00-NOT-24",
 ];
 
-/** Per-section floors, so one section cannot be gutted while the total still clears. */
+/**
+ * Per-section floors, so one section cannot be gutted while the total still clears.
+ *
+ * A FLOOR MUST BE RAISED WHEN ROWS ARE ADDED. `duration` went to 13 rows while this said 8, so five
+ * could be deleted and every layer stayed green — which is the same inert-threshold defect the
+ * required-id list exists to cover, one level down. The floors are the weak half of that pair by
+ * construction: they answer "are there enough?" and never "are the right ones still here."
+ */
 const SECTION_FLOOR: Record<string, number> = {
 	minutes: 12,
 	quota: 6,
-	duration: 8,
+	duration: 13,
 	date: 10,
 	bytes: 8,
 	money: 6,
