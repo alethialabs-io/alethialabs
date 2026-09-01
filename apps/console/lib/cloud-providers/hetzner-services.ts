@@ -284,6 +284,66 @@ function posInt(value: number | null | undefined, fallback: number): number {
  * Each id is unique per node (`db-<name>` / `cache-<name>` / `queue-<name>` / `registry-<name>`) so the runner's
  * `AddOnAppName` yields a distinct ArgoCD Application, and health reads back per component.
  */
+/**
+ * The id prefix each Hetzner-charted node kind gets, and the DNS-1123 rule that follows from it.
+ *
+ * These are the SINGLE definition: the `specs.push({ id: … })` sites below interpolate these
+ * constants, and `hetznerNodeNameProblem` derives its length bound from them. A gate that reports
+ * an emitter has to mirror every one of its conditions, and a hand-copied list of prefixes is a
+ * copy that decays the day a seventh kind ships.
+ *
+ * Note what is ABSENT and why: a `secret` node and a `chart repo` node get no id, because a secret
+ * is one KV entry inside the single project-wide Vault release rather than an object of its own.
+ * Their names never become a Kubernetes object name, so they are not bound by this rule.
+ */
+export const HETZNER_ADDON_ID_PREFIXES = {
+	databases: "db-",
+	topics: "topic-",
+	tables: "nosql-",
+	caches: "cache-",
+	registries: "registry-",
+	queues: "queue-",
+} as const;
+
+export type HetznerChartedKind = keyof typeof HETZNER_ADDON_ID_PREFIXES;
+
+/** Kubernetes' own ceiling for a label / object-name segment. */
+const DNS_1123_LABEL_MAX = 63;
+
+/** RFC-1123 DNS label: lower-case alphanumerics and hyphens, not starting or ending with one. */
+const DNS_1123_LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+/**
+ * Why a node name is unusable on Hetzner, or `null` when it is fine.
+ *
+ * The length bound is DERIVED — `63 - prefix.length` — not asserted. An earlier version of this
+ * rule hard-coded 40, which is a number no emitter produces: `db-` plus a 45-character name is 48
+ * and deploys today. A cap that refuses a name the cluster accepts introduces a failure instead of
+ * surfacing one.
+ */
+export function hetznerNodeNameProblem(
+	kind: HetznerChartedKind,
+	name: string,
+): string | null {
+	const prefix = HETZNER_ADDON_ID_PREFIXES[kind];
+	const max = DNS_1123_LABEL_MAX - prefix.length;
+	if (name.length > max) {
+		return (
+			`"${name}" is ${name.length} characters; on Hetzner it becomes the Kubernetes object ` +
+			`"${prefix}${name}", and Kubernetes allows at most ${DNS_1123_LABEL_MAX}. Use ${max} ` +
+			`characters or fewer.`
+		);
+	}
+	if (!DNS_1123_LABEL_RE.test(name)) {
+		return (
+			`"${name}" is not a valid DNS-1123 label. On Hetzner it becomes the Kubernetes object ` +
+			`"${prefix}${name}", so it must be lower-case letters, digits or hyphens, and start and ` +
+			`end with a letter or digit.`
+		);
+	}
+	return null;
+}
+
 export function hetznerDataServicesToAddOns(
 	services: HetznerDataServices,
 ): AddOnInstallSpec[] {
@@ -348,7 +408,7 @@ export function hetznerDataServicesToAddOns(
 			cluster.imageName = `ghcr.io/cloudnative-pg/postgresql:${db.engine_version}`;
 		}
 		specs.push({
-			id: `db-${db.name}`,
+			id: `${HETZNER_ADDON_ID_PREFIXES.databases}${db.name}`,
 			mode: "managed",
 			chartRepo: HETZNER_CHARTS.cnpgCluster.chartRepo,
 			chart: HETZNER_CHARTS.cnpgCluster.chart,
@@ -364,7 +424,7 @@ export function hetznerDataServicesToAddOns(
 	// on.
 	for (const topic of topics) {
 		specs.push({
-			id: `topic-${topic.name}`,
+			id: `${HETZNER_ADDON_ID_PREFIXES.topics}${topic.name}`,
 			mode: "managed",
 			chartRepo: HETZNER_CHARTS.nats.chartRepo,
 			chart: HETZNER_CHARTS.nats.chart,
@@ -404,7 +464,7 @@ export function hetznerDataServicesToAddOns(
 	}
 	for (const table of nosqlTables) {
 		specs.push({
-			id: `nosql-${table.name}`,
+			id: `${HETZNER_ADDON_ID_PREFIXES.tables}${table.name}`,
 			mode: "managed",
 			chartRepo: HETZNER_CHARTS.scyllaCluster.chartRepo,
 			chart: HETZNER_CHARTS.scyllaCluster.chart,
@@ -418,7 +478,7 @@ export function hetznerDataServicesToAddOns(
 	// Caches → Valkey (standalone, or replication when >1 node).
 	for (const cache of caches) {
 		specs.push({
-			id: `cache-${cache.name}`,
+			id: `${HETZNER_ADDON_ID_PREFIXES.caches}${cache.name}`,
 			mode: "managed",
 			chartRepo: HETZNER_CHARTS.valkey.chartRepo,
 			chart: HETZNER_CHARTS.valkey.chart,
@@ -435,7 +495,7 @@ export function hetznerDataServicesToAddOns(
 	// database is still coming up. Matches the marketplace add-on's own wave.
 	for (const registry of registries) {
 		specs.push({
-			id: `registry-${registry.name}`,
+			id: `${HETZNER_ADDON_ID_PREFIXES.registries}${registry.name}`,
 			mode: "managed",
 			chartRepo: HETZNER_CHARTS.harbor.chartRepo,
 			chart: HETZNER_CHARTS.harbor.chart,
@@ -449,7 +509,7 @@ export function hetznerDataServicesToAddOns(
 	// Queues → RabbitMQ (single node in v1).
 	for (const queue of queues) {
 		specs.push({
-			id: `queue-${queue.name}`,
+			id: `${HETZNER_ADDON_ID_PREFIXES.queues}${queue.name}`,
 			mode: "managed",
 			chartRepo: HETZNER_CHARTS.rabbitmq.chartRepo,
 			chart: HETZNER_CHARTS.rabbitmq.chart,

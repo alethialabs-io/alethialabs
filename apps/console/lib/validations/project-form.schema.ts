@@ -317,6 +317,33 @@ const servicesInsert = createInsertSchema(projectServices, {
 	probe: serviceProbeSchema.nullable().optional(),
 });
 
+/**
+ * A component node's name.
+ *
+ * IT IS NOT VALIDATED AS A DNS LABEL HERE, AND THAT IS THE FIX FOR #3588, NOT AN OVERSIGHT.
+ *
+ * The rule is real, but it is a HETZNER rule. Only `hetznerDataServicesToAddOns` turns a node name
+ * into a Kubernetes object name (`db-` / `cache-` / `queue-` / `topic-` / `nosql-` / `registry-`),
+ * and it is reached only under `identity.provider === "hetzner"` (projects.ts). On AWS the same
+ * field goes raw into tofu: a table's name IS `table_name_suffix`, which
+ * `infra/templates/project/aws/modules/dynamodb/dynamodb.tf` uses as its `for_each` KEY. DynamoDB
+ * accepts `[A-Za-z0-9_.-]`, so `Orders.v2` is legal there and deploys today.
+ *
+ * Enforcing the label rule in this schema did two things, both bad, and neither visible from here:
+ *
+ *  1. Every write path re-parses the whole document, so an existing AWS project holding such a name
+ *     became UNSAVABLE — not blocked from deploying, unable to be edited at all.
+ *  2. The rename the error demanded re-keys that `for_each`, so tofu REPLACES the table. The
+ *     remedy the message named would have destroyed the data it was protecting.
+ *
+ * So the check moved to `buildConfigSnapshot`, next to the DNS and WAF gates, where the provider is
+ * known and where it can be scoped to the paths that CREATE — the same two constraints those gates
+ * already document: mirror the emitter exactly, and never wedge a project that already exists.
+ */
+function nodeNameSchema(kind: string) {
+	return z.string().min(1, `${kind} name is required`);
+}
+
 const autoFields = { id: true, created_at: true, updated_at: true } as const;
 const componentAutoFields = {
 	...autoFields,
@@ -347,9 +374,12 @@ export const environmentMatrixSchema = z
 				.string()
 				.min(1)
 				.max(40)
+				// Leading LETTER (stricter than a bare label) because this feeds a tofu state-path
+				// segment; the trailing character is constrained too, because `prod-` is not a valid
+				// DNS-1123 label and the old pattern accepted it.
 				.regex(
-					/^[a-z][a-z0-9-]*$/,
-					"Environment name must be lower-case alphanumeric or hyphen.",
+					/^[a-z]([a-z0-9-]*[a-z0-9])?$/,
+					"Environment name must be lower-case alphanumeric or hyphen, and must not end with a hyphen.",
 				),
 			stage: z.enum(environmentStage.enumValues),
 			placement_mode: z.enum(placementMode.enumValues),
@@ -358,7 +388,7 @@ export const environmentMatrixSchema = z
 			namespace: z
 				.string()
 				.max(63)
-				.regex(/^[a-z][a-z0-9-]*$/)
+				.regex(/^[a-z]([a-z0-9-]*[a-z0-9])?$/)
 				.nullish(),
 			is_default: z.boolean().optional(),
 		}),
@@ -509,26 +539,26 @@ const databaseItemSchema = databasesInsert.omit({
 	...componentAutoFields,
 	endpoint: true,
 	reader_endpoint: true,
-}).extend({ name: z.string().min(1, "Database name is required") });
+}).extend({ name: nodeNameSchema("Database") });
 
 const cacheItemSchema = cachesInsert.omit({
 	...componentAutoFields,
 	endpoint: true,
 	reader_endpoint: true,
-}).extend({ name: z.string().min(1, "Cache name is required") });
+}).extend({ name: nodeNameSchema("Cache") });
 
 const queueItemSchema = queuesInsert
 	.omit(componentAutoFields)
-	.extend({ name: z.string().min(1, "Queue name is required") });
+	.extend({ name: nodeNameSchema("Queue") });
 
 const topicItemSchema = topicsInsert
 	.omit(componentAutoFields)
-	.extend({ name: z.string().min(1, "Topic name is required") });
+	.extend({ name: nodeNameSchema("Topic") });
 
 const nosqlItemSchema = nosqlInsert
 	.omit(componentAutoFields)
 	.extend({
-		name: z.string().min(1, "Table name is required"),
+		name: nodeNameSchema("Table"),
 		partition_key: z.string().min(1, "Hash key is required"),
 	});
 
@@ -553,7 +583,7 @@ const secretItemSchema = secretsInsert
 		status: true,
 		status_message: true,
 	})
-	.extend({ name: z.string().min(1, "Secret name is required") })
+	.extend({ name: nodeNameSchema("Secret") })
 	.superRefine((value, ctx) => {
 		// Native is the default and needs no connector.
 		if (!value.provider || value.provider === "native") return;
@@ -617,7 +647,7 @@ const registryItemSchema = registriesInsert
 		// Output column (set after the first deploy), never designed by the user.
 		repository_url: true,
 	})
-	.extend({ name: z.string().min(1, "Registry name is required") })
+	.extend({ name: nodeNameSchema("Registry") })
 	.superRefine((value, ctx) => {
 		// Native is the default and needs no connector.
 		if (!value.provider || value.provider === "native") return;
@@ -674,7 +704,7 @@ const helmRegistryItemSchema = helmRegistriesInsert
 		status: true,
 		status_message: true,
 	})
-	.extend({ name: z.string().min(1, "Chart repo name is required") })
+	.extend({ name: nodeNameSchema("Chart repo") })
 	.superRefine((value, ctx) => {
 		const rule = value.provider ? HELM_REGISTRY_HOST_RULES[value.provider] : undefined;
 		if (!value.provider || !rule) {
@@ -715,7 +745,7 @@ const serviceItemSchema = servicesInsert
 		resolved_image: true,
 	})
 	.extend({
-		name: z.string().min(1, "Service name is required"),
+		name: nodeNameSchema("Service"),
 		type: z
 			.enum(["deployment", "job", "cronjob", "statefulset"])
 			.default("deployment"),
