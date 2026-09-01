@@ -137,6 +137,66 @@
         }
       ]
     },
+    "js_trim": {
+      "kind": "transform",
+      "cases": [
+        {
+          "id": "a-plain-key-is-untouched",
+          "in": "region",
+          "want": "region"
+        },
+        {
+          "id": "ascii-space-both-ends",
+          "in": "  region  ",
+          "want": "region"
+        },
+        {
+          "id": "tab-and-newline",
+          "in": "\tregion\n",
+          "want": "region"
+        },
+        {
+          "id": "bom-ufeff-IS-a-js-space-unlike-go",
+          "in": "﻿region",
+          "want": "region"
+        },
+        {
+          "id": "nel-u0085-is-NOT-a-js-space-unlike-go",
+          "in": "region",
+          "want": "region"
+        },
+        {
+          "id": "no-break-space-u00a0",
+          "in": " region",
+          "want": "region"
+        },
+        {
+          "id": "ideographic-space-u3000",
+          "in": "region　",
+          "want": "region"
+        },
+        {
+          "id": "line-separator-u2028",
+          "in": " region",
+          "want": "region"
+        },
+        {
+          "id": "whitespace-only-becomes-empty",
+          "in": "   ",
+          "want": ""
+        },
+        {
+          "id": "empty-stays-empty",
+          "in": "",
+          "want": ""
+        },
+        {
+          "id": "interior-space-is-kept",
+          "in": "a b",
+          "want": "a b"
+        }
+      ]
+    },
     "network_cidr_max_prefix": {
       "kind": "predicate",
       "cases": [
@@ -199,6 +259,24 @@
           "in": "10.0.0.0/33",
           "arg": 18,
           "want": false
+        },
+        {
+          "id": "a-leading-zero-octet",
+          "in": "010.0.0.0/8",
+          "arg": 18,
+          "want": false
+        },
+        {
+          "id": "a-zero-padded-octet",
+          "in": "10.00.0.0/16",
+          "arg": 18,
+          "want": false
+        },
+        {
+          "id": "a-zero-padded-prefix-which-go-still-accepts",
+          "in": "10.0.0.0/016",
+          "arg": 18,
+          "want": true
         },
         {
           "id": "azure-exactly-at-its-floor",

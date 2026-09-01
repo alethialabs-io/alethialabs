@@ -32,9 +32,11 @@ var predicates = map[string]Predicate{
 	// refuse `Alethia_project_id`, which the runner passes through as an ordinary customer
 	// variable — the CLI would then reject input the server accepts.
 	//
-	// The runner's disposition is DROP-with-a-warning, not reject, which is why the generated step
-	// carries SeverityWarn. The console form refuses the key outright, and may: a form exists to
-	// tell a user that a value will not do what they think before it is stored.
+	// The generated step carries SeverityReject, and which surface that mirrors matters. The RUNNER
+	// drops the key with a warning rather than failing — but the CLI never reaches the runner: it
+	// posts to /api/cli/projects/{id}/byo-iac, and as of #3670 that endpoint refuses a reserved key
+	// with a 400. So the server the CLI actually talks to does certainly reject it, and warning
+	// instead would send the user through a request that dies.
 	"not_reserved_tfvar_key": func(v string, _ *int) bool {
 		return !strings.HasPrefix(v, reservedTfvarPrefix)
 	},
@@ -68,7 +70,30 @@ var transforms = map[string]Transform{
 	// JS trims U+FEFF and Go does not, Go trims U+0085 and JS does not. Both edges are named cases
 	// in the conformance table.
 	"go_trim_space": strings.TrimSpace,
+
+	// String.prototype.trim() — the OTHER set, because `iacVarKeySchema` calls zod's `.trim()` and
+	// the console therefore judges (and stores) the JS-trimmed key.
+	//
+	// This has to cross over, and the first version of this PR got it wrong: the trim was declared
+	// `not-shared` on the reasoning that the runner only ever sees the already-normalised key. True
+	// of the runner, irrelevant to the CLI — the CLI judges what the USER typed, before anything is
+	// stored. With no trim on this side, `Check(iac_var_key, " region")` failed the pattern while
+	// the console accepted the same input and stored "region": the CLI refusing what the server
+	// accepts, which is the one direction the invariant forbids.
+	//
+	// The two sets are near mirror images, and the conformance table pins both crossings: U+FEFF is
+	// a JS space and not a Go one, U+0085 is a Go space and not a JS one.
+	"js_trim": func(v string) string { return strings.Trim(v, jsSpaceCutset) },
 }
+
+// jsSpaceCutset is ECMA-262's WhiteSpace ∪ LineTerminator: TAB, LF, VT, FF, CR, SP, NBSP, U+1680,
+// U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, U+3000 and U+FEFF (ZWNBSP).
+//
+// U+0085 (NEL) is deliberately ABSENT — it is `unicode.IsSpace` but not JS WhiteSpace, and that
+// asymmetry is the whole reason this cannot just call strings.TrimSpace.
+const jsSpaceCutset = "\t\n\v\f\r \u00a0\u1680" +
+	"\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a" +
+	"\u2028\u2029\u202f\u205f\u3000\ufeff"
 
 // reservedTfvarPrefix is stated here rather than imported because provisioner.byoReservedVarPrefix
 // is unexported. TestReservedTfvarPrefixMatchesTheProvisioner reads the provisioner's source and

@@ -32,19 +32,17 @@ var Specs = map[string]Spec{
 		ID:  "iac_var_key",
 		Why: "A BYO IaC variable name. The reserved alethia_ namespace was enforced only in Go, so the console stored alethia_project_id and the user then watched it vanish at apply.",
 		Steps: []Step{
+			{Kind: StepTransform, Severity: SeverityReject, Message: "leading and trailing whitespace is ignored", Rule: "js_trim"},
 			{Kind: StepMinLength, Severity: SeverityReject, Message: "Variable name is required.", Length: intPtr(1)},
 			{Kind: StepPattern, Severity: SeverityReject, Message: "Use a valid tfvar name (letters, digits, underscore).", Pattern: "^[A-Za-z_][A-Za-z0-9_]*$"},
-			{Kind: StepRule, Severity: SeverityWarn, Message: "\"alethia_\" is reserved for the platform context; the runner drops variables with this prefix.", Rule: "not_reserved_tfvar_key"},
-		},
-		Unshared: []UnsharedRule{
-			{Rule: "js_trim", Why: "A console-side normalisation, not a shared rule. The trimmed key is what gets STORED, so the runner only ever sees the normalised value and has nothing to mirror. It is String.prototype.trim() here, which is NOT Go's whitespace set — a difference that stays unreachable because the tfvar grammar below admits no whitespace at all."},
+			{Kind: StepRule, Severity: SeverityReject, Message: "Invalid variable name: the \"alethia_\" prefix is reserved for the platform context.", Rule: "not_reserved_tfvar_key"},
 		},
 	},
 	"network_cidr_block.alibaba": {
 		ID:  "network_cidr_block.alibaba",
 		Why: "network.cidr_block on alibaba. cloud.validateNetworkCIDR refuses a network the template cannot carve its subnets out of, and nothing in the console checked this field at all — so the only feedback was a failed apply. Applies to a project that PROVISIONS ITS OWN network; the apply gate returns early for a brownfield one.",
 		Steps: []Step{
-			{Kind: StepPattern, Severity: SeverityReject, Message: "Enter a valid IPv4 CIDR, for example 10.0.0.0/16, or leave it blank for the template default.", Pattern: "^$|^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"},
+			{Kind: StepPattern, Severity: SeverityReject, Message: "Enter a valid IPv4 CIDR, for example 10.0.0.0/16, or leave it blank for the template default.", Pattern: "^$|^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,3}$"},
 			{Kind: StepRule, Severity: SeverityReject, Message: "This cloud carves its subnets out of the network with cidrsubnet(), so it needs a /28 or wider. Try 10.0.0.0/16.", Rule: "network_cidr_max_prefix", RuleArg: intPtr(28)},
 		},
 	},
@@ -52,7 +50,7 @@ var Specs = map[string]Spec{
 		ID:  "network_cidr_block.aws",
 		Why: "network.cidr_block on aws. cloud.validateNetworkCIDR refuses a network the template cannot carve its subnets out of, and nothing in the console checked this field at all — so the only feedback was a failed apply. Applies to a project that PROVISIONS ITS OWN network; the apply gate returns early for a brownfield one.",
 		Steps: []Step{
-			{Kind: StepPattern, Severity: SeverityReject, Message: "Enter a valid IPv4 CIDR, for example 10.0.0.0/16, or leave it blank for the template default.", Pattern: "^$|^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"},
+			{Kind: StepPattern, Severity: SeverityReject, Message: "Enter a valid IPv4 CIDR, for example 10.0.0.0/16, or leave it blank for the template default.", Pattern: "^$|^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,3}$"},
 			{Kind: StepRule, Severity: SeverityReject, Message: "This cloud carves its subnets out of the network with cidrsubnet(), so it needs a /18 or wider. Try 10.0.0.0/16.", Rule: "network_cidr_max_prefix", RuleArg: intPtr(18)},
 		},
 	},
@@ -60,7 +58,7 @@ var Specs = map[string]Spec{
 		ID:  "network_cidr_block.azure",
 		Why: "network.cidr_block on azure. cloud.validateNetworkCIDR refuses a network the template cannot carve its subnets out of, and nothing in the console checked this field at all — so the only feedback was a failed apply. Applies to a project that PROVISIONS ITS OWN network; the apply gate returns early for a brownfield one.",
 		Steps: []Step{
-			{Kind: StepPattern, Severity: SeverityReject, Message: "Enter a valid IPv4 CIDR, for example 10.0.0.0/16, or leave it blank for the template default.", Pattern: "^$|^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"},
+			{Kind: StepPattern, Severity: SeverityReject, Message: "Enter a valid IPv4 CIDR, for example 10.0.0.0/16, or leave it blank for the template default.", Pattern: "^$|^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,3}$"},
 			{Kind: StepRule, Severity: SeverityReject, Message: "This cloud carves its subnets out of the network with cidrsubnet(), so it needs a /18 or wider. Try 10.0.0.0/16.", Rule: "network_cidr_max_prefix", RuleArg: intPtr(18)},
 		},
 	},
@@ -68,7 +66,7 @@ var Specs = map[string]Spec{
 		ID:  "network_cidr_block.gcp",
 		Why: "network.cidr_block on gcp. cloud.validateNetworkCIDR refuses a network the template cannot carve its subnets out of, and nothing in the console checked this field at all — so the only feedback was a failed apply. Applies to a project that PROVISIONS ITS OWN network; the apply gate returns early for a brownfield one.",
 		Steps: []Step{
-			{Kind: StepPattern, Severity: SeverityReject, Message: "Enter a valid IPv4 CIDR, for example 10.0.0.0/16, or leave it blank for the template default.", Pattern: "^$|^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"},
+			{Kind: StepPattern, Severity: SeverityReject, Message: "Enter a valid IPv4 CIDR, for example 10.0.0.0/16, or leave it blank for the template default.", Pattern: "^$|^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,3}$"},
 			{Kind: StepRule, Severity: SeverityReject, Message: "Enter a valid IPv4 CIDR, for example 10.0.0.0/16.", Rule: "network_cidr_max_prefix", RuleArg: intPtr(32)},
 		},
 	},
@@ -76,7 +74,7 @@ var Specs = map[string]Spec{
 		ID:  "network_cidr_block.hetzner",
 		Why: "network.cidr_block on hetzner. cloud.validateNetworkCIDR refuses a network the template cannot carve its subnets out of, and nothing in the console checked this field at all — so the only feedback was a failed apply. Applies to a project that PROVISIONS ITS OWN network; the apply gate returns early for a brownfield one.",
 		Steps: []Step{
-			{Kind: StepPattern, Severity: SeverityReject, Message: "Enter a valid IPv4 CIDR, for example 10.0.0.0/16, or leave it blank for the template default.", Pattern: "^$|^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$"},
+			{Kind: StepPattern, Severity: SeverityReject, Message: "Enter a valid IPv4 CIDR, for example 10.0.0.0/16, or leave it blank for the template default.", Pattern: "^$|^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,3}$"},
 			{Kind: StepRule, Severity: SeverityReject, Message: "This cloud carves its subnets out of the network with cidrsubnet(), so it needs a /22 or wider. Try 10.0.0.0/16.", Rule: "network_cidr_max_prefix", RuleArg: intPtr(22)},
 		},
 	},

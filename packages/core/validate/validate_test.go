@@ -100,12 +100,14 @@ func TestTheTransformRunsBeforeTheStepsThatFollowIt(t *testing.T) {
 	}
 }
 
-// TestReservedTfvarKeyWarnsAndNeverRejects is the invariant, stated as a test.
+// TestReservedTfvarKeyIsRejected pins WHICH server the CLI is held to.
 //
-// provisioner.coerceByoVarValues DROPS a reserved key with a warning; it does not fail the apply.
-// A CLI that refused the key would be refusing input the server accepts, which is the one direction
-// of drift this whole lane exists to prevent.
-func TestReservedTfvarKeyWarnsAndNeverRejects(t *testing.T) {
+// provisioner.coerceByoVarValues drops a reserved key with a warning rather than failing, and an
+// earlier version of this spec said SeverityWarn on that basis. But the CLI never reaches the
+// provisioner: it posts to /api/cli/projects/{id}/byo-iac, which refuses a reserved key with a 400.
+// Warning would walk the user into a request that dies, so the server the CLI actually talks to is
+// the one the severity mirrors.
+func TestReservedTfvarKeyIsRejected(t *testing.T) {
 	spec, ok := Get("iac_var_key")
 	if !ok {
 		t.Fatal("no iac_var_key spec")
@@ -114,16 +116,55 @@ func TestReservedTfvarKeyWarnsAndNeverRejects(t *testing.T) {
 	if len(findings) != 1 {
 		t.Fatalf("want exactly one finding for a reserved key, got %+v", findings)
 	}
-	if findings[0].Severity != SeverityWarn {
-		t.Errorf("a reserved tfvar key is severity %q; the runner DROPS it rather than failing, so the CLI must warn", findings[0].Severity)
+	if !Rejected(findings) {
+		t.Errorf("a reserved tfvar key produced %q; the endpoint the CLI posts to refuses it outright", findings[0].Severity)
+	}
+	// And the spec is not simply rejecting everything.
+	if findings := Check(spec, "region"); len(findings) != 0 {
+		t.Errorf("an ordinary tfvar name was refused: %+v", findings)
+	}
+}
+
+// TestTheKeyTransformRunsBeforeTheGrammar.
+//
+// `iacVarKeySchema` is `.trim().min(1).regex(...)`, so the console judges — and stores — the
+// TRIMMED key. The first version of this PR declared that trim `not-shared`, which emitted no step
+// and left this side running the pattern against the RAW value: ` region` was accepted by the
+// console and refused by the CLI. That is the CLI refusing what the server accepts, the one
+// direction the invariant forbids, so it gets its own test rather than riding along in a table.
+func TestTheKeyTransformRunsBeforeTheGrammar(t *testing.T) {
+	spec, ok := Get("iac_var_key")
+	if !ok {
+		t.Fatal("no iac_var_key spec")
+	}
+	if findings := Check(spec, " region"); len(findings) != 0 {
+		t.Errorf("a padded tfvar name was refused: %+v — the console accepts it and stores \"region\"", findings)
+	}
+	// The grammar is still enforced, so the assertion above is not passing because nothing is.
+	if !Rejected(Check(spec, "a b")) {
+		t.Error("an INTERIOR space was accepted; the trim is swallowing the grammar rather than feeding it")
+	}
+}
+
+// TestRejectedDistinguishesWarnFromReject.
+//
+// No SHIPPED spec carries SeverityWarn today — `iac_var_key` did until the endpoint it maps to
+// started refusing the key. The severity is still part of the emitted contract for the next rule
+// whose server-side disposition is a drop, so the discrimination is exercised here on a synthetic
+// spec rather than left to be discovered wrong the first time it matters.
+func TestRejectedDistinguishesWarnFromReject(t *testing.T) {
+	warn := Spec{ID: "synthetic", Steps: []Step{{Kind: StepRule, Severity: SeverityWarn, Rule: "not_reserved_tfvar_key"}}}
+	findings := Check(warn, "alethia_project_id")
+	if len(findings) != 1 {
+		t.Fatalf("want one finding, got %+v", findings)
 	}
 	if Rejected(findings) {
-		t.Error("Rejected() said yes for a key the runner merely drops")
+		t.Error("Rejected() said yes for a warn-only finding")
 	}
-	// The spec still rejects things the runner genuinely refuses, so the assertion above is not
-	// passing because nothing is ever rejected.
-	if !Rejected(Check(spec, "has a space")) {
-		t.Error("a tfvar name that fails the grammar was not rejected")
+
+	reject := Spec{ID: "synthetic", Steps: []Step{{Kind: StepRule, Severity: SeverityReject, Rule: "not_reserved_tfvar_key"}}}
+	if !Rejected(Check(reject, "alethia_project_id")) {
+		t.Error("Rejected() said no for a reject finding")
 	}
 }
 
@@ -207,7 +248,7 @@ func TestAcceptsAnAbsentValueOnlyWhereTheSchemaSaysSo(t *testing.T) {
 
 	// A present value still goes through Check, so the nil branch above is not the whole function.
 	present := "alethia_project_id"
-	if got := Accepts(varKey, &present); len(got) != 1 || got[0].Severity != SeverityWarn {
+	if got := Accepts(varKey, &present); len(got) != 1 || !Rejected(got) {
 		t.Errorf("Accepts did not fall through to Check for a present value: %+v", got)
 	}
 }

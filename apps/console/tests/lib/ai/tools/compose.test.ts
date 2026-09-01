@@ -150,8 +150,26 @@ describe("catalogTools.cidr_for_hosts", () => {
 			prefix: number;
 		};
 		// Hetzner carves down to /22 and GCP has no floor at all, so neither is widened to AWS's /18.
+		// Both land on /22 here for different reasons: Hetzner because its floor binds, GCP because
+		// 511 HOSTS needs 513 addresses and so does not fit a /23 at all.
 		expect(hetzner.prefix).toBe(22);
-		expect(gcp.prefix).toBe(23);
+		expect(gcp.prefix).toBe(22);
+	});
+
+	// The block is sized by HOSTS, and a block spends two addresses on network + broadcast. Sizing
+	// by addresses answered /23 for 511 hosts — 510 usable, one short of what was asked for. AWS's
+	// floor hid it; GCP and Alibaba, whose floors are looser than the fit, handed it straight out.
+	it.each([
+		["gcp", 511],
+		["alibaba", 511],
+		["aws", 511],
+		["gcp", 254],
+		["gcp", 2],
+	])("returns a block that actually holds the hosts asked for (%s, %i)", async (cloud, hosts) => {
+		const out = (await run(catalogTools().cidr_for_hosts, { hosts, cloud })) as {
+			usableHosts: number;
+		};
+		expect(out.usableHosts).toBeGreaterThanOrEqual(hosts);
 	});
 
 	it("clamps to the tightest floor when no cloud is given, so the answer is valid everywhere", async () => {

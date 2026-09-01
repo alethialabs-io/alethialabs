@@ -542,6 +542,14 @@ function projectCheck(
 	const what = node.check === "custom" ? "a .refine()/.superRefine()" : `a ${node.check} check`;
 	const decl = declarationFor(node, what);
 
+	// An `overwrite` check REWRITES the value (zod's `.trim()` is one), so it must become a
+	// StepTransform and be looked up in the transform registry — every later step judges what it
+	// produced. Emitting it as a StepRule made packages/core/validate hunt for a predicate that did
+	// not exist, which `TestEverySpecRuleResolves` caught; had the same name existed in both
+	// registries it would instead have silently evaluated the wrong thing and never rewritten the
+	// value, which is the failure this comment is really guarding.
+	const stepKind = node.check === "overwrite" ? "transform" : "rule";
+
 	if (node.check === "custom") {
 		const stored = node.def.fn;
 		if (typeof stored === "function") {
@@ -570,7 +578,7 @@ function projectCheck(
 		}
 	}
 
-	applyDeclaration(spec, tables, reg, decl, node.path, "rule");
+	applyDeclaration(spec, tables, reg, decl, node.path, stepKind);
 }
 
 /** Turns a matched declaration into either a Step (table) or an unshared record. */
@@ -664,6 +672,9 @@ function messageOf(def: Record<string, unknown>): string | undefined {
  */
 const TS_IMPLEMENTATIONS: Record<string, (v: string, arg?: number) => string | boolean> = {
 	go_trim_space: (v) => goTrimSpace(v),
+	// zod's `.trim()` is String.prototype.trim(), so this is the console's implementation verbatim
+	// rather than a description of it.
+	js_trim: (v) => v.trim(),
 	apps_path: (v) => isValidAppsPath(v),
 	not_reserved_tfvar_key: (v) => isNotReservedTfvarKey(v),
 	// Keyed by the FLOOR rather than by a cloud name, because the Go step carries the floor and not
@@ -702,6 +713,13 @@ const NETWORK_CIDR_CASES: Record<(typeof NETWORK_CIDR_CLOUDS)[number], CaseInput
 		{ id: "not-a-cidr", in: "overlays/dev" },
 		{ id: "an-octet-out-of-range", in: "999.0.0.0/16" },
 		{ id: "a-prefix-over-32", in: "10.0.0.0/33" },
+		// Go's net.ParseCIDR has refused zero-padded OCTETS since 1.17 and still accepts a
+		// zero-padded PREFIX. All three spellings are pinned because the console used to accept the
+		// first two (too permissive — the apply gate refused them with nothing shown to the user)
+		// and the first fix for that refused the third (too strict — the forbidden direction).
+		{ id: "a-leading-zero-octet", in: "010.0.0.0/8" },
+		{ id: "a-zero-padded-octet", in: "10.00.0.0/16" },
+		{ id: "a-zero-padded-prefix-which-go-still-accepts", in: "10.0.0.0/016" },
 	],
 	azure: [
 		{ id: "azure-exactly-at-its-floor", in: "10.0.0.0/18" },
@@ -807,13 +825,34 @@ const REGISTRY: SpecRegistration[] = [
 			{
 				path: "$#0:overwrite",
 				disposition: {
-					via: "not-shared",
-					rule: "js_trim",
+					via: "table",
+					goRule: "js_trim",
+					// A transform never produces a finding; the severity is carried for the shape only.
+					severity: "reject",
+					message: "leading and trailing whitespace is ignored",
 					why:
-						"A console-side normalisation, not a shared rule. The trimmed key is what gets STORED, so " +
-						"the runner only ever sees the normalised value and has nothing to mirror. It is " +
-						"String.prototype.trim() here, which is NOT Go's whitespace set — a difference that stays " +
-						"unreachable because the tfvar grammar below admits no whitespace at all.",
+						"This was declared `not-shared` first, and that was wrong in the one direction the " +
+						"invariant forbids. The reasoning was that the trimmed key is what gets STORED, so the " +
+						"runner never sees the raw value — true of the runner, and beside the point for the CLI, " +
+						"which judges what the USER typed before anything is stored. With no trim on the Go side, " +
+						"`Check(iac_var_key, \" region\")` failed the pattern below while the console accepted the " +
+						"same input and stored \"region\": the CLI refusing what the server accepts. It is " +
+						"String.prototype.trim(), NOT Go's unicode.IsSpace set, and both crossings are cases.",
+					cases: [
+						{ id: "a-plain-key-is-untouched", in: "region" },
+						{ id: "ascii-space-both-ends", in: "  region  " },
+						{ id: "tab-and-newline", in: "\tregion\n" },
+						// The two code points where this transform and go_trim_space disagree, one each
+						// way. Pinning both is what stops somebody "simplifying" js_trim into TrimSpace.
+						{ id: "bom-ufeff-IS-a-js-space-unlike-go", in: "\uFEFFregion" },
+						{ id: "nel-u0085-is-NOT-a-js-space-unlike-go", in: "\u0085region" },
+						{ id: "no-break-space-u00a0", in: "\u00A0region" },
+						{ id: "ideographic-space-u3000", in: "region\u3000" },
+						{ id: "line-separator-u2028", in: "\u2028region" },
+						{ id: "whitespace-only-becomes-empty", in: "   " },
+						{ id: "empty-stays-empty", in: "" },
+						{ id: "interior-space-is-kept", in: "a b" },
+					],
 				},
 			},
 			{
@@ -822,12 +861,13 @@ const REGISTRY: SpecRegistration[] = [
 				disposition: {
 					via: "table",
 					goRule: "not_reserved_tfvar_key",
-					// WARN, not reject, and this is the invariant doing real work. The runner's disposition
-					// is DROP-with-a-warning (provisioner.coerceByoVarValues), not refusal — so a CLI that
-					// rejected the key would be refusing input the server accepts and merely ignores. The
-					// console form still refuses it, because a form may tell a user that a value will not do
-					// what they think BEFORE it is stored.
-					severity: "warn",
+					// REJECT, and which server this mirrors is the whole question. The first version of this
+					// PR said `warn`, reasoning from provisioner.coerceByoVarValues, which drops the key with
+					// a warning rather than failing. But the CLI never reaches the provisioner: it posts to
+					// /api/cli/projects/{id}/byo-iac, and this PR makes that endpoint refuse a reserved key
+					// with a 400. Warning would walk the user into a request that dies — the CLI being
+					// permissive about something the server it actually talks to certainly rejects.
+					severity: "reject",
 					message: RESERVED_TFVAR_MESSAGE,
 					why:
 						"A prefix test. Expressible as a pattern in principle, but the authority is a Go " +
@@ -1256,6 +1296,36 @@ function selfTestCases(): SelfTestCase[] {
 			id: "a-spec-that-projects-to-nothing-is-refused",
 			want: "NO_STEPS",
 			build: () => ({ id: "t", why: "t", schema: z.string(), declarations: [] }),
+		},
+		{
+			// No SHIPPED spec carries `warn` any more — `iac_var_key` did until the endpoint the CLI
+			// posts to started refusing the key outright. The severity is still part of the emitted
+			// contract for the next rule whose server-side disposition is a drop, so the emitter
+			// branch is exercised here rather than left to be discovered wrong the first time it is
+			// used. packages/core/validate's TestRejectedDistinguishesWarnFromReject is the other half.
+			id: "a-warn-disposition-emits-a-warn-step",
+			want: "ok",
+			build: () => ({
+				id: "t",
+				why: "t",
+				schema: z.string().min(1, "required").refine(selfTestPredicate, "nope"),
+				declarations: [
+					{
+						path: "$#1:custom",
+						fn: selfTestPredicate,
+						disposition: tableDisposition({ severity: "warn" }),
+					},
+				],
+			}),
+			assert: (spec) => {
+				const rule = spec.steps.find((step) => step.kind === "rule");
+				if (rule === undefined) return `expected a rule step, got ${JSON.stringify(spec.steps)}`;
+				if (rule.severity !== "warn") return `expected severity warn, got ${rule.severity}`;
+				// The projected checks stay `reject`, so this is not passing because everything warns.
+				const min = spec.steps.find((step) => step.kind === "min_length");
+				if (min?.severity !== "reject") return `a projected bound should stay reject, got ${String(min?.severity)}`;
+				return null;
+			},
 		},
 		{
 			id: "the-not-shared-route-emits-a-record-and-no-behaviour",

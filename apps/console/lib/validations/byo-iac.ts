@@ -36,8 +36,18 @@ export function isNotReservedTfvarKey(key: string): boolean {
 	return !key.startsWith(RESERVED_TFVAR_PREFIX);
 }
 
-/** The message both surfaces use for a reserved key, so the console and the CLI say the same thing. */
-export const RESERVED_TFVAR_MESSAGE = `"${RESERVED_TFVAR_PREFIX}" is reserved for the platform context; the runner drops variables with this prefix.`;
+/**
+ * The message every surface uses for a reserved key, so the console, the API and the CLI say the
+ * same thing.
+ *
+ * It opens with "Invalid" for a second reason worth stating, because it looks like a style choice
+ * and is not: `byoWriteError` (lib/cli/byo-write.ts) classifies an unhandled throw by regex over
+ * the message, and a ZodError's message is the JSON issue array — so a message without one of its
+ * 400 keywords lands the caller a 500 carrying a raw Zod dump. That is a BACKSTOP, not the
+ * mechanism: the CLI route validates the key in its own body schema and returns a proper 400 long
+ * before this can throw.
+ */
+export const RESERVED_TFVAR_MESSAGE = `Invalid variable name: the "${RESERVED_TFVAR_PREFIX}" prefix is reserved for the platform context.`;
 
 /**
  * One BYO IaC variable NAME. The shared spec `iac_var_key`
