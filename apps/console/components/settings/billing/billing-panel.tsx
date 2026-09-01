@@ -25,7 +25,7 @@ import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
-import { PageHeader } from "@repo/ui/page-header";
+import { SectionHeading } from "@repo/ui/section-heading";
 import { Skeleton } from "@repo/ui/skeleton";
 import { planMeta } from "@repo/plan-catalog";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
@@ -99,8 +99,7 @@ export function BillingPanel() {
 	if (!summary.hosted) {
 		return (
 			<Card className="p-6">
-				<PageHeader
-					level={2}
+				<SectionHeading
 					title="Self-managed deployment"
 					description="This instance is not connected to hosted billing. Enterprise features are unlocked by your license key. See the docs for self-managed licensing."
 				/>
@@ -113,12 +112,11 @@ export function BillingPanel() {
 		return (
 			<>
 				<Card className="p-6">
-					{/* `level={2}` preserves the rung these fallback cards already held. They are the
-					    whole page in this state, but the billing page has never carried an `h1` and
-					    promoting one heading of two would make the outline worse, not better. */}
-					<PageHeader
+					{/* A section heading, not a page title: these fallback cards are the whole page in
+					    this state, but the billing page has never carried an `h1` and the console no
+					    longer has page titles at all — the breadcrumb says "Billing". */}
+					<SectionHeading
 						className="max-w-prose"
-						level={2}
 						title="Create an organization"
 						description="Your account is a personal scope — your Projects are all yours. Create an organization to collaborate with teammates on a paid plan."
 					/>

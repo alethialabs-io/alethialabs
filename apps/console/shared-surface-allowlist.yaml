@@ -5,9 +5,11 @@
 #
 # §6: "if two pages disagree about how something looks or reads, the user is being told the product
 # is two products." `check:shared-surface` (scripts/check-shared-surface.mjs) fails on any console
-# site that hand-rolls a number, a date, a heading, an empty state, a stat strip, a stacking level
-# or a table instead of reaching for `@repo/format`, `@repo/ui/page-header`, `@repo/ui/empty`,
-# `@repo/ui/status-badge`, a `--z-*` token or `DataTable`, unless it is listed here.
+# site that hand-rolls a number, a date, a section heading, a font size, an empty state, a stat
+# strip, a stacking level or a table instead of reaching for `@repo/format`,
+# `@repo/ui/section-heading`, a `--text-ui-*` rung, `@repo/ui/empty`, `@repo/ui/status-badge`, a
+# `--z-*` token or `DataTable` — and on any console page that gives itself a TITLE, which is the one
+# rule whose fix is deletion. Unless it is listed here.
 #
 # TWO KINDS OF ENTRY, and the file says which. They are counted separately, and neither can be
 # spent as the other — converting one into the other is a diff, which is the point.
@@ -60,12 +62,23 @@
 #   format:          — @repo/format. `toFixed(`, `toLocaleDateString`, `toLocaleTimeString`, a
 #                      literal `$` before an interpolation, `/ 1024`, an interpolation glued
 #                      directly onto a `toLocaleString`, and a currency symbol passed as a prop.
-#   page_header:     — @repo/ui/page-header. A raw `<h1>` in app/(private)/** or components/**.
-#   section_header:  — @repo/ui/page-header with `level`. A raw `<h2>` through `<h6>`, same scope.
-#                      It runs to `<h6>` because a rule that stopped at `<h3>` would be an
-#                      instruction to demote: the guard goes quiet, the outline gets worse. Kept
-#                      apart from `page_header:` so a file's `<h1>` decision and its `<h2>` debt
-#                      cannot merge into one entry carrying only one of the two notes.
+#   page_title:      — NO page title. A raw `<h1>` in app/(private)/** or components/**. The
+#                      direction of this rule is INVERTED from what it was: the fix is to DELETE the
+#                      heading, not to adopt a component. #3733 — the page's name is said by the
+#                      sidebar entry you clicked and by the breadcrumb above the content, and a
+#                      third saying earns nothing. Every entry below is therefore a surface with NO
+#                      BREADCRUMB ABOVE IT, or the one `sr-only` outline landmark.
+#   section_header:  — @repo/ui/section-heading. A raw `<h2>` through `<h6>`, same scope. It runs
+#                      to `<h6>` because a rule that stopped at `<h3>` would be an instruction to
+#                      demote: the guard goes quiet, the outline gets worse. Kept apart from
+#                      `page_title:` so a file's `<h1>` decision and its `<h2>` debt cannot merge
+#                      into one entry carrying only one of the two notes.
+#   type_scale:      — a `--text-ui-*` rung from packages/brand/src/tokens.css. A hardcoded font
+#                      size — `text-[13px]`, `text-[12.5px]`, and the same in any length unit, with
+#                      or without a variant prefix — in components/**, app/**, lib/** or hooks/**.
+#                      1,079 of them
+#                      across 23 values when the rule landed, against a token file that carried no
+#                      UI type scale at all; every one is debt and none is a decision.
 #   empty_state:     — @repo/ui/empty. One class string — double-quoted, single-quoted or a
 #                      template literal — carrying `text-center` and `py-6` or more, no upper bound.
 #   stat_strip:      — §6's "No stat-card strips": a `<Stat` CELL — the container is the wrong
@@ -86,7 +99,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 15
-debt: 61
+debt: 255
 
 scanned:
   - scope: console_code
@@ -117,40 +130,48 @@ format:
     hits: 1
     lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 money site here writes the currency symbol somewhere other than next to the number."
 
-page_header:
+page_title:
+  # THE TEST IS: DOES ANYTHING ELSE ON SCREEN ALREADY NAME THIS? Not "is there a breadcrumb" — FIVE
+  # of the eleven entries below sit inside the console shell WITH a breadcrumb above them, and are
+  # kept because what they say is not the route's name: a question ("What can we help you with?"),
+  # two invitations above an empty composer, an error message, and an `sr-only` outline root. The
+  # other six are outside the shell entirely, where there is neither breadcrumb nor sidebar entry,
+  # so the heading is the only thing that says what the page is. Each entry's own `reason:` says
+  # which of the two it is, and applying "is there a breadcrumb" instead would delete five headings
+  # this list deliberately keeps.
   - path: apps/console/components/auth/auth-form.tsx
     hits: 4
-    reason: Sign-in is a full-screen, marketing-shaped page; its display heading is the same one the website uses, and shrinking it to a console page title would make the product's front door look like a settings tab.
+    reason: Sign-in is the front door — no sidebar, no breadcrumb, nothing else on the screen says what this is. It keeps the display heading the website uses, so the two halves of arriving look like one product.
   - path: apps/console/components/auth/onboarding-form.tsx
     hits: 2
-    reason: The first screen after sign-up, still on the marketing-shaped surface — it welcomes you, it does not label a page you navigated to.
+    reason: The first screen after sign-up, still outside the console shell — it welcomes you, and there is no breadcrumb above it to welcome you instead.
   - path: apps/console/components/forms/oauth-consent-form.tsx
     hits: 2
-    reason: A consent screen has to read as its own moment, not as a page inside the console you happen to be on, because the decision it asks for is about handing access to someone else.
+    reason: A consent screen has to read as its own moment, not as a page inside the console you happen to be on, because the decision it asks for is about handing access to someone else — and it renders outside the shell, with no breadcrumb.
   - path: apps/console/components/org/org-purchase-ui.tsx
     hits: 2
-    reason: Buying a plan is a checkout, not a console page; it keeps the display type the pricing page uses so the two halves of one purchase look like one purchase.
+    reason: Buying a plan is a checkout, not a console page; it renders outside the shell and keeps the display type the pricing page uses, so the two halves of one purchase look like one purchase.
   - path: apps/console/components/legal/accept-terms-form.tsx
     hits: 1
-    reason: Accepting terms blocks everything else until it is answered, and the display heading is what makes it read as a stop rather than a page.
+    reason: Accepting terms blocks everything else until it is answered — it replaces the console rather than sitting inside it, and the display heading is what makes it read as a stop rather than a page.
   - path: apps/console/app/(private)/cli/login/page.tsx
     hits: 1
-    reason: The CLI hand-off is a single-purpose full-screen page in the same marketing-shaped shell as sign-in, and it is read from a terminal-shaped context, not from inside the console shell.
+    reason: The CLI hand-off is a single-purpose full-screen page in the same shell-less frame as sign-in, arrived at from a terminal rather than from the console, so nothing above it says what it is.
   - path: apps/console/app/(private)/[org]/~/support/page.tsx
     hits: 1
-    reason: "\"What can we help you with?\" is the support hub's opening question over its entry-point cards — a centred hero, which a left-aligned title-and-actions row cannot express."
+    reason: "\"What can we help you with?\" is a question, not the name of a page — the breadcrumb above it already says \"Support\", and this asks you something instead of repeating that."
   - path: apps/console/components/agent/elench/elench-empty-landing.tsx
     hits: 1
-    reason: The agent's invitation above an empty composer. It is the prompt, not the name of a page — there is nothing on screen yet for a page title to title.
+    reason: The agent's invitation above an empty composer. It is the prompt, not the name of a page — the breadcrumb already says where you are, and there is nothing on screen yet for a title to title.
   - path: apps/console/components/create-project/create-project-form.tsx
     hits: 1
-    reason: The same invitation, on the surface where a project starts; it opens the composer rather than labelling the route, and the two openers must read alike.
+    reason: The same invitation, on the surface where a project starts; it opens the composer rather than labelling the route — the breadcrumb labels the route — and the two openers must read alike.
   - path: apps/console/components/alerts/alerts-page.tsx
     hits: 1
-    reason: An `sr-only` landmark. The page shows three stacked section headers and no visible title, so this exists purely to give a screen reader the route's name.
+    reason: An `sr-only` landmark, and the only heading in this list that is never painted. No console page shows a title any more, but a route still needs one outline root or its three sections are orphans — a screen reader has no breadcrumb to fall back on.
   - path: apps/console/components/errors/error-state.tsx
     hits: 1
-    reason: An error boundary is not a page header — it replaces the page, and its heading has to size itself to whether it is filling the screen or sitting inside a panel.
+    reason: An error boundary replaces the page, so the breadcrumb above it is naming something the reader can no longer see; its heading says what went wrong, and has to size itself to whether it is filling the screen or sitting inside a panel.
 
 section_header:
   # --- debt only: 46 raw <h2>-<h6> across 39 files, measured 2026-09-01 on an unmodified dev.
@@ -250,6 +271,594 @@ section_header:
   - path: apps/console/components/support/support-whats-new.tsx
     hits: 1
     lifts: "#3629 — the support hub is rebuilt: 1 raw section heading here."
+
+type_scale:
+  # --- debt only: 1,079 hardcoded pixel type sizes across 194 files and 23 distinct values,
+  # measured 2026-09-01 on an unmodified dev by this rule's own matcher. Not one of
+  # them is a decision: packages/brand/src/tokens.css carried NO UI type scale until the commit
+  # that added this rule, so there was nothing for any of these files to have reached for.
+  - path: apps/console/app/(private)/[org]/~/jobs/[id]/page.tsx
+    hits: 10
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 10 hardcoded pixel type sizes here."
+  - path: apps/console/app/(private)/[org]/~/runners/runners-client.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/app/(private)/[org]/~/settings/billing/invoices/page.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/app/(private)/[org]/~/support/page.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/app/(private)/cli/login/page.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/app/(public)/onboarding/page.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/addons/addon-config-sheet.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/addons/addon-visuals.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/agent/agent-artifact-gallery.tsx
+    hits: 8
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 8 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/agent-artifact-viewer.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/agent-chat.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/agent/agent-knowledge-panel.tsx
+    hits: 12
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/agent-tool-views.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/approval-card.tsx
+    hits: 7
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/artifact-panel.tsx
+    hits: 22
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 22 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/artifact-share-popover.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/build-pane.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/chat-top-bar.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/agent/deploy-pane.tsx
+    hits: 11
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 11 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/elench/elench-controls.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/elench/elench-conversation-switcher.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/elench/elench-empty-landing.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/elench/mention-typeahead.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/elench/suggestion-carousel.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/agent/render-tool-parts/dashboard-pinned.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/agent/render-tool-parts/org-tool-parts.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/render-tool-parts/project-tool-parts.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/thread-rail.tsx
+    hits: 5
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/tool-result-frame.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/agent/widgets/artifact-controls.tsx
+    hits: 10
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 10 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/widgets/bodies/blocks.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/widgets/bodies/tables.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/widgets/cell-prompt.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/agent/widgets/widget-card.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/agent/widgets/widget-grid.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/alerts/activity-panel.tsx
+    hits: 7
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
+  - path: apps/console/components/alerts/alerts-filter-bar.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/alerts/channel-routing.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/alerts/channel-sheet.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/alerts/channels-panel.tsx
+    hits: 9
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 9 hardcoded pixel type sizes here."
+  - path: apps/console/components/alerts/event-matrix.tsx
+    hits: 8
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 8 hardcoded pixel type sizes here."
+  - path: apps/console/components/alerts/policies-panel.tsx
+    hits: 12
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
+  - path: apps/console/components/alerts/policy-sheet.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/auth/auth-form.tsx
+    hits: 12
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
+  - path: apps/console/components/auth/auth-shell.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/auth/onboarding-form.tsx
+    hits: 18
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 18 hardcoded pixel type sizes here."
+  - path: apps/console/components/billing/billing-checkout-form.tsx
+    hits: 24
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 24 hardcoded pixel type sizes here."
+  - path: apps/console/components/billing/credit-pack-dialog.tsx
+    hits: 10
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 10 hardcoded pixel type sizes here."
+  - path: apps/console/components/billing/currency-toggle.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/billing/plan-checklist.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/billing/plan-chooser.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/billing/plan-picker.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/billing/upgrade-ai-sheet.tsx
+    hits: 11
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 11 hardcoded pixel type sizes here."
+  - path: apps/console/components/classification/classification-manager.tsx
+    hits: 8
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 8 hardcoded pixel type sizes here."
+  - path: apps/console/components/classification/classification-picker.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/classification/classification-ui.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/classification/dimension-detail.tsx
+    hits: 22
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 22 hardcoded pixel type sizes here."
+  - path: apps/console/components/classification/dimension-editor-sheet.tsx
+    hits: 11
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 11 hardcoded pixel type sizes here."
+  - path: apps/console/components/classification/dimension-rail.tsx
+    hits: 7
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
+  - path: apps/console/components/classification/value-drill-drawer.tsx
+    hits: 9
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 9 hardcoded pixel type sizes here."
+  - path: apps/console/components/classification/value-editor.tsx
+    hits: 8
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 8 hardcoded pixel type sizes here."
+  - path: apps/console/components/clusters/cluster-card.tsx
+    hits: 12
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
+  - path: apps/console/components/connectors/aws-connection.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/connectors/azure-connection.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/connectors/connection-ui.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/connectors/connector-card.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/connectors/connector-detail-sheet.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/connectors/connector-row.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/connectors/connectors-filter-bar.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/connectors/connectors-page.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/connectors/extra-cloud-connection.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/connectors/gcp-connection.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/connectors/hetzner-connection.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/connectors/provider-config-fields.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/create-project/configure-project.tsx
+    hits: 8
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 8 hardcoded pixel type sizes here."
+  - path: apps/console/components/create-project/create-project-form.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/create-project/environment-placement.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/create-project/region-select.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/create-project/repo-import-panel.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/create-project/source-summary.tsx
+    hits: 12
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
+  - path: apps/console/components/create-project/start-from-scratch-cards.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/byo/byo-chart-dialog.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/byo/byo-iac-dialog.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/byo/chart-scan-sheet.tsx
+    hits: 19
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 19 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/byo/iac-node.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/byo/iac-scan-sheet.tsx
+    hits: 19
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 19 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/activity-rail.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/ai/proposal-diff.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/canvas-command-palette.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/canvas-controls.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/design-project/canvas/cost-chip.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/design-project/canvas/design-project-canvas.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/design-project/canvas/env-settings-sheet.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/inspector/bindings-field.tsx
+    hits: 10
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 10 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/inspector/chart-workload-panel.tsx
+    hits: 9
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 9 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/inspector/collection-panel.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/inspector/config-fields.tsx
+    hits: 5
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/inspector/connector-select.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/inspector/external-panel.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/inspector/subresource-field.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/design-project/canvas/node-inspector.tsx
+    hits: 9
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 9 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/node-palette.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/nodes/base-node.tsx
+    hits: 12
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/nodes/chart-node.tsx
+    hits: 5
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/nodes/collection-node.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/nodes/zone-node.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/design-project/canvas/pending-changes-bar.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/canvas/run-menu.tsx
+    hits: 5
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/container-platform-selector.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/design-project/placement-selector.tsx
+    hits: 5
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
+  - path: apps/console/components/download-cli-button.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/environments/active-promotion-panel.tsx
+    hits: 18
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 18 hardcoded pixel type sizes here."
+  - path: apps/console/components/environments/consistency-matrix.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/environments/environment-card.tsx
+    hits: 15
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 15 hardcoded pixel type sizes here."
+  - path: apps/console/components/environments/environments-view.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/environments/new-environment-dialog.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/environments/promote-dialog.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/environments/promotion-detail-overlay.tsx
+    hits: 22
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 22 hardcoded pixel type sizes here."
+  - path: apps/console/components/environments/promotions-history.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/environments/protection-rules-dialog.tsx
+    hits: 8
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 8 hardcoded pixel type sizes here."
+  - path: apps/console/components/errors/error-state.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/evidence/drawer/drift-tab.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/evidence/drawer/evidence-drawer.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/evidence/drawer/receipt-tab.tsx
+    hits: 16
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 16 hardcoded pixel type sizes here."
+  - path: apps/console/components/evidence/drawer/report-tab.tsx
+    hits: 17
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 17 hardcoded pixel type sizes here."
+  - path: apps/console/components/evidence/drawer/tab-empty.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/evidence/evidence-client.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/evidence/evidence-table.tsx
+    hits: 7
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
+  - path: apps/console/components/evidence/evidence-waivers.tsx
+    hits: 10
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 10 hardcoded pixel type sizes here."
+  - path: apps/console/components/forms/accordion-form.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/forms/oauth-consent-form.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/jobs/columns.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/jobs/job-author.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/onboarding/setup-guide.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/org-switcher.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/org/create-org-sheet.tsx
+    hits: 13
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 13 hardcoded pixel type sizes here."
+  - path: apps/console/components/org/org-purchase-ui.tsx
+    hits: 18
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 18 hardcoded pixel type sizes here."
+  - path: apps/console/components/org/upgrade-org-sheet.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/overview/alerts-card.tsx
+    hits: 5
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
+  - path: apps/console/components/overview/overview-toolbar.tsx
+    hits: 12
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
+  - path: apps/console/components/overview/project-card.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/overview/project-row.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/overview/recent-jobs-card.tsx
+    hits: 7
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
+  - path: apps/console/components/overview/usage-card.tsx
+    hits: 7
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
+  - path: apps/console/components/plan/resource-card.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/project-switcher.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/projects/duplicate-project-dialog.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/repository-selector.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/runners/add-runner-dialog.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/runners/fleet-pool-wizard.tsx
+    hits: 12
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
+  - path: apps/console/components/runners/pool-card.tsx
+    hits: 10
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 10 hardcoded pixel type sizes here."
+  - path: apps/console/components/runners/release-notes-popover.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/runners/runner-actions.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/runners/runner-card.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/runners/runner-select-popover.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/runners/runners-pager.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/runners/versions-panel.tsx
+    hits: 5
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/access/access-manager.tsx
+    hits: 13
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 13 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/activity/activity-feed.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/activity/activity-log.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/settings/billing/billing-panel.tsx
+    hits: 10
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 10 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/billing/invoice-preview-dialog.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/billing/payment-methods-card.tsx
+    hits: 7
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/billing/plan-history-timeline.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/billing/recent-invoices.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/settings/general/org-general.tsx
+    hits: 7
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/general/project-general.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/members/invite-member-dialog.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/members/members-table.tsx
+    hits: 7
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/preview/preview-settings.tsx
+    hits: 10
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 10 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/roles/permission-matrix.tsx
+    hits: 5
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/roles/role-sheet.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/roles/roles-manager.tsx
+    hits: 11
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 11 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/settings-ui.tsx
+    hits: 9
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 9 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/sso/provider-sheet.tsx
+    hits: 8
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 8 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/sso/sso-manager.tsx
+    hits: 13
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 13 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/teams/teams-list.tsx
+    hits: 8
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 8 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/upgrade/feature-upsell.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/settings/usage/ai-spend-limits.tsx
+    hits: 5
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/usage/ai-usage-section.tsx
+    hits: 9
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 9 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/usage/project-usage-panel.tsx
+    hits: 7
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/usage/usage-panel.tsx
+    hits: 8
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 8 hardcoded pixel type sizes here."
+  - path: apps/console/components/settings/usage/usage-primitives.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/shell/account-settings-dialog.tsx
+    hits: 6
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+  - path: apps/console/components/shell/nav-row.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/shell/notifications-popover.tsx
+    hits: 5
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
+  - path: apps/console/components/shell/sidebar-drill.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/shell/sidebar-nav.tsx
+    hits: 2
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+  - path: apps/console/components/shell/sidebar-profile.tsx
+    hits: 4
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+  - path: apps/console/components/shell/sidebar-rail.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/shell/switcher-trigger.tsx
+    hits: 3
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+  - path: apps/console/components/support/ask/support-case-approval-card.tsx
+    hits: 7
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
+  - path: apps/console/components/support/cases/case-thread.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+  - path: apps/console/components/support/support-topics.tsx
+    hits: 1
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
 
 empty_state:
   # --- debt only: 33 hand-rolled centred empty states across 24 files, six different heights.

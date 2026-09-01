@@ -16,7 +16,7 @@ import { userInitials } from "@/lib/user-display";
 import { formatDate, formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
-import { PageHeader } from "@repo/ui/page-header";
+import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
 import { type ActivityContext, describeEvent } from "./humanize-event";
 
@@ -81,7 +81,7 @@ export function ActivityFeed({
 					    sat one rung under the feed's own `Activity` heading before and still does;
 					    what changes is that the rung's size now comes from one place instead of
 					    from this file. */}
-					<PageHeader className="mb-1" level={3} title={g.month} />
+					<SectionHeading className="mb-1" level={3} title={g.month} />
 					<ul>
 						{g.rows.map((row) => {
 							const e = describeEvent(row, ctx);

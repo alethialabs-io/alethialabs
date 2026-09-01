@@ -239,14 +239,24 @@ func TestBrandRadiiCollapseSixOntoTwo(t *testing.T) {
 
 // TestBrandEmphasisLadderHasThreeDistinctRungs pins the other collapse: a size scale becomes a
 // ranking, and a ranking whose rungs are equal ranks nothing.
+//
+// THE TOKEN COUNT AND THE RUNG COUNT ARE TWO NUMBERS, and this test used to compare both against
+// one `len(want)`. That was true only while the ladder was exactly one token per rung, and it
+// stopped being true when the console's UI type scale landed (#3733): --text-ui-lg and
+// --text-ui-xl are the console's two heading rungs, and in a terminal — which has one cell size —
+// a heading is bold, so both collapse onto EmphasisHeading beside the display ladder's middle
+// step. FIVE tokens, THREE rungs. Collapsing is what this port is FOR; what must not happen is
+// the rungs themselves collapsing, which is the assertion below and is unchanged.
 func TestBrandEmphasisLadderHasThreeDistinctRungs(t *testing.T) {
 	want := map[string]BrandEmphasis{
 		"--text-display-lg": EmphasisDisplay,
 		"--text-display-md": EmphasisHeading,
 		"--text-display-sm": EmphasisBand,
+		"--text-ui-lg":      EmphasisHeading,
+		"--text-ui-xl":      EmphasisHeading,
 	}
 	if len(BrandEmphasisLadder) != len(want) {
-		t.Fatalf("the ladder carries %d rungs and this test names %d", len(BrandEmphasisLadder), len(want))
+		t.Fatalf("the ladder carries %d tokens and this test names %d", len(BrandEmphasisLadder), len(want))
 	}
 	for token, rung := range want {
 		if BrandEmphasisLadder[token] != rung {
@@ -257,8 +267,11 @@ func TestBrandEmphasisLadderHasThreeDistinctRungs(t *testing.T) {
 	for _, rung := range BrandEmphasisLadder {
 		distinct[rung] = true
 	}
-	if len(distinct) != len(want) {
-		t.Errorf("the ladder's %d tokens collapse onto %d rungs — a size scale that ranks nothing", len(want), len(distinct))
+	// Three, named as a literal rather than derived from `want`: deriving it would make this
+	// assertion agree with whatever the table says, which is the one thing it must not do.
+	const rungs = 3
+	if len(distinct) != rungs {
+		t.Errorf("the ladder's %d tokens collapse onto %d rungs, want %d — a size scale that ranks nothing", len(want), len(distinct), rungs)
 	}
 }
 

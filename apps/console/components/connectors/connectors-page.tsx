@@ -54,7 +54,7 @@ import {
 import { Button } from "@repo/ui/button";
 import { CountPill } from "@repo/ui/count-pill";
 import { EmptyState } from "@repo/ui/empty";
-import { PageHeader } from "@repo/ui/page-header";
+import { PageToolbar } from "@repo/ui/page-toolbar";
 import { Sheet, SheetContent } from "@repo/ui/sheet";
 import {
 	Table,
@@ -396,8 +396,10 @@ export function ConnectorsPage({
 	return (
 		<>
 			<div className="space-y-6">
-				<PageHeader
-					title="Connectors"
+				{/* No title — the sidebar entry you clicked and the breadcrumb both say
+				    "Connectors". What is left is the count and the line that says what a
+				    connector IS, neither of which the breadcrumb carries. */}
+				<PageToolbar
 					description="Credentials Alethia acts through — cloud accounts, git providers, registries, chart repos, secret stores, observability sinks and DNS."
 					count={rows.length}
 				/>

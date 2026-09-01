@@ -10,7 +10,7 @@ import { useJobQuery } from "@/lib/query/use-jobs-query";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
 import { formatDate, formatDuration, formatRelative } from "@repo/format";
-import { PageHeader } from "@repo/ui/page-header";
+import { PageToolbar } from "@repo/ui/page-toolbar";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { Button } from "@repo/ui/button";
 import { ScrollArea } from "@repo/ui/scroll-area";
@@ -136,9 +136,11 @@ export default function JobDetailPage() {
 			<div className="px-6 py-4 border-b border-border/40 bg-muted/5 shrink-0">
 				<div className="flex items-start gap-3">
 					{Icon && <Icon className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />}
-					<PageHeader
+					{/* No title: the breadcrumb resolves this job's UUID to the very same
+					    `JOB_TYPES[...].label` this row used to repeat under it. What is left is the
+					    job's live state and its actions, which the breadcrumb carries none of. */}
+					<PageToolbar
 						className="min-w-0 flex-1"
-						title={info?.label ?? job.job_type}
 						description={
 							<span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
 								<StatusBadge status={jobState ?? job.status} />
