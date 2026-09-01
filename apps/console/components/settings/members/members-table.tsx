@@ -44,7 +44,7 @@ import { FacetFilter } from "@repo/ui/facet-filter";
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
 import { MultiCombobox } from "@repo/ui/multi-combobox";
-import { PageHeader } from "@repo/ui/page-header";
+import { PageToolbar } from "@repo/ui/page-toolbar";
 import {
   Select,
   SelectContent,
@@ -503,9 +503,8 @@ export function MembersTable() {
 
   return (
     <div>
-      <PageHeader
+      <PageToolbar
         className="mb-4"
-        title="Members"
         description="Organization members and pending invitations."
         count={filtered.length}
         actions={

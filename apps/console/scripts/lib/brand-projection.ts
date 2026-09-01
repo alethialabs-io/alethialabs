@@ -295,6 +295,48 @@ export const PROJECTIONS: Readonly<Record<string, Projection>> = {
 		why: "30px. The quietest display step is normal weight in primary ink; it is a heading only by contrast with the faint body around it.",
 	},
 
+	// ── The UI type scale → ink, mostly, and two rungs of the same weight ladder ──────────
+	// Seven rungs of 9–17px, derived from where the console's 1,079 hardcoded sizes cluster
+	// (#3733). A terminal cell is ONE size, so a size ladder cannot arrive as one — and unlike
+	// the display ladder above, five of these seven are not an emphasis ladder either. What
+	// separates an 11px label from a 13px value in the console is that the label is also
+	// `--text-tertiary` and the value is `--text-primary`; the CLI already carries that
+	// distinction EXACTLY, at those two tokens, which is why `none` here is the complete answer
+	// rather than a gap. The two heading rungs are different: a heading has a terminal analogue,
+	// and it is the weight ladder the display sizes already project onto.
+	"--text-ui-3xs": {
+		kind: "none",
+		why: "9px — a mono eyebrow or a badge caption, the smallest thing on a console screen. A terminal cell has one size, and the CLI's eyebrow device is already its own treatment (case and tracking, at --tracking-eyebrow); what makes this ink quiet in the console is --text-tertiary, which is projected exactly.",
+	},
+	"--text-ui-2xs": {
+		kind: "none",
+		why: "10px — a mono label over a value, or a column header. Same answer as --text-ui-3xs: the terminal separates a label from its value by INK and not by size, and that ink is projected exactly at --text-tertiary.",
+	},
+	"--text-ui-xs": {
+		kind: "none",
+		why: "11px — secondary metadata: a timestamp, a hint, a helper line. The console's most common rung, and in a terminal it is the same cell as the body it sits under; --text-secondary is what distinguishes it and is projected exactly.",
+	},
+	"--text-ui-sm": {
+		kind: "none",
+		why: "12px — control text: a chip, a filter, a small button. A terminal control is drawn from the same cells as everything else, so this rung buys the CLI nothing a border style and an ink do not already carry.",
+	},
+	"--text-ui-md": {
+		kind: "none",
+		why: "13px — the console's body rung, which in a terminal is simply the text. It is the size everything else is measured against, and the thing a terminal has exactly one of.",
+	},
+	"--text-ui-lg": {
+		kind: "lossy",
+		port: "emphasis",
+		to: "EmphasisHeading",
+		why: "15px — the SECTION-HEADING rung (@repo/ui/section-heading renders it). With no size to spend, a heading in a terminal is bold, so this joins the weight ladder at the same rung --text-display-md takes: a console section heading and a marketing h2 are one treatment here, and the console's own step down from 15px to its 13px body is carried by weight rather than by size.",
+	},
+	"--text-ui-xl": {
+		kind: "lossy",
+		port: "emphasis",
+		to: "EmphasisHeading",
+		why: "17px — the largest heading a console page carries, a dialog or sheet title. It collapses onto the SAME constant as --text-ui-lg because the terminal's ladder has three rungs and the console's has seven: bold is bold, and EmphasisDisplay is reserved for the display voice so a sheet title cannot arrive shouting in uppercase.",
+	},
+
 	// ── The focus ring → an indicator, not an outline ─────────────────────────────────────
 	"--ring": {
 		kind: "lossy",

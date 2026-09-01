@@ -45,7 +45,7 @@ import { planMeta } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
-import { PageHeader } from "@repo/ui/page-header";
+import { SectionHeading } from "@repo/ui/section-heading";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import {
 	type DateRange,
@@ -131,8 +131,7 @@ export function UsagePanel() {
 	if (!summary.hosted) {
 		return (
 			<Card className="p-6">
-				<PageHeader
-					level={2}
+				<SectionHeading
 					title="Self-managed deployment"
 					description="This instance isn't connected to hosted billing, so usage isn't metered here."
 				/>
@@ -145,9 +144,8 @@ export function UsagePanel() {
 		return (
 			<div>
 				<Card className="p-6">
-					<PageHeader
+					<SectionHeading
 						className="max-w-prose"
-						level={2}
 						title="No organization yet"
 						description="Usage is metered per organization. Create one to track seats, runner minutes, and AI against a plan."
 					/>

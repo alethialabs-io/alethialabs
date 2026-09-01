@@ -6,7 +6,7 @@
 // (lib/query/README.md → "Server-side filters"): a URL-synced zustand store → debounce →
 // `normalizeTeamsQuery` → `qk.teams(org, q)` → TanStack Query. Replaces the page's own
 // fetch-into-useState + un-debounced `.includes()` filter and its banned stat-card strip; the
-// result count now lives in the PageHeader's count pill, which is where the standard puts it.
+// result count now lives in the page toolbar's count pill, which is where the standard puts it.
 //
 // Wired to the real backend: getTeams (name + members) + better-auth createTeam/removeTeam +
 // ManageTeamDialog (add/remove members). The design's per-team description, stored slug and
@@ -43,7 +43,7 @@ import { EmptyState } from "@repo/ui/empty";
 import { FacetFilter } from "@repo/ui/facet-filter";
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
-import { PageHeader } from "@repo/ui/page-header";
+import { PageToolbar } from "@repo/ui/page-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
@@ -265,9 +265,8 @@ export function TeamsList() {
 
 	return (
 		<div>
-			<PageHeader
+			<PageToolbar
 				className="mb-4"
-				title="Teams"
 				description="Grant access to a group of members at once."
 				count={rows.length}
 				actions={createAction}
