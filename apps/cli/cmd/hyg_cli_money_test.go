@@ -55,9 +55,7 @@ var moneyLiteral = regexp.MustCompile(`[$€£¥]%[-+ #0-9.*']*[a-zA-Z]`)
 // fails when one names a file that no longer matches, so the list cannot rot into a permanent
 // allowance. It only ever shrinks.
 var moneyExemptions = map[string]string{
-	"clusters_get.go":  "`$%.0f/mo` on an ESTIMATE. Owned by the clusters noun group / #3659; the estimate style is format.Estimate, a different call from the exact one this lane made, and changing what a clusters row says is that lane's call to make",
-	"clusters_list.go": "same `$%.0f/mo` estimate render as clusters_get.go, same owner — the two must move together or the get and the list disagree about one cluster",
-	"project_list.go":  "`$%.0f/mo` on projects.estimated_monthly_cost. Owned by the projects noun group / #3659",
+	"project_list.go": "`$%.0f/mo` on projects.estimated_monthly_cost. Owned by the projects noun group / #3659",
 
 	"../pkg/utils/ui/render.go": "ui.FloatOrDash's `$%.2f`. Re-pointing it at format.MonthlyRate APPENDS `/mo`, which changes what `alethia protection list` prints in a column this lane does not own, and there is no currency on the wire for a cost_delta_threshold to render it in. #3659 owns the swap",
 }
