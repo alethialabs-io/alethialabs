@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/ui/theme"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -16,18 +17,27 @@ import (
 // legible on both dark (signature) and light terminals.
 
 // --- Palette (grayscale ink ramp) ---
+//
+// These five were hand-typed AdaptiveColors claiming to be a projection of the
+// ramp above. Exactly one of their ten hex values was a step of that ramp
+// (#FAFAFA = gray-50); #808080, #B3B3B3, #A3A3A3, #3D3D3D, #757575, #595959 and
+// #161616 are not steps of anything. The console's --text-tertiary is also ONE
+// ink in both themes, and this file had two. They are now aliases of the
+// generated projection (packages/core/types/brand_gen.go), derived from the stylesheet that
+// owns them. Change a colour in packages/brand/src/tokens.css, regenerate, and
+// both surfaces move together; there is nothing to re-type here.
 
 var (
 	// InkPrimary is the strongest foreground — headings, values, emphasis.
-	InkPrimary = lipgloss.AdaptiveColor{Light: "#161616", Dark: "#FAFAFA"}
+	InkPrimary = theme.InkPrimary
 	// InkSecondary is standard body text.
-	InkSecondary = lipgloss.AdaptiveColor{Light: "#3D3D3D", Dark: "#B3B3B3"}
+	InkSecondary = theme.InkSecondary
 	// InkMuted is secondary/labels/borders.
-	InkMuted = lipgloss.AdaptiveColor{Light: "#757575", Dark: "#808080"}
+	InkMuted = theme.InkMuted
 	// InkFaint is the dimmest readable ink — disabled, hints, rules.
-	InkFaint = lipgloss.AdaptiveColor{Light: "#A3A3A3", Dark: "#595959"}
+	InkFaint = theme.InkFaint
 	// InkInverse is foreground for text rendered on an inverted (ink) surface.
-	InkInverse = lipgloss.AdaptiveColor{Light: "#FAFAFA", Dark: "#161616"}
+	InkInverse = theme.InkInverse
 )
 
 // --- Styles ---
@@ -88,9 +98,11 @@ func RenderMark() string {
 // Eyebrow renders an uppercase, letter-spaced mono label — the brand's eyebrow
 // device (e.g. "CONTROL PLANE").
 func Eyebrow(label string) string {
-	upper := strings.ToUpper(label)
-	spaced := strings.Join(strings.Split(upper, ""), " ")
-	return EyebrowStyle.Render(spaced)
+	// theme.Track is the projection of --tracking-eyebrow: the grid cannot give
+	// you 0.16 of a cell, so the device spends a whole one. Same output as the
+	// literal " " join it replaces — the point is that the separator now has one
+	// owner, which is the token.
+	return EyebrowStyle.Render(theme.Track(strings.ToUpper(label)))
 }
 
 // --- Message Helpers ---

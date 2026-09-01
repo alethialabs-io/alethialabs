@@ -35,6 +35,8 @@
     "gen:catalog": "node scripts/gen-catalog.mjs",
     "gen:cli-fixtures": "tsx scripts/gen-cli-fixtures.ts",
     "gen:go-enums": "tsx scripts/gen-go-enums.ts",
+    "gen:go-brand": "tsx scripts/gen-go-brand.ts",
+    "gen:go-brand:check": "tsx scripts/gen-go-brand.ts --check",
     "gen:format-conformance": "tsx scripts/gen-format-conformance.ts --write",
     "gen:format-conformance:check": "tsx scripts/gen-format-conformance.ts",
     "gen:matrix": "node scripts/gen-matrix.mjs",
