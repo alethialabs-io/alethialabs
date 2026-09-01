@@ -94,6 +94,57 @@ seed_decision() { # <requested: ''|empty|seed|keep> <recorded: ''|empty|demo> <f
   esac
 }
 
+# ── Which EDITION is the running console actually serving? ───────────────────────
+#
+# An env boots, serves, and looks completely healthy while resolving COMMUNITY
+# entitlements. Nothing prints, nothing 500s: a `team`/`active` subscription row is read
+# correctly and the API still answers `invite-member` with 403, because the paid
+# `organizations` entitlement is not there to grant. Every "I verified it on a branch env"
+# claim about an enterprise-scoped surface is then a claim about the community build
+# (#3732). So the boot SAYS which one it got, the way ci.yml's `Guard — ee/dist must exist`
+# step does for CI.
+#
+# THE DISCRIMINATOR, measured on the box on 2026-09-01 in both directions — the same env,
+# one `pnpm -F @alethia/ee build` apart, nothing else changed:
+#
+#   POST /api/auth/organization/create   with an empty JSON body, no session
+#     404  — Next has no such route          ⇒ the organization plugin is NOT registered
+#     400  — better-auth's own body validation ⇒ it IS registered
+#
+# It needs no account and writes nothing: validation refuses the empty body long before
+# any row is created. `organization/list` answers 404 either way and is NOT a
+# discriminator — that was the first probe tried here, and it reported "community" against
+# an enterprise console.
+#
+# WHAT IT PROVES, exactly. It measures whether `getEnterprise()` loaded @alethia/ee, which
+# is the SAME seam entitlements come through: lib/enterprise.ts registers the auth plugins
+# and `resolveEntitlements` from one load, so plugin-absent ⇔ ee-absent ⇔ community
+# entitlements. It is not itself an entitlement assertion — `pnpm env:test` is where a
+# paid call gets made — but it cannot be green while the entitlement seam is community.
+#
+# Decision only, no I/O, so `--self-test` can exercise it anywhere.
+# Echoes "<verdict> <why>"; verdict is enterprise | community | DEFECT | unknown.
+scope_verdict() { # <http status of the probe> <ALETHIA_EDITION as seen by the console>
+  local code="$1" edition="$2"
+  case "$code" in
+  000 | "" | 5??)
+    echo "unknown the console did not answer the probe (status ${code:-none})"
+    ;;
+  404)
+    # A pinned community edition is a legitimate thing to run — it is how the community
+    # build gets exercised at all. Unpinned and community is the silent defect.
+    if [ "$edition" = "community" ]; then
+      echo "community ALETHIA_EDITION=community is pinned for this env"
+    else
+      echo "DEFECT the organization plugin is absent — this console resolves COMMUNITY entitlements"
+    fi
+    ;;
+  *)
+    echo "enterprise the organization plugin is registered"
+    ;;
+  esac
+}
+
 if [ "${1:-}" = "--self-test" ]; then
   pass=0
   fail=0
@@ -128,6 +179,35 @@ if [ "${1:-}" = "--self-test" ]; then
   expect "a restart of an unmarked env"       "keep"  ""      ""      "no keep"
   expect "a restart of a seeded env"          "keep"  "demo"  ""      "no keep"
   expect "a restart of an empty env"          "keep"  "empty" ""      "no keep"
+
+  # scope_verdict — the #3732 half. Only the verdict is the contract; the why is prose.
+  scope() { # <case> <http status> <edition> <expected verdict>
+    local got
+    got="$(scope_verdict "$2" "$3" | cut -d' ' -f1)"
+    if [ "$got" = "$4" ]; then
+      pass=$((pass + 1))
+    else
+      fail=$((fail + 1))
+      echo "  ✗ $1: expected '$4', got '$got'"
+    fi
+  }
+  # 400 is better-auth validating an empty body, which only a REGISTERED plugin does.
+  scope "400 = the org plugin answered"        400 ""          "enterprise"
+  scope "…and edition is irrelevant when it did" 400 "community" "enterprise"
+  # Anything else in the 2xx/4xx range still means a route exists — only 404 means absent.
+  scope "401 still means the route exists"     401 ""          "enterprise"
+  # 404 = Next has no such route = no organization plugin = community entitlements.
+  scope "404 unpinned is the silent defect"    404 ""          "DEFECT"
+  scope "404 with auto is the silent defect"   404 "auto"      "DEFECT"
+  scope "404 with enterprise is worse, not ok" 404 "enterprise" "DEFECT"
+  # …unless community was asked for, which is how the community build gets exercised.
+  scope "404 pinned community is deliberate"   404 "community" "community"
+  # A console that cannot answer must not be reported either way. `000` is curl's
+  # "no response", and an empty string is what a failed capture actually yields — the two
+  # differ, so both are asserted rather than assumed to be the same case.
+  scope "no answer is not a verdict"           000 ""          "unknown"
+  scope "an empty status is not a verdict"     ""  ""          "unknown"
+  scope "a 500 is not a community verdict"     503 ""          "unknown"
   echo "  ${pass} passed, ${fail} failed"
   [ "$fail" -eq 0 ]
   exit
@@ -172,6 +252,14 @@ URL="https://$FQDN"
 cd "$REPO"
 export PATH="$PATH:/usr/local/go/bin"
 
+# HERE, and not next to the `tmux new` that needs it — see the long note there. The tmux
+# SERVER captures the environment of whatever process happens to start it and hands a copy
+# to every session it ever creates, so it must be born now, while this script's environment
+# is still the one ssh gave it, and not after the migration step below exports this env's
+# entire .env into it (#3732). Idempotent: a server that is already running is left alone,
+# which is exactly why the scrub down there is also needed.
+tmux start-server 2>/dev/null || true
+
 log() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
 psql_su() { "${SHARED_COMPOSE[@]}" exec -T postgres psql -U alethia -v ON_ERROR_STOP=1 "$@"; }
@@ -210,11 +298,35 @@ log "Installing dependencies"
 pnpm install --frozen-lockfile
 
 # @alethia/ee ships as a workspace package whose dist a fresh tree links but never
-# builds; without it loadEnterprise() throws, getAuthPlugins() returns [], and
-# /api/auth/organization/* 404s. Same reasoning as scripts/dev-up.sh:116.
-if [ -f ee/package.json ] && [ ! -f ee/dist/index.js ]; then
+# builds; without it loadEnterprise()'s tolerant require throws MODULE_NOT_FOUND,
+# getAuthPlugins() returns [], /api/auth/organization/* 404s, and lib/auth/scope.ts falls
+# back to `{ orgId: userId }` with COMMUNITY_ENTITLEMENTS. Same reasoning as
+# scripts/dev-up.sh:116 and the two `Build @alethia/ee` steps in ci.yml.
+#
+# UNCONDITIONAL, where this used to build only `if [ ! -f ee/dist/index.js ]` (#3732).
+# ee/dist is gitignored, so it is never in a pushed tree, and push_tree rsyncs with
+# --delete: EVERY `pnpm env:push` removed it from a live env. The old guard was therefore
+# not "build it once" but "build it on every env:up and leave it deleted after every
+# env:push" — and a `next dev` server re-evaluates lib/enterprise.ts on its next recompile,
+# so the console silently dropped to community scope with no restart and no message.
+# env.sh now rebuilds after each push too; this is the boot half of the same rule.
+#
+# It is also the only thing that keeps dist in step with ee/src: a conditional build makes
+# an edited ee/src/*.ts invisible for as long as an old dist happens to be lying there.
+# esbuild bundles one entry point in about a second, so there is nothing to save.
+if [ -f ee/package.json ]; then
   log "Building @alethia/ee"
   pnpm -F @alethia/ee build
+  # Asserted, not assumed. A build that fails under `set -e` stops here anyway, but a build
+  # that "succeeds" while writing nothing would hand back an env that boots, serves, looks
+  # healthy, and answers every enterprise-scoped question with the community answer — which
+  # is precisely the failure this file is being changed to make impossible.
+  [ -f ee/dist/index.js ] || {
+    echo "✗ ee/dist/index.js is missing after building @alethia/ee." >&2
+    echo "  Refusing to start: the console would resolve COMMUNITY entitlements, so every" >&2
+    echo "  enterprise-scoped check against this env would pass or fail for the wrong reason." >&2
+    exit 1
+  }
 fi
 
 # ── Schema ───────────────────────────────────────────────────────────────────────
@@ -394,6 +506,44 @@ log "Cloudflare tunnel"
 # and on a shared box one runaway Turbopack compile OOM-kills its neighbours.
 log "Starting console on :$CPORT"
 tmux kill-session -t "$SESSION" 2>/dev/null || true
+
+# ── ONE ENV'S .env MUST NOT REACH ANOTHER ENV'S CONSOLE ──────────────────────────
+#
+# This is the second half of #3732, and it is the half that made the first half look
+# unfixable: rebuilding @alethia/ee and restarting the console changed nothing, because the
+# console was not failing to LOAD ee — it was never trying. `ALETHIA_EDITION=community` was
+# in its environment, and loadEnterprise() returns null on that before it reaches the
+# require at all.
+#
+# Where it came from. The migration step above sources $REPO/.env under `set -a`, which
+# EXPORTS every one of that env's variables into this script's own shell and leaves them
+# there (the seeder below needs them). `tmux new` then starts the tmux SERVER if none is
+# running — and the server captures the environment of whatever process started it, and
+# hands a copy to every session created afterwards, for as long as it lives.
+#
+# So the FIRST env booted after a box comes up writes its entire .env into the tmux server,
+# and every env booted after that inherits it. Variables the second env's own .env re-sets
+# are overwritten by the `set -a && . .env` in its session command and are fine; the ones it
+# does NOT set are silently the first env's. Measured on the box on 2026-09-01: the tmux
+# global environment held demo-ladder's database URL, its BETTER_AUTH_URL, its signing keys
+# and its hand-added ALETHIA_EDITION=community — and env2's console, whose own .env names no
+# edition, booted community and stayed community across every rebuild and restart.
+#
+# Two measures, because prevention alone cannot heal a server that is already carrying it:
+#
+#   · `tmux start-server` runs at the TOP of this script, before the .env is sourced, so a
+#     server born on this boot is born from an environment that holds no env's .env.
+#   · this scrub removes what a server born on an EARLIER boot already holds — including one
+#     started before this change shipped. The key set is DERIVED
+#     from the .env files themselves — the union of what any env can leak — rather than
+#     hand-listed, because a hand-written list of variables to scrub stops covering the day
+#     someone adds one and says nothing.
+for _k in $(cat /opt/alethia/envs/*/.env 2>/dev/null |
+  grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' | tr -d '=' | LC_ALL=C sort -u); do
+  tmux set-environment -gu "$_k" 2>/dev/null || true
+done
+unset _k
+
 tmux new -d -s "$SESSION" \
   "cd $REPO && set -a && . $REPO/.env && set +a && \
    PORT=$CPORT NODE_OPTIONS=--max-old-space-size=3072 \
@@ -411,6 +561,54 @@ for _ in $(seq 1 150); do
     # seen — on the laptop, in env.sh.
     echo "    tree:  $TREE_STAMP"
     echo "    seed:  $SEED_NOTE"
+
+    # WHICH EDITION IS ANSWERING (#3732) — see scope_verdict above for the probe and what
+    # it does and does not prove. Printed on every boot, because the whole failure mode is
+    # that nothing printed: the env came up, served, and looked healthy while every
+    # enterprise-scoped question got the community answer.
+    #
+    # The probe runs against the console THAT JUST ANSWERED, on loopback, so it reports what
+    # this boot actually got rather than what the files on disk imply it should have got.
+    # ee/dist existing is the precondition; this is the outcome, and the two came apart for
+    # a fortnight.
+    # Retried, because the readiness loop above breaks as soon as /login answers and this is
+    # a DIFFERENT route: `next dev` compiles a route on its first request, so a single
+    # attempt can time out on the compile and report "unknown" against a perfectly good env.
+    # A cold /api/auth/* compile was measured at ~4s here; the budget is deliberately much
+    # larger than that, and giving up still reports `unknown` rather than a verdict.
+    SCOPE_CODE=000
+    for _ in 1 2 3; do
+      SCOPE_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
+        -X POST -H 'content-type: application/json' -d '{}' \
+        "http://localhost:$CPORT/api/auth/organization/create" 2>/dev/null || echo 000)"
+      [ "$SCOPE_CODE" != "000" ] && break
+      sleep 3
+    done
+    SCOPE_EDITION="$(grep -E '^ALETHIA_EDITION=' "$REPO/.env" 2>/dev/null | cut -d= -f2- || true)"
+    read -r SCOPE_VERDICT SCOPE_WHY <<<"$(scope_verdict "$SCOPE_CODE" "$SCOPE_EDITION")"
+    case "$SCOPE_VERDICT" in
+    enterprise) echo "    scope: enterprise — $SCOPE_WHY" ;;
+    community) echo "    scope: community (deliberate) — $SCOPE_WHY" ;;
+    unknown) echo "    scope: UNKNOWN — $SCOPE_WHY" ;;
+    *)
+      # FATAL, and this is the point of the change. An env that resolves community
+      # entitlements while nobody asked it to is not a working env with a caveat — it is an
+      # env on which every enterprise-scoped verification is vacuous, and it looks identical
+      # to a good one. Same call CI's `Guard — ee/dist must exist` step makes.
+      echo "" >&2
+      echo "✗ $SLUG came up in COMMUNITY scope — $SCOPE_WHY" >&2
+      echo "  A team/active subscription row on this env will still be refused with" >&2
+      echo "  403 upgrade_required, because the paid 'organizations' entitlement is not" >&2
+      echo "  there to grant. Any enterprise-scoped check against it would be vacuous." >&2
+      echo "" >&2
+      echo "  ee/dist/index.js: $( [ -f "$REPO/ee/dist/index.js" ] && echo present || echo MISSING)" >&2
+      echo "  ALETHIA_EDITION in this env's .env: ${SCOPE_EDITION:-unset (= auto)}" >&2
+      echo "  ALETHIA_EDITION in the tmux server env: $(tmux show-environment -g ALETHIA_EDITION 2>/dev/null || echo 'not set')" >&2
+      echo "  Bring it up again (pnpm env:up); if it recurs, tmux kill-server on the box." >&2
+      exit 1
+      ;;
+    esac
+
     echo "    logs:  pnpm env:logs        (sign-in codes are printed here)"
     exit 0
   fi

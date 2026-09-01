@@ -592,14 +592,67 @@ push_tree() {
   #   apps/console/.env.local   holds the env's OpenFGA store id, likewise box-side.
   # Excluding .env also enforces the other half of the rule: even if a laptop worktree
   # does have one, its live keys can never be pushed to a snapshotted box.
+  #   ee/dist                   is BUILT ON THE BOX and gitignored, so it is never in the
+  #                             source tree and --delete removed it on every push (#3732).
+  #                             The console then resolved COMMUNITY entitlements: a
+  #                             team/active subscription row still got 403 upgrade_required,
+  #                             because the paid `organizations` entitlement was not there to
+  #                             grant. Nothing printed — a `next dev` server re-evaluates
+  #                             lib/enterprise.ts on its next recompile, so the flip happened
+  #                             with no restart and no message, and every enterprise-scoped
+  #                             check against that env was silently vacuous.
+  #                             Excluding it is not the whole fix and is not a licence for a
+  #                             stale dist: build_ee below REBUILDS it after every push, on
+  #                             the box, from the ee/src that was just pushed. The exclusion
+  #                             closes the window in between, during which a recompile would
+  #                             otherwise catch the console with no dist at all. It also means
+  #                             a laptop that happens to have built one can never SEND it.
   rsync -az --delete \
     --exclude=node_modules --exclude=.next --exclude=.git --exclude=.turbo \
     --exclude=test-results --exclude=playwright-report --exclude='*.tfstate*' \
-    --exclude=.terraform \
+    --exclude=.terraform --exclude=/ee/dist \
     --exclude=/.env --exclude='.env.local' --exclude='.env.*.local' \
     --exclude='apps/*/.env.local' \
     -e "ssh -o StrictHostKeyChecking=accept-new" \
     "$ROOT/" "root@$ip:$REMOTE/envs/$slug_/"
+}
+
+# Rebuild @alethia/ee ON THE BOX, from the ee/src that was just pushed (#3732).
+#
+# Why this exists at all: ee/dist is gitignored, so it is only ever a build artefact of the
+# machine the console runs on — and it is the difference between an env that resolves
+# ENTERPRISE entitlements and one that resolves community. Without it loadEnterprise()'s
+# require throws, getAuthPlugins() returns [], /api/auth/organization/* 404s, and
+# lib/auth/scope.ts falls back to `{ orgId: userId }` with COMMUNITY_ENTITLEMENTS.
+#
+# Why after every push and not once: ee/src changes like any other source, and a dist built
+# from an older one is the same silent lie in a different disguise. esbuild bundles a single
+# entry point in about a second.
+#
+# Why on the BOX rather than rsyncing a local build: every other build already happens there,
+# the box's own node_modules are what it links against, and a dist built on a laptop and
+# shipped is exactly the stale artefact this is meant to stop existing.
+#
+# NOT best-effort. A failure here leaves the env resolving community entitlements, which is
+# indistinguishable from a healthy env until something asks for a paid entitlement and reads
+# the refusal carefully — the whole reason #3732 survived as long as it did.
+build_ee() {
+  local slug_
+  slug_="$(slug)"
+  # The install guard is for the callers that push into a slot without bringing it up —
+  # env:check and env:test both push before they install, and `pnpm -F` needs the workspace
+  # linked and esbuild present before it can build anything. A warm env skips it.
+  ssh_box "set -e
+    cd $REMOTE/envs/$slug_
+    [ -f ee/package.json ] || exit 0
+    [ -d node_modules ] || pnpm install --frozen-lockfile >/dev/null
+    pnpm -F @alethia/ee build >/dev/null
+    test -f ee/dist/index.js" || die "could not build @alethia/ee on the box.
+  Until it exists, '$slug_' resolves COMMUNITY entitlements: a team/active subscription row
+  is read correctly and the API still refuses invite-member with 403, because the paid
+  'organizations' entitlement is not there to grant. Every enterprise-scoped check against
+  that env would be vacuous, so this is refused rather than warned about.
+  Look at:  pnpm env:ssh   then   cd $REMOTE/envs/$slug_ && pnpm -F @alethia/ee build"
 }
 
 cmd_push() {
@@ -609,14 +662,20 @@ cmd_push() {
     need fswatch
     echo "→ watching $ROOT — pushing to $slug_ on change (ctrl-c to stop)"
     push_tree
+    build_ee
     # Debounced: --latency batches a burst of saves into one rsync, so a formatter
     # rewriting twenty files does not trigger twenty pushes.
+    #
+    # build_ee runs on every iteration, not just the first: a --watch session is exactly
+    # where an ee/src edit is most likely, and a dist left behind by the first push would
+    # then be stale for the rest of the session.
     fswatch -o -l 1 -e '\.git' -e 'node_modules' -e '\.next' -e '\.turbo' "$ROOT" |
       while read -r _; do
-        push_tree && echo "  pushed $(date +%H:%M:%S)"
+        push_tree && build_ee && echo "  pushed $(date +%H:%M:%S)"
       done
   else
     push_tree
+    build_ee
     echo "✓ pushed to $slug_"
   fi
 }
@@ -876,6 +935,58 @@ cmd_verify() {
   exit 1
 }
 
+# ── WHICH EDITION IS EACH ENV SERVING? ───────────────────────────────────────────
+#
+# `env:status` printed a URL, ports, an owner and a timestamp — everything about whether the
+# process is up, and nothing about whether the product it is serving is the one you think.
+# An env resolving COMMUNITY entitlements boots, serves and looks identical to a good one:
+# a `team`/`active` subscription row is read correctly and the API still refuses
+# invite-member with 403, because the paid `organizations` entitlement is not there to
+# grant. That difference is invisible until something asks for a paid entitlement and reads
+# the refusal carefully, which is how it survived until a Playwright spec did (#3732).
+#
+# So it is printed, for every env, on the command people already run. Measured against the
+# RUNNING console on loopback — not inferred from ee/dist being on disk, because those two
+# came apart: dist was present and correct while the console served community anyway
+# (ALETHIA_EDITION had leaked in from another env through the tmux server's environment).
+# The probe and what it does and does not prove are documented on scope_verdict() in
+# scripts/box/env-mode.sh; this is the same discriminator, asked from here.
+#
+# ONE ssh for all envs, and every branch prints something: a `?` from an env that did not
+# answer must not read the same as an env that answered "enterprise" — a probe whose failure
+# branch is indistinguishable from its success branch is not a check.
+env_scopes() { # → lines of "<slug> <verdict>"
+  local pairs script s p
+  pairs="$(ssh_box "$REMOTE/bin/env-registry.sh list" 2>/dev/null |
+    jq -r 'to_entries[] | "\(.key) \(.value.consolePort)"' 2>/dev/null)" || return 0
+  [ -n "$pairs" ] || return 0
+
+  # The probe body is built here and the slug/port pairs are appended as CALLS, rather than
+  # piped to it: `bash -s` already owns ssh's stdin, so a loop reading pairs from stdin on the
+  # far side would read the script itself.
+  script='
+probe() {
+  s="$1"; p="$2"
+  c=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+        -X POST -H "content-type: application/json" -d "{}" \
+        "http://localhost:$p/api/auth/organization/create" 2>/dev/null || echo 000)
+  e=$(grep -E "^ALETHIA_EDITION=" "'"$REMOTE"'/envs/$s/.env" 2>/dev/null | cut -d= -f2- || true)
+  case "$c" in
+    000|"") echo "$s ?-no-answer" ;;
+    5??)    echo "$s ?-http-$c" ;;
+    404)
+      if [ "$e" = community ]; then echo "$s community-pinned"; else echo "$s COMMUNITY"; fi ;;
+    *)      echo "$s enterprise" ;;
+  esac
+}'
+  while read -r s p; do
+    [ -n "$s" ] || continue
+    script="$script
+probe '$s' '$p'"
+  done <<<"$pairs"
+  ssh_box "$script" 2>/dev/null || true
+}
+
 cmd_status() {
   need jq
   local ip domain
@@ -891,10 +1002,25 @@ cmd_status() {
   created="$(hc server describe "$SERVER_NAME" -o json 2>/dev/null | jq -r '.created // empty')"
   echo "box:  up   $ip   $type   since ${created:-?}"
   echo "envs: (cap from infra/sandbox env_cap)"
+  # The scope is asked of every env in one round trip, before the listing renders, and joined
+  # in by slug. An env missing from `scopes` prints `?` rather than nothing: a blank line
+  # there would read as "fine", which is the exact failure this is here to stop.
+  local scopes
+  scopes="$(env_scopes)"
   ssh_box "$REMOTE/bin/env-registry.sh list" |
-    jq -r --arg d "$domain" 'to_entries[] |
-      "  \(.key)\n    url    https://\(if .key == "dev" then $d else "env" + (((.value.consolePort - 3000) / 100) | tostring) + "-" + $d end)\n    ports  console :\(.value.consolePort)  storage :\(.value.storagePort)\n    owner  \(.value.owner)   last seen \(.value.lastSeen)"'
+    jq -r --arg d "$domain" --arg scopes "$scopes" '
+      ($scopes | split("\n") | map(select(length > 0) | split(" ") | {key: .[0], value: .[1]}) | from_entries) as $sc |
+      to_entries[] |
+      "  \(.key)\n    url    https://\(if .key == "dev" then $d else "env" + (((.value.consolePort - 3000) / 100) | tostring) + "-" + $d end)\n    ports  console :\(.value.consolePort)  storage :\(.value.storagePort)\n    scope  \($sc[.key] // "?-not-probed")\n    owner  \(.value.owner)   last seen \(.value.lastSeen)"'
   cat <<'NOTE'
+
+  Scope: which EDITION that env's console is serving, measured against the running process
+  — not inferred from ee/dist being on disk, because those two have come apart. `enterprise`
+  is what production and CI run and what any org-scoped check must be read against.
+  `COMMUNITY` (capitalised because it is almost never what you wanted) means the console
+  resolved the community entitlement baseline: a team/active subscription row on that env is
+  still refused with 403 upgrade_required, so EVERY enterprise-scoped verification on it is
+  vacuous. Fix it with `pnpm env:up`; `community-pinned` means that env's .env asked for it.
 
   Sign-in: OAuth redirect URIs cannot be wildcarded, so social sign-in and the Stripe
   test webhook only work on the PRIMARY env. Branch envs are email-OTP only — the code
@@ -957,6 +1083,11 @@ cmd_check() {
   local slug_ sizing workers
   slug_="$(slug)"
   push_tree
+  # push_tree's --delete does not remove ee/dist any more, but it is still only ever a build
+  # artefact of this box, and the console suite MEASURES the scope it resolves: without it
+  # lib/auth/scope.ts falls back to `{ orgId: userId }` and org-scoped assertions go vacuous
+  # rather than red. ci.yml builds it before its suites for exactly this reason (#3732).
+  build_ee
   # Measured on the box, not assumed here: another session's env may have landed since this one
   # started, and the right cap then is a different number.
   sizing="$(vitest_workers)"
@@ -997,6 +1128,12 @@ cmd_test() {
   proj="${1:---project=hero}"
 
   push_tree
+  # THE ONE THIS WAS FOUND ON (#3732). A browser suite is driven against the RUNNING console,
+  # and this push used to delete ee/dist out from under it moments before the run started —
+  # so the audit that asked for a paid entitlement got 403 upgrade_required from an env whose
+  # billing row was correct, and read as a product defect. Build it back before anything is
+  # driven, exactly as ci.yml's e2e jobs do.
+  build_ee
 
   # `playwright install --with-deps` needs root apt for ~16 shared libs (libnss3, libgbm1,
   # libasound2t64 ...) that cloud-init does not carry. We ssh as root, so this just works;
