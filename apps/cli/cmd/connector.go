@@ -5,10 +5,13 @@ package cmd
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -85,4 +88,137 @@ func finalizeConnection(
 	}
 	ui.Success("Connection verified")
 	return nil
+}
+
+// cloudIdentityLister is the slice of the API client the reference resolver needs — kept
+// small so the resolution is unit-testable with a fake (the concrete *api.Client satisfies
+// it), and so this group needs no edit to the shared apiClient interface.
+type cloudIdentityLister interface {
+	GetCloudIdentities() ([]api.CloudIdentity, error)
+}
+
+// isCloudProviderSlug reports whether ref names a cloud provider.
+//
+// The set is types.AllCloudProviders — the GENERATED mirror of the `cloud_provider` Postgres
+// enum, diff-gated against lib/db/schema/enums.ts. A hand-written list here would stop
+// covering silently the moment a seventh cloud is added, and the failure would be invisible:
+// `alethia cloud inventory <newcloud>` would fall through and be sent to the server as an
+// identity id, which reads as "that account does not exist".
+func isCloudProviderSlug(ref string) bool {
+	for _, p := range types.AllCloudProviders {
+		if string(p) == ref {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveCloudIdentityRef turns the optional `[provider|cloud-identity-id]` argument of a
+// read command into the identity id to operate on.
+//
+// This is the handoff removal. `alethia cloud inventory` used to take a bare
+// `<cloud-identity-id>` — an opaque token a reader had to copy out of another command's
+// output, which is exactly the class of manual step this programme exists to delete. It now
+// takes a provider name, or nothing at all and shows a picker.
+//
+// An id is NEVER reshaped. A stored cloud-identity id is a lookup key: a resolver that
+// trimmed, lower-cased or re-formatted one would rename a live record's address. So only a
+// value that IS a provider slug is resolved; everything else is passed through byte for
+// byte, and no request is made to list identities at all.
+func resolveCloudIdentityRef(lister cloudIdentityLister, ref string) (string, error) {
+	if ref != "" && !isCloudProviderSlug(ref) {
+		return ref, nil
+	}
+
+	if ref == "" {
+		if err := requireInteractive(); err != nil {
+			return "", fmt.Errorf(
+				"no cloud account given: pass a provider (%s) or a cloud-identity id as the argument (%w)",
+				strings.Join(connectorProviderNames(), ", "), err,
+			)
+		}
+	}
+
+	var identities []api.CloudIdentity
+	var err error
+	ui.RunSpinner("Fetching cloud connections...", func() {
+		identities, err = lister.GetCloudIdentities()
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch cloud connections: %w", err)
+	}
+	if len(identities) == 0 {
+		return "", fmt.Errorf("no cloud accounts connected — run `alethia connector` first")
+	}
+
+	if ref != "" {
+		matches := make([]api.CloudIdentity, 0, 1)
+		for _, id := range identities {
+			if id.Provider == ref {
+				matches = append(matches, id)
+			}
+		}
+		switch len(matches) {
+		case 0:
+			return "", fmt.Errorf("no connected %s account found — run `alethia connector %s` first", ref, ref)
+		case 1:
+			return matches[0].ID, nil
+		default:
+			// Ambiguity is reported, never guessed. Picking the first would silently read a
+			// different account than the one the user meant, and the two differ by nothing the
+			// output shows.
+			ids := make([]string, len(matches))
+			for i, m := range matches {
+				ids[i] = m.ID
+			}
+			return "", fmt.Errorf(
+				"%d connected %s accounts — pass the cloud-identity id instead (%s)",
+				len(matches), ref, strings.Join(ids, ", "),
+			)
+		}
+	}
+
+	return pickConnectedIdentity("Select a cloud account", identities)
+}
+
+// pickConnectedIdentity shows the picker over already-fetched connections and returns the
+// chosen identity id. The title is the caller's, because "Select a cloud account" and
+// "Select a connection to REMOVE" are not the same question to answer.
+func pickConnectedIdentity(title string, identities []api.CloudIdentity) (string, error) {
+	options := make([]huh.Option[string], len(identities))
+	for i, id := range identities {
+		options[i] = huh.NewOption(
+			fmt.Sprintf("%s — %s", strings.ToUpper(id.Provider), id.Label),
+			id.ID,
+		)
+	}
+	var chosen string
+	if err := runHuhForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title(title).
+			Options(options...).
+			Value(&chosen),
+	)); err != nil {
+		return "", err
+	}
+	if chosen == "" {
+		return "", fmt.Errorf("no cloud account selected")
+	}
+	return chosen, nil
+}
+
+// connectorProviderNames lists the providers `alethia connector` can connect, derived from
+// the registered subcommands rather than typed out — a second hand-written copy of the list
+// is how the parent command's help and its subcommands drift apart.
+func connectorProviderNames() []string {
+	names := make([]string, 0, len(connectorCmd.Commands()))
+	for _, c := range connectorCmd.Commands() {
+		switch c.Name() {
+		case "list", "remove":
+			continue
+		}
+		names = append(names, c.Name())
+	}
+	sort.Strings(names)
+	return names
 }

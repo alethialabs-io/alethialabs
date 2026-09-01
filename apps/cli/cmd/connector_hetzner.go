@@ -45,7 +45,7 @@ project dedicated to Alethia rather than one already holding infrastructure you 
 
 Object Storage (S3-compatible) uses a SEPARATE credential pair, which Hetzner issues
 under Security → S3 credentials. It is optional: pass it only if this project's
-environments declare storage buckets.`,
+environments declare storage buckets. It is a pair — give both keys or neither.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -66,9 +66,14 @@ environments declare storage buckets.`,
 			fail(err)
 		}
 
+		s3Access, s3Secret, err := resolveHetznerS3(connectorHetznerS3AccessKey, connectorHetznerS3SecretKey)
+		if err != nil {
+			fail(err)
+		}
+
 		ui.PrintStepper(steps, 2)
 		if err := finalizeConnection(apiClient, "hetzner", initResp.IdentityID, hetznerCreds(
-			apiToken, connectorHetznerS3AccessKey, connectorHetznerS3SecretKey,
+			apiToken, s3Access, s3Secret,
 		)); err != nil {
 			failf("Failed to connect Hetzner: %v", err)
 		}
@@ -87,6 +92,67 @@ func hetznerCreds(apiToken, s3Access, s3Secret string) map[string]interface{} {
 		creds["s3_secret_key"] = s3Secret
 	}
 	return creds
+}
+
+// resolveHetznerS3 resolves the Object-Storage credential PAIR: from the flags, or by prompt when
+// the command is already prompting and neither flag was given.
+//
+// Two rules, both learned from what the pair actually is.
+//
+// It is a PAIR, so half of one is refused rather than sent. hetznerCreds omits an empty member,
+// so `--s3-access-key AK` alone used to be accepted and stored as an access key with no secret —
+// a credential that cannot work, discovered later as a bucket that will not provision.
+//
+// It is OPTIONAL, so under --no-input its absence is an answer and not an error. Only the
+// interactive path asks, and it asks through a Confirm first: most Hetzner projects declare no
+// buckets, and two mandatory blank prompts in the common path is a worse command than a Yes/No.
+func resolveHetznerS3(access, secret string) (string, string, error) {
+	access, secret = strings.TrimSpace(access), strings.TrimSpace(secret)
+	if access != "" || secret != "" {
+		return validateHetznerS3Pair(access, secret)
+	}
+	if requireInteractive() != nil {
+		return "", "", nil
+	}
+
+	var wanted bool
+	if err := runHuhForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("Add Hetzner Object Storage credentials?").
+			Description("Only needed if this project's environments declare storage buckets. Console → Security → S3 credentials.").
+			Affirmative("Yes").
+			Negative("No").
+			Value(&wanted),
+	)); err != nil {
+		return "", "", err
+	}
+	if !wanted {
+		return "", "", nil
+	}
+
+	if err := runHuhForm(huh.NewGroup(
+		huh.NewInput().
+			Title("S3 access key").
+			Value(&access),
+		huh.NewInput().
+			Title("S3 secret key").
+			EchoMode(huh.EchoModePassword).
+			Value(&secret),
+	)); err != nil {
+		return "", "", err
+	}
+	return validateHetznerS3Pair(strings.TrimSpace(access), strings.TrimSpace(secret))
+}
+
+// validateHetznerS3Pair refuses half a pair, naming the missing half.
+func validateHetznerS3Pair(access, secret string) (string, string, error) {
+	switch {
+	case access == "":
+		return "", "", fmt.Errorf("an S3 secret key was given without an access key — pass --s3-access-key too, or neither")
+	case secret == "":
+		return "", "", fmt.Errorf("an S3 access key was given without a secret key — pass --s3-secret-key too, or neither")
+	}
+	return access, secret, nil
 }
 
 // resolveHetznerToken picks the token up from --token, from stdin under --token-stdin, or by masked
