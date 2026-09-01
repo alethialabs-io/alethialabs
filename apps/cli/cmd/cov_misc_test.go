@@ -1214,7 +1214,7 @@ func miscAdminCommands() [][]string {
 		{"runner", "list"}, {"runner", "remove", "r1"},
 		{"runner", "deploy", "--cloud-identity-id", "ci-aws", "--name", "n", "--region", "eu-west-1", "--assigned-runner-id", "r1"},
 		{"runner", "destroy", "--runner-id", "r1", "--assigned-runner-id", "r2"},
-		{"jobs", "list"}, {"jobs", "get", "j1"}, {"jobs", "logs", "j1"}, {"jobs", "cancel", "j1"},
+		{"jobs", "list"}, {"jobs", "get", "j1"}, {"jobs", "logs", "j1"}, {"jobs", "cancel", "j1", "--yes"},
 		{"usage"}, {"billing"}, {"cloud", "inventory", "ci-aws"},
 		{"project", "list"}, {"connector", "list"}, {"cluster", "list"}, {"config", "export", "web"},
 		{"activity"}, {"repo", "list"}, {"agent", "list"}, {"agent", "get", "ag1"},
@@ -1961,11 +1961,11 @@ func TestMisc_JobLogsAndCancel(t *testing.T) {
 	t.Run("cancel", func(t *testing.T) {
 		jobsLogsFollow = false
 		run := miscAdminEnv(t, miscAdminOpts{})
-		if err := run("jobs", "cancel", "j1", "--output", "json"); err != nil {
+		if err := run("jobs", "cancel", "j1", "--yes", "--output", "json"); err != nil {
 			t.Error(err)
 		}
 		exits := miscFatalRunner(miscAdminEnv(t, miscAdminOpts{failOn: "/cancel"}))
-		if !exits("jobs", "cancel", "j1", "--output", "json") {
+		if !exits("jobs", "cancel", "j1", "--yes", "--output", "json") {
 			t.Error("expected a refused cancel to be fatal")
 		}
 	})

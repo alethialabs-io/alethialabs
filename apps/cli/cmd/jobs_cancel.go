@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var jobsCancelYes bool
+
 var jobsCancelCmd = &cobra.Command{
 	Use:   "cancel <job_id>",
 	Short: "Cancel a queued or processing job",
@@ -21,6 +23,13 @@ var jobsCancelCmd = &cobra.Command{
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
+		}
+		if !confirmDestructive(
+			jobsCancelYes,
+			fmt.Sprintf("Cancel job %s?", jobID),
+			"A running apply stops part-way, which can leave the environment between two states.",
+		) {
+			return
 		}
 
 		apiClient := api.NewClient(token)
@@ -38,5 +47,6 @@ var jobsCancelCmd = &cobra.Command{
 }
 
 func init() {
+	addYesFlag(jobsCancelCmd, &jobsCancelYes)
 	jobsCmd.AddCommand(jobsCancelCmd)
 }

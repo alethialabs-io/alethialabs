@@ -166,6 +166,8 @@ func runTokenCreate(c apiClient, out, errOut io.Writer, format, name string, exp
 	return nil
 }
 
+var tokenRevokeYes bool
+
 var tokenRevokeCmd = &cobra.Command{
 	Use:   "revoke <id>",
 	Short: "Revoke a service-account token",
@@ -174,6 +176,13 @@ var tokenRevokeCmd = &cobra.Command{
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
+		}
+		if !confirmDestructive(
+			tokenRevokeYes,
+			fmt.Sprintf("Revoke token %s?", args[0]),
+			"It stops working on its very next request, and anything using it starts failing. This cannot be undone.",
+		) {
+			return
 		}
 		if err := runTokenRevoke(api.NewClient(token), os.Stdout, args[0]); err != nil {
 			failf("Failed to revoke token: %v", err)
@@ -195,6 +204,7 @@ func init() {
 	tokenCreateCmd.Flags().StringVar(&tokenCreateName, "name", "", "What this token is for (required)")
 	tokenCreateCmd.Flags().IntVar(&tokenCreateExpires, "expires-in-days", 0,
 		"Days until the token expires. 0 (the default) never expires — a deliberate choice, not an oversight.")
+	addYesFlag(tokenRevokeCmd, &tokenRevokeYes)
 	tokenCmd.AddCommand(tokenListCmd, tokenCreateCmd, tokenRevokeCmd)
 	rootCmd.AddCommand(tokenCmd)
 }

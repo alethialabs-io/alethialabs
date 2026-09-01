@@ -102,7 +102,7 @@ func TestTokenRevokeCommand(t *testing.T) {
 	run, calls := tokenEnv(t, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"revoked": true, "id": "t1"})
 	})
-	if err := run("token", "revoke", "t1"); err != nil {
+	if err := run("token", "revoke", "t1", "--yes"); err != nil {
 		t.Fatalf("token revoke: %v", err)
 	}
 	if len(*calls) != 1 || (*calls)[0].method != http.MethodDelete || (*calls)[0].path != "/api/cli/tokens/t1" {
@@ -124,7 +124,7 @@ func TestTokenCommandsExitOnFailure(t *testing.T) {
 	}{
 		{"list", []string{"token", "list"}},
 		{"create", []string{"token", "create", "--name", "ci"}},
-		{"revoke", []string{"token", "revoke", "t1"}},
+		{"revoke", []string{"token", "revoke", "t1", "--yes"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			run, _ := tokenEnv(t, func(w http.ResponseWriter, _ *http.Request) {
