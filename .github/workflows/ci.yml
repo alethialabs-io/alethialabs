@@ -669,6 +669,19 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-shared-surface.mjs --self-test
+      # packages/brand/src/ramp-srgb.ts is a hand-maintained sRGB copy of the OKLCH ramp in
+      # tokens.css, for the three surfaces that cannot read a custom property (email, Stripe
+      # Elements across an iframe, next/og). It fixed three disagreeing transcriptions by
+      # becoming a fourth, and nothing checked it. The CLI's lipgloss ink ramp is generated
+      # FROM that file, so a drift here reaches the terminal and makes the CLI a mirror of a
+      # copy. The check is arithmetic — every hex is recomputed from the `// oklch(...)`
+      # comment each line carries — so it needs no fifth table to compare against.
+      - name: Brand sRGB ramp is still a transcription of tokens.css
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:ramp-transcription
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-ramp-transcription.mjs --self-test
       - name: Runner self-image is baked, matches its job, and is multi-arch
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:runner-self-image
@@ -833,6 +846,18 @@ jobs:
           pnpm -F console gen:go-enums
           git diff --exit-code -- packages/core/types/enums_gen.go \
             || { echo "::error::Go enum constants are stale — run 'pnpm -F console gen:go-enums' and commit. The Go build + exhaustive lint then flag any switch/map to update."; exit 1; }
+      # The formatter contract both surfaces are held to. @repo/format decides what `47 min`,
+      # `2h 15m` and `$12.50/mo` look like for the console; packages/core/format will be held to
+      # the same table for the CLI, which today renders $12.50 as `$12/mo` (Go's %.0f rounds half
+      # to EVEN) and runner minutes as `0`. The table is GENERATED from the TS implementation, so
+      # it is a mirror of TS rather than a third opinion — and Go cannot write it, so a Go-only
+      # change has no way to make itself right.
+      - name: Formatter conformance table is in sync with @repo/format
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          pnpm -F console gen:format-conformance
+          git diff --exit-code -- packages/format/conformance/format-cases.json \
+            || { echo "::error::The formatter conformance table is stale — run 'pnpm -F console gen:format-conformance' and commit. NOTE this rewrites an EXPECTATION, not a formatting detail: read the changed-case list the generator prints, because packages/core/format is held to this table."; exit 1; }
       - name: Compat matrix mirror is in sync with the SSOT (matrix.json → matrix.ts)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |

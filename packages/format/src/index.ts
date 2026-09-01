@@ -179,9 +179,39 @@ export function formatBytes(bytes: number): string {
  * @param currency ISO 4217 code; defaults to USD.
  */
 export function formatMoney(cents: number, currency = "USD"): string {
-	const amount = Number.isFinite(cents) ? cents / 100 : 0;
+	// NOT `/ 100`. A minor unit is only a hundredth in currencies that HAVE two decimal places.
+	// JPY, KRW, VND and the rest of Stripe's zero-decimal list have none — their smallest unit is
+	// the unit — so dividing by 100 rendered a ¥124,000 invoice as `¥1,240`, understating real
+	// money by 100×. `invoices-table.tsx` and `invoice-preview-dialog.tsx` pass Stripe's `total`
+	// straight in, so that was reaching a customer's screen.
+	//
+	// The exponent comes from ICU's own currency data rather than a hand-kept list, so the
+	// divisor and the formatter below can never disagree about how many decimals a currency has
+	// — they are reading the same table. (BHD/JOD/KWD are three-decimal and work by the same
+	// rule.) A Go port must carry an explicit table; the conformance cases are what prove the two
+	// agree, and would fail if CLDR ever moved an exponent under one of them.
+	const amount = Number.isFinite(cents) ? cents / 10 ** minorUnitDigits(currency) : 0;
 	// No explicit decimals: a billed amount keeps the currency's own (2 for USD, 0 for JPY).
 	return money(amount, currency);
+}
+
+/**
+ * How many decimal places a currency's minor unit has — 2 for USD, 0 for JPY, 3 for BHD.
+ *
+ * An unrecognised but well-formed code (three letters Intl has no data for) resolves to 2, which
+ * is Intl's own default and the overwhelmingly common shape. A MALFORMED code throws, exactly as
+ * it already did — `money()` below constructs a formatter with the same code a line later, so
+ * catching here could not have changed the outcome, only hidden where it came from.
+ *
+ * @param currency ISO 4217 code.
+ * @returns the minor-unit exponent.
+ */
+function minorUnitDigits(currency: string): number {
+	const { maximumFractionDigits } = new Intl.NumberFormat(LOCALE, { style: "currency", currency }).resolvedOptions();
+	// Typed optional because it is absent for the non-currency number styles. For `style:
+	// "currency"` Intl always sets it, so `?? 2` satisfies the type without pretending to know
+	// better than it — and 2 is Intl's own default anyway, so the fallback cannot disagree.
+	return maximumFractionDigits ?? 2;
 }
 
 /**
