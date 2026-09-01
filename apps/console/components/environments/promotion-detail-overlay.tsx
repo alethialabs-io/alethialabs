@@ -80,7 +80,9 @@ export function PromotionDetailOverlay({
 												{s.label}
 											</span>
 										</div>
-										{i < arr.length - 1 && <div className="mx-1 mt-2.5 h-0.5 flex-1 bg-border" />}
+										{/* 3px centres the 2px rail on the shared 7px `.vx-status__dot` — see
+										    active-promotion-panel.tsx, which draws the same pipeline. */}
+										{i < arr.length - 1 && <div className="mx-1 mt-[3px] h-0.5 flex-1 bg-border" />}
 									</div>
 								))}
 							</div>

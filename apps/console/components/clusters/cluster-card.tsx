@@ -215,8 +215,18 @@ export function ClusterCard({
 						<div className="flex flex-wrap items-center gap-2">
 							{/* The card's own heading rung, through the shared component: the card
 							    used to hand-write an `<h3>` at `text-sm`, one of five sizes the
-							    same rung was typeset at across the console. */}
-							<PageHeader level={3} title={data.project_name} className="min-w-0" />
+							    same rung was typeset at across the console.
+							    `PageHeader` fixes its heading at `text-lg` whatever the `level` —
+							    deliberately, so type scale is not chosen from the outline — which
+							    inside an 18px-padded card over a `text-[11px]` meta line would make
+							    the title the largest type on the card, and larger than the sibling
+							    environment card's name. The slot override keeps the card's rung and
+							    takes only the tag from the component. */}
+							<PageHeader
+								level={3}
+								title={data.project_name}
+								className="min-w-0 [&_[data-slot=page-header-title]]:text-sm [&_[data-slot=page-header-title]]:font-semibold"
+							/>
 							<StatusBadge status={health.tier} tier={health.tier} label={health.name} />
 						</div>
 						<p className="mt-0.5 font-mono text-[11px] text-text-tertiary">

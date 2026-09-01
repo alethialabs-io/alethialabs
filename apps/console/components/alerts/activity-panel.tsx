@@ -30,6 +30,16 @@ import { formatDate } from "@repo/format";
 import type { AssignedValue } from "@/lib/queries/classification";
 import { StatusBadge } from "@repo/ui/status-badge";
 
+/**
+ * The stable empty map the classification query falls back to while it is in flight.
+ *
+ * A literal `= {}` in the destructuring mints a fresh object every render, so `columns`'
+ * dependency changes on every render and the memo below buys nothing — TanStack's
+ * `getAllColumns` then rebuilds all four columns and their handlers on mount and on any
+ * refetch that clears `data`.
+ */
+const NO_ASSIGNMENTS: Record<string, AssignedValue[]> = {};
+
 /** Delivery activity log. */
 export function ActivityPanel({
 	bootstrap,
@@ -41,7 +51,7 @@ export function ActivityPanel({
 }) {
 	const { deliveries } = bootstrap;
 	// One batched query hydrates every delivery row's classification chips (read-only).
-	const { data: classMap = {} } = useAssignmentsForKind(
+	const { data: classMap = NO_ASSIGNMENTS } = useAssignmentsForKind(
 		"alert_delivery",
 		deliveries.map((d) => d.id),
 	);
@@ -70,6 +80,13 @@ export function ActivityPanel({
  *
  * `classMap` is a parameter rather than a closure over the component body so the column list
  * memoises on the one thing it actually depends on.
+ *
+ * Every column sets `enableSorting: false`. An `accessorKey` column is sortable by default, and
+ * `DataTable` hangs the toggle on a bare `<th onClick>` with `cursor-pointer` and no `tabIndex`,
+ * `role`, `aria-sort` or button — four mouse-only controls with no announced state, on the one
+ * table converted BECAUSE its grid reached a screen reader as a stack of buttons. The grid it
+ * replaced did not sort either, so this is parity, not a removal. Sorting comes back here when
+ * `DataTable`'s header renders a real button with `aria-sort`, which every other table wants too.
  */
 function buildColumns(
 	classMap: Record<string, AssignedValue[]>,
@@ -78,6 +95,7 @@ function buildColumns(
 		{
 			accessorKey: "title",
 			header: "Event",
+			enableSorting: false,
 			cell: ({ row }) => {
 				const d = row.original;
 				return (
@@ -111,6 +129,7 @@ function buildColumns(
 		{
 			accessorKey: "status",
 			header: "Status",
+			enableSorting: false,
 			// The dot in the Event cell already carries the tier; this column carries its word.
 			cell: ({ row }) => (
 				<span className="font-mono text-[11px] uppercase text-muted-foreground">
@@ -121,6 +140,7 @@ function buildColumns(
 		{
 			accessorKey: "attempts",
 			header: "Attempts",
+			enableSorting: false,
 			cell: ({ row }) => (
 				<span className="font-mono text-[11px] tabular-nums text-muted-foreground">
 					{row.original.attempts}
@@ -130,6 +150,7 @@ function buildColumns(
 		{
 			accessorKey: "created_at",
 			header: () => <div className="w-full text-right">When</div>,
+			enableSorting: false,
 			cell: ({ row }) => (
 				<div className="text-right font-mono text-[10.5px] text-muted-foreground">
 					{formatDate(row.original.created_at, "datetime")}

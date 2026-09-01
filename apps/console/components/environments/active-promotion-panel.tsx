@@ -99,8 +99,12 @@ export function ActivePromotionPanel({
 								{s.label}
 							</span>
 						</div>
+						{/* The rail is centred on the dot, not on the column: `items-start` pins it to
+						    the row's top edge, so the offset has to name the dot's own centre. The
+						    shared `.vx-status__dot` is 7px and this rail is 2px, so 3px lands it
+						    across the middle of the dot. It read `mt-2.5` while the dot was 12px. */}
 						{i < steps.length - 1 && (
-							<div className="mx-1 mt-2.5 h-0.5 flex-1 bg-border" />
+							<div className="mx-1 mt-[3px] h-0.5 flex-1 bg-border" />
 						)}
 					</div>
 				))}

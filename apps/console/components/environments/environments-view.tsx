@@ -206,12 +206,26 @@ export function EnvironmentsView({
 					</div>
 				))}
 
-				{envs.length <= 1 && (
+				{/* Two states, not one. The predicate here used to be `<= 1`, which folded the
+				    empty list into the one-environment hint and asserted "Only one environment"
+				    over nothing at all. */}
+				{envs.length === 0 && (
 					<EmptyState
+						level={3}
 						className="border border-dashed border-border-strong"
-						title="Only one environment"
-						description="Create another to compare configuration and promote changes up the chain."
+						title="No environments"
+						description="Create one to deploy this project, then add a second to promote changes up a chain."
 					/>
+				)}
+
+				{/* A note under a POPULATED list, so NOT an `EmptyState`: that is a centred panel at
+				    `p-6 md:p-12` with an 18px headline, and sitting under the one environment card
+				    it reads as "this list is empty" when it is not. */}
+				{envs.length === 1 && (
+					<p className="rounded-lg border border-dashed border-border-strong px-4 py-3 text-[13px] text-text-tertiary">
+						Only one environment. Create another to compare configuration and promote
+						changes up the chain.
+					</p>
 				)}
 			</section>
 
