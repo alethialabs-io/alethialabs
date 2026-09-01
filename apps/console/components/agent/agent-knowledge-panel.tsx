@@ -23,6 +23,7 @@ import {
 import { KNOWLEDGE_LIMIT } from "@/lib/ai/knowledge-limits";
 import type { KnowledgeDoc } from "@/types/jsonb.types";
 import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
 import { Input } from "@repo/ui/input";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import { Textarea } from "@repo/ui/textarea";
@@ -224,9 +225,7 @@ export function AgentKnowledgePanel({
 			<ScrollArea className="min-h-0 flex-1">
 				<div className="mx-auto max-w-[760px] space-y-7 p-5">
 					{loading ? (
-						<div className="py-16 text-center text-sm text-muted-foreground">
-							Loading…
-						</div>
+						<EmptyState title="Loading…" />
 					) : (
 						<>
 							{/* Read-only notice: this member can't edit the shared knowledge. */}
@@ -300,20 +299,20 @@ export function AgentKnowledgePanel({
 								</div>
 
 								{docs.length === 0 && !editing && (
-									<div className="flex flex-col items-center gap-2 border border-dashed border-border py-10 text-center">
-										<FileText className="h-4 w-4 text-muted-foreground" />
-										<div className="text-[13px] text-foreground">
-											{canEdit
+									<EmptyState
+										className="gap-3 border border-border p-8 md:p-8 [&_[data-slot=empty-title]]:text-[13px] [&_[data-slot=empty-title]]:font-normal"
+										icon={<FileText />}
+										title={
+											canEdit
 												? "No knowledge yet."
-												: `No knowledge set for this ${projectId ? "project" : "organization"}.`}
-										</div>
-										{canEdit && (
-											<p className="max-w-[320px] text-xs text-muted-foreground">
-												Add what Elench should always know. It can already read
-												your live infrastructure on its own.
-											</p>
-										)}
-									</div>
+												: `No knowledge set for this ${projectId ? "project" : "organization"}.`
+										}
+										description={
+											canEdit
+												? "Add what Elench should always know. It can already read your live infrastructure on its own."
+												: undefined
+										}
+									/>
 								)}
 
 								{docs.length > 0 && (

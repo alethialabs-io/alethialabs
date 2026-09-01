@@ -9,6 +9,8 @@
 
 import { formatDistanceToNow } from "date-fns";
 import { ExternalLink } from "lucide-react";
+import { PANEL_EMPTY } from "@/components/agent/panel-empty";
+import { EmptyState } from "@repo/ui/empty";
 import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import type {
 	GitopsComponentRow,
@@ -158,9 +160,7 @@ function Group({
 /** The Deploy tab's content — null status means the read hasn't landed yet. */
 export function DeployPane({ status }: { status: GitopsDeployStatus | null }) {
 	if (!status) {
-		return (
-			<p className="py-8 text-center text-xs text-muted-foreground">Loading…</p>
-		);
+		return <EmptyState className={PANEL_EMPTY} title="Loading…" />;
 	}
 
 	const gitops = status.mode === "gitops";
