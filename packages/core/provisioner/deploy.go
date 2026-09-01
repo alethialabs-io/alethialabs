@@ -1130,6 +1130,18 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// re-runs this — which is a no-op when the credential already works.
 		credentialInClusterRegistries(ctx, vc, stdout, stderr)
 
+		// An in-cluster RabbitMQ (a Hetzner `queue` node) needs its password and erlang cookie to
+		// exist BEFORE its Application syncs, because the chart now only READS them (#3304). This
+		// runs ahead of both EnsureAddOnSecrets and ApplyAddOnsInWaves below, which is the ordering
+		// that matters — a queue whose Secret arrives late is a StatefulSet stuck at
+		// CreateContainerConfigError until the next reconcile.
+		// STOPS the deploy on one error only — see the function. The ordering above is why: this runs
+		// ahead of ApplyAddOnsInWaves, so refusing here is what keeps an Application whose
+		// `auth.existingSecret` names a Secret we could not write from reaching the cluster at all.
+		if err := credentialInClusterQueues(vc, stdout, stderr); err != nil {
+			return nil, err
+		}
+
 		// A pluggable container-registry connector's dockerconfigjson imagePullSecret is seeded
 		// HERE, post-apply, over the authenticated kubeconfig — NOT in tofu, whose kubernetes
 		// provider is host+CA-only on AWS and cannot create it. Must land before the app pods that
@@ -1854,6 +1866,36 @@ func credentialInClusterRegistries(ctx context.Context, vc *types.ProjectConfig,
 			fmt.Fprintf(stderr, "Warning: in-cluster registry %s credentials skipped: %v\n", reg.Name, err)
 		}
 	}
+}
+
+// credentialInClusterQueues mints each in-cluster RabbitMQ's password and erlang cookie, once
+// (#3304). A no-op on every cloud but Hetzner, which carries the `queue` kind as a chart instead of
+// a managed queue service.
+//
+// Non-fatal per queue, like the registry and add-on paths: one queue that cannot be credentialled
+// must not fail an otherwise-healthy cluster. Its Application reports the missing Secret, and the
+// next deploy re-runs this — which is a no-op for every queue already holding credentials.
+func credentialInClusterQueues(vc *types.ProjectConfig, stdout, stderr io.Writer) error {
+	for _, q := range argocd.HetznerQueues(vc, stderr) {
+		err := argocd.EnsureQueueCredentialSecret(q, stdout, stderr)
+		if err == nil {
+			continue
+		}
+		// ONE failure is not like the others. "Could not determine whether this queue already has
+		// live credentials" is not "not ready yet" — it is an unknown standing directly in front of
+		// the destructive branch, and proceeding applies an Application whose `auth.existingSecret`
+		// names a Secret this deploy failed to write. A restart then reads a credential that does
+		// not match the running broker, which is the partition this path exists to prevent.
+		//
+		// Everything else keeps the non-fatal convention deliberately: a queue that cannot be
+		// credentialled yet reports the missing Secret on its own Application, and the next deploy
+		// retries — a no-op for every queue already holding credentials.
+		if argocd.QueueLiveStateUnknown(err) {
+			return fmt.Errorf("in-cluster queue %s: %w", q.Name, err)
+		}
+		fmt.Fprintf(stderr, "Warning: in-cluster queue %s credentials skipped: %v\n", q.Name, err)
+	}
+	return nil
 }
 
 // bootstrapInClusterVault delivers Hetzner's `secret` kind: the Job that initialises, unseals and
