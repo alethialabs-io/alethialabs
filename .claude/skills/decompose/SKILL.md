@@ -37,8 +37,8 @@ into overlapping lanes, which is exactly the tangle this board prevents.
 ## 2. Draft the proposal (interface-first)
 
 Produce a JSON array of proposed issues — the shape the validator consumes. One **seams** unit (title
-says "seams", empty `blockedBy`), then fine lanes each `blockedBy` the seams unit, each with a
-**disjoint** `scope`:
+says "seams", blocked by no other PROPOSED unit), then fine lanes each `blockedBy` the seams unit,
+each with a **disjoint** `scope`:
 
 ```json
 [
@@ -106,7 +106,10 @@ Rules the validator enforces (get them right up front):
 
 Pipe the proposal through the validator. It checks the anti-tangle invariant (no two co-claimable units
 share a scope glob — overlap/prefix-subsumption, not just exact match), that every non-seams unit has a
-`blocked-by`, that labels are from the known set, and that the `blocked-by` graph is acyclic:
+`blocked-by`, that labels are from the known set, and that the `blocked-by` graph is acyclic. It also
+reads the **live open board** and applies the same anti-tangle invariant against every open unit
+`claim-work.sh` would hand out, because a proposal that is internally disjoint can still collide with a
+lane someone is already holding:
 
 ```
 echo "$PROPOSAL_JSON" | node scripts/decompose-validate.mjs
@@ -116,6 +119,12 @@ echo "$PROPOSAL_JSON" | node scripts/decompose-validate.mjs
 **If it prints `✗ FAIL`, do NOT seed.** Fix the proposal (split the overlapping scopes into disjoint
 lanes, add the missing `blocked-by`, correct the label) and re-validate until it prints `✓ PASS`. The
 validator is the same guard a human would run by eye — a failure means the board would tangle.
+
+A collision with an **open board** issue that is genuinely intended — the new wave supersedes that
+lane, say — is cleared by naming its number in the proposal unit's `blockedBy` (`"blockedBy": [900]`).
+That ordering is inherited transitively, so putting it on the seams unit covers every lane behind it,
+and a board number there does not stop a unit being the seams unit. `--no-board` skips the live read
+entirely and is for a deliberate offline run, not for getting past a collision.
 
 ## 4. Show the maintainer and WAIT
 
