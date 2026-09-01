@@ -62,7 +62,7 @@ func alertRows(rules []api.AlertRule) [][]string {
 			r.Severity,
 			strconv.Itoa(len(r.EventPatterns)),
 			strconv.Itoa(len(r.ChannelIDs)),
-			yesNo(r.Enabled),
+			ui.YesNo(r.Enabled),
 			r.ID,
 		}
 	}

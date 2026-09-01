@@ -157,8 +157,8 @@ func runConfigShow(out io.Writer, format, webOrigin string, source types.WebOrig
 	}
 	rows := [][]string{
 		{"web origin", fmt.Sprintf("%s (%s)", webOrigin, source)},
-		{"active org", orDash(cfg.ActiveOrgName)},
-		{"active org id", orDash(cfg.ActiveOrgID)},
+		{"active org", ui.OrDash(cfg.ActiveOrgName)},
+		{"active org id", ui.OrDash(cfg.ActiveOrgID)},
 		{"credentials", credsPath},
 		{"config", cfgPath},
 	}
@@ -192,11 +192,11 @@ func runConfigGet(out io.Writer, key string) error {
 	switch strings.ToLower(key) {
 	case "", "all":
 		fmt.Fprintf(out, "web-origin: %s\n", origin)
-		fmt.Fprintf(out, "active-org: %s\n", orDash(cfg.ActiveOrgName))
+		fmt.Fprintf(out, "active-org: %s\n", ui.OrDash(cfg.ActiveOrgName))
 	case "web-origin", "web_origin":
 		fmt.Fprintln(out, origin)
 	case "active-org", "active_org":
-		fmt.Fprintln(out, orDash(cfg.ActiveOrgName))
+		fmt.Fprintln(out, ui.OrDash(cfg.ActiveOrgName))
 	default:
 		return fmt.Errorf("unknown config key %q (supported: web-origin, active-org)", key)
 	}
@@ -212,14 +212,6 @@ func normalizeWebOrigin(raw string) (string, error) {
 		return "", fmt.Errorf("invalid web-origin %q (want e.g. https://alethialabs.io)", raw)
 	}
 	return strings.TrimRight(raw, "/"), nil
-}
-
-// orDash returns s, or the dash glyph when s is empty.
-func orDash(s string) string {
-	if s == "" {
-		return ui.SymbolDash
-	}
-	return s
 }
 
 // saveActiveOrg persists the chosen org as the active CLI context, preserving the

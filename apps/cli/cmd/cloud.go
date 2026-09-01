@@ -43,7 +43,7 @@ var subnetColumns = []string{"Subnet", "Name", "Region", "AZ", "CIDR", "Public"}
 func networkRows(networks []api.CloudNetwork) [][]string {
 	rows := make([][]string, len(networks))
 	for i, n := range networks {
-		rows[i] = []string{n.NativeID, strOrDash(n.Name), strOrDash(n.Region), strOrDash(n.CidrBlock), gateGlyph(n.IsDefault)}
+		rows[i] = []string{n.NativeID, ui.StrOrDash(n.Name), ui.StrOrDash(n.Region), ui.StrOrDash(n.CidrBlock), ui.GateGlyph(n.IsDefault)}
 	}
 	return rows
 }
@@ -52,7 +52,7 @@ func networkRows(networks []api.CloudNetwork) [][]string {
 func subnetRows(subnets []api.CloudSubnet) [][]string {
 	rows := make([][]string, len(subnets))
 	for i, s := range subnets {
-		rows[i] = []string{s.NativeID, strOrDash(s.Name), strOrDash(s.Region), strOrDash(s.AvailabilityZone), strOrDash(s.CidrBlock), gateGlyph(s.IsPublic)}
+		rows[i] = []string{s.NativeID, ui.StrOrDash(s.Name), ui.StrOrDash(s.Region), ui.StrOrDash(s.AvailabilityZone), ui.StrOrDash(s.CidrBlock), ui.GateGlyph(s.IsPublic)}
 	}
 	return rows
 }

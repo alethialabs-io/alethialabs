@@ -61,11 +61,11 @@ func fleetRows(pools []api.FleetPool) [][]string {
 	for i, p := range pools {
 		rows[i] = []string{
 			p.Provider,
-			yesNo(p.Enabled),
+			ui.YesNo(p.Enabled),
 			strconv.Itoa(p.WarmMin),
 			strconv.Itoa(p.Max),
 			strconv.Itoa(p.SlotsPerRunner),
-			orDash(strings.Join(p.Locations, ",")),
+			ui.OrDash(strings.Join(p.Locations, ",")),
 			fleetVersionCell(p),
 		}
 	}

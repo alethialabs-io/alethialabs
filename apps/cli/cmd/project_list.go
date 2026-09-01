@@ -8,14 +8,12 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 )
 
@@ -95,7 +93,7 @@ func projectRows(configs []types.ConfigurationSummary) [][]string {
 			provider,
 			region,
 			cost,
-			formatTime(v.UpdatedAt),
+			ui.SmartTime(v.UpdatedAt),
 		}
 	}
 	return rows
@@ -111,16 +109,6 @@ func renderProjects(out io.Writer, format string, configs []types.ConfigurationS
 		Columns: projectListColumns,
 		Rows:    projectRows(configs),
 	}, configs)
-}
-
-func formatTime(t time.Time) string {
-	if t.IsZero() {
-		return ui.SymbolDash
-	}
-	if time.Since(t).Hours() < 24*7 {
-		return humanize.Time(t)
-	}
-	return t.Format("2006-01-02")
 }
 
 func init() {

@@ -74,7 +74,7 @@ func runnerRows(runners []api.Runner) [][]string {
 		if w.IsDefault {
 			defaultLabel = ui.SymbolDefault
 		}
-		heartbeat := formatCreatedAt(w.LastHeartbeat)
+		heartbeat := ui.RelativeTime(w.LastHeartbeat)
 		version := w.Version
 		if version == "" {
 			version = ui.SymbolDash

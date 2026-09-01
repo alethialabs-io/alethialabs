@@ -78,25 +78,15 @@ func envRows(envs []api.Environment) [][]string {
 		rows[i] = []string{
 			e.Name,
 			e.Stage,
-			orDash(e.PlacementMode),
-			derefOrDash(e.Namespace),
-			derefOrDash(e.Fabric),
+			ui.OrDash(e.PlacementMode),
+			ui.StrOrDash(e.Namespace),
+			ui.StrOrDash(e.Fabric),
 			e.Status,
-			yesNo(e.IsDefault),
-			derefOrDash(e.Region),
+			ui.YesNo(e.IsDefault),
+			ui.StrOrDash(e.Region),
 		}
 	}
 	return rows
-}
-
-// derefOrDash is orDash for an optional field: nil and "" both render as the table's dash, so a
-// blank cell is never mistaken for a value the server actually returned. The pointer cases are
-// real — a dedicated environment has no namespace, and a Fabric may not exist yet.
-func derefOrDash(s *string) string {
-	if s == nil {
-		return ui.SymbolDash
-	}
-	return orDash(*s)
 }
 
 // runProjectEnvList fetches and renders a project's environments (non-interactive path).
