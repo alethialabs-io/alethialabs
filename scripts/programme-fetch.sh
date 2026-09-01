@@ -11,11 +11,10 @@
 # PR's status would depend on the board. So the live read happens ONCE, in a cron, and is COMMITTED;
 # the rollup then stays a deterministic function of files in the tree.
 #
-# WHY THIS FILE HAS NO LOGIC, AND NO --self-test. It is a pure `gh` transport: query, shape, write.
-# Every judgement — what counts as blocked, whether a cited issue is closed, how staleness is
-# reported — lives in the rollup, which IS self-tested against fixtures. That split is deliberate:
-# the untestable part (the network) is kept trivial enough to read, and the part worth testing is
-# kept offline. The same argument nightly-rollup.sh makes for its own derive/emit split.
+# WHY THIS FILE HAS NO VERDICT LOGIC, AND NO --self-test. It is a `gh` transport: query, validate
+# the reaper artifact's narrow schema, shape, write. Every judgement — what counts as blocked or
+# clean, whether a cited issue is closed, how staleness is reported — lives in the rollup, which IS
+# self-tested against fixtures. The untestable network half stays mechanical; derivation stays pure.
 #
 # SECRETS: this writes variable and secret NAMES, never values. `gh variable list` returns values
 # for variables (they are not secret) but we deliberately drop them anyway — the rollup only ever
@@ -37,6 +36,18 @@ command -v jq >/dev/null || {
 	echo "programme-fetch: jq is required" >&2
 	exit 3
 }
+# The reaper-evidence block below unzips each artifact and hands it to the schema validator, so
+# `unzip` and `node` are hard dependencies of this script now — not optional extras. Preflighted
+# with gh and jq rather than discovered mid-walk, because their absence there is INDISTINGUISHABLE
+# from a malformed artifact: the two `if !` branches print "did not contain exactly …" or "failed
+# schema validation" and `continue`, so a machine missing unzip refuses all five clouds' evidence
+# while blaming the evidence, and the snapshot silently carries stale observations forward.
+for tool in unzip node; do
+	command -v "$tool" >/dev/null || {
+		echo "programme-fetch: $tool is required (the orphan-reaper artifacts are zipped and schema-validated)" >&2
+		exit 3
+	}
+done
 
 # `derived_at` is the ONLY timestamp in the whole mechanism, and it lives here rather than in
 # PROGRAMME.md's rendered text on purpose: a timestamp inside a diff-gated region would make every
@@ -83,10 +94,12 @@ closed="$(gh issue list --repo "$REPO" --state closed --limit 500 \
 prev_vars='[]'
 prev_secrets='[]'
 prev_observed=''
+prev_reaper='[]'
 if [ -f "$OUT" ]; then
 	prev_vars="$(jq -c '.variables // []' "$OUT" 2>/dev/null || echo '[]')"
 	prev_secrets="$(jq -c '.secrets // []' "$OUT" 2>/dev/null || echo '[]')"
 	prev_observed="$(jq -r '.inventory_observed_at // ""' "$OUT" 2>/dev/null || echo '')"
+	prev_reaper="$(jq -c '.orphan_reaper_observations // []' "$OUT" 2>/dev/null || echo '[]')"
 fi
 
 inventory_observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -174,6 +187,120 @@ for run_id in $(printf '%s' "$runs" | jq -r '.[].id'); do
 	done
 done
 
+# ── ORPHAN REAPER REALITY, OBSERVED. ──
+#
+# The reaper's step summary expires and cannot satisfy PROGRAMME.md's "nothing is standing"
+# predicate. Each matrix leg now uploads one versioned, secret-free JSON result. Walk completed
+# runs newest-first and retain the newest REAL RECLAIM per provider: a one-cloud dispatch must not
+# erase the other four, while a diagnostic dry-run must not replace authoritative clean evidence.
+#
+# ARTIFACTS ARE UNTRUSTED INPUT. Accept one exact filename, no directories or extra entries, then
+# pass it through the strict schema validator before jq ever sees it. The raw sweep log is never an
+# artifact and no resource name reaches this snapshot.
+reaper_observations="$prev_reaper"
+reaper_tmp="$(mktemp -d)"
+trap 'rm -rf "$reaper_tmp"' EXIT
+if reaper_runs="$(gh api "repos/$REPO/actions/workflows/e2e-orphan-reaper.yml/runs?status=completed&per_page=100" \
+	--jq '[.workflow_runs[] | {id, completed_at: .updated_at}]')"; then
+	fresh_reaper='[]'
+	seen_reaper=''
+	# STOP WALKING ONCE EVERY CLOUD IS RESOLVED. `seen_reaper` skips a resolved PROVIDER but not the
+	# RUN, so the loop kept issuing one `gh api …/artifacts` call for every one of up to 100
+	# completed runs. The newest run normally carries all five legs, which made ~99 of those calls
+	# guaranteed to find nothing — pure latency on a nightly refresh and pure rate-limit exposure
+	# against the same token that still has issues, variables and secrets to read.
+	#
+	# The counter is a plain shell variable and stays correct BECAUSE the loop is fed by a process
+	# substitution rather than a pipe: `while … done < <(…)` runs in THIS shell, which is also why
+	# `seen_reaper` and `fresh_reaper` survive each iteration.
+	#
+	# The target is derived from the provider list rather than written as `5`, so adding a sixth
+	# cloud cannot leave the walk stopping one cloud early — which would look exactly like that
+	# cloud never having run.
+	reaper_providers="aws gcp azure alibaba hetzner"
+	# shellcheck disable=SC2086  # deliberate word splitting: the list is a fixed set of literals.
+	reaper_provider_count="$(printf '%s\n' $reaper_providers | grep -c .)"
+	reaper_resolved=0
+	while IFS=$'\t' read -r reaper_run_id reaper_completed_at; do
+		if [ "$reaper_resolved" -ge "$reaper_provider_count" ]; then break; fi
+		[ -n "$reaper_run_id" ] || continue
+		if ! artifacts="$(gh api "repos/$REPO/actions/runs/$reaper_run_id/artifacts?per_page=100" 2>/dev/null)"; then
+			echo "::warning::programme-fetch: could not list artifacts for reaper run $reaper_run_id; retaining earlier evidence." >&2
+			continue
+		fi
+		# shellcheck disable=SC2086  # deliberate word splitting over the fixed provider list.
+		for provider in $reaper_providers; do
+			case " $seen_reaper " in *" $provider "*) continue ;; esac
+			artifact_id="$(printf '%s' "$artifacts" | jq -r --arg n "orphan-reaper-result-${provider}-${reaper_run_id}" '.artifacts[]? | select(.name == $n and .expired == false) | .id' | head -1)"
+			[ -n "$artifact_id" ] || continue
+			zip="$reaper_tmp/${reaper_run_id}-${provider}.zip"
+			raw="$reaper_tmp/${reaper_run_id}-${provider}.json"
+			if ! gh api "repos/$REPO/actions/artifacts/$artifact_id/zip" >"$zip"; then
+				echo "::warning::programme-fetch: could not download reaper artifact $artifact_id; retaining earlier evidence." >&2
+				continue
+			fi
+			entries="$(unzip -Z1 "$zip" 2>/dev/null || true)"
+			if [ "$entries" != "orphan-reaper-result.json" ]; then
+				echo "::warning::programme-fetch: reaper artifact $artifact_id did not contain exactly orphan-reaper-result.json; refusing it." >&2
+				continue
+			fi
+			if ! unzip -p "$zip" orphan-reaper-result.json >"$raw"; then
+				echo "::warning::programme-fetch: could not read reaper artifact $artifact_id; refusing it." >&2
+				continue
+			fi
+			# KEEP THE VALIDATOR'S STDERR. It is the only thing that names the offending field, and
+			# `2>/dev/null` threw it away — leaving a warning that says an artifact was refused and
+			# nothing at all about why, on the one path where the answer is already computed and
+			# free. The validator's message is derived from the artifact's SHAPE (field names and
+			# type complaints), never its values, so it is safe to echo.
+			validation_error="$reaper_tmp/${reaper_run_id}-${provider}.err"
+			if ! normalized="$(node scripts/e2e/reaper-result.mjs validate --file "$raw" 2>"$validation_error")"; then
+				echo "::warning::programme-fetch: reaper artifact $artifact_id failed schema validation; refusing it. $(tr '\n' ' ' <"$validation_error")" >&2
+				continue
+			fi
+			if ! printf '%s' "$normalized" | jq -e --arg p "$provider" --arg r "$reaper_run_id" '.provider == $p and .run_id == $r' >/dev/null; then
+				echo "::warning::programme-fetch: reaper artifact $artifact_id disagrees with its provider/run identity; refusing it." >&2
+				continue
+			fi
+			# A dry-run is useful diagnostics, but it inspected without reclaiming and cannot replace
+			# the newest authoritative reclaim result for this cloud.
+			if [ "$(printf '%s' "$normalized" | jq -r .mode)" != "reclaim" ]; then continue; fi
+			# `completed_at` IS THE ONE FIELD THE VALIDATOR NEVER SAW. Everything above is checked by
+			# `reaper-result.mjs validate`, and then this line adds a field after that check has
+			# already passed. A null or empty `.updated_at` from the runs API — a transport hiccup,
+			# not a corrupted artifact — wrote `"completed_at": ""`, which the rollup then read as an
+			# unparseable timestamp. Refusing it here keeps a bad field out of the snapshot, where it
+			# would otherwise be carried forward unchanged every night.
+			if [ -z "$reaper_completed_at" ] || [ "$reaper_completed_at" = "null" ]; then
+				echo "::warning::programme-fetch: reaper artifact $artifact_id has no usable completion time (updated_at was empty); refusing it." >&2
+				continue
+			fi
+			observation="$(printf '%s' "$normalized" | jq -c --arg at "$reaper_completed_at" '. + {completed_at: $at}')"
+			# Re-validate WITH the injected field rather than trusting the addition. The composed
+			# object is the only shape anything downstream reads, so it is the shape that has to be
+			# checked. `validate` reads a path, so this goes through a temp file rather than a pipe.
+			composed="$reaper_tmp/${reaper_run_id}-${provider}-composed.json"
+			printf '%s' "$observation" >"$composed"
+			if ! node scripts/e2e/reaper-result.mjs validate --file "$composed" --allow-completed-at >/dev/null 2>&1; then
+				echo "::warning::programme-fetch: reaper artifact $artifact_id failed validation after completed_at was added; refusing it." >&2
+				continue
+			fi
+			fresh_reaper="$(printf '%s' "$fresh_reaper" | jq -c --argjson o "$observation" '. + [$o]')"
+			seen_reaper="$seen_reaper $provider"
+			reaper_resolved=$((reaper_resolved + 1))
+		done
+	done < <(printf '%s' "$reaper_runs" | jq -r '.[] | [.id, .completed_at] | @tsv')
+
+	# New observations overwrite the same provider only. Missing providers carry forward and age
+	# naturally against this snapshot's persisted derived_at; after 48h the rollup marks them stale.
+	reaper_observations="$(jq -cn --argjson previous "$prev_reaper" --argjson fresh "$fresh_reaper" '
+    (reduce ($previous[]?) as $o ({}; if (($o | type) == "object" and ($o.provider | type) == "string") then .[$o.provider] = $o else . end)) as $by_provider
+    | reduce ($fresh[]?) as $o ($by_provider; .[$o.provider] = $o)
+    | [to_entries[] | .value]')"
+else
+	echo "::warning::programme-fetch: could not list orphan-reaper runs; CARRYING FORWARD prior observations rather than erasing them." >&2
+fi
+
 jq -n \
 	--arg derived_at "$derived_at" \
 	--arg repo "$REPO" \
@@ -182,9 +309,10 @@ jq -n \
 	--argjson variables "$vars" \
 	--argjson secrets "$secrets" \
 	--argjson gate_observations "$observations" \
+	--argjson orphan_reaper_observations "$reaper_observations" \
 	--arg inventory_observed_at "$inventory_observed_at" \
 	'{
-    "_doc": "GENERATED by scripts/programme-fetch.sh. Do not edit. The LIVE board state PROGRAMME.md cannot derive from the tree. Variable and secret NAMES only — never values.",
+    "_doc": "GENERATED by scripts/programme-fetch.sh. Do not edit. The LIVE board and orphan-reaper state PROGRAMME.md cannot derive from the tree. Variable and secret NAMES only — never values.",
     derived_at: $derived_at,
     repo: $repo,
     open_issues: $open_issues,
@@ -192,13 +320,15 @@ jq -n \
     variables: $variables,
     secrets: $secrets,
     inventory_observed_at: $inventory_observed_at,
-    gate_observations: $gate_observations
+    gate_observations: $gate_observations,
+    orphan_reaper_observations: $orphan_reaper_observations
   }' >"$OUT"
 
-printf 'programme-fetch: wrote %s — %s open / %s closed issues, %s variables, %s secrets, %s gate observations\n' \
+printf 'programme-fetch: wrote %s — %s open / %s closed issues, %s variables, %s secrets, %s gate observations, %s reaper observations\n' \
 	"$OUT" \
 	"$(jq '.open_issues | length' "$OUT")" \
 	"$(jq '.closed_issues | length' "$OUT")" \
 	"$(jq '.variables | length' "$OUT")" \
 	"$(jq '.secrets | length' "$OUT")" \
-	"$(jq '.gate_observations | length' "$OUT")"
+	"$(jq '.gate_observations | length' "$OUT")" \
+	"$(jq '.orphan_reaper_observations | length' "$OUT")"
