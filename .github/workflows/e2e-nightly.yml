@@ -80,7 +80,7 @@ on:
           - alibaba
         default: hetzner
       region:
-        description: "Cloud region/location override (blank ⇒ the per-provider cheap default: hetzner nbg1, aws us-east-1, gcp europe-west3, azure westeurope, alibaba eu-central-1). hetzner: nbg1/fsn1/hel1."
+        description: "Cloud region/location override (blank ⇒ the per-provider cheap default: hetzner nbg1, aws us-east-1, gcp europe-west3-a, azure westeurope, alibaba eu-central-1). hetzner: nbg1/fsn1/hel1. NOTE gcp takes a ZONE: a bare region makes the GKE cluster regional, which multiplies every node count by the zone count AND skips the capacity preflight."
         type: string
         default: ""
       dimension:
@@ -490,7 +490,7 @@ jobs:
           case "$PROVIDER" in
             hetzner) DEFAULT_REGION="nbg1" ;;
             aws)     DEFAULT_REGION="us-east-1" ;;
-            gcp)     DEFAULT_REGION="europe-west3" ;;
+            gcp)     DEFAULT_REGION="europe-west3-a" ;;
             azure)   DEFAULT_REGION="westeurope" ;;
             alibaba) DEFAULT_REGION="eu-central-1" ;;
             *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
@@ -635,7 +635,16 @@ jobs:
           case "$PROVIDER" in
             hetzner) SHAPE="" ;;
             aws)     SHAPE='{"instance_types":["t3.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20,"provider_config":{"enable_karpenter":true}}'; NET='{"single_nat_gateway":true}' ;;
-            gcp)     SHAPE='{"instance_types":["e2-small"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}' ;;
+            # CAPACITY-NEUTRAL ACROSS THE ZONAL SWITCH, and the numbers look wrong until you know why.
+            # A node pool's initial_node_count and autoscaling min/max are PER ZONE, and until this PR
+            # gcp ran REGIONAL (location = var.region, europe-west3 = 3 zones) — so 1/2/1 was really
+            # delivering 3/6/3 and every green gcp run was paid at three e2-smalls. Going zonal makes
+            # the numbers literal, which would have shrunk the floor 3x in the same change that moves
+            # the location. Then a red would not say which one broke it. Stating 3/6/3 reproduces
+            # exactly what regional delivered, at exactly the cost already proven, so this dispatch
+            # tests the location fix ALONE. Shrinking the floor is a separate change with its own
+            # evidence: ArgoCD's fit in ~800-900Mi of allocatable has never been measured.
+            gcp)     SHAPE='{"instance_types":["e2-small"],"node_min_size":3,"node_max_size":6,"node_desired_size":3,"node_disk_size_gb":20}' ;;
             # Standard_B2s (v1) is NOT offered by AKS on a modern subscription: a real apply fails with
             # "The VM size of Standard_B2s is not allowed in your subscription" — only the v2/v3+
             # generations are served. (`az vm list-skus` disagrees and reports B2s unrestricted; AKS is
