@@ -3,8 +3,9 @@
 
 package e2e
 
-// The SECOND assertion for in-cluster max-config cells whose ArgoCD Application converging does not
-// actually prove the kind was delivered.
+// The SECOND assertion for max-config cells whose PRIMARY evidence does not actually prove the kind
+// was delivered — a converged ArgoCD Application for an in-cluster cell, or the counted resource in
+// tofu state for a cloud one. Both carriages can carry a probe; see MaxConfigCell.ClusterProbe.
 //
 // For four of hetzner's five in-cluster kinds it does: `addon-db-appdb` Healthy+Synced means a CNPG
 // Cluster is running, and a running Postgres is the kind. `secrets` is the exception, and it is the
@@ -37,8 +38,38 @@ const maxConfigProbeInterval = 10 * time.Second
 // maxConfigProbeGetTimeout bounds one kubectl call, well under the overall deadline.
 const maxConfigProbeGetTimeout = 30 * time.Second
 
-// AssertMaxConfigClusterProbes runs every ClusterProbe this cloud's in-cluster cells declare, and
-// reports the first one that never became Ready.
+// maxConfigProbeTimeout is the budget for ONE probe, and it is deliberately far smaller than
+// ArgoAssertTimeout.
+//
+// This runs AFTER AssertArgoAppsHealthy and after the tofu state assertion, so the operator is
+// already converged and the cloud resource already exists; what is left is ESO reconciling one
+// store, which is seconds when it works. Ten minutes is generous for that and still bounded.
+//
+// It used to be handed ArgoAssertTimeout() — up to 40m on a full bar — against a ctx that reserved
+// NOTHING for it. Two things went wrong with that. A store that is genuinely absent (the case this
+// exists to catch) would poll until the ctx expired, and awaitClusterProbeReady would then return
+// ctx.Err() — reporting `context deadline exceeded` and throwing away the last observed Ready
+// condition, which is the entire diagnostic value of the probe. And a merely slow store would eat
+// unreserved minutes that a LATER reserved scenario then died of, attributing the failure to the
+// wrong thing entirely.
+const maxConfigProbeTimeout = 10 * time.Minute
+
+// MaxConfigProbeTimeout is the per-probe budget, exported so the ladder and the caller cannot
+// disagree about it.
+func MaxConfigProbeTimeout() time.Duration { return maxConfigProbeTimeout }
+
+// MaxConfigProbeBudget is what ResolveT2Budget must reserve for this cloud: one probe budget per
+// cell that actually declares a probe.
+//
+// Derived from the same selection the assertion walks, rather than from a constant somebody has to
+// remember to bump — adding a probed cell to the grid must move the ladder by construction. That is
+// the mirror-the-emitter rule the budget file already applies to the day-2 URL probe.
+func MaxConfigProbeBudget(provider string) time.Duration {
+	return time.Duration(len(MaxConfigProbedCells(provider))) * maxConfigProbeTimeout
+}
+
+// AssertMaxConfigClusterProbes runs every ClusterProbe this cloud's cells declare — of EITHER
+// provisioning carriage — and reports the first one that never became Ready.
 //
 // Called AFTER AssertMaxConfigKindsInState, never instead of it: the probe is additive evidence, and
 // a cell whose primary evidence never held has already failed. A no-op for a cloud whose cells

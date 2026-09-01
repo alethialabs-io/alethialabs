@@ -309,7 +309,7 @@ jobs:
     # 180 → 195 (fabric 275 → 290) with the managed teardown window's 30m → 45m, measured on
     # aws/floor run 33155063965. Same rule as every other move here: the ladder rung moved, so its
     # outermost backstop moves with it, and the offline guard is what said so.
-    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 290 || 195 }}
+    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 300 || 205 }}
     # Serialize PER PROVIDER: never let two nightly runs provision into the SAME shared
     # cloud account at once — but let DIFFERENT providers run concurrently (they share no
     # account, and serializing them would stretch the nightly to the sum of every cloud).
@@ -1223,7 +1223,7 @@ jobs:
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
-        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 275 || 180 }}
+        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 285 || 190 }}
         working-directory: test/e2e
         env:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
@@ -1749,8 +1749,8 @@ jobs:
           # this offline on every PR, across every cloud x dimension, and additionally holds these
           # two to being the SAME expressions as the `timeout-minutes:` above — which the
           # "if you change one, change both" instruction asked for and nothing enforced.
-          T2_STEP_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 275 || 180 }}
-          T2_JOB_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 290 || 195 }}
+          T2_STEP_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 285 || 190 }}
+          T2_JOB_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 300 || 205 }}
           # Where the go-test stream is teed so capture-proof.sh can put the ASSERTIONS in the
           # committed bundle. ALETHIA_E2E_T2_RUNNER_LOG above is the RUNNER's deployment log — a
           # different stream, which carries no `--- PASS` and no A0.x decision lines.

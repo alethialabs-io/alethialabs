@@ -142,8 +142,8 @@ type MaxConfigCell struct {
 	// CloudCeiling, DeferredInProduct and ExcludedByCost: an exclusion nobody can read is
 	// indistinguishable from an oversight.
 	Why string
-	// ClusterProbe is an OPTIONAL SECOND assertion for an in-cluster cell, for the case where a
-	// converged Application does not actually prove the kind was delivered.
+	// ClusterProbe is an OPTIONAL SECOND assertion, for the case where a cell's primary evidence
+	// does not actually prove the kind was delivered.
 	//
 	// Usually it does: `addon-db-appdb` Healthy+Synced means a CNPG Cluster exists and is running.
 	// But `secrets` on hetzner is delivered by a Vault whose Helm release is perfectly Healthy while
@@ -166,8 +166,8 @@ type MaxConfigCell struct {
 	ClusterProbe *MaxConfigClusterProbe
 }
 
-// MaxConfigClusterProbe names one live object whose `Ready` condition must be True for an
-// in-cluster cell to count as delivered.
+// MaxConfigClusterProbe names one live object whose `Ready` condition must be True for a cell to
+// count as delivered — whichever carriage provisioned it.
 //
 // Deliberately narrow: a resource, a name, and the reason the Application alone is not enough. It is
 // read with the same `Ready`-condition parser the cross-account secrets lane uses

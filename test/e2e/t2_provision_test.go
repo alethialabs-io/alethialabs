@@ -752,7 +752,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		//        ClusterSecretStore, whose apply failed on aws/full run 32883119943 behind a retry
 		//        that swallowed the error (#2652). Every cloud now names the store whose readiness
 		//        discriminates, so this is a no-op on no cloud that provisions `secrets`.
-		if perr := AssertMaxConfigClusterProbes(ctx, kc, provider, ArgoAssertTimeout()); perr != nil {
+		if perr := AssertMaxConfigClusterProbes(ctx, kc, provider, MaxConfigProbeTimeout()); perr != nil {
 			t.Fatalf("FT-5 max-config cluster probe: %v", perr)
 		}
 		t.Logf("FT-5 max-config on %s: %d kind(s) proven in tofu state %v, %d proven as converged ArgoCD Applications %v",
