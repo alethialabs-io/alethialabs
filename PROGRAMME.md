@@ -74,7 +74,8 @@ The phases below are **intent**. Their state is rendered under the marker; do no
    and touch no credential and no migration. This is where N-way agent parallelism actually lives.
 5. **The full bar, per cloud, by dispatch** — blocked on a durable ledger and on that cloud's floor.
 6. **Scenario layers, then the CLI bar** — one gate per dispatch, then unset it.
-7. **The MVP predicate, then UI.**
+7. **The MVP predicate, then UI.** See decision D5 — the UI conformance wave is qualified out of this
+   ordering, not exempted from it.
 
 ## §2 · Standing decisions
 
@@ -116,6 +117,46 @@ overtaken is more useful than a gap.
   a scheduled cron resolves to the full bar unless every cloud in the matrix is priced — see #2385,
   which also tracks pricing the four unpriced clouds. Restoring a schedule is a per-cloud decision
   gated on that cloud being priced _and_ having a committed full-bar proof row.
+
+- **D5 · 2026-09-01 · Console UI conformance runs as its own wave, in parallel — the phase ordering
+  above is not amended, it is qualified.** §1 puts UI last, and the one-sentence intent says "then,
+  and only then, UI". That ordering is about *spend and proof*: a UI phase that competes for the
+  five-cloud dispatch budget, the single branch-env slot, or the maintainer's review attention would
+  push the proof cells out, and that is still refused.
+
+  `wave:console-ui` (epic #3613) competes for **no cloud dispatch budget** — that is the resource the
+  ordering exists to protect, and the one this wave genuinely does not touch. Its recurring gate runs
+  in CI rather than against a real cloud, and its instrument half is pure-Node static analysis. Note
+  that gate is not free to wire: the config is `apps/console/playwright.config.ts` (there is no root
+  copy), Postgres comes from a per-job `services:` block in `ci.yml` rather than from the config, and
+  `assertNoDeadZone()` fails a run whose project has no CI job — so the wave needs a NEW ci.yml job,
+  which is #3632's scope. "Already boots one" understated that.
+
+  That is the whole of the argument; the two stronger claims an earlier draft made are not true and
+  are recorded here as refused rather than quietly dropped:
+
+  - **Its scopes are NOT disjoint from the rest of the tree.** They are mostly `apps/console/**`, but
+    #3614 owns a route-manifest module in the shared `scripts` tree, #3617 owns the sandbox env
+    scripts, and #3632 owns the CI workflow — and those last two are exactly the shared files a
+    disjointness argument would need to exclude. `ci.yml` was edited by e2e/infra/coverage work three
+    times last month (#3586, #3457, #3298) and `scripts/env.sh` by the isolation-ladder work (#3449).
+    Collision is possible and the mitigation is the ordinary one — `scripts/claim-work.sh` refuses an
+    overlapping claim — not a property of this wave.
+  - **It DOES compete for the maintainer's review attention**, the third protected resource. Four of
+    its units (#3628–#3631) carry `class:ui` + `needs:design`, which `.claude/COORDINATION.md`
+    defines as human-in-the-loop with a human-gated merge. That is a real cost and it is the one to
+    weigh when deciding whether to run this wave now.
+
+  On the branch-env slot: #3633 needs it; #3632 does not (its own body says it costs CI minutes, not
+  a sandbox box), so the `#3617 → #3632 → #3633` chain serialises correctly but its middle term is
+  ordering, not contention. Those edges live on the board and are hand-maintained — read them there
+  rather than trusting this paragraph, which is exactly the "this file ranks; it never claims"
+  rule from the preamble.
+
+  The decision is recorded here because the alternative is worse than the reordering: a ledger that
+  reads "then, and only then, UI" while a UI wave is being built is a ledger disagreeing with the
+  tree, which §1's own first phase exists to prevent. The ordering claim that remains true, and is
+  the one worth keeping: **no cell of the proof grid may be deferred for it.**
 
 ## §3 · Anti-patterns
 
