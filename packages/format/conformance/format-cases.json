@@ -168,9 +168,29 @@
         "want": "1m 12s"
       },
       {
-        "id": "duration/TWO-HOURS-DOES-NOT-ROLL-INTO-HOURS",
+        "id": "duration/TWO-HOURS-ROLLS-INTO-HOURS",
         "in": 7200000,
-        "want": "120m 0s"
+        "want": "2h 0m"
+      },
+      {
+        "id": "duration/JUST-UNDER-AN-HOUR-DOES-NOT-ROLL",
+        "in": 3599999,
+        "want": "59m 59s"
+      },
+      {
+        "id": "duration/EXACTLY-AN-HOUR",
+        "in": 3600000,
+        "want": "1h 0m"
+      },
+      {
+        "id": "duration/hours-and-minutes-drop-the-seconds",
+        "in": 7505000,
+        "want": "2h 5m"
+      },
+      {
+        "id": "duration/many-hours",
+        "in": 356400000,
+        "want": "99h 0m"
       }
     ],
     "date": [

@@ -90,10 +90,19 @@ describe("formatQuota", () => {
 });
 
 describe("formatDuration", () => {
-	it("matches the implementation it replaces", () => {
+	// RENAMED from "matches the implementation it replaces", which is now false and was the whole
+	// point: it no longer matches. The console's shape is the one that lost.
+	it("reads seconds, then minutes, then rolls into hours", () => {
 		expect(formatDuration(42_000)).toBe("42s");
 		expect(formatDuration(72_000)).toBe("1m 12s");
 		expect(formatDuration(59_999)).toBe("59s");
+		// The ruling, asserted in THIS package. Without these the hour behaviour is covered only by
+		// the console app's test tree, so packages/format could be changed without its own suite
+		// noticing — which is the wrong way round for the package that owns the rule.
+		expect(formatDuration(3_599_999)).toBe("59m 59s");
+		expect(formatDuration(3_600_000)).toBe("1h 0m");
+		expect(formatDuration(7_200_000)).toBe("2h 0m");
+		expect(formatDuration(7_505_000)).toBe("2h 5m");
 		expect(formatDuration(60_000)).toBe("1m 0s");
 	});
 
