@@ -101,6 +101,7 @@ export const REFUSAL_CODES = [
 	"PATTERN_NOT_RE2",
 	"NO_CASES",
 	"NO_TS_IMPL",
+	"DUPLICATE_DECLARATION",
 	"NO_STEPS",
 ] as const;
 
@@ -390,7 +391,21 @@ function witnessProjection(owner: z.ZodType, kind: keyof typeof PROJECTION_WITNE
  */
 export function project(reg: SpecRegistration, tables: Map<string, TableRule>): GoSpec {
 	const nodes = discover(reg.schema);
-	const declaredByPath = new Map(reg.declarations.map((d) => [d.path, d]));
+	const declaredByPath = new Map<string, Declaration>();
+	for (const decl of reg.declarations) {
+		// A Map built by `.map()` would let the second entry win and mark BOTH paths used, so a
+		// duplicate would silently discard one declaration while the staleness check reported
+		// nothing. Two declarations for one node is always a mistake; which one was meant is not
+		// something this can guess.
+		if (declaredByPath.has(decl.path)) {
+			throw new Refusal(
+				"DUPLICATE_DECLARATION",
+				`${reg.id}: two declarations for ${decl.path}. Only one can apply, and silently keeping ` +
+					`the last would leave the other looking like it was doing something.`,
+			);
+		}
+		declaredByPath.set(decl.path, decl);
+	}
 	const usedPaths = new Set<string>();
 
 	const spec: GoSpec = { id: reg.id, why: reg.why, optional: false, nullable: false, steps: [], unshared: [] };
@@ -1153,6 +1168,19 @@ function selfTestCases(): SelfTestCase[] {
 						fn: selfTestPredicate,
 						disposition: tableDisposition({ goRule: "a_rule_no_one_implements" }),
 					},
+				],
+			}),
+		},
+		{
+			id: "two-declarations-for-one-node-are-refused",
+			want: "DUPLICATE_DECLARATION",
+			build: () => ({
+				id: "t",
+				why: "t",
+				schema: z.string().min(1, "required").refine(selfTestPredicate, "nope"),
+				declarations: [
+					{ path: "$#1:custom", fn: selfTestPredicate, disposition: tableDisposition() },
+					{ path: "$#1:custom", fn: selfTestPredicate, disposition: tableDisposition() },
 				],
 			}),
 		},
