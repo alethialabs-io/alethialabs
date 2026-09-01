@@ -296,9 +296,8 @@ before enabling a second cell on the same leg.
 ### Dispatch from `main`
 
 Real applies are main-gated, so a dispatch from `dev` provisions nothing. Run the workflow with the
-target `provider` from `main`, then record the bundle. The parity table in
-`docs/testing/provisioning-e2e-parity.md` flips **only** on a real-apply artifact in
-`demos/proofs/provisioning-e2e-log.md` — never on a green harness.
+target `provider` from `main`, then record the bundle. The proof grid derived in `PROGRAMME.md` moves
+**only** on a real-apply artifact in `demos/proofs/provisioning-e2e-log.md` — never on a green harness.
 
 ## Related
 
