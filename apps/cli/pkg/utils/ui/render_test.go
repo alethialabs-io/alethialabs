@@ -13,14 +13,14 @@ import (
 // commands, a hardcoded em dash in token.go, and the literal "N/A" in config_printer.go — so the
 // same absence rendered differently depending on which command you ran.
 //
-// Asserted through the constant AND against the literal rune, because the failure being prevented
-// is someone writing the character again somewhere rather than reusing the constant.
-func TestDashIsOneSpelling(t *testing.T) {
-	if SymbolDash != SymbolDash {
-		t.Errorf("SymbolDash = %q but SymbolDash = %q — they must be the same glyph, not two", SymbolDash, SymbolDash)
-	}
+// There is nothing to assert EQUAL any more, and that is the point: the earlier version of this
+// test compared a second exported name against SymbolDash, which passed right up until someone
+// edited one of them. Deleting the second name deleted the comparison. What is left is the only
+// thing still worth pinning — the constant's VALUE, since callers that write the rune inline rather
+// than reusing it are how three spellings happened in the first place.
+func TestDashIsTheEmDash(t *testing.T) {
 	if SymbolDash != "—" {
-		t.Errorf("SymbolDash = %q, want an em dash U+2014", SymbolDash)
+		t.Errorf("SymbolDash = %q (%U), want an em dash U+2014", SymbolDash, []rune(SymbolDash)[0])
 	}
 }
 
