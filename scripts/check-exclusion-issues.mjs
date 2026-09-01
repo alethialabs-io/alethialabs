@@ -105,6 +105,34 @@ export function issueFieldLines(source) {
 }
 
 /**
+ * How many times the field OCCURS, and how many of those the number scan could read.
+ *
+ * COUNT OCCURRENCES, NOT LINES, AND DO NOT DE-DUPLICATE. The emitter-mirror below used to compare
+ * `issueFieldLines().length` (raw lines) against `issueNumbersIn().length` (a de-duplicated Set),
+ * which are not the same quantity in either direction:
+ *
+ *   - two exclusions citing the SAME issue — legitimate, and the reason the Set exists — give two
+ *     lines and one number, so the guard failed the build claiming a field was unreadable and then
+ *     printed two perfectly readable identical lines;
+ *   - one single-line composite carrying two fields (`{Kind: A, Issue: "#1"}, {Kind: B, Issue: "#2"}`)
+ *     gives one line and two numbers, which is the very shape `issueNumbersIn` dropped its line
+ *     anchor to support.
+ *
+ * Both directions are false failures in the BLOCKING `--scan-only` step, i.e. this guard redding
+ * other people's PRs over a file it can read perfectly well. The quantity the mirror actually wants
+ * is "did every occurrence of the field yield a number", so both sides count occurrences with the
+ * same boundary and neither collapses duplicates.
+ *
+ * @param {string} source comment-stripped Go source
+ * @returns {{fields: number, readable: number}} occurrence counts, not de-duplicated
+ */
+export function issueFieldOccurrences(source) {
+	const fields = [...source.matchAll(/(?:^|[{,])\s*Issue:/gm)].length;
+	const readable = [...source.matchAll(/(?:^|[{,])\s*Issue:\s*"#(\d+)"/gm)].length;
+	return { fields, readable };
+}
+
+/**
  * Strip `//` line comments so a number quoted inside prose cannot be read as a field.
  *
  * Deliberately line-comments only: this repository's Go has no `/* *\/` blocks in these files, and
@@ -258,6 +286,28 @@ if (process.argv.includes("--self-test")) {
 	t(issueFieldLines('\t\tIssue: someConst,\n').length === 1, "counts an UNREADABLE field line too — that is the point");
 	t(issueNumbersIn('\t\tIssue: someConst,\n').length === 0, "…which the number scan does not read, so the counts disagree");
 	t(issueFieldLines('\t\tTrackingIssue: "#99",\n').length === 0, "does not count a different field");
+
+	// THE MIRROR COMPARES OCCURRENCES, NOT LINES-VS-A-DEDUPED-SET. Both of the next two are files
+	// this guard can read perfectly, and both used to FAIL the blocking --scan-only step: the first
+	// because two entries citing one issue collapse in the Set, the second because one line can
+	// carry two fields. A guard that reds other people's PRs over a file it understands is worse
+	// than the unreadable field it was written to catch.
+	{
+		const twoEntriesOneIssue = '\t\tIssue: "#42",\n\t\tIssue: "#42",\n';
+		const o = issueFieldOccurrences(twoEntriesOneIssue);
+		t(o.fields === o.readable, "two entries citing the SAME issue do not trip the mirror");
+		t(issueNumbersIn(twoEntriesOneIssue).length === 1 && o.fields === 2, "…even though the number scan de-duplicates to one");
+
+		const oneLineTwoFields = 'ex := map[string]E{a: {Kind: K, Issue: "#1"}, b: {Kind: K, Issue: "#2"}}\n';
+		const p = issueFieldOccurrences(oneLineTwoFields);
+		t(p.fields === p.readable && p.fields === 2, "two fields on ONE line do not trip the mirror");
+	}
+	// …and it still fires on the thing it exists for.
+	{
+		const unreadable = '\t\tIssue: "#7",\n\t\tIssue: someConst,\n';
+		const o = issueFieldOccurrences(unreadable);
+		t(o.fields === 2 && o.readable === 1, "an UNREADABLE field still trips the mirror");
+	}
 	// The failure direction that matters: a real field must survive comment-stripping.
 	t(
 		stripLineComments('\t\tIssue: "#7", // was #999\n').includes('Issue: "#7",'),
@@ -357,10 +407,11 @@ if (numbers.length === 0) {
 // scan could not read, and skipping it silently is the one failure mode this guard cannot afford:
 // its own "all clear" would then be a statement about the regex, not about the file.
 const mentions = issueFieldLines(source);
-if (mentions.length !== numbers.length) {
+const { fields, readable } = issueFieldOccurrences(source);
+if (fields !== readable) {
 	console.error(
-		`::error::check-exclusion-issues: ${GUARDED} has ${mentions.length} line(s) naming an Issue field but ` +
-			`${numbers.length} readable issue number(s) — at least one is in a shape this scan cannot read.`,
+		`::error::check-exclusion-issues: ${GUARDED} names the Issue field ${fields} time(s) but ` +
+			`${readable} of those are in a shape this scan can read — at least one is unreadable.`,
 	);
 	console.error('  The expected shape is `Issue: "#<digits>"`. Lines seen:');
 	for (const line of mentions) console.error(`    ${line}`);
