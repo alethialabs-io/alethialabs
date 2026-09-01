@@ -317,6 +317,42 @@ const servicesInsert = createInsertSchema(projectServices, {
 	probe: serviceProbeSchema.nullable().optional(),
 });
 
+/**
+ * A component node's name, validated as an RFC-1123 DNS LABEL.
+ *
+ * WHY THE FORM IS THE RIGHT PLACE TO REFUSE THIS (#3588). Every node name becomes Kubernetes
+ * object names — `db-<name>` / `cache-<name>` / `queue-<name>` Applications, a CNPG Cluster, a
+ * `registry-<name>` Service and the in-cluster host that must match it, the Secret the runner seeds
+ * a queue's credentials into. The runner validates all of those against the DNS-LABEL charset,
+ * because they interpolate into `kubectl` commands it runs through `bash -c`.
+ *
+ * A name outside that charset was accepted here and then failed silently much later. `orders.v2`
+ * renders a VALID Secret name and a VALID Application — both apply cleanly — and then the
+ * StatefulSet sits at CreateContainerConfigError forever, because the runner refuses the name and
+ * seeds no credential. The only human in that whole sequence is the person typing the name, and
+ * they were the one person not told.
+ *
+ * So it is refused here, where the message can name the rule. The runner's own refusal stays as the
+ * backstop for a snapshot that reaches it another way.
+ *
+ * Length is capped well under kubernetes' 63-character label ceiling because this name is never the
+ * whole object name: a chart's `fullname` template, an `addon-<kind>-` prefix and a StatefulSet's
+ * pod ordinal all ride on top of it.
+ */
+const K8S_LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+const K8S_LABEL_MAX = 40;
+
+function nodeNameSchema(kind: string) {
+	return z
+		.string()
+		.min(1, `${kind} name is required`)
+		.max(K8S_LABEL_MAX, `${kind} name must be ${K8S_LABEL_MAX} characters or fewer.`)
+		.regex(
+			K8S_LABEL_RE,
+			`${kind} name must be lower-case letters, digits or hyphens, and start and end with a letter or digit.`,
+		);
+}
+
 const autoFields = { id: true, created_at: true, updated_at: true } as const;
 const componentAutoFields = {
 	...autoFields,
@@ -347,9 +383,12 @@ export const environmentMatrixSchema = z
 				.string()
 				.min(1)
 				.max(40)
+				// Leading LETTER (stricter than a bare label) because this feeds a tofu state-path
+				// segment; the trailing character is constrained too, because `prod-` is not a valid
+				// DNS-1123 label and the old pattern accepted it.
 				.regex(
-					/^[a-z][a-z0-9-]*$/,
-					"Environment name must be lower-case alphanumeric or hyphen.",
+					/^[a-z]([a-z0-9-]*[a-z0-9])?$/,
+					"Environment name must be lower-case alphanumeric or hyphen, and must not end with a hyphen.",
 				),
 			stage: z.enum(environmentStage.enumValues),
 			placement_mode: z.enum(placementMode.enumValues),
@@ -358,7 +397,7 @@ export const environmentMatrixSchema = z
 			namespace: z
 				.string()
 				.max(63)
-				.regex(/^[a-z][a-z0-9-]*$/)
+				.regex(/^[a-z]([a-z0-9-]*[a-z0-9])?$/)
 				.nullish(),
 			is_default: z.boolean().optional(),
 		}),
@@ -509,26 +548,26 @@ const databaseItemSchema = databasesInsert.omit({
 	...componentAutoFields,
 	endpoint: true,
 	reader_endpoint: true,
-}).extend({ name: z.string().min(1, "Database name is required") });
+}).extend({ name: nodeNameSchema("Database") });
 
 const cacheItemSchema = cachesInsert.omit({
 	...componentAutoFields,
 	endpoint: true,
 	reader_endpoint: true,
-}).extend({ name: z.string().min(1, "Cache name is required") });
+}).extend({ name: nodeNameSchema("Cache") });
 
 const queueItemSchema = queuesInsert
 	.omit(componentAutoFields)
-	.extend({ name: z.string().min(1, "Queue name is required") });
+	.extend({ name: nodeNameSchema("Queue") });
 
 const topicItemSchema = topicsInsert
 	.omit(componentAutoFields)
-	.extend({ name: z.string().min(1, "Topic name is required") });
+	.extend({ name: nodeNameSchema("Topic") });
 
 const nosqlItemSchema = nosqlInsert
 	.omit(componentAutoFields)
 	.extend({
-		name: z.string().min(1, "Table name is required"),
+		name: nodeNameSchema("Table"),
 		partition_key: z.string().min(1, "Hash key is required"),
 	});
 
@@ -553,7 +592,7 @@ const secretItemSchema = secretsInsert
 		status: true,
 		status_message: true,
 	})
-	.extend({ name: z.string().min(1, "Secret name is required") })
+	.extend({ name: nodeNameSchema("Secret") })
 	.superRefine((value, ctx) => {
 		// Native is the default and needs no connector.
 		if (!value.provider || value.provider === "native") return;
@@ -617,7 +656,7 @@ const registryItemSchema = registriesInsert
 		// Output column (set after the first deploy), never designed by the user.
 		repository_url: true,
 	})
-	.extend({ name: z.string().min(1, "Registry name is required") })
+	.extend({ name: nodeNameSchema("Registry") })
 	.superRefine((value, ctx) => {
 		// Native is the default and needs no connector.
 		if (!value.provider || value.provider === "native") return;
@@ -674,7 +713,7 @@ const helmRegistryItemSchema = helmRegistriesInsert
 		status: true,
 		status_message: true,
 	})
-	.extend({ name: z.string().min(1, "Chart repo name is required") })
+	.extend({ name: nodeNameSchema("Chart repo") })
 	.superRefine((value, ctx) => {
 		const rule = value.provider ? HELM_REGISTRY_HOST_RULES[value.provider] : undefined;
 		if (!value.provider || !rule) {
@@ -715,7 +754,7 @@ const serviceItemSchema = servicesInsert
 		resolved_image: true,
 	})
 	.extend({
-		name: z.string().min(1, "Service name is required"),
+		name: nodeNameSchema("Service"),
 		type: z
 			.enum(["deployment", "job", "cronjob", "statefulset"])
 			.default("deployment"),
