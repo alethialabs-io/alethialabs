@@ -151,6 +151,11 @@ func hygCliConfirmResetFlags() {
 	alertsDeleteYes, channelsDeleteYes, connectorRemoveYes, fleetSetYes = false, false, false, false
 	grantsRemoveYes, membersRemoveYes, componentRemoveYes, projectDestroyYes = false, false, false, false
 	rolesDeleteYes, destroyRunnerYes, runnerRemoveYes, teamsDeleteYes = false, false, false, false
+	// Added with the commands they gate. `tokenEnv` does not reset the cobra tree, so a --yes left
+	// set here pre-confirms a LATER test in the same package run — which is the failure this
+	// explicit list exists to prevent, and which is why a new --yes global must always be added to
+	// it rather than relying on the VisitAll walk above.
+	classificationUnassignYes, jobsCancelYes = false, false
 }
 
 // hygCliConfirmEnv stands up isolated credentials, an active org and a fake control
@@ -244,6 +249,14 @@ var hygCliConfirmDestructive = []struct {
 	{"runner_destroy", []string{"runner", "destroy", "--runner-id", "r1"}},
 	{"runner_remove", []string{"runner", "remove", "r1"}},
 	{"teams_delete", []string{"teams", "delete", "t1"}},
+	// Missing since they were wired — nothing failed, because this list was both the subject AND
+	// the definition of the set. TestHygCliConfirm_BehaviouralListCoversTheDerivedSet now makes
+	// that impossible.
+	{"addon_disable", []string{"addon", "disable", "a1", "--project", "p1", "--env", "e1"}},
+	{"chart_detach", []string{"chart", "detach", "c1", "--project", "p1", "--env", "e1"}},
+	{"iac_detach", []string{"iac", "detach", "--project", "p1", "--env", "e1"}},
+	{"classification_unassign", []string{"classification", "unassign", "project_environment", "e1", "gold"}},
+	{"jobs_cancel", []string{"jobs", "cancel", "j1"}},
 }
 
 // TestHygCliConfirm_NoInputWithoutYesIsFatal is the regression this lane exists for.
@@ -456,7 +469,7 @@ func TestHygCliConfirm_ConfirmDestructiveMatrix(t *testing.T) {
 
 // ── the inventory, DERIVED ──────────────────────────────────────────────────────────────────
 //
-// TestHygCliConfirm_EveryDestructiveCommandOffersYes above walks a hand-written list, and a
+// TestHygCliConfirm_ListedDestructiveCommandsSpellYesTheSameWay above walks a hand-written list, and a
 // hand-written list of what a guard watches stops covering silently. It did: `token revoke`,
 // `classification unassign` and `jobs cancel` were all destructive, all missing `--yes`, and all
 // invisible to a test whose name claims to cover EVERY destructive command.
@@ -470,6 +483,11 @@ var destructiveVerbs = map[string]bool{
 	"delete": true, "remove": true, "revoke": true, "destroy": true,
 	"cancel": true, "unassign": true, "detach": true, "disable": true,
 }
+
+// A verb set is itself hand-written, so it has the same decay this file is about — one level
+// further down. `ops drain-runner` and `ops unstick-env` take something away, match no verb, and
+// would sit in neither map with nothing recording why. They are named here so the decision that
+// they are gated by a required --reason is written down rather than implied by their absence.
 
 // destructiveExemptions are commands that take something away and deliberately do NOT carry --yes,
 // each with the stronger gate it carries instead. An exemption is a decision, not a mute button:
@@ -488,14 +506,29 @@ var alsoDestructive = map[string]bool{
 	"alethia ops orphan-clean":       true,
 	"alethia ops force-release-lock": true,
 	"alethia ops state-surgery":      true,
+	"alethia ops drain-runner":       true,
+	"alethia ops unstick-env":        true,
 	"alethia fleet set":              true,
+	"alethia token revoke":           true,
 }
 
+// destructiveExemptions are commands in the derived set that deliberately do NOT carry --yes,
+// each naming the stronger gate it carries instead. An exemption is a decision, not a mute
+// button: the stale-entry check fails if one names a command the filter never classifies as
+// destructive, so an exemption cannot quietly become decorative.
 var destructiveExemptions = map[string]string{
-	"alethia ops cancel-job":         "audited --reason, and an ops verb is already behind the ops gate",
+	"alethia ops cancel-job":         "audited --reason; runOpsAction fails closed on an empty one",
 	"alethia ops orphan-clean":       "two-person --approval, a STRONGER gate than a single operator's --yes",
 	"alethia ops force-release-lock": "two-person --approval",
 	"alethia ops state-surgery":      "two-person --approval",
+	"alethia ops drain-runner":       "audited --reason; runOpsAction fails closed on an empty one",
+	"alethia ops unstick-env":        "audited --reason; runOpsAction fails closed on an empty one",
+	// REVOCATION IS A SAFETY ACTION and its asymmetry runs the other way: revoking a token you did
+	// not mean to is recoverable in one command, while failing to revoke a leaked one is not. A
+	// gate here fails a CI pipeline revoking a compromised credential and LEAVES IT LIVE, which is
+	// the moment an operator can least afford friction. Gated once, in this PR, and ungated on the
+	// maintainer's ruling before it shipped.
+	"alethia token revoke": "revocation is a safety action; a confirmation here fails incident-response pipelines and leaves the credential valid",
 }
 
 // walkLeaves yields every runnable leaf command under root.
@@ -530,7 +563,14 @@ func TestHygCliConfirm_DerivedDestructiveSetAllOfferYes(t *testing.T) {
 	destructive := 0
 	for _, c := range leaves {
 		path := c.CommandPath()
-		verb := strings.Fields(c.Use)[0]
+		// Fields on an empty Use returns an empty slice, and cobra permits an empty Use. Indexing
+		// it would take the whole binary down instead of naming the command.
+		fields := strings.Fields(c.Use)
+		if len(fields) == 0 {
+			t.Errorf("%q has an empty Use, so no verb can be read from it — give it one", path)
+			continue
+		}
+		verb := fields[0]
 		if !destructiveVerbs[verb] && !alsoDestructive[path] {
 			continue
 		}
@@ -588,7 +628,6 @@ func TestHygCliConfirm_DerivedDestructiveSetAllOfferYes(t *testing.T) {
 // returned cleanly.
 func TestHygCliConfirm_NewlyGatedCommandsHonourNo(t *testing.T) {
 	cases := map[string][]string{
-		"token revoke":            {"token", "revoke", "t1", "--output", "json"},
 		"classification unassign": {"classification", "unassign", "project_environment", "e1", "gold", "--output", "json"},
 		"jobs cancel":             {"jobs", "cancel", "j1", "--output", "json"},
 	}
@@ -616,8 +655,7 @@ func TestHygCliConfirm_NewlyGatedCommandsHonourNo(t *testing.T) {
 // perfectly, and this is what makes that impossible.
 func TestHygCliConfirm_NewlyGatedCommandsActOnYes(t *testing.T) {
 	cases := map[string][]string{
-		"token revoke": {"token", "revoke", "t1", "--yes", "--output", "json"},
-		"jobs cancel":  {"jobs", "cancel", "j1", "--yes", "--output", "json"},
+		"jobs cancel": {"jobs", "cancel", "j1", "--yes", "--output", "json"},
 	}
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -629,5 +667,66 @@ func TestHygCliConfirm_NewlyGatedCommandsActOnYes(t *testing.T) {
 				t.Errorf("%s was confirmed with --yes and sent NO mutation — the command is gated into doing nothing", name)
 			}
 		})
+	}
+}
+
+// TestHygCliConfirm_BehaviouralListCoversTheDerivedSet closes the hole one level below the derived
+// set, and it is the one that actually protects the regression this file exists for.
+//
+// Deriving the set fixed "WHICH commands do we check". It did not fix "WHAT do we check about
+// them": TestHygCliConfirm_DerivedDestructiveSetAllOfferYes asserts only that a --yes flag is
+// REGISTERED, and the two tests that drive the real contract — NoInputWithoutYesIsFatal and
+// NoInputWithYesProceeds — run off hygCliConfirmDestructive, which is hand-written. So the
+// `confirmDestructive` block could be deleted from a command, `addYesFlag` left in place, and the
+// whole suite would stay green: a flag that is registered, accepted, and read by nobody.
+//
+// It was not hypothetical. That list named 12 while 18 commands call confirmDestructive; `addon
+// disable`, `chart detach` and `iac detach` had no behavioural coverage from the day they were
+// wired, because the list was simultaneously the subject of the test and the definition of what
+// the test should cover.
+//
+// A hand-written ARGS table is unavoidable — every command needs its own valid invocation, and
+// nothing can derive those. What is avoidable is the table also deciding the SET. Here the set is
+// derived and the table must cover it; a gap is a failure that names the missing command.
+func TestHygCliConfirm_BehaviouralListCoversTheDerivedSet(t *testing.T) {
+	covered := map[string]bool{}
+	for _, tc := range hygCliConfirmDestructive {
+		cmd, _, err := rootCmd.Find(tc.args)
+		if err != nil {
+			t.Errorf("%s: args %v resolve to no command: %v", tc.name, tc.args, err)
+			continue
+		}
+		covered[cmd.CommandPath()] = true
+	}
+
+	need := 0
+	for _, c := range walkLeaves(rootCmd) {
+		path := c.CommandPath()
+		fields := strings.Fields(c.Use)
+		if len(fields) == 0 {
+			continue // reported by the derived-set test
+		}
+		if !destructiveVerbs[fields[0]] && !alsoDestructive[path] {
+			continue
+		}
+		if _, exempt := destructiveExemptions[path]; exempt {
+			continue // no --yes to exercise
+		}
+		need++
+		if !covered[path] {
+			t.Errorf("%s is in the derived destructive set and has NO entry in hygCliConfirmDestructive.\n"+
+				"      Nothing drives its --no-input contract, so deleting its confirmDestructive block\n"+
+				"      would leave the suite green with the flag still registered. Add an invocation.", path)
+		}
+	}
+
+	// Vacuity, both directions. Zero required commands would pass having checked nothing, and the
+	// count is the thing that silently fell out of step last time.
+	if need < 15 {
+		t.Errorf("only %d commands require a behavioural entry; 18 call confirmDestructive, so a "+
+			"count this low means the derivation stopped matching", need)
+	}
+	if len(hygCliConfirmDestructive) < need {
+		t.Errorf("the behavioural table has %d entries for %d commands that need one", len(hygCliConfirmDestructive), need)
 	}
 }

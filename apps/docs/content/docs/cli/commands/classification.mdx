@@ -127,7 +127,11 @@ Clear a value from a resource (addressed by its **slug**, not the dimension key)
 
 ```bash
 alethia classification unassign <kind> <id> <value-slug>
+alethia classification unassign <kind> <id> <value-slug> --yes   # scripted
 ```
+
+Clearing a value is destructive — policy that selects on it stops matching the resource — so it
+asks before acting. In a pipeline `--yes` is **required**.
 
 | Argument | Required | Description |
 |----------|----------|-------------|

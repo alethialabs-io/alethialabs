@@ -90,7 +90,11 @@ Cancel a queued or in-progress job. The job ID is a **positional argument**.
 
 ```bash
 alethia jobs cancel <job_id>
+alethia jobs cancel <job_id> --yes   # scripted: skip the confirmation
 ```
+
+Cancelling is destructive, so it asks before acting. In a pipeline there is no terminal to ask, so
+`--yes` is **required** — without it the command fails rather than cancelling silently.
 
 Sets the job status to CANCELLED. If the job is currently being executed by a Runner, the Runner detects the cancellation on its next status check and terminates the `tofu` process gracefully.
 
