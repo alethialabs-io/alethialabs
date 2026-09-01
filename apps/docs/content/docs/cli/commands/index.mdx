@@ -80,7 +80,8 @@ alethia
 │   ├── receipt -j <job_id> [--key-file <f>] [--allow-unsigned] [--allow-untrusted]
 │   └── show    -j <job_id>           # the per-control report, incl. not_evaluable + waivers
 ├── cluster                           # alias: clusters
-│   └── list
+│   ├── list
+│   └── get [selector]                # project name, cluster name or id — asks when omitted
 ├── repo                              # aliases: repos, repositories — browse connected git repos
 │   └── list [--provider github]      # provider: github, gitlab, bitbucket
 ├── cloud                             # inspect discovered cloud resources

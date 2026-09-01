@@ -81,38 +81,6 @@ func TestJobFieldRowsProviderAndVerify(t *testing.T) {
 	}
 }
 
-// TestClusterRowsCostAndMessage covers the Cost column and inline status message.
-func TestClusterRowsCostAndMessage(t *testing.T) {
-	cost := 128.0
-	withExtras := []api.ClusterSummary{{
-		ProjectName: "web", Environment: "prod", ClusterName: "web-eks",
-		ClusterVersion: "1.30", Status: "FAILED", StatusMessage: "node pool exhausted",
-		EstimatedMonthlyCost: &cost, Region: "eu-central-1",
-	}}
-	// Columns: Project, Cluster, Version, Status, ArgoCD, Nodes, Region, Cost.
-	row := clusterRows(withExtras)[0]
-	status, argocdCell, costCell := row[3], row[4], row[7]
-	if !strings.Contains(status, "node pool exhausted") || !strings.Contains(status, "—") {
-		t.Errorf("status cell should surface the message, got %q", status)
-	}
-	// A provisioned cluster with no managed-ingress URL reads "port-fwd".
-	if argocdCell != "port-fwd" {
-		t.Errorf("argocd cell = %q, want port-fwd", argocdCell)
-	}
-	if costCell != "$128/mo" {
-		t.Errorf("cost cell = %q, want $128/mo", costCell)
-	}
-
-	bare := clusterRows([]api.ClusterSummary{{ProjectName: "x", Status: "ACTIVE"}})[0]
-	if bare[7] != ui.SymbolDash {
-		t.Errorf("uncosted cluster should show dash, got %q", bare[7])
-	}
-	// No cluster_name yet ⇒ ArgoCD not installed ⇒ dash.
-	if bare[4] != ui.SymbolDash {
-		t.Errorf("un-provisioned cluster argocd cell should be dash, got %q", bare[4])
-	}
-}
-
 // TestActivityRowsReason covers the Reason column and resource-id enrichment.
 func TestActivityRowsReason(t *testing.T) {
 	entries := []api.ActivityEntry{{

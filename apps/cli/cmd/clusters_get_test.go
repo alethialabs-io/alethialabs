@@ -5,39 +5,209 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/charmbracelet/huh"
 )
 
 func strptr(s string) *string { return &s }
 
-// TestFindCluster covers exact matches (project/cluster/id), the substring fallback,
-// case-insensitivity, and the no-match paths (empty query, no candidates).
-func TestFindCluster(t *testing.T) {
+// clustersSetNoInput pins noInputMode for the duration of a test and restores it. The package
+// shares one global and the tests in it are not parallel, so a leaked value would decide a LATER
+// test's interactive arm.
+func clustersSetNoInput(t *testing.T, v bool) {
+	t.Helper()
+	prev := noInputMode
+	noInputMode = v
+	t.Cleanup(func() { noInputMode = prev })
+}
+
+// clustersStubForm replaces the huh runner with one that returns err and records that it ran.
+//
+// A stub can never answer the form: huh writes the selection through a pointer the group owns.
+// That is why pickCluster's default is a real cluster rather than a zero value — it is what makes
+// the SELECTED arm reachable here at all, and the test below asserts the default is the FIRST
+// candidate rather than merely non-nil.
+func clustersStubForm(t *testing.T, err error) *int {
+	t.Helper()
+	runs := 0
+	prev := runHuhForm
+	runHuhForm = func(...*huh.Group) error {
+		runs++
+		return err
+	}
+	t.Cleanup(func() { runHuhForm = prev })
+	return &runs
+}
+
+// twoEnvsOneProject is the ordinary ambiguity: one project, two environments, two clusters, and
+// the same project name on both. The old matcher returned whichever the API listed first.
+var twoEnvsOneProject = []api.ClusterSummary{
+	{ID: "clu_prod", ProjectName: "web", Environment: "production", ClusterName: "web-prod", Status: "ACTIVE"},
+	{ID: "clu_stg", ProjectName: "web", Environment: "staging", ClusterName: "web-stg", Status: "CREATING"},
+}
+
+// TestClusterMatches covers the selector grammar: exact on project/cluster/id, the substring
+// fallback, case-insensitivity, the empty selector, and — the reason it returns a SET — the
+// project whose two environments both answer to the same name.
+func TestClusterMatches(t *testing.T) {
 	clusters := []api.ClusterSummary{
 		{ID: "clu_1", ProjectName: "web", ClusterName: "web-eks"},
 		{ID: "clu_2", ProjectName: "payments-api", ClusterName: "pay-eks"},
 	}
 
-	if c := findCluster(clusters, "WEB"); c == nil || c.ID != "clu_1" {
-		t.Fatalf("exact project-name match (case-insensitive) failed: %+v", c)
+	one := func(t *testing.T, got []api.ClusterSummary, wantID string) {
+		t.Helper()
+		if len(got) != 1 || got[0].ID != wantID {
+			t.Fatalf("want exactly [%s], got %+v", wantID, got)
+		}
 	}
-	if c := findCluster(clusters, "pay-eks"); c == nil || c.ID != "clu_2" {
-		t.Fatalf("exact cluster-name match failed: %+v", c)
+
+	one(t, clusterMatches(clusters, "WEB"), "clu_1")
+	one(t, clusterMatches(clusters, "pay-eks"), "clu_2")
+	one(t, clusterMatches(clusters, "clu_1"), "clu_1")
+	one(t, clusterMatches(clusters, "  payments  "), "clu_2")
+
+	if got := clusterMatches(clusters, "nope"); len(got) != 0 {
+		t.Errorf("a selector that names nothing must match nothing, got %+v", got)
 	}
-	if c := findCluster(clusters, "clu_1"); c == nil || c.ID != "clu_1" {
-		t.Fatalf("exact id match failed: %+v", c)
+	if got := clusterMatches(clusters, ""); len(got) != 0 {
+		t.Errorf("an empty selector is the ask-me signal, not a wildcard; got %+v", got)
 	}
-	if c := findCluster(clusters, "  payments  "); c == nil || c.ID != "clu_2" {
-		t.Fatalf("substring fallback (trimmed) failed: %+v", c)
+	if got := clusterMatches(clusters, "   "); len(got) != 0 {
+		t.Errorf("a whitespace selector is empty too; got %+v", got)
 	}
-	if c := findCluster(clusters, "nope"); c != nil {
-		t.Fatalf("no-match should be nil, got %+v", c)
+
+	// Both environments of one project answer to the project name.
+	if got := clusterMatches(twoEnvsOneProject, "web"); len(got) != 2 {
+		t.Fatalf("an ambiguous selector must return every candidate, got %d: %+v", len(got), got)
 	}
-	if c := findCluster(clusters, ""); c != nil {
-		t.Fatalf("empty query must not substring-match everything, got %+v", c)
+
+	// An exact hit SUPPRESSES the substring hits: `web` must not also drag in `web-internal`.
+	mixed := []api.ClusterSummary{
+		{ID: "clu_a", ProjectName: "web"},
+		{ID: "clu_b", ProjectName: "web-internal"},
+	}
+	one(t, clusterMatches(mixed, "web"), "clu_a")
+	// …and with no exact hit, the substring arm still finds both.
+	if got := clusterMatches(mixed, "we"); len(got) != 2 {
+		t.Fatalf("substring fallback should return both, got %+v", got)
+	}
+}
+
+// TestResolveClusterErrors covers every arm that must NOT return a cluster. Exiting 0 on a miss is
+// the failure this replaced: `alethia cluster get typo` printed a muted line and reported success.
+func TestResolveClusterErrors(t *testing.T) {
+	clustersSetNoInput(t, true)
+
+	if _, err := resolveCluster(nil, "web"); !errors.Is(err, errNoClusters) {
+		t.Errorf("an org with no clusters must say so, got %v", err)
+	}
+
+	_, err := resolveCluster(twoEnvsOneProject, "nope")
+	if err == nil {
+		t.Fatal("a selector that names nothing must be an error, not an empty screen")
+	}
+	if !strings.Contains(err.Error(), "no cluster matches") || !strings.Contains(err.Error(), "web (production)") {
+		t.Errorf("the miss must name the candidates so the next attempt can succeed, got %q", err)
+	}
+
+	// Ambiguous with prompting off: refuse and name both, rather than pick for the caller.
+	_, err = resolveCluster(twoEnvsOneProject, "web")
+	if err == nil {
+		t.Fatal("an ambiguous selector with --no-input must refuse")
+	}
+	for _, want := range []string{"matches 2 clusters", "web (production)", "web (staging)"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ambiguity error %q is missing %q", err, want)
+		}
+	}
+
+	// No selector with prompting off: the form can never be answered, so say what to pass.
+	if _, err := resolveCluster(twoEnvsOneProject, ""); !errors.Is(err, errNoInput) {
+		t.Errorf("an absent selector with --no-input must be errNoInput, got %v", err)
+	}
+}
+
+// TestResolveClusterAsks covers the two arms that open the picker, and proves the form actually
+// RAN rather than the value arriving some other way.
+func TestResolveClusterAsks(t *testing.T) {
+	clustersSetNoInput(t, false)
+
+	runs := clustersStubForm(t, nil)
+	got, err := resolveCluster(twoEnvsOneProject, "")
+	if err != nil {
+		t.Fatalf("absent selector at a terminal should ask, got %v", err)
+	}
+	if *runs != 1 {
+		t.Fatalf("the picker must have run; runs = %d", *runs)
+	}
+	if got.ID != "clu_prod" {
+		t.Errorf("the default selection is the FIRST candidate, got %s", got.ID)
+	}
+
+	// Ambiguous at a terminal: the picker is offered the MATCHES, not the whole list.
+	//
+	// The unrelated cluster is FIRST in the list on purpose. Offering the whole list would default
+	// to it, and a fixture where the matches happen to lead cannot tell the two apart — the
+	// mutation that passes `clusters` instead of `matches` survived exactly that ordering.
+	withUnrelated := []api.ClusterSummary{
+		{ID: "clu_other", ProjectName: "api", Environment: "production"},
+		twoEnvsOneProject[0],
+		twoEnvsOneProject[1],
+	}
+	got, err = resolveCluster(withUnrelated, "web")
+	if err != nil {
+		t.Fatalf("ambiguous selector at a terminal should ask, got %v", err)
+	}
+	if *runs != 2 {
+		t.Fatalf("the picker must have run again; runs = %d", *runs)
+	}
+	if got.ID != "clu_prod" {
+		t.Errorf("the picker must be offered the MATCHES, not the whole list — got %s", got.ID)
+	}
+
+	// A single match never asks.
+	got, err = resolveCluster(twoEnvsOneProject, "web-stg")
+	if err != nil {
+		t.Fatalf("unambiguous selector: %v", err)
+	}
+	if got.ID != "clu_stg" {
+		t.Errorf("got %s, want clu_stg", got.ID)
+	}
+	if *runs != 2 {
+		t.Errorf("an unambiguous selector must not open a form; runs = %d", *runs)
+	}
+}
+
+// TestPickClusterPropagatesFormError pins that an aborted or broken prompt is an error, not a
+// silently-defaulted choice.
+func TestPickClusterPropagatesFormError(t *testing.T) {
+	clustersSetNoInput(t, false)
+	boom := errors.New("tty exploded")
+	clustersStubForm(t, boom)
+
+	if _, err := pickCluster(twoEnvsOneProject, "Which?"); !errors.Is(err, boom) {
+		t.Errorf("a failed form must surface, got %v", err)
+	}
+}
+
+// TestClusterLabel pins the one human name a cluster has, in every place that renders one.
+func TestClusterLabel(t *testing.T) {
+	if got := clusterLabel(api.ClusterSummary{ProjectName: "web", Environment: "prod"}); got != "web (prod)" {
+		t.Errorf("label = %q", got)
+	}
+	if got := clusterLabel(api.ClusterSummary{ProjectName: "web"}); got != "web" {
+		t.Errorf("no environment ⇒ no parenthetical, got %q", got)
+	}
+	if got := clusterLabels(twoEnvsOneProject); got != "web (production), web (staging)" {
+		t.Errorf("labels = %q", got)
 	}
 }
 
@@ -64,8 +234,9 @@ func TestClusterFieldRows(t *testing.T) {
 	if got["ArgoCD"] != "https://argo.example" {
 		t.Errorf("ArgoCD row should be the managed URL, got %q", got["ArgoCD"])
 	}
-	if !strings.Contains(got["Est. cost"], "$96/mo") {
-		t.Errorf("cost row = %q", got["Est. cost"])
+	// Minor units, because the console shows minor units for the same number.
+	if got["Est. cost"] != "$96.00/mo" {
+		t.Errorf("cost row = %q, want $96.00/mo", got["Est. cost"])
 	}
 
 	// Un-provisioned (no cluster name): no ArgoCD block, no optional fields.
@@ -86,6 +257,63 @@ func TestClusterFieldRows(t *testing.T) {
 	}
 	if !strings.Contains(argocd, "port-forward") {
 		t.Errorf("no-ingress ArgoCD row should mention port-forward, got %q", argocd)
+	}
+}
+
+// conformanceCase is one row of the committed formatter conformance table.
+type conformanceCase struct {
+	ID       string  `json:"id"`
+	Amount   float64 `json:"amount"`
+	Style    string  `json:"style"`
+	Currency string  `json:"currency"`
+	Want     string  `json:"want"`
+}
+
+// TestClusterCostAgreesWithTheConformanceTable drives the cluster cost cell against the table the
+// CONSOLE generates (packages/format/conformance/format-cases.json), not against a value computed
+// from the CLI's own code.
+//
+// That is the whole point. `fmt.Sprintf("$%.0f/mo", 12.5)` rendered `$12` — Go's %f rounds half to
+// even — while the billing page rendered `$12.50`, and a test that compared the cell against
+// `format.MonthlyRate(...)` would have agreed with whichever answer the CLI happened to produce.
+// The expected strings here come from a file the CLI cannot write.
+func TestClusterCostAgreesWithTheConformanceTable(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "packages", "format", "conformance", "format-cases.json"))
+	if err != nil {
+		t.Fatalf("read the conformance table: %v — it is the subject of this test, so an absent "+
+			"file is a failure and never a skip", err)
+	}
+	var table struct {
+		Cases struct {
+			MonthlyRate []conformanceCase `json:"monthlyRate"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &table); err != nil {
+		t.Fatalf("parse the conformance table: %v", err)
+	}
+
+	// The cluster cost is an ESTIMATE priced in USD, so those are the rows that bind it.
+	const halfCent = "monthlyRate/estimate/HALF-CENT-ROUNDS-AWAY-FROM-ZERO"
+	exercised, sawHalfCent := 0, false
+	for _, c := range table.Cases.MonthlyRate {
+		if c.Style != "estimate" || c.Currency != clusterCostCurrency {
+			continue
+		}
+		exercised++
+		if c.ID == halfCent {
+			sawHalfCent = true
+		}
+		if got := clusterCost(c.Amount); got != c.Want {
+			t.Errorf("%s: clusterCost(%v) = %q, the console renders %q", c.ID, c.Amount, got, c.Want)
+		}
+	}
+	if exercised == 0 {
+		t.Fatalf("no estimate/%s rows in the conformance table — every assertion above was vacuous",
+			clusterCostCurrency)
+	}
+	if !sawHalfCent {
+		t.Fatalf("%q is gone from the conformance table: it is the case this whole change exists "+
+			"for, so its absence is a failure rather than one fewer row", halfCent)
 	}
 }
 
@@ -127,14 +355,26 @@ func TestRenderCluster(t *testing.T) {
 	c := &api.ClusterSummary{ProjectName: "web", Environment: "prod", ClusterName: "web-eks", Status: "ACTIVE"}
 	g := &api.ClusterGitops{StatusAvailable: true, Total: 1, Synced: 1, Healthy: 1}
 
-	for _, format := range []string{"table", "json", "csv"} {
+	for _, outFormat := range []string{"table", "json", "csv"} {
 		var buf bytes.Buffer
-		if err := renderCluster(&buf, format, c, g); err != nil {
-			t.Fatalf("renderCluster(%s) error: %v", format, err)
+		if err := renderCluster(&buf, outFormat, c, g); err != nil {
+			t.Fatalf("renderCluster(%s) error: %v", outFormat, err)
 		}
 		if buf.Len() == 0 {
-			t.Errorf("renderCluster(%s) wrote nothing", format)
+			t.Errorf("renderCluster(%s) wrote nothing", outFormat)
 		}
+	}
+
+	// The card is titled with the shared label, so the header and a picker option agree.
+	// RenderCard upper-cases and letter-spaces its title, so the comparison drops the spacing
+	// rather than pinning a presentation the card owns.
+	var card bytes.Buffer
+	if err := renderCluster(&card, "table", c, g); err != nil {
+		t.Fatalf("renderCluster(table): %v", err)
+	}
+	squashed := strings.ReplaceAll(card.String(), " ", "")
+	if !strings.Contains(squashed, "WEB(PROD)") {
+		t.Errorf("card title should be the shared cluster label, got %q", card.String())
 	}
 
 	// Without gitops the plain cluster is still rendered.
@@ -144,5 +384,114 @@ func TestRenderCluster(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "web-eks") {
 		t.Errorf("json output should contain the cluster name, got %q", buf.String())
+	}
+}
+
+// ── End to end, through the real cobra tree ────────────────────────────────────────────────────
+//
+// The tests above drive the resolver directly. These drive `alethia cluster get` itself against a
+// fake control plane, because the thing being asserted is the EXIT CODE, and an exit code is a
+// property of the command, not of the function it calls. `miscEnv` / `miscTrapExit` / `miscTTY`
+// are the package's harness for exactly this (cov_misc_test.go).
+
+// clustersCLI is miscEnv plus the flag reset it does not do.
+//
+// rootCmd is a package global and cobra never clears a flag between Execute calls, so a
+// `--no-input` this file passes stays Changed for every LATER test in the package. Measured, not
+// assumed: without this, three TestConn_* cases in cov_connectors_test.go took the
+// "prompting is disabled" fatal arm, because Go orders a package's test files alphabetically and
+// clusters_get_test.go runs before cov_connectors_test.go. hygCliConfirmResetFlags is the
+// package's existing undo for exactly this.
+func clustersCLI(t *testing.T, mode miscMode) func(args ...string) error {
+	t.Helper()
+	run := miscEnv(t, mode)
+	t.Cleanup(hygCliConfirmResetFlags)
+	return func(args ...string) error {
+		defer hygCliConfirmResetFlags()
+		return run(args...)
+	}
+}
+
+// TestClusterGetE2E_MissIsFatal pins the defect this group closed: a selector that names no
+// cluster used to print a muted line and exit 0, so `alethia cluster get typo || echo missing`
+// never printed "missing" and a script could not tell a typo from a healthy cluster.
+func TestClusterGetE2E_MissIsFatal(t *testing.T) {
+	run := miscTrapExit(t, clustersCLI(t, miscFull))
+	if !run("cluster", "get", "no-such-project", "--output", "table", "--no-input") {
+		t.Error("a selector that matches nothing must exit non-zero")
+	}
+}
+
+// TestClusterGetE2E_NoClustersIsFatal pins the other miss: the org has nothing to show. Same
+// verdict, different sentence — and it must not be an empty card.
+func TestClusterGetE2E_NoClustersIsFatal(t *testing.T) {
+	run := miscTrapExit(t, clustersCLI(t, miscEmpty))
+	if !run("cluster", "get", "web", "--output", "table", "--no-input") {
+		t.Error("an org with no clusters must exit non-zero from `cluster get`")
+	}
+}
+
+// TestClusterGetE2E_NoSelectorWithNoInputIsFatal pins the --no-input half of the field spec: with
+// prompting refused and nothing passed, the command fails and says what to pass. It must never
+// block on a form that can never be answered, and never pick a cluster for the caller.
+func TestClusterGetE2E_NoSelectorWithNoInputIsFatal(t *testing.T) {
+	run := miscTrapExit(t, clustersCLI(t, miscFull))
+	if !run("cluster", "get", "--output", "table", "--no-input") {
+		t.Error("no selector with --no-input must exit non-zero")
+	}
+}
+
+// TestClusterGetE2E_ServerErrorIsFatal pins that a refused control plane is fatal rather than a
+// half-rendered card. `cluster get` left miscReadCommands, so this arm is asserted here.
+func TestClusterGetE2E_ServerErrorIsFatal(t *testing.T) {
+	run := miscTrapExit(t, clustersCLI(t, miscFail))
+	if !run("cluster", "get", "web", "--output", "json", "--no-input") {
+		t.Error("a 500 from the control plane must exit non-zero")
+	}
+}
+
+// TestClusterGetE2E_MatchRenders pins the success arm in both the static and the interactive
+// input modes, and that the rendered cost is the console's rendering of the same number.
+func TestClusterGetE2E_MatchRenders(t *testing.T) {
+	run := clustersCLI(t, miscFull)
+	for _, mode := range []string{"--no-input", "--no-input=false"} {
+		t.Run(mode, func(t *testing.T) {
+			if mode == "--no-input=false" {
+				miscTTY(t)
+			}
+			if err := run("cluster", "get", "web", "--output", "table", mode); err != nil {
+				t.Fatalf("cluster get web: %v", err)
+			}
+		})
+	}
+
+	// The selector also resolves by cluster name and by id, which is what makes a docs page able
+	// to say "the name you saw in the list" without qualifying which name.
+	for _, selector := range []string{"prod-eks", "c1"} {
+		if err := run("cluster", "get", selector, "--output", "json", "--no-input"); err != nil {
+			t.Fatalf("cluster get %s: %v", selector, err)
+		}
+	}
+}
+
+// TestClusterGetE2E_AcceptsZeroOrOneArgument pins the argument arity the docs and the form both
+// depend on: zero args is legal (it asks), one is legal, two is a usage error rather than a
+// silently ignored word.
+func TestClusterGetE2E_AcceptsZeroOrOneArgument(t *testing.T) {
+	for _, c := range []struct {
+		args    []string
+		wantErr bool
+	}{
+		{[]string{}, false},
+		{[]string{"web"}, false},
+		{[]string{"web", "extra"}, true},
+	} {
+		err := clusterGetCmd.ValidateArgs(c.args)
+		if (err != nil) != c.wantErr {
+			t.Errorf("ValidateArgs(%v) = %v, wantErr = %v", c.args, err, c.wantErr)
+		}
+	}
+	if err := clusterListCmd.ValidateArgs([]string{"web"}); err == nil {
+		t.Error("`cluster list` takes no arguments — a stray word must be a usage error")
 	}
 }
