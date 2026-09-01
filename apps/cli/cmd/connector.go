@@ -160,6 +160,18 @@ func resolveCloudIdentityRef(lister cloudIdentityLister, ref string) (string, er
 		}
 		switch len(matches) {
 		case 0:
+			// The slug set and the remediation come from two different lists on purpose:
+			// isCloudProviderSlug is the generated `cloud_provider` enum (so a cloud the schema
+			// knows is never mistaken for an identity id), while `alethia connector` only has
+			// leaves for the clouds the CLI can actually connect. Naming the leaf without
+			// checking it exists promised `alethia connector civo`, which exits with cobra's
+			// `unknown command "civo"`.
+			if !connectorHasProvider(ref) {
+				return "", fmt.Errorf(
+					"no connected %s account found, and the CLI cannot connect one — `alethia connector` covers %s",
+					ref, strings.Join(connectorProviderNames(), ", "),
+				)
+			}
 			return "", fmt.Errorf("no connected %s account found — run `alethia connector %s` first", ref, ref)
 		case 1:
 			return matches[0].ID, nil
@@ -221,4 +233,46 @@ func connectorProviderNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// connectorHasProvider reports whether `alethia connector <name>` is a REGISTERED leaf, which
+// is a narrower question than "is this a cloud provider": the `cloud_provider` enum carries
+// clouds the CLI has no connector for.
+func connectorHasProvider(name string) bool {
+	for _, n := range connectorProviderNames() {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// modeFlag pairs a setup-mode flag's name with whether this invocation gave it.
+type modeFlag struct {
+	name string
+	on   bool
+}
+
+// refuseMultipleModes refuses more than one setup mode on a single command line.
+//
+// Every connector resolves its setup with a switch, and a switch settles a combination by
+// PRECEDENCE rather than by refusing it: `connector alibaba --terraform --role-arn acs:…` wrote
+// no OpenTofu module, said nothing about having ignored --terraform, and connected. The user
+// asked for a module on disk and got a connection. An ignored flag is the same class of defect
+// as a missing one, so the combination is named and refused — before anything is created
+// server-side, since the flags alone show the mistake.
+func refuseMultipleModes(modes ...modeFlag) error {
+	given := make([]string, 0, len(modes))
+	for _, m := range modes {
+		if m.on {
+			given = append(given, m.name)
+		}
+	}
+	if len(given) < 2 {
+		return nil
+	}
+	return fmt.Errorf(
+		"%s cannot be combined — each asks for a different setup, so pass one of them",
+		strings.Join(given, ", "),
+	)
 }
