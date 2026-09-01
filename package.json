@@ -35,6 +35,7 @@
     "check:addon-published-defaults": "bash scripts/addons/check-published-defaults.sh",
     "check:addon-resource-fit": "bash scripts/addons/check-resource-fit.sh",
     "check:shared-surface": "node scripts/check-shared-surface.mjs",
+    "check:ramp-transcription": "node scripts/check-ramp-transcription.mjs",
     "check:theme-inline": "node scripts/check-theme-inline-overrides.mjs",
     "check:ui-client-boundary": "node scripts/check-ui-client-boundary.mjs",
     "check:workflow-shape": "node scripts/ci/check-workflow-shape.mjs",
