@@ -86,7 +86,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 15
-debt: 74
+debt: 61
 
 scanned:
   - scope: console_code
@@ -110,9 +110,6 @@ format:
     hits: 2
     reason: SVG path coordinates for a sparkline — geometry the browser reads, never a number a person does.
   # --- debt: measured 2026-09-01 on an unmodified dev, by the two new money matchers.
-  - path: apps/console/components/agent/approval-card.tsx
-    hits: 1
-    lifts: "#3623 — the agent surface adopts the shared surface: 1 money site here writes the currency symbol somewhere other than next to the number."
   - path: apps/console/components/billing/billing-checkout-form.tsx
     hits: 1
     lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 money site here writes the currency symbol somewhere other than next to the number."
@@ -157,15 +154,6 @@ section_header:
   - path: apps/console/app/(private)/[org]/~/runners/runners-client.tsx
     hits: 1
     lifts: "#3619 — the page frame is rebuilt: 1 raw section heading here."
-  - path: apps/console/components/ai-elements/conversation.tsx
-    hits: 1
-    lifts: "#3623 — the agent surface adopts the shared surface: 1 raw section heading here."
-  - path: apps/console/components/ai-elements/prompt-input.tsx
-    hits: 1
-    lifts: "#3623 — the agent surface adopts the shared surface: 1 raw section heading here."
-  - path: apps/console/components/ai-elements/tool.tsx
-    hits: 2
-    lifts: "#3623 — the agent surface adopts the shared surface: 2 raw section headings here."
   - path: apps/console/components/billing/plan-picker.tsx
     hits: 1
     lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
@@ -273,34 +261,12 @@ section_header:
     lifts: "#3629 — the support hub is rebuilt: 1 raw section heading here."
 
 empty_state:
-  # --- debt only: 33 hand-rolled centred empty states across 24 files, six different heights.
+  # --- debt only: 33 hand-rolled centred empty states across 24 files, six different heights,
+  #     measured 2026-09-01 on an unmodified dev. That census is the starting line, not a live
+  #     count — the rows below it are the live count, and they only shrink.
   - path: apps/console/app/(private)/[org]/~/runners/runners-client.tsx
     hits: 2
     lifts: "#3619 — the page frame is rebuilt: 2 hand-rolled empty states here."
-  - path: apps/console/components/agent/agent-artifact-gallery.tsx
-    hits: 3
-    lifts: "#3623 — the agent surface adopts the shared surface: 3 hand-rolled empty states here."
-  - path: apps/console/components/agent/agent-artifact-viewer.tsx
-    hits: 1
-    lifts: "#3623 — the agent surface adopts the shared surface: 1 hand-rolled empty state here."
-  - path: apps/console/components/agent/agent-knowledge-panel.tsx
-    hits: 2
-    lifts: "#3623 — the agent surface adopts the shared surface: 2 hand-rolled empty states here."
-  - path: apps/console/components/agent/build-pane.tsx
-    hits: 1
-    lifts: "#3623 — the agent surface adopts the shared surface: 1 hand-rolled empty state here."
-  - path: apps/console/components/agent/deploy-pane.tsx
-    hits: 1
-    lifts: "#3623 — the agent surface adopts the shared surface: 1 hand-rolled empty state here."
-  - path: apps/console/components/agent/elench/elench-empty-landing.tsx
-    hits: 1
-    lifts: "#3623 — the agent surface adopts the shared surface: 1 hand-rolled empty state here."
-  - path: apps/console/components/agent/thread-rail.tsx
-    hits: 1
-    lifts: "#3623 — the agent surface adopts the shared surface: 1 hand-rolled empty state here."
-  - path: apps/console/components/agent/widgets/widget-grid.tsx
-    hits: 1
-    lifts: "#3623 — the agent surface adopts the shared surface: 1 hand-rolled empty state here."
   - path: apps/console/components/alerts/activity-panel.tsx
     hits: 1
     lifts: "#3622 — alerts, environments and clusters adopt the shared surface: 1 hand-rolled empty state here."
@@ -348,10 +314,8 @@ empty_state:
     lifts: "#3620 — settings adopts the shared surface: 1 hand-rolled empty state here."
 
 stat_strip:
-  # --- debt only: 12 stat-card cells and the 2 Stat primitives they render.
-  - path: apps/console/components/agent/approval-card.tsx
-    hits: 5
-    lifts: "#3623 — the agent surface adopts the shared surface: 5 stat-card cell/primitive sites here."
+  # --- debt only: 12 stat-card cells and the 2 Stat primitives they render, measured
+  #     2026-09-01 on an unmodified dev. The census is the starting line, not a live count.
   - path: apps/console/components/settings/usage/project-usage-panel.tsx
     hits: 5
     lifts: "#3628 — the usage pages are rebuilt: 5 stat-card cell/primitive sites here."
