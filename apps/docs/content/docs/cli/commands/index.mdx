@@ -80,7 +80,8 @@ alethia
 │   ├── receipt -j <job_id> [--key-file <f>] [--allow-unsigned] [--allow-untrusted]
 │   └── show    -j <job_id>           # the per-control report, incl. not_evaluable + waivers
 ├── cluster                           # alias: clusters
-│   └── list
+│   ├── list
+│   └── get [selector]                # project name, cluster name or id — asks when omitted
 ├── repo                              # aliases: repos, repositories — browse connected git repos
 │   └── list [--provider github]      # provider: github, gitlab, bitbucket
 ├── cloud                             # inspect discovered cloud resources
@@ -148,9 +149,11 @@ alethia
 ```
 
 <Callout type="info">
-`members`, `teams`, and the org-scoped commands operate on the **active organization** (set via
-`alethia org switch`). Override per-invocation with `--org <id>`. The `cluster` command is singular
-with a `clusters` alias, so both `alethia cluster list` and `alethia clusters list` work.
+Every org-scoped command operates on the **active organization**, which you set with
+`alethia org switch`. There is one per-invocation override, `--org <id>`, and it exists on
+`members` and `teams` only — no other group accepts it, so `alethia cluster list --org …` is
+refused as an unknown flag. The `cluster` command is singular with a `clusters` alias, so both
+`alethia cluster list` and `alethia clusters list` work.
 </Callout>
 
 <Callout type="info">
