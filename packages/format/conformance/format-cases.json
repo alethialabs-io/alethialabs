@@ -343,30 +343,6 @@
         "want": "$1,240.37"
       },
       {
-        "id": "money/JPY-IS-ZERO-DECIMAL-SO-NO-DIVISION",
-        "cents": 124000,
-        "currency": "JPY",
-        "want": "¥124,000"
-      },
-      {
-        "id": "money/KRW-is-zero-decimal-too",
-        "cents": 5500,
-        "currency": "KRW",
-        "want": "₩5,500"
-      },
-      {
-        "id": "money/BHD-IS-THREE-DECIMAL",
-        "cents": 124000,
-        "currency": "BHD",
-        "want": "BHD 124.000"
-      },
-      {
-        "id": "money/unrecognised-but-well-formed-code-gets-two-decimals",
-        "cents": 1250,
-        "currency": "ZZZ",
-        "want": "ZZZ 12.50"
-      },
-      {
         "id": "money/EUR-NARROW-SYMBOL-NOT-EUR-PREFIX",
         "cents": 1250,
         "currency": "EUR",

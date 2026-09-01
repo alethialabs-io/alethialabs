@@ -229,7 +229,13 @@ function main(): void {
 	if (!write) {
 		console.error(
 			`FAIL: ${REL} is stale — the implementation and the committed table disagree.\n` +
-				`Regenerate with:  pnpm -F console gen:format-conformance`,
+				`Regenerate with:  pnpm -F console gen:format-conformance\n` +
+				`\nThis run: Node ${process.versions.node}, ICU ${process.versions.icu}. Several\n` +
+				`expectations are Intl output, so a CLDR bump inside the ICU shipped with Node can\n` +
+				`move them for a reason that has nothing to do with @repo/format. If the changed\n` +
+				`list below is currency symbols or date wording and no formatter was touched, that\n` +
+				`is what happened — say so in the commit rather than letting it read as a\n` +
+				`deliberate change to a contract Go is held to.`,
 		);
 		if (changed.length > 0) {
 			console.error(`\n${changed.length} expectation(s) would change:`);

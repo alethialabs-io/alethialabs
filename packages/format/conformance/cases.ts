@@ -166,21 +166,28 @@ export const BYTES: NumberCase[] = [
 	{ id: "bytes/petabytes-are-the-last-unit", in: 1024 ** 6 },
 ];
 
-/** `formatMoney` — MINOR units (cents), which is how Stripe and the billing tables store it. */
+/**
+ * `formatMoney` — MINOR units (cents), which is how Stripe and the billing tables store it.
+ *
+ * TWO-DECIMAL CURRENCIES ONLY, deliberately. `formatMoney` divides by 100 unconditionally, which
+ * is right for every currency Alethia bills in (USD, EUR, GBP) and wrong for JPY and the rest of
+ * Stripe's zero-decimal list. That is a real defect — see the KNOWN LIMITATION on `formatMoney` —
+ * and it is being fixed separately, because getting it right needs Stripe's CHARGE-context minor
+ * units and NOT the CLDR display table. A first attempt took the exponent from CLDR and inverted
+ * the bug onto HUF, ISK and UGX, which Stripe documents as two-decimal for charges while CLDR
+ * calls them zero-decimal.
+ *
+ * So no non-two-decimal currency appears below. A case here becomes the contract
+ * `packages/core/format` must reproduce, and freezing either the understatement or the
+ * overstatement would make Go faithfully copy a money bug. The absence is the honest state, and
+ * this comment is the record of why — not an oversight.
+ */
 export const MONEY: MoneyCase[] = [
 	{ id: "money/zero", cents: 0, currency: "USD" },
 	{ id: "money/negative", cents: -500, currency: "USD" },
 	{ id: "money/whole-dollars-still-show-cents", cents: 1200, currency: "USD" },
 	{ id: "money/cents", cents: 1250, currency: "USD" },
 	{ id: "money/THOUSANDS-SEPARATOR", cents: 124037, currency: "USD" },
-	// The minor unit is NOT always a hundredth. Stripe stores a zero-decimal currency's amount in
-	// whole units, so ¥124,000 arrives as 124000 and must render as ¥124,000 — dividing by 100
-	// understated it 100× on the real invoices table. Three-decimal currencies pin the same rule
-	// from the other side, so nobody "simplifies" this back to a JPY special case.
-	{ id: "money/JPY-IS-ZERO-DECIMAL-SO-NO-DIVISION", cents: 124000, currency: "JPY" },
-	{ id: "money/KRW-is-zero-decimal-too", cents: 5500, currency: "KRW" },
-	{ id: "money/BHD-IS-THREE-DECIMAL", cents: 124000, currency: "BHD" },
-	{ id: "money/unrecognised-but-well-formed-code-gets-two-decimals", cents: 1250, currency: "ZZZ" },
 	{ id: "money/EUR-NARROW-SYMBOL-NOT-EUR-PREFIX", cents: 1250, currency: "EUR" },
 	{ id: "money/GBP-narrow-symbol", cents: 1250, currency: "GBP" },
 ];

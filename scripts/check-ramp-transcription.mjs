@@ -95,8 +95,9 @@ function normaliseKey(raw) {
 /**
  * Parse the OKLCH ramp declarations out of tokens.css.
  *
- * Deliberately narrow: only `--gray-*` and `--black`, and only a literal `oklch(...)` value.
- * A `var(...)` indirection is the semantic layer, which is not what this guard is about.
+ * Narrow by SHAPE, not by name: a literal alpha-free `oklch(L C H)` value. A `var(...)`
+ * indirection or an alpha-bearing `oklch(1 0 0 / 0.10)` is the semantic layer, which is not what
+ * this guard is about.
  *
  * @param {string} src the file contents
  * @returns {Map<string, {L: number, chroma: number, hue: number, line: number}>}
@@ -104,7 +105,18 @@ function normaliseKey(raw) {
 function parseTokens(src) {
 	const out = new Map();
 	src.split("\n").forEach((text, i) => {
-		const m = /^\s*(--(?:gray-[0-9]+|black))\s*:\s*oklch\(\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\)/.exec(text);
+		// ANY custom property, not a `gray-*|black` allowlist. Symmetry with parseTranscription
+		// matters: with a closed matcher here, a `--slate-500` added to the ramp block would be
+		// invisible to the census and rule 3's "exists in tokens.css but missing from the
+		// transcription" branch could never fire for it.
+		//
+		// What keeps this from swallowing the semantic layer is the SHAPE, not a name list: the
+		// pattern requires `oklch(L C H)` and nothing else before the `)`, so all 12 non-ramp
+		// oklch tokens — every one of which carries an alpha (`oklch(1 0 0 / 0.10)`) — fail to
+		// match. Verified against tokens.css: the 17 alpha-free declarations are exactly the ramp.
+		// A CHROMATIC step added here still matches and is then refused by rule 4, so it is seen
+		// rather than skipped.
+		const m = /^\s*(--[a-z0-9-]+)\s*:\s*oklch\(\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\)/.exec(text);
 		if (!m) return;
 		out.set(normaliseKey(m[1]), {
 			L: Number(m[2]),
@@ -219,8 +231,14 @@ function compare(tokens, parsed) {
 	}
 
 	// Rule 3 — same set of steps, both directions.
+	//
+	// An entry that lost its `// oklch(...)` comment is NOT missing: it is present and
+	// unverifiable, and it was already reported as exactly that above. Reporting it a second time
+	// as "missing from the transcription" would be a false statement about the file, and it is the
+	// kind a reader trusts because it came from a guard.
+	const uncommentedKeys = new Set(parsed.uncommented.map((u) => normaliseKey(u.key)));
 	for (const key of tokens.keys()) {
-		if (!parsed.entries.has(key)) {
+		if (!parsed.entries.has(key) && !uncommentedKeys.has(key)) {
 			problems.push(`${TRANSCRIPTION}: \`${key}\` exists in ${TOKENS} but is missing from the transcription`);
 		}
 	}
@@ -287,10 +305,28 @@ function selfTest() {
 			1,
 		],
 		[
+			// Exactly ONE problem: the entry is present but unverifiable. It is NOT also "missing
+			// from the transcription" — saying so would be a false statement about the file, and
+			// the first cut of this guard made it.
 			"the comment cannot simply be dropped to dodge rule 1",
 			cleanTokens,
 			'\tgray500: "#ff0000",\n\tblack: "#020202", // oklch(0.09 0 0)\n',
-			2, // uncommented, plus rule 3's "missing from the transcription"
+			1,
+		],
+		[
+			// The tokens.css side of the same blindness. With a `gray-*|black` allowlist in
+			// parseTokens this ramp step is invisible and the guard prints OK.
+			"a new ramp step in tokens.css under an unexpected NAME is seen",
+			cleanTokens + "  --slate-500: oklch(0.664 0 0);\n",
+			cleanSrc,
+			1,
+		],
+		[
+			// ...while the semantic layer is still excluded, by SHAPE rather than by name.
+			"an alpha-bearing oklch token is not mistaken for a ramp step",
+			cleanTokens + "  --overlay: oklch(0 0 0 / 0.45);\n",
+			cleanSrc,
+			0,
 		],
 	];
 

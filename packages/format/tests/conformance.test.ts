@@ -121,12 +121,64 @@ function loadTable(): { version: number; cases: Record<string, Row[]> } {
 
 const table = loadTable();
 
+/**
+ * The rows that are the REASON this table exists, by id.
+ *
+ * A total-count floor is not enough on its own: at 82 cases a floor of 60 lets twenty-two rows be
+ * deleted with every layer still green — including the half-cent and hour-boundary rows, which are
+ * the two that actually catch Go. So the cases carrying a known cross-language divergence are
+ * named, and deleting one is a failure rather than a smaller number.
+ */
+const REQUIRED_IDS = [
+	// JS rounds half away from zero; Go's %.0f rounds half to EVEN.
+	"monthlyRate/estimate/HALF-CENT-ROUNDS-AWAY-FROM-ZERO",
+	"monthlyRate/exact/HALF-CENT-ROUNDS-AWAY-FROM-ZERO",
+	// Rounding happens once, BEFORE the hour test.
+	"minutes/HALF-ROUNDS-UP-ACROSS-THE-HOUR-BOUNDARY",
+	// The bug @repo/format was written to end, still live in the CLI.
+	"minutes/the-0.943-bug",
+	// The used side humanises; the allowance never does. And it keeps its separator.
+	"quota/used-exceeds-allowance-is-not-clamped",
+	"quota/ALLOWANCE-KEEPS-THOUSANDS-SEPARATOR",
+	// Duration never rolls into hours — cmd/jobs_list.go disagrees today.
+	"duration/TWO-HOURS-DOES-NOT-ROLL-INTO-HOURS",
+	// hourCycle h23, not hour12:false.
+	"date/MIDNIGHT-IS-00-NOT-24",
+];
+
+/** Per-section floors, so one section cannot be gutted while the total still clears. */
+const SECTION_FLOOR: Record<string, number> = {
+	minutes: 12,
+	quota: 6,
+	duration: 8,
+	date: 10,
+	bytes: 8,
+	money: 6,
+	monthlyRate: 15,
+};
+
 describe("format conformance table", () => {
 	// ── Vacuity. A suite that ran nothing must not look like a suite that found nothing wrong.
 	it("is not empty", () => {
 		expect(Object.keys(table.cases).length).toBeGreaterThan(0);
 		const total = Object.values(table.cases).reduce((acc, rows) => acc + rows.length, 0);
 		expect(total).toBeGreaterThanOrEqual(60);
+	});
+
+	it("meets a floor in every section, not just in total", () => {
+		for (const [section, floor] of Object.entries(SECTION_FLOOR)) {
+			expect(table.cases[section]?.length ?? 0, `section ${section} fell below its floor`).toBeGreaterThanOrEqual(
+				floor,
+			);
+		}
+		// And the floors themselves cover every section, so adding a section without a floor is
+		// not a silent exemption.
+		expect(Object.keys(SECTION_FLOOR).sort()).toEqual(Object.keys(table.cases).sort());
+	});
+
+	it("still carries every case that exists because Go disagrees", () => {
+		const ids = new Set(Object.values(table.cases).flatMap((rows) => rows.map((r) => r.id)));
+		expect(REQUIRED_IDS.filter((id) => !ids.has(id))).toEqual([]);
 	});
 
 	it("has a driver for every section, and a section for every driver", () => {

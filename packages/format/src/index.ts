@@ -175,43 +175,35 @@ export function formatBytes(bytes: number): string {
  * Takes minor units on purpose: every bug in this area starts with someone passing 12.5 where
  * 1250 was meant, and a signature that says `cents` makes that visible at the call site.
  *
- * @param cents amount in minor units.
+ * KNOWN LIMITATION — the `/ 100` is correct only for two-decimal currencies, which is every
+ * currency Alethia bills in today (USD, EUR, GBP). It is wrong for JPY and the rest of Stripe's
+ * zero-decimal list, where the minor unit IS the unit, so a ¥124,000 invoice renders `¥1,240`.
+ *
+ * Do NOT "fix" this by reading the exponent from Intl/CLDR. That was tried and it inverts the
+ * defect, because CLDR is the DISPLAY table and the divisor's authority is the PAYMENT PROCESSOR,
+ * and the two legitimately disagree. Stripe's own currency documentation, verbatim:
+ *
+ *   ISK — "transitioned to a zero-decimal currency, but backward compatibility requires you to
+ *          represent it as a two-decimal value … to charge 5 ISK, provide an amount value of 500"
+ *   UGX — same wording
+ *   HUF — "zero-decimal … for payouts, even though you can charge two-decimal amounts"
+ *
+ * CLDR calls all three zero-decimal. Taking the divisor from CLDR therefore renders an HUF, ISK
+ * or UGX invoice 100x OVERSTATED — the same defect as JPY's, pointing the other way.
+ *
+ * The real fix needs an explicit table of Stripe's CHARGE-context minor units, separate from the
+ * CLDR data that drives display, with HUF/ISK/UGX/TWD pinned as cases — because those are exactly
+ * the currencies a table built from JPY, KRW and BHD alone cannot catch. Tracked separately; the
+ * conformance table deliberately covers only two-decimal currencies so it cannot freeze either
+ * error as the contract Go must reproduce.
+ *
+ * @param cents amount in minor units, for a two-decimal currency.
  * @param currency ISO 4217 code; defaults to USD.
  */
 export function formatMoney(cents: number, currency = "USD"): string {
-	// NOT `/ 100`. A minor unit is only a hundredth in currencies that HAVE two decimal places.
-	// JPY, KRW, VND and the rest of Stripe's zero-decimal list have none — their smallest unit is
-	// the unit — so dividing by 100 rendered a ¥124,000 invoice as `¥1,240`, understating real
-	// money by 100×. `invoices-table.tsx` and `invoice-preview-dialog.tsx` pass Stripe's `total`
-	// straight in, so that was reaching a customer's screen.
-	//
-	// The exponent comes from ICU's own currency data rather than a hand-kept list, so the
-	// divisor and the formatter below can never disagree about how many decimals a currency has
-	// — they are reading the same table. (BHD/JOD/KWD are three-decimal and work by the same
-	// rule.) A Go port must carry an explicit table; the conformance cases are what prove the two
-	// agree, and would fail if CLDR ever moved an exponent under one of them.
-	const amount = Number.isFinite(cents) ? cents / 10 ** minorUnitDigits(currency) : 0;
+	const amount = Number.isFinite(cents) ? cents / 100 : 0;
 	// No explicit decimals: a billed amount keeps the currency's own (2 for USD, 0 for JPY).
 	return money(amount, currency);
-}
-
-/**
- * How many decimal places a currency's minor unit has — 2 for USD, 0 for JPY, 3 for BHD.
- *
- * An unrecognised but well-formed code (three letters Intl has no data for) resolves to 2, which
- * is Intl's own default and the overwhelmingly common shape. A MALFORMED code throws, exactly as
- * it already did — `money()` below constructs a formatter with the same code a line later, so
- * catching here could not have changed the outcome, only hidden where it came from.
- *
- * @param currency ISO 4217 code.
- * @returns the minor-unit exponent.
- */
-function minorUnitDigits(currency: string): number {
-	const { maximumFractionDigits } = new Intl.NumberFormat(LOCALE, { style: "currency", currency }).resolvedOptions();
-	// Typed optional because it is absent for the non-currency number styles. For `style:
-	// "currency"` Intl always sets it, so `?? 2` satisfies the type without pretending to know
-	// better than it — and 2 is Intl's own default anyway, so the fallback cannot disagree.
-	return maximumFractionDigits ?? 2;
 }
 
 /**
