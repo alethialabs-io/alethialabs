@@ -82,14 +82,24 @@ describe("the served document", () => {
 		);
 		expect(body.version).toMatch(/^[0-9a-f]{64}$/);
 		expect(res.headers.get("ETag")).toBe(`"${body.version}"`);
-		expect(res.headers.get("Cache-Control")).toBe("private, no-cache");
 	});
 
 	// The document is derived from committed code and holds nothing per-tenant, so it must not be
 	// stored by a shared cache on the strength of being identical for everyone.
-	it("marks the response private", async () => {
+	it("keeps the token-gated response out of shared caches", async () => {
 		const res = await GET(req());
 		expect(res.headers.get("Cache-Control")).toContain("private");
+	});
+
+	// The regression this pins by name: `no-cache` (or `no-store`) means a stored copy must be
+	// revalidated with the origin before EVERY reuse, so every `alethia project component …` would
+	// spend a round trip while holding a byte-identical document — the cost this endpoint exists to
+	// remove. The document cannot change without a deploy, so the held copy is allowed to be used.
+	it("lets a client reuse its copy instead of revalidating every command", async () => {
+		const res = await GET(req());
+		const cacheControl = res.headers.get("Cache-Control") ?? "";
+		expect(cacheControl).toBe("private, max-age=300");
+		expect(cacheControl).not.toMatch(/no-cache|no-store/);
 	});
 });
 

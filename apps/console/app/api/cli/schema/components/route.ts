@@ -9,9 +9,23 @@ import {
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 
-/** `private` because the response is token-gated (never store it in a shared cache); `no-cache`
- *  because the client SHOULD keep it and revalidate with `If-None-Match` rather than refetch. */
-const CACHE_CONTROL = "private, no-cache";
+/**
+ * `private` because the response is token-gated: never store it in a shared cache.
+ *
+ * `max-age` rather than `no-cache`, because `no-cache` means a stored copy MUST be revalidated
+ * with the origin before every reuse — a round trip per `alethia project component kinds|add|set`,
+ * which is precisely the cost this endpoint exists to remove. Those commands need no network at
+ * all today. The document is a pure projection of committed code and cannot change without a
+ * deploy, so a held copy is allowed to be USED; the ETag below still serves the revalidation that
+ * happens at expiry, and turns it into a bodiless 304.
+ *
+ * 300s is deliberately short, and the reason is the epic's subset invariant. A client holding a
+ * PRE-deploy document can refuse a kind or a field the server has just started accepting, and
+ * "too strict" is the one direction that invariant forbids (too permissive is caught by the
+ * server). This bounds that window; a consumer must additionally treat "not in my cached
+ * document" as advisory — let the server decide — rather than as a refusal it is sure of.
+ */
+const CACHE_CONTROL = "private, max-age=300";
 
 /**
  * True when `If-None-Match` names the current entity tag. Handles the list form ("a", "b"), the
@@ -43,8 +57,8 @@ function ifNoneMatchHits(header: string, etag: string): boolean {
  * There is no query, so there is no tenancy scoping to add on top — `authorizeCli` is the whole
  * boundary here rather than half of it.
  *
- * Cacheable by content hash: the body's `version` is served as the ETag, so a client that already
- * holds this version revalidates into a 304 with no body.
+ * Cacheable by content hash: the body's `version` is served as the ETag, so a client whose copy
+ * has expired revalidates into a 304 with no body instead of refetching the document.
  */
 export async function GET(req: Request) {
 	const auth = await authorizeCli(req, "view", { type: "project" });

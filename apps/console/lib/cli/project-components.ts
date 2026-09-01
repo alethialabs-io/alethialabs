@@ -409,9 +409,24 @@ function buildComponentSchemaDocument(): ComponentSchemaDocument {
 		const def = KINDS[kind];
 		// `io: "input"` because this document describes what a caller may SEND, and draft-7 to
 		// match the target the Go contract fixtures are already generated at
-		// (apps/console/scripts/gen-cli-fixtures.ts). `unrepresentable` is left at its default
-		// (throw): a field this cannot express must break the build, not publish as `{}` — an
-		// empty node accepts everything, which is the one answer a client must never cache.
+		// (apps/console/scripts/gen-cli-fixtures.ts).
+		//
+		// `unrepresentable` is left at its default (THROW) rather than "any", because `{}` is a
+		// node that accepts everything and that is the one answer a client must never cache.
+		//
+		// The throw is NOT a build failure, and it would be wrong to describe it as one. This
+		// builder is reachable only through the memoized componentSchemaDocument(), so on its own
+		// the first symptom of an inexpressible field would be a 500 on the first REQUEST in
+		// production. What catches it before a deploy is a named unit test — "expresses every
+		// published kind as JSON Schema" in tests/lib/cli/component-schema.test.ts drives this
+		// function directly.
+		//
+		// The reachable case is a TIMESTAMP column: drizzle-zod infers `z.date()` for one, and
+		// `created_at` / `updated_at` sit one line away in every pick-list below. Adding
+		// `created_at: true` to a pick is green under `tsc --noEmit`, `eslint` and `next build`,
+		// and red in the unit suite with "Date cannot be represented in JSON Schema" — measured,
+		// not assumed. (A jsonb column is NOT this case: `provider_config` publishes an explicit
+		// any-JSON-value union rather than an empty node.) The test is the guard.
 		const schema = asRecord(
 			z.toJSONSchema(def.fields, { target: "draft-7", io: "input" }),
 		);
@@ -441,16 +456,9 @@ export function componentSchemaDocument(): ComponentSchemaDocument {
 	return schemaDocument;
 }
 
-/** Converts a row/value into a plain key/value record without an unsafe cast. */
-function toRecord(row: unknown): Record<string, unknown> {
-	return row && typeof row === "object"
-		? Object.fromEntries(Object.entries(row))
-		: {};
-}
-
 /** Maps a component row to its uniform CLI wire shape. */
 export function rowToComponentWire(kind: string, row: unknown): ComponentWire {
-	const rec = toRecord(row);
+	const rec = asRecord(row);
 	const name =
 		typeof rec.name === "string" && rec.name.length > 0 ? rec.name : kind;
 	const status = typeof rec.status === "string" ? rec.status : "";
@@ -501,7 +509,7 @@ export function validateComponentFields(
 		const path = first?.path.join(".") || "fields";
 		return { ok: false, error: `Invalid value for ${path}: ${first?.message ?? "invalid"}` };
 	}
-	return { ok: true, values: toRecord(parsed.data) };
+	return { ok: true, values: asRecord(parsed.data) };
 }
 
 /** Lists a project's components — all kinds, or a single kind when `kindFilter` is set —

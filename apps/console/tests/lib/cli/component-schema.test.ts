@@ -47,11 +47,14 @@ const SINGLETON_KINDS = [
 	"repositories",
 ] as const;
 
-const document = componentSchemaDocument();
+// Called lazily, never at module scope. If the builder throws — the inexpressible-field case
+// below — a module-scope call fails COLLECTION, and a file that fails to collect reports no test
+// name at all. Every assertion here goes through this, so the throw lands on a named test.
+const doc = () => componentSchemaDocument();
 
 /** The published kind entry, or a failure naming the kind rather than a cryptic undefined. */
 function publishedKind(kind: string) {
-	const found = document.kinds.find((k) => k.kind === kind);
+	const found = doc().kinds.find((k) => k.kind === kind);
 	if (!found) throw new Error(`kind "${kind}" is not published`);
 	return found;
 }
@@ -83,27 +86,46 @@ function valueBranch(kind: string, field: string): Record<string, unknown> {
 	return value;
 }
 
+// THE pre-deploy guard for a field `z.toJSONSchema` cannot express. `unrepresentable` is left at
+// throw so such a field can never publish as an empty, accepts-everything node — but the builder is
+// reached only through a memo, so on its own that throw would first surface as a 500 on the first
+// request in PRODUCTION.
+//
+// The reachable case, verified rather than supposed: a timestamp column is `z.date()` to drizzle-zod,
+// and `created_at` / `updated_at` sit one line away in every pick-list in the registry. Adding
+// `created_at: true` to cluster's `.pick({…})` is green under `tsc --noEmit`, `eslint` and
+// `next build`, and dies here with "Date cannot be represented in JSON Schema".
+//
+// This test is what makes that change red in CI instead. It is named and separate rather than left
+// implicit in the assertions below, because "some other test happens to call the builder" is a
+// guard nobody can find when it fires.
+describe("representability", () => {
+	it("expresses every published kind as JSON Schema", () => {
+		expect(() => componentSchemaDocument()).not.toThrow();
+	});
+});
+
 describe("the published kind census", () => {
 	it("publishes every authorable kind, in registry order", () => {
-		expect(document.kinds.map((k) => k.kind)).toEqual([...PUBLISHED_KINDS]);
+		expect(doc().kinds.map((k) => k.kind)).toEqual([...PUBLISHED_KINDS]);
 	});
 
 	// The drift this lane exists to remove, named rather than implied. `helm_registries` is in the
 	// server registry and is NOT in the Go literal, so `alethia project component kinds` omits a
 	// kind the server will happily author — a fork that has already diverged, not one that might.
 	it("publishes helm_registries, which the CLI's hardcoded list omits", () => {
-		expect(document.kinds.map((k) => k.kind)).toContain("helm_registries");
+		expect(doc().kinds.map((k) => k.kind)).toContain("helm_registries");
 	});
 
 	it("publishes the cardinality the CLI hardcodes as singletonKinds", () => {
-		const singletons = document.kinds
+		const singletons = doc().kinds
 			.filter((k) => k.singleton)
 			.map((k) => k.kind);
 		expect(singletons).toEqual([...SINGLETON_KINDS]);
 	});
 
 	it("publishes every remaining kind as multi", () => {
-		const multi = document.kinds.filter((k) => !k.singleton).map((k) => k.kind);
+		const multi = doc().kinds.filter((k) => !k.singleton).map((k) => k.kind);
 		expect(multi).toEqual(
 			PUBLISHED_KINDS.filter(
 				(k) => !SINGLETON_KINDS.includes(k as (typeof SINGLETON_KINDS)[number]),
@@ -181,7 +203,7 @@ describe.each(PUBLISHED_KINDS)("%s", (kind) => {
 
 describe("assertComponentSchemaPublishable", () => {
 	it("passes the real document", () => {
-		expect(() => assertComponentSchemaPublishable(document.kinds)).not.toThrow();
+		expect(() => assertComponentSchemaPublishable(doc().kinds)).not.toThrow();
 	});
 
 	// A zero census must FAIL, not read as "no problems found": a client caching an empty document
@@ -216,7 +238,7 @@ describe("the wire contract", () => {
 	});
 
 	it("accepts the real document, serialized exactly as the route sends it", () => {
-		const wire: unknown = JSON.parse(JSON.stringify(document));
+		const wire: unknown = JSON.parse(JSON.stringify(doc()));
 		expect(componentSchemaWire.safeParse(wire).success).toBe(true);
 	});
 
@@ -224,7 +246,7 @@ describe("the wire contract", () => {
 	// that is what is asserted here. Its sensitivity to a registry change comes from being a
 	// sha256 over `kinds` (see buildComponentSchemaDocument); it is not claimed below.
 	it("serves a stable content hash as the version", () => {
-		expect(document.version).toMatch(/^[0-9a-f]{64}$/);
-		expect(componentSchemaDocument().version).toBe(document.version);
+		expect(doc().version).toMatch(/^[0-9a-f]{64}$/);
+		expect(componentSchemaDocument().version).toBe(doc().version);
 	});
 });
