@@ -175,6 +175,8 @@ func runClassificationAssign(c apiClient, out io.Writer, kind, id, dimensionKey,
 	return nil
 }
 
+var classificationUnassignYes bool
+
 var classificationUnassignCmd = &cobra.Command{
 	Use:   "unassign <kind> <id> <value-slug>",
 	Short: "Clear a classification value from a resource",
@@ -183,6 +185,13 @@ var classificationUnassignCmd = &cobra.Command{
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
+		}
+		if !confirmDestructive(
+			classificationUnassignYes,
+			fmt.Sprintf("Clear %s from %s %s?", args[2], args[0], args[1]),
+			"Policy that selects on this classification stops matching the resource.",
+		) {
+			return
 		}
 		if err := runClassificationUnassign(api.NewClient(token), os.Stdout, args[0], args[1], args[2]); err != nil {
 			failf("Failed to unassign classification: %v", err)
@@ -202,6 +211,7 @@ func init() {
 	classificationCmd.AddCommand(classificationDimensionsCmd)
 	classificationCmd.AddCommand(classificationShowCmd)
 	classificationCmd.AddCommand(classificationAssignCmd)
+	addYesFlag(classificationUnassignCmd, &classificationUnassignYes)
 	classificationCmd.AddCommand(classificationUnassignCmd)
 	rootCmd.AddCommand(classificationCmd)
 }
