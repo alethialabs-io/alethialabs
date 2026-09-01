@@ -4,6 +4,7 @@
 package agent
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/compat"
@@ -15,31 +16,41 @@ import (
 // controls (so the gate stays fail-closed by default). Authorization is the console's
 // job (it sets `by` to the actor and persists the row only for principals allowed to
 // deploy) — the runner just honours what was recorded.
-func buildCompatOverride(raw map[string]any) *compat.Override {
+func buildCompatOverride(raw map[string]any) (*compat.Override, string) {
 	if len(raw) == 0 {
-		return nil
+		return nil, ""
 	}
 	controls := toStringSlice(raw["controls"])
 	if len(controls) == 0 {
-		return nil
+		return nil, "the compat override lists no controls"
 	}
 	ov := &compat.Override{
 		Controls: controls,
 		Reason:   asString(raw["reason"]),
 		By:       asString(raw["by"]),
 	}
-	if exp := asString(raw["expiry"]); exp != "" {
-		t, err := time.Parse(time.RFC3339, exp)
-		if err != nil {
-			// An expiry we cannot READ is not a waiver. Swallowing the error here left Expiry at
-			// its zero value, and both Covers implementations read a zero Expiry as "never
-			// expires" — so a malformed timestamp waived a failing control FOREVER, on the very
-			// gate the waiver is supposed to be time-boxed against. Refusing the whole override
-			// matches what this function already does for an empty control list: fail closed, and
-			// let the apply stay blocked.
-			return nil
+	// PRESENCE, then type, then parse. Reading through asString collapsed three different
+	// payloads into one empty string: a missing expiry, an empty one, and a WRONG-TYPED one.
+	// `{"expiry": 1756728000}` decodes to float64, asString returns "", the parse never ran, and
+	// the Override was built with a zero Expiry — which both Covers implementations read as
+	// "never expires". Closing only the unparseable-string route left the wrong-type route into
+	// the same fail-open wide open.
+	if rawExpiry, present := raw["expiry"]; present {
+		exp, isString := rawExpiry.(string)
+		if !isString {
+			// A number, a bool, an object. Not an expiry, and not something to guess at.
+			return nil, fmt.Sprintf("the compat override's `expiry` is a %T, not an RFC3339 string", rawExpiry)
 		}
-		ov.Expiry = t
+		if exp != "" {
+			t, err := time.Parse(time.RFC3339, exp)
+			if err != nil {
+				// An expiry we cannot READ is not a waiver. Refusing the whole override matches
+				// what this function already does for an empty control list: fail closed, and let
+				// the apply stay blocked.
+				return nil, fmt.Sprintf("the compat override's `expiry` %q is not RFC3339 (want e.g. 2099-01-02T15:04:05Z)", exp)
+			}
+			ov.Expiry = t
+		}
 	}
-	return ov
+	return ov, ""
 }

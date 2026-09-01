@@ -106,7 +106,7 @@ func TestBuildCompatOverrideMatchesTheParityFixture(t *testing.T) {
 			if c.Expiry != "" {
 				payload["expiry"] = c.Expiry
 			}
-			ov := buildCompatOverride(payload)
+			ov, _ := buildCompatOverride(payload)
 
 			// The fixture's `decodes` must describe what the real builder did.
 			if c.Decodes && ov == nil && len(c.Controls) > 0 {

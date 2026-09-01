@@ -123,6 +123,14 @@ func evalSubjects() []struct {
 		{"evaluate/k8s/HEX-IS-NOT-A-VERSION", Subject{Providers: []string{"aws"}, K8sVersion: "1.0x10"}},
 		{"evaluate/k8s/EXPONENT-IS-NOT-A-VERSION", Subject{Providers: []string{"aws"}, K8sVersion: "1.1e2"}},
 
+		// The TRIM, not the parse. JS `.trim()` strips U+FEFF (ZWNBSP) and Go's `unicode.IsSpace`
+		// does not, so this reached `{1, 35}` on the console and `not_evaluable` at the apply gate
+		// — the console-looser direction, one character upstream of the parser the two agree on.
+		{"evaluate/k8s/BOM-IS-NOT-TRIMMED-BY-GO", Subject{Providers: []string{"aws"}, K8sVersion: "\ufeff1.35"}},
+		// The mirror image: Go's set includes U+0085 (NEL), JS's does not. Console STRICTER here,
+		// which is safe, but pinned so a "simplification" back to `.trim()` fails both directions.
+		{"evaluate/k8s/NEL-IS-TRIMMED-BY-GO", Subject{Providers: []string{"aws"}, K8sVersion: "\u00851.35"}},
+
 		// Adjacent shapes, so a fix cannot over-correct into rejecting valid input.
 		{"evaluate/k8s/no-minor-component", Subject{Providers: []string{"aws"}, K8sVersion: "1"}},
 		{"evaluate/k8s/empty-version", Subject{Providers: []string{"aws"}, K8sVersion: ""}},
@@ -195,7 +203,21 @@ func waiverCases() []parityWaiverCase {
 		{ID: "waiver/RFC1123-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "Tue, 01 Sep 2026 12:00:00 GMT"},
 		{ID: "waiver/HOUR-24-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099-01-01T24:00:00Z"},
 
+		// The OFFSET form. These were the hole left by validating the calendar through a `Date`
+		// round-trip gated on a `Z` suffix: with a numeric offset both guards were skipped, and
+		// `Date.parse` rolled an impossible day forward instead of refusing it.
+		{ID: "waiver/IMPOSSIBLE-DAY-WITH-AN-OFFSET-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099-02-30T00:00:00+02:00"},
+		{ID: "waiver/OFFSET-HOUR-25-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00+25:00"},
+		{ID: "waiver/OFFSET-MINUTE-99-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00+02:99"},
+
 		// ...and shapes both sides must still ACCEPT, so the fix cannot be "refuse everything".
+		// The two below look malformed and are NOT: Go range-checks the offset at `hr > 24` and
+		// `mm > 60`, and time/format.go's own comment says the off-by-one is deliberate — "such
+		// that it is valid to have a time zone offset of exactly 24:00:00". `Date.parse` returns
+		// NaN for both, so delegating the offset to it made the console refuse waivers the apply
+		// gate honours. Measured against go1.26.6 rather than read off the RFC.
+		{ID: "waiver/OFFSET-HOUR-24-IS-VALID-IN-GO", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00+24:00"},
+		{ID: "waiver/OFFSET-MINUTE-60-IS-VALID-IN-GO", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00+02:60"},
 		{ID: "waiver/a-numeric-offset-waives", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00+02:00"},
 		{ID: "waiver/fractional-seconds-waive", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00.123Z"},
 	}
@@ -368,6 +390,43 @@ func TestWallClockWrappersDelegate(t *testing.T) {
 	}
 }
 
+// requiredNotEvaluableCases are the malformed-version cases this fixture exists for. Each one is a
+// value `Number()` judges and `strconv.Atoi` refuses, which is the console-looser-than-the-gate
+// direction. They are named, NOT counted.
+//
+// A COUNT was the first cut and it was inert. `notEvaluable < 5` is a floor, and the fixture holds
+// twelve not_evaluable verdicts of which only five come from these cases — so all five could be
+// deleted and the threshold would still be cleared by unrelated ones. The guard passed with every
+// case it exists to protect removed, and the PR body claimed the opposite.
+var requiredNotEvaluableCases = []string{
+	"evaluate/k8s/TRAILING-DOT-IS-NOT-A-VERSION",
+	"evaluate/k8s/LEADING-DOT-IS-NOT-A-VERSION",
+	"evaluate/k8s/INNER-SPACE-IS-NOT-A-VERSION",
+	"evaluate/k8s/HEX-IS-NOT-A-VERSION",
+	"evaluate/k8s/EXPONENT-IS-NOT-A-VERSION",
+	"evaluate/k8s/beyond-int53-is-not-a-version",
+	"evaluate/k8s/BOM-IS-NOT-TRIMMED-BY-GO",
+}
+
+// requiredUndecodableExpiries are the expiry shapes `new Date` accepts and `time.Parse` refuses.
+// Same reasoning: named, so deleting one is a visible edit to this list rather than a threshold
+// silently absorbing it.
+var requiredUndecodableExpiries = []string{
+	"waiver/UNPARSEABLE-EXPIRY-DOES-NOT-WAIVE",
+	"waiver/PARTIAL-DATE-DOES-NOT-WAIVE",
+	"waiver/A-NUMBER-IS-NOT-A-TIMESTAMP",
+	"waiver/LOWERCASE-T-AND-Z-IS-NOT-RFC3339",
+	"waiver/A-MISSING-ZONE-IS-NOT-RFC3339",
+	"waiver/A-SPACE-SEPARATOR-IS-NOT-RFC3339",
+	"waiver/A-BARE-DATE-IS-NOT-RFC3339",
+	"waiver/A-BARE-YEAR-IS-NOT-RFC3339",
+	"waiver/RFC1123-IS-NOT-RFC3339",
+	"waiver/HOUR-24-IS-NOT-RFC3339",
+	"waiver/IMPOSSIBLE-DAY-WITH-AN-OFFSET-IS-NOT-RFC3339",
+	"waiver/OFFSET-HOUR-25-IS-NOT-RFC3339",
+	"waiver/OFFSET-MINUTE-99-IS-NOT-RFC3339",
+}
+
 // TestEngineParityFixtureIsNotVacuous pins that the fixture actually exercises the divergence it
 // was written for. Without this, someone could delete the malformed-input cases, regenerate, and
 // leave a green fixture that proves only the happy path — which is the state that let both bugs
@@ -375,35 +434,93 @@ func TestWallClockWrappersDelegate(t *testing.T) {
 func TestEngineParityFixtureIsNotVacuous(t *testing.T) {
 	built := buildParity(t)
 
-	notEvaluable := 0
+	// Every named case must be PRESENT and must still carry the verdict it was written to pin.
+	// Presence alone is not enough: a case retained but regenerated to `pass` proves nothing.
+	notEvaluableByID := map[string]bool{}
 	for _, c := range built.Evaluate {
 		for _, w := range c.Want {
 			if w.Status == StatusNotEvaluable {
-				notEvaluable++
+				notEvaluableByID[c.ID] = true
 			}
 		}
 	}
-	if notEvaluable < 5 {
-		t.Errorf("only %d not_evaluable verdicts in the fixture; the five malformed-version cases "+
-			"are the reason it exists", notEvaluable)
+	for _, id := range requiredNotEvaluableCases {
+		if !notEvaluableByID[id] {
+			t.Errorf("case %q is missing from the fixture, or no longer reaches not_evaluable — "+
+				"it is one of the malformed-version cases this fixture exists for. If the case is "+
+				"genuinely obsolete, delete it from requiredNotEvaluableCases in the same commit "+
+				"and say why in the PR.", id)
+		}
 	}
 
-	undecodable := 0
+	undecodableByID := map[string]bool{}
 	waivedDespiteBadExpiry := 0
 	for _, c := range built.Waiver {
 		if !c.Decodes {
-			undecodable++
+			undecodableByID[c.ID] = true
 			if len(c.Want) == 0 {
 				waivedDespiteBadExpiry++
 			}
 		}
 	}
-	if undecodable < 3 {
-		t.Errorf("only %d undecodable-expiry cases; the fail-open this fixture exists to close "+
-			"needs them", undecodable)
+	for _, id := range requiredUndecodableExpiries {
+		if !undecodableByID[id] {
+			t.Errorf("case %q is missing, or the fixture now records its expiry as DECODABLE — "+
+				"it is one of the shapes the fail-open rode in on. Same rule: remove it from "+
+				"requiredUndecodableExpiries deliberately, or not at all.", id)
+		}
 	}
 	if waivedDespiteBadExpiry > 0 {
 		t.Errorf("%d case(s) waived a control on an expiry Go cannot even decode — that is the "+
 			"fail-open itself, and it must never be the recorded answer", waivedDespiteBadExpiry)
+	}
+}
+
+// The guard above is only worth having if it FAILS on the mutation it describes, so this drives
+// that directly rather than asserting it in a comment. Deleting a required case from the built
+// fixture must be detected — the previous count-threshold version passed this mutation, which is
+// how it shipped inert.
+func TestVacuityGuardFailsWhenARequiredCaseIsRemoved(t *testing.T) {
+	built := buildParity(t)
+
+	for _, victim := range []string{requiredNotEvaluableCases[0], requiredUndecodableExpiries[0]} {
+		t.Run(victim, func(t *testing.T) {
+			notEvaluableByID := map[string]bool{}
+			for _, c := range built.Evaluate {
+				if c.ID == victim {
+					continue // the mutation
+				}
+				for _, w := range c.Want {
+					if w.Status == StatusNotEvaluable {
+						notEvaluableByID[c.ID] = true
+					}
+				}
+			}
+			undecodableByID := map[string]bool{}
+			for _, c := range built.Waiver {
+				if c.ID == victim {
+					continue // the mutation
+				}
+				if !c.Decodes {
+					undecodableByID[c.ID] = true
+				}
+			}
+
+			missing := 0
+			for _, id := range requiredNotEvaluableCases {
+				if !notEvaluableByID[id] {
+					missing++
+				}
+			}
+			for _, id := range requiredUndecodableExpiries {
+				if !undecodableByID[id] {
+					missing++
+				}
+			}
+			if missing != 1 {
+				t.Fatalf("removing %q should leave exactly 1 required case unsatisfied, got %d — "+
+					"the vacuity guard does not detect the deletion it exists to detect", victim, missing)
+			}
+		})
 	}
 }

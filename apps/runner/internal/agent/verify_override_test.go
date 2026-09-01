@@ -6,7 +6,7 @@ package agent
 import "testing"
 
 func TestBuildVerifyOverride_Full(t *testing.T) {
-	ov := buildVerifyOverride(map[string]any{
+	ov, _ := buildVerifyOverride(map[string]any{
 		"controls": []any{"KEYLESS-001", "LEASTPRIV-001"},
 		"reason":   "migration window",
 		"by":       "secops@acme",
@@ -24,13 +24,13 @@ func TestBuildVerifyOverride_Full(t *testing.T) {
 }
 
 func TestBuildVerifyOverride_NilAndEmpty(t *testing.T) {
-	if buildVerifyOverride(nil) != nil {
+	if got, _ := buildVerifyOverride(nil); got != nil {
 		t.Error("nil payload → nil override")
 	}
-	if buildVerifyOverride(map[string]any{}) != nil {
+	if got, _ := buildVerifyOverride(map[string]any{}); got != nil {
 		t.Error("empty payload → nil override")
 	}
-	if buildVerifyOverride(map[string]any{"reason": "x"}) != nil {
+	if got, _ := buildVerifyOverride(map[string]any{"reason": "x"}); got != nil {
 		t.Error("payload with no controls → nil override (gate stays fail-closed)")
 	}
 }
@@ -46,7 +46,7 @@ func TestBuildVerifyOverride_NilAndEmpty(t *testing.T) {
 //
 // "Ignored" is the wrong disposition for a field whose absence means "never expires".
 func TestBuildVerifyOverride_UnreadableExpiryRefusesTheWaiver(t *testing.T) {
-	ov := buildVerifyOverride(map[string]any{
+	ov, _ := buildVerifyOverride(map[string]any{
 		"controls": []any{"KEYLESS-001"},
 		"expiry":   "not-a-date",
 	})

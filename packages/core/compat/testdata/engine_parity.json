@@ -153,6 +153,36 @@
 			]
 		},
 		{
+			"id": "evaluate/k8s/BOM-IS-NOT-TRIMMED-BY-GO",
+			"subject": {
+				"providers": [
+					"aws"
+				],
+				"k8s_version": "﻿1.35"
+			},
+			"want": [
+				{
+					"id": "COMPAT-K8S-CLOUD-AWS",
+					"status": "not_evaluable"
+				}
+			]
+		},
+		{
+			"id": "evaluate/k8s/NEL-IS-TRIMMED-BY-GO",
+			"subject": {
+				"providers": [
+					"aws"
+				],
+				"k8s_version": "1.35"
+			},
+			"want": [
+				{
+					"id": "COMPAT-K8S-CLOUD-AWS",
+					"status": "pass"
+				}
+			]
+		},
+		{
 			"id": "evaluate/k8s/no-minor-component",
 			"subject": {
 				"providers": [
@@ -601,6 +631,77 @@
 			"want": [
 				"COMPAT-K8S-CLOUD-AWS"
 			]
+		},
+		{
+			"id": "waiver/IMPOSSIBLE-DAY-WITH-AN-OFFSET-IS-NOT-RFC3339",
+			"controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"expiry": "2099-02-30T00:00:00+02:00",
+			"decodes": false,
+			"now": "2026-09-01T12:00:00Z",
+			"failing_controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"want": [
+				"COMPAT-K8S-CLOUD-AWS"
+			]
+		},
+		{
+			"id": "waiver/OFFSET-HOUR-25-IS-NOT-RFC3339",
+			"controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"expiry": "2099-01-01T00:00:00+25:00",
+			"decodes": false,
+			"now": "2026-09-01T12:00:00Z",
+			"failing_controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"want": [
+				"COMPAT-K8S-CLOUD-AWS"
+			]
+		},
+		{
+			"id": "waiver/OFFSET-MINUTE-99-IS-NOT-RFC3339",
+			"controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"expiry": "2099-01-01T00:00:00+02:99",
+			"decodes": false,
+			"now": "2026-09-01T12:00:00Z",
+			"failing_controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"want": [
+				"COMPAT-K8S-CLOUD-AWS"
+			]
+		},
+		{
+			"id": "waiver/OFFSET-HOUR-24-IS-VALID-IN-GO",
+			"controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"expiry": "2099-01-01T00:00:00+24:00",
+			"decodes": true,
+			"now": "2026-09-01T12:00:00Z",
+			"failing_controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"want": []
+		},
+		{
+			"id": "waiver/OFFSET-MINUTE-60-IS-VALID-IN-GO",
+			"controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"expiry": "2099-01-01T00:00:00+02:60",
+			"decodes": true,
+			"now": "2026-09-01T12:00:00Z",
+			"failing_controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"want": []
 		},
 		{
 			"id": "waiver/a-numeric-offset-waives",

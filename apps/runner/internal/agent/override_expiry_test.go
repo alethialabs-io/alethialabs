@@ -38,7 +38,7 @@ func TestBuildCompatOverrideRefusesAnUnreadableExpiry(t *testing.T) {
 			continue // empty is the documented "no expiry" case, asserted below
 		}
 		t.Run(exp, func(t *testing.T) {
-			ov := buildCompatOverride(map[string]any{
+			ov, _ := buildCompatOverride(map[string]any{
 				"controls": []any{"COMPAT-K8S-CLOUD-AWS"},
 				"expiry":   exp,
 			})
@@ -56,7 +56,7 @@ func TestBuildVerifyOverrideRefusesAnUnreadableExpiry(t *testing.T) {
 			continue
 		}
 		t.Run(exp, func(t *testing.T) {
-			ov := buildVerifyOverride(map[string]any{
+			ov, _ := buildVerifyOverride(map[string]any{
 				"controls": []any{"IAM-WILDCARD"},
 				"expiry":   exp,
 			})
@@ -78,7 +78,7 @@ func TestOverrideBuildersStillAcceptValidExpiries(t *testing.T) {
 	}
 	for name, exp := range valid {
 		t.Run("compat/"+name, func(t *testing.T) {
-			ov := buildCompatOverride(map[string]any{"controls": []any{"C"}, "expiry": exp})
+			ov, _ := buildCompatOverride(map[string]any{"controls": []any{"C"}, "expiry": exp})
 			if ov == nil {
 				t.Fatalf("a valid expiry %q was refused", exp)
 			}
@@ -87,7 +87,7 @@ func TestOverrideBuildersStillAcceptValidExpiries(t *testing.T) {
 			}
 		})
 		t.Run("verify/"+name, func(t *testing.T) {
-			ov := buildVerifyOverride(map[string]any{"controls": []any{"C"}, "expiry": exp})
+			ov, _ := buildVerifyOverride(map[string]any{"controls": []any{"C"}, "expiry": exp})
 			if ov == nil {
 				t.Fatalf("a valid expiry %q was refused", exp)
 			}
@@ -98,7 +98,7 @@ func TestOverrideBuildersStillAcceptValidExpiries(t *testing.T) {
 	}
 
 	t.Run("an absent expiry still means no expiry", func(t *testing.T) {
-		ov := buildCompatOverride(map[string]any{"controls": []any{"C"}})
+		ov, _ := buildCompatOverride(map[string]any{"controls": []any{"C"}})
 		if ov == nil {
 			t.Fatal("an override with no expiry was refused; omitting it is the documented no-expiry case")
 		}
@@ -113,7 +113,7 @@ func TestOverrideBuildersStillAcceptValidExpiries(t *testing.T) {
 func TestAnUnreadableExpiryLeavesTheControlBlocked(t *testing.T) {
 	const ctl = "COMPAT-K8S-CLOUD-AWS"
 
-	waives := buildCompatOverride(map[string]any{
+	waives, _ := buildCompatOverride(map[string]any{
 		"controls": []any{ctl},
 		"expiry":   "2099-01-01T00:00:00Z",
 	})
@@ -121,11 +121,69 @@ func TestAnUnreadableExpiryLeavesTheControlBlocked(t *testing.T) {
 		t.Fatal("a valid, unexpired waiver should cover its control — the test's control case is broken")
 	}
 
-	malformed := buildCompatOverride(map[string]any{
+	malformed, _ := buildCompatOverride(map[string]any{
 		"controls": []any{ctl},
 		"expiry":   "garbage",
 	})
 	if malformed.CoversAt(ctl, time.Now()) {
 		t.Error("a waiver with an unreadable expiry still covered its control — the apply would proceed")
+	}
+}
+
+// The WRONG-TYPE route into the same fail-open.
+//
+// Closing the unparseable-STRING route was only half of it. Both builders read the field through
+// asString, which returns "" for anything that is not a string — collapsing a missing expiry, an
+// empty one and a wrong-typed one into one value. `compat_override` is decoded from JSON as
+// map[string]any, so `{"expiry": 1756728000}` arrives as a float64, asString gave "", the parse
+// never ran, and the Override was built with a ZERO Expiry — which both Covers implementations
+// read as "never expires". The waiver applied forever, by a different door.
+func TestOverrideBuildersRefuseANonStringExpiry(t *testing.T) {
+	wrongTypes := map[string]any{
+		"a unix timestamp as a number": float64(1756728000),
+		"an integer":                   42,
+		"a bool":                       true,
+		"an object":                    map[string]any{"at": "2099-01-01T00:00:00Z"},
+		"an array":                     []any{"2099-01-01T00:00:00Z"},
+		"an explicit null":             nil,
+	}
+	for name, val := range wrongTypes {
+		t.Run("compat/"+name, func(t *testing.T) {
+			ov, reason := buildCompatOverride(map[string]any{"controls": []any{"C"}, "expiry": val})
+			if ov != nil {
+				t.Fatalf("a %T expiry built an override with Expiry=%v (IsZero=%v) — that reads as 'never expires'",
+					val, ov.Expiry, ov.Expiry.IsZero())
+			}
+			if reason == "" {
+				t.Error("the refusal carried no reason; the operator sees only 'supply an override' for one they supplied")
+			}
+		})
+		t.Run("verify/"+name, func(t *testing.T) {
+			ov, reason := buildVerifyOverride(map[string]any{"controls": []any{"C"}, "expiry": val})
+			if ov != nil {
+				t.Fatalf("a %T expiry built an override with Expiry=%v (IsZero=%v)", val, ov.Expiry, ov.Expiry.IsZero())
+			}
+			if reason == "" {
+				t.Error("the refusal carried no reason")
+			}
+		})
+	}
+}
+
+// A refusal must be distinguishable from an ABSENCE, or the log line above cannot be written.
+// An absent override is the ordinary case and must stay silent; a malformed one must not.
+func TestRefusalReasonDistinguishesMalformedFromAbsent(t *testing.T) {
+	if _, reason := buildCompatOverride(nil); reason != "" {
+		t.Errorf("no override at all is not a refusal, got reason %q — this would log on every ordinary apply", reason)
+	}
+	if _, reason := buildCompatOverride(map[string]any{}); reason != "" {
+		t.Errorf("an empty payload is not a refusal, got %q", reason)
+	}
+	ov, reason := buildCompatOverride(map[string]any{"controls": []any{"C"}, "expiry": "2099-01-01T00:00:00Z"})
+	if ov == nil || reason != "" {
+		t.Errorf("a valid override must not be refused; ov=%v reason=%q", ov, reason)
+	}
+	if _, reason := buildCompatOverride(map[string]any{"controls": []any{"C"}, "expiry": "garbage"}); reason == "" {
+		t.Error("a malformed expiry must carry a reason")
 	}
 }

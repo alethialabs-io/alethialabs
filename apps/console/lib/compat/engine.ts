@@ -25,6 +25,7 @@ import type {
 } from "@/types/compat.types";
 import { MATRIX } from "./generated/matrix";
 import type { ComponentRelease, K8sRange } from "./generated/matrix";
+import { goTrimSpace } from "@/lib/validations/apps-path";
 
 /**
  * Evaluate a proposed config against the embedded matrix, returning a structured
@@ -100,28 +101,54 @@ function covers(override: CompatOverride | null | undefined, id: string, now: nu
 function parseRFC3339(raw: string): number | null {
 	// Uppercase T and Z only, a full date, a full time, and a mandatory zone — Go's layout is
 	// "2006-01-02T15:04:05Z07:00" and it is not case-insensitive.
-	const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(raw);
+	const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(raw);
 	if (!m) return null;
+
+	const [, y, mo, d, h, mi, sec, frac, sign, offH, offM] = m;
+	const year = Number(y);
+	const month = Number(mo);
+	const day = Number(d);
 
 	// The shape is right; the COMPONENTS still have to be real. `2026-13-45T00:00:00Z` matches the
 	// pattern, and JS would roll it over into 2027 rather than rejecting it, where Go range-checks.
-	const [, y, mo, d, h, mi, s] = m;
-	const month = Number(mo);
-	const day = Number(d);
-	const hour = Number(h);
-	if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-	// Go rejects hour 24; JS accepts it as midnight the next day.
-	if (hour > 23 || Number(mi) > 59 || Number(s) > 59) return null;
+	//
+	// This is arithmetic, NOT a Date round-trip. The round-trip it replaces ran only for `Z`-suffixed
+	// values, so an impossible day carrying a numeric offset (`2099-02-30T00:00:00+02:00`) skipped
+	// both guards and was rolled forward to March 1st — accepted here, `day out of range` in Go.
+	if (month < 1 || month > 12) return null;
+	if (day < 1 || day > daysInMonth(year, month)) return null;
+	// Go rejects hour 24; JS accepts it as midnight the next day. Leap seconds are not supported
+	// by Go's parser either, so 60 is out of range for the seconds field as well.
+	if (Number(h) > 23 || Number(mi) > 59 || Number(sec) > 59) return null;
 
-	const t = Date.parse(raw);
-	if (Number.isNaN(t)) return null;
+	// The offset's own ranges, mirrored from Go rather than delegated to `Date.parse`, whose rules
+	// are NOT Go's: `Date.parse` returns NaN for `+24:00` and `+02:60`, both of which Go accepts.
+	// Go's time/format.go range-checks `hr > 24` and `mm > 60` — and its own comment explains the
+	// off-by-one is deliberate: "such that it is valid to have a time zone offset of exactly
+	// 24:00:00". Measured against go1.26.6, not read off the spec.
+	let offsetMinutes = 0;
+	if (sign !== undefined) {
+		const oh = Number(offH);
+		const om = Number(offM);
+		if (oh > 24 || om > 60) return null;
+		offsetMinutes = (oh * 60 + om) * (sign === "-" ? -1 : 1);
+	}
 
-	// Round-trip the calendar fields so a day that does not exist in that month (2026-02-30) is
-	// refused rather than rolled forward, which is what Go does.
-	const back = new Date(t);
-	if (back.getUTCFullYear() !== Number(y) && raw.endsWith("Z")) return null;
-	if (raw.endsWith("Z") && (back.getUTCMonth() + 1 !== month || back.getUTCDate() !== day)) return null;
-	return t;
+	// Sub-millisecond precision is lost — JS epoch ms cannot carry Go's nanoseconds. The truncation
+	// moves an expiry EARLIER, so the console can only ever call a waiver expired a fraction of a
+	// millisecond before the runner does. That is the console being stricter, which is the safe
+	// direction: it never claims a waiver is in force that the apply gate has already dropped.
+	const ms = frac === undefined ? 0 : Math.floor(Number(`0${frac}`) * 1000);
+	return Date.UTC(year, month - 1, day, Number(h), Number(mi), Number(sec), ms) - offsetMinutes * 60_000;
+}
+
+/** Days in a (1-based) month, Gregorian leap rule — so February 30th is refused, not rolled. */
+function daysInMonth(year: number, month: number): number {
+	if (month === 2) {
+		const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+		return leap ? 29 : 28;
+	}
+	return month === 4 || month === 6 || month === 9 || month === 11 ? 30 : 31;
 }
 
 /** Checks that the cluster Kubernetes minor is offered by the cloud. */
@@ -258,7 +285,13 @@ function parseMinor(v: string | undefined): Minor | null {
 	if (!v) return null;
 	// Trim, strip a leading "v", trim AGAIN — mirroring Go's
 	// TrimSpace(TrimPrefix(TrimSpace(v), "v")), so "v 1.35" parses on both sides.
-	const trimmed = v.trim().replace(/^v/, "").trim();
+	//
+	// goTrimSpace, NOT `.trim()`. The two whitespace sets differ at the edges and the difference is
+	// live in both directions: JS strips U+FEFF (ZWNBSP), which `unicode.IsSpace` does not, so
+	// "\uFEFF1.35" was JUDGED here and `not_evaluable` at the apply gate; Go strips U+0085 (NEL),
+	// which JS does not, so "\u00851.35" was the reverse. Mirroring the parse while using a
+	// different trim leaves the divergence sitting one character upstream of the part that agrees.
+	const trimmed = goTrimSpace(goTrimSpace(v).replace(/^v/, ""));
 	const parts = trimmed.split(".");
 	if (parts.length < 2) return null;
 	const major = atoi(parts[0]);
