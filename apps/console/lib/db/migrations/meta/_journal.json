@@ -1037,6 +1037,13 @@
       "when": 1787928696802,
       "tag": "0147_wooden_amphibian",
       "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1788279010245,
+      "tag": "0148_odd_jackal",
+      "breakpoints": true
     }
   ]
 }

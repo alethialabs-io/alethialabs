@@ -43,6 +43,15 @@ export const projects = pgTable(
 		index("idx_projects_user").on(t.user_id),
 		index("idx_projects_org").on(t.org_id),
 		index("idx_projects_cloud_identity").on(t.cloud_identity_id),
+		// Cursor paging (lib/cli/paging.ts) — same shape as idx_jobs_org_cursor. The project
+		// list (`GET /api/cli/configurations`) already orders by created_at DESC within an
+		// org; this adds the id tiebreak the keyset predicate compares on, so the page query
+		// is one range scan and not a scan plus a sort.
+		index("idx_projects_org_cursor").on(
+			t.org_id,
+			t.created_at.desc(),
+			t.id.desc(),
+		),
 	],
 );
 
