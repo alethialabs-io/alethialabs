@@ -6,10 +6,11 @@ package argocd
 import (
 	"bytes"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"text/template"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/names"
 )
 
 // Persistent namespace-placement tenant isolation (#956), the delivery half of activating a
@@ -262,27 +263,23 @@ func (in NamespaceTenantInput) templateData() namespaceTenantData {
 	}
 }
 
-var namespaceNameUnsafe = regexp.MustCompile(`[^a-z0-9-]+`)
-
 // namespaceTenantName derives a stable, RFC1123-safe ArgoCD resource name of the form
 // "<prefix>-<project>-<namespace>", bounded to ≤63 chars (the k8s/ArgoCD name limit). The namespace
 // (unique per Fabric cluster) is the discriminator, so two projects' same-named envs never collide.
+//
+// Each part goes through names.SlugifyOrEmpty (#3665) rather than a local charset filter, so an
+// accented project name folds (`café` → `cafe`) instead of losing its last letter — which is what
+// this file used to do while the console did the other thing.
 func namespaceTenantName(prefix, project, namespace string) string {
-	sanitize := func(s string) string {
-		return strings.Trim(namespaceNameUnsafe.ReplaceAllString(strings.ToLower(strings.TrimSpace(s)), "-"), "-")
-	}
 	parts := make([]string, 0, 3)
-	for _, p := range []string{prefix, sanitize(project), sanitize(namespace)} {
-		if p != "" {
-			parts = append(parts, p)
+	for _, p := range []string{prefix, project, namespace} {
+		if s := names.SlugifyOrEmpty(p, names.SlugMaxLength); s != "" {
+			parts = append(parts, s)
 		}
 	}
 	name := strings.Join(parts, "-")
 	if name == "" {
 		name = "tenant"
 	}
-	if len(name) > 63 {
-		name = strings.TrimRight(name[:63], "-")
-	}
-	return name
+	return names.Bounded(name)
 }

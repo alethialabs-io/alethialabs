@@ -14,11 +14,8 @@ import {
 	projects,
 	resourceHierarchy,
 } from "@/lib/db/schema";
-import {
-	pickFreeSlug,
-	RESERVED_PROJECT_CHILD_SLUGS,
-	slugify,
-} from "@/lib/routing";
+import { pickFreeSlug, RESERVED_PROJECT_CHILD_SLUGS } from "@/lib/routing";
+import { slugify } from "@/lib/utils/slugify";
 
 /** One environment the front door seeds, with its placement onto a Fabric. The placement selector
  * (#844) emits these; the fan-out below turns them into `project_fabrics` + `project_environments`
@@ -143,7 +140,7 @@ export async function insertProjectWithDefaultFabric(
 		.select({ slug: projects.slug })
 		.from(projects)
 		.where(eq(projects.org_id, input.orgId));
-	const slug = pickFreeSlug(slugify(input.project_name) || "project", [
+	const slug = pickFreeSlug(slugify(input.project_name, "project"), [
 		...existing.map((r) => r.slug).filter((s): s is string => Boolean(s)),
 		...RESERVED_PROJECT_CHILD_SLUGS,
 	]);

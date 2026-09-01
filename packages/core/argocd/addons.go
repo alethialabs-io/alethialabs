@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/names"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 	"gopkg.in/yaml.v3"
@@ -198,7 +199,11 @@ type addonAutomated struct {
 // so re-deploys converge on the same Application rather than creating duplicates. Exported so
 // the health read-back can address the same names.
 func AddOnAppName(id string) string {
-	return "addon-" + id
+	// Bounded, because the id is not always ours to trust: a BYO chart's addon_id is derived from a
+	// user-typed display name, and until #3665 that derivation had no length cap at all. An
+	// over-long id produced an Application name Kubernetes refuses outright, so there is no live
+	// object this bound can rename — only a manifest that used to fail at apply.
+	return names.Bounded(names.AddOnAppNamePrefix + id)
 }
 
 // RenderManagedAddOns writes one ArgoCD Application manifest per managed add-on into a fresh

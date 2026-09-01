@@ -50,7 +50,8 @@ import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { authClient } from "@/lib/auth/client";
 import { track } from "@/lib/analytics/track";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
-import { orgHost, slugify } from "@/lib/org-url";
+import { orgHost } from "@/lib/org-url";
+import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
@@ -528,7 +529,7 @@ function NamePanel({
 						const v = e.target.value;
 						form.setValue("name", v, { shouldValidate: true });
 						if (!slugTouched)
-							form.setValue("slug", slugify(v), { shouldValidate: true });
+							form.setValue("slug", slugifyOrEmpty(v), { shouldValidate: true });
 					}}
 				/>
 				<div className="flex items-center justify-between pt-1">
@@ -555,7 +556,7 @@ function NamePanel({
 							value={slug}
 							onChange={(e) => {
 								setSlugTouched(true);
-								form.setValue("slug", slugify(e.target.value), {
+								form.setValue("slug", slugifyOrEmpty(e.target.value), {
 									shouldValidate: true,
 								});
 							}}

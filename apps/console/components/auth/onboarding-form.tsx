@@ -36,7 +36,8 @@ import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { safeNext } from "@/lib/auth/safe-next";
 import type { PrimaryOrg } from "@/lib/auth/onboarding";
-import { orgHost, slugify } from "@/lib/org-url";
+import { orgHost } from "@/lib/org-url";
+import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { Button } from "@repo/ui/button";
@@ -283,7 +284,7 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 					onChange={(e) => {
 						const v = e.target.value;
 						setName(v);
-						if (!slugTouched) setSlug(slugify(v));
+						if (!slugTouched) setSlug(slugifyOrEmpty(v));
 						setSlugError(null);
 					}}
 					onKeyDown={(e) => {
@@ -314,7 +315,7 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 							autoComplete="off"
 							onChange={(e) => {
 								setSlugTouched(true);
-								setSlug(slugify(e.target.value));
+								setSlug(slugifyOrEmpty(e.target.value));
 								setSlugError(null);
 							}}
 						/>

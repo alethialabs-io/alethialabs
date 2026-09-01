@@ -667,19 +667,49 @@ describe("a node name is NOT constrained by the form schema (#3588)", () => {
 	});
 });
 
-describe("environment names are DNS-1123 labels", () => {
+describe("the environment matrix uses the ONE env-name rule (#3665)", () => {
 	const env = (name: string) => [
 		{ name, stage: "development" as const, placement_mode: "namespace" as const },
 	];
+	/** The name the matrix would STORE for `name`, or null when it refuses it. */
+	const stored = (name: string): string | null => {
+		const parsed = environmentMatrixSchema.safeParse(env(name));
+		return parsed.success ? parsed.data[0].name : null;
+	};
 
-	it("rejects a trailing hyphen", () => {
-		expect(environmentMatrixSchema.safeParse(env("prod-")).success).toBe(false);
+	it("normalizes rather than 400ing, so it agrees with `project env add`", () => {
+		// This path used to reject `Prod` against a regex on the raw name while `project env add
+		// Prod` accepted it and stored `prod` — one product answering the same question two ways.
+		expect(stored("Prod")).toBe("prod");
+		// Likewise a trailing hyphen: as a NAME it slugs cleanly, and the namespace field (which is
+		// a Kubernetes object name) is where `dev-` is genuinely refused.
+		expect(stored("prod-")).toBe("prod");
 	});
 
-	it("still accepts an ordinary environment name", () => {
+	it("still accepts an ordinary environment name unchanged", () => {
 		// Asserted on the issues rather than on `success`, so a failure prints what was wrong.
 		const result = environmentMatrixSchema.safeParse(env("prod"));
 		expect(result.error?.issues ?? []).toEqual([]);
+		expect(stored("prod")).toBe("prod");
+	});
+
+	it("refuses a name that slugs to nothing, and one a console route shadows", () => {
+		expect(stored("!!!")).toBeNull();
+		expect(stored("settings")).toBeNull();
+	});
+
+	it("accepts a namespace Kubernetes accepts and refuses one it does not", () => {
+		const withNs = (namespace: string) => [
+			{
+				name: "dev",
+				stage: "development" as const,
+				placement_mode: "namespace" as const,
+				namespace,
+			},
+		];
+		// `1dev` is a legal Kubernetes namespace the old pattern refused.
+		expect(environmentMatrixSchema.safeParse(withNs("1dev")).success).toBe(true);
+		expect(environmentMatrixSchema.safeParse(withNs("dev-")).success).toBe(false);
 	});
 });
 

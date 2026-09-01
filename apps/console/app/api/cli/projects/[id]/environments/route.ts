@@ -12,9 +12,12 @@ import {
 	environmentStage,
 	placementMode,
 } from "@/lib/db/schema/enums";
-import { slugify } from "@/lib/slug";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
+import {
+	environmentNameSchema,
+	namespaceSchema,
+} from "@/lib/validations/names";
 import {
 	cliEnvironmentResponse,
 	cliEnvironmentsResponse,
@@ -28,7 +31,12 @@ import {
  * state key. The isolation ladder the product leads with (namespace → vcluster → dedicated) was
  * unreachable from the CLI, and the cheap rungs are the interesting ones. */
 const addEnvironmentBody = z.object({
-	name: z.string().min(1),
+	/** Validated AND normalized by the shared rule (lib/validations/names.ts), which is the same
+	 *  one `project create --env` and the console's own `addEnvironment` action now use. Parsing
+	 *  yields the stored slug, so this route cannot forget the normalization step — and it now
+	 *  refuses a name a console route would permanently shadow (`project env add settings` used to
+	 *  create an environment whose URL was unreachable forever). */
+	name: environmentNameSchema,
 	stage: z.enum(environmentStage.enumValues).default("development"),
 	region: z.string().min(1).optional(),
 	/** Defaults to `namespace`: an environment ADDED to an existing project is the cheap-rung case,
@@ -38,12 +46,12 @@ const addEnvironmentBody = z.object({
 	 *  Defaults to the project's default Fabric — "the second tier is free" only works if a shared
 	 *  placement lands on the Fabric that already exists. */
 	fabric: z.string().min(1).optional(),
-	/** ArgoCD destination namespace for a shared placement. NULL → derived from the env name. */
-	namespace: z
-		.string()
-		.max(63)
-		.regex(/^[a-z][a-z0-9-]*$/, "Namespace must be a DNS-1123 label.")
-		.optional(),
+	/** ArgoCD destination namespace for a shared placement. NULL → derived from the env name.
+	 *  Kubernetes' own grammar, exactly. The pattern here required a leading letter and constrained
+	 *  nothing at the end, so it ACCEPTED `dev-` — which Kubernetes refuses, making the failure
+	 *  arrive at apply time naming a namespace rather than a name — and refused `1dev`, which
+	 *  Kubernetes accepts. */
+	namespace: namespaceSchema.optional(),
 	lifecycle: z.enum(environmentLifecycle.enumValues).optional(),
 });
 
@@ -151,7 +159,8 @@ export async function GET(
 	}
 }
 
-/** Adds a non-default environment to a project (name slugified; region inherits the project). */
+/** Adds a non-default environment to a project (name normalized by the shared env-name rule;
+ *  region inherits the project). */
 export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
@@ -163,15 +172,17 @@ export async function POST(
 
 	const parsed = addEnvironmentBody.safeParse(await req.json().catch(() => null));
 	if (!parsed.success) {
-		return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
-	}
-	const name = slugify(parsed.data.name);
-	if (!name) {
+		// The name rules carry their own messages ("settings" is reserved, "must contain at least
+		// one letter or number"); a bare "Invalid request body" would tell the operator nothing
+		// about a name the server will never accept.
+		const issue = parsed.error.issues[0];
 		return NextResponse.json(
-			{ error: "Environment name is required" },
+			{ error: issue ? `${issue.path.join(".") || "body"}: ${issue.message}` : "Invalid request body" },
 			{ status: 400 },
 		);
 	}
+	// Already the stored slug — environmentNameSchema normalizes on parse.
+	const name = parsed.data.name;
 
 	try {
 		const db = getServiceDb();

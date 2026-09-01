@@ -12,28 +12,10 @@ import {
 	projectSettingsHref,
 	RESERVED_PROJECT_CHILD_SLUGS,
 	RESERVED_SLUGS,
-	slugify,
 } from "@/lib/routing";
 
-describe("slugify", () => {
-	it("lowercases, trims, and hyphenates non-alphanumerics", () => {
-		expect(slugify("  Acme Cloud  ")).toBe("acme-cloud");
-		expect(slugify("Foo___Bar!!Baz")).toBe("foo-bar-baz");
-	});
-
-	it("strips leading/trailing dashes and collapses runs", () => {
-		expect(slugify("--Hello  World--")).toBe("hello-world");
-	});
-
-	it("returns empty string for input with no alphanumerics", () => {
-		expect(slugify("@#$%")).toBe("");
-	});
-
-	it("drops apostrophes and folds accents (Vercel-style)", () => {
-		expect(slugify("bobikenobi12's Org")).toBe("bobikenobi12s-org");
-		expect(slugify("José's Café")).toBe("joses-cafe");
-	});
-});
+// `slugify` no longer lives here (it never did — this module re-exported it). Its tests are in
+// tests/lib/slugify.test.ts, against @/lib/utils/slugify.
 
 describe("pickFreeSlug", () => {
 	it("returns the base when it's free", () => {
