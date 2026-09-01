@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -62,6 +63,21 @@ const (
 // rabbitmqCredentialKeys are every key the chart reads from the Secret. Stated once so the
 // completeness check and the manifest cannot disagree about what a COMPLETE credential is.
 var rabbitmqCredentialKeys = []string{rabbitmqPasswordKey, rabbitmqErlangCookieKey}
+
+// errQueueLiveStateUnknown marks the one failure the DEPLOY may not shrug off: we could not
+// determine whether this queue already has live credentials.
+//
+// Every other seeding failure is non-fatal by design — a queue that cannot be credentialled yet
+// reports a missing Secret on its Application and the next deploy retries, which must not fail an
+// otherwise-healthy cluster. This one is different in kind. It does not mean "not ready"; it means
+// "we are about to act on an unknown", and the action on the other side of it is minting a
+// credential over a broker that may already be running with a different one.
+var errQueueLiveStateUnknown = errors.New("queue live credential state unknown")
+
+// QueueLiveStateUnknown reports whether a seeding error means the live credential state could not
+// be determined, so the caller must stop rather than proceed on the assumption there is nothing to
+// adopt.
+func QueueLiveStateUnknown(err error) bool { return errors.Is(err, errQueueLiveStateUnknown) }
 
 // HetznerQueue is one in-cluster RabbitMQ the runner must credential.
 type HetznerQueue struct {
@@ -227,7 +243,11 @@ func completeQueueCredentials(q HetznerQueue, data map[string]string, stderr io.
 	}
 	// Read ONCE, and only when something is actually missing — a complete Secret must not cost a
 	// Secret listing on every deploy.
-	live := adoptChartMintedQueueCredentials(q, stderr)
+	live, err := adoptChartMintedQueueCredentials(q, stderr)
+	if err != nil {
+		// Fail CLOSED. Minting is the destructive branch here, so an unknown must not reach it.
+		return false, nil, err
+	}
 	b64 := base64.StdEncoding.EncodeToString
 	for _, key := range missing {
 		if value, ok := live[key]; ok {
@@ -267,10 +287,12 @@ func completeQueueCredentials(q HetznerQueue, data map[string]string, stderr io.
 // correct answer for a queue that has never deployed and the only available one otherwise. The
 // values are read into memory and rendered into a 0600 manifest; they are never logged (kubectlJSON
 // captures stdout rather than echoing it, which keeps a Secret listing out of the job log).
-func adoptChartMintedQueueCredentials(q HetznerQueue, stderr io.Writer) map[string]string {
+func adoptChartMintedQueueCredentials(q HetznerQueue, stderr io.Writer) (map[string]string, error) {
 	release := AddOnAppName(q.AddOnID)
 	if !k8sNameRe.MatchString(release) {
-		return nil
+		// Not a failure: a name the runner cannot address has no chart-minted Secret to adopt, and
+		// #3304 already decided such a queue keeps the chart's own minting.
+		return nil, nil
 	}
 	var list struct {
 		Items []struct {
@@ -280,7 +302,18 @@ func adoptChartMintedQueueCredentials(q HetznerQueue, stderr io.Writer) map[stri
 	}
 	cmd := fmt.Sprintf("kubectl get secret -n %s -l app.kubernetes.io/instance=%s -o json", q.Namespace, release)
 	if err := kubectlJSON(cmd, &list, stderr); err != nil {
-		return nil
+		// A FAILED READ IS NOT AN ABSENT SECRET. Returning nil here made an apiserver blip, an
+		// expired token and an RBAC hiccup indistinguishable from "this queue was never charted" —
+		// and the caller answers "nothing to adopt" by MINTING A FRESH ERLANG COOKIE. On the one
+		// migration deploy that matters that partitions a live broker, under the reassuring log
+		// line "Seeding missing queue credentials…", and the window never reopens: the Secret is
+		// complete afterwards, so every later deploy takes the "leaving it in place" path and
+		// nothing re-derives it.
+		//
+		// This is the rule EnsureQueueCredentialSecret already states twenty lines above, for its
+		// own read of the runner's Secret. The adoption read was the one place in the file that
+		// broke it.
+		return nil, fmt.Errorf("%w: list chart-minted secrets for %s/%s: %v", errQueueLiveStateUnknown, q.Namespace, release, err)
 	}
 	out := map[string]string{}
 	for _, item := range list.Items {
@@ -297,7 +330,7 @@ func adoptChartMintedQueueCredentials(q HetznerQueue, stderr io.Writer) map[stri
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // decodeSecretValue decodes one base64 Secret value, reporting whether it held anything.

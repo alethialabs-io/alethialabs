@@ -6,6 +6,9 @@ package argocd
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
 	"io"
 	"os"
 	"path/filepath"
@@ -470,7 +473,11 @@ func TestAdoptionFindsNothingToCarry(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			newKubectlStub(t, 0, stubRule{Match: "app.kubernetes.io/instance=", Stdout: tc.json})
-			if live := adoptChartMintedQueueCredentials(oneQueue(t, "jobs"), io.Discard); len(live) != 0 {
+			live, err := adoptChartMintedQueueCredentials(oneQueue(t, "jobs"), io.Discard)
+			if err != nil {
+				t.Fatalf("a readable response must not error: %v", err)
+			}
+			if len(live) != 0 {
 				t.Fatalf("adopted %v from a Secret with nothing to carry", live)
 			}
 		})
@@ -519,5 +526,104 @@ func TestConsoleLabelPredicateMatchesTheRunners(t *testing.T) {
 	if got := string(m[1]); got != k8sNameRe.String() {
 		t.Errorf("the console accepts %q but the runner seeds only %q — a name in the gap renders a "+
 			"chart pointed at a Secret that is never written", got, k8sNameRe.String())
+	}
+}
+
+// TestAFailedAdoptionReadRefusesToMint pins the regression that made this whole file necessary in
+// the other direction: `adoptChartMintedQueueCredentials` used to answer a kubectl failure with
+// `nil`, which is the same value it returns for "this queue was never charted". The caller answers
+// "nothing to adopt" by MINTING A FRESH ERLANG COOKIE, so an apiserver blip on the one migration
+// deploy that matters partitioned a live broker — under the log line "Seeding missing queue
+// credentials…", and with no second chance, because the Secret is complete afterwards.
+//
+// Asserted on the SIDE EFFECT, not just the error: the point is not that a failure is reported, it
+// is that no credential was written. A version that returns the error and mints anyway passes an
+// error-only assertion.
+func TestAFailedAdoptionReadRefusesToMint(t *testing.T) {
+	// Exit 1 on the adoption LIST specifically — the apiserver blip. Everything else answers
+	// normally, so the failure under test is the one being asserted and not a broken stub.
+	newKubectlStub(t, 0,
+		stubRule{Match: "app.kubernetes.io/instance=addon-queue-jobs", Exit: 1, Stdout: "the server was unable to return a response"},
+	)
+
+	data := map[string]string{}
+	changed, adopted, err := completeQueueCredentials(oneQueue(t, "jobs"), data, io.Discard)
+
+	if err == nil {
+		t.Fatal("a failed read of the chart's Secret must be an error, not an empty adoption")
+	}
+	if !QueueLiveStateUnknown(err) {
+		t.Errorf("the error must be recognisable to the deploy as an unknown live state; got %v", err)
+	}
+	if changed {
+		t.Error("nothing may be reported as changed when the live state is unknown")
+	}
+	if len(adopted) != 0 {
+		t.Errorf("nothing may be adopted from a failed read; got %v", adopted)
+	}
+	// The assertion that actually matters.
+	for _, key := range rabbitmqCredentialKeys {
+		if _, minted := data[key]; minted {
+			t.Errorf("a fresh %q was minted over a broker whose live state we could not read", key)
+		}
+	}
+}
+
+// TestQueueLiveStateUnknownSeparatesTheTwoFailureKinds keeps the deploy's fatal/non-fatal split
+// honest. Every ordinary seeding failure stays non-fatal by design — a queue that cannot be
+// credentialled yet reports it on its own Application and the next deploy retries. If the predicate
+// answered true for those too, one converging queue would fail an otherwise-healthy cluster.
+func TestQueueLiveStateUnknownSeparatesTheTwoFailureKinds(t *testing.T) {
+	if !QueueLiveStateUnknown(fmt.Errorf("wrapped: %w", errQueueLiveStateUnknown)) {
+		t.Error("the sentinel must survive wrapping — the deploy sees it through two layers")
+	}
+	for _, err := range []error{
+		errors.New("read queue credential secret ns/name: connection refused"),
+		fmt.Errorf("generate RabbitMQ password: %w", errors.New("no entropy")),
+		nil,
+	} {
+		if QueueLiveStateUnknown(err) {
+			t.Errorf("an ordinary failure must stay non-fatal; %v was treated as an unknown live state", err)
+		}
+	}
+}
+
+// TestTheCredentialKeysMatchTheChartsOwnMintedSecret closes a hole the rest of this file cannot
+// see, because every other fixture here is BUILT from `rabbitmqCredentialKeys` and therefore agrees
+// with the constants by construction — including
+// TestEnsureQueueCredentialSecretAdoptsTheChartMintedCredentials, whose `chartMintedSecretJSON`
+// takes the same two constants as input. If the chart's minted keys ever diverge from ours,
+// adoption silently finds nothing and mints a FRESH ERLANG COOKIE over a live broker, and not one
+// existing test would notice.
+//
+// These are the keys the pinned chart actually writes, rendered rather than remembered:
+//
+//	helm repo add cloudpirates https://cloudpirates-io.github.io/helm-charts
+//	helm template q cloudpirates/rabbitmq --version 0.21.9 | awk '/^kind: Secret/,/^---/'
+//
+// which yields `data: {password, erlang-cookie}` on a Secret labelled
+// `app.kubernetes.io/instance: q` — the label the adoption LIST selects on.
+//
+// The values are golden and not fetched: CI has no network for a helm repo, and a test that
+// silently skips when the fetch fails is a test that reports green over nothing. Re-run the two
+// commands above when the pin in `apps/console/lib/cloud-providers/hetzner-services.ts` moves; if
+// this fails after a bump, adoption is broken and the fix is here, not in the assertion.
+func TestTheCredentialKeysMatchTheChartsOwnMintedSecret(t *testing.T) {
+	const chartPin = "cloudpirates/rabbitmq 0.21.9"
+	chartMintedKeys := []string{"password", "erlang-cookie"}
+
+	if len(rabbitmqCredentialKeys) != len(chartMintedKeys) {
+		t.Fatalf("%s mints %d keys, the runner reads %d: %v vs %v",
+			chartPin, len(chartMintedKeys), len(rabbitmqCredentialKeys), chartMintedKeys, rabbitmqCredentialKeys)
+	}
+	for _, want := range chartMintedKeys {
+		if !slices.Contains(rabbitmqCredentialKeys, want) {
+			t.Errorf("%s mints the key %q, which the runner never reads — adoption would miss it and mint a fresh credential over a live broker", chartPin, want)
+		}
+	}
+	for _, got := range rabbitmqCredentialKeys {
+		if !slices.Contains(chartMintedKeys, got) {
+			t.Errorf("the runner reads %q, which %s does not mint — adoption would treat a complete Secret as incomplete", got, chartPin)
+		}
 	}
 }
