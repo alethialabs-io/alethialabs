@@ -174,8 +174,11 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
           }) => {
             if (!member.role) {
               // An invitation with no role yields a member with no mappable role, so
-              // ensureMemberGrant would silently no-op (leaving the member ungranted).
-              // Surface it rather than fail silently.
+              // ensureMemberGrant writes nothing (leaving the member ungranted). It now says so
+              // itself for EVERY unmappable role — see core's `toPdpRole` / #3730, where
+              // better-auth's own `member` role was unmapped and this branch never fired because
+              // the role was present, just unrecognised. Kept because this one is the acceptance
+              // path's own precondition and names the invitation.
               console.warn(
                 `[authz] accepted invitation for user ${user.id} in org ${org.id} has no role — no grant written`,
               );
@@ -244,13 +247,22 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
       // the customer's IdP (Okta / Entra ID / AWS IAM Identity Center / …).
       // Loaded after organization() so per-org providers (ssoProvider.organizationId)
       // resolve. SSO users are provisioned into their org as least-privileged
-      // members so the PDP scopes them correctly. STANDUP: add a getRole mapping
-      // (IdP group claim → owner/admin/operator/viewer) and harden SAML
-      // (algorithms.onDeprecated: "reject", enable InResponseTo validation).
+      // members. STANDUP: a JIT-provisioned user still gets NO PDP GRANT — see the
+      // defaultRole comment below; plus add a getRole mapping (IdP group claim →
+      // owner/admin/operator/viewer) and harden SAML (algorithms.onDeprecated:
+      // "reject", enable InResponseTo validation).
       sso({
         organizationProvisioning: {
-          // better-auth's org role (owner/admin/member) — least-privileged
-          // "member"; the PDP then maps it to Alethia's viewer-scoped access.
+          // better-auth's org role (owner/admin/member) — least-privileged "member",
+          // which core's `toPdpRole` maps to Alethia's viewer bundle.
+          //
+          // THAT MAPPING DOES NOT REACH A JIT-PROVISIONED USER. `assignOrganization()`
+          // writes the member row with the generic adapter, not through the organization
+          // plugin's routes, so none of the `organizationHooks` above fire — no
+          // `ensureMemberGrant`, no grant row, no `syncOrgSeats`. The PDP authorizes from
+          // grants, so an employee signing in through the IdP for the first time still
+          // lands on `/{org}` denied. Fixing it needs a hook on the SSO path itself; the
+          // role map (#3730) covers the INVITED member, not this one.
           defaultRole: "member",
         },
         // Prove the customer controls the domain before we trust the IdP for it.
