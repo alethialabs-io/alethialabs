@@ -173,7 +173,10 @@ func Money(cents float64, currency string) string {
 func MonthlyRate(amount float64, style RateStyle, currency string) string {
 	decimals := decimalsFor(currency)
 	if math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0 {
-		if style == Exact {
+		// `!= Estimate` rather than `== Exact`, so a style nobody defined lands on Exact in BOTH
+		// branches. The asymmetric spelling had an unknown style rendering minor units above zero
+		// and dropping them at zero — the same caller getting two registers from one call site.
+		if style != Estimate {
 			return render(0, currency, decimals) + "/mo"
 		}
 		return render(0, currency, 0) + "/mo"
