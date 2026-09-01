@@ -52,7 +52,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { authClient } from "@/lib/auth/client";
 import { qk } from "@/lib/query/keys";
-import { slugify } from "@/lib/slug";
+import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useTeamsFilters } from "@/lib/stores/use-settings-filters";
 import { cn } from "@repo/ui/utils";
@@ -156,7 +156,7 @@ export function TeamsList() {
 								{t.name}
 							</span>
 							<span className="font-mono text-[10.5px] text-text-tertiary">
-								{slugify(t.name)}
+								{slugifyOrEmpty(t.name)}
 							</span>
 						</div>
 					</div>

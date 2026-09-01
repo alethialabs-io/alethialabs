@@ -119,9 +119,10 @@ tier_separation:
       [
         tests/integration/cli-project-create.test.ts,
         tests/lib/queries/fabric-placement.test.ts,
+        tests/lib/queries-projects-specs.test.ts,
       ]
-    symbols: [insertProjectWithDefaultFabric, planFabricPlacement]
-    reason: The project + default-fabric + hierarchy insert as one real transaction, plus the pure placement decision — unit-tested because needing Postgres to reach the fan-out is why an unprovisionable `shared` Fabric went unnoticed.
+    symbols: [insertProjectWithDefaultFabric, planFabricPlacement, environmentSpecProblem]
+    reason: The project + default-fabric + hierarchy insert as one real transaction, plus the pure placement decision — unit-tested because needing Postgres to reach the fan-out is why an unprovisionable `shared` Fabric went unnoticed. `environmentSpecProblem` is the fan-out's name validation, exported and driven as a pure function (#3665) so that its agreement with `environmentMatrixSchema` is a test rather than a claim — the two disagreeing turned a bad env name into a 500.
 
   - path: lib/queries/runner-usage.ts
     suite:

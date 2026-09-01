@@ -22,7 +22,8 @@ import {
 } from "@/components/design-project/placement-selector";
 import { DEFAULT_REGION, type CloudProviderSlug } from "@/lib/cloud-providers";
 import type { EnvironmentSpec } from "@/lib/queries/projects";
-import { globalHref, projectHref, slugify } from "@/lib/routing";
+import { globalHref, projectHref } from "@/lib/routing";
+import { slugify } from "@/lib/utils/slugify";
 import type { ScanProposal } from "@/lib/scanner/schema";
 import { PageHeader } from "@repo/ui/page-header";
 import { Button } from "@repo/ui/button";
@@ -161,7 +162,7 @@ export function ConfigureProject({
 		source.kind === "import" ||
 		(source.kind === "scratch" && source.scratch === "template");
 	const needsCloud = requiresCloud && !identityId;
-	const slug = slugify(name) || "project";
+	const slug = slugify(name, "project");
 
 	/** Create the project (DRAFT) from the chosen source + settings, then open its canvas. */
 	const onCreate = async () => {

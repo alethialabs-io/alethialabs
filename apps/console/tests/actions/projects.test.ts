@@ -2471,7 +2471,18 @@ describe("addEnvironment", () => {
 		setupDb({});
 		await expect(
 			addEnvironment("p1", { name: "!!!", stage: "staging" }),
-		).rejects.toThrow(/name is required/);
+		).rejects.toThrow(/at least one letter or number/);
+		expect(withActorScope).not.toHaveBeenCalled();
+	});
+
+	it("rejects a name a console route would shadow, and normalizes one it accepts", async () => {
+		// The SHARED env-name rule (lib/validations/names.ts), which `project env add` on the CLI
+		// route now applies too — the two used to disagree about `Prod`, and only this path knew
+		// that `settings` is unreachable forever.
+		setupDb({});
+		await expect(
+			addEnvironment("p1", { name: "Settings", stage: "staging" }),
+		).rejects.toThrow(/reserved by the console/);
 		expect(withActorScope).not.toHaveBeenCalled();
 	});
 

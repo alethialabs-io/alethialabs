@@ -28,17 +28,8 @@ import {
 	updateValue,
 } from "@/app/server/actions/classification/dimensions";
 import { type ValueInput, valueInputSchema } from "@/lib/validations/classification";
+import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { InfoHint, Spinner } from "./classification-ui";
-
-/** Lowercases + hyphenates a label into a slug candidate. */
-function slugify(input: string): string {
-	return input
-		.toLowerCase()
-		.trim()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "")
-		.slice(0, 64);
-}
 
 /**
  * The value editor dialog. Pass an existing `value` to edit, or omit it to create one on
@@ -98,7 +89,7 @@ export function ValueEditor({
 
 	const onSubmit = async (data: ValueInput) => {
 		try {
-			const payload = { ...data, value: data.value || slugify(data.label) };
+			const payload = { ...data, value: data.value || slugifyOrEmpty(data.label) };
 			if (value) {
 				await updateValue(value.id, payload);
 				toast.success("Value updated.");
@@ -136,7 +127,7 @@ export function ValueEditor({
 								onChange={(e) => {
 									form.setValue("label", e.target.value);
 									if (!isEdit && !form.formState.dirtyFields.value) {
-										form.setValue("value", slugify(e.target.value));
+										form.setValue("value", slugifyOrEmpty(e.target.value));
 									}
 								}}
 							/>

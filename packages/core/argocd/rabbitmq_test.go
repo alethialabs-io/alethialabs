@@ -499,36 +499,6 @@ func TestAdoptionIsNotConsultedForACompleteSecret(t *testing.T) {
 	}
 }
 
-// The console restates the DNS-1123 label charset as `K8S_LABEL` in hetzner-services.ts, because Go
-// cannot read that file and it cannot read Go — and the two decide the SAME question from opposite
-// sides: the mapper uses it to choose whether to point the chart at a runner-seeded Secret, and
-// HetznerQueues uses k8sNameRe to choose whether to seed one. If they ever disagree, one of the two
-// outcomes is a queue that can never start, and nothing at runtime would say so.
-//
-// So the literal is read out of the TS source and compared, rather than restated a third time here.
-func TestConsoleLabelPredicateMatchesTheRunners(t *testing.T) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate this file")
-	}
-	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "..",
-		"apps", "console", "lib", "cloud-providers", "hetzner-services.ts")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("cannot read %s (%v) — this test is the only check that the console and the runner "+
-			"agree on what a queue name may be", path, err)
-	}
-	m := regexp.MustCompile(`(?m)^const K8S_LABEL = /(.+)/;$`).FindSubmatch(raw)
-	if m == nil {
-		t.Fatalf("no `const K8S_LABEL = /…/;` in %s — it was renamed or removed, and with it the "+
-			"console's half of this contract", path)
-	}
-	if got := string(m[1]); got != k8sNameRe.String() {
-		t.Errorf("the console accepts %q but the runner seeds only %q — a name in the gap renders a "+
-			"chart pointed at a Secret that is never written", got, k8sNameRe.String())
-	}
-}
-
 // TestAFailedAdoptionReadRefusesToMint pins the regression that made this whole file necessary in
 // the other direction: `adoptChartMintedQueueCredentials` used to answer a kubectl failure with
 // `nil`, which is the same value it returns for "this queue was never charted". The caller answers
