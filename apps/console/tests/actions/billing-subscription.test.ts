@@ -1263,7 +1263,8 @@ describe("getInvoice", () => {
 		expect(orgInvoiceGet).toHaveBeenCalledWith("org-1", "nope");
 	});
 
-	// The preview dialog's read, same defect (#3731) — it is a second entry point, not the same one.
+	// The single-invoice sibling read, same defect (#3731). It has no production caller, so it was
+	// not one of the two 500s — but it carried the same guard over the same table.
 	it("still reads the mirrored table when Stripe is NOT configured", async () => {
 		vi.mocked(isStripeConfigured).mockReturnValue(false);
 		orgInvoiceGet.mockResolvedValue(null);

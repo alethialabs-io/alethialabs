@@ -10,8 +10,9 @@
 //
 // This test is deliberately a SWEEP rather than an assertion about that one button. A per-button
 // assertion would have passed for the two switchers and said nothing about the next control added
-// to the topbar. Every `<button>` the chrome renders must have an accessible name, and the sweep
-// is what carries that forward.
+// to the topbar. Every element the chrome renders in a COMMAND role — native `<button>` plus the
+// `role="button" | "link" | "menuitem"` shapes axe covers under `aria-command-name` — must have an
+// accessible name, and the sweep is what carries that forward.
 
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -73,9 +74,17 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 const { AppSidebar } = await import("@/components/shell/app-sidebar");
 const { Topbar } = await import("@/components/shell/topbar");
 
-/** Every `<button>` under `root`, paired with whether jest-dom can find an accessible name. */
+// The command roles axe enforces a discernible name on, across BOTH of its rules — `button-name`
+// (`selector: 'button'`, critical) and `aria-command-name` (`[role="link"], [role="button"],
+// [role="menuitem"]`, serious). `scanA11y` keeps serious AND critical, so both are inside the
+// audit's denominator and both must be inside this sweep's. Native `<button>` alone is not enough:
+// `SwitcherTrigger` renders the org body with `nativeButton={false}`, and base-ui's `useButton`
+// stamps `role="button"` on the resulting `<a>` — an element a `button` query never sees.
+const COMMAND_ROLES = 'button, [role="button"], [role="link"], [role="menuitem"]';
+
+/** Every command-role element under `root` that jest-dom cannot find an accessible name for. */
 function unnamedButtons(root: HTMLElement): string[] {
-	return Array.from(root.querySelectorAll("button")).flatMap((button) => {
+	return Array.from(root.querySelectorAll(COMMAND_ROLES)).flatMap((button) => {
 		try {
 			expect(button).toHaveAccessibleName();
 			return [];
@@ -93,7 +102,7 @@ beforeEach(() => {
 describe("shell chrome — accessible names", () => {
 	it("names every button in the topbar at org scope", () => {
 		const { container } = render(<Topbar onOpenSidebar={() => {}} />);
-		expect(container.querySelectorAll("button").length).toBeGreaterThan(0);
+		expect(container.querySelectorAll(COMMAND_ROLES).length).toBeGreaterThan(0);
 		expect(unnamedButtons(container)).toEqual([]);
 	});
 
@@ -107,9 +116,20 @@ describe("shell chrome — accessible names", () => {
 		expect(unnamedButtons(container)).toEqual([]);
 	});
 
-	it("names every button in the sidebar", () => {
-		const { container } = render(<AppSidebar isHosted selfRunners />);
-		expect(container.querySelectorAll("button").length).toBeGreaterThan(0);
+	// Both flags change WHAT the sidebar renders — `selfRunners` builds a different nav (whose
+	// "Soon" rows are disabled buttons) and `isHosted` gates the Upgrade CTA, the feedback entry
+	// and the issues link. Sweeping one combination would leave the self-managed shape unswept,
+	// which is the deployment the other half of this PR exists to unbreak.
+	it.each([
+		[true, true],
+		[true, false],
+		[false, true],
+		[false, false],
+	])("names every button in the sidebar (isHosted=%s, selfRunners=%s)", (isHosted, selfRunners) => {
+		const { container } = render(
+			<AppSidebar isHosted={isHosted} selfRunners={selfRunners} />,
+		);
+		expect(container.querySelectorAll(COMMAND_ROLES).length).toBeGreaterThan(0);
 		expect(unnamedButtons(container)).toEqual([]);
 	});
 

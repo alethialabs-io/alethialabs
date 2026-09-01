@@ -8,9 +8,11 @@
 // THE DEFECT (#3731). Both actions called `requireHostedBilling()`, which throws whenever
 // STRIPE_SECRET_KEY is unset. The UI conformance audit drove `~/settings/billing/invoices` on a
 // sandbox env with no Stripe key and recorded `500 POST …/~/settings/billing/invoices` — a server
-// action rejecting, twice per visit (the rows query and the unfiltered facet-count query). The
-// main billing panel hid the same fault behind a "Self-managed deployment" card that returns
-// before anything calls these; the dedicated invoices page has no such gate.
+// action rejecting, twice per visit. BOTH of those were `listInvoices`: the panel's filtered rows
+// query and its unfiltered facet-count query. `getInvoice` has no production caller and is here
+// only as the sibling read that carried the same guard. The main billing panel hid the fault
+// behind a "Self-managed deployment" card that returns before anything calls these; the dedicated
+// invoices page has no such gate.
 //
 // Why an INTEGRATION test rather than a unit one: with `authorize` and the query layer mocked, the
 // only thing left to assert is that a line was deleted. Here the action runs its real PDP gate and
@@ -27,8 +29,8 @@ import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { seedAuthz } from "@/lib/authz/seed";
 import type { Actor, Entitlements } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
-import { grants, invoice, organization, user } from "@/lib/db/schema";
-import { describeIfDb } from "./db";
+import { authzActivityLog, grants, invoice, organization, user } from "@/lib/db/schema";
+import { describeIfDb, purgeAuthzActivityLog } from "./db";
 
 const ORG = randomUUID();
 const OTHER_ORG = randomUUID();
@@ -110,6 +112,11 @@ describeIfDb("listInvoices without Stripe configured (#3731)", () => {
 		else process.env.STRIPE_SECRET_KEY = savedStripeKey;
 
 		const db = getServiceDb();
+		// `authorize()` writes one activity row per call, `authz_activity_log.org_id` carries no FK
+		// (so deleting the org does not cascade), and the append-only WORM trigger refuses a direct
+		// DELETE — hence the GC-flagged helper. Skipping it leaves undeletable residue in the
+		// long-lived dev database, in the very table authz-activity-gc.test.ts counts rows in.
+		await purgeAuthzActivityLog(eq(authzActivityLog.org_id, ORG));
 		await db.delete(invoice).where(inArray(invoice.id, [INVOICE_MINE, INVOICE_THEIRS]));
 		await db.delete(grants).where(eq(grants.org_id, ORG));
 		await db.delete(organization).where(inArray(organization.id, [ORG, OTHER_ORG]));
@@ -138,7 +145,9 @@ describeIfDb("listInvoices without Stripe configured (#3731)", () => {
 		expect(await runWithActor(owner, () => getInvoice(INVOICE_THEIRS))).toBeNull();
 	});
 
-	// The preview dialog's single-invoice read is the same class of call and was equally dead.
+	// `getInvoice` is the single-invoice sibling of the same read. It has NO production caller
+	// today, so it contributed none of the two 500s — it is covered here because it carried the
+	// identical guard over the identical table, not because the page called it.
 	it("loads one of the org's own invoices", async () => {
 		const row = await runWithActor(owner, () => getInvoice(INVOICE_MINE));
 		expect(row?.number).toBe("IT-0001");
