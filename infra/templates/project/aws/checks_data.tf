@@ -24,6 +24,10 @@ check "keyless_rds_iam_irsa_wired" {
     # THIS cluster's OIDC provider, so a cluster-less shape has no identity to mint tokens with and
     # the role is correctly absent. Naming it keeps the message actionable — without the term this
     # would tell an operator to "set rds_iam_irsa" on a shape where rds_iam_irsa changes nothing.
+    #
+    # `length()` and not the instance probe used for module OUTPUTS (#3509): this asserts the module's
+    # EXPANSION, reads nothing out of it, and a check block is a graph leaf — so the whole-module edge
+    # that rules `length()` out elsewhere costs nothing here, and no probe could ask this question.
     condition     = !var.rds_iam_auth_enabled || !var.provision_eks || length(module.rds_iam_auth) == 1
     error_message = "rds_iam_auth_enabled is on but the app RDS-IAM IRSA role is missing; set rds_iam_irsa (the iam_auth toggle should drive both)."
   }

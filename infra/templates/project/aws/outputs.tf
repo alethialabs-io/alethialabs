@@ -191,6 +191,11 @@ output "ecr_build_service_account" {
   # Guarded on the ROLE, not on provision_ecr: the pair must resolve together. Naming an identity the
   # renderer would schedule builds under while ecr_build_role_arn is null hands it a ServiceAccount
   # that can push nothing (#1772 — the role now also requires provision_eks).
+  #
+  # `length()` and not the instance probe every other module reference in this file now uses (#3509):
+  # this value is a LOCAL, so there is no module output to probe. A pure existence test is the only
+  # shape that expresses "does the role exist", and the whole-module edge it costs cannot cycle from
+  # a root output, which is a graph leaf.
   value = length(module.irsa_ecr_build) > 0 ? "${local.ecr_build_namespace}:${local.ecr_build_service_account}" : null
 }
 
@@ -259,6 +264,9 @@ output "karpenter_node_tags" {
   # true, provision_eks = false` the raw-flag form emitted a live tag map for an EC2NodeClass that
   # will never be rendered — this output IS consumed (packages/core/provisioner/karpenter.go), so a
   # non-null there is a positive claim about a Karpenter that does not exist. Unchanged on greenfield.
+  #
+  # `length()` rather than the instance probe, for the same reason as ecr_build_service_account: the
+  # value is a LOCAL, so there is no output to probe, and a root output cannot cycle (#3509).
   value = length(module.karpenter) > 0 ? local.aws_default_tags : null
 }
 

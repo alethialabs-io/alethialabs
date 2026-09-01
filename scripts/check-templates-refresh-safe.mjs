@@ -76,6 +76,23 @@
  * `module.x[*]` splat — nothing in these templates needs one, and reaching for it is what kept
  * #3509 open.
  *
+ * `length(module.x)` READING NO OUTPUT IS NOT WHAT IS REJECTED, and the distinction is the whole
+ * point rather than an exemption. What the table rules out is BUYING a whole-module edge to reach
+ * an OUTPUT that an instance probe reaches with a finer one — `length(module.x) > 0 ? module.x[0].out
+ * : f`. A pure existence test reads nothing and has no probe equivalent, because there is no output
+ * to probe:
+ *
+ *     value     = length(module.karpenter) > 0 ? local.aws_default_tags : null   # aws/outputs.tf
+ *     condition = (length(module.acr) > 0) == (var.provision_acr && …)           # azure/checks.tf
+ *
+ * Five such sites are deliberate, each carrying its own note: two aws outputs whose value is a local
+ * (a root output is a graph leaf and cannot cycle) and three `check` blocks asserting a module's
+ * EXPANSION against its predicate — which is the drift those checks exist to catch, and a check
+ * block is likewise a leaf. THIS GUARD CANNOT SEE THEM: with no `[0]` there is no reference to
+ * anchor on, so the paragraph above is prose, not enforcement. Stated because the guard's rule and
+ * the tree would otherwise look like they disagree, and the wrong way to resolve that is to
+ * "fix" a site whose `length()` is the only shape that can express what it asks.
+ *
  * WHAT IT DOES NOT COVER, each for a measured reason:
  *
  *   - a resource counted by anything but a 0-or-1 conditional (`count = var.vswitch_count`) —
