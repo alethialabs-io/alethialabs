@@ -805,7 +805,18 @@ export function deriveReaperObservation(observation, snapshotAt) {
 	}
 	const reference = Date.parse(snapshotAt ?? "");
 	const completed = Date.parse(observation.completed_at);
-	if (Number.isNaN(reference) || completed > reference + 5 * 60_000) {
+	// THE GRACE MUST BOUND THE FETCH, NOT A CLOCK SKEW. `derived_at` is stamped at the TOP of a
+	// programme-fetch run that then makes 120+ API calls, so the snapshot's own timestamp is already
+	// minutes older than the moment it is written. A five-minute window was narrower than the
+	// script's own runtime: a reaper dispatch finishing while the fetch was still walking runs
+	// committed a `completed_at` ahead of `derived_at` and made that cell indeterminate — a false
+	// negative from a benign race, on evidence that was perfectly good.
+	//
+	// An hour bounds the fetch with room and still refuses the thing this check is for: a result
+	// timestamped well after the snapshot it claims to belong to, which would mean the evidence and
+	// the snapshot are not describing the same moment.
+	const REAPER_COMPLETION_GRACE_MS = 60 * 60_000;
+	if (Number.isNaN(reference) || completed > reference + REAPER_COMPLETION_GRACE_MS) {
 		return {
 			state: "indeterminate",
 			why: "result timestamp cannot be reconciled with the snapshot",
@@ -1478,8 +1489,24 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	// MVP predicate 6: the latest REAL reclaim result per cloud, compared only with the persisted
 	// snapshot timestamp. A reclaimed incident may end clean; ambiguity and age never do.
 	const reaper = clouds.map((cloud) => ({ cloud, ...deriveReaperObservation(board.reaperObservation(cloud), board.derivedAt) }));
+	// AN UNREADABLE OBSERVATION DEGRADES ITS CELL; IT DOES NOT RED THE REPOSITORY.
+	//
+	// These used to go into `failures`, which exits 1 — and this file runs on every PR. That made a
+	// single malformed carried-forward observation red EVERY PR, permanently and unfixably:
+	// `programme-fetch.sh` carries `prev_reaper` forward without re-validating, so the offending
+	// entry is re-committed unchanged every night, and no PR can remove it because every PR is red.
+	// Bumping REAPER_RESULT_SCHEMA_VERSION would have done exactly that to every stale v1 entry at
+	// once.
+	//
+	// Nothing is silenced by this. `deriveReaperObservation` already returns `indeterminate` for
+	// both cases, so the cell renders `? indeterminate` with its reason in the table a human reads,
+	// and the notice below names it on stderr. Indeterminate is the correct fail-closed answer for
+	// "this evidence cannot be read" — it is not `clean`, and it never counts toward `reaperClean`.
+	// It is also self-healing: the next real reclaim result replaces the entry.
 	for (const result of reaper) {
-		if (result.integrityFailure !== null) failures.push(result.integrityFailure);
+		if (result.integrityFailure !== null) {
+			console.error(`::notice::${result.integrityFailure} — the ${result.cloud} cell is indeterminate until a later reclaim result replaces it.`);
+		}
 	}
 	const reaperClean = reaper.filter((result) => result.state === "clean").length;
 
@@ -3126,7 +3153,23 @@ function runSelfTest() {
 			ledgerText: hdr,
 			snapshot: { ...snap(), derived_at: "2026-09-02T00:00:00Z", orphan_reaper_observations: [result({ raw_log: "must never persist" })] },
 		});
-		ok("a malformed durable result is an integrity failure", malformed.failures.some((failure) => /orphan-reaper result/.test(failure)), JSON.stringify(malformed.failures));
+		// A MALFORMED DURABLE RESULT DEGRADES ITS CELL, IT DOES NOT RED THE REPOSITORY. This used to
+		// assert the opposite. It was changed deliberately: `failures` exits 1 and this file runs on
+		// every PR, while `programme-fetch.sh` carries a bad entry forward without re-validating it —
+		// so one malformed observation redded every PR permanently, and no PR could remove it because
+		// every PR was red. Both halves are asserted here so a future "tighten this up" cannot
+		// re-introduce the wedge without also deleting a stated reason.
+		ok(
+			"a malformed durable result does NOT fail the build",
+			!malformed.failures.some((failure) => /orphan-reaper result/.test(failure)),
+			JSON.stringify(malformed.failures),
+		);
+		const malformedCell = deriveReaperObservation(result({ raw_log: "must never persist" }), "2026-09-02T00:00:00Z");
+		ok(
+			"...and is indeterminate, never clean",
+			malformedCell.state === "indeterminate" && malformedCell.integrityFailure !== null,
+			JSON.stringify(malformedCell),
+		);
 		const fullyClean = derive({
 			...base,
 			ledgerText: hdr,

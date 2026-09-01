@@ -182,8 +182,14 @@ function capture(args, env) {
 function validateFile(args) {
   const file = flagValue(args, "--file");
   if (file === null) throw new Error("validate requires --file <path>");
+  // `--allow-completed-at` validates the shape that actually reaches the snapshot. The artifact a
+  // reaper run uploads carries no `completed_at`; programme-fetch.sh adds it from the runs API
+  // AFTER this validator has already passed, so the composed object — the only version anything
+  // downstream reads — was never checked by anything. This flag lets the fetcher re-run the same
+  // validation over the object it is about to persist.
+  const allowCompletedAt = args.includes("--allow-completed-at");
   const result = JSON.parse(fs.readFileSync(file, "utf8"));
-  const validation = validateReaperResult(result);
+  const validation = validateReaperResult(result, allowCompletedAt);
   if (!validation.ok) throw new Error(validation.errors.join("; "));
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
@@ -283,7 +289,7 @@ function main(args = process.argv.slice(2), env = process.env) {
   if (args[0] === "capture") return capture(args.slice(1), env);
   if (args[0] === "validate") return validateFile(args.slice(1));
   throw new Error(
-    "usage: reaper-result.mjs capture --log <path> --out <path> | validate --file <path> | --self-test",
+    "usage: reaper-result.mjs capture --log <path> --out <path> | validate --file <path> [--allow-completed-at] | --self-test",
   );
 }
 

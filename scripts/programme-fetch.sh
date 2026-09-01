@@ -228,7 +228,26 @@ if reaper_runs="$(gh api "repos/$REPO/actions/workflows/e2e-orphan-reaper.yml/ru
 			# A dry-run is useful diagnostics, but it inspected without reclaiming and cannot replace
 			# the newest authoritative reclaim result for this cloud.
 			if [ "$(printf '%s' "$normalized" | jq -r .mode)" != "reclaim" ]; then continue; fi
+			# `completed_at` IS THE ONE FIELD THE VALIDATOR NEVER SAW. Everything above is checked by
+			# `reaper-result.mjs validate`, and then this line adds a field after that check has
+			# already passed. A null or empty `.updated_at` from the runs API — a transport hiccup,
+			# not a corrupted artifact — wrote `"completed_at": ""`, which the rollup then read as an
+			# unparseable timestamp. Refusing it here keeps a bad field out of the snapshot, where it
+			# would otherwise be carried forward unchanged every night.
+			if [ -z "$reaper_completed_at" ] || [ "$reaper_completed_at" = "null" ]; then
+				echo "::warning::programme-fetch: reaper artifact $artifact_id has no usable completion time (updated_at was empty); refusing it." >&2
+				continue
+			fi
 			observation="$(printf '%s' "$normalized" | jq -c --arg at "$reaper_completed_at" '. + {completed_at: $at}')"
+			# Re-validate WITH the injected field rather than trusting the addition. The composed
+			# object is the only shape anything downstream reads, so it is the shape that has to be
+			# checked. `validate` reads a path, so this goes through a temp file rather than a pipe.
+			composed="$reaper_tmp/${reaper_run_id}-${provider}-composed.json"
+			printf '%s' "$observation" >"$composed"
+			if ! node scripts/e2e/reaper-result.mjs validate --file "$composed" --allow-completed-at >/dev/null 2>&1; then
+				echo "::warning::programme-fetch: reaper artifact $artifact_id failed validation after completed_at was added; refusing it." >&2
+				continue
+			fi
 			fresh_reaper="$(printf '%s' "$fresh_reaper" | jq -c --argjson o "$observation" '. + [$o]')"
 			seen_reaper="$seen_reaper $provider"
 		done
