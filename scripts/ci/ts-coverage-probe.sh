@@ -138,25 +138,43 @@ probe_run() {
   done
 }
 
-# ── WHERE did the runs disagree? ──────────────────────────────────────────────────────────────────
+# ── WHERE did the runs disagree? ─────────────────────────────────────────────────────────────────
 #
-# explain_nondeterminism <expected-run-count> <rows-file...>
+# explain_nondeterminism <expected-run-count> <projects-csv> <rows-file...>
 #
 # Called only after assert_deterministic has already failed, and it answers the question that
 # failure raises and cannot: the directory rows say `apps/console/lib/billing 957 1753` in some runs
 # and `958 1753` in others, which is a place-shaped answer to a statement-shaped question.
 #
 # It reports the per-FILE rows that did not appear in every run. One flapping statement lives in one
-# file, so this is normally a single line — and that line is the whole investigation.
+# file, so this is normally a single line.
 #
-# It NEVER changes the verdict. A missing or unreadable `.files` companion prints a sentence saying
-# so, because a diagnostic that renders identically to "nothing to report" is the defect class this
-# script has already been bitten by twice.
+# IT NEVER CHANGES THE VERDICT, and it has three ways of not being able to answer, each with its own
+# sentence — because a diagnostic that renders identically to "nothing to report" is the defect
+# class this script has already been bitten by twice:
+#
+#   1. a run produced no companion at all;
+#   2. a companion could not be READ (`-s` tests existence and non-emptiness, not readability, so
+#      a mode-000 file or an I/O error is a separate case);
+#   3. a PROJECT is missing from some runs' companions while others still wrote rows.
+#
+# (3) is the subtle one and it is a false-FINDING rather than a silence. `--print --per-file` goes
+# through `measureOrFailOpen`, which FAILS OPEN on F2/F4/F6 — exit 0, zero rows, an annotation on
+# stderr — and `probe_run`'s `|| true` adds a second way to contribute nothing. The companion is
+# still non-empty because the other projects wrote to it, so every check above passes and each of
+# the vanished project's files is then reported as "flapping", sending the reader to hunt a clock
+# that does not exist. `assert_measured` does not catch it either: it only inspects run 1.
 explain_nondeterminism() {
-  local n="$1"; shift
+  local n="$1" projects_csv="$2"; shift 2
   local f present=0
   local -a files=()
   for f in "$@"; do
+    if [ -e "$f.files" ] && [ ! -r "$f.files" ]; then
+      echo
+      echo "  per-file breakdown UNREADABLE: $f.files exists but cannot be read. That is a problem"
+      echo "  with this runner, NOT a finding about the coverage numbers."
+      return 0
+    fi
     if [ -s "$f.files" ]; then files+=("$f.files"); present=$((present + 1)); fi
   done
   echo
@@ -166,9 +184,49 @@ explain_nondeterminism() {
     echo "  disagreement is confined to the directory totals above."
     return 0
   fi
+
+  # PER PROJECT, before per file. A project that contributed rows to some runs and not others makes
+  # every one of its files look like it flapped, and that reading is confidently wrong.
+  local p missing_projects="" have
+  local IFS_SAVE="$IFS"; IFS=','
+  # shellcheck disable=SC2086  # deliberate word split on the comma-separated project list
+  set -- $projects_csv
+  IFS="$IFS_SAVE"
+  for p in "$@"; do
+    have=0
+    for f in "${files[@]}"; do
+      if awk -v p="$p" '$1 == p { found = 1 } END { exit !found }' "$f"; then have=$((have + 1)); fi
+    done
+    if [ "$have" -ne "$n" ]; then
+      missing_projects="$missing_projects
+    $p — per-file rows in $have of $n run(s)"
+    fi
+  done
+  if [ -n "$missing_projects" ]; then
+    echo "  ── a PROJECT dropped out of the per-file capture ────────────────────────────────────"
+    echo "  These projects did not produce per-file rows in every run:$missing_projects"
+    echo
+    echo "  Every file in such a project would appear below as though it flapped, which is a"
+    echo "  confidently wrong reading — the cause is that the project measured nothing in some"
+    echo "  run(s) (\`--print --per-file\` FAILS OPEN: no coverage-final.json → exit 0, zero rows)."
+    echo "  Fix that first; the per-file list below is not trustworthy for these projects."
+    echo
+  fi
+
   echo "  ── which FILE flapped (rows absent from at least one of the $n runs) ──"
-  # Same shape as the directory report above, one resolution finer.
-  if cat "${files[@]}" | sort | uniq -c | awk -v n="$n" '$1 != n { print "  " $0; found = 1 } END { exit !found }'; then
+  # The aggregate is materialised FIRST so a read failure in `cat`/`sort` gets its own verdict.
+  # Branching on the pipeline's status directly would, under `set -o pipefail`, fold a failed `cat`
+  # or a `sort` that ran out of TMPDIR into the else branch below — reporting an I/O error as a
+  # defect in the coverage tooling, and (when awk had already printed rows) printing the rows AND
+  # "none — every per-file row appeared" directly underneath them.
+  local agg="${TMPDIR:-/tmp}/ts-probe-agg.$$"
+  if ! cat "${files[@]}" 2>/dev/null | sort >"$agg"; then
+    rm -f "$agg"
+    echo "  could not aggregate the per-file rows (read or sort failed) — this is a problem with"
+    echo "  this runner, NOT a finding about the coverage numbers."
+    return 0
+  fi
+  if uniq -c <"$agg" | awk -v n="$n" '$1 != n { print "  " $0; found = 1 } END { exit !found }'; then
     echo
     echo "  Each line is '<count> <project> <file> <covered> <total>'. A file appearing with two"
     echo "  different covered counts is the one to open: its statements are executed on some runs"
@@ -179,6 +237,7 @@ explain_nondeterminism() {
     echo "  That combination should be impossible (a directory is the sum of its files), so treat"
     echo "  it as a defect in the measurement rather than as a finding about the code."
   fi
+  rm -f "$agg"
 }
 
 # ── did the probe actually measure every project it claims to? ────────────────────────────────────
@@ -367,7 +426,7 @@ if [ "${1:-}" = "--self-test" ]; then
   cp "$r1.files" "$r2.files"
   printf 'a lib/billing/period.ts 11 20\na lib/billing/plan.ts 5 9\n' >"$r3.files"
 
-  got="$(explain_nondeterminism 3 "$r1" "$r2" "$r3" 2>&1)"
+  got="$(explain_nondeterminism 3 a "$r1" "$r2" "$r3" 2>&1)"
   if printf '%s' "$got" | grep -qF "lib/billing/period.ts"; then
     ok "the flapping file is NAMED"
   else bad "the flapping file was not named; got: $got"; fi
@@ -379,7 +438,7 @@ if [ "${1:-}" = "--self-test" ]; then
   #     a probe that silently prints an empty section over an unavailable breakdown is the exact
   #     failure `assert_measured` exists to prevent one level up.
   rm -f "$r3.files"
-  got="$(explain_nondeterminism 3 "$r1" "$r2" "$r3" 2>&1)"
+  got="$(explain_nondeterminism 3 a "$r1" "$r2" "$r3" 2>&1)"
   if printf '%s' "$got" | grep -qF "UNAVAILABLE"; then ok "a missing per-file companion SAYS so"
   else bad "a missing companion must say so; got: $got"; fi
   if printf '%s' "$got" | grep -qF "period.ts"; then
@@ -389,21 +448,57 @@ if [ "${1:-}" = "--self-test" ]; then
   # (i) An EMPTY companion counts as missing, not as agreement. `-s` rather than `-f` is what makes
   #     that true, and a `-f` here would pass every other case in this section.
   : >"$r3.files"
-  if explain_nondeterminism 3 "$r1" "$r2" "$r3" 2>&1 | grep -qF "UNAVAILABLE"; then
+  if explain_nondeterminism 3 a "$r1" "$r2" "$r3" 2>&1 | grep -qF "UNAVAILABLE"; then
     ok "an EMPTY per-file companion counts as unavailable"
   else bad "an empty companion must not be read as agreement"; fi
 
   # (j) The impossible combination — directories disagreed, every file agreed — is reported as a
   #     measurement defect rather than as a clean bill of health.
   cp "$r1.files" "$r3.files"
-  got="$(explain_nondeterminism 3 "$r1" "$r2" "$r3" 2>&1)"
+  got="$(explain_nondeterminism 3 a "$r1" "$r2" "$r3" 2>&1)"
   if printf '%s' "$got" | grep -qF "should be impossible"; then
     ok "files agreeing while a directory disagreed is flagged, not passed over"
   else bad "the impossible combination must be flagged; got: $got"; fi
 
-  # (k) probe_run must WRITE the companion, or every branch above is unreachable in the real job.
-  #     Asserted separately from the run-loop case below because that one stubs TSCOV to a single
-  #     shape and would not notice a second invocation going missing.
+  # (g2) A PROJECT that dropped out of the capture must be named as ITSELF, not as N flapping
+  #      files. `--print --per-file` fails open, so this is the shape the reader is most likely to
+  #      be handed — and the confidently-wrong reading it produces sends them hunting a clock.
+  printf 'a lib/billing 957 1753\nb lib 1 2\n' >"$r1"; cp "$r1" "$r2"
+  printf 'a lib/billing 958 1753\nb lib 1 2\n' >"$r3"
+  printf 'a x.ts 1 2\nb y.ts 3 4\nb z.ts 5 6\n' >"$r1.files"; cp "$r1.files" "$r2.files"
+  printf 'a x.ts 1 2\n' >"$r3.files"          # project b vanished from run 3
+  got="$(explain_nondeterminism 3 a,b "$r1" "$r2" "$r3" 2>&1)"
+  if printf '%s' "$got" | grep -qF "a PROJECT dropped out"; then
+    ok "a project missing from some runs is named as a PROJECT"
+  else bad "a vanished project must be named; got: $got"; fi
+  if printf '%s' "$got" | grep -qF "b — per-file rows in 2 of 3 run(s)"; then
+    ok "…with which runs carried it"
+  else bad "must say how many runs carried it; got: $got"; fi
+  if printf '%s' "$got" | grep -qF "not trustworthy"; then
+    ok "…and that the file list below cannot be trusted for it"
+  else bad "must warn that the file list is unreliable; got: $got"; fi
+  # A project present in EVERY run must not be accused.
+  printf 'a x.ts 1 2\nb y.ts 3 4\nb z.ts 5 6\n' >"$r3.files"
+  if explain_nondeterminism 3 a,b "$r1" "$r2" "$r3" 2>&1 | grep -qF "a PROJECT dropped out"; then
+    bad "a project present in every run must NOT be reported as dropped"
+  else ok "a project present in every run is not accused"; fi
+
+  # (g3) An UNREADABLE companion is its own sentence. `-s` tests existence and non-emptiness, not
+  #      readability, so this branch is not covered by the UNAVAILABLE case above.
+  chmod 000 "$r3.files" 2>/dev/null || true
+  if [ -r "$r3.files" ]; then
+    ok "skipped: unreadable-companion case (running as root, chmod has no effect)"
+  else
+    got="$(explain_nondeterminism 3 a,b "$r1" "$r2" "$r3" 2>&1)"
+    if printf '%s' "$got" | grep -qF "UNREADABLE"; then
+      ok "an unreadable companion gets its OWN sentence, not the impossible-combination verdict"
+    else bad "an unreadable companion must say so; got: $got"; fi
+    if printf '%s' "$got" | grep -qF "should be impossible"; then
+      bad "a read failure must NOT be reported as a defect in the coverage tooling"
+    else ok "…and is not reported as a measurement defect"; fi
+  fi
+  chmod 644 "$r3.files" 2>/dev/null || true
+
 
   echo
   echo " the run loop"
@@ -479,7 +574,9 @@ assert_measured "run.1.txt" "${PROJECTS[@]}"
 # `set -e` would take the failure straight to the exit without it. The non-zero status is preserved
 # and re-raised, so the job still fails.
 if ! assert_deterministic "$RUNS" "${RUN_FILES[@]}"; then
-  explain_nondeterminism "$RUNS" "${RUN_FILES[@]}"
+  # The project list is passed as CSV so it stays ONE argument and cannot be confused with the run
+  # files that follow it.
+  explain_nondeterminism "$RUNS" "$(IFS=,; echo "${PROJECTS[*]}")" "${RUN_FILES[@]}"
   exit 1
 fi
 
