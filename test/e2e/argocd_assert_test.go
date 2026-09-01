@@ -1765,13 +1765,18 @@ func TestSyncedUnhealthyLosers(t *testing.T) {
 		"addon-falco": {Health: "Degraded", Sync: "Synced"},
 		// OutOfSync — the diff section owns this one, whatever its health.
 		"addon-loki": {Health: "Degraded", Sync: "OutOfSync"},
+		// Sync UNKNOWN. parseArgoApps normalises an empty status.sync.status to "Unknown", which is
+		// what an Application whose compares have ALL aborted reports — the same #3580 failure one
+		// reconcile EARLIER. `== "Synced"` excluded it, and dumpArgoAppDiffs declines it too, so it
+		// produced BOTH silences at once. It belongs here.
+		"addon-tempo": {Health: "Progressing", Sync: "Unknown"},
 		// Healthy losers are not losers; if one arrives, it is not this section's business.
 		"addon-reloader": {Health: "Healthy", Sync: "Synced"},
 	}
-	losers := []string{"addon-loki", "external-secrets-operator", "addon-falco", "addon-reloader"}
+	losers := []string{"addon-loki", "external-secrets-operator", "addon-falco", "addon-reloader", "addon-tempo"}
 
 	got := syncedUnhealthyLosers(observed, losers)
-	want := []string{"addon-falco", "external-secrets-operator"}
+	want := []string{"addon-falco", "addon-tempo", "external-secrets-operator"}
 	if len(got) != len(want) {
 		t.Fatalf("syncedUnhealthyLosers = %v, want %v", got, want)
 	}
@@ -1883,5 +1888,67 @@ func TestArgoHealthStalenessOnTheRunThatFailed(t *testing.T) {
 	}
 	if !strings.Contains(got, "Running-and-ready") {
 		t.Errorf("must name the evidence that actually settled it on this run; got %q", got)
+	}
+}
+
+// A read that did not happen must not be reported as a field the Application does not have.
+//
+// `readArgoReconciledAt` returns "" for a non-zero kubectl exit, an apiserver refusal AND this
+// section's share of the pooled dump budget expiring — and the last is the common one. Rendering
+// any of them as "there is no status.reconciledAt" states something about the cluster that was
+// never read: on a slow cluster six Applications in a row would be reported as never reconciled,
+// which is a much bigger and entirely fictional finding than the one being investigated.
+func TestReadArgoReconciledAtSeparatesAFailedReadFromAnEmptyField(t *testing.T) {
+	t.Run("a cancelled context is reported as the dump's budget, not as the Application", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		ts, reason := readArgoReconciledAtOrFail(ctx, "/nonexistent/kubeconfig", "external-secrets-operator")
+		if ts != "" {
+			t.Errorf("a cancelled read must yield no timestamp, got %q", ts)
+		}
+		if reason == "" {
+			t.Fatal("a failed read must carry a REASON — an empty one is what makes it look like an absent field")
+		}
+		if !strings.Contains(reason, "budget") {
+			t.Errorf("a cancelled context must be attributed to the dump's budget, got %q", reason)
+		}
+	})
+
+	t.Run("the collapsing wrapper still returns just the value", func(t *testing.T) {
+		// readArgoReconciledAt keeps its old shape for the SYNC path, where "" renders as
+		// "cannot say" — a hedge, not a claim — so that caller is unaffected.
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if got := readArgoReconciledAt(ctx, "/nonexistent/kubeconfig", "a"); got != "" {
+			t.Errorf("readArgoReconciledAt = %q, want the empty string it has always returned", got)
+		}
+	})
+}
+
+// …and the CALLER must actually use that separation. The helper returning a reason is worth
+// nothing if dumpArgoHealthStaleness still renders it as an absent field, and a test of the helper
+// alone cannot see that: mutating the caller's `if readErr != ""` to `if false` left the helper's
+// own test green.
+func TestDumpArgoHealthStalenessNeverBlamesTheApplicationForAFailedRead(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	observed := map[string]argoAppState{
+		"external-secrets-operator": {Health: "Progressing", Sync: "Synced"},
+	}
+	got := dumpArgoHealthStaleness(ctx, "/nonexistent/kubeconfig", observed, []string{"external-secrets-operator"})
+
+	if !strings.Contains(got, "could NOT BE READ") {
+		t.Errorf("a read that did not happen must say so; got:\n%s", got)
+	}
+	// The claim this must never make: it did not read the field, so it cannot say the field is absent.
+	if strings.Contains(got, "there is no status.reconciledAt") {
+		t.Errorf("a failed read must not be reported as an absent field; got:\n%s", got)
+	}
+	// …and it must not state an age it never measured.
+	if strings.Contains(got, " ago") {
+		t.Errorf("no age may be printed for a read that failed; got:\n%s", got)
+	}
+	if !strings.Contains(got, "external-secrets-operator") {
+		t.Errorf("the app must still be named; got:\n%s", got)
 	}
 }

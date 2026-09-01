@@ -25,7 +25,7 @@
 //     tiny marketplace add-on (seedAddOns in controlplane.go) so the set is never
 //     empty on the lean kind/hetzner paths, where every infra-service decision that
 //     maps to an Application is honestly "skipped".
-//   - The poll is BOUNDED (ALETHIA_E2E_ARGO_TIMEOUT, default 8m) and a timeout fails
+//   - The poll is BOUNDED (ALETHIA_E2E_ARGO_TIMEOUT, else DERIVED from the surface — see argoBudgetFor) and a timeout fails
 //     with every expected app's health/sync/conditions plus a `kubectl describe` of
 //     the losers, so a red merge-queue run or nightly is diagnosable from logs alone.
 package e2e
@@ -699,31 +699,47 @@ func ArgoAssertTimeout() time.Duration {
 // argoAddOnCount is how many add-on charts this run expects ArgoCD to converge.
 func argoAddOnCount() int {
 	if !AllAddOnsEnabled() {
-		// NOT ZERO. The old answer here was "the base + floor already cover it", and argoBudgetBase
-		// says in its own docstring what it covers: "ArgoCD itself: repo-server clone, the first
-		// reconcile loop, and the app-of-apps landing BEFORE ANY ADD-ON CHART IS PULLED". The lean
-		// tier pulls one anyway — alwaysRenderedArgoApps is rendered on every cloud and every
-		// dimension, with no gate — so the floor was buying the base's worth of time for the base's
-		// work PLUS a real upstream chart, and calling the difference nothing.
+		// NOT ZERO. The old answer was "the base + floor already cover it", and argoBudgetBase says
+		// in its own docstring what it covers: "ArgoCD itself: repo-server clone, the first
+		// reconcile loop, and the app-of-apps landing BEFORE ANY ADD-ON CHART IS PULLED". A lean run
+		// pulls several, so the floor was buying the base's worth of time for the base's work PLUS
+		// real upstream charts, and calling the difference nothing.
 		//
-		// MEASURED, on the gcp floor leg of nightly run 33487970328 (#3580). The 8m window opened
-		// at 09:06:05Z and the assertion read the Application at 09:14:05Z with
-		// `health=Progressing sync=Synced` — while every external-secrets pod was already Running,
-		// ready, zero restarts. ArgoCD recomputes `status.health` only on a successful compare, and
-		// its last two compares had aborted (`failed to get repo objects`; one manifest render took
-		// 34s on gcp's shared-core e2-small floor). So the health was ~2m stale, and the run lost
-		// its verdict to a value that was already out of date when it was read. The next reconcile
-		// falls inside ArgoCD's 120-180s band, i.e. by ~09:15:07Z at worst — INSIDE the 09:15:35Z
-		// deadline that one chart's allowance buys, and outside the 09:14:05Z one that zero buys.
+		// THE THREE, each DERIVED from the list that decides it rather than counted by hand:
+		//   · alwaysRenderedArgoApps — external-secrets-operator, ungated on every cloud and every
+		//     dimension. A real chart with three CRDs and a cert-bootstrap.
+		//   · leanSeedAddOnIDs — reloader, which seedAddOns() puts in EVERY tier's config snapshot,
+		//     so DeriveExpectedArgoApps picks it up and AssertArgoAppsHealthy waits for it.
+		//   · metrics-server, which renders on the metricsServerProviders clouds (aws, hetzner).
 		//
-		// DERIVED from alwaysRenderedArgoApps rather than typed as 1, so a template that becomes
-		// unconditional is paid for by the same edit that adds it to that list.
-		return len(alwaysRenderedArgoApps)
+		// The last is counted UNCONDITIONALLY even though gcp/azure/alibaba do not render it, because
+		// this function has no provider and over-buying is the safe direction: the poll returns the
+		// moment everything is green, so a budget larger than the surface needs costs time only on an
+		// already-broken cluster, while one smaller costs a real run its verdict. That asymmetry is
+		// ArgoAssertTimeout's own stated reasoning, applied here rather than restated.
+		//
+		// WHAT 3 BUYS, and why it is checked against BOTH quantities #3580 turned on. 8m + 3×90s =
+		// 12m30s. On the failing gcp floor leg of run 33487970328 the window opened at 09:06:05Z, so
+		// the deadline moves 09:14:05Z → 09:18:35Z. ArgoCD refreshes health only on a compare that
+		// SUCCEEDS, and its cadence is a 120-180s band, so the worst-case next reconcile starts at
+		// 09:15:07Z; add the 34s manifest render measured on that node and the refresh lands ~09:15:41Z
+		// — inside the new deadline with ~3m to spare, where the old 8m missed it by 96s and even
+		// 8m+90s would have missed the worst case by 6s. The per-chart rate has to cover a full
+		// reconcile band plus a compare, not just the chart pulls, and at three charts it does.
+		return len(alwaysRenderedArgoApps) + len(leanSeedAddOnIDs) + 1
 	}
 	addons, err := AllCatalogAddOns()
 	if err != nil {
 		return expectedCatalogSize
 	}
+	// DELIBERATELY the catalog alone, and NOT `+ len(alwaysRenderedArgoApps) + 1` as the lean branch
+	// above. A full run converges those platform apps too, so this under-counts by the same three —
+	// but 8m + 18×90s = 35m is a MEASURED convergence (run 33107415369, dispatched with
+	// ALETHIA_E2E_ARGO_TIMEOUT=35m purely to tell "slow" from "never converges"), and
+	// TestArgoBudgetFullSurfaceIsTheMeasuredConvergence pins it. Correcting the arithmetic here
+	// would replace a number that was observed with one that was inferred, on the dimension where
+	// the observation cost a paid run. The 40m ceiling absorbs the difference; if a future measured
+	// run says 35m is short, THAT is what moves this.
 	return len(addons)
 }
 
@@ -1383,7 +1399,7 @@ func argoDeadlineDump(
 ) string {
 	// ONE budget for the whole dump, and a SHARE of it for each section.
 	//
-	// Nine sections, each with its own per-call timeout and its own per-app cap, and the caps
+	// EVERY section carries its own per-call timeout and its own per-app cap, and the caps
 	// MULTIPLY: describeArgoApps alone is twenty losers × 30s, and dumpArgoAppDiff's per-app
 	// timeout is 300s — longer than the whole ceiling. Every section was sized as though it were
 	// the only one, which is how a chain of individually reasonable timeouts overruns.
@@ -1393,6 +1409,11 @@ func argoDeadlineDump(
 	// #2834 added the shared dump for — would be starved by the very cap meant to protect the run.
 	// So each section takes an equal share of what is left at the moment it starts, and a section
 	// that finishes early returns its remainder to the ones after it.
+	//
+	// The count is deliberately NOT written here. It said "Nine" while the slice held eight, and
+	// adding one made the sentence accidentally true — a hand-maintained number in a comment beside
+	// the list it counts is wrong the first time anybody edits the list. The share arithmetic below
+	// derives from `len(sections)`, so nothing depends on a reader keeping the prose in step.
 	sections := []dumpSection{
 		// FIRST, because it is the only one that speaks for a loser whose resources were never
 		// created, and because it is one small `kubectl get` rather than a chart render. See
@@ -1723,7 +1744,17 @@ func argoHealthOrUnknown(health string) string {
 func syncedUnhealthyLosers(observed map[string]argoAppState, losers []string) []string {
 	var out []string
 	for _, name := range losers {
-		if st, ok := observed[name]; ok && st.Sync == "Synced" && st.Health != "Healthy" {
+		// `!= "OutOfSync"`, NOT `== "Synced"`. parseArgoApps normalises an empty
+		// status.sync.status to "Unknown", which is what an Application whose compares have ALL
+		// aborted reports — the `failed to get repo objects` state this section exists for, one
+		// reconcile EARLIER than the case it was written from. `== "Synced"` excluded it, and
+		// dumpArgoAppDiffs declines it too (it requires OutOfSync), so that variant produced BOTH
+		// "no loser is Synced-but-unhealthy" and "no loser is OutOfSync" — the exact double silence
+		// this section was added to end.
+		//
+		// The complement of OutOfSync is also what the docstring above actually claims: the losers
+		// no other section speaks for.
+		if st, ok := observed[name]; ok && st.Sync != "OutOfSync" && st.Health != "Healthy" {
 			out = append(out, name)
 		}
 	}
@@ -1800,15 +1831,32 @@ func dumpArgoHealthStaleness(ctx context.Context, kubeconfigPath string, observe
 	const maxHealthChecked = 8
 
 	var b strings.Builder
-	b.WriteString("\n──── is the HEALTH current? (Synced losers, whose health ArgoCD refreshes only on a successful compare) ────\n")
-	now := time.Now()
+	b.WriteString("\n──── is the HEALTH current? (losers no other section speaks for — ArgoCD refreshes health only on a successful compare) ────\n")
 	for i, name := range candidates {
 		if i >= maxHealthChecked {
 			fmt.Fprintf(&b, "  … %d more Synced-but-unhealthy Application(s) not checked\n", len(candidates)-i)
 			break
 		}
-		b.WriteString(argoHealthStaleness(name, observed[name].Health,
-			readArgoReconciledAt(ctx, kubeconfigPath, name), now) + "\n")
+		// THE CLOCK IS READ PER APP, AFTER the kubectl call returns — not once before the loop.
+		// Each readArgoReconciledAt is a 30s-bounded call, and this section runs on a cluster whose
+		// apiserver is by hypothesis slow, so a single `now` taken up front is stale by the sum of
+		// every read before it: with three 25s reads the third app's age is understated by 50s.
+		// This is the one section whose entire subject is elapsed time, and the bias runs toward
+		// UNDER-reporting staleness — the direction that loses the finding. argoSyncStaleness's
+		// existing caller passes time.Now() per app for the same reason.
+		ts, readErr := readArgoReconciledAtOrFail(ctx, kubeconfigPath, name)
+		if readErr != "" {
+			// SAID as a failure of the probe, never attributed to the Application. "" is what a
+			// non-zero kubectl exit, an apiserver refusal AND this section's share of the pooled
+			// dump budget expiring all look like, and rendering those as "there is no
+			// status.reconciledAt" states something about the cluster that was never read — a
+			// reader takes it to mean ArgoCD never reconciled these Applications. Same rule
+			// dumpUnhealthyPods states four hundred lines up.
+			fmt.Fprintf(&b, "      %s: health=%s, and status.reconciledAt could NOT BE READ (%s) — this says nothing about the Application\n",
+				name, argoHealthOrUnknown(observed[name].Health), readErr)
+			continue
+		}
+		b.WriteString(argoHealthStaleness(name, observed[name].Health, ts, time.Now()) + "\n")
 	}
 	return b.String()
 }
@@ -1828,16 +1876,49 @@ const argoReconcileInterval = 3 * time.Minute
 // readArgoReconciledAt reads an Application's last reconcile timestamp. Best-effort: this runs on an
 // already-failing path and an empty string is handled by argoSyncStaleness as "cannot say".
 func readArgoReconciledAt(ctx context.Context, kubeconfigPath, app string) string {
-	// Same read, same reason: the value is parsed as a timestamp by argoSyncStaleness, and a
-	// `Warning:` line glued to the front makes a perfectly good reconciledAt unparseable — which
-	// this function reports as "cannot say" rather than as the read problem it is.
+	ts, _ := readArgoReconciledAtOrFail(ctx, kubeconfigPath, app)
+	return ts
+}
+
+// readArgoReconciledAtOrFail is the same read, keeping the two outcomes APART: it returns the
+// timestamp and a non-empty failure reason when the read itself did not happen.
+//
+// readArgoReconciledAt collapses them to "", which is fine on the sync path — argoSyncStaleness
+// renders "" as "cannot say", a hedge, not a claim. It is NOT fine on the health path, where the
+// same "" was rendered as "there is no status.reconciledAt": an affirmative statement about the
+// Application, made after a read that never returned. THREE things produce that "" — a non-zero
+// kubectl exit, an apiserver refusal, and this section's share of the pooled dump budget expiring —
+// and the last is the common one, so on a slow cluster six Applications in a row would be reported
+// as never reconciled. A wrong finding is worse than a missing one.
+//
+// Same read, same reason as the comment below: the value is parsed as a timestamp, and a `Warning:`
+// line glued to the front makes a perfectly good reconciledAt unparseable — which the callers
+// report as "cannot say" rather than as the read problem it is.
+func readArgoReconciledAtOrFail(ctx context.Context, kubeconfigPath, app string) (string, string) {
 	out, err := kubectlRead(ctx, 30*time.Second, kubeconfigPath,
 		"-n", "argocd", "get", "applications.argoproj.io", app,
 		"-o", "jsonpath={.status.reconciledAt}")
 	if err != nil {
-		return ""
+		// The context's own error when it is the reason, because "the dump ran out of budget" and
+		// "the apiserver refused this read" send a reader to entirely different places.
+		if cerr := ctx.Err(); cerr != nil {
+			return "", fmt.Sprintf("the dump's budget ran out: %v", cerr)
+		}
+		return "", trimArgoPreflightReasonLike(err.Error())
 	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(out)), ""
+}
+
+// trimArgoPreflightReasonLike bounds a diagnostic to one line so a kubectl error cannot turn one
+// row of this section into a page. (argocd's own trimArgoPreflightReason lives in packages/core and
+// is not importable from the test package.)
+func trimArgoPreflightReasonLike(s string) string {
+	const max = 200
+	one := strings.Join(strings.Fields(s), " ")
+	if len(one) > max {
+		return one[:max] + "…"
+	}
+	return one
 }
 
 // maxArgoDiffBytes caps one Application's diff. A CRD's openAPIV3Schema is enormous, and the useful

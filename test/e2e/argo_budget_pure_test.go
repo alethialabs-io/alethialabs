@@ -378,36 +378,56 @@ func TestArgoAddOnCountMatchesTheCatalogWhenFullSurfaceIsOn(t *testing.T) {
 // It is pinned to len(alwaysRenderedArgoApps) rather than to 1 so that a template which becomes
 // unconditional is paid for by the edit that makes it so, instead of silently re-opening the gap.
 func TestArgoAddOnCountCoversWhatTheLeanTierAlwaysPulls(t *testing.T) {
-	t.Setenv("ALETHIA_E2E_ALL_ADDONS", "")
-	want := len(alwaysRenderedArgoApps)
+	for _, v := range argoCapProbeEnv() {
+		t.Setenv(v, "")
+	}
+	want := len(alwaysRenderedArgoApps) + len(leanSeedAddOnIDs) + 1
 	if want == 0 {
 		t.Fatal("alwaysRenderedArgoApps is empty — this test would assert the zero it exists to disprove")
 	}
 	if got := argoAddOnCount(); got != want {
-		t.Errorf("argoAddOnCount() = %d on the lean tier, want %d (len(alwaysRenderedArgoApps))", got, want)
+		t.Errorf("argoAddOnCount() = %d on the lean tier, want %d "+
+			"(len(alwaysRenderedArgoApps) + len(leanSeedAddOnIDs) + metrics-server)", got, want)
 	}
 }
 
 // The lean tier's budget must be strictly LONGER than the base, or the fix above is arithmetic that
 // changes nothing. Asserts the DERIVED value a lean run actually gets, not argoBudgetFor(0) — the
 // distinction is the whole defect: the old test pinned an input nothing passed any more.
-func TestLeanTierBudgetBuysTheChartItPulls(t *testing.T) {
-	t.Setenv("ALETHIA_E2E_ALL_ADDONS", "")
+//
+// HERMETIC. It clears every switch in argoCapProbeEnv(), not just ALETHIA_E2E_ALL_ADDONS.
+// ArgoAssertTimeout() reads ALETHIA_E2E_ARGO_TIMEOUT FIRST and returns it verbatim, so with that
+// exported in the shell — the workflow documents it as a debugging knob — this asserted the
+// override rather than the derivation, and `=35m` would have made every check below pass while
+// argoAddOnCount() returned 0. TestT2HetznerPathUnchanged already gets this right via clearT2Env.
+func TestLeanTierBudgetBuysTheChartsItPulls(t *testing.T) {
+	for _, v := range argoCapProbeEnv() {
+		t.Setenv(v, "")
+	}
+	charts := len(alwaysRenderedArgoApps) + len(leanSeedAddOnIDs) + 1
 	got := ArgoAssertTimeout()
-	want := argoBudgetBase + time.Duration(len(alwaysRenderedArgoApps))*argoBudgetPerAddOn
+	want := argoBudgetBase + time.Duration(charts)*argoBudgetPerAddOn
 	if got != want {
-		t.Errorf("lean budget = %s, want %s (base + %d always-rendered chart(s))",
-			got, want, len(alwaysRenderedArgoApps))
+		t.Errorf("lean budget = %s, want %s (base + %d chart(s) the lean tier converges)", got, want, charts)
 	}
 	if got <= argoBudgetBase {
-		t.Errorf("lean budget = %s, still <= argoBudgetBase %s — the always-rendered chart is being given nothing",
+		t.Errorf("lean budget = %s, still <= argoBudgetBase %s — the charts a lean run pulls are being given nothing",
 			got, argoBudgetBase)
 	}
-	// The measured bound this value exists to clear: on run 33487970328 the 8m deadline fell at
-	// 09:14:05Z, 1m58s before ArgoCD's next reconcile could have refreshed a health that was
-	// already stale. Anything at or below 8m re-opens that.
-	if got < 9*time.Minute+30*time.Second {
-		t.Errorf("lean budget = %s, below the 9m30s that would have cleared run 33487970328", got)
+
+	// THE MEASURED BOUND, and it is the WORST case rather than the best. On the failing gcp floor
+	// leg of run 33487970328 the 8m window opened at 09:06:05Z. ArgoCD refreshes health only on a
+	// compare that SUCCEEDS, its cadence is a 120-180s band, and the last good compare was
+	// 09:12:07Z — so the next one starts no later than 09:15:07Z, and the 34s manifest render
+	// measured on that node puts the refresh at ~09:15:41Z. The budget must reach that.
+	//
+	// 9m30s (one chart's allowance) would NOT: it expires 09:15:35Z, six seconds early. That is
+	// exactly the arithmetic slip this bound exists to pin — the earlier version of this test cited
+	// 1m58s, which is how OLD the health was, not the gap to the next reconcile.
+	const worstCaseRefresh = 9*time.Minute + 36*time.Second // 09:06:05Z → 09:15:41Z
+	if got <= worstCaseRefresh {
+		t.Errorf("lean budget = %s, does not reach the WORST-case health refresh of run 33487970328 (%s after the window opens)",
+			got, worstCaseRefresh)
 	}
 }
 
