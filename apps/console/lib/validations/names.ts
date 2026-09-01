@@ -106,19 +106,47 @@ export const environmentNameSchema = z
 	})
 	.transform(normalizeEnvironmentName);
 
-/** The prefix `argocd.AddOnAppName` puts in front of an add-on id to form the ArgoCD Application
- *  name. It is part of the LENGTH BUDGET, which is why it lives beside the cap rather than only
- *  in the Go renderer. */
+/** The prefix `argocd.AddOnAppName` puts in front of an add-on id. It is part of the LENGTH
+ *  BUDGET below, which is why it lives beside the cap rather than only in the Go renderer. */
 export const ADDON_APP_NAME_PREFIX = "addon-";
 
-/** The cap for an add-on / BYO-chart id. `AddOnAppName` renders `addon-<id>` as an ArgoCD
- *  Application name, and ArgoCD names are DNS-1123 labels — so the id's budget is the label limit
- *  minus the prefix. `chartSlug` previously had NO cap, which is how a long chart display name
- *  produced an Application name Kubernetes refuses. */
+/**
+ * The cap for a NEWLY DERIVED add-on / BYO-chart id.
+ *
+ * Not because an over-long Application name is impossible — an ArgoCD `Application` is a CRD
+ * instance, so Kubernetes validates its name as a DNS-1123 SUBDOMAIN (≤253), and `addon-<70>`
+ * applies today. The 63 is a LABEL VALUE limit: ArgoCD names the Helm release after the
+ * Application and the chart carries that name in `app.kubernetes.io/instance`, which is the label
+ * `packages/core/argocd/data_endpoints.go` matches on to find a data service's Service. An id past
+ * this budget makes that label invalid, and the console then shows no endpoint for a chart that
+ * deployed fine.
+ *
+ * It applies to a name being slugified, never to an id that already exists — see `chartSlug`.
+ */
 export const ADDON_ID_MAX_LENGTH = DNS1123_LABEL_MAX_LENGTH - ADDON_APP_NAME_PREFIX.length;
 
-/** A BYO chart's `addon_id`, derived from its display name. Bounded so `addon-<id>` still fits a
- *  DNS-1123 label; `"chart"` when the display name slugs away entirely. */
+/** An id that some earlier version of `chartSlug` already produced and `project_addons.addon_id`
+ *  already stores: lowercase alphanumerics and `-`, alphanumeric at both ends, ANY length, and
+ *  internal runs of `-` intact (the pre-#3665 rule kept `-` inside its charset and trimmed only
+ *  the ends). */
+const STORED_ADDON_ID = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+/**
+ * A BYO chart's `addon_id`.
+ *
+ * THE IDENTITY ON AN ID THAT ALREADY IS ONE, and only then a slugifier. That is not a shortcut:
+ * `attachByoChart`, `detachByoChart` and `scanByoChart` all call this on the STORED id the canvas
+ * hands back, so it is a lookup-key canonicaliser as much as a derivation. The pre-#3665 version
+ * was accidentally idempotent (it kept `-` and had no cap), so `my---chart` and a 70-character id
+ * are both in `project_addons` today; putting them through the collapsing, capped slugifier would
+ * return a key that matches no row — a detach that reports success and leaves the chart deploying,
+ * and a re-attach that writes a SECOND row and a second ArgoCD Application.
+ *
+ * A display name is slugified as normal, so a new chart still gets `my-chart` rather than
+ * `my---chart`. `"chart"` when the name slugs away entirely.
+ */
 export function chartSlug(raw: string): string {
-	return slugifyOrEmpty(raw, ADDON_ID_MAX_LENGTH) || "chart";
+	const trimmed = raw.trim();
+	if (STORED_ADDON_ID.test(trimmed)) return trimmed;
+	return slugifyOrEmpty(trimmed, ADDON_ID_MAX_LENGTH) || "chart";
 }

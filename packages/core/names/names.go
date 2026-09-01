@@ -104,6 +104,34 @@ func Slugify(raw, fallback string, maxLength int) string {
 	panic("names.Slugify: fallback " + strconv.Quote(fallback) + " slugs to nothing; pass a fallback containing at least one letter or digit")
 }
 
+// legacyUnsafe is the charset filter that named the ArgoCD objects already applied in every
+// customer cluster. It KEEPS existing hyphens (they are inside the allowed class) and therefore
+// does not collapse runs, and it turns an apostrophe into a dash.
+var legacyUnsafe = regexp.MustCompile(`[^a-z0-9-]+`)
+
+// LegacyObjectSegment is FROZEN. It is the pre-#3665 derivation that named the ArgoCD AppProjects
+// and Applications that are already applied — `argocd.ByoProjectName` and
+// `argocd.namespaceTenantName` both fed a free-text project display name through it.
+//
+// It is deliberately NOT Slugify, and the difference is not cosmetic:
+//
+//	"Acme - Prod"    -> "acme---prod"   (Slugify: "acme-prod")
+//	"Bob's Project"  -> "bob-s-project" (Slugify: "bobs-project")
+//	"Foo--Bar"       -> "foo--bar"      (Slugify: "foo-bar")
+//	"café"           -> "caf"           (Slugify: "cafe")
+//
+// Moving these two namers onto Slugify would give the console and the runner one answer, which is
+// what #3665 is for — and it would also rename a live AppProject and Application on the next
+// deploy, orphaning the existing pair, for every project whose display name contains an
+// apostrophe, a spaced hyphen or a doubled hyphen. That is a MIGRATION, not a rename, so the rule
+// lives here, once, under a name that says what it is, instead of as two copies of a regex.
+//
+// It has one definition rather than two so the census in gen-go-names.ts stays meaningful and the
+// next reader finds the reason attached to the code rather than in a commit message.
+func LegacyObjectSegment(s string) string {
+	return strings.Trim(legacyUnsafe.ReplaceAllString(strings.ToLower(strings.TrimSpace(s)), "-"), "-")
+}
+
 // Bounded caps an already-slug-shaped name at SlugMaxLength, re-trimming a trailing dash the cut
 // exposes. For names ASSEMBLED from parts — `addon-<id>`, `tenant-<project>-<namespace>` — where
 // each part is within budget but the join is not.

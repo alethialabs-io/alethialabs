@@ -42,7 +42,6 @@ import {
 	ENVIRONMENT_NAME_INPUT_MAX_LENGTH,
 	ENVIRONMENT_NAME_MAX_LENGTH,
 	RESERVED_ENVIRONMENT_NAMES,
-	chartSlug,
 	environmentNameProblem,
 	namespaceProblem,
 	normalizeEnvironmentName,
@@ -148,14 +147,11 @@ const ENVIRONMENT_NAME_CASES: { id: string; in: string }[] = [
 	{ id: "long-but-readable-truncates", in: "staging environment for the european region" },
 ];
 
-/** Chart-id inputs — the cap that was missing entirely. */
-const CHART_SLUG_CASES: { id: string; in: string }[] = [
-	{ id: "plain", in: "My Chart" },
-	{ id: "empty-takes-the-fallback", in: "" },
-	{ id: "punctuation-takes-the-fallback", in: "***" },
-	{ id: "accented", in: "Café Chart" },
-	{ id: "long-name-fits-the-application-name", in: "a".repeat(120) },
-];
+// `chartSlug` is NOT in this table. It is a TypeScript-only rule — Go has no caller that derives an
+// add-on id — and it is a lookup-key canonicaliser rather than a pure derivation, so a Go mirror
+// would be dead code holding an unused implementation to a contract. Its expectations live in
+// apps/console/tests/validations/names.test.ts, hand-written, including the identity property that
+// keeps `project_addons.addon_id` resolvable.
 
 /** One row of the table: a semantic id plus whatever inputs and expectations its algorithm has. */
 type Row = { id: string } & Record<string, unknown>;
@@ -184,7 +180,6 @@ function build(): Table {
 			wantNormalized: normalizeEnvironmentName(c.in),
 			wantProblem: environmentNameProblem(c.in) ?? "",
 		})),
-		chartSlug: CHART_SLUG_CASES.map((c) => ({ id: c.id, in: c.in, want: chartSlug(c.in) })),
 	};
 }
 
@@ -240,6 +235,10 @@ const CENSUS_EXCEPTIONS: Record<string, string> = {
 		"Asserts a generated PASSWORD contains an upper, a lower and a digit. Not a name at all — " +
 		"the rune-range pattern cannot tell the two apart, which is the price of seeing the " +
 		"switch-based slugifiers.",
+	"apps/console/lib/cloud-providers/gcp-wif.ts":
+		"GCP_PROJECT_ID_REGEX is GOOGLE's grammar for a project id (6-30 characters, leading " +
+		"letter), not ours to unify — a name we accept and GCP refuses fails at their API, which " +
+		"is the whole reason it is checked here.",
 	"packages/core/argocd/manifest_addons.go":
 		"crdNameRe is a DNS-1123 SUBDOMAIN (dot-separated labels), which is a different grammar from " +
 		"a label — the file's own comment says reusing the label rule would refuse every real CRD.",
@@ -252,7 +251,14 @@ const CENSUS_EXCEPTIONS: Record<string, string> = {
 const CENSUS_PATTERNS: { id: string; re: RegExp }[] = [
 	{ id: "non-alphanumeric-run", re: /\[\^a-z0-9/ },
 	{ id: "dns1123-label-grammar", re: /\[a-z0-9\]\(\[-?a-z0-9-?\]\*\[a-z0-9\]\)\?/ },
-	{ id: "loose-namespace-grammar", re: /\^\[a-z\]\[a-z0-9-\]\*/ },
+	// A leading-LETTER name grammar — the rule #3665 removes, in any of its three spellings.
+	// Deliberately NOT anchored on the quantifier: the first version of this pattern ended in a
+	// literal star, so it saw the unbounded spelling and missed the COUNTED one that
+	// lib/queries/projects.ts used — the file that then 500'd on a name the schema had just
+	// accepted. The second alternative catches the grouped spelling. This prose deliberately
+	// writes none of the three out: a guard that matches its own description needs an exception,
+	// and an exception on the guard file is a place real hits can hide.
+	{ id: "leading-letter-name-grammar", re: /\^\[a-z\](\[a-z0-9-\]|\()/ },
 	// Not every slugifier is spelled as a regex. packages/core/manifests and packages/core/imagebuild
 	// filter runes in a switch, which the three patterns above cannot see at all — and a blind spot a
 	// guard does not know about is the failure mode this whole lane is about.

@@ -122,15 +122,54 @@ describe("the environment-name rule", () => {
 });
 
 describe("chartSlug", () => {
-	it("keeps `addon-<id>` inside a DNS-1123 label — the cap it used to have none of", () => {
-		const id = chartSlug("a".repeat(200));
+	// Every id the PRE-#3665 implementation could store. It kept `-` inside its charset, trimmed
+	// only the ends, and had no cap — so these are in `project_addons.addon_id` right now, and
+	// `attachByoChart` / `detachByoChart` / `scanByoChart` all put the STORED id back through this
+	// function to build their lookup key.
+	const STORED_IDS = [
+		"my-chart",
+		"my---chart", // "My - Chart" under the old rule
+		"bob-s-chart", // "Bob's chart" under the old rule
+		"foo--bar",
+		"a",
+		"1",
+		"a".repeat(70), // a 70-character display name under the old rule: no cap existed
+	];
+
+	it("is the IDENTITY on every id the old implementation could have stored", () => {
+		// Not a nicety. `detachByoChart` deletes WHERE addon_id = chartSlug(input.id) and returns
+		// { ok: true } regardless of the row count, so a key that no longer matches is a detach that
+		// reports success and leaves the chart deploying; `scanByoChart` throws "Chart not found";
+		// and a re-attach writes a SECOND row, and a second ArgoCD Application, for one chart.
+		expect(failing(STORED_IDS, (id) => chartSlug(id) === id)).toEqual([]);
+	});
+
+	it("is idempotent, so re-deriving a key any number of times is safe", () => {
+		const derived = ["My Chart", "Café Chart", "My - Chart", "Bob's chart", "A".repeat(200)].map(
+			chartSlug,
+		);
+		expect(failing(derived, (id) => chartSlug(id) === id)).toEqual([]);
+	});
+
+	it("slugifies a DISPLAY name, which is where the fold and the collapse belong", () => {
+		expect(chartSlug("My Chart")).toBe("my-chart");
+		expect(chartSlug("Café Chart")).toBe("cafe-chart");
+		expect(chartSlug("My - Chart")).toBe("my-chart");
+	});
+
+	it("caps a derived id so `addon-<id>` keeps a valid instance label", () => {
+		// An uppercase name is NOT already an id, so it goes down the slugifying branch — which is
+		// the only branch the cap applies to.
+		const id = chartSlug("A".repeat(200));
 		expect(id.length).toBe(ADDON_ID_MAX_LENGTH);
 		expect(`${ADDON_APP_NAME_PREFIX}${id}`.length).toBeLessThanOrEqual(DNS1123_LABEL_MAX_LENGTH);
 		expect(isDns1123Label(`${ADDON_APP_NAME_PREFIX}${id}`)).toBe(true);
 	});
 
-	it("folds accents, so the console and the runner name one chart one way", () => {
-		expect(chartSlug("Café Chart")).toBe("cafe-chart");
+	it("does NOT cap an id that already exists, because that id is a key", () => {
+		const stored = "a".repeat(70);
+		expect(chartSlug(stored)).toBe(stored);
+		expect(stored.length).toBeGreaterThan(ADDON_ID_MAX_LENGTH);
 	});
 
 	it("falls back to `chart` rather than an empty add-on id", () => {

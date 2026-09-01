@@ -124,15 +124,20 @@ var byoRepoUnsafe = regexp.MustCompile(`[\x00-\x1f\x7f]`)
 // LENGTH BUDGET, which is why the slug below is capped against it rather than after the join.
 const byoProjectPrefix = "byo-"
 
-// ByoProjectName derives a stable, RFC1123-safe ArgoCD AppProject name for a project's BYO
-// charts: "byo-<slug>". `slug` is typically the project name; the fallback keeps the name
-// non-empty and the cap keeps it inside the ≤63-char ArgoCD limit.
+// ByoProjectName derives a stable ArgoCD AppProject name for a project's BYO charts:
+// "byo-<segment>". `slug` is typically the project's free-text name; the fallback keeps the name
+// non-empty and the cap keeps it inside 63 characters.
 //
-// The slugifier is names.Slugify (#3665), not a local charset filter. The local one mapped every
-// non-ASCII rune to a dash and then trimmed, so a project called `café` became `caf` here and
-// `cafe` in the console — one product, two names for the same project.
+// The derivation is names.LegacyObjectSegment, which is FROZEN and is deliberately not
+// names.Slugify — this name is the identity of an AppProject that is already applied. See that
+// function for the four shapes where the two differ and for why closing the gap is a migration
+// rather than a rename. The local copy of the regex is gone; the rule now has one definition.
 func ByoProjectName(slug string) string {
-	return byoProjectPrefix + names.Slugify(slug, "project", names.SlugMaxLength-len(byoProjectPrefix))
+	s := names.LegacyObjectSegment(slug)
+	if s == "" {
+		s = "project"
+	}
+	return names.Bounded(byoProjectPrefix + s)
 }
 
 // RenderByoAppProject renders the hardened AppProject YAML locking BYO charts to their own repos

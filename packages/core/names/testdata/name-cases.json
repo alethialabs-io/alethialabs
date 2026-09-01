@@ -356,33 +356,6 @@
         "wantNormalized": "staging-environment-for-the-european-reg",
         "wantProblem": ""
       }
-    ],
-    "chartSlug": [
-      {
-        "id": "plain",
-        "in": "My Chart",
-        "want": "my-chart"
-      },
-      {
-        "id": "empty-takes-the-fallback",
-        "in": "",
-        "want": "chart"
-      },
-      {
-        "id": "punctuation-takes-the-fallback",
-        "in": "***",
-        "want": "chart"
-      },
-      {
-        "id": "accented",
-        "in": "Café Chart",
-        "want": "cafe-chart"
-      },
-      {
-        "id": "long-name-fits-the-application-name",
-        "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "want": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      }
     ]
   }
 }

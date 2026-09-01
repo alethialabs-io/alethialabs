@@ -37,12 +37,6 @@ type environmentNameCase struct {
 	WantProblem    string `json:"wantProblem"`
 }
 
-type chartSlugCase struct {
-	ID   string `json:"id"`
-	In   string `json:"in"`
-	Want string `json:"want"`
-}
-
 type nameCases struct {
 	// Doc is the generator's own "DO NOT EDIT" banner. Decoded rather than ignored, because
 	// DisallowUnknownFields below is what makes an undecoded section fail loudly.
@@ -52,7 +46,6 @@ type nameCases struct {
 		Slug            []slugCase            `json:"slug"`
 		Namespace       []namespaceCase       `json:"namespace"`
 		EnvironmentName []environmentNameCase `json:"environmentName"`
-		ChartSlug       []chartSlugCase       `json:"chartSlug"`
 	} `json:"cases"`
 }
 
@@ -94,7 +87,6 @@ func TestTableIsNotVacuous(t *testing.T) {
 		"slug":            len(doc.Cases.Slug),
 		"namespace":       len(doc.Cases.Namespace),
 		"environmentName": len(doc.Cases.EnvironmentName),
-		"chartSlug":       len(doc.Cases.ChartSlug),
 	}
 	names := make([]string, 0, len(sizes))
 	for name := range sizes {
@@ -145,25 +137,6 @@ func TestEnvironmentNameMatchesTheTable(t *testing.T) {
 			}
 			if got := EnvironmentNameProblem(c.In); got != c.WantProblem {
 				t.Errorf("EnvironmentNameProblem(%q) = %q, TypeScript says %q", c.In, got, c.WantProblem)
-			}
-		})
-	}
-}
-
-// TestChartSlugMatchesTheTable drives the add-on id derivation, including its "chart" fallback and
-// the cap that keeps `addon-<id>` inside a DNS-1123 label.
-func TestChartSlugMatchesTheTable(t *testing.T) {
-	for _, c := range loadCases(t).Cases.ChartSlug {
-		t.Run(c.ID, func(t *testing.T) {
-			got := Slugify(c.In, "chart", AddOnIDMaxLength)
-			if got != c.Want {
-				t.Errorf("Slugify(%q, \"chart\", %d) = %q, TypeScript's chartSlug says %q",
-					c.In, AddOnIDMaxLength, got, c.Want)
-			}
-			// The reason the cap exists, asserted rather than implied.
-			if n := len(AddOnAppNamePrefix + got); n > SlugMaxLength {
-				t.Errorf("addon-%s is %d characters; Kubernetes refuses an Application name over %d",
-					got, n, SlugMaxLength)
 			}
 		})
 	}

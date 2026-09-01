@@ -267,13 +267,15 @@ func (in NamespaceTenantInput) templateData() namespaceTenantData {
 // "<prefix>-<project>-<namespace>", bounded to ≤63 chars (the k8s/ArgoCD name limit). The namespace
 // (unique per Fabric cluster) is the discriminator, so two projects' same-named envs never collide.
 //
-// Each part goes through names.SlugifyOrEmpty (#3665) rather than a local charset filter, so an
-// accented project name folds (`café` → `cafe`) instead of losing its last letter — which is what
-// this file used to do while the console did the other thing.
+// Each part goes through names.LegacyObjectSegment, which is FROZEN: this name is the identity of
+// an ArgoCD AppProject and Application that are already applied, and `project` is the project's
+// free-text DISPLAY NAME rather than a slug. Moving it onto names.Slugify would rename the live
+// pair for every project whose name carries an apostrophe or a doubled/spaced hyphen — see that
+// function. What this file no longer has is its own COPY of the rule.
 func namespaceTenantName(prefix, project, namespace string) string {
 	parts := make([]string, 0, 3)
 	for _, p := range []string{prefix, project, namespace} {
-		if s := names.SlugifyOrEmpty(p, names.SlugMaxLength); s != "" {
+		if s := names.LegacyObjectSegment(p); s != "" {
 			parts = append(parts, s)
 		}
 	}
