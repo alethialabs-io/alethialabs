@@ -677,9 +677,11 @@ describe("component node names are DNS-1123 labels", () => {
 	}
 
 	it("rejects the boundary characters kubernetes rejects", () => {
-		for (const name of ["-orders", "orders-", "orders_v2", "orders/v2", "orders v2", ""]) {
-			expect(nameIssues("queues", name), name).not.toHaveLength(0);
-		}
+		const names = ["-orders", "orders-", "orders_v2", "orders/v2", "orders v2", ""];
+		// Collected rather than asserted one at a time, so a failure names WHICH character got
+		// through instead of stopping at the first.
+		const rejected = names.filter((name) => nameIssues("queues", name).length > 0);
+		expect(rejected).toEqual(names);
 	});
 
 	it("names the rule in the message, since the form is where it can be acted on", () => {
@@ -705,7 +707,8 @@ describe("environment names are DNS-1123 labels", () => {
 	});
 
 	it("still accepts an ordinary environment name", () => {
+		// Asserted on the issues rather than on `success`, so a failure prints what was wrong.
 		const result = environmentMatrixSchema.safeParse(env("prod"));
-		expect(result.success, JSON.stringify(result.error?.issues)).toBe(true);
+		expect(result.error?.issues ?? []).toEqual([]);
 	});
 });
