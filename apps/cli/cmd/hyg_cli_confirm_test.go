@@ -574,3 +574,60 @@ func TestHygCliConfirm_DerivedDestructiveSetAllOfferYes(t *testing.T) {
 		}
 	}
 }
+
+// TestHygCliConfirm_NewlyGatedCommandsHonourNo drives the DECLINE arm of the three commands this
+// change gated. Without it the accept arm is exercised (every other test passes --yes) and the
+// refusal is nine statements nobody runs — which the ratchet noticed before a human did.
+//
+// It is also the behaviour worth testing on its own merits, not merely a coverage errand: a
+// destructive command that asks "are you sure?" and proceeds when told no is a worse failure than
+// one that never asked, because the operator has been given a reason to believe they were heard.
+//
+// Each asserts BOTH halves: exit 0 (a declined prompt is a choice, not an error) and no mutation
+// reaching the server. The exit code alone would pass for a command that destroyed and then
+// returned cleanly.
+func TestHygCliConfirm_NewlyGatedCommandsHonourNo(t *testing.T) {
+	cases := map[string][]string{
+		"token revoke":            {"token", "revoke", "t1", "--output", "json"},
+		"classification unassign": {"classification", "unassign", "project_environment", "e1", "gold", "--output", "json"},
+		"jobs cancel":             {"jobs", "cancel", "j1", "--output", "json"},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, run := hygCliConfirmEnv(t)
+			hygCliConfirmInteractive(t)
+			prev := confirm
+			confirm = func(string, string) bool { return false }
+			t.Cleanup(func() { confirm = prev })
+
+			if got := run(args...); got != 0 {
+				t.Fatalf("exit code = %d, want 0 — a declined prompt is a choice, not an error", got)
+			}
+			if muts := s.mutations(); len(muts) > 0 {
+				t.Errorf("%s was declined and still changed state: %v\n"+
+					"      The confirmation must gate the API call, not decorate it.", name, muts)
+			}
+		})
+	}
+}
+
+// The other half of the same seam: when the operator says YES, the command must actually act. A
+// confirmation wired in front of a call that then never happens would satisfy the test above
+// perfectly, and this is what makes that impossible.
+func TestHygCliConfirm_NewlyGatedCommandsActOnYes(t *testing.T) {
+	cases := map[string][]string{
+		"token revoke": {"token", "revoke", "t1", "--yes", "--output", "json"},
+		"jobs cancel":  {"jobs", "cancel", "j1", "--yes", "--output", "json"},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, run := hygCliConfirmEnv(t)
+			if got := run(args...); got != 0 {
+				t.Fatalf("exit code = %d, want 0", got)
+			}
+			if muts := s.mutations(); len(muts) == 0 {
+				t.Errorf("%s was confirmed with --yes and sent NO mutation — the command is gated into doing nothing", name)
+			}
+		})
+	}
+}
