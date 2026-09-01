@@ -69,6 +69,9 @@ function SectionHeading({
 					</Heading>
 					<CountPill count={count} />
 				</div>
+				{/* The body rung, not the 14px `text-sm` this used to be. See the note in
+				    page-toolbar.tsx: it is a role choice, because 14px's own band is `--text-ui-lg`
+				    — the rung of the heading directly above this line. */}
 				{description ? (
 					<p data-slot="section-heading-description" className="text-ui-md text-text-tertiary">
 						{description}

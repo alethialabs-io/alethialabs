@@ -131,10 +131,14 @@ format:
     lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 money site here writes the currency symbol somewhere other than next to the number."
 
 page_title:
-  # Every entry here is a heading on a surface with NO BREADCRUMB ABOVE IT — outside the console
-  # shell, so nothing else on screen says where you are — or the one `sr-only` landmark that gives a
-  # screen reader an outline root. That is the whole test now that the console has no page titles:
-  # not "is this heading big", but "does anything else already name this page".
+  # THE TEST IS: DOES ANYTHING ELSE ON SCREEN ALREADY NAME THIS? Not "is there a breadcrumb" — FIVE
+  # of the eleven entries below sit inside the console shell WITH a breadcrumb above them, and are
+  # kept because what they say is not the route's name: a question ("What can we help you with?"),
+  # two invitations above an empty composer, an error message, and an `sr-only` outline root. The
+  # other six are outside the shell entirely, where there is neither breadcrumb nor sidebar entry,
+  # so the heading is the only thing that says what the page is. Each entry's own `reason:` says
+  # which of the two it is, and applying "is there a breadcrumb" instead would delete five headings
+  # this list deliberately keeps.
   - path: apps/console/components/auth/auth-form.tsx
     hits: 4
     reason: Sign-in is the front door — no sidebar, no breadcrumb, nothing else on the screen says what this is. It keeps the display heading the website uses, so the two halves of arriving look like one product.

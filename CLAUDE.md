@@ -168,9 +168,11 @@ Four of those deserve their reason stated, because the reason is what makes them
 **The console has no page titles.** The sidebar entry you clicked and the breadcrumb above the
 content both say the page's name; a third saying earns nothing. What the breadcrumb does NOT carry
 is the count, the description and the buttons — that is `PageToolbar`. A heading *inside* a page is
-a separate, smaller thing and keeps its component. The only exceptions are surfaces with no
-breadcrumb above them (sign-in, the CLI hand-off, buying a plan) and one `sr-only` landmark, each a
-recorded decision in `apps/console/shared-surface-allowlist.yaml`.
+a separate, smaller thing and keeps its component. The test for the exceptions is **does anything
+else on screen already name this?** — not "is there a breadcrumb": some are outside the shell where
+there is neither breadcrumb nor sidebar (sign-in, the CLI hand-off, buying a plan), and the rest are
+in-shell headings that say something other than the route's name (a question, an invitation, an
+error). Each is a recorded decision in `apps/console/shared-surface-allowlist.yaml`.
 
 **The type scale is derived, not designed.** The console carried 1,079 hardcoded `text-[Npx]` across
 23 values against a token file with no UI scale in it at all; the seven rungs are the seven bands

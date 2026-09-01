@@ -126,9 +126,13 @@ unit #3615 added; H8 is what #3733 added with the type scale itself.
 **H1 IS INVERTED, and the inversion is the predicate.** It used to read "the page title comes from
 `PageHeader`". #3733: the page's name is said by the sidebar entry you clicked and by the breadcrumb
 above the content, so the page's own heading is the third saying and earns nothing — the console has
-no page titles. A page therefore PASSES H1 by having no `<h1>` at all, and the eleven allowlisted
-exceptions are the surfaces with no breadcrumb above them (sign-in, the CLI hand-off, buying a plan,
-accepting terms) plus one `sr-only` outline landmark. `PageHeader` no longer exists: what survives
+no page titles. A page therefore PASSES H1 by having no `<h1>` at all. The test for the eleven
+allowlisted exceptions is **does anything else on screen already name this?** — six are outside the
+console shell, where there is neither breadcrumb nor sidebar (sign-in, the CLI hand-off, buying a
+plan, accepting terms, OAuth consent, onboarding), and five are in-shell headings that say something
+other than the route's name (a question, two invitations above an empty composer, an error message,
+an `sr-only` outline root). "Is there a breadcrumb" is NOT the test, and applying it would delete
+five headings this rubric deliberately keeps. `PageHeader` no longer exists: what survives
 is `@repo/ui/page-toolbar` — the count pill, the description and the page's actions, none of which
 the breadcrumb duplicates. **A page that loses its title must not lose its actions**, and H1 does not
 measure that; T-family and R-family predicates do.

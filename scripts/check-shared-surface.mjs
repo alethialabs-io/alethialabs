@@ -117,7 +117,11 @@
 //                  shrink. The unit alternation is wider than anything live — there is not one
 //                  `rem`/`em`/`pt` font size in the console today — because px is not the rule: a
 //                  flagged `text-[13px]` rewritten as `text-[0.8125rem]` would otherwise silence
-//                  the guard while changing nothing, which is the shape a "fix" takes.
+//                  the guard while changing nothing, which is the shape a "fix" takes. A SECOND
+//                  matcher reads Tailwind's arbitrary-PROPERTY spelling of the same declaration,
+//                  `[font-size:13px]` — eleven characters, no new utility, every variant prefix,
+//                  and it compiles to exactly what `text-[13px]` compiles to. There is not one live
+//                  site, and that is why it costs nothing to close now.
 //
 //   @repo/ui/empty  a CENTRED BLOCK STANDING IN FOR CONTENT, in apps/console/{components,app}: one
 //                  class string carrying both `text-center` and `py-6` OR MORE, with no upper
@@ -531,6 +535,29 @@ const RULES = [
 				// widening to `text-\[[^\]]+\]` would swallow. Varying the SIZE here would test
 				// nothing: any regex that matches the probe matches another number too.
 				antiProbe: 'const a = <p className="text-ui-md text-[color:var(--text-primary)]">x</p>;',
+			},
+			{
+				// THE ARBITRARY-PROPERTY SPELLING, and it is the widest escape of the lot — wider
+				// than every unit rewrite the matcher above was widened for. Tailwind compiles
+				// `[font-size:13px]` to the identical declaration as `text-[13px]`, takes every
+				// variant prefix, and needs no new utility, so a flagged site is silenced by moving
+				// eleven characters. It is a SECOND matcher rather than an alternation inside the
+				// first because the two shapes share no anchor: one starts at `text-[`, the other
+				// at `[`, and a single regex reaching both would have to match a bare `[`.
+				//
+				// Zero live sites — `grep -rn "\[font-size:" apps/console` finds none — so this
+				// adds no allowlist entry and moves no ledger. That is the point: it closes the
+				// route before anybody finds it, which is the only time closing one is free. The
+				// probe is what holds it, and the file's permanent positive control fires it on
+				// every run.
+				scope: "console_code",
+				re: /\[font-size:\s*(?:length:)?\d*\.?\d+(?:px|rem|em|pt|ch|%)\]/g,
+				say: "picks its own font size through Tailwind's arbitrary-property syntax, which compiles to exactly what `text-[13px]` does. Use a `--text-ui-*` rung — `text-ui-3xs` … `text-ui-xl` in packages/brand/src/tokens.css.",
+				probe: 'const a = <p className="md:[font-size:12.5px]">x</p>;',
+				// A NON-SIZE arbitrary property, which is the shape a widening to `\[[a-z-]+:` would
+				// swallow — and `[mask-image:…]`/`[grid-template-columns:…]` are how a real console
+				// file reaches CSS Tailwind has no utility for.
+				antiProbe: 'const a = <p className="[mask-image:linear-gradient(90deg,#000,transparent)] text-ui-md">x</p>;',
 			},
 		],
 	},
@@ -1526,6 +1553,14 @@ function selfTest() {
 	ok("...and a px size cannot be silenced by rewriting it in another unit", flags('const a = <p className="text-[0.8125rem]" />;') && flags('const a = <p className="text-[1em]" />;') && flags('const a = <p className="text-[11pt]" />;') && flags('const a = <p className="text-[80%]" />;'));
 	// Tailwind's own disambiguating prefix is a spelling of the identical class.
 	ok("...nor by writing Tailwind's `length:` prefix in front of it", flags('const a = <p className="text-[length:13px]" />;'));
+	// THE ARBITRARY-PROPERTY SPELLING — the widest escape, and the one the unit alternation above
+	// does not reach: `[font-size:13px]` compiles to the identical declaration, takes every variant
+	// prefix, and is eleven characters from any flagged site. Zero live sites, so the probe and
+	// these fixtures are the only things holding it.
+	ok("...nor by writing it as an arbitrary PROPERTY, which compiles identically", flags('const a = <p className="[font-size:13px]" />;'));
+	ok("...in any unit, and behind a variant, exactly like the utility spelling", flags('const a = <p className="[font-size:0.8125rem]" />;') && flags('const a = <p className="md:[font-size:12.5px]" />;') && flags('const a = <p className="[font-size:length:13px]" />;'));
+	ok("...but an arbitrary property that is not a size is how a file reaches CSS Tailwind has no utility for", !flags('const a = <p className="[mask-image:linear-gradient(90deg,#000,transparent)]" />;') && !flags('const a = <p className="[grid-template-columns:repeat(3,minmax(0,1fr))]" />;'));
+	ok("...and neither is a font-size read from the token", !flags('const a = <p className="[font-size:var(--text-ui-md)]" />;'));
 	// THE FIX, in both of its spellings. A matcher that reported its own answer would be unfixable.
 	ok("a rung utility is the fix and is not a finding", !flags('const a = <p className="text-ui-md text-text-tertiary">x</p>;'));
 	ok("...and neither is the token read as a var", !flags('const a = <p className="text-[var(--text-ui-lg)]" />;'));

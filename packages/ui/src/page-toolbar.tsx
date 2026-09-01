@@ -33,7 +33,12 @@ function PageToolbar({
 	actions,
 	className,
 	...props
-}: React.ComponentProps<"div"> & {
+	// `Omit<…, "title">` is the load-bearing half of this signature, not tidiness. `title` is a
+	// valid `<div>` attribute, so without it `<PageToolbar title="Connectors" …>` — the exact
+	// shape 19 files were hand-edited to remove — compiles clean, renders NO heading, and hangs
+	// the page's name off the row as a hover tooltip. `tsc` would not see it and
+	// `check-shared-surface` matches `<h1`, not this. With the Omit it is a compile error.
+}: Omit<React.ComponentProps<"div">, "title"> & {
 	/** One line of supporting copy. Omit rather than restating what the breadcrumb already says. */
 	description?: React.ReactNode;
 	/** Result count for a filtered list; null/undefined while loading renders nothing. */
@@ -54,6 +59,12 @@ function PageToolbar({
 		>
 			<div className="flex min-w-0 flex-col gap-1">
 				{hasCount ? <CountPill count={count} /> : null}
+				{/* `text-ui-md` (13px), down from `PageHeader`'s `text-sm` (14px), and it is a ROLE
+				    choice rather than a derived one — the ladder's bands were measured over
+				    `text-[Npx]` sites, and `text-sm` is a Tailwind utility that was in none of them.
+				    The band containing 14px is `--text-ui-lg`, which is the SECTION-HEADING rung: a
+				    description typeset at 15px would be the same size as the heading it sits under.
+				    13px is the body rung, and supporting copy is body. */}
 				{description ? (
 					<p data-slot="page-toolbar-description" className="text-ui-md text-text-tertiary">
 						{description}
