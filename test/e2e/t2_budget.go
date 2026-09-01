@@ -19,7 +19,8 @@ import (
 // comment and the ordering were wrong:
 //
 //  1. The stated 40m base is HETZNER's — 25m waitTimeout + 8m ArgoCD + 7m headroom, the numbers as
-//     they stood then (hetzner's waitTimeout is 40m now, so that base is 55m; the arithmetic below
+//     they stood then (hetzner's waitTimeout is 40m now and the lean argo budget is 12m30s since
+//     #3580, so that base is 59m30s; the arithmetic below
 //     is derived and needed no edit for it). Every managed
 //     cloud has a 50m waitTimeout (t2ProviderTable), and the soak is on by default from the workflow
 //     (`vars.E2E_SOAK || '10m'` ⇒ 10m + 15m headroom). So a managed floor leg's real ctx is
