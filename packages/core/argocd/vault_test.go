@@ -402,3 +402,36 @@ func TestTheVaultFactAndTheDerivedVaultAgree(t *testing.T) {
 		t.Error("a project with no secret still sets HetznerInClusterVault — a store would be applied over an absent Vault")
 	}
 }
+
+// PerCloudSecretStoreName exists to be the ONE source of these names, so the thing worth proving is
+// that it still agrees with the reaper — the map whose drift already cost #2038 a store that was
+// never reaped. A name the accessor returns but the render set does not know is a store the reaper
+// would orphan; one the render set knows and the accessor cannot name is a store the max-config
+// proof grid would silently stop probing.
+func TestPerCloudSecretStoreNameAgreesWithTheReaper(t *testing.T) {
+	clouds := []string{"aws", "gcp", "azure", "alibaba", "hetzner"}
+	// A set of every per-cloud name the render set knows, gathered by asking it as each cloud.
+	known := map[string]bool{}
+	for _, c := range clouds {
+		for name := range clusterSecretStoreRenderSet(&InfraFacts{Provider: c}) {
+			known[name] = true
+		}
+	}
+	for _, c := range clouds {
+		name := PerCloudSecretStoreName(c)
+		if name == "" {
+			t.Errorf("PerCloudSecretStoreName(%q) is empty — every cloud in the harness has a per-cloud store", c)
+			continue
+		}
+		if !known[name] {
+			t.Errorf("PerCloudSecretStoreName(%q) = %q, which clusterSecretStoreRenderSet never names — "+
+				"the reaper would orphan it in a permanently-broken state", c, name)
+		}
+	}
+	// A provider the platform does not run must return EMPTY rather than a plausible-looking name:
+	// "secretstore-openstack" would read as a real store, and a probe naming it could never be Ready.
+	if got := PerCloudSecretStoreName("openstack"); got != "" {
+		t.Errorf("PerCloudSecretStoreName(\"openstack\") = %q, want \"\" — inventing a name for a cloud the "+
+			"platform does not run produces a store that cannot exist", got)
+	}
+}

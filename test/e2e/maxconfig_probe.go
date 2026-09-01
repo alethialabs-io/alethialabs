@@ -41,20 +41,56 @@ const maxConfigProbeGetTimeout = 30 * time.Second
 // reports the first one that never became Ready.
 //
 // Called AFTER AssertMaxConfigKindsInState, never instead of it: the probe is additive evidence, and
-// a cell whose Application never converged has already failed. A no-op for a cloud whose cells
-// declare no probes, so the four managed clouds pay nothing for it.
+// a cell whose primary evidence never held has already failed. A no-op for a cloud whose cells
+// declare no probes.
+//
+// It does NOT filter on carriage. It used to skip everything but CarriedInCluster, which meant the
+// four managed clouds paid nothing for it — and that was the bug, not the saving: `secrets` on those
+// clouds is a TOFU cell whose counted resource is real while the ClusterSecretStore that is the only
+// way to read it may never have been created (#2652). A probe that cannot be declared where the
+// hazard lives is a guard for the case that was already safe.
 func AssertMaxConfigClusterProbes(ctx context.Context, kubeconfigPath, provider string, timeout time.Duration) error {
-	for _, k := range MaxConfigKinds {
-		cell, ok := k.Cell(provider)
-		if !ok || cell.Carriage != CarriedInCluster || cell.ClusterProbe == nil {
-			continue
-		}
-		if err := awaitClusterProbeReady(ctx, kubeconfigPath, *cell.ClusterProbe, timeout); err != nil {
-			return fmt.Errorf("max-config kind %q on %s: %w\n  the ArgoCD Application %s converged, but that is not the proof: %s",
-				k.Kind, provider, err, cell.ArgoApp, cell.ClusterProbe.Why)
+	for _, pc := range MaxConfigProbedCells(provider) {
+		if err := awaitClusterProbeReady(ctx, kubeconfigPath, *pc.Cell.ClusterProbe, timeout); err != nil {
+			return fmt.Errorf("max-config kind %q on %s: %w\n  %s, but that is not the proof: %s",
+				pc.Kind, provider, err, cellPrimaryEvidence(pc.Cell), pc.Cell.ClusterProbe.Why)
 		}
 	}
 	return nil
+}
+
+// ProbedCell pairs a kind with the cell that declares a probe for this cloud.
+type ProbedCell struct {
+	Kind string
+	Cell MaxConfigCell
+}
+
+// MaxConfigProbedCells is the SELECTION half of AssertMaxConfigClusterProbes, split out so it can be
+// asserted without a cluster.
+//
+// It is split out because the selection is where this went wrong: the loop used to require
+// CarriedInCluster, which silently excluded every tofu cell — so declaring a probe on `secrets` for
+// aws would have compiled, read correctly, and run nothing. A filter that drops the cells you care
+// about is indistinguishable from a passing probe, and nothing here would have said so.
+func MaxConfigProbedCells(provider string) []ProbedCell {
+	var out []ProbedCell
+	for _, k := range MaxConfigKinds {
+		cell, ok := k.Cell(provider)
+		if !ok || cell.ClusterProbe == nil {
+			continue
+		}
+		out = append(out, ProbedCell{Kind: k.Kind, Cell: cell})
+	}
+	return out
+}
+
+// cellPrimaryEvidence names what the cell had ALREADY established before the probe ran, so the
+// failure reads as "this much was true and it still was not enough" rather than as a bare timeout.
+func cellPrimaryEvidence(cell MaxConfigCell) string {
+	if cell.Carriage == CarriedByTofu {
+		return fmt.Sprintf("the tofu resource %s is in state", cell.Resource)
+	}
+	return fmt.Sprintf("the ArgoCD Application %s converged", cell.ArgoApp)
 }
 
 // awaitClusterProbeReady polls one object until its `Ready` condition is True, or the deadline
