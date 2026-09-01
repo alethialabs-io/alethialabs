@@ -164,10 +164,23 @@ if [ "${1:-}" = "--self-test" ]; then
 	# …but a backslash-escaped separator is a grep pattern, not a pipeline.
 	t allow  'a grep pattern naming stash is not a pipeline' 'grep -n "git stash pop\|git stash drop" f.sh'
 
-	# Unresolvable must fail CLOSED, the direction R-MAIN already takes: the sweep that eats another
-	# lane's entry — `for w in ../wt-*; do git -C "$w" stash pop; done` — is an unexpanded variable.
+	# Unresolvable must fail CLOSED, the direction R-MAIN already takes.
 	t block  'an unexpanded stash target refuses'            'git -C "$W" stash pop'
 	says 'unexpanded shell variable' 'the refusal names WHY the tree is unknown' 'git -C "$W" stash pop'
+
+	# A segment does not have to START with the command it runs. The sweep that eats another lane's
+	# entry — `for w in ../wt-*; do git -C "$w" stash pop; done` — splits on `;` into ` do git …`,
+	# and an anchored match stopped dead at the leading `do`. Both forms below must block: this is a
+	# COMMAND-POSITION bug, not a variable-resolution one, so the literal-path loop (which resolves
+	# perfectly well) escaped exactly the same way. See `stash_kw`, and read its scope note — the
+	# prefixes it steps over are a token list, not a shell parser.
+	t block  'the for-loop sweep over sibling worktrees'     'for w in ../wt-*; do git -C "$w" stash pop; done'
+	t block  '…and its literal, fully resolvable form'       "for w in $tmp/wt-*; do git -C $tmp/wt-mine stash pop; done"
+	t block  'a then-branch is command position too'         "if true; then git -C $tmp/wt-mine stash pop; fi"
+	t block  '…so is a brace group'                          "{ git -C $tmp/wt-mine stash drop; }"
+	t block  '…and a VAR=val prefix'                         "GIT_TRACE=1 git -C $tmp/wt-mine stash pop"
+	# The read-only carve-out has to survive that widening, or the guard starts eating `stash list`.
+	t allow  'a read-only stash in a loop stays allowed'     "for w in $tmp/wt-*; do git -C \$w stash list; done"
 
 	# The MAIN CHECKOUT is not a separate stack; it is the same one, and it is the shared tree.
 	t block  'stash drop in the main checkout is refused'    "git -C $main stash drop"
@@ -417,8 +430,11 @@ deny_shared_stash() { # <current-root> <other-root>
 }
 
 # The target could not be resolved AND another lane is live. R-MAIN fails closed on exactly this
-# shape and so does this rule: `for w in ../wt-*; do git -C "$w" stash pop; done` is precisely the
-# sweep that eats another lane's entry, and it is an unexpanded variable by construction.
+# shape and so does this rule. The sweep that eats another lane's entry —
+# `for w in ../wt-*; do git -C "$w" stash pop; done` — arrives here when it is written with a
+# variable; written with a literal path it resolves and takes deny_shared_stash instead. Either way
+# the segment matcher has to see past the loop's leading `do` first, which is `stash_kw` below —
+# this branch alone never covered that shape.
 deny_stash_unresolved() { # <raw-target> <other-root>
 	{
 		echo "BLOCKED: this \`git stash\` mutates a shared repository stack, another live worktree is"
@@ -483,9 +499,27 @@ if [ -n "$cmd" ] && [ "${ALETHIA_ALLOW_FOREIGN_WT:-}" != "1" ]; then
 	stash_split="${cmd//\\;/$'\001'}"
 	stash_split="${stash_split//\\&/$'\002'}"
 	stash_split="${stash_split//\\|/$'\003'}"
+	# A segment does not have to START with the command it runs, and the shape this whole rule
+	# exists for is the one that proves it: `for w in ../wt-*; do git -C "$w" stash pop; done`
+	# splits on `;` into ` do git -C "$w" stash pop`, where an anchored match stopped dead at the
+	# leading `do` — so the sweep that eats another lane's entry was allowed outright. It is a
+	# COMMAND-POSITION hole, not an unexpanded-variable one: the same loop written with a literal
+	# path escaped identically. So step over the words that can precede a command in a compound
+	# statement, and over a `VAR=val` prefix.
+	#
+	# SCOPE — this is a TOKEN LIST, not a shell parser, and the difference is worth stating because
+	# a reader grepping for their own shape has to be able to tell whether it is covered. Only the
+	# prefixes below are stepped over. A wrapper that is not one of them — `env`, `command`, `exec`,
+	# `nohup`, `xargs git …` — and a command substitution (`x=$(git … stash pop)`, whose `$(` the
+	# `VAR=` alternative deliberately will not swallow) still walk straight past R-STASH. Widening
+	# the list costs only false BLOCKS, which are recoverable and have a documented hatch; a real
+	# parser here would not be, so the trade runs this way on purpose.
+	#
 	# A shell's `-c` opens a command context inside the quotes, which is what keeps
 	# `sh -c "git stash pop"` caught — the same carve-out cmd_pos makes for R-MAIN.
-	stash_re="^[[:space:]]*((sh|bash|zsh|dash)[[:space:]]+-[a-z]*c[[:space:]]*[\"']?[[:space:]]*)?"
+	stash_kw="(((do|then|else|elif|if|while|until|time|!)|[{])[[:space:]]+|[(][[:space:]]*"
+	stash_kw="${stash_kw}|[A-Za-z_][A-Za-z0-9_]*=[^[:space:];&|\"'\$\`]*[[:space:]]+)*"
+	stash_re="^[[:space:]]*${stash_kw}((sh|bash|zsh|dash)[[:space:]]+-[a-z]*c[[:space:]]*[\"']?[[:space:]]*)?"
 	stash_re="${stash_re}git${git_pre}[[:space:]]+stash([[:space:]]+[^[:space:];&|\"']+)?"
 
 	stash_cd=""
