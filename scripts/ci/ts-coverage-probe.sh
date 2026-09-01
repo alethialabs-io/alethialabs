@@ -78,6 +78,17 @@ read_projects() {
 # The clean-up is per-project and derived from the same list. It used to name three projects while
 # the suite produced six, so three `coverage/` directories survived every `--force` iteration.
 # Measuring a directory it did not clean is the one thing a determinism probe must not do.
+# It captures the SAME run twice, at two resolutions: `<out>` holds the per-DIRECTORY rows the
+# determinism comparison is made on, and `<out>.files` the per-FILE rows that say WHERE a
+# disagreement lives. Both come from one suite invocation, so the two views describe the same run
+# and cannot be compared across a boundary that moved.
+#
+# The per-file half exists because the directory half cannot finish the sentence. #3342 is
+# `apps/console/lib/billing` measuring 957 or 958 of 1753 — one statement, thirty-one files, no
+# culprit — and `ts-coverage.mjs --print --per-file` has been able to name the file since #3444
+# while the only job that runs the suite five times in a comparable environment never called it.
+# The documented recipe was "run it twice on a laptop and diff", which produces numbers CI cannot
+# reproduce; that is the whole reason this job exists.
 probe_run() {
   local out="$1"; shift
   local p
@@ -85,10 +96,59 @@ probe_run() {
   # shellcheck disable=SC2086  # SUITE and TSCOV are command lines, deliberately word-split
   $SUITE
   : >"$out"
+  : >"$out.files"
   for p in "$@"; do
     # shellcheck disable=SC2086
     $TSCOV --project "$p" --print | sed "s|^|$p |" >>"$out"
+    # NOT asserted by assert_measured and NOT part of the verdict: this is diagnostic only, so a
+    # project that cannot produce it must not turn a determinism PASS into a failure. `|| true`
+    # says that deliberately rather than leaving it to `set -e`.
+    # shellcheck disable=SC2086
+    { $TSCOV --project "$p" --print --per-file | sed "s|^|$p |" >>"$out.files"; } || true
   done
+}
+
+# ── WHERE did the runs disagree? ──────────────────────────────────────────────────────────────────
+#
+# explain_nondeterminism <expected-run-count> <rows-file...>
+#
+# Called only after assert_deterministic has already failed, and it answers the question that
+# failure raises and cannot: the directory rows say `apps/console/lib/billing 957 1753` in some runs
+# and `958 1753` in others, which is a place-shaped answer to a statement-shaped question.
+#
+# It reports the per-FILE rows that did not appear in every run. One flapping statement lives in one
+# file, so this is normally a single line — and that line is the whole investigation.
+#
+# It NEVER changes the verdict. A missing or unreadable `.files` companion prints a sentence saying
+# so, because a diagnostic that renders identically to "nothing to report" is the defect class this
+# script has already been bitten by twice.
+explain_nondeterminism() {
+  local n="$1"; shift
+  local f present=0
+  local -a files=()
+  for f in "$@"; do
+    if [ -s "$f.files" ]; then files+=("$f.files"); present=$((present + 1)); fi
+  done
+  echo
+  if [ "$present" -ne "$n" ]; then
+    echo "  per-file breakdown UNAVAILABLE: $present of $n run(s) produced one, so the flapping"
+    echo "  file cannot be named here. That is a gap in this probe, NOT evidence that the"
+    echo "  disagreement is confined to the directory totals above."
+    return 0
+  fi
+  echo "  ── which FILE flapped (rows absent from at least one of the $n runs) ──"
+  # Same shape as the directory report above, one resolution finer.
+  if cat "${files[@]}" | sort | uniq -c | awk -v n="$n" '$1 != n { print "  " $0; found = 1 } END { exit !found }'; then
+    echo
+    echo "  Each line is '<count> <project> <file> <covered> <total>'. A file appearing with two"
+    echo "  different covered counts is the one to open: its statements are executed on some runs"
+    echo "  and not others — look for a real clock, a locale, or shared state between tests, since"
+    echo "  the suite runs its projects in parallel."
+  else
+    echo "  none — every per-file row appeared in all $n runs, while a DIRECTORY row did not."
+    echo "  That combination should be impossible (a directory is the sum of its files), so treat"
+    echo "  it as a defect in the measurement rather than as a finding about the code."
+  fi
 }
 
 # ── did the probe actually measure every project it claims to? ────────────────────────────────────
@@ -254,6 +314,55 @@ if [ "${1:-}" = "--self-test" ]; then
   else ok "a row that differs between runs fails"; fi
 
   echo
+  echo " naming the flapping FILE"
+  # (g) The half assert_deterministic cannot do. Its failure names a DIRECTORY, and the reader's
+  #     next question is which of that directory's files moved. Every branch here is a branch that
+  #     renders as prose in a job nothing else exercises, so each is driven rather than assumed.
+  printf 'a lib/billing 957 1753\n' >"$r1"; cp "$r1" "$r2"
+  printf 'a lib/billing 958 1753\n' >"$r3"
+  printf 'a lib/billing/period.ts 10 20\na lib/billing/plan.ts 5 9\n' >"$r1.files"
+  cp "$r1.files" "$r2.files"
+  printf 'a lib/billing/period.ts 11 20\na lib/billing/plan.ts 5 9\n' >"$r3.files"
+
+  got="$(explain_nondeterminism 3 "$r1" "$r2" "$r3" 2>&1)"
+  if printf '%s' "$got" | grep -qF "lib/billing/period.ts"; then
+    ok "the flapping file is NAMED"
+  else bad "the flapping file was not named; got: $got"; fi
+  if printf '%s' "$got" | grep -qF "lib/billing/plan.ts"; then
+    bad "a file that agreed in every run must NOT be listed — that is noise, not a finding"
+  else ok "a file that agreed in every run is not listed"; fi
+
+  # (h) The companion is MISSING. This is the branch that must not render like "nothing found":
+  #     a probe that silently prints an empty section over an unavailable breakdown is the exact
+  #     failure `assert_measured` exists to prevent one level up.
+  rm -f "$r3.files"
+  got="$(explain_nondeterminism 3 "$r1" "$r2" "$r3" 2>&1)"
+  if printf '%s' "$got" | grep -qF "UNAVAILABLE"; then ok "a missing per-file companion SAYS so"
+  else bad "a missing companion must say so; got: $got"; fi
+  if printf '%s' "$got" | grep -qF "period.ts"; then
+    bad "with a run missing, it must not name a file from the runs it did read"
+  else ok "with a run missing, it names no file"; fi
+
+  # (i) An EMPTY companion counts as missing, not as agreement. `-s` rather than `-f` is what makes
+  #     that true, and a `-f` here would pass every other case in this section.
+  : >"$r3.files"
+  if explain_nondeterminism 3 "$r1" "$r2" "$r3" 2>&1 | grep -qF "UNAVAILABLE"; then
+    ok "an EMPTY per-file companion counts as unavailable"
+  else bad "an empty companion must not be read as agreement"; fi
+
+  # (j) The impossible combination — directories disagreed, every file agreed — is reported as a
+  #     measurement defect rather than as a clean bill of health.
+  cp "$r1.files" "$r3.files"
+  got="$(explain_nondeterminism 3 "$r1" "$r2" "$r3" 2>&1)"
+  if printf '%s' "$got" | grep -qF "should be impossible"; then
+    ok "files agreeing while a directory disagreed is flagged, not passed over"
+  else bad "the impossible combination must be flagged; got: $got"; fi
+
+  # (k) probe_run must WRITE the companion, or every branch above is unreachable in the real job.
+  #     Asserted separately from the run-loop case below because that one stubs TSCOV to a single
+  #     shape and would not notice a second invocation going missing.
+
+  echo
   echo " the run loop"
   mkdir -p "$tmp/bin"
   cat >"$tmp/bin/suite" <<'STUB'
@@ -262,6 +371,10 @@ echo run >>"$PROBE_SELFTEST_COUNTER"
 STUB
   cat >"$tmp/bin/tscov" <<'STUB'
 #!/usr/bin/env bash
+# Mirrors the real CLI's two shapes so the self-test can tell the per-directory invocation from the
+# per-file one. A stub that answered both identically would let probe_run drop the --per-file call
+# entirely with every case still green.
+for a in "$@"; do [ "$a" = "--per-file" ] && { echo "src/f.ts 1 2"; exit 0; }; done
 echo "src 1 2"
 STUB
   chmod +x "$tmp/bin/suite" "$tmp/bin/tscov"
@@ -286,6 +399,9 @@ y src 1 2" ]; then ok "each project's rows are prefixed with its own path"
   if [ -d "$tmp/wt/x/coverage" ] || [ -d "$tmp/wt/y/coverage" ]; then
     bad "every project's coverage/ should be removed before the suite runs"
   else ok "every project's coverage/ is removed before the suite runs"; fi
+  if [ "$(cat "$tmp/out.txt.files" 2>/dev/null)" = "x src/f.ts 1 2
+y src/f.ts 1 2" ]; then ok "the per-FILE companion is written alongside, from the same run"
+  else bad "per-file companion was: $(cat "$tmp/out.txt.files" 2>/dev/null)"; fi
 
   echo
   if [ "$fail" -eq 0 ]; then echo "ts-coverage-probe self-test: all $pass passed"; exit 0; fi
@@ -314,7 +430,13 @@ echo "── per-directory covered/total, run 1 ──"
 cat run.1.txt
 
 assert_measured "run.1.txt" "${PROJECTS[@]}"
-assert_deterministic "$RUNS" "${RUN_FILES[@]}"
+# `if !` rather than a bare call: the per-file explanation must run BEFORE the script exits, and
+# `set -e` would take the failure straight to the exit without it. The non-zero status is preserved
+# and re-raised, so the job still fails.
+if ! assert_deterministic "$RUNS" "${RUN_FILES[@]}"; then
+  explain_nondeterminism "$RUNS" "${RUN_FILES[@]}"
+  exit 1
+fi
 
 # ee/dist is RECORDED, not asserted. What makes probe-recorded floors reachable is that this job
 # and the required `typescript` job run the IDENTICAL suite command — a property of the commands,
