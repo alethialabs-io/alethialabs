@@ -518,7 +518,17 @@ func TestT2HetznerPathUnchanged(t *testing.T) {
 		wantRegion       = "nbg1"
 		wantClusterReady = "8m"
 		wantWait         = 40 * time.Minute
-		wantOverallCtx   = 55 * time.Minute // deploy wait 40m + argo 8m + 7m headroom
+		// deploy wait 40m + argo 9m30s + 7m headroom. The argo term was 8m until #3580: the lean
+		// tier used to derive its budget from ZERO add-on charts while always converging the
+		// ungated external-secrets-operator, so it bought argoBudgetBase's time for
+		// argoBudgetBase's work plus a real upstream chart. Written out rather than recomputed from
+		// argoBudgetFor here on purpose — a literal is the only version of this number that can
+		// disagree with the derivation and say so.
+		//
+		// Containment is unaffected: the failing gcp leg of run 33487970328 reported
+		// "ctx 1h18m0s < go 2h8m0s < step 2h13m0s < job 2h28m0s", so 1m30s more sits far inside
+		// every rung, and TestArgoBudgetCeilingFitsTheWorkflowCaps still proves the ceiling itself.
+		wantOverallCtx = 56*time.Minute + 30*time.Second
 	)
 
 	t.Run("current workflow env (legacy region name)", func(t *testing.T) {

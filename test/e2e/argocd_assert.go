@@ -699,8 +699,26 @@ func ArgoAssertTimeout() time.Duration {
 // argoAddOnCount is how many add-on charts this run expects ArgoCD to converge.
 func argoAddOnCount() int {
 	if !AllAddOnsEnabled() {
-		// The lean tier seeds a small fixed set; the base + floor already cover it.
-		return 0
+		// NOT ZERO. The old answer here was "the base + floor already cover it", and argoBudgetBase
+		// says in its own docstring what it covers: "ArgoCD itself: repo-server clone, the first
+		// reconcile loop, and the app-of-apps landing BEFORE ANY ADD-ON CHART IS PULLED". The lean
+		// tier pulls one anyway — alwaysRenderedArgoApps is rendered on every cloud and every
+		// dimension, with no gate — so the floor was buying the base's worth of time for the base's
+		// work PLUS a real upstream chart, and calling the difference nothing.
+		//
+		// MEASURED, on the gcp floor leg of nightly run 33487970328 (#3580). The 8m window opened
+		// at 09:06:05Z and the assertion read the Application at 09:14:05Z with
+		// `health=Progressing sync=Synced` — while every external-secrets pod was already Running,
+		// ready, zero restarts. ArgoCD recomputes `status.health` only on a successful compare, and
+		// its last two compares had aborted (`failed to get repo objects`; one manifest render took
+		// 34s on gcp's shared-core e2-small floor). So the health was ~2m stale, and the run lost
+		// its verdict to a value that was already out of date when it was read. The next reconcile
+		// falls inside ArgoCD's 120-180s band, i.e. by ~09:15:07Z at worst — INSIDE the 09:15:35Z
+		// deadline that one chart's allowance buys, and outside the 09:14:05Z one that zero buys.
+		//
+		// DERIVED from alwaysRenderedArgoApps rather than typed as 1, so a template that becomes
+		// unconditional is paid for by the same edit that adds it to that list.
+		return len(alwaysRenderedArgoApps)
 	}
 	addons, err := AllCatalogAddOns()
 	if err != nil {
@@ -962,7 +980,7 @@ func truncateDescribe(s string, head, total int) string {
 // describeArgoApps returns `kubectl describe` output for each losing Application
 // (best-effort, truncated per app, capped at 5 apps) formatted for appending to the
 // timeout error — the "full dump" that makes a red nightly diagnosable from logs.
-func describeArgoApps(ctx context.Context, kubeconfigPath string, losers []string) string {
+func describeArgoApps(ctx context.Context, kubeconfigPath string, observed map[string]argoAppState, losers []string) string {
 	// SIZED TO THE WORST OBSERVED FAILURE, not to a comfortable number.
 	//
 	// hetzner/addons run 32959867406 had EIGHT losers against a cap of five, so minio and velero were
@@ -995,7 +1013,7 @@ func describeArgoApps(ctx context.Context, kubeconfigPath string, losers []strin
 		// `describe application` shows the DESIRED spec and the sync status. It says nothing about
 		// the workload, so a Degraded app — which ArgoCD derives from the underlying Deployment —
 		// reports a verdict with no cause attached. See dumpUnhealthyPods.
-		b.WriteString(dumpUnhealthyPods(ctx, kubeconfigPath, name))
+		b.WriteString(dumpUnhealthyPods(ctx, kubeconfigPath, name, observed[name].Health))
 	}
 	return b.String()
 }
@@ -1020,7 +1038,7 @@ func describeArgoApps(ctx context.Context, kubeconfigPath string, losers []strin
 // Best-effort and hard-capped: this runs on an ALREADY-FAILING path and must never be why a run
 // hangs or an error is lost. A pod dump that fails says so — "could not read it" and "nothing was
 // wrong" must not look the same.
-func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app string) string {
+func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app, health string) string {
 	const (
 		// Three was enough for a Deployment; a DaemonSet on a multi-node cluster can have every pod
 		// unhappy for one reason, and seeing only three of them hides whether it is one node or all.
@@ -1172,10 +1190,18 @@ func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app string) string {
 		}
 	}
 	if shown == 0 {
-		// Every pod is Running and ready, yet ArgoCD calls the Application Degraded. That is a real
-		// and quite different finding — the health is coming from something other than pod
+		// Every pod is Running and ready, yet ArgoCD does not call the Application Healthy. That is
+		// a real and quite different finding — the health is coming from something other than pod
 		// readiness — and saying so is more useful than printing nothing.
-		fmt.Fprintf(&b, "  every pod is Running and ready — the Degraded health is NOT pod readiness\n")
+		//
+		// It NAMES the health it was given rather than asserting "Degraded". The hardcoded word was
+		// printed verbatim over a `Progressing` Application on the gcp floor leg of run 33487970328
+		// (#3580), which reads as a contradiction of the status three lines above it and sent the
+		// reader looking for a Degraded app that did not exist. `Progressing` and `Degraded` also
+		// mean opposite things here — one is "not finished", the other "finished badly" — so the
+		// substitution was not cosmetic.
+		fmt.Fprintf(&b, "  every pod is Running and ready — the %s health is NOT pod readiness\n",
+			argoHealthOrUnknown(health))
 	}
 	return b.String()
 }
@@ -1383,8 +1409,11 @@ func argoDeadlineDump(
 		// never applied has nothing further to say, and both of these do. See argo_stuck_sync.go.
 		{"controller log", func(c context.Context) string { return dumpArgoControllerLog(c, kubeconfigPath, losers) }},
 		{"cluster warnings", func(c context.Context) string { return dumpDestinationWarnings(c, kubeconfigPath, losers) }},
-		{"describe", func(c context.Context) string { return describeArgoApps(c, kubeconfigPath, losers) }},
+		{"describe", func(c context.Context) string { return describeArgoApps(c, kubeconfigPath, observed, losers) }},
 		{"out-of-sync objects", func(c context.Context) string { return dumpOutOfSyncResources(c, kubeconfigPath, refs) }},
+		// BEFORE the diff section, because it speaks for exactly the losers that section is about
+		// to decline to speak for, and it is one jsonpath read per app rather than a chart render.
+		{"health freshness", func(c context.Context) string { return dumpArgoHealthStaleness(c, kubeconfigPath, observed, losers) }},
 		{"argocd app diff", func(c context.Context) string { return dumpArgoAppDiffs(c, kubeconfigPath, observed, losers) }},
 	}
 
@@ -1672,6 +1701,116 @@ func argoSyncStaleness(app string, reconciledAt string, now time.Time) string {
 	return fmt.Sprintf(
 		"      %s: last reconciled %s ago (< ArgoCD's ~%s cadence) — the status is FRESH, so an empty diff and an OutOfSync status genuinely disagree; that is an ArgoCD normalisation difference, not a timing artefact",
 		app, age, argoReconcileInterval)
+}
+
+// argoHealthOrUnknown renders a health string for a sentence, so an Application whose health was
+// never read does not silently become the empty word in "the  health is NOT pod readiness".
+func argoHealthOrUnknown(health string) string {
+	if h := strings.TrimSpace(health); h != "" {
+		return h
+	}
+	return "Unknown"
+}
+
+// syncedUnhealthyLosers narrows the losing Applications to the ones NO other dump section speaks
+// for: sync is Synced, so there is no diff to render and no sync failure to report, yet health is
+// not Healthy.
+//
+// It is the shape the gcp floor leg of nightly run 33487970328 died in (#3580), and the run's own
+// dump said so out loud — "argocd app diff: no loser is OutOfSync, so there is no diff to show" —
+// having then printed nothing else about it. Pure, so the narrowing is testable: pick the wrong set
+// and this section either duplicates the diff path or omits the only loser it exists for.
+func syncedUnhealthyLosers(observed map[string]argoAppState, losers []string) []string {
+	var out []string
+	for _, name := range losers {
+		if st, ok := observed[name]; ok && st.Sync == "Synced" && st.Health != "Healthy" {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// argoHealthStaleness reports HOW OLD a losing Application's health verdict is, and what that age
+// does and does not license the reader to conclude.
+//
+// This is a DIFFERENT question from argoSyncStaleness, which judges a sync status on the
+// "no difference, yet OutOfSync" path. Both read status.reconciledAt, and they must not be
+// collapsed: there, a stale status means the diff is right and the status is old; here, a stale
+// health means the WORKLOAD may already be up and the verdict was taken from before it was.
+//
+// IT NEVER ISSUES AN ALL-CLEAR, and that is the whole design. The first version of this function
+// had two arms — older than ArgoCD's cadence read as suspect, younger read as "the health is
+// CURRENT, so this is a real convergence failure". Driven against the run it was written for, the
+// second arm fired: on run 33487970328 the last successful compare was 09:12:07Z and the assertion
+// read health at 09:14:05Z, an age of 1m58s — inside a 120-180s cadence by two seconds — while the
+// health it was vouching for was demonstrably wrong (every pod had been Running and ready since
+// 09:11:36Z). No threshold answers this, because ArgoCD updates reconciledAt only on a compare that
+// SUCCEEDS: a small age means the last GOOD compare was recent, never that no compare has failed
+// since. Picking a bound that would have caught this one run would have been a number reverse-
+// engineered from the answer, which is not a measurement.
+//
+// So the age is reported as the FACT it is, both arms name the controller log as the place the
+// question is actually settled, and only the arm that can be sure — a full reconcile window missed
+// — states the stronger finding.
+//
+// Pure, so all four outcomes are testable without a cluster.
+func argoHealthStaleness(app, health, reconciledAt string, now time.Time) string {
+	t := strings.TrimSpace(reconciledAt)
+	if t == "" {
+		return fmt.Sprintf("      %s: health=%s, but there is no status.reconciledAt — cannot say how old that health is",
+			app, argoHealthOrUnknown(health))
+	}
+	parsed, err := time.Parse(time.RFC3339, t)
+	if err != nil {
+		return fmt.Sprintf("      %s: health=%s, and status.reconciledAt %q is unparseable — cannot say how old that health is",
+			app, argoHealthOrUnknown(health), t)
+	}
+	age := now.Sub(parsed).Round(time.Second)
+	const shared = " ArgoCD advances reconciledAt only on a compare that SUCCEEDS, so this age is the gap since the last GOOD compare and NOT evidence that none has failed since — check the controller log section above for compares that aborted, and treat a Running-and-ready workload as evidence the health is stale rather than the workload broken."
+	if age >= argoReconcileInterval {
+		return fmt.Sprintf(
+			"      %s: health=%s was last recomputed %s ago, which is a FULL reconcile window (~%s) missed — this verdict may predate the cluster it describes.%s",
+			app, argoHealthOrUnknown(health), age, argoReconcileInterval, shared)
+	}
+	return fmt.Sprintf(
+		"      %s: health=%s was last recomputed %s ago (within ArgoCD's ~%s cadence). That does NOT make it current:%s",
+		app, argoHealthOrUnknown(health), age, argoReconcileInterval, shared)
+}
+
+// dumpArgoHealthStaleness reports, for every Synced-but-unhealthy loser, whether its health is
+// fresh enough to be believed.
+//
+// It is its own section rather than a branch inside dumpArgoAppDiffs because that function returns
+// EARLY — "no loser is OutOfSync, so there is no diff to show" — before it reaches the staleness
+// probe it already owns. The one diagnostic that could have explained #3580 was therefore
+// unreachable in exactly the run that needed it: reachable only from the OutOfSync path, and this
+// loser was Synced.
+func dumpArgoHealthStaleness(ctx context.Context, kubeconfigPath string, observed map[string]argoAppState, losers []string) string {
+	candidates := syncedUnhealthyLosers(observed, losers)
+	if len(candidates) == 0 {
+		// Distinguishable from "we did not look", the same way dumpArgoAppDiffs is: no loser is in
+		// the state this section exists for.
+		return "\n──── argocd health freshness: no loser is Synced-but-unhealthy, so no health can be stale ────\n"
+	}
+	// One jsonpath read per app — cheap next to a chart render, but this section's share of the
+	// pooled dump budget is a fraction of four minutes, and a full-surface run can lose twenty
+	// Applications at once. Capped, and the cap SAYS SO: a section that quietly stops before the
+	// interesting app has the same effect as no section at all.
+	const maxHealthChecked = 8
+
+	var b strings.Builder
+	b.WriteString("\n──── is the HEALTH current? (Synced losers, whose health ArgoCD refreshes only on a successful compare) ────\n")
+	now := time.Now()
+	for i, name := range candidates {
+		if i >= maxHealthChecked {
+			fmt.Fprintf(&b, "  … %d more Synced-but-unhealthy Application(s) not checked\n", len(candidates)-i)
+			break
+		}
+		b.WriteString(argoHealthStaleness(name, observed[name].Health,
+			readArgoReconciledAt(ctx, kubeconfigPath, name), now) + "\n")
+	}
+	return b.String()
 }
 
 // argoReconcileInterval is the WORST-CASE gap between two reconciles on the shipped argo-cd chart.

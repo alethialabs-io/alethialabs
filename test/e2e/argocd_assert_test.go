@@ -1753,3 +1753,135 @@ func TestAVacuousAssertionStillWritesWhenNothingIsThere(t *testing.T) {
 		t.Errorf("outcome = %q, want vacuous", got.Outcome)
 	}
 }
+
+// syncedUnhealthyLosers picks the losers NO other dump section speaks for. Getting this narrowing
+// wrong is invisible at runtime in both directions — too wide and it duplicates the diff path, too
+// narrow and #3580's only loser falls out of the one section written for it.
+func TestSyncedUnhealthyLosers(t *testing.T) {
+	observed := map[string]argoAppState{
+		// The #3580 shape, verbatim from the gcp floor leg of run 33487970328.
+		"external-secrets-operator": {Health: "Progressing", Sync: "Synced"},
+		// Synced and Degraded — same section: ArgoCD refreshes health on a compare either way.
+		"addon-falco": {Health: "Degraded", Sync: "Synced"},
+		// OutOfSync — the diff section owns this one, whatever its health.
+		"addon-loki": {Health: "Degraded", Sync: "OutOfSync"},
+		// Healthy losers are not losers; if one arrives, it is not this section's business.
+		"addon-reloader": {Health: "Healthy", Sync: "Synced"},
+	}
+	losers := []string{"addon-loki", "external-secrets-operator", "addon-falco", "addon-reloader"}
+
+	got := syncedUnhealthyLosers(observed, losers)
+	want := []string{"addon-falco", "external-secrets-operator"}
+	if len(got) != len(want) {
+		t.Fatalf("syncedUnhealthyLosers = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("syncedUnhealthyLosers = %v, want %v (sorted)", got, want)
+		}
+	}
+
+	t.Run("a loser absent from the observed map is not invented", func(t *testing.T) {
+		// It has no sync status at all, so claiming it is Synced-but-unhealthy would be a
+		// diagnostic asserting something it never read.
+		if got := syncedUnhealthyLosers(observed, []string{"never-observed"}); len(got) != 0 {
+			t.Errorf("an unobserved loser must not be selected; got %v", got)
+		}
+	})
+}
+
+// argoHealthStaleness reports how old a health verdict is. It must NEVER issue an all-clear, and
+// that is not a style choice — see the function's own comment: the first version's "the health is
+// CURRENT" arm fired on the exact run it was written for, vouching for a health that was wrong.
+func TestArgoHealthStaleness(t *testing.T) {
+	now := time.Date(2026, 9, 1, 9, 14, 5, 0, time.UTC)
+
+	// Every arm that read a timestamp must point at where the question is actually settled, because
+	// the age alone never settles it.
+	assertNamesTheControllerLog := func(t *testing.T, got string) {
+		t.Helper()
+		if !strings.Contains(got, "controller log") {
+			t.Errorf("must name where the question is settled; got %q", got)
+		}
+		if !strings.Contains(got, "SUCCEEDS") {
+			t.Errorf("must say that an aborted compare does not advance reconciledAt; got %q", got)
+		}
+	}
+
+	t.Run("a full missed reconcile window states the stronger finding", func(t *testing.T) {
+		got := argoHealthStaleness("external-secrets-operator", "Progressing",
+			now.Add(-4*time.Minute).Format(time.RFC3339), now)
+		if !strings.Contains(got, "may predate") {
+			t.Errorf("a 4m-old health must be reported as possibly predating the cluster; got %q", got)
+		}
+		if !strings.Contains(got, "Progressing") {
+			t.Errorf("must name the health it judged; got %q", got)
+		}
+		assertNamesTheControllerLog(t, got)
+	})
+
+	t.Run("an age inside the cadence is NOT reported as current", func(t *testing.T) {
+		got := argoHealthStaleness("addon-falco", "Degraded",
+			now.Add(-30*time.Second).Format(time.RFC3339), now)
+		// The regression this pins: any wording that lets a reader conclude the health is fine.
+		for _, banned := range []string{"CURRENT", "is current", "real convergence failure", "not a stale read"} {
+			if strings.Contains(got, banned) {
+				t.Errorf("a young age must not read as an all-clear (%q); got %q", banned, got)
+			}
+		}
+		if !strings.Contains(got, "does NOT make it current") {
+			t.Errorf("must say explicitly what the age fails to prove; got %q", got)
+		}
+		assertNamesTheControllerLog(t, got)
+	})
+
+	t.Run("a missing or unreadable timestamp says it cannot tell", func(t *testing.T) {
+		for _, in := range []string{"", "   ", "not-a-timestamp"} {
+			got := argoHealthStaleness("a", "Progressing", in, now)
+			if !strings.Contains(got, "cannot say") {
+				t.Errorf("input %q must render as cannot-say; got %q", in, got)
+			}
+			// It read no timestamp, so it must not report an age of any kind.
+			if strings.Contains(got, "ago") {
+				t.Errorf("input %q must not state an age it never measured; got %q", in, got)
+			}
+		}
+	})
+
+	t.Run("the boundary is the reconcile cadence itself", func(t *testing.T) {
+		got := argoHealthStaleness("a", "Progressing",
+			now.Add(-argoReconcileInterval).Format(time.RFC3339), now)
+		if !strings.Contains(got, "may predate") {
+			t.Errorf("exactly at the cadence must state the stronger finding; got %q", got)
+		}
+	})
+
+	t.Run("an unread health renders as Unknown, never as the empty word", func(t *testing.T) {
+		// "health= was last recomputed" is the sentence this prevents.
+		got := argoHealthStaleness("a", "", now.Add(-time.Minute).Format(time.RFC3339), now)
+		if !strings.Contains(got, "health=Unknown") {
+			t.Errorf("an empty health must render as Unknown; got %q", got)
+		}
+	})
+}
+
+// The measured case #3580 turned on, pinned against the run's OWN timestamps rather than round
+// numbers. It is the arm that looks innocuous — 1m58s is INSIDE ArgoCD's cadence by two seconds —
+// and it is the one that must not reassure anybody, because the health it describes was already
+// wrong: every external-secrets pod had been Running and ready since 09:11:36Z.
+func TestArgoHealthStalenessOnTheRunThatFailed(t *testing.T) {
+	lastCompare := time.Date(2026, 9, 1, 9, 12, 7, 0, time.UTC) // last SUCCESSFUL compare
+	readAt := time.Date(2026, 9, 1, 9, 14, 5, 0, time.UTC)      // when the assertion gave up
+
+	got := argoHealthStaleness("external-secrets-operator", "Progressing",
+		lastCompare.Format(time.RFC3339), readAt)
+	if !strings.Contains(got, "1m58s") {
+		t.Errorf("must state the measured age so the reader can check it; got %q", got)
+	}
+	if !strings.Contains(got, "does NOT make it current") {
+		t.Errorf("the run's own health was stale despite a young age — this must not read as an all-clear; got %q", got)
+	}
+	if !strings.Contains(got, "Running-and-ready") {
+		t.Errorf("must name the evidence that actually settled it on this run; got %q", got)
+	}
+}
