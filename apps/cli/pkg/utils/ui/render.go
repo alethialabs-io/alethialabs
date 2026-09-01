@@ -31,16 +31,18 @@ import (
 //     job. Its rule is being replaced wholesale by `packages/core/format.Duration`, so hoisting it
 //     here first would move it twice.
 
-// Dash is the empty-value sentinel. One glyph, one spelling.
+// The empty-value sentinel is SymbolDash, in styles.go beside its siblings. This file deliberately
+// does NOT introduce a second name for it.
 //
-// Exported so a caller can compare against it rather than writing the rune again — a literal "—"
-// somewhere in the tree is how the three spellings happened.
-const Dash = SymbolDash
+// The first cut of this package exported `const Dash = SymbolDash`, reasoning that a caller should
+// compare against a constant rather than write the rune again. But ~25 sites went on using
+// SymbolDash directly, so the split re-created the very failure it was meant to end: change one and
+// the other half of the tree keeps the old character. Three spellings became four. One name.
 
 // OrDash renders a string, or the dash when it is empty.
 func OrDash(s string) string {
 	if s == "" {
-		return Dash
+		return SymbolDash
 	}
 	return s
 }
@@ -48,7 +50,7 @@ func OrDash(s string) string {
 // StrOrDash renders a nullable string, or the dash when it is unset or empty.
 func StrOrDash(s *string) string {
 	if s == nil || *s == "" {
-		return Dash
+		return SymbolDash
 	}
 	return *s
 }
@@ -56,7 +58,7 @@ func StrOrDash(s *string) string {
 // IntOrDash renders a nullable int, or the dash when unset.
 func IntOrDash(v *int) string {
 	if v == nil {
-		return Dash
+		return SymbolDash
 	}
 	return fmt.Sprintf("%d", *v)
 }
@@ -69,7 +71,7 @@ func IntOrDash(v *int) string {
 // `packages/core/format.MonthlyRate`, which is where that defect is fixed.
 func FloatOrDash(v *float64) string {
 	if v == nil {
-		return Dash
+		return SymbolDash
 	}
 	return fmt.Sprintf("$%.2f", *v)
 }
@@ -80,7 +82,7 @@ func FloatOrDash(v *float64) string {
 // the same constant, so a change to one would not have reached the other.
 func StampOrDash(v *string) string {
 	if v == nil || strings.TrimSpace(*v) == "" {
-		return Dash
+		return SymbolDash
 	}
 	if t, err := time.Parse(time.RFC3339, *v); err == nil {
 		return t.UTC().Format("2006-01-02 15:04")
@@ -105,7 +107,7 @@ func YesNo(b bool) string {
 	if b {
 		return SymbolDefault
 	}
-	return Dash
+	return SymbolDash
 }
 
 // GateGlyph renders an enabled/disabled gate as a tick or the dash.
@@ -113,7 +115,7 @@ func GateGlyph(on bool) string {
 	if on {
 		return SymbolSuccess
 	}
-	return Dash
+	return SymbolDash
 }
 
 // RelativeTime renders an RFC3339 timestamp as "3 minutes ago", the dash when empty, and the raw
@@ -127,7 +129,7 @@ func GateGlyph(on bool) string {
 // others pass a last-seen and a decided-at.
 func RelativeTime(raw string) string {
 	if raw == "" {
-		return Dash
+		return SymbolDash
 	}
 	t, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
@@ -145,4 +147,25 @@ func TruncID(id string) string {
 		return id[:8] + "…"
 	}
 	return id
+}
+
+// SmartTime renders a timestamp relatively inside a week and absolutely beyond it: "3 hours ago",
+// then "2026-03-09". The dash for a zero time.
+//
+// The week cutoff is the point where "ago" stops helping — nobody converts "5 weeks ago" back to a
+// date in their head, and nobody wants a calendar date for something that happened this morning.
+//
+// This is one of THREE relative-time renderings the CLI carries. The other two are RelativeTime
+// (always relative, from an RFC3339 string) and bare humanize.Time. They take different input types
+// and only this one has a cutoff, so they cannot simply be merged — converging them changes what a
+// user sees and belongs to the lane that owns that decision. Hoisting it here is step one: they can
+// only be compared once they are in the same place.
+func SmartTime(t time.Time) string {
+	if t.IsZero() {
+		return SymbolDash
+	}
+	if time.Since(t).Hours() < 24*7 {
+		return humanize.Time(t)
+	}
+	return t.Format("2006-01-02")
 }

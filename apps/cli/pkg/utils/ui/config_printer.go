@@ -31,7 +31,7 @@ func PrintConfiguration(config types.Configuration) {
 		return kv(key, valStr)
 	}
 	kvNum := func(key string, value *float64) string {
-		valStr := Dash
+		valStr := SymbolDash
 		if value != nil {
 			if *value == float64(int(*value)) {
 				valStr = fmt.Sprintf("%d", int(*value))
@@ -43,7 +43,7 @@ func PrintConfiguration(config types.Configuration) {
 	}
 	kvTime := func(key string, value time.Time) string {
 		if value.IsZero() {
-			return kv(key, Dash)
+			return kv(key, SymbolDash)
 		}
 		return kv(key, value.Format("2006-01-02 15:04:05"))
 	}

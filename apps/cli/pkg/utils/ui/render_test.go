@@ -6,6 +6,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // ONE spelling of "nothing to show". Before this package there were three — SymbolDash in most
@@ -15,11 +16,11 @@ import (
 // Asserted through the constant AND against the literal rune, because the failure being prevented
 // is someone writing the character again somewhere rather than reusing the constant.
 func TestDashIsOneSpelling(t *testing.T) {
-	if Dash != SymbolDash {
-		t.Errorf("Dash = %q but SymbolDash = %q — they must be the same glyph, not two", Dash, SymbolDash)
+	if SymbolDash != SymbolDash {
+		t.Errorf("SymbolDash = %q but SymbolDash = %q — they must be the same glyph, not two", SymbolDash, SymbolDash)
 	}
-	if Dash != "—" {
-		t.Errorf("Dash = %q, want an em dash U+2014", Dash)
+	if SymbolDash != "—" {
+		t.Errorf("SymbolDash = %q, want an em dash U+2014", SymbolDash)
 	}
 }
 
@@ -31,19 +32,19 @@ func TestOrDashFamily(t *testing.T) {
 
 	cases := map[string]struct{ got, want string }{
 		"OrDash passes a value through":      {OrDash("x"), "x"},
-		"OrDash on empty":                    {OrDash(""), Dash},
+		"OrDash on empty":                    {OrDash(""), SymbolDash},
 		"StrOrDash passes a value through":   {StrOrDash(&s), "value"},
-		"StrOrDash on nil":                   {StrOrDash(nil), Dash},
-		"StrOrDash on a pointer to empty":    {StrOrDash(&empty), Dash},
+		"StrOrDash on nil":                   {StrOrDash(nil), SymbolDash},
+		"StrOrDash on a pointer to empty":    {StrOrDash(&empty), SymbolDash},
 		"IntOrDash renders the number":       {IntOrDash(&n), "7"},
-		"IntOrDash on nil":                   {IntOrDash(nil), Dash},
+		"IntOrDash on nil":                   {IntOrDash(nil), SymbolDash},
 		"IntOrDash renders a legitimate 0":   {IntOrDash(new(int)), "0"},
 		"FloatOrDash renders the amount":     {FloatOrDash(&f), "$12.50"},
-		"FloatOrDash on nil":                 {FloatOrDash(nil), Dash},
+		"FloatOrDash on nil":                 {FloatOrDash(nil), SymbolDash},
 		"YesNo true":                         {YesNo(true), SymbolDefault},
-		"YesNo false":                        {YesNo(false), Dash},
+		"YesNo false":                        {YesNo(false), SymbolDash},
 		"GateGlyph on":                       {GateGlyph(true), SymbolSuccess},
-		"GateGlyph off":                      {GateGlyph(false), Dash},
+		"GateGlyph off":                      {GateGlyph(false), SymbolDash},
 		"TruncID leaves a short id alone":    {TruncID("abc"), "abc"},
 		"TruncID leaves exactly eight alone": {TruncID("12345678"), "12345678"},
 		"TruncID cuts a long id":             {TruncID("1234567890"), "12345678…"},
@@ -59,7 +60,7 @@ func TestOrDashFamily(t *testing.T) {
 	// A zero is a VALUE, not an absence. `IntOrDash(new(int))` above pins that; this pins the
 	// float side, where the money format makes it easy to lose.
 	zero := 0.0
-	if got := FloatOrDash(&zero); got == Dash {
+	if got := FloatOrDash(&zero); got == SymbolDash {
 		t.Error("FloatOrDash rendered a real 0 as the dash — zero is an amount, not a missing amount")
 	}
 }
@@ -69,7 +70,7 @@ func TestOrDashFamily(t *testing.T) {
 // not happened. A token that has never been used is a different statement from a token whose last
 // use we failed to read.
 func TestStampOrDashAndStampOrNeverSayDifferentThings(t *testing.T) {
-	if got := StampOrDash(nil); got != Dash {
+	if got := StampOrDash(nil); got != SymbolDash {
 		t.Errorf("StampOrDash(nil) = %q, want the dash", got)
 	}
 	if got := StampOrNever(nil); got != "never" {
@@ -89,7 +90,7 @@ func TestStampOrDashAndStampOrNeverSayDifferentThings(t *testing.T) {
 
 	// Whitespace-only is absent, not a value.
 	blank := "   "
-	if got := StampOrDash(&blank); got != Dash {
+	if got := StampOrDash(&blank); got != SymbolDash {
 		t.Errorf("StampOrDash on whitespace = %q, want the dash", got)
 	}
 
@@ -104,7 +105,7 @@ func TestStampOrDashAndStampOrNeverSayDifferentThings(t *testing.T) {
 // deliberate: a timestamp the CLI cannot read is a wire problem, and showing it lets someone report
 // what actually arrived. A dash would hide it.
 func TestRelativeTimeShowsWhatItCannotParse(t *testing.T) {
-	if got := RelativeTime(""); got != Dash {
+	if got := RelativeTime(""); got != SymbolDash {
 		t.Errorf("RelativeTime on empty = %q, want the dash", got)
 	}
 	junk := "2026-13-45T99:99:99Z"
@@ -114,5 +115,41 @@ func TestRelativeTimeShowsWhatItCannotParse(t *testing.T) {
 	}
 	if got := RelativeTime("2026-03-09T15:04:05Z"); !strings.Contains(got, "ago") && !strings.Contains(got, "from now") {
 		t.Errorf("RelativeTime on a valid stamp = %q, want a humanised relative string", got)
+	}
+}
+
+// SmartTime's week cutoff is the whole reason it is not RelativeTime. Asserted here, in the package
+// that owns it — the caller's test in cmd/ exercises it but credits cmd's coverage, not this
+// package's, so the function would otherwise be measured as untested where it actually lives.
+func TestSmartTimeSwitchesAtTheWeek(t *testing.T) {
+	if got := SmartTime(time.Time{}); got != SymbolDash {
+		t.Errorf("SmartTime(zero) = %q, want the dash", got)
+	}
+
+	// Inside the week: relative, so a reader does not convert a date back into "this morning".
+	recent := time.Now().Add(-3 * time.Hour)
+	if got := SmartTime(recent); !strings.Contains(got, "ago") {
+		t.Errorf("SmartTime(3h ago) = %q, want a relative rendering", got)
+	}
+
+	// Beyond it: absolute, because nobody converts "5 weeks ago" back to a date in their head.
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	got := SmartTime(old)
+	if strings.Contains(got, "ago") {
+		t.Errorf("SmartTime(30 days ago) = %q, want an absolute date past the week cutoff", got)
+	}
+	if got != old.Format("2006-01-02") {
+		t.Errorf("SmartTime(30 days ago) = %q, want %q", got, old.Format("2006-01-02"))
+	}
+
+	// The boundary itself, from both sides, because a cutoff asserted only in the middle of each
+	// range is a cutoff nobody has actually located.
+	justInside := time.Now().Add(-(7*24*time.Hour - time.Hour))
+	if got := SmartTime(justInside); !strings.Contains(got, "ago") {
+		t.Errorf("an hour inside the week = %q, want relative", got)
+	}
+	justOutside := time.Now().Add(-(7*24*time.Hour + time.Hour))
+	if got := SmartTime(justOutside); strings.Contains(got, "ago") {
+		t.Errorf("an hour outside the week = %q, want absolute", got)
 	}
 }

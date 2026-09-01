@@ -124,14 +124,14 @@ func TestFormatDuration(t *testing.T) {
 }
 
 func TestFormatTime(t *testing.T) {
-	if got := formatTime(time.Time{}); got != ui.SymbolDash {
+	if got := ui.SmartTime(time.Time{}); got != ui.SymbolDash {
 		t.Errorf("zero time should be dash, got %q", got)
 	}
-	if got := formatTime(time.Now()); got == ui.SymbolDash {
+	if got := ui.SmartTime(time.Now()); got == ui.SymbolDash {
 		t.Error("recent time should be humanized")
 	}
 	old := time.Now().Add(-100 * 24 * time.Hour)
-	if got := formatTime(old); len(got) != len("2006-01-02") {
+	if got := ui.SmartTime(old); len(got) != len("2006-01-02") {
 		t.Errorf("old time should be an absolute date, got %q", got)
 	}
 }
