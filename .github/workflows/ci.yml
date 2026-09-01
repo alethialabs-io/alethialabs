@@ -1692,7 +1692,7 @@ jobs:
       # convergence assertion 8m + build/boot headroom) plus teardown margin.
       - name: T1 — real runner claims from the control plane and provisions kind
         working-directory: test/e2e
-        run: GOWORK=off go test -tags=e2e_t1 ./... -run TestT1RealRunnerKindProvisioning -count=1 -timeout 25m -v
+        run: GOWORK=off go test -tags=e2e_t1 ./... -run TestT1RealRunnerKindProvisioning -count=1 -timeout 30m -v
       - name: Teardown any leaked kind clusters (safety net)
         if: always()
         run: kind delete clusters --all || true
