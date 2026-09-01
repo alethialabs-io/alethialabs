@@ -16,6 +16,44 @@ export function isPlausibleRepoUrl(url: string): boolean {
 	return /^https:\/\/\S+$/.test(url) || /^git@\S+:\S+$/.test(url);
 }
 
+/**
+ * The reserved platform variable namespace. The runner publishes the frozen Alethia context as
+ * `TF_VAR_alethia_*` environment variables, and a customer entry of the same name is written into
+ * the `-var-file`, which has HIGHER precedence — so `alethia_project_id` in var_values would shadow
+ * the platform's own value. `provisioner.coerceByoVarValues` drops any such key.
+ *
+ * Until #3670 the prefix was enforced only in Go, so the console happily STORED `alethia_project_id`
+ * and the user then watched it vanish at apply with nothing in the UI to explain why.
+ *
+ * CASE-SENSITIVE, matching `strings.HasPrefix(k, "alethia_")` exactly. A case-insensitive check here
+ * would refuse `Alethia_project_id`, which the runner passes through as an ordinary variable — the
+ * console would be refusing input the server accepts.
+ */
+export const RESERVED_TFVAR_PREFIX = "alethia_";
+
+/** Reports whether `key` is outside the reserved platform namespace — see RESERVED_TFVAR_PREFIX. */
+export function isNotReservedTfvarKey(key: string): boolean {
+	return !key.startsWith(RESERVED_TFVAR_PREFIX);
+}
+
+/** The message both surfaces use for a reserved key, so the console and the CLI say the same thing. */
+export const RESERVED_TFVAR_MESSAGE = `"${RESERVED_TFVAR_PREFIX}" is reserved for the platform context; the runner drops variables with this prefix.`;
+
+/**
+ * One BYO IaC variable NAME. The shared spec `iac_var_key`
+ * (apps/console/scripts/gen-go-validation.ts) is projected from exactly this schema.
+ *
+ * Note the split the generator makes visible: `.min(1)` and `.regex(...)` become data in
+ * packages/core/validate/spec_gen.go, while `.trim()` and the reserved-prefix `.refine()` cannot be
+ * — the first is a console-side normalisation, the second is held to a conformance table.
+ */
+export const iacVarKeySchema = z
+	.string()
+	.trim()
+	.min(1, "Variable name is required.")
+	.regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Use a valid tfvar name (letters, digits, underscore).")
+	.refine(isNotReservedTfvarKey, RESERVED_TFVAR_MESSAGE);
+
 /** The attachIacSource input — the insertable user-facing columns of project_iac_sources.
  * Server-derived columns (commit_sha, scan_*, status, timestamps) are omitted: the scan
  * pipeline owns them. */
@@ -32,9 +70,16 @@ export const iacSourceAttachSchema = createInsertSchema(projectIacSources, {
 		.transform((p) => p.replace(/^\/+|\/+$/g, ""))
 		.optional(),
 	git_credential_id: z.string().uuid().nullish(),
-	// Scalar-only tfvars (IacVarValues) — no nested objects/arrays, no secrets.
+	// Scalar-only tfvars (IacVarValues) — no nested objects/arrays, no secrets, and no key in the
+	// reserved platform namespace. The key check is HERE as well as on the form row because the
+	// server action is reachable without the form (the CLI and the API post straight to it), and
+	// storing a key the runner will drop is the defect this closes.
 	var_values: z
 		.record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+		.refine(
+			(v) => Object.keys(v).every(isNotReservedTfvarKey),
+			RESERVED_TFVAR_MESSAGE,
+		)
 		.optional()
 		.transform((v): IacVarValues => v ?? {}),
 }).pick({
@@ -58,11 +103,7 @@ export type IacVarKind = (typeof IAC_VAR_KINDS)[number];
  */
 export const iacVarRowSchema = z
 	.object({
-		key: z
-			.string()
-			.trim()
-			.min(1, "Variable name is required.")
-			.regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Use a valid tfvar name (letters, digits, underscore)."),
+		key: iacVarKeySchema,
 		kind: z.enum(IAC_VAR_KINDS),
 		// Raw text as typed; refined per-kind below so a `number`/`bool` can't hold garbage.
 		value: z.string(),
