@@ -691,6 +691,17 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-shared-surface.mjs --self-test
+      # scripts/lib/console-routes.mjs is the ONE definition of "the console's private route set" —
+      # the denominator of every score the console-UI conformance wave reports. It raises rather
+      # than returning [] on a renamed route group, an unreadable directory, two pages on one URL
+      # and two spellings of one boundary, so running it over the real tree IS the check: a route
+      # list nothing resolves is a clean bill of health over zero files.
+      - name: The console's private route manifest still resolves
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:console-routes
+      - name: ...and that manifest is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/lib/console-routes.mjs --self-test
       # packages/brand/src/ramp-srgb.ts is a hand-maintained sRGB copy of the OKLCH ramp in
       # tokens.css, for the three surfaces that cannot read a custom property (email, Stripe
       # Elements across an iframe, next/og). It fixed three disagreeing transcriptions by
