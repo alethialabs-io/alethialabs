@@ -232,7 +232,16 @@ func TestDescribeWithheldAddOnsIsNotVacuous(t *testing.T) {
 	}
 	app := argocd.AddOnAppName("external-dns")
 	got := DescribeWithheldAddOns(cloud, []string{app})
-	for _, want := range []string{app, string(NeedsUserConfig), "#2717", "CUSTOMER action"} {
+	// The issue is READ FROM THE ENTRY, not restated. It was hardcoded "#2717" here, so this
+	// assertion and the entry agreed with each other about a number that had been closed since
+	// 2026-08-29 — the same drift, in a second place, and pinning the literal is what made the
+	// second place possible. Reading it back still proves what this test is for: that whatever the
+	// entry records reaches the description a green run prints.
+	wantIssue := addOnExclusions["external-dns"].Issue
+	if wantIssue == "" {
+		t.Fatal("the external-dns exclusion records no Issue — this test would assert nothing")
+	}
+	for _, want := range []string{app, string(NeedsUserConfig), wantIssue, "CUSTOMER action"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("description does not mention %q:\n%s", want, got)
 		}
