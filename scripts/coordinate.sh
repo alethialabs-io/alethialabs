@@ -58,8 +58,29 @@ command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
 # So the decoration is stripped and the anchor is kept: a leading list marker and any `**` come off
 # first, then the same start-of-line match runs. A mid-sentence mention still does not match,
 # because stripping decoration does not move it to the start of its line.
+#
+# A FENCED BLOCK IS NOT A DECLARATION, and the anchor alone cannot tell the difference — inside a
+# fence the quoted line genuinely starts at column 0. That is the #3639 symptom exactly: the
+# seeding snippet in .claude/skills/decompose/SKILL.md prints `blocked-by: #$SEAMS` at column 0
+# inside a ```bash fence, so an issue body pasting that snippet with a real number acquires a
+# phantom dependency and a permanent `blocked` label with nothing in its prose to explain it. So
+# closed fenced blocks (``` or ~~~, delimiters included) are dropped before the match runs.
+#
+# CLOSED, deliberately. An UNTERMINATED fence leaves the rest of the body in play rather than
+# swallowing it, because dropping it would fail OPEN — the unblock pass reads an empty `deps` as
+# "no dependencies" and removes the `blocked` label — and one unclosed backtick run in a hand-typed
+# body would silently mark a lane READY. Keeping those lines can only over-report, which fails
+# closed and is visible.
 blocked_by_from_body() {
-  sed -e 's/^[[:space:]]*[-*+][[:space:]]\{1,\}/ /' -e 's/\*\*//g' \
+  awk '
+    { line[NR] = $0; drop[NR] = 0 }
+    /^[[:space:]]*(```|~~~)/ {
+      if (open) { for (i = start; i <= NR; i++) drop[i] = 1; open = 0 }
+      else { open = 1; start = NR }
+    }
+    END { for (i = 1; i <= NR; i++) if (!drop[i]) print line[i] }
+  ' \
+    | sed -e 's/^[[:space:]]*[-*+][[:space:]]\{1,\}/ /' -e 's/\*\*//g' \
     | sed -n 's/^[[:space:]]*[Bb]locked-by:[[:space:]]*\(.*\)$/\1/p' \
     | grep -oE '#[0-9]+' | tr -d '#' | sort -nu || true
 }

@@ -98,6 +98,35 @@ function scopeGlobs(body) {
 }
 
 /**
+ * The body's lines with every CLOSED fenced block (``` or ~~~, delimiters included) removed.
+ *
+ * A line inside a fence genuinely starts at column 0, so the start-of-line anchor cannot tell a
+ * declaration from a quoted one. That is the #3639 symptom: the seeding snippet in
+ * `.claude/skills/decompose/SKILL.md` prints `blocked-by: #$SEAMS` at column 0 inside a ```bash
+ * fence, so a body pasting it with a real number acquires a phantom dependency.
+ *
+ * CLOSED only. An unterminated fence leaves the rest of the body in play, because dropping it
+ * would fail OPEN — the coordinator removes the `blocked` label when `deps` is empty — and one
+ * stray backtick run would silently mark a lane READY. Over-reporting fails closed and is visible.
+ * Mirrors the awk pre-pass in `blocked_by_from_body`.
+ */
+function unfencedLines(body) {
+	const lines = (body || "").split("\n");
+	const drop = new Array(lines.length).fill(false);
+	let open = -1;
+	for (let i = 0; i < lines.length; i++) {
+		if (!/^[ \t]*(```|~~~)/.test(lines[i])) continue;
+		if (open >= 0) {
+			for (let j = open; j <= i; j++) drop[j] = true;
+			open = -1;
+		} else {
+			open = i;
+		}
+	}
+	return lines.filter((_, i) => !drop[i]);
+}
+
+/**
  * Parse the `blocked-by: #12 #14` declarations from an issue body → ascending, de-duplicated numbers.
  *
  * EVERY declaration line, not the first. This used to be a single `.match(/…/m)`, which takes ONE
@@ -107,13 +136,14 @@ function scopeGlobs(body) {
  * shared fixture file could not catch it, because no fixture carried a multi-line body. The two
  * parsers are a contract; the fixture set only proves it where it has a case.
  *
- * The normalisation mirrors the shell exactly: a leading list marker and any `**` come off, the
- * declaration must still start its line, and the result is sorted ascending and de-duplicated the
- * way `sort -nu` does. Matching that ordering is what lets one fixture file express both sides.
+ * The normalisation mirrors the shell exactly: closed fenced blocks come out, a leading list marker
+ * and any `**` come off, the declaration must still start its line, and the result is sorted
+ * ascending and de-duplicated the way `sort -nu` does. Matching that ordering is what lets one
+ * fixture file express both sides.
  */
 function blockedBy(body) {
 	const numbers = new Set();
-	for (const line of (body || "").split("\n")) {
+	for (const line of unfencedLines(body)) {
 		const bare = line.replace(/^[ \t]*[-*+][ \t]+/, " ").replace(/\*\*/g, "");
 		const m = bare.match(/^[ \t]*[Bb]locked-by:[ \t]*(.*)$/);
 		if (!m) continue;

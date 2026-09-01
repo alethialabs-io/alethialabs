@@ -30,9 +30,33 @@
       "blockedBy": []
     },
     {
-      "name": "code excerpt is not a declaration",
+      "name": "an inline code SPAN mid-sentence is not a declaration",
       "body": "The parser was `sed -n 's/.*blocked-by: #42/'` before #43 fixed it.",
       "blockedBy": []
+    },
+    {
+      "name": "a FENCED block is not a declaration, even at column zero",
+      "body": "Example:\n\n```\nblocked-by: #42\n```\n",
+      "blockedBy": []
+    },
+    {
+      "name": "the decompose seeding snippet quoted in a body declares nothing (#3639)",
+      "body": "Seeded with:\n\n```bash\ngh issue create --body \"$(cat <<EOF\nblocked-by: #99\nscope: apps/console/**\nEOF\n)\"\n```\n",
+      "blockedBy": []
+    },
+    {
+      "name": "an UNTERMINATED fence does not swallow a later declaration",
+      "body": "```\nsome snippet nobody closed\n\nblocked-by: #44\n",
+      "blockedBy": [
+        44
+      ]
+    },
+    {
+      "name": "a declaration AFTER a closed fence is still read",
+      "body": "```bash\nblocked-by: #77\n```\n\nblocked-by: #78\n",
+      "blockedBy": [
+        78
+      ]
     },
     {
       "name": "issue references without a declaration",

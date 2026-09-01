@@ -949,6 +949,20 @@ jobs:
       - name: Board claim arbitration (earliest-lease-wins) + PR predicates
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/claim-work.sh --self-test
+      # `blocked-by:` is parsed TWICE — by the coordinator that maintains the `blocked` label and by
+      # the dashboard that renders the reason — and the two are a contract, not two implementations.
+      # They have already drifted once: the dashboard took only the FIRST declaration line while the
+      # coordinator unioned every one, so a lane blocked on two issues rendered `◂ #10` and the
+      # maintainer closing #10 saw it stay blocked with nothing explaining why. Both self-tests run
+      # the SAME fixture file (scripts/lib/board-body-fixtures.json), so a change that moves one
+      # parser off the contract reds here instead of waiting for someone to run them by hand.
+      # Hermetic, like the steps above: no gh, no network, no board state.
+      - name: Board dependency-line parser contract (coordinator half)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/coordinate.sh --self-test
+      - name: Board dependency-line parser contract (dashboard half)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/board-dashboard.mjs --self-test
       # The Go coverage ratchet becomes a step inside `Go (build · vet · test · lint)`, a REQUIRED
       # check with no path filter — so it gates every PR in the repository and a false failure
       # stops the merge queue for everyone, not just its author. Three properties are pinned here
