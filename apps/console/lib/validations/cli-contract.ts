@@ -3,6 +3,7 @@
 
 import { createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
+import { pageInfoSchema } from "@/lib/cli/paging";
 import {
 	cloudIdentities,
 	jobLogs,
@@ -499,6 +500,13 @@ export const cliJobsPageResponse = z.object({
 	offset: z.number().int(),
 });
 export const cliJobResponse = z.object({ job: jobWire });
+/**
+ * The `page` object every cursor-paged list response carries. Registered here — rather than
+ * only inside the envelopes that embed it — so the shape is fixture-locked against
+ * `api.PageInfo` on its own, before any route converts. Defined in lib/cli/paging.ts; this is
+ * the registration, not a second definition.
+ */
+export const cliPageInfo = pageInfoSchema;
 /** GET /api/cli/signing-keys result — the trusted-key set `alethia verify receipt` binds a
  * receipt's key_id against. One flat list so a verifier does not have to know which custody
  * model produced a key in order to trust it. */
@@ -868,6 +876,7 @@ export const cliContract = {
 	CloudIdentitiesResponse: cliCloudIdentitiesResponse,
 	JobsPageResponse: cliJobsPageResponse,
 	JobResponse: cliJobResponse,
+	PageInfo: cliPageInfo,
 	Job: jobWire,
 	JobLogsResponse: cliJobLogsResponse,
 	RepositoriesResponse: cliRepositoriesResponse,
