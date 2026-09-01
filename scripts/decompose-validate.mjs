@@ -32,6 +32,11 @@
 // A unit is the "seams" unit when its title matches /\bseams?\b/i AND no OTHER PROPOSED unit
 // blocks it. A blockedBy ref to an id the proposal does not define is an open BOARD issue number
 // and does not disqualify it — that is how a seams unit clears a real overlap with the live board.
+// That exemption is only as good as the SEEDING: this script judges a proposal, and the board
+// learns the ordering solely from the `blocked-by:` line coordinate.sh parses out of the created
+// issue's body. So every unit whose blockedBy names a board number gets a `board ordering` warning
+// on the report spelling out the line that must be seeded — the seams issue included, which is the
+// case the skill's seeding section used to tell the author to leave blocked-by OFF entirely.
 //
 // Usage:
 //   node scripts/decompose-validate.mjs proposal.json   # validate a file
@@ -425,6 +430,21 @@ function validateAgainstBoard(proposal, board) {
 
 	for (const proposed of proposalUnits) {
 		const ordered = boardBlockers(proposed);
+		// The exemption above is granted to the PROPOSAL; the board only ever learns the ordering
+		// from the `blocked-by:` line coordinate.sh parses out of the seeded issue body. Name the
+		// DIRECT refs, because that is what goes on THIS unit's body — a lane inherits the seams
+		// unit's board blockers here, but on the board it inherits them by being blocked-by the
+		// seams issue, which stays blocked while they are open.
+		const directBoardRefs = proposed.blockedBy.filter((ref) => !idSet.has(ref));
+		if (directBoardRefs.length > 0) {
+			result.warnings.push(
+				`board ordering: proposed #${proposed.id} ("${proposed.title}") is exempted from the ` +
+					`open board only because it is ordered behind ${directBoardRefs.map((n) => `#${n}`).join(" ")} — ` +
+					`its seeded issue body MUST carry \`blocked-by: ${directBoardRefs.map((n) => `#${n}`).join(" ")}\` ` +
+					"(the seams issue too), or coordinate.sh leaves it unblocked and claim-work.sh hands it out " +
+					"alongside the issue it overlaps",
+			);
+		}
 		for (const existing of boardUnits) {
 			if (ordered.has(existing.number)) continue;
 			for (const proposedGlob of proposed.scope) {
@@ -551,6 +571,26 @@ function runSelfTest() {
 				: `failed, but for the wrong reason — no error matched ${expectError}`;
 		console.error(`FAIL - ${name}: ${why}${errors.length ? ` (${errors[0]})` : ""}`);
 	};
+	/**
+	 * Assert the report carries a warning matching `expectWarning` (or, with `shouldWarn` false,
+	 * that it carries none matching). The board exemption is only honoured if the author writes the
+	 * number onto the seeded issue, so the reminder is the only part of that hand-off this script
+	 * can hold — an assertion on the PASS/FAIL verdict alone cannot see it at all.
+	 */
+	const expectBoardWarning = (name, prop, board, shouldWarn, expectWarning) => {
+		const { warnings } = validateAgainstBoard(prop, board);
+		const matched = expectWarning.test(warnings.join("\n"));
+		if (matched === shouldWarn) {
+			console.log(`ok   - ${name}`);
+			return;
+		}
+		fails++;
+		console.error(
+			`FAIL - ${name}: expected ${shouldWarn ? "a" : "no"} warning matching ${expectWarning}, got ${
+				warnings.length ? warnings.join(" | ") : "(none)"
+			}`,
+		);
+	};
 	const boardIssue = (number, title, scope, labels = ["wave:W1", "lane:server", "class:backend"]) => ({
 		number,
 		title,
@@ -643,6 +683,27 @@ function runSelfTest() {
 		},
 	];
 	expectBoard("a board blocked-by keeps the seams unit a seams unit", boardBlockedSeams, openBoard, true);
+	// …and the PASS says so out loud. The exemption lives in the proposal; the board only learns it
+	// from the seeded `blocked-by:` line, which a seams issue otherwise does not have — so a silent
+	// PASS here is how the tangle gets seeded behind a green verdict.
+	expectBoardWarning(
+		"the seams unit's board exemption warns that it must be SEEDED",
+		boardBlockedSeams,
+		openBoard,
+		true,
+		/board ordering: proposed #1 .*`blocked-by: #900`/,
+	);
+	// The reminder must be about THIS unit's own body line. Lane #2 is ordered behind #900 only
+	// transitively, and on the board it inherits that by being blocked-by the seams issue — telling
+	// the author to write `blocked-by: #900` on the lane would be wrong, and a warning naming every
+	// unit would train the author to skim past all of them.
+	expectBoardWarning(
+		"a lane inheriting the exemption transitively is NOT told to seed the number",
+		boardBlockedSeams,
+		openBoard,
+		false,
+		/board ordering: proposed #2 /,
+	);
 	expectBoard(
 		"the board exemption reaches nothing once the chain is cut",
 		[{ ...boardBlockedSeams[0], blockedBy: [] }, boardBlockedSeams[1]],

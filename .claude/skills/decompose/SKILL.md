@@ -126,6 +126,14 @@ That ordering is inherited transitively, so putting it on the seams unit covers 
 and a board number there does not stop a unit being the seams unit. `--no-board` skips the live read
 entirely and is for a deliberate offline run, not for getting past a collision.
 
+**That exemption is a promise you have to keep at seed time.** The validator judges the *proposal*;
+it cannot see the issues you go on to create. The unit that named the board number must carry that
+number on its own `blocked-by:` line in the seeded issue body (§5) — **including the seams issue**,
+which otherwise has none. Seed it without and the ordering the `✓ PASS` was granted for never
+reaches the board: `coordinate.sh` leaves the unit unblocked and `claim-work.sh` hands it out
+alongside the very issue it overlaps. On PASS the validator prints one `⚠ board ordering` line per
+unit with a board `blockedBy`, naming the exact line to seed; treat each as a seeding obligation.
+
 ## 4. Show the maintainer and WAIT
 
 Present the full proposal for approval — do not create anything yet. Show:
@@ -145,7 +153,9 @@ its number, then the lanes referencing that real number:
 ```bash
 scripts/coordinate.sh --init-labels        # idempotent; ensures the board label set exists
 
-# Seams issue first — no blocked-by. Capture its number.
+# Seams issue first. It carries NO blocked-by *unless* its proposal unit named open board issues
+# in `blockedBy` to clear a live-board collision (§3) — then those numbers go in its body too, on
+# their own `blocked-by:` line, exactly as a lane's do. Capture its number.
 SEAMS=$(gh issue create \
   --title "seams: project_placement shared types + schema contract" \
   --label "wave:W1" --label "lane:schema" --label "class:backend" \
@@ -177,12 +187,21 @@ EOF
 The issue **body** must carry the two machine-read lines exactly (this is what `claim-work.sh` and
 `coordinate.sh` parse):
 
-- `blocked-by: #<n> #<n>` — the seams issue (and any other prerequisites). Omit on the seams issue.
+- `blocked-by: #<n> #<n>` — **every** prerequisite this unit is ordered behind. For a lane: the seams
+  issue, plus any other. For the **seams issue**: normally absent — but if its proposal unit named
+  open board issues in `blockedBy` to clear a collision (§3), those numbers MUST be written here.
+  This line is the *only* thing that carries the ordering onto the board — `coordinate.sh` computes
+  the `blocked` label from it and nothing else — so a seams issue seeded without one that its
+  proposal claimed is unblocked from the moment it is created, and `claim-work.sh` hands it out
+  concurrently with the open issue it overlaps. That is the mega-commit tangle, behind a `✓ PASS`.
 - `scope: <glob> <glob>` — the disjoint file globs this unit owns.
 
 After seeding, run `scripts/coordinate.sh` once so it computes the `blocked` labels from each
-`blocked-by:` line (lanes show `blocked` until the seams issue closes). Then merge the seams issue fast
-→ downstream unblocks → instances `scripts/claim-work.sh` and go.
+`blocked-by:` line (lanes show `blocked` until the seams issue closes). Then **read the labels back**:
+every unit whose body names a still-open prerequisite — the seams issue included, when §3's escape
+hatch was used — must now be labelled `blocked`. One that is not has a `blocked-by:` line the parser
+did not see (wrong line, or inside a code fence), and it is claimable right now. Then merge the seams
+issue fast → downstream unblocks → instances `scripts/claim-work.sh` and go.
 
 ## Alethia notes
 
