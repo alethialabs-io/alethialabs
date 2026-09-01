@@ -121,7 +121,14 @@ export const DURATION: NumberCase[] = [
 	{ id: "duration/JUST-UNDER-A-MINUTE", in: 59999 },
 	{ id: "duration/EXACTLY-A-MINUTE", in: 60000 },
 	{ id: "duration/minute-and-seconds", in: 72000 },
-	{ id: "duration/TWO-HOURS-DOES-NOT-ROLL-INTO-HOURS", in: 7200000 },
+	// RENAMED, not edited. The old id was `TWO-HOURS-DOES-NOT-ROLL-INTO-HOURS` and it asserted the
+	// old behaviour IN ITS NAME, so leaving the name while changing the output would have left the
+	// table saying the opposite of what it holds. A ruling that changes an answer renames the case.
+	{ id: "duration/TWO-HOURS-ROLLS-INTO-HOURS", in: 7200000 },
+	{ id: "duration/JUST-UNDER-AN-HOUR-DOES-NOT-ROLL", in: 3599999 },
+	{ id: "duration/EXACTLY-AN-HOUR", in: 3600000 },
+	{ id: "duration/hours-and-minutes-drop-the-seconds", in: 7505000 },
+	{ id: "duration/many-hours", in: 356400000 },
 ];
 
 /**

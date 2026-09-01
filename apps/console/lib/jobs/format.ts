@@ -97,12 +97,3 @@ export const JOB_TYPES: Record<
 		description: "Build & push service images in-cluster (kaniko → registry, keyless)",
 	},
 };
-
-/** Formats an elapsed millisecond span as `42s` or `1m 12s`. */
-export function formatDuration(ms: number): string {
-	const seconds = Math.floor(ms / 1000);
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-	return `${minutes}m ${remainingSeconds}s`;
-}
