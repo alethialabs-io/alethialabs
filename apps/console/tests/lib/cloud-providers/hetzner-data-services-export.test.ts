@@ -56,15 +56,22 @@ describe("hetzner data-service export fixture (e2e max-config in-cluster seed)",
 	// Read from the FIXTURE ON DISK, which is what the runner and the e2e harness actually consume.
 	// Asserting against the mapper's own output here would only prove the mapper agrees with itself.
 	it("hands every queue a runner-seeded credential and mints none itself", () => {
-		const onDisk = JSON.parse(readFileSync(FIXTURE, "utf8"));
-		// `onDisk` is `any` (JSON.parse), so these read as the fixture's own shape without a cast.
+		// The fixture's shape is DECLARED, not asserted onto the parse: `JSON.parse` returns `any`,
+		// and reading a spec off it would leave every field below unchecked.
+		const onDisk: {
+			addons: { id: string; values: { auth?: Record<string, unknown> } }[];
+		} = JSON.parse(readFileSync(FIXTURE, "utf8"));
 		const queues = onDisk.addons.filter((a) => a.id.startsWith("queue-"));
 		expect(queues.length).toBeGreaterThan(0);
 
-		const secretNames = new Set<string>();
+		const secretNames = new Set<unknown>();
 		for (const spec of queues) {
-			const auth = spec.values?.auth;
-			expect(auth, `${spec.id} renders no auth block`).toBeTruthy();
+			const auth = spec.values.auth;
+			if (!auth) {
+				throw new Error(
+					`${spec.id} renders no auth block — the chart is minting its own credentials again (#3304)`,
+				);
+			}
 			// The credential must exist only in the cluster. A value here is snapshot-persisted and
 			// rides a rendered manifest into the customer's cluster.
 			expect(auth.password).toBeUndefined();
