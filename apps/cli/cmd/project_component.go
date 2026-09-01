@@ -236,8 +236,21 @@ type componentAddSpec struct {
 	Sets []string
 }
 
+// knownComponentKind reports whether the cached registry holds this kind. An unknown kind is
+// not a wrong one: componentKinds is a CACHE the server's registry has already drifted from,
+// so the CLI answers "I have not heard of it" and leaves the verdict to the server.
+func knownComponentKind(kind string) bool {
+	for _, k := range componentKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
 // componentKindOptions builds the kind picker, annotating each with its cardinality so the
-// answer to "does this one need a name" is on screen at the moment it is asked.
+// answer to "does this one need a name" is on screen at the moment it is asked. A seed that
+// the cached list does not hold is offered verbatim, as its last option.
 //
 // Built from componentKinds, which is a CACHE of the server's registry and not a second
 // opinion of it — #3671 publishes that registry at GET /api/cli/schema/components, and #3691
@@ -245,12 +258,24 @@ type componentAddSpec struct {
 // needs a client method in packages/core/api, which is another lane's file; until then this
 // picker offers what the cached list holds and the server remains the thing that decides,
 // so a kind missing from the cache is still authorable with --kind.
-func componentKindOptions() []huh.Option[string] {
-	opts := make([]huh.Option[string], len(componentKinds))
-	for i, k := range componentKinds {
+//
+// The seed option is what makes that last sentence TRUE on a terminal. huh binds a Select to
+// its first option when the bound value matches no option's value — it writes options[0].Value
+// back through the pointer — so `--kind helm_registries` fed into a picker of cached kinds
+// alone came back as `network`, and the run authored a different component entirely.
+func componentKindOptions(seed string) []huh.Option[string] {
+	kinds := componentKinds
+	if seed != "" && !knownComponentKind(seed) {
+		kinds = append(append([]string{}, componentKinds...), seed)
+	}
+	opts := make([]huh.Option[string], len(kinds))
+	for i, k := range kinds {
 		label := k + " (multi — needs a name)"
-		if singletonKinds[k] {
+		switch {
+		case singletonKinds[k]:
 			label = k + " (singleton — one per environment)"
+		case !knownComponentKind(k):
+			label = k + " (passed with --kind — the server decides)"
 		}
 		opts[i] = huh.NewOption(label, k)
 	}
@@ -277,7 +302,7 @@ func promptComponentAdd(c apiClient, project string, seed componentAddSpec) (com
 		huh.NewSelect[string]().
 			Title("Component kind").
 			Description("What to author into this project").
-			Options(componentKindOptions()...).
+			Options(componentKindOptions(out.Kind)...).
 			Value(&out.Kind),
 	)}
 	if err := runHuhForm(groups...); err != nil {
@@ -295,11 +320,15 @@ func promptComponentAdd(c apiClient, project string, seed componentAddSpec) (com
 			Description("Required for a multi kind, e.g. main, sessions").
 			Value(&out.Name))
 	}
-	if envOpts, err := componentEnvOptions(c, project); err == nil && len(envOpts) > 0 {
+	// Best-effort: a failed list falls back to a free-text box, because refusing to author a
+	// component because the environment LIST could not be read would be a worse answer than
+	// accepting a name the server will resolve anyway.
+	if envs, listErr := c.ListEnvironments(project); listErr == nil && len(envs) > 0 {
+		out.Env = componentEnvSeedValue(envs, out.Env)
 		second = append(second, huh.NewSelect[string]().
 			Title("Environment").
 			Description("Which tier this component belongs to").
-			Options(envOpts...).
+			Options(componentEnvOptions(envs, out.Env)...).
 			Value(&out.Env))
 	} else {
 		second = append(second, huh.NewInput().
@@ -318,7 +347,10 @@ func promptComponentAdd(c apiClient, project string, seed componentAddSpec) (com
 		// something.
 		out.Name = ""
 	}
-	if !singletonKinds[out.Kind] && out.Name == "" {
+	// Only a kind the cache KNOWS is multi is refused here. An unknown kind's cardinality is
+	// the server registry's answer, not this list's, so a blank name is sent and the server
+	// decides rather than the CLI refusing a component it has merely not heard of.
+	if knownComponentKind(out.Kind) && !singletonKinds[out.Kind] && out.Name == "" {
 		return out, fmt.Errorf("%s is a multi kind and needs a name", out.Kind)
 	}
 
@@ -331,15 +363,16 @@ func promptComponentAdd(c apiClient, project string, seed componentAddSpec) (com
 }
 
 // componentEnvOptions offers the project's real environments, default first in the list the
-// server returned. An error is not fatal to the caller — it falls back to a free-text box —
-// because failing to author a component because the environment LIST could not be read would
-// be a worse answer than accepting a name the server will resolve anyway.
-func componentEnvOptions(c apiClient, project string) ([]huh.Option[string], error) {
-	envs, err := c.ListEnvironments(project)
-	if err != nil {
-		return nil, err
-	}
-	opts := make([]huh.Option[string], 0, len(envs)+1)
+// server returned, preceded by the empty value that means "the project's default environment".
+//
+// A seed none of those values expresses is appended verbatim, and that is load-bearing: huh
+// binds a Select to its FIRST option when the bound value matches no option's value, and this
+// picker's first option is the DEFAULT environment. `--env production` (a stage) or
+// `--env <env-id>` — both of which the flag documents — would otherwise be discarded without a
+// word and the component authored into the default tier, which is the exact silent
+// mis-targeting the picker exists to prevent.
+func componentEnvOptions(envs []api.Environment, seed string) []huh.Option[string] {
+	opts := make([]huh.Option[string], 0, len(envs)+2)
 	opts = append(opts, huh.NewOption("(the project's default environment)", ""))
 	for _, e := range envs {
 		label := fmt.Sprintf("%s (%s)", e.Name, e.Stage)
@@ -348,7 +381,51 @@ func componentEnvOptions(c apiClient, project string) ([]huh.Option[string], err
 		}
 		opts = append(opts, huh.NewOption(label, e.Name))
 	}
-	return opts, nil
+	if seed != "" {
+		known := false
+		for _, o := range opts {
+			if o.Value == seed {
+				known = true
+				break
+			}
+		}
+		if !known {
+			opts = append(opts, huh.NewOption(seed+" (as passed to --env)", seed))
+		}
+	}
+	return opts
+}
+
+// componentEnvSeedValue maps whatever --env carried — an environment's id, name or stage, all
+// three of which the flag documents — onto the picker option that names the same environment.
+// A seed it cannot place comes back unchanged, for componentEnvOptions to offer verbatim.
+//
+// A stage is matched only when ONE environment carries it: two environments can share a stage,
+// and picking either of them would be this function inventing the answer the server resolves.
+func componentEnvSeedValue(envs []api.Environment, seed string) string {
+	if seed == "" {
+		return ""
+	}
+	for _, e := range envs {
+		if e.Name == seed {
+			return e.Name
+		}
+	}
+	for _, e := range envs {
+		if e.ID == seed {
+			return e.Name
+		}
+	}
+	match, matches := "", 0
+	for _, e := range envs {
+		if e.Stage == seed {
+			match, matches = e.Name, matches+1
+		}
+	}
+	if matches == 1 {
+		return match
+	}
+	return seed
 }
 
 // promptSetValues asks for `key=value` assignments one at a time, appending to whatever was
@@ -509,7 +586,9 @@ var projectComponentRemoveCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		kind := componentRemoveKind
+		client := api.NewClient(token)
+		env := currentComponentEnv(cmd)
+		kind, name := componentRemoveKind, componentRemoveName
 		if kind == "" && promptsEnabled() {
 			// Asked BEFORE the confirmation, never after: the confirmation's whole job is to
 			// name what is about to go, and a prompt that asked "remove this component?" and
@@ -523,16 +602,34 @@ var projectComponentRemoveCmd = &cobra.Command{
 		if kind == "" {
 			failf("--kind is required (see `alethia project component kinds`)")
 		}
-		if !confirmDestructive(componentRemoveYes, "Remove this component?", removalDescription(kind, componentRemoveName, currentComponentEnv(cmd))) {
+		// A multi kind is deleted BY NAME — the server refuses a nameless one with
+		// "<kind> components are removed by name (pass --name)" — so the name is asked for
+		// here. Without it the interactive path dead-ended for the 8 multi kinds: it confirmed
+		// a destructive prompt naming a whole KIND and then failed on the request.
+		//
+		// Only a kind the cache knows is multi is held to this; an unknown one's cardinality
+		// is the server registry's answer, not this list's.
+		if name == "" && knownComponentKind(kind) && !singletonKinds[kind] {
+			if promptsEnabled() {
+				if name, err = promptComponentName(client, project, kind, env); err != nil {
+					fail(err)
+				}
+			}
+			if name == "" {
+				failf("%s is a multi kind and needs a name — pass --name (see `alethia project component list --kind %s`)", kind, kind)
+			}
+		}
+		if !confirmDestructive(componentRemoveYes, "Remove this component?", removalDescription(kind, name, env)) {
 			return
 		}
-		if err := runComponentRemove(api.NewClient(token), os.Stdout, project, kind, componentRemoveName, currentComponentEnv(cmd)); err != nil {
+		if err := runComponentRemove(client, os.Stdout, project, kind, name, env); err != nil {
 			failf("Failed to remove component: %v", err)
 		}
 	},
 }
 
-// promptComponentKind asks which kind to act on.
+// promptComponentKind asks which kind to act on. Only reached with no --kind, so there is no
+// seed to keep on the list.
 func promptComponentKind() (string, error) {
 	if err := requireInteractive(); err != nil {
 		return "", err
@@ -542,12 +639,72 @@ func promptComponentKind() (string, error) {
 		huh.NewSelect[string]().
 			Title("Component kind").
 			Description("Which kind to remove").
-			Options(componentKindOptions()...).
+			Options(componentKindOptions("")...).
 			Value(&kind),
 	)); err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(kind), nil
+}
+
+// promptComponentName asks WHICH component of a multi kind to remove, as a picker over the
+// ones that exist so the confirmation that follows has a real object to name.
+//
+// The list is best-effort and falls back to a free-text box: a failed READ is not a reason a
+// delete cannot be typed. The listing is the kind's components in the named environment — with
+// no --env it spans every environment, matching what `component list` shows, while the delete
+// itself is scoped to the default environment, which is what the confirmation says.
+func promptComponentName(c apiClient, project, kind, env string) (string, error) {
+	if err := requireInteractive(); err != nil {
+		return "", err
+	}
+	var name string
+	if opts := componentNameOptions(c, project, kind, env); len(opts) > 0 {
+		name = opts[0].Value
+		if err := runHuhForm(huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Which " + kind + " component").
+				Description("The one to remove" + envSuffix(env)).
+				Options(opts...).
+				Value(&name),
+		)); err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(name), nil
+	}
+	if err := runHuhForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Component name").
+			Description("Which " + kind + " component to remove").
+			Value(&name),
+	)); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(name), nil
+}
+
+// componentNameOptions offers the named components of one kind, deduplicated by name: the same
+// component name exists in every environment that holds one, and two identical options would
+// ask the reader to choose between them. An empty slice means "ask for the name instead".
+func componentNameOptions(c apiClient, project, kind, env string) []huh.Option[string] {
+	comps, err := c.ListComponents(project, kind, env)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	opts := make([]huh.Option[string], 0, len(comps))
+	for _, comp := range comps {
+		if comp.Name == "" || seen[comp.Name] {
+			continue
+		}
+		seen[comp.Name] = true
+		label := comp.Name
+		if comp.Status != "" {
+			label = fmt.Sprintf("%s (%s)", comp.Name, comp.Status)
+		}
+		opts = append(opts, huh.NewOption(label, comp.Name))
+	}
+	return opts
 }
 
 // removalDescription names WHAT is about to be removed and from WHICH tier, rather than

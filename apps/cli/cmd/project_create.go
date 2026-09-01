@@ -97,6 +97,14 @@ A default environment is created with the project; add component resources after
 		// and this lane's job is to stop REQUIRING an id, not to break the ones that have one.
 		identity := projectCreateIdentity
 		accountRef := projectCreateAccount
+		// Both flags name the SAME field, so passing both is refused rather than resolved by
+		// precedence — the same rule projectIDForJob applies to --project/--project-id, for a
+		// sharper reason here: preferring the id skips resolving the label (an unknown or
+		// ambiguous one would never be reported), and createReplayArgs then prints
+		// `--cloud-account <label>`, a line that links a DIFFERENT account than the run did.
+		if identity != "" && accountRef != "" {
+			failf("--cloud-account and --cloud-identity-id both name the cloud account: pass one (--cloud-account takes the label or the id)")
+		}
 		if identity == "" && accountRef != "" {
 			if identity, err = resolveCloudIdentityID(client, accountRef); err != nil {
 				fail(err)
@@ -142,26 +150,41 @@ A default environment is created with the project; add component resources after
 		if err := runProjectCreate(client, os.Stdout, outputFormat(cmd), params); err != nil {
 			failf("Failed to create project: %v", err)
 		}
-		printReplay(os.Stdout, outputFormat(cmd), asked, createReplayArgs(name, region, accountRef, identity, matrix)...)
+		printReplay(os.Stdout, outputFormat(cmd), asked, createReplayArgs(params, accountRef, matrix)...)
 	},
 }
 
 // createReplayArgs renders the `project create` that would have produced this project.
 //
+// It takes the SENT params rather than a hand-picked subset of them, because a replay line is
+// only worth printing if running it reproduces the run: --stage, --placement-mode and
+// --iac-version each change the project that comes out, and a line that dropped them invited
+// the reader to commit a command that creates a `development` project on the server's default
+// placement with an unpinned OpenTofu version.
+//
 // It prefers the LABEL the caller (or the picker) used over the resolved identity id,
 // because a replay line carrying a UUID is the thing this command exists to stop printing.
 // The id appears only when that is all we have — the picker returns one — and the docs say
 // so rather than the line pretending otherwise.
-func createReplayArgs(name, region, accountRef, identityID string, envs []string) []string {
-	args := []string{"alethia", "project", "create", name}
-	if region != "" {
-		args = append(args, "--region", region)
+func createReplayArgs(params api.CreateProjectParams, accountRef string, envs []string) []string {
+	args := []string{"alethia", "project", "create", params.ProjectName}
+	if params.Region != "" {
+		args = append(args, "--region", params.Region)
 	}
 	switch {
 	case accountRef != "":
 		args = append(args, "--cloud-account", accountRef)
-	case identityID != "":
-		args = append(args, "--cloud-identity-id", identityID)
+	case params.CloudIdentityID != "":
+		args = append(args, "--cloud-identity-id", params.CloudIdentityID)
+	}
+	if params.Stage != "" {
+		args = append(args, "--stage", params.Stage)
+	}
+	if params.Placement != "" {
+		args = append(args, "--placement-mode", params.Placement)
+	}
+	if params.IacVersion != "" {
+		args = append(args, "--iac-version", params.IacVersion)
 	}
 	for _, e := range envs {
 		args = append(args, "--env", e)

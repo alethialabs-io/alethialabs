@@ -1725,7 +1725,7 @@ func TestProj_ComponentReplayLineReproducesTheRun(t *testing.T) {
 // TestProj_ComponentKindOptionsSayWhichNeedAName pins that the picker answers the question
 // its next prompt depends on, and that it offers the whole cached registry.
 func TestProj_ComponentKindOptionsSayWhichNeedAName(t *testing.T) {
-	opts := componentKindOptions()
+	opts := componentKindOptions("")
 	if len(opts) != len(componentKinds) {
 		t.Fatalf("the kind picker offers %d of %d kinds", len(opts), len(componentKinds))
 	}
@@ -1740,6 +1740,23 @@ func TestProj_ComponentKindOptionsSayWhichNeedAName(t *testing.T) {
 		if !strings.Contains(o.Key, want) {
 			t.Errorf("kind %q is offered as %q, which does not say it is a %s", o.Value, o.Key, want)
 		}
+	}
+
+	// A kind the cache has not caught up with is still offered, because huh writes its FIRST
+	// option back through the bound pointer when the seed matches none of them — so a picker
+	// that dropped the seed would turn `--kind helm_registries` into a `network` component.
+	// componentKinds is documented as a cache the server registry has already drifted from,
+	// and the escape hatch is only real if the picker cannot silently overwrite it.
+	seeded := componentKindOptions("helm_registries")
+	if len(seeded) != len(componentKinds)+1 {
+		t.Fatalf("a seed outside the cache produced %d options, want %d", len(seeded), len(componentKinds)+1)
+	}
+	if got := seeded[len(seeded)-1].Value; got != "helm_registries" {
+		t.Errorf("the seed is offered as %q, want it verbatim", got)
+	}
+	// A seed the cache DOES hold is not offered twice.
+	if got := componentKindOptions("databases"); len(got) != len(componentKinds) {
+		t.Errorf("a cached seed produced %d options, want %d", len(got), len(componentKinds))
 	}
 }
 
@@ -1806,7 +1823,11 @@ func TestProj_EnvAddReplayArgsOmitWhatWasNotSet(t *testing.T) {
 // TestProj_CreateReplayPrefersTheLabelOverTheId pins the whole point of --cloud-account: the
 // line a person is invited to commit must not carry the identity UUID when a label was used.
 func TestProj_CreateReplayPrefersTheLabelOverTheId(t *testing.T) {
-	withLabel := replayLine(createReplayArgs("boutique", "eu-west-1", "prod-account", "ci-uuid-1", nil)...)
+	// A label resolves to an id, and only ONE of the two flags may be passed (the command
+	// refuses both), so the label is what the replay names.
+	withLabel := replayLine(createReplayArgs(
+		api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1", CloudIdentityID: "ci-uuid-1"},
+		"prod-account", nil)...)
 	if strings.Contains(withLabel, "ci-uuid-1") {
 		t.Errorf("%q carries the resolved id although a label was given", withLabel)
 	}
@@ -1815,14 +1836,50 @@ func TestProj_CreateReplayPrefersTheLabelOverTheId(t *testing.T) {
 	}
 	// The picker returns an id and there is no label, so the id is all we have. Printing it
 	// is honest; printing nothing would produce a command that creates an unlinked project.
-	fromPicker := replayLine(createReplayArgs("boutique", "eu-west-1", "", "ci-uuid-1", nil)...)
+	fromPicker := replayLine(createReplayArgs(
+		api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1", CloudIdentityID: "ci-uuid-1"},
+		"", nil)...)
 	if !strings.Contains(fromPicker, "--cloud-identity-id ci-uuid-1") {
 		t.Errorf("%q dropped the only account reference there was", fromPicker)
 	}
-	withEnvs := replayLine(createReplayArgs("boutique", "eu-west-1", "prod-account",
-		"", []string{"prod:production:dedicated", "dev-1:development:namespace:boutique-dev-1"})...)
+	withEnvs := replayLine(createReplayArgs(
+		api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1"},
+		"prod-account", []string{"prod:production:dedicated", "dev-1:development:namespace:boutique-dev-1"})...)
 	if strings.Count(withEnvs, "--env ") != 2 {
 		t.Errorf("%q does not carry both --env entries", withEnvs)
+	}
+}
+
+// TestProj_CreateReplayNamesEveryFlagThatShapedTheProject pins the other half of a replay
+// line: it must reproduce the run, not just avoid printing a UUID.
+//
+// --stage, --placement-mode and --iac-version are each sent in the create payload and each
+// change the project that comes out. A line that dropped them told the reader to commit a
+// command producing a `development` project on the server's default placement with an
+// unpinned OpenTofu version — a different project, presented as the same one.
+func TestProj_CreateReplayNamesEveryFlagThatShapedTheProject(t *testing.T) {
+	line := replayLine(createReplayArgs(api.CreateProjectParams{
+		ProjectName: "boutique",
+		Region:      "eu-west-1",
+		Stage:       "production",
+		Placement:   "dedicated",
+		IacVersion:  "1.8.2",
+	}, "", nil)...)
+	for _, want := range []string{
+		"--region eu-west-1", "--stage production", "--placement-mode dedicated", "--iac-version 1.8.2",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("%q is missing %q, so running it would not reproduce the project", line, want)
+		}
+	}
+	// What was not passed is not invented: the server defaults these, and naming a default
+	// the caller never chose pins it into a script that would then stop tracking the server.
+	bare := replayLine(createReplayArgs(
+		api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1"}, "", nil)...)
+	for _, unwanted := range []string{"--stage", "--placement-mode", "--iac-version"} {
+		if strings.Contains(bare, unwanted) {
+			t.Errorf("%q names %s although nothing set it", bare, unwanted)
+		}
 	}
 }
 
@@ -2509,14 +2566,11 @@ func TestProj_AskYesNoReadsAnAnsweredForm(t *testing.T) {
 // free-text --env: authoring into the wrong tier is silent, and the next thing that reads it
 // is a deploy.
 func TestProj_ComponentEnvOptionsOfferTheRealEnvironments(t *testing.T) {
-	f := &fakeClient{environments: []api.Environment{
+	envs := []api.Environment{
 		{ID: "e1", Name: "production", Stage: "production", IsDefault: true},
 		{ID: "e2", Name: "dev", Stage: "development"},
-	}}
-	opts, err := componentEnvOptions(f, "boutique")
-	if err != nil {
-		t.Fatalf("componentEnvOptions: %v", err)
 	}
+	opts := componentEnvOptions(envs, "")
 	if len(opts) != 3 {
 		t.Fatalf("offered %d options, want the two environments plus the default", len(opts))
 	}
@@ -2531,11 +2585,47 @@ func TestProj_ComponentEnvOptionsOfferTheRealEnvironments(t *testing.T) {
 	if !strings.Contains(opts[1].Key, "production") {
 		t.Errorf("label %q does not name the environment", opts[1].Key)
 	}
+}
 
-	// A failed list is reported, so the caller can fall back to a text box rather than
-	// refusing to author a component because a picker could not be built.
-	if _, err := componentEnvOptions(&fakeClient{err: errProjTestBoom}, "boutique"); err == nil {
-		t.Error("a failed environment list must be reported")
+// TestProj_ComponentEnvSeedSurvivesThePicker pins the half that makes --env mean what its help
+// says it means. `--env` takes an id, a NAME or a STAGE; the picker's option values are names.
+//
+// huh binds a Select to its FIRST option when the bound value matches none of them, and the
+// first option here is "the project's default environment" — so a seed the picker could not
+// express was silently discarded and the component authored into the DEFAULT tier, which is
+// the exact silent mis-targeting the picker was added to prevent.
+func TestProj_ComponentEnvSeedSurvivesThePicker(t *testing.T) {
+	envs := []api.Environment{
+		{ID: "e1", Name: "prod-1", Stage: "production", IsDefault: true},
+		{ID: "e2", Name: "dev", Stage: "development"},
+		{ID: "e3", Name: "dev-2", Stage: "development"},
+	}
+	for seed, want := range map[string]string{
+		"":           "",       // no seed: the default environment
+		"dev":        "dev",    // a name is already an option value
+		"e1":         "prod-1", // an id resolves onto the option that names it
+		"production": "prod-1", // a stage exactly one environment carries
+	} {
+		if got := componentEnvSeedValue(envs, seed); got != want {
+			t.Errorf("--env %q resolved to %q, want %q", seed, got, want)
+		}
+	}
+	// A stage TWO environments share names neither: resolving it here would be the CLI
+	// inventing the answer the server resolves.
+	if got := componentEnvSeedValue(envs, "development"); got != "development" {
+		t.Errorf("an ambiguous stage resolved to %q, want it left for the server", got)
+	}
+	// And whatever it could not place is still offered, so huh cannot overwrite it.
+	opts := componentEnvOptions(envs, "development")
+	if len(opts) != len(envs)+2 {
+		t.Fatalf("offered %d options, want the environments, the default, and the seed", len(opts))
+	}
+	if got := opts[len(opts)-1].Value; got != "development" {
+		t.Errorf("the unplaceable seed is offered as %q, want it verbatim", got)
+	}
+	// A seed that IS an option value is not offered twice.
+	if got := componentEnvOptions(envs, "dev"); len(got) != len(envs)+1 {
+		t.Errorf("a seed already on the list produced %d options, want %d", len(got), len(envs)+1)
 	}
 }
 
@@ -2588,6 +2678,7 @@ func TestProj_PromptsShortCircuitWhenPromptingIsDisabled(t *testing.T) {
 			return err
 		},
 		"promptProjectRef":      func() error { _, err := promptProjectRef("tok"); return err },
+		"promptProjectNameRef":  func() error { _, err := promptProjectNameRef("tok"); return err },
 		"promptEnvironmentSpec": func() error { a := envAnswers{}; return promptEnvironmentSpec(&a, true) },
 	}
 	for name, fn := range cases {
@@ -3240,6 +3331,69 @@ func TestProj_PromptProjectRefRefusesWhatItCannotName(t *testing.T) {
 	})
 }
 
+// TestProj_GetPickerReturnsAReferenceItsRouteCanResolve pins why `project get` has a picker of
+// its own rather than promptProjectRef's.
+//
+// promptProjectRef falls back to a project's ID when two listed projects share a name (#3145).
+// Every other consumer of it hits an id-or-name route; `get` reads
+// GET /cli/configurations/by-project-name/{name}, whose resolver filters on project_name and
+// nothing else — so the id would 404 on a project the picker had just offered. huh binds a
+// Select to its first option when the form is built, which is what these subtests select.
+func TestProj_GetPickerReturnsAReferenceItsRouteCanResolve(t *testing.T) {
+	t.Run("a unique name comes back as the name", func(t *testing.T) {
+		projEnv(t, &projServer{configs: []map[string]any{
+			{"id": "p1", "project_name": "web", "environment_stage": "production"},
+			{"id": "p2", "project_name": "shop", "environment_stage": "development"},
+		}})
+		projTTY(t)
+		projForm(t)
+		got, err := promptProjectNameRef("tok")
+		if err != nil {
+			t.Fatalf("promptProjectNameRef: %v", err)
+		}
+		if got != "web" {
+			t.Errorf("the picker returned %q, want the NAME the by-project-name route resolves", got)
+		}
+	})
+
+	t.Run("a shared name is refused rather than read as whichever is older", func(t *testing.T) {
+		projEnv(t, &projServer{configs: []map[string]any{
+			{"id": "p1", "project_name": "boutique", "environment_stage": "production"},
+			{"id": "p2", "project_name": "boutique", "environment_stage": "development"},
+		}})
+		projTTY(t)
+		projForm(t)
+		_, err := promptProjectNameRef("tok")
+		if err == nil {
+			t.Fatal("a name two projects share must be refused: the route answers it with the older one")
+		}
+		if !strings.Contains(err.Error(), "boutique") {
+			t.Errorf("err = %v, want one that names the project it cannot tell apart", err)
+		}
+	})
+
+	t.Run("a project with no name", func(t *testing.T) {
+		projEnv(t, &projServer{configs: []map[string]any{
+			{"id": "p1", "project_name": "", "environment_stage": "production"},
+		}})
+		projTTY(t)
+		projForm(t)
+		if _, err := promptProjectNameRef("tok"); err == nil {
+			t.Fatal("a nameless project must be refused rather than looked up by an empty name")
+		}
+	})
+
+	t.Run("an empty organization", func(t *testing.T) {
+		projEnv(t, &projServer{configs: []map[string]any{}})
+		projTTY(t)
+		projForm(t)
+		_, err := promptProjectNameRef("tok")
+		if err == nil || !strings.Contains(err.Error(), "project create") {
+			t.Fatalf("err = %v, want one that says how to make a project", err)
+		}
+	})
+}
+
 // TestProj_ComponentAddRefusalArms walks the add form's ways of not proceeding.
 func TestProj_ComponentAddRefusalArms(t *testing.T) {
 	t.Run("a dismissed kind form stops it", func(t *testing.T) {
@@ -3355,6 +3509,110 @@ func TestProj_ComponentRemoveNeedsAKindItCanName(t *testing.T) {
 	}
 	if len(order) != 2 || order[0] != "kind asked" || order[1] != "confirmed" {
 		t.Errorf("order = %v, want the kind asked BEFORE the confirmation", order)
+	}
+}
+
+// TestProj_ComponentRemoveNamesTheMultiKindItDeletes pins the other half of the same
+// confirmation: a multi kind is deleted BY NAME.
+//
+// `remove` asked for the kind and never for the name, so the interactive path dead-ended for
+// the 8 multi kinds — it confirmed "Deletes the databases configuration", naming no component,
+// and the server then refused the nameless DELETE with "databases components are removed by
+// name (pass --name)". A confirmation whose object is a whole KIND cannot be read as anything
+// but yes.
+func TestProj_ComponentRemoveNamesTheMultiKindItDeletes(t *testing.T) {
+	t.Run("scripted with no --name is refused before the request", func(t *testing.T) {
+		s := &projServer{}
+		h := projEnv(t, s)
+		if !h.run("project", "component", "remove", "--project", "web", "--kind", "databases",
+			"--no-input", "--yes") {
+			t.Error("a nameless multi-kind remove must be fatal, not sent for the server to refuse")
+		}
+		if len(s.posts) > 0 {
+			t.Errorf("it still issued the delete: %+v", s.posts)
+		}
+	})
+
+	t.Run("on a terminal the name is asked and lands in the confirmation", func(t *testing.T) {
+		s := &projServer{comps: projSampleComponents()}
+		h := projEnv(t, s)
+		projTTY(t)
+		projForm(t) // the kind form leaves `databases`; the name picker binds its first option
+		var described string
+		prevConfirm := confirm
+		confirm = func(_, description string) bool { described = description; return true }
+		t.Cleanup(func() { confirm = prevConfirm })
+
+		if h.run("project", "component", "remove", "--project", "web", "--kind", "databases") {
+			t.Fatal("an answered multi-kind remove exited fatally")
+		}
+		if !strings.Contains(described, "main") {
+			t.Errorf("the confirmation said %q, which names no component", described)
+		}
+		last, ok := s.lastPost()
+		if !ok {
+			t.Fatal("nothing was deleted")
+		}
+		// The name is a PATH SEGMENT: a nameless delete is `/components/databases`, which is
+		// the request the server refuses.
+		if last.Method != http.MethodDelete || !strings.HasSuffix(last.Path, "/components/databases/main") {
+			t.Errorf("sent %s %s, want DELETE …/components/databases/main", last.Method, last.Path)
+		}
+	})
+
+	t.Run("a singleton still needs no name", func(t *testing.T) {
+		s := &projServer{}
+		h := projEnv(t, s)
+		projConfirm(t, true)
+		if h.run("project", "component", "remove", "--project", "web", "--kind", "network") {
+			t.Error("a singleton remove must not have grown a name requirement")
+		}
+		if _, ok := s.lastPost(); !ok {
+			t.Error("the singleton delete was never sent")
+		}
+	})
+}
+
+// TestProj_ComponentNameOptionsOfferWhatExists pins the picker behind that question, including
+// the two arms that send it to a text box instead.
+func TestProj_ComponentNameOptionsOfferWhatExists(t *testing.T) {
+	f := &fakeClient{components: []api.Component{
+		{ID: "c1", Kind: "databases", Name: "main", Status: "READY"},
+		// The same component name exists in every environment that holds one, and with no
+		// --env the listing spans them all: two identical options would ask the reader to
+		// choose between them.
+		{ID: "c2", Kind: "databases", Name: "main", Status: "READY"},
+		{ID: "c3", Kind: "databases", Name: "sessions"},
+		{ID: "c4", Kind: "databases", Name: ""},
+	}}
+	opts := componentNameOptions(f, "boutique", "databases", "")
+	if len(opts) != 2 {
+		t.Fatalf("offered %d options, want one per distinct named component", len(opts))
+	}
+	if opts[0].Value != "main" || opts[1].Value != "sessions" {
+		t.Errorf("options carry %q and %q, want the component NAMES --name takes", opts[0].Value, opts[1].Value)
+	}
+	if !strings.Contains(opts[0].Key, "READY") {
+		t.Errorf("label %q drops the status, which is what a person is choosing between", opts[0].Key)
+	}
+	// A failed list is not a reason a delete cannot be typed: no options means "ask".
+	if got := componentNameOptions(&fakeClient{err: errProjTestBoom}, "boutique", "databases", ""); len(got) != 0 {
+		t.Errorf("a failed list produced %d options", len(got))
+	}
+	if got := componentNameOptions(&fakeClient{}, "boutique", "databases", ""); len(got) != 0 {
+		t.Errorf("an empty list produced %d options", len(got))
+	}
+
+	// And the question is still PUT when there is nothing to offer — a text box, not a
+	// refusal. A component the list cannot see is still one the server can delete.
+	hygCliConfirmSetNoInput(t, false)
+	projForm(t)
+	got, err := promptComponentName(&fakeClient{err: errProjTestBoom}, "boutique", "databases", "staging")
+	if err != nil {
+		t.Fatalf("a failed list must fall back to a text box, not stop the delete: %v", err)
+	}
+	if got != "" {
+		t.Errorf("an unanswered text box produced %q", got)
 	}
 }
 

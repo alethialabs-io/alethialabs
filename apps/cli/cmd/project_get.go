@@ -35,7 +35,9 @@ the name never has to be copied out of another command's output.`,
 			if !promptsEnabled() {
 				failf("a project name is required (pass it as the argument)")
 			}
-			if projectName, err = promptProjectRef(token); err != nil {
+			// promptProjectNameRef, not promptProjectRef: GetConfiguration below resolves by
+			// project NAME only, so the id that one falls back to for a shared name would 404.
+			if projectName, err = promptProjectNameRef(token); err != nil {
 				fail(err)
 			}
 		}

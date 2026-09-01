@@ -68,6 +68,13 @@ alethia project get                      # asks which project
 | `[project_name]` | No | Project name (positional). Omit it on a terminal to pick from a list. |
 | `--open` | No | Open the project in the web console. (Long-only — `-o` is the global `--output` flag.) |
 
+<Callout type="info">
+  `get` looks a project up by **name**, so the picker returns a name and refuses one that two
+  projects share — that lookup answers a duplicate with whichever project is older, and quietly
+  printing another project's region, cluster endpoint and apps repo is worse than an error. Every
+  other command takes `--project`, which resolves a name **or** an id.
+</Callout>
+
 Shows the full project configuration including:
 - Project name, provider, region, environment
 - Status and estimated monthly cost
@@ -99,13 +106,20 @@ alethia project create boutique \
 | `[name]` | Yes* | Project name (positional). *Asked for on a terminal when omitted. |
 | `--region` | Yes* | Cloud region to provision into. *Asked for on a terminal when omitted. |
 | `--cloud-account` | No | Cloud account to link, by its **label** or its id. Asked for on a terminal when omitted; a project may be created with none. |
-| `--cloud-identity-id` | No | Cloud account id to link. Prefer `--cloud-account`, which also takes the label. |
+| `--cloud-identity-id` | No | Cloud account id to link. Prefer `--cloud-account`, which also takes the label. Passing both is an error. |
 | `--stage` | No | Initial environment stage: `development` (default), `staging`, `production` |
 | `--iac-version` | No | OpenTofu version to pin (defaults server-side) |
 | `--placement-mode` | No | Placement of the default environment: `namespace`, `vcluster`, `dedicated` (default `dedicated`) |
 | `--env` | No | `name:stage[:mode[:namespace]]`, repeatable — the full environment matrix. Asked for, one environment at a time, on a terminal when omitted. |
 
-The created project prints as a card (or the typed object with `--output json`).
+The created project prints as a card (or the typed object with `--output json`), followed —
+when anything was asked for — by the `alethia project create` line that would produce the same
+project without the questions. That line names every flag that shaped it, `--stage`,
+`--placement-mode` and `--iac-version` included, so it can be committed as-is.
+
+`--cloud-account` and `--cloud-identity-id` name the same field, so passing **both** is refused
+rather than resolved by precedence — the same rule `--project` and `--project-id` follow on the job
+commands.
 
 ### The environment matrix
 
@@ -310,9 +324,9 @@ alethia project component remove --project boutique --kind network
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--project` | Yes* | Project name or id. *Asked for on a terminal when omitted. |
-| `--kind` | Yes* | Component kind. Optional on `list`, where it filters. *Asked for on a terminal for `add` and `remove`. |
-| `--name` | Yes for multi kinds | Component name. Ignored by singleton kinds, which upsert. |
-| `--env` | No | Environment id, name or stage. Asked for as a picker on `add`. |
+| `--kind` | Yes* | Component kind. Optional on `list`, where it filters. *Asked for on a terminal for `add` and `remove`. A kind this CLI's cached list does not hold is still authorable — the picker offers it verbatim and the server decides. |
+| `--name` | Yes for multi kinds | Component name. Ignored by singleton kinds, which upsert. *Asked for on a terminal by `add` and `remove`, as a picker over the components that exist. |
+| `--env` | No | Environment id, name or stage. Asked for as a picker on `add`; whichever form you pass is what the picker starts on. |
 | `--set` | No | `key=value` field assignment, repeatable. Asked for, one field at a time, on `add`. |
 | `-y`, `--yes` | No | `remove` only: skip the confirmation prompt (required with `--no-input`) |
 

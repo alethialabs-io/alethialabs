@@ -277,6 +277,90 @@ func projectRefFor(configs []types.ConfigurationSummary, id string) string {
 	return id
 }
 
+// projectsForPicker fetches the projects both project pickers offer, reporting "none" as the
+// thing to do about it rather than as an empty list to select from.
+func projectsForPicker(token string) ([]types.ConfigurationSummary, error) {
+	var configs []types.ConfigurationSummary
+	var err error
+	ui.RunSpinner("Fetching projects...", func() {
+		configs, err = api.NewClient(token).GetConfigurations()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch projects: %w", err)
+	}
+	if len(configs) == 0 {
+		return nil, fmt.Errorf("no projects found — create one with `alethia project create`")
+	}
+	return configs, nil
+}
+
+// promptProjectNameRef shows the project picker for the leaves that resolve a project by NAME
+// and nothing else, and returns that name.
+//
+// A separate function from promptProjectRef because the id fallback that one makes for a shared
+// name (#3145) is not a reference every route accepts: `project get` reads
+// GET /cli/configurations/by-project-name/{name}, whose resolver filters on project_name alone
+// (apps/console/lib/queries/cli-config.ts) — so an id handed to it 404s on a project the picker
+// had just offered.
+//
+// A name shared by two projects is REFUSED rather than sent. That route answers a duplicate name
+// with the oldest row, so picking the younger one and being shown the older one's region, cluster
+// endpoint and apps repo is a silent wrong read — the case cli-config.ts records as worse than an
+// error for a provisioning tool.
+func promptProjectNameRef(token string) (string, error) {
+	if err := requireInteractive(); err != nil {
+		return "", err
+	}
+	configs, err := projectsForPicker(token)
+	if err != nil {
+		return "", err
+	}
+	// The option VALUE is the id: two projects sharing a name would otherwise be two options
+	// that cannot be told apart, and the ambiguity below could not be reported against the row
+	// that was actually picked.
+	options := make([]huh.Option[string], len(configs))
+	for i, c := range configs {
+		options[i] = huh.NewOption(
+			fmt.Sprintf("%s (%s)", c.ProjectName, c.EnvironmentStage),
+			c.ID,
+		)
+	}
+	var id string
+	if err := runHuhForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Select Project").
+				Description("Which project to print").
+				Options(options...).
+				Value(&id),
+		),
+	); err != nil {
+		return "", err
+	}
+	name := ""
+	for _, c := range configs {
+		if c.ID == id {
+			name = c.ProjectName
+			break
+		}
+	}
+	if name == "" {
+		return "", fmt.Errorf("that project has no name, and this command looks a project up by name")
+	}
+	shared := 0
+	for _, c := range configs {
+		if c.ProjectName == name {
+			shared++
+		}
+	}
+	if shared > 1 {
+		return "", fmt.Errorf(
+			"%d projects are named %q and this command looks a project up by name, which would read whichever is older — rename one to tell them apart",
+			shared, name)
+	}
+	return name, nil
+}
+
 // promptProjectRef shows the project picker and returns a reference the --project flag
 // accepts — a name where that is unambiguous, an id where it is not.
 //
@@ -288,16 +372,9 @@ func promptProjectRef(token string) (string, error) {
 	if err := requireInteractive(); err != nil {
 		return "", err
 	}
-	var configs []types.ConfigurationSummary
-	var err error
-	ui.RunSpinner("Fetching projects...", func() {
-		configs, err = api.NewClient(token).GetConfigurations()
-	})
+	configs, err := projectsForPicker(token)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch projects: %w", err)
-	}
-	if len(configs) == 0 {
-		return "", fmt.Errorf("no projects found — create one with `alethia project create`")
+		return "", err
 	}
 	options := make([]huh.Option[string], len(configs))
 	for i, c := range configs {
