@@ -35,6 +35,9 @@
 package compat
 
 import (
+	"fmt"
+	"strings"
+
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -209,6 +212,8 @@ func waiverCases() []parityWaiverCase {
 		{ID: "waiver/IMPOSSIBLE-DAY-WITH-AN-OFFSET-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099-02-30T00:00:00+02:00"},
 		{ID: "waiver/OFFSET-HOUR-25-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00+25:00"},
 		{ID: "waiver/OFFSET-MINUTE-99-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00+02:99"},
+		{ID: "waiver/ONE-DIGIT-MINUTE-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099-01-01T09:0:00Z"},
+		{ID: "waiver/ONE-DIGIT-SECOND-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099-01-01T09:00:0Z"},
 
 		// ...and shapes both sides must still ACCEPT, so the fix cannot be "refuse everything".
 		// The two below look malformed and are NOT: Go range-checks the offset at `hr > 24` and
@@ -216,6 +221,12 @@ func waiverCases() []parityWaiverCase {
 		// that it is valid to have a time zone offset of exactly 24:00:00". `Date.parse` returns
 		// NaN for both, so delegating the offset to it made the console refuse waivers the apply
 		// gate honours. Measured against go1.26.6 rather than read off the RFC.
+		// `time.Parse(time.RFC3339, …)` falls back to the GENERAL parser on failure, which is laxer
+		// in exactly two places: the hour reads one-or-two digits, and the fraction accepts a comma.
+		// Minute, second, month and day stay fixed-width, so the laxness stops there — the two
+		// rejections below pin that boundary so a fix for the first pair cannot widen into them.
+		{ID: "waiver/ONE-DIGIT-HOUR-IS-VALID-IN-GO", Controls: []string{ctrl}, Expiry: "2099-01-01T9:00:00Z"},
+		{ID: "waiver/COMMA-FRACTION-IS-VALID-IN-GO", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00,5Z"},
 		{ID: "waiver/OFFSET-HOUR-24-IS-VALID-IN-GO", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00+24:00"},
 		{ID: "waiver/OFFSET-MINUTE-60-IS-VALID-IN-GO", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00+02:60"},
 		{ID: "waiver/a-numeric-offset-waives", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00+02:00"},
@@ -425,14 +436,20 @@ var requiredUndecodableExpiries = []string{
 	"waiver/IMPOSSIBLE-DAY-WITH-AN-OFFSET-IS-NOT-RFC3339",
 	"waiver/OFFSET-HOUR-25-IS-NOT-RFC3339",
 	"waiver/OFFSET-MINUTE-99-IS-NOT-RFC3339",
+	"waiver/ONE-DIGIT-MINUTE-IS-NOT-RFC3339",
+	"waiver/ONE-DIGIT-SECOND-IS-NOT-RFC3339",
 }
 
-// TestEngineParityFixtureIsNotVacuous pins that the fixture actually exercises the divergence it
-// was written for. Without this, someone could delete the malformed-input cases, regenerate, and
-// leave a green fixture that proves only the happy path — which is the state that let both bugs
-// live in the first place.
-func TestEngineParityFixtureIsNotVacuous(t *testing.T) {
-	built := buildParity(t)
+// vacuityProblems IS the guard. Both the check below and the mutation test that proves it works
+// call this one function, because the first cut of that mutation test re-implemented the maps and
+// the loops inline — so it verified a COPY of the guard and would have passed against a revert to
+// the inert count-threshold form. A test that re-implements what it is testing tests nothing about
+// the thing.
+//
+// @returns one message per unsatisfied requirement; empty means the fixture still carries what it
+// exists to carry.
+func vacuityProblems(built parityFile) []string {
+	var problems []string
 
 	// Every named case must be PRESENT and must still carry the verdict it was written to pin.
 	// Presence alone is not enough: a case retained but regenerated to `pass` proves nothing.
@@ -446,10 +463,11 @@ func TestEngineParityFixtureIsNotVacuous(t *testing.T) {
 	}
 	for _, id := range requiredNotEvaluableCases {
 		if !notEvaluableByID[id] {
-			t.Errorf("case %q is missing from the fixture, or no longer reaches not_evaluable — "+
-				"it is one of the malformed-version cases this fixture exists for. If the case is "+
-				"genuinely obsolete, delete it from requiredNotEvaluableCases in the same commit "+
-				"and say why in the PR.", id)
+			problems = append(problems, fmt.Sprintf(
+				"case %q is missing from the fixture, or no longer reaches not_evaluable — it is one of "+
+					"the malformed-version cases this fixture exists for. If the case is genuinely "+
+					"obsolete, delete it from requiredNotEvaluableCases in the same commit and say why "+
+					"in the PR.", id))
 		}
 	}
 
@@ -465,61 +483,59 @@ func TestEngineParityFixtureIsNotVacuous(t *testing.T) {
 	}
 	for _, id := range requiredUndecodableExpiries {
 		if !undecodableByID[id] {
-			t.Errorf("case %q is missing, or the fixture now records its expiry as DECODABLE — "+
-				"it is one of the shapes the fail-open rode in on. Same rule: remove it from "+
-				"requiredUndecodableExpiries deliberately, or not at all.", id)
+			problems = append(problems, fmt.Sprintf(
+				"case %q is missing, or the fixture now records its expiry as DECODABLE — it is one of "+
+					"the shapes the fail-open rode in on. Same rule: remove it from "+
+					"requiredUndecodableExpiries deliberately, or not at all.", id))
 		}
 	}
 	if waivedDespiteBadExpiry > 0 {
-		t.Errorf("%d case(s) waived a control on an expiry Go cannot even decode — that is the "+
-			"fail-open itself, and it must never be the recorded answer", waivedDespiteBadExpiry)
+		problems = append(problems, fmt.Sprintf(
+			"%d case(s) waived a control on an expiry Go cannot even decode — that is the fail-open "+
+				"itself, and it must never be the recorded answer", waivedDespiteBadExpiry))
+	}
+	return problems
+}
+
+// TestEngineParityFixtureIsNotVacuous pins that the fixture actually exercises the divergence it
+// was written for. Without this, someone could delete the malformed-input cases, regenerate, and
+// leave a green fixture that proves only the happy path — which is the state that let both bugs
+// live in the first place.
+func TestEngineParityFixtureIsNotVacuous(t *testing.T) {
+	for _, p := range vacuityProblems(buildParity(t)) {
+		t.Error(p)
 	}
 }
 
 // The guard above is only worth having if it FAILS on the mutation it describes, so this drives
-// that directly rather than asserting it in a comment. Deleting a required case from the built
-// fixture must be detected — the previous count-threshold version passed this mutation, which is
-// how it shipped inert.
+// that directly rather than asserting it in a comment — through vacuityProblems itself, so a
+// revert of the guard to its inert count-threshold form turns this red too.
 func TestVacuityGuardFailsWhenARequiredCaseIsRemoved(t *testing.T) {
-	built := buildParity(t)
+	base := buildParity(t)
+	if got := vacuityProblems(base); len(got) != 0 {
+		t.Fatalf("the unmutated fixture already fails the guard, so this test cannot prove anything: %v", got)
+	}
 
 	for _, victim := range []string{requiredNotEvaluableCases[0], requiredUndecodableExpiries[0]} {
 		t.Run(victim, func(t *testing.T) {
-			notEvaluableByID := map[string]bool{}
-			for _, c := range built.Evaluate {
-				if c.ID == victim {
-					continue // the mutation
-				}
-				for _, w := range c.Want {
-					if w.Status == StatusNotEvaluable {
-						notEvaluableByID[c.ID] = true
-					}
+			mutated := parityFile{}
+			for _, c := range base.Evaluate {
+				if c.ID != victim {
+					mutated.Evaluate = append(mutated.Evaluate, c)
 				}
 			}
-			undecodableByID := map[string]bool{}
-			for _, c := range built.Waiver {
-				if c.ID == victim {
-					continue // the mutation
-				}
-				if !c.Decodes {
-					undecodableByID[c.ID] = true
+			for _, c := range base.Waiver {
+				if c.ID != victim {
+					mutated.Waiver = append(mutated.Waiver, c)
 				}
 			}
-
-			missing := 0
-			for _, id := range requiredNotEvaluableCases {
-				if !notEvaluableByID[id] {
-					missing++
-				}
+			problems := vacuityProblems(mutated)
+			if len(problems) != 1 {
+				t.Fatalf("removing %q should leave exactly 1 unsatisfied requirement, got %d: %v — "+
+					"the vacuity guard does not detect the deletion it exists to detect", victim, len(problems), problems)
 			}
-			for _, id := range requiredUndecodableExpiries {
-				if !undecodableByID[id] {
-					missing++
-				}
-			}
-			if missing != 1 {
-				t.Fatalf("removing %q should leave exactly 1 required case unsatisfied, got %d — "+
-					"the vacuity guard does not detect the deletion it exists to detect", victim, missing)
+			if !strings.Contains(problems[0], victim) {
+				t.Errorf("the guard fired but did not name the case that was removed: %q", problems[0])
 			}
 		})
 	}

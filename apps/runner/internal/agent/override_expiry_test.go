@@ -29,13 +29,13 @@ var malformedExpiries = []string{
 	"2026-09-01 12:00:00Z",       // a space instead of the T separator
 	"2026-09-01T12:00:00",        // no zone offset
 	"Tue, 01 Sep 2026 12:00:00Z", // RFC1123, not RFC3339
-	"",                           // handled separately below: empty means "no expiry", which is legal
+	"",                           // empty means "no expiry" and is legal — asserted by TestOverrideBuildersAcceptAnEmptyStringExpiryAsNoExpiry
 }
 
 func TestBuildCompatOverrideRefusesAnUnreadableExpiry(t *testing.T) {
 	for _, exp := range malformedExpiries {
 		if exp == "" {
-			continue // empty is the documented "no expiry" case, asserted below
+			continue // empty is legal; see TestOverrideBuildersAcceptAnEmptyStringExpiryAsNoExpiry
 		}
 		t.Run(exp, func(t *testing.T) {
 			ov, _ := buildCompatOverride(map[string]any{
@@ -145,7 +145,6 @@ func TestOverrideBuildersRefuseANonStringExpiry(t *testing.T) {
 		"a bool":                       true,
 		"an object":                    map[string]any{"at": "2099-01-01T00:00:00Z"},
 		"an array":                     []any{"2099-01-01T00:00:00Z"},
-		"an explicit null":             nil,
 	}
 	for name, val := range wrongTypes {
 		t.Run("compat/"+name, func(t *testing.T) {
@@ -167,6 +166,61 @@ func TestOverrideBuildersRefuseANonStringExpiry(t *testing.T) {
 				t.Error("the refusal carried no reason")
 			}
 		})
+	}
+}
+
+// An explicit JSON `null` is ABSENT, not wrong-typed — the conventional encoding of an optional
+// field, and one this codebase already produces (`evidence.ts` writes `expiry: o.expiry ?? null`).
+// Refusing it would turn a legitimate no-expiry waiver into a hard block naming a field the
+// operator never set. It sat in the wrong-type table for exactly one review round.
+func TestOverrideBuildersTreatExplicitNullExpiryAsAbsent(t *testing.T) {
+	for _, build := range []struct {
+		name string
+		fn   func(map[string]any) (bool, bool, string)
+	}{
+		{"compat", func(m map[string]any) (bool, bool, string) {
+			ov, r := buildCompatOverride(m)
+			return ov != nil, ov != nil && ov.Expiry.IsZero(), r
+		}},
+		{"verify", func(m map[string]any) (bool, bool, string) {
+			ov, r := buildVerifyOverride(m)
+			return ov != nil, ov != nil && ov.Expiry.IsZero(), r
+		}},
+	} {
+		t.Run(build.name, func(t *testing.T) {
+			built, zeroExpiry, reason := build.fn(map[string]any{"controls": []any{"C"}, "expiry": nil})
+			if !built {
+				t.Fatalf("an explicit null expiry was refused (%q); null means the field was not set", reason)
+			}
+			if !zeroExpiry {
+				t.Error("a null expiry should leave the zero time, which is the documented no-expiry case")
+			}
+			if reason != "" {
+				t.Errorf("a null expiry is not a refusal, got reason %q", reason)
+			}
+		})
+	}
+}
+
+// The EMPTY-STRING route, which the tables above skip and their comments claimed was "asserted
+// below". It was not: the only follow-up built a payload with no `expiry` KEY at all, which is a
+// different branch of the presence → type → parse ladder. Key present, is a string, empty, so the
+// parse is skipped and Expiry stays zero. Tightening `if exp != ""` into a rejection would block
+// every override recorded with `expiry: ""` while the suite stayed green.
+func TestOverrideBuildersAcceptAnEmptyStringExpiryAsNoExpiry(t *testing.T) {
+	ov, reason := buildCompatOverride(map[string]any{"controls": []any{"C"}, "expiry": ""})
+	if ov == nil {
+		t.Fatalf("an empty-string expiry was refused (%q); empty means no expiry, same as absent", reason)
+	}
+	if !ov.Expiry.IsZero() {
+		t.Errorf("an empty expiry should leave the zero time, got %v", ov.Expiry)
+	}
+	vv, vreason := buildVerifyOverride(map[string]any{"controls": []any{"C"}, "expiry": ""})
+	if vv == nil {
+		t.Fatalf("verify: an empty-string expiry was refused (%q)", vreason)
+	}
+	if !vv.Expiry.IsZero() {
+		t.Errorf("verify: an empty expiry should leave the zero time, got %v", vv.Expiry)
 	}
 }
 

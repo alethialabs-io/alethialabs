@@ -678,6 +678,62 @@
 			]
 		},
 		{
+			"id": "waiver/ONE-DIGIT-MINUTE-IS-NOT-RFC3339",
+			"controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"expiry": "2099-01-01T09:0:00Z",
+			"decodes": false,
+			"now": "2026-09-01T12:00:00Z",
+			"failing_controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"want": [
+				"COMPAT-K8S-CLOUD-AWS"
+			]
+		},
+		{
+			"id": "waiver/ONE-DIGIT-SECOND-IS-NOT-RFC3339",
+			"controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"expiry": "2099-01-01T09:00:0Z",
+			"decodes": false,
+			"now": "2026-09-01T12:00:00Z",
+			"failing_controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"want": [
+				"COMPAT-K8S-CLOUD-AWS"
+			]
+		},
+		{
+			"id": "waiver/ONE-DIGIT-HOUR-IS-VALID-IN-GO",
+			"controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"expiry": "2099-01-01T9:00:00Z",
+			"decodes": true,
+			"now": "2026-09-01T12:00:00Z",
+			"failing_controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"want": []
+		},
+		{
+			"id": "waiver/COMMA-FRACTION-IS-VALID-IN-GO",
+			"controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"expiry": "2099-01-01T00:00:00,5Z",
+			"decodes": true,
+			"now": "2026-09-01T12:00:00Z",
+			"failing_controls": [
+				"COMPAT-K8S-CLOUD-AWS"
+			],
+			"want": []
+		},
+		{
 			"id": "waiver/OFFSET-HOUR-24-IS-VALID-IN-GO",
 			"controls": [
 				"COMPAT-K8S-CLOUD-AWS"

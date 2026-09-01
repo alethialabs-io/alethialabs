@@ -101,7 +101,19 @@ function covers(override: CompatOverride | null | undefined, id: string, now: nu
 function parseRFC3339(raw: string): number | null {
 	// Uppercase T and Z only, a full date, a full time, and a mandatory zone — Go's layout is
 	// "2006-01-02T15:04:05Z07:00" and it is not case-insensitive.
-	const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(raw);
+	// `time.Parse(time.RFC3339, …)` is NOT the strict fast path. format.go tries `parseRFC3339`
+	// and, on failure, falls through to the general parser with layout "2006-01-02T15:04:05Z07:00"
+	// — which is laxer in two specific places, both measured against go1.26.6:
+	//
+	//   `stdHour` reads getnum(value, false)  → ONE OR TWO digits, so `T9:00:00Z` parses;
+	//   the fraction branch tests commaOrPeriod → `00:00:00,5Z` parses.
+	//
+	// Minute, second, month and day stay fixed-width (getnum(…, true)) and `T`/`Z` stay
+	// case-sensitive, so the laxness is exactly those two and no further. Being STRICTER than the
+	// gate is not safe here just because it is the cautious direction: the console would report a
+	// control still blocking while the apply it is describing goes through, which is the same
+	// disagreement as the loose direction with the operator misled instead of the machine.
+	const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{1,2}):(\d{2}):(\d{2})([.,]\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(raw);
 	if (!m) return null;
 
 	const [, y, mo, d, h, mi, sec, frac, sign, offH, offM] = m;
@@ -138,7 +150,7 @@ function parseRFC3339(raw: string): number | null {
 	// moves an expiry EARLIER, so the console can only ever call a waiver expired a fraction of a
 	// millisecond before the runner does. That is the console being stricter, which is the safe
 	// direction: it never claims a waiver is in force that the apply gate has already dropped.
-	const ms = frac === undefined ? 0 : Math.floor(Number(`0${frac}`) * 1000);
+	const ms = frac === undefined ? 0 : Math.floor(Number(`0.${frac.slice(1)}`) * 1000);
 	return Date.UTC(year, month - 1, day, Number(h), Number(mi), Number(sec), ms) - offsetMinutes * 60_000;
 }
 

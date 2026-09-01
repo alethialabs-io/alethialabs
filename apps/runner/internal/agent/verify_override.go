@@ -35,10 +35,15 @@ func buildVerifyOverride(raw map[string]any) (*verify.Override, string) {
 	// the Override was built with a zero Expiry — which both Covers implementations read as
 	// "never expires". Closing only the unparseable-string route left the wrong-type route into
 	// the same fail-open wide open.
-	if rawExpiry, present := raw["expiry"]; present {
+	if rawExpiry, present := raw["expiry"]; present && rawExpiry != nil {
+		// An explicit JSON `null` is ABSENT, not wrong-typed, and is handled by the `!= nil` above.
+		// It is the conventional encoding of an optional field and this codebase already produces
+		// it — evidence.ts writes `expiry: o.expiry ?? null` — so refusing it would turn a
+		// legitimate no-expiry waiver into a hard block citing a field the operator never set.
 		exp, isString := rawExpiry.(string)
 		if !isString {
-			// A number, a bool, an object. Not an expiry, and not something to guess at.
+			// A number, a bool, an object, an array: values someone MEANT, in a type this field
+			// cannot carry. Not something to guess at.
 			return nil, fmt.Sprintf("the verify override's `expiry` is a %T, not an RFC3339 string", rawExpiry)
 		}
 		if exp != "" {
