@@ -9,7 +9,7 @@ import { useJobLogStream } from "@/hooks/use-job-log-stream";
 import { useJobQuery } from "@/lib/query/use-jobs-query";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
-import { formatDate, formatRelative } from "@repo/format";
+import { formatDate, formatDuration, formatRelative } from "@repo/format";
 import { PageHeader } from "@repo/ui/page-header";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { Button } from "@repo/ui/button";
@@ -104,14 +104,14 @@ export default function JobDetailPage() {
 	const info = job ? JOB_TYPES[job.job_type] : null;
 	const Icon = info?.icon;
 
+	// The FOURTH copy of the duration rendering used to live here, inline and byte-different from
+	// the other three: no roll into hours, and no guard, so a `created_at` a second ahead of the
+	// browser clock rendered `-1s` and an unparseable one `NaNs`. It defers to `@repo/format` now,
+	// which is the whole point of there being one ruling.
 	const duration = () => {
 		if (!job?.created_at) return null;
 		const end = job.completed_at ? new Date(job.completed_at) : new Date();
-		const ms = end.getTime() - new Date(job.created_at).getTime();
-		const seconds = Math.floor(ms / 1000);
-		if (seconds < 60) return `${seconds}s`;
-		const minutes = Math.floor(seconds / 60);
-		return `${minutes}m ${seconds % 60}s`;
+		return formatDuration(end.getTime() - new Date(job.created_at).getTime());
 	};
 
 	if (isLoading) {

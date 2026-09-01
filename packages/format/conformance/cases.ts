@@ -107,10 +107,16 @@ export const QUOTA: QuotaCase[] = [
 ];
 
 /**
- * `formatDuration` — milliseconds. NOTE it never rolls into hours: 7_200_000ms is `120m 0s`,
- * not `2h`. That is the contract, and `cmd/jobs_list.go` currently disagrees with it. If we
- * ever decide it SHOULD roll to hours, that is a change to the TS with a visible one-line
- * diff in the generated file.
+ * `formatDuration` — milliseconds. It ROLLS INTO HOURS at 60 minutes, and drops the seconds when
+ * it does: 7_200_000ms is `2h 0m`, not `120m 0s`. That is the contract, and it is the answer
+ * `cmd/jobs_list.go` already gave — the console was the half that disagreed, and the disagreement
+ * was settled in the CLI's favour because a provision over an hour is the common path, not an
+ * edge case.
+ *
+ * The rows pin the roll from BOTH sides, which is what a port has to satisfy: one that forgets to
+ * roll fails `EXACTLY-AN-HOUR`, one that rolls a millisecond early fails
+ * `JUST-UNDER-AN-HOUR-DOES-NOT-ROLL`, and one that keeps the seconds past the roll fails
+ * `hours-and-minutes-drop-the-seconds`.
  */
 export const DURATION: NumberCase[] = [
 	{ id: "duration/zero", in: 0 },
@@ -121,7 +127,14 @@ export const DURATION: NumberCase[] = [
 	{ id: "duration/JUST-UNDER-A-MINUTE", in: 59999 },
 	{ id: "duration/EXACTLY-A-MINUTE", in: 60000 },
 	{ id: "duration/minute-and-seconds", in: 72000 },
-	{ id: "duration/TWO-HOURS-DOES-NOT-ROLL-INTO-HOURS", in: 7200000 },
+	// RENAMED, not edited. The old id was `TWO-HOURS-DOES-NOT-ROLL-INTO-HOURS` and it asserted the
+	// old behaviour IN ITS NAME, so leaving the name while changing the output would have left the
+	// table saying the opposite of what it holds. A ruling that changes an answer renames the case.
+	{ id: "duration/TWO-HOURS-ROLLS-INTO-HOURS", in: 7200000 },
+	{ id: "duration/JUST-UNDER-AN-HOUR-DOES-NOT-ROLL", in: 3599999 },
+	{ id: "duration/EXACTLY-AN-HOUR", in: 3600000 },
+	{ id: "duration/hours-and-minutes-drop-the-seconds", in: 7505000 },
+	{ id: "duration/many-hours", in: 356400000 },
 ];
 
 /**
