@@ -772,6 +772,7 @@ jobs:
       id-token: write # assume the read-only vault role via GitHub OIDC — no stored secrets
     env:
       IMAGE_TAG: ${{ github.sha }}
+      APPS_CHANGED: ${{ needs.changes.outputs.apps }}
       ASM_SECRET_ID: alethia/prod/env
       ASM_REGION: eu-central-1
     steps:
@@ -1042,8 +1043,8 @@ jobs:
 
           # On the box: checkout the built SHA, swap in .env, render s3.json from the
           # same storage creds (checkout -f resets that tracked file), compose up behind
-          # the tunnel. `bash -s` gets IMAGE_TAG from the ssh env.
-          ssh $SSHOPTS "root@${HOST}" "IMAGE_TAG='${IMAGE_TAG}' bash -s" <<'REMOTE'
+          # the tunnel. `bash -s` gets IMAGE_TAG + the apps build verdict from the ssh env.
+          ssh $SSHOPTS "root@${HOST}" "IMAGE_TAG='${IMAGE_TAG}' APPS_CHANGED='${APPS_CHANGED}' bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/alethia
           git fetch origin main
@@ -1078,6 +1079,22 @@ jobs:
             echo "::endgroup::"
             exit 1
           fi
+          # A SHA tag is only a registry label. Read provenance from the running app container so a
+          # stale image tagged as this commit cannot turn the production deploy green (#2746). An
+          # apps build must name this exact SHA. A runner-only release legitimately retags the older,
+          # code-equivalent console image; `retag-unchanged` already diff-gated that source commit.
+          app_id="$(docker compose $cf ps -q app)"
+          deployed_commit="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$app_id" \
+            | sed -n 's/^ALETHIA_SOURCE_COMMIT=//p' | head -n1)"
+          if [ -z "$deployed_commit" ]; then
+            echo "::error::Running console carries no ALETHIA_SOURCE_COMMIT provenance."
+            exit 1
+          fi
+          if [ "$APPS_CHANGED" = true ] && [ "$deployed_commit" != "$IMAGE_TAG" ]; then
+            echo "::error::Running console provenance '${deployed_commit:-missing}' does not match promoted SHA '$IMAGE_TAG'."
+            exit 1
+          fi
+          echo "✓ running console carries ALETHIA_SOURCE_COMMIT=$deployed_commit (apps changed: $APPS_CHANGED)"
           # `git checkout` replaces tracked files atomically. Caddy bind-mounts one
           # tracked file, so its existing mount can stay attached to the old inode
           # even though /opt/alethia now shows the new routes. Compose cannot detect
