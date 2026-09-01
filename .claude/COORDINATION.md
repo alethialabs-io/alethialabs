@@ -16,11 +16,17 @@ like #530). You already built and debugged this for provisioning — this reuses
 ## The board (hybrid)
 
 - **GitHub Issues = the live execution board.** One issue per claimable work unit. Labels:
-  - `wave:<name>` — which programme. `wave:W1`…`wave:W7` and `wave:hygiene` from the original
-    north-star DAG, plus the named programmes that followed: `wave:fabric`, `wave:canvas`,
-    `wave:frontdoor`, `wave:connectors-v2`, `wave:capabilities`, `wave:compat`,
-    `wave:offer-parity`. Run `scripts/coordinate.sh --report` for the live set.
-  - `lane:schema` · `lane:server` · `lane:runner` · `lane:core` · `lane:canvas` · `lane:tests` · `lane:docs`.
+  - `wave:<name>` — which programme. **The set is DATA, in `scripts/lib/board-labels.json`** — that
+    file is what `coordinate.sh --init-labels` mints and what `decompose-validate.mjs` accepts, so
+    it is the answer, and any list retyped in prose here is a copy that will decay. It already has:
+    the enumeration below once named seven tracks while thirteen were live. `jq -r '.labels[]
+    | select(.kind=="wave") | .name' scripts/lib/board-labels.json` for the real set;
+    `scripts/coordinate.sh --report` for which of them carry open work.
+  - `lane:*` — the file-ownership lanes, **also from that file** (`select(.kind=="lane")`). Two are
+    easy to confuse: `lane:canvas` owns `apps/console/components/design-project/canvas/**` and
+    `apps/console/lib/canvas/**`; `lane:console` owns the rest of the console's pages and
+    components and must EXCLUDE that subtree, or the two lanes are not disjoint and the anti-tangle
+    invariant means nothing.
   - `class:backend` or `class:ui` — the routing rule (below).
   - `claimed` — set when an instance holds it; carries a **lease comment**.
   - `blocked` — maintained by `coordinate.sh`: present while any `blocked-by` is still open.
@@ -28,10 +34,19 @@ like #530). You already built and debugged this for provisioning — this reuses
   - `needs:design` / `needs:human` — a UI unit awaiting the human/Claude-Design pipeline.
   - `epic` — an umbrella/tracking issue. **Never directly built or claimed**: it is decomposed
     into sub-issues, and claiming it would collide with every one of them.
-- The issue **body** declares two machine-read lines:
+- The issue **body** declares machine-read lines. Each must start its own line at column 0 — the
+  parsers scan the whole body, so writing one of these tokens in prose (even inside backticks, even
+  in a sentence saying the line was removed) re-declares it. That has already happened once, on
+  #3617; #3639 tracks anchoring the parsers.
   - `blocked-by: #12 #14` — units that must close first.
   - `scope: apps/console/lib/db/schema/** packages/core/types/**` — the files this unit owns (globs). No two
     open+claimable issues in a wave may share a scope glob — that is how the mega-commit tangle is prevented.
+  - `check: pnpm check:shared-surface` — **required on a `lane:console` or `lane:canvas` unit that
+    is `class:backend`**, and enforced by `decompose-validate.mjs`. Those are the lanes that own
+    rendered UI, so routing one to `class:backend` is the decision that skips the human design gate
+    (see "The two work classes"); it is sound only because something else measures the claim. The
+    command need not be new — naming the existing one that fails if the adoption regresses is the
+    point. Both lanes carry the rule because a one-lane version is escapable by relabelling.
 - **The ledger = the plan.** Wave design docs live in the private `alethialabs-io/dataroom` repo
   (`spec/features/`), not in this one. Board = execution state; ledger = design. An issue links
   its wave doc by URL.
@@ -67,7 +82,8 @@ The test to apply: *could two competent implementations of this unit disagree ab
 yes it is `class:ui`. If the answer is written down and the unit's job is to make the tree match it, it is
 `class:backend` — and a unit that routes itself `class:backend` on this rule **must** land the check alongside
 the change, because "we adopted the primitive everywhere" is a claim, and an unmeasured claim is how the
-drift got here.
+drift got here. That is not left to good intentions: a `lane:console`/`lane:canvas` + `class:backend` unit
+without a `check:` line is rejected by `decompose-validate.mjs` before the board can be seeded.
 
 ## The protocol
 
