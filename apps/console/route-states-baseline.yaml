@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The route-state ratchet: RUBRIC.md predicates S1-S4 and T1-T4, scored over the private
+# console route set by `node scripts/check-route-states.mjs`.
+#
+# EVERY NUMBER HERE IS CHECKED IN BOTH DIRECTIONS. A count that grows is a regression; a
+# count that falls without this file changing in the SAME commit is also a failure, because
+# a stale baseline has stopped measuring the thing it names and the next regression back up
+# to the old number reports green. `na` is compared exactly for the reason RUBRIC.md gives:
+# an N/A count that can grow silently is a predicate being escaped.
+#
+# `node scripts/check-route-states.mjs --print-baseline` prints what the tree scores today.
+# It prints; it never writes. Regenerating this file over a red run is how a ratchet becomes
+# a rubber stamp — read the diff and only accept numbers your change actually moved.
+version: 1
+routes: 40
+redirectOnly: 4
+real: 36
+predicates:
+  S1:
+    fail: 1
+    na: 4
+  S2:
+    fail: 17
+    na: 4
+  S3:
+    fail: 4
+    na: 5
+  S4:
+    fail: 3
+    na: 4
+  T1:
+    fail: 4
+    na: 4
+  T2:
+    fail: 0
+    na: 0
+  T3:
+    fail: 10
+    na: 30
+  T4:
+    fail: 7
+    na: 0
