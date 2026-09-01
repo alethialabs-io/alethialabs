@@ -33,7 +33,7 @@ import { PromoteDialog } from "@/components/environments/promote-dialog";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
-import { PageHeader } from "@repo/ui/page-header";
+import { SectionHeading } from "@repo/ui/section-heading";
 import { ActivePromotionPanel } from "./active-promotion-panel";
 import { ConsistencyMatrix } from "./consistency-matrix";
 import { EnvironmentCard } from "./environment-card";
@@ -154,7 +154,7 @@ export function EnvironmentsView({
 			<section className="space-y-4">
 				{/* The count rides the header's pill, which is where the console filter standard
 				    puts a result count — it used to be prose ("N total") beside the heading. */}
-				<PageHeader
+				<SectionHeading
 					level={2}
 					title="Environments"
 					count={envs.length}

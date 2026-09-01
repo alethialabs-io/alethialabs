@@ -7,7 +7,7 @@
 
 import { formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
-import { PageHeader } from "@repo/ui/page-header";
+import { SectionHeading } from "@repo/ui/section-heading";
 import type { PromotionRowView } from "./environments-view";
 import { promoStatus, StatusDot } from "./env-ui";
 
@@ -29,7 +29,7 @@ export function PromotionsHistory({
 }) {
 	return (
 		<section>
-			<PageHeader className="mb-3" level={2} title="Promotions" />
+			<SectionHeading className="mb-3" level={2} title="Promotions" />
 			<div className="overflow-hidden rounded-lg border bg-surface shadow-sm">
 				{promotions.slice(0, 8).map((p) => {
 					const status = promoStatus(p.status);

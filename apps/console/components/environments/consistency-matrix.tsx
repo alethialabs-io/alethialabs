@@ -12,7 +12,7 @@
 // `<th scope>` per environment so a screen reader can name the cell it is reading.
 
 import type { EnvConsistency } from "@/app/server/actions/projects";
-import { PageHeader } from "@repo/ui/page-header";
+import { SectionHeading } from "@repo/ui/section-heading";
 import {
 	Table,
 	TableBody,
@@ -41,7 +41,7 @@ function Cell({ state }: { state: "present" | "differs" | "absent" }) {
 export function ConsistencyMatrix({ consistency }: { consistency: EnvConsistency }) {
 	return (
 		<section>
-			<PageHeader
+			<SectionHeading
 				className="mb-3"
 				level={2}
 				title="Consistency"
