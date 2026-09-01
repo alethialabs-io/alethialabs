@@ -164,9 +164,47 @@ func docsSplitArgs(t *testing.T, cmd *cobra.Command, rest []string, example stri
 	return args
 }
 
+// docsCommandTree returns the fenced command tree in index.mdx — the first fenced block that
+// carries a top-level `├── `/`└── ` entry — and "" when the page has none.
+//
+// The bound is the whole point. Over the raw page the LAST top-level group's block runs to EOF:
+// index.mdx ends `└── ops` and then carries ~70 further lines of callouts and other command
+// examples, so a `\bname\b` search over that block could not fail. The registry only grows, and it
+// grows until it contains whichever group is last.
+func docsCommandTree(index string) string {
+	var block []string
+	fenced := false
+	hasEntry := false
+	for _, line := range strings.Split(index, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			if fenced && hasEntry {
+				return strings.Join(block, "\n")
+			}
+			fenced = !fenced
+			block, hasEntry = nil, false
+			continue
+		}
+		if !fenced {
+			continue
+		}
+		block = append(block, line)
+		if strings.HasPrefix(line, "├── ") || strings.HasPrefix(line, "└── ") {
+			hasEntry = true
+		}
+	}
+	return ""
+}
+
 // docsIndexBlock returns the lines of the command tree in index.mdx that belong to one group: the
 // line naming it, and the indented lines under it up to the next top-level entry.
-func docsIndexBlock(tree, group string) string {
+//
+// It searches the FENCED tree, never the raw page — see docsCommandTree for why an unbounded walk
+// makes the assertion built on this block unfailable for the last group in the tree.
+func docsIndexBlock(index, group string) string {
+	tree := docsCommandTree(index)
+	if tree == "" {
+		return ""
+	}
 	head := regexp.MustCompile(`(?m)^[├└]── ` + regexp.QuoteMeta(group) + `\b`)
 	loc := head.FindStringIndex(tree)
 	if loc == nil {
@@ -180,6 +218,38 @@ func docsIndexBlock(tree, group string) string {
 		}
 	}
 	return block
+}
+
+// TestHygCliDocs_IndexBlockStopsAtTheClosingFence pins the bound the leaf-in-the-tree assertion
+// rests on: the block for the LAST top-level entry must end at the closing fence.
+//
+// It runs on a fixture rather than on index.mdx because the defect it guards is only reachable for
+// whichever group is last, and which group that is changes with the page. The prose below the fence
+// names both leaves on purpose: unbounded, the block would swallow it and the `\bname\b` search in
+// the test below would pass for a leaf that had been deleted from the tree.
+func TestHygCliDocs_IndexBlockStopsAtTheClosingFence(t *testing.T) {
+	const page = "# Commands\n\n```\nalethia\n├── cluster\n│   ├── list\n│   └── get [selector]\n└── ops\n    └── session --reason <r>\n```\n\nThe `ops` group opens a session; see get and list above.\n"
+
+	block := docsIndexBlock(page, "ops")
+	if block == "" {
+		t.Fatal("the last top-level entry must still resolve to a block")
+	}
+	if strings.Contains(block, "The `ops` group") {
+		t.Errorf("the last entry's block ran past the closing fence into the prose:\n%s", block)
+	}
+	if !strings.Contains(block, "session --reason") {
+		t.Errorf("the block dropped the group's own leaves:\n%s", block)
+	}
+
+	if block := docsIndexBlock(page, "cluster"); strings.Contains(block, "ops") {
+		t.Errorf("a group's block must stop at the next top-level entry:\n%s", block)
+	}
+	if got := docsIndexBlock(page, "runner"); got != "" {
+		t.Errorf("a group absent from the tree has no block, got %q", got)
+	}
+	if got := docsIndexBlock("no fenced tree here", "cluster"); got != "" {
+		t.Errorf("a page with no command tree has no block, got %q", got)
+	}
 }
 
 // TestHygCliDocs_EveryLeafIsDocumented pins that a registered group's page and the command tree

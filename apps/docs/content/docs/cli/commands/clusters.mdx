@@ -66,9 +66,12 @@ alethia cluster get api-backend-production -o json
 status. That is the whole reason the selector is optional: you never have to run `cluster list`
 first and copy a name out of it.
 
-With `--no-input` (or in a pipe, where a prompt could never be answered) the selector is required,
-and the command exits non-zero explaining what to pass. A selector that matches **nothing** is an
-error too, not an empty screen — `alethia cluster get typo || echo missing` prints `missing`.
+The selector is required when a prompt could not work: with `--no-input`, with a piped stdin that
+could never answer one, and with a redirected stdout that has no screen to draw one on. In each
+case the command exits non-zero explaining what to pass. The last is the easy one to hit —
+`alethia cluster get -o json > clusters.json` refuses rather than writing a form into your file.
+A selector that matches **nothing** is an error too, not an empty screen —
+`alethia cluster get typo || echo missing` prints `missing`.
 
 A selector that matches **more than one** cluster — the usual case is one project with a production
 and a staging environment — asks which you meant rather than picking for you. With `--no-input` it

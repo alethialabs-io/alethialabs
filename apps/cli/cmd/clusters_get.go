@@ -92,13 +92,29 @@ func clusterLabel(c api.ClusterSummary) string {
 	return c.ProjectName + " (" + c.Environment + ")"
 }
 
-// clusterLabels joins the labels of the candidates an error has to list.
-func clusterLabels(clusters []api.ClusterSummary) string {
-	labels := make([]string, len(clusters))
-	for i := range clusters {
-		labels[i] = clusterLabel(clusters[i])
+// clusterSelector is the value from a cluster that the selector grammar accepts AND that names
+// exactly one cluster: the cluster name, falling back to the id when the name is empty.
+//
+// clusterLabel is deliberately NOT that value. It renders `web (production)`, which reads well and
+// matches nothing — clusterMatches compares against the project name, the cluster name and the id
+// only. An error that offered labels alone answered "which one did you mean?" with the one set of
+// strings guaranteed to fail on the next attempt.
+func clusterSelector(c api.ClusterSummary) string {
+	if c.ClusterName != "" {
+		return c.ClusterName
 	}
-	return strings.Join(labels, ", ")
+	return c.ID
+}
+
+// clusterChoices renders the candidates an error has to list: the human label, then in brackets
+// the value to re-run with. Both halves earn their place — the label is how the reader recognises
+// the cluster they meant, the selector is what the command will actually take.
+func clusterChoices(clusters []api.ClusterSummary) string {
+	choices := make([]string, len(clusters))
+	for i := range clusters {
+		choices[i] = clusterLabel(clusters[i]) + " [" + clusterSelector(clusters[i]) + "]"
+	}
+	return strings.Join(choices, ", ")
 }
 
 // clusterMatches returns EVERY cluster a selector names: the exact matches on project name,
@@ -150,7 +166,7 @@ func resolveCluster(clusters []api.ClusterSummary, query string) (*api.ClusterSu
 	matches := clusterMatches(clusters, query)
 	switch len(matches) {
 	case 0:
-		return nil, fmt.Errorf("no cluster matches %q — have: %s", query, clusterLabels(clusters))
+		return nil, fmt.Errorf("no cluster matches %q — have: %s", query, clusterChoices(clusters))
 	case 1:
 		return &matches[0], nil
 	}
@@ -159,8 +175,8 @@ func resolveCluster(clusters []api.ClusterSummary, query string) (*api.ClusterSu
 	// picking one would be picking FOR the caller, which is the defect above wearing a new hat.
 	if noInputMode {
 		return nil, fmt.Errorf(
-			"%q matches %d clusters (%s) — name one exactly, by cluster name or id",
-			query, len(matches), clusterLabels(matches),
+			"%q matches %d clusters (%s) — re-run with one of the bracketed names or ids",
+			query, len(matches), clusterChoices(matches),
 		)
 	}
 	return pickCluster(matches, fmt.Sprintf("Which %q cluster?", query))
@@ -174,7 +190,10 @@ func resolveCluster(clusters []api.ClusterSummary, query string) (*api.ClusterSu
 // that is not in the list" arm to leave unreachable and untested. huh writes the answer through a
 // pointer no test stub can reach, so a stubbed form yields the default — which is a real cluster.
 func pickCluster(clusters []api.ClusterSummary, title string) (*api.ClusterSummary, error) {
-	if err := requireInteractive(); err != nil {
+	// Form, not table: the gate is requireInteractiveForm, which also requires a terminal on
+	// STDOUT. `cluster get -o json > f` from an interactive shell has a TTY stdin and no screen
+	// to draw on, and the frames would land in the file ahead of the JSON.
+	if err := requireInteractiveForm(); err != nil {
 		return nil, err
 	}
 

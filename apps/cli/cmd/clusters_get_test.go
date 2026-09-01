@@ -18,14 +18,20 @@ import (
 
 func strptr(s string) *string { return &s }
 
-// clustersSetNoInput pins noInputMode for the duration of a test and restores it. The package
-// shares one global and the tests in it are not parallel, so a leaked value would decide a LATER
-// test's interactive arm.
+// clustersSetNoInput pins the terminal posture for the duration of a test and restores it: both
+// noInputMode and stdout, which requireInteractiveForm reads too because a huh form draws there.
+// The package shares these globals and the tests in it are not parallel, so a leaked value would
+// decide a LATER test's interactive arm.
+//
+// stdout follows the mode — `v == false` means "prompting is on", which now requires a screen, and
+// in a test process stdout is never a terminal. A test that wants the two to DISAGREE (prompting
+// on, stdout redirected) sets stdoutIsTTY itself; TestPickClusterRequiresATerminal does.
 func clustersSetNoInput(t *testing.T, v bool) {
 	t.Helper()
-	prev := noInputMode
+	prev, prevOut := noInputMode, stdoutIsTTY
 	noInputMode = v
-	t.Cleanup(func() { noInputMode = prev })
+	stdoutIsTTY = func() bool { return !v }
+	t.Cleanup(func() { noInputMode, stdoutIsTTY = prev, prevOut })
 }
 
 // clustersStubForm replaces the huh runner with one that returns err and records that it ran.
@@ -44,6 +50,34 @@ func clustersStubForm(t *testing.T, err error) *int {
 	}
 	t.Cleanup(func() { runHuhForm = prev })
 	return &runs
+}
+
+// clusterMatchable pulls the bracketed selectors out of an error's candidate list, and fails when
+// there are none rather than passing over an empty set.
+//
+// It exists so the assertion can be the real one — every value an error offers must RESOLVE —
+// rather than a spelling check against a string the same test typed.
+func clusterMatchable(t *testing.T, msg string) []string {
+	t.Helper()
+	var out []string
+	rest := msg
+	for {
+		i := strings.Index(rest, "[")
+		if i < 0 {
+			break
+		}
+		rest = rest[i+1:]
+		j := strings.Index(rest, "]")
+		if j < 0 {
+			break
+		}
+		out = append(out, rest[:j])
+		rest = rest[j+1:]
+	}
+	if len(out) == 0 {
+		t.Fatalf("no candidate selector in %q — the assertion it feeds would be vacuous", msg)
+	}
+	return out
 }
 
 // twoEnvsOneProject is the ordinary ambiguity: one project, two environments, two clusters, and
@@ -114,8 +148,17 @@ func TestResolveClusterErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("a selector that names nothing must be an error, not an empty screen")
 	}
-	if !strings.Contains(err.Error(), "no cluster matches") || !strings.Contains(err.Error(), "web (production)") {
-		t.Errorf("the miss must name the candidates so the next attempt can succeed, got %q", err)
+	// "so the next attempt can succeed" is the whole assertion: the candidates have to include a
+	// value clusterMatches ACCEPTS. `web (production)` is a label and matches nothing.
+	for _, want := range []string{"no cluster matches", "web (production)", "[web-prod]", "[web-stg]"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the miss %q is missing %q", err, want)
+		}
+	}
+	for _, choice := range clusterMatchable(t, err.Error()) {
+		if len(clusterMatches(twoEnvsOneProject, choice)) != 1 {
+			t.Errorf("the miss offers %q, which does not name exactly one cluster", choice)
+		}
 	}
 
 	// Ambiguous with prompting off: refuse and name both, rather than pick for the caller.
@@ -126,6 +169,17 @@ func TestResolveClusterErrors(t *testing.T) {
 	for _, want := range []string{"matches 2 clusters", "web (production)", "web (staging)"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("ambiguity error %q is missing %q", err, want)
+		}
+	}
+	// …and the remedy it names has to work. Both candidates carry the same project name, so a
+	// candidate list of labels alone would offer only strings that re-raise this same error.
+	choices := clusterMatchable(t, err.Error())
+	if len(choices) != 2 {
+		t.Fatalf("both candidates need a selector, got %v", choices)
+	}
+	for _, choice := range choices {
+		if len(clusterMatches(twoEnvsOneProject, choice)) != 1 {
+			t.Errorf("the ambiguity error offers %q, which is still ambiguous", choice)
 		}
 	}
 
@@ -206,8 +260,39 @@ func TestClusterLabel(t *testing.T) {
 	if got := clusterLabel(api.ClusterSummary{ProjectName: "web"}); got != "web" {
 		t.Errorf("no environment ⇒ no parenthetical, got %q", got)
 	}
-	if got := clusterLabels(twoEnvsOneProject); got != "web (production), web (staging)" {
-		t.Errorf("labels = %q", got)
+	if got := clusterChoices(twoEnvsOneProject); got != "web (production) [web-prod], web (staging) [web-stg]" {
+		t.Errorf("choices = %q", got)
+	}
+	// A cluster still being provisioned has no cluster name yet; the id is the selector then, and
+	// clusterMatches accepts it.
+	unnamed := []api.ClusterSummary{{ID: "clu_new", ProjectName: "web", Environment: "production"}}
+	if got := clusterChoices(unnamed); got != "web (production) [clu_new]" {
+		t.Errorf("a nameless cluster must fall back to its id, got %q", got)
+	}
+	if len(clusterMatches(unnamed, clusterSelector(unnamed[0]))) != 1 {
+		t.Error("clusterSelector must return a value clusterMatches accepts")
+	}
+}
+
+// TestPickClusterRequiresATerminal pins the arm noInputMode cannot see: prompting is on — nobody
+// passed --no-input and stdin is a terminal — but stdout is redirected, so the form would draw into
+// the caller's file ahead of the payload and the screen would show nothing.
+//
+// `alethia cluster get -o json > clusters.json` from an interactive shell is the whole case.
+func TestPickClusterRequiresATerminal(t *testing.T) {
+	clustersSetNoInput(t, false)
+	stdoutIsTTY = func() bool { return false } // restored by clustersSetNoInput's cleanup
+	runs := clustersStubForm(t, nil)
+
+	_, err := resolveCluster(twoEnvsOneProject, "")
+	if !errors.Is(err, errNoTTY) {
+		t.Fatalf("a redirected stdout must refuse before opening a form, got %v", err)
+	}
+	if *runs != 0 {
+		t.Errorf("the form must not have run; runs = %d", *runs)
+	}
+	if errors.Is(err, errNoInput) {
+		t.Error("this is not the --no-input refusal — the next step a reader is given differs")
 	}
 }
 
