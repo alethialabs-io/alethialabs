@@ -86,7 +86,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 15
-debt: 74
+debt: 61
 
 scanned:
   - scope: console_code
@@ -223,27 +223,6 @@ section_header:
   - path: apps/console/components/runners/pool-card.tsx
     hits: 1
     lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw section heading here."
-  - path: apps/console/components/settings/activity/activity-feed.tsx
-    hits: 1
-    lifts: "#3620 — settings adopts the shared surface: 1 raw section heading here."
-  - path: apps/console/components/settings/activity/activity-log.tsx
-    hits: 1
-    lifts: "#3620 — settings adopts the shared surface: 1 raw section heading here."
-  - path: apps/console/components/settings/billing/billing-panel.tsx
-    hits: 2
-    lifts: "#3620 — settings adopts the shared surface: 2 raw section headings here."
-  - path: apps/console/components/settings/settings-card.tsx
-    hits: 1
-    lifts: "#3620 — settings adopts the shared surface: 1 raw section heading here."
-  - path: apps/console/components/settings/settings-ui.tsx
-    hits: 1
-    lifts: "#3620 — settings adopts the shared surface: 1 raw section heading here."
-  - path: apps/console/components/settings/upgrade/feature-upsell.tsx
-    hits: 1
-    lifts: "#3620 — settings adopts the shared surface: 1 raw section heading here."
-  - path: apps/console/components/settings/usage/usage-panel.tsx
-    hits: 2
-    lifts: "#3628 — the usage pages are rebuilt: 2 raw section headings here."
   - path: apps/console/components/shell/account-settings-dialog.tsx
     hits: 1
     lifts: "#3619 — the page frame is rebuilt: 1 raw section heading here."
@@ -337,30 +316,12 @@ empty_state:
   - path: apps/console/components/runners/pool-card.tsx
     hits: 1
     lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 hand-rolled empty state here."
-  - path: apps/console/components/settings/activity/activity-feed.tsx
-    hits: 1
-    lifts: "#3620 — settings adopts the shared surface: 1 hand-rolled empty state here."
-  - path: apps/console/components/settings/roles/roles-manager.tsx
-    hits: 1
-    lifts: "#3620 — settings adopts the shared surface: 1 hand-rolled empty state here."
-  - path: apps/console/components/settings/upgrade/feature-upsell.tsx
-    hits: 1
-    lifts: "#3620 — settings adopts the shared surface: 1 hand-rolled empty state here."
 
 stat_strip:
   # --- debt only: 12 stat-card cells and the 2 Stat primitives they render.
   - path: apps/console/components/agent/approval-card.tsx
     hits: 5
     lifts: "#3623 — the agent surface adopts the shared surface: 5 stat-card cell/primitive sites here."
-  - path: apps/console/components/settings/usage/project-usage-panel.tsx
-    hits: 5
-    lifts: "#3628 — the usage pages are rebuilt: 5 stat-card cell/primitive sites here."
-  - path: apps/console/components/settings/usage/usage-panel.tsx
-    hits: 3
-    lifts: "#3628 — the usage pages are rebuilt: 3 stat-card cell/primitive sites here."
-  - path: apps/console/components/settings/usage/usage-primitives.tsx
-    hits: 1
-    lifts: "#3628 — the usage pages are rebuilt: 1 stat-card cell/primitive site here."
 
 layer_token:
   # --- debt only: the two raw stacking levels in the gap the token scale leaves empty.
