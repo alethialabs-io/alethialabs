@@ -739,7 +739,7 @@ func TestReadSecretRefPrefersTheApplicationCredential(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			newKubectlStub(t, 0, stubRule{Match: "get secret -n data", Stdout: tc.stdout})
 			var stderr bytes.Buffer
-			if got := readSecretRef("addon-db-primary", "data", &stderr); got != tc.want {
+			if got := readSecretRef("addon-db-primary", "data", "db-primary", &stderr); got != tc.want {
 				t.Errorf("readSecretRef() = %q, want %q", got, tc.want)
 			}
 		})
