@@ -6,37 +6,65 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
 
 // TestGCPNightlyLocationContract pins the zonal cluster location and regional service consumers.
+//
+// Each contract states the literals that must be present, and `wantRe` states one that must not be
+// pinned as FORMATTED TEXT. Two of these used to under-assert in different ways, and both are worth
+// naming because they are the two ways a file-contents test goes wrong:
+//
+//   - Asserting a rendering rather than the thing. The firestore contract matched
+//     `location_id   = …` with `terraform fmt`'s alignment baked in, so adding a longer attribute
+//     anywhere in that block reds this test on an unrelated PR — and reformatting could equally
+//     hide a real change.
+//   - Asserting the INPUT to a behaviour instead of the behaviour. The cleanup contract matched
+//     only the zone the self-test passes in; deleting the normalization the self-test exists to
+//     exercise left it green, so the case did not pin what its own name claimed.
 func TestGCPNightlyLocationContract(t *testing.T) {
 	root := filepath.Join(e2ePackageDir(t), "..", "..")
 	contracts := []struct {
-		name string
-		path string
-		want string
+		name   string
+		path   string
+		want   []string
+		wantRe *regexp.Regexp
 	}{
 		{
 			name: "the nightly defaults GCP to a zone so GKE is zonal and capacity is checked",
 			path: filepath.Join(root, ".github", "workflows", "e2e-nightly.yml"),
-			want: `gcp)     DEFAULT_REGION="europe-west3-a" ;;`,
+			want: []string{`gcp)     DEFAULT_REGION="europe-west3-a" ;;`},
+		},
+		{
+			name: "the nightly floor stays capacity-neutral across the zonal switch",
+			path: filepath.Join(root, ".github", "workflows", "e2e-nightly.yml"),
+			// A node pool's counts are PER ZONE, so regional europe-west3 was delivering 3x what it
+			// declared. If these ever go back to 1/2/1 the floor silently shrinks to a third of the
+			// only shape gcp has ever been proven at, in whichever PR happens to touch this line.
+			want: []string{`"node_min_size":3,"node_max_size":6,"node_desired_size":3`},
 		},
 		{
 			name: "Firestore derives its regional default from the zonal cluster location",
 			path: filepath.Join(root, "infra", "templates", "project", "gcp", "firestore.tf"),
-			want: `location_id   = var.firestore_location_id != "" ? var.firestore_location_id : local.gcp_region_key`,
+			// The ATTRIBUTE, not its alignment: `location_id` = the derived region key.
+			wantRe: regexp.MustCompile(`location_id\s*=\s*var\.firestore_location_id != "" \? var\.firestore_location_id : local\.gcp_region_key`),
 		},
 		{
 			name: "brownfield subnet discovery matches the derived region rather than the zone",
 			path: filepath.Join(root, "infra", "templates", "project", "gcp", "existing-network.tf"),
-			want: `if length(regexall("/regions/${local.gcp_region_key}/", s)) > 0`,
+			want: []string{`if length(regexall("/regions/${local.gcp_region_key}/", s)) > 0`},
 		},
 		{
 			name: "cleanup self-tests the zone-to-region normalization used by regional APIs",
 			path: filepath.Join(root, "scripts", "e2e", "gcp-cleanup.sh"),
-			want: `ALETHIA_E2E_REGION="europe-west3-a"`,
+			// BOTH halves. The zone is only the self-test's INPUT; the normalization is the thing
+			// under test, and asserting the input alone let deleting it pass.
+			want: []string{
+				`ALETHIA_E2E_REGION="europe-west3-a"`,
+				`*-[a-z]) REGION="${REGION%-?}" ;;`,
+			},
 		},
 	}
 
@@ -46,8 +74,16 @@ func TestGCPNightlyLocationContract(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read %s: %v", contract.path, err)
 			}
-			if !strings.Contains(string(raw), contract.want) {
-				t.Fatalf("%s no longer contains the location contract:\n%s", contract.path, contract.want)
+			if contract.wantRe == nil && len(contract.want) == 0 {
+				t.Fatal("contract asserts nothing")
+			}
+			for _, want := range contract.want {
+				if !strings.Contains(string(raw), want) {
+					t.Errorf("%s no longer contains the location contract:\n%s", contract.path, want)
+				}
+			}
+			if contract.wantRe != nil && !contract.wantRe.Match(raw) {
+				t.Errorf("%s no longer satisfies the location contract:\n%s", contract.path, contract.wantRe)
 			}
 		})
 	}
