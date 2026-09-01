@@ -213,6 +213,12 @@ export const MONEY: MoneyCase[] = [
  * Rounding to cents happens ONCE, before the `<1` test, so 0.999 reads `$1.00/mo` and never
  * `<$1/mo` beside a `$1.00/mo`. The `<= 0` test runs FIRST on the raw value, because 0.001 is
  * a real cost that must not round into "nothing is running".
+ *
+ * The two `negative-clamps` cases freeze a GAP, not a guarantee. `<= 0` is one test, so a
+ * negative loses its sign in BOTH registers and a saving renders as `$0/mo` / `$0.00/mo` —
+ * including in the register that promises to round nothing away. They are here so the two
+ * implementations cannot drift apart on it, not because clamping is the right answer for a
+ * credit: neither language has a credit register, and adding one changes this frozen table.
  */
 export const MONTHLY_RATE: MonthlyRateCase[] = [
 	{ id: "monthlyRate/estimate/zero-is-not-a-bill", amount: 0, style: "estimate", currency: "USD" },

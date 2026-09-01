@@ -98,7 +98,13 @@ export function ApprovalCard({
 					   panel's total — the agent is told to copy `costSummary.totalMonthlyCost`
 					   into `stats.monthly`, and `artifact-panel` renders that same number exact.
 					   On the default the two read `<$1/mo` against `$0.75/mo`, and `$0/mo`
-					   against `$0.00/mo`, for one plan. */
+					   against `$0.00/mo`, for one plan.
+
+					   What `"exact"` does NOT buy is the sign: it clamps `<= 0`, so a negative
+					   `monthly` renders `$0.00/mo` and a teardown's saving reads as nothing.
+					   `stats.monthly` is declared to the model as an absolute total for that
+					   reason (`lib/ai/operation.ts`); showing a saving would need a credit
+					   register in `@repo/format`, which does not exist in either language. */
 					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-muted-foreground">
 						<span className="text-foreground">
 							{proposal.stats.add ?? 0} to add

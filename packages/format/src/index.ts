@@ -258,10 +258,10 @@ export type MonthlyRateStyle = "estimate" | "exact";
  *                  otherwise  -> `$12.50/mo`, `$1,240.37/mo`
  *
  *   "exact"    — a line in a breakdown, the total of one, or a card in a set that sums to a
- *                total on the same screen. It may NOT round anything away, because the reader is
- *                adding the column up: a $0.50 hosted zone and a $0.03 bucket must not both read
- *                `<$1/mo`, and a genuine zero must read `$0.00/mo` so the column aligns.
- *                  <= 0       -> `$0.00/mo`
+ *                total on the same screen. It may NOT round a POSITIVE figure away, because the
+ *                reader is adding the column up: a $0.50 hosted zone and a $0.03 bucket must not
+ *                both read `<$1/mo`, and a genuine zero must read `$0.00/mo` so the column aligns.
+ *                  <= 0       -> `$0.00/mo`   (a negative lands here too — read the gap below)
  *                  otherwise  -> `$0.03/mo`, `$126.40/mo`
  *
  * Rounding to cents happens ONCE, before the `<1` test, so a figure cannot be rounded differently
@@ -269,11 +269,34 @@ export type MonthlyRateStyle = "estimate" | "exact";
  * the exception and runs FIRST, on the raw value — 0.001 is a real cost that must not round into
  * "nothing is running".
  *
+ * A NEGATIVE IS CLAMPED IN BOTH REGISTERS, AND THAT IS A KNOWN GAP — not a rounding rule. `<= 0`
+ * is ONE test, so -5 renders exactly as 0 does: `$0/mo` in the estimate register, `$0.00/mo` in
+ * the exact one. A saving therefore reads as "nothing is running", and the exact register's
+ * promise above does not survive it: a column holding a credit will not sum to the total printed
+ * under it. Nothing here narrows that to the estimate register, and no caller can opt out of it.
+ *
+ * This package has NO credit register. Nothing renders `-$5.00/mo` or `$5.00/mo saved`, and
+ * `packages/core/format`'s `MonthlyRate` clamps identically because the conformance table pins
+ * both sides (`monthlyRate/estimate/negative-clamps`, `monthlyRate/exact/negative-clamps`).
+ * Adding one is a cross-language contract change across two implementations, the frozen
+ * conformance fixture and both suites — deliberately not carried here.
+ *
+ * What makes the clamp tolerable TODAY is that no live call site holds a negative: every one
+ * passes an ABSOLUTE cost — infracost's `totalMonthlyCost`, a resource's `monthlyCost`, a
+ * `cost_delta_threshold` that `z.number().min(0)` bounds — and never infracost's
+ * `diffTotalMonthlyCost`. The one input with no numeric bound is the agent-supplied
+ * `stats.monthly` on the approval card (`apps/console/lib/ai/operation.ts`), which is documented
+ * to the model as an absolute total for exactly this reason. If a delta, a saving or a credit
+ * ever has to be rendered, it needs a register of its own: do NOT reach for `"exact"` and assume
+ * the sign survives, because it does not.
+ *
  * NO `~`. Three call sites prefixed one and thirteen did not, which is the disagreement, not the
  * fix — the same field cannot be approximate on one screen and exact on the next. A page that
  * wants to say "estimated" says it in words beside the number, where it is readable.
  *
- * @param amount a recurring monthly cost in major units (dollars, euros). Negative is clamped to 0.
+ * @param amount a recurring monthly cost in major units (dollars, euros). Must be an absolute
+ *               cost, not a delta: a negative is clamped to 0 in BOTH registers and its sign is
+ *               lost, so a saving is indistinguishable from nothing running. See the gap above.
  * @param style which register — see above. Defaults to the headline `"estimate"`.
  * @param currency ISO 4217 code; defaults to USD.
  */
@@ -281,6 +304,10 @@ export function formatMonthlyRate(amount: number, style: MonthlyRateStyle = "est
 	const suffix = "/mo";
 	// `undefined` decimals keeps the currency's own (2 for USD, 0 for JPY) — the same choice
 	// `formatMoney` makes, so a breakdown line and a billed amount cannot disagree about JPY.
+	//
+	// `<= 0`, not `=== 0`: a negative is CLAMPED here, in both registers, and its sign is gone.
+	// That is the documented gap, not an oversight — this function renders absolute costs, and
+	// there is no credit register to fall through to.
 	if (!Number.isFinite(amount) || amount <= 0) {
 		return `${money(0, currency, style === "exact" ? undefined : 0)}${suffix}`;
 	}
