@@ -254,6 +254,17 @@ func harborRandomCredential(bytes int) (string, error) {
 }
 
 // harborRSAPrivateKey returns the PKCS#1 key Harbor core uses to sign registry tokens.
+//
+// The KEY ONLY, deliberately — there is no `tls.crt` here and adding one would be cargo cult. The
+// chart mounts `core.secretName` at `subPath: tls.key` (harbor 1.15.1, templates/core/core-dpl.yaml),
+// and a subPath mount reads exactly one key, so the certificate half is never opened; harbor's own
+// core-secret.yaml writes both halves only when `core.secretName` is UNSET. In 1.15.1 the registry
+// authenticates with htpasswd rather than a token bundle, so nothing else needs the cert to verify
+// core's signatures either. The marketplace add-on mints key-only for the same reason —
+// apps/console/lib/addons/secrets.ts.
+//
+// Rotating this key invalidates every auth token the registry has ever issued, which is why
+// completeHarborCredentials only ever fills it when ABSENT.
 func harborRSAPrivateKey() (string, error) {
 	key, err := rsa.GenerateKey(harborRandReader, 2048)
 	if err != nil {

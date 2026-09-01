@@ -71,21 +71,16 @@ func TestHetznerRegistryHostAgreesWithTheGeneratedFixture(t *testing.T) {
 		t.Fatalf("parse fixture: %v", err)
 	}
 	specs := append(fx.ChartedNotOffered, fx.AddOns...)
-	var externalURL, adminSecret, adminKey string
+	var values map[string]any
 	for _, s := range specs {
-		if !strings.HasPrefix(s.ID, "registry-") {
-			continue
-		}
-		if v, ok := s.Values["externalURL"].(string); ok {
-			externalURL = v
-		}
-		if v, ok := s.Values["existingSecretAdminPassword"].(string); ok {
-			adminSecret = v
-		}
-		if v, ok := s.Values["existingSecretAdminPasswordKey"].(string); ok {
-			adminKey = v
+		if strings.HasPrefix(s.ID, "registry-") {
+			values = s.Values
 		}
 	}
+	if values == nil {
+		t.Fatal("the fixture carries no registry spec")
+	}
+	externalURL, _ := fixtureLeaf(values, "externalURL")
 	if externalURL == "" {
 		t.Fatal("the fixture carries no registry spec with an externalURL")
 	}
@@ -95,14 +90,81 @@ func TestHetznerRegistryHostAgreesWithTheGeneratedFixture(t *testing.T) {
 			"the tokens it issues, so a mismatch authenticates and then 401s on every pull", externalURL, reg.Host)
 	}
 
-	// The chart must read the admin password from the Secret the runner seeds. Without these the
-	// chart falls back to its published default — which is exactly what #2430 shipped.
-	if adminSecret != reg.AdminSecretName() {
-		t.Errorf("chart existingSecretAdminPassword = %q, runner seeds %q", adminSecret, reg.AdminSecretName())
+	// The chart must read EVERY credential from the Secret the runner seeds. Where it does not, it
+	// falls back to a value goharbor publishes in its own values.yaml — `Harbor12345` for the admin
+	// password (#2430), `not-a-secure-key` for the data-encryption key and `harbor_registry_password`
+	// for the internal registry credential (#3299).
+	//
+	// Neither add-on ratchet can see this: both only run `helm template`, and pointing the chart at
+	// an existingSecret is exactly what makes it STOP rendering the key — which is what turns those
+	// guards green. So the correspondence between the console's knobs and the runner's key names is
+	// checked HERE or nowhere, and hetzner-services.ts says so: "a mismatch is silent".
+	//
+	// The two groups are enumerated rather than derived from the spelling, because the spelling
+	// lies: `existingSecretSecretKey` names a SECRET (the one holding `secretKey`), while
+	// `existingSecretAdminPasswordKey` names a KEY.
+	for _, path := range [][]string{
+		{"existingSecretAdminPassword"},
+		{"existingSecretSecretKey"},
+		{"core", "existingSecret"},
+		{"core", "existingXsrfSecret"},
+		{"core", "secretName"},
+		{"jobservice", "existingSecret"},
+		{"registry", "existingSecret"},
+		{"registry", "credentials", "existingSecret"},
+	} {
+		got, ok := fixtureLeaf(values, path...)
+		if !ok {
+			t.Errorf("the chart does not set %s, so Harbor falls back to its published default",
+				strings.Join(path, "."))
+			continue
+		}
+		if got != reg.AdminSecretName() {
+			t.Errorf("chart %s = %q, runner seeds Secret %q",
+				strings.Join(path, "."), got, reg.AdminSecretName())
+		}
 	}
-	if adminKey != harborAdminSecretKey {
+
+	declared := map[string]bool{}
+	for _, key := range harborCredentialKeys {
+		declared[key] = true
+	}
+	for _, path := range [][]string{
+		{"existingSecretAdminPasswordKey"},
+		{"core", "existingXsrfSecretKey"},
+		{"jobservice", "existingSecretKey"},
+		{"registry", "existingSecretKey"},
+	} {
+		got, ok := fixtureLeaf(values, path...)
+		if !ok {
+			t.Errorf("the chart does not set %s", strings.Join(path, "."))
+			continue
+		}
+		if !declared[got] {
+			t.Errorf("chart %s reads key %q, which the runner never mints — the chart would find it "+
+				"absent and fall back to its published default", strings.Join(path, "."), got)
+		}
+	}
+	if adminKey, _ := fixtureLeaf(values, "existingSecretAdminPasswordKey"); adminKey != harborAdminSecretKey {
 		t.Errorf("chart existingSecretAdminPasswordKey = %q, runner writes key %q", adminKey, harborAdminSecretKey)
 	}
+}
+
+// fixtureLeaf walks a nested Helm values map to a string leaf.
+func fixtureLeaf(values map[string]any, path ...string) (string, bool) {
+	var cur any = values
+	for _, step := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return "", false
+		}
+		cur, ok = m[step]
+		if !ok {
+			return "", false
+		}
+	}
+	s, ok := cur.(string)
+	return s, ok
 }
 
 func TestHetznerRegistriesOnlyOnHetzner(t *testing.T) {
@@ -368,14 +430,31 @@ func TestEnsureHarborSecretCompletesLegacyAdminOnlySecretWithoutRotatingIt(t *te
 	}
 }
 
+// REGISTRY_PASSWD and its bcrypt REGISTRY_HTPASSWD line are one credential in two encodings: the
+// registry authenticates against the hash, Harbor core presents the plaintext. Half a pair cannot be
+// completed — inventing the missing half would either rotate a live password or write a hash of a
+// password nothing holds — so it fails closed. BOTH directions are tested: a guard that only ever
+// sees one arrangement of its inputs is a guard for one arrangement.
 func TestEnsureHarborSecretRejectsHalfARegistryPasswordPair(t *testing.T) {
-	raw := `{"data":{"REGISTRY_PASSWD":"cGFzc3dvcmQ="}}`
-	newKubectlStub(t, 0, stubRule{Match: "get secret", Stdout: raw})
-	reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
+	for _, tc := range []struct {
+		name string
+		data string
+	}{
+		{"plaintext without its hash", `{"data":{"REGISTRY_PASSWD":"cGFzc3dvcmQ="}}`},
+		{"hash without its plaintext", `{"data":{"REGISTRY_HTPASSWD":"dXNlcjpoYXNo"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := newKubectlStub(t, 0, stubRule{Match: "get secret", Stdout: tc.data})
+			reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
 
-	err := EnsureHarborSecret(reg, io.Discard, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "only one of REGISTRY_PASSWD") {
-		t.Fatalf("error = %v, want fail-closed pair error", err)
+			err := EnsureHarborSecret(reg, io.Discard, io.Discard)
+			if err == nil || !strings.Contains(err.Error(), "only one of REGISTRY_PASSWD") {
+				t.Fatalf("error = %v, want fail-closed pair error", err)
+			}
+			if stub.calledWith("apply") {
+				t.Fatalf("applied a mismatched credential pair; calls = %v", stub.calls())
+			}
+		})
 	}
 }
 
@@ -470,5 +549,66 @@ func TestEnsureHarborSecretSurfacesAnEntropyFailure(t *testing.T) {
 	err := EnsureHarborSecret(reg, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "generate Harbor HARBOR_ADMIN_PASSWORD") {
 		t.Fatalf("error = %v, want a generation failure", err)
+	}
+}
+
+// harborCredentialKeys is the list the CHART reads through its `existingSecret*` knobs, and
+// completeHarborCredentials re-spells the same names inline because each key has its own generator.
+// Two copies of one list drift, and the drift is silent: every assertion above iterates the copy in
+// this file, so a key added to production and forgotten here would be tested by nothing. This pins
+// them to each other in BOTH directions — a production key missing from the list fails, and a list
+// entry production stopped minting fails too.
+func TestHarborCredentialKeysMirrorsWhatIsMinted(t *testing.T) {
+	data := map[string]string{}
+	if _, err := completeHarborCredentials(data); err != nil {
+		t.Fatalf("completeHarborCredentials: %v", err)
+	}
+	declared := map[string]bool{}
+	for _, key := range harborCredentialKeys {
+		declared[key] = true
+	}
+	for key := range data {
+		if !declared[key] {
+			t.Errorf("completeHarborCredentials mints %q, which harborCredentialKeys does not declare", key)
+		}
+	}
+	for _, key := range harborCredentialKeys {
+		if data[key] == "" {
+			t.Errorf("harborCredentialKeys declares %q, which completeHarborCredentials does not mint", key)
+		}
+	}
+}
+
+// A kubectl that FAILS must never be read as "the Secret is absent". `--ignore-not-found` makes a
+// genuine absence an empty SUCCESS, so every error left here is a real one — an API-server blip, a
+// lost token, a throttled request. Treating those as absence would re-seed over live credentials
+// while Harbor's database still holds the previous ones, which is the lockout EnsureHarborSecret
+// exists to avoid. The assertion that carries the invariant is the second one: returning an error is
+// not enough, nothing may be applied.
+func TestEnsureHarborSecretRefusesToSeedWhenTheReadFails(t *testing.T) {
+	stub := newKubectlStub(t, 0, stubRule{Match: "get secret", Exit: 1})
+	reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
+
+	err := EnsureHarborSecret(reg, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "read Harbor credential secret") {
+		t.Fatalf("error = %v, want a read failure", err)
+	}
+	if stub.calledWith("apply") {
+		t.Fatalf("overwrote credentials after a failed read; calls = %v", stub.calls())
+	}
+}
+
+// Same invariant, one step further in: the read SUCCEEDED but the payload is not a Secret. Anything
+// other than a hard stop here would apply a credential map built from a document we could not read.
+func TestEnsureHarborSecretRefusesToSeedOnAnUndecodableSecret(t *testing.T) {
+	stub := newKubectlStub(t, 0, stubRule{Match: "get secret", Stdout: "not json"})
+	reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
+
+	err := EnsureHarborSecret(reg, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "decode Harbor credential secret") {
+		t.Fatalf("error = %v, want a decode failure", err)
+	}
+	if stub.calledWith("apply") {
+		t.Fatalf("applied a credential map built from an unreadable Secret; calls = %v", stub.calls())
 	}
 }
