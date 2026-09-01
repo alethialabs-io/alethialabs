@@ -98,7 +98,11 @@ import type {
 	ServiceBinding,
 	TopicSubscription,
 } from "@/types/jsonb.types";
-import { RESERVED_PROJECT_CHILD_SLUGS, slugify } from "@/lib/routing";
+import {
+	environmentNameProblem,
+	normalizeEnvironmentName,
+} from "@/lib/validations/names";
+import { slugify } from "@/lib/utils/slugify";
 import { repoLabel } from "@/lib/repos/repo-label";
 import { and, desc, eq, inArray } from "drizzle-orm";
 
@@ -1701,12 +1705,19 @@ async function resolveTargetEnvironment(
 	}
 
 	// Effective ArgoCD destination namespace. `dedicated` owns the whole Fabric → no namespace
-	// (legacy behaviour); shared placements use the env's explicit namespace, else an RFC-1123
-	// slug of its name (via slugify, capped at 63 chars — the k8s namespace length limit).
+	// (legacy behaviour); shared placements use the env's explicit namespace, else a DNS-1123 slug
+	// of its name.
+	//
+	// The environment id is the fallback, and it is not decorative: `slugify` used to be able to
+	// return "" here and the result went straight into the ArgoCD destination unchecked, which
+	// renders `namespace: ` and applies into whatever ArgoCD defaults to. Env names created from
+	// now on are validated to slug to something (lib/validations/names.ts), but rows that predate
+	// that validation are still in the table — and a uuid is itself a valid DNS-1123 label, so the
+	// fallback is a legal namespace rather than another guess.
 	const namespace =
 		environment.placement_mode === "dedicated"
 			? null
-			: (environment.namespace ?? slugify(environment.name, 63));
+			: (environment.namespace ?? slugify(environment.name, environment.id));
 
 	return { environment, fabric, namespace };
 }
@@ -2549,12 +2560,12 @@ export async function addEnvironment(
 ) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
-	const name = slugify(input.name);
-	if (!name) throw new Error("Environment name is required");
-	if (RESERVED_PROJECT_CHILD_SLUGS.includes(name))
-		throw new Error(
-			`"${name}" is reserved and can't be used as an environment name`,
-		);
+	// One definition of what an environment name may be, shared with the CLI's `project env add`
+	// and with `project create --env` (lib/validations/names.ts). The two used to disagree: this
+	// path slugified `Prod` to `prod`, the create path 400'd on it.
+	const problem = environmentNameProblem(input.name);
+	if (problem) throw new Error(problem);
+	const name = normalizeEnvironmentName(input.name);
 	return withActorScope(actor, async (tx) => {
 		const [project] = await tx
 			.select({ org_id: projects.org_id })
@@ -2592,12 +2603,9 @@ export async function duplicateEnvironment(
 ) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
-	const slug = slugify(name);
-	if (!slug) throw new Error("Environment name is required");
-	if (RESERVED_PROJECT_CHILD_SLUGS.includes(slug))
-		throw new Error(
-			`"${slug}" is reserved and can't be used as an environment name`,
-		);
+	const problem = environmentNameProblem(name);
+	if (problem) throw new Error(problem);
+	const slug = normalizeEnvironmentName(name);
 	// The base env's design (form shape = config only; provisioned outputs already stripped). Null
 	// when the base env has no design yet (an empty env) → the duplicate is created empty too.
 	const baseConfig = await getProjectAsFormData(projectId, baseEnvironmentId)

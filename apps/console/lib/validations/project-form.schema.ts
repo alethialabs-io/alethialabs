@@ -6,7 +6,8 @@ import { z } from "zod";
 import { toRecord } from "@/lib/coerce";
 import { HELM_REGISTRY_HOST_RULES } from "@/lib/connectors/helm-registry-hosts";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
-import { slugify } from "@/lib/slug";
+import { canSlugify } from "@/lib/utils/slugify";
+import { environmentNameSchema, namespaceSchema } from "@/lib/validations/names";
 import { appsPathSchema } from "@/lib/validations/apps-path";
 import {
 	environmentLifecycle,
@@ -368,28 +369,19 @@ const componentAutoFields = {
 export const environmentMatrixSchema = z
 	.array(
 		z.object({
-			// Slug-safe (DNS-1123 label): the env name feeds the tofu state-path segment and the
-			// Fabric name, so it must never carry path separators or other unsafe characters.
-			name: z
-				.string()
-				.min(1)
-				.max(40)
-				// Leading LETTER (stricter than a bare label) because this feeds a tofu state-path
-				// segment; the trailing character is constrained too, because `prod-` is not a valid
-				// DNS-1123 label and the old pattern accepted it.
-				.regex(
-					/^[a-z]([a-z0-9-]*[a-z0-9])?$/,
-					"Environment name must be lower-case alphanumeric or hyphen, and must not end with a hyphen.",
-				),
+			// One environment-name rule, shared with `project env add` and the two server actions
+			// (lib/validations/names.ts). It NORMALIZES rather than refuses: this path used to 400
+			// on `Prod` against a raw-name regex while `project env add Prod` accepted it and stored
+			// `prod`, which is one product answering the same question two ways. What it still
+			// refuses is what normalising cannot fix — a name that slugs to nothing, and a name a
+			// console route would permanently shadow.
+			name: environmentNameSchema,
 			stage: z.enum(environmentStage.enumValues),
 			placement_mode: z.enum(placementMode.enumValues),
 			lifecycle: z.enum(environmentLifecycle.enumValues).optional(),
-			// The k8s destination namespace — DNS-1123 label when present.
-			namespace: z
-				.string()
-				.max(63)
-				.regex(/^[a-z]([a-z0-9-]*[a-z0-9])?$/)
-				.nullish(),
+			// The k8s destination namespace. Kubernetes' own grammar, exactly: the old pattern
+			// refused `1dev`, which Kubernetes accepts.
+			namespace: namespaceSchema.nullish(),
 			is_default: z.boolean().optional(),
 		}),
 	)
@@ -409,7 +401,7 @@ const projectSchema = projectsInsert
 			.string()
 			.min(1, "Project name is required")
 			.max(50)
-			.refine((v) => slugify(v).length > 0, "Enter at least one letter or number"),
+			.refine((v) => canSlugify(v), "Enter at least one letter or number"),
 		region: z.string().min(1, "Region is required"),
 		cloud_identity_id: z.string().min(1, "Cloud account is required"),
 		container_platform: z.string().optional(),

@@ -52,19 +52,10 @@ import {
 import { Spinner } from "./classification-ui";
 import { DimensionDetail } from "./dimension-detail";
 import { DimensionEditorSheet } from "./dimension-editor-sheet";
+import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { DimensionRail } from "./dimension-rail";
 import { ValueDrillDrawer } from "./value-drill-drawer";
 import { ValueEditor } from "./value-editor";
-
-/** Lowercases + hyphenates a label into a slug candidate. */
-function slugify(input: string): string {
-	return input
-		.toLowerCase()
-		.trim()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "")
-		.slice(0, 64);
-}
 
 type Sheet =
 	| { mode: "create"; templateKey?: string }
@@ -145,7 +136,7 @@ export function ClassificationManager() {
 	const onAddValue = async (dim: DimensionDTO, label: string) => {
 		try {
 			await createValue(dim.id, {
-				value: slugify(label),
+				value: slugifyOrEmpty(label),
 				label,
 				position: dim.values.length,
 			});

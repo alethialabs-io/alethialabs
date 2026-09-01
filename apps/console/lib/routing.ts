@@ -108,10 +108,6 @@ export function envHref(
 	return `/${orgSlug}/${projectSlug}/architecture?environment_id=${encodeURIComponent(environmentId)}`;
 }
 
-/** Vercel-style name → URL slug. Canonical implementation lives in `./slug`; re-exported
- *  here so the many `@/lib/routing` callers keep a single import site. */
-export { slugify } from "./slug";
-
 /**
  * Picks a slug that doesn't collide with `taken` by appending `-2`, `-3`, …
  * (used by createZone / createProject to keep the per-scope unique constraints).
