@@ -45,6 +45,10 @@ const RUN_POSTURE: Record<string, string | null> = {
 	hero: "ci.yml · E2E (browser · Playwright hero path)",
 	"elench-ai": "ci.yml · E2E (browser · Elench AI journeys · scripted model)",
 	"elench-live": "e2e-ai-nightly.yml · Elench live-model journeys",
+	// NON-REQUIRED on purpose. It is path-filtered to the console surface on PRs and runs in full
+	// on the nightly cron, and it joins NO required check until its findings have been worked
+	// through: #2417 is what happens when a 320-test suite becomes a merge gate unvalidated.
+	audit: "ci.yml · UI conformance audit (console · non-required, + nightly)",
 	// ── Not gating, and no job runs them. Each needs a workflow job it does not have yet; that
 	// change lives in `.github/workflows/**`, outside #2875's scope. Until it lands, NOTHING here
 	// may be cited as coverage — that is what the entry being `null` records.
@@ -284,6 +288,38 @@ const projects = [
 			/(^|\/)(account-settings|activity|billing|connectors|elench-agent|evidence|usage)\.spec\.ts$/,
 		testIgnore: /flows\//,
 		use: { ...devices["Desktop Chrome"] },
+	},
+
+	// The live half of the console UI conformance rubric (apps/console/docs/ui-conformance/RUBRIC.md):
+	// predicates R1–R7 and T5–T7 over every route `scripts/lib/console-routes.mjs` reports. The half
+	// static analysis cannot reach — an overlay's STACKING, a page's real geometry at four widths,
+	// what axe sees, what the console logged.
+	//
+	// `fullyParallel: false` is load-bearing, not a performance choice. `routes.spec.ts` audits the
+	// empty org FIRST and only then writes the rows the `[project]`/`[id]` routes need, because T5
+	// ("the empty state renders through EmptyState") has exactly one moment in which it can be
+	// asked. Tests in one file run in declaration order in one worker only when the project is not
+	// fully parallel; with it on, the seeding step could land before the pass it must follow.
+	{
+		name: "audit",
+		// `(^|/)audit/` rather than a bare `audit/`: the pattern is tested against the ABSOLUTE
+		// path, and a checkout or worktree whose directory name merely contains "audit" must not
+		// pull unrelated specs in. The segment has to be exactly `audit`.
+		testMatch: /(^|\/)audit\/[^/]*\.spec\.ts$/,
+		fullyParallel: false,
+		// One route test loads the page at FOUR viewport widths, runs axe, opens every overlay the
+		// page offers and hit-tests each one, then reloads it once more with an injected fault. The
+		// 30s default is not a budget for that, and the failure it produces is worse than slow:
+		// Playwright discards the worker after a timeout, the next test starts in a FRESH one, and
+		// the module-level audit context goes with it — measured, on 2026-09-01, as every
+		// `[project]` route in pass 2 suddenly reporting "cannot materialise".
+		timeout: 180_000,
+		// NO RETRIES, overriding the config-wide `isCI ? 2 : 0`. This project is expected to report
+		// real FAILURES, not flakes; retrying each one twice would triple a job that already takes
+		// the best part of an hour, and would say nothing new.
+		retries: 0,
+		dependencies: ["setup"],
+		use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
 	},
 
 	// The QA suite (e2e/flows). Needs ALETHIA_QA_E2E=1 so global-setup builds its personas.
