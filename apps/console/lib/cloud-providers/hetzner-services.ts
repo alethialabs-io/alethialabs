@@ -545,14 +545,31 @@ export function hetznerRegistryValues(
 		size: `${HCLOUD_MIN_VOLUME_GB}Gi`,
 		storageClass: HCLOUD_STORAGE_CLASS,
 	};
+	const credentialSecret = `harbor-${registry.name}-admin`;
 	return {
 		// The admin password comes from a Secret the RUNNER seeds and never from a literal here:
 		// values are snapshot-persisted and reach the customer's cluster through a rendered
 		// manifest. Without these two keys the chart falls back to its published default
 		// (`harborAdminPassword: "Harbor12345"`) — which is what #2430 shipped, and what #2431 fixes.
 		// The names must match packages/core/argocd/harbor.go exactly; a mismatch is silent.
-		existingSecretAdminPassword: `harbor-${registry.name}-admin`,
+		existingSecretAdminPassword: credentialSecret,
 		existingSecretAdminPasswordKey: "HARBOR_ADMIN_PASSWORD",
+		existingSecretSecretKey: credentialSecret,
+		core: {
+			existingSecret: credentialSecret,
+			existingXsrfSecret: credentialSecret,
+			existingXsrfSecretKey: "CSRF_KEY",
+			secretName: credentialSecret,
+		},
+		jobservice: {
+			existingSecret: credentialSecret,
+			existingSecretKey: "JOBSERVICE_SECRET",
+		},
+		registry: {
+			existingSecret: credentialSecret,
+			existingSecretKey: "REGISTRY_HTTP_SECRET",
+			credentials: { existingSecret: credentialSecret },
+		},
 		expose: {
 			type: "clusterIP",
 			tls: { enabled: false },

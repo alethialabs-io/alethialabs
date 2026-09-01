@@ -219,6 +219,24 @@
 			"values": {
 				"existingSecretAdminPassword": "harbor-app-images-admin",
 				"existingSecretAdminPasswordKey": "HARBOR_ADMIN_PASSWORD",
+				"existingSecretSecretKey": "harbor-app-images-admin",
+				"core": {
+					"existingSecret": "harbor-app-images-admin",
+					"existingXsrfSecret": "harbor-app-images-admin",
+					"existingXsrfSecretKey": "CSRF_KEY",
+					"secretName": "harbor-app-images-admin"
+				},
+				"jobservice": {
+					"existingSecret": "harbor-app-images-admin",
+					"existingSecretKey": "JOBSERVICE_SECRET"
+				},
+				"registry": {
+					"existingSecret": "harbor-app-images-admin",
+					"existingSecretKey": "REGISTRY_HTTP_SECRET",
+					"credentials": {
+						"existingSecret": "harbor-app-images-admin"
+					}
+				},
 				"expose": {
 					"type": "clusterIP",
 					"tls": {

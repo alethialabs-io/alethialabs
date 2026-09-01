@@ -1120,7 +1120,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 
 		// An in-cluster Harbor (a Hetzner `registry` node) needs credentials nothing else provides:
 		// unlike ECR / Artifact Registry / ACR there is no node identity to authenticate with. Seed
-		// the admin password (once — see EnsureHarborAdminSecret), pre-create the pull Secret so the
+		// Harbor credentials (once — see EnsureHarborSecret), pre-create the pull Secret so the
 		// bootstrap Job needs no name-unscopable `create` right, then apply the Job that mints a
 		// project-scoped PULL robot from INSIDE the cluster, which is the only place Harbor's API
 		// answers.
