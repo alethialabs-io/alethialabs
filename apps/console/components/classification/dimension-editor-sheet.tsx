@@ -41,18 +41,9 @@ import {
 	CLASSIFICATION_TEMPLATES,
 	type ClassificationTemplate,
 } from "./classification-templates";
+import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { InfoHint, Spinner } from "./classification-ui";
 import { RESOURCE_KIND_LABELS } from "./resource-kind-labels";
-
-/** Lowercases + hyphenates a label into a slug candidate. */
-function slugify(input: string): string {
-	return input
-		.toLowerCase()
-		.trim()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "")
-		.slice(0, 64);
-}
 
 /** Create / edit a dimension. Controlled via `open` / `onOpenChange`. */
 export function DimensionEditorSheet({
@@ -143,7 +134,7 @@ export function DimensionEditorSheet({
 	const addStaged = () => {
 		const label = addLabel.trim();
 		if (!label) return;
-		const value = slugify(label);
+		const value = slugifyOrEmpty(label);
 		if (staged.some((s) => s.value === value)) {
 			setAddLabel("");
 			return;
@@ -233,7 +224,7 @@ export function DimensionEditorSheet({
 								onChange={(e) => {
 									form.setValue("label", e.target.value);
 									if (!isEdit && !form.formState.dirtyFields.key) {
-										form.setValue("key", slugify(e.target.value));
+										form.setValue("key", slugifyOrEmpty(e.target.value));
 									}
 								}}
 							/>

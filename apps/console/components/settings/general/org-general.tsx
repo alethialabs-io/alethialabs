@@ -44,7 +44,7 @@ import {
 import { Button } from "@repo/ui/button";
 import { Skeleton } from "@repo/ui/skeleton";
 import { authClient } from "@/lib/auth/client";
-import { slugify } from "@/lib/slug";
+import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { cn } from "@repo/ui/utils";
 
@@ -177,7 +177,7 @@ export function OrgGeneral() {
                   <input
                     className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-[12px] text-text-primary outline-none"
                     value={s.slug}
-                    onChange={(e) => set("slug", slugify(e.target.value))}
+                    onChange={(e) => set("slug", slugifyOrEmpty(e.target.value))}
                     autoComplete="off"
                   />
                 </div>

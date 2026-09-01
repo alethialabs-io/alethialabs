@@ -14,11 +14,53 @@ import {
 	projects,
 	resourceHierarchy,
 } from "@/lib/db/schema";
+import { pickFreeSlug, RESERVED_PROJECT_CHILD_SLUGS } from "@/lib/routing";
+import { slugify } from "@/lib/utils/slugify";
 import {
-	pickFreeSlug,
-	RESERVED_PROJECT_CHILD_SLUGS,
-	slugify,
-} from "@/lib/routing";
+	environmentNameProblem,
+	namespaceProblem,
+	normalizeEnvironmentName,
+} from "@/lib/validations/names";
+
+/**
+ * Why an environment spec cannot be fanned out, or `null` when it can.
+ *
+ * Re-validated at all because `createProject` does not re-parse the client input, so a crafted
+ * request must not smuggle path separators into a tofu state key or a Fabric name.
+ *
+ * It asks the SHARED rules (lib/validations/names.ts) rather than keeping its own copy. The copy
+ * it used to keep was a pair of bounded charset patterns, one per field, and both required a
+ * leading LETTER — the rule #3665 removes, because Kubernetes accepts `1dev`. `POST
+ * /api/cli/projects` parses the matrix with `environmentMatrixSchema` and hands it straight to the
+ * fan-out, so the two disagreeing meant `alethia project create --env 1dev:namespace` passed
+ * validation and then threw out of the fan-out — which the route's catch renders as a 500, not the
+ * 400 a rejected name deserves.
+ *
+ * Exported so that agreement is a TEST rather than a claim: tests/lib/queries-projects-specs.test.ts
+ * drives this and `environmentMatrixSchema` over one corpus and asserts they answer alike.
+ */
+export function environmentSpecProblem(spec: {
+	name: string;
+	namespace?: string | null;
+}): string | null {
+	const nameProblem = environmentNameProblem(spec.name);
+	if (nameProblem) return `Invalid environment name "${spec.name}": ${nameProblem}`;
+	// The name arrives already normalized when it came through environmentMatrixSchema. Checked
+	// again because the fan-out is also reachable from callers that never parsed it, and a name
+	// that still needs normalizing would be stored in a form no URL resolves.
+	const canonical = normalizeEnvironmentName(spec.name);
+	if (canonical !== spec.name) {
+		return (
+			`Invalid environment name "${spec.name}": it must already be normalized ` +
+			`("${canonical}") before it reaches the fan-out.`
+		);
+	}
+	if (spec.namespace != null) {
+		const nsProblem = namespaceProblem(spec.namespace);
+		if (nsProblem) return `Invalid namespace "${spec.namespace}": ${nsProblem}`;
+	}
+	return null;
+}
 
 /** One environment the front door seeds, with its placement onto a Fabric. The placement selector
  * (#844) emits these; the fan-out below turns them into `project_fabrics` + `project_environments`
@@ -143,7 +185,7 @@ export async function insertProjectWithDefaultFabric(
 		.select({ slug: projects.slug })
 		.from(projects)
 		.where(eq(projects.org_id, input.orgId));
-	const slug = pickFreeSlug(slugify(input.project_name) || "project", [
+	const slug = pickFreeSlug(slugify(input.project_name, "project"), [
 		...existing.map((r) => r.slug).filter((s): s is string => Boolean(s)),
 		...RESERVED_PROJECT_CHILD_SLUGS,
 	]);
@@ -192,17 +234,9 @@ export async function insertProjectWithDefaultFabric(
 		if (defaults.length !== 1) {
 			throw new Error("Exactly one environment must be the default.");
 		}
-		// Slug-safe names (DNS-1123 label): the env name feeds the tofu state-path segment and the
-		// Fabric name — validated HERE because createProject does not re-parse the client input, so a
-		// crafted request must not smuggle path separators into a storage key.
-		const SLUG_LABEL = /^[a-z][a-z0-9-]{0,39}$/;
 		for (const s of specs) {
-			if (!SLUG_LABEL.test(s.name)) {
-				throw new Error(`Invalid environment name "${s.name}".`);
-			}
-			if (s.namespace != null && !/^[a-z][a-z0-9-]{0,62}$/.test(s.namespace)) {
-				throw new Error(`Invalid namespace "${s.namespace}".`);
-			}
+			const problem = environmentSpecProblem(s);
+			if (problem) throw new Error(problem);
 		}
 		// Still reserved even though the fan-out no longer mints a Fabric by this name: projects
 		// created before that fix carry one, so the name would be ambiguous in a state key and in

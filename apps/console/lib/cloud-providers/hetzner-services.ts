@@ -24,6 +24,7 @@
  */
 
 import type { AddOnInstallSpec } from "@/lib/addons/types";
+import { DNS1123_LABEL_PATTERN } from "@/lib/validations/names";
 
 /** The block-storage StorageClass the Hetzner/Talos template makes default (CSI driver). */
 const HCLOUD_STORAGE_CLASS = "hcloud-volumes";
@@ -310,8 +311,18 @@ export type HetznerChartedKind = keyof typeof HETZNER_ADDON_ID_PREFIXES;
 /** Kubernetes' own ceiling for a label / object-name segment. */
 const DNS_1123_LABEL_MAX = 63;
 
-/** RFC-1123 DNS label: lower-case alphanumerics and hyphens, not starting or ending with one. */
-const DNS_1123_LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+/**
+ * RFC-1123 DNS label: lower-case alphanumerics and hyphens, not starting or ending with one.
+ *
+ * The ONE grammar (lib/validations/names.ts). The runner has to agree with it — it derives every
+ * Secret and Application name from a node name and refuses anything outside this charset before
+ * interpolating one into a kubectl command — and it now does so by construction: `k8sNameRe` in
+ * packages/core/argocd/addon_secrets.go IS `names.NamespacePattern`, generated from the same
+ * constant and diff-gated by `pnpm -F console gen:go-names:check` (#3665). This file used to
+ * restate the charset twice, once here and once as `K8S_LABEL`, checked against Go by a test that
+ * read this file's source text.
+ */
+const DNS_1123_LABEL_RE = DNS1123_LABEL_PATTERN;
 
 /**
  * Why a node name is unusable on Hetzner, or `null` when it is fine.
@@ -741,17 +752,6 @@ export function hetznerVaultValues(): Record<string, unknown> {
 }
 
 /**
- * The RFC-1123 DNS LABEL charset, restated here because Go cannot read this file and this file
- * cannot read Go. It MUST match `k8sNameRe` in packages/core/argocd/addon_secrets.go: the runner
- * derives every Secret and Application name from a node name and refuses anything outside this
- * charset before it interpolates one into a kubectl command.
- *
- * The two halves are checked against each other by test, not by hope — the same arrangement the
- * generated fixture already gives the secret NAME.
- */
-const K8S_LABEL = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
-
-/**
  * Helm values for one queue node. The chart pulls the OFFICIAL upstream `docker.io/rabbitmq`
  * image (digest-pinned by the chart), not a Bitnami image — the previous `bitnami/rabbitmq`
  * chart's default image tag is now HTTP 404 (Broadcom relocated it to `bitnamilegacy/*`), so
@@ -785,7 +785,7 @@ export function hetznerQueueValues(
 	// So the fix applies to the names it can actually fix, and everything else is left exactly as it
 	// was. The console refuses such names at the form now (#3588); this branch exists for the rows
 	// that were saved before it did.
-	if (!K8S_LABEL.test(queue.name)) {
+	if (!DNS_1123_LABEL_RE.test(queue.name)) {
 		return { replicaCount: 1, persistence };
 	}
 	return {
