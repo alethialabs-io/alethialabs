@@ -117,6 +117,25 @@ overtaken is more useful than a gap.
   which also tracks pricing the four unpriced clouds. Restoring a schedule is a per-cloud decision
   gated on that cloud being priced _and_ having a committed full-bar proof row.
 
+- **D5 · 2026-09-01 · Console UI conformance runs as its own wave, in parallel — the phase ordering
+  above is not amended, it is qualified.** §1 puts UI last, and the one-sentence intent says "then,
+  and only then, UI". That ordering is about *spend and proof*: a UI phase that competes for the
+  five-cloud dispatch budget, the single branch-env slot, or the maintainer's review attention would
+  push the proof cells out, and that is still refused.
+
+  `wave:console-ui` (epic #3613) does none of those things. Its file scopes are `apps/console/**`
+  and `scripts/check-*`, disjoint from templates, runner, core and infra, so its lanes cannot collide
+  with a parity lane. Its recurring gate runs in CI's own console — `playwright.config.ts` already
+  boots one with a Postgres service — so it buys no cloud time. Its instrument half is pure-Node
+  static analysis. Where it *does* touch the shared resource, the single branch-env slot, the
+  dependency is written into the board (#3617 → #3632 → #3633) so it serialises against itself
+  rather than against the parity work.
+
+  The decision is recorded here because the alternative is worse than the reordering: a ledger that
+  reads "then, and only then, UI" while a UI wave is being built is a ledger disagreeing with the
+  tree, which §1's own first phase exists to prevent. The ordering claim that remains true, and is
+  the one worth keeping: **no cell of the proof grid may be deferred for it.**
+
 ## §3 · Anti-patterns
 
 Each one is a mistake this repo has already paid for.
