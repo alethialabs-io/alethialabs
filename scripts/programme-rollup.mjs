@@ -70,6 +70,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { validateReaperResult } from "./e2e/reaper-result.mjs";
 
 const SNAPSHOT = "docs/testing/programme-snapshot.json";
 const LEDGER = "demos/proofs/provisioning-e2e-log.md";
@@ -98,6 +99,7 @@ const RESOLVER = "scripts/e2e/resolve-dimension.sh";
 const UNSUPPORTED_KINDS = "apps/console/lib/cloud-providers/unsupported-kinds.ts";
 const PROOFS_DIR = "demos/proofs";
 const TARGET = "PROGRAMME.md";
+const REAPER_FRESH_HOURS = 48;
 
 const BEGIN = "<!-- BEGIN GENERATED: programme-rollup · tree-derived · DO NOT EDIT BELOW -->";
 const END = "<!-- END GENERATED: programme-rollup -->";
@@ -677,6 +679,8 @@ export function deriveBoard(snapshot) {
 			issueState: () => "unknown",
 			gateState: () => "unknown",
 			observedGate: () => null,
+			reaperObservation: () => null,
+			derivedAt: null,
 			needsHuman: [],
 			// Empty, not "no contradictions". With no snapshot there is nothing to contradict the
 			// ledger WITH, and the check below is skipped rather than reported as clean — absence of
@@ -692,6 +696,12 @@ export function deriveBoard(snapshot) {
 	for (const o of snapshot.gate_observations ?? []) {
 		if (o && typeof o.provider === "string" && !observations.has(o.provider)) {
 			observations.set(o.provider, o);
+		}
+	}
+	const reaperObservations = new Map();
+	for (const o of snapshot.orphan_reaper_observations ?? []) {
+		if (o && typeof o.provider === "string" && !reaperObservations.has(o.provider)) {
+			reaperObservations.set(o.provider, o);
 		}
 	}
 	const open = new Map((snapshot.open_issues ?? []).map((i) => [i.number, i]));
@@ -753,6 +763,8 @@ export function deriveBoard(snapshot) {
 		 * `gateReached` for why its conclusion alone is not enough to read.
 		 */
 		observedGate: (cloud) => observations.get(cloud) ?? null,
+		/** The newest persisted real-reclaim result for one cloud, or null. */
+		reaperObservation: (cloud) => reaperObservations.get(cloud) ?? null,
 		needsHuman: [...open.values()].filter((i) => (i.labels ?? []).includes("needs:human")),
 		/**
 		 * Every OPEN nightly-red issue, parsed out of its title, as `{cloud, dimension, number, date}`.
@@ -771,6 +783,78 @@ export function deriveBoard(snapshot) {
 			return [{ cloud: m[1], dimension: m[2].trim(), number: i.number, date: String(i.createdAt ?? "").slice(0, 10) }];
 		}),
 	};
+}
+
+/**
+ * Derive one cloud's standing-resource state from persisted timestamps and raw result facts.
+ * No wall clock enters this function, so the generated Markdown stays byte-identical until its
+ * committed snapshot changes.
+ */
+export function deriveReaperObservation(observation, snapshotAt) {
+	if (observation === null || observation === undefined) {
+		return { state: "indeterminate", why: "no durable reclaim result", observation: null, integrityFailure: null };
+	}
+	const validation = validateReaperResult(observation, true);
+	if (!validation.ok) {
+		return {
+			state: "indeterminate",
+			why: `malformed durable result: ${validation.errors.join("; ")}`,
+			observation,
+			integrityFailure: `orphan-reaper result for ${observation.provider ?? "unknown provider"} is malformed: ${validation.errors.join("; ")}`,
+		};
+	}
+	const reference = Date.parse(snapshotAt ?? "");
+	const completed = Date.parse(observation.completed_at);
+	// THE GRACE MUST BOUND THE FETCH, NOT A CLOCK SKEW. `derived_at` is stamped at the TOP of a
+	// programme-fetch run that then makes 120+ API calls, so the snapshot's own timestamp is already
+	// minutes older than the moment it is written. A five-minute window was narrower than the
+	// script's own runtime: a reaper dispatch finishing while the fetch was still walking runs
+	// committed a `completed_at` ahead of `derived_at` and made that cell indeterminate — a false
+	// negative from a benign race, on evidence that was perfectly good.
+	//
+	// An hour bounds the fetch with room and still refuses the thing this check is for: a result
+	// timestamped well after the snapshot it claims to belong to, which would mean the evidence and
+	// the snapshot are not describing the same moment.
+	const REAPER_COMPLETION_GRACE_MS = 60 * 60_000;
+	if (Number.isNaN(reference) || completed > reference + REAPER_COMPLETION_GRACE_MS) {
+		return {
+			state: "indeterminate",
+			why: "result timestamp cannot be reconciled with the snapshot",
+			observation,
+			integrityFailure: `orphan-reaper result for ${observation.provider} has a completion time outside its snapshot`,
+		};
+	}
+	const run = `run ${observation.run_id} at ${observation.completed_at}`;
+	if (observation.mode !== "reclaim") return { state: "indeterminate", why: `${run} was a dry run`, observation, integrityFailure: null };
+	if (!observation.gate_ran) return { state: "indeterminate", why: `${run} skipped its cloud gate`, observation, integrityFailure: null };
+	if (!observation.log_present) return { state: "indeterminate", why: `${run} produced no sweep log`, observation, integrityFailure: null };
+	if (observation.sweep_exit_code !== 0) return { state: "indeterminate", why: `${run} exited ${observation.sweep_exit_code ?? "without a status"}`, observation, integrityFailure: null };
+	if (observation.residual_detected) return { state: "standing", why: `${run} reported residual orphan resources`, observation, integrityFailure: null };
+	// A DISCOVERY THAT NEVER ANSWERED USED TO RENDER `clean`. Every check above and below this one
+	// asks about something the sweep REPORTED, and a preflight whose discovery call failed reports
+	// nothing at all: the orphan list comes back empty, the `[ -z "$orphans" ] → exit 0` early
+	// return fires, and the log is byte-identical to a genuinely empty account — exit 0, no
+	// residual, zero unverified. `unverified_count` could not catch it, because on four of five
+	// clouds the warning it keys on is emitted BELOW that early return, and aws called the tagging
+	// API raw with `2>/dev/null` so a throttle never reached the ledger either. The cell then read
+	// ✅ clean and PROGRAMME.md published "nothing standing" — about resources that BILL.
+	//
+	// The sweepers now emit a POSITIVE marker on every path a preflight can leave (see
+	// probe_report_discovery in scripts/e2e/lib/sweep-probe.sh). Absence is the fail-closed answer:
+	// a log that never said discovery ran is not evidence that it did. This sits AFTER the residual
+	// check on purpose — a run that FOUND orphans plainly discovered them, and `standing` is the
+	// stronger and truer verdict there.
+	if (!observation.discovery_reported) return { state: "indeterminate", why: `${run} never reported completing its orphan discovery — a discovery that failed silently looks exactly like an empty account`, observation, integrityFailure: null };
+	if (observation.unverified_count > 0) return { state: "indeterminate", why: `${run} could not verify ${observation.unverified_count} check(s)`, observation, integrityFailure: null };
+	if (observation.unattributable_count > 0) return { state: "indeterminate", why: `${run} found ${observation.unattributable_count} unattributable resource(s)`, observation, integrityFailure: null };
+	const ageHours = (reference - completed) / 3_600_000;
+	if (ageHours > REAPER_FRESH_HOURS) {
+		return { state: "stale", why: `${run} was clean but is older than ${REAPER_FRESH_HOURS} hours at this snapshot`, observation, integrityFailure: null };
+	}
+	const incident = observation.orphan_runs_found > 0
+		? `reclaimed ${observation.orphan_runs_found} orphan run(s) / ${observation.resources_reclaimed} resource(s), then verified clean`
+		: "found no orphan runs and verified clean";
+	return { state: "clean", why: `${run} ${incident}`, observation, integrityFailure: null };
 }
 
 export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, readBundleSummary = () => null, exclusionCounts, snapshot, ledgerBaseline = {}, assertRequirements = {} }) {
@@ -1417,6 +1501,30 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		return { cloud: c, gate: CLOUD_GATES[c] ?? "(unknown)", state: declared, observed, effective };
 	});
 
+	// MVP predicate 6: the latest REAL reclaim result per cloud, compared only with the persisted
+	// snapshot timestamp. A reclaimed incident may end clean; ambiguity and age never do.
+	const reaper = clouds.map((cloud) => ({ cloud, ...deriveReaperObservation(board.reaperObservation(cloud), board.derivedAt) }));
+	// AN UNREADABLE OBSERVATION DEGRADES ITS CELL; IT DOES NOT RED THE REPOSITORY.
+	//
+	// These used to go into `failures`, which exits 1 — and this file runs on every PR. That made a
+	// single malformed carried-forward observation red EVERY PR, permanently and unfixably:
+	// `programme-fetch.sh` carries `prev_reaper` forward without re-validating, so the offending
+	// entry is re-committed unchanged every night, and no PR can remove it because every PR is red.
+	// Bumping REAPER_RESULT_SCHEMA_VERSION would have done exactly that to every stale v1 entry at
+	// once.
+	//
+	// Nothing is silenced by this. `deriveReaperObservation` already returns `indeterminate` for
+	// both cases, so the cell renders `? indeterminate` with its reason in the table a human reads,
+	// and the notice below names it on stderr. Indeterminate is the correct fail-closed answer for
+	// "this evidence cannot be read" — it is not `clean`, and it never counts toward `reaperClean`.
+	// It is also self-healing: the next real reclaim result replaces the entry.
+	for (const result of reaper) {
+		if (result.integrityFailure !== null) {
+			console.error(`::notice::${result.integrityFailure} — the ${result.cloud} cell is indeterminate until a later reclaim result replaces it.`);
+		}
+	}
+	const reaperClean = reaper.filter((result) => result.state === "clean").length;
+
 	// Snapshot freshness. A broken cron produces NO signal, so staleness has to be an error eventually
 	// rather than a note nobody reads — but it warns first, because a quiet week should not red the repo
 	// on a Monday morning.
@@ -1478,7 +1586,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		}
 	}
 
-	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, supersededReds, compositeReds, unmappedReds, costCells, gateReality, cloudGates, unreachedComposites };
+	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, supersededReds, compositeReds, unmappedReds, costCells, gateReality, cloudGates, reaper, reaperClean, unreachedComposites };
 }
 
 // ───────────────────────────── rendering ─────────────────────────────
@@ -1729,6 +1837,19 @@ export function render(v) {
 		);
 		L.push("");
 	}
+
+	L.push("");
+	L.push("### Orphan reaper — nothing standing");
+	L.push("");
+	L.push(`**${v.reaperClean} of ${v.clouds.length} clouds are verified clean.** A real reclaim result stays current for ${REAPER_FRESH_HOURS} hours.`);
+	L.push("");
+	L.push("A run that reclaimed an orphan may still finish clean; the incident counts remain visible. Dry runs, skipped gates, failed or missing logs, unverifiable checks and unattributable resources never count as clean.");
+	L.push("");
+	L.push("| cloud | state | durable evidence |");
+	L.push("|---|:---:|---|");
+	const reaperGlyph = { clean: "✅ clean", standing: "❌ standing", indeterminate: "? indeterminate", stale: "♻️ stale" };
+	for (const result of v.reaper) L.push(`| **${result.cloud}** | ${reaperGlyph[result.state]} | ${result.why} |`);
+	L.push("");
 
 	L.push("### Blocked on a human");
 	L.push("");
@@ -2642,8 +2763,9 @@ function runSelfTest() {
 	}
 
 	// ── the LIVE BOARD half ──
-	const snap = (open = [], closed = [], variables = [], secrets = [], gate_observations = []) => ({
+	const snap = (open = [], closed = [], variables = [], secrets = [], gate_observations = [], orphan_reaper_observations = []) => ({
 		gate_observations,
+		orphan_reaper_observations,
 		derived_at: new Date(Date.now() - 3600_000).toISOString(),
 		open_issues: open.map((n) => ({ number: n, title: `t${n}`, labels: [] })),
 		closed_issues: closed.map((n) => ({ number: n, title: `t${n}`, labels: [] })),
@@ -3031,6 +3153,94 @@ function runSelfTest() {
 	ok("a snapshot older than 7 days fails", r.failures.some((f) => /days old/.test(f)), JSON.stringify(r.failures));
 	r = derive({ ...base, ledgerText: hdr, snapshot: { ...snap(), derived_at: new Date(Date.now() - 2 * 864e5).toISOString() } });
 	ok("...but a 2-day-old snapshot does not", !r.failures.some((f) => /days old/.test(f)), JSON.stringify(r.failures));
+
+	// ORPHAN REAPER: post-sweep state, not incident-free history. Every ambiguity is explicitly
+	// non-clean, and freshness compares two persisted timestamps rather than the wall clock.
+	{
+		const result = (overrides = {}) => ({
+			schema_version: 2,
+			provider: "aws",
+			region: "us-east-1",
+			run_id: "123",
+			run_attempt: 1,
+			event_name: "schedule",
+			mode: "reclaim",
+			gate_ran: true,
+			sweep_exit_code: 0,
+			log_present: true,
+			discovery_reported: true,
+			orphan_runs_found: 0,
+			resources_reclaimed: 0,
+			residual_detected: false,
+			unverified_count: 0,
+			unattributable_count: 0,
+			completed_at: "2026-09-01T00:00:00Z",
+			...overrides,
+		});
+		const at48 = deriveReaperObservation(result(), "2026-09-03T00:00:00Z");
+		ok("a verified reclaim exactly 48h old is clean", at48.state === "clean", JSON.stringify(at48));
+		const stale = deriveReaperObservation(result(), "2026-09-03T00:00:01Z");
+		ok("a verified reclaim older than 48h is stale", stale.state === "stale", JSON.stringify(stale));
+		const reclaimed = deriveReaperObservation(result({ orphan_runs_found: 2, resources_reclaimed: 7 }), "2026-09-02T00:00:00Z");
+		ok("a run that reclaimed incidents and verified afterward is clean", reclaimed.state === "clean" && /reclaimed 2/.test(reclaimed.why), JSON.stringify(reclaimed));
+		ok("an explicit residual is standing", deriveReaperObservation(result({ residual_detected: true }), "2026-09-02T00:00:00Z").state === "standing");
+		for (const [name, changes] of [
+			["dry run", { mode: "dry_run" }],
+			["skipped gate", { gate_ran: false }],
+			["missing log", { log_present: false }],
+			["failed sweep", { sweep_exit_code: 4 }],
+			["unverified check", { unverified_count: 1 }],
+			["unattributable resource", { unattributable_count: 1 }],
+			// THE FALSE ALL-CLEAR. Every other row here is a fact the sweep REPORTED; this one is a
+			// fact it never got to. A preflight whose discovery call failed produces an empty orphan
+			// list, takes its early return and exits 0 — no residual, nothing unverified, a log
+			// byte-identical to an empty account — and this cell used to read ✅ clean while
+			// PROGRAMME.md published "nothing standing" about resources that BILL.
+			["unreported discovery", { discovery_reported: false }],
+		]) {
+			const status = deriveReaperObservation(result(changes), "2026-09-02T00:00:00Z");
+			ok(`${name} is indeterminate, never clean`, status.state === "indeterminate", JSON.stringify(status));
+		}
+		// …and it must not swallow a stronger verdict: a run that found residual orphans plainly
+		// DID discover them, so `standing` wins over the discovery check that follows it.
+		ok(
+			"a residual finding still reads standing, not indeterminate",
+			deriveReaperObservation(result({ residual_detected: true, discovery_reported: false }), "2026-09-02T00:00:00Z").state === "standing",
+		);
+		const malformed = derive({
+			...base,
+			ledgerText: hdr,
+			snapshot: { ...snap(), derived_at: "2026-09-02T00:00:00Z", orphan_reaper_observations: [result({ raw_log: "must never persist" })] },
+		});
+		// A MALFORMED DURABLE RESULT DEGRADES ITS CELL, IT DOES NOT RED THE REPOSITORY. This used to
+		// assert the opposite. It was changed deliberately: `failures` exits 1 and this file runs on
+		// every PR, while `programme-fetch.sh` carries a bad entry forward without re-validating it —
+		// so one malformed observation redded every PR permanently, and no PR could remove it because
+		// every PR was red. Both halves are asserted here so a future "tighten this up" cannot
+		// re-introduce the wedge without also deleting a stated reason.
+		ok(
+			"a malformed durable result does NOT fail the build",
+			!malformed.failures.some((failure) => /orphan-reaper result/.test(failure)),
+			JSON.stringify(malformed.failures),
+		);
+		const malformedCell = deriveReaperObservation(result({ raw_log: "must never persist" }), "2026-09-02T00:00:00Z");
+		ok(
+			"...and is indeterminate, never clean",
+			malformedCell.state === "indeterminate" && malformedCell.integrityFailure !== null,
+			JSON.stringify(malformedCell),
+		);
+		const fullyClean = derive({
+			...base,
+			ledgerText: hdr,
+			snapshot: {
+				...snap(),
+				derived_at: "2026-09-02T00:00:00Z",
+				orphan_reaper_observations: [result(), result({ provider: "hetzner", region: "nbg1", run_id: "124" })],
+			},
+		});
+		ok("the clean tally is per declared cloud", fullyClean.reaperClean === 2, JSON.stringify(fullyClean.reaper));
+		ok("the rendered table preserves reclaimed incident history", /reclaimed 2 orphan run/.test(render({ ...fullyClean, reaper: fullyClean.reaper.map((entry) => entry.cloud === "aws" ? { ...reclaimed, cloud: "aws" } : entry) })));
+	}
 
 	// NO CLOCK IN THE RENDERED OUTPUT. An age is computed from Date.now(), so rendering one would make
 	// this diff-gated region go stale an hour after every refresh with no input change — redding CI for
