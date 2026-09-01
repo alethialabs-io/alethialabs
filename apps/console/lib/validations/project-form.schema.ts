@@ -318,39 +318,30 @@ const servicesInsert = createInsertSchema(projectServices, {
 });
 
 /**
- * A component node's name, validated as an RFC-1123 DNS LABEL.
+ * A component node's name.
  *
- * WHY THE FORM IS THE RIGHT PLACE TO REFUSE THIS (#3588). Every node name becomes Kubernetes
- * object names — `db-<name>` / `cache-<name>` / `queue-<name>` Applications, a CNPG Cluster, a
- * `registry-<name>` Service and the in-cluster host that must match it, the Secret the runner seeds
- * a queue's credentials into. The runner validates all of those against the DNS-LABEL charset,
- * because they interpolate into `kubectl` commands it runs through `bash -c`.
+ * IT IS NOT VALIDATED AS A DNS LABEL HERE, AND THAT IS THE FIX FOR #3588, NOT AN OVERSIGHT.
  *
- * A name outside that charset was accepted here and then failed silently much later. `orders.v2`
- * renders a VALID Secret name and a VALID Application — both apply cleanly — and then the
- * StatefulSet sits at CreateContainerConfigError forever, because the runner refuses the name and
- * seeds no credential. The only human in that whole sequence is the person typing the name, and
- * they were the one person not told.
+ * The rule is real, but it is a HETZNER rule. Only `hetznerDataServicesToAddOns` turns a node name
+ * into a Kubernetes object name (`db-` / `cache-` / `queue-` / `topic-` / `nosql-` / `registry-`),
+ * and it is reached only under `identity.provider === "hetzner"` (projects.ts). On AWS the same
+ * field goes raw into tofu: a table's name IS `table_name_suffix`, which
+ * `infra/templates/project/aws/modules/dynamodb/dynamodb.tf` uses as its `for_each` KEY. DynamoDB
+ * accepts `[A-Za-z0-9_.-]`, so `Orders.v2` is legal there and deploys today.
  *
- * So it is refused here, where the message can name the rule. The runner's own refusal stays as the
- * backstop for a snapshot that reaches it another way.
+ * Enforcing the label rule in this schema did two things, both bad, and neither visible from here:
  *
- * Length is capped well under kubernetes' 63-character label ceiling because this name is never the
- * whole object name: a chart's `fullname` template, an `addon-<kind>-` prefix and a StatefulSet's
- * pod ordinal all ride on top of it.
+ *  1. Every write path re-parses the whole document, so an existing AWS project holding such a name
+ *     became UNSAVABLE — not blocked from deploying, unable to be edited at all.
+ *  2. The rename the error demanded re-keys that `for_each`, so tofu REPLACES the table. The
+ *     remedy the message named would have destroyed the data it was protecting.
+ *
+ * So the check moved to `buildConfigSnapshot`, next to the DNS and WAF gates, where the provider is
+ * known and where it can be scoped to the paths that CREATE — the same two constraints those gates
+ * already document: mirror the emitter exactly, and never wedge a project that already exists.
  */
-const K8S_LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
-const K8S_LABEL_MAX = 40;
-
 function nodeNameSchema(kind: string) {
-	return z
-		.string()
-		.min(1, `${kind} name is required`)
-		.max(K8S_LABEL_MAX, `${kind} name must be ${K8S_LABEL_MAX} characters or fewer.`)
-		.regex(
-			K8S_LABEL_RE,
-			`${kind} name must be lower-case letters, digits or hyphens, and start and end with a letter or digit.`,
-		);
+	return z.string().min(1, `${kind} name is required`);
 }
 
 const autoFields = { id: true, created_at: true, updated_at: true } as const;

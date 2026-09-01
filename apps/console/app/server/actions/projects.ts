@@ -71,6 +71,8 @@ import {
 import {
 	HETZNER_DB_ENGINES,
 	hetznerDataServicesToAddOns,
+	hetznerNodeNameProblem,
+	type HetznerChartedKind,
 } from "@/lib/cloud-providers/hetzner-services";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
 import {
@@ -1071,6 +1073,51 @@ async function buildConfigSnapshot(
 		}
 
 		if (identity.provider === "hetzner") {
+			// #3588: a node name becomes a Kubernetes object name ONLY here. `db-<name>` /
+			// `cache-<name>` / `queue-<name>` / `topic-<name>` / `nosql-<name>` / `registry-<name>`
+			// are Applications, CNPG Clusters, Services and the Secrets the runner seeds credentials
+			// into, and the runner validates them against the DNS-LABEL charset because they
+			// interpolate into `kubectl` through `bash -c`. A name outside it renders a VALID Secret
+			// and a VALID Application, both apply, and the StatefulSet then sits at
+			// CreateContainerConfigError forever with no credential — the only human in that whole
+			// sequence being the one person not told.
+			//
+			// MIRRORS THE EMITTER: the kinds and their prefixes come from
+			// HETZNER_ADDON_ID_PREFIXES, the same constants hetznerDataServicesToAddOns
+			// interpolates, so a seventh charted kind is covered the day it ships. `secret` and
+			// `chart repo` are absent because they get no id — a secret is one KV entry inside the
+			// single project-wide Vault release, not an object of its own.
+			//
+			// AND ONLY ON THE PATHS THAT CREATE, exactly like the DNS gate above. This lived in
+			// project-form.schema.ts first, which was wrong twice over: the schema cannot see the
+			// provider, so it refused names that are legal on AWS (a table's name IS
+			// `table_name_suffix`, the `for_each` KEY of the DynamoDB module — `Orders.v2` deploys
+			// there today), and every write path re-parses the document, so those projects became
+			// unsavable rather than merely un-deployable. Worse, the rename the message demanded
+			// re-keys that `for_each` and REPLACES the table. Refusing to create more of a broken
+			// config is the point; wedging one that already exists is not.
+			const nameGateApplies = jobKind === "plan" || jobKind === "deploy";
+			if (nameGateApplies) {
+				const charted: [HetznerChartedKind, { name: string }[]][] = [
+					["databases", databases],
+					["caches", caches],
+					["queues", queues],
+					["topics", topics],
+					["tables", nosqlTables],
+					["registries", containerRegistries],
+				];
+				for (const [kind, rows] of charted) {
+					for (const row of rows) {
+						const problem = hetznerNodeNameProblem(kind, row.name);
+						if (problem) {
+							throw new Error(
+								`Component name: ${problem} Rename it in the canvas and save, then deploy again.`,
+							);
+						}
+					}
+				}
+			}
+
 			// Fail-closed engine gate: the mapper only charts what it supports (a NULL
 			// engine_family defaults to postgres), so anything else must throw here rather
 			// than be dropped from the deploy silently. Caches/queues need no gate — the

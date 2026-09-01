@@ -8,6 +8,10 @@ import {
 	environmentMatrixSchema,
 } from "@/lib/validations/project-form.schema";
 import { getProvidersForCategory } from "@/lib/connectors/registry.generated";
+import {
+	HETZNER_ADDON_ID_PREFIXES,
+	hetznerNodeNameProblem,
+} from "@/lib/cloud-providers/hetzner-services";
 
 const validProject = {
 	project: {
@@ -631,26 +635,14 @@ describe("dns connector selection", () => {
 // renders VALID Kubernetes objects, they apply cleanly, and the StatefulSet then sits at
 // CreateContainerConfigError forever because no credential was ever seeded. The person typing the
 // name is the only human in that sequence, and was the one person not told.
-describe("component node names are DNS-1123 labels", () => {
-	// Every list whose items become a Kubernetes object name. A kind missing from here is a kind
-	// that can still ship the failure, so the list is the test.
-	const kinds = [
-		"databases",
-		"caches",
-		"queues",
-		"topics",
-		"nosql_tables",
-		"secrets",
-		"container_registries",
-		"helm_registries",
-		"services",
-	] as const;
+describe("a node name is NOT constrained by the form schema (#3588)", () => {
+	// The regression this replaces: the DNS-1123 rule lived here, fired on every provider, and every
+	// write path re-parses the whole document — so an existing AWS project holding `Orders.v2`
+	// became unsavable. And the rename the message demanded re-keys the DynamoDB module's
+	// `for_each`, so following the advice REPLACED the table. The rule is Hetzner's; it now lives
+	// where the provider is known. These assertions pin the schema staying out of it.
+	const KINDS = ["databases", "caches", "queues", "topics", "nosql_tables", "container_registries"] as const;
 
-	// Asserted on the ISSUE PATH rather than on overall success, because several of these item
-	// schemas require fields this fixture has no business supplying (a service needs a source and
-	// its ports; a chart repo needs a CONNECTED provider). Judging by `success` there would make a
-	// rejection mean "something was wrong", which is not the claim — and would pass just as well if
-	// the name rule were deleted.
 	const nameIssues = (kind: string, name: string) => {
 		const parsed = projectFormSchema.safeParse({ ...validProject, [kind]: [{ name }] });
 		return (parsed.error?.issues ?? []).filter(
@@ -658,45 +650,23 @@ describe("component node names are DNS-1123 labels", () => {
 		);
 	};
 
-	// A name is rejected for the SAME reason everywhere, so it is checked everywhere: a rule applied
-	// to one list and forgotten on the next is exactly how this shipped in the first place.
-	for (const kind of kinds) {
-		it(`rejects a dotted name in ${kind} — it renders valid objects and then never starts`, () => {
-			expect(nameIssues(kind, "orders.v2")).not.toHaveLength(0);
-		});
-
-		it(`rejects an upper-case name in ${kind}`, () => {
-			expect(nameIssues(kind, "Orders")).not.toHaveLength(0);
-		});
-
-		it(`accepts an ordinary label in ${kind}`, () => {
-			// The pair is self-checking: if item validation never ran for this kind, the two
-			// rejections above fail rather than this passing vacuously.
-			expect(nameIssues(kind, "orders-v2")).toHaveLength(0);
+	for (const kind of KINDS) {
+		it(`accepts a name that is legal on AWS but not a DNS label — ${kind}`, () => {
+			expect(nameIssues(kind, "Orders.v2")).toHaveLength(0);
 		});
 	}
 
-	it("rejects the boundary characters kubernetes rejects", () => {
-		const names = ["-orders", "orders-", "orders_v2", "orders/v2", "orders v2", ""];
-		// Collected rather than asserted one at a time, so a failure names WHICH character got
-		// through instead of stopping at the first.
-		const rejected = names.filter((name) => nameIssues("queues", name).length > 0);
-		expect(rejected).toEqual(names);
+	it("still requires a name", () => {
+		expect(nameIssues("queues", "")).not.toHaveLength(0);
 	});
 
-	it("names the rule in the message, since the form is where it can be acted on", () => {
-		expect(nameIssues("queues", "orders.v2").map((i) => i.message).join(" ")).toContain("hyphens");
-	});
-
-	it("rejects a name too long to survive the prefixes that ride on it", () => {
-		expect(nameIssues("queues", "q".repeat(41))).not.toHaveLength(0);
-		expect(nameIssues("queues", "q".repeat(40))).toHaveLength(0);
+	it("does not impose a length bound of its own", () => {
+		// 45 characters: `db-` + this is 48, well under Kubernetes' 63, and it deploys today even on
+		// Hetzner. The rule that rejected it capped at 40, a number no emitter produces.
+		expect(nameIssues("databases", "d".repeat(45))).toHaveLength(0);
 	});
 });
 
-// The environment name feeds a tofu state-path segment and a Fabric name, and the namespace is a
-// kubernetes namespace — both DNS-1123 labels. The pattern accepted a TRAILING hyphen, which is not
-// one, so `prod-` reached the state path and the Fabric name.
 describe("environment names are DNS-1123 labels", () => {
 	const env = (name: string) => [
 		{ name, stage: "development" as const, placement_mode: "namespace" as const },
@@ -710,5 +680,54 @@ describe("environment names are DNS-1123 labels", () => {
 		// Asserted on the issues rather than on `success`, so a failure prints what was wrong.
 		const result = environmentMatrixSchema.safeParse(env("prod"));
 		expect(result.error?.issues ?? []).toEqual([]);
+	});
+});
+
+describe("hetznerNodeNameProblem — the rule, where the provider is known (#3588)", () => {
+	it("rejects a dotted name, naming the object it would become", () => {
+		const problem = hetznerNodeNameProblem("queues", "orders.v2");
+		expect(problem).toContain("queue-orders.v2");
+		expect(problem).toContain("DNS-1123");
+	});
+
+	it("rejects an upper-case name", () => {
+		expect(hetznerNodeNameProblem("databases", "Orders")).not.toBeNull();
+	});
+
+	it("rejects a trailing hyphen, which is not a valid label", () => {
+		expect(hetznerNodeNameProblem("caches", "orders-")).not.toBeNull();
+	});
+
+	it("accepts an ordinary label", () => {
+		expect(hetznerNodeNameProblem("queues", "orders-v2")).toBeNull();
+	});
+
+	// The bound is DERIVED from the prefix, not a constant. `registry-` is 9 characters, `db-` is 3,
+	// so the two kinds must disagree about the longest legal name by exactly 6 — a single hard-coded
+	// cap (the 40 this replaces) cannot produce that, which is what makes this assertion load-bearing
+	// rather than decorative.
+	it("derives its length bound from the prefix the emitter actually uses", () => {
+		const dbMax = 63 - "db-".length;
+		const registryMax = 63 - "registry-".length;
+		expect(registryMax).toBe(dbMax - 6);
+
+		expect(hetznerNodeNameProblem("databases", "d".repeat(dbMax))).toBeNull();
+		expect(hetznerNodeNameProblem("databases", "d".repeat(dbMax + 1))).not.toBeNull();
+		expect(hetznerNodeNameProblem("registries", "r".repeat(registryMax))).toBeNull();
+		expect(hetznerNodeNameProblem("registries", "r".repeat(registryMax + 1))).not.toBeNull();
+	});
+
+	// A 45-character database name deploys today: `db-` + 45 = 48, under 63. The rule that shipped
+	// first refused it, which introduces a failure rather than surfacing one.
+	it("accepts the 45-character name the old hard-coded cap of 40 refused", () => {
+		expect(hetznerNodeNameProblem("databases", "d".repeat(45))).toBeNull();
+	});
+
+	// Mirrors the emitter: every kind hetznerDataServicesToAddOns gives an id to is covered, and
+	// nothing else is. A seventh charted kind is covered the day it is added to the map.
+	it("covers exactly the kinds the mapper charts", () => {
+		expect(Object.keys(HETZNER_ADDON_ID_PREFIXES).sort()).toEqual(
+			["caches", "databases", "queues", "registries", "tables", "topics"].sort(),
+		);
 	});
 });
