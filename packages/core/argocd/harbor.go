@@ -133,6 +133,14 @@ func (h HarborRegistry) valid() bool {
 // password Alethia authenticates with while Harbor's own database still holds the previous one — an
 // immediate lockout. The cluster is therefore the store of record for this credential, which also
 // keeps it out of Postgres entirely: it is generated in memory, applied, and forgotten.
+//
+// ON AN ALREADY-DEPLOYED REGISTRY NODE THIS IS A MIGRATION, NOT A COMPLETION. Before #3299 the CHART
+// was the store of record for every key but the admin password, so an existing node is running on
+// harbor”'s published defaults. Filling them here moves secretKey off `not-a-secure-key`, and
+// secretKey is what harbor encrypts stored credentials with — a replication endpoint configured
+// before the upgrade keeps a secret that can no longer be decrypted and must be re-entered. There is
+// no way to avoid that and also stop shipping a published key; what there is no excuse for is not
+// saying so.
 func EnsureHarborSecret(reg HarborRegistry, stdout, stderr io.Writer) error {
 	if !reg.valid() {
 		return fmt.Errorf("refusing to seed a Harbor credential secret for invalid registry %q/%q", reg.Namespace, reg.Name)
@@ -282,7 +290,13 @@ func harborSecretManifest(namespace, name string, data map[string]string) string
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		fmt.Fprintf(&entries, "  %s: %s\n", key, data[key])
+		// QUOTED. These are base64 strings, and base64's alphabet includes digits — so a value that
+		// happens to be all digits parses as a YAML int, and an empty one as null. Either makes
+		// `kubectl apply` reject the Secret outright, permanently: credentialInClusterRegistries only
+		// WARNS on that failure, so the registry would silently never be credentialed. We only ever
+		// generate values that are safe bare, but this map also carries through whatever keys an
+		// existing Secret already had, and those we do not control.
+		fmt.Fprintf(&entries, "  %s: %q\n", key, data[key])
 	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: Namespace
@@ -395,6 +409,15 @@ spec:
         - name: harbor-admin
           secret:
             secretName: %[10]s
+            # PROJECT ONE KEY. This Secret used to hold exactly the admin password; it now holds the
+            # whole Harbor credential set, including tls.key — the RSA key Harbor core signs registry
+            # auth tokens with. Mounting it whole would put that key on the bootstrap pod's
+            # filesystem, where anything able to read the pod could forge registry tokens, and the
+            # Job reads only --admin-password-file. Widening a mount is the kind of privilege change
+            # that arrives as a side effect of an unrelated fix, which is exactly how this one did.
+            items:
+              - key: %[9]s
+                path: %[9]s
         - name: tmp
           emptyDir: {}
 `,

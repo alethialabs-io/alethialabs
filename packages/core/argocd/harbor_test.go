@@ -19,6 +19,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"golang.org/x/crypto/bcrypt"
+	"gopkg.in/yaml.v3"
 )
 
 func hetznerRegistryProject(names ...string) *types.ProjectConfig {
@@ -610,5 +611,161 @@ func TestEnsureHarborSecretRefusesToSeedOnAnUndecodableSecret(t *testing.T) {
 	}
 	if stub.calledWith("apply") {
 		t.Fatalf("applied a credential map built from an unreadable Secret; calls = %v", stub.calls())
+	}
+}
+
+// The bootstrap Job must receive ONE key, not the whole credential set.
+//
+// This Secret used to hold exactly the admin password, so mounting it whole was mounting one
+// credential. It now holds nine, including tls.key — the RSA key Harbor core signs registry auth
+// tokens with. Anything able to read that pod's filesystem could forge tokens. The widening would
+// have arrived as a silent side effect of a fix aimed at something else, which is the shape worth
+// having a test for.
+func TestHarborBootstrapJobMountsOnlyTheAdminPassword(t *testing.T) {
+	reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
+	y, err := HarborBootstrapJobManifest(reg, "runner:latest")
+	if err != nil {
+		t.Fatalf("HarborBootstrapJobManifest: %v", err)
+	}
+
+	var projected []string
+	for _, doc := range strings.Split(y, "\n---") {
+		var m struct {
+			Spec struct {
+				Template struct {
+					Spec struct {
+						Volumes []struct {
+							Name   string `yaml:"name"`
+							Secret *struct {
+								SecretName string `yaml:"secretName"`
+								Items      []struct {
+									Key string `yaml:"key"`
+								} `yaml:"items"`
+							} `yaml:"secret"`
+						} `yaml:"volumes"`
+					} `yaml:"spec"`
+				} `yaml:"template"`
+			} `yaml:"spec"`
+		}
+		if err := yaml.Unmarshal([]byte(doc), &m); err != nil {
+			continue
+		}
+		for _, v := range m.Spec.Template.Spec.Volumes {
+			if v.Secret == nil || v.Secret.SecretName != reg.AdminSecretName() {
+				continue
+			}
+			if len(v.Secret.Items) == 0 {
+				t.Fatalf("volume %q mounts the credential Secret %q WHOLE — the bootstrap pod would hold "+
+					"tls.key, secretKey and REGISTRY_PASSWD, and it reads only the admin password",
+					v.Name, v.Secret.SecretName)
+			}
+			for _, it := range v.Secret.Items {
+				projected = append(projected, it.Key)
+			}
+		}
+	}
+	if len(projected) == 0 {
+		t.Fatal("found no volume projecting the credential Secret — this guard would pass vacuously")
+	}
+	if len(projected) != 1 || projected[0] != harborAdminSecretKey {
+		t.Errorf("the bootstrap Job is given keys %v, want exactly [%s]", projected, harborAdminSecretKey)
+	}
+}
+
+// Every value must survive a YAML round-trip AS A STRING.
+//
+// base64's alphabet includes digits, so a value that happens to be all digits parses as a YAML int
+// and an empty one as null. Either makes `kubectl apply` reject the Secret outright — permanently,
+// because the shape never changes — and credentialInClusterRegistries only WARNS on that failure, so
+// the registry would silently never be credentialed. The generated values are safe bare; the ones
+// carried through from an existing Secret are not ours to choose.
+func TestHarborSecretManifestSurvivesHostileExistingValues(t *testing.T) {
+	data := map[string]string{
+		harborAdminSecretKey: base64.StdEncoding.EncodeToString([]byte("fine")),
+		"ALL_DIGITS":         "12345678",
+		"EMPTY":              "",
+		"YAML_TRUE":          "true",
+		"LEADING_ZERO":       "0123",
+	}
+	y := harborSecretManifest("registries", "harbor-app-images-admin", data)
+
+	var got struct {
+		Data map[string]string `yaml:"data"`
+	}
+	found := false
+	for _, doc := range strings.Split(y, "\n---") {
+		var probe struct {
+			Kind string            `yaml:"kind"`
+			Data map[string]string `yaml:"data"`
+		}
+		if err := yaml.Unmarshal([]byte(doc), &probe); err != nil {
+			t.Fatalf("the rendered manifest is not valid YAML, so kubectl would reject it: %v", err)
+		}
+		if probe.Kind == "Secret" {
+			got.Data, found = probe.Data, true
+		}
+	}
+	if !found {
+		t.Fatal("no Secret document in the rendered manifest")
+	}
+	for key, want := range data {
+		if got.Data[key] != want {
+			t.Errorf("key %s round-tripped as %q, want %q — a value YAML retyped is a Secret kubectl refuses",
+				key, got.Data[key], want)
+		}
+	}
+}
+
+// The htpasswd line names a user, and Harbor core must authenticate as THAT user or the internal
+// registry 401s every request while every pod reports Ready.
+//
+// The console does not set `registry.credentials.username` today, so the chart's default governs and
+// the Go constant is written to match it. That is a correspondence no test can see end-to-end
+// without rendering the chart — but the direction that IS checkable is the one a future edit would
+// break: if the console ever starts setting the username, it must equal what the runner hashes into
+// REGISTRY_HTPASSWD. Disagreeing there is silent.
+func TestHetznerRegistryUsernameAgreesWithTheRunnerIfTheChartIsToldOne(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate this file")
+	}
+	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "test", "e2e", "fixtures", "hetzner_data_services.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("generated fixture not present (%v)", err)
+	}
+	var fx struct {
+		ChartedNotOffered []struct {
+			ID     string         `json:"id"`
+			Values map[string]any `json:"values"`
+		} `json:"chartedNotOffered"`
+		AddOns []struct {
+			ID     string         `json:"id"`
+			Values map[string]any `json:"values"`
+		} `json:"addons"`
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	var values map[string]any
+	for _, s := range append(fx.ChartedNotOffered, fx.AddOns...) {
+		if strings.HasPrefix(s.ID, "registry-") {
+			values = s.Values
+		}
+	}
+	if values == nil {
+		t.Fatal("the fixture carries no registry spec")
+	}
+	got, set := fixtureLeaf(values, "registry", "credentials", "username")
+	if !set {
+		t.Logf("the chart is told no username, so its default governs and %q must match it — "+
+			"pinned by comment against harbor 1.15.1, which no test here can render",
+			harborRegistryUsername)
+		return
+	}
+	if got != harborRegistryUsername {
+		t.Errorf("the chart authenticates as %q but the runner hashes %q into REGISTRY_HTPASSWD — "+
+			"core would 401 on every request to the internal registry with all pods Ready",
+			got, harborRegistryUsername)
 	}
 }
