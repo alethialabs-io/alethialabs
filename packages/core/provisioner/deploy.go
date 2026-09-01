@@ -1853,7 +1853,7 @@ func credentialInClusterRegistries(ctx context.Context, vc *types.ProjectConfig,
 // must not fail an otherwise-healthy cluster. Its Application reports the missing Secret, and the
 // next deploy re-runs this — which is a no-op for every queue already holding credentials.
 func credentialInClusterQueues(vc *types.ProjectConfig, stdout, stderr io.Writer) {
-	for _, q := range argocd.HetznerQueues(vc) {
+	for _, q := range argocd.HetznerQueues(vc, stderr) {
 		if err := argocd.EnsureQueueCredentialSecret(q, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: in-cluster queue %s credentials skipped: %v\n", q.Name, err)
 		}

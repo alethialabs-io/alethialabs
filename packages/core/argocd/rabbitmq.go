@@ -6,8 +6,11 @@ package argocd
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
@@ -26,10 +29,10 @@ import (
 //   - the erlang cookie is the cluster's SHARED SECRET. Every node must present the same one;
 //     rotating it partitions the cluster and the nodes refuse to re-form.
 //   - the password is the credential the customer's `queue` binding already handed to their
-//     application. Rotating it invalidates every client that resolved the binding.
+//     application.
 //
-// So this file is the runner half: the credentials are generated ONCE, here, into a Secret the
-// chart only READS (`auth.existingSecret` in hetznerQueueValues). No credential reaches a rendered
+// So this file is the runner half: the credentials are minted ONCE, here, into a Secret the chart
+// only READS (`auth.existingSecret` in hetznerQueueValues). No credential reaches a rendered
 // manifest, and none lands in `config_snapshot` — the cluster is the store of record, exactly as it
 // is for Harbor's admin password (harbor.go).
 //
@@ -49,9 +52,15 @@ const (
 	// two must agree or the pod starts with an empty credential.
 	rabbitmqPasswordKey     = "password"
 	rabbitmqErlangCookieKey = "erlang-cookie"
-	// rabbitmqCredentialBytes is the entropy of each generated value before encoding.
-	rabbitmqCredentialBytes = 24
+	// rabbitmqPasswordBytes is the entropy of the generated password before encoding.
+	rabbitmqPasswordBytes = 24
+	// rabbitmqCookieLength matches `randAlphaNum 32`, what the chart minted before this took over.
+	rabbitmqCookieLength = 32
 )
+
+// rabbitmqCredentialKeys are every key the chart reads from the Secret. Stated once so the
+// completeness check and the manifest cannot disagree about what a COMPLETE credential is.
+var rabbitmqCredentialKeys = []string{rabbitmqPasswordKey, rabbitmqErlangCookieKey}
 
 // HetznerQueue is one in-cluster RabbitMQ the runner must credential.
 type HetznerQueue struct {
@@ -84,7 +93,12 @@ func (q HetznerQueue) valid() bool {
 // Hetzner only. Every other cloud provisions a real queue (SQS, Pub/Sub, Service Bus, MNS) whose
 // credentials are the cloud's own; there is no chart there and nothing to seed, so returning a
 // non-empty list would write Secrets nothing reads.
-func HetznerQueues(vc *types.ProjectConfig) []HetznerQueue {
+//
+// A name this cannot safely interpolate is REPORTED, not silently dropped. Skipping in silence
+// produces a queue whose Application applies cleanly and whose StatefulSet then sits at
+// CreateContainerConfigError forever, with the only clue arriving much later from
+// ReadDataEndpoints — which talks about endpoint read-back, not about a credential nobody seeded.
+func HetznerQueues(vc *types.ProjectConfig, stderr io.Writer) []HetznerQueue {
 	if vc == nil || vc.Provider != types.CloudProviderHetzner {
 		return nil
 	}
@@ -99,6 +113,8 @@ func HetznerQueues(vc *types.ProjectConfig) []HetznerQueue {
 			AddOnID: "queue-" + q.Name,
 		}
 		if !queue.valid() {
+			fmt.Fprintf(stderr, "Warning: queue %q is not a name this runner can seed credentials for "+
+				"(it must be an RFC-1123 label); its RabbitMQ will not start until the name is changed\n", q.Name)
 			continue
 		}
 		out = append(out, queue)
@@ -106,102 +122,171 @@ func HetznerQueues(vc *types.ProjectConfig) []HetznerQueue {
 	return out
 }
 
-// EnsureQueueCredentialSecret creates a queue's credential Secret if it does not already exist, and
-// leaves an existing one completely alone.
+// EnsureQueueCredentialSecret gives a queue the credentials its chart reads, filling only what is
+// absent and never rewriting a value that is already there.
 //
-// CREATE-ONCE, NOT APPLY-EVERY-DEPLOY, and the difference is the whole point. EnsureAddOnSecrets
-// re-applies on every deploy because the values it writes come from the database and a rotation
-// there SHOULD reach the cluster. These values exist nowhere but here: re-generating them would
-// hand a running RabbitMQ a new erlang cookie, which partitions the cluster, and a new password,
-// which every client that resolved the binding is still using.
+// COMPLETE-WHAT-IS-MISSING, NOT APPLY-EVERY-DEPLOY, and the difference is the whole point.
+// EnsureAddOnSecrets re-applies on every deploy because the values it writes come from the database
+// and a rotation there SHOULD reach the cluster. These values exist nowhere but here: re-generating
+// the cookie hands a running RabbitMQ a new cluster secret, which partitions it.
+//
+// It is also not EXISTS-SO-STOP. A Secret holding one of the two keys — hand-created from the
+// chart's own README, or half-written — would otherwise be frozen in that state on this deploy and
+// every deploy after it, while the StatefulSet sat at CreateContainerConfigError and the log said
+// "leaving it in place".
 func EnsureQueueCredentialSecret(q HetznerQueue, stdout, stderr io.Writer) error {
 	if !q.valid() {
 		return fmt.Errorf("refusing to seed credentials for invalid queue %q/%q", q.Namespace, q.Name)
 	}
 	name := q.CredentialSecretName()
-	// `kubectl get` decides idempotency. `create --dry-run | apply` would also be idempotent in the
-	// "no error" sense and would REPLACE both values every deploy, which is the partition above.
-	if err := utils.ExecuteCommand(
-		fmt.Sprintf("kubectl get secret %s -n %s", name, q.Namespace),
-		".", nil, io.Discard, io.Discard,
-	); err == nil {
-		fmt.Fprintf(stdout, "Queue credential secret %s/%s already exists; leaving it in place\n", q.Namespace, name)
+	// --ignore-not-found makes absence an empty successful response while preserving real kubectl
+	// failures, for the reason EnsureHarborSecret states: treating every read error as "absent"
+	// overwrites live credentials during an apiserver blip, an expired token or an RBAC hiccup —
+	// and the apply that follows would succeed, so nothing would surface until the next pod restart
+	// wrote a different .erlang.cookie. That is the partition this file exists to prevent.
+	raw, err := utils.ExecuteCommandWithOutput(
+		fmt.Sprintf("kubectl get secret %s -n %s -o json --ignore-not-found", name, q.Namespace),
+		".", nil,
+	)
+	if err != nil {
+		return fmt.Errorf("read queue credential secret %s/%s: %w", q.Namespace, name, err)
+	}
+	// Values stay BASE64-ENCODED end to end: what is already in the cluster is copied across
+	// untouched, so a key that exists cannot be altered by a decode/encode round trip.
+	data := map[string]string{}
+	if strings.TrimSpace(raw) != "" {
+		var existing struct {
+			Data map[string]string `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(raw), &existing); err != nil {
+			return fmt.Errorf("decode queue credential secret %s/%s: %w", q.Namespace, name, err)
+		}
+		for key, value := range existing.Data {
+			data[key] = value
+		}
+	}
+
+	changed, adopted, err := completeQueueCredentials(q, data, stderr)
+	if err != nil {
+		return fmt.Errorf("complete queue credential secret %s/%s: %w", q.Namespace, name, err)
+	}
+	if !changed {
+		fmt.Fprintf(stdout, "Queue credential secret %s/%s is complete; leaving it in place\n", q.Namespace, name)
 		return nil
 	}
-	// ADOPT BEFORE GENERATING. On a cluster that deployed before this change the chart minted its
-	// own Secret, and the chart marks it `helm.sh/resource-policy: keep` — so it is still there
-	// after the chart stops rendering it. Generating fresh values here would hand a RUNNING
-	// RabbitMQ a new erlang cookie and a new password: exactly the one-time breakage this whole
-	// change exists to prevent, delivered by the fix itself. Carrying the live values across makes
-	// the migration invisible.
-	password, cookie, adopted := adoptChartMintedQueueCredentials(q, stderr)
-	if adopted {
-		fmt.Fprintf(stdout, "Adopting the chart-minted credentials for %s into %s/%s (no rotation)...\n",
-			q.Name, q.Namespace, name)
+	// WHICH keys were carried over is named, because "adopted" and "generated" have different
+	// consequences for a running cluster and an operator reading this later cannot tell them apart
+	// from a Secret alone.
+	if len(adopted) > 0 {
+		fmt.Fprintf(stdout, "Seeding queue credential secret %s/%s, carrying the chart's live %s across...\n",
+			q.Namespace, name, strings.Join(adopted, " and "))
 	} else {
-		var err error
-		if password, err = rabbitmqCredential(); err != nil {
-			return fmt.Errorf("generate RabbitMQ password for %s: %w", q.Name, err)
-		}
-		if cookie, err = rabbitmqCredential(); err != nil {
-			return fmt.Errorf("generate RabbitMQ erlang cookie for %s: %w", q.Name, err)
-		}
-		fmt.Fprintf(stdout, "Seeding queue credential secret %s/%s...\n", q.Namespace, name)
+		fmt.Fprintf(stdout, "Seeding missing queue credentials in %s/%s...\n", q.Namespace, name)
 	}
 	// The credentials ride a 0600 temporary manifest into `kubectl apply -f <file>`, never argv.
-	return ApplyManifest(queueCredentialSecretManifest(q, password, cookie), stdout, stderr)
+	return ApplyManifest(queueCredentialSecretManifest(q, data), stdout, stderr)
 }
 
-// adoptChartMintedQueueCredentials returns the password and erlang cookie a PREVIOUS release of
-// this queue's chart minted for itself, when both are still readable.
+// completeQueueCredentials fills only the absent keys of data (base64-encoded, in place) and reports
+// whether anything changed and which keys were taken from the chart's own Secret.
+//
+// PER KEY, NOT ALL-OR-NOTHING. The password and the erlang cookie are unrelated secrets, and the
+// only thing that matters for each is whether the cluster is already running with a value — so a
+// Secret holding a password but no cookie still takes the LIVE cookie from the chart's Secret
+// rather than a fresh one that would partition the cluster.
+//
+// WHAT ADOPTION ACTUALLY GUARANTEES IS THE COOKIE. The init container rewrites `.erlang.cookie` from
+// the environment on every pod start, so carrying the live value across is exactly right there. The
+// password is a weaker claim and is deliberately not advertised as more: with `definitions.enabled`
+// false, `RABBITMQ_DEFAULT_PASS` is honoured only while the Mnesia database is empty — the queue's
+// very first boot — so on a cluster where ArgoCD has been rewriting the Secret every reconcile, the
+// value read here is whatever the last selfHeal wrote and not necessarily what the broker accepts.
+// Adopting it is still the better of the two available moves (it cannot be more wrong than a fresh
+// random one), but reconciling a live broker's password needs `rabbitmqctl change_password` and is
+// tracked separately.
+func completeQueueCredentials(q HetznerQueue, data map[string]string, stderr io.Writer) (changed bool, adopted []string, err error) {
+	missing := make([]string, 0, len(rabbitmqCredentialKeys))
+	for _, key := range rabbitmqCredentialKeys {
+		if _, ok := decodeSecretValue(data[key]); !ok {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) == 0 {
+		return false, nil, nil
+	}
+	// Read ONCE, and only when something is actually missing — a complete Secret must not cost a
+	// Secret listing on every deploy.
+	live := adoptChartMintedQueueCredentials(q, stderr)
+	b64 := base64.StdEncoding.EncodeToString
+	for _, key := range missing {
+		if value, ok := live[key]; ok {
+			data[key] = b64([]byte(value))
+			adopted = append(adopted, key)
+			continue
+		}
+		var value string
+		switch key {
+		case rabbitmqPasswordKey:
+			value, err = rabbitmqPassword()
+		case rabbitmqErlangCookieKey:
+			value, err = rabbitmqErlangCookie()
+		}
+		if err != nil {
+			return false, nil, fmt.Errorf("generate RabbitMQ %s: %w", key, err)
+		}
+		data[key] = b64([]byte(value))
+	}
+	return true, adopted, nil
+}
+
+// adoptChartMintedQueueCredentials returns whichever credentials a PREVIOUS release of this queue's
+// chart minted for itself and are still readable, keyed as the chart's Secret keys them. Empty when
+// there is nothing to adopt, which is the ordinary case for a queue that has never deployed.
 //
 // Found by the chart's own release label rather than by a derived name, for the reason
 // data_endpoints.go states: every chart names its Secrets with its own `fullname` template, so a
-// derived name is a guess, and a guess that misses here silently rotates a live cluster's cookie.
-//
-// BOTH OR NEITHER. Half a pair is not a migration — adopting the password while generating a new
-// cookie still partitions the cluster, and it would do so while reporting that nothing rotated.
-// Harbor's completeHarborCredentials refuses a half pair for the same reason.
+// derived name is a guess, and a guess that misses here rotates a live cluster's cookie.
 //
 // The lookup is RELIABLE rather than lucky, and the ordering in deploy.go is why: this runs before
 // ApplyAddOnsInWaves, so on the one deploy where adoption matters the old render — and its Secret —
 // is still what the cluster is running. (ArgoCD honours the chart's `resource-policy: keep`, but
 // nothing here depends on that.)
 //
-// Best-effort by contract: no old Secret, an unreadable one, or a partial one all mean "generate",
-// which is the correct answer for a queue that has never deployed. The values are read into memory
-// and rendered into a 0600 manifest; they are never logged (kubectlJSON captures stdout rather
-// than echoing it, which is what keeps a Secret listing out of the job log).
-func adoptChartMintedQueueCredentials(q HetznerQueue, stderr io.Writer) (password, cookie string, ok bool) {
+// Best-effort by contract: an unreachable or unreadable listing means "generate", which is the
+// correct answer for a queue that has never deployed and the only available one otherwise. The
+// values are read into memory and rendered into a 0600 manifest; they are never logged (kubectlJSON
+// captures stdout rather than echoing it, which keeps a Secret listing out of the job log).
+func adoptChartMintedQueueCredentials(q HetznerQueue, stderr io.Writer) map[string]string {
 	release := AddOnAppName(q.AddOnID)
 	if !k8sNameRe.MatchString(release) {
-		return "", "", false
+		return nil
 	}
 	var list struct {
 		Items []struct {
-			Metadata struct {
-				Name string `json:"name"`
-			} `json:"metadata"`
 			Type string            `json:"type"`
 			Data map[string]string `json:"data"`
 		} `json:"items"`
 	}
 	cmd := fmt.Sprintf("kubectl get secret -n %s -l app.kubernetes.io/instance=%s -o json", q.Namespace, release)
 	if err := kubectlJSON(cmd, &list, stderr); err != nil {
-		return "", "", false
+		return nil
 	}
+	out := map[string]string{}
 	for _, item := range list.Items {
 		// Helm's own release secrets are not credentials.
 		if item.Type == "helm.sh/release.v1" {
 			continue
 		}
-		pw, pwOK := decodeSecretValue(item.Data[rabbitmqPasswordKey])
-		ck, ckOK := decodeSecretValue(item.Data[rabbitmqErlangCookieKey])
-		if pwOK && ckOK {
-			return pw, ck, true
+		for _, key := range rabbitmqCredentialKeys {
+			if _, taken := out[key]; taken {
+				continue
+			}
+			if value, ok := decodeSecretValue(item.Data[key]); ok {
+				out[key] = value
+			}
 		}
 	}
-	return "", "", false
+	return out
 }
 
 // decodeSecretValue decodes one base64 Secret value, reporting whether it held anything.
@@ -221,26 +306,53 @@ func decodeSecretValue(encoded string) (string, bool) {
 // "random" secret becomes guessable, and nothing downstream would notice.
 var rabbitmqRandReader io.Reader = rand.Reader
 
-// rabbitmqCredential returns one URL-safe credential.
+// rabbitmqPassword returns the broker password.
 //
-// URL-safe rather than raw base64 because the password reaches applications through an AMQP URI,
-// where a `+` or a `/` would have to be percent-encoded by every client that builds one.
-func rabbitmqCredential() (string, error) {
-	buf := make([]byte, rabbitmqCredentialBytes)
+// URL-SAFE, because this value reaches applications through an AMQP URI, where a `+` or a `/` has
+// to be percent-encoded by every client that builds one.
+func rabbitmqPassword() (string, error) {
+	buf := make([]byte, rabbitmqPasswordBytes)
 	if _, err := io.ReadFull(rabbitmqRandReader, buf); err != nil {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// queueCredentialSecretManifest renders the namespace + the credential Secret.
+// rabbitmqCookieAlphabet is alphanumerics only — the charset `randAlphaNum` uses, which is what the
+// chart minted before this file took the job over.
+const rabbitmqCookieAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// rabbitmqErlangCookie returns the cluster's shared secret.
+//
+// ALPHANUMERIC, NOT URL-SAFE BASE64, and deliberately not the same generator as the password. The
+// cookie rides no URI, so URL-safety buys nothing — while RabbitMQ documents the cookie as
+// alphanumeric characters, and it passes through more hands than the password does: it becomes an
+// Erlang atom, the init container writes it to `.erlang.cookie` through a shell `echo`, and
+// `rabbitmqctl` / `rabbitmq-diagnostics` (the chart's own probes) read it back. Spending a
+// documented constraint to save a line is not a trade worth making, and this keeps the value
+// identical in shape to what every existing deployment already runs.
+func rabbitmqErlangCookie() (string, error) {
+	limit := big.NewInt(int64(len(rabbitmqCookieAlphabet)))
+	out := make([]byte, rabbitmqCookieLength)
+	for i := range out {
+		n, err := rand.Int(rabbitmqRandReader, limit)
+		if err != nil {
+			return "", err
+		}
+		out[i] = rabbitmqCookieAlphabet[n.Int64()]
+	}
+	return string(out), nil
+}
+
+// queueCredentialSecretManifest renders the namespace + the credential Secret from ALREADY-ENCODED
+// values, so a key copied out of the cluster goes back in byte-identical.
 //
 // The namespace is included (like addonSecretManifest and harborAdminSecretManifest) because this
 // Secret must exist BEFORE the queue's Application first syncs and creates the namespace itself
 // via CreateNamespace=true.
-func queueCredentialSecretManifest(q HetznerQueue, password, cookie string) string {
-	b64 := base64.StdEncoding.EncodeToString
-	return fmt.Sprintf(`apiVersion: v1
+func queueCredentialSecretManifest(q HetznerQueue, encoded map[string]string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `apiVersion: v1
 kind: Namespace
 metadata:
   name: %[1]s
@@ -255,16 +367,11 @@ metadata:
     %[3]s: %[4]s
 type: Opaque
 data:
-  %[5]s: %[6]s
-  %[7]s: %[8]s
-`,
-		q.Namespace,              // 1
-		q.CredentialSecretName(), // 2
-		addonSecretLabelKey,      // 3
-		q.AddOnID,                // 4
-		rabbitmqPasswordKey,      // 5
-		b64([]byte(password)),    // 6
-		rabbitmqErlangCookieKey,  // 7
-		b64([]byte(cookie)),      // 8
-	)
+`, q.Namespace, q.CredentialSecretName(), addonSecretLabelKey, q.AddOnID)
+	// Iterated over the DECLARED key list, not over the map: a deterministic render, and a key the
+	// chart does not read cannot ride along from whatever was in the cluster.
+	for _, key := range rabbitmqCredentialKeys {
+		fmt.Fprintf(&b, "  %s: %s\n", key, encoded[key])
+	}
+	return b.String()
 }
