@@ -5,7 +5,13 @@
 // evaluates a proposed config against the generated matrix into a CompatReport
 // with byte-for-byte the same verdict + control statuses the Go engine produces
 // for the same subject (the contract-lock discipline). Pure + deterministic —
-// no I/O, no clock — so config-time UI and the apply gate share one truth.
+// no I/O, and no clock except `unwaived`'s default `now`, which callers may pass
+// — so config-time UI and the apply gate share one truth.
+//
+// That claim is now CHECKED, by a fixture the Go side generates:
+// apps/console/tests/lib/compat/engine-parity.test.ts against
+// packages/core/compat/testdata/engine_parity.json. It was false in two places
+// before anything checked it — see parseMinor's and covers' comments below.
 
 import type {
 	CompatAddOnRef,
@@ -49,16 +55,33 @@ export function isBlocking(report: CompatReport): boolean {
  * The IDs of controls that FAILED and are NOT covered by a valid override. A
  * non-empty result means the apply must stay blocked. Mirrors Report.Unwaived.
  */
-export function unwaived(report: CompatReport, override?: CompatOverride | null): string[] {
+export function unwaived(report: CompatReport, override?: CompatOverride | null, now: number = Date.now()): string[] {
 	return report.controls
-		.filter((c) => c.status === "fail" && !covers(override, c.id))
+		.filter((c) => c.status === "fail" && !covers(override, c.id, now))
 		.map((c) => c.id);
 }
 
-/** Whether an override currently waives a control ID (false when expired). */
-function covers(override: CompatOverride | null | undefined, id: string): boolean {
+/**
+ * Whether an override currently waives a control ID (false when expired).
+ *
+ * `now` is a parameter so this decision can be pinned in the cross-language parity fixture, and
+ * so the "no clock" claim in this file's header is true of everything except the default.
+ * Mirrors Go's `(*Override).CoversAt` (packages/core/compat/override.go).
+ */
+function covers(override: CompatOverride | null | undefined, id: string, now: number): boolean {
 	if (!override) return false;
-	if (override.expiry && new Date(override.expiry).getTime() < Date.now()) return false;
+	if (override.expiry) {
+		const expiry = new Date(override.expiry).getTime();
+		// An expiry that cannot be READ does not waive. The previous form was
+		// `new Date(expiry).getTime() < now`, and `new Date("garbage").getTime()` is NaN — every
+		// comparison with NaN is false, so an unparseable expiry made the waiver valid FOREVER.
+		// A fail-open in the check that decides whether a fail-closed apply gate may be passed.
+		//
+		// Go never had this because Expiry is a time.Time: a malformed value fails json.Unmarshal
+		// and the Override never exists. There is no decode step here, so the NaN check IS that
+		// refusal, and it has to come first.
+		if (Number.isNaN(expiry) || expiry < now) return false;
+	}
 	return override.controls.includes(id);
 }
 
@@ -194,13 +217,42 @@ type Minor = { major: number; minor: number };
 /** Parses "1.35" / "1.35.6" / "v1.35" into its (major, minor), ignoring patch + leading "v". */
 function parseMinor(v: string | undefined): Minor | null {
 	if (!v) return null;
-	const trimmed = v.trim().replace(/^v/, "");
+	// Trim, strip a leading "v", trim AGAIN — mirroring Go's
+	// TrimSpace(TrimPrefix(TrimSpace(v), "v")), so "v 1.35" parses on both sides.
+	const trimmed = v.trim().replace(/^v/, "").trim();
 	const parts = trimmed.split(".");
 	if (parts.length < 2) return null;
-	const major = Number(parts[0]);
-	const minor = Number(parts[1]);
-	if (!Number.isInteger(major) || !Number.isInteger(minor)) return null;
+	const major = atoi(parts[0]);
+	const minor = atoi(parts[1]);
+	if (major === null || minor === null) return null;
 	return { major, minor };
+}
+
+/**
+ * Go's `strconv.Atoi`, exactly — an optional sign then decimal digits, and nothing else.
+ *
+ * This replaced `Number()` + `Number.isInteger`, which was far laxer than Atoi and made this
+ * engine disagree with the apply gate on malformed input. `Number("")` is 0 and
+ * `Number.isInteger(0)` is true, so `"1."` parsed as {1, 0}; `Number` also accepts surrounding
+ * whitespace, `0x` and exponent forms. The result was that `"1."`, `".5"`, `"1. 35"`, `"1.0x10"`
+ * and `"1.1e2"` were JUDGED here — shown to the user as a pass or a fail — while
+ * packages/core/compat returned `not_evaluable` and the apply gate refused to decide. The two
+ * ends of a fail-closed gate must agree about what they cannot read.
+ *
+ * The int64 bound is Atoi's, and it is checked on the DIGIT STRING rather than on a number: a
+ * double cannot represent the boundary, and BigInt literals need an ES2020 target the console
+ * does not use. Comparing equal-length digit strings lexicographically IS numeric comparison, so
+ * the accept/reject decision matches Go for every input, not only for those a double holds
+ * exactly. The returned number loses precision above 2^53, which is irrelevant here — nothing
+ * that large is a version, and what the fixture pins is which side accepts.
+ */
+function atoi(s: string | undefined): number | null {
+	if (s === undefined || !/^[+-]?\d+$/.test(s)) return null;
+	// Two's complement: the negative range extends one further than the positive.
+	const limit = s.startsWith("-") ? "9223372036854775808" : "9223372036854775807";
+	const digits = s.replace(/^[+-]/, "").replace(/^0+(?=\d)/, "");
+	if (digits.length > limit.length || (digits.length === limit.length && digits > limit)) return null;
+	return Number(s);
 }
 
 function minorEquals(a: Minor | null, b: Minor): boolean {
