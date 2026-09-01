@@ -34,10 +34,12 @@ func waitForJob(apiClient *api.Client, jobID string) error {
 		switch job.Status {
 		case "SUCCESS":
 			ui.Success("Job completed successfully")
-			if job.ExecutionMetadata != nil {
-				if costBreakdown, ok := (*job.ExecutionMetadata)["cost_breakdown"]; ok {
-					fmt.Printf("  Cost estimate: %v\n", costBreakdown)
-				}
+			// Through jobCostSummary (jobs_get.go), the same renderer the job card uses. This line
+			// used to be `fmt.Printf("  Cost estimate: %v\n", costBreakdown)` over the decoded
+			// `any`, so the last thing a successful `project apply --wait` said was a Go map
+			// literal several hundred characters long.
+			if c := jobCostSummary(job.ExecutionMetadata); c != "" {
+				fmt.Printf("  Cost estimate: %s\n", c)
 			}
 			return nil
 		case "FAILED":
