@@ -78,7 +78,7 @@ func TestRenderPreviewApplicationSet_Vcluster(t *testing.T) {
 	}
 	for _, want := range []string{
 		"name: 'preview-host-{{ .number }}'", // vcluster destination is by cluster name, per-PR
-		"namespace: preview",
+		"namespace: 'preview'",               // quoted, like the namespace arm — an unquoted `-` was not even valid YAML
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("vcluster ApplicationSet missing %q\n---\n%s", want, out)
