@@ -891,6 +891,19 @@ jobs:
           pnpm -F console gen:go-enums
           git diff --exit-code -- packages/core/types/enums_gen.go \
             || { echo "::error::Go enum constants are stale — run 'pnpm -F console gen:go-enums' and commit. The Go build + exhaustive lint then flag any switch/map to update."; exit 1; }
+      # The brand's terminal projection. Two failures ride on one command, and they are
+      # different problems with different fixes, so the generator distinguishes them itself:
+      # a NEW TOKEN WITH NO PROJECTION makes it exit 1 without writing anything (its own
+      # ::error:: names the token), and a stale committed file makes the diff below fire. The
+      # first is the one this step exists for — a token added to the console that nobody
+      # decided the CLI's answer for is invisible in every other check, and the two surfaces
+      # drift by omission rather than by disagreement.
+      - name: Every brand token is projected, lossy or refused (tokens.css → brand_gen.go)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          pnpm -F console gen:go-brand
+          git diff --exit-code -- packages/core/types/brand_gen.go \
+            || { echo "::error::The Go brand projection is stale — run 'pnpm -F console gen:go-brand' and commit (source of truth: packages/brand/src/tokens.css for the values, apps/console/scripts/lib/brand-projection.ts for the exact/lossy/none decisions)."; exit 1; }
       # The formatter contract both surfaces are held to. @repo/format decides what `47 min`,
       # `2h 15m` and `$12.50/mo` look like for the console; packages/core/format will be held to
       # the same table for the CLI, which today renders $12.50 as `$12/mo` (Go's %.0f rounds half

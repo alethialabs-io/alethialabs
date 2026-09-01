@@ -11,10 +11,16 @@
 // `#0a0a0a` and `#171717`, the brand icons used `#1A1A1A`, "none of which are ramp values at
 // all." It fixed three transcriptions by becoming a fourth — and nothing checks it.
 //
-// That matters more now than it did. The CLI's lipgloss ink ramp is generated FROM this file,
-// so an undetected drift here propagates to the terminal, and the CLI becomes a mirror of a
-// copy — one hop from truth, which is the shape CLAUDE.md's "one deriver, every consumer" rule
-// exists to prevent. A guard on the copy is what makes generating from it legitimate.
+// That matters more now than it did, though not in the way this note first predicted. The CLI's
+// lipgloss ink ramp is generated (apps/console/scripts/gen-go-brand.ts -> packages/core/types/
+// brand_gen.go), and it is generated from `tokens.css` DIRECTLY rather than from this file —
+// generating from the copy would have made the terminal a mirror of a mirror, one hop from
+// truth, which is the shape CLAUDE.md's "one deriver, every consumer" rule exists to prevent.
+//
+// So the two derivations are siblings, not a chain, and that is worth more than the chain would
+// have been: `gen-go-brand`'s unit test asserts its seventeen computed bytes against the
+// seventeen written here, so a slip in either arithmetic shows up as a disagreement between two
+// separately written implementations of the transfer function rather than as a plausible hex.
 //
 // The check is arithmetic, not a comparison against a checked-in table, because a table would
 // be a FIFTH copy. Every line of `ramp-srgb.ts` carries its source as a comment
