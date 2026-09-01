@@ -434,8 +434,8 @@ export async function insertProjectComponent(
 	};
 	if (!def.singleton) insertValues.name = name;
 
-	// A table that carries `fabric_id` attaches at the FABRIC, not the environment, and the
-	// linkage has to be made HERE because nothing else makes it at runtime. `project_cluster`
+	// A dedicated environment's cluster carries the Fabric linkage, and that linkage has to be
+	// made HERE because nothing else makes it at runtime. `project_cluster`
 	// was written env-keyed with a null `fabric_id`, and the only thing that ever filled it was
 	// a migration-time backfill in programmables.sql — which by definition cannot reach a project
 	// created after it ran, i.e. every real project.
@@ -447,23 +447,29 @@ export async function insertProjectComponent(
 	// config snapshot — the Fabric's cluster must be provisioned", against a cluster that was
 	// provisioned, ACTIVE and serving. Every shared placement was unreachable.
 	const fabricLinked = "fabric_id" in cols;
-	if (fabricLinked && insertValues.fabric_id === undefined) {
+	if (fabricLinked) {
 		const [env] = await db
-			.select({ fabric_id: projectEnvironments.fabric_id })
+			.select({
+				fabric_id: projectEnvironments.fabric_id,
+				placement_mode: projectEnvironments.placement_mode,
+			})
 			.from(projectEnvironments)
 			.where(eq(projectEnvironments.id, environmentId))
 			.limit(1);
-		if (env?.fabric_id) insertValues.fabric_id = env.fabric_id;
+		if (env?.placement_mode === "dedicated") {
+			insertValues.fabric_id = env.fabric_id;
+		} else {
+			delete insertValues.fabric_id;
+		}
 	}
 
 	if (def.singleton) {
 		// The conflict branch must carry the linkage too. `add` upserts, so the row a caller is
 		// amending is very often one written before this fix — repairing it on write is what makes
 		// the fix reach existing projects without a data migration.
-		const updateValues =
-			fabricLinked && insertValues.fabric_id !== undefined
-				? { ...values, fabric_id: insertValues.fabric_id }
-				: values;
+		const updateValues = fabricLinked
+			? { ...values, fabric_id: insertValues.fabric_id ?? null }
+			: values;
 		const [row] = await db
 			.insert(def.table)
 			.values(insertValues)
