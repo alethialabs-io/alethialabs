@@ -15,9 +15,17 @@
  *
  * ⚠️  REGENERATING REWRITES AN EXPECTATION, NOT A FORMATTING DETAIL.
  * `--write` is exactly what somebody runs when the Go test is red, and doing so makes the Go
- * test pass against a table describing a TS change nobody reviewed. Three things exist to stop
- * that being invisible: ids are semantic so a diff names the boundary that moved, this script
- * prints a changed-case summary, and `packages/format/conformance/**` is CODEOWNED.
+ * test pass against a table describing a TS change nobody reviewed.
+ *
+ * What actually stops that being invisible, stated precisely rather than optimistically:
+ *   - case ids are SEMANTIC, so a diff names the boundary that moved rather than an index;
+ *   - this script prints a changed-case summary, and the CI error tells the reader to read it;
+ *   - `/packages/format/conformance/` is in CODEOWNERS, which auto-requests a review.
+ *
+ * Note what the last one is NOT: required-review enforcement comes from the branch-protection
+ * rulesets on `main`/`staging`, so on a `dev` PR the CODEOWNERS entry requests a reviewer but
+ * does not block Mergify's auto-merge. It raises the chance the change is seen; it does not
+ * guarantee it. The semantic ids and the summary are the parts that work unattended.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -141,15 +149,29 @@ function previousWants(before: unknown): Map<string, string> {
 	return index;
 }
 
-/** Cases whose `want` moved between the committed table and this run, by id. */
+/**
+ * What moved between the committed table and this run.
+ *
+ * Added and removed ids are reported alongside changed ones, and that is not cosmetic: the
+ * detector matches on `section/id`, so RENAMING a case while also changing its value would
+ * otherwise report "0 changed" and hide the value move completely. Renaming a case is exactly
+ * what somebody does when its meaning changes, which is when the summary matters most.
+ */
 function changedIds(before: unknown, after: Record<string, { id: string; want: string }[]>): string[] {
 	const prev = previousWants(before);
+	const seen = new Set<string>();
 	const changed: string[] = [];
 	for (const [section, rows] of Object.entries(after)) {
 		for (const r of rows) {
-			const was = prev.get(`${section}/${r.id}`);
-			if (was !== undefined && was !== r.want) changed.push(`${r.id}: ${was} -> ${r.want}`);
+			const key = `${section}/${r.id}`;
+			seen.add(key);
+			const was = prev.get(key);
+			if (was === undefined) changed.push(`+ ${r.id}: ${r.want}  (new)`);
+			else if (was !== r.want) changed.push(`~ ${r.id}: ${was} -> ${r.want}`);
 		}
+	}
+	for (const [key, want] of prev) {
+		if (!seen.has(key)) changed.push(`- ${key.split("/").slice(1).join("/")}: ${want}  (removed)`);
 	}
 	return changed;
 }

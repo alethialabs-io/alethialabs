@@ -173,7 +173,14 @@ export const MONEY: MoneyCase[] = [
 	{ id: "money/whole-dollars-still-show-cents", cents: 1200, currency: "USD" },
 	{ id: "money/cents", cents: 1250, currency: "USD" },
 	{ id: "money/THOUSANDS-SEPARATOR", cents: 124037, currency: "USD" },
-	{ id: "money/JPY-HAS-NO-MINOR-UNIT", cents: 124000, currency: "JPY" },
+	// The minor unit is NOT always a hundredth. Stripe stores a zero-decimal currency's amount in
+	// whole units, so ¥124,000 arrives as 124000 and must render as ¥124,000 — dividing by 100
+	// understated it 100× on the real invoices table. Three-decimal currencies pin the same rule
+	// from the other side, so nobody "simplifies" this back to a JPY special case.
+	{ id: "money/JPY-IS-ZERO-DECIMAL-SO-NO-DIVISION", cents: 124000, currency: "JPY" },
+	{ id: "money/KRW-is-zero-decimal-too", cents: 5500, currency: "KRW" },
+	{ id: "money/BHD-IS-THREE-DECIMAL", cents: 124000, currency: "BHD" },
+	{ id: "money/unrecognised-but-well-formed-code-gets-two-decimals", cents: 1250, currency: "ZZZ" },
 	{ id: "money/EUR-NARROW-SYMBOL-NOT-EUR-PREFIX", cents: 1250, currency: "EUR" },
 	{ id: "money/GBP-narrow-symbol", cents: 1250, currency: "GBP" },
 ];

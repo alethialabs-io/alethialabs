@@ -28,6 +28,16 @@ import * as fmt from "../src/index.ts";
 const FILE = join(dirname(fileURLToPath(import.meta.url)), "../conformance/format-cases.json");
 
 /**
+ * A case id must NAME the boundary it pins, because the id is what a diff shows when an
+ * expectation moves. `minutes/HALF-ROUNDS-UP-ACROSS-THE-HOUR-BOUNDARY` tells a reviewer what
+ * changed; `minutes/3` tells them nothing and would let a regenerate-to-go-green slip past.
+ *
+ * The lookahead is the whole point: the name after the slash must contain at least one LETTER,
+ * so a bare index cannot masquerade as a name.
+ */
+const SEMANTIC_ID = /^[a-zA-Z]+\/(?=[a-zA-Z0-9/.-]*[a-zA-Z])[a-zA-Z0-9/.-]+$/;
+
+/**
  * A case row. Inputs vary per section, so the shared shape is the id and the expectation; the
  * per-section driver reads the inputs it needs.
  */
@@ -147,9 +157,19 @@ describe("format conformance table", () => {
 	it("has unique, semantic ids", () => {
 		const ids = Object.values(table.cases).flatMap((rows) => rows.map((r) => r.id));
 		expect(new Set(ids).size, "duplicate case ids").toBe(ids.length);
-		// An id is what a diff shows when an expectation moves, so it must name the boundary,
-		// not the index. `minutes/3` tells a reviewer nothing.
-		for (const id of ids) expect(id, `${id} is not a section/name id`).toMatch(/^[a-zA-Z]+\/[a-zA-Z0-9/.-]+$/);
+		for (const id of ids) expect(id, `${id} is not a section/name id`).toMatch(SEMANTIC_ID);
+	});
+
+	// The rule above is only worth as much as its regex, and the first version of that regex
+	// ACCEPTED `minutes/3` — the exact example the comment beside it offered as the thing to
+	// reject. So the regex is tested in both directions, here, rather than trusted.
+	it("its own id rule rejects an index-shaped id", () => {
+		for (const good of ["minutes/the-0.943-bug", "monthlyRate/estimate/JPY-HAS-NO-MINOR-UNIT", "date/plain"]) {
+			expect(good, `${good} should be a valid id`).toMatch(SEMANTIC_ID);
+		}
+		for (const bad of ["minutes/3", "minutes/0", "minutes/1.2", "minutes/", "minutes", "3/minutes"]) {
+			expect(bad, `${bad} should NOT be a valid id`).not.toMatch(SEMANTIC_ID);
+		}
 	});
 
 	// ── The contract itself.

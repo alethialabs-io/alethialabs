@@ -129,7 +129,13 @@ function parseTranscription(src) {
 	const entries = new Map();
 	const uncommented = [];
 	src.split("\n").forEach((text, i) => {
-		const decl = /^\s*(gray[0-9]+|black)\s*:\s*"(#[0-9a-fA-F]{6})"\s*,/.exec(text);
+		// ANY identifier, not just `gray*`/`black`. Matching only the names we expect would make
+		// rule 3's "a value from nowhere" branch dead code for the exact case it exists to catch:
+		// a `slate500: "#1a1a1a"` added to RAMP would be invisible to the matcher, the census
+		// would still read 17, and the guard would print OK over the fourth transcription this
+		// file was written to end. A matcher that only sees what it already approves of is not a
+		// census.
+		const decl = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*"(#[0-9a-fA-F]{6})"\s*,/.exec(text);
 		if (!decl) return;
 		const line = i + 1;
 		const note = /\/\/\s*oklch\(\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\)/.exec(text);
@@ -263,6 +269,16 @@ function selfTest() {
 			"  --black:     oklch(0.09 0 0);\n",
 			cleanSrc,
 			1,
+		],
+		[
+			// The case the matcher used to be blind to. A colour under a NAME the ramp does not
+			// have is the original sin this file records — #0a0a0a, #171717, #1A1A1A, "none of
+			// which are ramp values at all". If the matcher only recognises `gray*`, this passes.
+			"rule 3 — a colour under a name the ramp does not have is SEEN, not skipped",
+			cleanTokens,
+			'\tgray500: "#939393", // oklch(0.664 0 0)\n\tblack: "#020202", // oklch(0.09 0 0)\n' +
+				'\tslate500: "#1a1a1a", // oklch(0.205 0 0)\n',
+			2, // its hex disagrees with its own comment (#171717), AND it is not a ramp step
 		],
 		[
 			"rule 4 — a chromatic entry refuses instead of computing",
