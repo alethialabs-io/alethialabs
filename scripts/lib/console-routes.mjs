@@ -13,8 +13,20 @@
 // list came from somewhere else.
 //
 //   node scripts/lib/console-routes.mjs              # print the manifest as JSON
+//   node scripts/lib/console-routes.mjs --json       # the same, said out loud
 //   node scripts/lib/console-routes.mjs --summary    # one line per route, for eyeballing
 //   node scripts/lib/console-routes.mjs --self-test
+//   node scripts/lib/console-routes.mjs --help
+//
+// `pnpm check:console-routes` runs it over the real tree (every raise below is a CI failure) and
+// CI runs `--self-test` beside it — see the two steps in `.github/workflows/ci.yml`'s
+// `Authz / open-core guards` job. A self-test nothing re-runs asserts only that the file was
+// correct on the day it was written.
+//
+// An argument this list does not name is an ERROR (exit 2), not a shrug that falls through to the
+// JSON. `--summry` printing a perfectly valid manifest and exiting 0 is the same silent success
+// the next paragraph exists to prevent, one layer up. `parseCliArgs` below is the whole parser and
+// the self-test drives it.
 //
 // Do NOT pipe it. `node scripts/lib/console-routes.mjs | tail` reports TAIL's exit code, which is
 // always 0, and every raise below becomes invisible.
@@ -66,6 +78,40 @@ const BOUNDARY_FILES = /** @type {const} */ ([
 	"not-found",
 	"template",
 ]);
+
+/**
+ * The extensions Next.js resolves a routing file from — its `pageExtensions` default, which
+ * `apps/console/next.config.ts` does not override.
+ *
+ * This is not pedantry about a case the console does not have today. Matching `page.tsx` ALONE
+ * makes the manifest under-count, and an under-counting manifest is worse than no manifest at
+ * all, because every downstream check in the wave reads its route list as complete: a page the
+ * audit never visited and a page that does not exist are the same absence. Measured: against a
+ * tree holding `page.tsx` and `app/(private)/[org]/go/page.ts`, the `page.tsx`-only walker
+ * returned ONE route where Next serves two and raised nothing — the scan's own silent-green
+ * failure mode, in the file whose header argues against exactly that. `loading.js` and
+ * `error.jsx` read as "no boundary" the same way, which flips predicate T1 from FAIL to a
+ * passing "nothing to inherit". The self-test now fails in three places if this list shrinks.
+ *
+ * Ordering is irrelevant — no member is a suffix of another, so `endsWith` cannot be ambiguous
+ * (`page.tsx` does not end in `.ts`, `page.jsx` does not end in `.js`).
+ */
+const PAGE_EXTENSIONS = /** @type {const} */ (["tsx", "ts", "jsx", "js"]);
+
+/**
+ * `"page.tsx"` → `"page"`, `"loading.js"` → `"loading"`, `"styles.css"` → `null`.
+ *
+ * @param {string} filename
+ * @returns {string|null} the routing-file base name, or null when the file is not one Next
+ *   resolves a route or a boundary from.
+ */
+function routeFileBase(filename) {
+	for (const ext of PAGE_EXTENSIONS) {
+		const suffix = `.${ext}`;
+		if (filename.endsWith(suffix)) return filename.slice(0, -suffix.length);
+	}
+	return null;
+}
 
 /** Directories under `app/` that never contribute a URL segment. */
 const isRouteGroup = (seg) => seg.startsWith("(") && seg.endsWith(")");
@@ -216,7 +262,9 @@ export function discoverShells(componentsDir) {
 				walk(full);
 				continue;
 			}
-			if (!entry.name.endsWith(".tsx")) continue;
+			// A shell renders JSX, so it lives in a `.tsx`/`.jsx` file. Both, for the same reason
+			// `PAGE_EXTENSIONS` has four members: the scan must not go quiet on a spelling.
+			if (!entry.name.endsWith(".tsx") && !entry.name.endsWith(".jsx")) continue;
 			const src = stripComments(readFileOrRaise(full), full);
 			for (const m of src.matchAll(
 				/export\s+(?:async\s+)?(?:function|const)\s+([A-Z][A-Za-z0-9]*Shell)\b/g,
@@ -240,8 +288,10 @@ export function discoverShells(componentsDir) {
  *
  * @param {object} args
  * @param {string} args.appDir      absolute path to `apps/console/app`
- * @param {string} args.pageFile    absolute path to a `page.tsx`
- * @param {Map<string, Set<string>>} args.boundaries  dir → set of boundary names present
+ * @param {string} args.pageFile    absolute path to a `page.<PAGE_EXTENSIONS>`
+ * @param {Map<string, Map<string, string>>} args.boundaries  dir → boundary name → the FILENAME
+ *   that provides it. The filename, not merely the name, because `layout.js` and `layout.tsx` are
+ *   the same boundary and reporting the wrong one names a file that does not exist.
  * @param {{name: string, file: string}[]} args.shells
  * @param {string} args.repoRoot
  */
@@ -293,19 +343,15 @@ function toRecord({ appDir, pageFile, boundaries, shells, repoRoot }) {
 	for (let depth = 0; depth <= segments.length; depth++) {
 		const ancestorSegments = segments.slice(0, segments.length - depth);
 		const ancestorDir = path.join(appDir, ...ancestorSegments);
-		const present = boundaries.get(ancestorDir) ?? new Set();
+		const present = boundaries.get(ancestorDir) ?? new Map();
 		for (const name of BOUNDARY_FILES) {
-			if (!present.has(name)) continue;
+			const filename = present.get(name);
+			if (filename === undefined) continue;
+			const relFile = path.relative(repoRoot, path.join(ancestorDir, filename));
 			if (inherited[name].file === null) {
-				inherited[name] = {
-					file: path.relative(repoRoot, path.join(ancestorDir, `${name}.tsx`)),
-					own: depth === 0,
-					distance: depth,
-				};
+				inherited[name] = { file: relFile, own: depth === 0, distance: depth };
 			}
-			if (name === "layout") {
-				layoutChain.unshift(path.relative(repoRoot, path.join(ancestorDir, "layout.tsx")));
-			}
+			if (name === "layout") layoutChain.unshift(relFile);
 		}
 	}
 
@@ -394,26 +440,38 @@ export function collectConsoleRoutes(opts = {}) {
 
 	/** @type {string[]} */
 	const pageFiles = [];
-	/** @type {Map<string, Set<string>>} */
+	/** @type {Map<string, Map<string, string>>} */
 	const boundaries = new Map();
 
 	// Boundaries are collected from the WHOLE app tree, not just the scope: a page inside
 	// `(private)` inherits `app/error.tsx` and `app/layout.tsx`, which sit above it.
 	const walk = (dir, inScope) => {
-		/** @type {Set<string>} */
-		const here = new Set();
+		/** @type {Map<string, string>} */
+		const here = new Map();
 		for (const entry of readDirOrRaise(dir)) {
 			const full = path.join(dir, entry.name);
 			if (entry.isDirectory()) {
 				walk(full, inScope || full === scopeDir);
 				continue;
 			}
-			const base = entry.name.replace(/\.tsx$/, "");
-			if (entry.name === "page.tsx") {
+			const base = routeFileBase(entry.name);
+			if (base === null) continue;
+			if (base === "page") {
 				if (inScope) pageFiles.push(full);
 				continue;
 			}
-			if (entry.name.endsWith(".tsx") && BOUNDARY_FILES.includes(base)) here.add(base);
+			if (!BOUNDARY_FILES.includes(base)) continue;
+			// Two spellings of one boundary in one directory: Next resolves exactly one of them and
+			// the losing file is dead. Picking one here would silently attribute behaviour to a file
+			// that never renders, so it RAISES — the same reason two pages on one URL do.
+			const already = here.get(base);
+			if (already !== undefined) {
+				throw new Error(
+					`${dir}: both ${already} and ${entry.name} provide the "${base}" boundary — Next ` +
+						`renders one and ignores the other, and this manifest cannot say which.`,
+				);
+			}
+			here.set(base, entry.name);
 		}
 		if (here.size) boundaries.set(dir, here);
 	};
@@ -421,8 +479,9 @@ export function collectConsoleRoutes(opts = {}) {
 
 	if (pageFiles.length === 0) {
 		throw new Error(
-			`no page.tsx found under ${scopeDir} — this is a broken scan, not an empty app. ` +
-				`Refusing to hand every downstream check a zero-route manifest it would report green over.`,
+			`no page.{${PAGE_EXTENSIONS.join(",")}} found under ${scopeDir} — this is a broken scan, ` +
+				`not an empty app. Refusing to hand every downstream check a zero-route manifest it ` +
+				`would report green over.`,
 		);
 	}
 
@@ -449,6 +508,59 @@ export function collectConsoleRoutes(opts = {}) {
 		routes,
 		shells: shells.map((s) => ({ name: s.name, file: path.relative(repoRoot, s.file) })),
 	};
+}
+
+// ── CLI argument parsing ─────────────────────────────────────────────────────────────────────
+
+/** What the CLI was asked to do, or why the arguments were refused. */
+export const USAGE = [
+	"Usage: node scripts/lib/console-routes.mjs [--json|--summary|--self-test|--help]",
+	"",
+	"  (no argument)  print the private-route manifest as JSON",
+	"  --json         the same, said out loud",
+	"  --summary      one line per route, for eyeballing",
+	"  --self-test    run the fixture suite; exit 1 on any failure",
+	"  --help, -h     this text",
+].join("\n");
+
+/**
+ * The whole argument parser, pulled out of the entrypoint so the self-test can drive it.
+ *
+ * An unrecognised argument is an ERROR, never a fall-through to the default mode. Before this,
+ * `--summry` (and `--help`) printed a valid-looking manifest and exited 0: the caller's typo was
+ * indistinguishable from a successful run, in the one tool every later conformance check in this
+ * wave is driven by. Exactly one mode may be named, because `--summary --json` has no honest
+ * answer and picking one silently is the same defect wearing a different hat.
+ *
+ * @param {string[]} argv  arguments after the script name (`process.argv.slice(2)`)
+ * @returns {{mode: "json"|"summary"|"self-test"|"help", error: null} |
+ *           {mode: null, error: string}}
+ */
+export function parseCliArgs(argv) {
+	/** @type {Record<string, "json"|"summary"|"self-test"|"help">} */
+	const MODES = {
+		"--json": "json",
+		"--summary": "summary",
+		"--self-test": "self-test",
+		"--help": "help",
+		"-h": "help",
+	};
+	if (argv.length === 0) return { mode: "json", error: null };
+	const unknown = argv.filter((a) => !(a in MODES));
+	if (unknown.length > 0) {
+		return {
+			mode: null,
+			error: `unrecognised argument${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}`,
+		};
+	}
+	// `--help` anywhere wins: asking for help and being handed an error about the OTHER flag is
+	// the least useful thing this could do.
+	if (argv.some((a) => MODES[a] === "help")) return { mode: "help", error: null };
+	const distinct = [...new Set(argv.map((a) => MODES[a]))];
+	if (distinct.length > 1) {
+		return { mode: null, error: `${distinct.join(" and ")} cannot both be asked for` };
+	}
+	return { mode: distinct[0], error: null };
 }
 
 // ── self-test ────────────────────────────────────────────────────────────────────────────────
@@ -489,6 +601,8 @@ function selfTest() {
 		"apps/console/components/settings/settings-shell.tsx",
 		"export function SettingsShell() { return null; }",
 	);
+	// A `.jsx` shell. The scan matched `.tsx` alone and would have missed this one silently.
+	put("apps/console/components/legacy/legacy-shell.jsx", "export function LegacyShell() { return null; }");
 	put("apps/console/app/layout.tsx", "export default function L() { return null; }");
 	put("apps/console/app/error.tsx", "export default function E() { return null; }");
 	put("apps/console/app/(private)/layout.tsx", "export default function P() { return null; }");
@@ -520,13 +634,43 @@ function selfTest() {
 			"  const sp = await searchParams; redirect(`/x/${Object.keys(sp).length}`);\n}",
 	);
 
+	// ── The non-.tsx routing files Next also resolves ────────────────────────────────────────
+	// `pageExtensions` defaults to tsx/ts/jsx/js. A walker matching `page.tsx` alone returns
+	// FEWER routes than Next serves and raises nothing — the manifest's own silent-green failure,
+	// and the one every downstream check reads as a complete route list. These two pages exist to
+	// fail that walker: mutate `PAGE_EXTENSIONS` back to `["tsx"]` and the count assertion below
+	// drops from 6 to 4 while every other assertion here stays green.
+	put(
+		"apps/console/app/(private)/[org]/go/page.ts",
+		"import { redirect } from 'next/navigation';\nexport default function G() { redirect('/x'); }",
+	);
+	put("apps/console/app/(private)/[org]/~/legacy/page.jsx", "export default function J() { return <div />; }");
+	// ...and the boundaries beside them, in the other two spellings. A `loading.js` read as "no
+	// boundary" turns predicate T1 from FAIL into a passing "nothing to inherit".
+	put("apps/console/app/(private)/[org]/~/legacy/loading.js", "export default function JL() { return null; }");
+	put("apps/console/app/(private)/[org]/~/legacy/error.jsx", "export default function JE() { return <div />; }");
+
 	const m = collectConsoleRoutes({ repoRoot: root });
 	const by = (r) => m.routes.find((x) => x.route === r);
 
-	// Four page.tsx are placed above: [org], [org]/~/deep, [org]/~/near, [org]/~/settings.
+	// Six pages are placed above: [org], [org]/~/deep, [org]/~/near, [org]/~/settings, and the
+	// two non-.tsx ones ([org]/go as page.ts, [org]/~/legacy as page.jsx).
 	// Asserted against that count and not against whatever the walker returned — a self-test whose
 	// expected value is read back out of the thing under test proves only that it is consistent.
-	ok("walks the private scope and finds every page", m.routes.length === 4);
+	ok("walks the private scope and finds every page", m.routes.length === 6);
+	ok("a page.ts route is not dropped", !!by("/[org]/go"));
+	ok("a page.jsx route is not dropped", !!by("/[org]/~/legacy"));
+	ok(
+		"a loading.js is a boundary, not an absence",
+		by("/[org]/~/legacy").boundaries.loading.own === true &&
+			(by("/[org]/~/legacy").boundaries.loading.file ?? "").endsWith("loading.js"),
+	);
+	ok(
+		"an error.jsx is a boundary, and is named by the file that actually exists",
+		(by("/[org]/~/legacy").boundaries.error.file ?? "").endsWith("error.jsx") &&
+			by("/[org]/~/legacy").boundaries.error.distance === 0,
+	);
+	ok("a redirect-only page.ts is still read as source", by("/[org]/go").isRedirectOnly === true);
 	ok("route groups are dropped from the URL", !!by("/[org]"));
 	ok("a literal `~` segment survives", !!by("/[org]/~/deep"));
 	ok("dynamic params are named", by("/[org]").params[0]?.name === "org");
@@ -549,7 +693,8 @@ function selfTest() {
 
 	ok("the innermost shell wins", by("/[org]/~/settings").shell === "SettingsShell");
 	ok("the outer shell is still recorded in the chain", by("/[org]/~/settings").shellChain.includes("AppShell"));
-	ok("shells are discovered, not typed", m.shells.length === 2);
+	ok("shells are discovered, not typed", m.shells.length === 3);
+	ok("a .jsx shell is discovered too", m.shells.some((s) => s.name === "LegacyShell"));
 
 	ok("a redirect-only page is flagged", by("/[org]/~/settings").isRedirectOnly === true);
 	ok("a rendering page is NOT flagged as redirect-only", by("/[org]").isRedirectOnly === false);
@@ -618,7 +763,68 @@ function selfTest() {
 		"produced by two page files",
 	);
 
-	for (const d of [root, empty, noShellNeeded, badComment, dup]) rmSync(d, { recursive: true, force: true });
+	// Two spellings of one page in one directory. Next resolves one; a manifest that lists both
+	// has invented a route, and one that silently drops either has lost one.
+	const dupExt = mkdtempSync(path.join(tmpdir(), "console-routes-dupext-"));
+	const dupExtPut = (rel, body) => {
+		const full = path.join(dupExt, rel);
+		mkdirSync(path.dirname(full), { recursive: true });
+		writeFileSync(full, body);
+	};
+	dupExtPut("apps/console/components/s.tsx", "export function AppShell() { return null; }");
+	dupExtPut("apps/console/app/(private)/x/page.tsx", "export default function A() { return <div />; }");
+	dupExtPut("apps/console/app/(private)/x/page.ts", "export default function B() { return null; }");
+	raises(
+		"page.tsx and page.ts in ONE directory RAISES rather than picking one",
+		() => collectConsoleRoutes({ repoRoot: dupExt }),
+		"produced by two page files",
+	);
+
+	const dupBoundary = mkdtempSync(path.join(tmpdir(), "console-routes-dupbound-"));
+	const dupBoundaryPut = (rel, body) => {
+		const full = path.join(dupBoundary, rel);
+		mkdirSync(path.dirname(full), { recursive: true });
+		writeFileSync(full, body);
+	};
+	dupBoundaryPut("apps/console/components/s.tsx", "export function AppShell() { return null; }");
+	dupBoundaryPut("apps/console/app/(private)/y/page.tsx", "export default function A() { return <div />; }");
+	dupBoundaryPut("apps/console/app/(private)/y/loading.tsx", "export default function L1() { return null; }");
+	dupBoundaryPut("apps/console/app/(private)/y/loading.js", "export default function L2() { return null; }");
+	raises(
+		"two spellings of one boundary in one directory RAISES",
+		() => collectConsoleRoutes({ repoRoot: dupBoundary }),
+		'provide the "loading" boundary',
+	);
+
+	// ── the CLI parser ───────────────────────────────────────────────────────────────────────
+	// Driven directly, because the defect it replaced was invisible from the outside: an
+	// unrecognised flag fell through to the manifest and exited 0, so the failing case and the
+	// succeeding case printed the same thing.
+	ok("no argument means JSON", parseCliArgs([]).mode === "json");
+	ok("--summary is a mode", parseCliArgs(["--summary"]).mode === "summary");
+	ok("--self-test is a mode", parseCliArgs(["--self-test"]).mode === "self-test");
+	ok("--json is a mode", parseCliArgs(["--json"]).mode === "json");
+	ok("--help is help, NOT the manifest", parseCliArgs(["--help"]).mode === "help");
+	ok("-h is help", parseCliArgs(["-h"]).mode === "help");
+	ok(
+		"a typo'd flag is an ERROR, not the default mode",
+		parseCliArgs(["--summry"]).mode === null &&
+			(parseCliArgs(["--summry"]).error ?? "").includes("--summry"),
+	);
+	ok(
+		"a bare positional argument is an ERROR too",
+		parseCliArgs(["apps/console"]).mode === null,
+	);
+	ok(
+		"two modes at once is an ERROR rather than a silent pick",
+		parseCliArgs(["--summary", "--json"]).mode === null,
+	);
+	ok("--help wins over a second mode", parseCliArgs(["--summary", "--help"]).mode === "help");
+	ok("the same mode twice is not a conflict", parseCliArgs(["--json", "--json"]).mode === "json");
+	ok("USAGE names every flag the parser accepts", ["--json", "--summary", "--self-test", "--help"].every((f) => USAGE.includes(f)));
+
+	for (const d of [root, empty, noShellNeeded, badComment, dup, dupExt, dupBoundary])
+		rmSync(d, { recursive: true, force: true });
 
 	console.log(failures === 0 ? "\nself-test: all passed" : `\nself-test: ${failures} FAILED`);
 	return failures === 0 ? 0 : 1;
@@ -629,12 +835,20 @@ const invokedDirectly =
 	process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (invokedDirectly) {
-	const arg = process.argv[2];
-	if (arg === "--self-test") {
+	const parsed = parseCliArgs(process.argv.slice(2));
+	if (parsed.error !== null) {
+		console.error(`console-routes: ${parsed.error}\n\n${USAGE}`);
+		process.exit(2);
+	}
+	if (parsed.mode === "help") {
+		console.log(USAGE);
+		process.exit(0);
+	}
+	if (parsed.mode === "self-test") {
 		process.exit(selfTest());
 	}
 	const manifest = collectConsoleRoutes();
-	if (arg === "--summary") {
+	if (parsed.mode === "summary") {
 		console.log(`${manifest.routes.length} private routes · shells: ${manifest.shells.map((s) => s.name).join(", ")}\n`);
 		for (const r of manifest.routes) {
 			const ld = r.boundaries.loading;
