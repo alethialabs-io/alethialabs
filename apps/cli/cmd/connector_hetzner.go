@@ -47,6 +47,17 @@ Object Storage (S3-compatible) uses a SEPARATE credential pair, which Hetzner is
 under Security → S3 credentials. It is optional: pass it only if this project's
 environments declare storage buckets. It is a pair — give both keys or neither.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Half an S3 pair is a complaint about the COMMAND LINE, so it is made before anything
+		// exists server-side. initProviderIdentity creates a pending cloud identity, and refusing
+		// after it left that identity orphaned — the user had to `connector remove` it before
+		// retrying, for a mistake the shape of the flags already showed.
+		if _, _, err := validateHetznerS3Pair(
+			strings.TrimSpace(connectorHetznerS3AccessKey),
+			strings.TrimSpace(connectorHetznerS3SecretKey),
+		); err != nil {
+			fail(err)
+		}
+
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
@@ -144,9 +155,17 @@ func resolveHetznerS3(access, secret string) (string, string, error) {
 	return validateHetznerS3Pair(strings.TrimSpace(access), strings.TrimSpace(secret))
 }
 
-// validateHetznerS3Pair refuses half a pair, naming the missing half.
+// validateHetznerS3Pair refuses HALF a pair, naming the missing half.
+//
+// Both blank is "neither", which is a valid answer for an optional field and not half of
+// anything. The flag path never reaches here with both empty, but the prompt path does: the
+// Yes/No offer is answered Yes and then both inputs are submitted blank (neither has a
+// Validate), and reporting "an S3 secret key was given without an access key" there describes
+// a mistake the user did not make — and aborts the whole connector run over it.
 func validateHetznerS3Pair(access, secret string) (string, string, error) {
 	switch {
+	case access == "" && secret == "":
+		return "", "", nil
 	case access == "":
 		return "", "", fmt.Errorf("an S3 secret key was given without an access key — pass --s3-access-key too, or neither")
 	case secret == "":

@@ -44,6 +44,14 @@ module instead. Pass --role-arn to submit a role you already created — the fla
 that same paste, so the command works under --no-input with no aliyun CLI on the
 machine.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if err := refuseMultipleModes(
+			modeFlag{"--role-arn", strings.TrimSpace(connectorAlibabaRoleArn) != ""},
+			modeFlag{"--terraform", connectorAlibabaTerraform},
+			modeFlag{"--manual", connectorAlibabaManual},
+		); err != nil {
+			fail(err)
+		}
+
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)

@@ -38,6 +38,14 @@ Azure Cloud Shell and paste back the tenant, client, and subscription IDs, or pa
 form of that same paste, so the command works under --no-input with no az CLI on the
 machine.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if err := refuseMultipleModes(
+			modeFlag{"--tenant-id/--client-id", strings.TrimSpace(connectorAzureTenantID) != "" ||
+				strings.TrimSpace(connectorAzureClientID) != ""},
+			modeFlag{"--manual", connectorAzureManual},
+		); err != nil {
+			fail(err)
+		}
+
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)

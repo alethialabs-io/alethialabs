@@ -41,6 +41,14 @@ it from the AWS console and paste back the role ARN, or --role-arn to submit a r
 you already created — the flag form of that same paste, so the command works under
 --no-input with no aws CLI on the machine.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if err := refuseMultipleModes(
+			modeFlag{"--role-arn", strings.TrimSpace(connectorAwsRoleArn) != ""},
+			modeFlag{"--manual", connectorAwsManual},
+			modeFlag{"--script", connectorAwsScript},
+		); err != nil {
+			fail(err)
+		}
+
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)

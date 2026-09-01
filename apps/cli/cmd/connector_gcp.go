@@ -39,6 +39,13 @@ installer in the browser Cloud Shell and paste the result, or --wif-config to su
 a credential config you already have — the flag form of that same paste, so the
 command works under --no-input with no gcloud on the machine.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if err := refuseMultipleModes(
+			modeFlag{"--wif-config", strings.TrimSpace(connectorGcpWifConfig) != ""},
+			modeFlag{"--manual", connectorGcpManual},
+		); err != nil {
+			fail(err)
+		}
+
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)

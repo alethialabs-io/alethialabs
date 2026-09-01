@@ -133,6 +133,12 @@ echo "$HCLOUD_TOKEN" | alethia connector hetzner --no-input --token-stdin
 Leave a required field out under `--no-input` and the command exits non-zero **naming the
 flag** that would have supplied it, rather than failing at a prompt it cannot open.
 
+Each command takes **one** setup mode. Submitting something you already have and asking for the
+setup that creates it are two different answers to the same question, so combining them is
+refused by name rather than resolved by precedence — `--role-arn` with `--manual`, `--terraform`
+or `--script`, `--wif-config` with `--manual`, and `--tenant-id`/`--client-id` with `--manual`.
+An ignored flag is the same class of defect as a missing one.
+
 ## `alethia connector gcp`
 
 Connect a Google Cloud project using Workload Identity Federation.

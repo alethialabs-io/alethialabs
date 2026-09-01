@@ -1748,7 +1748,14 @@ func TestConnField_DocsTableMatchesTheRegisteredFlags(t *testing.T) {
 				}
 				scannedSections++
 				c.Flags().VisitAll(func(f *pflag.Flag) {
-					if c.InheritedFlags().Lookup(f.Name) != nil {
+					// LocalFlags, not "not in InheritedFlags", and the difference is a whole
+					// command's flag. `connector hetzner` registers its OWN --token, and root
+					// registers a persistent --token as well, so InheritedFlags().Lookup("token")
+					// is non-nil and the flag that actually binds was skipped as "a root flag,
+					// documented on the reference page": deleting the `--token` row from the
+					// hetzner table left this guard GREEN. LocalFlags keeps a flag that SHADOWS
+					// a parent's, and drops only the ones purely inherited.
+					if c.LocalFlags().Lookup(f.Name) == nil {
 						return // a root flag, documented on the reference page
 					}
 					if connDocsAutoFlags["--"+f.Name] {
@@ -1861,6 +1868,7 @@ func TestConnField_ProviderRefEdges(t *testing.T) {
 		identities []api.CloudIdentity
 		listErr    error
 		wantIn     []string
+		wantNotIn  []string
 	}{
 		{
 			name: "unconnected provider", ref: "azure", noInput: true,
@@ -1876,6 +1884,15 @@ func TestConnField_ProviderRefEdges(t *testing.T) {
 				{ID: "ci-one", Provider: "aws"}, {ID: "ci-two", Provider: "aws"},
 			},
 			wantIn: []string{"2 connected aws accounts", "ci-one", "ci-two"},
+		},
+		{
+			// A cloud the `cloud_provider` enum carries but the CLI has no connector leaf for.
+			// The remediation must not name `alethia connector civo`, which exits with cobra's
+			// `unknown command "civo"` — a suggestion that cannot be followed is worse than none.
+			name: "provider with no connector leaf", ref: "civo", noInput: true,
+			identities: []api.CloudIdentity{{ID: "ci-aws", Provider: "aws"}},
+			wantIn:     []string{"no connected civo account", "cannot connect one", "hetzner"},
+			wantNotIn:  []string{"alethia connector civo"},
 		},
 		{
 			name: "nothing connected", ref: "aws", noInput: true,
@@ -1904,6 +1921,11 @@ func TestConnField_ProviderRefEdges(t *testing.T) {
 			for _, want := range tc.wantIn {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("message %q should mention %q", err, want)
+				}
+			}
+			for _, unwanted := range tc.wantNotIn {
+				if strings.Contains(err.Error(), unwanted) {
+					t.Errorf("message %q names %q, which is not a command that exists", err, unwanted)
 				}
 			}
 		})
@@ -2152,7 +2174,10 @@ func TestConnField_HetznerS3AbortedFormsAreErrors(t *testing.T) {
 }
 
 // TestConnField_HetznerHalfPairIsFatalThroughTheTree pins the refusal on the real command,
-// not only on the helper: half a pair must stop before /connect.
+// not only on the helper: half a pair must stop before /connect — and before /init, which is
+// the assertion that matters. Half a pair is a complaint about the command line, so refusing
+// it after initProviderIdentity left an orphaned pending identity the user had to
+// `connector remove` before retrying.
 func TestConnField_HetznerHalfPairIsFatalThroughTheTree(t *testing.T) {
 	hygCliConfirmResetFlags()
 	rec := &connRecorder{}
@@ -2167,6 +2192,92 @@ func TestConnField_HetznerHalfPairIsFatalThroughTheTree(t *testing.T) {
 	}
 	if rec.saw("/connect") {
 		t.Error("a half credential reached the control plane")
+	}
+	if rec.saw("/init") {
+		t.Errorf("a pending cloud identity was created before the flags were checked (%v) — "+
+			"the user is left with an orphan to remove", rec.paths)
+	}
+}
+
+// TestConnField_HetznerS3OfferAcceptedThenLeftBlankIsNeither covers the arm only the prompt
+// can reach: the Yes/No offer is answered Yes out of curiosity and both inputs are submitted
+// blank. Neither input has a Validate, so both-blank arrived at validateHetznerS3Pair — which
+// reported "an S3 secret key was given without an access key" and aborted the whole run, for
+// an OPTIONAL field, after the token was captured. Both blank is "neither", not half.
+func TestConnField_HetznerS3OfferAcceptedThenLeftBlankIsNeither(t *testing.T) {
+	hygCliConfirmSetNoInput(t, false)
+	connStubFormSequence(t, []string{"y"}, nil) // accepted, then both inputs left empty
+	access, secret, err := resolveHetznerS3("", "")
+	if err != nil {
+		t.Fatalf("two blank inputs for an optional pair must not be an error: %v", err)
+	}
+	if access != "" || secret != "" {
+		t.Errorf("captured (%q, %q) from two blank inputs", access, secret)
+	}
+}
+
+// TestConnField_ConflictingSetupModesAreRefused pins the combinations each command's
+// resolution switch would otherwise settle by PRECEDENCE. `connector alibaba --terraform
+// --role-arn …` wrote no OpenTofu module, never said --terraform had been ignored, and
+// connected: the user asked for a module on disk and got a connection. The refusal must name
+// both flags, and must land before /init so no pending identity is left behind.
+func TestConnField_ConflictingSetupModesAreRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		wantNamed []string
+	}{
+		{
+			"alibaba · terraform with a role arn",
+			[]string{"connector", "alibaba", "--terraform", "--role-arn", "acs:ram::123456789012:role/A"},
+			[]string{"--role-arn", "--terraform"},
+		},
+		{
+			"aws · manual with a role arn",
+			[]string{"connector", "aws", "--manual", "--role-arn", "arn:aws:iam::123456789012:role/A"},
+			[]string{"--role-arn", "--manual"},
+		},
+		{
+			"aws · manual and script",
+			[]string{"connector", "aws", "--manual", "--script"},
+			[]string{"--manual", "--script"},
+		},
+		{
+			"gcp · manual with a wif config",
+			[]string{"connector", "gcp", "--project", "p1", "--manual", "--wif-config", "-"},
+			[]string{"--wif-config", "--manual"},
+		},
+		{
+			"azure · manual with the identity ids",
+			[]string{"connector", "azure", "--subscription", "s1", "--manual",
+				"--tenant-id", "t1", "--client-id", "c1"},
+			[]string{"--tenant-id/--client-id", "--manual"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hygCliConfirmResetFlags()
+			rec := &connRecorder{}
+			run := connEnv(t, connFakeAPI{rec: rec})
+			connNoCloudCLIs(t)
+
+			var exited bool
+			var code int
+			out := connCaptureStdout(t, func() {
+				exited, code, _ = connInvoke(t, run, tc.args...)
+			})
+			if !exited || code == 0 {
+				t.Fatalf("an ignored flag must be refused, got exited=%v code=%d", exited, code)
+			}
+			for _, want := range tc.wantNamed {
+				if !strings.Contains(out, want) {
+					t.Errorf("the refusal did not name %s — the user cannot tell which flag lost; "+
+						"it said:\n%s", want, out)
+				}
+			}
+			if rec.saw("/init") {
+				t.Errorf("a pending cloud identity was created before the flags were checked (%v)", rec.paths)
+			}
+		})
 	}
 }
 
