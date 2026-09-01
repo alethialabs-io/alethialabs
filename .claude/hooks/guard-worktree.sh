@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # PreToolUse guard: keep parallel Claude instances out of each other's trees.
 #
-# Two rules, in order:
+# Three rules, in order:
 #   R-LEASE  don't write inside a worktree another LIVE instance is working in.
+#   R-STASH  don't mutate the repository-wide stash while another worktree is live.
 #   R-MAIN   don't `git commit` / `git add -A` / `git rebase` in the shared main checkout.
 #
 # R-LEASE exists because R-MAIN wasn't enough. On 2026-07-26 a second instance ran
@@ -47,6 +48,7 @@ if [ "${1:-}" = "--self-test" ]; then
 		git add f
 		git -c commit.gpgsign=false commit -qm init
 		git worktree add -q "$tmp/wt-mine" -b feat/mine
+		git worktree add -q "$tmp/wt-other" -b feat/other
 	) >/dev/null 2>&1 || {
 		echo "self-test: could not build the git fixture" >&2
 		exit 1
@@ -111,6 +113,27 @@ if [ "${1:-}" = "--self-test" ]; then
 	# Unwinding a rebase is never blocked, or you could get stuck mid-rebase.
 	t allow  'rebase --continue'                             'git rebase --continue'
 	t allow  'rebase --abort'                                'git rebase --abort'
+
+	# ── R-STASH: the stack is repository-wide, not worktree-local ──
+	t allow  'stash is allowed with no other live lease'     "git -C $tmp/wt-mine stash push"
+	other_admin="$(git -C "$tmp/wt-other" rev-parse --absolute-git-dir)/alethia-lease"
+	mkdir -p "$other_admin"
+	{
+		echo "pid: $$"
+		echo "procStart: $(ps -o lstart= -p $$ | tr -s '[:space:]' ' ' | sed 's/^ //; s/ *$//')"
+		echo "host: $(hostname -s 2>/dev/null || hostname)"
+		echo "session: self-test-other"
+		echo "branch: feat/other"
+		echo "acquiredAt: $(date +%s)"
+	} >"$other_admin/owner"
+	t block  'stash push is refused with another live lease' "git -C $tmp/wt-mine stash push"
+	t block  'stash pop is refused with another live lease'  "git -C $tmp/wt-mine stash pop"
+	t block  'cd into a worktree resolves the stash target'  "cd $tmp/wt-mine && git stash push"
+	t allow  'stash list remains read-only'                  "git -C $tmp/wt-mine stash list"
+	t allow  'stash show remains read-only'                  "git -C $tmp/wt-mine stash show -p"
+	t allow  'stash create remains ref-free'                 "git -C $tmp/wt-mine stash create"
+	says 'shared repository stack' 'the refusal names the shared-stack race' \
+		"git -C $tmp/wt-mine stash push"
 
 	# ── #3192: prose is not a command ──
 	# Each of these blocked before, and none of them was going to write anything.
@@ -217,6 +240,12 @@ done
 # ── R-LEASE, Bash ───────────────────────────────────────────────────────────────────────────────
 cmd="$(payload_field command)"
 
+# Git's global options sit between `git` and its subcommand. These fragments are shared by
+# R-STASH and R-MAIN so both rules recognise the same command shapes.
+git_pre='([[:space:]]+(-C[[:space:]]+[^[:space:];&|]+|-c[[:space:]]+[^[:space:];&|]+|--git-dir=[^[:space:];&|]+|--work-tree=[^[:space:];&|]+|--no-pager|--no-replace-objects|--literal-pathspecs))*'
+tok='([[:space:]]|"|\\|$)'
+cmd_pos='(^|^[;&|][[:space:]]*|[^\\][;&|][[:space:]]*|(^|[[:space:]])(sh|bash|zsh|dash)[[:space:]]+-[a-z]*c[[:space:]]*["'"'"']?)'
+
 # Does this ONE segment reference <root>? Re-runs the same path extraction the target loop uses, so
 # a segment can never be judged by a different notion of "which paths does this touch".
 seg_touches_root() { # <segment> <base> <root>
@@ -307,6 +336,68 @@ $targets
 EOF
 fi
 
+# ── R-STASH, repository-wide ref ───────────────────────────────────────────────────────────────
+# A linked worktree has its own index and HEAD, but every worktree shares refs/stash. Therefore a
+# top-of-stack `pop`, `drop`, or even a plain `push` can consume/reorder another live lane's stash.
+# Read-only `list`/`show` and ref-free `create` remain safe. Refuse mutations only when ANOTHER
+# linked worktree has a live lease; a blanket stash ban would train operators to bypass the guard.
+deny_shared_stash() { # <current-root> <other-root>
+	{
+		echo "BLOCKED: git stash uses a shared repository stack, and another live worktree is active."
+		echo "  current  $1"
+		echo "  other    $2 · pid ${WT_L_PID:-?} on ${WT_L_HOST:-?} · branch ${WT_L_BRANCH:-?}"
+		echo ""
+		echo "A push/pop/drop here can race with that lane through the repository-wide refs/stash."
+		echo "For a baseline, use a detached throwaway worktree; for a ref-free snapshot, use"
+		echo "\`git stash create\`. The same shared-state caution applies to tags, notes, and bisect."
+	} >&2
+	exit 2
+}
+
+if [ -n "$cmd" ]; then
+	# Extract only command-position stash invocations. The first token after `stash` is enough to
+	# distinguish the three safe forms; every option/default/other verb is conservatively mutating.
+	stash_hits="$(printf '%s' "$cmd" | grep -oE "${cmd_pos}git${git_pre}[[:space:]]+stash([[:space:]]+[^[:space:];&|]+)?" || true)"
+	while IFS= read -r hit; do
+		[ -n "$hit" ] || continue
+		stash_arg="$(printf '%s' "$hit" | sed -E 's/.*[[:space:]]stash([[:space:]]+([^[:space:];&|]+))?$/\2/')"
+		case "$stash_arg" in list | show | create | -h | --help) continue ;; esac
+
+		base="$(payload_cwd)"
+		[ -n "$base" ] || base="${CLAUDE_PROJECT_DIR:-$PWD}"
+		stash_scan="$(printf '%s' "$hit" | tr -d '\42\47\134')"
+		target="$(printf '%s' "$stash_scan" |
+			grep -oE "git[[:space:]]+-C[[:space:]]+[^[:space:];&|]+${git_pre}[[:space:]]+stash" |
+			tail -1 | sed -E 's/^git[[:space:]]+-C[[:space:]]+//' | sed -E 's/[[:space:]].*$//' || true)"
+		if [ -z "$target" ]; then
+			stash_prefix="${cmd%%"$hit"*}"
+			target="$(printf '%s' "$stash_prefix" | tr -d '\42\47\134' |
+				grep -oE '(^|[^a-zA-Z0-9_])cd[[:space:]]+[^[:space:];&|]+' |
+				tail -1 | sed -E 's/.*cd[[:space:]]+//' || true)"
+		fi
+		[ -n "$target" ] || target="$base"
+		current_root="$(wt_root_of "$(wt_abs "$target" "$base")")"
+		[ -n "$current_root" ] || continue
+		# The main checkout appears in wt_roots too, but has no lease dir. Require the current target
+		# itself to be a linked worktree before applying this worktree-specific rule.
+		wt_lease_dir "$current_root" >/dev/null 2>&1 || continue
+
+		while IFS= read -r other_root; do
+			[ -n "$other_root" ] || continue
+			[ "$other_root" = "$current_root" ] && continue
+			other_ld="$(wt_lease_dir "$other_root" 2>/dev/null || true)"
+			[ -n "$other_ld" ] || continue
+			if wt_lease_read "$other_ld" 2>/dev/null && wt_lease_live; then
+				deny_shared_stash "$current_root" "$other_root"
+			fi
+		done <<EOF
+$(wt_roots)
+EOF
+	done <<EOF
+$stash_hits
+EOF
+fi
+
 # ── R-MAIN: the original main-checkout rule ─────────────────────────────────────────────────────
 # Only care about a commit / stage-everything / rebase invocation — bail fast on anything else.
 #
@@ -348,9 +439,6 @@ cmd_scan="$(printf '%s' "$cmd_text" |
 # fact UNPARSED and allowed — the right answer for a worktree, by accident, and the wrong one for
 # the main checkout. Anything that now matches but cannot be resolved falls through to the block,
 # which is the fail-closed direction.
-git_pre='([[:space:]]+(-C[[:space:]]+[^[:space:];&|]+|-c[[:space:]]+[^[:space:];&|]+|--git-dir=[^[:space:];&|]+|--work-tree=[^[:space:];&|]+|--no-pager|--no-replace-objects|--literal-pathspecs))*'
-# End-of-token: whitespace, a quote, a backslash (JSON escaping), or end of string.
-tok='([[:space:]]|"|\\|$)'
 # COMMAND POSITION, and it is what stops this guard firing on prose (#3192).
 #
 # Quote-stripping above is deliberate and must stay: `sh -c "git commit"` has to be caught, and it
@@ -383,7 +471,6 @@ tok='([[:space:]]|"|\\|$)'
 # `\|` is one literal alternation character to grep and looks exactly like a shell pipe here.
 # That single case was the last false positive left, and it is the one that blocked me from
 # searching this very file while fixing it.
-cmd_pos='(^|^[;&|][[:space:]]*|[^\\][;&|][[:space:]]*|(^|[[:space:]])(sh|bash|zsh|dash)[[:space:]]+-[a-z]*c[[:space:]]*["'"'"']?)'
 trigger="${cmd_pos}git${git_pre}[[:space:]]+commit${tok}"
 trigger="${trigger}|${cmd_pos}git${git_pre}[[:space:]]+add[[:space:]]+(-A|--all|\.)${tok}"
 trigger="${trigger}|${cmd_pos}git${git_pre}[[:space:]]+rebase${tok}"
