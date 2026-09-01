@@ -695,6 +695,18 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-ramp-transcription.mjs --self-test
+      # PROGRAMME.md replaced fifteen hand-maintained boards that had begun contradicting each
+      # other in the tree while passing CI, and its §3 says the intent-half grep is "the only
+      # structural reason a 16th hand-maintained board cannot re-emerge inside this very file" —
+      # inside THAT file. Nothing stopped a new one appearing beside it, and nothing in CI read any
+      # of the twelve. A status claim under docs/testing now either derives from the ledger with a
+      # diff gate, or is declared with the reason it is still written by hand.
+      - name: Every status claim under docs/testing is generated or declared
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:one-board
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-one-board.mjs --self-test
       - name: Runner self-image is baked, matches its job, and is multi-arch
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:runner-self-image

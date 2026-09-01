@@ -1811,20 +1811,41 @@ export function splice(existing, generated) {
 export function intentHalfViolations(existing) {
 	const idx = existing.indexOf(BEGIN);
 	const intent = idx === -1 ? existing : existing.slice(0, idx);
+	return statusClaimsIn(intent).map(
+		(c) => `${TARGET}:${c.line}: ${c.kind === "glyph"
+			? "a verdict glyph in the intent half — status belongs below the marker."
+			: c.kind === "count"
+				? "a derived count in the intent half — it will rot. Let the rollup render it."
+				: 'a status claim in the intent half ("is green"/"is proven"/…) — status belongs below the marker.'}`,
+	);
+}
+
+/**
+ * The three shapes that make a line a STATUS CLAIM rather than intent: a verdict glyph, a derived
+ * count, or an "is/are (now) green|proven|passing|red".
+ *
+ * Exported because `scripts/check-one-board.mjs` asks the same question of `docs/testing/*.md`, and
+ * two definitions of "this line asserts status" would be exactly the drift both guards exist to
+ * stop. This function is the definition; both callers phrase the message their own way.
+ *
+ * @param {string} text
+ * @returns {{line: number, kind: "glyph"|"count"|"claim", text: string}[]}
+ */
+export function statusClaimsIn(text) {
 	const out = [];
-	for (const [i, line] of intent.split("\n").entries()) {
+	for (const [i, line] of text.split("\n").entries()) {
 		if (/^\s*(#|>|_)/.test(line)) continue; // headings and quoted rationale
 		// A CITATION is not a claim. Strip backticked code and double-quoted spans before matching,
 		// so prose may name the very phrasing it forbids — the anti-patterns section has to be able
 		// to say `"is green"` without tripping the rule that forbids saying it. Without this the
 		// guard's only stable state is one where nobody can document it.
 		const prose = line.replace(/`[^`]*`/g, " ").replace(/"[^"]*"/g, " ").replace(/[“][^”]*[”]/g, " ");
-		if (/[✅❌⛔🔶]/.test(prose)) out.push(`${TARGET}:${i + 1}: a verdict glyph in the intent half — status belongs below the marker.`);
+		if (/[✅❌⛔🔶]/.test(prose)) out.push({ line: i + 1, kind: "glyph", text: line });
 		if (/\b\d+\s*(?:of|\/)\s*\d+\s+(?:cells|clouds|proven|passing|green)\b/i.test(prose)) {
-			out.push(`${TARGET}:${i + 1}: a derived count in the intent half — it will rot. Let the rollup render it.`);
+			out.push({ line: i + 1, kind: "count", text: line });
 		}
 		if (/\b(?:is|are)\s+(?:now\s+)?(?:green|proven|passing|red)\b/i.test(prose)) {
-			out.push(`${TARGET}:${i + 1}: a status claim in the intent half ("is green"/"is proven"/…) — status belongs below the marker.`);
+			out.push({ line: i + 1, kind: "claim", text: line });
 		}
 	}
 	return out;
