@@ -95,7 +95,7 @@ describe("insertProjectComponent — Fabric linkage", () => {
 		});
 		// Fail open rather than invent one: a transitional env the backfill has not reached still
 		// resolves through resolveServingCluster's env-key fallback.
-		expect(captured.values?.fabric_id).toBeUndefined();
+		expect(captured.values?.fabric_id).toBeNull();
 		expect(captured.conflictSet?.fabric_id).toBeNull();
 	});
 
