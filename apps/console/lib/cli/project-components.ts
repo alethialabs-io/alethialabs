@@ -9,12 +9,14 @@
 // table's drizzle-zod insert schema (picked down to the user-settable columns) so an
 // unknown or mistyped field is a clear 400 — code and DB never drift.
 
+import { createHash } from "node:crypto";
 import { createInsertSchema } from "drizzle-zod";
 import { and, eq, getTableColumns } from "drizzle-orm";
 import type { AnyColumn } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
+import { asRecord } from "@/lib/records";
 import {
 	projectCaches,
 	projectCluster,
@@ -304,6 +306,139 @@ export function getKindDef(kind: string): KindDef | null {
 export function isSingletonKind(kind: string): boolean {
 	const def = getKindDef(kind);
 	return def ? def.singleton : false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The PUBLISHED schema (#3671)
+//
+// Everything above this line is the server's private opinion of what a component kind is. The
+// CLI holds a SECOND opinion — `componentKinds` and `singletonKinds`, two literals in
+// apps/cli/cmd/project_component.go — and the two have already drifted: `helm_registries` is in
+// this registry and is not in that list, so `alethia project component kinds` does not name a
+// kind the server will happily author.
+//
+// A wire projection of THIS registry is what turns that literal into a cache. It carries the
+// three things the CLI reads a registry for:
+//
+//   • which kinds exist, in a stable order   (`componentKinds`)
+//   • which of them are 1:1 per environment  (`singletonKinds`)
+//   • what `--set key=value` may assign, and AT WHAT TYPE
+//
+// The third closes the `--set` split-brain. Today coercion lives in Go — `coerceSetValue` JSON-
+// decodes the raw text with no idea what the field is — and validation lives here, so
+// `--set cluster_version=1.35` becomes the NUMBER 1.35 and this registry refuses it against a
+// `text()` column, with the documented workaround being to quote it. A client that has read
+// `{"cluster_version": {"type": "string"}}` can coerce per field instead of per literal, and it
+// can refuse a bad value before spending a round trip.
+//
+// The document is deliberately never STRICTER than the server. Some of this registry's rules are
+// not expressible in JSON Schema at all — apps_path's mirrored grammar is a `.refine`, so it
+// publishes as plain `string` — so what ships is a SUPERSET of what the server accepts. That is
+// the safe direction, and it is the epic's invariant: a client validating against this document
+// can only ever refuse a value the server would also refuse, never one it would have taken.
+
+/** One published component kind. */
+export interface PublishedComponentKind {
+	kind: string;
+	/** 1:1 per (project, environment) — the CLI's `singletonKinds`, no longer hand-typed. */
+	singleton: boolean;
+	/** Settable field names, in registry order. DERIVED from `schema.properties` — never
+	 *  written out separately, so the list and the schema cannot disagree. */
+	fields: string[];
+	/** JSON Schema (draft-7) of the `fields` object of an add / `--set` request. */
+	schema: Record<string, unknown>;
+}
+
+/** The published component-kind registry as it goes over the wire. */
+export interface ComponentSchemaDocument {
+	/** sha256 over the serialized `kinds` — the CLI's cache key and the route's ETag, so a cached
+	 *  copy can be revalidated for free and changes when the published registry does. */
+	version: string;
+	kinds: PublishedComponentKind[];
+}
+
+/** The wire contract for {@link ComponentSchemaDocument}, so `cliJson` validates the bytes that
+ *  actually ship. `kinds` is bounded below on purpose: an empty document is not a small answer,
+ *  it is a client that will refuse every `--kind`, and it must be a 500 rather than a 200. */
+export const componentSchemaWire = z.object({
+	version: z.string().min(1),
+	kinds: z
+		.array(
+			z.object({
+				kind: z.string().min(1),
+				singleton: z.boolean(),
+				fields: z.array(z.string().min(1)),
+				schema: z.record(z.string(), z.unknown()),
+			}),
+		)
+		.min(1),
+});
+
+/**
+ * Fails loudly on a VACUOUS published registry — zero kinds, or a kind that publishes zero
+ * settable fields.
+ *
+ * Both are silent-wrong-answer shapes rather than errors: a client caching an empty `kinds`
+ * array refuses every `--kind` the server would have accepted, and a kind whose `properties`
+ * came back empty tells the client "nothing is settable here" when in fact everything is. Both
+ * render as a working CLI that has quietly lost a capability, so the census is asserted rather
+ * than assumed.
+ *
+ * Exported so the zero census can be driven directly — a guard whose failure branch has never
+ * run is a comment.
+ */
+export function assertComponentSchemaPublishable(
+	kinds: readonly PublishedComponentKind[],
+): void {
+	if (kinds.length === 0) {
+		throw new Error(
+			"component schema: the kind registry published ZERO kinds — a client caching this document would refuse every --kind",
+		);
+	}
+	const empty = kinds.filter((k) => k.fields.length === 0).map((k) => k.kind);
+	if (empty.length > 0) {
+		throw new Error(
+			`component schema: kind(s) published no settable fields: ${empty.join(", ")} — a client caching this document would refuse every --set for them`,
+		);
+	}
+}
+
+/** Projects the private registry into the published document. */
+function buildComponentSchemaDocument(): ComponentSchemaDocument {
+	const kinds = COMPONENT_KINDS.map((kind) => {
+		const def = KINDS[kind];
+		// `io: "input"` because this document describes what a caller may SEND, and draft-7 to
+		// match the target the Go contract fixtures are already generated at
+		// (apps/console/scripts/gen-cli-fixtures.ts). `unrepresentable` is left at its default
+		// (throw): a field this cannot express must break the build, not publish as `{}` — an
+		// empty node accepts everything, which is the one answer a client must never cache.
+		const schema = asRecord(
+			z.toJSONSchema(def.fields, { target: "draft-7", io: "input" }),
+		);
+		return {
+			kind,
+			singleton: def.singleton,
+			fields: Object.keys(asRecord(schema.properties)),
+			schema,
+		};
+	});
+	assertComponentSchemaPublishable(kinds);
+	const version = createHash("sha256")
+		.update(JSON.stringify(kinds))
+		.digest("hex");
+	return { version, kinds };
+}
+
+let schemaDocument: ComponentSchemaDocument | null = null;
+
+/**
+ * The published component-kind schema. Memoized: it is a pure projection of module-level
+ * constants, so it is identical for every caller and every tenant, and its `version` must be
+ * stable across requests for the ETag to mean anything.
+ */
+export function componentSchemaDocument(): ComponentSchemaDocument {
+	if (!schemaDocument) schemaDocument = buildComponentSchemaDocument();
+	return schemaDocument;
 }
 
 /** Converts a row/value into a plain key/value record without an unsafe cast. */
