@@ -14,6 +14,7 @@
 #   scripts/coordinate.sh --report        # report only (no mutations)
 #   scripts/coordinate.sh --close-shipped # close open board units a MERGED PR CLOSES (kw + #n)
 #   scripts/coordinate.sh --init-labels   # create/refresh the board's label set (once)
+#   scripts/coordinate.sh --self-test     # offline board-body parser fixtures
 #
 # --close-shipped is the manual BACKSTOP for the close-on-dev-merge Action: it reclaims/unblocks
 # NOTHING, but for each open, still-claimable board unit that a MERGED PR CLOSES — a closing
@@ -26,19 +27,113 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-command -v gh >/dev/null || { echo "gh (GitHub CLI) required" >&2; exit 1; }
-command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
-
 LEASE_TTL="${ALETHIA_LEASE_TTL:-3600}"
 MODE="full"
 case "${1:-}" in
   --report) MODE="report" ;;
   --close-shipped) MODE="close-shipped" ;;
   --init-labels) MODE="init" ;;
+  --self-test) MODE="self-test" ;;
   "" ) MODE="full" ;;
-  -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
   *) echo "unknown arg: $1" >&2; exit 2 ;;
 esac
+
+command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
+
+# Read dependency issue numbers only from the machine-readable declaration line.
+#
+# THE ANCHOR IS RIGHT; DROPPING MARKDOWN DECORATION IS NOT. Anchoring to the start of a line is what
+# stops a `blocked-by: #42` quoted mid-sentence in prose from being read as a declaration, and that
+# is the bug this file exists to fix. But the anchor as first written also dropped `- blocked-by:
+# #12` and `**blocked-by:** #12`, which the previous parser accepted and which are what a human
+# hand-filing an issue actually types.
+#
+# That direction is the dangerous one. The unblock pass below treats an empty `deps` as "this issue
+# has no dependencies" and REMOVES the `blocked` label — so a dropped declaration does not fail
+# closed and leave a lane blocked, it fails OPEN and marks the lane READY while its seams issue is
+# still open. Someone then claims work that is not ready to start. The old parser's failure was
+# noisy; this one is silent.
+#
+# So the decoration is stripped and the anchor is kept: a leading list marker and any `**` come off
+# first, then the same start-of-line match runs. A mid-sentence mention still does not match,
+# because stripping decoration does not move it to the start of its line.
+#
+# A FENCED BLOCK IS NOT A DECLARATION, and the anchor alone cannot tell the difference — inside a
+# fence the quoted line genuinely starts at column 0. That is the #3639 symptom exactly: the
+# seeding snippet in .claude/skills/decompose/SKILL.md prints `blocked-by: #$SEAMS` at column 0
+# inside a ```bash fence, so an issue body pasting that snippet with a real number acquires a
+# phantom dependency and a permanent `blocked` label with nothing in its prose to explain it. So
+# closed fenced blocks (``` or ~~~, delimiters included) are dropped before the match runs.
+#
+# CLOSED, deliberately. An UNTERMINATED fence leaves the rest of the body in play rather than
+# swallowing it, because dropping it would fail OPEN — the unblock pass reads an empty `deps` as
+# "no dependencies" and removes the `blocked` label — and one unclosed backtick run in a hand-typed
+# body would silently mark a lane READY. Keeping those lines can only over-report, which fails
+# closed and is visible.
+blocked_by_from_body() {
+  awk '
+    { line[NR] = $0; drop[NR] = 0 }
+    /^[[:space:]]*(```|~~~)/ {
+      if (open) { for (i = start; i <= NR; i++) drop[i] = 1; open = 0 }
+      else { open = 1; start = NR }
+    }
+    END { for (i = 1; i <= NR; i++) if (!drop[i]) print line[i] }
+  ' \
+    | sed -e 's/^[[:space:]]*[-*+][[:space:]]\{1,\}/ /' -e 's/\*\*//g' \
+    | sed -n 's/^[[:space:]]*[Bb]locked-by:[[:space:]]*\(.*\)$/\1/p' \
+    | grep -oE '#[0-9]+' | tr -d '#' | sort -nu || true
+}
+
+# Exercise the shell parser against the contract shared with the dashboard parser.
+run_board_body_self_test() {
+  local fixtures="scripts/lib/board-body-fixtures.json" fails=0 checks=0 cases fixture name body expected actual
+  [ -f "$fixtures" ] || { echo "missing $fixtures" >&2; exit 1; }
+
+  # READ THE CASES BEFORE THE LOOP. This was `done < <(jq -c '.cases[]' "$fixtures")`, and a jq
+  # failure inside a PROCESS SUBSTITUTION is invisible to both `set -e` and `pipefail` — the shell
+  # never sees its exit status. A fixtures file missing the `cases` key made jq write to stderr and
+  # exit non-zero, the loop ran zero times, and the function printed "self-test: all passed" and
+  # exited 0. Assigning to a variable puts the exit status back where the shell can act on it.
+  cases="$(jq -c '.cases[]' "$fixtures")" || {
+    echo "self-test: could not read .cases[] from $fixtures — the fixtures are unreadable, which is" >&2
+    echo "  a failure, not an empty suite." >&2
+    exit 1
+  }
+
+  while IFS= read -r fixture; do
+    [ -n "$fixture" ] || continue
+    name="$(jq -r '.name' <<<"$fixture")"
+    body="$(jq -r '.body' <<<"$fixture")"
+    expected="$(jq -r '.blockedBy | join(" ")' <<<"$fixture")"
+    actual="$(printf '%s\n' "$body" | blocked_by_from_body | paste -sd' ' -)"
+    checks=$((checks + 1))
+    if [ "$actual" = "$expected" ]; then
+      echo "ok   - $name"
+    else
+      echo "FAIL - $name: want '$expected' got '$actual'" >&2
+      fails=$((fails + 1))
+    fi
+  done <<<"$cases"
+
+  # AN EMPTY SUITE IS A FAILURE. `{"cases":[]}` ran zero checks and reported "all passed" — the
+  # exact shape this guard is written to catch one level down, in its own reporting. A self-test
+  # whose "nothing found" branch is indistinguishable from "nothing wrong" is not a self-test.
+  [ "$checks" -gt 0 ] || {
+    echo "self-test: $fixtures contains NO cases — asserting nothing is not passing." >&2
+    exit 1
+  }
+
+  [ "$fails" -eq 0 ] || { echo "self-test: $fails of $checks check(s) FAILED" >&2; exit 1; }
+  echo "self-test: all $checks passed"
+}
+
+if [ "$MODE" = "self-test" ]; then
+  run_board_body_self_test
+  exit 0
+fi
+
+command -v gh >/dev/null || { echo "gh (GitHub CLI) required" >&2; exit 1; }
 
 # Portable ISO-8601(Z) → epoch seconds (macOS BSD date vs GNU date).
 # Prints NOTHING on a parse failure — deliberately not `echo 0`, which made `now - 0` ≈ now, so an
@@ -224,7 +319,7 @@ if [ "$MODE" = "full" ]; then
     body="$(echo "$board" | jq -r --arg n "$n" '.[]|select(.number==($n|tonumber))|.body // ""')"
     # `|| true`: grep exits 1 when an issue has no blocked-by; under `set -e` + pipefail that
     # non-zero command substitution would abort the whole pass on the first unblocked issue.
-    deps="$(printf '%s' "$body" | sed -n 's/.*[Bb]locked-by:\([^\n]*\).*/\1/p' | grep -oE '#[0-9]+' | tr -d '#' | sort -u || true)"
+    deps="$(printf '%s\n' "$body" | blocked_by_from_body)"
     [ -z "$deps" ] && { have "$n" blocked && gh issue edit "$n" --remove-label blocked >/dev/null 2>&1 || true; continue; }
     open_dep=0
     for d in $deps; do
