@@ -226,15 +226,22 @@ func runTokenCreate(c apiClient, out, errOut io.Writer, format, name string, exp
 	//
 	// `record` is nil on purpose: this branch is only ever the table format (the
 	// machine formats return above), and RenderCard reads the record only for json.
-	if err := ui.RenderCard(errOut, ui.FormatTable, "alethia · token created", [][]string{
+	cardErr := ui.RenderCard(errOut, ui.FormatTable, "alethia · token created", [][]string{
 		{"id", created.ID},
 		{"name", created.Name},
 		{"prefix", created.TokenPrefix},
 		{"expires", ui.StampOrNever(created.ExpiresAt)},
-	}, nil); err != nil {
-		return err
-	}
+	}, nil)
+	// The credential is written BEFORE the card's error is reported. The token exists
+	// server-side by now, the server keeps only its hash, and this is the one moment it
+	// is ever shown — so returning on a failed write to `errOut` would cost the user the
+	// value itself and leave them to revoke and mint again. `alethia token create --name
+	// ci > token.txt 2>&-` is enough to hit it. The decoration is what may be lost here,
+	// never the product.
 	fmt.Fprintln(out, created.Token)
+	if cardErr != nil {
+		return cardErr
+	}
 	fmt.Fprintln(errOut)
 	fmt.Fprintln(errOut, ui.MutedStyle.Render("Use it with:  export ALETHIA_TOKEN=…   (or --token)"))
 	return nil

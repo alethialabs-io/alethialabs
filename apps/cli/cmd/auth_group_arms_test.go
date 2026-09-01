@@ -239,13 +239,22 @@ func TestAuthArm_TokenRevokePickerAbortIsPropagated(t *testing.T) {
 // write there must be reported, not swallowed: the alternative is a command that
 // prints the credential on stdout and reports success having shown the operator
 // none of the context — which id it is, when it expires — they need to record it.
+//
+// It must be reported AFTER the credential has been written, though. The token is
+// minted by the time the card renders, the server keeps only its hash, and this is
+// the only moment it is ever shown — so a stderr that cannot be written to
+// (`… > token.txt 2>&-`) must cost the operator the decoration, never the value.
 func TestAuthArm_TokenCreateReportsAFailedCardWrite(t *testing.T) {
 	c := &fakeClient{createdToken: &api.CreatedServiceToken{
 		ID: "t1", Name: "ci", TokenPrefix: "alethia_sat_abc12345", Token: "secret", Warning: "once",
 	}}
-	err := runTokenCreate(c, io.Discard, authArmBrokenWriter{}, ui.FormatTable, "ci", 0)
+	var out strings.Builder
+	err := runTokenCreate(c, &out, authArmBrokenWriter{}, ui.FormatTable, "ci", 0)
 	if err == nil {
 		t.Fatal("a failed write of the token card was reported as success")
+	}
+	if !strings.Contains(out.String(), "secret") {
+		t.Errorf("the minted token never reached stdout (%q) — it is unrecoverable now", out.String())
 	}
 }
 

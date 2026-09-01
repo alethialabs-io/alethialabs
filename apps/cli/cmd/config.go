@@ -217,10 +217,17 @@ type configField struct {
 	// and not written needs to say what does write it; "unknown key" would be a
 	// lie, and silence would be worse.
 	SetVia string
-	// Read renders the key's current value. It takes the resolved origin as well as
-	// the stored config because `web-origin`'s effective value can come from the
-	// environment, which is not in the file.
-	Read func(cfg types.CliConfig, resolvedOrigin string) string
+	// Read returns the key's current value, RAW — no placeholder for an empty one.
+	// `config get` feeds it to json and csv as well as to the table, so a `—` here
+	// would be a presentation glyph a script has to test for; the table branch of
+	// runConfigGet applies ui.OrDash instead.
+	//
+	// It takes an origin as well as the stored config because `web-origin`'s value
+	// can come from the environment, which is not in the file — and the two callers
+	// mean different origins on purpose. `config get` passes the RESOLVED one
+	// (what commands actually talk to); `config set`'s form passes the STORED one,
+	// because the form seeds what the write is about to replace.
+	Read func(cfg types.CliConfig, origin string) string
 }
 
 // settable reports whether `config set` may write this key.
@@ -246,7 +253,7 @@ var configFields = []configField{
 		// `config set active-org` that wrote only the name would leave the id stale
 		// and every request scoped to the PREVIOUS organization.
 		SetVia: "alethia org switch",
-		Read:   func(cfg types.CliConfig, _ string) string { return ui.OrDash(cfg.ActiveOrgName) },
+		Read:   func(cfg types.CliConfig, _ string) string { return cfg.ActiveOrgName },
 	},
 }
 
@@ -318,6 +325,11 @@ func runConfigSet(out io.Writer, key, value string) error {
 // `$(alethia config get web-origin)` is the whole point of the command; json and
 // csv render key/value pairs for a caller that wants them labelled. Before this
 // the -o flag was accepted and silently ignored on every `config get`.
+//
+// ui.OrDash is applied HERE, in the table branches only. It is a placeholder for a
+// person reading a column, and json and csv are read by programs: an unset key has
+// to arrive as "" so an emptiness test answers "unset", rather than as an em dash
+// that is non-empty and then flows into whatever the script feeds next.
 func runConfigGet(out io.Writer, format, key string) error {
 	cfg := types.LoadCliConfig()
 	origin, _ := types.ResolveWebOrigin()
@@ -332,7 +344,7 @@ func runConfigGet(out io.Writer, format, key string) error {
 		}
 		if format == "" || format == ui.FormatTable {
 			for _, r := range rows {
-				fmt.Fprintf(out, "%s: %s\n", r[0], r[1])
+				fmt.Fprintf(out, "%s: %s\n", r[0], ui.OrDash(r[1]))
 			}
 			return nil
 		}
@@ -345,7 +357,7 @@ func runConfigGet(out io.Writer, format, key string) error {
 	}
 	v := f.Read(cfg, origin)
 	if format == "" || format == ui.FormatTable {
-		fmt.Fprintln(out, v)
+		fmt.Fprintln(out, ui.OrDash(v))
 		return nil
 	}
 	return ui.Render(out, format,
@@ -408,19 +420,42 @@ var promptConfigSet = func(key, value string) (string, string, error) {
 		return "", "", fmt.Errorf("config key %q is read-only — set it with `%s`", f.Key, f.SetVia)
 	}
 	if value == "" {
-		// Seeded with the CURRENT value so the form is an edit, not a re-type, and
+		// Seeded with the STORED value so the form is an edit, not a re-type, and
 		// validated by the SAME function `config set` gates on — a value the form
 		// accepted can never be refused a moment later.
-		origin, _ := types.ResolveWebOrigin()
-		value = f.Read(types.LoadCliConfig(), origin)
+		//
+		// Stored, not RESOLVED: `config set` writes the file, and $ALETHIA_WEB_ORIGIN
+		// outranks the file, so seeding from types.ResolveWebOrigin() would put the
+		// environment's origin in the box and a bare Enter would persist it OVER the
+		// self-hosted origin in config.json that the user never touched. The note
+		// runConfigSet prints would not save them either: after such a write the
+		// resolved and stored values agree, so the one line that would have warned them
+		// is exactly the line the overwrite suppresses.
+		cfg := types.LoadCliConfig()
+		storedOrigin := cfg.WebOrigin
+		if storedOrigin == "" {
+			// Nothing written yet. The hosted default is what the CLI is already using,
+			// so it keeps the form an edit rather than an empty box.
+			storedOrigin = types.DefaultWebOrigin
+		}
+		value = f.Read(cfg, storedOrigin)
 		// The helper line is the CHOSEN KEY's summary, not the field's — see the
 		// exception named on authField.Description. "The new value" would tell a
-		// reader nothing they did not know from the title.
+		// reader nothing they did not know from the title. When the environment
+		// outranks what this form writes, it says so, because the box is then showing
+		// a value that is not the one commands are using.
+		description := f.Summary
+		if resolved, source := types.ResolveWebOrigin(); f.Key == "web-origin" &&
+			source == types.WebOriginFromEnv && resolved != value {
+			description += fmt.Sprintf(
+				" ($ALETHIA_WEB_ORIGIN is %s and outranks the file, so this edits what is stored, not what commands use.)",
+				resolved)
+		}
 		spec := mustAuthField("alethia config set", fieldKeyValue)
 		if err := runHuhForm(huh.NewGroup(
 			huh.NewInput().
 				Title(spec.Title + " · " + f.Key).
-				Description(f.Summary).
+				Description(description).
 				Value(&value).
 				Validate(func(s string) error { _, err := f.Normalize(s); return err }),
 		)); err != nil {

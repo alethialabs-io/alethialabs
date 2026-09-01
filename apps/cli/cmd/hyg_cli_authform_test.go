@@ -736,6 +736,32 @@ func TestHygCliAuthForm_ConfigSetValueFormIsPrefilled(t *testing.T) {
 	}
 }
 
+// The seed is the STORED value, not the resolved one. $ALETHIA_WEB_ORIGIN outranks
+// the config file and `config set` writes the FILE, so seeding from
+// types.ResolveWebOrigin() puts the environment's origin in the box — and a bare
+// Enter from a user who opened the form only to look at the setting persists it
+// over the self-hosted origin they never touched. The "outranks the config file"
+// note cannot save them: after that write the two values agree, so the one line
+// that would have warned them is the line the overwrite suppresses.
+func TestHygCliAuthForm_ConfigSetValueFormSeedsTheStoredOriginNotTheEnvironment(t *testing.T) {
+	isolatedConfigHome(t)
+	authFormInteractive(t)
+	if err := runConfigSet(io.Discard, "web-origin", "https://selfhosted.example"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	t.Setenv("ALETHIA_WEB_ORIGIN", "https://staging.example")
+	script := &authFormScript{keys: authFormKey(nil, tea.KeyEnter)}
+	authFormAnswer(t, script)
+
+	_, value, err := promptConfigSet("web-origin", "")
+	if err != nil {
+		t.Fatalf("promptConfigSet: %v", err)
+	}
+	if value != "https://selfhosted.example" {
+		t.Errorf("an untouched form yielded %q, want the STORED origin — writing that would have destroyed it", value)
+	}
+}
+
 // The value form validates with the SAME function `config set` gates on, so a
 // value the form accepted can never be refused a moment later.
 func TestHygCliAuthForm_ConfigSetValueFormRefusesAnInvalidURL(t *testing.T) {
@@ -892,6 +918,39 @@ func TestHygCliAuthForm_ConfigGetHonoursTheOutputFormat(t *testing.T) {
 	}
 	if strings.TrimSpace(buf.String()) != "https://cp.example.com" {
 		t.Errorf("table get = %q, want the bare value", buf.String())
+	}
+}
+
+// Honouring -o put the em dash in reach of a program. ui.OrDash is a placeholder
+// for a person reading a column; json and csv are read by scripts, where a probe
+// for "no org selected" is an emptiness test — and an em dash is not empty, so it
+// passes the test AND flows into whatever the script feeds next.
+func TestHygCliAuthForm_ConfigGetKeepsThePlaceholderOutOfTheMachineFormats(t *testing.T) {
+	isolatedConfigHome(t)
+	var buf strings.Builder
+	if err := runConfigGet(&buf, ui.FormatJSON, "active-org"); err != nil {
+		t.Fatalf("get json: %v", err)
+	}
+	if !strings.Contains(buf.String(), `"active-org": ""`) {
+		t.Errorf("an unset key did not arrive as the empty string:\n%s", buf.String())
+	}
+	// `get all` walks the same Read, and csv renders the rows rather than the record.
+	for _, format := range []string{ui.FormatJSON, ui.FormatCSV} {
+		buf.Reset()
+		if err := runConfigGet(&buf, format, ""); err != nil {
+			t.Fatalf("get all %s: %v", format, err)
+		}
+		if strings.Contains(buf.String(), ui.SymbolDash) {
+			t.Errorf("`get all -o %s` carries the placeholder glyph:\n%s", format, buf.String())
+		}
+	}
+	// The human table still shows it — an empty line there says nothing.
+	buf.Reset()
+	if err := runConfigGet(&buf, ui.FormatTable, "active-org"); err != nil {
+		t.Fatalf("get table: %v", err)
+	}
+	if strings.TrimSpace(buf.String()) != ui.SymbolDash {
+		t.Errorf("the table lost the placeholder for an unset key: %q", buf.String())
 	}
 }
 
