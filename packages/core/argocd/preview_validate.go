@@ -204,8 +204,29 @@ var scpStyleRemote = regexp.MustCompile(`^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[A-Za-z
 // helper across two different KINDS of URL is how a permissive union gets built by accident.
 var apiServerSchemes = []string{"https", "http"}
 
-// validatePreviewURL checks a URL rendered unquoted into YAML, against the schemes valid for that
-// FIELD. Empty is legal when the caller documents a default; the caller decides.
+// yamlDQBreakers are the characters that restructure a YAML DOUBLE-QUOTED scalar from the inside.
+//
+// The backslash belongs here and was missing. In a double-quoted scalar `\` is the ESCAPE
+// character, so it is exactly as document-restructuring as the quote it escapes: a trailing
+// `https://git.example.com/bundle\` renders as `- "https://git.example.com/bundle\"`, the closing
+// quote is consumed as an escape, and the scalar runs on into the following lines — swallowing the
+// `destinations:` block that pins the untrusted project. A non-trailing `\q` fails differently and
+// just as fatally ("found unknown escape character"). `url.Parse` accepts both.
+//
+// Line breaks are NOT listed for values that have been through url.Parse — it already refuses every
+// ASCII control byte — but ARE listed here because this constant is also used on paths that have
+// not. Over-listing costs nothing; under-listing cost the backslash.
+const yamlDQBreakers = "\n\r\"'\\"
+
+// validatePreviewURL checks a URL rendered into a YAML double-quoted scalar, against the schemes
+// valid for that FIELD. Empty is legal when the caller documents a default; the caller decides.
+//
+// "rendered unquoted" was this comment's first claim and it was half true: `repoURL:` really was a
+// bare plain scalar in both templates while everything else in the pass got quoted. That is fixed
+// at the render sites rather than here, because a plain scalar cannot be made safe by a character
+// class — `net/url.Parse` rejects only ASCII CONTROL bytes (`b < 0x20 || b == 0x7f`), so SPACE
+// (0x20) and `#` both survive it, and `repoURL: https://git.example.com/a: b` restructures the
+// mapping while `repoURL: https://h/a #x` silently truncates to a comment.
 func validatePreviewURL(what, field, raw string, allowed []string) error {
 	u := strings.TrimSpace(raw)
 	if u == "" {
@@ -216,8 +237,8 @@ func validatePreviewURL(what, field, raw string, allowed []string) error {
 	// cannot contain colon") — so a scheme list alone silently outlawed a configuration that
 	// works. Refuse only what is KNOWN broken.
 	if scpStyleRemote.MatchString(u) && slices.Contains(allowed, "ssh") {
-		if strings.ContainsAny(u, "\"'") {
-			return fmt.Errorf("%s: %s %q contains a quote character", what, field, u)
+		if strings.ContainsAny(u, yamlDQBreakers) {
+			return fmt.Errorf("%s: %s %q contains a character that would break the YAML scalar it is rendered into", what, field, u)
 		}
 		return nil
 	}
@@ -234,11 +255,10 @@ func validatePreviewURL(what, field, raw string, allowed []string) error {
 		return fmt.Errorf("%s: %s %q has no host", what, field, u)
 	}
 	// GuardrailsRepoURL is rendered INSIDE double quotes (`sourceRepos: - "[[ . ]]"`), and
-	// url.Parse happily accepts a quote in a path — so it would terminate the scalar early and
-	// break the whole AppProject document. validatePreviewLabels already refuses quotes for the
-	// same reason.
-	if strings.ContainsAny(u, "\"'") {
-		return fmt.Errorf("%s: %s %q contains a quote character", what, field, u)
+	// url.Parse happily accepts these in a path — so they would restructure the scalar and break
+	// the whole AppProject document. validatePreviewLabels already refuses them for the same reason.
+	if strings.ContainsAny(u, yamlDQBreakers) {
+		return fmt.Errorf("%s: %s %q contains a character that would break the YAML scalar it is rendered into", what, field, u)
 	}
 	// NO explicit line-break check here, deliberately. net/url.Parse already refuses any ASCII
 	// control character — "\n", "\r" and "\t" all return an error above — so a check for them

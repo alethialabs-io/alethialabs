@@ -93,7 +93,7 @@ metadata:
   labels:
     alethia.io/preview: "true"
 [[- range .SortedLabels ]]
-    [[ .Key ]]: "[[ .Value ]]"
+    "[[ .Key ]]": "[[ .Value ]]"
 [[- end ]]
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -123,7 +123,7 @@ metadata:
   labels:
     alethia.io/preview: "true"
 [[- range .SortedLabels ]]
-    [[ .Key ]]: "[[ .Value ]]"
+    "[[ .Key ]]": "[[ .Value ]]"
 [[- end ]]
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -164,7 +164,7 @@ metadata:
   labels:
     alethia.io/preview: "true"
 [[- range .SortedLabels ]]
-    [[ .Key ]]: "[[ .Value ]]"
+    "[[ .Key ]]": "[[ .Value ]]"
 [[- end ]]
 spec:
   goTemplate: true
@@ -187,12 +187,12 @@ spec:
         alethia.io/preview: "true"
         alethia.io/preview-pr: '{{ .number }}'
 [[- range .SortedLabels ]]
-        [[ .Key ]]: "[[ .Value ]]"
+        "[[ .Key ]]": "[[ .Value ]]"
 [[- end ]]
     spec:
       project: preview-guardrails-[[ .Project ]]
       source:
-        repoURL: [[ .GuardrailsRepoURL ]]
+        repoURL: "[[ .GuardrailsRepoURL ]]"
         targetRevision: HEAD
         path: '[[ .GuardrailsPath ]]'
       destination:
@@ -298,7 +298,7 @@ func (in PreviewGuardrailsInput) validate() error {
 		// a syntax error that takes the whole guardrails document — the AppProjects constraining
 		// the untrusted half — down with it. "!*" and other globs are legal ArgoCD syntax and stay
 		// allowed, so only the two characters that restructure the document are refused.
-		if strings.ContainsAny(repo, "\n\r\"'") {
+		if strings.ContainsAny(repo, yamlDQBreakers) {
 			return fmt.Errorf("%s: app source repo %q contains a line break or a quote character", what, repo)
 		}
 	}

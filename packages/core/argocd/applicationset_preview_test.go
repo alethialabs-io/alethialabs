@@ -41,7 +41,7 @@ func TestRenderPreviewApplicationSet_Namespace(t *testing.T) {
 		"secretName: 'preview-scm-token'",
 		"requeueAfterSeconds: 60",
 		"name: 'preview-demo-{{ .number }}'", // ArgoCD placeholder, NOT Alethia-resolved
-		"repoURL: https://github.com/acme/shop",
+		`repoURL: "https://github.com/acme/shop"`,
 		"targetRevision: '{{ .head_sha }}'", // deploys the PR's head_sha
 		"path: 'deploy'",
 		"server: 'https://kubernetes.default.svc'",
@@ -49,7 +49,7 @@ func TestRenderPreviewApplicationSet_Namespace(t *testing.T) {
 		"project: preview-apps-demo", // #887: hardened project, NOT the wide-open "apps"
 		"CreateNamespace=false",      // #887: the guardrails ApplicationSet owns the namespace
 		"prune: true",
-		"alethia.io/project: \"demo\"", // label propagated
+		`"alethia.io/project": "demo"`, // label propagated
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered ApplicationSet missing %q\n---\n%s", want, out)

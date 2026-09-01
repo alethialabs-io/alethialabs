@@ -60,7 +60,7 @@ metadata:
   labels:
     alethia.io/preview: "true"
 [[- range .SortedLabels ]]
-    [[ .Key ]]: "[[ .Value ]]"
+    "[[ .Key ]]": "[[ .Value ]]"
 [[- end ]]
 spec:
   goTemplate: true
@@ -83,7 +83,7 @@ spec:
         alethia.io/preview: "true"
         alethia.io/preview-pr: '{{ .number }}'
 [[- range .SortedLabels ]]
-        [[ .Key ]]: "[[ .Value ]]"
+        "[[ .Key ]]": "[[ .Value ]]"
 [[- end ]]
     spec:
       # Untrusted PR code runs here → the hardened preview-apps AppProject (#887,
@@ -92,7 +92,7 @@ spec:
       # can't weaken its own isolation. NOT the wide-open "apps" project.
       project: preview-apps-[[ .Project ]]
       source:
-        repoURL: [[ .AppsRepoURL ]]
+        repoURL: "[[ .AppsRepoURL ]]"
         targetRevision: '{{ .head_sha }}'
         path: '[[ .AppsPath ]]'
       destination:

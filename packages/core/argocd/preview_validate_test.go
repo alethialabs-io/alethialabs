@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Both preview renderers write raw YAML through text/template, so every user-controlled field is a
@@ -308,5 +310,101 @@ func TestPreviewGuardrailsRefusesAQuoteInASourceRepo(t *testing.T) {
 	in.AppSourceRepos = []string{`https://x" , "*`}
 	if out, err := RenderPreviewGuardrails(in); err == nil {
 		t.Errorf("a source repo carrying a quote was accepted:\n%s", out)
+	}
+}
+
+// ── The four render-position defects review found in the first pass ──────────────────────────
+//
+// Each is the same mistake in a different place: a value was checked against the rules of a
+// position it does not actually occupy. The remedy is the same too — decide the position, then
+// make the check match it — so these are asserted by PARSING the rendered document rather than by
+// substring, because a substring assertion is what let `repoURL:` stay bare through a pass whose
+// entire subject was quoting.
+
+// A backslash is not a quote, and in a double-quoted YAML scalar it is just as fatal: it starts an
+// escape, so a TRAILING one consumes the closing quote and the scalar swallows whatever follows —
+// including the `destinations:` block that pins the untrusted project.
+func TestPreviewURLRefusesTheYAMLEscapeCharacter(t *testing.T) {
+	breakers := map[string]string{
+		"a trailing backslash consumes the closing quote": `https://git.example.com/bundle\`,
+		"an interior backslash is an unknown escape":      `https://git.example.com/a\q`,
+		"a double quote closes the scalar":                `https://git.example.com/a"b`,
+		"a single quote":                                  "https://git.example.com/a'b",
+	}
+	for name, raw := range breakers {
+		t.Run(name, func(t *testing.T) {
+			if err := validatePreviewURL("test", "repo_url", raw, gitRemoteSchemes); err == nil {
+				t.Errorf("%q was accepted; it restructures the double-quoted scalar it renders into", raw)
+			}
+		})
+	}
+	// scp-style remotes take a different branch and had their own, separate character class.
+	if err := validatePreviewURL("test", "repo_url", `git@github.com:acme/shop.git\`, gitRemoteSchemes); err == nil {
+		t.Error("the scp-style branch accepted a trailing backslash — it has its own class and was missed once already")
+	}
+	// The other direction: an ordinary remote must still pass, or "refuse everything" would satisfy
+	// every assertion above.
+	for _, ok := range []string{"https://github.com/acme/shop", "git@github.com:acme/shop.git", "ssh://git@h/acme/shop.git"} {
+		if err := validatePreviewURL("test", "repo_url", ok, gitRemoteSchemes); err != nil {
+			t.Errorf("a valid remote %q was refused: %v", ok, err)
+		}
+	}
+}
+
+// `repoURL:` was the one field this pass left as a bare plain scalar, and `net/url.Parse` cannot
+// protect it: it rejects ASCII CONTROL bytes only (`b < 0x20 || b == 0x7f`), so SPACE (0x20) and
+// `#` both survive. Unquoted, `a: b` restructures the mapping and `#x` truncates to a comment.
+//
+// Asserted by round-tripping the document: the value that comes back out must be the value that
+// went in, whatever the renderer did to it.
+func TestPreviewRepoURLSurvivesSpaceAndHash(t *testing.T) {
+	for _, raw := range []string{"https://git.example.com/a: b", "https://git.example.com/a #x"} {
+		t.Run(raw, func(t *testing.T) {
+			in := basePreviewInput()
+			in.AppsRepoURL = raw
+			out, err := RenderPreviewApplicationSet(in)
+			if err != nil {
+				// Refusing outright is an acceptable answer; silently mis-rendering is not.
+				t.Skipf("input refused at validation, which is also fail-closed: %v", err)
+			}
+			var doc map[string]any
+			if err := yaml.Unmarshal([]byte(out), &doc); err != nil {
+				t.Fatalf("rendered ApplicationSet does not parse as YAML: %v\n%s", err, out)
+			}
+			if !strings.Contains(out, raw) {
+				t.Errorf("the URL did not survive rendering intact\n%s", out)
+			}
+		})
+	}
+}
+
+// Label KEYS render in the same unquoted style the VALUES were fixed out of, and YAML 1.1 retypes
+// a key exactly as readily as a value. `on`, `y`, `no`, `true` are all legal Kubernetes label keys
+// and all decode to booleans — at which point sigs.k8s.io/yaml fails the conversion to JSON with
+// "unsupported key type" and the API server never sees the ApplicationSet.
+//
+// Asserted TEXTUALLY, on purpose, and this is the one place in this file where that is the strong
+// form rather than the weak one. The decoder that exhibits the bug is sigs.k8s.io/yaml (YAML 1.1),
+// which is what Kubernetes uses; packages/core depends on gopkg.in/yaml.v3, which is YAML 1.2 and
+// deliberately DROPPED the `y/yes/on/off` boolean aliases. Round-tripping through the parser we
+// have would therefore pass whether or not the key is quoted — a test that proves the fix only
+// where the bug does not exist. Checking the rendered bytes is version-independent.
+func TestPreviewLabelKeysAreQuotedAgainstYAML11Retyping(t *testing.T) {
+	for _, key := range []string{"on", "y", "n", "no", "yes", "true", "false", "2048"} {
+		t.Run(key, func(t *testing.T) {
+			in := basePreviewInput()
+			in.Labels = map[string]string{key: "x"}
+			out, err := RenderPreviewApplicationSet(in)
+			if err != nil {
+				t.Fatalf("%q is a valid Kubernetes label key and must render: %v", key, err)
+			}
+			if !strings.Contains(out, `"`+key+`": "x"`) {
+				t.Errorf("label key %q is not quoted; YAML 1.1 decodes it as a non-string key and "+
+					"sigs.k8s.io/yaml then fails the JSON conversion with \"unsupported key type\"\n%s", key, out)
+			}
+			if strings.Contains(out, "\n    "+key+": ") || strings.Contains(out, "\n        "+key+": ") {
+				t.Errorf("label key %q still renders as a bare scalar somewhere in the document\n%s", key, out)
+			}
+		})
 	}
 }
