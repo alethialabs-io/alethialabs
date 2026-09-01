@@ -48,6 +48,48 @@ describe("hetzner data-service export fixture (e2e max-config in-cluster seed)",
 		}
 	});
 
+	// #3304. Left alone, cloudpirates/rabbitmq mints `auth.password` and `auth.erlangCookie` at
+	// RENDER time: the Application is permanently OutOfSync and, with selfHeal on, rewrites both
+	// every reconcile — which partitions the cluster (the cookie is its shared secret) and breaks
+	// every client that already resolved the queue binding (the password).
+	//
+	// Read from the FIXTURE ON DISK, which is what the runner and the e2e harness actually consume.
+	// Asserting against the mapper's own output here would only prove the mapper agrees with itself.
+	it("hands every queue a runner-seeded credential and mints none itself", () => {
+		// The fixture's shape is DECLARED, not asserted onto the parse: `JSON.parse` returns `any`,
+		// and reading a spec off it would leave every field below unchecked.
+		const onDisk: {
+			addons: { id: string; values: { auth?: Record<string, unknown> } }[];
+		} = JSON.parse(readFileSync(FIXTURE, "utf8"));
+		const queues = onDisk.addons.filter((a) => a.id.startsWith("queue-"));
+		expect(queues.length).toBeGreaterThan(0);
+
+		const secretNames = new Set<unknown>();
+		for (const spec of queues) {
+			const auth = spec.values.auth;
+			if (!auth) {
+				throw new Error(
+					`${spec.id} renders no auth block — the chart is minting its own credentials again (#3304)`,
+				);
+			}
+			// The credential must exist only in the cluster. A value here is snapshot-persisted and
+			// rides a rendered manifest into the customer's cluster.
+			expect(auth.password).toBeUndefined();
+			expect(auth.erlangCookie).toBeUndefined();
+			expect(auth.existingSecret).toBe(
+				`rabbitmq-${spec.id.slice("queue-".length)}-credentials`,
+			);
+			expect(auth.existingPasswordKey).toBe("password");
+			expect(auth.existingErlangCookieKey).toBe("erlang-cookie");
+			// The username the password belongs to is stated, not left to a chart default.
+			expect(auth.username).toBe("admin");
+			secretNames.add(auth.existingSecret);
+		}
+		// One Secret per queue. A shared erlang cookie would silently merge two clusters that the
+		// canvas says are separate.
+		expect(secretNames.size).toBe(queues.length);
+	});
+
 	it("pins a fetchable chart for every spec (the bitnami rot class)", () => {
 		for (const spec of exportHetznerDataServiceFixture().addons) {
 			// bitnami-labs.github.io was renamed → its index 404s, and Broadcom relocated
