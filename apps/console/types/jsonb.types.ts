@@ -3,14 +3,22 @@
 
 // Typed JSONB shapes for the Drizzle schema's `.$type<>()` columns (lib/db/schema).
 //
-// A `Mirrors the Go X` comment below is a LOCK, not a note. `packages/core/types/jsonb_mirror_test.go`
-// holds one committed fixture per mirrored interface in `packages/core/types/testdata/jsonb/` and
-// requires three sets to be equal: the interface's properties, the fixture's keys, and the Go
-// struct's json tags. Adding, removing or renaming a property on either side alone turns that test
-// red. Most of the string unions those interfaces use are checked against the Go constant blocks
-// that define them too; `ArgocdHealthStatus` / `ArgocdSyncStatus` are the stated exception, because
-// ArgoCD's vocabulary has no declared constant set on the Go side to compare against. The fixtures
-// are hand-written — fix a failure by bringing the three into agreement, not by regenerating.
+// A `Mirrors the Go X` comment below is a LOCK, not a note.
+// `packages/core/jsonbmirror/jsonb_mirror_test.go` holds one committed fixture per mirrored
+// interface and requires three sets to be equal: the interface's properties, the fixture's keys,
+// and the Go struct's json tags. Adding, removing or renaming a property on either side alone
+// turns that test red. The fixtures are hand-written — fix a failure by bringing the three into
+// agreement, not by regenerating.
+//
+// Exactly three things in this file that name a Go type are NOT locked, and the test file lists
+// the same three:
+//   - the VALUES of `ArgocdHealthStatus` / `ArgocdSyncStatus` — ArgoCD's vocabulary is bare
+//     string literals on the Go side, with no constant set to compare against;
+//   - the VALUES of `GitopsStatusReport.mode` — `argocd.GitopsStatus.Mode` is a bare `string`;
+//   - `HelmRegistryProviderConfig`, whose claim is about what the Go providers READ, not about a
+//     struct's tags.
+// Their FIELDS are still locked where an interface carries them. Every other string union here is
+// checked against the Go constant block that defines it.
 
 import type {
 	AlertSeverity,
@@ -280,6 +288,9 @@ export * from "@repo/support/types";
 /** How a resource diverged from state (mirrors the Go `drift.Kind`). */
 export type DriftResourceKind = "modified" | "deleted" | "other";
 
+// Mirrors the Go `drift.ResourceDrift` (packages/core/drift). This is the shape on the live
+// path: `environment_drift.details` and `fabric_drift.details` are typed with it, and the canvas,
+// evidence and drift readers all go through it.
 export interface DriftDetail {
 	/** Terraform address of the drifted resource. */
 	address: string;
@@ -287,11 +298,23 @@ export interface DriftDetail {
 	type: string;
 	/** "modified" | "deleted" | "other" — how it diverged. */
 	kind: DriftResourceKind;
+	/**
+	 * The attribute PATHS that differed — never VALUES, same rule as
+	 * DriftNormalizedResource.attributes and for the same reason.
+	 *
+	 * Optional because it is genuinely absent for verdicts reached before the leaf diff
+	 * runs (a non-update action, or a change whose sides do not parse as objects). Empty
+	 * therefore means "not computed", never "nothing differed".
+	 *
+	 * This field was missing here while a second, near-identical `DriftResource` interface
+	 * carried it — the duplicate is gone and this one is locked, so they cannot diverge again.
+	 */
+	attributes?: string[];
 }
 
 /**
  * Honest structured result of a cluster-alive probe (BYOC B2) — mirrors the Go
- * `provisioner.ProbeResult` (packages/core/provisioner, built in B2.2). Stored on
+ * `provisioner.ProbeDetail` (packages/core/provisioner, built in B2.2). Stored on
  * `environment_probes.detail`; produced by a PROBE_CLUSTER job that dials the env's
  * cluster API server. Every field is optional because a probe records only what it
  * could observe: an unreachable cluster fills `error` and little else; a reachable one
@@ -860,22 +883,6 @@ export interface SecurityReport {
 	scanned: boolean;
 }
 
-// Mirrors the Go `drift.ResourceDrift` (packages/core/drift). This comment used to name
-// `drift.Posture` and explain `unmanaged_known` — a field of DriftPosture, declared below —
-// because nothing checked which Go type it sat opposite. jsonb_mirror_test.go does now.
-export interface DriftResource {
-	address: string;
-	type: string;
-	kind: DriftResourceKind;
-	// The attribute PATHS that differed — never VALUES, same rule as
-	// DriftNormalizedResource.attributes and for the same reason.
-	//
-	// Optional because it is genuinely absent for verdicts reached before the leaf diff
-	// runs (a non-update action, or a change whose sides do not parse as objects). Empty
-	// therefore means "not computed", never "nothing differed".
-	attributes?: string[];
-}
-
 // Why a refresh delta was dismissed as representational rather than counted as drift.
 // Mirrors the Go `drift.NormalizedReason` (packages/core/drift/normalize.go).
 export type DriftNormalizedReason =
@@ -900,7 +907,7 @@ export interface DriftNormalizedResource {
 export interface DriftPosture {
 	in_sync: boolean;
 	drifted: number;
-	details?: DriftResource[];
+	details?: DriftDetail[];
 	// What the detector examined and dismissed. Kept rather than dropped so the
 	// dismissal is auditable — "0 drifted" with no trace is a control that cannot be
 	// shown to have operated.
