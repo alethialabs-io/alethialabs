@@ -60,13 +60,13 @@ func activityRows(entries []api.ActivityEntry) [][]string {
 		}
 		resource := e.ResourceType
 		if e.ResourceID != "" {
-			resource += " " + truncID(e.ResourceID)
+			resource += " " + ui.TruncID(e.ResourceID)
 		}
 		reason := e.Reason
 		if reason == "" {
 			reason = ui.SymbolDash
 		}
-		rows[i] = []string{formatCreatedAt(e.Ts), actor, e.Action, resource, decisionLabel(e.Decision), reason}
+		rows[i] = []string{ui.RelativeTime(e.Ts), actor, e.Action, resource, decisionLabel(e.Decision), reason}
 	}
 	return rows
 }

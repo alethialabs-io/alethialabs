@@ -55,7 +55,7 @@ var ssoListColumns = []string{"Provider", "Domain", "Issuer", "Enabled", "ID"}
 func ssoRows(providers []api.SsoProvider) [][]string {
 	rows := make([][]string, len(providers))
 	for i, p := range providers {
-		rows[i] = []string{p.ProviderType, p.Domain, p.Issuer, yesNo(p.Enabled), p.ID}
+		rows[i] = []string{p.ProviderType, p.Domain, p.Issuer, ui.YesNo(p.Enabled), p.ID}
 	}
 	return rows
 }
@@ -110,7 +110,7 @@ func ssoFieldRows(p *api.SsoProvider) [][]string {
 		{"Provider", p.ProviderType},
 		{"Domain", p.Domain},
 		{"Issuer", p.Issuer},
-		{"Enabled", yesNo(p.Enabled)},
+		{"Enabled", ui.YesNo(p.Enabled)},
 	}
 }
 

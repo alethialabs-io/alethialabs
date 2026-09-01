@@ -58,29 +58,29 @@ func TestTokenStatusPrefersRevokedOverExpired(t *testing.T) {
 // row in the list — the one somebody minted, put somewhere wrong, and forgot — and a dash reads as
 // missing data rather than as a finding.
 func TestStampRenderingDistinguishesNeverFromAbsent(t *testing.T) {
-	if got := stampOrNever(nil); got != "never" {
+	if got := ui.StampOrNever(nil); got != "never" {
 		t.Errorf("an unused token renders %q, want \"never\"", got)
 	}
-	if got := stampOrNever(ptr("   ")); got != "never" {
+	if got := ui.StampOrNever(ptr("   ")); got != "never" {
 		t.Errorf("whitespace renders %q, want \"never\"", got)
 	}
 	// A REAL timestamp must delegate to stampOrDash rather than being swallowed by the "never" arm —
 	// otherwise a token that HAS been used would report that it never was, which is the exact
 	// distinction this pair exists to make.
 	used := "2026-08-26T09:41:00Z"
-	if got := stampOrNever(&used); got != "2026-08-26 09:41" {
+	if got := ui.StampOrNever(&used); got != "2026-08-26 09:41" {
 		t.Errorf("a used token renders %q, want the UTC minute", got)
 	}
-	if got := stampOrDash(nil); got != "—" {
+	if got := ui.StampOrDash(nil); got != "—" {
 		t.Errorf("an absent timestamp renders %q, want an em dash", got)
 	}
 	stamp := "2026-08-26T09:41:00Z"
-	if got := stampOrDash(&stamp); got != "2026-08-26 09:41" {
+	if got := ui.StampOrDash(&stamp); got != "2026-08-26 09:41" {
 		t.Errorf("stampOrDash = %q, want the UTC minute", got)
 	}
 	// An unparseable value is shown VERBATIM rather than swallowed: a reader can act on a weird
 	// string, and cannot act on a dash that hid one.
-	if got := stampOrDash(ptr("tomorrow")); got != "tomorrow" {
+	if got := ui.StampOrDash(ptr("tomorrow")); got != "tomorrow" {
 		t.Errorf("an unparseable stamp renders %q, want it verbatim", got)
 	}
 }

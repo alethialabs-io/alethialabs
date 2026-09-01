@@ -46,11 +46,11 @@ func iacRows(s *api.IacSource) [][]string {
 		{"name", s.Name},
 		{"repo", s.RepoURL},
 		{"path", s.Path},
-		{"ref", strOrDash(s.Ref)},
+		{"ref", ui.StrOrDash(s.Ref)},
 		{"enabled", fmt.Sprintf("%t", s.Enabled)},
 		{"scan", s.ScanStatus},
-		{"pinned commit", strOrDash(s.CommitSha)},
-		{"deployed commit", strOrDash(s.DeployedCommitSha)},
+		{"pinned commit", ui.StrOrDash(s.CommitSha)},
+		{"deployed commit", ui.StrOrDash(s.DeployedCommitSha)},
 		{"status", s.Status},
 	}
 }
