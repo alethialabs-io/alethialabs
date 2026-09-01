@@ -1,55 +1,88 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Shared-surface exceptions — the machine-readable half of CLAUDE.md §6.
+# Shared-surface exceptions and measured drift — the machine-readable half of CLAUDE.md §6.
 #
 # §6: "if two pages disagree about how something looks or reads, the user is being told the product
 # is two products." `check:shared-surface` (scripts/check-shared-surface.mjs) fails on any console
-# site that hand-rolls a number, a date or a page title instead of reaching for `@repo/format` or
-# `@repo/ui/page-header`, unless it is listed here.
+# site that hand-rolls a number, a date, a heading, an empty state, a stat strip, a stacking level
+# or a table instead of reaching for `@repo/format`, `@repo/ui/page-header`, `@repo/ui/empty`,
+# `@repo/ui/status-badge`, a `--z-*` token or `DataTable`, unless it is listed here.
 #
-# An entry is a DECISION, not a mute button. Each one states why THIS surface is a different thing
-# from the one the shared component is for — a display heading on a marketing-shaped page, an
-# accessibility landmark, a quantity the package has no opinion about. Never "we haven't got to it
-# yet": work not yet done belongs on the board as an issue, where it stays visible. An exclusion
-# says we are not going to do it, and the guard prints it to anyone who trips over it.
+# TWO KINDS OF ENTRY, and the file says which. They are counted separately, and neither can be
+# spent as the other — converting one into the other is a diff, which is the point.
 #
-# The list is SHRINK-ONLY. `baseline` is the entry count the guard ratchets against: adding an
-# entry without raising it is refused, and so is a shrink that is not recorded, so a win cannot be
+#   reason:  A DECISION. This surface is genuinely a different thing from the one the shared
+#            component is for — a display heading on a marketing-shaped page, an accessibility
+#            landmark, a quantity the package has no opinion about. NEVER "we haven't got to it
+#            yet". An exclusion says we are not going to do it, and the guard prints it to anyone
+#            who trips over it. Counted against `baseline`.
+#
+#   lifts:   DEBT. Measured drift that is going to be fixed, recorded per file and per occurrence
+#            so it can only shrink, and naming the board issue that removes it — quoted, because a
+#            bare `#` opens a comment in every YAML reader that is not the guard's own. Counted
+#            against `debt`.
+#
+# Why the second kind exists, since the first kind's rule ("never 'we haven't got to it yet'") is
+# right and stays: on its own it is also a rule that stops a guard from ever being ADDED to a
+# surface that has already drifted. The six rules added in #3615 were measured on an unmodified
+# `dev` and found 88 occurrences across 71 files, and there is no honest sentence in the product's
+# voice that calls any of them a different thing. Writing 71 fake decisions would empty the word
+# "decision" of meaning — the eleven `page_header` reasons below are worth reading precisely
+# because none of them is that. Leaving the guard red would mean it never lands, which is how the
+# drift reached 88 unseen. So the drift is written down where it can only shrink, and every row
+# says which issue takes it away. Work not yet done still belongs on the board, and here it is
+# ON the board: #3613's conformance lanes, one per console area.
+#
+# BOTH ledgers are SHRINK-ONLY and both are checked in BOTH directions: adding a row without
+# raising the number is refused, and so is a shrink that is not recorded, so a win cannot be
 # quietly spent later. Be clear about what that does and does not mechanise: the guard compares
-# `baseline` against the entry count in THIS file, so raising the number and adding an entry in one
-# commit passes. The shrink-only property is enforced by REVIEW — the same way the checked-in
-# coverage floors are. A `baseline` that goes up in a diff is the thing to stop.
+# each number against the rows in THIS file, so raising it and adding a row in one commit passes.
+# The shrink-only property is enforced by REVIEW — the same way the checked-in coverage floors
+# are. A `baseline` or a `debt` that goes UP in a diff is the thing to stop.
 #
-# `hits` is the same ratchet one level down — an exception is granted per OCCURRENCE, not per file,
-# so a new `<h1>` in an allowlisted file is new drift.
+# `hits` is the same ratchet one level down — granted per OCCURRENCE, not per file, so a new
+# `<h2>` in a file already carrying two is new drift.
 #
 # Fields:
 #   path    — repo-relative, exactly as the guard prints it. One entry per file per section; a
 #             second entry for the same path is a parse error, because it would be a free entry
-#             against `baseline` with only one of its two reasons being the recorded decision.
+#             against a ledger with only one of its two notes being the recorded one.
 #   hits    — how many occurrences this entry covers. The guard fails if the file has more OR
 #             fewer, which is also its live proof that the matcher still matches.
 #   reason  — one line, in the product's voice: what a USER gets from this surface being different,
 #             not what the code does. The guard prints it verbatim with either `hits` failure.
+#   lifts   — one quoted line starting `#<issue>`: the board issue that removes this drift, and
+#             what is here. Printed the same way, so whoever trips over it knows where it is owed.
 #
-# THREE sections. A section this file invents is a parse error, never a silently ignored block of
+# THE SECTIONS. A section this file invents is a parse error, never a silently ignored block of
 # exceptions.
-#   format:       — @repo/format. `toFixed(`, `toLocaleDateString`, `toLocaleTimeString`, a literal
-#                   `$` before an interpolation, and `/ 1024`. `scripts/check-shared-surface.mjs`
-#                   states which console directories each of those reaches.
-#   page_header:  — @repo/ui/page-header. A raw `<h1>` in app/(private)/** or components/**.
-#   scanned:      — NOT exceptions. One census floor per scope the guard declares: the fewest
-#                   files that scope may examine before the run is refused. It is the ONLY control
-#                   that notices a root being DELETED from the guard's own scope declaration — the
-#                   per-root vacuity check is built from that list, so a removed root has no row
-#                   left to be zero, and the guard printed a clean tree over 299 unread route
-#                   files. This ratchet runs the OPPOSITE way to `baseline`: files only grow, so
-#                   the number may be raised freely and a DROP is the thing review stops. The
-#                   floors sit a few percent under the live count so an ordinary refactor need not
-#                   touch them.
+#   format:          — @repo/format. `toFixed(`, `toLocaleDateString`, `toLocaleTimeString`, a
+#                      literal `$` before an interpolation, `/ 1024`, an interpolation glued
+#                      directly onto a `toLocaleString`, and a currency symbol passed as a prop.
+#   page_header:     — @repo/ui/page-header. A raw `<h1>` in app/(private)/** or components/**.
+#   section_header:  — @repo/ui/page-header with `level`. A raw `<h2>` or `<h3>`, same scope. Kept
+#                      apart from `page_header:` so a file's `<h1>` decision and its `<h2>` debt
+#                      cannot merge into one entry carrying only one of the two notes.
+#   empty_state:     — @repo/ui/empty. One class string carrying `text-center` and `py-6`…`py-16`.
+#   stat_strip:      — §6's "No stat-card strips": a container opening onto a `<Stat`, and the
+#                      `Stat` cell primitive itself.
+#   layer_token:     — a `--z-*` token. A raw stacking level of 40 or more, which is the gap
+#                      packages/brand/src/tokens.css leaves empty between its in-flow lifts and
+#                      the page chrome.
+#   data_table:      — DataTable, or @repo/ui/table. A grid used as a table, and a raw `<table>`.
+#   scanned:         — NOT entries. One census floor per scope the guard declares: the fewest
+#                      files that scope may examine before the run is refused. It is the ONLY
+#                      control that notices a root being DELETED from the guard's own scope
+#                      declaration — the per-root vacuity check is built from that list, so a
+#                      removed root has no row left to be zero, and the guard printed a clean tree
+#                      over 299 unread route files. This ratchet runs the OPPOSITE way to the two
+#                      above: files only grow, so the number may be raised freely and a DROP is
+#                      the thing review stops. The floors sit a few percent under the live count
+#                      so an ordinary refactor need not touch them.
 
 baseline: 15
+debt: 71
 
 scanned:
   - scope: console_code
@@ -72,6 +105,13 @@ format:
   - path: apps/console/components/agent/widgets/bodies/blocks.tsx
     hits: 2
     reason: SVG path coordinates for a sparkline — geometry the browser reads, never a number a person does.
+  # --- debt: measured 2026-09-01 on an unmodified dev, by #3615's two new money matchers.
+  - path: apps/console/components/agent/approval-card.tsx
+    hits: 1
+    lifts: "#3623 — the agent surface adopts the shared surface: 1 money site here writes the currency symbol somewhere other than next to the number."
+  - path: apps/console/components/billing/billing-checkout-form.tsx
+    hits: 1
+    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 money site here writes the currency symbol somewhere other than next to the number."
 
 page_header:
   - path: apps/console/components/auth/auth-form.tsx
@@ -107,3 +147,225 @@ page_header:
   - path: apps/console/components/errors/error-state.tsx
     hits: 1
     reason: An error boundary is not a page header — it replaces the page, and its heading has to size itself to whether it is filling the screen or sitting inside a panel.
+
+section_header:
+  # --- debt only: 41 raw <h2>/<h3> across 36 files, measured 2026-09-01 on an unmodified dev.
+  - path: apps/console/app/(private)/[org]/~/runners/runners-client.tsx
+    hits: 1
+    lifts: "#3619 — the page frame is rebuilt: 1 raw section heading here."
+  - path: apps/console/components/ai-elements/conversation.tsx
+    hits: 1
+    lifts: "#3623 — the agent surface adopts the shared surface: 1 raw section heading here."
+  - path: apps/console/components/ai-elements/prompt-input.tsx
+    hits: 1
+    lifts: "#3623 — the agent surface adopts the shared surface: 1 raw section heading here."
+  - path: apps/console/components/billing/plan-picker.tsx
+    hits: 1
+    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/classification/classification-manager.tsx
+    hits: 1
+    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/classification/dimension-detail.tsx
+    hits: 1
+    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/classification/value-drill-drawer.tsx
+    hits: 1
+    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/clusters/cluster-card.tsx
+    hits: 1
+    lifts: "#3622 — alerts, environments and clusters adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/connectors/connector-detail-sheet.tsx
+    hits: 2
+    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 2 raw section headings here."
+  - path: apps/console/components/connectors/connectors-page.tsx
+    hits: 1
+    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/create-project/configure-project.tsx
+    hits: 1
+    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/create-project/repo-import-panel.tsx
+    hits: 1
+    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/design-project/canvas/env-settings-sheet.tsx
+    hits: 2
+    lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 2 raw section headings here."
+  - path: apps/console/components/environments/consistency-matrix.tsx
+    hits: 1
+    lifts: "#3622 — alerts, environments and clusters adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/environments/environments-view.tsx
+    hits: 1
+    lifts: "#3622 — alerts, environments and clusters adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/environments/promotions-history.tsx
+    hits: 1
+    lifts: "#3622 — alerts, environments and clusters adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/evidence/evidence-client.tsx
+    hits: 1
+    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/evidence/evidence-waivers.tsx
+    hits: 1
+    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/onboarding/setup-guide.tsx
+    hits: 1
+    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/runners/add-runner-dialog.tsx
+    hits: 1
+    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/runners/pool-card.tsx
+    hits: 1
+    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/settings/activity/activity-feed.tsx
+    hits: 1
+    lifts: "#3620 — settings adopts the shared surface: 1 raw section heading here."
+  - path: apps/console/components/settings/activity/activity-log.tsx
+    hits: 1
+    lifts: "#3620 — settings adopts the shared surface: 1 raw section heading here."
+  - path: apps/console/components/settings/billing/billing-panel.tsx
+    hits: 2
+    lifts: "#3620 — settings adopts the shared surface: 2 raw section headings here."
+  - path: apps/console/components/settings/settings-card.tsx
+    hits: 1
+    lifts: "#3620 — settings adopts the shared surface: 1 raw section heading here."
+  - path: apps/console/components/settings/settings-ui.tsx
+    hits: 1
+    lifts: "#3620 — settings adopts the shared surface: 1 raw section heading here."
+  - path: apps/console/components/settings/upgrade/feature-upsell.tsx
+    hits: 1
+    lifts: "#3620 — settings adopts the shared surface: 1 raw section heading here."
+  - path: apps/console/components/settings/usage/usage-panel.tsx
+    hits: 2
+    lifts: "#3628 — the usage pages are rebuilt: 2 raw section headings here."
+  - path: apps/console/components/support/submit/steps/step-category.tsx
+    hits: 1
+    lifts: "#3625 — support adopts the shared surface: 1 raw section heading here."
+  - path: apps/console/components/support/submit/steps/step-contact.tsx
+    hits: 1
+    lifts: "#3625 — support adopts the shared surface: 1 raw section heading here."
+  - path: apps/console/components/support/submit/steps/step-details.tsx
+    hits: 1
+    lifts: "#3625 — support adopts the shared surface: 1 raw section heading here."
+  - path: apps/console/components/support/submit/steps/step-severity.tsx
+    hits: 1
+    lifts: "#3625 — support adopts the shared surface: 1 raw section heading here."
+  - path: apps/console/components/support/submit/steps/step-type.tsx
+    hits: 1
+    lifts: "#3625 — support adopts the shared surface: 1 raw section heading here."
+  - path: apps/console/components/support/support-card.tsx
+    hits: 1
+    lifts: "#3625 — support adopts the shared surface: 1 raw section heading here."
+  - path: apps/console/components/support/support-topics.tsx
+    hits: 2
+    lifts: "#3629 — the support hub is rebuilt: 2 raw section headings here."
+  - path: apps/console/components/support/support-whats-new.tsx
+    hits: 1
+    lifts: "#3629 — the support hub is rebuilt: 1 raw section heading here."
+
+empty_state:
+  # --- debt only: 33 hand-rolled centred empty states across 24 files, six different heights.
+  - path: apps/console/app/(private)/[org]/~/runners/runners-client.tsx
+    hits: 2
+    lifts: "#3619 — the page frame is rebuilt: 2 hand-rolled empty states here."
+  - path: apps/console/components/agent/agent-artifact-gallery.tsx
+    hits: 3
+    lifts: "#3623 — the agent surface adopts the shared surface: 3 hand-rolled empty states here."
+  - path: apps/console/components/agent/agent-artifact-viewer.tsx
+    hits: 1
+    lifts: "#3623 — the agent surface adopts the shared surface: 1 hand-rolled empty state here."
+  - path: apps/console/components/agent/agent-knowledge-panel.tsx
+    hits: 2
+    lifts: "#3623 — the agent surface adopts the shared surface: 2 hand-rolled empty states here."
+  - path: apps/console/components/agent/build-pane.tsx
+    hits: 1
+    lifts: "#3623 — the agent surface adopts the shared surface: 1 hand-rolled empty state here."
+  - path: apps/console/components/agent/deploy-pane.tsx
+    hits: 1
+    lifts: "#3623 — the agent surface adopts the shared surface: 1 hand-rolled empty state here."
+  - path: apps/console/components/agent/elench/elench-empty-landing.tsx
+    hits: 1
+    lifts: "#3623 — the agent surface adopts the shared surface: 1 hand-rolled empty state here."
+  - path: apps/console/components/agent/thread-rail.tsx
+    hits: 1
+    lifts: "#3623 — the agent surface adopts the shared surface: 1 hand-rolled empty state here."
+  - path: apps/console/components/agent/widgets/widget-grid.tsx
+    hits: 1
+    lifts: "#3623 — the agent surface adopts the shared surface: 1 hand-rolled empty state here."
+  - path: apps/console/components/alerts/activity-panel.tsx
+    hits: 1
+    lifts: "#3622 — alerts, environments and clusters adopt the shared surface: 1 hand-rolled empty state here."
+  - path: apps/console/components/classification/value-drill-drawer.tsx
+    hits: 2
+    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 2 hand-rolled empty states here."
+  - path: apps/console/components/design-project/byo/byo-iac-dialog.tsx
+    hits: 1
+    lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 1 hand-rolled empty state here."
+  - path: apps/console/components/design-project/byo/chart-scan-sheet.tsx
+    hits: 2
+    lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 2 hand-rolled empty states here."
+  - path: apps/console/components/design-project/byo/iac-scan-sheet.tsx
+    hits: 2
+    lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 2 hand-rolled empty states here."
+  - path: apps/console/components/design-project/canvas/inspector/collection-panel.tsx
+    hits: 1
+    lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 1 hand-rolled empty state here."
+  - path: apps/console/components/overview/alerts-card.tsx
+    hits: 2
+    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 2 hand-rolled empty states here."
+  - path: apps/console/components/overview/recent-jobs-card.tsx
+    hits: 2
+    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 2 hand-rolled empty states here."
+  - path: apps/console/components/plan/plan-tab.tsx
+    hits: 1
+    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 hand-rolled empty state here."
+  - path: apps/console/components/project-switcher.tsx
+    hits: 1
+    lifts: "#3619 — the page frame is rebuilt: 1 hand-rolled empty state here."
+  - path: apps/console/components/runners/add-runner-dialog.tsx
+    hits: 1
+    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 hand-rolled empty state here."
+  - path: apps/console/components/runners/pool-card.tsx
+    hits: 1
+    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 hand-rolled empty state here."
+  - path: apps/console/components/settings/activity/activity-feed.tsx
+    hits: 1
+    lifts: "#3620 — settings adopts the shared surface: 1 hand-rolled empty state here."
+  - path: apps/console/components/settings/roles/roles-manager.tsx
+    hits: 1
+    lifts: "#3620 — settings adopts the shared surface: 1 hand-rolled empty state here."
+  - path: apps/console/components/settings/upgrade/feature-upsell.tsx
+    hits: 1
+    lifts: "#3620 — settings adopts the shared surface: 1 hand-rolled empty state here."
+
+stat_strip:
+  # --- debt only: four strips and the two Stat cell primitives they are built from.
+  - path: apps/console/components/agent/approval-card.tsx
+    hits: 2
+    lifts: "#3623 — the agent surface adopts the shared surface: one strip, plus the local `Stat` cell primitive it is built from."
+  - path: apps/console/components/settings/usage/project-usage-panel.tsx
+    hits: 2
+    lifts: "#3628 — the usage pages are rebuilt: 2 stat-strip sites here."
+  - path: apps/console/components/settings/usage/usage-panel.tsx
+    hits: 1
+    lifts: "#3628 — the usage pages are rebuilt: 1 stat-strip site here."
+  - path: apps/console/components/settings/usage/usage-primitives.tsx
+    hits: 1
+    lifts: "#3628 — the usage pages are rebuilt: the settings `Stat` cell primitive both usage strips are built from."
+
+layer_token:
+  # --- debt only: the two raw stacking levels in the gap the token scale leaves empty.
+  - path: apps/console/components/design-project/canvas/inspector/config-fields.tsx
+    hits: 1
+    lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 1 raw stacking level here."
+  - path: apps/console/components/onboarding/setup-guide.tsx
+    hits: 1
+    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw stacking level here."
+
+data_table:
+  # --- debt only: three grid-as-table sites in two files, plus the console's one raw <table>.
+  - path: apps/console/components/alerts/activity-panel.tsx
+    hits: 2
+    lifts: "#3622 — alerts, environments and clusters adopt the shared surface: 2 grid-as-table sites here."
+  - path: apps/console/components/alerts/event-matrix.tsx
+    hits: 1
+    lifts: "#3622 — alerts, environments and clusters adopt the shared surface: 1 grid-as-table site here."
+  - path: apps/console/components/environments/consistency-matrix.tsx
+    hits: 1
+    lifts: "#3622 — alerts, environments and clusters adopt the shared surface: the console's one raw <table>, which agrees with no other table about its header type or its row rule."
