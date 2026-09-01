@@ -41,7 +41,17 @@ import (
 // the prefix cannot use the whole 63-character label budget. Eight characters are reserved for a
 // hyphen plus a seven-digit PR number — comfortably past any real repository, and a bound that is
 // stated rather than discovered when a namespace creation fails.
-const previewPrefixMaxLen = dns1123LabelMaxLen - 8
+const previewPrefixMaxLen = dns1123LabelMaxLen - previewNumberSuffixLen
+
+// previewNumberSuffixLen is what `-{{ .number }}` costs: a hyphen plus a seven-digit PR number,
+// comfortably past any real repository.
+const previewNumberSuffixLen = 8
+
+// previewLongestNamePrefix is the longest literal a project slug is rendered behind. The two
+// renderers between them emit `preview-<p>`, `preview-apps-<p>` and `preview-guardrails-<p>`, and
+// the last is 19 characters — an earlier bound reserved for `preview-apps-` (13) and so let a
+// 50-character slug through, which RenderPreviewGuardrails then emitted as a 69-character name.
+const previewLongestNamePrefix = len("preview-guardrails-")
 
 // A Kubernetes label VALUE: at most 63 characters, alphanumeric at both ends, with '-', '_' and
 // '.' allowed inside. Empty is also legal, which the caller handles separately.
@@ -71,11 +81,12 @@ func validatePreviewProject(what, project string) error {
 	if p == "" {
 		return fmt.Errorf("%s: project is required", what)
 	}
-	// `preview-<project>` and `preview-apps-<project>` must both be valid names, so the slug gets
-	// the label budget minus the longer of the two prefixes.
-	if len(p)+len("preview-apps-") > dns1123LabelMaxLen {
-		return fmt.Errorf("%s: project %q is too long — `preview-apps-%s` exceeds the %d-character Kubernetes name limit",
-			what, p, p, dns1123LabelMaxLen)
+	// The slug is rendered behind a prefix AND in front of `-{{ .number }}`, on both halves. The
+	// budget has to cover the worst of each: `preview-guardrails-<slug>-<7 digits>`. Reserving for
+	// only the prefix accepted values that blow the very limit the error message names.
+	if budget := dns1123LabelMaxLen - previewLongestNamePrefix - previewNumberSuffixLen; len(p) > budget {
+		return fmt.Errorf("%s: project %q is %d characters; at most %d, so `preview-guardrails-%s-<pr number>` still fits Kubernetes' %d-character limit",
+			what, p, len(p), budget, p, dns1123LabelMaxLen)
 	}
 	if !dns1123Label.MatchString(p) {
 		return fmt.Errorf("%s: project %q is not a valid DNS-1123 label (lowercase alphanumerics and '-', starting and ending alphanumeric)", what, p)
@@ -181,6 +192,10 @@ func validatePreviewClusterName(what, name string) error {
 // gitRemoteSchemes are the transports ArgoCD can clone a repository over.
 var gitRemoteSchemes = []string{"https", "ssh", "git", "http"}
 
+// scpStyleRemote matches `user@host:path` — git's scp-like syntax, which carries no scheme.
+// Anchored and deliberately narrow: no whitespace, no quote, and a non-empty path.
+var scpStyleRemote = regexp.MustCompile(`^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[A-Za-z0-9._/~-]+$`)
+
 // apiServerSchemes are the transports a Kubernetes API server is reachable over.
 //
 // Deliberately NOT the git set. An earlier cut of this file used one validator for both and so
@@ -196,6 +211,16 @@ func validatePreviewURL(what, field, raw string, allowed []string) error {
 	if u == "" {
 		return nil
 	}
+	// scp-style remotes (`git@github.com:acme/shop.git`) are the normal form for deploy-key access
+	// and ArgoCD accepts them, but url.Parse refuses them outright ("first path segment in URL
+	// cannot contain colon") — so a scheme list alone silently outlawed a configuration that
+	// works. Refuse only what is KNOWN broken.
+	if scpStyleRemote.MatchString(u) && slices.Contains(allowed, "ssh") {
+		if strings.ContainsAny(u, "\"'") {
+			return fmt.Errorf("%s: %s %q contains a quote character", what, field, u)
+		}
+		return nil
+	}
 	parsed, err := url.Parse(u)
 	if err != nil {
 		return fmt.Errorf("%s: %s %q is not a valid URL: %w", what, field, u, err)
@@ -207,6 +232,13 @@ func validatePreviewURL(what, field, raw string, allowed []string) error {
 	// rendered unquoted, so a hostless value would emit a bare `repoURL: https:` into the document.
 	if parsed.Host == "" {
 		return fmt.Errorf("%s: %s %q has no host", what, field, u)
+	}
+	// GuardrailsRepoURL is rendered INSIDE double quotes (`sourceRepos: - "[[ . ]]"`), and
+	// url.Parse happily accepts a quote in a path — so it would terminate the scalar early and
+	// break the whole AppProject document. validatePreviewLabels already refuses quotes for the
+	// same reason.
+	if strings.ContainsAny(u, "\"'") {
+		return fmt.Errorf("%s: %s %q contains a quote character", what, field, u)
 	}
 	// NO explicit line-break check here, deliberately. net/url.Parse already refuses any ASCII
 	// control character — "\n", "\r" and "\t" all return an error above — so a check for them

@@ -54,9 +54,9 @@ func TestRenderPreviewGuardrails_GuardrailsAppSet(t *testing.T) {
 		"name: preview-guardrails-demo",
 		"- pullRequest:",
 		"github:",
-		"owner: acme",
-		"repo: shop",
-		"secretName: preview-scm-token",
+		"owner: 'acme'",
+		"repo: 'shop'",
+		"secretName: 'preview-scm-token'",
 		"name: 'preview-guardrails-demo-{{ .number }}'", // ArgoCD placeholder, NOT Alethia-resolved
 		"project: preview-guardrails-demo",
 		"repoURL: https://github.com/alethialabs-io/alethialabs",
@@ -155,7 +155,7 @@ func TestRenderPreviewGuardrails_Vcluster(t *testing.T) {
 			t.Errorf("vcluster guardrails missing %q\n---\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "server: https://kubernetes.default.svc") {
+	if strings.Contains(out, "server: 'https://kubernetes.default.svc'") {
 		t.Errorf("vcluster placement should not emit a server destination:\n%s", out)
 	}
 }

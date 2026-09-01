@@ -106,7 +106,7 @@ spec:
     - name: "[[ .VClusterName ]]-*"
       namespace: "[[ .NamespacePrefix ]]"
 [[- else ]]
-    - server: [[ .DestServerOrDefault ]]
+    - server: '[[ .DestServerOrDefault ]]'
       namespace: "[[ .NamespacePrefix ]]-*"
 [[- end ]]
   clusterResourceWhitelist:
@@ -138,7 +138,7 @@ spec:
     - name: "[[ .VClusterName ]]-*"
       namespace: "[[ .NamespacePrefix ]]"
 [[- else ]]
-    - server: [[ .DestServerOrDefault ]]
+    - server: '[[ .DestServerOrDefault ]]'
       namespace: "[[ .NamespacePrefix ]]-*"
 [[- end ]]
   clusterResourceWhitelist: []
@@ -172,11 +172,11 @@ spec:
   generators:
     - pullRequest:
         [[ .GitProvider ]]:
-          owner: [[ .RepoOwner ]]
-          repo: [[ .RepoName ]]
+          owner: '[[ .RepoOwner ]]'
+          repo: '[[ .RepoName ]]'
 [[- if .TokenSecretRef ]]
           tokenRef:
-            secretName: [[ .TokenSecretRef ]]
+            secretName: '[[ .TokenSecretRef ]]'
             key: token
 [[- end ]]
         requeueAfterSeconds: 60
@@ -200,7 +200,7 @@ spec:
         name: '[[ .VClusterName ]]-{{ .number }}'
         namespace: '[[ .NamespacePrefix ]]'
 [[- else ]]
-        server: [[ .DestServerOrDefault ]]
+        server: '[[ .DestServerOrDefault ]]'
         namespace: '[[ .NamespacePrefix ]]-{{ .number }}'
 [[- end ]]
       syncPolicy:
@@ -293,10 +293,13 @@ func (in PreviewGuardrailsInput) validate() error {
 		return err
 	}
 	for _, repo := range in.AppSourceRepos {
-		// An entry is rendered into the AppProject's sourceRepos list. "!*" and other globs are
-		// legal ArgoCD syntax, so only a line break — which would add list entries — is refused.
-		if strings.ContainsAny(repo, "\n\r") {
-			return fmt.Errorf("%s: app source repo %q contains a line break", what, repo)
+		// An entry renders INSIDE DOUBLE QUOTES (`sourceRepos:\n  - "[[ . ]]"`). A line break adds
+		// list entries; a quote terminates the scalar early and leaves trailing content, which is
+		// a syntax error that takes the whole guardrails document — the AppProjects constraining
+		// the untrusted half — down with it. "!*" and other globs are legal ArgoCD syntax and stay
+		// allowed, so only the two characters that restructure the document are refused.
+		if strings.ContainsAny(repo, "\n\r\"'") {
+			return fmt.Errorf("%s: app source repo %q contains a line break or a quote character", what, repo)
 		}
 	}
 
@@ -330,6 +333,23 @@ type previewGuardrailsData struct {
 // string, the in-cluster default destination, the namespace-prefix default, and a fail-closed
 // sourceRepos allowlist for the untrusted app project).
 func (in PreviewGuardrailsInput) templateData() previewGuardrailsData {
+	// Every shape guard judges the TRIMMED value, so the template must render the trimmed one too.
+	// Without this, `Project = "\ndemo"` passes validatePreviewProject (it trims to a valid label)
+	// and then renders `name: preview-` followed by `demo` at column 0 — the half-formed manifest
+	// validate() exists to prevent. vcluster_app.go:204 writes the trimmed value back for the same
+	// reason; this renderer did it only as an emptiness test.
+	in.Project = strings.TrimSpace(in.Project)
+	in.GitProvider = strings.TrimSpace(in.GitProvider)
+	in.RepoOwner = strings.TrimSpace(in.RepoOwner)
+	in.RepoName = strings.TrimSpace(in.RepoName)
+	in.TokenSecretRef = strings.TrimSpace(in.TokenSecretRef)
+	in.NamespacePrefix = strings.TrimSpace(in.NamespacePrefix)
+	in.VClusterName = strings.TrimSpace(in.VClusterName)
+	in.DestServer = strings.TrimSpace(in.DestServer)
+
+	in.GuardrailsRepoURL = strings.TrimSpace(in.GuardrailsRepoURL)
+	in.GuardrailsPath = strings.TrimSpace(in.GuardrailsPath)
+
 	prefix := in.NamespacePrefix
 	if strings.TrimSpace(prefix) == "" {
 		prefix = "preview"

@@ -85,6 +85,12 @@ var previewRejects = map[string]func(*PreviewAppSetInput){
 	},
 	// `https:` parses with a scheme and an empty host, so the scheme check alone lets it through.
 	"dest server has no host": func(in *PreviewAppSetInput) { in.DestServer = "https:" },
+	// A quote terminates the scalar in the double-quoted render positions.
+	"apps repo URL contains a quote": func(in *PreviewAppSetInput) { in.AppsRepoURL = `https://x/a"b` },
+	// The slug is rendered behind `preview-guardrails-` AND in front of `-<pr number>`.
+	"project leaves no room for prefix and suffix": func(in *PreviewAppSetInput) {
+		in.Project = strings.Repeat("a", 37)
+	},
 	// A destination is a Kubernetes API server, so the git transports are NOT valid there even
 	// though they are valid for a repository URL.
 	"dest server uses a git transport": func(in *PreviewAppSetInput) { in.DestServer = "ssh://cluster.internal" },
@@ -107,11 +113,17 @@ var previewAccepts = map[string]func(*PreviewAppSetInput){
 	"empty dest server defaults":          func(in *PreviewAppSetInput) { in.DestServer = "" },
 	"an ssh apps repo URL":                func(in *PreviewAppSetInput) { in.AppsRepoURL = "ssh://git@github.com/acme/shop.git" },
 	"a git:// apps repo URL":              func(in *PreviewAppSetInput) { in.AppsRepoURL = "git://github.com/acme/shop.git" },
-	"an explicit https dest server":       func(in *PreviewAppSetInput) { in.DestServer = "https://api.cluster.internal" },
-	"a repo name with punctuation":        func(in *PreviewAppSetInput) { in.RepoOwner = "a-c_m.e"; in.RepoName = "shop.js" },
-	"a prefixed label key":                func(in *PreviewAppSetInput) { in.Labels = map[string]string{"alethia.io/project": "demo"} },
-	"an empty label value":                func(in *PreviewAppSetInput) { in.Labels = map[string]string{"alethia.io/x": ""} },
-	"a label value at the limit":          func(in *PreviewAppSetInput) { in.Labels = map[string]string{"a": strings.Repeat("v", 63)} },
+	// scp-style is the normal deploy-key form and ArgoCD accepts it; url.Parse does not.
+	"an scp-style git remote":       func(in *PreviewAppSetInput) { in.AppsRepoURL = "git@github.com:acme/shop.git" },
+	"a project at the exact budget": func(in *PreviewAppSetInput) { in.Project = strings.Repeat("a", 36) },
+	// YAML 1.1 retypes these, so they must survive as strings — see the render test below.
+	"a repo named like a number":    func(in *PreviewAppSetInput) { in.RepoName = "2048" },
+	"an owner named like a boolean": func(in *PreviewAppSetInput) { in.RepoOwner = "on" },
+	"an explicit https dest server": func(in *PreviewAppSetInput) { in.DestServer = "https://api.cluster.internal" },
+	"a repo name with punctuation":  func(in *PreviewAppSetInput) { in.RepoOwner = "a-c_m.e"; in.RepoName = "shop.js" },
+	"a prefixed label key":          func(in *PreviewAppSetInput) { in.Labels = map[string]string{"alethia.io/project": "demo"} },
+	"an empty label value":          func(in *PreviewAppSetInput) { in.Labels = map[string]string{"alethia.io/x": ""} },
+	"a label value at the limit":    func(in *PreviewAppSetInput) { in.Labels = map[string]string{"a": strings.Repeat("v", 63)} },
 }
 
 func TestPreviewApplicationSetRefusesUnsafeShapes(t *testing.T) {
@@ -228,5 +240,73 @@ func TestPreviewRenderersShareTheAppsPathGuard(t *testing.T) {
 		if !strings.Contains(err.Error(), "normalises to") {
 			t.Errorf("refusal does not carry ValidateAppsPath's normalised-form contract: %v", err)
 		}
+	}
+}
+
+// A repo called "2048" is a real GitHub repository, and `on`/`no`/`y` are real owner names.
+// Kubernetes decodes manifests through sigs.k8s.io/yaml, which is YAML 1.1: an unquoted `2048`
+// becomes a float and an unquoted `on` becomes a boolean, while the ApplicationSet CRD declares
+// both fields string — so the API server rejects the object. The values are legal, so the fix is
+// to quote the render positions rather than to refuse the names.
+func TestPreviewRenderQuotesScalarsYAML11WouldRetype(t *testing.T) {
+	in := basePreviewInput()
+	in.RepoOwner = "on"
+	in.RepoName = "2048"
+	in.TokenSecretRef = "true"
+	out, err := RenderPreviewApplicationSet(in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{"owner: 'on'", "repo: '2048'", "secretName: 'true'"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered manifest missing %q — an unquoted value here is retyped by YAML 1.1\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"owner: on\n", "repo: 2048\n", "secretName: true\n"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("rendered manifest still carries the bare scalar %q", unwanted)
+		}
+	}
+}
+
+// The shape guards judge TrimSpace(x); the templates must render the trimmed value too, or a
+// leading newline passes validation and then breaks the document it was validated for.
+func TestPreviewRenderTrimsWhatItValidated(t *testing.T) {
+	in := basePreviewInput()
+	in.Project = "\ndemo"
+	in.RepoOwner = "  acme  "
+	in.RepoName = "\tshop"
+	in.NamespacePrefix = " preview "
+	in.TokenSecretRef = " preview-scm-token\n"
+	out, err := RenderPreviewApplicationSet(in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		"name: preview-demo",
+		"owner: 'acme'",
+		"repo: 'shop'",
+		"namespace: 'preview-{{ .number }}'",
+		"secretName: 'preview-scm-token'",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered manifest missing %q — a field was rendered untrimmed\n%s", want, out)
+		}
+	}
+	// And nothing landed at column 0, which is what an untrimmed leading newline produces.
+	for _, line := range strings.Split(out, "\n") {
+		if line == "demo" || line == "shop" || line == "acme" {
+			t.Errorf("a field value landed at column 0 — the value was rendered untrimmed:\n%s", out)
+		}
+	}
+}
+
+// The guardrails sourceRepos entries render inside DOUBLE quotes, so a quote in an entry
+// terminates the scalar and breaks the AppProject that constrains the untrusted half.
+func TestPreviewGuardrailsRefusesAQuoteInASourceRepo(t *testing.T) {
+	in := basePreviewGuardrailsInput()
+	in.AppSourceRepos = []string{`https://x" , "*`}
+	if out, err := RenderPreviewGuardrails(in); err == nil {
+		t.Errorf("a source repo carrying a quote was accepted:\n%s", out)
 	}
 }

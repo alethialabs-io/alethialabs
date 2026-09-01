@@ -68,11 +68,11 @@ spec:
   generators:
     - pullRequest:
         [[ .GitProvider ]]:
-          owner: [[ .RepoOwner ]]
-          repo: [[ .RepoName ]]
+          owner: '[[ .RepoOwner ]]'
+          repo: '[[ .RepoName ]]'
 [[- if .TokenSecretRef ]]
           tokenRef:
-            secretName: [[ .TokenSecretRef ]]
+            secretName: '[[ .TokenSecretRef ]]'
             key: token
 [[- end ]]
         requeueAfterSeconds: 60
@@ -100,7 +100,7 @@ spec:
         name: '[[ .VClusterName ]]-{{ .number }}'
         namespace: '[[ .NamespacePrefix ]]'
 [[- else ]]
-        server: [[ .DestServerOrDefault ]]
+        server: '[[ .DestServerOrDefault ]]'
         namespace: '[[ .NamespacePrefix ]]-{{ .number }}'
 [[- end ]]
       syncPolicy:
@@ -224,6 +224,23 @@ type labelKV struct {
 // templateData precomputes derived template values (sorted labels for determinism, the
 // placement-mode string, and the in-cluster default destination).
 func (in PreviewAppSetInput) templateData() previewTemplateData {
+	// Every shape guard judges the TRIMMED value, so the template must render the trimmed one too.
+	// Without this, `Project = "\ndemo"` passes validatePreviewProject (it trims to a valid label)
+	// and then renders `name: preview-` followed by `demo` at column 0 — the half-formed manifest
+	// validate() exists to prevent. vcluster_app.go:204 writes the trimmed value back for the same
+	// reason; this renderer did it only as an emptiness test.
+	in.Project = strings.TrimSpace(in.Project)
+	in.GitProvider = strings.TrimSpace(in.GitProvider)
+	in.RepoOwner = strings.TrimSpace(in.RepoOwner)
+	in.RepoName = strings.TrimSpace(in.RepoName)
+	in.TokenSecretRef = strings.TrimSpace(in.TokenSecretRef)
+	in.AppsPath = strings.TrimSpace(in.AppsPath)
+	in.NamespacePrefix = strings.TrimSpace(in.NamespacePrefix)
+	in.VClusterName = strings.TrimSpace(in.VClusterName)
+	in.DestServer = strings.TrimSpace(in.DestServer)
+
+	in.AppsRepoURL = strings.TrimSpace(in.AppsRepoURL)
+
 	prefix := in.NamespacePrefix
 	if strings.TrimSpace(prefix) == "" {
 		prefix = "preview"
