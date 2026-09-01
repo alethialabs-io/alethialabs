@@ -42,29 +42,69 @@ esac
 command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
 
 # Read dependency issue numbers only from the machine-readable declaration line.
+#
+# THE ANCHOR IS RIGHT; DROPPING MARKDOWN DECORATION IS NOT. Anchoring to the start of a line is what
+# stops a `blocked-by: #42` quoted mid-sentence in prose from being read as a declaration, and that
+# is the bug this file exists to fix. But the anchor as first written also dropped `- blocked-by:
+# #12` and `**blocked-by:** #12`, which the previous parser accepted and which are what a human
+# hand-filing an issue actually types.
+#
+# That direction is the dangerous one. The unblock pass below treats an empty `deps` as "this issue
+# has no dependencies" and REMOVES the `blocked` label — so a dropped declaration does not fail
+# closed and leave a lane blocked, it fails OPEN and marks the lane READY while its seams issue is
+# still open. Someone then claims work that is not ready to start. The old parser's failure was
+# noisy; this one is silent.
+#
+# So the decoration is stripped and the anchor is kept: a leading list marker and any `**` come off
+# first, then the same start-of-line match runs. A mid-sentence mention still does not match,
+# because stripping decoration does not move it to the start of its line.
 blocked_by_from_body() {
-  sed -n 's/^[[:space:]]*[Bb]locked-by:[[:space:]]*\(.*\)$/\1/p' \
+  sed -e 's/^[[:space:]]*[-*+][[:space:]]\{1,\}/ /' -e 's/\*\*//g' \
+    | sed -n 's/^[[:space:]]*[Bb]locked-by:[[:space:]]*\(.*\)$/\1/p' \
     | grep -oE '#[0-9]+' | tr -d '#' | sort -nu || true
 }
 
 # Exercise the shell parser against the contract shared with the dashboard parser.
 run_board_body_self_test() {
-  local fixtures="scripts/lib/board-body-fixtures.json" fails=0 fixture name body expected actual
+  local fixtures="scripts/lib/board-body-fixtures.json" fails=0 checks=0 cases fixture name body expected actual
   [ -f "$fixtures" ] || { echo "missing $fixtures" >&2; exit 1; }
+
+  # READ THE CASES BEFORE THE LOOP. This was `done < <(jq -c '.cases[]' "$fixtures")`, and a jq
+  # failure inside a PROCESS SUBSTITUTION is invisible to both `set -e` and `pipefail` — the shell
+  # never sees its exit status. A fixtures file missing the `cases` key made jq write to stderr and
+  # exit non-zero, the loop ran zero times, and the function printed "self-test: all passed" and
+  # exited 0. Assigning to a variable puts the exit status back where the shell can act on it.
+  cases="$(jq -c '.cases[]' "$fixtures")" || {
+    echo "self-test: could not read .cases[] from $fixtures — the fixtures are unreadable, which is" >&2
+    echo "  a failure, not an empty suite." >&2
+    exit 1
+  }
+
   while IFS= read -r fixture; do
+    [ -n "$fixture" ] || continue
     name="$(jq -r '.name' <<<"$fixture")"
     body="$(jq -r '.body' <<<"$fixture")"
     expected="$(jq -r '.blockedBy | join(" ")' <<<"$fixture")"
     actual="$(printf '%s\n' "$body" | blocked_by_from_body | paste -sd' ' -)"
+    checks=$((checks + 1))
     if [ "$actual" = "$expected" ]; then
       echo "ok   - $name"
     else
       echo "FAIL - $name: want '$expected' got '$actual'" >&2
       fails=$((fails + 1))
     fi
-  done < <(jq -c '.cases[]' "$fixtures")
-  [ "$fails" -eq 0 ] || { echo "self-test: $fails check(s) FAILED" >&2; exit 1; }
-  echo "self-test: all passed"
+  done <<<"$cases"
+
+  # AN EMPTY SUITE IS A FAILURE. `{"cases":[]}` ran zero checks and reported "all passed" — the
+  # exact shape this guard is written to catch one level down, in its own reporting. A self-test
+  # whose "nothing found" branch is indistinguishable from "nothing wrong" is not a self-test.
+  [ "$checks" -gt 0 ] || {
+    echo "self-test: $fixtures contains NO cases — asserting nothing is not passing." >&2
+    exit 1
+  }
+
+  [ "$fails" -eq 0 ] || { echo "self-test: $fails of $checks check(s) FAILED" >&2; exit 1; }
+  echo "self-test: all $checks passed"
 }
 
 if [ "$MODE" = "self-test" ]; then
