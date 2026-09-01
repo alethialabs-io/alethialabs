@@ -234,7 +234,8 @@
 					"existingSecret": "harbor-app-images-admin",
 					"existingSecretKey": "REGISTRY_HTTP_SECRET",
 					"credentials": {
-						"existingSecret": "harbor-app-images-admin"
+						"existingSecret": "harbor-app-images-admin",
+						"username": "harbor_registry_user"
 					}
 				},
 				"expose": {

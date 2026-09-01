@@ -136,7 +136,7 @@ func (h HarborRegistry) valid() bool {
 //
 // ON AN ALREADY-DEPLOYED REGISTRY NODE THIS IS A MIGRATION, NOT A COMPLETION. Before #3299 the CHART
 // was the store of record for every key but the admin password, so an existing node is running on
-// harbor”'s published defaults. Filling them here moves secretKey off `not-a-secure-key`, and
+// harbor's published defaults. Filling them here moves secretKey off `not-a-secure-key`, and
 // secretKey is what harbor encrypts stored credentials with — a replication endpoint configured
 // before the upgrade keeps a secret that can no longer be decrypted and must be re-entered. There is
 // no way to avoid that and also stop shipping a published key; what there is no excuse for is not

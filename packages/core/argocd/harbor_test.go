@@ -719,12 +719,12 @@ func TestHarborSecretManifestSurvivesHostileExistingValues(t *testing.T) {
 // The htpasswd line names a user, and Harbor core must authenticate as THAT user or the internal
 // registry 401s every request while every pod reports Ready.
 //
-// The console does not set `registry.credentials.username` today, so the chart's default governs and
-// the Go constant is written to match it. That is a correspondence no test can see end-to-end
-// without rendering the chart — but the direction that IS checkable is the one a future edit would
-// break: if the console ever starts setting the username, it must equal what the runner hashes into
-// REGISTRY_HTPASSWD. Disagreeing there is silent.
-func TestHetznerRegistryUsernameAgreesWithTheRunnerIfTheChartIsToldOne(t *testing.T) {
+// The console now STATES the username rather than inheriting the chart's default, so this test can
+// be unconditional — and it has to be. The first version returned green when the fixture carried no
+// username at all, which is the same "nothing found is not nothing wrong" vacuity this file guards
+// against two tests up: the absent username WAS the finding, so the guard passed on exactly the
+// state it existed to reject.
+func TestHetznerRegistryUsernameAgreesWithTheRunner(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("cannot locate this file")
@@ -758,10 +758,9 @@ func TestHetznerRegistryUsernameAgreesWithTheRunnerIfTheChartIsToldOne(t *testin
 	}
 	got, set := fixtureLeaf(values, "registry", "credentials", "username")
 	if !set {
-		t.Logf("the chart is told no username, so its default governs and %q must match it — "+
-			"pinned by comment against harbor 1.15.1, which no test here can render",
-			harborRegistryUsername)
-		return
+		t.Fatalf("the chart is told no username, so harbor's default governs and agrees with the runner's "+
+			"%q only by coincidence — an upstream rename would 401 every core->registry request with every "+
+			"pod Ready", harborRegistryUsername)
 	}
 	if got != harborRegistryUsername {
 		t.Errorf("the chart authenticates as %q but the runner hashes %q into REGISTRY_HTPASSWD — "+

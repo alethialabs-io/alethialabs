@@ -568,7 +568,17 @@ export function hetznerRegistryValues(
 		registry: {
 			existingSecret: credentialSecret,
 			existingSecretKey: "REGISTRY_HTTP_SECRET",
-			credentials: { existingSecret: credentialSecret },
+			credentials: {
+				existingSecret: credentialSecret,
+				// STATED, not inherited. The runner hashes this exact name into REGISTRY_HTPASSWD
+				// (harborRegistryUsername in packages/core/argocd/harbor.go) and Harbor core
+				// authenticates to the internal registry as whoever the chart names here. Leaving it
+				// to the chart's default meant the two agreed only by coincidence: a rename upstream
+				// would 401 every core->registry request while every pod reported Ready. The value is
+				// deliberately identical to the chart's default, so the render is byte-for-byte
+				// unchanged and this costs nothing but the correspondence.
+				username: "harbor_registry_user",
+			},
 		},
 		expose: {
 			type: "clusterIP",

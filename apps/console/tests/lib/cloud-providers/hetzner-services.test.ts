@@ -350,6 +350,13 @@ describe("hetznerDataServicesToAddOns — registries (Harbor)", () => {
 		expect(
 			leaf(spec?.values, "registry", "credentials", "existingSecret"),
 		).toBe(secret);
+		// The one half that is NOT a secret reference, and the one that fails silently: the runner
+		// hashes this exact name into REGISTRY_HTPASSWD, and Harbor core authenticates to the
+		// internal registry as whoever this names. Inherited from the chart they agreed only by
+		// coincidence — an upstream rename 401s every core->registry request with all pods Ready.
+		expect(
+			leaf(spec?.values, "registry", "credentials", "username"),
+		).toBe("harbor_registry_user");
 	});
 
 	it("pins ALL FIVE volumes to the hcloud StorageClass, never the cluster default", () => {
