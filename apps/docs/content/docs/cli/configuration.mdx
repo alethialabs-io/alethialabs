@@ -67,6 +67,58 @@ config         /Users/you/Library/Application Support/alethia/config.json
 `alethia config clear-context` clears the active organization context. `alethia config -o json`
 emits the same values as a JSON object.
 
+## Config keys
+
+These are the keys `alethia config get` reads. `alethia config set` writes the ones marked
+`config set`; a key set anywhere else says which command owns it, because a value you can read and
+cannot write needs to tell you what does write it.
+
+{/* configkeys */}
+
+| Key | What it is | How to set it |
+| --- | --- | --- |
+| `web-origin` | The control-plane URL the CLI talks to (hosted, self-hosted or dev). | `config set` |
+| `active-org` | The organization every request is scoped to, sent as X-Alethia-Org. | `alethia org switch` |
+
+`active-org` is deliberately read-only. Setting it by name would have to resolve that name to an id
+and a slug — which is a server round-trip, and that round-trip is `alethia org switch`. A
+`config set active-org` that wrote only the name would leave the id stale and scope every subsequent
+request to the *previous* organization.
+
+The underscore spellings (`web_origin`, `active_org`) are accepted too, because that is how the keys
+appear in `config.json` and people type what they have read.
+
+## `alethia config set`
+
+```bash
+alethia config set                                       # pick the key, edit the current value
+alethia config set web-origin https://alethia.internal.example.com   # the same, unattended
+```
+
+Run with no arguments on a terminal, `config set` asks for both:
+
+{/* fieldspec: alethia config set */}
+
+| Field | What it is | Set without the form |
+| --- | --- | --- |
+| Config key | Which value to change | `[key]` |
+| Value | The new value; the form describes it with the chosen key's own summary | `[value]` |
+
+The value field is pre-filled with the current value, so the form is an edit rather than a re-type,
+and it is validated by the same rule `config set` applies — a value the form accepts is never
+refused a moment later.
+
+With `--no-input` both arguments are required; the command fails rather than guessing.
+
+<Callout type="info">
+`ALETHIA_WEB_ORIGIN` **outranks** the config file. If it is set to a different URL,
+`alethia config set web-origin` says so after saving, because otherwise the write appears to succeed
+and every subsequent command keeps talking to the environment's origin.
+</Callout>
+
+`alethia config get` prints the bare value in the default table format — so
+`$(alethia config get web-origin)` works — and key/value pairs under `-o json` or `-o csv`.
+
 ## `alethia config export`
 
 Export an environment's **design document** — the same nested shape the console design form holds,
