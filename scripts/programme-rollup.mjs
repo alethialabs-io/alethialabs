@@ -830,6 +830,21 @@ export function deriveReaperObservation(observation, snapshotAt) {
 	if (!observation.log_present) return { state: "indeterminate", why: `${run} produced no sweep log`, observation, integrityFailure: null };
 	if (observation.sweep_exit_code !== 0) return { state: "indeterminate", why: `${run} exited ${observation.sweep_exit_code ?? "without a status"}`, observation, integrityFailure: null };
 	if (observation.residual_detected) return { state: "standing", why: `${run} reported residual orphan resources`, observation, integrityFailure: null };
+	// A DISCOVERY THAT NEVER ANSWERED USED TO RENDER `clean`. Every check above and below this one
+	// asks about something the sweep REPORTED, and a preflight whose discovery call failed reports
+	// nothing at all: the orphan list comes back empty, the `[ -z "$orphans" ] → exit 0` early
+	// return fires, and the log is byte-identical to a genuinely empty account — exit 0, no
+	// residual, zero unverified. `unverified_count` could not catch it, because on four of five
+	// clouds the warning it keys on is emitted BELOW that early return, and aws called the tagging
+	// API raw with `2>/dev/null` so a throttle never reached the ledger either. The cell then read
+	// ✅ clean and PROGRAMME.md published "nothing standing" — about resources that BILL.
+	//
+	// The sweepers now emit a POSITIVE marker on every path a preflight can leave (see
+	// probe_report_discovery in scripts/e2e/lib/sweep-probe.sh). Absence is the fail-closed answer:
+	// a log that never said discovery ran is not evidence that it did. This sits AFTER the residual
+	// check on purpose — a run that FOUND orphans plainly discovered them, and `standing` is the
+	// stronger and truer verdict there.
+	if (!observation.discovery_reported) return { state: "indeterminate", why: `${run} never reported completing its orphan discovery — a discovery that failed silently looks exactly like an empty account`, observation, integrityFailure: null };
 	if (observation.unverified_count > 0) return { state: "indeterminate", why: `${run} could not verify ${observation.unverified_count} check(s)`, observation, integrityFailure: null };
 	if (observation.unattributable_count > 0) return { state: "indeterminate", why: `${run} found ${observation.unattributable_count} unattributable resource(s)`, observation, integrityFailure: null };
 	const ageHours = (reference - completed) / 3_600_000;
@@ -3112,7 +3127,7 @@ function runSelfTest() {
 	// non-clean, and freshness compares two persisted timestamps rather than the wall clock.
 	{
 		const result = (overrides = {}) => ({
-			schema_version: 1,
+			schema_version: 2,
 			provider: "aws",
 			region: "us-east-1",
 			run_id: "123",
@@ -3122,6 +3137,7 @@ function runSelfTest() {
 			gate_ran: true,
 			sweep_exit_code: 0,
 			log_present: true,
+			discovery_reported: true,
 			orphan_runs_found: 0,
 			resources_reclaimed: 0,
 			residual_detected: false,
@@ -3144,10 +3160,22 @@ function runSelfTest() {
 			["failed sweep", { sweep_exit_code: 4 }],
 			["unverified check", { unverified_count: 1 }],
 			["unattributable resource", { unattributable_count: 1 }],
+			// THE FALSE ALL-CLEAR. Every other row here is a fact the sweep REPORTED; this one is a
+			// fact it never got to. A preflight whose discovery call failed produces an empty orphan
+			// list, takes its early return and exits 0 — no residual, nothing unverified, a log
+			// byte-identical to an empty account — and this cell used to read ✅ clean while
+			// PROGRAMME.md published "nothing standing" about resources that BILL.
+			["unreported discovery", { discovery_reported: false }],
 		]) {
 			const status = deriveReaperObservation(result(changes), "2026-09-02T00:00:00Z");
 			ok(`${name} is indeterminate, never clean`, status.state === "indeterminate", JSON.stringify(status));
 		}
+		// …and it must not swallow a stronger verdict: a run that found residual orphans plainly
+		// DID discover them, so `standing` wins over the discovery check that follows it.
+		ok(
+			"a residual finding still reads standing, not indeterminate",
+			deriveReaperObservation(result({ residual_detected: true, discovery_reported: false }), "2026-09-02T00:00:00Z").state === "standing",
+		);
 		const malformed = derive({
 			...base,
 			ledgerText: hdr,

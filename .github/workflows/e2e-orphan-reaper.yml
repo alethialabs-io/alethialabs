@@ -359,13 +359,24 @@ jobs:
           # with an unattributable resource standing in it is not a region that came back clean.
           # Non-gating by design — see scripts/e2e/lib/sweep-probe.sh's header and #2463.
           unattributable=$(grep -cE 'sweep for .* found UNATTRIBUTABLE resource' "$LOG" || true)
+          # THE ONE FACT READ AS A PRESENCE, NOT A COUNT. Everything above counts something the
+          # sweep REPORTED, and a preflight whose discovery call never answered reports nothing:
+          # empty orphan list, early return, exit 0, a log identical to a quiet region. So the
+          # sweepers emit a positive marker (probe_report_discovery) on every path they can leave,
+          # and its ABSENCE is the finding. "0 orphans" from a scan that ran and "0 orphans" from a
+          # scan that never ran are the same row without this column.
+          discovery=no
+          if grep -qE '^✓ preflight discovery reported for ' "$LOG"; then discovery=yes; fi
           {
             echo "### Orphan reaper — ${PROVIDER}"
             echo
-            echo "| region | orphan runs | resources | unverified | unattributable | mode |"
-            echo "|---|---:|---:|---:|---:|---|"
-            echo "| \`${ALETHIA_E2E_REGION}\` | ${orphans} | ${swept} | ${unverified} | ${unattributable} | $([ "$DRY_RUN" = "1" ] && echo 'DRY RUN' || echo 'reclaim') |"
+            echo "| region | discovery | orphan runs | resources | unverified | unattributable | mode |"
+            echo "|---|---|---:|---:|---:|---:|---|"
+            echo "| \`${ALETHIA_E2E_REGION}\` | $([ "$discovery" = yes ] && echo 'reported' || echo '**NOT REPORTED**') | ${orphans} | ${swept} | ${unverified} | ${unattributable} | $([ "$DRY_RUN" = "1" ] && echo 'DRY RUN' || echo 'reclaim') |"
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$discovery" != yes ]; then
+            echo "::warning::${PROVIDER}: the preflight never reported completing its orphan discovery in ${ALETHIA_E2E_REGION}. A discovery that failed silently produces an empty orphan list and exits 0, which looks exactly like an empty region — so this run is NOT evidence that ${ALETHIA_E2E_REGION} is clean."
+          fi
           if [ "${unattributable:-0}" -gt 0 ]; then
             echo "::warning::${PROVIDER}: ${ALETHIA_E2E_REGION} holds resource(s) that EXIST and cannot be attributed to any run — see the UNATTRIBUTABLE warnings above. Not a failure and not a clean region: this reaper is the only thing that looks for them, and only a human can decide whether they are leaked (#2463)."
           fi
@@ -401,6 +412,13 @@ jobs:
           path: ${{ runner.temp }}/orphan-reaper-result.json
           if-no-files-found: error
           retention-days: 14
+          # The name carries the run id but NOT the attempt, and it cannot: programme-fetch.sh
+          # resolves artifacts by exactly `orphan-reaper-result-<provider>-<run_id>`, so adding the
+          # attempt would make every result invisible to the snapshot. Without `overwrite` a
+          # re-run of a failed leg then 409s at upload and the attempt that most needs evidence
+          # produces none. A re-run's result supersedes the attempt it re-ran, which is the
+          # behaviour we want anyway.
+          overwrite: true
 
       # Stated on EVERY run rather than in a comment nobody opens: a cloud missing from the matrix
       # above is invisible, and an invisible exclusion reads as coverage.

@@ -872,7 +872,12 @@ if [ "$PREFLIGHT" = "1" ]; then
 		report_image_cache
 		# Reports BOTH states: the unattributable finding, and — if the listing itself failed —
 		# the fact that it could not answer. Preflight never blocks its caller, so both warn.
-		probe_warn_unverifiable hcloud "the preflight scan"
+		#
+		# It also emits the POSITIVE marker, which is what makes this early return readable from
+		# outside: "discovery answered nothing" and "discovery never answered" print the same ✓ line
+		# below, and only a line that must be PRESENT can separate them. See
+		# scripts/e2e/lib/sweep-probe.sh's probe_report_discovery header.
+		probe_report_discovery hcloud "the preflight scan"
 		echo "✓ preflight: no prior-run e2e orphans — nothing to sweep$(probe_clean_suffix)"
 		exit 0
 	fi
@@ -916,7 +921,7 @@ if [ "$PREFLIGHT" = "1" ]; then
 		# ⚠️ Not "the account is clean" — "every orphan this preflight could SEE is swept". The
 		# discovery listing itself can fail, and preflight is explicitly non-blocking, so the honest
 		# report here is a warning; the always() teardown is what gates.
-		probe_warn_unverifiable hcloud "the preflight orphan scan"
+		probe_report_discovery hcloud "the preflight orphan scan"
 		echo "✓ preflight complete — all prior-run e2e orphans swept"
 	fi
 	exit 0 # preflight never blocks its caller

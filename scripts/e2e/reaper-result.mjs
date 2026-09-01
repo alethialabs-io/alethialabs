@@ -10,10 +10,17 @@
 //   node scripts/e2e/reaper-result.mjs validate --file <path>
 //   node scripts/e2e/reaper-result.mjs --self-test
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-export const REAPER_RESULT_SCHEMA_VERSION = 1;
+// v2 added `discovery_reported`. A v1 result is REFUSED rather than defaulted, and that is the
+// point of the bump: `discovery_reported: false` is the fail-closed reading of a log that never
+// said discovery ran, so silently defaulting an old artifact either way would be inventing the one
+// fact this version exists to stop inventing. programme-rollup.mjs renders an unreadable
+// observation `indeterminate` (never `clean`, never a build failure), so stale v1 entries degrade
+// their cell with a stated reason and self-heal on the next real reclaim.
+export const REAPER_RESULT_SCHEMA_VERSION = 2;
 export const REAPER_PROVIDERS = ["aws", "gcp", "azure", "alibaba", "hetzner"];
 
 const DEFAULT_REGIONS = {
@@ -35,12 +42,36 @@ const RESULT_KEYS = [
   "gate_ran",
   "sweep_exit_code",
   "log_present",
+  "discovery_reported",
   "orphan_runs_found",
   "resources_reclaimed",
   "residual_detected",
   "unverified_count",
   "unattributable_count",
 ];
+
+// THE ONE FACT THAT MUST BE PRESENT RATHER THAN ABSENT.
+//
+// Every other line this file counts is evidence of something HAPPENING. This one is evidence that
+// the preflight's orphan discovery RAN AT ALL, and it exists because nothing else here can tell
+// these two logs apart:
+//
+//   · discovery answered, the region holds nothing         → "✓ preflight: no BILLING … orphans"
+//   · discovery never answered (expired session, throttled
+//     tagging API, a CLI too old for the subcommand)       → "✓ preflight: no BILLING … orphans"
+//
+// In the second case the orphan list is empty, the preflight takes its early return, and the run
+// exits 0 with zero warnings — so `residual_detected` is false, `unverified_count` is 0, and this
+// file recorded `clean`, which PROGRAMME.md publishes as "nothing is standing" about resources
+// that BILL. `unverified_count` could not close it: it keys on a warning emitted BELOW the early
+// return on aws/gcp/azure/alibaba, and a silent failure is defined by that warning's absence.
+//
+// So the sweepers now emit a positive marker (`probe_report_discovery` in
+// scripts/e2e/lib/sweep-probe.sh) on every path a preflight can leave, and a result whose log does
+// not carry it is not clean — it is indeterminate. The self-test below SOURCES that shell function
+// and matches its real output rather than restating the literal, because a decision that mirrors an
+// emitter by copying its text is one careless reword away from marking every cloud indeterminate.
+const DISCOVERY_MARKER = /^✓ preflight discovery reported for /m;
 
 /** Count lines matching one expression without retaining any source text. */
 function countLines(text, expression) {
@@ -50,6 +81,7 @@ function countLines(text, expression) {
 /** Parse a sweep log into the allowlisted counts and booleans safe to publish. */
 export function summarizeReaperLog(text) {
   return {
+    discovery_reported: DISCOVERY_MARKER.test(text),
     orphan_runs_found: countLines(text, /^── preflight sweep: prior run /),
     resources_reclaimed: countLines(text, /^\s*(?:deleted|would delete) /),
     residual_detected:
@@ -119,7 +151,12 @@ export function validateReaperResult(value, allowCompletedAt = false) {
     errors.push("event_name must be schedule or workflow_dispatch");
   if (!new Set(["reclaim", "dry_run"]).has(value.mode))
     errors.push("mode must be reclaim or dry_run");
-  for (const key of ["gate_ran", "log_present", "residual_detected"]) {
+  for (const key of [
+    "gate_ran",
+    "log_present",
+    "discovery_reported",
+    "residual_detected",
+  ]) {
     if (typeof value[key] !== "boolean") errors.push(`${key} must be boolean`);
   }
   if (
@@ -215,16 +252,111 @@ function runSelfTest() {
     sweepStatus: "0",
     logPresent: true,
   };
-  let result = buildReaperResult(
-    "✓ preflight complete — all prior-run e2e orphans swept\n",
-    base,
-  );
+  const swept =
+    "✓ preflight discovery reported for aws: the preflight orphan scan in us-east-1\n✓ preflight complete — all prior-run e2e orphans swept\n";
+  let result = buildReaperResult(swept, base);
   ok(
     "a clean log emits zero findings",
     validateReaperResult(result).ok &&
       result.orphan_runs_found === 0 &&
       !result.residual_detected,
   );
+
+  // ── THE FALSE ALL-CLEAR, IN BOTH DIRECTIONS. ────────────────────────────────────────────────
+  //
+  // The first case is the exact log an expired session produced: the quiet-day sentence, exit 0,
+  // no warning, nothing to distinguish it from an account that was genuinely empty. It must not
+  // come back `discovery_reported`, and programme-rollup.mjs refuses to call it clean when it
+  // does not. The second is the same sentence WITH the marker, which must still be reported —
+  // otherwise the fix would mark every cloud indeterminate forever, which is the failure mode
+  // arriving from the other side.
+  ok(
+    "a quiet-day log with no discovery marker is NOT reported as discovery-complete",
+    buildReaperResult(
+      "✓ preflight: no BILLING prior-run e2e orphans in us-east-1 — nothing to sweep\n",
+      base,
+    ).discovery_reported === false,
+  );
+  ok(
+    "…and the same log WITH the marker is",
+    buildReaperResult(
+      "✓ preflight discovery reported for aws: the preflight orphan scan in us-east-1\n✓ preflight: no BILLING prior-run e2e orphans in us-east-1 — nothing to sweep\n",
+      base,
+    ).discovery_reported === true,
+  );
+  const v1Shaped = { ...result, schema_version: 1 };
+  delete v1Shaped.discovery_reported;
+  ok(
+    "a v1 result carrying no discovery_reported is REFUSED, never defaulted",
+    !validateReaperResult(v1Shaped).ok,
+  );
+  // A STRING IS THE DANGEROUS WRONG TYPE, not a harmless one. The rollup asks
+  // `!observation.discovery_reported`, and every non-empty string — including "false" — is truthy
+  // there, so a shape that drifted from boolean to text would restore the exact false all-clear
+  // this field exists to prevent, while still validating.
+  ok(
+    "a non-boolean discovery_reported is rejected",
+    !validateReaperResult({ ...result, discovery_reported: "false" }).ok,
+  );
+
+  // ── THE DECISION MIRRORS THE EMITTER, BY RUNNING IT. ────────────────────────────────────────
+  //
+  // `DISCOVERY_MARKER` is a literal in JavaScript and the marker is a printf in bash. Asserting
+  // this file against its own literal proves nothing: reword the shell and every cloud silently
+  // goes indeterminate, with each half self-consistent. So the shell function is SOURCED and RUN,
+  // and its real stdout is fed through the real summarizer.
+  const probeLib = fileURLToPath(
+    new URL("./lib/sweep-probe.sh", import.meta.url),
+  );
+  const emitted = execFileSync(
+    "bash",
+    [
+      "-c",
+      '. "$1"; probe_report_discovery aws "the preflight orphan scan in us-east-1"',
+      "bash",
+      probeLib,
+    ],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+  );
+  ok(
+    "the marker the sweepers actually print is the marker this file reads",
+    summarizeReaperLog(emitted).discovery_reported === true,
+  );
+
+  // ── EVERY EMITTER, NOT JUST THE LIBRARY. ────────────────────────────────────────────────────
+  //
+  // The library can be perfect and a sweeper still never call it: that WAS the defect — hcloud
+  // reported before its early return and the other four did not, so four of five clouds published
+  // a clean account nobody had looked at. This asserts the call site is inside the
+  // `[ -z "$orphans" ] → exit 0` branch, which is the branch a failed discovery falls into.
+  const sweepers = {
+    aws: "aws",
+    gcp: "gcp",
+    azure: "azure",
+    alibaba: "alibaba",
+    hetzner: "hcloud",
+  };
+  for (const [cloud, file] of Object.entries(sweepers)) {
+    // Comment lines are dropped first: this asks about the CODE in that branch, and these files
+    // discuss `exit 0` in prose several times inside the very block being measured — matching the
+    // prose would end the segment before the call site and fail a correct sweeper.
+    const source = fs
+      .readFileSync(
+        fileURLToPath(new URL(`./${file}-cleanup.sh`, import.meta.url)),
+        "utf8",
+      )
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+    const branchAt = source.indexOf('if [ -z "$orphans" ]; then');
+    const exitAt = branchAt === -1 ? -1 : source.indexOf("exit 0", branchAt);
+    ok(
+      `${cloud} reports discovery BEFORE its no-orphans early return`,
+      branchAt !== -1 &&
+        exitAt !== -1 &&
+        source.slice(branchAt, exitAt).includes("probe_report_discovery"),
+    );
+  }
   result = buildReaperResult(
     "── preflight sweep: prior run e2e-old\n  deleted cluster x\n",
     base,

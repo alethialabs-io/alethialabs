@@ -36,6 +36,18 @@ command -v jq >/dev/null || {
 	echo "programme-fetch: jq is required" >&2
 	exit 3
 }
+# The reaper-evidence block below unzips each artifact and hands it to the schema validator, so
+# `unzip` and `node` are hard dependencies of this script now — not optional extras. Preflighted
+# with gh and jq rather than discovered mid-walk, because their absence there is INDISTINGUISHABLE
+# from a malformed artifact: the two `if !` branches print "did not contain exactly …" or "failed
+# schema validation" and `continue`, so a machine missing unzip refuses all five clouds' evidence
+# while blaming the evidence, and the snapshot silently carries stale observations forward.
+for tool in unzip node; do
+	command -v "$tool" >/dev/null || {
+		echo "programme-fetch: $tool is required (the orphan-reaper artifacts are zipped and schema-validated)" >&2
+		exit 3
+	}
+done
 
 # `derived_at` is the ONLY timestamp in the whole mechanism, and it lives here rather than in
 # PROGRAMME.md's rendered text on purpose: a timestamp inside a diff-gated region would make every
@@ -192,13 +204,32 @@ if reaper_runs="$(gh api "repos/$REPO/actions/workflows/e2e-orphan-reaper.yml/ru
 	--jq '[.workflow_runs[] | {id, completed_at: .updated_at}]')"; then
 	fresh_reaper='[]'
 	seen_reaper=''
+	# STOP WALKING ONCE EVERY CLOUD IS RESOLVED. `seen_reaper` skips a resolved PROVIDER but not the
+	# RUN, so the loop kept issuing one `gh api …/artifacts` call for every one of up to 100
+	# completed runs. The newest run normally carries all five legs, which made ~99 of those calls
+	# guaranteed to find nothing — pure latency on a nightly refresh and pure rate-limit exposure
+	# against the same token that still has issues, variables and secrets to read.
+	#
+	# The counter is a plain shell variable and stays correct BECAUSE the loop is fed by a process
+	# substitution rather than a pipe: `while … done < <(…)` runs in THIS shell, which is also why
+	# `seen_reaper` and `fresh_reaper` survive each iteration.
+	#
+	# The target is derived from the provider list rather than written as `5`, so adding a sixth
+	# cloud cannot leave the walk stopping one cloud early — which would look exactly like that
+	# cloud never having run.
+	reaper_providers="aws gcp azure alibaba hetzner"
+	# shellcheck disable=SC2086  # deliberate word splitting: the list is a fixed set of literals.
+	reaper_provider_count="$(printf '%s\n' $reaper_providers | grep -c .)"
+	reaper_resolved=0
 	while IFS=$'\t' read -r reaper_run_id reaper_completed_at; do
+		if [ "$reaper_resolved" -ge "$reaper_provider_count" ]; then break; fi
 		[ -n "$reaper_run_id" ] || continue
 		if ! artifacts="$(gh api "repos/$REPO/actions/runs/$reaper_run_id/artifacts?per_page=100" 2>/dev/null)"; then
 			echo "::warning::programme-fetch: could not list artifacts for reaper run $reaper_run_id; retaining earlier evidence." >&2
 			continue
 		fi
-		for provider in aws gcp azure alibaba hetzner; do
+		# shellcheck disable=SC2086  # deliberate word splitting over the fixed provider list.
+		for provider in $reaper_providers; do
 			case " $seen_reaper " in *" $provider "*) continue ;; esac
 			artifact_id="$(printf '%s' "$artifacts" | jq -r --arg n "orphan-reaper-result-${provider}-${reaper_run_id}" '.artifacts[]? | select(.name == $n and .expired == false) | .id' | head -1)"
 			[ -n "$artifact_id" ] || continue
@@ -217,8 +248,14 @@ if reaper_runs="$(gh api "repos/$REPO/actions/workflows/e2e-orphan-reaper.yml/ru
 				echo "::warning::programme-fetch: could not read reaper artifact $artifact_id; refusing it." >&2
 				continue
 			fi
-			if ! normalized="$(node scripts/e2e/reaper-result.mjs validate --file "$raw" 2>/dev/null)"; then
-				echo "::warning::programme-fetch: reaper artifact $artifact_id failed schema validation; refusing it." >&2
+			# KEEP THE VALIDATOR'S STDERR. It is the only thing that names the offending field, and
+			# `2>/dev/null` threw it away — leaving a warning that says an artifact was refused and
+			# nothing at all about why, on the one path where the answer is already computed and
+			# free. The validator's message is derived from the artifact's SHAPE (field names and
+			# type complaints), never its values, so it is safe to echo.
+			validation_error="$reaper_tmp/${reaper_run_id}-${provider}.err"
+			if ! normalized="$(node scripts/e2e/reaper-result.mjs validate --file "$raw" 2>"$validation_error")"; then
+				echo "::warning::programme-fetch: reaper artifact $artifact_id failed schema validation; refusing it. $(tr '\n' ' ' <"$validation_error")" >&2
 				continue
 			fi
 			if ! printf '%s' "$normalized" | jq -e --arg p "$provider" --arg r "$reaper_run_id" '.provider == $p and .run_id == $r' >/dev/null; then
@@ -250,6 +287,7 @@ if reaper_runs="$(gh api "repos/$REPO/actions/workflows/e2e-orphan-reaper.yml/ru
 			fi
 			fresh_reaper="$(printf '%s' "$fresh_reaper" | jq -c --argjson o "$observation" '. + [$o]')"
 			seen_reaper="$seen_reaper $provider"
+			reaper_resolved=$((reaper_resolved + 1))
 		done
 	done < <(printf '%s' "$reaper_runs" | jq -r '.[] | [.id, .completed_at] | @tsv')
 
