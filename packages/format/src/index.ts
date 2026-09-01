@@ -175,7 +175,29 @@ export function formatBytes(bytes: number): string {
  * Takes minor units on purpose: every bug in this area starts with someone passing 12.5 where
  * 1250 was meant, and a signature that says `cents` makes that visible at the call site.
  *
- * @param cents amount in minor units.
+ * KNOWN LIMITATION — the `/ 100` is correct only for two-decimal currencies, which is every
+ * currency Alethia bills in today (USD, EUR, GBP). It is wrong for JPY and the rest of Stripe's
+ * zero-decimal list, where the minor unit IS the unit, so a ¥124,000 invoice renders `¥1,240`.
+ *
+ * Do NOT "fix" this by reading the exponent from Intl/CLDR. That was tried and it inverts the
+ * defect, because CLDR is the DISPLAY table and the divisor's authority is the PAYMENT PROCESSOR,
+ * and the two legitimately disagree. Stripe's own currency documentation, verbatim:
+ *
+ *   ISK — "transitioned to a zero-decimal currency, but backward compatibility requires you to
+ *          represent it as a two-decimal value … to charge 5 ISK, provide an amount value of 500"
+ *   UGX — same wording
+ *   HUF — "zero-decimal … for payouts, even though you can charge two-decimal amounts"
+ *
+ * CLDR calls all three zero-decimal. Taking the divisor from CLDR therefore renders an HUF, ISK
+ * or UGX invoice 100x OVERSTATED — the same defect as JPY's, pointing the other way.
+ *
+ * The real fix needs an explicit table of Stripe's CHARGE-context minor units, separate from the
+ * CLDR data that drives display, with HUF/ISK/UGX/TWD pinned as cases — because those are exactly
+ * the currencies a table built from JPY, KRW and BHD alone cannot catch. Tracked separately; the
+ * conformance table deliberately covers only two-decimal currencies so it cannot freeze either
+ * error as the contract Go must reproduce.
+ *
+ * @param cents amount in minor units, for a two-decimal currency.
  * @param currency ISO 4217 code; defaults to USD.
  */
 export function formatMoney(cents: number, currency = "USD"): string {
