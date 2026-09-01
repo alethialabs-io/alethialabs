@@ -18,6 +18,26 @@ on:
   merge_group:
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC — mutation testing (slow, non-blocking)
+    # Nightly 03:00 UTC — the console UI conformance audit over EVERY route, so a route no PR
+    # happened to touch is still measured.
+    #
+    # ADDING A CRON SIGNS UP MORE THAN THE JOB YOU ADDED IT FOR, in two different ways, and both
+    # are handled here rather than discovered later:
+    #
+    #   · a job that gates on `github.event_name == 'schedule'` now also fires nightly — that is
+    #     `mutation`, which is pinned to its own cron expression below;
+    #   · a job with NO `if:` AT ALL fires on every trigger, so six jobs that ran weekly on the
+    #     Monday cron would have started running nightly against `main` (schedule only fires on the
+    #     default branch): `typescript`, `integration`, `guards`, `go`, `secrets` and
+    #     `addon-charts-render`. Each now carries `if: github.event.schedule != '0 3 * * *'`.
+    #
+    # Two are deliberately NOT excluded, and the reason is not "it was missed":
+    #   · `detect-changes` — `ui-audit` declares `needs: [detect-changes]`, and a job whose `needs`
+    #     skipped is itself skipped, so excluding it would silently cancel the nightly audit;
+    #   · `docs-prose` — it exists to ALWAYS report its status check (see its own comment), and on
+    #     a schedule event every one of its steps is gated off by the `docs` filter, so it costs one
+    #     idle runner rather than a Vale run.
+    - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
       # ONLY the ts-coverage determinism probe reads this; every other job ignores it. It is here
@@ -120,6 +140,11 @@ jobs:
   typescript:
     name: TypeScript (lint · types · test · docs)
     runs-on: ubuntu-latest
+    # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
+    # 03:00 cron added for the console UI audit would have signed this one up for a nightly
+    # run it never asked for — the same trap the cron block records for `mutation`, which
+    # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
+    if: github.event.schedule != '0 3 * * *'
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -265,6 +290,11 @@ jobs:
   integration:
     name: Integration (real Postgres + RLS)
     runs-on: ubuntu-latest
+    # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
+    # 03:00 cron added for the console UI audit would have signed this one up for a nightly
+    # run it never asked for — the same trap the cron block records for `mutation`, which
+    # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
+    if: github.event.schedule != '0 3 * * *'
     # A throwaway Postgres mirroring the dev stack (compose uses postgres:17-alpine with the
     # same superuser/db). db:migrate then creates the least-priv `alethia_app` role + RLS, so
     # the suite exercises the real SQL query builders and the multi-tenant isolation boundary.
@@ -438,6 +468,112 @@ jobs:
           name: playwright-report
           path: apps/console/playwright-report/
           retention-days: 7
+
+  ui-audit:
+    name: UI conformance audit (console · non-required)
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    # NON-REQUIRED, DELIBERATELY, and the reason is on the record. This drives every private console
+    # route through the live half of apps/console/docs/ui-conformance/RUBRIC.md (R1-R7, T5-T7) and
+    # it WILL be red until the conformance lanes land — the baseline is captured separately (#3634),
+    # and a suite that becomes a merge gate before anyone has read its findings is how #2417's
+    # 320-test suite nearly went in. It is not in .mergify.yml's merge_conditions and not in the
+    # protect-dev ruleset; scripts/ci/check-required-checks.mjs compares those two, so this job
+    # joining a required check can only ever be a deliberate edit to both.
+    #
+    # WHEN: on a PR that touches the console surface (the same `console` filter the hero path uses,
+    # which covers apps/console/** and the @repo packages the console depends on), and in full every
+    # night at 03:00 UTC. The nightly is what keeps the audit honest on routes no PR happened to
+    # touch. `github.event.schedule` is matched EXACTLY rather than `event_name == 'schedule'`,
+    # because ci.yml already carries a Monday cron for the mutation job and a bare event_name test
+    # would silently sign that job up for a nightly run too.
+    if: >-
+      github.event.schedule == '0 3 * * *'
+      || github.event_name == 'workflow_dispatch'
+      || needs.detect-changes.outputs.console == 'true'
+    # Same hermetic recipe as the hero job: real Postgres, a production console booted by the
+    # Playwright `webServer`, email-OTP with the code scraped from the teed log. No sandbox box, no
+    # cloud credentials — this costs CI minutes, not an environment slot.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: alethia
+          POSTGRES_PASSWORD: alethia-dev-secret
+          POSTGRES_DB: alethia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alethia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+      BETTER_AUTH_SECRET: e2e-browser-placeholder-secret
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
+      ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
+      ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
+      DEV_CONSOLE_LOG: /tmp/alethia-ui-audit-console.log
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Cache Turbo
+        uses: actions/cache@v6
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate the test database (schema + programmables/RLS + app role)
+        run: pnpm -F console db:migrate
+      # See the hero job: without ee/dist the console falls back to community scope
+      # (actor.orgId === actor.userId) and every org-scoped surface renders empty — which would
+      # make the whole audit a measurement of the wrong application.
+      - name: Build @alethia/ee (the console resolves EE scope only when its dist exists)
+        run: pnpm -F @alethia/ee build
+      - name: Guard — ee/dist must exist, or the audit measures community scope
+        run: |
+          test -f ee/dist/index.js || {
+            echo "::error::ee/dist/index.js missing — the console would fall back to community scope."
+            exit 1
+          }
+      - name: Build the console (production image the browser drives)
+        run: pnpm -F console build
+      - name: Install Playwright (Chromium + OS deps)
+        run: pnpm -F console exec playwright install --with-deps chromium
+      # The route manifest IS the audit's denominator. If the seam raises — a moved route group, a
+      # zero-route scan — every route below would be "audited" over nothing, so it is run here on
+      # its own where the failure names itself. NOT piped: a pipe would report the pipe's exit code.
+      - name: Guard — the route manifest resolves
+        run: node scripts/lib/console-routes.mjs --summary
+      - name: Guard — the audit project must match at least one test
+        run: |
+          list=$(pnpm -F console exec playwright test --project=audit --list 2>&1) || { echo "$list"; exit 1; }
+          echo "$list"
+          echo "$list" | grep -qE "Total: [1-9][0-9]* test" || { echo "::error::--project=audit matched 0 tests (testMatch drift?)"; exit 1; }
+      - name: Run the UI conformance audit (Playwright boots `next start` via webServer)
+        run: pnpm -F console exec playwright test --project=audit
+      - name: Upload the audit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-audit
+          path: |
+            apps/console/playwright-report/
+            apps/console/test-results/ui-audit*.json
+          retention-days: 14
 
   e2e-elench-ai:
     name: E2E (browser · Elench AI journeys · scripted model)
@@ -639,6 +775,11 @@ jobs:
   guards:
     name: Authz / open-core guards
     runs-on: ubuntu-latest
+    # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
+    # 03:00 cron added for the console UI audit would have signed this one up for a nightly
+    # run it never asked for — the same trap the cron block records for `mutation`, which
+    # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
+    if: github.event.schedule != '0 3 * * *'
     # `issues: read` for check-exclusion-issues.mjs, the one network step in an otherwise hermetic
     # job. The workflow-level `permissions: contents: read` makes every unlisted scope NONE, so
     # without this `gh issue view` fails, the check reports "could not read the state" and — being
@@ -1441,6 +1582,11 @@ jobs:
   go:
     name: Go (build · vet · test · lint)
     runs-on: ubuntu-latest
+    # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
+    # 03:00 cron added for the console UI audit would have signed this one up for a nightly
+    # run it never asked for — the same trap the cron block records for `mutation`, which
+    # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
+    if: github.event.schedule != '0 3 * * *'
     strategy:
       fail-fast: false
       matrix:
@@ -1965,7 +2111,10 @@ jobs:
     name: Mutation testing (Stryker + Gremlins)
     # The objective "are the tests real" check. Slow — runs WEEKLY + on manual dispatch only,
     # never on PRs. Report-only for now (|| true); ratchet to a hard threshold as scores climb.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Pinned to the MONDAY cron by its expression, not to `event_name == 'schedule'`: ci.yml now
+    # also carries a nightly cron for the UI audit, and the looser test would have quietly turned
+    # this weekly job into a nightly one.
+    if: github.event.schedule == '0 6 * * 1' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1990,6 +2139,11 @@ jobs:
   secrets:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
+    # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
+    # 03:00 cron added for the console UI audit would have signed this one up for a nightly
+    # run it never asked for — the same trap the cron block records for `mutation`, which
+    # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
+    if: github.event.schedule != '0 3 * * *'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -2019,6 +2173,11 @@ jobs:
   addon-charts-render:
     name: Add-on charts render (helm template · pinned charts)
     runs-on: ubuntu-latest
+    # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
+    # 03:00 cron added for the console UI audit would have signed this one up for a nightly
+    # run it never asked for — the same trap the cron block records for `mutation`, which
+    # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
+    if: github.event.schedule != '0 3 * * *'
     # Its own job because it needs helm on PATH and fetches real charts — neither belongs in the
     # console's vitest run. It renders the DEFAULT values of every marketplace add-on against its
     # pinned chart and requires exit 0.
