@@ -30,7 +30,13 @@ func resetDeploySeams(t *testing.T) {
 	// The preflight shells kubectl directly, so without this every test that drives installArgoCD
 	// probed whatever cluster the process KUBECONFIG pointed at (#3495). Stubbed to the answer a
 	// fresh cluster gives — proceed — so the tests exercise the install they are about.
-	preflightArgoVersion = func(context.Context, io.Writer) error { return nil }
+	// ABSENT, not a zero decision: the fresh-cluster answer carries no chart override and no skip,
+	// which is what makes the install these tests are about the one that actually runs. A bare
+	// `ArgoPreflightDecision{}` would happen to have the same two fields and would say nothing
+	// about which verdict it stands for (#3521).
+	preflightArgoVersion = func(context.Context, io.Writer) (argocd.ArgoPreflightDecision, error) {
+		return argocd.ArgoPreflightDecision{Verdict: argocd.ArgoPreflightAbsent, Proceed: true}, nil
+	}
 	t.Cleanup(func() {
 		executeCommand = origExecuteCommand
 		executeCommandWithOutput = origExecuteCommandWithOutput
