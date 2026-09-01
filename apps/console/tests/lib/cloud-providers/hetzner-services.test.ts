@@ -327,6 +327,31 @@ describe("hetznerDataServicesToAddOns — registries (Harbor)", () => {
 		);
 	});
 
+	it("references every Harbor credential through the runner-seeded Secret", () => {
+		const spec = specOf([{ name: "app-images" }], "registry-app-images");
+		const secret = "harbor-app-images-admin";
+		expect(leaf(spec?.values, "existingSecretAdminPassword")).toBe(secret);
+		expect(leaf(spec?.values, "existingSecretAdminPasswordKey")).toBe(
+			"HARBOR_ADMIN_PASSWORD",
+		);
+		expect(leaf(spec?.values, "existingSecretSecretKey")).toBe(secret);
+		expect(leaf(spec?.values, "core", "existingSecret")).toBe(secret);
+		expect(leaf(spec?.values, "core", "existingXsrfSecret")).toBe(secret);
+		expect(leaf(spec?.values, "core", "existingXsrfSecretKey")).toBe("CSRF_KEY");
+		expect(leaf(spec?.values, "core", "secretName")).toBe(secret);
+		expect(leaf(spec?.values, "jobservice", "existingSecret")).toBe(secret);
+		expect(leaf(spec?.values, "jobservice", "existingSecretKey")).toBe(
+			"JOBSERVICE_SECRET",
+		);
+		expect(leaf(spec?.values, "registry", "existingSecret")).toBe(secret);
+		expect(leaf(spec?.values, "registry", "existingSecretKey")).toBe(
+			"REGISTRY_HTTP_SECRET",
+		);
+		expect(
+			leaf(spec?.values, "registry", "credentials", "existingSecret"),
+		).toBe(secret);
+	});
+
 	it("pins ALL FIVE volumes to the hcloud StorageClass, never the cluster default", () => {
 		// Harbor ships its own Postgres, Redis and Trivy. Leaving four of the five unset works only
 		// while hcloud-volumes happens to be the cluster's default StorageClass.

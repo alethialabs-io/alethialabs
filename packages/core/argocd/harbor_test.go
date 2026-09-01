@@ -5,7 +5,10 @@ package argocd
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"os"
@@ -15,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func hetznerRegistryProject(names ...string) *types.ProjectConfig {
@@ -202,14 +206,19 @@ func TestHarborBootstrapJobRefusesInvalidInput(t *testing.T) {
 	}
 }
 
-func TestHarborAdminSecretManifestCarriesTheChartsKey(t *testing.T) {
-	y := harborAdminSecretManifest("registries", "harbor-app-images-admin", "hunter2")
-	if !strings.Contains(y, "  "+harborAdminSecretKey+": ") {
-		t.Errorf("the Secret does not carry the key the chart reads (%s)", harborAdminSecretKey)
+func TestHarborSecretManifestCarriesEveryCredentialWithoutPlaintext(t *testing.T) {
+	data := map[string]string{}
+	for _, key := range harborCredentialKeys {
+		data[key] = base64.StdEncoding.EncodeToString([]byte("hunter2-" + key))
 	}
-	// Never a plaintext password in the rendered manifest.
+	y := harborSecretManifest("registries", "harbor-app-images-admin", data)
+	for _, key := range harborCredentialKeys {
+		if !strings.Contains(y, "  "+key+": ") {
+			t.Errorf("the Secret does not carry %s", key)
+		}
+	}
 	if strings.Contains(y, "hunter2") {
-		t.Error("the password appears in plaintext in the manifest")
+		t.Error("a credential appears in plaintext in the manifest")
 	}
 }
 
@@ -244,37 +253,83 @@ func TestHarborAdminPasswordSatisfiesHarborsComplexityRule(t *testing.T) {
 	}
 }
 
-// ── the runner-side orchestration, against a stubbed kubectl ───────────────────────────────────
-
-// The admin password is created ONCE and then read, never rewritten. Rotating it on every deploy
-// would change the password Alethia authenticates with while Harbor's own database still holds the
-// previous one — an immediate lockout that looks like a Harbor bug.
-func TestEnsureHarborAdminSecretLeavesAnExistingPasswordAlone(t *testing.T) {
-	// `kubectl get secret` succeeds ⇒ the Secret exists.
-	stub := newKubectlStub(t, 0)
-	reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
-
-	var out strings.Builder
-	if err := EnsureHarborAdminSecret(reg, &out, io.Discard); err != nil {
-		t.Fatalf("EnsureHarborAdminSecret: %v", err)
+func TestCompleteHarborCredentialsMintsTheFullChartContract(t *testing.T) {
+	existingAdmin := base64.StdEncoding.EncodeToString([]byte("keep-this-admin"))
+	data := map[string]string{harborAdminSecretKey: existingAdmin}
+	changed, err := completeHarborCredentials(data)
+	if err != nil {
+		t.Fatalf("complete credentials: %v", err)
 	}
-	for _, c := range stub.calls() {
-		if strings.Contains(c, "apply") {
-			t.Fatalf("re-applied the admin secret over an existing one: %q", c)
+	if !changed {
+		t.Fatal("an admin-only legacy Secret was reported complete")
+	}
+	if data[harborAdminSecretKey] != existingAdmin {
+		t.Fatal("rotated the existing admin password")
+	}
+	decoded := map[string]string{}
+	for _, key := range harborCredentialKeys {
+		raw, err := base64.StdEncoding.DecodeString(data[key])
+		if err != nil || len(raw) == 0 {
+			t.Fatalf("%s is not a non-empty base64 value: %v", key, err)
 		}
+		decoded[key] = string(raw)
 	}
-	if !strings.Contains(out.String(), "already exists") {
-		t.Errorf("did not report the existing secret: %q", out.String())
+	if len(decoded["secretKey"]) != 16 {
+		t.Fatalf("secretKey length = %d, want Harbor's exact 16", len(decoded["secretKey"]))
+	}
+	block, _ := pem.Decode([]byte(decoded["tls.key"]))
+	if block == nil {
+		t.Fatal("tls.key is not PEM")
+	}
+	if _, err := x509.ParsePKCS1PrivateKey(block.Bytes); err != nil {
+		t.Fatalf("tls.key is not a PKCS#1 RSA private key: %v", err)
+	}
+	wantPrefix := harborRegistryUsername + ":"
+	if !strings.HasPrefix(decoded["REGISTRY_HTPASSWD"], wantPrefix) {
+		t.Fatalf("REGISTRY_HTPASSWD does not name %s", harborRegistryUsername)
+	}
+	hash := strings.TrimPrefix(decoded["REGISTRY_HTPASSWD"], wantPrefix)
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(decoded["REGISTRY_PASSWD"])); err != nil {
+		t.Fatalf("REGISTRY_HTPASSWD is not the bcrypt of REGISTRY_PASSWD: %v", err)
 	}
 }
 
-func TestEnsureHarborAdminSecretSeedsWhenAbsent(t *testing.T) {
-	// `kubectl get secret` fails ⇒ absent; the apply must follow.
-	stub := newKubectlStub(t, 0, stubRule{Match: "get secret", Exit: 1})
+// ── the runner-side orchestration, against a stubbed kubectl ───────────────────────────────────
+
+// A complete credential set is created ONCE and never rewritten. Re-applying would rotate Harbor's
+// internal credentials while its database still holds the previous values.
+func TestEnsureHarborSecretLeavesACompleteSecretAlone(t *testing.T) {
+	data := map[string]string{}
+	for _, key := range harborCredentialKeys {
+		data[key] = base64.StdEncoding.EncodeToString([]byte("existing-" + key))
+	}
+	raw, err := json.Marshal(map[string]any{"data": data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := newKubectlStub(t, 0, stubRule{Match: "get secret", Stdout: string(raw)})
 	reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
 
-	if err := EnsureHarborAdminSecret(reg, io.Discard, io.Discard); err != nil {
-		t.Fatalf("EnsureHarborAdminSecret: %v", err)
+	var out strings.Builder
+	if err := EnsureHarborSecret(reg, &out, io.Discard); err != nil {
+		t.Fatalf("EnsureHarborSecret: %v", err)
+	}
+	for _, c := range stub.calls() {
+		if strings.Contains(c, "apply") {
+			t.Fatalf("re-applied the complete credential secret: %q", c)
+		}
+	}
+	if !strings.Contains(out.String(), "is complete") {
+		t.Errorf("did not report the complete secret: %q", out.String())
+	}
+}
+
+func TestEnsureHarborSecretSeedsEveryKeyWhenAbsent(t *testing.T) {
+	stub := newKubectlStub(t, 0)
+	reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
+
+	if err := EnsureHarborSecret(reg, io.Discard, io.Discard); err != nil {
+		t.Fatalf("EnsureHarborSecret: %v", err)
 	}
 	applied := false
 	for _, c := range stub.calls() {
@@ -287,15 +342,40 @@ func TestEnsureHarborAdminSecretSeedsWhenAbsent(t *testing.T) {
 		}
 	}
 	if !applied {
-		t.Fatalf("never applied the admin secret; calls = %v", stub.calls())
+		t.Fatalf("never applied the credential secret; calls = %v", stub.calls())
 	}
 }
 
-func TestEnsureHarborAdminSecretRefusesAnUnsafeRegistry(t *testing.T) {
+func TestEnsureHarborSecretRefusesAnUnsafeRegistry(t *testing.T) {
 	newKubectlStub(t, 0)
 	bad := HarborRegistry{Name: "Bad Name", Namespace: "registries", Host: "h", PullSecretName: "p", PullSecretNamespace: "default"}
-	if err := EnsureHarborAdminSecret(bad, io.Discard, io.Discard); err == nil {
+	if err := EnsureHarborSecret(bad, io.Discard, io.Discard); err == nil {
 		t.Error("seeded a secret for a registry whose name is not an RFC-1123 label")
+	}
+}
+
+func TestEnsureHarborSecretCompletesLegacyAdminOnlySecretWithoutRotatingIt(t *testing.T) {
+	admin := base64.StdEncoding.EncodeToString([]byte("existing-admin"))
+	raw := `{"data":{"HARBOR_ADMIN_PASSWORD":"` + admin + `"}}`
+	stub := newKubectlStub(t, 0, stubRule{Match: "get secret", Stdout: raw})
+	reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
+
+	if err := EnsureHarborSecret(reg, io.Discard, io.Discard); err != nil {
+		t.Fatalf("EnsureHarborSecret: %v", err)
+	}
+	if !stub.calledWith("apply -f") {
+		t.Fatal("did not complete the legacy admin-only Secret")
+	}
+}
+
+func TestEnsureHarborSecretRejectsHalfARegistryPasswordPair(t *testing.T) {
+	raw := `{"data":{"REGISTRY_PASSWD":"cGFzc3dvcmQ="}}`
+	newKubectlStub(t, 0, stubRule{Match: "get secret", Stdout: raw})
+	reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
+
+	err := EnsureHarborSecret(reg, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "only one of REGISTRY_PASSWD") {
+		t.Fatalf("error = %v, want fail-closed pair error", err)
 	}
 }
 
@@ -303,7 +383,7 @@ func TestEnsureHarborAdminSecretRefusesAnUnsafeRegistry(t *testing.T) {
 // resourceName: RBAC cannot name-scope `create`, so a Job that created its own Secret would need
 // namespace-wide create authority.
 func TestEnsureHarborPullCredentialsSeedsTheSecretBeforeTheJob(t *testing.T) {
-	stub := newKubectlStub(t, 0, stubRule{Match: "get secret", Exit: 1})
+	stub := newKubectlStub(t, 0)
 	reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
 
 	if err := EnsureHarborPullCredentials(context.Background(), reg, "runner:v1", io.Discard, io.Discard); err != nil {
@@ -331,25 +411,25 @@ func TestEnsureHarborPullCredentialsSeedsTheSecretBeforeTheJob(t *testing.T) {
 }
 
 func TestEnsureHarborPullCredentialsRefusesWithNoRunnerImage(t *testing.T) {
-	newKubectlStub(t, 0, stubRule{Match: "get secret", Exit: 1})
+	newKubectlStub(t, 0)
 	reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
 	if err := EnsureHarborPullCredentials(context.Background(), reg, "", io.Discard, io.Discard); err == nil {
 		t.Error("rendered and applied a Job with no runner image")
 	}
 }
 
-func TestEnsureHarborAdminSecretReportsAnApplyFailure(t *testing.T) {
+func TestEnsureHarborSecretReportsAnApplyFailure(t *testing.T) {
 	// absent, then `kubectl apply` fails — the caller must see it rather than proceed to a Job that
 	// would authenticate with nothing.
-	newKubectlStub(t, 0, stubRule{Match: "get secret", Exit: 1}, stubRule{Match: "apply", Exit: 1})
+	newKubectlStub(t, 0, stubRule{Match: "apply", Exit: 1})
 	reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
-	if err := EnsureHarborAdminSecret(reg, io.Discard, io.Discard); err == nil {
+	if err := EnsureHarborSecret(reg, io.Discard, io.Discard); err == nil {
 		t.Error("a failed apply was reported as success")
 	}
 }
 
 func TestEnsureHarborPullCredentialsStopsIfTheAdminSecretFails(t *testing.T) {
-	newKubectlStub(t, 0, stubRule{Match: "get secret", Exit: 1}, stubRule{Match: "apply", Exit: 1})
+	newKubectlStub(t, 0, stubRule{Match: "apply", Exit: 1})
 	reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
 	if err := EnsureHarborPullCredentials(context.Background(), reg, "runner:v1", io.Discard, io.Discard); err == nil {
 		t.Error("continued to the Job after the admin secret failed")
@@ -380,15 +460,15 @@ type failingReader struct{}
 
 func (failingReader) Read([]byte) (int, error) { return 0, errors.New("no entropy") }
 
-func TestEnsureHarborAdminSecretSurfacesAnEntropyFailure(t *testing.T) {
-	newKubectlStub(t, 0, stubRule{Match: "get secret", Exit: 1})
+func TestEnsureHarborSecretSurfacesAnEntropyFailure(t *testing.T) {
+	newKubectlStub(t, 0)
 	prev := harborRandReader
 	t.Cleanup(func() { harborRandReader = prev })
 	harborRandReader = failingReader{}
 
 	reg := HetznerRegistries(hetznerRegistryProject("app-images"))[0]
-	err := EnsureHarborAdminSecret(reg, io.Discard, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "generate Harbor admin password") {
+	err := EnsureHarborSecret(reg, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "generate Harbor HARBOR_ADMIN_PASSWORD") {
 		t.Fatalf("error = %v, want a generation failure", err)
 	}
 }
