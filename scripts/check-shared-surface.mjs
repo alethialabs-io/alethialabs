@@ -69,22 +69,59 @@
 //                  true, and neither matcher here looks at a bare call. What they look at is the
 //                  SYMBOL arriving by another route.
 //
-//   @repo/ui/page-header   a raw `<h1>`, in apps/console/app/(private)/** and components/**.
+//   NO PAGE TITLE  a raw `<h1>`, in apps/console/app/(private)/** and components/**, as the
+//                  `page_title` rule. THE DIRECTION OF THIS ROW IS INVERTED FROM WHAT IT WAS: it
+//                  used to say "use `PageHeader` instead", and the fix is now DELETION. The
+//                  maintainer's call, #3733: the page's name is said three times — the sidebar
+//                  entry you clicked, the breadcrumb above the content, and the page's own heading
+//                  — and the third one earns nothing. `@repo/ui/page-toolbar` is what is left of
+//                  the old component: the count pill, one line of copy and the page's actions, all
+//                  of which the breadcrumb duplicates none of. The eleven recorded decisions under
+//                  this rule are the surfaces with NO breadcrumb above them — sign-in, the CLI
+//                  hand-off, buying a plan — plus one `sr-only` outline landmark.
 //
-//   @repo/ui/page-header   a raw `<h2>` through `<h6>`, same scope, as the SEPARATE `section_header`
-//                  rule. This is a reversal of what this header said until #3615, and the reason it
-//                  reversed is worth keeping: the old text argued that "a class-name match cannot
-//                  tell a section heading from a bold label", and declined the row. That argument
-//                  was about the CLASS NAME, and the matcher does not read one — a raw `<h2>` in
-//                  the console is a heading whatever it is wearing, because the tag is the thing
-//                  that lands in the accessibility tree. Measured when the rule was added: 24
-//                  `<h2>` across at least five type scales (`text-[19px]`, `[17px]`, `[15px]`,
-//                  `[14.5px]`, `text-lg`/`2xl`), so the same rung of the same document outline is
-//                  rendered five sizes, 17 `<h3>` under them, and 5 `<h4>` under those which
-//                  already disagree between `text-sm` and `text-xs`. `PageHeader` takes `level={n}`
-//                  for exactly this. It runs to `<h6>` and not to `<h3>` because a rule that stops
-//                  early is an instruction to demote: a flagged `<h3>` written as `<h4>` passes,
-//                  and the outline it was protecting is worse than before.
+//   @repo/ui/section-heading   a raw `<h2>` through `<h6>`, same scope, as the SEPARATE
+//                  `section_header` rule. This is a reversal of what this header said until #3615,
+//                  and the reason it reversed is worth keeping: the old text argued that "a
+//                  class-name match cannot tell a section heading from a bold label", and declined
+//                  the row. That argument was about the CLASS NAME, and the matcher does not read
+//                  one — a raw `<h2>` in the console is a heading whatever it is wearing, because
+//                  the tag is the thing that lands in the accessibility tree. Measured when the
+//                  rule was added: 24 `<h2>` across at least five type scales (`text-[19px]`,
+//                  `[17px]`, `[15px]`, `[14.5px]`, `text-lg`/`2xl`), so the same rung of the same
+//                  document outline is rendered five sizes, 17 `<h3>` under them, and 5 `<h4>`
+//                  under those which already disagree between `text-sm` and `text-xs`. It runs to
+//                  `<h6>` and not to `<h3>` because a rule that stops early is an instruction to
+//                  demote: a flagged `<h3>` written as `<h4>` passes, and the outline it was
+//                  protecting is worse than before.
+//
+//                  The ANSWER moved in #3733 too. It was `PageHeader` with `level={n}`, which
+//                  rendered `text-lg font-medium` whatever the level — so every heading converted
+//                  to it jumped to 18px from the 14.5–15px the console actually typesets that rung
+//                  at, and that jump is what found the missing type scale below. It is now
+//                  `SectionHeading` from `@repo/ui/section-heading`: one rung (`--text-ui-lg`),
+//                  `level` sets the tag and nothing else.
+//
+//   a `--text-ui-*` rung   a HARDCODED font size — `text-[13px]`, `text-[12.5px]`, and the same in
+//                  any length unit — in apps/console/{components,app,lib,hooks}, as the
+//                  `type_scale` rule. It reaches `lib/` and `hooks/` for the reason the format rule
+//                  does: a class list does not stop being one for living outside a component, and
+//                  those two roots hold no Tailwind class string at all today, so the wider scope
+//                  costs nothing and closes the hole a className constant would move into.
+//                  Measured on an unmodified dev: 1,079 of them across 23 distinct values and 194
+//                  files, against a `packages/brand/src/tokens.css` that carried NO UI type scale
+//                  at all — only `--text-display-lg/md/sm` for marketing headlines, starting at
+//                  30px. So every file picked its own number and the same rung of the same page is
+//                  typeset at five sizes. The scale is seven rungs DERIVED from where those 1,079
+//                  cluster, and the whole census is recorded as `lifts:` debt so it can only
+//                  shrink. The unit alternation is wider than anything live — there is not one
+//                  `rem`/`em`/`pt` font size in the console today — because px is not the rule: a
+//                  flagged `text-[13px]` rewritten as `text-[0.8125rem]` would otherwise silence
+//                  the guard while changing nothing, which is the shape a "fix" takes. A SECOND
+//                  matcher reads Tailwind's arbitrary-PROPERTY spelling of the same declaration,
+//                  `[font-size:13px]` — eleven characters, no new utility, every variant prefix,
+//                  and it compiles to exactly what `text-[13px]` compiles to. There is not one live
+//                  site, and that is why it costs nothing to close now.
 //
 //   @repo/ui/empty  a CENTRED BLOCK STANDING IN FOR CONTENT, in apps/console/{components,app}: one
 //                  class string carrying both `text-center` and `py-6` OR MORE, with no upper
@@ -160,6 +197,19 @@
 //                      never the call.
 //   a NEGATIVE `-z-*`  — none exist, and a level below the flow is a different question from
 //                      claiming one above it.
+//   an inline `fontSize:` — the other route to a hardcoded size, and it is NOT matched. Measured
+//                      inside the guarded roots: seven sites, and not one of them is a rung. Four
+//                      COMPUTE the value from a geometry the caller passed (`Math.round(size *
+//                      0.5)` for an avatar's initials, three more of that shape), which is a glyph
+//                      sized to a box; one is an SVG `fontSize="9"` presentation attribute on a
+//                      `<text>` node, which is drawing, not typesetting; and two are the
+//                      `appearance` object handed to Stripe Elements, which renders inside a
+//                      cross-origin iframe that no Tailwind class and no CSS variable can reach.
+//                      `--text-ui-*` cannot be the answer to any of the seven, so a matcher here
+//                      would buy seven allowlist entries that are not decisions. The literal
+//                      `fontSize: "13px"` spelling that WOULD be a rung exists 18 times, and every
+//                      one is under `apps/console/emails/**`, which no scope here reaches — an
+//                      email client resolves no variable and no class either.
 //   A CLASS LIST SPLIT ACROSS TWO `cn()` ARGUMENTS — `cn("px-4 py-16", "text-center")`, and the
 //                      same for the grid matcher. The two class-string matchers read ONE string
 //                      literal, in any of the three quote styles; a pair whose halves live in two
@@ -379,15 +429,25 @@ const RULES = [
 		],
 	},
 	{
-		id: "page_header",
-		surface: "@repo/ui/page-header",
+		// THE DIRECTION OF THIS RULE IS INVERTED. It used to say "a page title must come from
+		// `PageHeader`"; it now says a console page has no page title at all. The regex did not
+		// change and neither did the eleven recorded decisions — what changed is the FIX the guard
+		// prints, from "adopt the component" to "delete the heading", and that sentence is the
+		// whole rule. #3733: the page's name is said by the sidebar entry you clicked and by the
+		// breadcrumb above the content, and a third saying earns nothing.
+		//
+		// It is NOT renamed to something like `no_page_title` beyond this: the id is the
+		// allowlist's section name, so it is a value in a checked-in file, and `page_title` says
+		// what it matches without pretending the eleven entries beneath it are new.
+		id: "page_title",
+		surface: "no page title — the breadcrumb already says it",
 		matchers: [
 			{
 				// `|$` for the last line of a file, where the two-line window has no next line to
 				// supply the `\s` that error-state.tsx's `<h1`-then-className shape matches on.
 				scope: "console_pages",
 				re: /<h1(?=[\s/>]|$)/g,
-				say: "hand-writes a page title. Use `PageHeader` from `@repo/ui/page-header`, with `level` when it heads a section rather than the page.",
+				say: "gives the page a title. The sidebar entry you clicked and the breadcrumb above the content both already say this page's name — delete the heading. `PageToolbar` from `@repo/ui/page-toolbar` keeps the count pill, the description and the page's actions, which the breadcrumb duplicates none of; a heading INSIDE the page is `SectionHeading` from `@repo/ui/section-heading`.",
 				probe: 'const a = <h1 className="text-2xl">Clusters</h1>;',
 				antiProbe: "const a = <h10>x</h10>;",
 			},
@@ -399,19 +459,19 @@ const RULES = [
 		// otherwise merge into one entry whose recorded reason describes only the `<h1>`, and the
 		// per-occurrence ratchet would be spent on a heading nobody decided about.
 		id: "section_header",
-		surface: "@repo/ui/page-header with `level`",
+		surface: "@repo/ui/section-heading",
 		matchers: [
 			{
 				scope: "console_pages",
 				re: /<h2(?=[\s/>]|$)/g,
-				say: "hand-writes a section heading. Use `PageHeader` with `level={2}` — it owns the one size, weight and spacing a second-level heading gets, which is why the console currently renders that same rung at five different sizes.",
+				say: "hand-writes a section heading. Use `SectionHeading` from `@repo/ui/section-heading` — it owns the one size, weight and spacing a section heading gets, which is why the console currently renders that same rung at five different sizes.",
 				probe: 'const a = <h2 className="text-lg font-semibold">Usage</h2>;',
 				antiProbe: "const a = <h20>x</h20>;",
 			},
 			{
 				scope: "console_pages",
 				re: /<h3(?=[\s/>]|$)/g,
-				say: "hand-writes a third-level heading. Use `PageHeader` with `level={3}`, so a heading nested under a section is a rung of one outline rather than whatever size its own file chose.",
+				say: "hand-writes a third-level heading. Use `SectionHeading` with `level={3}`, so a heading nested under a section is a rung of one outline rather than whatever size its own file chose.",
 				probe: 'const a = <h3 className="text-sm font-semibold">Members</h3>;',
 				antiProbe: "const a = <h30>x</h30>;",
 			},
@@ -425,9 +485,79 @@ const RULES = [
 				// defect the `<h2>` count was written about, one rung down.
 				scope: "console_pages",
 				re: /<h[4-6](?=[\s/>]|$)/g,
-				say: "hand-writes a fourth-level or deeper heading. Use `PageHeader` with `level={n}` — an outline is only an outline if every rung of it comes from one place, and demoting a heading to escape a guard is not a fix.",
+				say: "hand-writes a fourth-level or deeper heading. Use `SectionHeading` with `level={n}` — an outline is only an outline if every rung of it comes from one place, and demoting a heading to escape a guard is not a fix.",
 				probe: 'const a = <h4 className="text-xs uppercase">Inputs</h4>;',
 				antiProbe: "const a = <h40>x</h40>;",
+			},
+		],
+	},
+	{
+		// THE TYPE SCALE, added in #3733 with the ladder it points at. Everything above this rule is
+		// about a COMPONENT being reached for; this one is about a VALUE, and it is the largest
+		// single census in this file: 1,079 occurrences across 23 distinct values and 194 files,
+		// measured on an unmodified dev. `packages/brand/src/tokens.css` had no UI type scale at all
+		// until the same commit, so there was nothing to reach for — which is why every one of the
+		// 1,079 is `lifts:` debt and not one of them is a decision.
+		//
+		// WHY THE UNIT ALTERNATION IS WIDER THAN THE TREE. There is not one `rem`, `em`, `pt`, `ch`
+		// or `%` font size in the console today, and the matcher reads all of them anyway. px is not
+		// the rule — a hardcoded size is — and a flagged `text-[13px]` rewritten as
+		// `text-[0.8125rem]` renders identically while dropping the file's `hits` to zero, which
+		// reds as "matches nothing" and invites lowering `debt:` for a fix that never happened. That
+		// is the same perverse escape the empty-state padding cap used to hand out, one rule over.
+		// `length:` is in for the same reason: Tailwind's own disambiguating prefix is a spelling of
+		// the identical class.
+		//
+		// It does NOT read a colour or a variable: the value has to START with a digit or a decimal
+		// point, so `text-[#0a0a0a]`, `text-[color:var(--text-primary)]` and `text-[var(--text-ui-lg)]`
+		// are all untouched. The last of those matters most — it is one of the two spellings of the
+		// FIX, and a matcher that reported its own answer would be unfixable.
+		//
+		// `\b` and not a `(?<![-\w])` lookbehind: a Tailwind variant prefix ends in `:`
+		// (`md:text-[13px]`, `group-hover:text-[11px]`), and excluding the colon is exactly how the
+		// layer-token rule taught its own evasion for a year. A word boundary admits every prefix.
+		id: "type_scale",
+		surface: "a `--text-ui-*` rung from packages/brand/src/tokens.css",
+		matchers: [
+			{
+				// `console_code`, not the rendering layer the byte matcher stops at: a class list does
+				// not stop being one for living outside a component. Measured before choosing it —
+				// `apps/console/{lib,hooks}` hold ZERO Tailwind class strings of any kind today, so
+				// the wider scope changes the census by nothing and costs nothing, and it is the
+				// half of the console a className constant would move INTO.
+				scope: "console_code",
+				re: /\btext-\[(?:length:)?\d*\.?\d+(?:px|rem|em|pt|ch|%)\]/g,
+				say: "picks its own font size. Use a `--text-ui-*` rung — `text-ui-3xs` … `text-ui-xl` in packages/brand/src/tokens.css. The console carries 1,079 hardcoded sizes across 23 values and there is no reading of a page on which 12px and 12.5px are two different decisions; the rungs are derived from where those 1,079 actually cluster.",
+				// A VARIANT PREFIX and a HALF-PIXEL value, because both are live shapes and either
+				// one alone would leave a hole a plain `text-[13px]` probe cannot see.
+				probe: 'const a = <p className="md:text-[12.5px] text-text-tertiary">x</p>;',
+				// The FIX, in both of its spellings, plus an arbitrary colour — the three things a
+				// widening to `text-\[[^\]]+\]` would swallow. Varying the SIZE here would test
+				// nothing: any regex that matches the probe matches another number too.
+				antiProbe: 'const a = <p className="text-ui-md text-[color:var(--text-primary)]">x</p>;',
+			},
+			{
+				// THE ARBITRARY-PROPERTY SPELLING, and it is the widest escape of the lot — wider
+				// than every unit rewrite the matcher above was widened for. Tailwind compiles
+				// `[font-size:13px]` to the identical declaration as `text-[13px]`, takes every
+				// variant prefix, and needs no new utility, so a flagged site is silenced by moving
+				// eleven characters. It is a SECOND matcher rather than an alternation inside the
+				// first because the two shapes share no anchor: one starts at `text-[`, the other
+				// at `[`, and a single regex reaching both would have to match a bare `[`.
+				//
+				// Zero live sites — `grep -rn "\[font-size:" apps/console` finds none — so this
+				// adds no allowlist entry and moves no ledger. That is the point: it closes the
+				// route before anybody finds it, which is the only time closing one is free. The
+				// probe is what holds it, and the file's permanent positive control fires it on
+				// every run.
+				scope: "console_code",
+				re: /\[font-size:\s*(?:length:)?\d*\.?\d+(?:px|rem|em|pt|ch|%)\]/g,
+				say: "picks its own font size through Tailwind's arbitrary-property syntax, which compiles to exactly what `text-[13px]` does. Use a `--text-ui-*` rung — `text-ui-3xs` … `text-ui-xl` in packages/brand/src/tokens.css.",
+				probe: 'const a = <p className="md:[font-size:12.5px]">x</p>;',
+				// A NON-SIZE arbitrary property, which is the shape a widening to `\[[a-z-]+:` would
+				// swallow — and `[mask-image:…]`/`[grid-template-columns:…]` are how a real console
+				// file reaches CSS Tailwind has no utility for.
+				antiProbe: 'const a = <p className="[mask-image:linear-gradient(90deg,#000,transparent)] text-ui-md">x</p>;',
 			},
 		],
 	},
@@ -1379,17 +1509,26 @@ function selfTest() {
 	ok("...including one that ends the file, where the window has no next line", flags("const a = <h1"));
 	ok("...but h10 is a different tag", !flags("const a = <h10>x</h10>;"));
 	ok("...and a component whose name merely contains h1 is not", !flags("const a = <Ch1ldTitle>x</Ch1ldTitle>;"));
-	ok("PageHeader is the fix, so it is not itself a finding", !flags('const a = <PageHeader title="Clusters" />;'));
+	// THE DIRECTION OF THIS RULE INVERTED IN #3733. It used to close with "PageHeader is the fix, so
+	// it is not itself a finding". There is no longer a component that puts a title on a console
+	// page — the fix is deletion — and what survives, `PageToolbar`, has no `title` prop at all, so
+	// the shape that used to be the answer cannot be written any more. What the guard still owes the
+	// reader is that the SURVIVING primitives are not findings.
+	ok("PageToolbar is not a finding — it carries the count and the actions, and no heading", !flags('const a = <PageToolbar count={3} actions={btn} />;'));
+	ok("...and neither is SectionHeading, which is a heading INSIDE a page", !flags('const a = <SectionHeading title="Usage" level={2} />;'));
 
 	// ── section headings: the tag, never the class name ──────────────────────────────────────
 	// The old header declined this row because "a class-name match cannot tell a section heading
 	// from a bold label". These fixtures are the answer: the matcher never reads the class, and the
 	// same words in a <span> wearing the identical classes are NOT a finding.
-	ok("a raw h2 is flagged", flags('const a = <h2 className="text-[15px] font-semibold">Usage</h2>;'));
+	// `text-ui-lg`, not the `text-[15px]` these fixtures used to wear: an arbitrary pixel size is
+	// now a finding under `type_scale`, so the span below would have "passed" on the wrong matcher
+	// and the h2 above would have proved nothing about `<h2` at all.
+	ok("a raw h2 is flagged", flags('const a = <h2 className="text-ui-lg font-semibold">Usage</h2>;'));
 	ok("a raw h3 is flagged", flags('const a = <h3 className="text-sm font-semibold">Members</h3>;'));
 	ok("...whatever type scale it is wearing", flags('const a = <h2 className="text-2xl">Browse by topic</h2>;'));
 	ok("...and a self-closing one, and one whose attributes are on the next line", flags("const a = <h2 />;") && flags("const a = (\n\t<h3\n\t\tclassName={cn(x)}\n\t>t</h3>\n);"));
-	ok("...but the same words in a span with the same classes are not", !flags('const a = <span className="text-[15px] font-semibold">Usage</span>;'));
+	ok("...but the same words in a span with the same classes are not", !flags('const a = <span className="text-ui-lg font-semibold">Usage</span>;'));
 	ok("...and h20/h30 are different tags", !flags("const a = <h20>x</h20>;") && !flags("const a = <h30>x</h30>;"));
 	// THE OUTLINE DOES NOT STOP AT h3. A rule that did would hand out an escape hatch that makes
 	// the defect worse: demote the flagged <h3> to <h4> and the guard goes quiet while the document
@@ -1397,6 +1536,42 @@ function selfTest() {
 	ok("h4, h5 and h6 are findings too", flags('const a = <h4 className="text-xs">Inputs</h4>;') && flags("const a = <h5 />;") && flags("const a = <h6 />;"));
 	ok("...so a flagged h3 cannot be silenced by demoting it", flags("const a = <h4>Inputs</h4>;"));
 	ok("...but h40 is still a different tag, and h7 is not a heading", !flags("const a = <h40>x</h40>;") && !flags("const a = <h7>x</h7>;"));
+
+	// ── the type scale: a hardcoded SIZE, in any unit and behind any variant ─────────────────
+	// The largest census in this file, and the only rule about a VALUE rather than a component.
+	ok("a hardcoded pixel font size is flagged", flags('const a = <p className="text-[13px]">x</p>;'));
+	ok("...including the half-pixel values, which are 230 of the 1,079 live sites", flags('const a = <p className="text-[12.5px]">x</p>;') && flags('const a = <p className="text-[11.5px]">x</p>;'));
+	// THE VARIANT PREFIX. `layer_token` shipped for a year with a lookbehind that excluded `:`, so
+	// `md:z-50` read as clean and the rule taught its own evasion. This one is written to admit
+	// every prefix, and these three are how that is proved rather than asserted.
+	ok("...behind a breakpoint, a state, and a data-attribute variant", flags('const a = <p className="md:text-[13px]" />;') && flags('const a = <p className="hover:text-[11px]" />;') && flags('const a = <p className="data-[state=open]:text-[13px]" />;'));
+	// THE UNIT ALTERNATION, and why it is wider than the tree. There is not one rem/em/pt font size
+	// in the console today. If the matcher stopped at px, a flagged `text-[13px]` rewritten as
+	// `text-[0.8125rem]` would render identically and drop the file's `hits` to zero — which reds as
+	// "matches nothing" and invites lowering `debt:` for a fix that never happened. That is the
+	// same perverse escape the empty-state padding cap used to hand out.
+	ok("...and a px size cannot be silenced by rewriting it in another unit", flags('const a = <p className="text-[0.8125rem]" />;') && flags('const a = <p className="text-[1em]" />;') && flags('const a = <p className="text-[11pt]" />;') && flags('const a = <p className="text-[80%]" />;'));
+	// Tailwind's own disambiguating prefix is a spelling of the identical class.
+	ok("...nor by writing Tailwind's `length:` prefix in front of it", flags('const a = <p className="text-[length:13px]" />;'));
+	// THE ARBITRARY-PROPERTY SPELLING — the widest escape, and the one the unit alternation above
+	// does not reach: `[font-size:13px]` compiles to the identical declaration, takes every variant
+	// prefix, and is eleven characters from any flagged site. Zero live sites, so the probe and
+	// these fixtures are the only things holding it.
+	ok("...nor by writing it as an arbitrary PROPERTY, which compiles identically", flags('const a = <p className="[font-size:13px]" />;'));
+	ok("...in any unit, and behind a variant, exactly like the utility spelling", flags('const a = <p className="[font-size:0.8125rem]" />;') && flags('const a = <p className="md:[font-size:12.5px]" />;') && flags('const a = <p className="[font-size:length:13px]" />;'));
+	ok("...but an arbitrary property that is not a size is how a file reaches CSS Tailwind has no utility for", !flags('const a = <p className="[mask-image:linear-gradient(90deg,#000,transparent)]" />;') && !flags('const a = <p className="[grid-template-columns:repeat(3,minmax(0,1fr))]" />;'));
+	ok("...and neither is a font-size read from the token", !flags('const a = <p className="[font-size:var(--text-ui-md)]" />;'));
+	// THE FIX, in both of its spellings. A matcher that reported its own answer would be unfixable.
+	ok("a rung utility is the fix and is not a finding", !flags('const a = <p className="text-ui-md text-text-tertiary">x</p>;'));
+	ok("...and neither is the token read as a var", !flags('const a = <p className="text-[var(--text-ui-lg)]" />;'));
+	// The `text-[…]` bracket is overloaded: a COLOUR is written the same way and is not a size.
+	ok("an arbitrary text COLOUR is not a font size", !flags('const a = <p className="text-[#0a0a0a]" />;') && !flags('const a = <p className="text-[color:var(--text-primary)]" />;') && !flags('const a = <p className="text-[oklch(0.2_0_0)]" />;'));
+	// The value has to be a SIZE on the TEXT utility. An arbitrary length on any other utility is a
+	// geometry, and the type scale is not the answer to a geometry.
+	ok("...and an arbitrary length on another utility is not one either", !flags('const a = <div className="max-w-[380px] leading-[13px] size-[11px]" />;'));
+	// The scope reaches lib/ and hooks/, unlike the byte-division matcher one rule over. Same
+	// content, different path — the only way to prove a scope.
+	ok("a hardcoded size under lib/ IS in scope — a class list is one wherever it lives", run({ ...ballast(), "apps/console/lib/x/a.ts": 'export const C = "text-[13px]";' }).problems.length > 0);
 
 	// ── the empty state: the PADDING is the discriminator ────────────────────────────────────
 	ok("a centred block with generous vertical padding is flagged", flags('const a = <div className="px-4 py-16 text-center">No runners yet</div>;'));

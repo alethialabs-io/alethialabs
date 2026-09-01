@@ -210,7 +210,7 @@ function validate(proposal) {
 		// ── a conformance unit that skips the human gate must say what measures it ────────
 		//
 		// `.claude/COORDINATION.md` routes console work that merely ADOPTS an already-decided
-		// primitive (a raw `<h2>` → `PageHeader level={2}`) to `class:backend`, so it lands
+		// primitive (a raw `<h2>` → `SectionHeading`) to `class:backend`, so it lands
 		// autonomously with no human ever seeing the rendered page. That is only sound because the
 		// unit also ships the check that proves the adoption — and until this rule existed, that
 		// obligation was a paragraph of prose with nothing behind it. A unit could be labelled

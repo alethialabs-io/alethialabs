@@ -43,7 +43,7 @@ import { EmptyState } from "@repo/ui/empty";
 import { FacetFilter } from "@repo/ui/facet-filter";
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
-import { PageHeader } from "@repo/ui/page-header";
+import { PageToolbar } from "@repo/ui/page-toolbar";
 import { Spinner } from "@repo/ui/spinner";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
@@ -112,8 +112,7 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 
 	return (
 		<div className="space-y-4">
-			<PageHeader
-				title="Single sign-on"
+			<PageToolbar
 				description="Identity providers your members can sign in through."
 				count={providers.length}
 				actions={

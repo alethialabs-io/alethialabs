@@ -68,7 +68,7 @@ first, UI specs always have a stable model to consume (never pixels-before-schem
 
 **The line is whether a design decision is still open — not whether the diff touches a `.tsx`.** "Anything
 visual is `class:ui`" was written when every UI unit was a new surface, and read literally it routes
-*conformance* work — replacing a hand-rolled `<h2>` with `PageHeader level={2}`, a bespoke centred div with
+*conformance* work — replacing a hand-rolled `<h2>` with `SectionHeading`, a bespoke centred div with
 `EmptyState` — into a design-spec queue that has nothing to decide. CLAUDE.md §6 already made those calls; the
 unit is adopting them. So:
 

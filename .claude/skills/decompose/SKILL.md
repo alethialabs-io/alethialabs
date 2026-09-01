@@ -87,7 +87,7 @@ Rules the validator enforces (get them right up front):
   short form, and if the two ever disagree that file wins. Infra/backend work is `class:backend`
   (autonomous). Visual work splits on **whether a design decision is still open**, not on whether
   the diff touches a `.tsx`:
-  - *Adopting a primitive that is already decided* — a raw `<h2>` → `PageHeader level={2}`, a
+  - *Adopting a primitive that is already decided* — a raw `<h2>` → `SectionHeading`, a
     bespoke centred div → `EmptyState` — is `class:backend`. CLAUDE.md §6 is the spec; the unit
     ships the check that keeps it true, and it **must** declare that check (see below).
   - *Changing a page's information architecture, or inventing a pattern the table does not name* is

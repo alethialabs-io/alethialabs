@@ -42,7 +42,7 @@ import { EmptyState } from "@repo/ui/empty";
 import { FacetFilter } from "@repo/ui/facet-filter";
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
-import { PageHeader } from "@repo/ui/page-header";
+import { PageToolbar } from "@repo/ui/page-toolbar";
 import { Spinner } from "@repo/ui/spinner";
 import { cn } from "@repo/ui/utils";
 import {
@@ -160,9 +160,8 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 
 	return (
 		<div>
-			<PageHeader
+			<PageToolbar
 				className="mb-4"
-				title="Roles"
 				description="Built-in roles plus the custom roles this organization defines."
 				count={builtinList.length + custom.length}
 				actions={

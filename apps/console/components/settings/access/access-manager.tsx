@@ -60,7 +60,7 @@ import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
 import { formatRelative } from "@repo/format";
 import { MultiCombobox } from "@repo/ui/multi-combobox";
-import { PageHeader } from "@repo/ui/page-header";
+import { PageToolbar } from "@repo/ui/page-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
@@ -334,9 +334,8 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
         </div>
       ) : (
         <>
-          <PageHeader
+          <PageToolbar
             className="mb-4"
-            title="Access"
             description="Who is granted what, and where it applies."
             count={filtered.length}
             actions={

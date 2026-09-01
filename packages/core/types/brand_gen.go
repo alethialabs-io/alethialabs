@@ -7,7 +7,7 @@
 // Source of truth: packages/brand/src/tokens.css (the values) and apps/console/scripts/lib/brand-projection.ts (the decisions).
 //
 // Every custom property declared in the stylesheet appears in BrandProjections below with
-// exactly one of exact / lossy / none. 63 exact, 16 lossy, 81 none — 160 tokens, no gaps.
+// exactly one of exact / lossy / none. 63 exact, 18 lossy, 86 none — 167 tokens, no gaps.
 // The generator refuses to emit if a declared token has no decision, so a token added to the
 // console fails CI until somebody says what the CLI does with it. A "none" entry is a real
 // answer, not an omission: a spinner has no easing curve and a CLI cannot set a font.
@@ -201,6 +201,13 @@ var BrandProjections = []BrandProjection{
 	{Token: "--text-display-sm", Kind: BrandLossy, Target: "EmphasisBand", Note: "30px. The quietest display step is normal weight in primary ink; it is a heading only by contrast with the faint body around it."},
 	{Token: "--tracking-display", Kind: BrandNone, Target: "", Note: "negative tracking. The eyebrow's positive tracking projects because a cell can be ADDED; there is no sub-cell to remove, so tightening a display headline has nothing to spend."},
 	{Token: "--leading-display", Kind: BrandNone, Target: "", Note: "line-height 0.96. A terminal row is one row; there is no leading to compress."},
+	{Token: "--text-ui-3xs", Kind: BrandNone, Target: "", Note: "9px — a mono eyebrow or a badge caption, the smallest thing on a console screen. A terminal cell has one size, and the CLI's eyebrow device is already its own treatment (case and tracking, at --tracking-eyebrow); what makes this ink quiet in the console is --text-tertiary, which is projected exactly."},
+	{Token: "--text-ui-2xs", Kind: BrandNone, Target: "", Note: "10px — a mono label over a value, or a column header. Same answer as --text-ui-3xs: the terminal separates a label from its value by INK and not by size, and that ink is projected exactly at --text-tertiary."},
+	{Token: "--text-ui-xs", Kind: BrandNone, Target: "", Note: "11px — secondary metadata: a timestamp, a hint, a helper line. The console's most common rung, and in a terminal it is the same cell as the body it sits under; --text-secondary is what distinguishes it and is projected exactly."},
+	{Token: "--text-ui-sm", Kind: BrandNone, Target: "", Note: "12px — control text: a chip, a filter, a small button. A terminal control is drawn from the same cells as everything else, so this rung buys the CLI nothing a border style and an ink do not already carry."},
+	{Token: "--text-ui-md", Kind: BrandNone, Target: "", Note: "13px — the console's body rung, which in a terminal is simply the text. It is the size everything else is measured against, and the thing a terminal has exactly one of."},
+	{Token: "--text-ui-lg", Kind: BrandLossy, Target: "EmphasisHeading", Note: "15px — the SECTION-HEADING rung (@repo/ui/section-heading renders it). With no size to spend, a heading in a terminal is bold, so this joins the weight ladder at the same rung --text-display-md takes: a console section heading and a marketing h2 are one treatment here, and the console's own step down from 15px to its 13px body is carried by weight rather than by size."},
+	{Token: "--text-ui-xl", Kind: BrandLossy, Target: "EmphasisHeading", Note: "17px — the largest heading a console page carries, a dialog or sheet title. It collapses onto the SAME constant as --text-ui-lg because the terminal's ladder has three rungs and the console's has seven: bold is bold, and EmphasisDisplay is reserved for the display voice so a sheet title cannot arrive shouting in uppercase."},
 	{Token: "--wrap-max", Kind: BrandNone, Target: "", Note: "1180px of maximum content width. The terminal's content width is the window's, reported by the tty and not ours to cap — a CLI that refused to use the width you gave it would be wrong."},
 	{Token: "--wrap-pad", Kind: BrandNone, Target: "", Note: "64px of page gutter, sized to clear the vertical rail's glyphs. Terminal padding is measured in cells and set per style; there is no page to gutter."},
 }
@@ -556,7 +563,15 @@ const (
 	EmphasisDisplay BrandEmphasis = "display"
 
 	// EmphasisHeading is the terminal projection of: --text-display-md — 40px. The middle step is
-	// bold alone — the second rung of the same ladder.
+	// bold alone — the second rung of the same ladder. · --text-ui-lg — 15px — the SECTION-HEADING
+	// rung (@repo/ui/section-heading renders it). With no size to spend, a heading in a terminal
+	// is bold, so this joins the weight ladder at the same rung --text-display-md takes: a console
+	// section heading and a marketing h2 are one treatment here, and the console's own step down
+	// from 15px to its 13px body is carried by weight rather than by size. · --text-ui-xl — 17px —
+	// the largest heading a console page carries, a dialog or sheet title. It collapses onto the
+	// SAME constant as --text-ui-lg because the terminal's ladder has three rungs and the
+	// console's has seven: bold is bold, and EmphasisDisplay is reserved for the display voice so
+	// a sheet title cannot arrive shouting in uppercase.
 	EmphasisHeading BrandEmphasis = "heading"
 
 	// EmphasisBand is the terminal projection of: --text-display-sm — 30px. The quietest display
@@ -570,6 +585,8 @@ var BrandEmphasisLadder = map[string]BrandEmphasis{
 	"--text-display-lg": EmphasisDisplay,
 	"--text-display-md": EmphasisHeading,
 	"--text-display-sm": EmphasisBand,
+	"--text-ui-lg":      EmphasisHeading,
+	"--text-ui-xl":      EmphasisHeading,
 }
 
 // The focus ring, which is not a ring. A terminal cannot outline a run of cells without

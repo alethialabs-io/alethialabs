@@ -15,7 +15,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@repo/ui/select";
-import { PageHeader } from "@repo/ui/page-header";
+import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
 
 /** Two-up responsive grid for pairing short sections; stacks on narrow screens. */
@@ -24,15 +24,15 @@ export function SettingsColumns({ children }: { children: ReactNode }) {
 }
 
 /**
- * A titled block: a second-level `PageHeader` + a hairline rule (+ optional trailing action),
- * then content.
+ * A titled block: a `SectionHeading` + a hairline rule (+ optional trailing action), then content.
  *
- * The heading comes from `@repo/ui/page-header` rather than a local `<h2>`, and this one call
+ * The heading comes from `@repo/ui/section-heading` rather than a local `<h2>`, and this one call
  * site is why the rule is worth having: every settings page composes `SettingsSection`, so its
  * hand-written `font-display text-[14.5px]` was one of the five sizes the console rendered the
- * same outline rung at — and the pages that had already adopted `PageHeader` for their titles
- * (members, teams, roles, sso, access) disagreed with their own sections. `level={2}` keeps the
- * document outline exactly as it was; the type scale is now the shared one.
+ * same outline rung at. It briefly went through `PageHeader level={2}`, which typeset it at 18px
+ * whatever the level — the jump from 14.5px to 18px is what surfaced the missing type scale.
+ * `level={2}` keeps the document outline exactly as it was; the size is now the `--text-ui-lg`
+ * rung, which is where the console's section headings already clustered.
  */
 export function SettingsSection({
 	title,
@@ -47,15 +47,15 @@ export function SettingsSection({
 }) {
 	return (
 		<section className={cn("mb-[18px]", className)}>
-			{/* `items-center`, not `items-baseline`: `PageHeader` is a flex container with its own
-			    inner rows, so a parent baseline resolves against its first line box rather than the
-			    heading — the hairline rule already asked for `self-center` to work around that. */}
+			{/* `items-center`, not `items-baseline`: `SectionHeading` is a flex container with its
+			    own inner rows, so a parent baseline resolves against its first line box rather than
+			    the heading — the hairline rule already asked for `self-center` to work around that. */}
 			<div className="mb-3 flex items-center gap-3">
-				{/* `min-w-0` and NOT `shrink-0`: `PageHeader` truncates its title and puts the full
-				    text in a `title` attribute, but a flex item defaults to `min-width: auto`, so
+				{/* `min-w-0` and NOT `shrink-0`: `SectionHeading` truncates its title and puts the
+				    full text in a `title` attribute, but a flex item defaults to `min-width: auto`, so
 				    without this the truncation can never fire and a long section title pushes the
 				    rule and the action off the row instead. */}
-				<PageHeader level={2} title={title} className="min-w-0" />
+				<SectionHeading level={2} title={title} className="min-w-0" />
 				<span className="h-px flex-1 bg-border" />
 				{action}
 			</div>

@@ -25,7 +25,7 @@ import type { EnvironmentSpec } from "@/lib/queries/projects";
 import { globalHref, projectHref } from "@/lib/routing";
 import { slugify } from "@/lib/utils/slugify";
 import type { ScanProposal } from "@/lib/scanner/schema";
-import { PageHeader } from "@repo/ui/page-header";
+import { SectionHeading } from "@repo/ui/section-heading";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 
@@ -248,7 +248,10 @@ export function ConfigureProject({
 				>
 					<ChevronLeft className="size-4" />
 				</button>
-				<PageHeader
+				{/* A section heading: this names the STEP, not the route. The breadcrumb says
+				    "New project" for all three steps, so nothing above the page says which one you
+				    are on except the stepper on the right. */}
+				<SectionHeading
 					className="flex-1"
 					title="Configure your project"
 					description="Set the essentials — you’ll review and deploy the full design on the canvas."

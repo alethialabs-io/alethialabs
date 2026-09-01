@@ -3,7 +3,7 @@
 
 # The console UI conformance rubric
 
-Twenty-five predicates over every **private** console route. This file is the contract: the static
+Twenty-six predicates over every **private** console route. This file is the contract: the static
 checks, the live Playwright `audit` project and the scoreboard generator all implement predicates
 defined *here*, and none of them may invent one.
 
@@ -109,17 +109,44 @@ naming the right thing is.
 
 ## Family H — the shared surface  ·  static
 
-Each row is a row of CLAUDE.md §6's table. H1 is guarded today; H2–H7 are what unit #3615 adds.
+Each row is a row of CLAUDE.md §6's table. H1 was guarded before this family existed; H2–H7 are what
+unit #3615 added; H8 is what #3733 added with the type scale itself.
 
 | id | predicate | PASS when | N/A when |
 |---|---|---|---|
-| **H1** | the page title comes from `PageHeader` | no raw `<h1>` outside the allowlist | `redirect-only` |
-| **H2** | every section heading comes from `PageHeader level={n}` | no raw `<h2>`/`<h3>` outside the allowlist | `redirect-only` |
+| **H1** | the page has **no** title | no `<h1>` outside the allowlist — see below, this predicate is inverted | `redirect-only` |
+| **H2** | every section heading comes from `SectionHeading` | no raw `<h2>`–`<h6>` outside the allowlist | `redirect-only` |
+| **H8** | every font size is a `--text-ui-*` rung | no `text-[Npx]` (any length unit, any variant prefix) outside the allowlist | `redirect-only` |
 | **H3** | status renders through `StatusBadge` | no local status→variant map, and no raw `.vx-status` re-implementation | `renders-no-status` |
 | **H4** | tabular data renders through `DataTable` or `@repo/ui/table` | no header row over repeated `grid-cols-[…]` row children | `renders-no-table` |
 | **H5** | every number, date, size and amount goes through `@repo/format` | no `toFixed`, `toLocale{Date,Time}String`, `/1024`, hand-written currency symbol, or local `format*` duplicating a `@repo/format` export | `renders-no-formatted-value` |
 | **H6** | no stat-card strip | no row of bordered label-over-number cells | `redirect-only` |
 | **H7** | no bare numeric z-index | every `z-*` is a `--z-*` token from `packages/brand/src/tokens.css` | `declares-no-z-index` |
+
+**H1 IS INVERTED, and the inversion is the predicate.** It used to read "the page title comes from
+`PageHeader`". #3733: the page's name is said by the sidebar entry you clicked and by the breadcrumb
+above the content, so the page's own heading is the third saying and earns nothing — the console has
+no page titles. A page therefore PASSES H1 by having no `<h1>` at all. The test for the eleven
+allowlisted exceptions is **does anything else on screen already name this?** — six are outside the
+console shell, where there is neither breadcrumb nor sidebar (sign-in, the CLI hand-off, buying a
+plan, accepting terms, OAuth consent, onboarding), and five are in-shell headings that say something
+other than the route's name (a question, two invitations above an empty composer, an error message,
+an `sr-only` outline root). "Is there a breadcrumb" is NOT the test, and applying it would delete
+five headings this rubric deliberately keeps. `PageHeader` no longer exists: what survives
+is `@repo/ui/page-toolbar` — the count pill, the description and the page's actions, none of which
+the breadcrumb duplicates. **A page that loses its title must not lose its actions**, and H1 does not
+measure that; T-family and R-family predicates do.
+
+**H2's answer moved with it.** It was `PageHeader level={n}`, which rendered `text-lg font-medium`
+whatever the level — so a section heading converted to it jumped to 18px from the
+`text-[14.5px]`/`text-[15px]` the console actually typesets that rung at. That jump is what found the
+missing type scale, and H8. The answer is now `SectionHeading` from `@repo/ui/section-heading`: one
+rung (`--text-ui-lg`, 15px), with `level` setting the tag and nothing else.
+
+**H8 is a ratchet, not a pass/fail on day one.** All 1,079 live occurrences are recorded as `lifts:`
+debt in `apps/console/shared-surface-allowlist.yaml` against #3742, so a page scores FAIL on H8 today
+and the number can only shrink. A page with no arbitrary size left scores PASS. Nothing about H8 is
+N/A for a page that renders text.
 
 **H5's hardest case is the one a grep cannot reach.** `billing/billing-checkout-form.tsx:118` builds
 `${symbol}${n.toLocaleString("en-US")}` where `symbol` is a **variable**, and

@@ -35,6 +35,18 @@ const SEGMENT_LABELS: Record<string, string> = {
 	billing: "Billing",
 	usage: "Usage",
 	agent: "Agent",
+	// The support shell, added with #3733. Every other segment here was mapped because the
+	// fallback (`seg[0].toUpperCase() + seg.slice(1)`) does not read as a page name — and these
+	// six were the ones where that mattered least until the console stopped painting page titles.
+	// Now the crumb is the ONLY thing naming these routes, and the fallback prints `My-cases`,
+	// hyphen and all, where the deleted heading said "My cases". Neither support route has a
+	// sidebar entry either: both are reached from the support hub.
+	support: "Support",
+	"my-cases": "My cases",
+	cases: "Cases",
+	abuse: "Report abuse",
+	submit: "Submit a case",
+	ask: "Ask",
 };
 
 /** A nice label for a URL segment: the map first, else a capitalized fallback. */

@@ -154,14 +154,30 @@ product is two products.**
 | Need | Use | Never |
 |---|---|---|
 | A duration, date, size, quota or amount | `@repo/format` | a local `formatDate`, `toFixed`, or `/ 1024` |
-| A page or section heading | `@repo/ui/page-header` — `PageHeader`, with `level` | a bespoke `<h1>` + description block |
+| A page **title** | nothing — the sidebar entry and the breadcrumb already say it. `@repo/ui/page-toolbar` — `PageToolbar` — carries the count, the description and the actions | an `<h1>` naming the page |
+| A **section** heading inside a page | `@repo/ui/section-heading` — `SectionHeading`, with `level` for the outline | a bespoke `<h2>` at whatever size that file chose |
+| A font size | a `--text-ui-*` rung from `packages/brand/src/tokens.css` | `text-[13px]`, or the same number in any other unit |
 | An empty list, tab or panel | `@repo/ui/empty` — `EmptyState` | a one-off centred div |
 | A status pill | `@repo/ui/status-badge` | a `<Badge>` plus a local colour map |
 | A table | `DataTable`, or `@repo/ui/table` for shapes it cannot express | a `<div className="grid">` |
 | A layer above the page | a `--z-*` token from `packages/brand/src/tokens.css` | a bare `z-50` or `z-[95]` |
 | A list-page filter | the console filter standard, **both halves** | a per-page filter language |
 
-Three of those deserve their reason stated, because the reason is what makes them stick:
+Four of those deserve their reason stated, because the reason is what makes them stick:
+
+**The console has no page titles.** The sidebar entry you clicked and the breadcrumb above the
+content both say the page's name; a third saying earns nothing. What the breadcrumb does NOT carry
+is the count, the description and the buttons — that is `PageToolbar`. A heading *inside* a page is
+a separate, smaller thing and keeps its component. The test for the exceptions is **does anything
+else on screen already name this?** — not "is there a breadcrumb": some are outside the shell where
+there is neither breadcrumb nor sidebar (sign-in, the CLI hand-off, buying a plan), and the rest are
+in-shell headings that say something other than the route's name (a question, an invitation, an
+error). Each is a recorded decision in `apps/console/shared-surface-allowlist.yaml`.
+
+**The type scale is derived, not designed.** The console carried 1,079 hardcoded `text-[Npx]` across
+23 values against a token file with no UI scale in it at all; the seven rungs are the seven bands
+those 1,079 cluster into. The `ui-` prefix is load-bearing — this ladder is denser than Tailwind's
+and must not be read as it: `text-ui-sm` is 12px, `text-sm` is 14px.
 
 **Minutes are read by a person.** `0.943 minutes / 200 minutes` is a number the code happens to
 hold, not an answer to "how much have I used". `formatMinutes` / `formatQuota` decide once —
@@ -179,16 +195,21 @@ just picked disappears, which makes the filter bar un-un-selectable.
 
 No stat-card strips.
 
-`pnpm check:shared-surface` mechanises **five of the seven rows above, plus the stat-card ban**. It
+`pnpm check:shared-surface` mechanises **seven of the nine rows above, plus the stat-card ban**. It
 fails on `toFixed(`, `toLocaleDateString`, `toLocaleTimeString`, a hand-written `$` in front of an
 interpolation (including one built from a variable or taken as a `prefix` prop), and a byte division
-by 1024; on a raw `<h1>` **and now on a hand-rolled `<h2>` through `<h6>` section heading**; on a
-centred one-off empty state (`text-center` with `py-6` or more); on a `<Stat` cell and the `Stat`
-primitive behind it; on a raw stacking level of 40 or more, variant prefix or not; and on a
-`grid-cols-[…]` used as a table.
+by 1024; on a raw `<h1>`, which is now a defect to DELETE rather than one to convert, and on a
+hand-rolled `<h2>` through `<h6>` section heading; on a hardcoded font size (`text-[13px]`, any
+length unit, variant prefix or not); on a centred one-off empty state (`text-center` with `py-6` or
+more); on a `<Stat` cell and the `Stat` primitive behind it; on a raw stacking level of 40 or more,
+variant prefix or not; and on a `grid-cols-[…]` used as a table.
 
-Two of those are stated precisely on purpose, because the imprecise version is wrong. **The z-index
-rule is not "no bare `z-*`"** — `packages/brand/src/tokens.css` puts its in-flow lifts at 10/20/30
+Three of those are stated precisely on purpose, because the imprecise version is wrong. **The
+`<h1>` rule inverted in #3733** — it used to say "use `PageHeader`", it now says delete the heading,
+and the eleven recorded decisions under it are the pages with no breadcrumb. **The font-size rule is
+not "no `text-[…]`"** — that bracket also carries a colour, and `text-[color:var(--text-primary)]`
+and `text-[var(--text-ui-lg)]` are both correct; what is matched is a value that STARTS with a
+number and ends in a length unit. **The z-index rule is not "no bare `z-*`"** — `packages/brand/src/tokens.css` puts its in-flow lifts at 10/20/30
 and its chrome at 100, so `z-10` is a real rung written without its name while `z-40`/`z-50` name a
 level in the gap the scale leaves empty. **And the table rule is a SHAPE test, not a class-name
 match**: a bracketed column template that is NOT behind a breakpoint, plus a row marker. A table's
@@ -197,13 +218,15 @@ a phone and is not a table.
 
 Where each of those bounds runs to the edge of the rule rather than to the edge of what was measured,
 that is deliberate: a guard whose cheapest escape route is to deepen the defect — demote the `<h2>`,
-raise the padding, add a `md:` prefix — is worse than no guard.
+raise the padding, add a `md:` prefix, rewrite `text-[13px]` as `text-[0.8125rem]` — is worse than no
+guard. The font-size matcher reads `rem`, `em`, `pt`, `ch` and `%` for exactly that reason, though
+the console today uses none of them.
 
 **Two rows stay prose, and the file says why**: `StatusBadge`, which has no negative form to match
 ("a page that should have shown a status pill and showed a `<Badge>`" is not a grep), and the filter
-standard's server half, which is a behaviour and needs a unit test. A direct `date-fns` import and a
-bare `.toLocaleString(` are also still unmatched, deliberately — as is a class list split across two
-`cn()` arguments. **Read the omissions in `scripts/check-shared-surface.mjs` rather than inferring
+standard's server half, which is a behaviour and needs a unit test. A direct `date-fns` import, a
+bare `.toLocaleString(`, an inline `fontSize:` and a class list split across two `cn()` arguments are
+also unmatched, deliberately and each for its own stated reason. **Read the omissions in `scripts/check-shared-surface.mjs` rather than inferring
 them from this list**: it states every one of them, with the exact token shape and the exact console
 directories each matcher reaches, because an unstated exception is how the next reader concludes the
 whole table is enforced.

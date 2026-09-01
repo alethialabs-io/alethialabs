@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { ReactNode } from "react";
-import { PageHeader } from "@repo/ui/page-header";
+import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
 
 interface SettingsCardProps {
@@ -35,7 +35,7 @@ export function SettingsCard({
 						// `level={2}` preserves the outline rung this card already occupied; the
 						// `text-sm font-semibold` it used to typeset it at was one of the five sizes
 						// the console rendered a second-level heading at.
-						<PageHeader level={2} title={title} description={description} />
+						<SectionHeading level={2} title={title} description={description} />
 					) : (
 						<p className="text-xs text-muted-foreground">{description}</p>
 					)}
