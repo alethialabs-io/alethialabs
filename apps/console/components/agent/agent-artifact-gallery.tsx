@@ -9,10 +9,19 @@ import { deleteArtifact, listArtifacts } from "@/app/server/actions/artifacts";
 import { AgentArtifactViewer } from "@/components/agent/agent-artifact-viewer";
 import type { AgentArtifact } from "@/lib/db/schema";
 import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
 import { cn } from "@repo/ui/utils";
 import { ScrollArea } from "@repo/ui/scroll-area";
 
 type GalleryTab = "yours" | "shared";
+
+/**
+ * The gallery's two "nothing here" states, which were a near-copy of `EmptyState` already —
+ * `border-dashed`, a centred icon, a title, a line of copy — differing only in the 420px column
+ * and the dashed rule the shared component already carries (it ships `border-dashed` with no
+ * border WIDTH, so a caller opts in with `border`). Only that width and the column are local.
+ */
+const GALLERY_EMPTY = "mx-auto max-w-[420px] border border-border";
 
 /**
  * The Artifacts library — the modal's main region when the rail's "Artifacts" nav is active.
@@ -127,40 +136,32 @@ export function AgentArtifactGallery({
 			<ScrollArea className="min-h-0 flex-1">
 				<div className="p-5">
 				{items === null ? (
-					<div className="py-16 text-center text-sm text-muted-foreground">
-						Loading artifacts…
-					</div>
+					<EmptyState title="Loading artifacts…" />
 				) : items.length === 0 ? (
 					tab === "shared" ? (
-						<div className="mx-auto flex max-w-[420px] flex-col items-center gap-3 border border-dashed border-border py-16 text-center">
-							<LayoutDashboard className="h-5 w-5 text-muted-foreground" />
-							<div className="text-[15px] font-semibold text-foreground">
-								Nothing shared with you yet
-							</div>
-							<p className="text-[13px] text-muted-foreground">
-								When a teammate shares an artifact with your org, a team you belong
-								to, or a role you hold, it shows up here.
-							</p>
-						</div>
+						<EmptyState
+							className={GALLERY_EMPTY}
+							icon={<LayoutDashboard />}
+							title="Nothing shared with you yet"
+							description="When a teammate shares an artifact with your org, a team you belong to, or a role you hold, it shows up here."
+						/>
 					) : (
-						<div className="mx-auto flex max-w-[420px] flex-col items-center gap-3 border border-dashed border-border py-16 text-center">
-							<LayoutDashboard className="h-5 w-5 text-muted-foreground" />
-							<div className="text-[15px] font-semibold text-foreground">
-								No artifacts yet
-							</div>
-							<p className="text-[13px] text-muted-foreground">
-								Start a chat, ask Elench to build a dashboard, then save it — it lands
-								here for any conversation to reopen.
-							</p>
-							<Button
-								size="sm"
-								className="mt-1 gap-1.5 rounded-none"
-								onClick={onNewArtifact}
-							>
-								<Plus className="h-3.5 w-3.5" />
-								New artifact
-							</Button>
-						</div>
+						<EmptyState
+							className={GALLERY_EMPTY}
+							icon={<LayoutDashboard />}
+							title="No artifacts yet"
+							description="Start a chat, ask Elench to build a dashboard, then save it — it lands here for any conversation to reopen."
+							action={
+								<Button
+									size="sm"
+									className="gap-1.5 rounded-none"
+									onClick={onNewArtifact}
+								>
+									<Plus className="h-3.5 w-3.5" />
+									New artifact
+								</Button>
+							}
+						/>
 					)
 				) : (
 					<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">

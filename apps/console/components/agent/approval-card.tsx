@@ -5,6 +5,7 @@
 import { Check, ShieldCheck, X } from "lucide-react";
 import { useState } from "react";
 import { planProject, provisionProject } from "@/app/server/actions/projects";
+import { formatMonthlyRate } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { track } from "@/lib/analytics/track";
 import type { OperationProposal } from "@/lib/ai/operation";
@@ -86,12 +87,32 @@ export function ApprovalCard({
 
 			<div className="space-y-3 px-3.5 py-3">
 				{proposal.stats && (
-					<div className="flex gap-5">
-						<Stat n={proposal.stats.add ?? 0} l="to add" />
-						<Stat n={proposal.stats.change ?? 0} l="to change" />
-						<Stat n={proposal.stats.destroy ?? 0} l="to destroy" />
+					/* One mono line, not a stat strip. §6 bans the strips with no qualifier, and
+					   the reason is this card exactly: it asks for a decision, and a row of four
+					   18px numbers takes the space above the Approve button to tell you what is
+					   countable instead of what you are agreeing to. The same four facts read in
+					   a sentence, at the weight of the sentence beside them. The money goes
+					   through `formatMonthlyRate`, so this card and the plan panel's Est. cannot
+					   disagree about the symbol, the separators or the cents. */
+					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-muted-foreground">
+						<span className="text-foreground">
+							{proposal.stats.add ?? 0} to add
+						</span>
+						<span aria-hidden>·</span>
+						<span className="text-foreground">
+							{proposal.stats.change ?? 0} to change
+						</span>
+						<span aria-hidden>·</span>
+						<span className="text-foreground">
+							{proposal.stats.destroy ?? 0} to destroy
+						</span>
 						{proposal.stats.monthly != null && (
-							<Stat n={proposal.stats.monthly} l="est / mo" prefix="$" />
+							<>
+								<span aria-hidden>·</span>
+								<span className="text-foreground">
+									{formatMonthlyRate(proposal.stats.monthly)} est.
+								</span>
+							</>
 						)}
 					</div>
 				)}
@@ -147,26 +168,6 @@ export function ApprovalCard({
 					</div>
 				)}
 			</div>
-		</div>
-	);
-}
-
-function Stat({
-	n,
-	l,
-	prefix,
-}: {
-	n: number;
-	l: string;
-	prefix?: string;
-}) {
-	return (
-		<div>
-			<div className="font-mono text-lg font-semibold tracking-tight">
-				{prefix}
-				{n}
-			</div>
-			<div className="vx-eyebrow text-[8px]">{l}</div>
 		</div>
 	);
 }
