@@ -2,8 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// CLAUDE.md §6's shared-surface table, made mechanical for the two rows where the rule is
-// unambiguous and the drift was measured.
+// CLAUDE.md §6's shared-surface table, made mechanical for every row where a token shape can carry
+// the rule and the drift was measured — five of its seven, plus the section's closing "No stat-card
+// strips". StatusBadge and the filter standard are the two that stay prose, and the list below says
+// why each of them does.
 //
 // WHY THIS EXISTS. That table states its own reason — "if two pages disagree about how something
 // looks or reads, the user is being told the product is two products" — and no row of it was
@@ -12,6 +14,24 @@
 // `~$12/mo` in three and `€12.50` in one; in-app page titles rendered at FIVE sizes, from
 // `text-base` to `text-4xl`. Neither `check:dead-code` (knip) nor `check:action-boundary` can see
 // either, and packages/eslint-config carries no `no-restricted-syntax`.
+//
+// The rows added in #3615 were measured the same way, on an unmodified `dev`, and found 101 more
+// occurrences: the SAME heading rung typeset at five sizes across 24 `<h2>`, with 17 `<h3>` and 5
+// `<h4>` under them; 33 hand-rolled empty states at six different heights (four of them
+// byte-identical across two sibling sheets); 12 stat-card cells and the 2 primitives they render,
+// against a ban with no qualifier on it; three grids standing in for tables and one raw `<table>`;
+// two raw stacking levels in the gap the layer scale leaves empty; and the two money sites whose
+// currency symbol reaches the number by a route the `$${` matcher cannot see.
+//
+// SEVEN OF THOSE MATCHERS WERE TOO NARROW ON FIRST SUBMISSION, and every one of the seven was
+// narrow in the same direction — it read a shape somebody had already written, not the shape the
+// rule is about. That distinction is the review finding worth carrying forward, because three of
+// the seven were not merely incomplete but ACTIVELY PERVERSE: a padding cap at the measured
+// maximum meant a recorded debt row could be silenced by making the drift bigger; a heading rule
+// stopping at `<h3>` meant a flagged heading could be silenced by demoting it and worsening the
+// outline; a `:` in the z-index lookbehind meant a flagged `z-50` could be silenced by writing
+// `md:z-50`. A guard whose cheapest escape route is to deepen the defect is worse than no guard.
+// Where a bound is now wider than anything live, that is deliberate and the comment says so.
 //
 //   node scripts/check-shared-surface.mjs
 //   node scripts/check-shared-surface.mjs --self-test
@@ -39,38 +59,116 @@
 //                  answer there. Widening the matcher would have bought six allowlist entries
 //                  that are not decisions.
 //
+//   @repo/format   MONEY THAT NEVER WRITES ITS OWN `$`, in apps/console/{components,app,lib,hooks}.
+//                  Two shapes the `$${` matcher above structurally CANNOT see, because in neither
+//                  of them is the currency symbol a literal next to the number:
+//                  an interpolation sitting directly behind another (`` `${symbol}${n.toLocale…}` ``
+//                  — the symbol is a VARIABLE), and a bare currency symbol handed to a component as
+//                  a prop (`prefix="$"`). The header used to record `.toLocaleString(` as
+//                  unguardable because a bare call is how a COUNT gets separators; that is still
+//                  true, and neither matcher here looks at a bare call. What they look at is the
+//                  SYMBOL arriving by another route.
+//
 //   @repo/ui/page-header   a raw `<h1>`, in apps/console/app/(private)/** and components/**.
-//                  `<h1>` and nothing else: a hand-rolled `<h2 className="text-lg font-semibold">`
-//                  section heading is NOT caught, even though `PageHeader` takes `level={2}` for
-//                  exactly that. A class-name match cannot tell a section heading from a bold
-//                  label, and this guard does not pretend otherwise.
+//
+//   @repo/ui/page-header   a raw `<h2>` through `<h6>`, same scope, as the SEPARATE `section_header`
+//                  rule. This is a reversal of what this header said until #3615, and the reason it
+//                  reversed is worth keeping: the old text argued that "a class-name match cannot
+//                  tell a section heading from a bold label", and declined the row. That argument
+//                  was about the CLASS NAME, and the matcher does not read one — a raw `<h2>` in
+//                  the console is a heading whatever it is wearing, because the tag is the thing
+//                  that lands in the accessibility tree. Measured when the rule was added: 24
+//                  `<h2>` across at least five type scales (`text-[19px]`, `[17px]`, `[15px]`,
+//                  `[14.5px]`, `text-lg`/`2xl`), so the same rung of the same document outline is
+//                  rendered five sizes, 17 `<h3>` under them, and 5 `<h4>` under those which
+//                  already disagree between `text-sm` and `text-xs`. `PageHeader` takes `level={n}`
+//                  for exactly this. It runs to `<h6>` and not to `<h3>` because a rule that stops
+//                  early is an instruction to demote: a flagged `<h3>` written as `<h4>` passes,
+//                  and the outline it was protecting is worse than before.
+//
+//   @repo/ui/empty  a CENTRED BLOCK STANDING IN FOR CONTENT, in apps/console/{components,app}: one
+//                  class string carrying both `text-center` and `py-6` OR MORE, with no upper
+//                  bound. The vertical padding is the whole shape — it is what separates a block
+//                  placed where rows would have been from a centred label, a table cell, or a
+//                  caption, none of which buy themselves 24px of air. Measured: 33 of them across
+//                  six different heights, the tallest `py-16`; the rule reads every rung above that
+//                  too, because the measured maximum is not the boundary and capping there let a
+//                  recorded row be silenced by making the block taller.
+//
+//   no stat-card strip  a `<Stat` CELL, and the `Stat` primitive itself, in
+//                  apps/console/{components,app}. §6's ban is one line with no qualifier ("No
+//                  stat-card strips"), and both halves have to be matched or fixing it looks like
+//                  moving it: deleting a strip while leaving the primitive it was built from leaves
+//                  the next strip one import away. It matches the CELL rather than the container
+//                  that holds it because the container is the wrong half of the shape twice over —
+//                  the formatter's own wrap of a long container is three lines, and the console's
+//                  own `<Card>` is in no `div|section|dl` alternation.
+//
+//   a `--z-*` token  a RAW stacking level of 40 or more, VARIANT PREFIX OR NOT, in
+//                  apps/console/{components,app}. Not
+//                  every bare `z-*`: `packages/brand/src/tokens.css` puts its in-flow lifts at
+//                  10/20/30 and starts the page chrome at 100, so a bare `z-10` is an unnamed rung
+//                  that nevertheless IS a rung, while `z-40` and `z-50` name a level in the gap the
+//                  scale deliberately leaves empty — below the header, below every overlay, above
+//                  every in-flow lift. That is not a style preference: the hand-rolled combobox
+//                  popover at `z-50` paints UNDER the site header. `z-[95]` and any other
+//                  arbitrary numeric value are matched for the same reason; `z-[var(--z-overlay)]`
+//                  is the fix and is not matched. `md:z-50`, `hover:z-40` and
+//                  `data-[state=open]:z-50` ARE — the last is how a Radix/base-ui popover picks its
+//                  level, and all three were invisible while the lookbehind excluded a colon.
+//
+//   DataTable       a grid used as a table, and a raw `<table>`, in apps/console/{components,app}.
+//                  This too is a reversal, and the old text set the bar it had to clear: the a11y
+//                  defect "needs a SHAPE test — a header row, repeated row children — not a
+//                  class-name match", because "a guard that cannot separate a layout from a table
+//                  is noise, and noise is how a guard gets disabled". So it is a shape test. A
+//                  match needs THREE things in one class string: `grid`, a BRACKETED column
+//                  template (`grid-cols-[2fr_1fr_auto]` — somebody spelling out column widths,
+//                  which is what a table has and an N-up card grid does not), that template
+//                  UNPREFIXED by a breakpoint, and a row marker (`uppercase`, the typesetting of a
+//                  `<th>`, or `hover:bg-`, which only a row highlights on). The breakpoint test is
+//                  the one that carries it: a table's columns are the same at every width, so
+//                  `lg:grid-cols-[280px_1fr]` is a page layout stacking on a phone and is not a
+//                  table. The class string may be double-quoted, single-quoted or a template
+//                  literal — the delimiter is captured and closed with a backreference, so a
+//                  conditional class list is read and no string may be closed by the other kind of
+//                  quote. Measured: 22 bracketed-template sites in the console, 19 of them honest
+//                  layouts, 3 matches in 2 files — plus the one raw `<table>`, which is the same
+//                  defect arriving from the other direction (a real table element that is not
+//                  `@repo/ui/table`, so it agrees with nothing).
 //
 // NOT guarded, and the omission is stated here rather than left for a reader to infer that the
 // whole table is enforced:
 //
-//   DataTable        — 45 `className="grid grid-cols…"` sites, most of them honest layouts. The
-//                      a11y defect §6 describes ("it reads to a screen reader as a stack of
-//                      buttons") needs a SHAPE test — a header row, repeated row children — not a
-//                      class-name match. A guard that cannot separate a layout from a table is
-//                      noise, and noise is how a guard gets disabled.
-//   EmptyState       — 15 files, and StatusBadge 33, the best-adopted row. Neither has a negative
-//                      form to match: "a page that should have shown an empty state and showed
-//                      nothing" is not a grep.
+//   StatusBadge      — 33 files, the best-adopted row, and the one with no negative form to match:
+//                      the defect is "a `<Badge>` plus a LOCAL colour map", and a local colour map
+//                      is an object literal, which is exactly the thing a token-shape scan cannot
+//                      tell from any other object literal. #3622 and #3623 name the live ones.
+//   EmptyState's negative form — "a page that should have shown an empty state and showed nothing"
+//                      is not a grep either, and the matcher above cannot see it: it finds the
+//                      empty states somebody wrote by hand, never the ones nobody wrote at all.
 //   the filter standard's server half — `apps/console/lib/queries/facets.ts` and the `query*Page`
 //                      builders. "A facet pass sees only the scope predicates" is a real check and
 //                      a real unit test; it is not a text match.
-//   `--z-*`          — 2 bare hits. De-facto clean; not worth a gate today.
 //   `date-fns` direct — 11 console files still import `formatDistanceToNow` rather than
 //                      `formatRelative`. A bare import name is a weak signal (the package has
 //                      honest non-formatting uses), so this row is prose, not a matcher.
-//   `.toLocaleString(…)` — the fifth spelling of money, and the one this guard deliberately does
-//                      NOT match. The same call with no options is the correct way to put
-//                      separators in a COUNT and appears ~20 times; the two money sites that
-//                      survive it (`billing/billing-checkout-form.tsx`, and the credit counts in
-//                      `billing/credit-pack-dialog.tsx`) pass NO options at all, so there is no
-//                      shape that separates them from a count. The `$${` matcher above catches
-//                      the ones that write their own currency symbol, which was all of them but
-//                      those two.
+//   a bare `.toLocaleString(…)` — still not matched, and for the reason first recorded here: with
+//                      no options it is the correct way to put separators in a COUNT and appears
+//                      ~20 times, so no shape separates the money sites from the counts. The two
+//                      money matchers above do not relax this — they match the SYMBOL's route in,
+//                      never the call.
+//   a NEGATIVE `-z-*`  — none exist, and a level below the flow is a different question from
+//                      claiming one above it.
+//   A CLASS LIST SPLIT ACROSS TWO `cn()` ARGUMENTS — `cn("px-4 py-16", "text-center")`, and the
+//                      same for the grid matcher. The two class-string matchers read ONE string
+//                      literal, in any of the three quote styles; a pair whose halves live in two
+//                      arguments of one call is one honest expression and it is not matched.
+//                      Reading it needs the lookaheads to run over the whole `className={…}`
+//                      expression, which without a parser means guessing where that expression
+//                      ends — and guessing long is how a matcher starts marrying tokens from two
+//                      unrelated strings. Zero live sites today; stated here because an unstated
+//                      exception is how the next reader concludes the row is fully enforced.
 //
 // ── HOW IT MATCHES ───────────────────────────────────────────────────────────────────────────
 //
@@ -102,7 +200,7 @@
 // is to move the sample out of the console tree — not an allowlist entry, which this file reserves
 // for decisions about real surfaces.
 //
-// HOW IT KNOWS IT LOOKED. Three controls, because each catches something the others cannot, and
+// HOW IT KNOWS IT LOOKED. Five controls, because each catches something the others cannot, and
 // this guard was reviewed for reporting a clean tree over files it never opened:
 //   - a per-ROOT and per-EXTENSION floor of one file, per scope. Catches a root that moved, an
 //     extension list that was edited, a walker that broke.
@@ -110,8 +208,30 @@
 //     the only one that sees a root DELETED from the scope declaration above, because the per-root
 //     check is BUILT from that declaration: with `apps/console/app` removed, every remaining root
 //     was healthy and the run printed `✓` over 299 unread route files.
-//   - a directory the walker cannot read RAISES rather than counting as empty, and an unterminated
-//     block comment refuses its file rather than being scanned blank.
+//   - a directory the walker cannot read RAISES rather than counting as empty.
+//   - an unterminated block comment REFUSES its file rather than being scanned blank.
+//   - a permanent PROBE and ANTI-PROBE per matcher, fired on every run. The others prove the guard
+//     read the tree; this one proves each matcher can still find and still discriminate, which is
+//     the control that has to outlive the drift — the day the last entry is fixed there is nothing
+//     else left to notice a matcher that has quietly stopped matching.
+//
+// ── WHY THERE ARE TWO LEDGERS, AND WHY THE SECOND ONE IS NOT AN ALLOWLIST ─────────────────────
+//
+// The exception list has always said an entry is a DECISION and never "we haven't got to it yet",
+// which is the right rule and the reason the eleven `page_header` reasons are worth reading. It is
+// also, on its own, a rule that stops a guard from ever being ADDED to a surface that has already
+// drifted: the six rules above were measured on an unmodified `dev` and found 88 occurrences, and
+// there is no honest sentence in the product's voice that calls any of them a different thing.
+// Writing 88 fake decisions would empty the word "decision" of meaning; leaving the guard red would
+// mean it never lands, which is how the drift got to 88.
+//
+// So an entry is one of two kinds, and the file says which:
+//   `reason:` — a DECISION. This surface is genuinely different. Counts against `baseline`.
+//   `lifts:`  — DEBT. Measured drift, kept per file and per occurrence so it can only shrink, and
+//               naming the board issue that removes it. Counts against `debt`, never `baseline`.
+// Both numbers are checked in BOTH directions, so neither can grow and neither can be under-spent.
+// Everything else — the per-occurrence `hits`, the entry-matches-nothing failure, the printed
+// text — is identical, because a debt row is a measurement and has to be as precise as a decision.
 //
 // The guard cannot match itself: its scopes are all under `apps/console/**` and it lives in
 // `scripts/`, and its fixtures are strings held in this file, never files on disk. The self-test
@@ -149,12 +269,21 @@ const SCOPES = {
 		roots: ["apps/console/components", "apps/console/app"],
 		exts: [".ts", ".tsx"],
 	},
-	// In-app pages. `app/(public)/**` is out on purpose: those routes are the signed-out,
-	// marketing-shaped surfaces the allowlist's display-heading reason already covers, and they
-	// are not "in-app page titles" at all.
+	// In-app pages. The root is `apps/console/app` with `(public)` EXCLUDED BY NAME, which is
+	// what the exclusion has always been about: those routes are the signed-out, marketing-shaped
+	// surfaces the allowlist's display-heading reason already covers, and they are not "in-app
+	// page titles" at all.
+	//
+	// It used to be rooted at `app/(private)` instead, which said the same thing badly: five route
+	// files sit in NEITHER group — `error.tsx`, `global-error.tsx`, `not-found.tsx`, `providers.tsx`
+	// and `start/page.tsx` — and a signed-in user meets the first three constantly. None of them
+	// holds a raw heading today, so this was a hole in the CENSUS rather than a missed finding, and
+	// it is the kind no anti-vacuity control can see: `app/(private)` still resolved, its floor
+	// still passed, and a raw `<h1>` added to `app/error.tsx` tomorrow was not a finding.
 	console_pages: {
-		roots: ["apps/console/app/(private)", "apps/console/components"],
+		roots: ["apps/console/app", "apps/console/components"],
 		exts: [".tsx"],
+		exclude: ["apps/console/app/(public)"],
 	},
 };
 
@@ -210,6 +339,43 @@ const RULES = [
 				probe: "const mb = bytes / (1024 * 1024);",
 				antiProbe: "const MAX = 10 * 1024 * 1024;",
 			},
+			{
+				// MONEY BEHIND A VARIABLE. `$${` cannot see this one: the symbol is chosen at run
+				// time (`const symbol = currency === "eur" ? "€" : "$"`), so nothing in the source
+				// puts a `$` in front of the number. What IS in the source is an interpolation
+				// sitting directly against another whose expression formats a number — no
+				// separator, no space, no text between them, which is what glueing a symbol onto a
+				// figure looks like and what a sentence built from two values never does.
+				scope: "console_code",
+				re: /\}\$\{[^`{}\n]*\.\s*toLocaleString\s*\(/g,
+				say: "glues a run-time currency symbol onto a formatted number. Use `formatMoney` (it takes CENTS) or `formatMonthlyRate` — they own the symbol for every currency, so a checkout and an invoice cannot disagree about how €12.50 is written.",
+				probe: "const s = `${symbol}${n.toLocaleString(\"en-US\")}`;",
+				// The anti-probe varies the axis that MATTERS, which is not the one it first varied.
+				// Two interpolations with a separator between them (`${a} / ${b.toLocaleString()}`)
+				// tests the adjacency and leaves the CONTENT untested — and adjacency alone is 48
+				// sites in this console, almost all of them an id glued to a suffix. Widening the
+				// matcher to a bare `}${` was the one mutation the anti-probes did not kill.
+				antiProbe: "const s = `${context.resource_type}${suffix}`;",
+			},
+			{
+				// MONEY BEHIND A PROP. The symbol is not next to the number here either — it is
+				// handed to a component that renders `{prefix}{n}` somewhere else entirely. A JSX
+				// attribute whose whole value is a currency symbol is the one shape that survives
+				// that hand-off, and it is worth matching precisely because the render site is
+				// unreachable: `{prefix}` on one line and `{n}` on the next is not a money shape.
+				//
+				// `\w+=` with no space around it is a JSX attribute and not an assignment, because
+				// the formatter puts spaces around `=` in `const symbol = "$"` — measured: one hit
+				// in the whole console, the prop. If that ever stops being true the cost is a false
+				// positive, which is the loud direction.
+				scope: "console_code",
+				re: /\w+=["'][$€£¥]["']/g,
+				say: "passes a currency symbol to a component as a prop, which puts the symbol at one end of a prop and the number at the other. Use `formatMoney`/`formatMonthlyRate` at the call site and hand the component the finished string.",
+				// `<Amount`, not the `<Stat` this was measured on: `<Stat` is itself a finding under
+				// the stat-strip rule now, and a fixture that trips two matchers proves neither.
+				probe: 'const a = <Amount value={12} prefix="$" />;',
+				antiProbe: 'const a = <Amount value={12} prefix="~" />;',
+			},
 		],
 	},
 	{
@@ -224,6 +390,182 @@ const RULES = [
 				say: "hand-writes a page title. Use `PageHeader` from `@repo/ui/page-header`, with `level` when it heads a section rather than the page.",
 				probe: 'const a = <h1 className="text-2xl">Clusters</h1>;',
 				antiProbe: "const a = <h10>x</h10>;",
+			},
+		],
+	},
+	{
+		// A SEPARATE rule from `page_header`, not two more matchers inside it, because the allowlist
+		// is keyed per file per SECTION: a file carrying an allowlisted `<h1>` and a new `<h2>` would
+		// otherwise merge into one entry whose recorded reason describes only the `<h1>`, and the
+		// per-occurrence ratchet would be spent on a heading nobody decided about.
+		id: "section_header",
+		surface: "@repo/ui/page-header with `level`",
+		matchers: [
+			{
+				scope: "console_pages",
+				re: /<h2(?=[\s/>]|$)/g,
+				say: "hand-writes a section heading. Use `PageHeader` with `level={2}` — it owns the one size, weight and spacing a second-level heading gets, which is why the console currently renders that same rung at five different sizes.",
+				probe: 'const a = <h2 className="text-lg font-semibold">Usage</h2>;',
+				antiProbe: "const a = <h20>x</h20>;",
+			},
+			{
+				scope: "console_pages",
+				re: /<h3(?=[\s/>]|$)/g,
+				say: "hand-writes a third-level heading. Use `PageHeader` with `level={3}`, so a heading nested under a section is a rung of one outline rather than whatever size its own file chose.",
+				probe: 'const a = <h3 className="text-sm font-semibold">Members</h3>;',
+				antiProbe: "const a = <h30>x</h30>;",
+			},
+			{
+				// h4 THROUGH h6, and the reason it is not "h2 and h3 are where the drift was". A rule
+				// that stops at h3 hands out an escape hatch that makes the defect WORSE: a flagged
+				// `<h3>` is silenced by demoting it to `<h4>`, which passes this guard while breaking
+				// the document outline it was supposed to protect. Measured when this was extended:
+				// five live `<h4>` in three files, already disagreeing (`text-sm` in one,
+				// `text-xs` in the other four, and two of those in different class order) — the same
+				// defect the `<h2>` count was written about, one rung down.
+				scope: "console_pages",
+				re: /<h[4-6](?=[\s/>]|$)/g,
+				say: "hand-writes a fourth-level or deeper heading. Use `PageHeader` with `level={n}` — an outline is only an outline if every rung of it comes from one place, and demoting a heading to escape a guard is not a fix.",
+				probe: 'const a = <h4 className="text-xs uppercase">Inputs</h4>;',
+				antiProbe: "const a = <h40>x</h40>;",
+			},
+		],
+	},
+	{
+		id: "empty_state",
+		surface: "@repo/ui/empty",
+		matchers: [
+			{
+				// One class string carrying BOTH `text-center` and a vertical padding of 6 or more.
+				// The padding is the discriminator and it is doing real work: `text-center` alone is
+				// 73 sites, most of them a centred cell, a caption or a label. A block that also buys
+				// itself 24px or more of air above and below is standing where rows would have been,
+				// which is the definition of an empty state and nothing else's.
+				//
+				// TWO BOUNDS THIS USED TO GET WRONG, and both were the quiet direction:
+				//
+				// It anchored on a literal `"`, so a class list in a template literal or in single
+				// quotes was invisible — and `className={`…`}` is 23 live sites in this console,
+				// because a conditional class list is the normal reason to reach for one. The
+				// delimiter is now captured and closed with a backreference, so all three spellings
+				// are read and none of them may be closed by a different quote.
+				//
+				// It capped the padding at `py-16`, which was the measured MAXIMUM and not the
+				// boundary the rule is about — `py-20`, `py-24`, `py-32` all escaped. That cap had a
+				// perverse consequence worth stating: a recorded debt row could be silenced by making
+				// the drift BIGGER. Bump a flagged `py-16` to `py-20` and the entry drops to zero
+				// hits, which reds as "matches nothing" and invites lowering `debt:` for a fix that
+				// never happened.
+				//
+				// `[^\n]` and never a bare `.`: a JS string cannot contain a raw newline, so a pair
+				// of delimiters spanning one would be the CLOSING quote of this line married to an
+				// OPENING quote of the next — a match assembled out of two unrelated strings.
+				scope: "console_view",
+				re: /(["'`])(?=(?:(?!\1)[^\n])*\btext-center\b)(?=(?:(?!\1)[^\n])*\bpy-(?:[6-9]|[1-9]\d)\b)(?:(?!\1)[^\n])*\1/g,
+				say: "hand-rolls an empty state. Use `EmptyState` from `@repo/ui/empty` — six different heights of centred nothing is six answers to the same question, and the one thing a user meets when a list is empty should not change shape between two pages.",
+				// The probe is a TEMPLATE LITERAL at a padding above the old cap, so it fails against
+				// both of the bounds this matcher used to get wrong rather than only against a dead
+				// regex.
+				probe: "const a = <div className={`px-4 py-20 text-center ${x}`}>No runners yet</div>;",
+				antiProbe: 'const a = <td className="px-3 py-2.5 text-center">{v}</td>;',
+			},
+		],
+	},
+	{
+		// §6 ends on one unqualified line: "No stat-card strips." Both halves are matched — the
+		// strip and the cell primitive it is built from — because fixing only the first looks
+		// identical to moving it.
+		id: "stat_strip",
+		surface: "no stat-card strip",
+		matchers: [
+			{
+				// THE CELL, not the container that holds it. This matched `<div>`-then-`<Stat>` over
+				// the two-line window first, and the container turned out to be the wrong half of the
+				// shape twice over. The formatter's own wrap of a long container is THREE lines —
+				// `<div`, the className, then `>` alone — which one extra utility class on any live
+				// strip produces, and the window closed one line too early to see it. And the
+				// alternation was `div|section|dl`, so the console's own `<Card className="grid
+				// grid-cols-4">` wrapper escaped, while §6's ban carries no qualifier at all.
+				//
+				// A `<Stat` cell IS the banned thing — the primitive it renders is banned outright by
+				// the matcher below — so keying on the cell costs nothing and closes both holes. It
+				// also makes the ratchet finer: `hits` now counts CELLS, so removing three of a
+				// strip's four is recorded progress rather than an unchanged 1.
+				scope: "console_view",
+				re: /<Stat(?=[\s/>]|$)/g,
+				say: "renders a stat-card cell. CLAUDE.md §6 bans the strips they make up, with no qualifier: a row of big numbers tells the reader what is countable rather than what to do, and it takes the space the thing they came for was going to occupy.",
+				probe: '<Card className="grid grid-cols-4">\n\t<Stat\n\t\tlabel="Jobs"\n\t/>',
+				antiProbe: '<div className="grid grid-cols-4">\n\t<StatusBadge tone="ok" />',
+			},
+			{
+				// The primitive. Without this the fix is one import away from being undone, and the
+				// two live copies of it already disagree — one renders a label above the figure, the
+				// other a caption below. `function Stat` and not also `const Stat = (` because both
+				// live copies are declarations and a second alternative would be a shape with no
+				// occurrence to prove it still matches — the probe would be the only thing holding
+				// it, which is exactly the arrangement this file spent its census floors avoiding.
+				scope: "console_view",
+				re: /\bfunction Stat\s*\(/g,
+				say: "defines a stat-card cell. Delete it with the strip it feeds — a `Stat` primitive left behind is the next strip's first line, and the console already carries two copies of this one that disagree about where the label goes.",
+				probe: "function Stat({ label, value }) { return null; }",
+				antiProbe: "function StatusDot({ status }) { return null; }",
+			},
+		],
+	},
+	{
+		id: "layer_token",
+		surface: "a `--z-*` token from packages/brand/src/tokens.css",
+		matchers: [
+			{
+				// 40 and above — the gap (40..99) and everything past the chrome (100+) — plus any
+				// arbitrary NUMERIC value. See the header: the scale's in-flow lifts stop at 30 and
+				// its chrome starts at 100, so 0/10/20/30 are rungs written without their names
+				// while anything above is a level nobody agreed on. `(?<![-\w])` keeps the matcher
+				// off `--z-overlay` itself, which is how the token is spelled everywhere it is used
+				// correctly; a NEGATIVE `-z-*` is excluded by the same lookbehind, and the header
+				// says why that is the right call rather than an accident.
+				//
+				// The lookbehind used to exclude `:` as well, which excluded every Tailwind VARIANT
+				// prefix with it: `md:z-50`, `hover:z-40` and `data-[state=open]:z-50` all read as
+				// clean, and the last of those is exactly how a Radix/base-ui popover picks its
+				// level. Worse, it was the shape a "fix" takes — red on `z-50`, write `md:z-50`, go
+				// quiet, still paint under the header — so the rule taught its own evasion.
+				// Dropping the `:` was measured over the whole console before and after: the same
+				// two findings, no new ones, because `--z-overlay` is excluded by the `-` anyway.
+				scope: "console_view",
+				re: /(?<![-\w])z-(?:[4-9]\d|\d{3,}|\[\d)/g,
+				say: "picks its own stacking level. Use a `--z-*` token — `z-[var(--z-overlay)]` for anything that floats over the page. The scale's in-flow lifts stop at 30 and its chrome starts at 100, so a level in between paints UNDER the site header and under every real overlay, whatever it was reaching over.",
+				// The probe carries a VARIANT prefix on purpose: the unprefixed form is what the
+				// live findings are, so a probe written that way would not have noticed the hole.
+				probe: 'const a = <div className="fixed data-[state=open]:z-50" />;',
+				antiProbe: 'const a = <div className="absolute z-[var(--z-overlay)] bg-popover" />;',
+			},
+		],
+	},
+	{
+		id: "data_table",
+		surface: "DataTable, or @repo/ui/table",
+		matchers: [
+			{
+				// THE SHAPE TEST this row waited for. Two things in one class string: a BRACKETED
+				// column template that is NOT behind a breakpoint (which is a grid by construction —
+				// nothing else spells its columns out), and a row marker, `uppercase` for a header
+				// row or `hover:bg-` for a data row. See the header for why the breakpoint test is
+				// the one that carries it.
+				scope: "console_view",
+				re: /(["'`])(?=(?:(?!\1)[^\n])*(?<![-:\w])grid-cols-\[)(?=(?:(?!\1)[^\n])*(?:\buppercase\b|\bhover:bg-))(?:(?!\1)[^\n])*\1/g,
+				say: "builds a table out of a grid. Use `DataTable`, or `@repo/ui/table` for a shape it cannot express — a `<div className=\"grid\">` reads to a screen reader as a stack of buttons, so these columns reach a blind user unlabelled.",
+				probe: "const a = <div className={`grid grid-cols-[2fr_1fr] uppercase ${x}`} />;",
+				antiProbe: 'const a = <div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr] hover:bg-muted/30" />;',
+			},
+			{
+				// The same defect from the other side: a real `<table>` that is not `@repo/ui/table`,
+				// so it agrees with nothing about padding, borders, header type or the empty row.
+				scope: "console_view",
+				re: /<table(?=[\s/>]|$)/g,
+				say: "hand-writes a table element. Use `DataTable`, or `@repo/ui/table` — a raw `<table>` agrees with no other table in the console about its header type, its row rule or what it shows when there is nothing in it.",
+				probe: 'const a = <table className="w-full">{rows}</table>;',
+				antiProbe: "const a = <Table>{rows}</Table>;",
 			},
 		],
 	},
@@ -318,9 +660,11 @@ export function stripComments(source) {
  * Every guarded file in a scope, repo-relative and posix-separated, plus the per-(root, extension)
  * census the vacuity check reads.
  *
- * @param {{roots: string[], exts: string[]}} scope
+ * @param {{roots: string[], exts: string[], exclude?: string[]}} scope
  * @param {(dir: string) => string[]} listDir directory lister, injected for the self-test
- * @returns {{files: string[], census: Map<string, number>}} census keys are `root SEP ext`
+ * @returns {{files: string[], census: Map<string, number>, skipped: Map<string, number>}} census
+ *   keys are `root SEP ext`; `skipped` counts what each `exclude` prefix actually kept out, so an
+ *   exclusion that has stopped excluding anything can be reported rather than sitting there.
  */
 export function filesFor(scope, listDir) {
 	/** @type {string[]} */
@@ -328,6 +672,21 @@ export function filesFor(scope, listDir) {
 	/** @type {Map<string, number>} */
 	const census = new Map();
 	for (const root of scope.roots) for (const ext of scope.exts) census.set(`${root}${SEP}${ext}`, 0);
+	/** @type {Map<string, number>} */
+	const skipped = new Map();
+	for (const e of scope.exclude ?? []) skipped.set(e, 0);
+
+	/**
+	 * The exclusion that made this path invisible, or null. A prefix match on a PATH SEGMENT
+	 * boundary, not a substring: `apps/console/app/(public)` must not also swallow a sibling
+	 * directory whose name merely starts with it.
+	 *
+	 * @param {string} p
+	 */
+	const excludedBy = (p) => {
+		for (const e of scope.exclude ?? []) if (p === e || p.startsWith(`${e}/`)) return e;
+		return null;
+	};
 
 	/** @param {string} dir @param {string} root */
 	const walk = (dir, root) => {
@@ -335,22 +694,33 @@ export function filesFor(scope, listDir) {
 			if (entry === "node_modules" || entry === ".next" || entry === "dist") continue;
 			const child = `${dir}/${entry}`;
 			const kids = listDir(child);
+			const skip = excludedBy(child);
 			if (kids.length > 0) {
+				// Counted, not merely skipped: an exclusion whose directory was renamed would
+				// otherwise stay in the declaration excluding nothing, and read as a live rule.
+				if (skip !== null) {
+					skipped.set(skip, (skipped.get(skip) ?? 0) + 1);
+					continue;
+				}
 				walk(child, root);
 				continue;
 			}
 			const ext = scope.exts.find((e) => child.endsWith(e));
 			if (ext === undefined) continue;
+			if (skip !== null) {
+				skipped.set(skip, (skipped.get(skip) ?? 0) + 1);
+				continue;
+			}
 			found.push(child);
 			const key = `${root}${SEP}${ext}`;
 			census.set(key, (census.get(key) ?? 0) + 1);
 		}
 	};
 	for (const root of scope.roots) walk(root, root);
-	// A directory can appear under two roots (components/** is a root of several scopes, and
-	// app/(private) sits under app/); one file must not be reported twice. The census counts
-	// before the de-duplication on purpose — it is measuring whether each ROOT still resolves.
-	return { files: [...new Set(found)].sort(), census };
+	// A directory can appear under two roots (components/** is a root of several scopes); one file
+	// must not be reported twice. The census counts before the de-duplication on purpose — it is
+	// measuring whether each ROOT still resolves.
+	return { files: [...new Set(found)].sort(), census, skipped };
 }
 
 /**
@@ -362,8 +732,9 @@ export function filesFor(scope, listDir) {
  *
  * @param {(p: string) => string} readFile
  * @param {(dir: string) => string[]} listDir
- * @returns {{findings: Finding[], census: Map<string, number>, perRule: Map<string, number>, unterminated: Set<string>}}
+ * @returns {{findings: Finding[], census: Map<string, number>, perRule: Map<string, number>, unterminated: Set<string>, skipped: Map<string, number>}}
  *   census keys are `scopeId SEP root SEP ext`; only scopes a matcher actually uses appear.
+ *   `skipped` keys are `scopeId SEP excludePrefix`.
  */
 export function scan(readFile, listDir) {
 	/** @type {Finding[]} */
@@ -378,6 +749,8 @@ export function scan(readFile, listDir) {
 	const perRule = new Map();
 	/** @type {Set<string>} */
 	const unterminated = new Set();
+	/** @type {Map<string, number>} */
+	const skipped = new Map();
 
 	/** @param {string} id */
 	const scopeFiles = (id) => {
@@ -386,6 +759,7 @@ export function scan(readFile, listDir) {
 			hit = filesFor(SCOPES[id], listDir);
 			scopeCache.set(id, hit);
 			for (const [pair, n] of hit.census) census.set(`${id}${SEP}${pair}`, n);
+			for (const [prefix, n] of hit.skipped) skipped.set(`${id}${SEP}${prefix}`, n);
 		}
 		return hit.files;
 	};
@@ -425,13 +799,13 @@ export function scan(readFile, listDir) {
 		}
 		perRule.set(rule.id, seen.size);
 	}
-	return { findings, census, perRule, unterminated };
+	return { findings, census, perRule, unterminated, skipped };
 }
 
 // ── the allowlist ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * @typedef {{section: string, path: string, hits: number, reason: string, line: number}} Entry
+ * @typedef {{section: string, path: string, hits: number, kind: "decision" | "debt" | null, note: string, line: number}} Entry
  * @typedef {{scope: string, floor: number, line: number}} Floor
  */
 
@@ -443,7 +817,7 @@ export function scan(readFile, listDir) {
  * failure mode an allowlist must not have.
  *
  * @param {string} text
- * @returns {{baseline: number, entries: Entry[], floors: Floor[]}}
+ * @returns {{baseline: number, debt: number, entries: Entry[], floors: Floor[]}}
  */
 export function parseAllowlist(text) {
 	const known = new Set(RULES.map((r) => r.id));
@@ -453,9 +827,10 @@ export function parseAllowlist(text) {
 	const floors = [];
 	/** @type {Floor | null} */
 	let floor = null;
-	/** Section+path already claimed, so two entries cannot both count against `baseline`. */
+	/** Section+path already claimed, so two entries cannot both count against a ledger. */
 	const claimed = new Map();
 	let baseline = null;
+	let debt = null;
 	let section = null;
 	/** @type {Entry | null} */
 	let current = null;
@@ -475,7 +850,18 @@ export function parseAllowlist(text) {
 		closeFloor(n);
 		if (current === null) return;
 		if (current.hits === -1) bad(n, `entry for \`${current.path}\` has no \`hits:\``);
-		if (current.reason === "") bad(n, `entry for \`${current.path}\` has no \`reason:\` — an entry is a DECISION`);
+		// An entry is one kind or the other, never both and never neither. "Neither" is the shape
+		// that matters: it used to be caught as "no `reason:`", and a debt row is not a decision, so
+		// the check has to be about the PAIR rather than about one field being present.
+		if (current.kind === null) {
+			bad(
+				n,
+				`entry for \`${current.path}\` has neither \`reason:\` nor \`lifts:\` — it must be one or the ` +
+					"other: a `reason:` says this surface is genuinely a different thing (a DECISION, counted " +
+					"against `baseline`), a `lifts:` records measured drift and names the board issue that " +
+					"removes it (DEBT, counted against `debt`).",
+			);
+		}
 		const key = `${current.section}${SEP}${current.path}`;
 		const first = claimed.get(key);
 		if (first !== undefined) {
@@ -499,6 +885,13 @@ export function parseAllowlist(text) {
 			closeEntry(n);
 			if (baseline !== null) bad(n, "`baseline:` appears twice");
 			baseline = Number(m[1]);
+			continue;
+		}
+		m = raw.match(/^debt: (\d+)$/);
+		if (m !== null) {
+			closeEntry(n);
+			if (debt !== null) bad(n, "`debt:` appears twice");
+			debt = Number(m[1]);
 			continue;
 		}
 		m = raw.match(/^([a-z_]+):$/);
@@ -529,7 +922,7 @@ export function parseAllowlist(text) {
 		if (m !== null) {
 			closeEntry(n);
 			if (section === null) bad(n, "an entry before any section header");
-			current = { section, path: m[1], hits: -1, reason: "", line: n };
+			current = { section, path: m[1], hits: -1, kind: null, note: "", line: n };
 			continue;
 		}
 		m = raw.match(/^ {4}hits: (\d+)$/);
@@ -541,7 +934,33 @@ export function parseAllowlist(text) {
 		m = raw.match(/^ {4}reason: (.+)$/);
 		if (m !== null) {
 			if (current === null) bad(n, "`reason:` outside an entry");
-			current.reason = m[1].trim();
+			if (current.kind !== null) bad(n, `entry for \`${current.path}\` carries both \`reason:\` and \`lifts:\` — it is a decision or it is debt, and only one of them counts against a ledger.`);
+			current.kind = "decision";
+			current.note = m[1].trim();
+			continue;
+		}
+		m = raw.match(/^ {4}lifts: (.+)$/);
+		if (m !== null) {
+			if (current === null) bad(n, "`lifts:` outside an entry");
+			if (current.kind !== null) bad(n, `entry for \`${current.path}\` carries both \`reason:\` and \`lifts:\` — it is a decision or it is debt, and only one of them counts against a ledger.`);
+			// DOUBLE-QUOTED, and the quotes are not decoration: the value has to start with `#`, and
+			// a bare `#` opens a comment in every YAML reader that is not this one, so an unquoted
+			// value would read as an empty `lifts:` to anything else that ever parses this file.
+			const raw2 = m[1].trim();
+			const note = /^".*"$/s.test(raw2) ? raw2.slice(1, -1) : null;
+			// The issue number is the whole difference between debt and a mute button: it is what
+			// keeps the work visible somewhere that is not this file. A `lifts:` that names no issue
+			// is a decision wearing the other word.
+			if (note === null || !/^#\d+\b/.test(note)) {
+				bad(
+					n,
+					`the \`lifts:\` for \`${current.path}\` must be a quoted value naming the board issue that ` +
+						'removes it — `lifts: "#1234 — what it is"`. Debt that names no issue is an exception with a ' +
+						"nicer word on it, and an unquoted `#` reads as a comment to every other YAML reader.",
+				);
+			}
+			current.kind = "debt";
+			current.note = note;
 			continue;
 		}
 		bad(n, `cannot parse \`${raw.trim().slice(0, 60)}\``);
@@ -549,7 +968,8 @@ export function parseAllowlist(text) {
 	closeEntry(lines.length);
 
 	if (baseline === null) throw new Error(`${ALLOWLIST}: no \`baseline:\` — the list has no ratchet, so it is not shrink-only`);
-	return { baseline, entries, floors };
+	if (debt === null) throw new Error(`${ALLOWLIST}: no \`debt:\` — the measured drift has no ratchet, so it is not shrink-only`);
+	return { baseline, debt, entries, floors };
 }
 
 // ── the check ─────────────────────────────────────────────────────────────────────────────────
@@ -557,7 +977,7 @@ export function parseAllowlist(text) {
 /**
  * @param {(p: string) => string} readFile
  * @param {(dir: string) => string[]} listDir
- * @returns {{problems: string[], census: Map<string, number>, perRule: Map<string, number>, allowed: number, entries: number}}
+ * @returns {{problems: string[], census: Map<string, number>, perRule: Map<string, number>, allowed: number, entries: number, decisions: number, debt: number}}
  */
 export function check(readFile, listDir) {
 	/** @type {string[]} */
@@ -565,12 +985,12 @@ export function check(readFile, listDir) {
 	/** @type {Map<string, number>} */
 	const empty = new Map();
 
-	/** @type {{baseline: number, entries: Entry[], floors: Floor[]}} */
+	/** @type {{baseline: number, debt: number, entries: Entry[], floors: Floor[]}} */
 	let list;
 	try {
 		list = parseAllowlist(readFile(ALLOWLIST));
 	} catch (err) {
-		return { problems: [String(err instanceof Error ? err.message : err)], census: empty, perRule: empty, allowed: 0, entries: 0 };
+		return { problems: [String(err instanceof Error ? err.message : err)], census: empty, perRule: empty, allowed: 0, entries: 0, decisions: 0, debt: 0 };
 	}
 
 	// Structure before scanning: a matcher naming a scope that is not in SCOPES would otherwise
@@ -585,11 +1005,24 @@ export function check(readFile, listDir) {
 						`${Object.keys(SCOPES).join(", ")}. It would look at nothing.`,
 				);
 			}
+			// The positive control below is `re.test(probe)` and `!re.test(antiProbe)`. A MISSING
+			// antiProbe passes that silently — `test(undefined)` matches almost nothing — so the
+			// widening half of the control would be absent and read exactly like a control that
+			// held. The probe half fails loudly if it is missing; this makes both halves loud.
+			for (const half of ["probe", "antiProbe"]) {
+				if (typeof matcher[half] !== "string" || matcher[half] === "") {
+					problems.push(
+						`the \`${rule.id}\` matcher ${matcher.re} declares no \`${half}\`. Every matcher carries ` +
+							"both, because they are the only control that outlives the drift: once the ledgers " +
+							"reach 0 there is nothing else left to notice a matcher that has stopped matching.",
+					);
+				}
+			}
 		}
 	}
-	if (problems.length > 0) return { problems, census: empty, perRule: empty, allowed: 0, entries: list.entries.length };
+	if (problems.length > 0) return { problems, census: empty, perRule: empty, allowed: 0, entries: list.entries.length, decisions: 0, debt: 0 };
 
-	/** @type {{findings: Finding[], census: Map<string, number>, perRule: Map<string, number>, unterminated: Set<string>}} */
+	/** @type {{findings: Finding[], census: Map<string, number>, perRule: Map<string, number>, unterminated: Set<string>, skipped: Map<string, number>}} */
 	let scanned;
 	try {
 		scanned = scan(readFile, listDir);
@@ -646,6 +1079,21 @@ export function check(readFile, listDir) {
 		}
 	}
 
+	// AN EXCLUSION THAT EXCLUDES NOTHING. A scope's `exclude` is the one declaration that makes the
+	// guard read LESS, so it is the one that must justify itself on every run: a renamed or deleted
+	// directory leaves the prefix in place, still reading as a live rule, and the next person to
+	// widen it has no way to tell a rule that is working from one that stopped. Reported rather
+	// than repaired, because which of the two it is is a decision.
+	for (const [key, n] of scanned.skipped) {
+		if (n > 0) continue;
+		const [scopeId, prefix] = key.split(SEP);
+		problems.push(
+			`the \`${scopeId}\` scope excludes \`${prefix}\`, which matched NOTHING. Either the path moved — ` +
+				"fix the exclusion — or it is dead and should be deleted. An exclusion nobody can see the " +
+				"effect of is indistinguishable from one that has quietly stopped working.",
+		);
+	}
+
 	// THE CENSUS FLOOR, and the reason it exists on top of the two axes above. Those axes are
 	// built FROM the roots list, so a root DELETED from the declaration has no census row to be
 	// zero — verified: reducing `console_code` to three roots left the check printing `✓` over 299
@@ -700,22 +1148,39 @@ export function check(readFile, listDir) {
 			matcher.re.lastIndex = 0;
 		}
 	}
-	if (problems.length > 0) return { problems, census, perRule, allowed: 0, entries: list.entries.length };
+	if (problems.length > 0) return { problems, census, perRule, allowed: 0, entries: list.entries.length, decisions: 0, debt: 0 };
 
-	// The list is shrink-only, and `baseline` is where that is enforced. It is checked in BOTH
-	// directions: growing is the drift coming back, and shrinking without lowering the number
-	// leaves headroom nobody decided to grant — the same reason the coverage floors are a
-	// checked-in file rather than a high-water mark computed at run time.
-	if (list.entries.length > list.baseline) {
-		problems.push(
-			`${ALLOWLIST} has ${list.entries.length} entries against a baseline of ${list.baseline}. This list ` +
-				"only shrinks. Fix the site to use the shared component instead of adding an exception.",
-		);
-	} else if (list.entries.length < list.baseline) {
-		problems.push(
-			`${ALLOWLIST} is down to ${list.entries.length} entries from a baseline of ${list.baseline} — a win. ` +
-				`Lower \`baseline:\` to ${list.entries.length} in the same commit, so it cannot be spent again.`,
-		);
+	// Both ledgers are shrink-only, and each is checked in BOTH directions: growing is the drift
+	// coming back, and shrinking without lowering the number leaves headroom nobody decided to
+	// grant — the same reason the coverage floors are a checked-in file rather than a high-water
+	// mark computed at run time. They are counted SEPARATELY so that neither can be spent as the
+	// other: converting a debt row into a "decision" would otherwise be free, and that conversion
+	// is exactly how a drift census turns back into a mute button.
+	const ledgers = [
+		{
+			key: "baseline",
+			want: list.baseline,
+			have: list.entries.filter((e) => e.kind === "decision").length,
+			noun: "recorded decision(s)",
+			fix: "Fix the site to use the shared component instead of adding an exception.",
+		},
+		{
+			key: "debt",
+			want: list.debt,
+			have: list.entries.filter((e) => e.kind === "debt").length,
+			noun: "file(s) of measured drift",
+			fix: "New drift is not debt — debt is what was measured when the rule landed. Fix the site.",
+		},
+	];
+	for (const l of ledgers) {
+		if (l.have > l.want) {
+			problems.push(`${ALLOWLIST} has ${l.have} ${l.noun} against a \`${l.key}:\` of ${l.want}. This ledger only shrinks. ${l.fix}`);
+		} else if (l.have < l.want) {
+			problems.push(
+				`${ALLOWLIST} is down to ${l.have} ${l.noun} from a \`${l.key}:\` of ${l.want} — a win. ` +
+					`Lower \`${l.key}:\` to ${l.have} in the same commit, so it cannot be spent again.`,
+			);
+		}
 	}
 
 	// Every entry must still MATCH. This is the shrink-only half AND the positive control: the
@@ -742,7 +1207,10 @@ export function check(readFile, listDir) {
 		// The recorded decision is printed with the failure, which is the only thing that makes
 		// the allowlist's promise ("the guard prints it to anyone who trips over it") true — and
 		// the reason is what tells the reader whether their new occurrence is the same case.
-		const recorded = `\n  The recorded decision for this file: ${entry.reason}`;
+		const recorded =
+			entry.kind === "debt"
+				? `\n  The recorded DEBT for this file: ${entry.note}`
+				: `\n  The recorded decision for this file: ${entry.note}`;
 		if (hits.length === 0) {
 			problems.push(
 				`${ALLOWLIST}:${entry.line}: the \`${entry.section}\` entry for ${entry.path} matches nothing. ` +
@@ -772,7 +1240,15 @@ export function check(readFile, listDir) {
 		);
 	}
 
-	return { problems, census, perRule, allowed, entries: list.entries.length };
+	return {
+		problems,
+		census,
+		perRule,
+		allowed,
+		entries: list.entries.length,
+		decisions: list.entries.filter((e) => e.kind === "decision").length,
+		debt: list.entries.filter((e) => e.kind === "debt").length,
+	};
 }
 
 // ── self-test ─────────────────────────────────────────────────────────────────────────────────
@@ -804,20 +1280,26 @@ function fakeTree(files) {
  * every time a scope is added, and the edit everyone forgets is the one that makes a fixture pass
  * for the wrong reason.
  */
-const EMPTY_LIST = `baseline: 0\n\nscanned:\n${Object.keys(SCOPES)
+const EMPTY_LIST = `baseline: 0\ndebt: 0\n\nscanned:\n${Object.keys(SCOPES)
 	.map((id) => `  - scope: ${id}\n    floor: 0\n`)
 	.join("")}`;
 
 /** `EMPTY_LIST` with one scope's floor raised, for the fixtures that must trip it. */
 function listWithFloor(scopeId, floor) {
-	return `baseline: 0\n\nscanned:\n${Object.keys(SCOPES)
+	return `baseline: 0\ndebt: 0\n\nscanned:\n${Object.keys(SCOPES)
 		.map((id) => `  - scope: ${id}\n    floor: ${id === scopeId ? floor : 0}\n`)
 		.join("")}`;
 }
 
 /**
- * One file per (root, extension) pair every scope declares, so a fixture is testing the CLASSIFIER
- * and never accidentally tripping the vacuity check. Each is inert — no matcher can fire on it.
+ * One file per (root, extension) pair every scope declares, plus one under every `exclude` prefix,
+ * so a fixture is testing the CLASSIFIER and never accidentally tripping a vacuity check. Each is
+ * inert — no matcher can fire on it.
+ *
+ * The excluded files are ballast in the same sense the others are, and for a sharper reason: the
+ * stale-exclusion control fails when an `exclude` matches nothing, so without them EVERY fixture
+ * would carry that failure and the self-test would be reading it as the result of whatever it was
+ * actually testing.
  *
  * @returns {Record<string, string>}
  */
@@ -829,6 +1311,11 @@ function ballast() {
 		for (const root of scope.roots) {
 			for (const ext of scope.exts) {
 				files[`${root}/ballast${i++}${ext}`] = "export const inert = 1;";
+			}
+		}
+		for (const skip of scope.exclude ?? []) {
+			for (const ext of scope.exts) {
+				files[`${skip}/ballast${i++}${ext}`] = "export const inert = 1;";
 			}
 		}
 	}
@@ -894,6 +1381,105 @@ function selfTest() {
 	ok("...and a component whose name merely contains h1 is not", !flags("const a = <Ch1ldTitle>x</Ch1ldTitle>;"));
 	ok("PageHeader is the fix, so it is not itself a finding", !flags('const a = <PageHeader title="Clusters" />;'));
 
+	// ── section headings: the tag, never the class name ──────────────────────────────────────
+	// The old header declined this row because "a class-name match cannot tell a section heading
+	// from a bold label". These fixtures are the answer: the matcher never reads the class, and the
+	// same words in a <span> wearing the identical classes are NOT a finding.
+	ok("a raw h2 is flagged", flags('const a = <h2 className="text-[15px] font-semibold">Usage</h2>;'));
+	ok("a raw h3 is flagged", flags('const a = <h3 className="text-sm font-semibold">Members</h3>;'));
+	ok("...whatever type scale it is wearing", flags('const a = <h2 className="text-2xl">Browse by topic</h2>;'));
+	ok("...and a self-closing one, and one whose attributes are on the next line", flags("const a = <h2 />;") && flags("const a = (\n\t<h3\n\t\tclassName={cn(x)}\n\t>t</h3>\n);"));
+	ok("...but the same words in a span with the same classes are not", !flags('const a = <span className="text-[15px] font-semibold">Usage</span>;'));
+	ok("...and h20/h30 are different tags", !flags("const a = <h20>x</h20>;") && !flags("const a = <h30>x</h30>;"));
+	// THE OUTLINE DOES NOT STOP AT h3. A rule that did would hand out an escape hatch that makes
+	// the defect worse: demote the flagged <h3> to <h4> and the guard goes quiet while the document
+	// outline gets strictly worse. h4, h5 and h6 are all findings for that reason.
+	ok("h4, h5 and h6 are findings too", flags('const a = <h4 className="text-xs">Inputs</h4>;') && flags("const a = <h5 />;") && flags("const a = <h6 />;"));
+	ok("...so a flagged h3 cannot be silenced by demoting it", flags("const a = <h4>Inputs</h4>;"));
+	ok("...but h40 is still a different tag, and h7 is not a heading", !flags("const a = <h40>x</h40>;") && !flags("const a = <h7>x</h7>;"));
+
+	// ── the empty state: the PADDING is the discriminator ────────────────────────────────────
+	ok("a centred block with generous vertical padding is flagged", flags('const a = <div className="px-4 py-16 text-center">No runners yet</div>;'));
+	ok("...at any of the six heights it is written at", flags('const a = <p className="px-3 py-6 text-center">none</p>;') && flags('const a = <div className="py-12 text-center">none</div>;'));
+	// EVERY DELIMITER, because a class list is written three ways in this console and anchoring on
+	// `"` made the census mean "the double-quoted ones". A template literal is the normal way to
+	// write a conditional class list — 17 files already do.
+	ok("...in a template literal", flags("const a = <div className={`px-4 py-16 text-center ${x}`}>none</div>;"));
+	ok("...and in single quotes", flags("const a = <div className={cn('px-4 py-16 text-center')}>none</div>;"));
+	// NO UPPER BOUND. `py-16` was the measured maximum, not the boundary the rule is about — and a
+	// cap there means a recorded debt row can be silenced by making the drift BIGGER.
+	ok("...at py-20, py-24 and py-32, which the measured cap used to let through", flags('const a = <div className="py-20 text-center" />;') && flags('const a = <div className="py-24 text-center" />;') && flags('const a = <div className="py-32 text-center" />;'));
+	ok("...but a centred TABLE CELL is not — py-2.5 is not standing in for content", !flags('const a = <td className="px-3 py-2.5 text-center">{v}</td>;'));
+	ok("...and py-1.5 is not either, so the two-digit rung did not reach down into the fractions", !flags('const a = <div className="py-1.5 text-center" />;'));
+	// THE LOOKAHEADS MAY NOT LEAVE THE STRING. `(?:(?!\1)[^\n])*` is what stops the scan at the
+	// closing delimiter; without it, two ADJACENT attributes each holding one half of the pair get
+	// married into one match. That is the load-bearing half of the delimiter work — the closing
+	// backreference only decides how much text a finding prints — so it is what these assert.
+	ok("...and one attribute's padding does not marry the NEXT attribute's centring", !flags('const a = <div className="px-4 py-16" title="text-center" />;'));
+	ok("...nor across a template literal and the quoted attribute beside it", !flags("const a = <div className={`py-16 x`} title=\"text-center\" />;"));
+	ok("...and the same for the grid matcher's two halves", !flags('const a = <div className="grid grid-cols-[2fr_1fr]" title="uppercase" />;'));
+	ok("...nor a centred label with no vertical padding at all", !flags('const a = <div className="text-center text-xs">{label}</div>;'));
+	ok("...nor generous padding without the centring", !flags('const a = <div className="px-4 py-16">{rows}</div>;'));
+	// A JS string cannot hold a raw newline, so a `"` … `"` spanning one is two unrelated strings.
+	ok(
+		"...and the two halves may not be assembled out of two different strings on two lines",
+		!flags('const a = <div className="text-center" data-x="py-16" />;\nconst b = "py-16";'),
+	);
+
+	// ── the stat strip: the container AND the primitive ──────────────────────────────────────
+	ok("a <Stat cell is flagged", flags('const a = (\n<div className="grid grid-cols-4">\n<Stat label="Jobs" value={n} />\n</div>\n);'));
+	ok("...including when the cell's props wrap onto the following lines", flags('const a = (\n<div className="grid grid-cols-2">\n<Stat\n\tlabel="Jobs"\n/>\n</div>\n);'));
+	// THE TWO SHAPES THE CONTAINER MATCH MISSED. The formatter's own wrap of a long container is
+	// three lines, and the console's Card primitive is not in any `div|section|dl` alternation.
+	ok("...and when the CONTAINER is the thing the formatter wrapped, over three lines", flags('const a = (\n<div\n\tclassName="grid grid-cols-4 gap-4 border-b border-border px-5 py-3"\n>\n\t<Stat label="Jobs" value={n} />\n</div>\n);'));
+	ok("...and inside a Card, which §6's unqualified ban covers just as well", flags('const a = (\n<Card className="grid grid-cols-4">\n<Stat label="Jobs" value={n} />\n</Card>\n);'));
+	ok("...and the Stat primitive itself, so the fix cannot be one import away", flags("function Stat({ label, value }) {\n\treturn null;\n}"));
+	ok("...but StatusBadge is a different component", !flags('const a = (\n<div className="grid grid-cols-4">\n<StatusBadge tone="ok" />\n</div>\n);'));
+	ok("...and StatusDot is a different function", !flags("function StatusDot({ status }) {\n\treturn null;\n}"));
+
+	// ── the layer scale: 40..99 is the gap, 10/20/30 are rungs ───────────────────────────────
+	ok("a bare z-50 is flagged", flags('const a = <div className="absolute z-50 bg-popover" />;'));
+	ok("...and a bare z-40, which is the same empty gap", flags('const a = <div className="fixed z-40" />;'));
+	ok("...and an arbitrary numeric value", flags('const a = <div className="z-[95]" />;'));
+	// EVERY VARIANT PREFIX. The lookbehind used to exclude `:`, which excluded these with it — and
+	// `data-[state=open]:z-50` is how a Radix/base-ui popover picks its level, i.e. the common case
+	// AND the shape a "fix" takes when someone reds on the bare form.
+	ok("...behind a responsive prefix", flags('const a = <div className="fixed md:z-50" />;'));
+	ok("...behind a state prefix", flags('const a = <div className="absolute hover:z-40" />;'));
+	ok("...and behind a data-attribute prefix, which is how a popover picks its level", flags('const a = <div className="data-[state=open]:z-50" />;'));
+	ok("...but z-10/z-20/z-30 are the scale's own in-flow rungs, unnamed rather than invented", !flags('const a = <div className="relative z-10" />;') && !flags('const a = <div className="z-30" />;'));
+	ok("...and the token form is the FIX, so it is never a finding", !flags('const a = <div className="z-[var(--z-overlay)]" />;'));
+	ok("...nor is the token's own name where it is declared", !flags("const css = `--z-overlay: 200;`;"));
+
+	// ── grid-as-table: the SHAPE test the old header asked for ───────────────────────────────
+	ok("an uppercase header row over a bracketed column template is flagged", flags('const a = <div className="grid grid-cols-[2fr_1fr_auto] uppercase tracking-[0.1em]" />;'));
+	ok("...and a hoverable data row on the same template", flags('const a = <div className="grid grid-cols-[2fr_1fr_auto] hover:bg-muted/30" />;'));
+	ok("...and the same row written as a template literal", flags("const a = <div className={`grid grid-cols-[2fr_1fr_auto] hover:bg-muted/30 ${x}`} />;"));
+	// THE ONE THAT SEPARATES A LAYOUT FROM A TABLE. A table's columns are the same at every width.
+	ok(
+		"...but the identical class list behind a BREAKPOINT is a page layout, not a table",
+		!flags('const a = <div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr] hover:bg-muted/30" />;'),
+	);
+	ok("...and a bracketed template with no row marker is a label/value pair", !flags('const a = <div className="grid grid-cols-[8rem_1fr] gap-y-1.5" />;'));
+	ok("...and an N-up card grid is not a table", !flags('const a = <div className="grid grid-cols-3 gap-4 hover:bg-muted/30" />;'));
+	ok("a raw <table> is flagged", flags('const a = <table className="w-full">{rows}</table>;'));
+	ok("...but @repo/ui/table's <Table> is the fix", !flags("const a = <Table>{rows}</Table>;"));
+
+	// ── money that never writes its own `$` ──────────────────────────────────────────────────
+	ok("an interpolation glued directly onto a formatted number is flagged", flags('const s = `${symbol}${n.toLocaleString("en-US")}`;'));
+	// THE AXIS THAT MATTERS. Adjacency alone is ~48 sites in this console — an id glued to a
+	// suffix, a prefix glued to a path — so the second half having to FORMAT A NUMBER is the whole
+	// matcher, and it is what a widening has to be caught on.
+	ok("...but two adjacent interpolations that format nothing are an identifier, not a price", !flags("const s = `${context.resource_type}${suffix}`;"));
+	ok("...and two values with words between them are a sentence", !flags("const s = `${used} / ${limit.toLocaleString()}`;"));
+	ok("...and a bare toLocaleString is still how a count gets separators", !flags("const s = `${n.toLocaleString()} jobs`;"));
+	// `<Amount` throughout: `<Stat` is a finding under the stat-strip rule, so a fixture built on
+	// it would flag whatever this matcher did, and the negative case would fail for the wrong
+	// reason — which is exactly how it first failed when the strip rule moved onto the cell.
+	ok("a currency symbol handed over as a prop is flagged", flags('const a = <Amount value={12} prefix="$" />;'));
+	ok("...in any currency", flags('const a = <Amount value={12} prefix="€" />;'));
+	ok("...but a prop that is not a currency symbol is not", !flags('const a = <Amount value={12} prefix="~" />;'));
+
 	// One occurrence is reported once, not once per window it appears in.
 	const twice = run({ ...ballast(), [AT]: "const a = 1;\nconst s = x.toFixed(2);\nconst b = 2;" });
 	ok("a match on a middle line is reported exactly once", twice.problems.length === 1, JSON.stringify(twice.problems));
@@ -920,6 +1506,27 @@ function selfTest() {
 	ok("an h1 under app/(private) is in scope", run(at("apps/console/app/(private)/p/page.tsx")).problems.length > 0);
 	const pub = run(at("apps/console/app/(public)/p/page.tsx"));
 	ok("...and the identical file under app/(public) is not", pub.problems.length === 0, JSON.stringify(pub.problems));
+	// THE FILES THAT SIT IN NEITHER ROUTE GROUP. Rooting at `app/(private)` left these unread by
+	// every heading rule, and no vacuity control could see it: `app/(private)` still resolved and
+	// its floor still passed.
+	ok("an h1 in app/error.tsx — neither (private) nor (public) — is in scope", run(at("apps/console/app/error.tsx")).problems.length > 0);
+	ok("...and so is one in app/not-found.tsx", run(at("apps/console/app/not-found.tsx")).problems.length > 0);
+	// AN EXCLUSION THAT EXCLUDES NOTHING is the one declaration that makes this guard read LESS, so
+	// it has to justify itself on every run. Removing the ballast under it is how a renamed
+	// directory would look.
+	const staleSkip = (() => {
+		const tree = ballast();
+		for (const k of Object.keys(tree)) if (k.startsWith("apps/console/app/(public)/")) delete tree[k];
+		return run(tree);
+	})();
+	ok("an `exclude` that matches nothing FAILS rather than sitting there", says(staleSkip, /excludes `apps\/console\/app\/\(public\)`, which matched NOTHING/), JSON.stringify(staleSkip.problems));
+	// A prefix match on a SEGMENT boundary: a sibling whose name merely starts with the excluded
+	// one must still be read. The name matters and this fixture first got it wrong — `(publicity)`
+	// is NOT a prefix extension of `(public)`, because the closing paren breaks it, so the test
+	// passed with the segment check deliberately removed and proved nothing. `(public)-archive` is
+	// a real one, and it reds the moment `p.startsWith(e)` replaces the boundary test.
+	const sibling = run({ ...ballast(), "apps/console/app/(public)-archive/p/page.tsx": H1 });
+	ok("...and a sibling directory whose name merely starts with it is still scanned", sibling.problems.length > 0, JSON.stringify(sibling.problems));
 	// The scope split INSIDE one rule: money reaches lib/, the byte division does not.
 	const money = run({ ...ballast(), "apps/console/lib/x/a.ts": "const s = `$${n}`;" });
 	ok("a hand-written money symbol under lib/ is in scope", money.problems.length > 0, JSON.stringify(money.problems));
@@ -992,7 +1599,7 @@ function selfTest() {
 		says(rootDeleted.narrowed, /against a floor of/),
 		JSON.stringify(rootDeleted.narrowed.problems),
 	);
-	const noFloor = run(ballast(), "baseline: 0\n");
+	const noFloor = run(ballast(), "baseline: 0\ndebt: 0\n");
 	ok("an allowlist with no census floors fails", says(noFloor, /has no floor for the/), JSON.stringify(noFloor.problems));
 	const strayFloor = run(ballast(), EMPTY_LIST + "  - scope: console_nope\n    floor: 0\n");
 	ok("...and a floor for a scope that does not exist fails", says(strayFloor, /which is not a scope/), JSON.stringify(strayFloor.problems));
@@ -1008,13 +1615,38 @@ function selfTest() {
 			return String(err instanceof Error ? err.message : err);
 		}
 	};
-	const good = "baseline: 1\n\nformat:\n  - path: apps/console/components/a.tsx\n    hits: 2\n    reason: because.\n";
+	const good = "baseline: 1\ndebt: 0\n\nformat:\n  - path: apps/console/components/a.tsx\n    hits: 2\n    reason: because.\n";
 	/** A rule-section allowlist plus the floors every run requires, so a fixture tests one thing. */
 	const withFloors = (t) => t + EMPTY_LIST.slice(EMPTY_LIST.indexOf("scanned:"));
 	ok("a well-formed entry parses", typeof parses(good) === "object" && parses(good).entries.length === 1);
-	ok("...and carries its hits and reason", parses(good).entries[0].hits === 2 && parses(good).entries[0].reason === "because.");
+	ok("...and carries its hits and its recorded note", parses(good).entries[0].hits === 2 && parses(good).entries[0].note === "because.");
 	ok("an unknown section is rejected", /unknown section/.test(String(parses("baseline: 0\nnope:\n"))));
-	ok("a missing reason is rejected", /has no `reason:`/.test(String(parses("baseline: 1\nformat:\n  - path: a.tsx\n    hits: 1\n"))));
+	// An entry with NEITHER field is the shape that used to be caught as "no `reason:`". It has to
+	// stay caught now that there are two kinds, because an entry with no kind counts against
+	// neither ledger — a free exception, which is the one failure an allowlist must not have.
+	ok("an entry with neither reason nor lifts is rejected", /has neither `reason:` nor `lifts:`/.test(String(parses("baseline: 1\ndebt: 0\nformat:\n  - path: a.tsx\n    hits: 1\n"))));
+	ok(
+		"...and one carrying BOTH is too, because only one of them can count",
+		/carries both `reason:` and `lifts:`/.test(String(parses("baseline: 1\ndebt: 0\nformat:\n  - path: a.tsx\n    hits: 1\n    reason: x\n    lifts: \"#1 y\"\n"))),
+	);
+	// The issue number is what keeps debt visible somewhere that is not this file.
+	ok(
+		"a `lifts:` that names no board issue is rejected",
+		/must be a quoted value naming the board issue/.test(String(parses("baseline: 0\ndebt: 1\nformat:\n  - path: a.tsx\n    hits: 1\n    lifts: \"we will get to it\"\n"))),
+	);
+	// The quotes carry meaning of their own: unquoted, the `#` reads as a comment everywhere else.
+	ok(
+		"...and so is an UNQUOTED one, however well it names its issue",
+		/must be a quoted value naming the board issue/.test(String(parses("baseline: 0\ndebt: 1\nformat:\n  - path: a.tsx\n    hits: 1\n    lifts: #3613 — the wave lifts this.\n"))),
+	);
+	ok(
+		"...and one that does parses as DEBT, not as a decision",
+		(() => {
+			const r = parses("baseline: 0\ndebt: 1\nformat:\n  - path: a.tsx\n    hits: 1\n    lifts: \"#3613 — the console-UI conformance wave lifts this.\"\n");
+			return typeof r === "object" && r.entries[0].kind === "debt" && r.debt === 1;
+		})(),
+	);
+	ok("an allowlist with no debt ledger fails", /no `debt:`/.test(String(parses("baseline: 0\n"))));
 	ok("a missing hits is rejected", /has no `hits:`/.test(String(parses("baseline: 1\nformat:\n  - path: a.tsx\n    reason: x\n"))));
 	// A `- scope:` with no `floor:` would otherwise carry the sentinel -1, i.e. a floor nothing
 	// can fall below — a census control that reads as configured and is not one.
@@ -1023,28 +1655,44 @@ function selfTest() {
 	ok("a `- scope:` outside the scanned section is rejected", /belongs to the `scanned:` section/.test(String(parses("baseline: 0\nformat:\n  - scope: console_code\n"))));
 	ok("a line it cannot parse is rejected, not skipped", /cannot parse/.test(String(parses("baseline: 0\nformat:\n  - patth: a.tsx\n"))));
 	ok("an entry before any section is rejected", /before any section/.test(String(parses("baseline: 0\n  - path: a.tsx\n"))));
-	ok("a comment and a blank line are fine", typeof parses("# note\n\nbaseline: 0\n") === "object");
+	ok("a comment and a blank line are fine", typeof parses("# note\n\nbaseline: 0\ndebt: 0\n") === "object");
 	// A duplicate is a second free entry against `baseline`, and only one of its two reasons is
 	// the decision anyone recorded.
 	ok(
 		"the same file twice in one section is rejected",
-		/a second `format` entry/.test(String(parses("baseline: 2\nformat:\n  - path: a.tsx\n    hits: 1\n    reason: x\n  - path: a.tsx\n    hits: 1\n    reason: y\n"))),
+		/a second `format` entry/.test(String(parses("baseline: 2\ndebt: 0\nformat:\n  - path: a.tsx\n    hits: 1\n    reason: x\n  - path: a.tsx\n    hits: 1\n    reason: y\n"))),
 	);
 
 	// ── the ratchet and the positive control ─────────────────────────────────────────────────
 	const tree = { ...ballast(), "apps/console/components/a.tsx": "const a = n.toFixed(2);" };
 	const entry = (hits, p = "apps/console/components/a.tsx") =>
-		withFloors(`baseline: 1\n\nformat:\n  - path: ${p}\n    hits: ${hits}\n    reason: THE RECORDED DECISION.\n`);
+		withFloors(`baseline: 1\ndebt: 0\n\nformat:\n  - path: ${p}\n    hits: ${hits}\n    reason: THE RECORDED DECISION.\n`);
 	ok("an allowlisted site passes", run(tree, entry(1)).problems.length === 0, JSON.stringify(run(tree, entry(1)).problems));
 	ok("an unallowlisted site fails with file:line", says(run(tree, EMPTY_LIST), /components\/a\.tsx:1:/));
 	ok("an entry that over-declares fails", says(run(tree, entry(2)), /declares 2 hit\(s\) and there are 1/));
 	ok("an entry matching NOTHING fails — the positive control", says(run(tree, entry(1, "apps/console/components/gone.tsx")), /matches nothing/));
 	// The allowlist's header promises the guard prints the reason to whoever trips over it.
 	ok("...and both entry failures print the recorded reason", says(run(tree, entry(2)), /THE RECORDED DECISION/) && says(run(tree, entry(1, "apps/console/components/gone.tsx")), /THE RECORDED DECISION/));
-	const grew = withFloors(`baseline: 0\n\nformat:\n  - path: apps/console/components/a.tsx\n    hits: 1\n    reason: because.\n`);
+	const grew = withFloors(`baseline: 0\ndebt: 0\n\nformat:\n  - path: apps/console/components/a.tsx\n    hits: 1\n    reason: because.\n`);
 	ok("the list may never grow past its baseline", says(run(tree, grew), /only shrinks/));
-	const shrank = withFloors(`baseline: 2\n\nformat:\n  - path: apps/console/components/a.tsx\n    hits: 1\n    reason: because.\n`);
+	const shrank = withFloors(`baseline: 2\ndebt: 0\n\nformat:\n  - path: apps/console/components/a.tsx\n    hits: 1\n    reason: because.\n`);
 	ok("...and a shrink must be recorded, not left as headroom", says(run(tree, shrank), /Lower `baseline:` to 1/));
+
+	// THE SECOND LEDGER, both directions, and the one that matters most: the two must not be
+	// interchangeable. A debt row counted against `baseline` would let a fake decision be paid for
+	// out of the drift census, which is the conversion the split exists to make visible.
+	const debtEntry = (bl, db, kind) =>
+		withFloors(`baseline: ${bl}\ndebt: ${db}\n\nformat:\n  - path: apps/console/components/a.tsx\n    hits: 1\n    ${kind}\n`);
+	const LIFTS = 'lifts: "#3620 — THE RECORDED DEBT."';
+	const asDebt = run(tree, debtEntry(0, 1, LIFTS));
+	ok("a debt row passes, and pays out of `debt` rather than `baseline`", asDebt.problems.length === 0 && asDebt.debt === 1 && asDebt.decisions === 0, JSON.stringify(asDebt.problems));
+	ok("...and its recorded note is printed when its hits stop agreeing", says(run({ ...tree, "apps/console/components/a.tsx": "const a = n.toFixed(2);\nconst b = n.toFixed(1);" }, debtEntry(0, 1, LIFTS)), /THE RECORDED DEBT/));
+	ok("a debt ledger may never grow past its number", says(run(tree, debtEntry(0, 0, LIFTS)), /against a `debt:` of 0/));
+	ok("...and a debt shrink must be recorded too", says(run(tree, debtEntry(0, 2, LIFTS)), /Lower `debt:` to 1/));
+	// The conversion, in both directions, proved by moving ONE row between the two kinds and
+	// leaving both numbers alone. Each direction reds against a DIFFERENT ledger.
+	ok("a decision row does not pay out of `debt`", says(run(tree, debtEntry(0, 1, "reason: because.")), /against a `baseline:` of 0/));
+	ok("...and a debt row does not pay out of `baseline`", says(run(tree, debtEntry(1, 0, LIFTS)), /against a `debt:` of 0/));
 
 	// ── the permanent positive control, exercised in both directions ────────────────────────
 	// Both halves are exercised THROUGH `check`, not against `RULES` directly: the earlier version
@@ -1061,6 +1709,24 @@ function selfTest() {
 	const widened = run(tree, entry(1));
 	dead.re = realRe;
 	ok("a matcher that WIDENED onto correct code fails too", says(widened, /has widened onto/), JSON.stringify(widened.problems));
+
+	// A matcher with NO anti-probe passes the widening half silently, because `re.test(undefined)`
+	// is false for every matcher here — a control that is absent and reads as a control that held.
+	const noAnti = (() => {
+		const m = RULES[0].matchers[0];
+		const real = m.antiProbe;
+		delete m.antiProbe;
+		const r = run(tree, entry(1));
+		m.antiProbe = real;
+		return r;
+	})();
+	ok("a matcher that declares no anti-probe FAILS rather than skipping the widening control", says(noAnti, /declares no `antiProbe`/), JSON.stringify(noAnti.problems));
+	// Every matcher in the live rules carries both halves — asserted here as well as in `check`,
+	// because this is the assertion that survives someone deleting the structural check above.
+	ok(
+		"every live matcher carries a probe and an anti-probe",
+		RULES.every((r) => r.matchers.every((m) => typeof m.probe === "string" && m.probe !== "" && typeof m.antiProbe === "string" && m.antiProbe !== "")),
+	);
 
 	// ── the guard must not be able to match itself or its own fixtures ───────────────────────
 	const mixed = fakeTree({ "scripts/check-shared-surface.mjs": "const a = n.toFixed(2);", "apps/console/components/a.tsx": "" });
@@ -1102,7 +1768,7 @@ if (process.argv.includes("--self-test")) {
 		}
 		return entries.filter((e) => e.isDirectory() || e.isFile()).map((e) => e.name);
 	};
-	const { problems, census, perRule, allowed, entries } = check(readFile, listDir);
+	const { problems, census, perRule, allowed, decisions, debt } = check(readFile, listDir);
 	for (const p of problems) console.error(`::error::shared-surface: ${p}`);
 	// The per-root breakdown is printed on EVERY run, pass or fail. A collapse that the floors
 	// above cannot see — one root emptying while another grows — is then visible in the diff of
@@ -1125,6 +1791,7 @@ if (process.argv.includes("--self-test")) {
 	console.log(
 		`✓ check-shared-surface: files per rule — ${rules}; per root — ${breakdown}. ` +
 			`Every hand-rolled ${RULES.map((r) => r.surface).join(" / ")} site is one of the ${allowed} ` +
-			`occurrence(s) that ${entries} recorded decision(s) in ${ALLOWLIST} account for.`,
+			`occurrence(s) that ${ALLOWLIST} accounts for — across ${decisions} recorded decision(s) and ` +
+			`${debt} file(s) of measured drift still owed to the board.`,
 	);
 }
