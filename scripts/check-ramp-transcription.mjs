@@ -50,6 +50,10 @@ const TRANSCRIPTION = "packages/brand/src/ramp-srgb.ts";
 // and passes. "Nothing found" and "nothing wrong" must not share an exit code.
 const MIN_STEPS = 17;
 
+/** The section comment that opens the ramp block in tokens.css, and the shape that closes it. */
+const RAMP_BLOCK_START = /^\s*\/\*\s*-+\s*Alethia neutral ink ramp/;
+const SECTION_COMMENT = /^\s*\/\*\s*-+\s/;
+
 /**
  * The sRGB transfer function (IEC 61966-2-1), linear light in, display-encoded out.
  *
@@ -104,28 +108,40 @@ function normaliseKey(raw) {
  */
 function parseTokens(src) {
 	const out = new Map();
-	src.split("\n").forEach((text, i) => {
-		// ANY custom property, not a `gray-*|black` allowlist. Symmetry with parseTranscription
-		// matters: with a closed matcher here, a `--slate-500` added to the ramp block would be
-		// invisible to the census and rule 3's "exists in tokens.css but missing from the
-		// transcription" branch could never fire for it.
-		//
-		// What keeps this from swallowing the semantic layer is the SHAPE, not a name list: the
-		// pattern requires `oklch(L C H)` and nothing else before the `)`, so all 12 non-ramp
-		// oklch tokens — every one of which carries an alpha (`oklch(1 0 0 / 0.10)`) — fail to
-		// match. Verified against tokens.css: the 17 alpha-free declarations are exactly the ramp.
-		// A CHROMATIC step added here still matches and is then refused by rule 4, so it is seen
-		// rather than skipped.
+	const lines = src.split("\n");
+
+	// Scope the scan to the RAMP BLOCK, not the whole file.
+	//
+	// An open matcher over all of tokens.css classifies any alpha-free `oklch(L C H)` as a ramp
+	// step, and the semantic layer is entitled to hold one. `--overlay: oklch(0 0 0 / 0.45)` is
+	// excluded by its alpha, but a solid sibling — `--overlay-solid: oklch(0 0 0)` — would be
+	// counted, and rule 3 would then demand it appear in the transcription. The only ways out of
+	// that would be a bogus RAMP entry or editing this guard, which is a guard training people to
+	// disable it.
+	//
+	// The block is delimited by the section comment tokens.css already carries. That keeps the
+	// breadth that matters — a MIS-NAMED step inside the ramp is still caught, which is the case
+	// rule 3 exists for — without claiming every opaque neutral in the file is a ramp value.
+	const startIdx = lines.findIndex((l) => RAMP_BLOCK_START.test(l));
+	if (startIdx < 0) {
+		// The marker is how this guard knows what it is looking at. Refuse rather than falling
+		// back to a whole-file scan (false positives) or an empty one (a silent pass).
+		return { entries: out, markerMissing: true };
+	}
+	for (let i = startIdx + 1; i < lines.length; i++) {
+		const text = lines[i];
+		// The next section comment, or the end of the rule, closes the block.
+		if (SECTION_COMMENT.test(text) || /^\s*}/.test(text)) break;
 		const m = /^\s*(--[a-z0-9-]+)\s*:\s*oklch\(\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\)/.exec(text);
-		if (!m) return;
+		if (!m) continue;
 		out.set(normaliseKey(m[1]), {
 			L: Number(m[2]),
 			chroma: Number(m[3]),
 			hue: Number(m[4]),
 			line: i + 1,
 		});
-	});
-	return out;
+	}
+	return { entries: out, markerMissing: false };
 }
 
 /**
@@ -201,7 +217,11 @@ function compare(tokens, parsed) {
 	}
 	for (const [key, v] of tokens) {
 		if (v.chroma !== 0) {
-			notNeutral.push(`${TOKENS}:${v.line}: \`${key}\` is not neutral (chroma ${v.chroma}) — see above`);
+			notNeutral.push(
+				`${TOKENS}:${v.line}: \`${key}\` is oklch(${v.L} ${v.chroma} ${v.hue}) — chroma is not 0, so ` +
+					`the L³ neutral shortcut this guard uses is invalid. The ramp is neutral by definition; a ` +
+					`chromatic value belongs in the semantic layer, not in the ramp block.`,
+			);
 		}
 	}
 	// Do NOT return here. An earlier cut did, and it repeated — for the whole file — the exact
@@ -271,7 +291,8 @@ function compare(tokens, parsed) {
  * that must not be — a guard tested in one direction only is one that reports green.
  */
 function selfTest() {
-	const cleanTokens = "  --gray-500:  oklch(0.664 0 0);\n  --black:     oklch(0.09 0 0);\n";
+	const RAMP_MARKER = "  /* ---- Alethia neutral ink ramp (OKLCH, zero chroma) ---- */\n";
+	const cleanTokens = RAMP_MARKER + "  --gray-500:  oklch(0.664 0 0);\n  --black:     oklch(0.09 0 0);\n";
 	const cleanSrc = '\tgray500: "#939393", // oklch(0.664 0 0)\n\tblack: "#020202", // oklch(0.09 0 0)\n';
 
 	const cases = [
@@ -284,7 +305,7 @@ function selfTest() {
 		],
 		[
 			"rule 2 — tokens.css restyled, transcription stale",
-			"  --gray-500:  oklch(0.700 0 0);\n  --black:     oklch(0.09 0 0);\n",
+			RAMP_MARKER + "  --gray-500:  oklch(0.700 0 0);\n  --black:     oklch(0.09 0 0);\n",
 			cleanSrc,
 			1,
 		],
@@ -296,7 +317,7 @@ function selfTest() {
 		],
 		[
 			"rule 3 — step in the transcription that tokens.css does not have",
-			"  --black:     oklch(0.09 0 0);\n",
+			RAMP_MARKER + "  --black:     oklch(0.09 0 0);\n",
 			cleanSrc,
 			1,
 		],
@@ -355,7 +376,7 @@ function selfTest() {
 
 	let failed = 0;
 	for (const [name, tokensSrc, transcriptionSrc, wantCount] of cases) {
-		const got = compare(parseTokens(tokensSrc), parseTranscription(transcriptionSrc));
+		const got = compare(parseTokens(tokensSrc).entries, parseTranscription(transcriptionSrc));
 		const ok = got.length === wantCount;
 		if (!ok) {
 			failed++;
@@ -363,6 +384,32 @@ function selfTest() {
 			got.forEach((p) => console.error(`      ${p}`));
 		} else {
 			console.log(`  ✓ ${name}`);
+		}
+	}
+
+	// The block marker is how this guard knows what it is looking at. Without it parseTokens must
+	// report markerMissing rather than returning an empty map, which would otherwise read as
+	// "tokens.css has no ramp steps" and sail through as a vacuous pass.
+	{
+		const noMarker = parseTokens("  --gray-500:  oklch(0.664 0 0);\n");
+		if (!noMarker.markerMissing) {
+			failed++;
+			console.error("  ✗ a tokens.css with no ramp-block marker must be REFUSED, not scanned as empty");
+		} else {
+			console.log("  ✓ a missing ramp-block marker is refused rather than scanned as empty");
+		}
+		const scoped = parseTokens(
+			"  /* ---- Alethia neutral ink ramp ---- */\n  --gray-500:  oklch(0.664 0 0);\n" +
+				"  /* ---- Alethia semantic surfaces ---- */\n  --overlay-solid: oklch(0 0 0);\n",
+		);
+		if (scoped.entries.has("overlaysolid")) {
+			failed++;
+			console.error("  ✗ an opaque neutral OUTSIDE the ramp block was counted as a ramp step");
+		} else if (!scoped.entries.has("gray500")) {
+			failed++;
+			console.error("  ✗ the ramp block itself was not scanned");
+		} else {
+			console.log("  ✓ an opaque neutral outside the ramp block is not a ramp step");
 		}
 	}
 
@@ -409,7 +456,16 @@ function main() {
 		process.exit(1);
 	}
 
-	const tokens = parseTokens(tokensSrc);
+	const { entries: tokens, markerMissing } = parseTokens(tokensSrc);
+	if (markerMissing) {
+		console.error(
+			`FAIL: could not find the ramp block in ${TOKENS}. This guard scopes its scan to the ` +
+				`section opened by "/* ---- Alethia neutral ink ramp ... ----" so the semantic layer's own ` +
+				`opaque neutrals are not mistaken for ramp steps. That marker is gone or renamed, so the ` +
+				`ramp has NOT been checked — restore the comment, or update RAMP_BLOCK_START here.`,
+		);
+		process.exit(1);
+	}
 	const parsed = parseTranscription(transcriptionSrc);
 	const seen = parsed.entries.size + parsed.uncommented.length;
 

@@ -857,7 +857,7 @@ jobs:
         run: |
           pnpm -F console gen:format-conformance
           git diff --exit-code -- packages/format/conformance/format-cases.json \
-            || { echo "::error::The formatter conformance table is stale — run 'pnpm -F console gen:format-conformance' and commit. NOTE this rewrites an EXPECTATION, not a formatting detail: read the changed-case list the generator prints, because packages/core/format is held to this table."; exit 1; }
+            || { echo "::error::The formatter conformance table is stale — run 'pnpm -F console gen:format-conformance' and commit. NOTE this rewrites an EXPECTATION, not a formatting detail: read the changed-case list the generator prints (~ = an expectation moved, i = only the inputs did), because packages/core/format is held to this table."; exit 1; }
       - name: Compat matrix mirror is in sync with the SSOT (matrix.json → matrix.ts)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |

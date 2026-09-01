@@ -139,8 +139,8 @@ function assertCoverage(cases: Record<string, unknown[]>): void {
  * every case read as "new" rather than "changed" — the honest answer when there is nothing to
  * compare against.
  */
-function previousWants(before: unknown): Map<string, string> {
-	const index = new Map<string, string>();
+function previousRows(before: unknown): Map<string, { want: string; row: string }> {
+	const index = new Map<string, { want: string; row: string }>();
 	if (before === null || typeof before !== "object") return index;
 	const doc: Record<string, unknown> = { ...before };
 	if (doc.cases === null || typeof doc.cases !== "object") return index;
@@ -150,7 +150,11 @@ function previousWants(before: unknown): Map<string, string> {
 			if (row === null || typeof row !== "object") continue;
 			const entry: Record<string, unknown> = { ...row };
 			if (typeof entry.id === "string" && typeof entry.want === "string") {
-				index.set(`${section}/${entry.id}`, entry.want);
+				// The whole row, not just `want`. A case whose INPUT moved without moving its
+				// output matters as much here, because it changes what packages/core/format is
+				// driven with — and indexing only `want` reported "0 changed" for it while the
+				// message told the reader to read the list.
+				index.set(`${section}/${entry.id}`, { want: entry.want, row: JSON.stringify(entry) });
 			}
 		}
 	}
@@ -166,7 +170,7 @@ function previousWants(before: unknown): Map<string, string> {
  * what somebody does when its meaning changes, which is when the summary matters most.
  */
 function changedIds(before: unknown, after: Record<string, { id: string; want: string }[]>): string[] {
-	const prev = previousWants(before);
+	const prev = previousRows(before);
 	const seen = new Set<string>();
 	const changed: string[] = [];
 	for (const [section, rows] of Object.entries(after)) {
@@ -174,12 +178,18 @@ function changedIds(before: unknown, after: Record<string, { id: string; want: s
 			const key = `${section}/${r.id}`;
 			seen.add(key);
 			const was = prev.get(key);
-			if (was === undefined) changed.push(`+ ${r.id}: ${r.want}  (new)`);
-			else if (was !== r.want) changed.push(`~ ${r.id}: ${was} -> ${r.want}`);
+			if (was === undefined) {
+				changed.push(`+ ${r.id}: ${r.want}  (new)`);
+			} else if (was.want !== r.want) {
+				changed.push(`~ ${r.id}: ${was.want} -> ${r.want}`);
+			} else if (was.row !== JSON.stringify(r)) {
+				// Same answer, different question. Still a change to what Go is held to.
+				changed.push(`i ${r.id}: inputs changed, expectation unmoved (${r.want})`);
+			}
 		}
 	}
-	for (const [key, want] of prev) {
-		if (!seen.has(key)) changed.push(`- ${key.split("/").slice(1).join("/")}: ${want}  (removed)`);
+	for (const [key, was] of prev) {
+		if (!seen.has(key)) changed.push(`- ${key.split("/").slice(1).join("/")}: ${was.want}  (removed)`);
 	}
 	return changed;
 }
@@ -238,7 +248,9 @@ function main(): void {
 				`deliberate change to a contract Go is held to.`,
 		);
 		if (changed.length > 0) {
-			console.error(`\n${changed.length} expectation(s) would change:`);
+			// "case(s) differ", not "expectation(s) would change": a row marked `i` moved its INPUT
+			// while its output stayed put, and calling that a changed expectation would be false.
+			console.error(`\n${changed.length} case(s) differ  (~ expectation moved · i inputs only · + new · - removed):`);
 			changed.forEach((c) => console.error(`  ${c}`));
 		}
 		process.exit(1);
@@ -247,7 +259,7 @@ function main(): void {
 	writeFileSync(OUT, next, "utf8");
 	console.log(`conformance: ${total} cases across ${sections} functions; ${changed.length} changed`);
 	if (changed.length > 0) {
-		console.log("\nEXPECTATIONS CHANGED — each of these is a user-visible output moving:");
+		console.log("\nCASES CHANGED  (~ expectation moved · i inputs only · + new · - removed):");
 		changed.forEach((c) => console.log(`  ${c}`));
 	}
 	console.log(`\nwrote ${REL}`);
