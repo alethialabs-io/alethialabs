@@ -60,6 +60,18 @@ const CLASS_LABELS = namesOfKind("class");
 // and a proposal carrying one still fails — same behaviour as before.
 const RUNTIME_LABELS = namesOfKind("runtime");
 const AUTHORABLE_EXTRA = namesOfKind("authorable");
+/**
+ * The lanes that own RENDERED product UI. A `class:backend` unit in one of these is taking the
+ * routing that skips the human design gate, and therefore owes a `check:`.
+ *
+ * It is a SET and not a single lane because a one-lane rule is escapable by relabelling: the
+ * console and the canvas are one file tree (`lane:canvas` owns
+ * `apps/console/components/design-project/**`, `lane:console` the rest), so a unit that owed a
+ * check under `lane:console` could shed the obligation by moving to `lane:canvas` and still ship
+ * exactly the same rendered change. Both lanes, or neither.
+ */
+const CONFORMANCE_LANES = new Set(["lane:console", "lane:canvas"]);
+
 const KNOWN_LABELS = new Set([
 	...WAVE_LABELS,
 	...LANE_LABELS,
@@ -158,6 +170,7 @@ function validate(proposal) {
 		labels: Array.isArray(u.labels) ? u.labels : [],
 		scope: Array.isArray(u.scope) ? u.scope.filter(Boolean) : [],
 		blockedBy: Array.isArray(u.blockedBy) ? u.blockedBy : [],
+		check: typeof u.check === "string" ? u.check.trim() : "",
 		_idx: idx,
 	}));
 
@@ -192,6 +205,29 @@ function validate(proposal) {
 		if (waves.length > 1) warnings.push(`unit ${tag} carries multiple wave: labels`);
 		if (!u.labels.some((l) => LANE_LABELS.has(l))) {
 			warnings.push(`unit ${tag} carries no lane: label (recommended for board reporting)`);
+		}
+
+		// ── a conformance unit that skips the human gate must say what measures it ────────
+		//
+		// `.claude/COORDINATION.md` routes console work that merely ADOPTS an already-decided
+		// primitive (a raw `<h2>` → `PageHeader level={2}`) to `class:backend`, so it lands
+		// autonomously with no human ever seeing the rendered page. That is only sound because the
+		// unit also ships the check that proves the adoption — and until this rule existed, that
+		// obligation was a paragraph of prose with nothing behind it. A unit could be labelled
+		// `lane:console` + `class:backend`, swap 24 headings, declare no check, pass this validator
+		// with zero errors, be handed out by `claim-work.sh --class backend`, and be squash-merged
+		// by Mergify. Nothing at any point asked.
+		//
+		// It is an ERROR and not a warning on purpose: a warning is exactly as enforceable as the
+		// prose it replaces. The check need not be new — naming the existing command that will fail
+		// if the adoption regresses is the point, not writing a fresh guard per unit.
+		const conformanceLane = u.labels.find((l) => CONFORMANCE_LANES.has(l));
+		if (conformanceLane && u.labels.includes("class:backend") && !u.check) {
+			errors.push(
+				`unit ${tag} is ${conformanceLane} + class:backend but declares no \`check:\` — ` +
+					`name the command that proves the adoption (it may be an existing one). This routing ` +
+					`skips the human design gate, and is only sound if something measures the claim.`,
+			);
 		}
 	}
 
@@ -564,6 +600,56 @@ function runSelfTest() {
 		},
 	];
 	expect("unit with two class: labels FAILs", twoClasses, false);
+
+	// ── the `check:` obligation on lane:console + class:backend ────────────────────────────
+	//
+	// Four fixtures, because the rule has to bind on exactly one combination and stay silent on the
+	// other three. A single "it fails without a check" fixture would also pass an implementation
+	// that demanded a check from EVERY unit, which would make the whole board unseedable.
+	const conformanceNoCheck = [
+		{
+			id: 1,
+			title: "seams: the conformance contract",
+			labels: ["wave:console-ui", "lane:tests", "class:backend"],
+			scope: ["scripts/lib/console-routes.mjs"],
+			blockedBy: [],
+		},
+		{
+			id: 2,
+			title: "settings adopts the shared surface",
+			labels: ["wave:console-ui", "lane:console", "class:backend"],
+			scope: ["apps/console/components/settings/**"],
+			blockedBy: [1],
+		},
+	];
+	expect("lane:console + class:backend with NO check: FAILs", conformanceNoCheck, false);
+
+	const conformanceWithCheck = structuredClone(conformanceNoCheck);
+	conformanceWithCheck[1].check = "pnpm check:shared-surface";
+	expect("...and PASSes once it declares one", conformanceWithCheck, true);
+
+	// A whitespace-only check is not a check. Without this, `check: " "` satisfies the rule and the
+	// obligation is back to being decorative.
+	const conformanceBlankCheck = structuredClone(conformanceNoCheck);
+	conformanceBlankCheck[1].check = "   ";
+	expect("...and a whitespace-only check: does NOT satisfy it", conformanceBlankCheck, false);
+
+	// The rule must NOT fire on a class:ui console unit (it keeps the human gate, so the check is
+	// not what makes it safe), nor on a backend unit in any other lane.
+	const conformanceUi = structuredClone(conformanceNoCheck);
+	conformanceUi[1].labels = ["wave:console-ui", "lane:console", "class:ui", "needs:design"];
+	expect("lane:console + class:ui needs no check: (the human gate is intact)", conformanceUi, true);
+
+	const otherLaneNoCheck = structuredClone(conformanceNoCheck);
+	otherLaneNoCheck[1].labels = ["wave:console-ui", "lane:server", "class:backend"];
+	expect("another lane + class:backend needs no check:", otherLaneNoCheck, true);
+
+	// The escape the single-lane version of this rule allowed: shed the obligation by moving to the
+	// OTHER lane that owns rendered UI, and ship the identical change.
+	const relabelEscape = structuredClone(conformanceNoCheck);
+	relabelEscape[1].labels = ["wave:console-ui", "lane:canvas", "class:backend"];
+	relabelEscape[1].scope = ["apps/console/components/design-project/**"];
+	expect("relabelling lane:console -> lane:canvas does NOT shed the check:", relabelEscape, false);
 
 	if (fails === 0) {
 		console.log("\nself-test: all passed");

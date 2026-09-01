@@ -76,13 +76,31 @@ Rules the validator enforces (get them right up front):
   file glob. A lane may narrow a file the seams issue also owns (they are never claimable at once), but
   two sibling lanes must never overlap. Split by resource group / directory — `lib/db/schema/foo.ts`,
   `app/server/actions/foo/**`, `internal/agent/foo/**`, `components/.../foo/**`.
-- **Correct labels** from the board set: one `wave:*`, one `class:*`, and a `lane:*`
-  (`schema`/`server`/`runner`/`core`/`canvas`/`tests`/`docs`). Add `mutex:migration` to the single lane
-  that runs `pnpm -F console db:generate`. Do NOT set `claimed`/`blocked` — those are runtime labels.
-- **Routing:** infra/backend work is `class:backend` (autonomous). Anything visual is `class:ui` — its
-  deliverable is a data-model-grounded **design spec** (per `alethia-design`), human-gated, not an
-  autonomous merge. Because the backend lanes define the model first, UI specs always have a stable
-  model to consume.
+- **Correct labels** from the board set: one `wave:*`, one `class:*`, and a `lane:*`. The valid
+  names are **data** — `scripts/lib/board-labels.json`, which is also what the validator reads, so
+  ask it (`jq -r '.labels[]|select(.kind=="lane")|.name'`) rather than trusting a list typed here.
+  A retyped list is how `lane:console` was minted and then never used by anyone following this
+  file. Note `lane:canvas` owns the canvas subtree and `lane:console` owns the console *excluding*
+  it. Add `mutex:migration` to the single lane that runs `pnpm -F console db:generate`. Do NOT set
+  `claimed`/`blocked` — those are runtime labels.
+- **Routing** — the full rule is `.claude/COORDINATION.md` §"The two work classes"; this is the
+  short form, and if the two ever disagree that file wins. Infra/backend work is `class:backend`
+  (autonomous). Visual work splits on **whether a design decision is still open**, not on whether
+  the diff touches a `.tsx`:
+  - *Adopting a primitive that is already decided* — a raw `<h2>` → `PageHeader level={2}`, a
+    bespoke centred div → `EmptyState` — is `class:backend`. CLAUDE.md §6 is the spec; the unit
+    ships the check that keeps it true, and it **must** declare that check (see below).
+  - *Changing a page's information architecture, or inventing a pattern the table does not name* is
+    `class:ui` — deliverable is a data-model-grounded **design spec** (per `alethia-design`),
+    human-gated, not an autonomous merge. Because the backend lanes define the model first, UI
+    specs always have a stable model to consume.
+
+  The test to apply: *could two competent implementations of this unit disagree about how it should
+  look?* If yes it is `class:ui`.
+- **A `lane:console` + `class:backend` unit MUST declare a `check:` line**, naming the command that
+  proves the adoption. The validator enforces this. Routing conformance work away from the human
+  gate is only safe if something else measures it — "we adopted the primitive everywhere" is a
+  claim, and an unmeasured claim is how the drift being fixed got there.
 
 ## 3. Validate — refuse to seed on any collision
 
