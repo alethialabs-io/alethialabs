@@ -322,6 +322,21 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 ### Open REDs
 
 No cell is failing or blocked.
+
+### Orphan reaper — nothing standing
+
+**0 of 5 clouds are verified clean.** A real reclaim result stays current for 48 hours.
+
+A run that reclaimed an orphan may still finish clean; the incident counts remain visible. Dry runs, skipped gates, failed or missing logs, unverifiable checks and unattributable resources never count as clean.
+
+| cloud | state | durable evidence |
+|---|:---:|---|
+| **aws** | ? indeterminate | no durable reclaim result |
+| **gcp** | ? indeterminate | no durable reclaim result |
+| **azure** | ? indeterminate | no durable reclaim result |
+| **alibaba** | ? indeterminate | no durable reclaim result |
+| **hetzner** | ? indeterminate | no durable reclaim result |
+
 ### Blocked on a human
 
 - #3438 — release(runner): `release-runner` has never once succeeded — the ECR repo it pushes to does not exist, and nothing creates it
