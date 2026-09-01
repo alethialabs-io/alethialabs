@@ -137,7 +137,13 @@ These are not per-cloud gates, but legs depend on them:
   azure, alibaba and hetzner are unpriced, so dispatch them one at a time and watch them.
 
 Region defaults per cloud when the `region` input is blank: hetzner `nbg1`, aws `us-east-1`,
-gcp `europe-west3`, azure `westeurope`, alibaba `eu-central-1`.
+gcp `europe-west3-a`, azure `westeurope`, alibaba `eu-central-1`.
+
+**gcp takes a ZONE, not a region.** A bare `europe-west3` makes the GKE cluster *regional*, and that
+changes two things at once: the capacity preflight is skipped (it asks a zonal question), and a node
+pool's `initial_node_count` and autoscaling min/max are applied **per zone** — so a floor configured
+for 1 node silently provisions one per zone and is billed accordingly. Overriding `region` with a
+bare region re-creates both.
 
 The matrix runs at most **3 real provisions concurrently** (`max-parallel: 3`), and a per-provider
 concurrency group serializes same-cloud runs.
