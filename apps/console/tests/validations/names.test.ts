@@ -23,16 +23,24 @@ import {
 	normalizeEnvironmentName,
 } from "@/lib/validations/names";
 
+/** The subset of `inputs` for which `holds` is false. Asserting this is `[]` names the offending
+ *  input in the failure output, which `expect(...).toBe(true)` inside a loop does not — and
+ *  eslint's valid-expect rule (rightly) refuses the second "message" argument that would. */
+const failing = (inputs: readonly string[], holds: (v: string) => boolean): string[] =>
+	inputs.filter((v) => !holds(v));
+
+/** The namespace refusal message, matched by shape rather than restated in full at each site. */
+const NOT_A_LABEL = /start and end with a letter or digit/;
+
 describe("the namespace grammar", () => {
 	it("accepts exactly what Kubernetes accepts", () => {
-		for (const ok of ["a", "1", "1dev", "12345", "a-b-c", "boutique-dev", "a".repeat(63)]) {
-			expect(namespaceProblem(ok), ok).toBeNull();
-			expect(isDns1123Label(ok), ok).toBe(true);
-		}
+		const accepted = ["a", "1", "1dev", "12345", "a-b-c", "boutique-dev", "a".repeat(63)];
+		expect(failing(accepted, (v) => namespaceProblem(v) === null)).toEqual([]);
+		expect(failing(accepted, isDns1123Label)).toEqual([]);
 	});
 
 	it("refuses `dev-`, which the CLI route used to accept and Kubernetes does not", () => {
-		expect(namespaceProblem("dev-")).toMatch(/start and end with a letter or digit/);
+		expect(namespaceProblem("dev-")).toMatch(NOT_A_LABEL);
 		expect(isDns1123Label("dev-")).toBe(false);
 	});
 
@@ -41,9 +49,8 @@ describe("the namespace grammar", () => {
 	});
 
 	it("refuses the rest of what Kubernetes refuses", () => {
-		for (const bad of ["-dev", "-", "Dev", "dev_1", "dev.1", "dev/1"]) {
-			expect(namespaceProblem(bad), bad).toMatch(/start and end with a letter or digit/);
-		}
+		const refused = ["-dev", "-", "Dev", "dev_1", "dev.1", "dev/1"];
+		expect(failing(refused, (v) => NOT_A_LABEL.test(namespaceProblem(v) ?? ""))).toEqual([]);
 		expect(namespaceProblem("")).toBe("Namespace is required");
 		expect(namespaceProblem("a".repeat(64))).toMatch(/at most 63/);
 		expect(DNS1123_LABEL_MAX_LENGTH).toBe(63);
@@ -67,9 +74,10 @@ describe("the environment-name rule", () => {
 	});
 
 	it("refuses a name that slugs away entirely", () => {
-		for (const bad of ["", "!!!", "   "]) {
-			expect(environmentNameProblem(bad), bad).toMatch(/at least one letter or number/);
-		}
+		const refused = ["", "!!!", "   "];
+		expect(
+			failing(refused, (v) => /at least one letter or number/.test(environmentNameProblem(v) ?? "")),
+		).toEqual([]);
 	});
 
 	it("refuses every name a console route would permanently shadow", () => {
@@ -78,12 +86,13 @@ describe("the environment-name rule", () => {
 		// would pass while the fourth silently became creatable.
 		expect(RESERVED_ENVIRONMENT_NAMES.length).toBeGreaterThan(0);
 		expect([...RESERVED_ENVIRONMENT_NAMES]).toEqual([...RESERVED_PROJECT_CHILD_SLUGS]);
-		for (const reserved of RESERVED_ENVIRONMENT_NAMES) {
-			expect(environmentNameProblem(reserved), reserved).toMatch(/reserved by the console/);
-			// And through the un-normalized spelling, which is how `project env add Settings` arrives.
-			const shouted = reserved.toUpperCase();
-			expect(environmentNameProblem(shouted), shouted).toMatch(/reserved by the console/);
-		}
+		const isRefusedAsReserved = (v: string) =>
+			/reserved by the console/.test(environmentNameProblem(v) ?? "");
+		expect(failing(RESERVED_ENVIRONMENT_NAMES, isRefusedAsReserved)).toEqual([]);
+		// And through the un-normalized spelling, which is how `project env add Settings` arrives.
+		expect(
+			failing(RESERVED_ENVIRONMENT_NAMES.map((v) => v.toUpperCase()), isRefusedAsReserved),
+		).toEqual([]);
 	});
 
 	it("bounds the raw input instead of silently slugging a megabyte down to 40", () => {
