@@ -222,7 +222,7 @@ export function EnvironmentsView({
 				    `p-6 md:p-12` with an 18px headline, and sitting under the one environment card
 				    it reads as "this list is empty" when it is not. */}
 				{envs.length === 1 && (
-					<p className="rounded-lg border border-dashed border-border-strong px-4 py-3 text-[13px] text-text-tertiary">
+					<p className="rounded-lg border border-dashed border-border-strong px-4 py-3 text-ui-md text-text-tertiary">
 						Only one environment. Create another to compare configuration and promote
 						changes up the chain.
 					</p>
