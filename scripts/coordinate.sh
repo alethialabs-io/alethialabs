@@ -14,6 +14,7 @@
 #   scripts/coordinate.sh --report        # report only (no mutations)
 #   scripts/coordinate.sh --close-shipped # close open board units a MERGED PR CLOSES (kw + #n)
 #   scripts/coordinate.sh --init-labels   # create/refresh the board's label set (once)
+#   scripts/coordinate.sh --self-test     # offline board-body parser fixtures
 #
 # --close-shipped is the manual BACKSTOP for the close-on-dev-merge Action: it reclaims/unblocks
 # NOTHING, but for each open, still-claimable board unit that a MERGED PR CLOSES — a closing
@@ -26,19 +27,52 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-command -v gh >/dev/null || { echo "gh (GitHub CLI) required" >&2; exit 1; }
-command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
-
 LEASE_TTL="${ALETHIA_LEASE_TTL:-3600}"
 MODE="full"
 case "${1:-}" in
   --report) MODE="report" ;;
   --close-shipped) MODE="close-shipped" ;;
   --init-labels) MODE="init" ;;
+  --self-test) MODE="self-test" ;;
   "" ) MODE="full" ;;
-  -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
   *) echo "unknown arg: $1" >&2; exit 2 ;;
 esac
+
+command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
+
+# Read dependency issue numbers only from the machine-readable declaration line.
+blocked_by_from_body() {
+  sed -n 's/^[[:space:]]*[Bb]locked-by:[[:space:]]*\(.*\)$/\1/p' \
+    | grep -oE '#[0-9]+' | tr -d '#' | sort -nu || true
+}
+
+# Exercise the shell parser against the contract shared with the dashboard parser.
+run_board_body_self_test() {
+  local fixtures="scripts/lib/board-body-fixtures.json" fails=0 fixture name body expected actual
+  [ -f "$fixtures" ] || { echo "missing $fixtures" >&2; exit 1; }
+  while IFS= read -r fixture; do
+    name="$(jq -r '.name' <<<"$fixture")"
+    body="$(jq -r '.body' <<<"$fixture")"
+    expected="$(jq -r '.blockedBy | join(" ")' <<<"$fixture")"
+    actual="$(printf '%s\n' "$body" | blocked_by_from_body | paste -sd' ' -)"
+    if [ "$actual" = "$expected" ]; then
+      echo "ok   - $name"
+    else
+      echo "FAIL - $name: want '$expected' got '$actual'" >&2
+      fails=$((fails + 1))
+    fi
+  done < <(jq -c '.cases[]' "$fixtures")
+  [ "$fails" -eq 0 ] || { echo "self-test: $fails check(s) FAILED" >&2; exit 1; }
+  echo "self-test: all passed"
+}
+
+if [ "$MODE" = "self-test" ]; then
+  run_board_body_self_test
+  exit 0
+fi
+
+command -v gh >/dev/null || { echo "gh (GitHub CLI) required" >&2; exit 1; }
 
 # Portable ISO-8601(Z) → epoch seconds (macOS BSD date vs GNU date).
 # Prints NOTHING on a parse failure — deliberately not `echo 0`, which made `now - 0` ≈ now, so an
@@ -224,7 +258,7 @@ if [ "$MODE" = "full" ]; then
     body="$(echo "$board" | jq -r --arg n "$n" '.[]|select(.number==($n|tonumber))|.body // ""')"
     # `|| true`: grep exits 1 when an issue has no blocked-by; under `set -e` + pipefail that
     # non-zero command substitution would abort the whole pass on the first unblocked issue.
-    deps="$(printf '%s' "$body" | sed -n 's/.*[Bb]locked-by:\([^\n]*\).*/\1/p' | grep -oE '#[0-9]+' | tr -d '#' | sort -u || true)"
+    deps="$(printf '%s\n' "$body" | blocked_by_from_body)"
     [ -z "$deps" ] && { have "$n" blocked && gh issue edit "$n" --remove-label blocked >/dev/null 2>&1 || true; continue; }
     open_dep=0
     for d in $deps; do

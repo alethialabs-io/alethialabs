@@ -20,17 +20,19 @@
 //   node scripts/board-dashboard.mjs --out board.html     # write to a path
 //   node scripts/board-dashboard.mjs --open               # write, then `open` it (macOS)
 //   node scripts/board-dashboard.mjs --json               # ALSO print the raw board model to stdout
+//   node scripts/board-dashboard.mjs --self-test          # offline board-body parser fixtures
 //
 // Env: ALETHIA_LEASE_TTL (seconds, default 3600) — a lease older than this is flagged stale (matches
 //      coordinate.sh). Pure Node (built-ins only) + the `gh` CLI on PATH; no npm installs.
 
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const LEASE_TTL = Number(process.env.ALETHIA_LEASE_TTL || "3600");
 const args = process.argv.slice(2);
 const DUMP_JSON = args.includes("--json");
 const OPEN_AFTER = args.includes("--open");
+const SELF_TEST = args.includes("--self-test");
 const outIdx = args.indexOf("--out");
 const OUT = outIdx >= 0 && args[outIdx + 1] ? args[outIdx + 1] : "/tmp/alethia-board.html";
 
@@ -97,9 +99,31 @@ function scopeGlobs(body) {
 
 /** Parse the `blocked-by: #12 #14` line from an issue body → array of numbers. */
 function blockedBy(body) {
-	const m = (body || "").match(/[Bb]locked-by:\s*([^\n]*)/);
+	const m = (body || "").match(/^[ \t]*[Bb]locked-by:[ \t]*([^\n]*)$/m);
 	if (!m) return [];
 	return [...m[1].matchAll(/#(\d+)/g)].map((x) => Number(x[1]));
+}
+
+/** Exercise the dashboard parser against the contract shared with the coordinator. */
+function runBoardBodySelfTest() {
+	const fixtures = JSON.parse(readFileSync(new URL("./lib/board-body-fixtures.json", import.meta.url), "utf8"));
+	let failures = 0;
+	for (const fixture of fixtures.cases) {
+		const actual = blockedBy(fixture.body);
+		if (JSON.stringify(actual) === JSON.stringify(fixture.blockedBy)) {
+			console.log(`ok   - ${fixture.name}`);
+		} else {
+			console.error(`FAIL - ${fixture.name}: want ${JSON.stringify(fixture.blockedBy)} got ${JSON.stringify(actual)}`);
+			failures++;
+		}
+	}
+	if (failures > 0) die(`self-test: ${failures} check(s) FAILED`);
+	console.log("self-test: all passed");
+}
+
+if (SELF_TEST) {
+	runBoardBodySelfTest();
+	process.exit(0);
 }
 
 /** ISO-8601 → epoch seconds (0 if unparseable). */
