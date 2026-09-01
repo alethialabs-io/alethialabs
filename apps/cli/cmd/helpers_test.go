@@ -93,10 +93,10 @@ func TestRunnerOperatorLabel(t *testing.T) {
 }
 
 func TestTruncID(t *testing.T) {
-	if got := truncID("0123456789"); got != "01234567…" {
+	if got := ui.TruncID("0123456789"); got != "01234567…" {
 		t.Errorf("truncID long: %q", got)
 	}
-	if got := truncID("short"); got != "short" {
+	if got := ui.TruncID("short"); got != "short" {
 		t.Errorf("truncID short: %q", got)
 	}
 }
@@ -137,13 +137,13 @@ func TestFormatTime(t *testing.T) {
 }
 
 func TestFormatCreatedAt(t *testing.T) {
-	if got := formatCreatedAt(""); got != ui.SymbolDash {
+	if got := ui.RelativeTime(""); got != ui.SymbolDash {
 		t.Errorf("empty should be dash, got %q", got)
 	}
-	if got := formatCreatedAt("not-a-time"); got != "not-a-time" {
+	if got := ui.RelativeTime("not-a-time"); got != "not-a-time" {
 		t.Errorf("unparseable should pass through, got %q", got)
 	}
-	if got := formatCreatedAt("2026-01-01T00:00:00Z"); got == "" {
+	if got := ui.RelativeTime("2026-01-01T00:00:00Z"); got == "" {
 		t.Error("valid time should humanize")
 	}
 }

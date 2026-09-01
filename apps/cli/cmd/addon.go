@@ -65,22 +65,14 @@ func addonRows(addons []api.Addon) [][]string {
 	for i, a := range addons {
 		rows[i] = []string{
 			a.AddonID,
-			gateGlyph(a.Enabled),
+			ui.GateGlyph(a.Enabled),
 			a.Mode,
-			strOrDash(a.Version),
+			ui.StrOrDash(a.Version),
 			a.Status,
-			strOrDash(a.Health),
+			ui.StrOrDash(a.Health),
 		}
 	}
 	return rows
-}
-
-// strOrDash renders a nullable string, or the dash glyph when nil/empty.
-func strOrDash(s *string) string {
-	if s == nil || *s == "" {
-		return ui.SymbolDash
-	}
-	return *s
 }
 
 // runAddonList fetches and renders a project environment's installed add-ons. json emits the

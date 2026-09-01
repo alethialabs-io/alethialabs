@@ -78,11 +78,11 @@ func envRows(envs []api.Environment) [][]string {
 		rows[i] = []string{
 			e.Name,
 			e.Stage,
-			orDash(e.PlacementMode),
+			ui.OrDash(e.PlacementMode),
 			derefOrDash(e.Namespace),
 			derefOrDash(e.Fabric),
 			e.Status,
-			yesNo(e.IsDefault),
+			ui.YesNo(e.IsDefault),
 			derefOrDash(e.Region),
 		}
 	}
@@ -96,7 +96,7 @@ func derefOrDash(s *string) string {
 	if s == nil {
 		return ui.SymbolDash
 	}
-	return orDash(*s)
+	return ui.OrDash(*s)
 }
 
 // runProjectEnvList fetches and renders a project's environments (non-interactive path).

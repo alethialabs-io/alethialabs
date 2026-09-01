@@ -67,7 +67,7 @@ func repoRows(repos []api.Repository) [][]string {
 		if name == "" {
 			name = r.Name
 		}
-		rows[i] = []string{name, visibility, orDash(r.DefaultBranch), r.URL}
+		rows[i] = []string{name, visibility, ui.OrDash(r.DefaultBranch), r.URL}
 	}
 	return rows
 }
