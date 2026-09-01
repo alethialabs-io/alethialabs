@@ -1575,6 +1575,17 @@ jobs:
           for f in .claude/hooks/*.sh scripts/env.sh scripts/dev-doctor.sh scripts/box/*.sh; do
             bash -n "$f"
           done
+      # The box scripts' own decision matrices — the seed/empty/restart table and the edition
+      # verdict in env-mode.sh, the port arithmetic in env-registry.sh. They HAD a CI home, in
+      # infra-sandbox.yml, and it is gated on `infra/sandbox/**`: a change to scripts/box/ ran
+      # the parse above and nothing else, so every cell in those matrices was advisory on the
+      # only PRs that could break them. The step above proves the file parses; this one proves
+      # the decisions still hold.
+      - name: Box script self-tests (edition verdict · seed matrix · port allocation)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          bash scripts/box/env-mode.sh --self-test
+          bash scripts/box/env-registry.sh --self-test
       - name: Cloud privilege (OIDC / creds) never reachable from a PR (BYOC invariant 1)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-workflow-oidc-isolation.mjs

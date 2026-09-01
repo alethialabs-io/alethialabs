@@ -756,8 +756,16 @@ cmd_up() {
     echo "⚠ this env will come up EMPTY — $stale" >&2
   fi
 
-  ssh_box "$REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db' '$fresh' '$seed'"
+  # The touch happens WHATEVER the boot decided, and the boot's exit code is carried past it.
+  # env-mode.sh's scope refusal fires AFTER tmux, the tunnel and the registry allocation — the
+  # slot is claimed and a console is running by then — so letting `set -e` skip the touch would
+  # leave the env holding a slot with a stale lastSeen, i.e. first in line for `env:reap` while
+  # its owner is still working on it. lastSeen means "someone is using this", not "this is
+  # healthy".
+  local up_rc=0
+  ssh_box "$REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db' '$fresh' '$seed'" || up_rc=$?
   ssh_box "$REMOTE/bin/env-registry.sh touch '$slug_'"
+  [ "$up_rc" = 0 ] || exit "$up_rc"
 }
 
 # Write the env's .env — MINTED ON THE BOX, never copied from yours.
@@ -949,8 +957,20 @@ cmd_verify() {
 # RUNNING console on loopback — not inferred from ee/dist being on disk, because those two
 # came apart: dist was present and correct while the console served community anyway
 # (ALETHIA_EDITION had leaked in from another env through the tmux server's environment).
-# The probe and what it does and does not prove are documented on scope_verdict() in
-# scripts/box/env-mode.sh; this is the same discriminator, asked from here.
+#
+# THE SAME PROBE, not a second copy of it: `env-mode.sh --scope` is the one discriminator,
+# and it is the one env:up boots against and env:test gates on. A reimplementation here is
+# how a fix lands in one of three places — which is exactly what happened to the
+# `|| echo 000` capture bug this call site used to carry.
+#
+# WHAT IT COSTS, because this is the cheap "who holds what" command and it now POSTs into
+# every running console: the route writes nothing (better-auth refuses the empty body before
+# any row exists), and the only expensive part — `next dev` compiling /api/auth/* on its
+# first request — is paid ONCE PER CONSOLE, by the boot probe in env-mode.sh, before
+# env:status ever asks. So the budget here is deliberately smaller than the boot's: the route
+# is warm, and a console that is DOWN answers instantly with connection-refused rather than
+# spending the timeout. Two tries at 10s only ever elapse against a console that is alive
+# and busy.
 #
 # ONE ssh for all envs, and every branch prints something: a `?` from an env that did not
 # answer must not read the same as an env that answered "enterprise" — a probe whose failure
@@ -964,19 +984,26 @@ env_scopes() { # → lines of "<slug> <verdict>"
   # The probe body is built here and the slug/port pairs are appended as CALLS, rather than
   # piped to it: `bash -s` already owns ssh's stdin, so a loop reading pairs from stdin on the
   # far side would read the script itself.
+  #
+  # `?-stale-script` is its own answer and not folded into `?-no-answer`: scripts/box/ ships from
+  # the main checkout and drifts (see the SEED_REQUEST handshake in cmd_up), so a box running
+  # an env-mode.sh that predates --scope must say THAT rather than accuse a healthy console of
+  # not answering.
   script='
 probe() {
   s="$1"; p="$2"
-  c=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-        -X POST -H "content-type: application/json" -d "{}" \
-        "http://localhost:$p/api/auth/organization/create" 2>/dev/null || echo 000)
-  e=$(grep -E "^ALETHIA_EDITION=" "'"$REMOTE"'/envs/$s/.env" 2>/dev/null | cut -d= -f2- || true)
-  case "$c" in
-    000|"") echo "$s ?-no-answer" ;;
-    5??)    echo "$s ?-http-$c" ;;
-    404)
-      if [ "$e" = community ]; then echo "$s community-pinned"; else echo "$s COMMUNITY"; fi ;;
-    *)      echo "$s enterprise" ;;
+  v=$('"$REMOTE"'/bin/env-mode.sh --scope "$p" "'"$REMOTE"'/envs/$s/.env" 2 10 2>/dev/null) || v=""
+  set -- $v
+  case "${1:-}" in
+    enterprise) echo "$s enterprise" ;;
+    community)  echo "$s community-pinned" ;;
+    DEFECT)     echo "$s COMMUNITY" ;;
+    unknown)
+      case "${2:-000}" in
+        000|"") echo "$s ?-no-answer" ;;
+        *)      echo "$s ?-http-${2}" ;;
+      esac ;;
+    *)          echo "$s ?-stale-script" ;;
   esac
 }'
   while read -r s p; do
@@ -1021,6 +1048,9 @@ cmd_status() {
   resolved the community entitlement baseline: a team/active subscription row on that env is
   still refused with 403 upgrade_required, so EVERY enterprise-scoped verification on it is
   vacuous. Fix it with `pnpm env:up`; `community-pinned` means that env's .env asked for it.
+  A leading `?` is the absence of an answer, never a verdict: `?-no-answer` (the console did
+  not respond), `?-http-NNN` (it answered, but not usefully) and `?-stale-script` (the box is
+  running an env-mode.sh older than the probe — `git -C <main checkout> pull --ff-only`).
 
   Sign-in: OAuth redirect URIs cannot be wildcarded, so social sign-in and the Stripe
   test webhook only work on the PRIMARY env. Branch envs are email-OTP only — the code
@@ -1087,6 +1117,13 @@ cmd_check() {
   # artefact of this box, and the console suite MEASURES the scope it resolves: without it
   # lib/auth/scope.ts falls back to `{ orgId: userId }` and org-scoped assertions go vacuous
   # rather than red. ci.yml builds it before its suites for exactly this reason (#3732).
+  #
+  # NO LIVE SCOPE PROBE HERE, unlike cmd_test, and the asymmetry is the point rather than an
+  # omission: this suite does not drive the running console. vitest resolves @alethia/ee in
+  # its own process, over ssh, out of the tree that was just pushed — so ee/dist on disk IS
+  # the question, and the running console's answer would be about a process no assertion in
+  # this run touches. The tmux server's environment cannot reach it either: ssh_box runs the
+  # suite directly, not through a tmux session.
   build_ee
   # Measured on the box, not assumed here: another session's env may have landed since this one
   # started, and the right cap then is a different number.
@@ -1134,6 +1171,41 @@ cmd_test() {
   # billing row was correct, and read as a product defect. Build it back before anything is
   # driven, exactly as ci.yml's e2e jobs do.
   build_ee
+
+  # …AND THEN ASK THE CONSOLE, because those are two different questions and this is the
+  # command #3632 hit the difference on. `build_ee` proves ee/dist/index.js is on the box;
+  # it does not prove the RUNNING console loaded it, and the whole finding behind this change
+  # is that dist was present and correct while the console served community anyway. env:up
+  # and env:status both measure the process; until now env:test still inferred from the file.
+  #
+  # AFTER build_ee, deliberately: push_tree runs before it and the push is what triggers the
+  # recompile, so the window in which a recompile can land before the new dist is written
+  # closes here — the probe is what observes which side of it this console ended up on.
+  #
+  # REFUSED, not warned. A browser suite against a community console does not fail, it goes
+  # VACUOUS: every paid-entitlement assertion gets a correct 403 upgrade_required and the
+  # report reads as a product defect. `unknown` stays a warning for the same reason the boot
+  # does not refuse on it — an unanswered probe is not a verdict either way.
+  local scope_ verdict_
+  scope_="$(ssh_box "$REMOTE/bin/env-mode.sh --scope '$cport' '$REMOTE/envs/$slug_/.env' 3 30" 2>/dev/null || true)"
+  verdict_="${scope_%% *}"
+  case "$verdict_" in
+  enterprise) ;;
+  community)
+    echo "⚠ '$slug_' is PINNED to the community build (ALETHIA_EDITION=community): every" >&2
+    echo "  enterprise-scoped spec in this run will be vacuous, not passing." >&2
+    ;;
+  DEFECT)
+    die "'$slug_' is serving COMMUNITY entitlements — ${scope_#* * }
+  A team/active subscription row on it is still refused with 403 upgrade_required, so every
+  enterprise-scoped spec would pass vacuously or fail for the wrong reason. Fix the env
+  first:  pnpm env:up"
+    ;;
+  *)
+    echo "⚠ could not measure which edition '$slug_' is serving: ${scope_:-no answer from the box}" >&2
+    echo "  The run continues — read an entitlement failure with that in mind." >&2
+    ;;
+  esac
 
   # `playwright install --with-deps` needs root apt for ~16 shared libs (libnss3, libgbm1,
   # libasound2t64 ...) that cloud-init does not carry. We ssh as root, so this just works;
@@ -1205,13 +1277,21 @@ restart_env_console() { # <slug>
 
   # `keep` (the 6th argument) for the same reason as restore_live_envs: this bounces a
   # console, it does not bring an env up. The empty default would resolve to a full
-  # seed:demo on any env with no recorded mode — and here the seeder's output is swallowed
-  # by the >/dev/null 2>&1 below, so the only visible symptom would be a long pause.
-  ssh_box "tmux kill-session -t 'alethia-$slug_' 2>/dev/null || true
-           $REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db' '' 'keep'" >/dev/null 2>&1 || {
+  # seed:demo on any env with no recorded mode — and here the boot's output is only surfaced
+  # when it fails, so the only visible symptom would be a long pause.
+  # CAPTURED, not discarded. The boot prints a diagnostic that names the fault — a missing
+  # ee/dist, an ALETHIA_EDITION leaked into the tmux server, a seeder that threw — and
+  # `>/dev/null 2>&1` threw all of it away and told the operator only that the console "did
+  # not come back". The bounce itself is still non-fatal (the run it follows has already
+  # happened), but the reason it failed has to survive.
+  local out rc=0
+  out="$(ssh_box "tmux kill-session -t 'alethia-$slug_' 2>/dev/null || true
+           $REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db' '' 'keep'" 2>&1)" || rc=$?
+  if [ "$rc" != 0 ]; then
+    printf '%s\n' "$out" | tail -n 15 | sed 's/^/  │ /' >&2
     echo "  ⚠ console did not come back — pnpm env:up to restore it" >&2
     return 0
-  }
+  fi
   after="$(env_rss_mb "$slug_")"
   if [ -n "$before" ] && [ -n "$after" ]; then
     echo "  console restarted — ${before}MB → ${after}MB"

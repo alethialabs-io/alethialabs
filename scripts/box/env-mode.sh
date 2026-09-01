@@ -126,9 +126,26 @@ seed_decision() { # <requested: ''|empty|seed|keep> <recorded: ''|empty|demo> <f
 # Echoes "<verdict> <why>"; verdict is enterprise | community | DEFECT | unknown.
 scope_verdict() { # <http status of the probe> <ALETHIA_EDITION as seen by the console>
   local code="$1" edition="$2"
+
+  # The edition is read straight out of a .env with `cut -d= -f2-`, so it arrives exactly as
+  # written: `ALETHIA_EDITION="community"` yields `"community"`, a CRLF file yields
+  # `community` with a trailing \r, and a stray space survives. Every dotenv loader — and
+  # `set -a && . .env`, which is how the console's session actually gets it — strips all
+  # three, so the console really IS community while an un-normalised compare reads "unset,
+  # therefore auto" and refuses to boot the one env the design says must stay runnable.
+  edition="${edition//$'\r'/}"
+  edition="${edition#"${edition%%[![:space:]]*}"}"
+  edition="${edition%"${edition##*[![:space:]]}"}"
+  case "$edition" in
+  '"'*'"' | "'"*"'") edition="${edition:1:${#edition}-2}" ;;
+  esac
+
   case "$code" in
-  000 | "" | 5??)
+  "" | 000)
     echo "unknown the console did not answer the probe (status ${code:-none})"
+    ;;
+  5[0-9][0-9])
+    echo "unknown the console did not answer the probe (status $code)"
     ;;
   404)
     # A pinned community edition is a legitimate thing to run — it is how the community
@@ -139,10 +156,57 @@ scope_verdict() { # <http status of the probe> <ALETHIA_EDITION as seen by the c
       echo "DEFECT the organization plugin is absent — this console resolves COMMUNITY entitlements"
     fi
     ;;
-  *)
+  [1-9][0-9][0-9])
     echo "enterprise the organization plugin is registered"
     ;;
+  *)
+    # FAIL CLOSED on anything that is not an HTTP status. The `*)` arm used to be the
+    # enterprise one, so a malformed capture — `000000`, the six characters a
+    # `$(curl -w '%{http_code}' ... || echo 000)` really produces on a failed connection —
+    # read as "the plugin answered". A value the probe never got is not a verdict.
+    echo "unknown '$code' is not an HTTP status — the probe itself failed"
+    ;;
   esac
+}
+
+# The probe itself: ASK THE RUNNING CONSOLE, then decide. Split from scope_verdict so the
+# decision stays pure and testable, and so every caller — this script's boot, `env:status`
+# and `env:test` — asks the same question of the same route through the same code. There
+# were three copies of this before, and a fix to one of them was a fix to one of them.
+#
+# RETRIED, because `next dev` compiles a route on its FIRST request and the readiness loop
+# that precedes this one waited on a DIFFERENT route: a cold /api/auth/* compile was measured
+# at ~4s here, and a single short attempt reports "unknown" against a perfectly good env. A
+# console that is DOWN costs nothing to discover — curl returns on connection-refused
+# immediately — so the timeout only ever elapses against a console that is alive and busy,
+# which is exactly when waiting is the right thing to do. Callers pick the budget: a boot
+# pays for the cold compile, `env:status` runs against consoles this route is already warm in.
+#
+# Echoes "<verdict> <http status> <why>" and always exits 0: WHICH verdicts are fatal differs
+# by caller (a boot refuses DEFECT; a status listing only prints it).
+scope_probe() { # <console port> <path to that env's .env> [attempts] [seconds per attempt]
+  local port="$1" envfile="$2" attempts="${3:-3}" timeout="${4:-30}"
+  local code="" edition="" out verdict why i
+
+  for ((i = 1; i <= attempts; i++)); do
+    # NOT `$(curl ... || echo 000)`. With -w '%{http_code}' curl PRINTS `000` on a failed
+    # connection AND exits non-zero, so the `||` appends a SECOND `000` and the capture is
+    # the six-character string `000000` — which matched neither the no-answer arm nor `5??`
+    # and fell through to "enterprise". The status and the exit code have to stay apart;
+    # the `||` here only normalises a capture that came back empty.
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time "$timeout" \
+      -X POST -H 'content-type: application/json' -d '{}' \
+      "http://localhost:$port/api/auth/organization/create" 2>/dev/null)" || code=000
+    [ "$code" = "000" ] || break
+    if [ "$i" -lt "$attempts" ]; then sleep 3; fi
+  done
+
+  # The LAST assignment wins, the same way `set -a && . .env` resolves a duplicated key.
+  edition="$(grep -E '^ALETHIA_EDITION=' "$envfile" 2>/dev/null | tail -n 1 | cut -d= -f2- || true)"
+  out="$(scope_verdict "$code" "$edition")"
+  verdict="${out%% *}"
+  why="${out#* }"
+  printf '%s %s %s\n' "$verdict" "$code" "$why"
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -202,15 +266,39 @@ if [ "${1:-}" = "--self-test" ]; then
   scope "404 with enterprise is worse, not ok" 404 "enterprise" "DEFECT"
   # …unless community was asked for, which is how the community build gets exercised.
   scope "404 pinned community is deliberate"   404 "community" "community"
+  # A pin is read out of a .env verbatim, and all three of these ARE `community` to the
+  # console: `set -a && . .env` strips the quotes, and a CRLF file leaves the \r behind.
+  # Reading them as "unset, therefore auto" makes env:up refuse a deliberately pinned env.
+  scope "a double-quoted pin is a pin"         404 '"community"'   "community"
+  scope "a single-quoted pin is a pin"         404 "'community'"   "community"
+  scope "a CRLF pin is a pin"                  404 "community$(printf '\r')" "community"
+  scope "a padded pin is a pin"                404 "  community  " "community"
   # A console that cannot answer must not be reported either way. `000` is curl's
   # "no response", and an empty string is what a failed capture actually yields — the two
   # differ, so both are asserted rather than assumed to be the same case.
   scope "no answer is not a verdict"           000 ""          "unknown"
   scope "an empty status is not a verdict"     ""  ""          "unknown"
   scope "a 500 is not a community verdict"     503 ""          "unknown"
+  # THE VALUE CURL REALLY EMITS when it cannot connect and the capture appends its own
+  # fallback: `-w '%{http_code}'` writes `000` to stdout AND exits non-zero. This cell is
+  # here because the three cells above hand-feed a `000` the broken capture never produced,
+  # so they passed while the probe was wrong end to end — and this file's self-test is a CI
+  # gate (.github/workflows/infra-sandbox.yml). Anything that is not an HTTP status is not
+  # a verdict, however it got that way.
+  scope "a doubled capture is not a verdict"   000000 ""       "unknown"
+  scope "garbage is not a verdict"             "curl: (7)" ""  "unknown"
   echo "  ${pass} passed, ${fail} failed"
   [ "$fail" -eq 0 ]
   exit
+fi
+
+# `env-mode.sh --scope <console port> <path to .env> [attempts] [seconds]` — the probe on
+# its own, for the callers that are not a boot: `env:status` asks it of every env and
+# `env:test` asks it of the env it is about to drive a browser suite against. Exits 0 with
+# the verdict on stdout whatever the answer; the caller decides what is fatal.
+if [ "${1:-}" = "--scope" ]; then
+  scope_probe "${2:?console port}" "${3:?path to that env .env file}" "${4:-3}" "${5:-30}"
+  exit 0
 fi
 
 SLUG="${1:?slug}"
@@ -252,13 +340,33 @@ URL="https://$FQDN"
 cd "$REPO"
 export PATH="$PATH:/usr/local/go/bin"
 
+# The keys a CLEAN ssh gave this script, captured before anything sources a .env. The scrub
+# further down subtracts them: PATH, HOME, LANG and the rest are on every boot regardless of
+# which env booted, and unsetting them in the tmux server would break every session it starts
+# afterwards. Everything the server holds that is NOT in here arrived from somewhere else.
+BOOT_ENV_KEYS=" $(compgen -e | tr '\n' ' ' || true) "
+
 # HERE, and not next to the `tmux new` that needs it — see the long note there. The tmux
 # SERVER captures the environment of whatever process happens to start it and hands a copy
 # to every session it ever creates, so it must be born now, while this script's environment
 # is still the one ssh gave it, and not after the migration step below exports this env's
 # entire .env into it (#3732). Idempotent: a server that is already running is left alone,
 # which is exactly why the scrub down there is also needed.
+#
+# `start-server` ALONE IS NOT ENOUGH, and the failure is silent: `exit-empty` defaults to on,
+# so a server with no sessions and no attached client exits again the moment the issuing
+# client goes away. The clean server would then be gone by the time it matters, each
+# `set-environment -gu` below would start a NEW one from THIS script's environment — which by
+# then holds this env's entire .env, exported under `set -a` — unset one key and die again,
+# and the `tmux new` at the end would start the server carrying the whole .env. That is worse
+# than doing nothing: the leak is still created, just healed a boot later by the next env's
+# scrub. `exit-empty off` is what makes the server outlive its client; the keeper session is
+# the fallback for a tmux too old to have that option (< 2.4), where the `set-option` fails.
 tmux start-server 2>/dev/null || true
+if ! tmux set-option -g exit-empty off 2>/dev/null; then
+  tmux has-session -t __alethia_keeper 2>/dev/null ||
+    tmux new-session -d -s __alethia_keeper 'sleep 2147483647' 2>/dev/null || true
+fi
 
 log() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
@@ -534,12 +642,31 @@ tmux kill-session -t "$SESSION" 2>/dev/null || true
 #   · `tmux start-server` runs at the TOP of this script, before the .env is sourced, so a
 #     server born on this boot is born from an environment that holds no env's .env.
 #   · this scrub removes what a server born on an EARLIER boot already holds — including one
-#     started before this change shipped. The key set is DERIVED
-#     from the .env files themselves — the union of what any env can leak — rather than
-#     hand-listed, because a hand-written list of variables to scrub stops covering the day
-#     someone adds one and says nothing.
-for _k in $(cat /opt/alethia/envs/*/.env 2>/dev/null |
-  grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' | tr -d '=' | LC_ALL=C sort -u); do
+#     started before this change shipped. The key set is DERIVED rather than hand-listed,
+#     because a hand-written list of variables to scrub stops covering the day someone adds
+#     one and says nothing.
+#
+# It is derived from TWO sources, because each alone has a hole:
+#
+#   · every env's .env — the union of what any env CAN leak. Read with `grep -h`, never
+#     `cat … | grep`: a .env with no trailing newline joins its last line to the next file's
+#     first, and the `^` anchor then misses that file's first key entirely. That is not
+#     hypothetical — a hand-added `ALETHIA_EDITION=community`, which is exactly how #3732's
+#     value got there, is precisely the edit that leaves a file with no final newline.
+#   · what the server ACTUALLY holds, minus the keys a clean ssh gave this script (captured
+#     at the top, before any .env was sourced). A key leaked from an env that has since been
+#     deleted — or recreated without it — is in no .env any more, so the union above stops
+#     scrubbing it while the server is still handing it out: the same decay a hand-written
+#     list has, arriving by a different route. Subtracting the boot environment is what keeps
+#     PATH, HOME and ssh's own variables out of the scrub; unsetting those would break every
+#     session the server starts afterwards.
+for _k in $(
+  {
+    grep -h -oE '^[A-Za-z_][A-Za-z0-9_]*=' /opt/alethia/envs/*/.env 2>/dev/null || true
+    tmux show-environment -g 2>/dev/null | grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' || true
+  } | tr -d '=' | LC_ALL=C sort -u
+); do
+  case "$BOOT_ENV_KEYS" in *" $_k "*) continue ;; esac
   tmux set-environment -gu "$_k" 2>/dev/null || true
 done
 unset _k
@@ -571,27 +698,19 @@ for _ in $(seq 1 150); do
     # this boot actually got rather than what the files on disk imply it should have got.
     # ee/dist existing is the precondition; this is the outcome, and the two came apart for
     # a fortnight.
-    # Retried, because the readiness loop above breaks as soon as /login answers and this is
-    # a DIFFERENT route: `next dev` compiles a route on its first request, so a single
-    # attempt can time out on the compile and report "unknown" against a perfectly good env.
-    # A cold /api/auth/* compile was measured at ~4s here; the budget is deliberately much
-    # larger than that, and giving up still reports `unknown` rather than a verdict.
-    SCOPE_CODE=000
-    for _ in 1 2 3; do
-      SCOPE_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
-        -X POST -H 'content-type: application/json' -d '{}' \
-        "http://localhost:$CPORT/api/auth/organization/create" 2>/dev/null || echo 000)"
-      [ "$SCOPE_CODE" != "000" ] && break
-      sleep 3
-    done
-    SCOPE_EDITION="$(grep -E '^ALETHIA_EDITION=' "$REPO/.env" 2>/dev/null | cut -d= -f2- || true)"
-    read -r SCOPE_VERDICT SCOPE_WHY <<<"$(scope_verdict "$SCOPE_CODE" "$SCOPE_EDITION")"
+    # The retry budget is scope_probe's, and it is the generous one: this is a cold console
+    # and the readiness loop above breaks as soon as /login answers, which is a DIFFERENT
+    # route from the one being probed.
+    read -r SCOPE_VERDICT SCOPE_CODE SCOPE_WHY <<<"$(scope_probe "$CPORT" "$REPO/.env" 3 30)"
+    # RAW, for the diagnostic below only — scope_probe normalises its own copy. A pin that
+    # reads oddly here (quoted, padded, \r-terminated) is information, not a defect.
+    SCOPE_EDITION="$(grep -E '^ALETHIA_EDITION=' "$REPO/.env" 2>/dev/null | tail -n 1 | cut -d= -f2- || true)"
     case "$SCOPE_VERDICT" in
     enterprise) echo "    scope: enterprise — $SCOPE_WHY" ;;
     community) echo "    scope: community (deliberate) — $SCOPE_WHY" ;;
     unknown) echo "    scope: UNKNOWN — $SCOPE_WHY" ;;
     *)
-      # FATAL, and this is the point of the change. An env that resolves community
+      # FATAL on an env:up, and this is the point of the change. An env that resolves community
       # entitlements while nobody asked it to is not a working env with a caveat — it is an
       # env on which every enterprise-scoped verification is vacuous, and it looks identical
       # to a good one. Same call CI's `Guard — ee/dist must exist` step makes.
@@ -601,11 +720,28 @@ for _ in $(seq 1 150); do
       echo "  403 upgrade_required, because the paid 'organizations' entitlement is not" >&2
       echo "  there to grant. Any enterprise-scoped check against it would be vacuous." >&2
       echo "" >&2
+      echo "  probe: POST /api/auth/organization/create → $SCOPE_CODE (404 = no such route)" >&2
       echo "  ee/dist/index.js: $( [ -f "$REPO/ee/dist/index.js" ] && echo present || echo MISSING)" >&2
       echo "  ALETHIA_EDITION in this env's .env: ${SCOPE_EDITION:-unset (= auto)}" >&2
       echo "  ALETHIA_EDITION in the tmux server env: $(tmux show-environment -g ALETHIA_EDITION 2>/dev/null || echo 'not set')" >&2
-      echo "  Bring it up again (pnpm env:up); if it recurs, tmux kill-server on the box." >&2
-      exit 1
+      # This boot ALREADY scrubbed the tmux server's global environment and started the
+      # session from the scrubbed one, so a repeat is not the leak of #3732 healing slowly —
+      # it means the value is arriving from somewhere the two lines above name.
+      echo "  Bring it up again (pnpm env:up). The tmux server's environment was scrubbed" >&2
+      echo "  before this session started, so if it recurs the cause is one of the two" >&2
+      echo "  lines above, not a stale server." >&2
+      # A `keep` restart is not this session's env coming up. restart_env_console (after a
+      # Playwright run) and restore_live_envs (after a box restore) both bounce consoles
+      # this caller does not own — the shared `dev` env among them. Exiting 1 there reports
+      # a console that IS running and serving as "did not come back", which names the wrong
+      # fault and, in a restore, blames an env the caller never touched. The refusal belongs
+      # to the owner's own env:up; a restart says the same thing just as loudly and returns.
+      if [ "$SEED_REQUEST" = "keep" ]; then
+        echo "  (This was a console restart, not env:up — it is left running. Its OWNER" >&2
+        echo "   must fix it: pnpm env:up from that branch's worktree.)" >&2
+      else
+        exit 1
+      fi
       ;;
     esac
 
