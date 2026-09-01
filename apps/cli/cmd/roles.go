@@ -59,7 +59,7 @@ var roleListColumns = []string{"Name", "Built-in", "Permissions", "ID"}
 func roleRows(roles []api.Role) [][]string {
 	rows := make([][]string, len(roles))
 	for i, r := range roles {
-		rows[i] = []string{r.Name, yesNo(r.IsBuiltin), strconv.Itoa(len(r.PermissionKeys)), r.ID}
+		rows[i] = []string{r.Name, ui.YesNo(r.IsBuiltin), strconv.Itoa(len(r.PermissionKeys)), r.ID}
 	}
 	return rows
 }

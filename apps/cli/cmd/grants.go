@@ -69,8 +69,8 @@ func grantRows(grants []api.Grant) [][]string {
 		rows[i] = []string{
 			fmt.Sprintf("%s %s", g.PrincipalType, g.PrincipalID),
 			g.Effect,
-			orDash(g.Role),
-			orDash(g.PermissionKey),
+			ui.OrDash(g.Role),
+			ui.OrDash(g.PermissionKey),
 			grantScope(g),
 			g.ID,
 		}

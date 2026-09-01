@@ -8,13 +8,11 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 )
 
@@ -73,7 +71,7 @@ func cloudIdentityRows(identities []api.CloudIdentity) [][]string {
 		rows[i] = []string{
 			strings.ToUpper(id.Provider),
 			id.Label,
-			formatCreatedAt(id.CreatedAt),
+			ui.RelativeTime(id.CreatedAt),
 		}
 	}
 	return rows
@@ -89,19 +87,6 @@ func renderCloudIdentities(out io.Writer, format string, identities []api.CloudI
 		Columns: connectorListColumns,
 		Rows:    cloudIdentityRows(identities),
 	}, identities)
-}
-
-// formatCreatedAt renders an ISO timestamp as a relative time, falling back to
-// the raw value if it cannot be parsed.
-func formatCreatedAt(raw string) string {
-	if raw == "" {
-		return ui.SymbolDash
-	}
-	t, err := time.Parse(time.RFC3339, raw)
-	if err != nil {
-		return raw
-	}
-	return humanize.Time(t)
 }
 
 func init() {

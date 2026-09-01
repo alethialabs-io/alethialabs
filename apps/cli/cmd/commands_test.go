@@ -680,11 +680,11 @@ func TestRenderSsoProviderJSON(t *testing.T) {
 }
 
 func TestYesNo(t *testing.T) {
-	if yesNo(true) != ui.SymbolDefault {
-		t.Errorf("yesNo(true) = %q", yesNo(true))
+	if ui.YesNo(true) != ui.SymbolDefault {
+		t.Errorf("ui.YesNo(true) = %q", ui.YesNo(true))
 	}
-	if yesNo(false) != ui.SymbolDash {
-		t.Errorf("yesNo(false) = %q", yesNo(false))
+	if ui.YesNo(false) != ui.SymbolDash {
+		t.Errorf("ui.YesNo(false) = %q", ui.YesNo(false))
 	}
 }
 
@@ -718,11 +718,11 @@ func TestRunConfigShowJSON(t *testing.T) {
 }
 
 func TestOrDash(t *testing.T) {
-	if orDash("x") != "x" {
+	if ui.OrDash("x") != "x" {
 		t.Errorf("orDash passthrough failed")
 	}
-	if orDash("") != ui.SymbolDash {
-		t.Errorf("orDash empty should yield the dash glyph, got %q", orDash(""))
+	if ui.OrDash("") != ui.SymbolDash {
+		t.Errorf("orDash empty should yield the dash glyph, got %q", ui.OrDash(""))
 	}
 }
 

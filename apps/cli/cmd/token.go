@@ -73,36 +73,13 @@ func tokenRows(tokens []api.ServiceToken) [][]string {
 			t.ID,
 			t.Name,
 			t.TokenPrefix,
-			stampOrDash(&t.CreatedAt),
-			stampOrNever(t.ExpiresAt),
-			stampOrNever(t.LastUsedAt),
+			ui.StampOrDash(&t.CreatedAt),
+			ui.StampOrNever(t.ExpiresAt),
+			ui.StampOrNever(t.LastUsedAt),
 			tokenStatus(t),
 		})
 	}
 	return rows
-}
-
-// stampOrDash renders a timestamp, or "—" when absent.
-func stampOrDash(v *string) string {
-	if v == nil || strings.TrimSpace(*v) == "" {
-		return "—"
-	}
-	if t, err := time.Parse(time.RFC3339, *v); err == nil {
-		return t.UTC().Format("2006-01-02 15:04")
-	}
-	return *v
-}
-
-// stampOrNever renders a timestamp, or "never" when absent.
-//
-// "never" rather than "—" is the point for `last_used_at`: a token that has NEVER been used is the
-// single most actionable row in the list. It is the one somebody minted, pasted somewhere wrong, and
-// forgot — and a dash reads as missing data rather than as a finding.
-func stampOrNever(v *string) string {
-	if v == nil || strings.TrimSpace(*v) == "" {
-		return "never"
-	}
-	return stampOrDash(v)
 }
 
 // tokenStatus collapses the three timestamps into the one word a reader wants.
@@ -159,7 +136,7 @@ func runTokenCreate(c apiClient, out, errOut io.Writer, format, name string, exp
 	fmt.Fprintln(errOut)
 	fmt.Fprintln(errOut, ui.MutedStyle.Render(created.Warning))
 	fmt.Fprintf(errOut, "  id      %s\n  name    %s\n  prefix  %s\n  expires %s\n\n",
-		created.ID, created.Name, created.TokenPrefix, stampOrNever(created.ExpiresAt))
+		created.ID, created.Name, created.TokenPrefix, ui.StampOrNever(created.ExpiresAt))
 	fmt.Fprintln(out, created.Token)
 	fmt.Fprintln(errOut)
 	fmt.Fprintln(errOut, ui.MutedStyle.Render("Use it with:  export ALETHIA_TOKEN=…   (or --token)"))

@@ -123,7 +123,7 @@ func jobRowsPlain(jobs []api.ProvisionJob) [][]string {
 
 		project := j.ProjectName
 		if project == "" && j.ProjectID != "" {
-			project = truncID(j.ProjectID)
+			project = ui.TruncID(j.ProjectID)
 		}
 		if project == "" {
 			project = ui.SymbolDash
@@ -131,7 +131,7 @@ func jobRowsPlain(jobs []api.ProvisionJob) [][]string {
 
 		runner := j.RunnerName
 		if runner == "" && j.RunnerID != "" {
-			runner = truncID(j.RunnerID)
+			runner = ui.TruncID(j.RunnerID)
 		}
 		if runner == "" {
 			runner = ui.SymbolDash
@@ -147,13 +147,6 @@ func jobRowsPlain(jobs []api.ProvisionJob) [][]string {
 		}
 	}
 	return rows
-}
-
-func truncID(id string) string {
-	if len(id) > 8 {
-		return id[:8] + "…"
-	}
-	return id
 }
 
 func formatDuration(started, completed *time.Time) string {

@@ -158,7 +158,7 @@ func renderProjectCard(out io.Writer, format string, p *api.Project) error {
 	}
 	rows := [][]string{
 		{"Project", p.ProjectName},
-		{"Slug", orDash(p.Slug)},
+		{"Slug", ui.OrDash(p.Slug)},
 		{"Status", p.Status},
 		{"Provider", provider},
 		{"Region", p.Region},

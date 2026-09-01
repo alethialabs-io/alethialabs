@@ -49,7 +49,7 @@ func providerStatusRows(s *api.ProviderStatus) [][]string {
 	}
 	rows := [][]string{
 		{"status", connected},
-		{"identity", orDash(s.IdentityID)},
+		{"identity", ui.OrDash(s.IdentityID)},
 	}
 	add := func(label, value string) {
 		if value != "" {

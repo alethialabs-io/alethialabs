@@ -62,7 +62,7 @@ var stagedColumns = []string{"Op", "Component", "Component ID", "Created"}
 func stagedRows(changes []api.StagedChange) [][]string {
 	rows := make([][]string, len(changes))
 	for i, c := range changes {
-		rows[i] = []string{c.Op, c.ComponentType, strOrDash(c.ComponentID), c.CreatedAt}
+		rows[i] = []string{c.Op, c.ComponentType, ui.StrOrDash(c.ComponentID), c.CreatedAt}
 	}
 	return rows
 }

@@ -56,17 +56,9 @@ var channelListColumns = []string{"Name", "Type", "Verified", "Enabled", "ID"}
 func channelRows(channels []api.Channel) [][]string {
 	rows := make([][]string, len(channels))
 	for i, c := range channels {
-		rows[i] = []string{c.Name, c.Type, yesNo(c.IsVerified), yesNo(c.Enabled), c.ID}
+		rows[i] = []string{c.Name, c.Type, ui.YesNo(c.IsVerified), ui.YesNo(c.Enabled), c.ID}
 	}
 	return rows
-}
-
-// yesNo renders a bool as the brand marker (true) or a dash (false).
-func yesNo(b bool) string {
-	if b {
-		return ui.SymbolDefault
-	}
-	return ui.SymbolDash
 }
 
 // runChannelsList fetches and renders the channels (non-interactive path).
