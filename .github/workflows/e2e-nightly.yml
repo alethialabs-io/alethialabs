@@ -490,7 +490,7 @@ jobs:
           case "$PROVIDER" in
             hetzner) DEFAULT_REGION="nbg1" ;;
             aws)     DEFAULT_REGION="us-east-1" ;;
-            gcp)     DEFAULT_REGION="europe-west3" ;;
+            gcp)     DEFAULT_REGION="europe-west3-a" ;;
             azure)   DEFAULT_REGION="westeurope" ;;
             alibaba) DEFAULT_REGION="eu-central-1" ;;
             *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
