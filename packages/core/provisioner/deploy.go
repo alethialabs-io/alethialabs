@@ -1483,8 +1483,17 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 	// Returned UNWRAPPED. Four of the check's six states proceed (see argocd/version_preflight.go);
 	// the two that stop are deliberate refusals, not failures, and prefixing them with "failed to
 	// install ArgoCD" is how a refusal gets misread as a broken chart.
-	if err := preflightArgoVersion(ctx, stdout); err != nil {
+	decision, err := preflightArgoVersion(ctx, stdout)
+	if err != nil {
 		return err
+	}
+	// SKIP means proceed with the deploy having applied NOTHING to ArgoCD — a live ArgoCD newer than
+	// our pin that helm cannot name a release for, where `helm upgrade --install` would either adopt
+	// objects it does not own or pass the pin to --version, which is the downgrade (#3521). Returning
+	// nil here is deliberate: this is not a failure, and the decision's own message has already said
+	// on stdout exactly which values went unapplied.
+	if decision.SkipChartInstall {
+		return nil
 	}
 
 	// Repo URL + chart version are config-driven (env override, current literals as defaults) and
@@ -1503,10 +1512,19 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		return fmt.Errorf("failed to pre-seed the argocd-redis secret: %w", err)
 	}
 
+	// The chart version comes from the DECISION, not straight from the pin. They are the same for
+	// every verdict but DOWNGRADE_AVOIDED, where the cluster already runs a newer in-window ArgoCD
+	// and the override is the chart helm reports for it — so this deploy's values are applied while
+	// the version does not move (#3521). Read off the decision rather than re-resolved here so the
+	// version installed and the version the operator was just told about cannot drift apart.
+	chartVersion := argocd.ResolvedArgoChartVersion()
+	if decision.InstallChartVersion != "" {
+		chartVersion = decision.InstallChartVersion
+	}
 	installCmd := fmt.Sprintf(
 		"helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version %s"+
 			" --set redisSecretInit.enabled=false --wait --timeout %s",
-		utils.ShellQuote(argocd.ResolvedArgoChartVersion()),
+		utils.ShellQuote(chartVersion),
 		utils.ShellQuote(argocd.ResolvedArgoInstallTimeout()))
 
 	// Scratch space for a per-cloud values FILE (GKE's, below). Created unconditionally so the
