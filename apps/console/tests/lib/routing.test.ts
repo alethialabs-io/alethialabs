@@ -8,6 +8,7 @@ import {
 	orgHref,
 	PERSONAL_ORG_SLUG,
 	pickFreeSlug,
+	projectGlobalHref,
 	projectHref,
 	projectSettingsHref,
 	RESERVED_PROJECT_CHILD_SLUGS,
@@ -42,6 +43,12 @@ describe("href builders", () => {
 		expect(projectSettingsHref("acme", "api", "activity")).toBe(
 			"/acme/api/settings/activity",
 		);
+		// The project analogue of globalHref. Its `sub` is a RESERVED project-child segment, which
+		// is what keeps it from colliding with an environment name.
+		expect(projectGlobalHref("acme", "api", "jobs")).toBe("/acme/api/jobs");
+		for (const sub of RESERVED_PROJECT_CHILD_SLUGS) {
+			expect(projectGlobalHref("acme", "api", sub)).toBe(`/acme/api/${sub}`);
+		}
 	});
 
 	it("targets a project's Architecture directly (not the bare /{org}/{project})", () => {

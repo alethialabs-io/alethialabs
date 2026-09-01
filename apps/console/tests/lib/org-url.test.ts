@@ -25,6 +25,19 @@ describe("orgHost", () => {
 		delete process.env.NEXT_PUBLIC_APP_URL;
 		expect(orgHost()).toBe("alethialabs.io");
 	});
+
+	it("strips a bare host out of a value `new URL` cannot parse", () => {
+		// Not hypothetical: a self-host deployment that sets NEXT_PUBLIC_APP_URL to a bare host
+		// (no scheme) throws in `new URL`, and the answer must still be a host rather than a crash
+		// in every page that shows the org's URL.
+		process.env.NEXT_PUBLIC_APP_URL = "console.internal.example/";
+		expect(orgHost()).toBe("console.internal.example");
+	});
+
+	it("falls back to the brand host when the value carries no host at all", () => {
+		process.env.NEXT_PUBLIC_APP_URL = "https://";
+		expect(orgHost()).toBe("alethialabs.io");
+	});
 });
 
 describe("orgUrl", () => {
