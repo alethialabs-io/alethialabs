@@ -118,7 +118,7 @@ func TestChartVersionFromHelmChart(t *testing.T) {
 	// multi-major downgrade and printed "NOT DOWNGRADING" while doing it. A foreign chart must be
 	// UNREADABLE, not plausible.
 	for _, foreign := range []string{
-		"argo-cd-ha-1.2.3",     // shares the prefix, is a different chart
+		"argo-cd-ha-1.2.3",      // shares the prefix, is a different chart
 		"platform-argocd-0.4.2", // a wrapper chart
 		"argocd-9.5.11",         // no hyphen in the name — not our chart
 		"my-argo-cd-1.0.0",      // ends with our chart's shape, does not start with it
