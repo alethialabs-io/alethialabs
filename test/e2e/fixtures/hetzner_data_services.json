@@ -289,6 +289,12 @@
 			"namespace": "queues",
 			"values": {
 				"replicaCount": 1,
+				"auth": {
+					"existingSecret": "rabbitmq-jobs-credentials",
+					"existingPasswordKey": "password",
+					"existingErlangCookieKey": "erlang-cookie",
+					"username": "admin"
+				},
 				"persistence": {
 					"enabled": true,
 					"size": "8Gi",
