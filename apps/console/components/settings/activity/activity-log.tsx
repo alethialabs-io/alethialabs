@@ -32,12 +32,12 @@ import {
 	useWorkspaceStore,
 } from "@/lib/stores/use-workspace-store";
 import { Button } from "@repo/ui/button";
-import { CountPill } from "@repo/ui/count-pill";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { FacetFilter } from "@repo/ui/facet-filter";
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
 import { GroupedFilterSheet } from "@repo/ui/grouped-filter-sheet";
+import { PageHeader } from "@repo/ui/page-header";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import {
 	type DateRange,
@@ -228,13 +228,18 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 			)}
 			{/* The result count lives beside the heading, never as prose in the bar. This feed is
 			    cursor-paginated, so it counts the rows LOADED so far — "42" here means 42 on
-			    screen, and "Load more" moves it. */}
-			<div className="mb-3 flex items-center gap-2">
-				<h2 className="font-display text-[14.5px] font-semibold tracking-[-0.01em] text-text-primary">
-					Activity
-				</h2>
-				<CountPill count={loading ? null : rows.length} />
-			</div>
+			    screen, and "Load more" moves it.
+
+			    `PageHeader`'s `count` renders through the same `CountPill` this used to mount by
+			    hand, which is the whole reason the pair belongs to the primitive: the standard
+			    says where a result count goes, and a local heading + pill is a second answer to a
+			    question already settled. */}
+			<PageHeader
+				className="mb-3"
+				level={2}
+				title="Activity"
+				count={loading ? null : rows.length}
+			/>
 
 			<FilterBar
 				end={

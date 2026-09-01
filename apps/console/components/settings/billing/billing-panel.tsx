@@ -25,6 +25,7 @@ import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
+import { PageHeader } from "@repo/ui/page-header";
 import { Skeleton } from "@repo/ui/skeleton";
 import { planMeta } from "@repo/plan-catalog";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
@@ -98,13 +99,11 @@ export function BillingPanel() {
 	if (!summary.hosted) {
 		return (
 			<Card className="p-6">
-				<h2 className="text-sm font-semibold text-foreground">
-					Self-managed deployment
-				</h2>
-				<p className="mt-1 text-sm text-muted-foreground">
-					This instance is not connected to hosted billing. Enterprise features are
-					unlocked by your license key. See the docs for self-managed licensing.
-				</p>
+				<PageHeader
+					level={2}
+					title="Self-managed deployment"
+					description="This instance is not connected to hosted billing. Enterprise features are unlocked by your license key. See the docs for self-managed licensing."
+				/>
 			</Card>
 		);
 	}
@@ -114,13 +113,15 @@ export function BillingPanel() {
 		return (
 			<>
 				<Card className="p-6">
-					<h2 className="text-sm font-semibold text-foreground">
-						Create an organization
-					</h2>
-					<p className="mt-1 max-w-prose text-sm text-muted-foreground">
-						Your account is a personal scope — your Projects are all yours.
-						Create an organization to collaborate with teammates on a paid plan.
-					</p>
+					{/* `level={2}` preserves the rung these fallback cards already held. They are the
+					    whole page in this state, but the billing page has never carried an `h1` and
+					    promoting one heading of two would make the outline worse, not better. */}
+					<PageHeader
+						className="max-w-prose"
+						level={2}
+						title="Create an organization"
+						description="Your account is a personal scope — your Projects are all yours. Create an organization to collaborate with teammates on a paid plan."
+					/>
 					<Button className="mt-4" onClick={() => setCreateOpen(true)}>
 						Create organization
 					</Button>
