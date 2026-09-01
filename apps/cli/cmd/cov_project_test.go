@@ -621,14 +621,14 @@ func TestProj_ClassificationAssignUnassign(t *testing.T) {
 	if h.run("classification", "assign", "project_environment", "e1", "tier", "gold", "--output", "json") {
 		t.Error("assign exited fatally")
 	}
-	if h.run("classification", "unassign", "project_environment", "e1", "gold", "--output", "json") {
+	if h.run("classification", "unassign", "project_environment", "e1", "gold", "--yes", "--output", "json") {
 		t.Error("unassign exited fatally")
 	}
 	s.failOn = []string{"/classification/assignments"}
 	if !h.run("classification", "assign", "project_environment", "e1", "tier", "gold", "--output", "json") {
 		t.Error("assign should exit on a server error")
 	}
-	if !h.run("classification", "unassign", "project_environment", "e1", "gold", "--output", "json") {
+	if !h.run("classification", "unassign", "project_environment", "e1", "gold", "--yes", "--output", "json") {
 		t.Error("unassign should exit on a server error")
 	}
 }
@@ -1076,7 +1076,7 @@ func TestProj_UnauthenticatedIsFatal(t *testing.T) {
 		{"classification", "dimensions"},
 		{"classification", "show", "project_environment", "e1"},
 		{"classification", "assign", "project_environment", "e1", "tier", "gold"},
-		{"classification", "unassign", "project_environment", "e1", "gold"},
+		{"classification", "unassign", "project_environment", "e1", "gold", "--yes"},
 		{"channels", "list"},
 		{"channels", "create", "ops", "--type", "webhook", "--url", "https://x/y"},
 		{"channels", "verify", "ch1"},

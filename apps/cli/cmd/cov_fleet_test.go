@@ -382,7 +382,7 @@ var fleetAdminCommands = [][]string{
 	{"runner", "destroy"},
 	{"runner", "remove", "r1"},
 	{"jobs", "logs", "j1"},
-	{"jobs", "cancel", "j1"},
+	{"jobs", "cancel", "j1", "--yes"},
 }
 
 // TestFleet_UnauthenticatedCommandExitsOne pins that every command in this scope
@@ -1022,7 +1022,7 @@ func TestFleet_JobsLogsFollowStopsAtATerminalStatus(t *testing.T) {
 // that a refusal is fatal.
 func TestFleet_JobsCancelStopsAJob(t *testing.T) {
 	s, run := fleetEnv(t, fleetOpts{})
-	if got := run("jobs", "cancel", "j1"); got != 0 {
+	if got := run("jobs", "cancel", "j1", "--yes"); got != 0 {
 		t.Fatalf("exit code = %d, want 0", got)
 	}
 	if !s.saw("POST", "/api/cli/jobs/j1/cancel") {
@@ -1030,7 +1030,7 @@ func TestFleet_JobsCancelStopsAJob(t *testing.T) {
 	}
 
 	_, broken := fleetEnv(t, fleetOpts{broken: true})
-	if got := broken("jobs", "cancel", "j1"); got != 1 {
+	if got := broken("jobs", "cancel", "j1", "--yes"); got != 1 {
 		t.Errorf("broken: exit code = %d, want 1", got)
 	}
 }
