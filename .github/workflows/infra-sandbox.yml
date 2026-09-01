@@ -61,5 +61,11 @@ jobs:
           done
       - name: env-registry self-test (allocation, cap, reuse, fail-safe idle)
         run: bash scripts/box/env-registry.sh --self-test
+      # `bash -n` above parses seed_decision; it never CALLS it. Without this step the
+      # 14-cell matrix — the whole argument for trusting a decision a real env can only
+      # exercise a few cells of affordably — runs nowhere, and the next edit that inverts
+      # a branch or reorders the two `case` blocks merges green.
+      - name: env-mode self-test (the seed/empty/restart decision matrix)
+        run: bash scripts/box/env-mode.sh --self-test
       - name: guard-runtime self-test (blocks and, more importantly, allows)
         run: bash .claude/hooks/guard-runtime.sh --self-test

@@ -7,6 +7,7 @@
 # product lives on the box (see .claude/skills/dev/SKILL.md and CLAUDE.md).
 #
 #   env:up      ensure this branch has an environment, and that it is running
+#               a NEW env comes up seeded with demo data   [--empty | --seed | --fresh]
 #   env:push    rsync the working tree (the fast inner loop)   [--watch]
 #   env:down    release this branch's environment
 #   env:status  the box, every environment, capacity, cost
@@ -501,7 +502,15 @@ restore_live_envs() {
     cport="$(printf '%s' "$row" | jq -r .consolePort)"
     sport="$(printf '%s' "$row" | jq -r .storagePort)"
     db="$(printf '%s' "$row" | jq -r .database)"
-    ssh_box "test -d $REMOTE/envs/$sl && $REMOTE/bin/env-mode.sh '$sl' '$cport' '$sport' '$db'" ||
+    # `keep` (the 6th argument), NOT the empty default. This loop restarts environments
+    # THIS SESSION DOES NOT OWN — the shared `dev` integration env and whatever branch env
+    # another instance holds — and env-mode.sh's empty default means "resolve against the
+    # recorded mode", which for any env predating the marker resolves to a full seed:demo.
+    # That would inject the demo org into other people's environments, and where their
+    # demo owner's org already holds non-demo projects the seeder throws by design, the
+    # boot exits 1, and the restore degrades into "✗ did not come back" for an env that
+    # was fine. A restore restarts; it never writes data.
+    ssh_box "test -d $REMOTE/envs/$sl && $REMOTE/bin/env-mode.sh '$sl' '$cport' '$sport' '$db' '' 'keep'" ||
       echo "      ✗ $sl did not come back — pnpm env:up from its worktree"
   done
 }
@@ -529,8 +538,22 @@ provision_box() {
     sleep 5
   done
 
+  # …with ONE opt-in exception, for the branch that is CHANGING those files. Shipping the
+  # main checkout's copy on every env:up means a scripts/box/** edit is otherwise
+  # UNTESTABLE: env:up overwrites it with dev's copy before running it, so the change can
+  # only ever be reviewed by reading it — and this repo has repeatedly shipped shell
+  # changes that were green locally and inert in reality. Opt in explicitly and say so
+  # loudly; the reason for the default is real, and this is not it being relaxed.
+  local box_src="$MAIN_CHECKOUT"
+  if [ "${ALETHIA_BOX_SCRIPTS_FROM_TREE:-}" = "1" ]; then
+    box_src="$ROOT"
+    echo "⚠ ALETHIA_BOX_SCRIPTS_FROM_TREE=1 — shipping THIS tree's scripts/box/ to the box."
+    echo "  $box_src/scripts/box/"
+    echo "  EVERY env on the box runs them, not just yours, until the next env:up from a"
+    echo "  checkout without this set. Use it to test a scripts/box/** change, nothing else."
+  fi
   rsync -az -e "ssh -o StrictHostKeyChecking=accept-new" \
-    "$MAIN_CHECKOUT/scripts/box/" "root@$ip:$REMOTE/bin/"
+    "$box_src/scripts/box/" "root@$ip:$REMOTE/bin/"
 
   # /opt/alethia/box.env carries the env cap and the domain. cloud-init wrote it once at
   # creation, but user_data is now ignored on the server (changing it FORCES REPLACEMENT
@@ -598,11 +621,42 @@ cmd_push() {
   fi
 }
 
+# A NEW env comes up SEEDED with demo data (apps/console/scripts/seed-demo.ts). It came
+# up empty until 2026-09-01, so every list page rendered its empty state — a UI audit
+# measured an empty product and nobody manually checking a branch env had ever seen a
+# populated page.
+#
+#   --empty   bring it up with NO demo data, and REMEMBER that. On an env this already
+#             seeded it TEARS THE DEMO ORG DOWN — skipping the seeder would leave every
+#             demo row in place while the boot banner announced an empty env.
+#   --seed    (re-)seed an env that is already up, refreshing the demo org
+#   --fresh   drop the database first — which implies a re-seed, unless --empty
+#
+# --empty is not optional polish: the empty state is itself something the console has to
+# render correctly, and it can only be checked against an org that has nothing in it. An
+# env that can only be seeded proves half the contract. scripts/box/env-mode.sh resolves
+# the flag against the mode it recorded last time; seed_decision() there is the matrix,
+# and `bash scripts/box/env-mode.sh --self-test` exercises it.
 cmd_up() {
   need jq
   need rsync
-  local slug_ row cport sport db fresh=""
-  [ "${1:-}" = "--fresh" ] && fresh="fresh"
+  local slug_ row cport sport db fresh="" seed="" a
+  for a in "$@"; do
+    case "$a" in
+    --fresh) fresh="fresh" ;;
+    # Refused rather than last-one-wins: "--empty --seed" has no defensible reading, and
+    # quietly picking one of them decides the audit's answer for it.
+    --empty | --seed)
+      [ -z "$seed" ] || [ "$seed" = "${a#--}" ] ||
+        die "--empty and --seed contradict each other."
+      seed="${a#--}"
+      ;;
+    # An unrecognised flag is REFUSED rather than ignored. A silently dropped --empty
+    # would hand back a seeded env that the caller believes is empty, and every
+    # conclusion drawn from it would be wrong in a way nothing prints.
+    *) die "unknown flag '$a' — env:up takes [--fresh] and one of [--empty|--seed]" ;;
+    esac
+  done
   slug_="$(slug)"
 
   provision_box
@@ -620,7 +674,30 @@ cmd_up() {
   push_tree
   mint_env "$slug_" "$cport" "$sport" "$db"
 
-  ssh_box "$REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db' '$fresh'"
+  # The flag refusal above stops at the LAPTOP, and a POSITIONAL argument has no handshake.
+  # scripts/box/ ships from $MAIN_CHECKOUT (see provision_box), which CLAUDE.md §7 pins to
+  # `dev` but does NOT auto-pull, so it drifts: an older env-mode.sh reads $1..$5, ignores
+  # the 6th, seeds nothing and prints no seed: line — `env:up --seed` then hands back an
+  # empty env with nothing anywhere saying the flag was dropped. Ask the SHIPPED script
+  # whether it understands the argument before promising it.
+  local mode_rc=0
+  ssh_box "grep -q SEED_REQUEST $REMOTE/bin/env-mode.sh" >/dev/null 2>&1 || mode_rc=$?
+  # ONLY rc 1 — grep's own "not found" — means the shipped script is stale. Anything else
+  # (2 = no such file, 255 = ssh transport) is a broken box, and reading a failure as an
+  # ABSENCE is how a guard names the wrong cause: it would send you to pull a checkout
+  # that is already current. Those cases fall through, and the env-mode.sh call below
+  # reports the real fault.
+  if [ "$mode_rc" = 1 ]; then
+    local stale="the box is running an env-mode.sh that predates demo seeding.
+  It ships from $MAIN_CHECKOUT/scripts/box/, which drifts — refresh it and re-run:
+      git -C $MAIN_CHECKOUT pull --ff-only"
+    # A mode you asked for explicitly and silently did not get is a WRONG answer, so
+    # refuse. With no flag the env still comes up, only unseeded: warn and continue.
+    [ -z "$seed" ] || die "--$seed cannot be honoured — $stale"
+    echo "⚠ this env will come up EMPTY — $stale" >&2
+  fi
+
+  ssh_box "$REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db' '$fresh' '$seed'"
   ssh_box "$REMOTE/bin/env-registry.sh touch '$slug_'"
 }
 
@@ -989,8 +1066,12 @@ restart_env_console() { # <slug>
   sport="$(printf '%s' "$row" | jq -r .storagePort)"
   db="$(printf '%s' "$row" | jq -r .database)"
 
+  # `keep` (the 6th argument) for the same reason as restore_live_envs: this bounces a
+  # console, it does not bring an env up. The empty default would resolve to a full
+  # seed:demo on any env with no recorded mode — and here the seeder's output is swallowed
+  # by the >/dev/null 2>&1 below, so the only visible symptom would be a long pause.
   ssh_box "tmux kill-session -t 'alethia-$slug_' 2>/dev/null || true
-           $REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db'" >/dev/null 2>&1 || {
+           $REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db' '' 'keep'" >/dev/null 2>&1 || {
     echo "  ⚠ console did not come back — pnpm env:up to restore it" >&2
     return 0
   }
@@ -1247,7 +1328,9 @@ timer)
   cmd_timer "$@"
   ;;
 *)
-  sed -n '5,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # 5,22 is exactly the header block above. It read 5,25 and so printed `set -euo
+  # pipefail` and the first line of the next comment section as if they were usage.
+  sed -n '5,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 1
   ;;
 esac
