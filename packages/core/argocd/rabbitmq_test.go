@@ -1,0 +1,523 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package argocd
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
+)
+
+func hetznerQueueProject(names ...string) *types.ProjectConfig {
+	pc := &types.ProjectConfig{Provider: types.CloudProviderHetzner}
+	for _, n := range names {
+		pc.Queues = append(pc.Queues, types.ProjectQueueConfig{Name: n})
+	}
+	return pc
+}
+
+// oneQueue is the derived spec for a single well-named queue, which most tests below want.
+func oneQueue(t *testing.T, name string) HetznerQueue {
+	t.Helper()
+	qs := HetznerQueues(hetznerQueueProject(name), io.Discard)
+	if len(qs) != 1 {
+		t.Fatalf("derived %d queues for %q, want 1", len(qs), name)
+	}
+	return qs[0]
+}
+
+// b64 encodes a Secret value the way the API server returns it.
+func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+
+// secretJSON is one `kubectl get secret -o json` object with the given data.
+func secretJSON(data map[string]string) string {
+	raw, err := json.Marshal(map[string]any{"data": data})
+	if err != nil {
+		panic(err)
+	}
+	return string(raw)
+}
+
+// secretValue pulls one key back out of a rendered Secret manifest, decoded. Reading the APPLIED
+// BYTES is the point: "an apply happened" and "the right credential was written" are different
+// claims, and only the second one is this fix.
+func secretValue(t *testing.T, manifest, key string) string {
+	t.Helper()
+	m := regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(key) + `: (.+)$`).FindStringSubmatch(manifest)
+	if m == nil {
+		t.Fatalf("the applied Secret has no %q key:\n%s", key, manifest)
+	}
+	raw, err := base64.StdEncoding.DecodeString(m[1])
+	if err != nil {
+		t.Fatalf("%q is not base64 (%v):\n%s", key, err, manifest)
+	}
+	if len(raw) == 0 {
+		t.Fatalf("%q is empty — a RabbitMQ with no authentication", key)
+	}
+	return string(raw)
+}
+
+// ── the cross-language contract ────────────────────────────────────────────────────────────────
+
+// THE invariant. The chart reads its password and erlang cookie from whatever `auth.existingSecret`
+// names, and the runner writes them into whatever this returns. The two are written in different
+// languages and nothing at runtime compares them: a mismatch renders, applies, and surfaces only as
+// a StatefulSet that never starts.
+//
+// So it is read back out of the GENERATED fixture — the product of the real console mapper — rather
+// than compared against a string retyped here, which would only prove Go agrees with Go.
+func TestQueueCredentialSecretNameAgreesWithTheGeneratedFixture(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate this file")
+	}
+	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "test", "e2e", "fixtures", "hetzner_data_services.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		// FATAL, NOT SKIP. This is the only thing tying CredentialSecretName() to the TS
+		// `auth.existingSecret`, and a skip is a green run that checked nothing — the same defect
+		// as the `found == 0` guard below, one level up. A moved fixture would let the two names
+		// diverge in silence, and the first signal would be a StatefulSet stuck at
+		// CreateContainerConfigError on a customer's cluster.
+		t.Fatalf("generated fixture not readable at %s (%v) — this test is the only check that the Go "+
+			"secret name and the TS auth.existingSecret agree", path, err)
+	}
+	var fx struct {
+		AddOns []struct {
+			ID        string         `json:"id"`
+			Namespace string         `json:"namespace"`
+			Values    map[string]any `json:"values"`
+		} `json:"addons"`
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	var found int
+	for _, spec := range fx.AddOns {
+		name, isQueue := strings.CutPrefix(spec.ID, "queue-")
+		if !isQueue {
+			continue
+		}
+		found++
+		q := oneQueue(t, name)
+		if q.AddOnID != spec.ID {
+			t.Errorf("AddOnID = %q, want %q — PruneAddOnSecrets matches this against the enabled set",
+				q.AddOnID, spec.ID)
+		}
+		if q.Namespace != spec.Namespace {
+			t.Errorf("Namespace = %q, but the console renders the release into %q", q.Namespace, spec.Namespace)
+		}
+		auth, _ := spec.Values["auth"].(map[string]any)
+		if auth == nil {
+			t.Fatalf("%s renders no auth block — the chart is minting its own credentials again (#3304)", spec.ID)
+		}
+		if got := auth["existingSecret"]; got != q.CredentialSecretName() {
+			t.Errorf("auth.existingSecret = %v, but the runner seeds %q", got, q.CredentialSecretName())
+		}
+		if got := auth["existingPasswordKey"]; got != rabbitmqPasswordKey {
+			t.Errorf("auth.existingPasswordKey = %v, but the runner writes the key %q", got, rabbitmqPasswordKey)
+		}
+		if got := auth["existingErlangCookieKey"]; got != rabbitmqErlangCookieKey {
+			t.Errorf("auth.existingErlangCookieKey = %v, but the runner writes the key %q", got, rabbitmqErlangCookieKey)
+		}
+	}
+	// A fixture that stopped carrying a queue would make every assertion above vacuous, and the
+	// test would keep reporting success while checking nothing.
+	if found == 0 {
+		t.Fatal("the generated fixture carries no queue spec — this test proved nothing")
+	}
+}
+
+// ── derivation ─────────────────────────────────────────────────────────────────────────────────
+
+// Hetzner only: every other cloud provisions a real queue service, so a derived queue there would
+// write a Secret nothing reads.
+func TestHetznerQueuesAreDerivedOnHetznerOnly(t *testing.T) {
+	for _, p := range []types.CloudProvider{"aws", "gcp", "azure", "alibaba"} {
+		pc := hetznerQueueProject("jobs")
+		pc.Provider = p
+		if got := HetznerQueues(pc, io.Discard); len(got) != 0 {
+			t.Errorf("provider %s derived %d queue(s), want 0", p, len(got))
+		}
+	}
+	if got := HetznerQueues(nil, io.Discard); got != nil {
+		t.Errorf("HetznerQueues(nil) = %v, want nil", got)
+	}
+}
+
+// A name this cannot safely interpolate is dropped — and SAID. Dropping it in silence produces a
+// queue whose Application applies cleanly and whose StatefulSet then sits at
+// CreateContainerConfigError forever, with nothing in the deploy log pointing at the credential
+// nobody seeded.
+func TestHetznerQueuesReportEveryNameTheyRefuse(t *testing.T) {
+	for _, name := range []string{"", "Jobs", "jobs; rm -rf /", "jobs$(id)", "-jobs", "jobs/../x", "orders.v2"} {
+		var errOut strings.Builder
+		if got := HetznerQueues(hetznerQueueProject(name), &errOut); len(got) != 0 {
+			t.Errorf("name %q derived %d queue(s), want 0", name, len(got))
+		}
+		if !strings.Contains(errOut.String(), "will not start") {
+			t.Errorf("name %q was dropped without a word: %q", name, errOut.String())
+		}
+	}
+}
+
+// ── seeding, completing, and never rewriting ───────────────────────────────────────────────────
+
+// A COMPLETE Secret is left exactly as it is. Re-applying would hand a running RabbitMQ a new
+// erlang cookie, which partitions the cluster.
+func TestEnsureQueueCredentialSecretLeavesACompleteSecretAlone(t *testing.T) {
+	stub := newKubectlStub(t, 0, stubRule{Match: "get secret rabbitmq-jobs-credentials", Stdout: secretJSON(map[string]string{
+		rabbitmqPasswordKey:     b64("live-password"),
+		rabbitmqErlangCookieKey: b64("live-cookie"),
+	})})
+	var out strings.Builder
+	if err := EnsureQueueCredentialSecret(oneQueue(t, "jobs"), &out, io.Discard); err != nil {
+		t.Fatalf("EnsureQueueCredentialSecret: %v", err)
+	}
+	if applied := stub.appliedManifests(); applied != "" {
+		t.Fatalf("rewrote a complete queue credential:\n%s", applied)
+	}
+	if !strings.Contains(out.String(), "is complete") {
+		t.Errorf("did not report the complete secret: %q", out.String())
+	}
+}
+
+// EXISTENCE IS NOT COMPLETENESS. A Secret holding one of the two keys — hand-created from the
+// chart's own README, or half-written — was previously frozen in that state on this deploy and every
+// deploy after it, while the StatefulSet sat at CreateContainerConfigError and the log said
+// "leaving it in place". The present key must survive byte-identical; only the absent one is filled.
+func TestEnsureQueueCredentialSecretFillsOnlyTheMissingKey(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		present string
+		absent  string
+	}{
+		{"a password with no cookie", rabbitmqPasswordKey, rabbitmqErlangCookieKey},
+		{"a cookie with no password", rabbitmqErlangCookieKey, rabbitmqPasswordKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := newKubectlStub(t, 0,
+				stubRule{Match: "get secret rabbitmq-jobs-credentials", Stdout: secretJSON(map[string]string{
+					tc.present: b64("kept-" + tc.present),
+					tc.absent:  "",
+				})},
+				// Nothing to adopt: the absent half must be generated, not left empty.
+				stubRule{Match: "app.kubernetes.io/instance=", Stdout: `{"items":[]}`},
+			)
+			if err := EnsureQueueCredentialSecret(oneQueue(t, "jobs"), io.Discard, io.Discard); err != nil {
+				t.Fatalf("EnsureQueueCredentialSecret: %v", err)
+			}
+			applied := stub.appliedManifests()
+			if applied == "" {
+				t.Fatalf("an incomplete Secret was left alone; calls = %v", stub.calls())
+			}
+			if got := secretValue(t, applied, tc.present); got != "kept-"+tc.present {
+				t.Errorf("%s = %q, want the existing value kept byte-identical", tc.present, got)
+			}
+			// secretValue fails the test on an absent, non-base64 or empty value.
+			secretValue(t, applied, tc.absent)
+		})
+	}
+}
+
+// A FAILED READ IS NOT AN ABSENT SECRET. `kubectl get` exits non-zero for `Unable to connect to the
+// server`, a 429 from a restarting apiserver, an expired token or an RBAC blip — and treating those
+// as "absent" would generate two credentials and apply them straight over a live Secret. The pod
+// does not restart, so nothing surfaces until the next restart writes a different .erlang.cookie.
+func TestEnsureQueueCredentialSecretRefusesToReadAFailureAsAbsence(t *testing.T) {
+	stub := newKubectlStub(t, 0, stubRule{Match: "get secret rabbitmq-jobs-credentials", Exit: 1})
+	err := EnsureQueueCredentialSecret(oneQueue(t, "jobs"), io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("a failed read was treated as an absent Secret")
+	}
+	if !strings.Contains(err.Error(), "read queue credential secret") {
+		t.Errorf("error = %v, want it to name the read", err)
+	}
+	if applied := stub.appliedManifests(); applied != "" {
+		t.Fatalf("applied over a Secret it could not read:\n%s", applied)
+	}
+}
+
+// The `--ignore-not-found` shape is what makes absence an EMPTY SUCCESS, and it is what the test
+// above depends on to tell the two apart. Asserted on the command, because a future edit that drops
+// the flag turns every read failure back into "absent" while every test here still passes.
+func TestEnsureQueueCredentialSecretReadsWithIgnoreNotFound(t *testing.T) {
+	stub := newKubectlStub(t, 0, stubRule{Match: "app.kubernetes.io/instance=", Stdout: `{"items":[]}`})
+	if err := EnsureQueueCredentialSecret(oneQueue(t, "jobs"), io.Discard, io.Discard); err != nil {
+		t.Fatalf("EnsureQueueCredentialSecret: %v", err)
+	}
+	if !stub.calledWith("get secret rabbitmq-jobs-credentials -n queues -o json --ignore-not-found") {
+		t.Fatalf("the existence read is not --ignore-not-found; calls = %v", stub.calls())
+	}
+}
+
+func TestEnsureQueueCredentialSecretSeedsWhenAbsent(t *testing.T) {
+	stub := newKubectlStub(t, 0, stubRule{Match: "app.kubernetes.io/instance=", Stdout: `{"items":[]}`})
+	if err := EnsureQueueCredentialSecret(oneQueue(t, "jobs"), io.Discard, io.Discard); err != nil {
+		t.Fatalf("EnsureQueueCredentialSecret: %v", err)
+	}
+	for _, c := range stub.calls() {
+		// A credential must never reach a command line — it rides a 0600 manifest file.
+		if strings.Contains(c, "password=") || strings.Contains(c, "erlang-cookie=") {
+			t.Errorf("a credential reached argv: %q", c)
+		}
+	}
+	applied := stub.appliedManifests()
+	if applied == "" {
+		t.Fatalf("never applied the credential secret; calls = %v", stub.calls())
+	}
+	secretValue(t, applied, rabbitmqPasswordKey)
+	cookie := secretValue(t, applied, rabbitmqErlangCookieKey)
+	// RabbitMQ documents the cookie as alphanumeric: it becomes an Erlang atom, the init container
+	// writes it through a shell `echo`, and rabbitmqctl reads it back. The chart it replaces used
+	// `randAlphaNum 32`, so this keeps the value identical in shape to what is already deployed.
+	if !regexp.MustCompile(`^[A-Za-z0-9]{32}$`).MatchString(cookie) {
+		t.Errorf("erlang cookie %q is not 32 alphanumeric characters", cookie)
+	}
+}
+
+func TestEnsureQueueCredentialSecretRefusesAnUnsafeQueue(t *testing.T) {
+	newKubectlStub(t, 0)
+	bad := HetznerQueue{Name: "jobs; rm -rf /", Namespace: hetznerQueueNamespace, AddOnID: "queue-jobs"}
+	if err := EnsureQueueCredentialSecret(bad, io.Discard, io.Discard); err == nil {
+		t.Fatal("seeded credentials for an unsafe queue name")
+	}
+}
+
+// An entropy failure must surface as an error and apply NOTHING. Falling back to something weaker
+// is how a "random" credential becomes guessable with nothing downstream noticing. Both generators
+// are exercised, because they no longer share an implementation.
+func TestEnsureQueueCredentialSecretSurfacesAnEntropyFailure(t *testing.T) {
+	stub := newKubectlStub(t, 0, stubRule{Match: "app.kubernetes.io/instance=", Stdout: `{"items":[]}`})
+	prev := rabbitmqRandReader
+	t.Cleanup(func() { rabbitmqRandReader = prev })
+	rabbitmqRandReader = failingReader{}
+
+	if err := EnsureQueueCredentialSecret(oneQueue(t, "jobs"), io.Discard, io.Discard); err == nil {
+		t.Fatal("no error when the entropy source failed")
+	}
+	if applied := stub.appliedManifests(); applied != "" {
+		t.Fatalf("applied a secret despite a failed entropy read:\n%s", applied)
+	}
+	if _, err := rabbitmqPassword(); err == nil {
+		t.Error("rabbitmqPassword returned a value from a failed reader")
+	}
+	if _, err := rabbitmqErlangCookie(); err == nil {
+		t.Error("rabbitmqErlangCookie returned a value from a failed reader")
+	}
+}
+
+// The manifest carries BOTH keys, the sweep labels, and — deliberately — no ArgoCD tracking
+// metadata. A Secret carrying `app.kubernetes.io/instance` becomes a resource the Application owns,
+// and an owned resource absent from the rendered manifest is exactly what `prune: true` deletes.
+func TestQueueCredentialSecretManifestShape(t *testing.T) {
+	q := oneQueue(t, "jobs")
+	manifest := queueCredentialSecretManifest(q, map[string]string{
+		rabbitmqPasswordKey:     b64("pw-value"),
+		rabbitmqErlangCookieKey: b64("cookie-value"),
+		// A key the chart does not read must not ride along out of the cluster.
+		"leftover": b64("stale"),
+	})
+	for _, want := range []string{
+		"name: rabbitmq-jobs-credentials",
+		"namespace: queues",
+		"kind: Namespace",
+		"alethia.io/managed-by: addon-marketplace",
+		addonSecretLabelKey + ": queue-jobs",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Errorf("manifest is missing %q:\n%s", want, manifest)
+		}
+	}
+	if strings.Contains(manifest, "leftover") {
+		t.Errorf("a key the chart does not read was carried into the Secret:\n%s", manifest)
+	}
+	if strings.Contains(manifest, "app.kubernetes.io/instance") {
+		t.Errorf("the manifest carries ArgoCD tracking metadata — the Application will prune it:\n%s", manifest)
+	}
+	// The plaintext must appear nowhere but inside the base64 payload.
+	if strings.Contains(manifest, "pw-value") || strings.Contains(manifest, "cookie-value") {
+		t.Errorf("a credential is in the manifest in plaintext:\n%s", manifest)
+	}
+	if got := secretValue(t, manifest, rabbitmqPasswordKey); got != "pw-value" {
+		t.Errorf("password = %q, want pw-value", got)
+	}
+}
+
+// Two queues in one project get two DIFFERENT credentials. A shared cookie would silently merge two
+// clusters that the canvas says are separate.
+func TestQueueCredentialsAreNotSharedBetweenQueues(t *testing.T) {
+	qs := HetznerQueues(hetznerQueueProject("jobs", "events"), io.Discard)
+	if len(qs) != 2 {
+		t.Fatalf("derived %d queues, want 2", len(qs))
+	}
+	if qs[0].CredentialSecretName() == qs[1].CredentialSecretName() {
+		t.Fatalf("both queues share the Secret %q", qs[0].CredentialSecretName())
+	}
+	first, err := rabbitmqErlangCookie()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := rabbitmqErlangCookie()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("two generated cookies are identical")
+	}
+}
+
+// ── the migration ──────────────────────────────────────────────────────────────────────────────
+
+// chartMintedSecretJSON is what the chart's own Secret looks like in the cluster. The chart marks it
+// `helm.sh/resource-policy: keep`, so it survives the chart no longer rendering it — which is what
+// makes adoption possible at all.
+func chartMintedSecretJSON(data map[string]string) string {
+	items := []any{map[string]any{
+		"metadata": map[string]any{"name": "sh.helm.release.v1.addon-queue-jobs.v1"},
+		"type":     "helm.sh/release.v1",
+		// Deliberately carries both keys: a helm release Secret must be SKIPPED, not read.
+		"data": map[string]string{rabbitmqPasswordKey: b64("helm-noise"), rabbitmqErlangCookieKey: b64("helm-noise")},
+	}}
+	if data != nil {
+		items = append(items, map[string]any{
+			"metadata": map[string]any{"name": "addon-queue-jobs-rabbitmq"},
+			"type":     "Opaque",
+			"data":     data,
+		})
+	}
+	raw, err := json.Marshal(map[string]any{"items": items})
+	if err != nil {
+		panic(err)
+	}
+	return string(raw)
+}
+
+// The one-time rotation this fix could have caused is the very breakage it exists to prevent: a new
+// erlang cookie partitions a RUNNING cluster. So the live values are carried across instead.
+func TestEnsureQueueCredentialSecretAdoptsTheChartMintedCredentials(t *testing.T) {
+	stub := newKubectlStub(t, 0,
+		stubRule{Match: "app.kubernetes.io/instance=addon-queue-jobs", Stdout: chartMintedSecretJSON(map[string]string{
+			rabbitmqPasswordKey:     b64("live-password"),
+			rabbitmqErlangCookieKey: b64("live-cookie"),
+		})},
+	)
+	var out strings.Builder
+	if err := EnsureQueueCredentialSecret(oneQueue(t, "jobs"), &out, io.Discard); err != nil {
+		t.Fatalf("EnsureQueueCredentialSecret: %v", err)
+	}
+	applied := stub.appliedManifests()
+	if applied == "" {
+		t.Fatalf("applied no manifest at all; calls = %v", stub.calls())
+	}
+	if got := secretValue(t, applied, rabbitmqErlangCookieKey); got != "live-cookie" {
+		t.Errorf("erlang cookie = %q, want the live one — the cluster would partition", got)
+	}
+	if got := secretValue(t, applied, rabbitmqPasswordKey); got != "live-password" {
+		t.Errorf("password = %q, want the live one", got)
+	}
+	if !strings.Contains(out.String(), "carrying the chart's live") {
+		t.Errorf("did not report the adoption: %q", out.String())
+	}
+}
+
+// ADOPTION IS PER KEY. The password and the cookie are unrelated secrets, so a chart Secret holding
+// only the cookie still saves the cluster from a partition; the password is simply generated. An
+// all-or-nothing rule would have thrown the live cookie away for a reason that has nothing to do
+// with it.
+func TestAdoptionIsPerKey(t *testing.T) {
+	stub := newKubectlStub(t, 0,
+		stubRule{Match: "app.kubernetes.io/instance=addon-queue-jobs", Stdout: chartMintedSecretJSON(map[string]string{
+			rabbitmqErlangCookieKey: b64("live-cookie"),
+		})},
+	)
+	var out strings.Builder
+	if err := EnsureQueueCredentialSecret(oneQueue(t, "jobs"), &out, io.Discard); err != nil {
+		t.Fatalf("EnsureQueueCredentialSecret: %v", err)
+	}
+	applied := stub.appliedManifests()
+	if got := secretValue(t, applied, rabbitmqErlangCookieKey); got != "live-cookie" {
+		t.Errorf("erlang cookie = %q, want the live one", got)
+	}
+	if got := secretValue(t, applied, rabbitmqPasswordKey); got == "" || got == "helm-noise" {
+		t.Errorf("password = %q, want a freshly generated one", got)
+	}
+	if !strings.Contains(out.String(), rabbitmqErlangCookieKey) {
+		t.Errorf("did not name which key was carried across: %q", out.String())
+	}
+}
+
+// Nothing to adopt is the ordinary case for a queue that has never deployed, and it must not be
+// reported as an adoption.
+func TestAdoptionFindsNothingToCarry(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		json string
+	}{
+		{"no secret at all", `{"items":[]}`},
+		{"only a helm release secret", chartMintedSecretJSON(nil)},
+		{"empty values", chartMintedSecretJSON(map[string]string{rabbitmqPasswordKey: "", rabbitmqErlangCookieKey: ""})},
+		{"unreadable base64", chartMintedSecretJSON(map[string]string{rabbitmqErlangCookieKey: "not-base64!!"})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newKubectlStub(t, 0, stubRule{Match: "app.kubernetes.io/instance=", Stdout: tc.json})
+			if live := adoptChartMintedQueueCredentials(oneQueue(t, "jobs"), io.Discard); len(live) != 0 {
+				t.Fatalf("adopted %v from a Secret with nothing to carry", live)
+			}
+		})
+	}
+}
+
+// A complete Secret must not cost a Secret LISTING on every deploy either — the adoption read is
+// for the migration, and running it forever would be a per-deploy cost for a one-time question.
+func TestAdoptionIsNotConsultedForACompleteSecret(t *testing.T) {
+	stub := newKubectlStub(t, 0, stubRule{Match: "get secret rabbitmq-jobs-credentials", Stdout: secretJSON(map[string]string{
+		rabbitmqPasswordKey:     b64("live-password"),
+		rabbitmqErlangCookieKey: b64("live-cookie"),
+	})})
+	if err := EnsureQueueCredentialSecret(oneQueue(t, "jobs"), io.Discard, io.Discard); err != nil {
+		t.Fatalf("EnsureQueueCredentialSecret: %v", err)
+	}
+	if stub.calledWith("app.kubernetes.io/instance=") {
+		t.Errorf("listed the chart's Secrets for a complete credential; calls = %v", stub.calls())
+	}
+}
+
+// The console restates the DNS-1123 label charset as `K8S_LABEL` in hetzner-services.ts, because Go
+// cannot read that file and it cannot read Go — and the two decide the SAME question from opposite
+// sides: the mapper uses it to choose whether to point the chart at a runner-seeded Secret, and
+// HetznerQueues uses k8sNameRe to choose whether to seed one. If they ever disagree, one of the two
+// outcomes is a queue that can never start, and nothing at runtime would say so.
+//
+// So the literal is read out of the TS source and compared, rather than restated a third time here.
+func TestConsoleLabelPredicateMatchesTheRunners(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate this file")
+	}
+	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "..",
+		"apps", "console", "lib", "cloud-providers", "hetzner-services.ts")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("cannot read %s (%v) — this test is the only check that the console and the runner "+
+			"agree on what a queue name may be", path, err)
+	}
+	m := regexp.MustCompile(`(?m)^const K8S_LABEL = /(.+)/;$`).FindSubmatch(raw)
+	if m == nil {
+		t.Fatalf("no `const K8S_LABEL = /…/;` in %s — it was renamed or removed, and with it the "+
+			"console's half of this contract", path)
+	}
+	if got := string(m[1]); got != k8sNameRe.String() {
+		t.Errorf("the console accepts %q but the runner seeds only %q — a name in the gap renders a "+
+			"chart pointed at a Secret that is never written", got, k8sNameRe.String())
+	}
+}

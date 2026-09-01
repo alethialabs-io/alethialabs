@@ -56,7 +56,12 @@ func TestHetznerRegistryHostAgreesWithTheGeneratedFixture(t *testing.T) {
 	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "test", "e2e", "fixtures", "hetzner_data_services.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Skipf("generated fixture not present (%v)", err)
+		// FATAL, NOT SKIP, for the reason stated on the queue twin in rabbitmq_test.go: these are
+		// the only checks that the Go and TS halves of a name contract agree, and a skip is a green
+		// run that checked nothing. Both sites here, because a hardening applied to one copy of
+		// this pattern and not the other is how the registry path kept diverging in the first place.
+		t.Fatalf("generated fixture not readable at %s (%v) — this test is the only check that the "+
+			"Go and TS halves of this contract agree", path, err)
 	}
 	var fx struct {
 		ChartedNotOffered []struct {
@@ -732,7 +737,12 @@ func TestHetznerRegistryUsernameAgreesWithTheRunner(t *testing.T) {
 	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "test", "e2e", "fixtures", "hetzner_data_services.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Skipf("generated fixture not present (%v)", err)
+		// FATAL, NOT SKIP, for the reason stated on the queue twin in rabbitmq_test.go: these are
+		// the only checks that the Go and TS halves of a name contract agree, and a skip is a green
+		// run that checked nothing. Both sites here, because a hardening applied to one copy of
+		// this pattern and not the other is how the registry path kept diverging in the first place.
+		t.Fatalf("generated fixture not readable at %s (%v) — this test is the only check that the "+
+			"Go and TS halves of this contract agree", path, err)
 	}
 	var fx struct {
 		ChartedNotOffered []struct {
