@@ -1610,6 +1610,21 @@ export interface InvoiceListParams {
 	limit?: number;
 }
 
+// NO `requireHostedBilling()` on either read below, and its absence is the fix for the HTTP 500
+// the UI conformance audit recorded on `~/settings/billing/invoices` (#3731).
+//
+// That guard's own contract is "before any Stripe call" — and these two make none: they read the
+// MIRRORED `invoice` table this deployment already owns. It threw whenever STRIPE_SECRET_KEY is
+// unset, which is every self-managed install and every sandbox env, turning a plain table read
+// into an unhandled server-action rejection → 500. Both of the audit's two 500s per visit were
+// `listInvoices` — the panel's filtered rows query and its unfiltered facet-count query.
+//
+// The main billing panel never showed it because it returns a "Self-managed deployment" card
+// before it mounts anything that calls these; the dedicated invoices page has no such gate, so it
+// called straight through. Refusing to READ mirrored history because Stripe is not wired is also
+// wrong on its own terms — an org that once paid keeps its invoices, and an org that never did
+// simply has none, which is an empty list, not an error.
+
 /**
  * Lists the active org's mirrored invoices (newest paid first), from the local table — no
  * Stripe call, so it's fast and only ever shows real paid invoices. Filterable by period
@@ -1619,15 +1634,24 @@ export async function listInvoices(
 	params: InvoiceListParams = {},
 ): Promise<InvoiceInfo[]> {
 	const actor = await authorize("manage_billing", { type: "billing" });
-	requireHostedBilling();
 	const rows = await listOrgInvoices(actor.orgId, params);
 	return rows.map(toInvoiceInfo);
 }
 
-/** Loads one invoice for the active org (preview dialog), or null if it isn't theirs. */
+/**
+ * Loads one invoice for the active org, or null if it isn't theirs.
+ *
+ * NO PRODUCTION CALLER TODAY — `git grep getInvoice` finds this definition and its tests, nothing
+ * else. It used to say "(preview dialog)", which is wrong and was worth correcting rather than
+ * inheriting: `InvoicePreviewDialog` is presentational and takes an `InvoiceInfo` PROP that both
+ * its parents already hold from `listInvoices`, and the PDF route calls `getOrgInvoice` directly.
+ * So this action contributed NONE of the 500s in #3731 — both were `listInvoices`. It is kept and
+ * fixed alongside its sibling because it is the same read over the same table and an inconsistent
+ * guard between the two is the next reader's trap; if it still has no caller when someone next
+ * touches this file, delete it rather than re-explaining it.
+ */
 export async function getInvoice(id: string): Promise<InvoiceInfo | null> {
 	const actor = await authorize("manage_billing", { type: "billing" });
-	requireHostedBilling();
 	const row = await getOrgInvoice(actor.orgId, id);
 	return row ? toInvoiceInfo(row) : null;
 }

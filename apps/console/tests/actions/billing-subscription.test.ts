@@ -1240,6 +1240,20 @@ describe("listInvoices", () => {
 		expect(row.hasPdf).toBe(false);
 		expect(row.periodStart).toBeNull();
 	});
+
+	// #3731. Every assertion above ran with `isStripeConfigured` mocked TRUE, so none of them could
+	// see the defect: both invoice reads also called `requireHostedBilling()`, which throws when
+	// STRIPE_SECRET_KEY is unset — every self-managed install and every sandbox env. The UI
+	// conformance audit hit it as `500 POST …/~/settings/billing/invoices`. Nothing here touches
+	// Stripe: the rows come from the mirrored `invoice` table this deployment already owns.
+	it("still reads the mirrored table when Stripe is NOT configured", async () => {
+		vi.mocked(isStripeConfigured).mockReturnValue(false);
+		orgInvoicesList.mockResolvedValue([]);
+
+		await expect(listInvoices({})).resolves.toEqual([]);
+		expect(orgInvoicesList).toHaveBeenCalledWith("org-1", {});
+		expect(stripe.invoices.list).not.toHaveBeenCalled();
+	});
 });
 
 describe("getInvoice", () => {
@@ -1247,6 +1261,15 @@ describe("getInvoice", () => {
 		orgInvoiceGet.mockResolvedValue(null);
 		expect(await getInvoice("nope")).toBeNull();
 		expect(orgInvoiceGet).toHaveBeenCalledWith("org-1", "nope");
+	});
+
+	// The single-invoice sibling read, same defect (#3731). It has no production caller, so it was
+	// not one of the two 500s — but it carried the same guard over the same table.
+	it("still reads the mirrored table when Stripe is NOT configured", async () => {
+		vi.mocked(isStripeConfigured).mockReturnValue(false);
+		orgInvoiceGet.mockResolvedValue(null);
+		await expect(getInvoice("uuid-1")).resolves.toBeNull();
+		expect(orgInvoiceGet).toHaveBeenCalledWith("org-1", "uuid-1");
 	});
 });
 

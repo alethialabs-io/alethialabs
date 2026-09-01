@@ -64,6 +64,7 @@ export function ProjectSwitcher() {
 			<SwitcherTrigger
 				variant="topbar"
 				open={open}
+				ariaLabel="Switch project"
 				leading={
 					active?.cloud_provider ? (
 						<span className="flex h-5 w-5 shrink-0 items-center justify-center rounded border text-muted-foreground">
