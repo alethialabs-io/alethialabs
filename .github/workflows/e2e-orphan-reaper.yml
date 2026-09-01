@@ -376,6 +376,32 @@ jobs:
             echo "::warning::${PROVIDER}: reclaimed ${orphans} orphaned run(s), ${swept} resource(s). A previous nightly's teardown did NOT complete — check whether that run was cancelled (#2330)."
           fi
 
+      # The raw log may name cloud resources and this job holds five clouds' credentials. Publish
+      # neither: reaper-result.mjs is the ONE allowlisting seam, reducing the log to counts,
+      # booleans and public run metadata. `always()` also records skipped gates and failed sweeps,
+      # because absence is unknown — never evidence that an account was clean.
+      - name: Capture the durable reaper result (secret-free)
+        id: result
+        if: always()
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          REGION: ${{ env.ALETHIA_E2E_REGION }}
+          GATE_RUN: ${{ steps.gate.outputs.run }}
+          SWEEP_STATUS: ${{ steps.sweep.outputs.status }}
+        run: |
+          node scripts/e2e/reaper-result.mjs capture \
+            --log "${RUNNER_TEMP}/reap.log" \
+            --out "${RUNNER_TEMP}/orphan-reaper-result.json"
+
+      - name: Upload the durable reaper result
+        if: always() && steps.result.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: orphan-reaper-result-${{ matrix.provider }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/orphan-reaper-result.json
+          if-no-files-found: error
+          retention-days: 14
+
       # Stated on EVERY run rather than in a comment nobody opens: a cloud missing from the matrix
       # above is invisible, and an invisible exclusion reads as coverage.
       - name: Record the coverage gap

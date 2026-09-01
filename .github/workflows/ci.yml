@@ -1116,6 +1116,9 @@ jobs:
       - name: Sweeper probe contract (an API that did not answer is not an empty account)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/lib/sweep-probe.sh --self-test
+      - name: Orphan reaper result contract is secret-free and fail-closed (#2465)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/e2e/reaper-result.mjs --self-test
       - name: GCP sweeper four-state verification
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/gcp-cleanup.sh --self-test
