@@ -51,6 +51,24 @@ to the human; it never enters the autonomous enqueue-on-green path. Because back
 first, UI specs always have a stable model to consume (never pixels-before-schema). This operationalizes the
 "UI work is a spec" rule.
 
+**The line is whether a design decision is still open — not whether the diff touches a `.tsx`.** "Anything
+visual is `class:ui`" was written when every UI unit was a new surface, and read literally it routes
+*conformance* work — replacing a hand-rolled `<h2>` with `PageHeader level={2}`, a bespoke centred div with
+`EmptyState` — into a design-spec queue that has nothing to decide. CLAUDE.md §6 already made those calls; the
+unit is adopting them. So:
+
+- **Adopting a decided primitive, with a gate that proves it → `class:backend`.** The shared-surface table in
+  CLAUDE.md §6 *is* the spec, and the unit ships the check that keeps it true. No `needs:design`.
+- **Changing a page's information architecture, or inventing a pattern the table does not name →
+  `class:ui`.** Rebuilding a page, adding a surface, choosing a new interaction: those still surface to the
+  human with a design spec.
+
+The test to apply: *could two competent implementations of this unit disagree about how it should look?* If
+yes it is `class:ui`. If the answer is written down and the unit's job is to make the tree match it, it is
+`class:backend` — and a unit that routes itself `class:backend` on this rule **must** land the check alongside
+the change, because "we adopted the primitive everywhere" is a claim, and an unmeasured claim is how the
+drift got here.
+
 ## The protocol
 
 Every instance, at kickoff, reads this file, then:
