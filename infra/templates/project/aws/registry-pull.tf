@@ -63,7 +63,7 @@ module "ecr_pull_xacct" {
   }
   oidc_providers = {
     main = {
-      provider_arn               = module.eks[0].oidc_provider_arn
+      provider_arn               = try(module.eks[0].oidc_provider_arn, null) != null ? module.eks[0].oidc_provider_arn : null
       namespace_service_accounts = ["${local.registry_pull_ksa_namespace}:${local.registry_pull_ksa_name}"]
     }
   }

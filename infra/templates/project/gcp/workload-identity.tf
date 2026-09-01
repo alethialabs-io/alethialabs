@@ -178,7 +178,7 @@ resource "google_secret_manager_secret_iam_member" "external_secrets_sql_accesso
   count = var.provision_gke && var.create_cloud_sql ? 1 : 0
 
   project   = var.project_id
-  secret_id = module.cloud_sql[0].credentials_secret_id
+  secret_id = try(module.cloud_sql[0].credentials_secret_id, null) != null ? module.cloud_sql[0].credentials_secret_id : null
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${local.external_secrets_sa_email}"
 }
