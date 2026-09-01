@@ -100,17 +100,57 @@ func TestChartVersionFromHelmChart(t *testing.T) {
 	if got := chartVersionFromHelmChart("argo-cd-9.9.1"); got != "9.9.1" {
 		t.Errorf("argo-cd-9.9.1 → %q, want 9.9.1", got)
 	}
-	if got := chartVersionFromHelmChart("argo-cd-9.5.11-rc.1"); got != "rc.1" {
-		// RECORDED, not endorsed: a pre-release suffix splits at its own hyphen. It is reported
-		// here so the behaviour is known rather than discovered; the shipped chart carries no such
-		// tag, and a wrong version is caught by helm itself ("chart not found") rather than
-		// installed. Tightening this needs a semver parse, which is a bigger change than #3521.
-		t.Errorf("pre-release suffix behaviour changed: got %q, the recorded behaviour is rc.1", got)
+	// FIXED, no longer merely recorded. Splitting on the last hyphen returned "rc.1" here, which
+	// would have been handed to `helm --version rc.1` and killed the deploy. Anchoring on the chart
+	// NAME takes everything after it, so a pre-release tag survives intact.
+	if got := chartVersionFromHelmChart("argo-cd-9.5.11-rc.1"); got != "9.5.11-rc.1" {
+		t.Errorf("argo-cd-9.5.11-rc.1 → %q, want 9.5.11-rc.1", got)
 	}
 	for _, bad := range []string{"", "argocd", "argo-cd-", "   "} {
 		if got := chartVersionFromHelmChart(bad); got != "" {
 			t.Errorf("%q must yield no version (got %q) — a guess here is installed", bad, got)
 		}
+	}
+
+	// THE MULTI-MAJOR SILENT DOWNGRADE. The release NAME is re-checked upstream, but `argo-cd` is a
+	// name several publishers use and the name does not identify the chart. bitnami's argo-cd is on
+	// its own version scale, where 7.4.0 is ArgoCD v2.11 — so trusting it would have installed a
+	// multi-major downgrade and printed "NOT DOWNGRADING" while doing it. A foreign chart must be
+	// UNREADABLE, not plausible.
+	for _, foreign := range []string{
+		"argo-cd-ha-1.2.3",     // shares the prefix, is a different chart
+		"platform-argocd-0.4.2", // a wrapper chart
+		"argocd-9.5.11",         // no hyphen in the name — not our chart
+		"my-argo-cd-1.0.0",      // ends with our chart's shape, does not start with it
+	} {
+		if got := chartVersionFromHelmChart(foreign); got != "" {
+			t.Errorf("%q is not the chart this deploy installs and must yield no version, got %q — "+
+				"a foreign chart's version scale deciding an upgrade is a silent downgrade", foreign, got)
+		}
+	}
+}
+
+// `helm list` applies a deployed+failed state mask unless told otherwise, and a release left
+// `pending-upgrade` by a killed `helm upgrade --wait` would then be reported ABSENT — which the
+// decider reads as "not installed from this chart" and answers with a downgrade. The flag is the
+// whole fix, so it is asserted on the argv rather than trusted to a comment.
+func TestArgoHelmListAsksForEveryReleaseState(t *testing.T) {
+	args := argoHelmListArgs()
+	var hasAll bool
+	for _, a := range args {
+		if a == "--all" {
+			hasAll = true
+		}
+	}
+	if !hasAll {
+		t.Fatalf("helm list must pass --all — without it a pending-upgrade release reads as NO "+
+			"release at all, which the decider answers with a downgrade. argv was %v", args)
+	}
+	// Not vacuous: the argv must still be the one that actually runs, so pin the rest of it too.
+	// If the filter or the namespace moved, this test would otherwise pass while the probe asked a
+	// different question.
+	if args[0] != "list" || args[len(args)-1] != "json" {
+		t.Fatalf("argoHelmListArgs no longer describes a `helm list -o json`: %v", args)
 	}
 }
 
