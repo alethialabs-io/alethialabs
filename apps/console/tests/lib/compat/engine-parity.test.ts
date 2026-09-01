@@ -41,10 +41,15 @@ interface ParityControl {
 	status: string;
 }
 
+interface ParityRef {
+	id: string;
+	version?: string;
+}
+
 interface ParityEvalCase {
 	id: string;
 	/** Go's json tags, so the fixture reads the same on both sides. */
-	subject: { providers?: string[]; k8s_version?: string };
+	subject: { providers?: string[]; k8s_version?: string; components?: ParityRef[]; addons?: ParityRef[] };
 	want: ParityControl[];
 }
 
@@ -76,6 +81,18 @@ function strArray(v: unknown, what: string): string[] {
 	return v.map((x, i) => str(x, `${what}[${i}]`));
 }
 
+function refArray(v: unknown, what: string): ParityRef[] {
+	if (!Array.isArray(v)) throw new TypeError(`${what} is not an array`);
+	return v.map((x, i) => {
+		if (x === null || typeof x !== "object") throw new TypeError(`${what}[${i}] is not an object`);
+		const r: Record<string, unknown> = { ...x };
+		return {
+			id: str(r.id, `${what}[${i}].id`),
+			version: r.version === undefined ? undefined : str(r.version, `${what}[${i}].version`),
+		};
+	});
+}
+
 /** Narrow the Go-written fixture without letting an `any` escape or using a cast. */
 function loadFixture(): ParityFile {
 	const parsed: unknown = JSON.parse(readFileSync(FIXTURE, "utf8"));
@@ -93,11 +110,29 @@ function loadFixture(): ParityFile {
 		if (subjRaw === null || typeof subjRaw !== "object") throw new TypeError(`evaluate[${i}].subject missing`);
 		const subj: Record<string, unknown> = { ...subjRaw };
 		if (!Array.isArray(c.want)) throw new TypeError(`evaluate[${i}].want is not an array`);
+
+		// REFUSE an unknown subject field rather than dropping it. The loader used to build the
+		// subject from a fixed pair of keys, so adding `components` to the fixture would have been
+		// silently ignored here — and the case would then fail as a bogus ENGINE mismatch, sending
+		// the next reader after a disagreement that does not exist. A loader that quietly narrows
+		// its input is the same defect class as a guard that quietly narrows its matcher.
+		const known = new Set(["providers", "k8s_version", "components", "addons"]);
+		const unknown = Object.keys(subj).filter((k) => !known.has(k));
+		if (unknown.length > 0) {
+			throw new TypeError(
+				`evaluate[${i}] (${String(c.id)}) has subject field(s) this loader does not carry: ` +
+					`${unknown.join(", ")}. Add them to toSubject() — leaving them out makes the case fail ` +
+					`as an engine mismatch when the engines actually agree.`,
+			);
+		}
+
 		return {
 			id: str(c.id, `evaluate[${i}].id`),
 			subject: {
 				providers: subj.providers === undefined ? undefined : strArray(subj.providers, "providers"),
 				k8s_version: subj.k8s_version === undefined ? undefined : str(subj.k8s_version, "k8s_version"),
+				components: subj.components === undefined ? undefined : refArray(subj.components, "components"),
+				addons: subj.addons === undefined ? undefined : refArray(subj.addons, "addons"),
 			},
 			want: c.want.map((w, j) => {
 				if (w === null || typeof w !== "object") throw new TypeError(`evaluate[${i}].want[${j}] is not an object`);
@@ -129,7 +164,14 @@ const fixture = loadFixture();
 
 /** The Go fixture's snake_case subject, as the TS engine's camelCase one. */
 function toSubject(s: ParityEvalCase["subject"]): CompatSubject {
-	return { providers: s.providers, k8sVersion: s.k8s_version };
+	return {
+		providers: s.providers,
+		k8sVersion: s.k8s_version,
+		// Go's ComponentRef.Version is a plain string; the TS type requires it, so an absent
+		// version becomes "" rather than undefined — which is what Go would have sent.
+		components: s.components?.map((r) => ({ id: r.id, version: r.version ?? "" })),
+		addons: s.addons?.map((r) => ({ id: r.id, version: r.version })),
+	};
 }
 
 /** A minimal report standing in for one whose listed controls have failed. */

@@ -13,9 +13,15 @@
 //     showed a pass or a fail where the gate refused to decide — in both directions.
 //
 //  2. The waiver expiry. `new Date("garbage").getTime()` is NaN and `NaN < now` is false, so an
-//     unparseable expiry made a waiver valid FOREVER on the console side. Go never had that bug
-//     because Expiry is a time.Time and a malformed value fails json.Unmarshal at the boundary —
-//     the Override simply never exists. The type did the work.
+//     unparseable expiry made a waiver valid FOREVER on the console side.
+//
+//     GO HAD THE SAME FAIL-OPEN, on the path production actually uses. It is tempting to say the
+//     type prevented it — Expiry is a time.Time, so json.Unmarshal refuses a malformed value and
+//     the Override never exists — and that is true of json.Unmarshal and false of the runner.
+//     apps/runner's buildCompatOverride (and buildVerifyOverride, on the elench gate) read the
+//     payload as map[string]any and called time.Parse with the error SWALLOWED, leaving Expiry
+//     zero, which Covers reads as "never expires". A test named BadExpiryIgnored pinned it, so it
+//     was a recorded intention rather than an oversight. Both builders now refuse the override.
 //
 // GO IS THE SOURCE HERE, and the direction follows authority: compat.Evaluate is what runs inside
 // provisioner/deploy.go between plan and apply (deploy.go:787), and Report.Unwaived is what
@@ -30,7 +36,6 @@ package compat
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -66,8 +71,9 @@ type parityWaiverCase struct {
 	Controls []string `json:"controls"`
 	// Expiry as it appears on the wire. "" means no expiry.
 	Expiry string `json:"expiry"`
-	// Decodes records whether Go accepts this expiry at the JSON boundary. When false, Go has no
-	// Override at all, and the TS mirror must reach the same outcome by its own route.
+	// Decodes records whether the WIRE PATH accepts this expiry (RFC3339). When false the runner's
+	// builder refuses the override outright, so nothing is waived, and the TS mirror must reach
+	// the same outcome by its own route.
 	Decodes bool `json:"decodes"`
 	// Now is the instant the waiver is evaluated at, so the case is not a function of wall time.
 	Now string `json:"now"`
@@ -123,6 +129,42 @@ func evalSubjects() []struct {
 		{"evaluate/k8s/not-a-number-at-all", Subject{Providers: []string{"aws"}, K8sVersion: "stable"}},
 		{"evaluate/k8s/plus-sign-is-accepted-by-Atoi", Subject{Providers: []string{"aws"}, K8sVersion: "+1.+31"}},
 		{"evaluate/k8s/beyond-int53-is-not-a-version", Subject{Providers: []string{"aws"}, K8sVersion: "1.99999999999999999999"}},
+
+		// A PASS, and the component/add-on control families. Without these the fixture only ever
+		// recorded `fail` and `not_evaluable` from one control type, so "the two engines agree"
+		// meant far less than it looked: evalComponent and evalAddOn were never compared at all,
+		// and no case proved either engine can reach a pass.
+		{"evaluate/k8s/A-SUPPORTED-VERSION-PASSES", Subject{Providers: []string{"aws"}, K8sVersion: "1.35"}},
+		{"evaluate/component/argocd-inside-its-window", Subject{
+			K8sVersion: "1.35",
+			Components: []ComponentRef{{ID: "argocd", Version: "9.5.11"}},
+		}},
+		{"evaluate/component/argocd-below-its-k8s-floor", Subject{
+			K8sVersion: "1.32",
+			Components: []ComponentRef{{ID: "argocd", Version: "9.5.11"}},
+		}},
+		{"evaluate/component/an-unrecorded-version-is-not-evaluable", Subject{
+			K8sVersion: "1.35",
+			Components: []ComponentRef{{ID: "argocd", Version: "0.0.0-nope"}},
+		}},
+		{"evaluate/component/a-malformed-version-is-not-evaluable", Subject{
+			K8sVersion: "1.",
+			Components: []ComponentRef{{ID: "argocd", Version: "9.5.11"}},
+		}},
+		{"evaluate/addon/kube-prometheus-stack-inside-its-window", Subject{
+			K8sVersion: "1.35",
+			AddOns:     []AddOnRef{{ID: "kube-prometheus-stack"}},
+		}},
+		{"evaluate/addon/an-unrecorded-addon-is-not-evaluable", Subject{
+			K8sVersion: "1.35",
+			AddOns:     []AddOnRef{{ID: "not-in-the-matrix"}},
+		}},
+		{"evaluate/mixed/a-provider-a-component-and-an-addon", Subject{
+			Providers:  []string{"aws"},
+			K8sVersion: "1.35",
+			Components: []ComponentRef{{ID: "argocd", Version: "9.5.11"}},
+			AddOns:     []AddOnRef{{ID: "kube-prometheus-stack"}},
+		}},
 	}
 }
 
@@ -140,6 +182,22 @@ func waiverCases() []parityWaiverCase {
 		{ID: "waiver/UNPARSEABLE-EXPIRY-DOES-NOT-WAIVE", Controls: []string{ctrl}, Expiry: "garbage"},
 		{ID: "waiver/PARTIAL-DATE-DOES-NOT-WAIVE", Controls: []string{ctrl}, Expiry: "2026-13-45"},
 		{ID: "waiver/A-NUMBER-IS-NOT-A-TIMESTAMP", Controls: []string{ctrl}, Expiry: "1756728000"},
+
+		// The seven shapes `new Date` accepts and Go's RFC3339 refuses. Every one is FUTURE-dated,
+		// so a TS mirror using a bare NaN check would honour the waiver while the runner refuses
+		// the override outright — the console looser than the gate, which is the direction that
+		// tells a user their waiver is in force while the apply is blocked anyway.
+		{ID: "waiver/LOWERCASE-T-AND-Z-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099-01-01t00:00:00z"},
+		{ID: "waiver/A-MISSING-ZONE-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00"},
+		{ID: "waiver/A-SPACE-SEPARATOR-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099-01-01 00:00:00Z"},
+		{ID: "waiver/A-BARE-DATE-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099-01-01"},
+		{ID: "waiver/A-BARE-YEAR-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099"},
+		{ID: "waiver/RFC1123-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "Tue, 01 Sep 2026 12:00:00 GMT"},
+		{ID: "waiver/HOUR-24-IS-NOT-RFC3339", Controls: []string{ctrl}, Expiry: "2099-01-01T24:00:00Z"},
+
+		// ...and shapes both sides must still ACCEPT, so the fix cannot be "refuse everything".
+		{ID: "waiver/a-numeric-offset-waives", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00+02:00"},
+		{ID: "waiver/fractional-seconds-waive", Controls: []string{ctrl}, Expiry: "2099-01-01T00:00:00.123Z"},
 	}
 }
 
@@ -169,20 +227,27 @@ func buildParity(t *testing.T) parityFile {
 	}
 
 	for _, c := range waiverCases() {
-		// Decode the expiry the way the wire does. A failure here IS Go's answer: the Override
-		// never comes into existence, so nothing is waived.
+		// Parse the expiry the way the WIRE PATH does — RFC3339, and an unreadable value means no
+		// waiver at all.
+		//
+		// This deliberately does NOT use json.Unmarshal. An earlier cut did, on the reasoning that
+		// Override.Expiry is a time.Time so a malformed value fails to decode and the Override
+		// never exists. That is true of json.Unmarshal and FALSE of the path production uses:
+		// apps/runner's buildCompatOverride reads the payload as map[string]any and called
+		// time.Parse with the error SWALLOWED, leaving Expiry zero — which Covers reads as "never
+		// expires". So Go had the same fail-open as the TS mirror, and a fixture built on
+		// json.Unmarshal pinned an answer the apply gate never produced.
+		//
+		// The builder now refuses the override outright, and override_expiry_wire_test.go in
+		// apps/runner drives THIS fixture through the real builder so the two cannot drift.
 		var ov *Override
 		decodes := true
 		if c.Expiry == "" {
 			ov = &Override{Controls: c.Controls}
+		} else if t2, err := time.Parse(time.RFC3339, c.Expiry); err != nil {
+			decodes = false
 		} else {
-			raw := fmt.Sprintf(`{"controls":%s,"expiry":%q}`, mustJSON(t, c.Controls), c.Expiry)
-			var decoded Override
-			if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
-				decodes = false
-			} else {
-				ov = &decoded
-			}
+			ov = &Override{Controls: c.Controls, Expiry: t2}
 		}
 
 		failing := []string{"COMPAT-K8S-CLOUD-AWS"}
@@ -198,15 +263,6 @@ func buildParity(t *testing.T) parityFile {
 		})
 	}
 	return out
-}
-
-func mustJSON(t *testing.T, v any) string {
-	t.Helper()
-	b, err := json.Marshal(v)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	return string(b)
 }
 
 // TestEngineParityFixture freezes the Go engine's answers, or regenerates them under

@@ -71,18 +71,57 @@ export function unwaived(report: CompatReport, override?: CompatOverride | null,
 function covers(override: CompatOverride | null | undefined, id: string, now: number): boolean {
 	if (!override) return false;
 	if (override.expiry) {
-		const expiry = new Date(override.expiry).getTime();
+		const expiry = parseRFC3339(override.expiry);
 		// An expiry that cannot be READ does not waive. The previous form was
 		// `new Date(expiry).getTime() < now`, and `new Date("garbage").getTime()` is NaN — every
 		// comparison with NaN is false, so an unparseable expiry made the waiver valid FOREVER.
 		// A fail-open in the check that decides whether a fail-closed apply gate may be passed.
-		//
-		// Go never had this because Expiry is a time.Time: a malformed value fails json.Unmarshal
-		// and the Override never exists. There is no decode step here, so the NaN check IS that
-		// refusal, and it has to come first.
-		if (Number.isNaN(expiry) || expiry < now) return false;
+		if (expiry === null || expiry < now) return false;
 	}
 	return override.controls.includes(id);
+}
+
+/**
+ * `time.Parse(time.RFC3339, s)`, as closely as JS can express it.
+ *
+ * A bare NaN check is NOT enough, and this is the second half of the same fail-open. `new Date` is
+ * far laxer than Go: it accepts a lowercase `t`/`z`, a missing zone, a space instead of the `T`, a
+ * bare date, a bare year, an RFC1123 string, and hour 24 — SEVEN shapes Go's RFC3339 refuses. Each
+ * one is a future-dated waiver the console would honour while the runner refuses the override
+ * outright, which is the console being LOOSER: the dangerous direction, since the user is told the
+ * waiver is in force and the apply is blocked anyway.
+ *
+ * Mirrors apps/runner's buildCompatOverride / buildVerifyOverride, which parse with
+ * `time.RFC3339` and refuse the whole override when it fails. The divergent shapes are pinned in
+ * packages/core/compat/testdata/engine_parity.json.
+ *
+ * @returns epoch milliseconds, or null when Go would not have parsed it.
+ */
+function parseRFC3339(raw: string): number | null {
+	// Uppercase T and Z only, a full date, a full time, and a mandatory zone — Go's layout is
+	// "2006-01-02T15:04:05Z07:00" and it is not case-insensitive.
+	const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(raw);
+	if (!m) return null;
+
+	// The shape is right; the COMPONENTS still have to be real. `2026-13-45T00:00:00Z` matches the
+	// pattern, and JS would roll it over into 2027 rather than rejecting it, where Go range-checks.
+	const [, y, mo, d, h, mi, s] = m;
+	const month = Number(mo);
+	const day = Number(d);
+	const hour = Number(h);
+	if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+	// Go rejects hour 24; JS accepts it as midnight the next day.
+	if (hour > 23 || Number(mi) > 59 || Number(s) > 59) return null;
+
+	const t = Date.parse(raw);
+	if (Number.isNaN(t)) return null;
+
+	// Round-trip the calendar fields so a day that does not exist in that month (2026-02-30) is
+	// refused rather than rolled forward, which is what Go does.
+	const back = new Date(t);
+	if (back.getUTCFullYear() !== Number(y) && raw.endsWith("Z")) return null;
+	if (raw.endsWith("Z") && (back.getUTCMonth() + 1 !== month || back.getUTCDate() !== day)) return null;
+	return t;
 }
 
 /** Checks that the cluster Kubernetes minor is offered by the cloud. */

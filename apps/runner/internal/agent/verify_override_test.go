@@ -35,15 +35,23 @@ func TestBuildVerifyOverride_NilAndEmpty(t *testing.T) {
 	}
 }
 
-func TestBuildVerifyOverride_BadExpiryIgnored(t *testing.T) {
+// REVERSED, deliberately. This test used to assert the opposite — "expected an override even with
+// a bad expiry" and "an unparseable expiry should be left zero (treated as no expiry)" — so the
+// behaviour was not an oversight but a recorded intention. It was wrong, and the file next door
+// says why: verify/override.go refuses a zero Expiry for the ControlPlanUnavailable backstop
+// because "a payload merely omitting expiry" would "disable the backstop FOREVER". That defends
+// the MISSING-expiry route into the zero value. An UNPARSEABLE expiry reached the same zero value
+// by another route, and leaving it zero meant a malformed timestamp waived a failing control on
+// every subsequent apply.
+//
+// "Ignored" is the wrong disposition for a field whose absence means "never expires".
+func TestBuildVerifyOverride_UnreadableExpiryRefusesTheWaiver(t *testing.T) {
 	ov := buildVerifyOverride(map[string]any{
 		"controls": []any{"KEYLESS-001"},
 		"expiry":   "not-a-date",
 	})
-	if ov == nil {
-		t.Fatal("expected an override even with a bad expiry")
-	}
-	if !ov.Expiry.IsZero() {
-		t.Error("an unparseable expiry should be left zero (treated as no expiry)")
+	if ov != nil {
+		t.Fatalf("an unreadable expiry must not produce a waiver; got Expiry=%v (IsZero=%v), which reads as 'never expires'",
+			ov.Expiry, ov.Expiry.IsZero())
 	}
 }

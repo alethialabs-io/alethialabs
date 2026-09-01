@@ -29,9 +29,17 @@ func buildVerifyOverride(raw map[string]any) *verify.Override {
 		By:       asString(raw["by"]),
 	}
 	if exp := asString(raw["expiry"]); exp != "" {
-		if t, err := time.Parse(time.RFC3339, exp); err == nil {
-			ov.Expiry = t
+		t, err := time.Parse(time.RFC3339, exp)
+		if err != nil {
+			// An expiry we cannot READ is not a waiver. Swallowing the error here left Expiry at
+			// its zero value, and both Covers implementations read a zero Expiry as "never
+			// expires" — so a malformed timestamp waived a failing control FOREVER, on the very
+			// gate the waiver is supposed to be time-boxed against. Refusing the whole override
+			// matches what this function already does for an empty control list: fail closed, and
+			// let the apply stay blocked.
+			return nil
 		}
+		ov.Expiry = t
 	}
 	return ov
 }
