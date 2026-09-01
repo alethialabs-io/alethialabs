@@ -174,8 +174,11 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
           }) => {
             if (!member.role) {
               // An invitation with no role yields a member with no mappable role, so
-              // ensureMemberGrant would silently no-op (leaving the member ungranted).
-              // Surface it rather than fail silently.
+              // ensureMemberGrant writes nothing (leaving the member ungranted). It now says so
+              // itself for EVERY unmappable role — see core's `toPdpRole` / #3730, where
+              // better-auth's own `member` role was unmapped and this branch never fired because
+              // the role was present, just unrecognised. Kept because this one is the acceptance
+              // path's own precondition and names the invitation.
               console.warn(
                 `[authz] accepted invitation for user ${user.id} in org ${org.id} has no role — no grant written`,
               );
