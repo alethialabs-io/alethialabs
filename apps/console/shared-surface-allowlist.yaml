@@ -26,11 +26,11 @@
 # Why the second kind exists, since the first kind's rule ("never 'we haven't got to it yet'") is
 # right and stays: on its own it is also a rule that stops a guard from ever being ADDED to a
 # surface that has already drifted. The six rules added in #3615 were measured on an unmodified
-# `dev` and found 88 occurrences across 71 files, and there is no honest sentence in the product's
-# voice that calls any of them a different thing. Writing 71 fake decisions would empty the word
+# `dev` and found 101 occurrences across 74 files, and there is no honest sentence in the product's
+# voice that calls any of them a different thing. Writing 74 fake decisions would empty the word
 # "decision" of meaning — the eleven `page_header` reasons below are worth reading precisely
 # because none of them is that. Leaving the guard red would mean it never lands, which is how the
-# drift reached 88 unseen. So the drift is written down where it can only shrink, and every row
+# drift reached 101 unseen. So the drift is written down where it can only shrink, and every row
 # says which issue takes it away. Work not yet done still belongs on the board, and here it is
 # ON the board: #3613's conformance lanes, one per console area.
 #
@@ -61,13 +61,17 @@
 #                      literal `$` before an interpolation, `/ 1024`, an interpolation glued
 #                      directly onto a `toLocaleString`, and a currency symbol passed as a prop.
 #   page_header:     — @repo/ui/page-header. A raw `<h1>` in app/(private)/** or components/**.
-#   section_header:  — @repo/ui/page-header with `level`. A raw `<h2>` or `<h3>`, same scope. Kept
+#   section_header:  — @repo/ui/page-header with `level`. A raw `<h2>` through `<h6>`, same scope.
+#                      It runs to `<h6>` because a rule that stopped at `<h3>` would be an
+#                      instruction to demote: the guard goes quiet, the outline gets worse. Kept
 #                      apart from `page_header:` so a file's `<h1>` decision and its `<h2>` debt
 #                      cannot merge into one entry carrying only one of the two notes.
-#   empty_state:     — @repo/ui/empty. One class string carrying `text-center` and `py-6`…`py-16`.
-#   stat_strip:      — §6's "No stat-card strips": a container opening onto a `<Stat`, and the
-#                      `Stat` cell primitive itself.
-#   layer_token:     — a `--z-*` token. A raw stacking level of 40 or more, which is the gap
+#   empty_state:     — @repo/ui/empty. One class string — double-quoted, single-quoted or a
+#                      template literal — carrying `text-center` and `py-6` or more, no upper bound.
+#   stat_strip:      — §6's "No stat-card strips": a `<Stat` CELL — the container is the wrong
+#                      half of the shape — and the `Stat` primitive itself.
+#   layer_token:     — a `--z-*` token. A raw stacking level of 40 or more, variant prefix or
+#                      not (`md:z-50`, `data-[state=open]:z-50`), counting from the gap
 #                      packages/brand/src/tokens.css leaves empty between its in-flow lifts and
 #                      the page chrome.
 #   data_table:      — DataTable, or @repo/ui/table. A grid used as a table, and a raw `<table>`.
@@ -82,7 +86,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 15
-debt: 71
+debt: 74
 
 scanned:
   - scope: console_code
@@ -90,7 +94,7 @@ scanned:
   - scope: console_view
     floor: 630
   - scope: console_pages
-    floor: 380
+    floor: 400
 
 format:
   - path: apps/console/components/runners/pool-card.tsx
@@ -105,7 +109,7 @@ format:
   - path: apps/console/components/agent/widgets/bodies/blocks.tsx
     hits: 2
     reason: SVG path coordinates for a sparkline — geometry the browser reads, never a number a person does.
-  # --- debt: measured 2026-09-01 on an unmodified dev, by #3615's two new money matchers.
+  # --- debt: measured 2026-09-01 on an unmodified dev, by the two new money matchers.
   - path: apps/console/components/agent/approval-card.tsx
     hits: 1
     lifts: "#3623 — the agent surface adopts the shared surface: 1 money site here writes the currency symbol somewhere other than next to the number."
@@ -149,7 +153,7 @@ page_header:
     reason: An error boundary is not a page header — it replaces the page, and its heading has to size itself to whether it is filling the screen or sitting inside a panel.
 
 section_header:
-  # --- debt only: 41 raw <h2>/<h3> across 36 files, measured 2026-09-01 on an unmodified dev.
+  # --- debt only: 46 raw <h2>-<h6> across 39 files, measured 2026-09-01 on an unmodified dev.
   - path: apps/console/app/(private)/[org]/~/runners/runners-client.tsx
     hits: 1
     lifts: "#3619 — the page frame is rebuilt: 1 raw section heading here."
@@ -159,6 +163,9 @@ section_header:
   - path: apps/console/components/ai-elements/prompt-input.tsx
     hits: 1
     lifts: "#3623 — the agent surface adopts the shared surface: 1 raw section heading here."
+  - path: apps/console/components/ai-elements/tool.tsx
+    hits: 2
+    lifts: "#3623 — the agent surface adopts the shared surface: 2 raw section headings here."
   - path: apps/console/components/billing/plan-picker.tsx
     hits: 1
     lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
@@ -207,6 +214,9 @@ section_header:
   - path: apps/console/components/onboarding/setup-guide.tsx
     hits: 1
     lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw section heading here."
+  - path: apps/console/components/plan/plan-tab.tsx
+    hits: 2
+    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 2 raw section headings here."
   - path: apps/console/components/runners/add-runner-dialog.tsx
     hits: 1
     lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw section heading here."
@@ -234,6 +244,9 @@ section_header:
   - path: apps/console/components/settings/usage/usage-panel.tsx
     hits: 2
     lifts: "#3628 — the usage pages are rebuilt: 2 raw section headings here."
+  - path: apps/console/components/shell/account-settings-dialog.tsx
+    hits: 1
+    lifts: "#3619 — the page frame is rebuilt: 1 raw section heading here."
   - path: apps/console/components/support/submit/steps/step-category.tsx
     hits: 1
     lifts: "#3625 — support adopts the shared surface: 1 raw section heading here."
@@ -335,19 +348,19 @@ empty_state:
     lifts: "#3620 — settings adopts the shared surface: 1 hand-rolled empty state here."
 
 stat_strip:
-  # --- debt only: four strips and the two Stat cell primitives they are built from.
+  # --- debt only: 12 stat-card cells and the 2 Stat primitives they render.
   - path: apps/console/components/agent/approval-card.tsx
-    hits: 2
-    lifts: "#3623 — the agent surface adopts the shared surface: one strip, plus the local `Stat` cell primitive it is built from."
+    hits: 5
+    lifts: "#3623 — the agent surface adopts the shared surface: 5 stat-card cell/primitive sites here."
   - path: apps/console/components/settings/usage/project-usage-panel.tsx
-    hits: 2
-    lifts: "#3628 — the usage pages are rebuilt: 2 stat-strip sites here."
+    hits: 5
+    lifts: "#3628 — the usage pages are rebuilt: 5 stat-card cell/primitive sites here."
   - path: apps/console/components/settings/usage/usage-panel.tsx
-    hits: 1
-    lifts: "#3628 — the usage pages are rebuilt: 1 stat-strip site here."
+    hits: 3
+    lifts: "#3628 — the usage pages are rebuilt: 3 stat-card cell/primitive sites here."
   - path: apps/console/components/settings/usage/usage-primitives.tsx
     hits: 1
-    lifts: "#3628 — the usage pages are rebuilt: the settings `Stat` cell primitive both usage strips are built from."
+    lifts: "#3628 — the usage pages are rebuilt: 1 stat-card cell/primitive site here."
 
 layer_token:
   # --- debt only: the two raw stacking levels in the gap the token scale leaves empty.
@@ -368,4 +381,4 @@ data_table:
     lifts: "#3622 — alerts, environments and clusters adopt the shared surface: 1 grid-as-table site here."
   - path: apps/console/components/environments/consistency-matrix.tsx
     hits: 1
-    lifts: "#3622 — alerts, environments and clusters adopt the shared surface: the console's one raw <table>, which agrees with no other table about its header type or its row rule."
+    lifts: "#3622 — alerts, environments and clusters adopt the shared surface: 1 grid-as-table site here."
