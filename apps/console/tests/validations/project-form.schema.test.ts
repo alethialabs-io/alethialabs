@@ -5,6 +5,7 @@ import { describe, it, expect } from "vitest";
 import {
 	projectFormSchema,
 	helmRegistryProviderConfigSchema,
+	environmentMatrixSchema,
 } from "@/lib/validations/project-form.schema";
 import { getProvidersForCategory } from "@/lib/connectors/registry.generated";
 
@@ -618,5 +619,93 @@ describe("dns connector selection", () => {
 				zone_id: "z",
 			}).success,
 		).toBe(false);
+	});
+});
+
+// #3588. A node name becomes Kubernetes object names — `queue-<name>` Applications, a
+// `registry-<name>` Service, the Secret the runner seeds a queue's credentials into — and the
+// runner validates every one of them against the DNS-1123 LABEL charset before it interpolates
+// them into a `kubectl` command.
+//
+// A name outside that charset used to be accepted here and then failed with nothing said: it
+// renders VALID Kubernetes objects, they apply cleanly, and the StatefulSet then sits at
+// CreateContainerConfigError forever because no credential was ever seeded. The person typing the
+// name is the only human in that sequence, and was the one person not told.
+describe("component node names are DNS-1123 labels", () => {
+	// Every list whose items become a Kubernetes object name. A kind missing from here is a kind
+	// that can still ship the failure, so the list is the test.
+	const kinds = [
+		"databases",
+		"caches",
+		"queues",
+		"topics",
+		"nosql_tables",
+		"secrets",
+		"container_registries",
+		"helm_registries",
+		"services",
+	] as const;
+
+	// Asserted on the ISSUE PATH rather than on overall success, because several of these item
+	// schemas require fields this fixture has no business supplying (a service needs a source and
+	// its ports; a chart repo needs a CONNECTED provider). Judging by `success` there would make a
+	// rejection mean "something was wrong", which is not the claim — and would pass just as well if
+	// the name rule were deleted.
+	const nameIssues = (kind: string, name: string) => {
+		const parsed = projectFormSchema.safeParse({ ...validProject, [kind]: [{ name }] });
+		return (parsed.error?.issues ?? []).filter(
+			(issue) => issue.path[0] === kind && issue.path[issue.path.length - 1] === "name",
+		);
+	};
+
+	// A name is rejected for the SAME reason everywhere, so it is checked everywhere: a rule applied
+	// to one list and forgotten on the next is exactly how this shipped in the first place.
+	for (const kind of kinds) {
+		it(`rejects a dotted name in ${kind} — it renders valid objects and then never starts`, () => {
+			expect(nameIssues(kind, "orders.v2")).not.toHaveLength(0);
+		});
+
+		it(`rejects an upper-case name in ${kind}`, () => {
+			expect(nameIssues(kind, "Orders")).not.toHaveLength(0);
+		});
+
+		it(`accepts an ordinary label in ${kind}`, () => {
+			// The pair is self-checking: if item validation never ran for this kind, the two
+			// rejections above fail rather than this passing vacuously.
+			expect(nameIssues(kind, "orders-v2")).toHaveLength(0);
+		});
+	}
+
+	it("rejects the boundary characters kubernetes rejects", () => {
+		for (const name of ["-orders", "orders-", "orders_v2", "orders/v2", "orders v2", ""]) {
+			expect(nameIssues("queues", name), name).not.toHaveLength(0);
+		}
+	});
+
+	it("names the rule in the message, since the form is where it can be acted on", () => {
+		expect(nameIssues("queues", "orders.v2").map((i) => i.message).join(" ")).toContain("hyphens");
+	});
+
+	it("rejects a name too long to survive the prefixes that ride on it", () => {
+		expect(nameIssues("queues", "q".repeat(41))).not.toHaveLength(0);
+		expect(nameIssues("queues", "q".repeat(40))).toHaveLength(0);
+	});
+});
+
+// The environment name feeds a tofu state-path segment and a Fabric name, and the namespace is a
+// kubernetes namespace — both DNS-1123 labels. The pattern accepted a TRAILING hyphen, which is not
+// one, so `prod-` reached the state path and the Fabric name.
+describe("environment names are DNS-1123 labels", () => {
+	const env = (name: string) => [
+		{ name, stage: "development" as const, placement_mode: "namespace" as const },
+	];
+
+	it("rejects a trailing hyphen", () => {
+		expect(environmentMatrixSchema.safeParse(env("prod-")).success).toBe(false);
+	});
+
+	it("still accepts an ordinary environment name", () => {
+		const result = environmentMatrixSchema.safeParse(env("prod"));
+		expect(result.success, JSON.stringify(result.error?.issues)).toBe(true);
 	});
 });
