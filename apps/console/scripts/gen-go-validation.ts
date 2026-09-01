@@ -160,9 +160,23 @@ function isZodType(v: unknown): v is z.ZodType {
 /**
  * Walks a schema depth-first in EVALUATION order and returns every node.
  *
- * Order is the contract: a pipe evaluates `in`, then `out`, then its own checks, and a transform
- * rewrites the value every later step sees. A Go side that ran the length bound against the
- * UNTRIMMED value would refuse input the server trims and accepts.
+ * Order is the contract: a wrapper evaluates its inner value first and its OWN checks last, a pipe
+ * evaluates `in` then `out` then its own checks, and a transform rewrites the value every later
+ * step sees. A Go side that ran the length bound against the UNTRIMMED value would refuse input the
+ * server trims and accepts.
+ *
+ * ⚠️  EVERY node's own checks are collected on ONE exit path, deliberately.
+ *
+ * This function used to `return` from inside each switch arm and call `pushChecks` in only three of
+ * the five. The two that forgot were `optional` and `nullable` — which is where `.nullish()` puts
+ * the outermost wrapper of `appsPathSchema`, so a `.refine()` appended AFTER `.nullish()` (the
+ * natural place to write one: it is the last link in the chain) was never discovered at all. Not
+ * projected, not tabled, not refused: the generator printed "up to date" and exited 0.
+ *
+ * That is the exact failure this whole file exists to prevent, reintroduced by an omission in the
+ * file itself. So the structure no longer allows the omission: the arms below decide what a node's
+ * CHILDREN are, and nothing else, and the checks are pushed once at the bottom for every node
+ * including the ones with no children.
  */
 export function discover(schema: unknown, prefix = "$"): DiscoveredNode[] {
 	const out: DiscoveredNode[] = [];
@@ -172,41 +186,29 @@ export function discover(schema: unknown, prefix = "$"): DiscoveredNode[] {
 	const def = defOf(schema);
 	const type = typeof def.type === "string" ? def.type : "<unknown>";
 
-	const pushChecks = (owner: z.ZodType, at: string) => {
-		const checks = defOf(owner).checks;
-		if (!Array.isArray(checks)) return;
-		checks.forEach((check, i) => {
-			const cdef = defOf(check);
-			const name = typeof cdef.check === "string" ? cdef.check : "<unknown>";
-			out.push({ path: `${at}#${i}:${name}`, kind: "check", check: name, def: cdef, owner });
-		});
-	};
-
 	switch (type) {
 		case "optional":
 			out.push({ path: prefix, kind: "optional" });
 			out.push(...discover(def.innerType, `${prefix}/inner`));
-			return out;
+			break;
 		case "nullable":
 			out.push({ path: prefix, kind: "nullable" });
 			out.push(...discover(def.innerType, `${prefix}/inner`));
-			return out;
+			break;
 		case "pipe":
 			out.push(...discover(def.in, `${prefix}/in`));
 			out.push(...discover(def.out, `${prefix}/out`));
-			pushChecks(schema, prefix);
-			return out;
+			break;
 		case "transform":
 			out.push({ path: prefix, kind: "transform" });
-			return out;
+			break;
 		case "string":
 		case "number":
 			// A number base is DISCOVERED but not projectable: packages/core/validate evaluates
 			// string values only. Reporting it as a base node rather than as an unknown type is what
 			// lets `project` say "teach the evaluator this type" instead of "no idea what this is".
 			out.push({ path: prefix, kind: "base", type });
-			pushChecks(schema, prefix);
-			return out;
+			break;
 		default:
 			// Every other zod type — object, array, union, record, enum, and the wrappers that change
 			// a value rather than widening it (default, catch, readonly). None is unsupported
@@ -215,8 +217,21 @@ export function discover(schema: unknown, prefix = "$"): DiscoveredNode[] {
 			// point: `optional` and `nullable` are projected because they only ever WIDEN, and
 			// nothing else here can claim that.
 			out.push({ path: prefix, kind: "unsupported", detail: type });
-			return out;
+			break;
 	}
+
+	// The node's OWN checks, last, for every node kind. A node type that carries no `checks` array
+	// (a transform, for one) contributes nothing here, which is the difference between "has none"
+	// and "was never asked".
+	const checks = def.checks;
+	if (Array.isArray(checks)) {
+		checks.forEach((check, i) => {
+			const cdef = defOf(check);
+			const name = typeof cdef.check === "string" ? cdef.check : "<unknown>";
+			out.push({ path: `${prefix}#${i}:${name}`, kind: "check", check: name, def: cdef, owner: schema });
+		});
+	}
+	return out;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1001,6 +1016,13 @@ interface SelfTestCase {
 const selfTestPredicate = (v: string): boolean => v.length > 0;
 const selfTestOtherPredicate = (v: string): boolean => v.length > 1;
 
+/**
+ * A predicate for the OUTERMOST position, where `.nullish()` has already widened the value. It
+ * exists because a refine attached above the wrappers sees `string | null | undefined`, which is
+ * exactly why that position is easy to reach by accident and was the one the walk did not look at.
+ */
+const selfTestOuterPredicate = (v: string | null | undefined): boolean => v !== "";
+
 /** A table disposition with one real case, reusing a rule both sides already implement. */
 function tableDisposition(overrides: Partial<Extract<Disposition, { via: "table" }>> = {}): Disposition {
 	return {
@@ -1034,6 +1056,52 @@ function selfTestCases(): SelfTestCase[] {
 				schema: z.string().min(1, "required").refine(selfTestPredicate, "nope"),
 				declarations: [],
 			}),
+		},
+		{
+			// THE REGRESSION CASE. `discover` used to return from inside each switch arm and collect
+			// the node's own checks in only three of the five, and `optional`/`nullable` were two of
+			// the misses. `.nullish()` is the last link on the real appsPathSchema, so a rule
+			// appended after it — the natural place to write one — was silently accepted: not
+			// projected, not tabled, not refused, "up to date", exit 0.
+			//
+			// Every other UNDECLARED case below carries its checks BENEATH a wrapper or on a bare
+			// string, so none of them could see this position. That is what made a derived
+			// "all twelve codes are reached" true and still blind.
+			id: "an-undeclared-refine-on-the-OUTERMOST-node-is-refused",
+			want: "UNDECLARED",
+			build: () => ({
+				id: "t",
+				why: "t",
+				schema: z.string().min(1, "required").nullish().refine(selfTestOuterPredicate, "nope"),
+				declarations: [],
+			}),
+		},
+		{
+			// The other half: once seen, an outermost rule must actually PROJECT. A fix that made
+			// the walk notice the node and then refuse everything would satisfy the case above.
+			id: "a-declared-refine-on-the-OUTERMOST-node-projects",
+			want: "ok",
+			build: () => ({
+				id: "t",
+				why: "t",
+				schema: z.string().min(1, "required").nullish().refine(selfTestOuterPredicate, "nope"),
+				declarations: [
+					{ path: "$#0:custom", fn: selfTestOuterPredicate, disposition: tableDisposition() },
+				],
+			}),
+			assert: (spec) => {
+				if (!spec.optional || !spec.nullable) {
+					return `expected the .nullish() wrappers to be projected, got optional=${spec.optional} nullable=${spec.nullable}`;
+				}
+				// The rule step must come AFTER the inner min_length: the outer check is the last
+				// thing zod evaluates, and a Go side that ran it first would judge an untrimmed or
+				// unbounded value.
+				const kinds = spec.steps.map((step) => step.kind);
+				if (kinds.join(",") !== "min_length,rule") {
+					return `expected [min_length, rule] in evaluation order, got [${kinds.join(", ")}]`;
+				}
+				return null;
+			},
 		},
 		{
 			id: "an-undeclared-super-refine-is-refused",
