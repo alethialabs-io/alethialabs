@@ -48,8 +48,13 @@
 // `apps/console/components/**` for an exported `*Shell` and matching the layout chain against
 // what it finds. A typed list of four shell names would stop covering the day a fifth shipped,
 // and it would stop covering SILENTLY, which is the failure mode this repo has paid for most
-// often. `AuthShell` is found and then excluded by scope, not by omission: it wraps `(public)`
-// only, and this manifest is the PRIVATE app.
+// often. `AuthShell` and `ConnectSheetShell` are FOUND by that scan and carry no exclusion in code:
+// they simply never appear in a `(private)` layout chain today, because AuthShell wraps `(public)`
+// and ConnectSheetShell is a sheet rather than a page shell. That is exclusion by SCOPE — a
+// property of the tree being walked, not a rule this file enforces — so either would become a
+// route's `shell` the day a private layout mounted it. Stated rather than implied, because an
+// earlier draft of this comment said AuthShell "is excluded", which reads as a guarantee that
+// nothing here provides.
 
 import {
 	mkdirSync,
@@ -366,12 +371,28 @@ function toRecord({ appDir, pageFile, boundaries, shells, repoRoot }) {
 			readFileOrRaise(path.join(repoRoot, layoutRel)),
 			layoutRel,
 		);
-		for (const shell of shells) {
+		// ORDER BY POSITION IN THE SOURCE, NOT BY DISCOVERY ORDER, AND LET A RE-MOUNT MOVE.
+		//
+		// `shell` below is `shellChain[last]` and is read as the innermost — the width owner. Two
+		// shapes broke that, and both are one refactor away rather than hypothetical:
+		//   · one layout mounting two shells (`<AppShell><SettingsShell>`) pushed them in `shells`
+		//     DISCOVERY order, which is filesystem order over components/**, so the outer one could
+		//     land last and be reported as the owner;
+		//   · `!shellChain.includes(name)` pinned a shell to its OUTERMOST appearance, so a shell
+		//     re-mounted at a deeper layout kept the ancestor's slot.
+		// Sorting this layout's mounts by their index in the source fixes the first; deleting a
+		// prior occurrence before pushing fixes the second. Layouts are walked outermost-first, so
+		// appending per layout keeps the chain in nesting order.
+		const mountedHere = shells
+			.map((shell) => ({ name: shell.name, at: src.search(new RegExp(`<${shell.name}\\b`)) }))
 			// A JSX mount (`<AppShell`), not a mere import — a layout may import a type or a helper
 			// from the same module without rendering it.
-			if (new RegExp(`<${shell.name}\\b`).test(src) && !shellChain.includes(shell.name)) {
-				shellChain.push(shell.name);
-			}
+			.filter((hit) => hit.at >= 0)
+			.sort((a, b) => a.at - b.at);
+		for (const hit of mountedHere) {
+			const prior = shellChain.indexOf(hit.name);
+			if (prior >= 0) shellChain.splice(prior, 1);
+			shellChain.push(hit.name);
 		}
 	}
 
@@ -387,13 +408,22 @@ function toRecord({ appDir, pageFile, boundaries, shells, repoRoot }) {
 		params,
 		/** No JSX anywhere and a `redirect()` call: the page renders nothing a user can look at. */
 		isRedirectOnly: /\bredirect\s*\(/.test(pageSrc) && !hasJsx(pageSrc),
-		/** T4. `generateMetadata` may live on a sibling layout for a client page — hence both. */
-		hasMetadata:
-			/\bexport\s+(?:const|async\s+function|function)\s+(?:metadata|generateMetadata)\b/.test(
-				pageSrc,
-			) ||
+		/**
+		 * T4. `generateMetadata` may live on a sibling layout for a client page — hence both.
+		 *
+		 * A TITLE, NOT MERELY A `metadata` EXPORT. The export alone does not answer T4: a metadata
+		 * object may declare only `robots`, `openGraph` or `alternates` and never name the page.
+		 * `app/(private)/layout.tsx` is exactly that shape, and because T4 is declared never-N/A
+		 * ("a redirect still owns a title"), a noindex-only layout scored PASS with no title
+		 * anywhere — the predicate reporting satisfied on evidence that does not bear on it.
+		 *
+		 * `generateMetadata` is accepted on sight because it is a function: what it returns cannot
+		 * be read statically, and refusing it would flip the error to the other side and fail every
+		 * page that computes its title. Only the object form is inspected for a `title`.
+		 */
+		hasMetadata: declaresTitle(pageSrc) ||
 			(inherited.layout.own &&
-				/\bexport\s+(?:const|async\s+function|function)\s+(?:metadata|generateMetadata)\b/.test(
+				declaresTitle(
 					stripComments(
 						readFileOrRaise(path.join(repoRoot, inherited.layout.file)),
 						inherited.layout.file,
@@ -405,6 +435,28 @@ function toRecord({ appDir, pageFile, boundaries, shells, repoRoot }) {
 		/** The width owner, or `null` when no known shell wraps the page at all. */
 		shell: shellChain.length ? shellChain[shellChain.length - 1] : null,
 	};
+}
+
+/**
+ * Does this source name the page — i.e. satisfy T4 — rather than merely export a metadata object?
+ *
+ * `export async function generateMetadata` and `export function generateMetadata` count on sight:
+ * the title is computed at request time and cannot be read out of the source, so demanding a literal
+ * would fail every page that builds its title from data. `export const metadata` is inspected, and
+ * only a `title` key in it counts — an object declaring `robots`/`openGraph`/`alternates` and no
+ * title does not name the page, which is the whole of T4.
+ *
+ * @param {string} src comment-stripped source
+ * @returns {boolean}
+ */
+function declaresTitle(src) {
+	if (/\bexport\s+(?:async\s+function|function)\s+generateMetadata\b/.test(src)) return true;
+	const m = src.match(/\bexport\s+const\s+metadata\b[^=]*=\s*(\{[\s\S]*?\n\})/);
+	if (m) return /(^|[{,\s])title\s*:/.test(m[1]);
+	// `export const metadata: Metadata = someIdentifier` — not an object literal we can read. Accept
+	// it for the same reason as generateMetadata: unreadable is not the same as absent, and refusing
+	// here would fail a page whose metadata is composed elsewhere.
+	return /\bexport\s+const\s+metadata\b/.test(src);
 }
 
 /**
@@ -651,7 +703,20 @@ function selfTest() {
 	put("apps/console/app/(private)/[org]/~/legacy/error.jsx", "export default function JE() { return <div />; }");
 
 	const m = collectConsoleRoutes({ repoRoot: root });
-	const by = (r) => m.routes.find((x) => x.route === r);
+	// RAISES ON A LOST ROUTE RATHER THAN RETURNING undefined. Every assertion below dereferences
+	// this immediately (`by("/[org]").params[0]`), so a route the walker stopped producing threw a
+	// TypeError out of the self-test: no FAIL line, no tally, and the `rmSync` cleanup never ran —
+	// a crash where the whole point was a verdict. Failing here names the missing route and lets the
+	// harness report it as a failure like any other.
+	const by = (r) => {
+		const found = m.routes.find((x) => x.route === r);
+		if (!found) {
+			throw new Error(
+				`self-test: the walker produced no route ${r}. Routes seen: ${m.routes.map((x) => x.route).join(", ") || "(none)"}`,
+			);
+		}
+		return found;
+	};
 
 	// Six pages are placed above: [org], [org]/~/deep, [org]/~/near, [org]/~/settings, and the
 	// two non-.tsx ones ([org]/go as page.ts, [org]/~/legacy as page.jsx).
@@ -845,7 +910,18 @@ if (invokedDirectly) {
 		process.exit(0);
 	}
 	if (parsed.mode === "self-test") {
-		process.exit(selfTest());
+		// A THROW IS A FAILING SELF-TEST, NOT A CRASH. Every assertion dereferences its subject
+		// immediately, so a route the walker stopped producing used to escape as a TypeError: no
+		// FAIL line, no tally, and a non-zero exit that read like the harness itself was broken
+		// rather than like the thing under test. Catching here turns any escape into the verdict
+		// the mode exists to produce.
+		try {
+			process.exit(selfTest());
+		} catch (err) {
+			console.error(`\nFAIL - the self-test raised before it could report: ${err.message}`);
+			console.error("self-test: 1 FAILED (an assertion's subject was missing, not merely wrong)");
+			process.exit(1);
+		}
 	}
 	const manifest = collectConsoleRoutes();
 	if (parsed.mode === "summary") {
