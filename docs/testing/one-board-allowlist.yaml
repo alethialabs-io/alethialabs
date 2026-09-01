@@ -16,12 +16,12 @@
   retires_when: the legend is expressed without glyphs, or the guard learns to tell a legend from a verdict
 
 - path: docs/testing/provisioning-e2e-parity.md
-  reason: the remaining marks sit inside decision records and post-mortems - the alibaba ExcludedByCost measurement, the 2026-08-05 hetzner addons run, the Azure quota survey
-  retires_when: those writeups move somewhere that is not a board, or carry their verdicts as prose
+  reason: two marks are the Azure ESv5-vs-ESv3 quota survey, which is a measurement of what the subscription would not create; one is a checklist item using the glyph as a word ("before each dimension flips")
+  retires_when: the quota survey carries its finding as prose, and the checklist item stops naming a glyph
 
 - path: docs/testing/runner-xcloud-parity.md
-  reason: the remaining marks are in the 2026-07-22 fleet-churn incident record, which is history and cannot rot
-  retires_when: the incident record moves out of docs/testing
+  reason: one mark - a DONE marker on the register ELF-arch check, which shipped as the pre-merge runner-image-arch CI guard and so records a completed change rather than a cloud verdict
+  retires_when: that line is rewritten as prose, or the shipped-work note moves out of the board
 
 - path: docs/testing/cloud-preflight-2026-08-24.md
   reason: a dated point-in-time audit of the cloud ACCOUNTS - quotas, billing state, balances - which the rollup has no input for and cannot see

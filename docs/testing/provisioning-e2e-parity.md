@@ -13,15 +13,15 @@ Harness: `.github/workflows/e2e-nightly.yml` (T2 tier) → `test/e2e` (`-tags=e2
 `TestT2RealCloudProvisioning`). Run history: [`demos/proofs/provisioning-e2e-log.md`](../../demos/proofs/provisioning-e2e-log.md).
 Tracking epic: **#1058**.
 
-**How to update:** every run is recorded by `scripts/e2e/provisioning-e2e.sh` (appends the ledger + writes a
-scrubbed proof bundle + files a deduped GitHub issue on failure); the nightly `rollup` job also appends the
-ledger. Flip a matrix cell here when a dimension's verdict changes, and link the run/issue. A cell goes ✅
-**only with a real-apply proof artifact** in the ledger — never on `tofu validate` alone. **Failures are
-recorded, never hidden.**
+**How runs are recorded:** every run goes through `scripts/e2e/provisioning-e2e.sh` (appends the ledger +
+writes a scrubbed proof bundle + files a deduped GitHub issue on failure); the nightly `rollup` job also
+appends the ledger. **Failures are recorded, never hidden.**
 
-Legend: ✅ green (real-apply proof) · 🟡 floor-only (provisions + converges, full-bar dimension not yet run) ·
-⏳ pending · 🚫 blocked (open issue) · — n/a / out of scope. A green-skipped nightly is neither a
-proof nor a ledger row; a later `RETRACTED` ledger row corrects any historical claim without rewriting it.
+There is no matrix here to flip, and the legend that named its glyphs went with it — both are derived in
+`PROGRAMME.md` now. Two rules the ledger enforces are worth keeping in prose, because they are the reason
+the derivation can be trusted: a dimension counts as proven **only with a real-apply proof artifact**, never
+on `tofu validate` alone; and a green-SKIPPED nightly is neither a proof nor a ledger row. A later
+`RETRACTED` ledger row corrects a historical claim without rewriting it.
 
 ## Parity matrix
 

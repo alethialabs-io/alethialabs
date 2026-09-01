@@ -8,16 +8,16 @@ Living status for **per-cloud runner health + cluster provisioning**: does each 
 (EKS / GKE / AKS / Talos) on that cloud from a connected keyless identity. Tracking epic: **#1050**.
 Run history: [`demos/proofs/runner-xcloud-e2e-log.md`](../../demos/proofs/runner-xcloud-e2e-log.md).
 
-**How to update:** every e2e run is recorded by `scripts/e2e/runner-e2e.sh <cloud> <register|cluster>`
-(appends the ledger + captures a scrubbed proof bundle + files a deduped issue on failure). Flip the
-matrix cell when a stage's verdict changes, and link the run/issue. **Failures are recorded, never hidden.**
-
-Legend: ✅ done/green · ⏳ pending · 🚫 blocked (reason) · — n/a
+**How runs are recorded:** every e2e run goes through `scripts/e2e/runner-e2e.sh <cloud> <register|cluster>`,
+which appends the ledger, captures a scrubbed proof bundle and files a deduped issue on failure.
+**Failures are recorded, never hidden.** There is no matrix here to flip — verdicts are derived in
+`PROGRAMME.md`, and the legend that named their glyphs went with the table it described.
 
 ## Parity matrix
 
-> **Status is not here.** It rots, and this table proved it: every blocker it cited had been
-> closed, and it contradicted `runner-xcloud-parity.md` in the same directory while both passed CI.
+> **Status is not here.** It rots, and this table proved it: it called four of five clouds
+> "wired, gate off" for cluster provision after epic #1050 closed with all five wired, and it
+> contradicted `provisioning-e2e-parity.md` in the same directory while both passed CI.
 > `scripts/programme-rollup.mjs` names that pair as the reason it exists.
 >
 > The proof grid, the per-cell evidence and the open blockers are derived in **`PROGRAMME.md`**,
