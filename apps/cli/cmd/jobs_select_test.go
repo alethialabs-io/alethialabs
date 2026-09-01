@@ -646,3 +646,170 @@ func TestCancelJobWarning(t *testing.T) {
 		t.Errorf("the consequence was dropped from %q", resolved)
 	}
 }
+
+// jobsCancelSample is a page whose NEWEST job is terminal and whose second job is the one still
+// running. It is the shape the cancel scope exists for: "the most recent job" and "the job a
+// cancel could act on" are different jobs.
+func jobsCancelSample() []api.ProvisionJob {
+	base := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
+	return []api.ProvisionJob{
+		{ID: "job-plan-done", JobType: string(types.JobTypePlan), Status: string(types.JobStatusSuccess),
+			ProjectID: "p-web-0001", ProjectName: "web", CreatedAt: base},
+		{ID: "job-deploy-running", JobType: string(types.JobTypeDeploy), Status: string(types.JobStatusProcessing),
+			ProjectID: "p-web-0001", ProjectName: "web", CreatedAt: base.Add(-time.Minute)},
+	}
+}
+
+// TestCancellableJobScope_IsASubsetOfTheEnum pins the scope against the generated vocabulary in
+// both directions: every status it names must exist, and it must leave some out. A scope that
+// had silently grown to the whole enum would narrow nothing and every test below would still
+// pass by accident.
+func TestCancellableJobScope_IsASubsetOfTheEnum(t *testing.T) {
+	if len(cancellableJobScope.Statuses) == 0 {
+		t.Fatal("the cancellable scope is empty — cancel would resolve to no job at all")
+	}
+	for _, s := range cancellableJobScope.Statuses {
+		if !containsFold(jobStatusValues(), s) {
+			t.Errorf("%q is not a provision_job_status", s)
+		}
+	}
+	if len(cancellableJobScope.Statuses) >= len(jobStatusValues()) {
+		t.Errorf("the scope names %d of %d statuses — it excludes nothing",
+			len(cancellableJobScope.Statuses), len(jobStatusValues()))
+	}
+	// The terminal statuses are the ones the control plane refuses, so naming one here would
+	// re-open the defect this scope closes.
+	for _, terminal := range []types.JobStatus{types.JobStatusSuccess, types.JobStatusFailed, types.JobStatusCancelled} {
+		if containsFold(cancellableJobScope.Statuses, string(terminal)) {
+			t.Errorf("%s is terminal and the control plane refuses to cancel it", terminal)
+		}
+	}
+}
+
+// TestJobsSelector_CancelScopeSkipsTheTerminalNewest is the defect itself: unscoped, `--latest`
+// takes the PLAN that finished a second ago; scoped, it takes the deploy that is still running.
+// Both halves are asserted, so a scope that stopped applying could not pass by resolving "a job".
+func TestJobsSelector_CancelScopeSkipsTheTerminalNewest(t *testing.T) {
+	jobsSelectNoInput(t)
+
+	unscoped := &jobsSelectLister{jobs: jobsCancelSample()}
+	ref, err := resolveJob(unscoped, nil, jobSelector{latest: true})
+	if err != nil {
+		t.Fatalf("unscoped resolveJob: %v", err)
+	}
+	if ref.ID != "job-plan-done" {
+		t.Fatalf("unscoped --latest resolved %q, want job-plan-done — the fixture no longer poses the problem", ref.ID)
+	}
+
+	scoped := &jobsSelectLister{jobs: jobsCancelSample()}
+	ref, err = resolveJobIn(scoped, nil, jobSelector{latest: true}, cancellableJobScope)
+	if err != nil {
+		t.Fatalf("cancel-scoped resolveJob: %v", err)
+	}
+	if ref.ID != "job-deploy-running" {
+		t.Errorf("cancel --latest resolved %q, want job-deploy-running — the newest job the server would accept", ref.ID)
+	}
+}
+
+// TestJobsSelector_CancelScopeYieldsToAnExplicitStatus pins the escape hatch. A status the
+// operator typed is theirs: answering "no such job" for one they can see in `jobs list` would be
+// the CLI lying about the server's contents rather than reporting its refusal.
+func TestJobsSelector_CancelScopeYieldsToAnExplicitStatus(t *testing.T) {
+	jobsSelectNoInput(t)
+	f := &jobsSelectLister{jobs: jobsCancelSample()}
+	ref, err := resolveJobIn(f, nil, jobSelector{latest: true, status: "SUCCESS"}, cancellableJobScope)
+	if err != nil {
+		t.Fatalf("resolveJobIn --status SUCCESS: %v", err)
+	}
+	if ref.ID != "job-plan-done" {
+		t.Errorf("--status SUCCESS resolved %q, want job-plan-done — the scope overrode an explicit status", ref.ID)
+	}
+}
+
+// TestJobsSelector_CancelScopeNamesItselfWhenNothingMatches pins the empty answer. "no job" would
+// be false — there are jobs, none of them cancellable — and sends the reader looking for a job
+// that is right there in `jobs list`.
+func TestJobsSelector_CancelScopeNamesItselfWhenNothingMatches(t *testing.T) {
+	jobsSelectNoInput(t)
+	terminalOnly := []api.ProvisionJob{{
+		ID: "job-plan-done", JobType: string(types.JobTypePlan), Status: string(types.JobStatusSuccess),
+		ProjectID: "p-web-0001", ProjectName: "web", CreatedAt: time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC),
+	}}
+	f := &jobsSelectLister{jobs: terminalOnly}
+	_, err := resolveJobIn(f, nil, jobSelector{latest: true}, cancellableJobScope)
+	if err == nil {
+		t.Fatal("a page of terminal jobs resolved a cancel target")
+	}
+	for _, want := range append([]string{cancellableJobScope.Noun}, cancellableJobScope.Statuses...) {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
+	}
+}
+
+// TestJobsCancel_ResolvesInsideTheCancellableScope reads the wiring back off the real command, so
+// a `cancel` that went back to the unscoped resolver fails here rather than in an operator's
+// terminal. The scope lives in the Long help too, because a flag's behaviour that only the source
+// states is one an operator cannot check.
+func TestJobsCancel_ResolvesInsideTheCancellableScope(t *testing.T) {
+	for _, want := range cancellableJobScope.Statuses {
+		if !strings.Contains(jobsCancelCmd.Long, want) {
+			t.Errorf("`jobs cancel --help` does not say that %s is in the set --latest considers", want)
+		}
+	}
+	if !strings.Contains(jobsCancelCmd.Long, "stderr") {
+		t.Error("`jobs cancel --help` does not name the stream the resolved job is announced on")
+	}
+	if strings.Contains(jobsCancelCmd.Long, "stdout") {
+		t.Error("`jobs cancel --help` says stdout; announceResolvedJob writes to stderr")
+	}
+}
+
+// jobsDocsCapsToken matches a SHOUTED word, which is how the docs render an enum value.
+var jobsDocsCapsToken = regexp.MustCompile(`[A-Z][A-Z_]{2,}`)
+
+// TestJobsSelector_DocsRenderTheStatusVocabularyOnce guards the one rendering of
+// provision_job_status the docs are allowed to hand-write.
+//
+// The flag table above is checked by name only, so a hand-listed vocabulary in it was the one
+// projection of the enum that nothing covered: add a status to `enums.ts` and `--help`,
+// `validate()` and the refusal message all pick it up from `jobStatusValues()` while the docs go
+// on listing six. This asserts the page enumerates the statuses in exactly one place and that the
+// place names every generated value — every other mention must point at it.
+func TestJobsSelector_DocsRenderTheStatusVocabularyOnce(t *testing.T) {
+	raw, err := os.ReadFile(jobsDocsPath)
+	if err != nil {
+		t.Fatalf("reading %s: %v", jobsDocsPath, err)
+	}
+	statuses := jobStatusValues()
+	if len(statuses) < 2 {
+		t.Fatal("the generated enum has fewer than two statuses — this test would cover nothing")
+	}
+
+	enumerating := 0
+	for i, line := range strings.Split(string(raw), "\n") {
+		named := map[string]bool{}
+		for _, tok := range jobsDocsCapsToken.FindAllString(line, -1) {
+			if containsFold(statuses, tok) {
+				named[strings.ToUpper(tok)] = true
+			}
+		}
+		// One status is prose — "sets the job status to CANCELLED", a sample row. Two or more is
+		// a vocabulary, and a vocabulary is what stops covering the enum silently.
+		if len(named) < 2 {
+			continue
+		}
+		enumerating++
+		if len(named) != len(statuses) {
+			t.Errorf("%s:%d enumerates %d of the %d provision_job_status values: %s",
+				jobsDocsPath, i+1, len(named), len(statuses), strings.TrimSpace(line))
+		}
+	}
+	if enumerating == 0 {
+		t.Fatalf("%s enumerates the statuses nowhere — the reader is never told what they are", jobsDocsPath)
+	}
+	if enumerating != 1 {
+		t.Errorf("%s enumerates provision_job_status on %d lines — a second hand-written copy is one the enum can outgrow silently; point it at the lifecycle instead",
+			jobsDocsPath, enumerating)
+	}
+}

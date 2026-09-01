@@ -24,7 +24,11 @@ the tofu process.
 
 The id is optional, the same as ` + "`jobs get`" + ` and ` + "`jobs logs`" + `. Because cancelling is
 destructive AND ` + "`--latest`" + ` picks the target for you, the resolved job is always named — in
-the confirmation on a terminal, and on stdout before it acts when ` + "`--yes`" + ` skipped it.`,
+the confirmation on a terminal, and on stderr before it acts when ` + "`--yes`" + ` skipped it.
+
+Without an explicit ` + "`--status`" + `, ` + "`--latest`" + ` and the picker consider only jobs that can still be
+cancelled (QUEUED, CLAIMED, PROCESSING), so a plan that finished a second ago cannot become the
+target of a cancel meant for the deploy that is still running.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
@@ -33,7 +37,10 @@ the confirmation on a terminal, and on stdout before it acts when ` + "`--yes`" 
 		}
 
 		apiClient := api.NewClient(token)
-		ref, err := resolveJob(apiClient, args, jobsCancelSelector)
+		// Scoped, because this is the destructive one: an unscoped --latest would resolve to the
+		// newest job of ANY status, which is either a 400 from the control plane or, under --yes,
+		// a cancellation of a job the operator never meant to name.
+		ref, err := resolveJobIn(apiClient, args, jobsCancelSelector, cancellableJobScope)
 		if err != nil {
 			fail(err)
 		}

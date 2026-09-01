@@ -177,6 +177,57 @@ func containsFold(vals []string, v string) bool {
 	return false
 }
 
+// jobStatusScope is the set of statuses a COMMAND can act on, as distinct from the narrowing the
+// user asked for.
+//
+// `cancel` has one and `get`/`logs` do not. The control plane refuses to cancel a job that has
+// already finished, so an unscoped `--latest` lands on whatever ran most recently — a PLAN that
+// succeeded a second ago, a scheduled DETECT_DRIFT — and the operator either takes a 400 while
+// the deploy they meant keeps running, or, under `--yes`, silently cancels the wrong job.
+//
+// Narrowing the candidates is validate()'s "provable subset" rule read the other way round: the
+// CLI may skip only what the server would CERTAINLY refuse. A job outside this set cannot be
+// cancelled by anyone, so declining to resolve to it hides nothing the operator could have had.
+type jobStatusScope struct {
+	// Statuses is the closed set. Empty means every status, which is the get/logs case.
+	Statuses []string
+	// Noun describes the set in an error message: "cancellable".
+	Noun string
+}
+
+// cancellableJobScope mirrors what `POST /api/cli/jobs/[id]/cancel` accepts.
+//
+// Through the generated constants and not string literals, so a status renamed or dropped from
+// the drizzle enum fails the CLI build rather than leaving a stale set that silently stops
+// matching. `TestCancellableJobScope_IsASubsetOfTheEnum` pins the other direction.
+var cancellableJobScope = jobStatusScope{
+	Statuses: []string{
+		string(types.JobStatusQueued),
+		string(types.JobStatusClaimed),
+		string(types.JobStatusProcessing),
+	},
+	Noun: "cancellable",
+}
+
+// applies reports whether the scope narrows this selector.
+//
+// An explicit `--status` wins: `jobs cancel --status SUCCESS --latest` still reaches the server's
+// refusal, because a CLI that answered "no such job" to a status the operator named by hand would
+// be lying about a job they can see in `jobs list`.
+func (s jobStatusScope) applies(sel jobSelector) bool {
+	return len(s.Statuses) > 0 && sel.status == ""
+}
+
+// keeps reports whether a job's status is inside the scope.
+func (s jobStatusScope) keeps(j api.ProvisionJob) bool {
+	return containsFold(s.Statuses, j.Status)
+}
+
+// describe names the scope for an error: "cancellable job (QUEUED, CLAIMED, PROCESSING)".
+func (s jobStatusScope) describe() string {
+	return s.Noun + " job (" + strings.Join(s.Statuses, ", ") + ")"
+}
+
 // jobLister is the slice of the API client the resolver needs — small enough that the resolution
 // logic is unit-testable against a fake, and satisfied by the concrete *api.Client.
 type jobLister interface {
@@ -238,8 +289,16 @@ func announceResolvedJob(ref jobRef, verb string) {
 	fmt.Fprintln(os.Stderr, ui.MutedStyle.Render(ui.SymbolPoint+" "+verb+" "+ref.Summary))
 }
 
-// resolveJob answers "which job" from the positional argument, `--latest`, or the picker.
+// resolveJob answers "which job" from the positional argument, `--latest`, or the picker, over
+// every job the org has.
 func resolveJob(client jobLister, args []string, sel jobSelector) (jobRef, error) {
+	return resolveJobIn(client, args, sel, jobStatusScope{})
+}
+
+// resolveJobIn is resolveJob for a command that can only act on some statuses. The scope applies
+// to `--latest` and to the picker; an id on the command line is still the answer, because the
+// server's refusal names the status and is the better place to learn it.
+func resolveJobIn(client jobLister, args []string, sel jobSelector, statusScope jobStatusScope) (jobRef, error) {
 	if len(args) > 0 && args[0] != "" {
 		if sel.latest {
 			return jobRef{}, fmt.Errorf("pass a job id or --latest, not both (%q was given)", args[0])
@@ -261,16 +320,20 @@ func resolveJob(client jobLister, args []string, sel jobSelector) (jobRef, error
 		}
 	}
 
-	matches, err := narrowJobs(client, sel)
+	matches, err := narrowJobs(client, sel, statusScope)
 	if err != nil {
 		return jobRef{}, err
 	}
 	if len(matches) == 0 {
-		scope := fmt.Sprintf("in the last %d jobs", jobSelectorPageSize)
+		where := fmt.Sprintf("in the last %d jobs", jobSelectorPageSize)
 		if narrowed := sel.describe(); narrowed != "" {
-			scope = "with " + narrowed + " " + scope
+			where = "with " + narrowed + " " + where
 		}
-		return jobRef{}, fmt.Errorf("no job %s — run `alethia jobs list` to see what there is", scope)
+		noun := "job"
+		if statusScope.applies(sel) {
+			noun = statusScope.describe()
+		}
+		return jobRef{}, fmt.Errorf("no %s %s — run `alethia jobs list` to see what there is", noun, where)
 	}
 
 	if sel.latest {
@@ -279,12 +342,14 @@ func resolveJob(client jobLister, args []string, sel jobSelector) (jobRef, error
 	return pickJob(matches)
 }
 
-// narrowJobs fetches a page of recent jobs and keeps the ones every set field matches.
+// narrowJobs fetches a page of recent jobs and keeps the ones every set field matches, inside the
+// command's status scope.
 //
 // `--status` is handed to the server, which indexes it; the rest are applied here because
 // GET /api/jobs takes no other filter. That split is invisible to the caller and stays correct
-// if the endpoint grows one (#3672).
-func narrowJobs(client jobLister, sel jobSelector) ([]api.ProvisionJob, error) {
+// if the endpoint grows one (#3672). The scope is a SET and the endpoint takes one status, so it
+// is applied here too.
+func narrowJobs(client jobLister, sel jobSelector, statusScope jobStatusScope) ([]api.ProvisionJob, error) {
 	page, err := client.GetJobs(strings.ToUpper(sel.status), jobSelectorPageSize, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch jobs: %w", err)
@@ -292,8 +357,12 @@ func narrowJobs(client jobLister, sel jobSelector) ([]api.ProvisionJob, error) {
 	if page == nil {
 		return nil, nil
 	}
+	scoped := statusScope.applies(sel)
 	var out []api.ProvisionJob
 	for _, j := range page.Jobs {
+		if scoped && !statusScope.keeps(j) {
+			continue
+		}
 		keep := true
 		for _, f := range sel.set() {
 			if !f.Match(j, *f.Target(&sel)) {

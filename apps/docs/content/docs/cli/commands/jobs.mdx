@@ -31,7 +31,7 @@ Narrow it until it names one job.
 |------|-------------|
 | `--latest` | Act on the most recent matching job instead of naming one. Works with `--no-input`. |
 | `--type` | Narrow to a job type: `PLAN`, `DEPLOY`, `DESTROY`, and the rest of the table below. |
-| `--status` | Narrow to a status: `QUEUED`, `CLAIMED`, `PROCESSING`, `SUCCESS`, `FAILED`, `CANCELLED`. |
+| `--status` | Narrow to a status — one of the [STATUS lifecycle](#alethia-jobs-list) values. |
 | `--project` | Narrow to a project, by name or by an id prefix. |
 
 The search covers the 50 most recent jobs, newest first. A `--type` or `--status` value outside
@@ -56,7 +56,7 @@ alethia jobs list [--status <S>] [-n/--limit <N>]
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--status` | No | Filter by status: `QUEUED`, `CLAIMED`, `PROCESSING`, `SUCCESS`, `FAILED`, `CANCELLED`. |
+| `--status` | No | Filter by status — one of the STATUS lifecycle values below. |
 | `-n`, `--limit` | No | Jobs per page (default `20`). |
 
 Output:
@@ -151,6 +151,11 @@ When `--latest` chose the job, the command names it: in the confirmation on a te
 stderr before it acts when `--yes` skipped the confirmation. A cancellation you cannot check is
 not a confirmation.
 
+Unless you pass `--status` yourself, `--latest` and the picker consider only the jobs that can
+still be cancelled — the non-terminal half of the STATUS lifecycle. Without that, a plan that
+finished a second ago is "the most recent job", and `--latest --yes` would either fail on the
+control plane's refusal or cancel something you did not mean while the deploy kept running.
+
 Sets the job status to CANCELLED. If the job is currently being executed by a Runner, the Runner detects the cancellation on its next status check and terminates the `tofu` process gracefully.
 
 ## Waiting for jobs
@@ -158,11 +163,17 @@ Sets the job status to CANCELLED. If the job is currently being executed by a Ru
 To block on a job from a script, queue it with `-w/--wait` rather than polling:
 
 ```bash
-# Plan and block until it finishes, then apply and block again
+# Plan and block until it finishes, then apply that exact plan and block again
 alethia project plan --project-id $ID --wait
-alethia project apply --project-id $ID --wait
+PLAN_JOB=$(alethia jobs get --latest --type PLAN --project $ID -o json | jq -r .id)
+alethia project apply --project-id $ID --plan-job-id $PLAN_JOB --wait
 ```
 
 On success, `--wait` prints the job's cost estimate through the same renderer `jobs get` uses.
+
+`--plan-job-id` is what makes the second command an *apply of the first one's plan*: the Runner
+checks the referenced PLAN job succeeded and downloads its artifact. Drop it and the DEPLOY
+re-plans from scratch against whatever the cloud looks like by then, which is the review window
+the flag exists to close. The id comes out of `jobs get --latest`, so nothing is copied by hand.
 
 See [Plan & Apply](/cli/commands/plan-and-apply) for the full workflow.
