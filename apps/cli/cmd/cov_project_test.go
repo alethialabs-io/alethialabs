@@ -3699,6 +3699,143 @@ func TestProj_EnvAddPrintsTheReplayLineForAnAnsweredRun(t *testing.T) {
 	}
 }
 
+// TestProj_CreateRefusesBothCloudAccountFlags pins the refusal --cloud-account grew when it
+// was added beside the older --cloud-identity-id.
+//
+// They name the SAME field, so a caller who set both either believes one is being ignored or
+// has an unnoticed leak from a wrapper script. Resolving that by precedence is worse than it
+// looks: preferring the id skips resolveCloudIdentityID entirely, so an unknown or ambiguous
+// label is never reported, and createReplayArgs still prints `--cloud-account <label>` — a
+// line inviting the reader to commit a command that links a DIFFERENT account than the run
+// did. The refusal happens before anything is sent.
+func TestProj_CreateRefusesBothCloudAccountFlags(t *testing.T) {
+	s := &projServer{}
+	h := projEnv(t, s)
+
+	if !h.run("project", "create", "boutique", "--region", "eu-west-1",
+		"--cloud-account", "prod-account", "--cloud-identity-id", "ci1",
+		"--no-input", "--output", "json") {
+		t.Error("both account flags at once must be fatal, not resolved by precedence")
+	}
+	if len(s.posts) > 0 {
+		t.Errorf("it still created the project: %+v", s.posts)
+	}
+
+	// And the refusal is about the PAIR, not about either flag: the label alone still
+	// resolves to the identity the project is linked to.
+	s.forgetPosts()
+	if h.run("project", "create", "boutique", "--region", "eu-west-1",
+		"--cloud-account", "prod-account", "--no-input", "--output", "json") {
+		t.Fatal("--cloud-account alone exited fatally")
+	}
+	last, ok := s.lastPost()
+	if !ok {
+		t.Fatal("--cloud-account alone created nothing")
+	}
+	if got := last.Body["cloud_identity_id"]; got != "ci1" {
+		t.Errorf("the payload carries cloud_identity_id %v, want the id the label resolved to", got)
+	}
+}
+
+// TestProj_GetPickerDismissalIsNotASelection pins the arm `project get`'s own picker shares
+// with every other form: a dismissed one returns the dismissal, not a project.
+//
+// promptProjectNameRef reads the picked NAME back out of the listing, and a form that never
+// ran leaves the bound id empty — which would fall through to "that project has no name",
+// reporting a malformed listing for what was actually a person pressing escape.
+func TestProj_GetPickerDismissalIsNotASelection(t *testing.T) {
+	projEnv(t, &projServer{configs: []map[string]any{
+		{"id": "p1", "project_name": "web", "environment_stage": "production"},
+	}})
+	projTTY(t)
+	projFormSeq(t, errProjTestBoom)
+
+	got, err := promptProjectNameRef("tok")
+	if err == nil {
+		t.Fatal("a dismissed project picker must be reported, not read as a selection")
+	}
+	if got != "" {
+		t.Errorf("it returned %q alongside an error — a caller acting on it would look up a project nobody picked", got)
+	}
+}
+
+// TestProj_PromptComponentNameRefusalArms walks the three ways the multi-kind name question
+// does not produce a name. Each matters because the answer feeds a DELETE: a prompt that
+// swallowed its own failure would hand `remove` an empty name, which is the nameless request
+// the server refuses with "<kind> components are removed by name".
+func TestProj_PromptComponentNameRefusalArms(t *testing.T) {
+	f := &fakeClient{components: []api.Component{
+		{ID: "c1", Kind: "databases", Name: "main", Status: "READY"},
+	}}
+
+	t.Run("prompting disabled refuses instead of opening a form", func(t *testing.T) {
+		hygCliConfirmSetNoInput(t, true)
+		opened := projFormCounter(t)
+		got, err := promptComponentName(f, "boutique", "databases", "")
+		if err == nil {
+			t.Fatal("a scripted run must be refused, not asked: a form it cannot answer is a hang")
+		}
+		if got != "" {
+			t.Errorf("it returned %q with prompting disabled", got)
+		}
+		if *opened != 0 {
+			t.Errorf("it opened %d form(s) with prompting disabled", *opened)
+		}
+	})
+
+	t.Run("a dismissed picker is reported", func(t *testing.T) {
+		hygCliConfirmSetNoInput(t, false)
+		projFormSeq(t, errProjTestBoom)
+		got, err := promptComponentName(f, "boutique", "databases", "")
+		if err == nil {
+			t.Fatal("a dismissed component picker must be reported")
+		}
+		if got != "" {
+			t.Errorf("it returned %q alongside an error", got)
+		}
+	})
+
+	t.Run("a dismissed text box is reported", func(t *testing.T) {
+		// Nothing to list, so this is the free-text arm rather than the picker.
+		hygCliConfirmSetNoInput(t, false)
+		projFormSeq(t, errProjTestBoom)
+		got, err := promptComponentName(&fakeClient{err: errProjTestBoom}, "boutique", "databases", "")
+		if err == nil {
+			t.Fatal("a dismissed component-name box must be reported")
+		}
+		if got != "" {
+			t.Errorf("it returned %q alongside an error", got)
+		}
+	})
+}
+
+// TestProj_ComponentRemoveDismissedNameStopsIt pins what the command does with that
+// dismissal: it stops, and nothing is deleted.
+//
+// The name picker sits BEFORE the confirmation, so a dismissal that fell through would reach
+// confirmDestructive with an empty name — a prompt naming a whole KIND, which is the
+// unreadable confirmation the name question was added to remove.
+func TestProj_ComponentRemoveDismissedNameStopsIt(t *testing.T) {
+	s := &projServer{comps: projSampleComponents()}
+	h := projEnv(t, s)
+	projTTY(t)
+	projFormSeq(t, errProjTestBoom)
+	asked := false
+	prevConfirm := confirm
+	confirm = func(string, string) bool { asked = true; return true }
+	t.Cleanup(func() { confirm = prevConfirm })
+
+	if !h.run("project", "component", "remove", "--project", "web", "--kind", "databases") {
+		t.Error("a dismissed name picker must stop the remove")
+	}
+	if asked {
+		t.Error("it confirmed a removal whose object was never chosen")
+	}
+	if len(s.posts) > 0 {
+		t.Errorf("it still issued the delete: %+v", s.posts)
+	}
+}
+
 // projCaptureStdout redirects os.Stdout to a pipe and returns a reader for what was written.
 // The commands write through os.Stdout directly (they are cobra Run bodies, not run* helpers
 // taking an io.Writer), so this is the only way to read what a user would see.
