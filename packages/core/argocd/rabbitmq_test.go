@@ -83,7 +83,13 @@ func TestQueueCredentialSecretNameAgreesWithTheGeneratedFixture(t *testing.T) {
 	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "test", "e2e", "fixtures", "hetzner_data_services.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Skipf("generated fixture not present (%v)", err)
+		// FATAL, NOT SKIP. This is the only thing tying CredentialSecretName() to the TS
+		// `auth.existingSecret`, and a skip is a green run that checked nothing — the same defect
+		// as the `found == 0` guard below, one level up. A moved fixture would let the two names
+		// diverge in silence, and the first signal would be a StatefulSet stuck at
+		// CreateContainerConfigError on a customer's cluster.
+		t.Fatalf("generated fixture not readable at %s (%v) — this test is the only check that the Go "+
+			"secret name and the TS auth.existingSecret agree", path, err)
 	}
 	var fx struct {
 		AddOns []struct {
@@ -483,5 +489,35 @@ func TestAdoptionIsNotConsultedForACompleteSecret(t *testing.T) {
 	}
 	if stub.calledWith("app.kubernetes.io/instance=") {
 		t.Errorf("listed the chart's Secrets for a complete credential; calls = %v", stub.calls())
+	}
+}
+
+// The console restates the DNS-1123 label charset as `K8S_LABEL` in hetzner-services.ts, because Go
+// cannot read that file and it cannot read Go — and the two decide the SAME question from opposite
+// sides: the mapper uses it to choose whether to point the chart at a runner-seeded Secret, and
+// HetznerQueues uses k8sNameRe to choose whether to seed one. If they ever disagree, one of the two
+// outcomes is a queue that can never start, and nothing at runtime would say so.
+//
+// So the literal is read out of the TS source and compared, rather than restated a third time here.
+func TestConsoleLabelPredicateMatchesTheRunners(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate this file")
+	}
+	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "..",
+		"apps", "console", "lib", "cloud-providers", "hetzner-services.ts")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("cannot read %s (%v) — this test is the only check that the console and the runner "+
+			"agree on what a queue name may be", path, err)
+	}
+	m := regexp.MustCompile(`(?m)^const K8S_LABEL = /(.+)/;$`).FindSubmatch(raw)
+	if m == nil {
+		t.Fatalf("no `const K8S_LABEL = /…/;` in %s — it was renamed or removed, and with it the "+
+			"console's half of this contract", path)
+	}
+	if got := string(m[1]); got != k8sNameRe.String() {
+		t.Errorf("the console accepts %q but the runner seeds only %q — a name in the gap renders a "+
+			"chart pointed at a Secret that is never written", got, k8sNameRe.String())
 	}
 }

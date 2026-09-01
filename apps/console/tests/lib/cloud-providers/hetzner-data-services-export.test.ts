@@ -18,6 +18,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { exportHetznerDataServiceFixture } from "@/lib/cloud-providers/hetzner-services-export";
+import { hetznerQueueValues } from "@/lib/cloud-providers/hetzner-services";
 
 const FIXTURE = resolve(
 	__dirname,
@@ -88,6 +89,33 @@ describe("hetzner data-service export fixture (e2e max-config in-cluster seed)",
 		// One Secret per queue. A shared erlang cookie would silently merge two clusters that the
 		// canvas says are separate.
 		expect(secretNames.size).toBe(queues.length);
+	});
+
+	// The runner refuses to seed a credential for a name that is not an RFC-1123 label, because the
+	// names it derives interpolate into kubectl commands. Pointing the chart at a Secret that will
+	// never be written turns a queue that runs — badly — into one that never starts, so such a name
+	// keeps the chart's own minting instead. #3588 stops new ones being saved; this is for the rows
+	// that already exist.
+	it("leaves the chart minting for a name the runner cannot seed", () => {
+		const withAuth = hetznerQueueValues({ name: "orders-v2", storage_gb: 8 });
+		expect(withAuth.auth).toBeTruthy();
+
+		const unseedable = ["orders.v2", "Orders", "orders_v2", "-orders"];
+		// Collected, so a failure names WHICH name got an auth block rather than stopping at the
+		// first — and so the assertion carries its diagnostic without a message argument, which
+		// `vitest/valid-expect` rejects.
+		const gotAuth = unseedable.filter(
+			(name) => hetznerQueueValues({ name, storage_gb: 8 }).auth !== undefined,
+		);
+		expect(gotAuth).toEqual([]);
+
+		for (const name of unseedable) {
+			// And it is still a working queue spec, not a stripped one: the volume the node asked
+			// for has to survive, or the fallback would trade one broken queue for another.
+			const values = hetznerQueueValues({ name, storage_gb: 8 });
+			expect(values.persistence).toEqual(withAuth.persistence);
+			expect(values.replicaCount).toBe(1);
+		}
 	});
 
 	it("pins a fetchable chart for every spec (the bitnami rot class)", () => {

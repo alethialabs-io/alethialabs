@@ -681,6 +681,17 @@ export function hetznerVaultValues(): Record<string, unknown> {
 }
 
 /**
+ * The RFC-1123 DNS LABEL charset, restated here because Go cannot read this file and this file
+ * cannot read Go. It MUST match `k8sNameRe` in packages/core/argocd/addon_secrets.go: the runner
+ * derives every Secret and Application name from a node name and refuses anything outside this
+ * charset before it interpolates one into a kubectl command.
+ *
+ * The two halves are checked against each other by test, not by hope — the same arrangement the
+ * generated fixture already gives the secret NAME.
+ */
+const K8S_LABEL = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+/**
  * Helm values for one queue node. The chart pulls the OFFICIAL upstream `docker.io/rabbitmq`
  * image (digest-pinned by the chart), not a Bitnami image — the previous `bitnami/rabbitmq`
  * chart's default image tag is now HTTP 404 (Broadcom relocated it to `bitnamilegacy/*`), so
@@ -700,6 +711,23 @@ export function hetznerVaultValues(): Record<string, unknown> {
 export function hetznerQueueValues(
 	queue: QueueInput,
 ): Record<string, unknown> {
+	const persistence = {
+		enabled: true,
+		size: `${posInt(queue.storage_gb, 8)}Gi`,
+		storageClass: HCLOUD_STORAGE_CLASS,
+	};
+	// A NAME THE RUNNER CANNOT SEED KEEPS THE CHART'S OWN MINTING, deliberately. `HetznerQueues`
+	// (packages/core/argocd/rabbitmq.go) refuses anything that is not an RFC-1123 LABEL, because the
+	// names it derives interpolate into kubectl commands. `orders.v2` is a name Kubernetes accepts
+	// and that predicate does not: pointing the chart at a Secret the runner will never write turns a
+	// queue that runs — badly, rotating its credentials — into one that never starts at all.
+	//
+	// So the fix applies to the names it can actually fix, and everything else is left exactly as it
+	// was. The console refuses such names at the form now (#3588); this branch exists for the rows
+	// that were saved before it did.
+	if (!K8S_LABEL.test(queue.name)) {
+		return { replicaCount: 1, persistence };
+	}
 	return {
 		replicaCount: 1,
 		auth: {
@@ -714,11 +742,7 @@ export function hetznerQueueValues(
 			// render is unchanged apart from the Secret it no longer mints.
 			username: "admin",
 		},
-		persistence: {
-			enabled: true,
-			size: `${posInt(queue.storage_gb, 8)}Gi`,
-			storageClass: HCLOUD_STORAGE_CLASS,
-		},
+		persistence,
 	};
 }
 

@@ -100,9 +100,14 @@ func TestReadDataEndpoints(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			// The secret rule is scoped to the CHART-MINTED selector: readSecretRef asks the
+			// runner-seeded one first, and a bare "get secret" rule would answer that instead —
+			// leaving every case in this table (CNPG's `-app`, the single-Service shape, the
+			// no-credential case) proving itself on a branch it was not written for.
 			newKubectlStub(t, 0,
 				stubRule{Match: "get svc", Stdout: tc.svcJSON, Exit: tc.svcExit},
-				stubRule{Match: "get secret", Stdout: tc.secretJSON},
+				stubRule{Match: "alethia.io/addon-secret=", Stdout: `{"items":[]}`},
+				stubRule{Match: "app.kubernetes.io/instance=", Stdout: tc.secretJSON},
 			)
 			var stdout, stderr bytes.Buffer
 			got := ReadDataEndpoints(tc.addons, &stdout, &stderr)

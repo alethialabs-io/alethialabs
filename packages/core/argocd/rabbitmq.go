@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"slices"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -176,10 +177,20 @@ func EnsureQueueCredentialSecret(q HetznerQueue, stdout, stderr io.Writer) error
 	}
 	// WHICH keys were carried over is named, because "adopted" and "generated" have different
 	// consequences for a running cluster and an operator reading this later cannot tell them apart
-	// from a Secret alone.
+	// from a Secret alone — AND the two adoptions are not equally trustworthy, so the line says so.
+	//
+	// This is the only deploy that will ever say anything about it: once the Secret is complete,
+	// every later deploy takes the "leaving it in place" return above and nothing re-derives the
+	// password. An operator whose AMQP login is rejected after the migration goes looking in this
+	// log, so the caveat has to be IN it rather than in a comment they will never read.
 	if len(adopted) > 0 {
-		fmt.Fprintf(stdout, "Seeding queue credential secret %s/%s, carrying the chart's live %s across...\n",
+		fmt.Fprintf(stdout, "Seeding queue credential secret %s/%s, carrying the chart's live %s across.\n",
 			q.Namespace, name, strings.Join(adopted, " and "))
+		if slices.Contains(adopted, rabbitmqPasswordKey) {
+			fmt.Fprintf(stdout, "  NOTE: the erlang cookie is authoritative, the password is NOT. RabbitMQ honours "+
+				"RABBITMQ_DEFAULT_PASS only while its database is empty, so an adopted password is whatever the "+
+				"chart's Secret last held and may not be the one the running broker accepts (#3590).\n")
+		}
 	} else {
 		fmt.Fprintf(stdout, "Seeding missing queue credentials in %s/%s...\n", q.Namespace, name)
 	}
