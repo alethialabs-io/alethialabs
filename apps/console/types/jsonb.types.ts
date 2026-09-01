@@ -2,6 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Typed JSONB shapes for the Drizzle schema's `.$type<>()` columns (lib/db/schema).
+//
+// A `Mirrors the Go X` comment below is a LOCK, not a note. `packages/core/types/jsonb_mirror_test.go`
+// holds one committed fixture per mirrored interface in `packages/core/types/testdata/jsonb/` and
+// requires three sets to be equal: the interface's properties, the fixture's keys, and the Go
+// struct's json tags. Adding, removing or renaming a property on either side alone turns that test
+// red. Most of the string unions those interfaces use are checked against the Go constant blocks
+// that define them too; `ArgocdHealthStatus` / `ArgocdSyncStatus` are the stated exception, because
+// ArgoCD's vocabulary has no declared constant set on the Go side to compare against. The fixtures
+// are hand-written — fix a failure by bringing the three into agreement, not by regenerating.
 
 import type {
 	AlertSeverity,
@@ -746,7 +755,7 @@ export interface ExecutionMetadata {
 	// deploy finalizer. Mirrors the Go `argocd.AddOnHealth`.
 	addon_status?: Record<string, AddOnStatusEntry>;
 	// DEPLOY jobs: the cluster's aggregated Trivy-Operator vulnerability posture (L9), written
-	// back to environment_security by the deploy finalizer. Mirrors Go `argocd.SecurityPosture`.
+	// back to environment_security by the deploy finalizer. Mirrors the Go `argocd.SecurityPosture`.
 	security_report?: SecurityReport;
 	// IAC_SCAN jobs: the BYO IaC module scan result — finalizeIacScan writes it back onto the
 	// project_iac_sources row (scan_report + pinned commit_sha).
@@ -851,9 +860,9 @@ export interface SecurityReport {
 	scanned: boolean;
 }
 
-// Mirrors the Go `drift.Posture` (packages/core/drift). `unmanaged_known` is false
-// for a refresh-only plan — it cannot see resources that exist in the cloud but
-// not in state.
+// Mirrors the Go `drift.ResourceDrift` (packages/core/drift). This comment used to name
+// `drift.Posture` and explain `unmanaged_known` — a field of DriftPosture, declared below —
+// because nothing checked which Go type it sat opposite. jsonb_mirror_test.go does now.
 export interface DriftResource {
 	address: string;
 	type: string;
@@ -886,6 +895,8 @@ export interface DriftNormalizedResource {
 	reason: DriftNormalizedReason;
 }
 
+// Mirrors the Go `drift.Posture` (packages/core/drift). `unmanaged_known` is false for a
+// refresh-only plan — it cannot see resources that exist in the cloud but not in state.
 export interface DriftPosture {
 	in_sync: boolean;
 	drifted: number;
@@ -1033,7 +1044,8 @@ export interface RekorAnchor {
 	anchor_public_key: string;
 }
 
-// One captured (truncated) file from a scanned repo. Mirrors packages/core/types RepoFile.
+// One captured (truncated) file from a scanned repo. Mirrors the Go `types.RepoFile`
+// (packages/core/types/repo_digest.go).
 export interface RepoFile {
 	path: string;
 	content: string;
