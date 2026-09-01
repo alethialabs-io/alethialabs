@@ -25,6 +25,12 @@
 //     "a deliberate state", and T7 would report a column of PASSes while measuring nothing about
 //     permissions. So the run asserts FIRST that the persona can load a route normally. If it
 //     cannot, the instrument is broken and this spec says so instead of scoring.
+//
+// And for the same reason RESTRICTION IS MEASURED AS A DIFFERENCE. Every route is driven twice —
+// once as the member, once as the OWNER of the same org — and a route counts as restricted only
+// where the two disagree. A redirect on its own proves nothing: `/dashboard` and `~/settings`
+// redirect every caller, so reading "the member was bounced" as refusal scored T7 PASS on routes
+// that restrict nobody.
 
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { closeDb, db, orgIdBySlug } from "../helpers/db";
@@ -32,29 +38,49 @@ import { signUpWithOtp } from "../fixtures/auth";
 import { materialize, needsOnlyOrg, type AuditContext } from "./context";
 import { consoleRoutes } from "./manifest";
 import { rendersSharedErrorState, visibleText } from "./error-state";
-import { record, writeReport } from "./report";
+import { createReport } from "./report";
 
 const manifest = consoleRoutes();
 const ctx: AuditContext = { orgSlug: "", owner: { userId: "", orgId: "" } };
+// This spec's OWN verdict buffer — see report.ts on why it must not be module state.
+const report = createReport();
+const record = report.record;
 
 let memberContext: BrowserContext | null = null;
 let memberPage: Page | null = null;
 let memberEmail = "";
+// The OWNER stays open for the whole spec. T7's question is comparative — see `observe` below —
+// and answering it needs the same route driven by somebody who is not the member.
+let ownerContext: BrowserContext | null = null;
+let ownerPage: Page | null = null;
 
 /**
- * Signs an account up, retrying the whole walk.
+ * Signs an account up, retrying the whole walk — WITH A FRESH ADDRESS EACH TIME.
  *
- * `signUpWithOtp` waits 5s for the consent banner and 30s for the OTP, and on a contended box the
- * first of those is genuinely tight — `e2e/global-setup.ts` wraps every persona in the same shape
- * for the same reason ("transient recompile 500s, slow OTP"). A T7 persona that fails to be born
- * takes the whole predicate with it, so the retry is the difference between measuring T7 and
- * reporting that it could not be measured.
+ * `signUpWithOtp` waits 5s for the consent banner and 30s for the OTP, and on a contended runner
+ * the first of those is genuinely tight; `e2e/global-setup.ts` wraps every persona in the same
+ * shape for the same reason ("transient recompile 500s, slow OTP"). A T7 persona that fails to be
+ * born takes the whole predicate with it.
+ *
+ * THE ADDRESS MUST CHANGE PER ATTEMPT, and this is not tidiness. `signUpWithOtp` creates the
+ * account at OTP verification and then still has to walk onboarding, the clickwrap and the org
+ * hand-off. A failure in any of those — precisely the transient case the retry exists for — leaves
+ * a REAL account behind. Retried on the same address the flow is a SIGN-IN, `/onboarding` never
+ * appears, and the fixture's `waitForURL(/\/onboarding/)` times out after 30s. Every later attempt
+ * is then guaranteed to fail, and the run spends two 35s sleeps and two 30s timeouts proving it
+ * inside a 180s test budget. So the caller gets back the address that actually worked.
  */
-async function signUpWithRetry(page: Page, email: string, attempts = 3): Promise<{ orgSlug: string }> {
+async function signUpWithRetry(
+	page: Page,
+	emailFor: (attempt: number) => string,
+	attempts = 3,
+): Promise<{ email: string; orgSlug: string }> {
 	let last: unknown;
 	for (let i = 1; i <= attempts; i++) {
+		const email = emailFor(i);
 		try {
-			return await withTestEmail(email, () => signUpWithOtp(page));
+			const { orgSlug } = await withTestEmail(email, () => signUpWithOtp(page));
+			return { email, orgSlug };
 		} catch (err) {
 			last = err;
 			const why = err instanceof Error ? err.message : String(err);
@@ -125,11 +151,14 @@ test.beforeAll(async ({ browser }, testInfo) => {
 	const baseURL = testInfo.project.use.baseURL;
 	// An org of its OWN, not the audit persona's: T7 needs a paid plan and a second member, and
 	// both would change what `routes.spec.ts` measures on the org it deliberately keeps empty.
-	const ownerContext = await browser.newContext({ baseURL, storageState: undefined });
-	const ownerPage = await ownerContext.newPage();
-	try {
+	ownerContext = await browser.newContext({ baseURL, storageState: undefined });
+	// A local binding as well as the module-level one: the module-level `ownerPage` is nullable
+	// (T7's per-route comparison reads it), and narrowing it once here keeps the setup readable.
+	const asOwner = await ownerContext.newPage();
+	ownerPage = asOwner;
+	{
 		const stamp = Date.now();
-		const owner = await signUpWithRetry(ownerPage, `e2e-audit-owner-${stamp}@alethia.test`);
+		const owner = await signUpWithRetry(asOwner, (i) => `e2e-audit-owner-${stamp}-${i}@alethia.test`);
 		ctx.orgSlug = owner.orgSlug;
 		const orgId = await orgIdBySlug(ctx.orgSlug);
 		expect(orgId, `no organization row for "${ctx.orgSlug}"`).toBeTruthy();
@@ -151,10 +180,18 @@ test.beforeAll(async ({ browser }, testInfo) => {
 		// exactly one membership, and `[org]/layout.tsx` re-syncs the session's active org to the
 		// `{org}` segment on every request anyway. Asserted, it would fail the whole predicate for
 		// a call that changes nothing.
-		await authApi(ownerPage, "set-active", { organizationId: orgId });
+		await authApi(asOwner, "set-active", { organizationId: orgId });
 
-		memberEmail = `e2e-audit-member-${stamp}@alethia.test`;
-		const invited = await authApi(ownerPage, "invite-member", {
+		// THE INVITEE SIGNS UP FIRST, then is invited at whatever address it ended up with. The
+		// other order coupled the invitation to an address chosen before the signup ran, so a retry
+		// that (correctly) minted a fresh one would have invited an account that does not exist.
+		memberContext = await browser.newContext({ baseURL, storageState: undefined });
+		const invitee = await memberContext.newPage();
+		memberPage = invitee;
+		const member = await signUpWithRetry(invitee, (i) => `e2e-audit-member-${stamp}-${i}@alethia.test`);
+		memberEmail = member.email;
+
+		const invited = await authApi(asOwner, "invite-member", {
 			email: memberEmail,
 			role: "member",
 			organizationId: orgId,
@@ -171,13 +208,6 @@ test.beforeAll(async ({ browser }, testInfo) => {
 				`  sandbox env, where \`pnpm env:push\` left the console silently in community scope.\n` +
 				`  T7 cannot be measured without a member — do not let this become a skipped predicate.`,
 		).toBeLessThan(400);
-
-		// The invitee is a brand-new account: sign up (which lands it in an org of its OWN), then
-		// accept.
-		memberContext = await browser.newContext({ baseURL, storageState: undefined });
-		const invitee = await memberContext.newPage();
-		memberPage = invitee;
-		await signUpWithRetry(invitee, memberEmail);
 
 		// Not `helpers/db.ts:pendingInvitationId` — it quotes `"organizationId"`, and the real column
 		// is `organization_id` (the drizzle instance maps the schema's camelCase keys through
@@ -198,26 +228,27 @@ test.beforeAll(async ({ browser }, testInfo) => {
 			select role from member
 			where organization_id = ${orgId} and user_id = (select id from "user" where email = ${memberEmail})`;
 		expect(role[0]?.role, `${memberEmail} is not a member row in ${orgId}`).toBeTruthy();
-	} finally {
-		await ownerContext.close();
 	}
 });
 
 test.afterAll(async () => {
 	await memberContext?.close();
-	writeReport(ctx.orgSlug, "ui-audit-permissions.json");
+	await ownerContext?.close();
+	report.write(ctx.orgSlug, "ui-audit-permissions.json");
 	await closeDb();
 });
 
-/** What the member sees on a route: the shell's content region, reduced to the three things T7 asks. */
-async function observe(page: Page): Promise<{
+/** What a persona sees on a route: the content region, reduced to the things T7 asks about. */
+interface Observation {
 	path: string;
 	text: string;
 	length: number;
 	sharedErrorState: boolean;
 	sharedEmpty: boolean;
 	denialCopy: boolean;
-}> {
+}
+
+async function observe(page: Page): Promise<Observation> {
 	const sharedErrorState = await rendersSharedErrorState(page);
 	// `visibleText` (innerText), NOT textContent: the document carries tens of kilobytes of inline
 	// script source, so a textContent-based "is this blank?" answers "no" for a genuinely blank
@@ -242,12 +273,17 @@ async function observe(page: Page): Promise<{
 	};
 }
 
+/** Loads `url` in `page` and reports what a person would see there. */
+async function visit(page: Page, url: string): Promise<Observation> {
+	await page.goto(url, { waitUntil: "domcontentloaded" });
+	await page.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => {});
+	return observe(page);
+}
+
 test("the member persona really is a member — otherwise T7 measures the org 404, not permissions", async () => {
 	expect(memberPage, "no member page was created").not.toBeNull();
 	if (!memberPage) return;
-	await memberPage.goto(`/${ctx.orgSlug}`, { waitUntil: "domcontentloaded" });
-	await memberPage.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => {});
-	const seen = await observe(memberPage);
+	const seen = await visit(memberPage, `/${ctx.orgSlug}`);
 	expect(
 		seen.path.startsWith(`/${ctx.orgSlug}`),
 		`the member was bounced off the org overview to ${seen.path} — it has no access to the ` +
@@ -280,14 +316,29 @@ test.describe("T7 · what the member persona gets on each route", () => {
 				return;
 			}
 			const url = materialize(route, ctx);
-			await memberPage.goto(url, { waitUntil: "domcontentloaded" });
-			await memberPage.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => {});
-			const seen = await observe(memberPage);
+			const seen = await visit(memberPage, url);
 
-			// Bounced somewhere else entirely (sign-in, another org) — a redirect IS a deliberate
-			// answer to "you may not be here", and the URL says which.
-			const redirected = !seen.path.startsWith(url.replace(/\/$/, ""));
-			const restricted = redirected || seen.sharedErrorState || seen.denialCopy;
+			// RESTRICTION IS A DIFFERENCE, NOT A REDIRECT.
+			//
+			// The first version read "the member was redirected" as evidence of refusal on its own,
+			// and that scores a PASS on routes that redirect EVERYONE: `/dashboard` is the app's
+			// "where do I belong" hop (JSX beside its `redirect()`, so `isRedirectOnly` does not
+			// catch it) and `~/settings` sends every caller to its default tab. Both bounced the
+			// member, both were recorded restricted-and-deliberate, and T7 reported green over a
+			// route that restricted nothing — the exact column-of-PASSes failure this file's header
+			// warns about.
+			//
+			// So the same URL is driven by the OWNER of the same org, and only a difference counts:
+			// the member ends up somewhere the owner does not, or sees a denial the owner does not.
+			const byOwner = ownerPage ? await visit(ownerPage, url) : null;
+			const memberRedirected = !seen.path.startsWith(url.replace(/\/$/, ""));
+			const ownerRedirectedSameWay = byOwner !== null && byOwner.path === seen.path;
+			const redirectedAway = memberRedirected && !ownerRedirectedSameWay;
+			const deniedWhereOwnerIsNot =
+				(seen.sharedErrorState && !(byOwner?.sharedErrorState ?? false)) ||
+				(seen.denialCopy && !(byOwner?.denialCopy ?? false));
+			const restricted = redirectedAway || deniedWhereOwnerIsNot;
+			const evidence = { member: seen, owner: byOwner, redirectedAway, deniedWhereOwnerIsNot };
 
 			if (!restricted) {
 				record({
@@ -296,18 +347,18 @@ test.describe("T7 · what the member persona gets on each route", () => {
 					predicate: "T7",
 					verdict: "N/A",
 					reason: "no-restricted-surface",
-					evidence: seen,
+					evidence,
 				});
 				return;
 			}
 			// A blank is never a deliberate state — that is the whole of T7.
-			const deliberate = redirected || seen.sharedErrorState || seen.sharedEmpty || seen.length >= 20;
+			const deliberate = redirectedAway || seen.sharedErrorState || seen.sharedEmpty || seen.length >= 20;
 			record({
 				route: route.route,
 				url,
 				predicate: "T7",
 				verdict: deliberate ? "PASS" : "FAIL",
-				evidence: seen,
+				evidence,
 			});
 			expect(
 				deliberate,

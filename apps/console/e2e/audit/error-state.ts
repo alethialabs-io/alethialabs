@@ -143,8 +143,28 @@ export async function loadWithInjectedFault(page: Page, url: string): Promise<Fa
 	try {
 		await faulted.addInitScript(CLIENT_FAULT);
 		await faulted.goto(url, { waitUntil: "domcontentloaded" }).catch(() => {});
-		// The boundary renders on the client, after hydration throws.
-		await faulted.waitForTimeout(1_500);
+		// WAIT FOR THE OUTCOME, WITH A TIMEOUT AS THE CEILING — never a fixed duration.
+		//
+		// `domcontentloaded` returns as soon as the HTML is parsed, before the client bundle has
+		// hydrated, which is when the poisoned `matchMedia` actually throws and the boundary
+		// renders. A flat 1.5s wait made that whole window the budget, and it failed in the "not
+		// yet" direction: on a slow runner the boundary had simply not rendered, `T6` recorded FAIL,
+		// and the evidence was indistinguishable from a route that genuinely has no shared error
+		// state. A timing flake reported as a conformance defect is worse than one reported as a
+		// timeout, so this polls for the signature and only concludes FAIL after 15s.
+		await faulted
+			.waitForFunction(
+				(arms: string[][]) =>
+					Array.from(document.querySelectorAll<HTMLElement>("div")).some((el) => {
+						const classes = new Set((el.className || "").split(/\s+/));
+						if (!arms.some((tokens) => tokens.every((t) => classes.has(t)))) return false;
+						const r = el.getBoundingClientRect();
+						return r.width > 0 && r.height > 0;
+					}),
+				errorStateSignature(),
+				{ timeout: 15_000 },
+			)
+			.catch(() => {});
 		const text = await visibleText(faulted);
 		return {
 			shellSurvived: await faulted.evaluate(

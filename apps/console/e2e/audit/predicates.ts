@@ -117,7 +117,12 @@ export async function measurePage(page: Page, width: number): Promise<PageMeasur
 		// fits is a declaration, not a scroll container.
 		const scrollingEl = document.scrollingElement;
 		const scrollContainers: ScrollContainer[] = [];
-		for (const el of [document.documentElement, ...all]) {
+		// `all` is `querySelectorAll("*")`, which ALREADY contains `<html>`. Prepending
+		// `documentElement` visited it twice, and both visits pass the `scrolls` test — so any page
+		// whose DOCUMENT scrolls reported two identical containers and failed R3 for having "two
+		// scroll containers", naming the same element twice. The self-test could not see it: its
+		// one-scroller fixture never makes the document overflow.
+		for (const el of all) {
 			const s = getComputedStyle(el);
 			const scrolls =
 				el === document.documentElement || s.overflowY === "auto" || s.overflowY === "scroll";

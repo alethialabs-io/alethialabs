@@ -15,11 +15,28 @@
 // a later positioned sibling paints straight over it. A z-index matcher reads that page as correct.
 // The hit test does not.
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { errorStateSignature, rendersSharedErrorState } from "./error-state";
 import { hitTest } from "./overlays";
 import { measurePage } from "./predicates";
-import { NA_REASONS, record } from "./report";
+import { createReport, NA_REASONS } from "./report";
+
+/**
+ * Hit-test the overlay carrying `slot`, handed over as the ELEMENT the way `probeOverlays` does.
+ *
+ * `hitTest` takes a handle rather than a selector precisely so the node measured is the node that
+ * opened; passing one here keeps the self-test on the same path the audit uses.
+ */
+async function hitTestSlot(page: Page, slot: string) {
+	const handle = await page.locator(`[data-slot="${slot}"]`).first().elementHandle();
+	expect(handle, `no [data-slot="${slot}"] in the fixture`).not.toBeNull();
+	if (!handle) throw new Error(`no [data-slot="${slot}"]`);
+	try {
+		return await hitTest(page, handle);
+	} finally {
+		await handle.dispose();
+	}
+}
 
 const CHROME = `
   <header style="position: fixed; inset: 0 0 auto 0; height: 60px; z-index: 100;
@@ -57,6 +74,16 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		// And a container DECLARED scrollable whose content fits is not a scroll container.
 		await page.setContent(`<main style="height: 300px; overflow-y: auto"><div style="height: 10px">a</div></main>`);
 		expect((await measurePage(page, 1280)).scrollContainers).toEqual([]);
+
+		// THE DOCUMENT SCROLLING IS **ONE** CONTAINER, not two. `querySelectorAll("*")` already
+		// contains `<html>`, so an explicit `[documentElement, ...all]` visited it twice and every
+		// page whose document scrolls reported two identical containers and failed R3 for having
+		// "two" — naming the same element both times. No earlier fixture made the document
+		// overflow, which is exactly why nothing caught it.
+		await page.setContent(`<div style="height: 4000px">tall</div>`);
+		const doc = await measurePage(page, 1280);
+		expect(doc.scrollContainers).toHaveLength(1);
+		expect(doc.scrollContainers[0].isShellScroller, "the document IS the shell scroller here").toBe(true);
 	});
 
 	test("R4 — two overlapping buttons are a FAIL; a nested pair and a disjoint pair are not", async ({ page }) => {
@@ -114,7 +141,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 					a later positioned sibling
 				</div>
 			</main>`);
-		const behind = await hitTest(page, "popover-content");
+		const behind = await hitTestSlot(page, "popover-content");
 		expect(behind, "the fixture overlay is measurable").not.toBe("off-screen");
 		if (behind === "off-screen") return;
 		expect(
@@ -135,7 +162,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 					a later positioned sibling
 				</div>
 			</main>`);
-		const above = await hitTest(page, "popover-content");
+		const above = await hitTestSlot(page, "popover-content");
 		expect(above).not.toBe("off-screen");
 		if (above === "off-screen") return;
 		expect(above.points.filter((p) => !p.inside), "the fixed overlay is on top at every probe").toEqual([]);
@@ -152,7 +179,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 					dialog body
 				</div>
 			</main>`);
-		const measured = await hitTest(page, "dialog-content");
+		const measured = await hitTestSlot(page, "dialog-content");
 		expect(measured).not.toBe("off-screen");
 		if (measured === "off-screen") return;
 		const missed = measured.points.filter((p) => !p.inside).map((p) => p.name);
@@ -168,7 +195,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 			<main style="position: relative; height: 600px">
 				<div data-slot="tooltip-content" style="position: absolute; left: 200px; top: 200px; width: 200px; height: 80px; z-index: 10; pointer-events: none; background: #222; color: white">tip</div>
 			</main>`);
-		const measured = await hitTest(page, "tooltip-content");
+		const measured = await hitTestSlot(page, "tooltip-content");
 		expect(measured).not.toBe("off-screen");
 		if (measured === "off-screen") return;
 		expect(measured.pointerEventsRelaxed, "the probe records that it had to relax pointer-events").toBe(true);
@@ -190,6 +217,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 	});
 
 	test("the report refuses the three ways an N/A goes wrong", () => {
+		const { record } = createReport();
 		expect(() => record({ route: "/x", url: "/x", predicate: "R1", verdict: "N/A" })).toThrow(/no reason/);
 		expect(() =>
 			record({ route: "/x", url: "/x", predicate: "R1", verdict: "N/A", reason: "it-was-hard" }),

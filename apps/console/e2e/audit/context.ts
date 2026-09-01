@@ -25,7 +25,7 @@ import path from "node:path";
 import type { Page } from "@playwright/test";
 import { db, orgIdBySlug } from "../helpers/db";
 import { seedJob, seedProject, type Owner } from "../helpers/seed";
-import type { RouteRecord } from "./manifest";
+import type { RouteParam, RouteRecord } from "./manifest";
 
 export interface AuditContext {
 	orgSlug: string;
@@ -143,12 +143,20 @@ export function restoreContext(ctx: AuditContext): void {
 	if ("supportCaseId" in saved && typeof saved.supportCaseId === "string") ctx.supportCaseId = saved.supportCaseId;
 }
 
-/** Parameters this audit knows how to resolve, keyed by the segment they appear under. */
-function valueFor(param: string, route: string, ctx: AuditContext): string | null {
-	if (param === "org") return ctx.orgSlug;
-	if (param === "project") return ctx.projectSlug ?? null;
-	if (param === "rest") return ""; // `[[...rest]]` — the optional catch-all's zero-segment form
-	if (param === "id") {
+/**
+ * Parameters this audit knows how to resolve.
+ *
+ * Takes the whole `RouteParam`, not just its name: the zero-segment form is legal for the OPTIONAL
+ * catch-all `[[...rest]]` and for nothing else. Keyed on the name alone, a REQUIRED `[...rest]`
+ * resolved to "" too — and Next answers that with a not-found, which is exactly the outcome this
+ * module's header says must never happen, made worse by being silent where every other unresolvable
+ * parameter raises.
+ */
+function valueFor(param: RouteParam, route: string, ctx: AuditContext): string | null {
+	if (param.name === "org") return ctx.orgSlug;
+	if (param.name === "project") return ctx.projectSlug ?? null;
+	if (param.catchAll && param.optional) return "";
+	if (param.name === "id") {
 		if (route.startsWith("/[org]/~/jobs/")) return ctx.jobId ?? null;
 		if (route.startsWith("/[org]/~/support/cases/")) return ctx.supportCaseId ?? null;
 		return null;
@@ -171,7 +179,7 @@ export function needsOnlyOrg(route: RouteRecord): boolean {
 export function materialize(route: RouteRecord, ctx: AuditContext): string {
 	let path = route.route;
 	for (const p of route.params) {
-		const value = valueFor(p.name, route.route, ctx);
+		const value = valueFor(p, route.route, ctx);
 		if (value === null) {
 			throw new Error(
 				`cannot materialise ${route.route}: no value for "${p.segment}". Every manifest route ` +

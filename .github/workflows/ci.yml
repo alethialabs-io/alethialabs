@@ -19,10 +19,24 @@ on:
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC — mutation testing (slow, non-blocking)
     # Nightly 03:00 UTC — the console UI conformance audit over EVERY route, so a route no PR
-    # happened to touch is still measured. Jobs gate on `github.event.schedule` (the exact
-    # expression), never on `event_name == 'schedule'`: a bare event test would sign every
-    # cron-gated job up for every cron added here, which is precisely what adding this one
-    # would have done to `mutation`.
+    # happened to touch is still measured.
+    #
+    # ADDING A CRON SIGNS UP MORE THAN THE JOB YOU ADDED IT FOR, in two different ways, and both
+    # are handled here rather than discovered later:
+    #
+    #   · a job that gates on `github.event_name == 'schedule'` now also fires nightly — that is
+    #     `mutation`, which is pinned to its own cron expression below;
+    #   · a job with NO `if:` AT ALL fires on every trigger, so six jobs that ran weekly on the
+    #     Monday cron would have started running nightly against `main` (schedule only fires on the
+    #     default branch): `typescript`, `integration`, `guards`, `go`, `secrets` and
+    #     `addon-charts-render`. Each now carries `if: github.event.schedule != '0 3 * * *'`.
+    #
+    # Two are deliberately NOT excluded, and the reason is not "it was missed":
+    #   · `detect-changes` — `ui-audit` declares `needs: [detect-changes]`, and a job whose `needs`
+    #     skipped is itself skipped, so excluding it would silently cancel the nightly audit;
+    #   · `docs-prose` — it exists to ALWAYS report its status check (see its own comment), and on
+    #     a schedule event every one of its steps is gated off by the `docs` filter, so it costs one
+    #     idle runner rather than a Vale run.
     - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
@@ -126,6 +140,11 @@ jobs:
   typescript:
     name: TypeScript (lint · types · test · docs)
     runs-on: ubuntu-latest
+    # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
+    # 03:00 cron added for the console UI audit would have signed this one up for a nightly
+    # run it never asked for — the same trap the cron block records for `mutation`, which
+    # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
+    if: github.event.schedule != '0 3 * * *'
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -271,6 +290,11 @@ jobs:
   integration:
     name: Integration (real Postgres + RLS)
     runs-on: ubuntu-latest
+    # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
+    # 03:00 cron added for the console UI audit would have signed this one up for a nightly
+    # run it never asked for — the same trap the cron block records for `mutation`, which
+    # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
+    if: github.event.schedule != '0 3 * * *'
     # A throwaway Postgres mirroring the dev stack (compose uses postgres:17-alpine with the
     # same superuser/db). db:migrate then creates the least-priv `alethia_app` role + RLS, so
     # the suite exercises the real SQL query builders and the multi-tenant isolation boundary.
@@ -751,6 +775,11 @@ jobs:
   guards:
     name: Authz / open-core guards
     runs-on: ubuntu-latest
+    # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
+    # 03:00 cron added for the console UI audit would have signed this one up for a nightly
+    # run it never asked for — the same trap the cron block records for `mutation`, which
+    # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
+    if: github.event.schedule != '0 3 * * *'
     # `issues: read` for check-exclusion-issues.mjs, the one network step in an otherwise hermetic
     # job. The workflow-level `permissions: contents: read` makes every unlisted scope NONE, so
     # without this `gh issue view` fails, the check reports "could not read the state" and — being
@@ -1525,6 +1554,11 @@ jobs:
   go:
     name: Go (build · vet · test · lint)
     runs-on: ubuntu-latest
+    # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
+    # 03:00 cron added for the console UI audit would have signed this one up for a nightly
+    # run it never asked for — the same trap the cron block records for `mutation`, which
+    # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
+    if: github.event.schedule != '0 3 * * *'
     strategy:
       fail-fast: false
       matrix:
@@ -2077,6 +2111,11 @@ jobs:
   secrets:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
+    # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
+    # 03:00 cron added for the console UI audit would have signed this one up for a nightly
+    # run it never asked for — the same trap the cron block records for `mutation`, which
+    # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
+    if: github.event.schedule != '0 3 * * *'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -2106,6 +2145,11 @@ jobs:
   addon-charts-render:
     name: Add-on charts render (helm template · pinned charts)
     runs-on: ubuntu-latest
+    # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
+    # 03:00 cron added for the console UI audit would have signed this one up for a nightly
+    # run it never asked for — the same trap the cron block records for `mutation`, which
+    # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
+    if: github.event.schedule != '0 3 * * *'
     # Its own job because it needs helm on PATH and fetches real charts — neither belongs in the
     # console's vitest run. It renders the DEFAULT values of every marketplace add-on against its
     # pinned chart and requires exit 0.

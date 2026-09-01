@@ -33,7 +33,7 @@ import { loadWithInjectedFault, rendersSharedErrorState, type FaultResult } from
 import { consoleRoutes, type RouteRecord } from "./manifest";
 import { AUDIT_VIEWPORT_HEIGHT, measurePage, R1_WIDTHS, type PageMeasurement } from "./predicates";
 import { describeOverlayMisses, probeOverlays } from "./overlays";
-import { record, writeReport } from "./report";
+import { createReport } from "./report";
 import {
 	attachSignals,
 	navigationsFor,
@@ -48,6 +48,10 @@ import { STORAGE_STATE } from "../fixtures/auth";
 
 const manifest = consoleRoutes();
 const ctx: AuditContext = { orgSlug: "", owner: { userId: "", orgId: "" } };
+// This spec's OWN verdict buffer. In CI every audit spec loads into one worker, so a module-level
+// buffer would pool `permissions.spec`'s T7 verdicts into this file's report — see report.ts.
+const report = createReport();
+const record = report.record;
 
 test.beforeAll(async ({ browser }, testInfo) => {
 	// R5's scanner must be REAL before a single route is scored. `helpers/a11y.ts` answers `[]` when
@@ -74,7 +78,7 @@ test.beforeAll(async ({ browser }, testInfo) => {
 });
 
 test.afterAll(async () => {
-	const file = writeReport(ctx.orgSlug);
+	const file = report.write(ctx.orgSlug);
 	console.log(`ui-audit: ${file}`);
 	await closeDb();
 });
@@ -108,8 +112,17 @@ async function auditRoute(page: Page, route: RouteRecord): Promise<void> {
 		await page.setViewportSize({ width, height: AUDIT_VIEWPORT_HEIGHT });
 		const started = Date.now();
 		await page.goto(url, { waitUntil: "domcontentloaded" });
-		await settle(page);
+		// R7'S SAMPLE STOPS AT `load`, BEFORE `settle`. It used to be taken after it, which put the
+		// INSTRUMENT'S OWN WAITING inside the number: `settle` always spends 250ms and up to 4,000ms
+		// in `networkidle`, and its own comment says a polling page (the jobs list) never goes idle
+		// — so such a route carried a fixed 4,250ms of the 8,000ms budget, a page that became usable
+		// in a healthy 3.8s was reported as 8.05s, and nothing in the evidence let a reader see
+		// which part was the harness. `load` is the page's own signal.
+		await page.waitForLoadState("load").catch(() => {});
 		interactiveMs.push(Date.now() - started);
+		// Settle AFTER the sample: it is a pre-condition for the geometry predicates, not part of
+		// what R7 measures.
+		await settle(page);
 		measurements.push(await measurePage(page, width));
 	}
 	const landedOn = new URL(page.url()).pathname;
@@ -215,6 +228,7 @@ async function auditRoute(page: Page, route: RouteRecord): Promise<void> {
 		evidence: {
 			samples: interactiveMs,
 			warmUpExcluded: interactiveMs[0],
+			measuredTo: "load",
 			p95: measuredP95,
 			budgetMs: R7_BUDGET_MS,
 			navigations: navigationsFor(signals.perf, "/").slice(-6),

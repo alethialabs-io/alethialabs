@@ -15,7 +15,7 @@
 // `document.elementFromPoint()` return at its centre and its four inset corners? If the answer is
 // not inside the overlay, something paints over it — whatever the class list says.
 
-import type { Locator, Page } from "@playwright/test";
+import type { ElementHandle, Locator, Page } from "@playwright/test";
 
 /** Trigger `data-slot` → the `data-slot` of the layer it opens, and how to provoke it. */
 const OVERLAY_KINDS: { trigger: string; content: string; action: "click" | "hover" }[] = [
@@ -73,14 +73,21 @@ export interface OverlayReport {
  * it, which is indistinguishable from the defect. So when the overlay declares it, the probe sets
  * `pointer-events: auto` on the OVERLAY ELEMENT ONLY for the duration of the read and records that
  * it did. Nothing about the chrome is touched, so the stacking being measured is the real one.
+ *
+ * IT TAKES THE ELEMENT, NOT A SELECTOR. Re-querying `document.querySelector('[data-slot=…]')` here
+ * returned the FIRST node in DOM order, while the caller had waited on the locator's first VISIBLE
+ * one — and several of these layers stay mounted-but-hidden while closed. The two are then
+ * different nodes, the hidden one measures 0x0, the probe files itself as `off-screen`, and a route
+ * whose only overlay was open and perfectly measurable records R2 as N/A "opens-no-overlay". The
+ * element measured must be the element opened.
  */
 async function hitTest(
 	page: Page,
-	contentSlot: string,
+	// The union `Locator.elementHandle()` returns. Both members carry `style` and
+	// `getBoundingClientRect`, which is everything this reads.
+	overlay: ElementHandle<SVGElement | HTMLElement>,
 ): Promise<{ points: HitTestPoint[]; pointerEventsRelaxed: boolean } | "off-screen"> {
-	const result = await page.evaluate((slot) => {
-		const el = document.querySelector<HTMLElement>(`[data-slot="${slot}"]`);
-		if (!el) return "off-screen" as const;
+	const result = await page.evaluate((el: SVGElement | HTMLElement) => {
 		const r = el.getBoundingClientRect();
 		if (r.width < 8 || r.height < 8) return "off-screen" as const;
 
@@ -122,10 +129,22 @@ async function hitTest(
 
 		if (relaxed) el.style.pointerEvents = prior;
 		return { points, pointerEventsRelaxed: relaxed };
-	}, contentSlot);
+	}, overlay);
 
 	if (result === "off-screen") return "off-screen";
 	return result;
+}
+
+/**
+ * Escape, unconditionally, without waiting on any particular layer.
+ *
+ * Used on the paths where the expected content never appeared: something may still be open, and it
+ * is by definition not the thing this probe knows how to wait for.
+ */
+async function dismissAnything(page: Page, content: Locator): Promise<void> {
+	await page.keyboard.press("Escape").catch(() => {});
+	await content.first().waitFor({ state: "hidden", timeout: 500 }).catch(() => {});
+	await page.mouse.move(2, 2).catch(() => {});
 }
 
 /** Dismisses whatever is open, and waits for it to go. */
@@ -168,21 +187,33 @@ export async function probeOverlays(page: Page): Promise<OverlayReport> {
 				if (kind.action === "hover") await trigger.hover({ timeout: 2_000 });
 				else await trigger.click({ timeout: 2_000 });
 			} catch {
+				// DISMISS EVEN HERE. "The content slot I was waiting for never became visible" is
+				// not "nothing opened": a trigger whose menu is built on a different slot (or has
+				// been renamed) leaves a real, modal layer over the page. Every later trigger then
+				// fails `isVisible`/`click` behind it, the route reports `measured === 0`, and R2
+				// records N/A "opens-no-overlay" for a page that opens overlays — which is the one
+				// escape hatch R2 has. An unconditional Escape removes the coupling entirely.
+				await dismissAnything(page, content);
 				probes.push({ kind: kind.content, triggerIndex: i, trigger: label, status: "did-not-open", points: [], misses: [] });
 				continue;
 			}
 
-			const opened = await content
-				.first()
+			const visibleOverlay = content.first();
+			const opened = await visibleOverlay
 				.waitFor({ state: "visible", timeout: 2_000 })
 				.then(() => true)
 				.catch(() => false);
 			if (!opened) {
+				await dismissAnything(page, content);
 				probes.push({ kind: kind.content, triggerIndex: i, trigger: label, status: "did-not-open", points: [], misses: [] });
 				continue;
 			}
 
-			const measured = await hitTest(page, kind.content);
+			// The handle comes from the SAME locator that was waited on, so the node measured is the
+			// node that opened — see the note on `hitTest`.
+			const handle = await visibleOverlay.elementHandle().catch(() => null);
+			const measured = handle ? await hitTest(page, handle) : "off-screen";
+			await handle?.dispose();
 			if (measured === "off-screen") {
 				probes.push({ kind: kind.content, triggerIndex: i, trigger: label, status: "off-screen", points: [], misses: [] });
 			} else {

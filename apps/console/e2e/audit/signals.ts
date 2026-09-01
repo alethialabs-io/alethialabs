@@ -75,6 +75,13 @@ export function attachSignals(page: Page): RouteSignals {
 	const REAL_IN_PRODUCTION = [/hydration/i, /validateDOMNesting/i];
 	const capture = (text: string, kind: CapturedError["kind"]) => {
 		if (!REAL_IN_PRODUCTION.some((re) => re.test(text))) return;
+		// ONLY WHAT THE GUARD ACTUALLY DROPPED. These patterns are deliberately broader than the
+		// guard's — its entry is `/Warning: .*validateDOMNesting/i`, and React 19 logs most of those
+		// without the `Warning: ` prefix — so a message the guard already captured would be counted
+		// a second time here, appearing twice in the R6 evidence and inflating the failure count.
+		// Mirroring the guard's exact regexes would be a copy that decays; asking what it captured
+		// is the same question, answered by the emitter.
+		if (guard.errors.some((e) => e.text === text)) return;
 		suppressedButReal.push({ kind, text, at: new Date().toISOString() });
 	};
 	page.on("console", (msg) => {
