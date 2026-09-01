@@ -109,6 +109,7 @@ const FIXTURES: Record<keyof typeof cliContract, string> = {
 	CloudIdentitiesResponse: "cloud_identities.json",
 	JobsPageResponse: "jobs_page.json",
 	JobResponse: "job_response.json",
+	PageInfo: "page_info.json",
 	Job: "job.json",
 	JobLogsResponse: "job_logs.json",
 	RepositoriesResponse: "repositories.json",
