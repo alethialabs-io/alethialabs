@@ -41,12 +41,18 @@ var projectDesignApplyCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		project, err := currentProject(cmd)
+		project, err := projectFromFlag(cmd, token)
 		if err != nil {
 			fail(err)
 		}
 		env, _ := cmd.Flags().GetString("env")
-		doc, err := readDesignDocument(designApplyFile, os.Stdin)
+		file := designApplyFile
+		if file == "" && promptsEnabled() {
+			if file, err = promptDesignFile(); err != nil {
+				fail(err)
+			}
+		}
+		doc, err := readDesignDocument(file, os.Stdin)
 		if err != nil {
 			fail(err)
 		}
@@ -60,6 +66,19 @@ var projectDesignApplyCmd = &cobra.Command{
 			failf("Failed to apply the design: %v", err)
 		}
 	},
+}
+
+// promptDesignFile asks for the document's path when -f was not passed.
+//
+// A path is the one thing this command cannot default: a design document is a file somebody
+// wrote, and there is no sensible guess. Asking is still better than refusing, because the
+// caller who forgot the flag is on a terminal and has the path in their head.
+func promptDesignFile() (string, error) {
+	if err := requireInteractive(); err != nil {
+		return "", err
+	}
+	return askLine("Design document",
+		"Path to the document, or - to read stdin. `alethia config export` emits this shape")
 }
 
 // readDesignDocument reads the document from a file, or from stdin when the path is "-". It checks the
@@ -106,26 +125,40 @@ func runDesignApply(c apiClient, out io.Writer, p api.ApplyDesignParams) error {
 			return nil
 		}
 		fmt.Fprintf(out, "%d change(s) would be made%s:\n", len(res.Changes), envSuffix(p.Env))
-		for _, ch := range res.Changes {
-			name := ""
-			if ch.Name != nil && *ch.Name != "" {
-				name = " " + *ch.Name
-			}
-			fmt.Fprintf(out, "  %-7s %s%s\n", ch.Action, ch.Kind, name)
-		}
+		printDesignChanges(out, res.Changes)
 		fmt.Fprintln(out, ui.MutedStyle.Render("Nothing was written. Re-run without --dry-run to apply."))
 	case "staged":
 		fmt.Fprintln(out, ui.FormatSuccess("Staged the design"+envSuffix(p.Env)))
 		fmt.Fprintln(out, ui.MutedStyle.Render("Review and apply it from the staged-changes tray."))
 	default:
 		fmt.Fprintln(out, ui.FormatSuccess("Applied the design"+envSuffix(p.Env)))
+		// The changes it MADE, not only the ones a dry run would have made.
+		//
+		// An apply is the one mode that can DELETE a component — a kind the document omits is
+		// a kind the environment loses — and until this printed them, the only way to find out
+		// was to have run --dry-run first and trusted that nothing moved in between. `apply`
+		// is not in the CLI's destructive-verb set and does not carry --yes (a design document
+		// is what CI replays; a confirmation there would break the workflow the command exists
+		// for), so REPORTING what went is the whole safety story and it was missing.
+		printDesignChanges(out, res.Changes)
 		fmt.Fprintln(out, ui.MutedStyle.Render("It reaches the cloud on the next plan + apply."))
 	}
 	return nil
 }
 
+// printDesignChanges writes one row per component change, in the order the server reported.
+func printDesignChanges(out io.Writer, changes []api.DesignChange) {
+	for _, ch := range changes {
+		name := ""
+		if ch.Name != nil && *ch.Name != "" {
+			name = " " + *ch.Name
+		}
+		fmt.Fprintf(out, "  %-7s %s%s\n", ch.Action, ch.Kind, name)
+	}
+}
+
 func init() {
-	projectDesignApplyCmd.Flags().StringVarP(&designApplyFile, "file", "f", "", "Design document path, or - for stdin (required)")
+	projectDesignApplyCmd.Flags().StringVarP(&designApplyFile, "file", "f", "", "Design document path, or - for stdin (asked for on a terminal when omitted)")
 	projectDesignApplyCmd.Flags().BoolVar(&designApplyDryRun, "dry-run", false, "Print the changes that would be made and write nothing")
 	projectDesignApplyCmd.Flags().BoolVar(&designApplyStage, "stage", false, "Stage the change for review instead of applying it")
 	projectDesignCmd.PersistentFlags().StringP("project", "p", "", "Project name or id")
