@@ -319,6 +319,11 @@ const RULES = [
 				// attribute whose whole value is a currency symbol is the one shape that survives
 				// that hand-off, and it is worth matching precisely because the render site is
 				// unreachable: `{prefix}` on one line and `{n}` on the next is not a money shape.
+				//
+				// `\w+=` with no space around it is a JSX attribute and not an assignment, because
+				// the formatter puts spaces around `=` in `const symbol = "$"` — measured: one hit
+				// in the whole console, the prop. If that ever stops being true the cost is a false
+				// positive, which is the loud direction.
 				scope: "console_code",
 				re: /\w+=["'][$€£¥]["']/g,
 				say: "passes a currency symbol to a component as a prop, which puts the symbol at one end of a prop and the number at the other. Use `formatMoney`/`formatMonthlyRate` at the call site and hand the component the finished string.",
@@ -411,7 +416,10 @@ const RULES = [
 			{
 				// The primitive. Without this the fix is one import away from being undone, and the
 				// two live copies of it already disagree — one renders a label above the figure, the
-				// other a caption below.
+				// other a caption below. `function Stat` and not also `const Stat = (` because both
+				// live copies are declarations and a second alternative would be a shape with no
+				// occurrence to prove it still matches — the probe would be the only thing holding
+				// it, which is exactly the arrangement this file spent its census floors avoiding.
 				scope: "console_view",
 				re: /\bfunction Stat\s*\(/g,
 				say: "defines a stat-card cell. Delete it with the strip it feeds — a `Stat` primitive left behind is the next strip's first line, and the console already carries two copies of this one that disagree about where the label goes.",
