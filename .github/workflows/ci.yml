@@ -639,6 +639,15 @@ jobs:
   guards:
     name: Authz / open-core guards
     runs-on: ubuntu-latest
+    # `issues: read` for check-exclusion-issues.mjs, the one network step in an otherwise hermetic
+    # job. The workflow-level `permissions: contents: read` makes every unlisted scope NONE, so
+    # without this `gh issue view` fails, the check reports "could not read the state" and — being
+    # continue-on-error — becomes permanent background noise in which a genuinely CLOSED tracker
+    # renders identically to the guard being broken. Every other workflow here that touches the
+    # issues API declares it explicitly (programme.yml, workflow-health.yml, catalog-drift.yml, …).
+    permissions:
+      contents: read
+      issues: read
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -1060,6 +1069,35 @@ jobs:
       - name: Nightly rollup derivation (a red leg is never "not enabled")
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/nightly-rollup.sh --self-test
+      # An e2e exclusion's tracking issue must still be OPEN — the `Issue` field's own docstring in
+      # test/e2e/addon_exclusions.go says a closed one "defeats the whole point of the field". Only
+      # its SHAPE (`^#\d+$`) was enforced, by a pure test that cannot ask GitHub, and the contract
+      # was already broken on dev: the sole entry cited #2717, closed 2026-08-29 (#3524).
+      #
+      # TWO steps, because they answer different questions and only one needs the network. The
+      # self-test pins the scan and the verdict — including that an UNREADABLE state is an error and
+      # never "assume open" — and runs even where the live check cannot.
+      - name: Exclusion tracking-issue guard self-test (scan + verdict, no network)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-exclusion-issues.mjs --self-test
+      # …and the same scan against the REAL file, which is also pure. It BLOCKS, because the
+      # tripwires it carries — "found NO Issue fields", and a field in a shape the scan cannot read
+      # — are the ones whose own message says "a guard that silently checks nothing is worse than no
+      # guard". Reachable only from the network step below, they could never red the build: a regex
+      # that stopped matching produced an annotation on a green job and nothing else.
+      - name: Every add-on exclusion's tracking issue is READABLE (no network)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-exclusion-issues.mjs --scan-only
+      # …and the live question. `continue-on-error` DELIBERATELY: an issue closing is a state change
+      # in GitHub, not in the diff, so this can go red on a PR that touched nothing — and a guard
+      # that blocks unrelated work is a guard people route around. It annotates; the self-test above
+      # is the blocking half. Revisit if it turns out to be ignored rather than acted on.
+      - name: Every add-on exclusion still names an OPEN issue
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-exclusion-issues.mjs
       # The row the rollup appends must name the commit the RUN executed, not the commit the rollup
       # job happens to be sitting on. Those are different jobs, so any merge between them separates
       # the two — and seven ledger rows already disagree with their own bundle, in BOTH directions,
