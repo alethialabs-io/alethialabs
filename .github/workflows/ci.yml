@@ -19,6 +19,19 @@ on:
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC — mutation testing (slow, non-blocking)
   workflow_dispatch:
+    inputs:
+      # ONLY the ts-coverage determinism probe reads this; every other job ignores it. It is here
+      # because a run-count is the one knob a flap hunt actually needs, and today changing it means
+      # editing a script and opening a PR — which is a poor way to ask "does it show up in 20?".
+      #
+      # MEASURED NEED (#3342): `apps/console/lib/billing` measures 957 or 958 of 1753 on the same
+      # tree, and a 5-run dispatch on 2026-09-01 (run 33497231141) reported it DETERMINISTIC. That
+      # is not evidence the flap is gone — it is evidence it is rarer than 1 in 5, and the only way
+      # to say more is more runs.
+      ts_probe_runs:
+        description: "TS coverage determinism probe: how many runs to compare (default 5)"
+        required: false
+        default: "5"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -1560,7 +1573,18 @@ jobs:
           printf '%-22s %s\n' ee/dist "$(test -f ee/dist/index.js && echo present || echo ABSENT)"
           node -p "require('./node_modules/@vitest/coverage-v8/package.json').version" 2>/dev/null \
             || echo "coverage-v8 version: resolved per-project"
-      - name: Five runs, compared — then the floors those numbers produce
+      # The count comes from the dispatch input, defaulted in BOTH places: the `||` here covers an
+      # event where `inputs` does not exist at all, and the script's own `${ALETHIA_TS_PROBE_RUNS:-5}`
+      # covers being run by hand.
+      #
+      # An EMPTY value is safe — `${VAR:-5}` substitutes for empty as well as unset, checked rather
+      # than assumed. What is NOT safe is `0`, which survives that default and (on GNU seq) runs the
+      # loop zero times, so the probe would report success having compared nothing. The script now
+      # rejects anything below 2; this comment records why the rejection is there rather than
+      # leaving it to look like fussiness.
+      - name: N runs, compared — then the floors those numbers produce
+        env:
+          ALETHIA_TS_PROBE_RUNS: ${{ inputs.ts_probe_runs || '5' }}
         run: scripts/ci/ts-coverage-probe.sh
       - uses: actions/upload-artifact@v7
         with:

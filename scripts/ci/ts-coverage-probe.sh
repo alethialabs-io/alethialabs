@@ -47,13 +47,43 @@
 
 set -euo pipefail
 
-RUNS="${ALETHIA_TS_PROBE_RUNS:-5}"
+RUNS_RAW="${ALETHIA_TS_PROBE_RUNS:-5}"
 SWEEP="${ALETHIA_TS_PROBE_SWEEP:-scripts/ts-coverage-sweep.json}"
 SUITE="${ALETHIA_TS_PROBE_SUITE:-pnpm exec turbo run test --force}"
 TSCOV="${ALETHIA_TS_PROBE_TSCOV:-node scripts/ts-coverage.mjs}"
 OUT="${ALETHIA_TS_PROBE_OUT:-ts-coverage-floors}"
 
 die() { echo "::error::ts-coverage-probe: $*" >&2; exit 1; }
+
+# validate_runs <value>: echo the run count, or fail. A determinism probe that compares fewer than
+# two runs has compared nothing.
+#
+# MEASURED, not assumed. `RUNS` is now settable from a workflow_dispatch input (#3342 needed more
+# than five to hunt a flap that did not reproduce in five), and two values get through the
+# `${VAR:-5}` default that look harmless:
+#
+#   RUNS=0    `:-` only substitutes for UNSET or EMPTY, so 0 survives. On GNU coreutils `seq 1 0`
+#             prints nothing, so the loop body never executes, `assert_deterministic 0` compares an
+#             empty set — and the probe reports success having measured NOTHING. That is the exact
+#             "found nothing / nothing is wrong" collapse this script's own header is about.
+#   RUNS=abc  `seq: invalid floating point argument`, which is a diagnostic about seq rather than
+#             about the input somebody typed.
+#
+# (An empty value is genuinely safe — `:-` substitutes 5 — which is why this checks the value and
+# not merely whether it was set.)
+#
+# BSD `seq 1 0` counts DOWN and prints "1 0", so the same input is a no-op on Linux and a two-run
+# probe on a laptop. Rejecting it removes the divergence rather than picking a side.
+validate_runs() {
+  case "$1" in
+    ''|*[!0-9]*) echo "::error::ts-coverage-probe: run count must be a positive integer, got '$1'" >&2; return 1 ;;
+  esac
+  if [ "$1" -lt 2 ]; then
+    echo "::error::ts-coverage-probe: run count must be at least 2, got '$1' — a determinism probe that compares fewer than two runs compares nothing and would report success having measured it" >&2
+    return 1
+  fi
+  echo "$1"
+}
 
 # ── the list, read once ───────────────────────────────────────────────────────────────────────────
 #
@@ -314,6 +344,19 @@ if [ "${1:-}" = "--self-test" ]; then
   else ok "a row that differs between runs fails"; fi
 
   echo
+  echo " the run count"
+  # (l) The values that get through `${VAR:-5}` and would otherwise make the probe measure nothing.
+  for good in 2 5 20 100; do
+    if [ "$(validate_runs "$good" 2>/dev/null)" = "$good" ]; then ok "runs=$good is accepted"
+    else bad "runs=$good should be accepted"; fi
+  done
+  for evil in 0 1 "" "abc" "-3" "2.5" "5 5"; do
+    if validate_runs "$evil" >/dev/null 2>&1; then
+      bad "runs='$evil' should be REJECTED — it would compare fewer than two runs, or none"
+    else ok "runs='$evil' is rejected"; fi
+  done
+
+  echo
   echo " naming the flapping FILE"
   # (g) The half assert_deterministic cannot do. Its failure names a DIRECTORY, and the reader's
   #     next question is which of that directory's files moved. Every branch here is a branch that
@@ -411,6 +454,8 @@ fi
 # ── the probe ─────────────────────────────────────────────────────────────────────────────────────
 
 command -v jq >/dev/null || die "jq is required to read $SWEEP"
+
+RUNS="$(validate_runs "$RUNS_RAW")" || exit 1
 
 PROJECTS=()
 while IFS= read -r line; do PROJECTS+=("$line"); done < <(read_projects "$SWEEP")
