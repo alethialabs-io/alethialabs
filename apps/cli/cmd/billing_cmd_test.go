@@ -84,9 +84,74 @@ func TestRunUsageTable(t *testing.T) {
 	if err := runUsage(&fakeClient{usage: sampleUsage()}, &buf, "table"); err != nil {
 		t.Fatalf("runUsage: %v", err)
 	}
-	for _, want := range []string{"3 / 5", "120", "7", "450 / 3000"} {
+	for _, want := range []string{"3 / 5", "2h", "7", "450 / 3000"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("usage table missing %q:\n%s", want, buf.String())
+		}
+	}
+}
+
+// usageCell returns the value of one Field/Value row, so an assertion can be about the whole cell
+// rather than a substring of the rendered card. `strings.Contains(out, "2h")` is satisfied by
+// "2h 15m" and by "12h"; the row is the thing under test.
+func usageCell(t *testing.T, u *api.Usage, field string) string {
+	t.Helper()
+	for _, row := range usageRows(u) {
+		if row[0] == field {
+			return row[1]
+		}
+	}
+	t.Fatalf("usage has no %q row: %v", field, usageRows(u))
+	return ""
+}
+
+// TestUsageRendersRunnerMinutesForAPerson is the defect the issue names: `strconv.Itoa` printed a
+// bare integer with no unit, where the console reads the same number through formatMinutes.
+//
+// The cases are named rather than counted, and each is a shape the old render got wrong in its own
+// way: an hour boundary, a sub-minute figure that a bare integer prints as "0", and the ordinary
+// case that has to keep its unit.
+func TestUsageRendersRunnerMinutesForAPerson(t *testing.T) {
+	cases := map[string]struct {
+		minutes int
+		want    string
+	}{
+		"a whole number of hours drops the minutes": {120, "2h"},
+		"an hour and a bit keeps both":              {135, "2h 15m"},
+		"under an hour stays in minutes":            {47, "47 min"},
+		"nothing used is zero, with its unit":       {0, "0 min"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			u := sampleUsage()
+			u.RunnerMinutes = tc.minutes
+			if got := usageCell(t, u, "Runner minutes"); got != tc.want {
+				t.Errorf("Runner minutes for %d = %q, want %q", tc.minutes, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestUsageDoesNotInventARunnerMinuteAllowance pins a DECISION, not an omission.
+//
+// api.Usage pairs seats_used/seats_cap and ai_credits_used/ai_credits_granted, and carries no
+// runner-minute allowance at all. The console's `/ 200 min` comes from the plan catalogue, which
+// the CLI does not have. Rendering `2h / 0 min` would state an allowance of zero — a number the
+// user would read as "no minutes included" — and `2h / 200 min` would state one nobody sent.
+//
+// When an `included_minutes` field is added to the wire, this test is what should fail: it is the
+// record of why the quota is absent, so its failure is the prompt to render one.
+func TestUsageDoesNotInventARunnerMinuteAllowance(t *testing.T) {
+	got := usageCell(t, sampleUsage(), "Runner minutes")
+	if strings.Contains(got, "/") {
+		t.Errorf("Runner minutes = %q — it renders a ratio, but api.Usage carries no runner-minute "+
+			"cap for the denominator to come from. If the wire gained one, render format.Quota and "+
+			"delete this test; if it did not, the denominator was invented.", got)
+	}
+	// The premise, asserted rather than remembered: the two counters that DO have a cap keep theirs.
+	for _, field := range []string{"Seats", "AI credits"} {
+		if cell := usageCell(t, sampleUsage(), field); !strings.Contains(cell, "/") {
+			t.Errorf("%s = %q, want a used/cap ratio — the wire does carry a cap for it", field, cell)
 		}
 	}
 }

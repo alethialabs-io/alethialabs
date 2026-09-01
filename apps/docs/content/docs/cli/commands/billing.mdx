@@ -51,12 +51,21 @@ alethia usage
 alethia usage -o json
 ```
 
-| Field            | Meaning                                                       |
-| ---------------- | ------------------------------------------------------------- |
-| `Seats`          | Billable seats used **/** purchased cap                       |
-| `Runner minutes` | Managed-runner minutes consumed this billing period           |
-| `Projects`       | Projects in the organization                                  |
-| `AI credits`     | Included AI credits used this week **/** the weekly grant     |
+| Field            | Meaning                                                                        |
+| ---------------- | ------------------------------------------------------------------------------ |
+| `Seats`          | Billable seats used **/** purchased cap                                        |
+| `Runner minutes` | Managed-runner minutes consumed this billing period, written for a person: `0 min`, `<1 min`, `47 min`, `2h 15m` |
+| `Projects`       | Projects in the organization                                                   |
+| `AI credits`     | Included AI credits used this week **/** the weekly grant                      |
+
+<Callout type="info">
+`Runner minutes` has no **/ cap** beside it, unlike `Seats` and `AI credits`. The usage API returns
+a consumed figure and no runner-minute allowance, so the CLI shows what you have used and does not
+state an allowance nobody sent. The console's usage page reads the allowance from the plan
+catalogue; see **Settings → Usage** there for minutes used against minutes included.
+</Callout>
+
+Use `-o json` when a script needs the raw counters: `runner_minutes` is a plain integer of minutes.
 
 ## `alethia fleet`
 
