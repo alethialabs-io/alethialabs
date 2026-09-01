@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/spf13/cobra"
 )
@@ -91,17 +92,17 @@ func TestRunUsageTable(t *testing.T) {
 	}
 }
 
-// usageCell returns the value of one Field/Value row, so an assertion can be about the whole cell
-// rather than a substring of the rendered card. `strings.Contains(out, "2h")` is satisfied by
-// "2h 15m" and by "12h"; the row is the thing under test.
-func usageCell(t *testing.T, u *api.Usage, field string) string {
+// usageCell returns the value of one Field/Value row in the given render, so an assertion can be
+// about the whole cell rather than a substring of the rendered card. `strings.Contains(out, "2h")`
+// is satisfied by "2h 15m" and by "12h"; the row is the thing under test.
+func usageCell(t *testing.T, u *api.Usage, outFmt, field string) string {
 	t.Helper()
-	for _, row := range usageRows(u) {
+	for _, row := range usageRows(u, outFmt) {
 		if row[0] == field {
 			return row[1]
 		}
 	}
-	t.Fatalf("usage has no %q row: %v", field, usageRows(u))
+	t.Fatalf("usage has no %q row: %v", field, usageRows(u, outFmt))
 	return ""
 }
 
@@ -125,7 +126,7 @@ func TestUsageRendersRunnerMinutesForAPerson(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			u := sampleUsage()
 			u.RunnerMinutes = tc.minutes
-			if got := usageCell(t, u, "Runner minutes"); got != tc.want {
+			if got := usageCell(t, u, ui.FormatTable, "Runner minutes"); got != tc.want {
 				t.Errorf("Runner minutes for %d = %q, want %q", tc.minutes, got, tc.want)
 			}
 		})
@@ -142,7 +143,7 @@ func TestUsageRendersRunnerMinutesForAPerson(t *testing.T) {
 // When an `included_minutes` field is added to the wire, this test is what should fail: it is the
 // record of why the quota is absent, so its failure is the prompt to render one.
 func TestUsageDoesNotInventARunnerMinuteAllowance(t *testing.T) {
-	got := usageCell(t, sampleUsage(), "Runner minutes")
+	got := usageCell(t, sampleUsage(), ui.FormatTable, "Runner minutes")
 	if strings.Contains(got, "/") {
 		t.Errorf("Runner minutes = %q — it renders a ratio, but api.Usage carries no runner-minute "+
 			"cap for the denominator to come from. If the wire gained one, render format.Quota and "+
@@ -150,9 +151,38 @@ func TestUsageDoesNotInventARunnerMinuteAllowance(t *testing.T) {
 	}
 	// The premise, asserted rather than remembered: the two counters that DO have a cap keep theirs.
 	for _, field := range []string{"Seats", "AI credits"} {
-		if cell := usageCell(t, sampleUsage(), field); !strings.Contains(cell, "/") {
+		if cell := usageCell(t, sampleUsage(), ui.FormatTable, field); !strings.Contains(cell, "/") {
 			t.Errorf("%s = %q, want a used/cap ratio — the wire does carry a cap for it", field, cell)
 		}
+	}
+}
+
+// TestUsageCSVKeepsRunnerMinutesAsAnInteger pins the machine half of the same row.
+//
+// ui.RenderCard hands these exact rows to the CSV branch, so humanising them unconditionally turned
+// `alethia usage -o csv | awk -F, '/Runner minutes/ {print $2}'` from `120` into `2h` — silently,
+// with no error to notice. `2h 15m` is worse still: one field that no longer parses at all.
+func TestUsageCSVKeepsRunnerMinutesAsAnInteger(t *testing.T) {
+	u := sampleUsage()
+	u.RunnerMinutes = 135
+	got := usageCell(t, u, ui.FormatCSV, "Runner minutes")
+	if got != "135" {
+		t.Errorf("csv Runner minutes = %q, want the raw integer 135", got)
+	}
+	// The premise: the table cell for the same number is NOT an integer, which is why the two
+	// renders had to part company rather than share one string.
+	if table := usageCell(t, u, ui.FormatTable, "Runner minutes"); table == got {
+		t.Fatalf("premise broken: the table cell is also %q, so this split guards nothing", table)
+	}
+}
+
+func TestRunUsageCSVIsParseable(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runUsage(&fakeClient{usage: sampleUsage()}, &buf, ui.FormatCSV); err != nil {
+		t.Fatalf("runUsage: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Runner minutes,120") {
+		t.Errorf("csv output does not carry the raw minute count:\n%s", buf.String())
 	}
 }
 

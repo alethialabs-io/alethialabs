@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -32,12 +33,17 @@ var costShowCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		project, err := resolveCostProject(cmd, func() (string, error) { return selectProject(token) })
+		// The output format is resolved BEFORE the project, for two reasons. `-o bogus` is now
+		// rejected without first opening a picker; and interactiveTable is what decides whether the
+		// picker may run at all — huh and its spinner write to os.Stdout, so a picker opened for
+		// `-o json > cost.json` would put its frames in the file ahead of the JSON document.
+		outFmt := outputFormat(cmd)
+		project, err := resolveCostProject(cmd, interactiveTable(cmd), func() (string, error) { return selectProject(token) })
 		if err != nil {
 			fail(err)
 		}
 		env, _ := cmd.Flags().GetString("env")
-		if err := runCostShow(api.NewClient(token), os.Stdout, outputFormat(cmd), project, env); err != nil {
+		if err := runCostShow(api.NewClient(token), os.Stdout, outFmt, project, env); err != nil {
 			failf("Failed to get cost: %v", err)
 		}
 	},
@@ -50,12 +56,22 @@ var costShowCmd = &cobra.Command{
 // answer — so `--no-input` never needs a TTY. It takes `pick` as a parameter rather than calling
 // selectProject directly so both arms are reachable without a terminal or a network.
 //
+// `mayPick` is the caller's interactiveTable verdict, and it is a correctness gate rather than a
+// nicety: ui.NewForm and ui.RunSpinner both default to os.Stdout (huh's `cmp.Or(f.output,
+// os.Stdout)`), so a picker opened for `-o json` or `-o csv` — or for a table redirected into a
+// file — writes its spinner frames and its rendered select into the machine-readable stream ahead
+// of the document. When picking is not allowed, an omitted --project is refused the same way
+// --no-input refuses it, which is what the invocation did before the picker existed.
+//
 // Under --no-input the picker returns errNoInput, whose message is "interactive input required".
 // That is true and useless here: it does not say WHICH input. The refusal is rewritten to name the
 // flag, because the person reading it is writing a script.
-func resolveCostProject(cmd *cobra.Command, pick func() (string, error)) (string, error) {
+func resolveCostProject(cmd *cobra.Command, mayPick bool, pick func() (string, error)) (string, error) {
 	if p, _ := cmd.Flags().GetString("project"); p != "" {
 		return p, nil
+	}
+	if !mayPick {
+		return "", errCostProjectRequired
 	}
 	project, err := pick()
 	if err != nil {
@@ -76,7 +92,7 @@ var errCostProjectRequired = errors.New("--project is required (pass the project
 
 var costColumns = []string{"Address", "Type", "Monthly"}
 
-// costRows projects priced resource lines into plain table cells.
+// costRows projects priced resource lines into plain cells for the given output format.
 //
 // The Monthly cell renders through format.MonthlyRate in the environment's OWN currency. It used to
 // be fmt.Sprintf("$%.2f", …), which is wrong twice: the `$` is a constant, so a euro environment
@@ -85,12 +101,27 @@ var costColumns = []string{"Address", "Type", "Monthly"}
 //
 // `Exact` and not `Estimate`, and on every row, because the reader adds the column up — the same
 // call the console's Cost Breakdown table makes on the same numbers.
-func costRows(resources []api.CostResourceLine, currency string) [][]string {
+func costRows(resources []api.CostResourceLine, currency, outFmt string) [][]string {
 	rows := make([][]string, len(resources))
 	for i, r := range resources {
-		rows[i] = []string{r.Address, r.ResourceType, format.MonthlyRate(r.MonthlyCost, format.Exact, currency)}
+		rows[i] = []string{r.Address, r.ResourceType, costMonthlyCell(r.MonthlyCost, currency, outFmt)}
 	}
 	return rows
+}
+
+// costMonthlyCell renders one Monthly cell: the shared formatter's rate for a person, and a bare
+// fixed-point number for CSV.
+//
+// ui.Render writes spec.Rows verbatim in its CSV branch, so the humanised cell is what
+// `alethia cost show -o csv` would emit — and it carries three things a machine format should not:
+// a `/mo` suffix, `,` thousands separators (a $1,234.56 resource stops parsing as a float), and a
+// symbol that varies by environment in a column that never varied before. The number alone is what
+// a script asked for; `-o json` is where the currency is stated, once, as its ISO code.
+func costMonthlyCell(amount float64, currency, outFmt string) string {
+	if outFmt == ui.FormatCSV {
+		return strconv.FormatFloat(amount, 'f', 2, 64)
+	}
+	return format.MonthlyRate(amount, format.Exact, currency)
 }
 
 // costCapturedAt renders the capture stamp the way the console writes a date — `1 Jan 2026, 00:00`
@@ -154,7 +185,7 @@ func runCostShow(c apiClient, out io.Writer, outFmt, project, env string) error 
 	}
 	return ui.Render(out, outFmt, ui.TableSpec{
 		Columns: costColumns,
-		Rows:    costRows(cost.Resources, cost.Currency),
+		Rows:    costRows(cost.Resources, cost.Currency, outFmt),
 	}, cost.Resources)
 }
 

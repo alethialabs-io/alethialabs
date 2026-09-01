@@ -32,12 +32,22 @@ credits used vs the plan's weekly grant. Read-only. Use --output json for script
 	},
 }
 
-// usageRows projects the usage counters into Field/Value card rows.
+// usageRows projects the usage counters into Field/Value card rows for the given output format.
 //
-// Runner minutes go through format.Minutes, so 120 reads `2h` and 0.943 reads `<1 min` instead of
-// a bare integer with no unit. That is the rule the console's usage meter applies to the same
-// number, and it is the whole reason the shared formatter exists: `0.943` is a number the code
-// happens to hold, not an answer to "how much have I used".
+// Runner minutes go through format.Minutes for the TABLE card, so 120 reads `2h` and 47 reads
+// `47 min` instead of a bare integer with no unit. That is the rule the console's usage meter
+// applies to the same number: `120` is a number the code happens to hold, not an answer to "how
+// much have I used".
+//
+// CSV keeps the raw integer, and the format parameter exists for exactly that. ui.RenderCard feeds
+// these same rows to the CSV branch, so humanising them unconditionally would have changed
+// `alethia usage -o csv` from `120` to `2h` — a value `awk`/`ParseFloat` can no longer do
+// arithmetic on, with no error and no deprecation. A person reads the card; a script reads the CSV.
+//
+// format.Minutes admits a `<1 min` case, and this call site can never reach it: the wire's
+// `runner_minutes` is an int and the server rounds before serialising (`Math.round(job_minutes)`),
+// so 0.943 minutes arrives here as `1` and reads `1 min`. That is a wire fact, not a render one —
+// the sub-minute case would need a float on the wire, which is a contract change.
 //
 // They are deliberately NOT rendered as a quota, and the reason is a wire fact rather than an
 // omission. api.Usage pairs seats_used with seats_cap and ai_credits_used with ai_credits_granted,
@@ -48,10 +58,14 @@ credits used vs the plan's weekly grant. Read-only. Use --output json for script
 //
 // Seats and AI credits stay bare counts on both sides of the slash: they are people and credits,
 // not durations, and the console renders the seats meter as the same `used / cap` pair.
-func usageRows(u *api.Usage) [][]string {
+func usageRows(u *api.Usage, outFmt string) [][]string {
+	runnerMinutes := strconv.Itoa(u.RunnerMinutes)
+	if outFmt == ui.FormatTable {
+		runnerMinutes = format.Minutes(float64(u.RunnerMinutes))
+	}
 	return [][]string{
 		{"Seats", fmt.Sprintf("%d / %d", u.SeatsUsed, u.SeatsCap)},
-		{"Runner minutes", format.Minutes(float64(u.RunnerMinutes))},
+		{"Runner minutes", runnerMinutes},
 		{"Projects", strconv.Itoa(u.Projects)},
 		{"AI credits", fmt.Sprintf("%d / %d", u.AICreditsUsed, u.AICreditsGranted)},
 	}
@@ -64,7 +78,7 @@ func runUsage(c apiClient, out io.Writer, outFmt string) error {
 	if err != nil {
 		return err
 	}
-	return ui.RenderCard(out, outFmt, "alethia · usage", usageRows(usage), usage)
+	return ui.RenderCard(out, outFmt, "alethia · usage", usageRows(usage, outFmt), usage)
 }
 
 func init() {
