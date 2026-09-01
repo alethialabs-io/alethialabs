@@ -20,17 +20,19 @@
 //   node scripts/board-dashboard.mjs --out board.html     # write to a path
 //   node scripts/board-dashboard.mjs --open               # write, then `open` it (macOS)
 //   node scripts/board-dashboard.mjs --json               # ALSO print the raw board model to stdout
+//   node scripts/board-dashboard.mjs --self-test          # offline board-body parser fixtures
 //
 // Env: ALETHIA_LEASE_TTL (seconds, default 3600) — a lease older than this is flagged stale (matches
 //      coordinate.sh). Pure Node (built-ins only) + the `gh` CLI on PATH; no npm installs.
 
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const LEASE_TTL = Number(process.env.ALETHIA_LEASE_TTL || "3600");
 const args = process.argv.slice(2);
 const DUMP_JSON = args.includes("--json");
 const OPEN_AFTER = args.includes("--open");
+const SELF_TEST = args.includes("--self-test");
 const outIdx = args.indexOf("--out");
 const OUT = outIdx >= 0 && args[outIdx + 1] ? args[outIdx + 1] : "/tmp/alethia-board.html";
 
@@ -95,11 +97,57 @@ function scopeGlobs(body) {
 		.filter(Boolean);
 }
 
-/** Parse the `blocked-by: #12 #14` line from an issue body → array of numbers. */
+/**
+ * Parse the `blocked-by: #12 #14` declarations from an issue body → ascending, de-duplicated numbers.
+ *
+ * EVERY declaration line, not the first. This used to be a single `.match(/…/m)`, which takes ONE
+ * match: a body carrying `blocked-by: #10` and `blocked-by: #11` on separate lines yielded `[10]`
+ * here while `blocked_by_from_body` in coordinate.sh unioned both and returned `10 11`. The
+ * dashboard then rendered `◂ #10` for an issue the coordinator was blocking on two things — and the
+ * shared fixture file could not catch it, because no fixture carried a multi-line body. The two
+ * parsers are a contract; the fixture set only proves it where it has a case.
+ *
+ * The normalisation mirrors the shell exactly: a leading list marker and any `**` come off, the
+ * declaration must still start its line, and the result is sorted ascending and de-duplicated the
+ * way `sort -nu` does. Matching that ordering is what lets one fixture file express both sides.
+ */
 function blockedBy(body) {
-	const m = (body || "").match(/[Bb]locked-by:\s*([^\n]*)/);
-	if (!m) return [];
-	return [...m[1].matchAll(/#(\d+)/g)].map((x) => Number(x[1]));
+	const numbers = new Set();
+	for (const line of (body || "").split("\n")) {
+		const bare = line.replace(/^[ \t]*[-*+][ \t]+/, " ").replace(/\*\*/g, "");
+		const m = bare.match(/^[ \t]*[Bb]locked-by:[ \t]*(.*)$/);
+		if (!m) continue;
+		for (const x of m[1].matchAll(/#(\d+)/g)) numbers.add(Number(x[1]));
+	}
+	return [...numbers].sort((a, b) => a - b);
+}
+
+/** Exercise the dashboard parser against the contract shared with the coordinator. */
+function runBoardBodySelfTest() {
+	const fixtures = JSON.parse(readFileSync(new URL("./lib/board-body-fixtures.json", import.meta.url), "utf8"));
+	// An empty or absent `cases` array ran zero checks and printed "all passed" — the same
+	// nothing-found-reads-as-nothing-wrong shape the shell half had. Refuse it here too, so the two
+	// self-tests cannot disagree about what an empty suite means.
+	if (!Array.isArray(fixtures.cases) || fixtures.cases.length === 0) {
+		die("self-test: board-body-fixtures.json contains no cases — asserting nothing is not passing.");
+	}
+	let failures = 0;
+	for (const fixture of fixtures.cases) {
+		const actual = blockedBy(fixture.body);
+		if (JSON.stringify(actual) === JSON.stringify(fixture.blockedBy)) {
+			console.log(`ok   - ${fixture.name}`);
+		} else {
+			console.error(`FAIL - ${fixture.name}: want ${JSON.stringify(fixture.blockedBy)} got ${JSON.stringify(actual)}`);
+			failures++;
+		}
+	}
+	if (failures > 0) die(`self-test: ${failures} check(s) FAILED`);
+	console.log("self-test: all passed");
+}
+
+if (SELF_TEST) {
+	runBoardBodySelfTest();
+	process.exit(0);
 }
 
 /** ISO-8601 → epoch seconds (0 if unparseable). */

@@ -1,0 +1,73 @@
+{
+  "_comment": "Shared dependency-line parser contract for coordinate.sh and board-dashboard.mjs.",
+  "cases": [
+    {
+      "name": "declaration at column zero",
+      "body": "blocked-by: #12 #14",
+      "blockedBy": [
+        12,
+        14
+      ]
+    },
+    {
+      "name": "indented capitalized declaration",
+      "body": "  Blocked-by: #21",
+      "blockedBy": [
+        21
+      ]
+    },
+    {
+      "name": "declaration among prose",
+      "body": "Context names #88.\n\nblocked-by: #31 #32\n\nMore context names #89.",
+      "blockedBy": [
+        31,
+        32
+      ]
+    },
+    {
+      "name": "inline prose marker is not a declaration",
+      "body": "The `blocked-by: #3614` marker was removed from #3617.",
+      "blockedBy": []
+    },
+    {
+      "name": "code excerpt is not a declaration",
+      "body": "The parser was `sed -n 's/.*blocked-by: #42/'` before #43 fixed it.",
+      "blockedBy": []
+    },
+    {
+      "name": "issue references without a declaration",
+      "body": "Related work:\n- #51\n- #52",
+      "blockedBy": []
+    },
+    {
+      "name": "TWO declaration lines are unioned, not just the first",
+      "body": "blocked-by: #10\nsome prose\nblocked-by: #11\n",
+      "blockedBy": [
+        10,
+        11
+      ]
+    },
+    {
+      "name": "a list-item declaration is READ, not silently dropped",
+      "body": "Depends on:\n- blocked-by: #12\n",
+      "blockedBy": [
+        12
+      ]
+    },
+    {
+      "name": "a bold declaration is READ, not silently dropped",
+      "body": "**blocked-by:** #13\n",
+      "blockedBy": [
+        13
+      ]
+    },
+    {
+      "name": "duplicates collapse and the result is ascending",
+      "body": "blocked-by: #30 #12\nblocked-by: #12\n",
+      "blockedBy": [
+        12,
+        30
+      ]
+    }
+  ]
+}
