@@ -15,6 +15,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@repo/ui/select";
+import { PageHeader } from "@repo/ui/page-header";
 import { cn } from "@repo/ui/utils";
 
 /** Two-up responsive grid for pairing short sections; stacks on narrow screens. */
@@ -22,7 +23,17 @@ export function SettingsColumns({ children }: { children: ReactNode }) {
 	return <div className="grid grid-cols-1 gap-x-6 lg:grid-cols-2">{children}</div>;
 }
 
-/** A titled block: Geist h2 + a hairline rule (+ optional trailing action), then content. */
+/**
+ * A titled block: a second-level `PageHeader` + a hairline rule (+ optional trailing action),
+ * then content.
+ *
+ * The heading comes from `@repo/ui/page-header` rather than a local `<h2>`, and this one call
+ * site is why the rule is worth having: every settings page composes `SettingsSection`, so its
+ * hand-written `font-display text-[14.5px]` was one of the five sizes the console rendered the
+ * same outline rung at — and the pages that had already adopted `PageHeader` for their titles
+ * (members, teams, roles, sso, access) disagreed with their own sections. `level={2}` keeps the
+ * document outline exactly as it was; the type scale is now the shared one.
+ */
 export function SettingsSection({
 	title,
 	action,
@@ -36,11 +47,16 @@ export function SettingsSection({
 }) {
 	return (
 		<section className={cn("mb-[18px]", className)}>
-			<div className="mb-3 flex items-baseline gap-3">
-				<h2 className="font-display text-[14.5px] font-semibold tracking-[-0.01em] text-text-primary">
-					{title}
-				</h2>
-				<span className="h-px flex-1 self-center bg-border" />
+			{/* `items-center`, not `items-baseline`: `PageHeader` is a flex container with its own
+			    inner rows, so a parent baseline resolves against its first line box rather than the
+			    heading — the hairline rule already asked for `self-center` to work around that. */}
+			<div className="mb-3 flex items-center gap-3">
+				{/* `min-w-0` and NOT `shrink-0`: `PageHeader` truncates its title and puts the full
+				    text in a `title` attribute, but a flex item defaults to `min-width: auto`, so
+				    without this the truncation can never fire and a long section title pushes the
+				    rule and the action off the row instead. */}
+				<PageHeader level={2} title={title} className="min-w-0" />
+				<span className="h-px flex-1 bg-border" />
 				{action}
 			</div>
 			{children}
@@ -263,47 +279,13 @@ export function SettingsSearch({
 	);
 }
 
-/** A horizontal strip of summary stats (the design's `m-stats`). */
-export function StatStrip({ children }: { children: ReactNode }) {
-	return (
-		<div className="mb-[18px] flex overflow-hidden rounded-lg border border-border shadow-sm">
-			{children}
-		</div>
-	);
-}
-
-/** One cell of a StatStrip: a mono key, a big value, and an optional sub + track. */
-export function StatCell({
-	label,
-	value,
-	sub,
-	track,
-}: {
-	label: string;
-	value: ReactNode;
-	sub?: ReactNode;
-	/** 0–1 fill ratio; renders the thin progress track beneath the value. */
-	track?: number;
-}) {
-	return (
-		<div className="flex-1 border-r border-border px-[18px] py-[14px] last:border-r-0">
-			<div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-text-tertiary">
-				{label}
-			</div>
-			<div className="mt-[7px] flex items-baseline gap-[7px]">
-				<span className="font-display text-[22px] font-semibold tracking-[-0.02em] text-text-primary">
-					{value}
-				</span>
-				{sub && <span className="font-mono text-[11px] text-text-tertiary">{sub}</span>}
-			</div>
-			{track !== undefined && (
-				<div className="mt-[11px] h-1 overflow-hidden rounded-full border border-border bg-surface-sunken">
-					<div
-						className="h-full bg-text-primary"
-						style={{ width: `${Math.min(100, Math.max(0, track * 100))}%` }}
-					/>
-				</div>
-			)}
-		</div>
-	);
-}
+// `StatStrip` and `StatCell` used to live here — a container of flex-1 cells, each a mono key
+// over a 22px display figure. They are deleted rather than migrated: §6 bans stat-card strips
+// with no qualifier, and these two had NO call site in the console at all, so the whole cost of
+// keeping them was that the next settings page needed one import to grow a strip.
+//
+// Worth knowing if you are reading this from the guard: `check:shared-surface` did not see them.
+// Its primitive matcher is `function Stat(`, which `function StatCell(` and `function StatStrip(`
+// both slip past, and its cell matcher is `<Stat` followed by whitespace or `>`, which `<StatCell`
+// slips past for the same reason. The banned shape was two renames away from being invisible, and
+// here it already was.

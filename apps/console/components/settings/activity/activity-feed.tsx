@@ -15,6 +15,8 @@ import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
 import { userInitials } from "@/lib/user-display";
 import { formatDate, formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
+import { PageHeader } from "@repo/ui/page-header";
 import { cn } from "@repo/ui/utils";
 import { type ActivityContext, describeEvent } from "./humanize-event";
 
@@ -58,12 +60,15 @@ export function ActivityFeed({
 
 	if (rows.length === 0) {
 		return (
-			<div className="rounded-lg bg-surface-sunken px-6 py-16 text-center">
-				<ScrollText className="mx-auto mb-3 size-5 text-text-tertiary" />
-				<p className="text-[13px] text-text-tertiary">
-					No activity matches these filters.
-				</p>
-			</div>
+			// The copy is unchanged on purpose. `components/alerts/activity-panel.tsx` says the
+			// same sentence for the same condition and `docs/qa/flow-catalog.md` pins it as a QA
+			// probe — rewording one of two agreeing pages is the defect §6 is about, arriving
+			// from the other direction.
+			<EmptyState
+				className="bg-surface-sunken"
+				icon={<ScrollText />}
+				title="No activity matches these filters."
+			/>
 		);
 	}
 
@@ -71,9 +76,12 @@ export function ActivityFeed({
 		<div className="flex flex-col gap-4">
 			{groups.map((g) => (
 				<section key={g.month}>
-					<h3 className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.1em] text-text-tertiary">
-						{g.month}
-					</h3>
+					{/* The month bucket IS a heading — it names the group of rows under it, and the
+					    tag is what lands in the accessibility tree whatever the type scale says. It
+					    sat one rung under the feed's own `Activity` heading before and still does;
+					    what changes is that the rung's size now comes from one place instead of
+					    from this file. */}
+					<PageHeader className="mb-1" level={3} title={g.month} />
 					<ul>
 						{g.rows.map((row) => {
 							const e = describeEvent(row, ctx);

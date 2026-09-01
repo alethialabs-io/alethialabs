@@ -38,6 +38,7 @@ import {
 	AlertDialogTitle,
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
 import { FacetFilter } from "@repo/ui/facet-filter";
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
@@ -266,9 +267,10 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 							onDelete={() => setDeleting(selected)}
 						/>
 					) : (
-						<div className="px-5 py-16 text-center text-[13px] text-text-tertiary">
-							Select a role to view its permissions.
-						</div>
+						<EmptyState
+							title="No role selected"
+							description="Pick a role from the list to see the permissions it grants."
+						/>
 					)}
 				</div>
 			</div>
