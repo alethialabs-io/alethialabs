@@ -12,6 +12,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -102,7 +103,7 @@ var projectComponentListCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		project, err := currentProject(cmd)
+		project, err := projectFromFlag(cmd, token)
 		if err != nil {
 			fail(err)
 		}
@@ -189,18 +190,237 @@ Values are parsed as JSON when possible, else taken literally:
 		if err != nil {
 			fail(err)
 		}
-		project, err := currentProject(cmd)
+		project, err := projectFromFlag(cmd, token)
 		if err != nil {
 			fail(err)
 		}
-		fields, err := parseSetValues(componentAddSet)
+		kind, name, sets := componentAddKind, componentAddName, componentAddSet
+		env := currentComponentEnv(cmd)
+
+		// The interactive path this command never had. The tutorial calls it three times
+		// with hand-typed `--set k=v` pairs and a hand-typed --env, and there was no
+		// terminal path at all — flag-or-nothing for the one command that authors a
+		// project's actual infrastructure.
+		asked := false
+		if promptsEnabled() && (kind == "" || len(sets) == 0) {
+			answers, err := promptComponentAdd(api.NewClient(token), project, componentAddSpec{
+				Kind: kind, Name: name, Env: env, Sets: sets,
+			})
+			if err != nil {
+				fail(err)
+			}
+			kind, name, env, sets = answers.Kind, answers.Name, answers.Env, answers.Sets
+			asked = true
+		}
+
+		fields, err := parseSetValues(sets)
 		if err != nil {
 			fail(err)
 		}
-		if err := runComponentAdd(api.NewClient(token), os.Stdout, project, componentAddKind, componentAddName, currentComponentEnv(cmd), fields); err != nil {
+		if err := runComponentAdd(api.NewClient(token), os.Stdout, project, kind, name, env, fields); err != nil {
 			failf("Failed to add component: %v", err)
 		}
+		printReplay(os.Stdout, outputFormat(cmd), asked, componentAddReplayArgs(project, componentAddSpec{
+			Kind: kind, Name: name, Env: env, Sets: sets,
+		})...)
 	},
+}
+
+// componentAddSpec is one `component add` as the flags and the form both express it. The two
+// are the same four fields in the same order, which is what lets componentAddReplayArgs turn
+// an answered form back into the command that would repeat it.
+type componentAddSpec struct {
+	Kind string
+	Name string
+	Env  string
+	Sets []string
+}
+
+// componentKindOptions builds the kind picker, annotating each with its cardinality so the
+// answer to "does this one need a name" is on screen at the moment it is asked.
+//
+// Built from componentKinds, which is a CACHE of the server's registry and not a second
+// opinion of it — #3671 publishes that registry at GET /api/cli/schema/components, and #3691
+// notes the Go list has already drifted (`helm_registries`). Consuming the published document
+// needs a client method in packages/core/api, which is another lane's file; until then this
+// picker offers what the cached list holds and the server remains the thing that decides,
+// so a kind missing from the cache is still authorable with --kind.
+func componentKindOptions() []huh.Option[string] {
+	opts := make([]huh.Option[string], len(componentKinds))
+	for i, k := range componentKinds {
+		label := k + " (multi — needs a name)"
+		if singletonKinds[k] {
+			label = k + " (singleton — one per environment)"
+		}
+		opts[i] = huh.NewOption(label, k)
+	}
+	return opts
+}
+
+// promptComponentAdd asks for the kind, the name, the environment and the field assignments,
+// seeded from whatever flags were already passed.
+//
+// The environment is a PICKER over the project's real environments rather than a text box.
+// `--env` is a lookup key — authoring a component into the wrong tier is silent, and the next
+// thing that reads it is a deploy — so offering the names that exist beats accepting a typo
+// that the server resolves to the default environment.
+func promptComponentAdd(c apiClient, project string, seed componentAddSpec) (componentAddSpec, error) {
+	if err := requireInteractive(); err != nil {
+		return seed, err
+	}
+	out := seed
+	if out.Kind == "" {
+		out.Kind = componentKinds[0]
+	}
+
+	groups := []*huh.Group{huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Component kind").
+			Description("What to author into this project").
+			Options(componentKindOptions()...).
+			Value(&out.Kind),
+	)}
+	if err := runHuhForm(groups...); err != nil {
+		return seed, err
+	}
+	out.Kind = strings.TrimSpace(out.Kind)
+
+	// Asked in a SECOND form on purpose: whether a name is needed depends on the kind, and
+	// huh decides which fields to show when a form is built. One form would have to decide
+	// that from the seed rather than the answer.
+	second := []huh.Field{}
+	if !singletonKinds[out.Kind] {
+		second = append(second, huh.NewInput().
+			Title("Component name").
+			Description("Required for a multi kind, e.g. main, sessions").
+			Value(&out.Name))
+	}
+	if envOpts, err := componentEnvOptions(c, project); err == nil && len(envOpts) > 0 {
+		second = append(second, huh.NewSelect[string]().
+			Title("Environment").
+			Description("Which tier this component belongs to").
+			Options(envOpts...).
+			Value(&out.Env))
+	} else {
+		second = append(second, huh.NewInput().
+			Title("Environment").
+			Description("Name, stage or id — blank for the project's default environment").
+			Value(&out.Env))
+	}
+	if err := runHuhForm(huh.NewGroup(second...)); err != nil {
+		return seed, err
+	}
+	out.Name = strings.TrimSpace(out.Name)
+	out.Env = strings.TrimSpace(out.Env)
+	if singletonKinds[out.Kind] {
+		// A singleton upserts the project's single row and the server ignores the name, so
+		// carrying a seeded one through would put it in the replay line as though it did
+		// something.
+		out.Name = ""
+	}
+	if !singletonKinds[out.Kind] && out.Name == "" {
+		return out, fmt.Errorf("%s is a multi kind and needs a name", out.Kind)
+	}
+
+	sets, err := promptSetValues(out.Sets)
+	if err != nil {
+		return out, err
+	}
+	out.Sets = sets
+	return out, nil
+}
+
+// componentEnvOptions offers the project's real environments, default first in the list the
+// server returned. An error is not fatal to the caller — it falls back to a free-text box —
+// because failing to author a component because the environment LIST could not be read would
+// be a worse answer than accepting a name the server will resolve anyway.
+func componentEnvOptions(c apiClient, project string) ([]huh.Option[string], error) {
+	envs, err := c.ListEnvironments(project)
+	if err != nil {
+		return nil, err
+	}
+	opts := make([]huh.Option[string], 0, len(envs)+1)
+	opts = append(opts, huh.NewOption("(the project's default environment)", ""))
+	for _, e := range envs {
+		label := fmt.Sprintf("%s (%s)", e.Name, e.Stage)
+		if e.IsDefault {
+			label += ui.DefaultBadge()
+		}
+		opts = append(opts, huh.NewOption(label, e.Name))
+	}
+	return opts, nil
+}
+
+// promptSetValues asks for `key=value` assignments one at a time, appending to whatever was
+// already passed with --set, and returns them in --set syntax so the SAME parser handles the
+// answered and the typed forms.
+//
+// Generic key/value rather than a form built per kind, deliberately. The fields a kind accepts
+// are published by the server (#3671, GET /api/cli/schema/components) precisely so the CLI
+// stops holding a second opinion of them; a hand-written field list here would be that second
+// opinion, and it would drift the way componentKinds already has. The typed form arrives when
+// a Go client for that document does.
+func promptSetValues(seed []string) ([]string, error) {
+	out := append([]string{}, seed...)
+	for {
+		title := "Set a field?"
+		if len(out) > 0 {
+			title = "Set another field?"
+		}
+		more, err := askYesNo(title, setsSoFar(out))
+		if err != nil {
+			return nil, err
+		}
+		if !more {
+			return out, nil
+		}
+		key, value, err := askKeyValue()
+		if err != nil {
+			return nil, err
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil, fmt.Errorf("a field needs a name")
+		}
+		out = append(out, key+"="+value)
+	}
+}
+
+// askKeyValue is the one-field question as a seam, so promptSetValues' loop is testable. See
+// the question seams in project.go.
+var askKeyValue = func() (string, string, error) {
+	var key, value string
+	if err := runHuhForm(huh.NewGroup(
+		huh.NewInput().Title("Field").Description("e.g. engine, port, instance_types").Value(&key),
+		huh.NewInput().Title("Value").Description(`JSON when it parses, else literal text — 5432, true, ["t3.medium"], postgres`).Value(&value),
+	)); err != nil {
+		return "", "", err
+	}
+	return key, value, nil
+}
+
+// setsSoFar renders the assignments collected so far for the loop's prompt, so the answer to
+// "have I already set engine" does not require scrolling back.
+func setsSoFar(sets []string) string {
+	if len(sets) == 0 {
+		return "Nothing set yet — the server validates each field against the kind's schema"
+	}
+	return "So far: " + strings.Join(sets, "  ")
+}
+
+// componentAddReplayArgs renders the `project component add` that would repeat this result.
+func componentAddReplayArgs(project string, spec componentAddSpec) []string {
+	args := []string{"alethia", "project", "component", "add", "--project", project, "--kind", spec.Kind}
+	if spec.Name != "" {
+		args = append(args, "--name", spec.Name)
+	}
+	if spec.Env != "" {
+		args = append(args, "--env", spec.Env)
+	}
+	for _, s := range spec.Sets {
+		args = append(args, "--set", s)
+	}
+	return args
 }
 
 // parseSetValues parses repeatable `key=value` flags into a field map, coercing each value
@@ -285,20 +505,70 @@ var projectComponentRemoveCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		project, err := currentProject(cmd)
+		project, err := projectFromFlag(cmd, token)
 		if err != nil {
 			fail(err)
 		}
-		if componentRemoveKind == "" {
+		kind := componentRemoveKind
+		if kind == "" && promptsEnabled() {
+			// Asked BEFORE the confirmation, never after: the confirmation's whole job is to
+			// name what is about to go, and a prompt that asked "remove this component?" and
+			// only then asked which one would be a confirmation of nothing.
+			picked, err := promptComponentKind()
+			if err != nil {
+				fail(err)
+			}
+			kind = picked
+		}
+		if kind == "" {
 			failf("--kind is required (see `alethia project component kinds`)")
 		}
-		if !confirmDestructive(componentRemoveYes, "Remove this component?", "Its configuration is deleted (provisioned resources are removed on the next apply/destroy).") {
+		if !confirmDestructive(componentRemoveYes, "Remove this component?", removalDescription(kind, componentRemoveName, currentComponentEnv(cmd))) {
 			return
 		}
-		if err := runComponentRemove(api.NewClient(token), os.Stdout, project, componentRemoveKind, componentRemoveName, currentComponentEnv(cmd)); err != nil {
+		if err := runComponentRemove(api.NewClient(token), os.Stdout, project, kind, componentRemoveName, currentComponentEnv(cmd)); err != nil {
 			failf("Failed to remove component: %v", err)
 		}
 	},
+}
+
+// promptComponentKind asks which kind to act on.
+func promptComponentKind() (string, error) {
+	if err := requireInteractive(); err != nil {
+		return "", err
+	}
+	kind := componentKinds[0]
+	if err := runHuhForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Component kind").
+			Description("Which kind to remove").
+			Options(componentKindOptions()...).
+			Value(&kind),
+	)); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(kind), nil
+}
+
+// removalDescription names WHAT is about to be removed and from WHICH tier, rather than
+// describing removal in general.
+//
+// A confirmation that does not name its object cannot be read as anything but "yes". The
+// tier is the load-bearing half: `remove` deletes from one environment, a sibling tier keeps
+// its copy, and the default environment is what an omitted --env means — so the prompt says
+// which one rather than leaving the reader to remember the rule.
+func removalDescription(kind, name, env string) string {
+	what := kind
+	if name != "" && !singletonKinds[kind] {
+		what = kind + " " + name
+	}
+	where := "the project's default environment"
+	if env != "" {
+		where = env
+	}
+	return fmt.Sprintf(
+		"Deletes the %s configuration in %s. Other environments keep theirs; provisioned resources go on the next apply/destroy.",
+		what, where)
 }
 
 // runComponentRemove deletes the component and confirms it. Singleton kinds ignore the name. An empty

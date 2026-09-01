@@ -12,8 +12,6 @@ import (
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
-	"github.com/charmbracelet/bubbles/table"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
 
@@ -40,21 +38,17 @@ var listProjectsCmd = &cobra.Command{
 
 		if interactiveTable(cmd) {
 			if len(configs) == 0 {
-				ui.Muted("No projects found. Create one through Alethia.")
+				ui.Muted("No projects found. Create one with `alethia project create`.")
 				return
 			}
-			columns := make([]table.Column, len(projectListColumns))
-			widths := []int{20, 14, 16, 10, 16, 10, 14}
-			for i, title := range projectListColumns {
-				columns[i] = table.Column{Title: title, Width: widths[i]}
-			}
-			plain := projectRows(configs)
-			rows := make([]table.Row, len(plain))
-			for i, r := range plain {
-				rows[i] = table.Row(r)
-			}
-			m := ui.NewTableModel(columns, rows, "projects", "project", 0)
-			if _, err := tea.NewProgram(m).Run(); err != nil {
+			// ui.ShowTable, like every other list in the CLI. This was the last list command
+			// building its own bubbletea program: seven hardcoded column widths, its own
+			// tea.NewProgram call, and a sort column named "project" where the header says
+			// "Project" — so the one table a user is most likely to see first was the one
+			// that did not size its columns to its contents. The shared entry point measures
+			// them, truncates at the shared MaxColWidth, and sorts by the first column's real
+			// title.
+			if err := ui.ShowTable(projectListColumns, projectRows(configs), "projects"); err != nil {
 				failf("Table error: %v", err)
 			}
 			return
