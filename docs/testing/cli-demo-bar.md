@@ -65,35 +65,15 @@ Every direction fails closed: unset, empty, whitespace, `"false"`, an empty answ
 and a timeout all read as **unsatisfied**. `ScoreCLIDemo` stays pure and never runs a probe, so a
 caller that forgets to evaluate gets the strict answer, never a laxer one.
 
-## Status — 2026-08-26
+## Status
 
-Scored against `alethia` built from `dev`. Every `CLIDriven` claim below is **executed**, not
-asserted: the run half runs `alethia <cmd> --help` for each and fails on a non-zero exit.
-
-| Cloud | CLI-driven | CLI gaps | Ceilings | of which satisfied | Console by design | Verdict |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **AWS** | 19 | 0 | 1 | 1 | 1 | ✅ |
-| **GCP** | 19 | 0 | 2 | 1 | 1 | ❌ [#1871] |
-| **Azure** | 19 | 0 | 1 | 1 | 1 | ✅ |
-| **Alibaba** | 19 | 0 | 2 | 1 | 1 | ❌ [#2333] |
-| **Hetzner** | 19 | 0 | 2 | 2 | 1 | ✅ |
-
-The verdict column is what the scored table plus the current satisfaction state resolves to; the
-**recorded** proof is whichever run next dispatches this bar, as always.
-
-**19 of 20 applicable steps are CLI-driven on every cloud, and the CLI gap column is zero.** What
-still fails the bar is a ceiling nobody has met yet — GCP's billing-budgets publisher binding, which
-genuinely does not exist, and Alibaba's Container Registry sweep, which **recurs** after every full
-bar rather than retiring once.
-
-That distinction is the one worth carrying into a demo. Nothing red here is ours: every remaining ❌
-is a thing the cloud does not offer an API for **and** that has not been done by hand, not a thing
-Alethia has not built.
-
-[#1773]: https://github.com/alethialabs-io/alethialabs/issues/1773
-[#2332]: https://github.com/alethialabs-io/alethialabs/issues/2332
-[#1871]: https://github.com/alethialabs-io/alethialabs/issues/1871
-[#2333]: https://github.com/alethialabs-io/alethialabs/issues/2333
+> **Status is not here.** It rots, and this table proved it: it printed a verdict per cloud dated
+> 2026-08-26, counted "19 of 20" steps where `programme.json` carries 28, and cited #1871 and
+> #2333 as open when both are closed.
+>
+> The proof grid, the per-cell evidence and the open blockers are derived in **`PROGRAMME.md`**,
+> below its generated marker. Read it there. What stays below is the reasoning the ledger cannot
+> hold — decisions, post-mortems and measurements.
 
 ### The CLI gap that closed — [#2331]
 
