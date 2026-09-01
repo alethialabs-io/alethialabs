@@ -82,10 +82,12 @@ check "rds_log_exports_match_engine" {
 # an empty resource id would silently widen the connect ARN to a wildcard.
 check "rds_cluster_resource_id_resolvable_when_iam_auth" {
   assert {
-    # try(): with create_rds off (or the module absent) one() yields null and trimspace would raise
-    # instead of failing the check — the whole point is a clean, actionable failure, so collapse any
-    # unresolvable id to false.
-    condition     = !var.rds_iam_auth_enabled || try(length(trimspace(one(module.rds_maindb[*].rds_cluster_resource_id))) > 0, false)
+    # try(): with create_rds off the module is an EMPTY TUPLE and the index raises instead of
+    # failing the check — the whole point is a clean, actionable failure, so collapse any
+    # unresolvable id to false. The index replaced `one(module.rds_maindb[*]…)` (#3509): the splat
+    # reads the module as a whole, and this file's other checks must not order behind it. A renamed
+    # output is still caught — it makes the condition FALSE, so the check reports rather than passes.
+    condition     = !var.rds_iam_auth_enabled || try(length(trimspace(module.rds_maindb[0].rds_cluster_resource_id)) > 0, false)
     error_message = "rds_iam_auth_enabled is on but rds_cluster_resource_id is empty; the rds-db:connect ARN cannot be scoped to this cluster."
   }
 }

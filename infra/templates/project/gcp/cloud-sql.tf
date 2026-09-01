@@ -9,7 +9,7 @@ module "cloud_sql" {
   environment  = var.environment
   project_name = var.project_name
 
-  network_self_link = var.provision_network ? module.vpc_network[0].network_self_link : var.network_id
+  network_self_link = try(module.vpc_network[0].network_self_link, null) != null ? module.vpc_network[0].network_self_link : var.network_id
 
   engine         = var.cloud_sql_engine
   engine_version = var.cloud_sql_engine_version
