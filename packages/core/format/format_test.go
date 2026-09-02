@@ -8,7 +8,13 @@
 //
 //   - The ISO-code fallback for a currency with no symbol. TypeScript delegates to Intl, which
 //     knows every currency; Go carries a deliberate four-entry table and falls back. That is a
-//     RULING, not a mirror, and a ruling with no test is a comment.
+//     RULING, not a mirror, and a ruling with no test is a comment. Measured, so that nobody
+//     later adds the row the table looks like it is missing: en-GB Intl renders CHF as
+//     `CHF\u00a012.50` — the ISO code, PREFIXED, with a non-breaking space — where this file
+//     renders `12.50 CHF`; and for HUF it finds a narrow symbol, `Ft 13`, which Go has no table
+//     for at all. A conformance row over any currency outside the four would freeze that
+//     disagreement rather than a contract, so both MonthlyRate's fallback and MonthlyDelta's are
+//     asserted here instead.
 //   - `Dash`, and the shapes that return it. The table's date section reaches the em dash through a
 //     null date; nothing exercises the sentinel as a value other callers will use.
 //   - Go-only input shapes: a zero time.Time, a negative time.Duration, an unknown DateStyle.
@@ -97,6 +103,62 @@ func TestMonthlyRateKeepsTheFallbackInEveryBranch(t *testing.T) {
 	// zero and `$0/mo` at zero — two registers from one call site, in a column of costs.
 	if got := MonthlyRate(0, RateStyle("wat"), "USD"); got != "$0.00/mo" {
 		t.Errorf("an unknown RateStyle at zero rendered %q, want %q — it must pick the same register as it does above zero", got, "$0.00/mo")
+	}
+}
+
+// MonthlyDelta reaches the same fallback, through a different set of branches: it renders the
+// magnitude and then leads it with a sign, so a fallback that only worked in `render`'s own
+// negative branch would pass MonthlyRate's cases and fail here.
+//
+// The `<1` branch has no counterpart: MonthlyDelta deliberately has no `<1 HUF/mo`, because a
+// change that rounds to nothing IS no change worth showing, while a COST that rounds to nothing
+// would be misread as free. The `no change` rows below are what pin that.
+func TestMonthlyDeltaKeepsTheFallbackInEveryBranch(t *testing.T) {
+	cases := map[string]struct {
+		amount   float64
+		style    RateStyle
+		currency string
+		want     string
+	}{
+		"estimate, no symbol, an increase":  {12.5, Estimate, "HUF", "+13 HUF/mo"},
+		"estimate, no symbol, a saving":     {-12.5, Estimate, "HUF", "-13 HUF/mo"},
+		"exact, no symbol, an increase":     {12.5, Exact, "HUF", "+12.50 HUF/mo"},
+		"exact, no symbol, a saving":        {-12.5, Exact, "HUF", "-12.50 HUF/mo"},
+		"the zero branch, no symbol":        {0, Estimate, "HUF", "0 HUF/mo"},
+		"the zero branch, exact, no symbol": {0, Exact, "HUF", "0 HUF/mo"},
+		"rounds to no change, no symbol":    {0.4, Estimate, "HUF", "0 HUF/mo"},
+		"lowercase is still recognised":     {-12.5, Exact, "huf", "-12.50 HUF/mo"},
+		"grouping survives the fallback":    {-1240.37, Exact, "HUF", "-1,240.37 HUF/mo"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := MonthlyDelta(c.amount, c.style, c.currency); got != c.want {
+				t.Errorf("MonthlyDelta(%v, %q, %q) = %q, want %q", c.amount, c.style, c.currency, got, c.want)
+			}
+		})
+	}
+
+	// An unknown style must pick Exact, the same ruling MonthlyRate follows and for the same
+	// reason: whole units where minor units were wanted misstates money, and the reverse is
+	// cosmetic. Asserted at zero as well, because that is where MonthlyRate's first cut asked the
+	// question with the opposite polarity and handed one caller two registers.
+	if got := MonthlyDelta(12.5, RateStyle("wat"), "USD"); got != "+$12.50/mo" {
+		t.Errorf("an unknown RateStyle rendered %q; it must not lose the minor units", got)
+	}
+	if got := MonthlyDelta(0.4, RateStyle("wat"), "USD"); got != "+$0.40/mo" {
+		t.Errorf("an unknown RateStyle at a sub-unit change rendered %q; it must not round to no change", got)
+	}
+	if got := MonthlyDelta(0, RateStyle("wat"), "USD"); got != "$0/mo" {
+		t.Errorf("an unknown RateStyle at zero rendered %q, want %q", got, "$0/mo")
+	}
+
+	// The property behind the whole split, as a property rather than a table: MonthlyRate and
+	// MonthlyDelta must never agree about a negative. If they do, one of them has been "fixed".
+	for _, style := range []RateStyle{Estimate, Exact} {
+		if MonthlyRate(-5, style, "USD") == MonthlyDelta(-5, style, "USD") {
+			t.Errorf("MonthlyRate and MonthlyDelta agreed about -5 in the %q register (%q) — the clamp is a refusal, and the two registers exist so a caller cannot render a diff as an absolute by accident",
+				style, MonthlyDelta(-5, style, "USD"))
+		}
 	}
 }
 
