@@ -89,9 +89,9 @@
 #   type_scale:      — a `--text-ui-*` rung from packages/brand/src/tokens.css. A hardcoded font
 #                      size — `text-[13px]`, `text-[12.5px]`, and the same in any length unit, with
 #                      or without a variant prefix — in components/**, app/**, lib/** or hooks/**.
-#                      1,079 of them
-#                      across 23 values when the rule landed, against a token file that carried no
-#                      UI type scale at all; every one is debt and none is a decision.
+#                      They were spread across 23 values when the rule landed, against a token
+#                      file that carried no UI type scale at all; every one is debt and none is a
+#                      decision, and the live count is whatever the matcher measures.
 #   empty_state:     — @repo/ui/empty. One class string — double-quoted, single-quoted or a
 #                      template literal — carrying `text-center` and `py-6` or more, no upper bound.
 #   stat_strip:      — §6's "No stat-card strips": a `<Stat` CELL — the container is the wrong
@@ -193,7 +193,7 @@ section_header:
     lifts: "#3619 — the page frame is rebuilt: 1 raw section heading here."
 
 type_scale:
-  # --- debt only: 1,079 hardcoded pixel type sizes across 194 files and 23 distinct values,
+  # --- debt only: hardcoded pixel type sizes across 194 files and 23 distinct values,
   # measured 2026-09-01 on an unmodified dev by this rule's own matcher. Not one of
   # them is a decision: packages/brand/src/tokens.css carried NO UI type scale until the commit
   # that added this rule, so there was nothing for any of these files to have reached for.
