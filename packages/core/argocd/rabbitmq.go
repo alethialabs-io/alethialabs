@@ -171,9 +171,13 @@ func EnsureQueueCredentialSecret(q HetznerQueue, stdout, stderr io.Writer) error
 	// Values stay BASE64-ENCODED end to end: what is already in the cluster is copied across
 	// untouched, so a key that exists cannot be altered by a decode/encode round trip.
 	data := map[string]string{}
+	labels := map[string]string{}
 	if strings.TrimSpace(raw) != "" {
 		var existing struct {
-			Data map[string]string `json:"data"`
+			Data     map[string]string `json:"data"`
+			Metadata struct {
+				Labels map[string]string `json:"labels"`
+			} `json:"metadata"`
 		}
 		if err := json.Unmarshal([]byte(raw), &existing); err != nil {
 			return fmt.Errorf("decode queue credential secret %s/%s: %w", q.Namespace, name, err)
@@ -181,6 +185,7 @@ func EnsureQueueCredentialSecret(q HetznerQueue, stdout, stderr io.Writer) error
 		for key, value := range existing.Data {
 			data[key] = value
 		}
+		labels = existing.Metadata.Labels
 	}
 
 	changed, adopted, err := completeQueueCredentials(q, data, stderr)
@@ -188,6 +193,15 @@ func EnsureQueueCredentialSecret(q HetznerQueue, stdout, stderr io.Writer) error
 		return fmt.Errorf("complete queue credential secret %s/%s: %w", q.Namespace, name, err)
 	}
 	if !changed {
+		if labels["alethia.io/managed-by"] != "addon-marketplace" || labels[addonSecretLabelKey] != q.AddOnID {
+			cmd := fmt.Sprintf(
+				"kubectl label secret -n %s %s alethia.io/managed-by=addon-marketplace %s=%s --overwrite",
+				q.Namespace, name, addonSecretLabelKey, q.AddOnID,
+			)
+			if err := utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); err != nil {
+				return fmt.Errorf("label complete queue credential secret %s/%s: %w", q.Namespace, name, err)
+			}
+		}
 		fmt.Fprintf(stdout, "Queue credential secret %s/%s is complete; leaving it in place\n", q.Namespace, name)
 		return nil
 	}
