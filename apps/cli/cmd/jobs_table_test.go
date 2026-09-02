@@ -102,7 +102,9 @@ func TestProjectSummaryRows(t *testing.T) {
 		t.Fatalf("projectSummaryRows with a timestamp returned %d rows, want 8", len(rows))
 	}
 	last := rows[len(rows)-1]
-	if last[0] != "Last Updated" || last[1] != "2026-03-04 05:06:07" {
+	// `4 Mar 2026, 05:06` since #3659 — the console's one absolute date, in UTC. It was
+	// `2006-01-02 15:04:05`, one of five copies of that layout literal in the CLI.
+	if last[0] != "Last Updated" || last[1] != "4 Mar 2026, 05:06" {
 		t.Errorf("last row = %v, want the formatted Last Updated row", last)
 	}
 }

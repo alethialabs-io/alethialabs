@@ -63,7 +63,10 @@ var promotionColumns = []string{"ID", "Source", "Target", "Status", "Created"}
 func promotionListRows(promos []api.Promotion) [][]string {
 	rows := make([][]string, len(promos))
 	for i, p := range promos {
-		rows[i] = []string{p.ID, p.Source, p.Target, p.Status, p.CreatedAt}
+		// The Created cell echoed the wire's RFC3339 — `2026-03-09T15:04:05Z` in a column a person
+		// reads, while the console showed `9 Mar 2026, 15:04` for the same instant. Handed to this
+		// lane by the governance lane (#3703), which was right to wait: `ui.Stamp` did not exist yet.
+		rows[i] = []string{p.ID, p.Source, p.Target, p.Status, ui.Stamp(p.CreatedAt)}
 	}
 	return rows
 }
@@ -109,7 +112,10 @@ var approvalColumns = []string{"Status", "Approver", "Role", "Decided"}
 func approvalRows(approvals []api.PromotionApproval) [][]string {
 	rows := make([][]string, len(approvals))
 	for i, a := range approvals {
-		rows[i] = []string{a.Status, ui.StrOrDash(a.Name), ui.StrOrDash(a.RequiredRole), ui.StrOrDash(a.DecidedAt)}
+		// StampOrDash, not StrOrDash: `decided_at` is a TIMESTAMP, and passing it through the string
+		// helper printed the wire form while dashing correctly. The dash rule is the same; the
+		// rendering was the accident.
+		rows[i] = []string{a.Status, ui.StrOrDash(a.Name), ui.StrOrDash(a.RequiredRole), ui.StampOrDash(a.DecidedAt)}
 	}
 	return rows
 }
@@ -130,7 +136,7 @@ func runPromotionGet(c apiClient, out io.Writer, format, project, promotionID st
 		{"status", p.Status},
 		{"approvals", fmt.Sprintf("%d/%d", p.Approved, p.Required)},
 		{"initiator", ui.StrOrDash(p.Initiator)},
-		{"created", p.CreatedAt},
+		{"created", ui.Stamp(p.CreatedAt)},
 	}
 	if p.ErrorMessage != nil && *p.ErrorMessage != "" {
 		rows = append(rows, []string{"error", *p.ErrorMessage})

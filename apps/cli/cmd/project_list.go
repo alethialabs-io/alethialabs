@@ -11,6 +11,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/format"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
 )
@@ -78,7 +79,15 @@ func projectRows(configs []types.ConfigurationSummary) [][]string {
 		}
 		cost := ui.SymbolDash
 		if v.EstimatedMonthlyCost != nil {
-			cost = fmt.Sprintf("$%.0f/mo", *v.EstimatedMonthlyCost)
+			// `$%.0f/mo` was the live half-to-even defect: Go's %f rounds half to EVEN, so an
+			// estimate of 12.5 printed `$12/mo` against a billing page showing `$12.50`. Estimate
+			// keeps the minor units above one unit, so the cell now reads `$12.50/mo`.
+			//
+			// USD is ASSUMED, as the `$` glyph before it was: `types.ConfigurationSummary` carries no
+			// currency at all, so a euro org is shown a dollar sign. That is a WIRE gap, not a
+			// rendering one — `cost show` gets this right because its response carries `Currency` —
+			// and it is visible here rather than hidden inside a format string.
+			cost = format.MonthlyRate(*v.EstimatedMonthlyCost, format.Estimate, "USD")
 		}
 		rows[i] = []string{
 			v.ProjectName,

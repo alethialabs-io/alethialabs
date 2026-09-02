@@ -64,31 +64,53 @@ func IntOrDash(v *int) string {
 	return fmt.Sprintf("%d", *v)
 }
 
-// FloatOrDash renders a nullable USD/mo threshold, or the dash when unset.
+// FloatOrDash renders a nullable USD cost threshold, or the dash when unset.
 //
-// The `$%.2f` is money and does not belong in a render helper — Go's %f rounds half to EVEN, so
-// 12.5 prints 12.50 here but a sibling site using %.0f prints 12 for the same amount. It is hoisted
-// AS-IS on purpose: this lane moves addresses, it does not change answers. #3659 re-points it at
-// `packages/core/format.MonthlyRate`, which is where that defect is fixed.
+// It carried `fmt.Sprintf("$%.2f", …)` until #3659 — money written with a hardcoded glyph and Go's
+// `%f`, which rounds half to EVEN, so `12.125` printed `$12.12` where the console prints `$12.13`.
+//
+// NO `/mo`, deliberately, and this is the call #3659 left to this lane. Its one caller is
+// `protection list`'s `Cost Δ` column (`protection.go`), holding a `cost_delta_threshold` — a
+// number an operator TYPED, as `--cost-delta-threshold 50`. `format.MonthlyRate` is the obvious
+// reach and it appends `/mo`, which would make the cell claim a periodicity the flag does not:
+// the threshold is a size, not a rate. Rendering back what they typed is the reading that cannot
+// mislead.
+//
+// So `format.Money`, whose unit is MINOR units — hence the `* 100`, which looks redundant against
+// the `/ 100` inside and is not: it is what buys the shared rounding rule, and it is exact for the
+// two-decimal currencies this renders. `format` exports no exact major-unit register without a
+// suffix; adding one would need a `@repo/format` mirror and conformance rows for a single caller.
+//
+// USD is ASSUMED, as the `$` before it was. `ProtectionRule.CostDeltaThreshold` carries no currency
+// on the wire, so this is the honest place for the assumption to be visible rather than baked into
+// a format string. A non-USD org is shown the wrong symbol; the fix is a currency on the wire.
 func FloatOrDash(v *float64) string {
 	if v == nil {
 		return SymbolDash
 	}
-	return fmt.Sprintf("$%.2f", *v)
+	return format.Money(*v*100, "USD")
 }
 
-// StampOrDash renders an RFC3339 timestamp to the minute in UTC, or the dash when unset.
+// StampOrDash renders an RFC3339 timestamp the way the console writes an absolute date —
+// `9 Mar 2026, 15:04` — in UTC, or the dash when unset.
 //
-// Previously returned a hardcoded "—" rather than the shared glyph — the same character, but not
-// the same constant, so a change to one would not have reached the other.
+// IT IS NOW Stamp'S RULE, which is the convergence #3659 owns. It rendered `2006-01-02 15:04` — a
+// fifth date spelling, differing from Stamp only in the layout literal, so `token list` and
+// `staged list` wrote the same instant two ways in two columns a reader compares. Stamp said
+// outright that converging the two "changes what those callers show and belongs to the lane that
+// owns them". This is that lane, and the change is deliberate and user-visible: `token list`,
+// `token get` and `addon list` move to `9 Mar 2026, 15:04`.
+//
+// What survives is the part that was never about layout — the DASH. StampOrDash, Stamp and
+// StampOrNever are three answers to "what does an absent timestamp mean": the dash for *we do not
+// know*, the word "never" for *we know, and it has not happened*, and Stamp's verbatim echo for
+// *the wire sent something we cannot read*. Delegating to Stamp keeps the one rule and the three
+// answers, instead of a fourth layout.
 func StampOrDash(v *string) string {
 	if v == nil || strings.TrimSpace(*v) == "" {
 		return SymbolDash
 	}
-	if t, err := time.Parse(time.RFC3339, *v); err == nil {
-		return t.UTC().Format("2006-01-02 15:04")
-	}
-	return *v
+	return Stamp(*v)
 }
 
 // Stamp renders an RFC3339 timestamp string the way the console writes an absolute date —
@@ -97,10 +119,9 @@ func StampOrDash(v *string) string {
 // This is `packages/core/format.Date(DateTime, UTC)` with the wire's string form in front of it,
 // and it exists because THREE command files needed exactly that and two of them had written their
 // own: `costCapturedAt` (cost.go) and the raw echo in `staged.go`, which printed
-// `2026-03-09T15:04:05Z` into a column a person reads. StampOrDash below is a DIFFERENT rule
-// (`2006-01-02 15:04`) with its own callers; converging the two changes what those callers show and
-// belongs to the lane that owns them, so this file now states both rather than pretending there is
-// one.
+// `2026-03-09T15:04:05Z` into a column a person reads. StampOrDash ABOVE was a different rule
+// (`2006-01-02 15:04`) until #3659 converged it onto this one; it now delegates here and keeps only
+// its own answer for an absent stamp. There is one absolute-date layout in the CLI.
 //
 // A stamp that does not parse is returned VERBATIM rather than dashed — the rule RelativeTime
 // already follows: a timestamp the CLI cannot read is a wire problem, and showing it lets someone
@@ -176,6 +197,20 @@ func GateGlyph(on bool) string {
 //
 // Named for what it does rather than `formatCreatedAt`, which named ONE of its callers — the
 // others pass a last-seen and a decided-at.
+//
+// IT NOW DELEGATES TO SmartTime, which is #3659's convergence of the CLI's three relative-time
+// renderings onto one rule: relative inside a week, an absolute date beyond it. The three differed
+// in their INPUT TYPE (an RFC3339 string here, a `time.Time` there, a bare `humanize.Time` call in
+// two job listings) and only one carried a cutoff, so they could not be compared until #3696 put
+// them in one file. The cutoff wins because "5 weeks ago" is a number nobody converts back into a
+// date, and this function had no cutoff at all.
+//
+// User-visible: a `connector list` identity created two months ago now reads `9 Mar 2026` rather
+// than `2 months ago`. Anything inside a week is unchanged, which is the overwhelming majority of
+// what these columns hold.
+//
+// The name stays. It is still the relative renderer — "relative inside the window where relative
+// helps" is the rule, and a caller asking for a person-readable age is asking for exactly that.
 func RelativeTime(raw string) string {
 	if raw == "" {
 		return SymbolDash
@@ -184,7 +219,7 @@ func RelativeTime(raw string) string {
 	if err != nil {
 		return raw
 	}
-	return humanize.Time(t)
+	return SmartTime(t)
 }
 
 // TruncID shortens an opaque id for a table cell, with an ellipsis when it was cut.
@@ -204,11 +239,20 @@ func TruncID(id string) string {
 // The week cutoff is the point where "ago" stops helping — nobody converts "5 weeks ago" back to a
 // date in their head, and nobody wants a calendar date for something that happened this morning.
 //
-// This is one of THREE relative-time renderings the CLI carries. The other two are RelativeTime
-// (always relative, from an RFC3339 string) and bare humanize.Time. They take different input types
-// and only this one has a cutoff, so they cannot simply be merged — converging them changes what a
-// user sees and belongs to the lane that owns that decision. Hoisting it here is step one: they can
-// only be compared once they are in the same place.
+// THIS IS THE ONE RULE NOW. It was one of three — RelativeTime (always relative, from an RFC3339
+// string) and two bare `humanize.Time` calls in the job listings were the others — and #3659 is the
+// lane that owns converging them. They took different input types and only this one had a cutoff,
+// which is why #3696 could only put them in one file and not merge them. RelativeTime is now this
+// function with a parse in front of it.
+//
+// The absolute half is `format.Date(DateOnly)`, not a layout literal: `2006-01-02` was a sixth
+// spelling of a date in a tree that had just finished agreeing on one. It renders `9 Mar 2026`.
+//
+// A FUTURE time stays relative however far out it is, because `time.Since` is negative for it and
+// no negative exceeds the cutoff. That is not an accident of the comparison, it is the right
+// reading: `billing`'s `Trial ends` wants "in 3 months", and an absolute date for a deadline the
+// reader is being asked to act on is the less useful of the two. The cutoff is about the PAST,
+// where "5 weeks ago" is a number nobody converts back into a date.
 func SmartTime(t time.Time) string {
 	if t.IsZero() {
 		return SymbolDash
@@ -216,5 +260,5 @@ func SmartTime(t time.Time) string {
 	if time.Since(t).Hours() < 24*7 {
 		return humanize.Time(t)
 	}
-	return t.Format("2006-01-02")
+	return format.Date(t, format.DateOnly, time.UTC)
 }
