@@ -115,8 +115,12 @@ test.describe("Projects — not-found + auth", () => {
 		await owner.page.goto(`/${owner.orgSlug}/no-such-project-${Date.now()}/architecture`);
 		// notFound() → no design canvas; a 404 surface instead.
 		await expect(owner.page.getByRole("button", { name: /^add$/i })).toHaveCount(0);
+		// Assert the PROJECT copy, not any 404. The old `/not found|could not be found|404/i`
+		// also matched `[org]/not-found.tsx`'s "Organization not found", which is exactly the
+		// wrong answer #3880 fixed — so this spec passed both before and after and could not
+		// tell a regression from a fix. `[project]/not-found.tsx` renders "Project not found".
 		await expect(
-			owner.page.getByText(/not found|could not be found|404/i).first(),
+			owner.page.getByText(/project not found/i).first(),
 		).toBeVisible({ timeout: 15_000 });
 	});
 
