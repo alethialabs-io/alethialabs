@@ -72,13 +72,31 @@
 // predicate that can no longer fail is indistinguishable from a clean tree, and every other guard
 // in this repo that got that wrong reported green for months.
 //
+// ── THE ONE FINDING THAT IS NOT PER-ROUTE ────────────────────────────────────────────────────
+//
+// `layoutBoundaryEscapes()` is scored per LAYOUT, is not baselined, and is not one of the eight
+// predicates. It reports a layout that calls `notFound()` with no `not-found.tsx` at the segment
+// ABOVE it — the throw then escapes every boundary written for that segment and lands on the root
+// `app/not-found.tsx`, so the user gets the generic page-not-found (#3880 at `[project]`, #3891 at
+// `[org]`, where it covered 38 of 40 routes).
+//
+// It is deliberately NOT a predicate, and the reason is the whole point of separating it. T3 is
+// bounded to layouts at or below the route's frame, so one layout's defect is never charged to
+// every route beneath it — a gate that reports 38 routes broken for one cause trains people to
+// ignore it. The same bound is what made `[org]/layout.tsx` invisible to T3, before and after its
+// fix. A per-layout invariant restores the coverage at the right granularity: one finding per
+// defect, named at the file that holds it.
+//
+// It is also not baselined, because after #3891 the tree holds zero of them and a ratchet at zero
+// is just an assertion with a file behind it.
+//
 // Do NOT pipe it. `node scripts/check-route-states.mjs | tail` reports TAIL's exit code.
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { collectConsoleRoutes, stripCommentLines } from "./lib/console-routes.mjs";
+import { PAGE_EXTENSIONS, collectConsoleRoutes, stripCommentLines } from "./lib/console-routes.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "..");
@@ -820,6 +838,114 @@ function renderBaseline(tallied, totals) {
 	return lines.join("\n") + "\n";
 }
 
+// ── the layout boundary-escape invariant ─────────────────────────────────────────────────────
+
+/**
+ * The `not-found` boundary file in ONE directory, by filename, or null when it holds none.
+ *
+ * The extension list is the manifest's `PAGE_EXTENSIONS`, imported rather than retyped: a second
+ * copy stops matching the day the first one changes, and it does so in the quiet direction —
+ * "no boundary file here" reads as "nothing to report" and this whole invariant goes green.
+ *
+ * @param {string} dirAbs
+ * @returns {string|null}
+ */
+function notFoundFileIn(dirAbs) {
+	for (const ext of PAGE_EXTENSIONS) {
+		if (existsSync(path.join(dirAbs, `not-found.${ext}`))) return `not-found.${ext}`;
+	}
+	return null;
+}
+
+/**
+ * Every layout that calls `notFound()`, and whether anything can catch that throw.
+ *
+ * ── THE MECHANISM, SO THE RULE IS NOT MISTAKEN FOR A STYLE PREFERENCE ────────────────────────
+ *
+ * `create-component-tree.js` builds a segment's `not-found` element and passes it ONLY to the
+ * `children` parallel route (`const notFoundComponent = isChildrenRouteKey ? notFoundElement :
+ * undefined`). So a segment's own `not-found.tsx` mounts INSIDE that segment's layout, wrapping
+ * what the layout renders as `{children}`. A `notFound()` thrown by the layout itself is thrown
+ * outside that wrapper and cannot be caught by it — it unwinds to the nearest boundary at a
+ * segment strictly ABOVE, and, absent one, to the root `app/not-found.tsx`.
+ *
+ * ── WHY "THE PARENT SEGMENT", AND NOT "SOME ANCESTOR" ────────────────────────────────────────
+ *
+ * `app/not-found.tsx` exists and always will, so "some ancestor has one" is satisfied by every
+ * layout in the tree and the predicate can never fire. That is exactly the state `[org]` shipped
+ * in: a root boundary answered, the org-specific page one segment down was unreachable, and the
+ * user was told "Page not found" for a URL whose org simply did not resolve. The parent segment is
+ * the nearest place a boundary CAN be put for this layout, so it is where one has to be.
+ *
+ * The escapes this leaves are all healthy: stop throwing from the layout (#3880's shape, where
+ * the pages below guard themselves), or put a `not-found.tsx` at the segment above (#3891's, where
+ * 38 pages do not). Neither deepens the defect. Deleting the layout's own `not-found.tsx` does not
+ * silence it, because the own-segment file is not what is being looked for.
+ *
+ * @param {{routes: {layoutChain: string[]}[], appDir: string}} manifest
+ * @param {string} repoRoot
+ * @returns {{scanned: string[], throwing: string[], escapes: string[]}}
+ */
+export function layoutBoundaryEscapes(manifest, repoRoot) {
+	const scanned = [...new Set(manifest.routes.flatMap((r) => r.layoutChain))].sort();
+	// "No layouts" is not "no findings". Every private route renders through at least the root
+	// layout, so an empty set means the record's layoutChain stopped being populated and this
+	// invariant has quietly stopped reading anything at all.
+	if (scanned.length === 0) {
+		throw new Error(
+			"no layout appears in any route's layoutChain — the manifest has stopped reporting " +
+				"layouts, so this invariant would report a clean tree over nothing.",
+		);
+	}
+	/** @type {string[]} */
+	const throwing = [];
+	/** @type {string[]} */
+	const escapes = [];
+	for (const layoutRel of scanned) {
+		const src = readStripped(path.join(repoRoot, layoutRel));
+		if (src === null) {
+			throw new Error(`${layoutRel}: named in a route's layoutChain but not readable`);
+		}
+		// The same matcher `callsNotFound` uses on a page, for the same reason: `notFound` is only
+		// ever the navigation helper, and matching the call rather than the import survives a
+		// re-export or an aliased import of something else from `next/navigation`.
+		if (!/\bnotFound\s*\(/.test(src)) continue;
+		throwing.push(layoutRel);
+
+		const ownDir = path.dirname(layoutRel); // the segment this layout governs
+		const parentDir = path.dirname(ownDir); // the segment whose boundary could catch it
+		const atAppRoot = path.resolve(repoRoot, ownDir) === path.resolve(repoRoot, manifest.appDir);
+		const caught = atAppRoot ? null : notFoundFileIn(path.join(repoRoot, parentDir));
+		if (caught !== null) continue;
+
+		// What DOES answer, so the report names the page the user actually sees rather than only
+		// the one they do not. Walk strictly above the layout's own segment, up to `app/`.
+		/** @type {string|null} */
+		let answers = null;
+		let cursor = atAppRoot ? null : parentDir;
+		while (cursor !== null) {
+			const hit = notFoundFileIn(path.join(repoRoot, cursor));
+			if (hit !== null) {
+				answers = path.join(cursor, hit);
+				break;
+			}
+			if (path.resolve(repoRoot, cursor) === path.resolve(repoRoot, manifest.appDir)) break;
+			cursor = path.dirname(cursor);
+		}
+		const own = notFoundFileIn(path.join(repoRoot, ownDir));
+		const under = manifest.routes.filter((r) => r.layoutChain.includes(layoutRel)).length;
+		escapes.push(
+			`${layoutRel} calls notFound(), and ${parentDir} has no not-found.tsx — the throw is ` +
+				`raised OUTSIDE the boundary this segment's own file provides` +
+				(own === null ? "" : ` (${path.join(ownDir, own)}, which cannot catch it)`) +
+				`, so ${answers === null ? "Next's built-in not-found" : answers} answers instead, on ` +
+				`${under} route${under === 1 ? "" : "s"}. Put a not-found.tsx at ${parentDir}, or stop ` +
+				`throwing here and let the pages below call notFound() themselves.`,
+		);
+	}
+	return { scanned, throwing, escapes };
+}
+
 // ── the run ──────────────────────────────────────────────────────────────────────────────────
 
 /** Score one tree. Never catches the manifest's raises — a zero-route tree must not report green. */
@@ -833,6 +959,7 @@ export function runOver(repoRoot) {
 		contexts,
 		scored,
 		tallied: tally(scored),
+		escapes: layoutBoundaryEscapes(manifest, repoRoot),
 		totals: {
 			routes: manifest.routes.length,
 			redirectOnly,
@@ -870,6 +997,11 @@ function buildProbeTree() {
 		'export function NarrowShell({ children }) { return <div className="mx-auto w-full max-w-[800px]">{children}</div>; }\n');
 	put(root, "apps/console/app/layout.tsx", "export default function L({ children }) { return <div>{children}</div>; }\n");
 	put(root, "apps/console/app/(private)/layout.tsx", "export default function PL({ children }) { return <div>{children}</div>; }\n");
+	// THE BOUNDARY-ESCAPE PROBE, half one: a ROOT not-found.tsx that exists. Without it, an
+	// implementation asking "does SOME ancestor have one" would report the escape below anyway and
+	// the control could not tell the two rules apart — and "some ancestor" is the rule that scores
+	// the real console green, because `app/not-found.tsx` is always there.
+	put(root, "apps/console/app/not-found.tsx", "export default function RNF() { return <div />; }\n");
 	// S1 · T2 · T4 — no shell above it, no error boundary anywhere, no metadata.
 	put(root, "apps/console/app/(private)/loose/page.tsx", PAGE());
 	// S2, branch "the shell declares no width".
@@ -880,8 +1012,12 @@ function buildProbeTree() {
 	// the other branch cannot fire and a mutation that deletes this one is caught here and only here.
 	put(root, "apps/console/app/(private)/plain/copy/page.tsx",
 		META + 'export default function C() { return <div className="mx-auto max-w-[1200px]" />; }\n');
+	// THE BOUNDARY-ESCAPE PROBE, half two: the console's own pre-#3891 shape. The layout throws,
+	// `(private)` above it holds no not-found.tsx, and the segment's OWN not-found.tsx below is
+	// exactly the file that cannot catch it. An implementation that credited the own-segment file,
+	// or any ancestor, reports nothing here.
 	put(root, "apps/console/app/(private)/[org]/layout.tsx",
-		"import { AppShell } from '@/components/shell/app-shell';\nexport default function O({ children }) { return <AppShell>{children}</AppShell>; }\n");
+		"import { AppShell } from '@/components/shell/app-shell';\nimport { notFound } from 'next/navigation';\nexport default function O({ children, ok }) { if (!ok) notFound(); return <AppShell>{children}</AppShell>; }\n");
 	put(root, "apps/console/app/(private)/[org]/not-found.tsx", "export default function NF() { return <div />; }\n");
 	// S2, branch "the page declares its own on top of the shell's".
 	put(root, "apps/console/app/(private)/[org]/wide/page.tsx",
@@ -941,11 +1077,22 @@ function buildAntiProbeTree() {
 	put(root, "apps/console/app/layout.tsx", "export default function L({ children }) { return <div>{children}</div>; }\n");
 	put(root, "apps/console/app/error.tsx", "export default function E() { return <div />; }\n");
 	put(root, "apps/console/app/(private)/layout.tsx", "export default function PL({ children }) { return <div>{children}</div>; }\n");
-	// The org layout THROWS, exactly as the console's does. That throw escapes `[org]/not-found.tsx`
-	// by the same mechanism as every other layout's — and it is out of frame for every route below
-	// `[org]` whose own innermost segment is deeper. This is the control on bound 2 in the header:
-	// a rule that read the whole layout chain instead of the part at or below the route's frame
-	// would fail `/[org]/[thing]` here for a defect belonging to `[org]`.
+	// The org layout THROWS, exactly as the console's does. Two separate rules are controlled by
+	// this one file, and both statements have to survive together.
+	//
+	// #3890's: the throw escapes `[org]/not-found.tsx` by the same mechanism as every other
+	// layout's, and it is out of frame for every route below `[org]` whose own innermost segment
+	// is deeper. That is the control on bound 2 in the header — a rule that read the whole layout
+	// chain instead of the part at or below the route's frame would fail `/[org]/[thing]` here for
+	// a defect belonging to `[org]`.
+	//
+	// #3933's: this is also the boundary-escape antiprobe, so it carries the one file that FIXES
+	// the escape — a not-found.tsx at the segment ABOVE. Without it the per-layout invariant fails
+	// on the tree whose entire purpose is that every predicate passes. There is deliberately no
+	// ROOT not-found.tsx, so the invariant cannot be passing by finding that one instead; and the
+	// segment's own not-found.tsx below is present too, because having one does not make a
+	// layout's throw catchable and must not make it un-reportable either.
+	put(root, "apps/console/app/(private)/not-found.tsx", "export default function PNF() { return <div />; }\n");
 	put(root, "apps/console/app/(private)/[org]/layout.tsx",
 		"import { notFound } from 'next/navigation';\nimport { AppShell } from '@/components/shell/app-shell';\nexport default function O({ children }) { if (!children) notFound(); return <AppShell>{children}</AppShell>; }\n");
 	put(root, "apps/console/app/(private)/[org]/loading.tsx", "export default function LS() { return <div />; }\n");
@@ -1045,6 +1192,54 @@ export function positiveControl() {
 		}
 		expect(a, "antiProbe", "/[org]/sect", "T2", "PASS");
 		expect(a, "antiProbe", "/[org]/sect", "T4", "FAIL"); // "a redirect still owns a title"
+
+		// ── the layout boundary-escape invariant: it must fire, and it must stay quiet ──────
+		//
+		// Both trees hold the same throwing `[org]/layout.tsx`. They differ in one file: the
+		// antiProbe has `(private)/not-found.tsx` and the probe has `app/not-found.tsx` instead.
+		// So this pair separates "a boundary at the parent segment" from "a boundary somewhere
+		// above", which is the only distinction that matters — the second rule scores the real
+		// console green while a bad org slug renders the wrong page.
+		//
+		// The three assertions below are MEMBERSHIP, not counts, and that is deliberate. They were
+		// written as `length === 1` when `[org]/layout.tsx` was the only throwing layout in either
+		// tree; #3890 then added `[org]/[thing]/sub/layout.tsx` and `[org]/sec/[res]/layout.tsx` to
+		// drive ITS rule, and an exact count made this fail for a reason that has nothing to do
+		// with what it measures. The property was never "there is exactly one" — it is "the one
+		// this invariant exists for is found, and its escape is reported". A count is a statement
+		// about the fixture; membership is a statement about the matcher.
+		//
+		// The quiet branch below stays EXACT (`=== 0`), because there the count IS the property:
+		// one spurious report is the whole failure.
+		const escapeAt = path.join("apps", "console", "app", "(private)", "[org]", "layout.tsx");
+		if (!p.escapes.throwing.includes(escapeAt)) {
+			problems.push(
+				`probe boundary-escape: expected ${escapeAt} among the layouts calling notFound(), got ` +
+					`[${p.escapes.throwing.join(", ")}] — the layout matcher has stopped matching`,
+			);
+		}
+		if (!p.escapes.escapes.some((e) => e.startsWith(escapeAt))) {
+			problems.push(
+				`probe boundary-escape: expected an escape reported at ${escapeAt}, got ` +
+					`${p.escapes.escapes.length}: [${p.escapes.escapes.join(" | ")}]`,
+			);
+		}
+		// Membership on the SAME file as above, not a bare count. `length >= 1` would be satisfied
+		// by #3890's other throwing layouts even if the one this invariant exists for were deleted
+		// from the fixed tree — a green that proves nothing about the quiet branch, which is the
+		// exact shape this whole rule was written to catch.
+		if (!a.escapes.throwing.includes(escapeAt)) {
+			problems.push(
+				`antiProbe boundary-escape: the fixed tree must still hold the throwing ${escapeAt}, ` +
+					`or the quiet branch below proves nothing — got [${a.escapes.throwing.join(", ")}]`,
+			);
+		}
+		if (a.escapes.escapes.length !== 0) {
+			problems.push(
+				`antiProbe boundary-escape: a layout whose PARENT segment holds a not-found.tsx must ` +
+					`not be reported — got [${a.escapes.escapes.join(" | ")}]`,
+			);
+		}
 	} finally {
 		for (const d of [probe, anti]) rmSync(d, { recursive: true, force: true });
 	}
@@ -1054,9 +1249,15 @@ export function positiveControl() {
 // ── reporting ────────────────────────────────────────────────────────────────────────────────
 
 function report(run, { routes = false } = {}) {
-	const { scored, tallied, totals } = run;
+	const { scored, tallied, totals, escapes } = run;
 	console.log(
-		`${totals.routes} private routes · ${totals.redirectOnly} redirect-only · ${totals.real} real pages\n`,
+		`${totals.routes} private routes · ${totals.redirectOnly} redirect-only · ${totals.real} real pages`,
+	);
+	// Stated on every run, green included: "0 escapes" and "the scan read nothing" have to look
+	// different, so the counts it examined are printed rather than only the findings.
+	console.log(
+		`${escapes.scanned.length} layouts · ${escapes.throwing.length} call notFound() · ` +
+			`${escapes.escapes.length} boundary escape(s)\n`,
 	);
 	console.log("  id   PASS  FAIL   N/A   score  predicate");
 	for (const id of PREDICATES) {
@@ -1078,6 +1279,10 @@ function report(run, { routes = false } = {}) {
 		console.log(
 			`\n${id} N/A: ${reasons.map(([r, xs]) => `${r}=${xs.length}`).join(", ")}`,
 		);
+	}
+	if (escapes.escapes.length > 0) {
+		console.log("\nlayout boundary escapes — a notFound() nothing at or above the segment can catch");
+		for (const line of escapes.escapes) console.log(`  FAIL ${line}`);
 	}
 	if (routes) {
 		console.log("\nroute × predicate");
@@ -1253,6 +1458,27 @@ function selfTest() {
 		compareToBaseline(base, flat, { ...totals, routes: 41 }).some((p) => p.startsWith("routes:")),
 	);
 
+	// ── the boundary-escape invariant's own silent-green branch ──────────────────────────────
+	//
+	// Every other assertion about it lives in the positive control, which runs on every
+	// invocation. This one cannot: it is the branch where the invariant reads NOTHING, and the
+	// probe trees always give it something to read. A manifest whose records stopped carrying a
+	// layoutChain would otherwise hand back `escapes: []` — indistinguishable from a clean tree.
+	raises(
+		"a manifest with no layouts RAISES rather than reporting zero escapes",
+		() => layoutBoundaryEscapes({ routes: [], appDir: path.join("apps", "console", "app") }, REPO_ROOT),
+		"stopped reporting layouts",
+	);
+	raises(
+		"a layoutChain naming a file that is not there RAISES rather than skipping it",
+		() =>
+			layoutBoundaryEscapes(
+				{ routes: [{ layoutChain: [path.join("apps", "console", "app", "no-such-layout.tsx")] }], appDir: path.join("apps", "console", "app") },
+				REPO_ROOT,
+			),
+		"not readable",
+	);
+
 	// ── the manifest's zero-route raise is NOT caught into a green ───────────────────────────
 	const emptyRoot = mkdtempSync(path.join(tmpdir(), "route-states-empty-"));
 	mkdirSync(path.join(emptyRoot, "apps", "console", "app", "(private)"), { recursive: true });
@@ -1396,7 +1622,13 @@ if (invokedDirectly) {
 		process.exit(0);
 	}
 	if (parsed.mode === "json") {
-		console.log(JSON.stringify({ totals: run.totals, tallied: run.tallied, scored: run.scored }, null, "\t"));
+		console.log(
+			JSON.stringify(
+				{ totals: run.totals, tallied: run.tallied, scored: run.scored, escapes: run.escapes },
+				null,
+				"\t",
+			),
+		);
 		process.exit(0);
 	}
 
@@ -1411,6 +1643,21 @@ if (invokedDirectly) {
 		console.error(
 			`\nThe baseline is the gate. An unreadable one is not "no findings" — run ` +
 				`\`node scripts/check-route-states.mjs --print-baseline\` and reconcile it by hand.`,
+		);
+		process.exit(1);
+	}
+
+	// Not baselined and not negotiable: the tree holds zero of these, and a layout that starts
+	// throwing where nothing above it can catch reds the check on the PR that adds it.
+	if (run.escapes.escapes.length > 0) {
+		console.error(
+			`\ncheck-route-states: ${run.escapes.escapes.length} layout boundary escape(s)\n`,
+		);
+		for (const line of run.escapes.escapes) console.error(`  ${line}`);
+		console.error(
+			`\nA segment's own not-found.tsx mounts INSIDE its layout, so a notFound() thrown by the ` +
+				`layout escapes it and the root app/not-found.tsx answers instead — the generic page, ` +
+				`not the one written for that segment (#3880, #3891).`,
 		);
 		process.exit(1);
 	}
