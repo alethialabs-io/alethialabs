@@ -354,6 +354,15 @@ Two things a script needs to know:
 - `-o json` prints the payload alone. The styled success line is only rendered for the table
   format, so a break-glass result pipes into `jq` without a sentence in front of it.
 
+  <Callout type="warn">
+  One thing still writes to `stdout` ahead of the payload: the loading spinner, which draws its
+  frames there rather than on `stderr`. A redirected or piped `-o json` result can therefore begin
+  with terminal escape sequences, and `jq` reports `Invalid numeric literal at line 1, column 2`.
+  Until [#3838](https://github.com/alethialabs-io/alethialabs/issues/3838) lands, parse from the
+  first `{` or `[` rather than from byte zero. This affects every command with a spinner, not only
+  `ops`.
+  </Callout>
+
 ```bash
 alethia ops inspect-job 8f3c2a1b-77de-4c05-9a41-2b8e6a1d40f7 --reason incident-1234-triage --no-input -o json
 ```
