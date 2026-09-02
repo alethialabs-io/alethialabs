@@ -19,7 +19,10 @@ var promotionCmd = &cobra.Command{
 	Short:   "Inspect environment promotions",
 	Long: `A promotion moves a source environment's proven design into a target environment,
 gated by that environment's protection rules. List a project's promotions or show one in detail
-(status, approval tally, and approval slots).`,
+(status, approval tally, and approval slots).
+
+A promotion is named by its id or an unambiguous id prefix — or by nothing at all, and you are
+asked which of the project's promotions to open.`,
 }
 
 var promotionListCmd = &cobra.Command{
@@ -30,7 +33,7 @@ var promotionListCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		project, err := currentProject(cmd)
+		project, err := projectFromFlag(cmd, token)
 		if err != nil {
 			fail(err)
 		}
@@ -85,22 +88,47 @@ func runPromotionList(c apiClient, out io.Writer, format, project, env string) e
 }
 
 var promotionGetCmd = &cobra.Command{
-	Use:   "get <promotion-id>",
+	Use:   "get [promotion]",
 	Short: "Show a promotion's status and approval slots",
-	Args:  cobra.ExactArgs(1),
+	Long: `Show one promotion in detail. Name it by its id or an unambiguous id prefix; omit it on
+a terminal and you are asked which of the project's promotions to open.`,
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		project, err := currentProject(cmd)
+		project, err := projectFromFlag(cmd, token)
 		if err != nil {
 			fail(err)
 		}
-		if err := runPromotionGet(api.NewClient(token), os.Stdout, outputFormat(cmd), project, args[0]); err != nil {
+		client := api.NewClient(token)
+		env, _ := cmd.Flags().GetString("env")
+		ref, err := resolvePromotion(client, project, env, args)
+		if err != nil {
+			fail(err)
+		}
+		if err := runPromotionGet(client, os.Stdout, outputFormat(cmd), project, ref.ID); err != nil {
 			failf("Failed to get promotion: %v", err)
 		}
 	},
+}
+
+// resolvePromotion answers "which promotion?" from an id, an id prefix, or the picker.
+//
+// It reuses the LIST endpoint the `promotion list` command already calls, and honours the same
+// --env narrowing, so `promotion get --env production` opens a picker over exactly the rows
+// `promotion list --env production` just printed. A picker that showed a different set from the
+// list beside it would be a second opinion about what the project contains.
+//
+// A promotion has no name, so the only thing a reader could previously have passed was a UUID
+// copied out of that list by eye — the handoff `promotions.mdx` stood an ellipsis in for.
+func resolvePromotion(c apiClient, project, env string, args []string) (govRef, error) {
+	promos, err := c.GetProjectPromotions(project, env)
+	if err != nil {
+		return govRef{}, err
+	}
+	return resolveGovRef(promotionSelect, govRefsFromPromotions(promos), args)
 }
 
 var approvalColumns = []string{"Status", "Approver", "Role", "Decided"}
@@ -149,8 +177,10 @@ func runPromotionGet(c apiClient, out io.Writer, format, project, promotionID st
 }
 
 func init() {
-	promotionCmd.PersistentFlags().StringP("project", "p", "", "Project name or id")
-	promotionCmd.PersistentFlags().StringP("env", "e", "", "Filter by target environment name, stage, or id")
+	promotionCmd.PersistentFlags().StringP("project", "p", "",
+		mustGovField("alethia promotion list", fieldKeyGovProject).Description+" (name or id)")
+	promotionCmd.PersistentFlags().StringP("env", "e", "",
+		mustGovField("alethia promotion list", fieldKeyGovEnv).Description)
 	promotionCmd.AddCommand(promotionListCmd)
 	promotionCmd.AddCommand(promotionGetCmd)
 	rootCmd.AddCommand(promotionCmd)

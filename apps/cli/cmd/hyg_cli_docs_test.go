@@ -55,6 +55,7 @@ var docsGroups = map[string]string{
 	"roles":   "access",
 	"grants":  "access",
 	"sso":     "access",
+
 	// The BYO-IaC group (#3707). All five at once because they are one noun group and one pass:
 	// `chart` and `iac` are the two halves of bring-your-own, `repo` is where their repository
 	// picker gets its list, and `drift` and `staged` are the two read-only leaves that share the
@@ -64,23 +65,19 @@ var docsGroups = map[string]string{
 	"repo":   "repositories",
 	"drift":  "drift",
 	"staged": "staged",
-}
 
-// docsGroupsOnPage inverts the registry: which groups share one page.
-//
-// Derived from docsGroups rather than written beside it, because a second list of the same fact is
-// a list that stops agreeing — and the failure would be silent in the safe direction: an example
-// wrongly reported as foreign, or worse, a foreign one accepted because the page was thought to
-// carry a group it does not.
-func docsGroupsOnPage(page string) []string {
-	var out []string
-	for group, p := range docsGroups {
-		if p == page {
-			out = append(out, group)
-		}
-	}
-	sort.Strings(out)
-	return out
+	// The governance noun group (#3703). Three of these pages carry more than one group, which is
+	// why the registry is keyed on the GROUP and not on the page: `channels`, `alerts` and
+	// `activity` all document onto notifications.mdx, and `fleet` onto billing.mdx beside the
+	// billing group's own commands.
+	"protection":     "protection",
+	"promotion":      "promotions",
+	"probes":         "probes",
+	"classification": "classification",
+	"channels":       "notifications",
+	"alerts":         "notifications",
+	"activity":       "notifications",
+	"fleet":          "billing",
 }
 
 // docsRepoRoot is the repo root as seen from apps/cli/cmd.
@@ -106,12 +103,23 @@ func docsRead(t *testing.T, path string) string {
 	return string(b)
 }
 
-// docsLeaves returns a group's runnable subcommands, deepest-first paths as argument slices.
+// docsLeaves returns a group's runnable commands, deepest-first paths as argument slices.
 //
 // Cobra's generated `help` and `completion` are not part of anyone's docs page, and neither is a
 // hidden command; everything else a user can run must be documented.
+//
+// THE GROUP ITSELF COUNTS when it is runnable, and it comes back as the EMPTY path. `alethia
+// activity` is a top-level command with a Run and no subcommands at all, so a subcommands-only
+// walk returns nothing for it — and the group would then fail the "has no runnable subcommands"
+// arm below, which reads as "this walk cannot see them" rather than as what it is. Registering it
+// with a walk that could not express it would have been a group inside the registry and outside
+// every assertion. `alethia config` (the auth group) has the same shape, which is the reason
+// authGroupCommands is runnable-not-leaf too.
 func docsLeaves(group *cobra.Command) [][]string {
 	var leaves [][]string
+	if group.Runnable() {
+		leaves = append(leaves, []string{})
+	}
 	var walk func(c *cobra.Command, path []string)
 	walk = func(c *cobra.Command, path []string) {
 		for _, sub := range c.Commands() {
@@ -127,6 +135,17 @@ func docsLeaves(group *cobra.Command) [][]string {
 	}
 	walk(group, nil)
 	return leaves
+}
+
+// docsLeafPath renders a leaf as the invocation a reader types.
+//
+// It exists because the empty path above would otherwise render as "alethia activity " with a
+// trailing space — which no heading carries, no example matches, and cobra's CommandPath never
+// produces. Three separate assertions build this string; one that built it differently would
+// disagree with the other two about a command that is perfectly well documented.
+func docsLeafPath(group string, leaf []string) string {
+	parts := append([]string{"alethia", group}, leaf...)
+	return strings.Join(parts, " ")
 }
 
 // docsFencedExamples returns every `alethia …` invocation inside a fenced code block.
@@ -177,6 +196,80 @@ func docsFencedExamples(page string) []string {
 		out = append(out, strings.TrimSpace(cmd))
 	}
 	return out
+}
+
+// docsTokens splits a documented invocation into the tokens a shell would hand the process.
+//
+// strings.Fields is not that splitter, and the difference is not cosmetic: `alethia channels
+// delete "Ops Slack"` is ONE argument, and Fields makes it two, so ValidateArgs rejects a
+// perfectly good example for having an arity the command "does not accept". Every example naming a
+// record by its human name — which is the whole point of not making readers copy ids — hits this.
+//
+// Quotes are stripped, matching what execve receives; an unterminated quote runs to end of line
+// rather than being dropped, because a malformed example should reach the resolver and be reported
+// as unresolvable, not silently become a shorter one that passes.
+func docsTokens(example string) []string {
+	var tokens []string
+	var cur strings.Builder
+	var quote rune
+	started := false
+	flush := func() {
+		if started {
+			tokens = append(tokens, cur.String())
+			cur.Reset()
+			started = false
+		}
+	}
+	for _, r := range example {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				cur.WriteRune(r)
+			}
+		case r == '"' || r == '\'':
+			quote = r
+			started = true
+		case r == ' ' || r == '\t':
+			flush()
+		default:
+			cur.WriteRune(r)
+			started = true
+		}
+	}
+	flush()
+	return tokens
+}
+
+// docsPageGroups inverts the registry: which registered groups document onto each page.
+//
+// The registry is keyed on the group because a PAGE can carry several — notifications.mdx carries
+// `channels`, `alerts` and `activity`. The first cut of the misplaced-example check below asked
+// whether every example on the page belonged to the ONE group being iterated, which is only ever
+// true for a page with one group; with three it reported all three groups' examples as misplaced,
+// nine times over. The claim worth keeping is "this example belongs on THIS PAGE", and that is a
+// question about the page.
+func docsPageGroups() map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	for group, page := range docsGroups {
+		if out[page] == nil {
+			out[page] = map[string]bool{}
+		}
+		out[page][group] = true
+	}
+	return out
+}
+
+// docsGroupIsRegistered reports whether a top-level command is in the registry at all.
+//
+// An example for an UNREGISTERED group is not misplaced — it is simply not yet covered. billing.mdx
+// documents `alethia billing` and `alethia usage` beside the fleet group; those two are a different
+// noun group whose lane has not registered them, and failing this page for showing them would make
+// the registry's growth an obstacle rather than a ratchet.
+func docsGroupIsRegistered(group string) bool {
+	_, ok := docsGroups[group]
+	return ok
 }
 
 // docsPlaceholderToken reports whether one token of an example is a placeholder a reader must
@@ -453,14 +546,18 @@ func TestHygCliDocs_EveryLeafIsDocumented(t *testing.T) {
 		}
 		for _, leaf := range leaves {
 			checkedLeaves++
-			heading := "## `alethia " + group + " " + strings.Join(leaf, " ") + "`"
+			path := docsLeafPath(group, leaf)
+			heading := "## `" + path + "`"
 			if !strings.Contains(body, heading) {
-				t.Errorf("%s.mdx has no section for `alethia %s %s` (want a heading %q)",
-					page, group, strings.Join(leaf, " "), heading)
+				t.Errorf("%s.mdx has no section for `%s` (want a heading %q)", page, path, heading)
+			}
+			// The GROUP's own leaf carries no name of its own to look for; the block existing at
+			// all, asserted above, is exactly the claim "this group is in the tree".
+			if len(leaf) == 0 {
+				continue
 			}
 			if block != "" && !regexp.MustCompile(`\b`+regexp.QuoteMeta(leaf[len(leaf)-1])+`\b`).MatchString(block) {
-				t.Errorf("`alethia %s %s` is missing from the command tree in index.mdx:\n%s",
-					group, strings.Join(leaf, " "), block)
+				t.Errorf("`%s` is missing from the command tree in index.mdx:\n%s", path, block)
 			}
 		}
 	}
@@ -481,14 +578,11 @@ func TestHygCliDocs_EveryDocumentedExampleResolves(t *testing.T) {
 		t.Fatal("the registry is empty — every assertion in this file would be vacuous")
 	}
 	checkedExamples := 0
-	// Over PAGES, not over groups: a page shared by three groups would otherwise have every one of
-	// its examples checked three times, and each miss reported three times.
-	seenPage := map[string]bool{}
-	for _, page := range docsGroups {
-		if seenPage[page] {
-			continue
-		}
-		seenPage[page] = true
+	// Over the PAGES, not the groups. Three groups document onto notifications.mdx, and iterating
+	// the registry would read and re-check that page three times — which is not merely wasteful:
+	// checkedExamples, the vacuity floor at the bottom, would count the same example three times
+	// and report a healthier census than the guard actually has.
+	for page, onThisPage := range docsPageGroups() {
 		body := docsRead(t, docsPagePath(page))
 		examples := docsFencedExamples(body)
 		if len(examples) == 0 {
@@ -498,7 +592,7 @@ func TestHygCliDocs_EveryDocumentedExampleResolves(t *testing.T) {
 		}
 		for _, example := range examples {
 			checkedExamples++
-			tokens := strings.Fields(example)[1:] // drop "alethia"
+			tokens := docsTokens(example)[1:] // drop "alethia"
 			cmd, rest, err := rootCmd.Find(tokens)
 			if err != nil {
 				t.Errorf("%q does not resolve: %v", example, err)
@@ -511,17 +605,10 @@ func TestHygCliDocs_EveryDocumentedExampleResolves(t *testing.T) {
 					"print help and exit 0", example, cmd.CommandPath())
 				continue
 			}
-			owners := docsGroupsOnPage(page)
-			owned := false
-			for _, owner := range owners {
-				if strings.HasPrefix(cmd.CommandPath(), "alethia "+owner+" ") {
-					owned = true
-					break
-				}
-			}
-			if !owned {
-				t.Errorf("%q is on %s.mdx but resolves to `%s`, outside the group(s) %v that page documents",
-					example, page, cmd.CommandPath(), owners)
+			top := strings.Fields(cmd.CommandPath())[1]
+			if docsGroupIsRegistered(top) && !onThisPage[top] {
+				t.Errorf("%q is on %s.mdx but resolves to `%s`, whose group %q documents onto %s.mdx",
+					example, page, cmd.CommandPath(), top, docsGroups[top])
 			}
 			args := docsSplitArgs(t, cmd, rest, example)
 			if err := cmd.ValidateArgs(args); err != nil {
@@ -547,17 +634,17 @@ func TestHygCliDocs_EveryLeafIsShownAtLeastOnce(t *testing.T) {
 		examples := docsFencedExamples(docsRead(t, docsPagePath(page)))
 		for _, leaf := range docsLeaves(groupCmd) {
 			checked++
+			path := docsLeafPath(group, leaf)
 			shown := false
 			for _, example := range examples {
-				cmd, _, err := rootCmd.Find(strings.Fields(example)[1:])
-				if err == nil && cmd.CommandPath() == "alethia "+group+" "+strings.Join(leaf, " ") {
+				cmd, _, err := rootCmd.Find(docsTokens(example)[1:])
+				if err == nil && cmd.CommandPath() == path {
 					shown = true
 					break
 				}
 			}
 			if !shown {
-				t.Errorf("`alethia %s %s` has no runnable example on %s.mdx",
-					group, strings.Join(leaf, " "), page)
+				t.Errorf("`%s` has no runnable example on %s.mdx", path, page)
 			}
 		}
 	}
