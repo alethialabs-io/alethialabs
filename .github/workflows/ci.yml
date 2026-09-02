@@ -872,13 +872,13 @@ jobs:
       # dangling path, and the diff proves the committed output is what the manifest produces.
       - name: Every connector icon resolves, and the generated registry + seed are current
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        # `node …` and not `pnpm -F console gen:connectors`, deliberately: the generator resolves
+        # `node …` and not `pnpm -C apps/console run gen:connectors`, deliberately: the generator resolves
         # every path from its own module URL, so the direct call is identical, and it cannot inherit
         # whatever a package-manager wrapper decides to do with a non-zero exit code.
         run: |
           node apps/console/scripts/gen-connectors.mjs
           git diff --exit-code -- apps/console/lib/connectors/registry.generated.ts apps/console/lib/db/seed/connectors.generated.sql \
-            || { echo "::error::apps/console/lib/connectors/registry.generated.ts or lib/db/seed/connectors.generated.sql is stale — run 'pnpm -F console gen:connectors' and commit."; exit 1; }
+            || { echo "::error::apps/console/lib/connectors/registry.generated.ts or lib/db/seed/connectors.generated.sql is stale — run 'pnpm -C apps/console run gen:connectors' and commit."; exit 1; }
       - name: ...and that gate is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node apps/console/scripts/gen-connectors.mjs --self-test
