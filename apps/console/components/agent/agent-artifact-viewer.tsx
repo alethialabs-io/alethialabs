@@ -66,7 +66,7 @@ export function AgentArtifactViewer({
 				<button
 					type="button"
 					onClick={onBack}
-					className="flex items-center gap-1 rounded-none px-1.5 py-1 text-[13px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+					className="flex items-center gap-1 rounded-none px-1.5 py-1 text-ui-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 				>
 					<ChevronLeft className="h-4 w-4" />
 					Artifacts
@@ -78,7 +78,7 @@ export function AgentArtifactViewer({
 				>
 					{artifact.name}
 				</div>
-				<span className="flex-none font-mono text-[10px] uppercase text-muted-foreground">
+				<span className="flex-none font-mono text-ui-2xs uppercase text-muted-foreground">
 					{artifact.kind} · {widgets.length}{" "}
 					{widgets.length === 1 ? "widget" : "widgets"}
 				</span>
@@ -131,7 +131,7 @@ export function AgentArtifactViewer({
 							</button>
 						</>
 					) : (
-						<span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+						<span className="font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground">
 							Shared with you
 						</span>
 					)}
@@ -165,7 +165,7 @@ export function AgentArtifactViewer({
 									<div className="flex h-7 flex-none items-center border-b border-border px-2">
 										<span
 											title={w.title}
-											className="min-w-0 flex-1 truncate font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+											className="min-w-0 flex-1 truncate font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground"
 										>
 											{w.title}
 										</span>
