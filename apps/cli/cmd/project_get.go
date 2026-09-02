@@ -6,9 +6,11 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/format"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
 )
@@ -95,7 +97,10 @@ func projectSummaryRows(c types.Configuration) [][]string {
 		{"IaC Version", c.IacVersion},
 	}
 	if !c.UpdatedAt.IsZero() {
-		rows = append(rows, []string{"Last Updated", c.UpdatedAt.Format("2006-01-02 15:04:05")})
+		// `2006-01-02 15:04:05` was one of five copies of that layout in the CLI. One absolute
+		// date, the console's, in UTC — the host zone would make the same project print two
+		// different times on two machines.
+		rows = append(rows, []string{"Last Updated", format.Date(c.UpdatedAt, format.DateTime, time.UTC)})
 	}
 	return rows
 }

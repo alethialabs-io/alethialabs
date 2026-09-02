@@ -54,11 +54,18 @@ var moneyLiteral = regexp.MustCompile(`[$€£¥]%[-+ #0-9.*']*[a-zA-Z]`)
 // not fixed here. An exemption is a decision, not a mute button: TestHygCliMoney_ExemptionsAreLive
 // fails when one names a file that no longer matches, so the list cannot rot into a permanent
 // allowance. It only ever shrinks.
-var moneyExemptions = map[string]string{
-	"project_list.go": "`$%.0f/mo` on projects.estimated_monthly_cost. Owned by the projects noun group / #3659",
-
-	"../pkg/utils/ui/render.go": "ui.FloatOrDash's `$%.2f`. Re-pointing it at format.MonthlyRate APPENDS `/mo`, which changes what `alethia protection list` prints in a column this lane does not own, and there is no currency on the wire for a cost_delta_threshold to render it in. #3659 owns the swap",
-}
+// EMPTY, and that is the finished state rather than an unwritten one. #3659 paid off both entries:
+//
+//   - `project_list.go` rendered `$%.0f/mo`, the live half-to-even defect — 12.5 printed `$12/mo`
+//     against a billing page showing `$12.50`. It is `format.MonthlyRate(…, Estimate, "USD")` now.
+//   - `../pkg/utils/ui/render.go`'s `ui.FloatOrDash` carried `$%.2f`. Its exemption named the real
+//     obstacle — `MonthlyRate` appends `/mo`, which the `Cost Δ` column must not claim — and the
+//     answer was `format.Money`, the register with no suffix, in minor units.
+//
+// An entry here is a DECISION with a reason, and TestHygCliMoney_ExemptionsAreLive fails on one
+// that names a file no longer matching, so the list can only shrink. Adding to it needs the same
+// justification these two carried: which lane owns the swap, and what blocks it today.
+var moneyExemptions = map[string]string{}
 
 // moneyScanDirs are the directories walked, relative to apps/cli/cmd.
 var moneyScanDirs = []string{".", "../pkg/utils/ui"}

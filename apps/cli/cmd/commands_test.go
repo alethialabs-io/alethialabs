@@ -737,7 +737,9 @@ func TestRenderProjects(t *testing.T) {
 	if err := renderProjects(&buf, "table", configs); err != nil {
 		t.Fatalf("renderProjects: %v", err)
 	}
-	for _, want := range []string{"web", "production", "AWS", "eu-west-1", "$42/mo"} {
+	// `$42.00/mo`, not `$42/mo`: #3659 moved this cell onto format.MonthlyRate, whose Estimate
+	// register keeps the minor units above one unit. The old `%.0f` was the half-to-even defect.
+	for _, want := range []string{"web", "production", "AWS", "eu-west-1", "$42.00/mo"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("projects missing %q:\n%s", want, buf.String())
 		}
