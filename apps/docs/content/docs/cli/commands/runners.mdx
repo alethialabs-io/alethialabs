@@ -128,6 +128,10 @@ alethia runner destroy --runner eu-runner --no-input --yes
 | `--wait`, `-w` | Wait for job completion |
 | `--yes`, `-y` | Skip the confirmation prompt (**required** with `--no-input`) |
 
+A runner cannot execute its own teardown. Naming the same runner for both the executor and
+the target is refused before the job is queued — the interactive picker leaves it out of the
+list for the same reason. Omit the executor flags to let the control plane choose.
+
 ## `alethia runner remove`
 
 Remove a runner's database record only (no cloud teardown). Run

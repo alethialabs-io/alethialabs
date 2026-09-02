@@ -63,6 +63,17 @@ pass one; passing both is refused rather than resolved by precedence.`,
 		if err != nil {
 			fail(err)
 		}
+		// The picker below already refuses to OFFER the runner being destroyed (selectRunner takes
+		// it as excludeID). The flag path has to encode the same exclusion, or the two halves of one
+		// field disagree: what the picker will not let you choose, `--assigned-runner` would accept
+		// silently, and `--yes` removes the one place a human might have noticed. A runner tearing
+		// down its own cloud resources mid-job does not fail cleanly — the control plane sees a
+		// DESTROY_RUNNER that stops reporting, and whether it completed is not answerable from
+		// outside. This sits with the other refusals, BEFORE the confirmation, on the reasoning
+		// stated above.
+		if assignedID != "" && assignedID == runnerID {
+			failf("--assigned-runner names the runner being destroyed; pick another executor, or omit it to let the control plane choose")
+		}
 
 		if !confirmDestructive(
 			destroyRunnerYes,

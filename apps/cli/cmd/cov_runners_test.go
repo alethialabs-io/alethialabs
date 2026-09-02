@@ -1295,3 +1295,45 @@ func TestRunnerField_ADestroyIsNotConfirmedBeforeItsFlagsAreChecked(t *testing.T
 		t.Error("a DESTROY_RUNNER job was queued from a command line that named two executors")
 	}
 }
+
+// TestRunnerField_ADestroyIsNeverAssignedToItself pins the exclusion the PICKER already applies:
+// selectRunner drops the runner being destroyed from the options, and the flag path must refuse the
+// same thing rather than accept silently what the picker will not offer. A runner tearing down its
+// own cloud resources mid-job does not fail cleanly — the control plane sees a DESTROY_RUNNER that
+// stops reporting, and whether it completed is not answerable from outside.
+//
+// Both spellings of the executor field are driven, because they reach it by different routes: the
+// name form resolves through the listing, the id form is passed through unresolved. And --yes is not
+// what stops it — the refusal is checked with the prompt skipped and with it live.
+func TestRunnerField_ADestroyIsNeverAssignedToItself(t *testing.T) {
+	s, run := runnerEnv(t)
+	hygCliConfirmInteractive(t)
+	asked := 0
+	prev := confirm
+	confirm = func(string, string) bool { asked++; return true }
+	t.Cleanup(func() { confirm = prev })
+
+	// The name form on both sides, with --yes — the command line from the finding, and the one a
+	// person actually types.
+	if got := run("runner", "destroy", "--runner", "eu-runner",
+		"--assigned-runner", "eu-runner", "--yes"); got != 1 {
+		t.Fatalf("name form: exit code = %d, want 1; requests = %v", got, s.seen())
+	}
+	if s.saw(http.MethodPost, "/api/jobs") {
+		t.Error("a DESTROY_RUNNER job was queued naming the runner being destroyed as its own executor")
+	}
+
+	// The id form, reaching the same field unresolved, with the confirmation live: the refusal must
+	// still land BEFORE the prompt, so the user is never asked about a teardown that cannot run.
+	s.forget()
+	if got := run("runner", "destroy", "--runner", "eu-runner",
+		"--assigned-runner-id", "r-eu"); got != 1 {
+		t.Fatalf("id form: exit code = %d, want 1; requests = %v", got, s.seen())
+	}
+	if asked != 0 {
+		t.Errorf("the user was asked to confirm %d time(s) a teardown that was never going to run", asked)
+	}
+	if s.saw(http.MethodPost, "/api/jobs") {
+		t.Error("id form: a DESTROY_RUNNER job was queued naming the runner being destroyed as its own executor")
+	}
+}
