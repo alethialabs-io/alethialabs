@@ -6,6 +6,7 @@ import type { ClusterData } from "@/app/server/actions/clusters";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import type { AssignedValue } from "@/lib/queries/classification";
 import { getProvider } from "@/lib/cloud-providers";
+import { SectionHeading } from "@repo/ui/section-heading";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import { Button } from "@repo/ui/button";
 import { StatusBadge, statusTier, type StatusTier } from "@repo/ui/status-badge";
@@ -212,9 +213,20 @@ export function ClusterCard({
 					<ProviderIcon provider={provider} size={20} />
 					<div className="min-w-0">
 						<div className="flex flex-wrap items-center gap-2">
-							<h3 className="text-sm font-semibold text-text-primary">
-								{data.project_name}
-							</h3>
+							{/* The card's own heading rung, through the shared component: the card
+							    used to hand-write an `<h3>` at `text-sm`, one of five sizes the
+							    same rung was typeset at across the console.
+							    `SectionHeading` fixes its heading at `text-ui-lg` whatever the
+							    `level` — deliberately, so type scale is not chosen from the outline
+							    — which inside an 18px-padded card over an 11px meta line would make
+							    the title the largest type on the card, and larger than the sibling
+							    environment card's name. The slot override keeps the card's rung and
+							    takes only the tag from the component. */}
+							<SectionHeading
+								level={3}
+								title={data.project_name}
+								className="min-w-0 [&_[data-slot=section-heading-title]]:text-sm [&_[data-slot=section-heading-title]]:font-semibold"
+							/>
 							<StatusBadge status={health.tier} tier={health.tier} label={health.name} />
 						</div>
 						<p className="mt-0.5 font-mono text-[11px] text-text-tertiary">
