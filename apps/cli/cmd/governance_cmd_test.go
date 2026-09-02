@@ -392,8 +392,12 @@ func govCmdCustom(t *testing.T, body map[string]any, failMethod, failPath string
 				code = e.code
 			}
 		}()
+		// hygCliConfirmResetFlags walks the WHOLE tree and clears every flag a previous test
+		// left Changed; execRootArgs additionally returns the root persistent flags to their
+		// defaults and is what TestHygCliHarness_NothingBypassesTheSharedRunner requires. Both,
+		// not either: the harness guard is about the root flags, and the walk is about the rest.
 		hygCliConfirmResetFlags()
-		rootCmd.SetArgs(args)
+		execRootArgs(args)
 		err = rootCmd.Execute()
 		return 0, err
 	}
