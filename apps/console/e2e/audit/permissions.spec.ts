@@ -80,10 +80,12 @@ import {
 	type BuiltInRole,
 	type PermissionKey,
 } from "@/lib/authz/registry";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { closeDb, db, orgIdBySlug } from "../helpers/db";
 import { signUpWithOtp } from "../fixtures/auth";
 import { materialize, needsOnlyOrg, type AuditContext } from "./context";
-import { consoleRoutes } from "./manifest";
+import { consoleRoutes, repoRoot } from "./manifest";
 import { rendersSharedErrorState, visibleText } from "./error-state";
 import { createReport } from "./report";
 
@@ -402,9 +404,49 @@ async function visit(page: Page, url: string): Promise<Observation> {
 // So the subject is COUNTED, from the registry's own role bundles, and an empty count is a FAILURE
 // rather than a quiet column of dashes. It drives no page: the question is arithmetic — does this
 // role lack a permission some page refuses on? — so its answer cannot be lost to a flaky render.
+//
+// ONE MORE WAY IT CAN MEASURE NOTHING, and the arithmetic above cannot see it.
+//
+// `refused` is derived from ROUTE_LEVEL_GATES, which is a list typed by hand. The per-route
+// checks below iterate `manifest.routes.filter(needsOnlyOrg)` instead — so a gated route that is
+// DELETED, RENAMED, or gains a second parameter leaves the manifest and is never driven, while it
+// stays in ROUTE_LEVEL_GATES and keeps counting toward the subject. T7 then reports 0 measured and
+// 27 N/A with every assertion green: #3898 again, arrived at from the other direction.
+//
+// The list decays silently because nothing compares it to its source. So compare it — first, and
+// as its own failure, so the count below can never be computed from a route that is not driven.
+test("every route-level gate is a route the audit actually drives — otherwise the subject is fiction", () => {
+	const driven = new Set(manifest.routes.filter(needsOnlyOrg).map((r) => r.route));
+	const undriven = ROUTE_LEVEL_GATES.filter((g) => !driven.has(g.route));
+	expect(
+		undriven.map((g) => `${g.route} (${g.permission}, ${g.file})`),
+		`ROUTE_LEVEL_GATES names ${undriven.length} route(s) the audit never visits — they are not ` +
+			`in the manifest, or no longer satisfy needsOnlyOrg. Each still counts toward T7's ` +
+			`subject while measuring nothing, which is exactly the shape #3898 was filed about.\n` +
+			`  Fix the LIST, not this assertion: if the page moved, re-point the entry; if it was ` +
+			`deleted, delete the entry. If deleting it empties the list, the test below says so.`,
+	).toEqual([]);
+});
+
+// The gate list also names a FILE, and that name is the reader's only route back to the enforcing
+// code. It is checked separately and against the filesystem, so this still fails if the manifest
+// and needsOnlyOrg both change under it — two independent ways to be wrong, two assertions.
+test("every route-level gate names an enforcing file that exists", () => {
+	const consoleRoot = path.join(repoRoot(), "apps", "console");
+	const missing = ROUTE_LEVEL_GATES.filter((g) => !existsSync(path.join(consoleRoot, g.file)));
+	expect(
+		missing.map((g) => `${g.route} → ${g.file}`),
+		`a gate names an enforcing file that is not in the tree. The permission it claims is ` +
+			`enforced there cannot be, so the subject T7 counts is not the surface it measures.`,
+	).toEqual([]);
+});
+
 test(`the ${PERSONA_ROLE} persona is refused something — otherwise T7 has no subject and can only report "—"`, () => {
 	const held = bundleOf(PERSONA_ROLE);
-	const refused = ROUTE_LEVEL_GATES.filter((g) => !held.has(g.permission));
+	// Restricted to DRIVEN routes on purpose. The test above fails first when the two disagree,
+	// but if it is ever weakened this keeps the count honest rather than inheriting the fiction.
+	const driven = new Set(manifest.routes.filter(needsOnlyOrg).map((r) => r.route));
+	const refused = ROUTE_LEVEL_GATES.filter((g) => driven.has(g.route) && !held.has(g.permission));
 	expect(
 		refused.map((g) => `${g.route} (${g.permission}, ${g.file})`),
 		`"${PERSONA_ROLE}" holds every permission the console's route-level gates enforce ` +
