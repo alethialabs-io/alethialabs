@@ -4,8 +4,23 @@
 
 // The cross-environment consistency matrix — which components each environment defines and where
 // they diverge. ● present · ≠ differs · – absent.
+//
+// This is the one shape in the lane that `DataTable` cannot express: the columns ARE the data
+// (one per environment, discovered at render), and there is nothing to sort, filter or paginate.
+// So it composes `@repo/ui/table` directly, which is the shell `DataTable` itself renders
+// through — same padding, borders and hover as every other console table, and a real
+// `<th scope>` per environment so a screen reader can name the cell it is reading.
 
 import type { EnvConsistency } from "@/app/server/actions/projects";
+import { SectionHeading } from "@repo/ui/section-heading";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@repo/ui/table";
 
 /** One matrix cell. */
 function Cell({ state }: { state: "present" | "differs" | "absent" }) {
@@ -26,53 +41,56 @@ function Cell({ state }: { state: "present" | "differs" | "absent" }) {
 export function ConsistencyMatrix({ consistency }: { consistency: EnvConsistency }) {
 	return (
 		<section>
-			<div className="mb-3">
-				<h2 className="m-0 font-display text-[15px] font-semibold tracking-tight text-text-primary">
-					Consistency
-				</h2>
-				<p className="mt-1.5 text-[12.5px] text-text-tertiary">
-					Which services each environment defines, and where they diverge.{" "}
-					<span className="font-mono text-text-primary">●</span> present ·{" "}
-					<span className="font-mono font-bold text-text-primary">≠</span> differs ·{" "}
-					<span className="font-mono text-text-disabled">–</span> absent
-				</p>
-			</div>
-			<div className="overflow-x-auto rounded-lg border bg-surface shadow-sm">
-				<table className="w-full border-collapse text-[12.5px]">
-					<thead>
-						<tr className="bg-surface-muted">
-							<th className="px-4 py-2.5 text-left font-mono text-[11px] uppercase tracking-[0.1em] text-text-tertiary">
+			<SectionHeading
+				className="mb-3"
+				level={2}
+				title="Consistency"
+				description={
+					<>
+						Which services each environment defines, and where they diverge.{" "}
+						<span className="font-mono text-text-primary">●</span> present ·{" "}
+						<span className="font-mono font-bold text-text-primary">≠</span> differs ·{" "}
+						<span className="font-mono text-text-disabled">–</span> absent
+					</>
+				}
+			/>
+			<div className="overflow-hidden rounded-lg border bg-surface shadow-sm">
+				<Table scroll className="text-[12.5px]">
+					<TableHeader>
+						<TableRow className="bg-surface-muted">
+							<TableHead
+								scope="col"
+								className="font-mono text-[11px] uppercase tracking-[0.1em] text-text-tertiary"
+							>
 								Component
-							</th>
+							</TableHead>
 							{consistency.envs.map((e) => (
-								<th
+								<TableHead
 									key={e.id}
-									className="px-3 py-2.5 text-center font-mono font-normal text-text-secondary"
+									scope="col"
+									className="text-center font-mono font-normal text-text-secondary"
 								>
 									{e.name}
-								</th>
+								</TableHead>
 							))}
-						</tr>
-					</thead>
-					<tbody>
+						</TableRow>
+					</TableHeader>
+					<TableBody>
 						{consistency.rows.map((row) => (
-							<tr
-								key={`${row.component_type}-${row.key}`}
-								className="border-t border-border-faint"
-							>
-								<td className="px-4 py-2.5">
+							<TableRow key={`${row.component_type}-${row.key}`}>
+								<TableCell>
 									<span className="text-text-tertiary">{row.component_type}</span>{" "}
 									<span className="font-mono text-text-primary">{row.key}</span>
-								</td>
+								</TableCell>
 								{consistency.envs.map((e) => (
-									<td key={e.id} className="px-3 py-2.5 text-center">
+									<TableCell key={e.id} className="text-center">
 										<Cell state={row.perEnv[e.id]} />
-									</td>
+									</TableCell>
 								))}
-							</tr>
+							</TableRow>
 						))}
-					</tbody>
-				</table>
+					</TableBody>
+				</Table>
 			</div>
 		</section>
 	);

@@ -75,12 +75,14 @@ export function PromotionDetailOverlay({
 								{pipelineSteps(detail.status).map((s, i, arr) => (
 									<div key={s.label} className={cn("flex items-start", i < arr.length - 1 && "flex-1")}>
 										<div className="flex w-[62px] shrink-0 flex-col items-center gap-1.5">
-											<StatusDot tier={s.tier} size={12} />
+											<StatusDot tier={s.tier} />
 											<span className="font-mono text-[10px] uppercase tracking-wider text-text-tertiary">
 												{s.label}
 											</span>
 										</div>
-										{i < arr.length - 1 && <div className="mx-1 mt-2.5 h-0.5 flex-1 bg-border" />}
+										{/* 3px centres the 2px rail on the shared 7px `.vx-status__dot` — see
+										    active-promotion-panel.tsx, which draws the same pipeline. */}
+										{i < arr.length - 1 && <div className="mx-1 mt-[3px] h-0.5 flex-1 bg-border" />}
 									</div>
 								))}
 							</div>
