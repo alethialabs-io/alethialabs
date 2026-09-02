@@ -12,7 +12,10 @@ these commands only inspect and re-probe one.
 <Callout type="info">
 The CLI is a client of the same Console API. These subcommands call `/cli/providers/<provider>/*`
 with your [CLI token](/cli/authentication) and operate on the **active organization**
-(`alethia org switch`). There is no per-invocation `--org` override.
+(`alethia org switch`), or on the organization named by the global `--org <id>` flag.
+You must be a member of the organization you name; if you are not, the request is refused
+with `403`. A service token is pinned to the organization it was minted for, and a request
+carrying a different one is refused with `403` rather than quietly rescoped.
 </Callout>
 
 ## `alethia provider status`
