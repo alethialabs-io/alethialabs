@@ -11,8 +11,8 @@ Three related views into an organization's plan and the platform's provisioning 
 - **`usage`** — current consumption: seats, runner-minutes, projects, and AI credits.
 - **`fleet`** — the managed pool of warm provisioning runners (platform-operator config).
 
-`billing` and `usage` operate on the **active organization** (set via `alethia org switch`); override
-per-invocation with `--org <id>`. Every command accepts the global
+`billing` and `usage` operate on the **active organization** (set via `alethia org switch`); there is
+no per-invocation `--org` override. Every command accepts the global
 [`-o, --output <table|json|csv>`](/cli/identity#output-formats) flag.
 
 <Callout type="info">
