@@ -171,3 +171,32 @@ func TestPadCell(t *testing.T) {
 		t.Errorf("padCell overflow should not truncate: %q", got)
 	}
 }
+
+// TestHumanReadableIsTrueForEveryFormatARenderedRowReaches pins the question row builders ask
+// before humanising a cell.
+//
+// The list is derived from ValidFormat rather than typed beside it, so a fourth --output value
+// added to this file fails here until someone decides which side of the split it is on — a
+// hand-written list would have gone on answering for the three it knew about.
+func TestHumanReadableIsTrueForEveryFormatARenderedRowReaches(t *testing.T) {
+	valid := []string{}
+	for _, f := range []string{FormatTable, FormatJSON, FormatCSV, "", "yaml", "xml", "Table"} {
+		if ValidFormat(f) || f == "" {
+			valid = append(valid, f)
+		}
+	}
+	if len(valid) != 4 {
+		t.Fatalf("this file knows %d --output values (%v); ValidFormat now accepts a different "+
+			"set, so decide whether the new one renders for a person or for a machine", len(valid), valid)
+	}
+	// csv is the ONE machine reading of spec.Rows. json never reaches them — Render marshals the
+	// typed records — so its answer here is unobservable and true is the harmless one.
+	if HumanReadable(FormatCSV) {
+		t.Error("csv is the machine reading of spec.Rows; a humanised cell reaches a script")
+	}
+	for _, f := range []string{FormatTable, FormatJSON, ""} {
+		if !HumanReadable(f) {
+			t.Errorf("%q renders for a person", f)
+		}
+	}
+}

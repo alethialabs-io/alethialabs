@@ -902,6 +902,18 @@ jobs:
       # regression cannot be attributed to the PR that caused it. Do NOT pipe this into
       # `tail`/`head`: the script's own header says so, because a pipe reports the exit code of
       # the LAST command in it.
+      #
+      # IT IS REQUIRED FROM THE MOMENT IT LANDED, AND THERE IS NO SOAK. #3781's body proposed
+      # promoting it "once it has ridden a few PRs", but this job is `Authz / open-core guards`,
+      # which `infra/github/variables.tf` lists as a required status check on `protect-dev` and
+      # `.mergify.yml` requires by name — and the step carries no `continue-on-error`, so it has
+      # blocked merges since it merged. The soak was never a state this step could be in.
+      #
+      # Left required deliberately rather than made real with `continue-on-error: true`: a gate
+      # that reports green while finding something is the defect class this repo has shipped most
+      # often, and this one is deterministic, sub-second, and green on `dev`. So the churn the
+      # #3781 body identified is a CONTRACT, not a risk to measure: a PR that adds or renames a
+      # private console route updates apps/console/route-states-baseline.yaml in the same commit.
       - name: Route states (RUBRIC.md S1-S4, T1-T4) have not regressed against the baseline
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:route-states

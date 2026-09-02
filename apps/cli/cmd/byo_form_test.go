@@ -787,7 +787,7 @@ func TestByoForm_ChartRowsDashTheOptionalCells(t *testing.T) {
 	rows := chartRows([]api.ByoChart{
 		{ID: "api", RepoURL: "oci://registry.example.com/acme/api", Status: "Synced", ScanStatus: "done"},
 		{ID: "web", RepoURL: "https://github.com/acme/charts", ChartPath: "charts/web", Ref: "v2", Status: "Synced", ScanStatus: "done"},
-	})
+	}, ui.FormatTable)
 	if len(rows) != 2 {
 		t.Fatalf("want 2 rows, got %d", len(rows))
 	}
@@ -809,7 +809,7 @@ func TestByoForm_StagedRowsRenderTheConsolesDate(t *testing.T) {
 	rows := stagedRows([]api.StagedChange{
 		{Op: "update", ComponentType: "cluster", ComponentID: &id, CreatedAt: "2026-03-09T15:04:05Z"},
 		{Op: "create", ComponentType: "cluster", CreatedAt: ""},
-	})
+	}, ui.FormatTable)
 	if rows[0][3] != "9 Mar 2026, 15:04" {
 		t.Errorf("Created = %q, want the console's absolute-date rule", rows[0][3])
 	}
