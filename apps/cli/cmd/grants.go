@@ -147,10 +147,12 @@ whole grant is asked for.`,
 		// The closed sets are checked AFTER the form, not instead of it: the form can only write
 		// back a value it was given, so this arm exists for the flags — and checking both through
 		// one gate is what keeps the two paths from diverging.
-		if err := requireOneOf("principal-type", answers.PrincipalType, grantPrincipalTypes); err != nil {
+		principalType, err := canonicalOneOf("principal-type", answers.PrincipalType, grantPrincipalTypes)
+		if err != nil {
 			fail(err)
 		}
-		if err := requireOneOf("effect", answers.Effect, grantEffects); err != nil {
+		effect, err := canonicalOneOf("effect", answers.Effect, grantEffects)
+		if err != nil {
 			fail(err)
 		}
 		if (answers.RoleID == "") == (answers.Permission == "") {
@@ -173,9 +175,9 @@ whole grant is asked for.`,
 		}
 
 		params := api.AddGrantParams{
-			PrincipalType: answers.PrincipalType,
+			PrincipalType: principalType,
 			PrincipalID:   principal.ID,
-			Effect:        answers.Effect,
+			Effect:        effect,
 			RoleID:        boundRole.ID,
 			PermissionKey: answers.Permission,
 			ResourceType:  answers.ResourceType,
