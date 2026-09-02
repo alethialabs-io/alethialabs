@@ -7,11 +7,11 @@ import { auth } from "@/lib/auth";
 import {
 	CLI_DEVICE_RATE_LIMIT,
 	checkDeviceCodeBinding,
-	cliDeviceRateLimitKey,
 	deviceCodeExpiresAt,
 	isValidDeviceCode,
 	isValidUserCode,
 } from "@/lib/auth/cli-device-code";
+import { cliDeviceRateLimitKey } from "@/lib/auth/trusted-ip";
 import { getServiceDb } from "@/lib/db";
 import { cliLogins } from "@/lib/db/schema";
 import { checkRateLimit } from "@/lib/rate-limit";

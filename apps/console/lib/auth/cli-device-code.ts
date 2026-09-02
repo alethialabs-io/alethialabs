@@ -125,32 +125,3 @@ export function checkDeviceCodeBinding(
 	if (existing.profile_id === profileId) return { ok: true };
 	return { ok: false, reason: "bound_to_another_account" };
 }
-
-/**
- * The client IP the limiter buckets on. ONLY `cf-connecting-ip` is trusted: production
- * is Cloudflare Tunnel → Caddy → console and Cloudflare sets/overwrites that header,
- * while a client-supplied `x-forwarded-for` is attacker-controlled — rotating it would
- * mint a fresh bucket per request and defeat the limit entirely. Mirrors the
- * `ipAddressHeaders` Better Auth is configured with in lib/auth/index.ts.
- */
-export function trustedClientIp(headers: Headers): string | null {
-	const ip = headers.get("cf-connecting-ip")?.trim();
-	return ip ? ip : null;
-}
-
-/**
- * The rate-limit bucket key for a CLI device-code request, or null when the request
- * must NOT be limited.
- *
- * Null means FAIL OPEN, and that is deliberate: with no trusted IP header — a self-host
- * with no edge proxy in front of the console — every user would collapse into a single
- * bucket and login would break for the whole deployment. See CLI_DEVICE_RATE_LIMIT for
- * what the budget is and is not.
- */
-export function cliDeviceRateLimitKey(
-	route: "generate" | "exchange",
-	headers: Headers,
-): string | null {
-	const ip = trustedClientIp(headers);
-	return ip ? `cli-device:${route}:${ip}` : null;
-}
