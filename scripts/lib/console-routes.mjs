@@ -100,8 +100,13 @@ const BOUNDARY_FILES = /** @type {const} */ ([
  *
  * Ordering is irrelevant — no member is a suffix of another, so `endsWith` cannot be ambiguous
  * (`page.tsx` does not end in `.ts`, `page.jsx` does not end in `.js`).
+ *
+ * EXPORTED because `check-route-states.mjs` resolves a `not-found.<ext>` in a directory the
+ * record does not name (the segment ABOVE a layout that throws), and a second hand-typed copy of
+ * this list would stop matching the day this one changes — silently, in the direction that reads
+ * "no boundary there" as "nothing to report".
  */
-const PAGE_EXTENSIONS = /** @type {const} */ (["tsx", "ts", "jsx", "js"]);
+export const PAGE_EXTENSIONS = /** @type {const} */ (["tsx", "ts", "jsx", "js"]);
 
 /**
  * `"page.tsx"` → `"page"`, `"loading.js"` → `"loading"`, `"styles.css"` → `null`.
