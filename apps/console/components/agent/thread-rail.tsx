@@ -5,6 +5,7 @@
 import { BookOpen, LayoutDashboard, Plus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
 import { Input } from "@repo/ui/input";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import type { AgentThread } from "@/lib/db/schema";
@@ -145,9 +146,13 @@ export function ThreadRail({
 			<ScrollArea className="flex-1">
 				<div className="px-2 pb-3.5">
 					{groups.length === 0 && (
-						<p className="px-2 py-6 text-center text-xs text-muted-foreground">
-							No chats yet.
-						</p>
+						/* The rail is a 240px column, so the shared state's page-sized padding is
+						   tuned down the same way the artifact panel's is — the structure and the
+						   words stay shared, only the scale is local. */
+						<EmptyState
+							className="gap-2 p-6 md:p-6 [&_[data-slot=empty-title]]:text-xs [&_[data-slot=empty-title]]:font-normal [&_[data-slot=empty-title]]:text-muted-foreground"
+							title="No chats yet."
+						/>
 					)}
 					{groups.map((g) => (
 						<div key={g.label}>
