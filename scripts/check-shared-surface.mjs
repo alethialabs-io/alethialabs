@@ -291,6 +291,15 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
+// The comment stripper described above lives in `scripts/lib/console-routes.mjs` and is imported,
+// not copied. It was a copy for exactly one release: `console-routes.mjs` needs it too (a
+// commented-out `export const metadata` would otherwise read as real), and it could not import
+// THIS file because this file runs its whole check at import time and can `process.exit(1)`.
+// The import goes checker → seams module and can only go that way until this file grows an
+// entrypoint guard; `console-routes.mjs` already has one (`invokedDirectly`), so importing it
+// here runs no check.
+import { stripCommentLines as stripComments } from "./lib/console-routes.mjs";
+
 const ROOT = path.resolve(import.meta.dirname, "..");
 const ALLOWLIST = "apps/console/shared-surface-allowlist.yaml";
 
@@ -702,89 +711,6 @@ const RULES = [
 ];
 
 // ── source scanning ───────────────────────────────────────────────────────────────────────────
-
-/**
- * True when every quote character is closed before `index` on this line, i.e. `index` is NOT
- * inside a string literal that opened on this line.
- *
- * This is the cheapest honest answer available without a parser, and it exists for one shape:
- * `const g = "a{/*}b"` used to latch the block-comment state from inside a string and blank every
- * line after it. It is deliberately conservative in the LOUD direction — an apostrophe in JSX text
- * (`<p>Don't</p>{/* note *\/}`) leaves the counts odd, so the comment after it is scanned as code
- * and can only produce a false positive, never a skipped line.
- *
- * @param {string} line
- * @param {number} index
- * @returns {boolean}
- */
-function quotesClosedBefore(line, index) {
-	let dq = 0;
-	let sq = 0;
-	let bt = 0;
-	for (let i = 0; i < index; i++) {
-		const c = line[i];
-		if (c === "\\") {
-			i++;
-			continue;
-		}
-		if (c === '"') dq++;
-		else if (c === "'") sq++;
-		else if (c === "`") bt++;
-	}
-	return dq % 2 === 0 && sq % 2 === 0 && bt % 2 === 0;
-}
-
-/**
- * Blank every comment, line by line, keeping one output line per input line so a finding's line
- * number is still true. See the header for why trailing comments are left alone.
- *
- * @param {string} source
- * @returns {{lines: string[], unterminated: boolean}} `unterminated` when a block comment was still
- *   open at EOF — the one state in which this function has blanked live code, so the caller must
- *   refuse the file rather than report it clean.
- */
-export function stripComments(source) {
-	/** @type {string[]} */
-	const out = [];
-	let inBlock = false;
-	for (const line of source.split("\n")) {
-		if (inBlock) {
-			const end = line.indexOf("*/");
-			if (end === -1) {
-				out.push("");
-				continue;
-			}
-			inBlock = false;
-			out.push(line.slice(end + 2));
-			continue;
-		}
-		const trimmed = line.trimStart();
-		if (trimmed.startsWith("//")) {
-			out.push("");
-			continue;
-		}
-		// `{/*` is taken anywhere on the line PROVIDED the quotes ahead of it are closed: a brace
-		// followed by a block-comment open, outside a string, is a JSX comment and can be nothing
-		// else. A bare `/*` is only taken when it OPENS the line, because mid-line it is
-		// indistinguishable from a glob inside a string ("apps/*\/**") and blanking from there
-		// would swallow live code — the direction that reports green.
-		const jsx = line.indexOf("{/*");
-		const jsxOpen = jsx !== -1 && quotesClosedBefore(line, jsx) ? jsx + 1 : -1;
-		const open = jsxOpen !== -1 ? jsxOpen : trimmed.startsWith("/*") ? line.indexOf("/*") : -1;
-		if (open === -1) {
-			out.push(line);
-			continue;
-		}
-		const end = line.indexOf("*/", open + 2);
-		if (end === -1) {
-			inBlock = true;
-			out.push(line.slice(0, open));
-			continue;
-		}
-		out.push(line.slice(0, open) + line.slice(end + 2));
-	}
-	return { lines: out, unterminated: inBlock };
-}
 
 /**
  * Every guarded file in a scope, repo-relative and posix-separated, plus the per-(root, extension)
