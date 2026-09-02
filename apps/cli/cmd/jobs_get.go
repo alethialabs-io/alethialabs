@@ -41,7 +41,7 @@ terminal gets a picker — so nothing has to be copied out of another command's 
 
 		var job *api.ProvisionJob
 
-		ui.RunSpinner("Fetching job details...", func() {
+		runSpinner("Fetching job details...", func() {
 			job, err = apiClient.GetJob(ref.ID)
 		})
 

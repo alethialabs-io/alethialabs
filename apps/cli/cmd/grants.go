@@ -34,7 +34,7 @@ var grantsListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var grants []api.Grant
-			ui.RunSpinner("Fetching grants...", func() { grants, err = client.ListGrants() })
+			runSpinner("Fetching grants...", func() { grants, err = client.ListGrants() })
 			if err != nil {
 				failf("Failed to list grants: %v", err)
 			}

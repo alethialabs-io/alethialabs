@@ -37,7 +37,7 @@ var protectionListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var rules []api.ProtectionRule
-			ui.RunSpinner("Fetching protection rules...", func() {
+			runSpinner("Fetching protection rules...", func() {
 				rules, err = client.GetProjectProtection(project)
 			})
 			if err != nil {

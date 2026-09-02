@@ -34,7 +34,7 @@ var repoListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var repos []api.Repository
-			ui.RunSpinner("Fetching repositories...", func() {
+			runSpinner("Fetching repositories...", func() {
 				repos, err = client.GetRepositories(provider)
 			})
 			if err != nil {

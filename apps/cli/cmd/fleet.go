@@ -35,7 +35,7 @@ var fleetListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var pools []api.FleetPool
-			ui.RunSpinner("Fetching fleet pools...", func() { pools, err = client.ListFleetPools() })
+			runSpinner("Fetching fleet pools...", func() { pools, err = client.ListFleetPools() })
 			if err != nil {
 				failf("Failed to list fleet pools: %v", err)
 			}

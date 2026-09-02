@@ -193,7 +193,7 @@ func connEnv(t *testing.T, cfg connFakeAPI) func(args ...string) error {
 	t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
 
 	return func(args ...string) error {
-		rootCmd.SetArgs(args)
+		execRootArgs(args)
 		return rootCmd.Execute()
 	}
 }
@@ -1340,7 +1340,7 @@ func TestConn_HetznerRequiresAuth(t *testing.T) {
 	isolatedHome(t) // no credentials written
 	t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
 	run := func(args ...string) error {
-		rootCmd.SetArgs(args)
+		execRootArgs(args)
 		return rootCmd.Execute()
 	}
 	exited, code, err := connInvoke(t, run, "connector", "hetzner", "--token", strings.Repeat("h", 64))

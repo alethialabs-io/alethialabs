@@ -24,7 +24,7 @@ var orgListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var orgs []api.OrgSummary
-			ui.RunSpinner("Fetching organizations...", func() { orgs, err = client.ListOrgs() })
+			runSpinner("Fetching organizations...", func() { orgs, err = client.ListOrgs() })
 			if err != nil {
 				failf("Failed to list organizations: %v", err)
 			}

@@ -172,9 +172,9 @@ func authCovRunCLI(t *testing.T, args ...string) error {
 	prevForce, prevOrigin := forceLogin, loginWebOrigin
 	t.Cleanup(func() {
 		forceLogin, loginWebOrigin = prevForce, prevOrigin
-		rootCmd.SetArgs(nil)
+		execRootArgs(nil)
 	})
-	rootCmd.SetArgs(args)
+	execRootArgs(args)
 	return rootCmd.Execute()
 }
 

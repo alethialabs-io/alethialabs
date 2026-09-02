@@ -48,7 +48,7 @@ func runOpsAction(action, resourceID, reason, approvalID string, input *api.Brea
 	client := api.NewClient(token)
 
 	var session *api.BreakglassSession
-	ui.RunSpinner("Opening break-glass session...", func() {
+	runSpinner("Opening break-glass session...", func() {
 		session, err = client.OpenBreakglassSession(reason)
 	})
 	if err != nil {
@@ -69,7 +69,7 @@ func runOpsAction(action, resourceID, reason, approvalID string, input *api.Brea
 	}
 
 	var result *api.BreakglassResult
-	ui.RunSpinner(fmt.Sprintf("Executing %s...", action), func() {
+	runSpinner(fmt.Sprintf("Executing %s...", action), func() {
 		result, err = client.ExecuteBreakglass(params)
 	})
 	if err != nil {

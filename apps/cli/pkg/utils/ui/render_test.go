@@ -184,3 +184,38 @@ func TestStampIsNotStampOrDash(t *testing.T) {
 		t.Fatal("the two absolute-stamp rules now agree — if that was deliberate, delete one of them")
 	}
 }
+
+// TestStatusCell pins the cell four command files used to build by hand: the unstyled glyph, one
+// space, and the status lower-cased.
+//
+// Every arm of PlainStatusDot is driven through it, because the point of the hoist is that ONE
+// definition decides all of them — a StatusCell that agreed with PlainStatusDot on ACTIVE and not
+// on DESTROYED would still have let two tables disagree.
+func TestStatusCell(t *testing.T) {
+	cases := map[string]string{
+		"ACTIVE":       SymbolOnline + " active",
+		"ONLINE":       SymbolOnline + " online",
+		"PROVISIONING": SymbolPending + " provisioning",
+		"DRAINING":     SymbolPending + " draining",
+		"QUEUED":       SymbolPending + " queued",
+		"CREATING":     SymbolPending + " creating",
+		"UPDATING":     SymbolPending + " updating",
+		"FAILED":       SymbolError + " failed",
+		"DESTROYED":    SymbolDash + " destroyed",
+		"OFFLINE":      SymbolOffline + " offline",
+		"":             SymbolOffline + " ",
+	}
+	for status, want := range cases {
+		if got := StatusCell(status); got != want {
+			t.Errorf("StatusCell(%q) = %q, want %q", status, got, want)
+		}
+	}
+
+	// The glyph must be the SAME decision PlainStatusDot makes, not a copy of its table. A second
+	// switch here would be the duplication this function was hoisted to end, one package over.
+	for _, status := range []string{"ACTIVE", "DRAINING", "FAILED", "DESTROYED", "WHATEVER"} {
+		if !strings.HasPrefix(StatusCell(status), PlainStatusDot(status)+" ") {
+			t.Errorf("StatusCell(%q) does not lead with PlainStatusDot(%q)", status, status)
+		}
+	}
+}

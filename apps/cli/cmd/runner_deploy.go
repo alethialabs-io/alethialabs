@@ -71,7 +71,7 @@ any available runner.`, runners.DeployProvidersLabel()),
 			fail(err)
 		}
 		if identityID == "" {
-			if noInputMode {
+			if !canPromptForm() {
 				// Naming the flag matters more than naming the mode: the reader of a CI log needs
 				// the thing to add, not a restatement of the switch they already passed.
 				failf("no cloud account given: pass --cloud-account (its label or its id), "+
@@ -100,7 +100,7 @@ any available runner.`, runners.DeployProvidersLabel()),
 		if err != nil {
 			fail(err)
 		}
-		if assignedID == "" && !noInputMode {
+		if assignedID == "" && canPromptForm() {
 			// As in `runner destroy`: the executor picker cannot be answered with prompting
 			// disabled, and an empty id leaves the deployment job for any available runner. Before
 			// this guard the picker ran unconditionally, so `runner deploy --no-input` died on a

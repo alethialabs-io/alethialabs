@@ -19,19 +19,23 @@ import (
 func strptr(s string) *string { return &s }
 
 // clustersSetNoInput pins the terminal posture for the duration of a test and restores it: both
-// noInputMode and stdout, which requireInteractiveForm reads too because a huh form draws there.
-// The package shares these globals and the tests in it are not parallel, so a leaked value would
-// decide a LATER test's interactive arm.
+// noInputMode and the stream a form draws on, which requireInteractiveForm reads too. The package
+// shares these globals and the tests in it are not parallel, so a leaked value would decide a LATER
+// test's interactive arm.
 //
-// stdout follows the mode — `v == false` means "prompting is on", which now requires a screen, and
-// in a test process stdout is never a terminal. A test that wants the two to DISAGREE (prompting
-// on, stdout redirected) sets stdoutIsTTY itself; TestPickClusterRequiresATerminal does.
+// The form stream follows the mode — `v == false` means "prompting is on", which also requires a
+// screen. A test that wants the two to DISAGREE (prompting on, the form's stream redirected) uses
+// withInteractiveOutputRedirected; TestPickClusterRequiresATerminal does.
+//
+// It is interactiveOutIsTTY and NOT stdoutIsTTY: huh draws on stderr, so a redirected STDOUT never
+// stopped this picker and never should. `alethia cluster get -o json > clusters.json` at a terminal
+// is a working invocation, and the earlier spelling of this helper refused it.
 func clustersSetNoInput(t *testing.T, v bool) {
 	t.Helper()
-	prev, prevOut := noInputMode, stdoutIsTTY
+	prev, prevOut := noInputMode, interactiveOutIsTTY
 	noInputMode = v
-	stdoutIsTTY = func() bool { return !v }
-	t.Cleanup(func() { noInputMode, stdoutIsTTY = prev, prevOut })
+	interactiveOutIsTTY = func() bool { return !v }
+	t.Cleanup(func() { noInputMode, interactiveOutIsTTY = prev, prevOut })
 }
 
 // clustersStubForm replaces the huh runner with one that returns err and records that it ran.
@@ -275,24 +279,52 @@ func TestClusterLabel(t *testing.T) {
 }
 
 // TestPickClusterRequiresATerminal pins the arm noInputMode cannot see: prompting is on — nobody
-// passed --no-input and stdin is a terminal — but stdout is redirected, so the form would draw into
-// the caller's file ahead of the payload and the screen would show nothing.
+// passed --no-input and stdin is a terminal — but the stream the form draws on is redirected, so
+// the frames land in the caller's file and the screen shows nothing.
 //
-// `alethia cluster get -o json > clusters.json` from an interactive shell is the whole case.
+// `alethia cluster get 2> err.log` from an interactive shell is the whole case. It is stderr and
+// not stdout: huh constructs its program with tea.WithOutput(os.Stderr), which ui.InteractiveOutput now
+// states once for the whole CLI.
 func TestPickClusterRequiresATerminal(t *testing.T) {
 	clustersSetNoInput(t, false)
-	stdoutIsTTY = func() bool { return false } // restored by clustersSetNoInput's cleanup
+	withInteractiveOutputRedirected(t)
 	runs := clustersStubForm(t, nil)
 
 	_, err := resolveCluster(twoEnvsOneProject, "")
 	if !errors.Is(err, errNoTTY) {
-		t.Fatalf("a redirected stdout must refuse before opening a form, got %v", err)
+		t.Fatalf("a redirected form stream must refuse before opening a form, got %v", err)
 	}
 	if *runs != 0 {
 		t.Errorf("the form must not have run; runs = %d", *runs)
 	}
 	if errors.Is(err, errNoInput) {
 		t.Error("this is not the --no-input refusal — the next step a reader is given differs")
+	}
+}
+
+// TestPickClusterAcceptsARedirectedStdout is the other half, and the arm the first spelling of this
+// gate got WRONG: stdout is a file and the form's own stream is still a terminal, so the picker is
+// perfectly drawable and must open.
+//
+// Measured against the shipped binary before this was written: `alethia cluster get -o json > f`
+// under a real pty exited 1 with "stdout is not a terminal" while the picker it refused to show
+// would have rendered on the still-attached stderr.
+func TestPickClusterAcceptsARedirectedStdout(t *testing.T) {
+	clustersSetNoInput(t, false)
+	prev := stdoutIsTTY
+	stdoutIsTTY = func() bool { return false }
+	t.Cleanup(func() { stdoutIsTTY = prev })
+	runs := clustersStubForm(t, nil)
+
+	got, err := resolveCluster(twoEnvsOneProject, "")
+	if err != nil {
+		t.Fatalf("a redirected stdout must not stop a form that draws on stderr: %v", err)
+	}
+	if *runs != 1 {
+		t.Errorf("the picker must have opened exactly once; runs = %d", *runs)
+	}
+	if got == nil {
+		t.Fatal("the picker returned no cluster")
 	}
 }
 

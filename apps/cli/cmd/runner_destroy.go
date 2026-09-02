@@ -40,7 +40,7 @@ pass one; passing both is refused rather than resolved by precedence.`,
 			fail(err)
 		}
 		if runnerID == "" {
-			if noInputMode {
+			if !canPromptForm() {
 				failf("no runner given: pass --runner (its name or its id), or --runner-id")
 			}
 			runnerID, err = selectRunner(token, "")
@@ -85,7 +85,7 @@ pass one; passing both is refused rather than resolved by precedence.`,
 
 		// As in project destroy: the executor picker cannot be answered with prompting
 		// disabled, and an empty id leaves the teardown job for any available runner.
-		if assignedID == "" && !noInputMode {
+		if assignedID == "" && canPromptForm() {
 			assignedID, err = selectRunner(token, runnerID)
 			if err != nil {
 				fail(err)

@@ -37,7 +37,7 @@ var projectPlanCmd = &cobra.Command{
 		// run simply leaves the job unassigned. Without this guard `--no-input` could not queue
 		// a PLAN at all without also naming a runner, which is a flag for a field the command
 		// does not require. `project destroy` already had it; these two did not.
-		if projectPlanRunnerID == "" && !noInputMode {
+		if projectPlanRunnerID == "" && canPromptForm() {
 			projectPlanRunnerID, err = selectRunner(token, "")
 			if err != nil {
 				fail(err)

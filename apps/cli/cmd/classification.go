@@ -34,7 +34,7 @@ var classificationDimensionsCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var dims []api.ClassificationDimension
-			ui.RunSpinner("Fetching dimensions...", func() {
+			runSpinner("Fetching dimensions...", func() {
 				dims, err = client.ListClassificationDimensions()
 			})
 			if err != nil {
@@ -108,7 +108,7 @@ var classificationShowCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var rows []api.ClassificationAssignment
-			ui.RunSpinner("Fetching classifications...", func() {
+			runSpinner("Fetching classifications...", func() {
 				rows, err = client.GetResourceClassifications(args[0], args[1])
 			})
 			if err != nil {

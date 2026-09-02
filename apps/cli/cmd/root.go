@@ -21,14 +21,11 @@ const (
 
 func init() {
 	rootCmd.Version = version.Version
-	rootCmd.PersistentFlags().StringP("output", "o", "table", "Output format: table, json, or csv")
-	rootCmd.PersistentFlags().Bool("no-input", false, "Disable interactive prompts (fail instead of prompting)")
-	// The NON-INTERACTIVE credential. Pairs with --no-input: that one stops the CLI asking
-	// questions, this one gives it an answer to the only question a pipeline cannot answer.
-	// Prefer $ALETHIA_TOKEN in CI — a flag value lands in the process table and in shell history,
-	// where an environment variable does not.
-	rootCmd.PersistentFlags().StringVar(&serviceTokenFlag, "token", "",
-		"Service-account `token` for non-interactive use (or set $"+ServiceTokenEnv+"). Skips the interactive login entirely.")
+	// The three flags every command in the tree inherits, registered from the ONE place they are
+	// described. Their usage strings, their defaults and the rows the docs tables carry for them
+	// all come from shellFields — see shell_fields.go for why a global is the value most likely to
+	// drift, and hyg_cli_shellform_test.go for what holds the renderings together.
+	registerShellGlobalFlags(rootCmd)
 }
 
 var rootCmd = &cobra.Command{

@@ -39,9 +39,16 @@ type hygCliConfirmExit struct{ code int }
 // rather than the confirm stub the test installed.
 func hygCliConfirmInteractive(t *testing.T) {
 	t.Helper()
-	prev := stdinIsTTY
+	prev, prevMode := stdinIsTTY, noInputMode
 	stdinIsTTY = func() bool { return true }
-	t.Cleanup(func() { stdinIsTTY = prev })
+	// noInputMode too, and not only the seam. It is DERIVED from stdinIsTTY rather than bound to
+	// it, so stubbing the seam changes nothing until the next PersistentPreRun — and a test that
+	// calls confirm directly never reaches one. It was reading whatever the previously-run file
+	// left behind, so this helper's answer depended on the alphabet: under `go test -shuffle` the
+	// declined-confirmation cases in cov_connectors_test.go and byo_write_test.go took the fatal
+	// arm instead.
+	noInputMode = false
+	t.Cleanup(func() { stdinIsTTY, noInputMode = prev, prevMode })
 }
 
 // hygCliConfirmSetNoInput pins noInputMode for a direct (non-cobra) unit test and
@@ -363,7 +370,7 @@ func hygCliConfirmEnv(t *testing.T) (*hygCliConfirmServer, func(args ...string) 
 		// Reset before as well as after: a --yes left Changed by another test in this
 		// package would otherwise silently pre-confirm the first run here.
 		hygCliConfirmResetFlags()
-		rootCmd.SetArgs(args)
+		execRootArgs(args)
 		if err := rootCmd.Execute(); err != nil {
 			return 1
 		}

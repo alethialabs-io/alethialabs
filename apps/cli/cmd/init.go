@@ -58,7 +58,7 @@ func promptWebOrigin(flagValue string) (string, error) {
 		return normalizeWebOrigin(flagValue)
 	}
 	current, _ := types.ResolveWebOrigin()
-	if noInputMode {
+	if !canPromptForm() {
 		return current, nil
 	}
 	origin := current
