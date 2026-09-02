@@ -10,7 +10,6 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
-	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
 )
 
@@ -21,23 +20,6 @@ var membersCmd = &cobra.Command{
 	Long:    `List members of the active organization, invite new members, and remove members.`,
 }
 
-// currentOrgID resolves the org to operate on: the --org flag if set, otherwise
-// the active organization from the CLI config.
-//
-// `--org` is registered on `members` and `teams` ONLY. Those two address the org in their request
-// PATH (`/api/cli/orgs/:id/members`), so a different one can be targeted per invocation; roles,
-// grants and sso are scoped by the X-Alethia-Org header the active context sets, and have no such
-// flag. access.mdx claimed otherwise until this pass.
-func currentOrgID(cmd *cobra.Command) (string, error) {
-	if o, _ := cmd.Flags().GetString("org"); o != "" {
-		return o, nil
-	}
-	if o := types.LoadCliConfig().ActiveOrgID; o != "" {
-		return o, nil
-	}
-	return "", fmt.Errorf("no active organization — run `alethia org switch` or pass --org")
-}
-
 var membersListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List members of the active organization",
@@ -46,7 +28,7 @@ var membersListCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		orgID, err := currentOrgID(cmd)
+		orgID, err := currentOrgID()
 		if err != nil {
 			fail(err)
 		}
@@ -113,7 +95,7 @@ terminal; with neither, the form asks for both, offering the org's own roles.`,
 		if err != nil {
 			fail(err)
 		}
-		orgID, err := currentOrgID(cmd)
+		orgID, err := currentOrgID()
 		if err != nil {
 			fail(err)
 		}
@@ -131,10 +113,13 @@ terminal; with neither, the form asks for both, offering the org's own roles.`,
 		// `Changed` and not emptiness: `--role ""` is a caller who said something, and the form
 		// re-asking it would be the CLI ignoring the flag it advertises.
 		if email == "" || (!cmd.Flags().Changed("role") && canPromptForm()) {
-			// The role LIST is the active org's — `GET /api/cli/roles` reads the X-Alethia-Org
-			// header, which `--org` does not change. Offering it for another org would name roles
-			// that do not exist where the invitation lands.
-			email, role, err = promptMembersAdd(client, email, role, orgID == types.LoadCliConfig().ActiveOrgID)
+			// The role LIST comes from `GET /api/cli/roles`, which is scoped by the X-Alethia-Org
+			// header. That header used to follow the active context while `--org` moved only the
+			// request PATH, so a cross-org invitation was offered the WRONG org's roles and the
+			// list had to be withheld. Since #3817 both come from one value (currentOrgID and
+			// setAuthHeaders read the same override), so the roles offered are always the ones
+			// that exist where the invitation lands.
+			email, role, err = promptMembersAdd(client, email, role, true)
 			if err != nil {
 				fail(err)
 			}
@@ -174,7 +159,7 @@ by address; with neither, pick from the org's members.`,
 		if err != nil {
 			fail(err)
 		}
-		orgID, err := currentOrgID(cmd)
+		orgID, err := currentOrgID()
 		if err != nil {
 			fail(err)
 		}
@@ -211,7 +196,9 @@ func runMembersRemove(c apiClient, out io.Writer, orgID, memberID string) error 
 
 func init() {
 	addYesFlag(membersRemoveCmd, &membersRemoveYes)
-	membersCmd.PersistentFlags().String("org", "", "Organization id (defaults to the active org)")
+	// No `--org` here. It is a ROOT persistent flag (shell_fields.go, #3817) — registering a second
+	// one on this group would shadow it, because cobra resolves to the nearest definition, and
+	// `members` would then read a different variable from every other command in the tree.
 	membersAddCmd.Flags().StringVar(&membersAddRole, "role", "member",
 		"Role for the invited member (any of the org's roles)")
 	membersRemoveCmd.Flags().StringVar(&membersRemoveEmail, "email", "",

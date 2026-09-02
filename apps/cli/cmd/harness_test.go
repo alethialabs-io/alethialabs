@@ -7,6 +7,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -110,6 +111,12 @@ func resetAllFlags() {
 	}
 	// noInputMode is derived rather than bound, and is recomputed by the next PersistentPreRun.
 	noInputMode = false
+	// So is the api package's org override: --org is bound to orgFlag, which the loop above has
+	// just reset, but the copy applyOrgScope handed to the api package is only refreshed by the
+	// next PersistentPreRun. A test that calls a Run function directly would otherwise inherit the
+	// previous test's --org and send its header — the same leak the Changed bit caused above, in
+	// the one place where it would pick a different TENANT rather than a different code arm.
+	api.SetOrgOverride("")
 }
 
 // resetRootPersistentFlags returns --output, --no-input and --token to their defaults.

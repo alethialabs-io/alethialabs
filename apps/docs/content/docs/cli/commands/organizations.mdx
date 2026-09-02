@@ -9,11 +9,15 @@ alethia scopes everything you do — projects, runners, jobs, connectors — to 
 organization**. The active org is persisted locally (in `~/.config/alethia/config.json`) and sent as
 the `X-Alethia-Org` header on every request.
 
-The `members` and `teams` commands address the org in their request path, so they also take
-`--org <id>` to target a different one for a single invocation. No other command group accepts that
-flag; everything else follows the active context.
+`--org <id>` targets a different organization for a single invocation, on every command in the CLI
+and not only the ones on this page. It sets the `X-Alethia-Org` header, and for `members` and
+`teams` — the two commands that address the org in their request path — it sets the org in the path
+as well, from the same value. Naming an organization you are not a member of is refused with `403`.
+Under a service token the flag must name the token's own organization: a different one is refused
+with `403` rather than quietly ignored, so a pipeline cannot believe it is acting on one org while
+every write lands in another.
 
-Every command here also accepts the global
+Every command here also accepts the global `--org <id>`,
 [`-o, --output <table|json|csv>`](/cli/identity#output-formats) and `--no-input` flags.
 
 <Callout type="info">
@@ -168,7 +172,7 @@ Members keep their org membership but lose the grants the team carried. Destruct
 
 | Flag | Where | Description |
 |------|-------|-------------|
-| `--org <id>` | `members`, `teams` | Operate on this org instead of the active one. |
+| `--org <id>` | every command (global) | Operate on this org instead of the active one, for one invocation. |
 | `--role <role>` | `members add` | Role for the invited member. Default `member`. |
 | `--email <email>` | `members remove` | Name the member by address instead of a member id. |
 | `--name <name>` | `teams delete` | Name the team instead of a team id. |
