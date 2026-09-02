@@ -21,13 +21,13 @@
 		"scoredHere": 16,
 		"live": 10,
 		"notInstrumented": 8,
-		"findings": 78,
+		"findings": 77,
 		"findingFiles": 31,
 		"liveNotMeasured": 13
 	},
 	"ledgers": {
 		"baseline": 16,
-		"debt": 23
+		"debt": 22
 	},
 	"live": {
 		"source": {
@@ -96,41 +96,40 @@
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 35,
-			"fail": 1,
+			"pass": 36,
+			"fail": 0,
 			"na": 4,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
-			"score": 0.9722
+			"score": 1
 		},
 		"S2": {
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 31,
-			"fail": 5,
+			"pass": 32,
+			"fail": 4,
 			"na": 4,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
-			"score": 0.8611
+			"score": 0.8889
 		},
 		"S3": {
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 35,
+			"pass": 36,
 			"fail": 0,
-			"na": 5,
+			"na": 4,
 			"notMeasured": 0,
 			"naReasons": {
-				"redirect-only": 4,
-				"no-loading-boundary": 1
+				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -153,15 +152,15 @@
 			"family": "T",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 35,
-			"fail": 1,
+			"pass": 36,
+			"fail": 0,
 			"na": 4,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
-			"score": 0.9722
+			"score": 1
 		},
 		"T2": {
 			"family": "T",
@@ -276,13 +275,13 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 23,
-			"fail": 17,
+			"pass": 24,
+			"fail": 16,
 			"na": 0,
 			"notMeasured": 0,
 			"naReasons": {},
 			"notMeasuredReasons": {},
-			"score": 0.575
+			"score": 0.6
 		},
 		"H3": {
 			"family": "H",
@@ -2734,34 +2733,34 @@
 		{
 			"route": "/cli/login",
 			"redirectOnly": false,
-			"surfaceFiles": 4,
+			"surfaceFiles": 3,
 			"families": {
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 1,
-					"fail": 2,
-					"na": 1,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
 					"notMeasured": 0,
-					"score": 0.3333
+					"score": 1
 				},
 				"T": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 0,
@@ -2783,11 +2782,11 @@
 				}
 			},
 			"overall": {
-				"pass": 17,
-				"fail": 4,
-				"na": 5,
+				"pass": 22,
+				"fail": 0,
+				"na": 4,
 				"notMeasured": 0,
-				"score": 0.8095
+				"score": 1
 			}
 		},
 		{
@@ -7991,8 +7990,7 @@
 		{
 			"route": "/cli/login",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/app/(private)/cli/login/page.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
@@ -8038,20 +8036,17 @@
 		{
 			"route": "/cli/login",
 			"predicate": "S1",
-			"verdict": "FAIL",
-			"detail": "no known shell in the layout chain"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "no max-width anywhere — no shell declares none"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
 			"predicate": "S3",
-			"verdict": "N/A",
-			"reason": "no-loading-boundary"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
@@ -8061,8 +8056,7 @@
 		{
 			"route": "/cli/login",
 			"predicate": "T1",
-			"verdict": "FAIL",
-			"detail": "no loading.tsx anywhere in its chain"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
@@ -8309,11 +8303,11 @@
 				"owner": null
 			},
 			"type_scale": {
-				"total": 50,
+				"total": 49,
 				"decision": 1,
-				"debt": 49,
+				"debt": 48,
 				"unlisted": 0,
-				"inPageClosure": 17,
+				"inPageClosure": 16,
 				"chromeOnly": 29,
 				"offTree": 4,
 				"predicate": "H8",
