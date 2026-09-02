@@ -112,9 +112,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Migrate the test database
-        run: pnpm -F console db:migrate
+        run: pnpm -C apps/console run db:migrate
       - name: Build the console
-        run: pnpm -F console build
+        run: pnpm -C apps/console run build
       - name: Install Playwright (Chromium + OS deps)
         run: pnpm -F console exec playwright install --with-deps chromium
       - name: Guard — elench-live project must match at least one test
@@ -125,7 +125,7 @@ jobs:
       - name: Run the real-model journeys
         run: pnpm -F console exec playwright test --project=elench-live
       - name: Behavior eval (tool traces, not prose)
-        run: pnpm -F console test:ai-eval
+        run: pnpm -C apps/console run test:ai-eval
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7

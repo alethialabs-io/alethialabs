@@ -497,7 +497,7 @@ func TestSeedAddOnsPinnedToCatalog(t *testing.T) {
 	for _, a := range seedAddOns() {
 		want, ok := byID[a.ID]
 		if !ok {
-			t.Errorf("seeded add-on %q is not in the generated catalog fixture — regenerate: pnpm -F console export:addon-catalog", a.ID)
+			t.Errorf("seeded add-on %q is not in the generated catalog fixture — regenerate: pnpm -C apps/console run export:addon-catalog", a.ID)
 			continue
 		}
 		if !reflect.DeepEqual(a, want) {
