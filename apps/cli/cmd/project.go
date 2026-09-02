@@ -119,7 +119,12 @@ type projectLister interface {
 	GetConfigurations() ([]types.ConfigurationSummary, error)
 }
 
-// cloudIdentityLister is the slice of the API client the cloud-account resolver needs.
+// cloudIdentityLister is the slice of the API client the cloud-account resolvers need — kept
+// small so resolution is unit-testable with a fake (the concrete *api.Client satisfies it), and
+// so neither group needs an edit to the shared apiClient interface.
+//
+// Shared by the project group (resolveCloudIdentityID), the connector group
+// (resolveCloudIdentityRef) and provider.go (resolveProviderRef): one package, one declaration.
 type cloudIdentityLister interface {
 	GetCloudIdentities() ([]api.CloudIdentity, error)
 }
