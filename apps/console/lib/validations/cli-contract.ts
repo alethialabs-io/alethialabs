@@ -493,11 +493,21 @@ export const cliClustersResponse = z.object({ clusters: z.array(clusterWire) });
 export const cliCloudIdentitiesResponse = z.object({
 	cloud_identities: z.array(cloudIdentityWire),
 });
+/**
+ * GET /api/jobs.
+ *
+ * `page` is the cursor vocabulary and the one to read. `total`, `limit` and `offset` are the
+ * pre-cursor wire, kept because the shipped CLI's interactive pager still walks this endpoint by
+ * offset (`apps/cli/cmd/jobs_table.go:40`) and will until #3667 replaces it; they are ADDITIVE
+ * here, not a second mechanism — `total` and `limit` are `page.total` and `page.limit`, emitted
+ * once and echoed, so the two halves of the envelope cannot disagree.
+ */
 export const cliJobsPageResponse = z.object({
 	jobs: z.array(jobListItemWire),
 	total: z.number().int(),
 	limit: z.number().int(),
 	offset: z.number().int(),
+	page: pageInfoSchema,
 });
 export const cliJobResponse = z.object({ job: jobWire });
 /**
