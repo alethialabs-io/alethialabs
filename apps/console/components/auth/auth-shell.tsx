@@ -94,7 +94,7 @@ export function AuthShell({
 
         {switchPrompt && switchHref && switchLabel ? (
           <div className="flex items-center gap-3 whitespace-nowrap">
-            <span className="hidden text-[13px] text-text-tertiary sm:inline">
+            <span className="hidden text-ui-md text-text-tertiary sm:inline">
               {switchPrompt}
             </span>
             <Button
@@ -124,7 +124,7 @@ export function AuthShell({
 
       {/* footer */}
       <footer className="relative z-30 flex flex-wrap items-center justify-between gap-4 px-8 pb-7 pt-5">
-        <div className="flex flex-wrap items-center gap-4 font-mono text-[10.5px] tracking-[0.06em] text-text-tertiary">
+        <div className="flex flex-wrap items-center gap-4 font-mono text-ui-2xs tracking-[0.06em] text-text-tertiary">
           {/* The year was hard-coded and would have quietly gone stale. */}
           <span>© {new Date().getFullYear()} {LEGAL_ENTITY.tradingName}</span>
           <a href={legalUrl("/terms")} className="vx-clamp vx-clamp--tight transition-colors hover:text-text-primary">
@@ -149,7 +149,7 @@ export function AuthShell({
             className="vx-clamp vx-clamp--tight inline-flex items-center gap-2"
           >
             <span className="ah-pulse" />
-            <span className="font-mono text-[10.5px] tracking-[0.06em] text-text-tertiary transition-colors hover:text-text-primary">
+            <span className="font-mono text-ui-2xs tracking-[0.06em] text-text-tertiary transition-colors hover:text-text-primary">
               All systems operational
             </span>
           </a>

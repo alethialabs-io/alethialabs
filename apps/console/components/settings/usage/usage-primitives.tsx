@@ -33,10 +33,10 @@ export function Meter({
 	return (
 		<div className="border-r border-border px-6 py-4 last:border-r-0">
 			<div className="mb-[9px] flex items-baseline justify-between">
-				<span className="font-mono text-[10px] uppercase tracking-[0.1em] text-text-tertiary">
+				<span className="font-mono text-ui-2xs uppercase tracking-[0.1em] text-text-tertiary">
 					{label}
 				</span>
-				<span className="text-[12.5px] font-medium text-text-primary">{value}</span>
+				<span className="text-ui-sm font-medium text-text-primary">{value}</span>
 			</div>
 			<div className="h-[5px] overflow-hidden rounded-full border border-border bg-surface-sunken">
 				<div
@@ -44,7 +44,7 @@ export function Meter({
 					style={{ width: `${Math.min(100, Math.max(0, fill))}%` }}
 				/>
 			</div>
-			<div className="mt-2 font-mono text-[10px] text-text-tertiary">{sub}</div>
+			<div className="mt-2 font-mono text-ui-2xs text-text-tertiary">{sub}</div>
 		</div>
 	);
 }
@@ -99,13 +99,13 @@ export function Fact({
 				className,
 			)}
 		>
-			<dt className="flex min-w-0 items-baseline gap-2 text-[12.5px] text-text-secondary">
+			<dt className="flex min-w-0 items-baseline gap-2 text-ui-sm text-text-secondary">
 				{icon}
 				<span className="min-w-0">{label}</span>
 			</dt>
-			<dd className="flex shrink-0 flex-wrap items-baseline justify-end gap-x-2 text-[12.5px]">
+			<dd className="flex shrink-0 flex-wrap items-baseline justify-end gap-x-2 text-ui-sm">
 				{sub && (
-					<span className="font-mono text-[10px] text-text-tertiary">{sub}</span>
+					<span className="font-mono text-ui-2xs text-text-tertiary">{sub}</span>
 				)}
 				<span className="font-mono text-text-primary">{value}</span>
 			</dd>
