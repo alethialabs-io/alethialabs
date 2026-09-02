@@ -4,7 +4,9 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -34,12 +36,44 @@ import (
 type opsFormServer struct {
 	mu       sync.Mutex
 	requests []string
+	bodies   map[string][]string
 }
 
 func (s *opsFormServer) record(r *http.Request) {
+	// The body is read and PUT BACK. A handler downstream decodes it, and a recorder that consumed
+	// it would make every such handler see an empty document — a fake that breaks the thing it is
+	// observing. Recording is additive: no existing assertion changes shape.
+	var raw []byte
+	if r.Body != nil {
+		raw, _ = io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.requests = append(s.requests, r.Method+" "+r.URL.Path)
+	key := r.Method + " " + r.URL.Path
+	s.requests = append(s.requests, key)
+	if len(raw) > 0 {
+		if s.bodies == nil {
+			s.bodies = map[string][]string{}
+		}
+		s.bodies[key] = append(s.bodies[key], string(raw))
+	}
+}
+
+// body returns the single body posted to this route, failing when there was not exactly one.
+//
+// Exactly one, deliberately: "the first of several" hides a command that posted twice, and a
+// helper that returns "" for none would let an assertion about the payload pass against a request
+// that never happened.
+func (s *opsFormServer) body(t *testing.T, method, path string) string {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	got := s.bodies[method+" "+path]
+	if len(got) != 1 {
+		t.Fatalf("%s %s: recorded %d bodies, want exactly 1 (all requests: %v)", method, path, len(got), s.requests)
+	}
+	return got[0]
 }
 
 // saw reports whether the CLI made this exact request.
@@ -810,6 +844,48 @@ func TestOpsForm_RegisterOpsVerbRefusesAnUnspecifiedCommand(t *testing.T) {
 				}
 			}()
 			registerOpsVerb(cmd)
+		})
+	}
+}
+
+// TestOpsForm_ApproveNormalisesTheActionToTheCatalogSpelling pins what is POSTED, not that a POST
+// happened.
+//
+// The match is case-insensitive on purpose — an operator typing STATE_SURGERY during an incident
+// should not be refused for the shift key. But `mintApprovalSchema.action` is
+// `z.enum(breakglassAction.enumValues)`, lowercase snake_case, so returning the caller's spelling
+// converts an argument the CLI accepted into a 400 and a zod issue list from the server. This lands
+// on the two-person approval that is the ONLY gate on force-release-lock, state-surgery and
+// orphan-clean.
+//
+// The sibling assertion "an approval was minted" cannot see this: the request is made either way.
+func TestOpsForm_ApproveNormalisesTheActionToTheCatalogSpelling(t *testing.T) {
+	actions := opsApprovalActions()
+	if len(actions) == 0 {
+		t.Fatal("no action requires an approval — this test would check nothing")
+	}
+	for _, canonical := range actions {
+		shouted := strings.ToUpper(canonical)
+		if shouted == canonical {
+			t.Fatalf("%q is unchanged by ToUpper, so this case cannot distinguish the caller's "+
+				"spelling from the catalog's", canonical)
+		}
+		t.Run(shouted, func(t *testing.T) {
+			s, _, run := opsFormEnv(t)
+			if got := run("ops", "approve", shouted, "resource-1", "--reason", "incident-4711", "--no-input"); got != 0 {
+				t.Fatalf("exit code = %d, want 0 — a shouted action must be accepted", got)
+			}
+			body := s.body(t, http.MethodPost, "/api/breakglass/approval")
+			var posted struct {
+				Action string `json:"action"`
+			}
+			if err := json.Unmarshal([]byte(body), &posted); err != nil {
+				t.Fatalf("approval body is not JSON: %v (%s)", err, body)
+			}
+			if posted.Action != canonical {
+				t.Errorf("posted action = %q, want the catalog spelling %q — the server enum is "+
+					"lowercase snake_case and would answer 400", posted.Action, canonical)
+			}
 		})
 	}
 }

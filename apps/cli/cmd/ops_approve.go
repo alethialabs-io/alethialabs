@@ -77,11 +77,18 @@ func opsResolveApprovalAction(cmd *cobra.Command, args []string) string {
 
 	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
 		action := strings.TrimSpace(args[0])
-		if !containsFold(allowed, action) {
+		canonical, ok := opsMatchAction(allowed, action)
+		if !ok {
 			failf("%q does not take a two-person approval (want one of: %s)", action, strings.Join(allowed, ", "))
 			return ""
 		}
-		return action
+		// The CANONICAL spelling, not the caller's. The match is case-insensitive so an operator
+		// typing STATE_SURGERY at 3am is not refused for it, but `mintApprovalSchema.action` is
+		// `z.enum(breakglassAction.enumValues)` — lowercase snake_case — so posting the caller's
+		// spelling turns an accepted argument into a 400 and a zod issue list at the server. That
+		// is the round trip this command removes for --reason and --from/--to, landing on the only
+		// gate `force-release-lock`, `state-surgery` and `orphan-clean` have.
+		return canonical
 	}
 	if err := requireInteractiveForm(); err != nil {
 		fail(opsScripted(f, err))
@@ -137,4 +144,17 @@ var opsSessionCmd = &cobra.Command{
 func init() {
 	registerOpsVerb(opsApproveCmd)
 	registerOpsVerb(opsSessionCmd)
+}
+
+// opsMatchAction resolves a caller-supplied action to the catalog's own spelling, case-insensitively.
+//
+// Separate from containsFold (jobs_select.go) because the answer needed here is the matched VALUE,
+// not whether one exists — a predicate cannot normalise, and the normalisation is the point.
+func opsMatchAction(allowed []string, v string) (string, bool) {
+	for _, a := range allowed {
+		if strings.EqualFold(a, v) {
+			return a, true
+		}
+	}
+	return "", false
 }
