@@ -1172,8 +1172,8 @@ cmd_check() {
   # the flag, and a max below that minimum is rejected. Measured, not reasoned: `--maxWorkers=1`
   # alone fails on this repo's console config; with `--minWorkers=1` the same run passes.
   ssh_box "cd $REMOTE/envs/$slug_ && pnpm install --frozen-lockfile >/dev/null && \
-           pnpm -F console check-types && pnpm -F console lint && \
-           pnpm -F console test -- --maxWorkers=$workers --minWorkers=$workers"
+           pnpm -C apps/console run check-types && pnpm -C apps/console run lint && \
+           pnpm -C apps/console run test -- --maxWorkers=$workers --minWorkers=$workers"
 }
 
 # Browser tests, on the box. This is what the box is FOR — the Mac cannot run them.

@@ -354,9 +354,9 @@ jobs:
             sleep 1
           done
       - name: Migrate the test database (schema + programmables/RLS + app role)
-        run: pnpm -F console db:migrate
+        run: pnpm -C apps/console run db:migrate
       - name: Integration tests (real SQL query builders + RLS isolation + PDP parity)
-        run: pnpm -F console test:integration
+        run: pnpm -C apps/console run test:integration
 
   e2e-browser:
     name: E2E (browser · Playwright hero path)
@@ -429,9 +429,9 @@ jobs:
             turbo-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
       - name: Migrate the test database (schema + programmables/RLS + app role)
-        run: pnpm -F console db:migrate
+        run: pnpm -C apps/console run db:migrate
       # Build @alethia/ee FIRST. Its dist is gitignored and it has no prepare/postinstall
-      # hook, and `pnpm -F console build` calls the console's own script — bypassing turbo,
+      # hook, and `pnpm -C apps/console run build` calls the console's own script — bypassing turbo,
       # so `build.dependsOn: ["^build"]` never fires. Without this, ee/dist/index.js does
       # not exist, getEnterprise()'s tolerant require throws, and lib/auth/scope.ts falls
       # back to `{ userId, orgId: userId }`.
@@ -450,7 +450,7 @@ jobs:
             exit 1
           }
       - name: Build the console (production image the browser drives)
-        run: pnpm -F console build
+        run: pnpm -C apps/console run build
       - name: Install Playwright (Chromium + OS deps)
         run: pnpm -F console exec playwright install --with-deps chromium
       # Guard against a vacuous green: if the hero spec is ever renamed without updating the
@@ -552,7 +552,7 @@ jobs:
             turbo-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
       - name: Migrate the test database (schema + programmables/RLS + app role)
-        run: pnpm -F console db:migrate
+        run: pnpm -C apps/console run db:migrate
       # See the hero job: without ee/dist the console falls back to community scope
       # (actor.orgId === actor.userId) and every org-scoped surface renders empty — which would
       # make the whole audit a measurement of the wrong application.
@@ -565,7 +565,7 @@ jobs:
             exit 1
           }
       - name: Build the console (production image the browser drives)
-        run: pnpm -F console build
+        run: pnpm -C apps/console run build
       - name: Install Playwright (Chromium + OS deps)
         run: pnpm -F console exec playwright install --with-deps chromium
       # The route manifest IS the audit's denominator. If the seam raises — a moved route group, a
@@ -656,9 +656,9 @@ jobs:
             turbo-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
       - name: Migrate the test database (schema + programmables/RLS + app role)
-        run: pnpm -F console db:migrate
+        run: pnpm -C apps/console run db:migrate
       # Build @alethia/ee FIRST. Its dist is gitignored and it has no prepare/postinstall
-      # hook, and `pnpm -F console build` calls the console's own script — bypassing turbo,
+      # hook, and `pnpm -C apps/console run build` calls the console's own script — bypassing turbo,
       # so `build.dependsOn: ["^build"]` never fires. Without this, ee/dist/index.js does
       # not exist, getEnterprise()'s tolerant require throws, and lib/auth/scope.ts falls
       # back to `{ userId, orgId: userId }`.
@@ -677,7 +677,7 @@ jobs:
             exit 1
           }
       - name: Build the console (production image the browser drives)
-        run: pnpm -F console build
+        run: pnpm -C apps/console run build
       - name: Install Playwright (Chromium + OS deps)
         run: pnpm -F console exec playwright install --with-deps chromium
       # Guard against a vacuous green (renamed spec → testMatch drift → 0 tests → exit 0).
@@ -819,7 +819,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Open-core boundary (core must not import ee/)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:ee-boundary
+        run: pnpm -C apps/console run check:ee-boundary
       - name: Repository-wide open-core boundary and community image contract
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:open-core
@@ -921,7 +921,7 @@ jobs:
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         env:
           ALETHIA_EDITION: community
-        run: pnpm -F console check-types
+        run: pnpm -C apps/console run check-types
       - name: Installed dependency licence inventory has no unknown metadata
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm compliance:licenses
@@ -942,25 +942,25 @@ jobs:
           retention-days: 30
       - name: No Supabase
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:no-supabase
+        run: pnpm -C apps/console run check:no-supabase
       - name: No arbitrary var utility shadowed by an unlayered brand device
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:var-utility-shadowing
       - name: Authz scope (PDP, not ad-hoc user_id)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:authz-scope
+        run: pnpm -C apps/console run check:authz-scope
       - name: Guard — revalidatePath targets resolve to real routes
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:revalidate-paths
+        run: pnpm -C apps/console run check:revalidate-paths
       - name: Guard — no unauthorized "use server" action files
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:action-boundary
+        run: pnpm -C apps/console run check:action-boundary
       - name: Marketing routes ⇄ reservation ⇄ Caddy in sync
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:marketing-routes
+        run: pnpm -C apps/console run check:marketing-routes
       - name: tsconfig.build.json excludes every un-shipped file (pruned-image type-check)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:tsconfig-build
+        run: pnpm -C apps/console run check:tsconfig-build
       # Dead code in the console (knip). The script first asserts that every `entry` glob in
       # apps/console/knip.json still matches at least one file on disk, and FAILS if one does
       # not: a knip run that resolves no entry points treats nothing as reachable, so it can
@@ -974,32 +974,32 @@ jobs:
       # delete. Ratchet those two rules to "error" once that backlog is cleared.
       - name: Dead code — unused files, deps and binaries in the console (knip)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:dead-code
+        run: pnpm -C apps/console run check:dead-code
       - name: Drizzle migration history is unforked (linear snapshot chain)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:migrations
+        run: pnpm -C apps/console run check:migrations
       - name: Every canvas offer is buildable on every cloud, or documented (offer parity)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:offer-parity
+        run: pnpm -C apps/console run check:offer-parity
       - name: Offer-parity matrix is in sync with the code
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:offer-parity
+          pnpm -C apps/console run gen:offer-parity
           git diff --exit-code -- docs/testing/offer-parity.md \
-            || { echo "::error::docs/testing/offer-parity.md is stale — run 'pnpm -F console gen:offer-parity' and commit."; exit 1; }
+            || { echo "::error::docs/testing/offer-parity.md is stale — run 'pnpm -C apps/console run gen:offer-parity' and commit."; exit 1; }
       # The sibling of offer parity, on a different unit: offer parity asks whether a CHOICE the
       # canvas presents is buildable, this asks whether the VALUE a user typed reaches the plan. A
       # choice can be perfectly buildable while the number beside it is discarded — #1981 shipped a
       # cache allow-list that saved cleanly, provisioned nothing, and left the cache open.
       - name: Every value the product collects reaches the plan, or is documented (config carriage)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:config-carriage
+        run: pnpm -C apps/console run check:config-carriage
       - name: Config-carriage board is in sync with the code
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:config-carriage
+          pnpm -C apps/console run gen:config-carriage
           git diff --exit-code -- docs/testing/config-carriage.md \
-            || { echo "::error::docs/testing/config-carriage.md is stale — run 'pnpm -F console gen:config-carriage' and commit."; exit 1; }
+            || { echo "::error::docs/testing/config-carriage.md is stale — run 'pnpm -C apps/console run gen:config-carriage' and commit."; exit 1; }
       # The third parity unit, and the one that closes a hole the first two structurally could not
       # see: BOTH of the guards above derive their surface from the canvas — offer parity from the
       # offer list, config carriage from user-settable columns. A capability that exists only as a
@@ -1008,25 +1008,25 @@ jobs:
       # templates while three clouds did not, unboarded and unexcluded (#2004).
       - name: Every asymmetric template variable is recorded (template parity)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:template-parity
+        run: pnpm -C apps/console run check:template-parity
       - name: Template-parity board is in sync with the templates
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:template-parity
+          pnpm -C apps/console run gen:template-parity
           git diff --exit-code -- docs/testing/template-parity.md \
-            || { echo "::error::docs/testing/template-parity.md is stale — run 'pnpm -F console gen:template-parity' and commit."; exit 1; }
+            || { echo "::error::docs/testing/template-parity.md is stale — run 'pnpm -C apps/console run gen:template-parity' and commit."; exit 1; }
       - name: Keyless cells agree with the code that implements them
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:keyless-cells
+        run: pnpm -C apps/console run check:keyless-cells
       # The canvas gates the IAM-auth toggle on this table (#1510). Hand-mirroring it would only
       # DETECT drift; generating it makes drift impossible — and the table churns (aws/gcp MySQL
       # opened four lanes after it was first written).
       - name: Keyless cell mirror is in sync with the renderer (keyless.go → keyless-cells.ts)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:keyless-cells
+          pnpm -C apps/console run gen:keyless-cells
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/keyless-cells.ts \
-            || { echo "::error::Generated keyless-cells.ts is stale — run 'pnpm -F console gen:keyless-cells' and commit (source of truth: packages/core/manifests/keyless.go)."; exit 1; }
+            || { echo "::error::Generated keyless-cells.ts is stale — run 'pnpm -C apps/console run gen:keyless-cells' and commit (source of truth: packages/core/manifests/keyless.go)."; exit 1; }
       # The inspector's per-cloud node-disk floors (#1972). Same shape: the floors live in the
       # templates' own `>= N` validations (the literals the Go constants are pinned to by
       # TestNodeDiskFloorsMatchTemplates); the canvas reads a generated mirror of them, so a floor
@@ -1034,9 +1034,9 @@ jobs:
       - name: Node-disk floors are in sync with the templates (variables.tf → node-disk.ts)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:node-disk
+          pnpm -C apps/console run gen:node-disk
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/node-disk.ts \
-            || { echo "::error::Generated node-disk.ts is stale — run 'pnpm -F console gen:node-disk' and commit (source of truth: each template's disk-size variable)."; exit 1; }
+            || { echo "::error::Generated node-disk.ts is stale — run 'pnpm -C apps/console run gen:node-disk' and commit (source of truth: each template's disk-size variable)."; exit 1; }
       # The offer surface — which canvas switches a user can actually see, per cloud. Derived by
       # EVALUATING the inspector schema's visibleWhen predicates, because they are closures over
       # (config, provider, capabilities) that no pattern-match can read. Checked in so the answer is
@@ -1045,9 +1045,9 @@ jobs:
       - name: Offer surface is in sync with the inspector schema (config-schema.ts → offer-surface.json)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:offer-surface
+          pnpm -C apps/console run gen:offer-surface
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/offer-surface.json \
-            || { echo "::error::Generated offer-surface.json is stale — run 'pnpm -F console gen:offer-surface' and commit (source of truth: apps/console/components/design-project/canvas/inspector/config-schema.ts)."; exit 1; }
+            || { echo "::error::Generated offer-surface.json is stale — run 'pnpm -C apps/console run gen:offer-surface' and commit (source of truth: apps/console/components/design-project/canvas/inspector/config-schema.ts)."; exit 1; }
       # Same shape, same reason (#1621). Which secret stores a cluster can actually read is decided by
       # which store hook each provider registers in Go; the canvas greys out the rest. That answer was
       # a hand-written TS list of two slugs, free to drift from the hooks — and in the direction that
@@ -1057,27 +1057,27 @@ jobs:
       - name: Secrets runtime-read mirror is in sync with the hooks (secrets_*.go → secrets-runtime-read.ts)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:secrets-runtime-read
+          pnpm -C apps/console run gen:secrets-runtime-read
           git diff --exit-code -- apps/console/lib/connectors/generated/secrets-runtime-read.ts \
-            || { echo "::error::Generated secrets-runtime-read.ts is stale — run 'pnpm -F console gen:secrets-runtime-read' and commit (source of truth: the saasSecretStore / keylessSecretStore hooks in packages/core/categories/secrets_*.go)."; exit 1; }
+            || { echo "::error::Generated secrets-runtime-read.ts is stale — run 'pnpm -C apps/console run gen:secrets-runtime-read' and commit (source of truth: the saasSecretStore / keylessSecretStore hooks in packages/core/categories/secrets_*.go)."; exit 1; }
       - name: Project templates pin their providers (tofu lock files, no -upgrade)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:tofu-lockfiles
+        run: pnpm -C apps/console run check:tofu-lockfiles
       - name: Shipped version defaults are mutually compatible (compat matrix)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:compat
+        run: pnpm -C apps/console run check:compat
       - name: CLI contract fixtures are in sync with the Zod contract
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:cli-fixtures
+          pnpm -C apps/console run gen:cli-fixtures
           git diff --exit-code -- packages/core/api/testdata \
-            || { echo "::error::CLI fixtures are stale — run 'pnpm -F console gen:cli-fixtures' and commit (the Go contract test will then name any struct field to update)."; exit 1; }
+            || { echo "::error::CLI fixtures are stale — run 'pnpm -C apps/console run gen:cli-fixtures' and commit (the Go contract test will then name any struct field to update)."; exit 1; }
       - name: Go enum constants are in sync with the drizzle enums
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:go-enums
+          pnpm -C apps/console run gen:go-enums
           git diff --exit-code -- packages/core/types/enums_gen.go \
-            || { echo "::error::Go enum constants are stale — run 'pnpm -F console gen:go-enums' and commit. The Go build + exhaustive lint then flag any switch/map to update."; exit 1; }
+            || { echo "::error::Go enum constants are stale — run 'pnpm -C apps/console run gen:go-enums' and commit. The Go build + exhaustive lint then flag any switch/map to update."; exit 1; }
       # The brand's terminal projection. Two failures ride on one command, and they are
       # different problems with different fixes, so the generator distinguishes them itself:
       # a NEW TOKEN WITH NO PROJECTION makes it exit 1 without writing anything (its own
@@ -1088,9 +1088,9 @@ jobs:
       - name: Every brand token is projected, lossy or refused (tokens.css → brand_gen.go)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:go-brand
+          pnpm -C apps/console run gen:go-brand
           git diff --exit-code -- packages/core/types/brand_gen.go \
-            || { echo "::error::The Go brand projection is stale — run 'pnpm -F console gen:go-brand' and commit (source of truth: packages/brand/src/tokens.css for the values, apps/console/scripts/lib/brand-projection.ts for the exact/lossy/none decisions)."; exit 1; }
+            || { echo "::error::The Go brand projection is stale — run 'pnpm -C apps/console run gen:go-brand' and commit (source of truth: packages/brand/src/tokens.css for the values, apps/console/scripts/lib/brand-projection.ts for the exact/lossy/none decisions)."; exit 1; }
       # The formatter contract both surfaces are held to. @repo/format decides what `47 min`,
       # `2h 15m` and `$12.50/mo` look like for the console; packages/core/format will be held to
       # the same table for the CLI, which today renders $12.50 as `$12/mo` (Go's %.0f rounds half
@@ -1100,9 +1100,9 @@ jobs:
       - name: Formatter conformance table is in sync with @repo/format
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:format-conformance
+          pnpm -C apps/console run gen:format-conformance
           git diff --exit-code -- packages/format/conformance/format-cases.json \
-            || { echo "::error::The formatter conformance table is stale — run 'pnpm -F console gen:format-conformance' and commit. NOTE this rewrites an EXPECTATION, not a formatting detail: read the changed-case list the generator prints (~ = an expectation moved, i = only the inputs did), because packages/core/format is held to this table."; exit 1; }
+            || { echo "::error::The formatter conformance table is stale — run 'pnpm -C apps/console run gen:format-conformance' and commit. NOTE this rewrites an EXPECTATION, not a formatting detail: read the changed-case list the generator prints (~ = an expectation moved, i = only the inputs did), because packages/core/format is held to this table."; exit 1; }
       # zod -> JSON Schema -> Go (#3670). The generator REFUSES to emit when a registered schema
       # grows a `.refine()` / `.transform()` nobody disposed of, because z.toJSONSchema drops those
       # silently — so a CLI built on its output would enforce a fraction of the console's rules
@@ -1111,13 +1111,13 @@ jobs:
       # anything would still regenerate a byte-identical artifact and pass the diff-gate below.
       - name: The validation generator still refuses what it is supposed to refuse
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console gen:go-validation:self-test
+        run: pnpm -C apps/console run gen:go-validation:self-test
       - name: Shared validation specs are in sync with the console's zod schemas
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:go-validation
+          pnpm -C apps/console run gen:go-validation
           git diff --exit-code -- packages/core/validate/spec_gen.go packages/core/validate/testdata \
-            || { echo "::error::The shared validation artifacts are stale — run 'pnpm -F console gen:go-validation' and commit. NOTE the case table is an EXPECTATION packages/core/validate is held to, not a formatting detail: read the changed-case list the generator prints."; exit 1; }
+            || { echo "::error::The shared validation artifacts are stale — run 'pnpm -C apps/console run gen:go-validation' and commit. NOTE the case table is an EXPECTATION packages/core/validate is held to, not a formatting detail: read the changed-case list the generator prints."; exit 1; }
       # The name grammar and the slug algorithm, on both surfaces. Two artifacts, one generator:
       # names_gen.go carries the DATA (the DNS-1123 pattern, the limits, the reserved environment
       # names) and name-cases.json carries the ALGORITHM contract, produced by running the real
@@ -1127,15 +1127,15 @@ jobs:
       - name: Name grammar + slug conformance are in sync (and no second slugifier)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:go-names
+          pnpm -C apps/console run gen:go-names
           git diff --exit-code -- packages/core/names/names_gen.go packages/core/names/testdata/name-cases.json \
-            || { echo "::error::The generated name grammar or the slug conformance table is stale — run 'pnpm -F console gen:go-names' and commit. NOTE name-cases.json is an EXPECTATION packages/core/names is held to, not a snapshot: read the changed-case list the generator prints."; exit 1; }
+            || { echo "::error::The generated name grammar or the slug conformance table is stale — run 'pnpm -C apps/console run gen:go-names' and commit. NOTE name-cases.json is an EXPECTATION packages/core/names is held to, not a snapshot: read the changed-case list the generator prints."; exit 1; }
       - name: Compat matrix mirror is in sync with the SSOT (matrix.json → matrix.ts)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:matrix
+          pnpm -C apps/console run gen:matrix
           git diff --exit-code -- apps/console/lib/compat/generated/matrix.ts \
-            || { echo "::error::Compat matrix.ts is stale — run 'pnpm -F console gen:matrix' and commit (source of truth: packages/core/compat/matrix.json)."; exit 1; }
+            || { echo "::error::Compat matrix.ts is stale — run 'pnpm -C apps/console run gen:matrix' and commit (source of truth: packages/core/compat/matrix.json)."; exit 1; }
       # gen-catalog.mjs has claimed "CI re-runs it and fails on drift" since it was written; until
       # #1373 nothing did. It also re-runs the generator's fail-fast shape guards (every engine has a
       # non-empty versions[] containing its default, and the snake + camel surfaces agree), so a
@@ -1143,12 +1143,12 @@ jobs:
       - name: Cloud catalog mirror is in sync with the SSOT (catalog.json → catalog.ts)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
-          pnpm -F console gen:catalog
+          pnpm -C apps/console run gen:catalog
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/catalog.ts \
-            || { echo "::error::Generated catalog.ts is stale — run 'pnpm -F console gen:catalog' and commit (source of truth: packages/core/catalog/catalog.json)."; exit 1; }
+            || { echo "::error::Generated catalog.ts is stale — run 'pnpm -C apps/console run gen:catalog' and commit (source of truth: packages/core/catalog/catalog.json)."; exit 1; }
       - name: Catalog drift scout's pure parsers/differ hold (derive:catalog --self-test)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console derive:catalog -- --self-test
+        run: pnpm -C apps/console run derive:catalog -- --self-test
       - name: Tests exercise real source (anti-vacuous-test tripwire)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-test-imports.mjs
@@ -1192,7 +1192,7 @@ jobs:
       - name: Worktree lease protocol (13 properties, incl. pid-reuse + nested worktrees)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-lease.sh --self-test
-      - name: Worktree lease guard — replays incident #1247
+      - name: 'Worktree lease guard — replays incident #1247'
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-lease-hook-test.sh
       - name: Worktree landed-detection (squash merges; merged-PR-plus-new-commit is NOT landed)
@@ -1608,6 +1608,20 @@ jobs:
       - name: ...and that check's own parser is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/ci/check-guards-independent.mjs --self-test
+      # The level ABOVE the two checks either side of this one. They ask whether a step is shaped
+      # so Actions will run it, and whether one failure can skip the rest. This asks whether the
+      # command a step names does anything at all: `pnpm -F <pkg> <script>` exits 0 when no
+      # selected package has that script — an EMPTY SELECTION, not an error (#3853). 32 of the
+      # steps in this very job were written that way, `check:ee-boundary`, `check:authz-scope` and
+      # `check:migrations` among them, so renaming any one of those scripts would have left its
+      # gate green having executed nothing, with the PR that did it looking clean. Measured, not
+      # theorised: #3827's two new steps reported `success` having run nothing.
+      - name: Every pnpm script a workflow names exists, and none uses the exit-0 filter form
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:pnpm-script-refs
+      - name: ...and that check's own parser is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-pnpm-script-refs.mjs --self-test
       # The classifier both chart-render jobs share, and the retry built on it. It runs the script
       # under `bash -e` — GitHub's default shell — because an earlier version of that retry was 100%
       # INERT in CI for exactly that reason while passing a harness that used plain `bash`.
@@ -2046,7 +2060,7 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - run: pnpm install --frozen-lockfile
       - name: Migrate the control-plane database (schema + programmables/RLS + app role)
-        run: pnpm -F console db:migrate
+        run: pnpm -C apps/console run db:migrate
       # B6.1 — the gated-promotion chain is console + DB logic (no cloud, no kind), so it runs here
       # first (fast feedback) against the SAME migrated Postgres: it drives the REAL exported console
       # actions (advancePromotionOnPlan → applyPromotionApproval → finalizeDeployment +
@@ -2199,7 +2213,7 @@ jobs:
           go-version-file: go.work
       - run: pnpm install --frozen-lockfile
       - name: TS mutation (Stryker — lib + actions)
-        run: pnpm -F console mutate || true
+        run: pnpm -C apps/console run mutate || true
       - name: Go mutation (Gremlins — all modules)
         run: |
           go install github.com/go-gremlins/gremlins/cmd/gremlins@latest

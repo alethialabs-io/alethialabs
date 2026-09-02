@@ -203,7 +203,7 @@ let catalog;
 try {
 	catalog = JSON.parse(readFileSync(CATALOG, "utf8"));
 } catch {
-	die(`could not read the generated catalog at ${CATALOG}. Run \`pnpm -F console export:addon-catalog\`.`);
+	die(`could not read the generated catalog at ${CATALOG}. Run \`pnpm -C apps/console run export:addon-catalog\`.`);
 }
 if (!Array.isArray(catalog) || catalog.length === 0) {
 	die("the generated catalog is empty — a render check over nothing reports success and means nothing.");
@@ -220,7 +220,7 @@ try {
 	// mapping that most needs asking, being the newest, so it is rendered here all the same.
 	hetzner = [...fx.addons, ...(fx.chartedNotOffered ?? [])];
 } catch {
-	die(`could not read the generated Hetzner specs at ${HETZNER}. Run \`pnpm -F console export:hetzner-data-services\`.`);
+	die(`could not read the generated Hetzner specs at ${HETZNER}. Run \`pnpm -C apps/console run export:hetzner-data-services\`.`);
 }
 if (!Array.isArray(hetzner) || hetzner.length === 0) {
 	die("the generated Hetzner in-cluster spec list is empty — a render check over nothing reports success and means nothing.");

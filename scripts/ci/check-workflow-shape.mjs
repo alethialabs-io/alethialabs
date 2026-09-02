@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// Every step in every workflow must have a `run:` or a `uses:`.
+// A workflow file must MEAN what it says: every step carries a `run:` or a `uses:`, every
+// `permissions:` scope is one Actions accepts, and no `name:` loses half of itself to an
+// unquoted `#`.
 //
 // WHY THIS EXISTS. A workflow file can be VALID YAML and still be REJECTED by Actions:
 //
@@ -124,6 +126,44 @@ function editDistance(a, b) {
  * Line-scanned, matching the rest of this file: a `permissions:` key, then the indented `k: v`
  * pairs beneath it until the indentation returns.
  */
+/**
+ * Every `name:` whose written text is NOT what YAML parses — because an unquoted `#` preceded by
+ * whitespace opens a comment and the rest of the line is dropped.
+ *
+ * WHY THIS IS WORTH A CHECK, given that the step still runs. Two names in this repo cite an
+ * incident, and the citation is the entire reason they are worded that way:
+ *
+ *     written: Worktree lease guard — replays incident #1247
+ *     parsed : Worktree lease guard — replays incident
+ *     written: Post the result to #2843
+ *     parsed : Post the result to
+ *
+ * The Actions UI shows the parsed form, so the reference a reader needs when the step goes red is
+ * exactly the half that disappears. Same family as the rest of this file: a workflow that says
+ * something it does not mean, and `yaml.parse()` agrees with the file rather than with the author.
+ *
+ * THE RULE IS "`#` PRECEDED BY WHITESPACE", NOT "CONTAINS `#`". `IP-activation markers still match
+ * the legal prose (#2366)` is CORRECT — the `#` follows `(`, so it is part of the scalar and
+ * nothing is lost. Four such names exist here, and a contains-`#` rule would "fix" all four.
+ * A quoted scalar (`name: 'Post the result to #2843'`) is likewise fine.
+ *
+ * @param {string} text
+ * @returns {{line: number, written: string, parsed: string}[]}
+ */
+export function scanNameTruncation(text) {
+	const out = [];
+	text.split("\n").forEach((line, i) => {
+		const m = line.match(/^\s*(?:-\s+)?name:\s*(\S.*?)\s*$/);
+		if (m === null) return;
+		const scalar = m[1];
+		if (scalar.startsWith("'") || scalar.startsWith('"') || scalar.startsWith(">") || scalar.startsWith("|")) return;
+		const cut = scalar.search(/\s#/);
+		if (cut === -1) return;
+		out.push({ line: i + 1, written: scalar, parsed: scalar.slice(0, cut).trimEnd() });
+	});
+	return out;
+}
+
 export function scanPermissions(text) {
 	const lines = text.split("\n");
 	const entries = [];
@@ -255,6 +295,14 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 		}
 		if (jobs === 0) {
 			out.push(`${dir}/${f}: a \`jobs:\` block with no jobs under it — Actions would reject this file, producing a run with zero jobs and an EMPTY status rollup.`);
+		}
+		for (const t of scanNameTruncation(text)) {
+			out.push(
+				`${dir}/${f}:${t.line}: this name is silently truncated by YAML — written \`${t.written}\`, ` +
+					`parsed \`${t.parsed}\`. An unquoted \`#\` preceded by whitespace opens a comment, so the ` +
+					"Actions UI drops everything after it — including the issue reference the name exists to carry. " +
+					`Quote it: \`name: '${t.written}'\`.`,
+			);
 		}
 		for (const p of problems) {
 			out.push(
@@ -410,6 +458,32 @@ jobs:
 	ok("on:/paths: list items are not steps", scanWorkflow(NOTSTEPS).problems.length === 0, JSON.stringify(scanWorkflow(NOTSTEPS).problems));
 	ok("...and a matrix include is not a step either", scanWorkflow(NOTSTEPS).steps === 1, `steps=${scanWorkflow(NOTSTEPS).steps}`);
 
+	// Name truncation. The false-positive direction is the one that matters: a `#` inside
+	// parentheses is part of the scalar and four correct names in this repo carry one, so a rule
+	// that merely looked for `#` would rewrite all four and teach people the check is noise.
+	ok(
+		"a whitespace-preceded # truncates the name",
+		scanNameTruncation("      - name: Worktree lease guard — replays incident #1247\n")[0]?.parsed ===
+			"Worktree lease guard — replays incident",
+	);
+	ok("a # after ( is part of the scalar", scanNameTruncation("      - name: markers still match the prose (#2366)\n").length === 0);
+	ok("a single-quoted name is safe", scanNameTruncation("      - name: 'Post the result to #2843'\n").length === 0);
+	ok("a double-quoted name is safe", scanNameTruncation('      - name: "Post the result to #2843"\n').length === 0);
+	ok("a name with no # is not reported", scanNameTruncation("      - name: Run the guards\n").length === 0);
+	ok("a job-level name is scanned too", scanNameTruncation("    name: Authz guards for #1\n").length === 1);
+	ok(
+		"the real ci.yml name is reported when unquoted, through check()",
+		check("d", () => ["a.yml"], () => "jobs:\n  a:\n    steps:\n      - name: replays incident #1247\n        run: true\n").some((p) =>
+			/silently truncated by YAML/.test(p),
+		),
+	);
+	ok(
+		"...and not when quoted",
+		!check("d", () => ["a.yml"], () => "jobs:\n  a:\n    steps:\n      - name: 'replays incident #1247'\n        run: true\n").some((p) =>
+			/silently truncated by YAML/.test(p),
+		),
+	);
+
 	// Blindness. Each of these would otherwise be a clean report.
 	ok("a file with no jobs: block is unreadable, not clean", scanWorkflow("name: x\non: push\n").readable === false);
 	const noDir = check("nope", () => { throw new Error("ENOENT"); });
@@ -448,6 +522,7 @@ if (process.argv.includes("--self-test")) {
 	// green line produced by a scanner that matched nothing.
 	console.log(
 		`workflow-shape: ${files.length} workflow(s), ${steps} steps, every one carrying a \`run:\` or \`uses:\`; ` +
-			`${perms} permission entr(ies), every scope and level one Actions accepts`,
+			`${perms} permission entr(ies), every scope and level one Actions accepts; ` +
+			"no `name:` losing text to an unquoted `#`",
 	);
 }
