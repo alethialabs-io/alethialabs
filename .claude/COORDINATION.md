@@ -58,13 +58,14 @@ claim → `pnpm wt` → build → **open a non-draft PR into `dev`** → **Mergi
 every non-draft, conflict-free `dev` PR and squash-merges it in order, validating each on its own branch — you
 run NO `gh pr merge`). The human is NOT in the loop.
 
-**`class:ui`** — canvas, components, anything visual. **Human-in-the-loop.** A UI unit's deliverable is NOT a
-merged PR — it is a **UI design spec grounded in the data model** the backend lanes define (the seams issue +
-`project_*` schema), authored per the `alethia-design` skill and shaped for **Claude Design** ingestion. The
-visual is then built and **the human gates the merge.** A `class:ui` issue lands `needs:design` and surfaces
-to the human; it never enters the autonomous enqueue-on-green path. Because backend lanes define the data model
-first, UI specs always have a stable model to consume (never pixels-before-schema). This operationalizes the
-"UI work is a spec" rule.
+**`class:ui`** — canvas, components, anything visual. **Human-in-the-loop.** A UI unit starts with a **UI
+design spec grounded in the data model** the backend lanes define (the seams issue + `project_*` schema),
+authored per the `alethia-design` skill and shaped for **Claude Design** ingestion. Its implementation PR MUST
+open as a **draft**. Draft is the mechanical gate Mergify already honours: the agent never runs `gh pr ready`,
+and only the maintainer marks the PR ready after accepting the design decision. Once ready, the ordinary queue
+may land it on green. A `class:ui` issue lands `needs:design` and surfaces to the human. Because backend lanes
+define the data model first, UI specs always have a stable model to consume (never pixels-before-schema). This
+operationalizes the "UI work is a spec" rule without pretending the issue label itself controls Mergify.
 
 **The line is whether a design decision is still open — not whether the diff touches a `.tsx`.** "Anything
 visual is `class:ui`" was written when every UI unit was a new surface, and read literally it routes
@@ -142,6 +143,9 @@ scripts/claim-work.sh --class backend      # loop
   the gap behind #1247: unclaimable meant unprotected, so the only path was the forbidden hand-claim, leaving
   no lease and nothing to stop a second instance starting the same unit. `--issue` runs the full lock + lease +
   verify on one named unit; it refuses if the unit is closed, already claimed, or already has a closing PR.
+  A `class:ui` implementation PR opens as a **draft** and stays draft until the maintainer marks it ready; the
+  building agent must never run `gh pr ready`. This is the actual merge gate — Mergify does not read the class
+  label, and will auto-queue any non-draft, conflict-free `dev` PR once its review threads are resolved.
 - **A worktree is leased too, separately from the issue.** `pnpm wt:who` shows holders; another instance cannot
   write in, remove, or commit from a worktree you hold. See CLAUDE.md → "One worktree per instance". The two
   leases answer different questions — the issue lease says *who is building this unit*, the worktree lease says
