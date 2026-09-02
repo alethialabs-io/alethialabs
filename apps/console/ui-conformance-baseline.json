@@ -20,12 +20,12 @@
 		"scoredHere": 15,
 		"live": 10,
 		"notInstrumented": 8,
-		"findings": 715,
+		"findings": 699,
 		"findingFiles": 130
 	},
 	"ledgers": {
-		"baseline": 15,
-		"debt": 135
+		"baseline": 16,
+		"debt": 133
 	},
 	"predicates": {
 		"S1": {
@@ -2439,7 +2439,7 @@
 			"route": "/[org]",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 2 file(s), worst apps/console/components/org/org-purchase-ui.tsx (2)"
+			"detail": "2 occurrence(s) in 1 file(s), worst apps/console/components/settings/members/invite-member-dialog.tsx (2)"
 		},
 		{
 			"route": "/[org]",
@@ -2987,7 +2987,7 @@
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "25 occurrence(s) in 4 file(s), worst apps/console/components/settings/access/access-manager.tsx (13)"
+			"detail": "23 occurrence(s) in 3 file(s), worst apps/console/components/settings/access/access-manager.tsx (13)"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -3063,7 +3063,7 @@
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "11 occurrence(s) in 4 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"detail": "9 occurrence(s) in 3 file(s), worst apps/console/components/errors/error-state.tsx (4)"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -3367,7 +3367,7 @@
 			"route": "/[org]/~/alerts",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "50 occurrence(s) in 10 file(s), worst apps/console/components/alerts/policies-panel.tsx (12)"
+			"detail": "48 occurrence(s) in 9 file(s), worst apps/console/components/alerts/policies-panel.tsx (12)"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -3830,7 +3830,7 @@
 			"route": "/[org]/~/new",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "11 occurrence(s) in 3 file(s), worst apps/console/components/design-project/placement-selector.tsx (5)"
+			"detail": "9 occurrence(s) in 2 file(s), worst apps/console/components/design-project/placement-selector.tsx (5)"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -3909,7 +3909,7 @@
 			"route": "/[org]/~/runners",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "11 occurrence(s) in 4 file(s), worst apps/console/app/(private)/[org]/~/runners/runners-client.tsx (4)"
+			"detail": "9 occurrence(s) in 3 file(s), worst apps/console/app/(private)/[org]/~/runners/runners-client.tsx (4)"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -4068,7 +4068,7 @@
 			"route": "/[org]/~/settings/access",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "25 occurrence(s) in 4 file(s), worst apps/console/components/settings/access/access-manager.tsx (13)"
+			"detail": "23 occurrence(s) in 3 file(s), worst apps/console/components/settings/access/access-manager.tsx (13)"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -4145,7 +4145,7 @@
 			"route": "/[org]/~/settings/activity",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "11 occurrence(s) in 4 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"detail": "9 occurrence(s) in 3 file(s), worst apps/console/components/errors/error-state.tsx (4)"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -4222,7 +4222,7 @@
 			"route": "/[org]/~/settings/billing",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "49 occurrence(s) in 9 file(s), worst apps/console/components/settings/billing/billing-panel.tsx (10)"
+			"detail": "45 occurrence(s) in 8 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
@@ -4530,7 +4530,7 @@
 			"route": "/[org]/~/settings/members",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "11 occurrence(s) in 3 file(s), worst apps/console/components/settings/members/members-table.tsx (7)"
+			"detail": "9 occurrence(s) in 2 file(s), worst apps/console/components/settings/members/members-table.tsx (7)"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -4607,7 +4607,7 @@
 			"route": "/[org]/~/settings/roles",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "24 occurrence(s) in 5 file(s), worst apps/console/components/settings/roles/roles-manager.tsx (11)"
+			"detail": "22 occurrence(s) in 4 file(s), worst apps/console/components/settings/roles/roles-manager.tsx (11)"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -4684,7 +4684,7 @@
 			"route": "/[org]/~/settings/sso",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "27 occurrence(s) in 5 file(s), worst apps/console/components/settings/sso/sso-manager.tsx (13)"
+			"detail": "25 occurrence(s) in 4 file(s), worst apps/console/components/settings/sso/sso-manager.tsx (13)"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -4761,7 +4761,7 @@
 			"route": "/[org]/~/settings/teams",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "20 occurrence(s) in 4 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
+			"detail": "18 occurrence(s) in 3 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -5296,7 +5296,7 @@
 			"route": "/[org]/~/usage",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "39 occurrence(s) in 6 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
+			"detail": "37 occurrence(s) in 5 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
 		},
 		{
 			"route": "/[org]/~/usage",
@@ -5572,13 +5572,13 @@
 				"owner": null
 			},
 			"type_scale": {
-				"total": 678,
-				"decision": 0,
-				"debt": 678,
+				"total": 662,
+				"decision": 1,
+				"debt": 661,
 				"unlisted": 0,
-				"inPageClosure": 488,
+				"inPageClosure": 484,
 				"chromeOnly": 152,
-				"offTree": 38,
+				"offTree": 26,
 				"predicate": "H8",
 				"owner": null
 			},
@@ -5739,11 +5739,11 @@
 		"offTreeFiles": [
 			{
 				"file": "apps/console/components/auth/onboarding-form.tsx",
-				"hits": 20
+				"hits": 19
 			},
 			{
 				"file": "apps/console/components/auth/auth-form.tsx",
-				"hits": 16
+				"hits": 5
 			},
 			{
 				"file": "apps/console/components/forms/oauth-consent-form.tsx",
