@@ -195,8 +195,39 @@ func docsPlaceholderToken(token string) bool {
 	return strings.HasPrefix(token, "[") && strings.HasSuffix(token, "]") && len(token) > 2
 }
 
-// TestHygCliDocs_NoDocumentedExampleCarriesAPlaceholder is the `cli_ux` ratchet's docs half: a
-// registered group's examples must be runnable AS WRITTEN.
+// docsPlaceholderRatchetGroups is the EXPLICIT opt-in list for the placeholder ratchet below.
+//
+// It is written out by hand, and deliberately NOT derived from docsGroups, because the two answer
+// different questions. docsGroups says "this group has a docs page"; this list says "a pass has
+// read every example on that page and confirmed it is runnable as written".
+//
+// Iterating docsGroups conflated them, and that is a ratchet nobody can keep green. Groups are
+// registered by whichever lane finishes them, landing on dev independently and AFTER this ratchet
+// was measured — so a sibling lane's merge could turn this test red on a page the author of the
+// failing branch has never touched and is not theirs to change. A guard whose verdict depends on
+// what merged elsewhere this week is a guard that gets deleted rather than fixed.
+//
+// TO ADD A GROUP: read every fenced `alethia …` example on its page, remove or replace each
+// placeholder — prefer a form of the command that resolves the value itself over a literal — and
+// then add the group's name here, in the same pass. Adding the name without doing the reading is
+// the only way this list can lie.
+//
+// Registering a group in docsGroups does NOT enrol it here; that is the point. The other tests in
+// this file still hold every registered group to its page.
+var docsPlaceholderRatchetGroups = []string{
+	"chart",
+	"cluster",
+	"drift",
+	"iac",
+	"members",
+	"org",
+	"repo",
+	"staged",
+	"teams",
+}
+
+// TestHygCliDocs_NoDocumentedExampleCarriesAPlaceholder is the `cli_ux` ratchet's docs half: an
+// enrolled group's examples must be runnable AS WRITTEN.
 //
 // The programme's target number is "copied placeholders in the golden-path docs", and this is what
 // makes it a number rather than an intention. An example carrying `<job-id>` is not an example — it
@@ -205,14 +236,34 @@ func docsPlaceholderToken(token string) bool {
 // available in the tree already (`jobs logs --latest`, an id the picker resolves), so what the
 // placeholder recorded was that nobody had gone back to the page.
 //
-// It only inspects REGISTERED groups, and the registry only grows, so this is a ratchet: a page is
-// held to it from the pass that finishes its group onward, and can never quietly regress.
+// It inspects the groups ENROLLED in docsPlaceholderRatchetGroups, and that list only grows, so
+// this is a ratchet: a page is held to it from the pass that enrols its group onward, and can never
+// quietly regress.
 func TestHygCliDocs_NoDocumentedExampleCarriesAPlaceholder(t *testing.T) {
-	if len(docsGroups) == 0 {
-		t.Fatal("the registry is empty — every assertion in this file would be vacuous")
+	if len(docsPlaceholderRatchetGroups) == 0 {
+		t.Fatal("the enrolment list is empty — every assertion in this test would be vacuous")
 	}
+	// One page can carry several enrolled groups (organizations.mdx carries org, members and
+	// teams); read it once so a violation is reported once rather than per group.
+	seen := map[string]bool{}
+	var pages []string
+	for _, group := range docsPlaceholderRatchetGroups {
+		page, ok := docsGroups[group]
+		if !ok {
+			t.Errorf("%q is enrolled in docsPlaceholderRatchetGroups but is not in docsGroups.\n"+
+				"      An enrolled group that no longer has a page is a stale entry, not a row to\n"+
+				"      skip: remove it here in the same change that removes it from the registry.", group)
+			continue
+		}
+		if seen[page] {
+			continue
+		}
+		seen[page] = true
+		pages = append(pages, page)
+	}
+	sort.Strings(pages)
 	checked := 0
-	for _, page := range docsGroups {
+	for _, page := range pages {
 		body := docsRead(t, docsPagePath(page))
 		examples := docsFencedExamples(body)
 		if len(examples) == 0 {
