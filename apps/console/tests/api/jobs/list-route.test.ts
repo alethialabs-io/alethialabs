@@ -65,6 +65,16 @@ function render(fragment: SQL | undefined): {
 	return { sql: q.sql, params: q.params };
 }
 
+/**
+ * Collapses whitespace so an assertion reads the SHAPE of a clause rather than drizzle's spacing.
+ *
+ * Only whitespace: the identifier quoting, the parentheses and the `$n` numbering are all part of
+ * what is being asserted, because they are what tell a disjunction from a conjunction.
+ */
+function normalized(rendered: string): string {
+	return rendered.replace(/\s+/g, " ").trim();
+}
+
 /** What one drive of the route recorded. */
 interface Captured {
 	/** The rows query's projection, so the cursor-key EXPRESSION can be read, not just its value. */
@@ -209,31 +219,58 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		expect(vi.mocked(authorizeCli).mock.calls[0][2]).toEqual({ type: "job" });
 	});
 
-	it("scopes the rows to the actor's ORG, and to nothing else", async () => {
+	it("scopes the rows to the RLS `owner_all` disjunction — org OR owner, never org alone", async () => {
 		await drive("");
 		const where = render(captured.rowsWhere);
 		// The WHOLE parameter list, not a containment check. The bug this route had was
 		// `eq(jobs.user_id, userId)`, and an AND of both ids would satisfy "the org is in there"
 		// while still hiding a teammate's job.
-		expect(where.params).toEqual([ORG]);
+		expect(where.params).toEqual([ORG, USER]);
 		expect(where.sql).toContain('"org_id"');
-		expect(where.sql).not.toContain('"user_id"');
+		expect(where.sql).toContain('"user_id"');
+		// AND THE JOIN MUST BE `or`. Both ids appear in the parameter list either way, so the
+		// parameter assertion above cannot tell the policy from its conjunction — and the
+		// conjunction is a real, shipped set of rows this route would hide: a project-less job
+		// stamped `org_id = user_id` by the trigger's personal-org fallback carries the caller's
+		// id in BOTH columns, but a teammate's org job carries the org in only one.
+		expect(normalized(where.sql)).toContain(
+			'("jobs"."org_id" = $1 or "jobs"."user_id" = $2)',
+		);
+		expect(where.sql).not.toMatch(/"org_id" = \$1 and/i);
 	});
 
-	it("adds the user predicate — and nothing else — under ?mine=true", async () => {
+	it("renders the default WHERE as the policy and NOTHING else", async () => {
+		// The whole rendered clause, by hand, `toBe` rather than `toContain`. `owner_all`
+		// (programmables.sql:885-889) is `user_id = app.current_owner OR org_id = app.current_org`
+		// and the two surfaces returning the IDENTICAL set is this route's thesis, so an extra
+		// ANDed arm is as much a defect as a missing one — and a containment check cannot see it.
+		// Written out rather than rebuilt from `sql`/`eq`, because an expectation composed the
+		// same way the route composes it agrees with the route by construction.
+		await drive("");
+		expect(normalized(render(captured.rowsWhere).sql)).toBe(
+			'("jobs"."org_id" = $1 or "jobs"."user_id" = $2)',
+		);
+	});
+
+	it("SUBSTITUTES the owner arm under ?mine=true rather than ANDing onto the org", async () => {
 		await drive("?mine=true");
 		const where = render(captured.rowsWhere);
-		expect(where.params).toEqual([ORG, USER]);
+		// Exactly the predicate this route carried BEFORE #3672 — which is what makes "?mine
+		// restores the old set" literally true. An AND would answer "my jobs that are also
+		// stamped with my org", which drops every job the trigger stamped with my personal org.
+		expect(where.params).toEqual([USER]);
 		expect(where.sql).toContain('"user_id"');
+		expect(where.sql).not.toContain('"org_id"');
+		expect(render(captured.countWhere).params).toEqual([USER]);
 	});
 
 	it("adds the status predicate to the rows AND to the count", async () => {
 		await drive("?status=QUEUED");
-		expect(render(captured.rowsWhere).params).toEqual([ORG, "QUEUED"]);
+		expect(render(captured.rowsWhere).params).toEqual([ORG, USER, "QUEUED"]);
 		// A facet or count taken from different predicates than the rows is the console filter
 		// standard's named defect; here it would report the org's whole job history beside a
 		// single-status page.
-		expect(render(captured.countWhere).params).toEqual([ORG, "QUEUED"]);
+		expect(render(captured.countWhere).params).toEqual([ORG, USER, "QUEUED"]);
 	});
 
 	it("counts over the SCOPE, not over the remainder after the cursor", async () => {
@@ -247,8 +284,24 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		// The keyset predicate is on the rows query only. A total that shrank as the caller paged
 		// would read as rows disappearing from under them.
 		expect(rows.sql).toContain("::timestamptz");
-		expect(rows.params).toEqual([ORG, CURSOR_KEY, JOB_ID]);
-		expect(counted.params).toEqual([ORG]);
+		expect(rows.params).toEqual([ORG, USER, CURSOR_KEY, JOB_ID]);
+		expect(counted.params).toEqual([ORG, USER]);
+	});
+
+	it("hands the count the SAME tuple as the rows, so total cannot disagree with them", async () => {
+		// `total` and the rows are two readings of one scope. They are built from a single tuple
+		// precisely so they cannot drift, and this asserts the artifact rather than the intent —
+		// in both modes, because `?mine` is where a second, separately-built predicate would be
+		// easiest to introduce.
+		for (const q of ["", "?mine=true", "?status=QUEUED", "?mine=true&status=QUEUED"]) {
+			captured.rowsWhere = undefined;
+			captured.countWhere = undefined;
+			await drive(q);
+			const rows = render(captured.rowsWhere);
+			const counted = render(captured.countWhere);
+			expect(normalized(counted.sql)).toBe(normalized(rows.sql));
+			expect(counted.params).toEqual(rows.params);
+		}
 	});
 
 	it("asks for one row more than the page, so the extra row alone decides `has more`", async () => {

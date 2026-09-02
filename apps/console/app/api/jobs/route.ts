@@ -333,24 +333,49 @@ function badRequest(error: string): NextResponse {
 }
 
 /**
- * Lists the caller's ORGANIZATION's jobs, cursor-paged, with the project and runner names joined.
+ * Lists every job the caller can see — their org's and their own — cursor-paged, with the project
+ * and runner names joined.
  *
- * THE SCOPE WAS THE USER AND IS NOW THE ORG, AND THAT IS THE FIX (#3672). This route used to
- * filter on `jobs.user_id = <caller>`, so `alethia jobs list` and the console's jobs page —
- * `getJobsPage`, which reads through RLS at `org_id` — answered the same question differently:
- * a teammate's deploy of the org's own project was invisible from the terminal and plainly
- * listed in the browser. One product, two surfaces, two answers. The org is the tenancy scope
- * everywhere else in the schema, so the org is what this lists. `jobs.org_id` is stamped on
- * insert by `jobs_set_org_id` (programmables.sql), which derives it from the parent project and
- * falls back to the session org and then to `user_id` — `user_id` is NOT NULL, so the trigger has
- * no path that leaves the column unset. The column is nonetheless declared nullable and holds
- * pre-trigger history, which the migrations backfill rather than the schema forbid; that is why
- * this is a WHERE clause on org_id and not an assumption that every row has one.
+ * THE SCOPE IS THE `owner_all` RLS POLICY, QUOTED (#3672). This route used to filter on
+ * `jobs.user_id = <caller>`, so `alethia jobs list` and the console's jobs page — `getJobsPage`,
+ * which reads through RLS — answered the same question differently: a teammate's deploy of the
+ * org's own project was invisible from the terminal and plainly listed in the browser. One
+ * product, two surfaces, two answers. So the predicate here is not a scope invented for the CLI;
+ * it is `owner_all` (programmables.sql:885-889) written out in drizzle:
  *
- * `?mine=true` is what makes the OLD behaviour addressable instead of implicit. It narrows to the
- * caller's own jobs, and — being a scope predicate rather than a post-filter — it narrows `total`
- * and `page.total` with the rows. A count taken from a different set of predicates than the rows
- * is the defect the console's filter standard exists to prevent.
+ *     org_id = <caller's org>  OR  user_id = <caller>
+ *
+ * — the same disjunction the console's own reads are filtered by, which is what makes the two
+ * surfaces return the IDENTICAL set. The service role bypasses RLS, so quoting the policy is the
+ * only way to get the policy's answer.
+ *
+ * THE OWNER ARM IS NOT DECORATION, AND THE REASON IS A DATA DEFECT. `jobs.org_id` is stamped on
+ * insert by `jobs_set_org_id` → `set_org_id_from_project` (programmables.sql:827-841): parent
+ * project's org, else the `app.current_org` GUC, else `NEW.user_id`. Two shipped enqueue paths
+ * reach that last fallback — the `DESTROY_RUNNER` branch of this file's POST, and
+ * `/api/cli/runners/deploy` — because both insert a project-less job on `getServiceDb()`, which
+ * sets no GUC. Those rows carry `org_id = <userId>`, the caller's PERSONAL org, so for a member
+ * of a Teams org an `org_id`-only WHERE clause hides the caller's OWN runner jobs, and `?mine=`
+ * could not recover them while it was ANDed onto that clause. The org arm alone is therefore
+ * wrong about rows the product actually writes today.
+ *
+ * That personal-org stamp is a defect at the ENQUEUE SITES, not a paging one — the fix is a
+ * session org on those two inserts (or an explicit `org_id`), and it is tracked separately in
+ * #3874. This route quotes the policy either way: `owner_all` is what the console
+ * already answers with, and it stays correct after those rows stop existing.
+ *
+ * `?mine=true` SUBSTITUTES, IT DOES NOT NARROW. It replaces the disjunction with its owner arm —
+ * `user_id = <caller>` alone — which is exactly the predicate this route carried before #3672, so
+ * the flag genuinely restores the old set rather than intersecting the old set with the new one.
+ * ANDing would have been the looser-looking but wronger rule: it would answer "my jobs that also
+ * happen to be stamped with my org", which drops precisely the personal-org rows above. Being a
+ * scope predicate rather than a post-filter, it moves `total` and `page.total` with the rows; a
+ * count taken from a different set of predicates than the rows is the defect the console's filter
+ * standard exists to prevent.
+ *
+ * `jobs.org_id` is declared nullable and holds pre-trigger history that the migrations backfill
+ * rather than the schema forbid, which is a second reason this is a WHERE clause and not an
+ * assumption that every row has one.
  *
  * `X-Alethia-Org` NOW APPLIES HERE. The GET resolved the caller's default scope and consulted no
  * policy at all; it goes through `authorizeCli` like every sibling CLI job route, so the header
@@ -401,9 +426,25 @@ export async function GET(req: Request) {
 	// THE TENANCY BOUNDARY. These routes read through getServiceDb(), whose role bypasses RLS, so
 	// this predicate is the whole of it — and it is also what a cursor is fingerprinted against, so
 	// a cursor minted in another org is refused above rather than answered here.
+	//
+	// IT IS THE `owner_all` RLS POLICY WRITTEN OUT IN DRIZZLE (programmables.sql:885-889):
+	// `user_id = app.current_owner OR org_id = app.current_org`. Quoting the policy rather than
+	// re-deriving a scope here is the whole point — the console reads this table THROUGH that
+	// policy, so any predicate narrower than it makes the terminal and the browser answer the same
+	// question differently again, which is the defect #3672 closed. `?mine=true` SUBSTITUTES the
+	// owner arm for the disjunction rather than ANDing onto it; see the GET doc above.
+	//
+	// The two `eq()` fragments are embedded in the template rather than written out as
+	// `${jobs.org_id} = ${actor.orgId}` so each parameter still binds through the column's own
+	// drizzle type mapper — a raw interpolation would hand postgres-js a bare string for a `uuid`
+	// column. A `sql` template is used at all because `or()` is typed `SQL | undefined` and this
+	// tuple's first element may not be optional; narrowing it would need an `as`, which is banned.
+	const visible: SQL = mine.mine
+		? eq(jobs.user_id, actor.userId)
+		: sql`(${eq(jobs.org_id, actor.orgId)} or ${eq(jobs.user_id, actor.userId)})`;
+
 	const scope: [SQL, ...(SQL | undefined)[]] = [
-		eq(jobs.org_id, actor.orgId),
-		mine.mine ? eq(jobs.user_id, actor.userId) : undefined,
+		visible,
 		status ? sql`${jobs.status}::text = ${status}` : undefined,
 	];
 
