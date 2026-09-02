@@ -93,6 +93,10 @@ const DRIVERS: Record<string, { fn: string; run: (r: Row) => string }> = {
 		fn: "formatMonthlyRate",
 		run: (r) => fmt.formatMonthlyRate(n(r.amount), rateStyle(r.style), s(r.currency)),
 	},
+	monthlyDelta: {
+		fn: "formatMonthlyDelta",
+		run: (r) => fmt.formatMonthlyDelta(n(r.amount), rateStyle(r.style), s(r.currency)),
+	},
 };
 
 /** Narrow the imported file without an `any` escaping or a cast. */
@@ -153,6 +157,39 @@ const REQUIRED_IDS = [
 	"duration/many-hours",
 	// hourCycle h23, not hour12:false.
 	"date/MIDNIGHT-IS-00-NOT-24",
+	// The credit register — ONE ROW PER WAY OF GETTING IT WRONG, listed below rather than counted.
+	// Each of these mistakes renders the REST of the block correctly, which is why none of them can
+	// be dropped: dropping the sign, signing the zero, rounding half to even, deciding the sign on
+	// the raw amount rather than on the rendered magnitude, rounding the decimal a human typed
+	// rather than the binary product Go scales, and pre-rounding at a fixed two places rather than
+	// at the ones being printed.
+	//
+	// NO NUMBER IN THIS SENTENCE, deliberately. It used to open "Four rows, because four separate
+	// mistakes", and had been wrong since the fifth id was added below it — a hand-typed count in
+	// prose beside a list is a second source of truth for the list's length, and it decays silently
+	// the first time the list grows. The same sentence, with the same error, is in
+	// `packages/core/format/conformance_test.go`.
+	"monthlyDelta/estimate/A-SAVING-KEEPS-ITS-SIGN",
+	"monthlyDelta/estimate/AN-INCREASE-IS-SIGNED-TOO",
+	"monthlyDelta/exact/ZERO-CARRIES-NO-SIGN-AND-NO-MINOR-UNITS",
+	"monthlyDelta/exact/JPY-HALF-ROUNDS-AWAY-FROM-ZERO",
+	"monthlyDelta/estimate/A-SUB-UNIT-INCREASE-ROUNDS-TO-NO-CHANGE",
+	// #3895. Three decimals, so the binary product lands on the far side of a half from the decimal
+	// literal — the region every other row in this section stays out of, and where the two
+	// implementations diverged for four weeks with all three layers green.
+	"monthlyDelta/exact/BINARY-SCALE-8.165-ROUNDS-DOWN",
+	"monthlyDelta/exact/BINARY-SCALE-8.165-ROUNDS-DOWN-A-SAVING-TOO",
+	"monthlyDelta/exact/BINARY-SCALE-1.005-ROUNDS-DOWN",
+	"monthlyDelta/exact/BINARY-SCALE-1.005-ROUNDS-DOWN-A-SAVING-TOO",
+	// ...and the rows that fail if the pre-round is at a fixed two places instead of the printed
+	// ones, which double-rounds every zero-decimal register.
+	"monthlyDelta/estimate/DOUBLE-ROUNDING-12.496-IS-NOT-A-HALF",
+	"monthlyDelta/exact/DOUBLE-ROUNDING-12.496-IS-NOT-A-HALF-AT-JPY",
+	// `monthlyRate` clamps a negative, and that is now a REFUSAL rather than a gap — the register
+	// a signed amount belongs in exists. Deleting these two would delete the only statement that
+	// the clamp is deliberate.
+	"monthlyRate/estimate/negative-REFUSED-see-monthlyDelta",
+	"monthlyRate/exact/negative-REFUSED-see-monthlyDelta",
 ];
 
 /**
@@ -171,6 +208,10 @@ const SECTION_FLOOR: Record<string, number> = {
 	bytes: 8,
 	money: 6,
 	monthlyRate: 15,
+	// Set to the row count, not below it. The paragraph above is a complaint about floors that
+	// lagged the sections they guard; a new section starting three rows slack would re-earn it.
+	// Raised 22 -> 32 with the binary-scale block (#3895).
+	monthlyDelta: 32,
 };
 
 describe("format conformance table", () => {
