@@ -48,14 +48,17 @@ var opsApproveCmd = &cobra.Command{
 
 		format := outputFormat(cmd)
 		if format == ui.FormatTable {
-			ui.Success(fmt.Sprintf("Approval minted (expires %s)", approval.ExpiresAt))
+			ui.Success(fmt.Sprintf("Approval minted (expires %s)", ui.Stamp(approval.ExpiresAt)))
 		}
 		rows := [][]string{
 			{"approval id", ui.OrDash(approval.ApprovalID)},
 			{"action", ui.OrDash(approval.Action)},
 			{"resource", ui.OrDash(approval.ResourceID)},
 			{"approver", ui.OrDash(approval.Approver)},
-			{"expires", ui.OrDash(approval.ExpiresAt)},
+			// ui.Stamp, not ui.OrDash: `expiresAt` is a TIMESTAMP, and the string helper echoed the
+			// wire's RFC3339 into a row a person reads while dashing correctly. Stamp already
+			// returns the dash for an empty value, so the OrDash wrapper had nothing left to add.
+			{"expires", ui.Stamp(approval.ExpiresAt)},
 			{"note", ui.OrDash(approval.Note)},
 		}
 		if err := ui.RenderCard(os.Stdout, format, "approval", rows, approval); err != nil {
@@ -133,7 +136,7 @@ var opsSessionCmd = &cobra.Command{
 		rows := [][]string{
 			{"session id", ui.OrDash(session.SessionID)},
 			{"operator", ui.OrDash(session.Operator)},
-			{"expires", ui.OrDash(session.ExpiresAt)},
+			{"expires", ui.Stamp(session.ExpiresAt)},
 		}
 		if err := ui.RenderCard(os.Stdout, format, "session", rows, session); err != nil {
 			fail(err)

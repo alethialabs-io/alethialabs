@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/ui/theme"
+	"github.com/alethialabs-io/alethialabs/packages/core/format"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -79,10 +80,22 @@ const (
 	SymbolOffline = "○"
 	SymbolPending = "◐"
 	SymbolDefault = "◆"
-	SymbolDash    = "—"
-	SymbolBullet  = "·"
-	SymbolArrow   = "→"
-	SymbolPoint   = "▸"
+	// SymbolDash IS format.Dash — one definition, in `packages/core`, because that is the half
+	// the runner and the console-facing formatter can both see and `packages/core` cannot import
+	// `apps/cli`. It was an independent `"—"` literal until #3659, which is the defect: two
+	// definitions of one glyph that a change reaches only one of.
+	//
+	// #3659 ruled that this name should be DELETED rather than pointed at the shared value, and
+	// that is still the right end state — one thing deserves one name. It is not done here because
+	// deleting it forces an edit to nine command files this unit's `scope:` does not own, one of
+	// which (`org_select.go`) a different lane is editing right now, and a mega-commit across
+	// another lane's files is the exact tangle the board's disjoint scopes exist to prevent. The
+	// DRIFT is closed today; the RENAME is owed, and each noun group can pay it in its own lane
+	// without coordinating with anyone.
+	SymbolDash   = format.Dash
+	SymbolBullet = "·"
+	SymbolArrow  = "→"
+	SymbolPoint  = "▸"
 )
 
 // Mark is the Alethia bracketed-point brand mark.
