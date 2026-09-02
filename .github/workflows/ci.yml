@@ -519,6 +519,19 @@ jobs:
       ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
       ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
       DEV_CONSOLE_LOG: /tmp/alethia-ui-audit-console.log
+      # The audit is a LOAD TEST against its own server, and the limiter it trips is protecting
+      # nothing here — this is a throwaway `next start` on localhost with a throwaway database.
+      # apps/console/lib/config/auth.ts documents ALETHIA_AUTH_RATE_LIMIT=0 as exactly that escape
+      # hatch. Why it is needed: lib/auth/index.ts trusts ONLY `cf-connecting-ip` for the bucket
+      # key (prod is Cloudflare → Caddy → console), that header never arrives on a bare localhost
+      # `next start`, and Better Auth's getIP returns null under NODE_ENV=production — so every
+      # request in the run lands in ONE shared `no-trusted-ip|/get-session` bucket. The global rule
+      # is 60s/100 and an ALLOWED request rewrites `lastRequest`, so the window only resets after
+      # 60s of SILENCE on the key: it is 100 requests for the whole run, not 100 per minute. The
+      # audit does ~270 page loads and every private page mounts `useSession`, so it rate-limits
+      # itself and then reports its own 429s as R6 "failed request" defects on the pages under
+      # test. Scoped to this job's env only — production policy is untouched.
+      ALETHIA_AUTH_RATE_LIMIT: "0"
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
