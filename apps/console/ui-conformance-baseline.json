@@ -20,12 +20,12 @@
 		"scoredHere": 15,
 		"live": 10,
 		"notInstrumented": 8,
-		"findings": 1141,
-		"findingFiles": 204
+		"findings": 715,
+		"findingFiles": 130
 	},
 	"ledgers": {
 		"baseline": 15,
-		"debt": 234
+		"debt": 135
 	},
 	"predicates": {
 		"S1": {
@@ -150,21 +150,21 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 32,
-			"fail": 8,
+			"pass": 38,
+			"fail": 2,
 			"na": 0,
 			"naReasons": {},
-			"score": 0.8
+			"score": 0.95
 		},
 		"H8": {
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 6,
-			"fail": 34,
+			"pass": 8,
+			"fail": 32,
 			"na": 0,
 			"naReasons": {},
-			"score": 0.15
+			"score": 0.2
 		},
 		"H3": {
 			"family": "H",
@@ -185,11 +185,11 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 25,
-			"fail": 15,
+			"pass": 40,
+			"fail": 0,
 			"na": 0,
 			"naReasons": {},
-			"score": 0.625
+			"score": 1
 		},
 		"H6": {
 			"family": "H",
@@ -286,7 +286,7 @@
 		{
 			"route": "/[org]",
 			"redirectOnly": false,
-			"surfaceFiles": 280,
+			"surfaceFiles": 281,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -307,10 +307,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -330,10 +330,10 @@
 				}
 			},
 			"overall": {
-				"pass": 11,
-				"fail": 3,
+				"pass": 12,
+				"fail": 2,
 				"na": 1,
-				"score": 0.7857
+				"score": 0.8571
 			}
 		},
 		{
@@ -678,10 +678,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -701,10 +701,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 3,
+				"pass": 13,
+				"fail": 2,
 				"na": 0,
-				"score": 0.8
+				"score": 0.8667
 			}
 		},
 		{
@@ -731,10 +731,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -754,10 +754,10 @@
 				}
 			},
 			"overall": {
-				"pass": 11,
-				"fail": 4,
+				"pass": 12,
+				"fail": 3,
 				"na": 0,
-				"score": 0.7333
+				"score": 0.8
 			}
 		},
 		{
@@ -943,10 +943,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -966,10 +966,10 @@
 				}
 			},
 			"overall": {
-				"pass": 10,
-				"fail": 4,
+				"pass": 11,
+				"fail": 3,
 				"na": 1,
-				"score": 0.7143
+				"score": 0.7857
 			}
 		},
 		{
@@ -1049,10 +1049,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
-					"score": 0.7143
+					"score": 1
 				},
 				"F": {
 					"instrumented": 0,
@@ -1072,10 +1072,10 @@
 				}
 			},
 			"overall": {
-				"pass": 11,
-				"fail": 3,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.7857
+				"score": 0.9286
 			}
 		},
 		{
@@ -1102,10 +1102,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -1125,10 +1125,10 @@
 				}
 			},
 			"overall": {
-				"pass": 11,
-				"fail": 3,
+				"pass": 12,
+				"fail": 2,
 				"na": 1,
-				"score": 0.7857
+				"score": 0.8571
 			}
 		},
 		{
@@ -1261,10 +1261,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 4,
-					"fail": 3,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.5714
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -1284,10 +1284,10 @@
 				}
 			},
 			"overall": {
-				"pass": 9,
-				"fail": 5,
+				"pass": 11,
+				"fail": 3,
 				"na": 1,
-				"score": 0.6429
+				"score": 0.7857
 			}
 		},
 		{
@@ -1314,10 +1314,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 4,
-					"fail": 3,
+					"pass": 5,
+					"fail": 2,
 					"na": 0,
-					"score": 0.5714
+					"score": 0.7143
 				},
 				"F": {
 					"instrumented": 0,
@@ -1337,10 +1337,10 @@
 				}
 			},
 			"overall": {
-				"pass": 10,
-				"fail": 4,
+				"pass": 11,
+				"fail": 3,
 				"na": 1,
-				"score": 0.7143
+				"score": 0.7857
 			}
 		},
 		{
@@ -1420,10 +1420,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -1443,10 +1443,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 2,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.8571
+				"score": 0.9286
 			}
 		},
 		{
@@ -1473,10 +1473,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -1496,10 +1496,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 2,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.8571
+				"score": 0.9286
 			}
 		},
 		{
@@ -1526,10 +1526,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -1549,10 +1549,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 2,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.8571
+				"score": 0.9286
 			}
 		},
 		{
@@ -1632,10 +1632,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -1655,10 +1655,10 @@
 				}
 			},
 			"overall": {
-				"pass": 10,
-				"fail": 4,
+				"pass": 11,
+				"fail": 3,
 				"na": 1,
-				"score": 0.7143
+				"score": 0.7857
 			}
 		},
 		{
@@ -1738,10 +1738,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -1761,10 +1761,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 2,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.8571
+				"score": 0.9286
 			}
 		},
 		{
@@ -1791,10 +1791,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -1814,10 +1814,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 2,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.8571
+				"score": 0.9286
 			}
 		},
 		{
@@ -1844,10 +1844,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -1867,10 +1867,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 2,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.8571
+				"score": 0.9286
 			}
 		},
 		{
@@ -1897,10 +1897,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -1920,10 +1920,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 2,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.8571
+				"score": 0.9286
 			}
 		},
 		{
@@ -1950,10 +1950,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -1973,10 +1973,10 @@
 				}
 			},
 			"overall": {
-				"pass": 10,
-				"fail": 4,
+				"pass": 11,
+				"fail": 3,
 				"na": 1,
-				"score": 0.7143
+				"score": 0.7857
 			}
 		},
 		{
@@ -2056,10 +2056,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -2079,10 +2079,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 2,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.8571
+				"score": 0.9286
 			}
 		},
 		{
@@ -2109,10 +2109,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"F": {
 					"instrumented": 0,
@@ -2132,10 +2132,10 @@
 				}
 			},
 			"overall": {
-				"pass": 13,
-				"fail": 2,
+				"pass": 14,
+				"fail": 1,
 				"na": 0,
-				"score": 0.8667
+				"score": 0.9333
 			}
 		},
 		{
@@ -2215,10 +2215,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"F": {
 					"instrumented": 0,
@@ -2238,10 +2238,10 @@
 				}
 			},
 			"overall": {
-				"pass": 13,
-				"fail": 1,
+				"pass": 14,
+				"fail": 0,
 				"na": 1,
-				"score": 0.9286
+				"score": 1
 			}
 		},
 		{
@@ -2268,10 +2268,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"F": {
 					"instrumented": 0,
@@ -2291,10 +2291,10 @@
 				}
 			},
 			"overall": {
-				"pass": 9,
-				"fail": 5,
+				"pass": 10,
+				"fail": 4,
 				"na": 1,
-				"score": 0.6429
+				"score": 0.7143
 			}
 		},
 		{
@@ -2423,8 +2423,7 @@
 		{
 			"route": "/[org]",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]",
@@ -2440,7 +2439,7 @@
 			"route": "/[org]",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "95 occurrence(s) in 13 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "4 occurrence(s) in 2 file(s), worst apps/console/components/org/org-purchase-ui.tsx (2)"
 		},
 		{
 			"route": "/[org]",
@@ -2602,7 +2601,7 @@
 			"route": "/[org]/[project]/architecture",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "160 occurrence(s) in 30 file(s), worst apps/console/components/design-project/byo/chart-scan-sheet.tsx (19)"
+			"detail": "154 occurrence(s) in 27 file(s), worst apps/console/components/design-project/byo/chart-scan-sheet.tsx (19)"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -2680,7 +2679,7 @@
 			"route": "/[org]/[project]/clusters",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "17 occurrence(s) in 3 file(s), worst apps/console/components/clusters/cluster-card.tsx (12)"
+			"detail": "16 occurrence(s) in 2 file(s), worst apps/console/components/clusters/cluster-card.tsx (12)"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -2758,7 +2757,7 @@
 			"route": "/[org]/[project]/environments",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "77 occurrence(s) in 10 file(s), worst apps/console/components/environments/promotion-detail-overlay.tsx (22)"
+			"detail": "76 occurrence(s) in 9 file(s), worst apps/console/components/environments/promotion-detail-overlay.tsx (22)"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -2837,7 +2836,7 @@
 			"route": "/[org]/[project]/jobs",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "12 occurrence(s) in 4 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -2981,8 +2980,7 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -2998,7 +2996,7 @@
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "71 occurrence(s) in 8 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "25 occurrence(s) in 4 file(s), worst apps/console/components/settings/access/access-manager.tsx (13)"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -3059,8 +3057,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -3076,7 +3073,7 @@
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "57 occurrence(s) in 8 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "11 occurrence(s) in 4 file(s), worst apps/console/components/errors/error-state.tsx (4)"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -3154,7 +3151,7 @@
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "12 occurrence(s) in 3 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
+			"detail": "11 occurrence(s) in 2 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
@@ -3370,8 +3367,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -3387,7 +3383,7 @@
 			"route": "/[org]/~/alerts",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "97 occurrence(s) in 15 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "50 occurrence(s) in 10 file(s), worst apps/console/components/alerts/policies-panel.tsx (12)"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -3466,7 +3462,7 @@
 			"route": "/[org]/~/clusters",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "17 occurrence(s) in 3 file(s), worst apps/console/components/clusters/cluster-card.tsx (12)"
+			"detail": "16 occurrence(s) in 2 file(s), worst apps/console/components/clusters/cluster-card.tsx (12)"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -3518,8 +3514,7 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "H2",
-			"verdict": "FAIL",
-			"detail": "3 occurrence(s) in 2 file(s), worst apps/console/components/connectors/connector-detail-sheet.tsx (2)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -3544,8 +3539,7 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "29 occurrence(s) in 12 file(s), worst apps/console/components/connectors/connection-ui.tsx (6)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -3597,8 +3591,7 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "H2",
-			"verdict": "FAIL",
-			"detail": "2 occurrence(s) in 2 file(s), worst apps/console/components/evidence/evidence-client.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -3624,7 +3617,7 @@
 			"route": "/[org]/~/evidence",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "65 occurrence(s) in 9 file(s), worst apps/console/components/evidence/drawer/report-tab.tsx (17)"
+			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -3702,7 +3695,7 @@
 			"route": "/[org]/~/jobs",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "12 occurrence(s) in 4 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -3780,7 +3773,7 @@
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "21 occurrence(s) in 5 file(s), worst apps/console/app/(private)/[org]/~/jobs/[id]/page.tsx (10)"
+			"detail": "10 occurrence(s) in 1 file(s), worst apps/console/app/(private)/[org]/~/jobs/[id]/page.tsx (10)"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -3833,8 +3826,7 @@
 		{
 			"route": "/[org]/~/new",
 			"predicate": "H2",
-			"verdict": "FAIL",
-			"detail": "2 occurrence(s) in 2 file(s), worst apps/console/components/create-project/configure-project.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -3844,8 +3836,7 @@
 		{
 			"route": "/[org]/~/new",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -3861,7 +3852,7 @@
 			"route": "/[org]/~/new",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "111 occurrence(s) in 21 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "11 occurrence(s) in 3 file(s), worst apps/console/components/design-project/placement-selector.tsx (5)"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -3915,7 +3906,7 @@
 			"route": "/[org]/~/runners",
 			"predicate": "H2",
 			"verdict": "FAIL",
-			"detail": "3 occurrence(s) in 3 file(s), worst apps/console/app/(private)/[org]/~/runners/runners-client.tsx (1)"
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/app/(private)/[org]/~/runners/runners-client.tsx (1)"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -3925,8 +3916,7 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -3942,7 +3932,7 @@
 			"route": "/[org]/~/runners",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "108 occurrence(s) in 20 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "11 occurrence(s) in 4 file(s), worst apps/console/app/(private)/[org]/~/runners/runners-client.tsx (4)"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -4086,8 +4076,7 @@
 		{
 			"route": "/[org]/~/settings/access",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -4103,7 +4092,7 @@
 			"route": "/[org]/~/settings/access",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "71 occurrence(s) in 8 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "25 occurrence(s) in 4 file(s), worst apps/console/components/settings/access/access-manager.tsx (13)"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -4164,8 +4153,7 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -4181,7 +4169,7 @@
 			"route": "/[org]/~/settings/activity",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "57 occurrence(s) in 8 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "11 occurrence(s) in 4 file(s), worst apps/console/components/errors/error-state.tsx (4)"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -4242,8 +4230,7 @@
 		{
 			"route": "/[org]/~/settings/billing",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
@@ -4259,7 +4246,7 @@
 			"route": "/[org]/~/settings/billing",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "129 occurrence(s) in 16 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "49 occurrence(s) in 9 file(s), worst apps/console/components/settings/billing/billing-panel.tsx (10)"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
@@ -4388,8 +4375,7 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "H2",
-			"verdict": "FAIL",
-			"detail": "3 occurrence(s) in 3 file(s), worst apps/console/components/classification/classification-manager.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
@@ -4415,7 +4401,7 @@
 			"route": "/[org]/~/settings/classification",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "75 occurrence(s) in 8 file(s), worst apps/console/components/classification/dimension-detail.tsx (22)"
+			"detail": "9 occurrence(s) in 1 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
@@ -4555,8 +4541,7 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -4572,7 +4557,7 @@
 			"route": "/[org]/~/settings/members",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "58 occurrence(s) in 8 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "11 occurrence(s) in 3 file(s), worst apps/console/components/settings/members/members-table.tsx (7)"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -4633,8 +4618,7 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -4650,7 +4634,7 @@
 			"route": "/[org]/~/settings/roles",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "71 occurrence(s) in 10 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "24 occurrence(s) in 5 file(s), worst apps/console/components/settings/roles/roles-manager.tsx (11)"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -4711,8 +4695,7 @@
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -4728,7 +4711,7 @@
 			"route": "/[org]/~/settings/sso",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "73 occurrence(s) in 9 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "27 occurrence(s) in 5 file(s), worst apps/console/components/settings/sso/sso-manager.tsx (13)"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -4789,8 +4772,7 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -4806,7 +4788,7 @@
 			"route": "/[org]/~/settings/teams",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "66 occurrence(s) in 8 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "20 occurrence(s) in 4 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -4857,8 +4839,7 @@
 		{
 			"route": "/[org]/~/support",
 			"predicate": "H2",
-			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 3 file(s), worst apps/console/components/support/support-topics.tsx (2)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support",
@@ -4884,7 +4865,7 @@
 			"route": "/[org]/~/support",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "2 occurrence(s) in 2 file(s), worst apps/console/app/(private)/[org]/~/support/page.tsx (1)"
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/app/(private)/[org]/~/support/page.tsx (1)"
 		},
 		{
 			"route": "/[org]/~/support",
@@ -5023,8 +5004,7 @@
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/ask",
@@ -5040,7 +5020,7 @@
 			"route": "/[org]/~/support/ask",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "55 occurrence(s) in 7 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "2 occurrence(s) in 2 file(s), worst apps/console/components/agent/agent-chat.tsx (1)"
 		},
 		{
 			"route": "/[org]/~/support/ask",
@@ -5116,8 +5096,7 @@
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "2 occurrence(s) in 2 file(s), worst apps/console/components/classification/classification-picker.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
@@ -5245,8 +5224,7 @@
 		{
 			"route": "/[org]/~/support/submit",
 			"predicate": "H2",
-			"verdict": "FAIL",
-			"detail": "5 occurrence(s) in 5 file(s), worst apps/console/components/support/submit/steps/step-category.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/submit",
@@ -5332,8 +5310,7 @@
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "H5",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/usage",
@@ -5349,7 +5326,7 @@
 			"route": "/[org]/~/usage",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "119 occurrence(s) in 13 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+			"detail": "39 occurrence(s) in 6 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
 		},
 		{
 			"route": "/[org]/~/usage",
@@ -5574,13 +5551,13 @@
 				"owner": null
 			},
 			"section_header": {
-				"total": 29,
+				"total": 4,
 				"decision": 0,
-				"debt": 29,
+				"debt": 4,
 				"unlisted": 0,
-				"inPageClosure": 24,
-				"chromeOnly": 2,
-				"offTree": 3,
+				"inPageClosure": 3,
+				"chromeOnly": 1,
+				"offTree": 0,
 				"predicate": "H2",
 				"owner": null
 			},
@@ -5596,11 +5573,11 @@
 				"owner": null
 			},
 			"format": {
-				"total": 7,
+				"total": 6,
 				"decision": 6,
-				"debt": 1,
+				"debt": 0,
 				"unlisted": 0,
-				"inPageClosure": 4,
+				"inPageClosure": 3,
 				"chromeOnly": 3,
 				"offTree": 0,
 				"predicate": "H5",
@@ -5618,35 +5595,35 @@
 				"owner": null
 			},
 			"layer_token": {
-				"total": 2,
+				"total": 1,
 				"decision": 0,
-				"debt": 2,
+				"debt": 1,
 				"unlisted": 0,
 				"inPageClosure": 1,
-				"chromeOnly": 1,
+				"chromeOnly": 0,
 				"offTree": 0,
 				"predicate": "H7",
 				"owner": null
 			},
 			"type_scale": {
-				"total": 1068,
+				"total": 678,
 				"decision": 0,
-				"debt": 1068,
+				"debt": 678,
 				"unlisted": 0,
-				"inPageClosure": 869,
-				"chromeOnly": 158,
-				"offTree": 41,
+				"inPageClosure": 488,
+				"chromeOnly": 152,
+				"offTree": 38,
 				"predicate": "H8",
 				"owner": null
 			},
 			"empty_state": {
-				"total": 18,
+				"total": 9,
 				"decision": 0,
-				"debt": 18,
+				"debt": 9,
 				"unlisted": 0,
-				"inPageClosure": 16,
+				"inPageClosure": 8,
 				"chromeOnly": 1,
-				"offTree": 1,
+				"offTree": 0,
 				"predicate": null,
 				"owner": "#3798"
 			}
@@ -5666,10 +5643,6 @@
 			},
 			{
 				"file": "apps/console/components/agent/widgets/bodies/blocks.tsx",
-				"hits": 8
-			},
-			{
-				"file": "apps/console/components/onboarding/setup-guide.tsx",
 				"hits": 8
 			},
 			{
@@ -5815,14 +5788,6 @@
 				"hits": 3
 			},
 			{
-				"file": "apps/console/components/plan/plan-tab.tsx",
-				"hits": 3
-			},
-			{
-				"file": "apps/console/components/billing/plan-picker.tsx",
-				"hits": 2
-			},
-			{
 				"file": "apps/console/app/(public)/onboarding/page.tsx",
 				"hits": 1
 			},
@@ -5831,19 +5796,11 @@
 				"hits": 1
 			},
 			{
-				"file": "apps/console/components/billing/plan-chooser.tsx",
-				"hits": 1
-			},
-			{
 				"file": "apps/console/components/design-project/canvas/nodes/zone-node.tsx",
 				"hits": 1
 			},
 			{
 				"file": "apps/console/components/legal/accept-terms-form.tsx",
-				"hits": 1
-			},
-			{
-				"file": "apps/console/components/plan/resource-card.tsx",
 				"hits": 1
 			}
 		]

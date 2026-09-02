@@ -5,6 +5,7 @@ import type { LucideIcon } from "lucide-react";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import Link from "next/link";
 import { Card } from "@repo/ui/card";
+import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
 
 interface SupportCardProps {
@@ -48,8 +49,12 @@ function SupportCardBody({
 						<ArrowRight className="size-[18px] text-muted-foreground/50 transition-[transform,color] duration-150 group-hover:translate-x-[3px] group-hover:text-foreground" />
 					))}
 			</div>
-			<h3 className="mt-6 text-lg font-semibold tracking-tight">{title}</h3>
-			<p className="mt-1 text-sm text-muted-foreground">{description}</p>
+			<SectionHeading
+				level={3}
+				title={title}
+				description={description}
+				className="mt-6"
+			/>
 		</div>
 	);
 }
