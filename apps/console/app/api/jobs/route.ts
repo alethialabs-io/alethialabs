@@ -352,17 +352,18 @@ function badRequest(error: string): NextResponse {
  * THE OWNER ARM IS NOT DECORATION, AND THE REASON IS A DATA DEFECT. `jobs.org_id` is stamped on
  * insert by `jobs_set_org_id` → `set_org_id_from_project` (programmables.sql:827-841): parent
  * project's org, else the `app.current_org` GUC, else `NEW.user_id`. Two shipped enqueue paths
- * reach that last fallback — the `DESTROY_RUNNER` branch of this file's POST, and
+ * reached that last fallback — the `DESTROY_RUNNER` branch of this file's POST, and
  * `/api/cli/runners/deploy` — because both insert a project-less job on `getServiceDb()`, which
  * sets no GUC. Those rows carry `org_id = <userId>`, the caller's PERSONAL org, so for a member
  * of a Teams org an `org_id`-only WHERE clause hides the caller's OWN runner jobs, and `?mine=`
- * could not recover them while it was ANDed onto that clause. The org arm alone is therefore
- * wrong about rows the product actually writes today.
+ * could not recover them while it was ANDed onto that clause.
  *
- * That personal-org stamp is a defect at the ENQUEUE SITES, not a paging one — the fix is a
- * session org on those two inserts (or an explicit `org_id`), and it is tracked separately in
- * #3874. This route quotes the policy either way: `owner_all` is what the console
- * already answers with, and it stays correct after those rows stop existing.
+ * That personal-org stamp is a defect at the ENQUEUE SITES, not a paging one, and #3874 has since
+ * fixed it there (#3942): both inserts now stamp `org_id` EXPLICITLY. IT STAMPS FORWARD ONLY —
+ * that change ships no backfill — so every job those two paths enqueued before it still carries
+ * `org_id = <userId>` and is still invisible to an `org_id`-only clause. The owner arm is what
+ * keeps that history listed, and the route quotes the policy either way: `owner_all` is what the
+ * console already answers with, and it stays correct after those rows stop existing.
  *
  * `?mine=true` SUBSTITUTES, IT DOES NOT NARROW. It replaces the disjunction with its owner arm —
  * `user_id = <caller>` alone — which is exactly the predicate this route carried before #3672, so
