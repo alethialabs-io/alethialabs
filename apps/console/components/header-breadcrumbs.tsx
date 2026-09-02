@@ -170,9 +170,13 @@ export function HeaderBreadcrumbs() {
 	// On /dashboard there are no route crumbs — the bar is just "[·] / Org".
 	if (crumbs.length === 0) return null;
 
+	// `min-w-0` on both the nav and the list: the topbar gives the trail its own grid track, and a
+	// track can only be narrower than the trail if every box between the track and the truncating
+	// crumb is allowed to shrink below its content. Without these two the `truncate` on each crumb
+	// never fires and the trail pushes its own track wider than the space the header has left.
 	return (
-		<Breadcrumb>
-			<BreadcrumbList className="flex-nowrap">
+		<Breadcrumb className="min-w-0">
+			<BreadcrumbList className="min-w-0 flex-nowrap">
 				{/* Separators sit between crumbs only — no leading chevron. */}
 				{crumbs.map((crumb, i) => (
 					<Fragment key={crumb.href ?? crumb.label}>
