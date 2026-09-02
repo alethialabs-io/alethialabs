@@ -486,6 +486,11 @@ func TestAuth_ResolveLoginPromptRefused(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			credsPath := isolatedHome(t)
+			// resolveLogin now REFUSES before the prompt when the confirm has no terminal
+			// to draw on, and a test process never has one. Without this the assertions
+			// below would still pass — on the gate's refusal, never reaching the prompt
+			// they exist to describe.
+			authCovTTY(t)
 			prev := authRequiredPrompt
 			authRequiredPrompt = func() (bool, error) { return tc.ok, tc.err }
 			t.Cleanup(func() { authRequiredPrompt = prev })
@@ -508,6 +513,7 @@ func TestAuth_ResolveLoginReturnsFreshToken(t *testing.T) {
 	authCovServer(t, authCovExchange("ada@x.com"))
 	authCovHeadless(t)
 	authCovForm(t, nil)
+	authCovTTY(t) // the confirm needs a terminal before resolveLogin will open it
 
 	prev := authRequiredPrompt
 	authRequiredPrompt = func() (bool, error) { return true, nil }
@@ -538,6 +544,7 @@ func TestAuth_ResolveLoginCredentialsUnusableAfterFlow(t *testing.T) {
 		savePreferences(cliPreferences{HideLoginWarning: true})
 		authCovServer(t, deny)
 		authCovHeadless(t)
+		authCovTTY(t) // the confirm needs a terminal before resolveLogin will open it
 		prev := authRequiredPrompt
 		authRequiredPrompt = func() (bool, error) { return true, nil }
 		t.Cleanup(func() { authRequiredPrompt = prev })
@@ -556,6 +563,7 @@ func TestAuth_ResolveLoginCredentialsUnusableAfterFlow(t *testing.T) {
 		}
 		authCovServer(t, deny)
 		authCovHeadless(t)
+		authCovTTY(t) // the confirm needs a terminal before resolveLogin will open it
 		prev := authRequiredPrompt
 		authRequiredPrompt = func() (bool, error) { return true, nil }
 		t.Cleanup(func() { authRequiredPrompt = prev })
@@ -1182,6 +1190,7 @@ func TestAuth_ResolveLoginSurfacesFlowFailure(t *testing.T) {
 	savePreferences(cliPreferences{HideLoginWarning: true})
 	authCovServer(t, authCovExchange("ada@x.com"))
 	authCovKilledProgram(t)
+	authCovTTY(t) // the confirm needs a terminal before resolveLogin will open it
 
 	prev := authRequiredPrompt
 	authRequiredPrompt = func() (bool, error) { return true, nil }
