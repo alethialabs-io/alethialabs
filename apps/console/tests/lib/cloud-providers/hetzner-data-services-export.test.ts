@@ -3,7 +3,7 @@
 
 // The Go e2e harness seeds Hetzner's three in-cluster data services (CloudNativePG / Valkey /
 // RabbitMQ) from a GENERATED fixture — `test/e2e/fixtures/hetzner_data_services.json`, produced by
-// `pnpm -F console export:hetzner-data-services` from hetzner-services.ts via the real
+// `pnpm -C apps/console run export:hetzner-data-services` from hetzner-services.ts via the real
 // `hetznerDataServicesToAddOns`.
 //
 // This guard is what makes that safe, and it is the sibling of catalog-export.test.ts. The mapper is
@@ -26,7 +26,7 @@ const FIXTURE = resolve(
 );
 
 describe("hetzner data-service export fixture (e2e max-config in-cluster seed)", () => {
-	it("is current with hetzner-services.ts — regenerate with `pnpm -F console export:hetzner-data-services`", () => {
+	it("is current with hetzner-services.ts — regenerate with `pnpm -C apps/console run export:hetzner-data-services`", () => {
 		const onDisk = JSON.parse(readFileSync(FIXTURE, "utf8"));
 		const live = JSON.parse(JSON.stringify(exportHetznerDataServiceFixture()));
 		expect(onDisk).toEqual(live);

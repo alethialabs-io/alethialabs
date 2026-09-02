@@ -13,7 +13,7 @@
 //
 // Go cannot write the file, so it has no way to make itself right. Neither side drifts alone.
 //
-// NEVER run `pnpm -F console gen:format-conformance --write` to make this file go green. That is
+// NEVER run `pnpm -C apps/console run gen:format-conformance --write` to make this file go green. That is
 // exactly what somebody does when a Go test is red, and it converts a disagreement into a silently
 // rewritten expectation. If Go is wrong, fix Go. If the TABLE is wrong, change the TypeScript and
 // let the generator move the row, where the changed-case summary shows it in review.
@@ -34,7 +34,7 @@ import (
 const tableRel = "packages/format/conformance/format-cases.json"
 
 // regenerate is printed on every failure that could be a stale table rather than a real disagreement.
-const regenerate = "If the TABLE is stale, regenerate it from TypeScript: pnpm -F console gen:format-conformance"
+const regenerate = "If the TABLE is stale, regenerate it from TypeScript: pnpm -C apps/console run gen:format-conformance"
 
 type tableFile struct {
 	Version  int                         `json:"version"`
