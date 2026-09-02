@@ -103,13 +103,13 @@
 			"family": "T",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 0,
-			"fail": 10,
+			"pass": 9,
+			"fail": 1,
 			"na": 30,
 			"naReasons": {
 				"does-not-call-not-found": 30
 			},
-			"score": 0
+			"score": 0.9
 		},
 		"T4": {
 			"family": "T",
@@ -405,10 +405,10 @@
 				"T": {
 					"instrumented": 4,
 					"of": 7,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"H": {
 					"instrumented": 7,
@@ -436,10 +436,10 @@
 				}
 			},
 			"overall": {
-				"pass": 10,
-				"fail": 5,
+				"pass": 11,
+				"fail": 4,
 				"na": 0,
-				"score": 0.6667
+				"score": 0.7333
 			}
 		},
 		{
@@ -458,10 +458,10 @@
 				"T": {
 					"instrumented": 4,
 					"of": 7,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"H": {
 					"instrumented": 7,
@@ -489,10 +489,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 3,
+				"pass": 13,
+				"fail": 2,
 				"na": 0,
-				"score": 0.8
+				"score": 0.8667
 			}
 		},
 		{
@@ -511,63 +511,10 @@
 				"T": {
 					"instrumented": 4,
 					"of": 7,
-					"pass": 3,
-					"fail": 1,
-					"na": 0,
-					"score": 0.75
-				},
-				"H": {
-					"instrumented": 7,
-					"of": 8,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"score": 0.8571
-				},
-				"F": {
-					"instrumented": 0,
-					"of": 7,
-					"pass": 0,
+					"pass": 4,
 					"fail": 0,
 					"na": 0,
-					"score": null
-				},
-				"R": {
-					"instrumented": 0,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 0,
-					"score": null
-				}
-			},
-			"overall": {
-				"pass": 11,
-				"fail": 4,
-				"na": 0,
-				"score": 0.7333
-			}
-		},
-		{
-			"route": "/[org]/[project]/jobs",
-			"redirectOnly": false,
-			"surfaceFiles": 219,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 3,
-					"fail": 1,
-					"na": 0,
-					"score": 0.75
-				},
-				"T": {
-					"instrumented": 4,
-					"of": 7,
-					"pass": 3,
-					"fail": 1,
-					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"H": {
 					"instrumented": 7,
@@ -599,6 +546,59 @@
 				"fail": 3,
 				"na": 0,
 				"score": 0.8
+			}
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"redirectOnly": false,
+			"surfaceFiles": 219,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 13,
+				"fail": 2,
+				"na": 0,
+				"score": 0.8667
 			}
 		},
 		{
@@ -670,10 +670,10 @@
 				"T": {
 					"instrumented": 4,
 					"of": 7,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"H": {
 					"instrumented": 7,
@@ -701,10 +701,10 @@
 				}
 			},
 			"overall": {
-				"pass": 13,
-				"fail": 2,
+				"pass": 14,
+				"fail": 1,
 				"na": 0,
-				"score": 0.8667
+				"score": 0.9333
 			}
 		},
 		{
@@ -723,10 +723,10 @@
 				"T": {
 					"instrumented": 4,
 					"of": 7,
-					"pass": 2,
-					"fail": 2,
+					"pass": 3,
+					"fail": 1,
 					"na": 0,
-					"score": 0.5
+					"score": 0.75
 				},
 				"H": {
 					"instrumented": 7,
@@ -754,10 +754,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 3,
+				"pass": 13,
+				"fail": 2,
 				"na": 0,
-				"score": 0.8
+				"score": 0.8667
 			}
 		},
 		{
@@ -776,10 +776,10 @@
 				"T": {
 					"instrumented": 4,
 					"of": 7,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"H": {
 					"instrumented": 7,
@@ -807,10 +807,10 @@
 				}
 			},
 			"overall": {
-				"pass": 13,
-				"fail": 2,
+				"pass": 14,
+				"fail": 1,
 				"na": 0,
-				"score": 0.8667
+				"score": 0.9333
 			}
 		},
 		{
@@ -829,10 +829,63 @@
 				"T": {
 					"instrumented": 4,
 					"of": 7,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 14,
+				"fail": 1,
+				"na": 0,
+				"score": 0.9333
+			}
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"redirectOnly": false,
+			"surfaceFiles": 146,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
 					"pass": 3,
 					"fail": 1,
 					"na": 0,
 					"score": 0.75
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
 				},
 				"H": {
 					"instrumented": 7,
@@ -864,59 +917,6 @@
 				"fail": 2,
 				"na": 0,
 				"score": 0.8667
-			}
-		},
-		{
-			"route": "/[org]/[project]/usage",
-			"redirectOnly": false,
-			"surfaceFiles": 146,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 3,
-					"fail": 1,
-					"na": 0,
-					"score": 0.75
-				},
-				"T": {
-					"instrumented": 4,
-					"of": 7,
-					"pass": 3,
-					"fail": 1,
-					"na": 0,
-					"score": 0.75
-				},
-				"H": {
-					"instrumented": 7,
-					"of": 8,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"score": 0.8571
-				},
-				"F": {
-					"instrumented": 0,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 0,
-					"score": null
-				},
-				"R": {
-					"instrumented": 0,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 0,
-					"score": null
-				}
-			},
-			"overall": {
-				"pass": 12,
-				"fail": 3,
-				"na": 0,
-				"score": 0.8
 			}
 		},
 		{
@@ -2637,8 +2637,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "T3",
-			"verdict": "FAIL",
-			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -2715,8 +2714,7 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "T3",
-			"verdict": "FAIL",
-			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -2794,8 +2792,7 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "T3",
-			"verdict": "FAIL",
-			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -2872,8 +2869,7 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "T3",
-			"verdict": "FAIL",
-			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -3031,8 +3027,7 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "T3",
-			"verdict": "FAIL",
-			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -3108,8 +3103,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "T3",
-			"verdict": "FAIL",
-			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -3186,8 +3180,7 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "T3",
-			"verdict": "FAIL",
-			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
@@ -3263,8 +3256,7 @@
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "T3",
-			"verdict": "FAIL",
-			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
@@ -3341,8 +3333,7 @@
 		{
 			"route": "/[org]/[project]/usage",
 			"predicate": "T3",
-			"verdict": "FAIL",
-			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/usage",

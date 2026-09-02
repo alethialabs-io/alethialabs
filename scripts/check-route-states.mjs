@@ -167,10 +167,33 @@ function readStrippedLines(abs) {
 	return lines;
 }
 
-/** The same source as one string — for the import scan, which is not width-sensitive. */
+/**
+ * The same source as one string — for the import scan, which is not width-sensitive.
+ */
 function readStripped(abs) {
 	const lines = readStrippedLines(abs);
 	return lines === null ? null : lines.join("\n");
+}
+
+/**
+ * Source of a file the MANIFEST said exists, or a raised error.
+ *
+ * `readStripped` answers `null` for "not there", which is a legitimate answer when the caller is
+ * asking whether a boundary exists. It is NOT a legitimate answer here: every path handed to this
+ * comes from the manifest's own filesystem walk, so an unreadable one means the tree moved under us
+ * or the walk is wrong. Coalescing that to `""` would make the regex below find no `notFound()` and
+ * report the route CLEAN — absence and error giving the same answer, which is the shape that keeps
+ * biting this repo. Raise instead: a scan that cannot read its own subject has not scored it.
+ */
+function readManifestFile(abs) {
+	const src = readStripped(abs);
+	if (src === null) {
+		throw new Error(
+			`${abs}: the route manifest names this file but it could not be read — refusing to score, ` +
+				`because "unreadable" and "contains no notFound()" must not look the same`,
+		);
+	}
+	return src;
 }
 
 /**
@@ -321,7 +344,7 @@ export function buildContexts(manifest, repoRoot) {
 	const routeByDir = new Map(manifest.routes.map((r) => [r.dir, r]));
 
 	return manifest.routes.map((record) => {
-		const pageSrc = readStripped(path.join(repoRoot, record.file)) ?? "";
+		const pageSrc = readManifestFile(path.join(repoRoot, record.file));
 		const page = resolveWidth(repoRoot, record.file);
 		const shellWidth = record.shell === null ? null : (shellsByName.get(record.shell) ?? null);
 
@@ -358,7 +381,7 @@ export function buildContexts(manifest, repoRoot) {
 			const layoutDir = path.dirname(layoutRel);
 			const inFrame = layoutDir === frameDir || layoutDir.startsWith(frameDir + path.sep);
 			if (!inFrame) return false;
-			return /\bnotFound\s*\(/.test(readStripped(path.join(repoRoot, layoutRel)) ?? "");
+			return /\bnotFound\s*\(/.test(readManifestFile(path.join(repoRoot, layoutRel)));
 		});
 
 		return {
