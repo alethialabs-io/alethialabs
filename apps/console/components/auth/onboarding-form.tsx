@@ -174,7 +174,7 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 			<div className="mx-auto w-full max-w-[460px]">
 				<div className="mb-6 flex flex-col gap-1.5">
 					<p className="vx-eyebrow">{meta.name}</p>
-					<h1 className="font-grotesk text-[26px] font-semibold tracking-[-0.03em] text-text-primary">
+					<h1 className="font-grotesk text-display-xs font-semibold tracking-[-0.03em] text-text-primary">
 						Subscribe to {meta.name}
 					</h1>
 					<p className="text-[13px] text-text-secondary">
