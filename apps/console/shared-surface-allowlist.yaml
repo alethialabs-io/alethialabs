@@ -98,8 +98,8 @@
 #                      the thing review stops. The floors sit a few percent under the live count
 #                      so an ordinary refactor need not touch them.
 
-baseline: 15
-debt: 198
+baseline: 16
+debt: 145
 
 scanned:
   - scope: console_code
@@ -123,9 +123,6 @@ format:
     hits: 2
     reason: SVG path coordinates for a sparkline — geometry the browser reads, never a number a person does.
   # --- debt: measured 2026-09-01 on an unmodified dev, by the two new money matchers.
-  - path: apps/console/components/billing/billing-checkout-form.tsx
-    hits: 1
-    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 money site here writes the currency symbol somewhere other than next to the number."
 
 page_title:
   # THE TEST IS: DOES ANYTHING ELSE ON SCREEN ALREADY NAME THIS? Not "is there a breadcrumb" — FIVE
@@ -175,36 +172,9 @@ section_header:
   - path: apps/console/app/(private)/[org]/~/runners/runners-client.tsx
     hits: 1
     lifts: "#3619 — the page frame is rebuilt: 1 raw section heading here."
-  - path: apps/console/components/billing/plan-picker.tsx
-    hits: 1
-    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
-  - path: apps/console/components/classification/classification-manager.tsx
-    hits: 1
-    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
-  - path: apps/console/components/classification/dimension-detail.tsx
-    hits: 1
-    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
-  - path: apps/console/components/classification/value-drill-drawer.tsx
-    hits: 1
-    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
-  - path: apps/console/components/connectors/connector-detail-sheet.tsx
-    hits: 2
-    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 2 raw section headings here."
-  - path: apps/console/components/connectors/connectors-page.tsx
-    hits: 1
-    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
   - path: apps/console/components/design-project/canvas/env-settings-sheet.tsx
     hits: 2
     lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 2 raw section headings here."
-  - path: apps/console/components/evidence/evidence-client.tsx
-    hits: 1
-    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
-  - path: apps/console/components/evidence/evidence-waivers.tsx
-    hits: 1
-    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
-  - path: apps/console/components/plan/plan-tab.tsx
-    hits: 2
-    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 2 raw section headings here."
   - path: apps/console/components/shell/account-settings-dialog.tsx
     hits: 1
     lifts: "#3619 — the page frame is rebuilt: 1 raw section heading here."
@@ -254,12 +224,6 @@ type_scale:
     hits: 1
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
   - path: apps/console/app/(public)/onboarding/page.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/addons/addon-config-sheet.tsx
-    hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/addons/addon-visuals.tsx
     hits: 1
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
   - path: apps/console/components/agent/agent-artifact-gallery.tsx
@@ -376,90 +340,9 @@ type_scale:
   - path: apps/console/components/auth/onboarding-form.tsx
     hits: 18
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 18 hardcoded pixel type sizes here."
-  - path: apps/console/components/billing/billing-checkout-form.tsx
-    hits: 24
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 24 hardcoded pixel type sizes here."
-  - path: apps/console/components/billing/credit-pack-dialog.tsx
-    hits: 10
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 10 hardcoded pixel type sizes here."
-  - path: apps/console/components/billing/currency-toggle.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/billing/plan-checklist.tsx
-    hits: 3
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
-  - path: apps/console/components/billing/plan-chooser.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/billing/plan-picker.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/billing/upgrade-ai-sheet.tsx
-    hits: 11
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 11 hardcoded pixel type sizes here."
-  - path: apps/console/components/classification/classification-manager.tsx
-    hits: 8
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 8 hardcoded pixel type sizes here."
-  - path: apps/console/components/classification/classification-picker.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/classification/classification-ui.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/classification/dimension-detail.tsx
-    hits: 22
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 22 hardcoded pixel type sizes here."
-  - path: apps/console/components/classification/dimension-editor-sheet.tsx
-    hits: 11
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 11 hardcoded pixel type sizes here."
-  - path: apps/console/components/classification/dimension-rail.tsx
-    hits: 7
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
-  - path: apps/console/components/classification/value-drill-drawer.tsx
-    hits: 9
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 9 hardcoded pixel type sizes here."
-  - path: apps/console/components/classification/value-editor.tsx
-    hits: 8
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 8 hardcoded pixel type sizes here."
   - path: apps/console/components/clusters/cluster-card.tsx
     hits: 12
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
-  - path: apps/console/components/connectors/aws-connection.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/connectors/azure-connection.tsx
-    hits: 3
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
-  - path: apps/console/components/connectors/connection-ui.tsx
-    hits: 6
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
-  - path: apps/console/components/connectors/connector-card.tsx
-    hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
-  - path: apps/console/components/connectors/connector-detail-sheet.tsx
-    hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/connectors/connector-row.tsx
-    hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
-  - path: apps/console/components/connectors/connectors-filter-bar.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/connectors/connectors-page.tsx
-    hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
-  - path: apps/console/components/connectors/extra-cloud-connection.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/connectors/gcp-connection.tsx
-    hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/connectors/hetzner-connection.tsx
-    hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
-  - path: apps/console/components/connectors/provider-config-fields.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
   - path: apps/console/components/design-project/byo/byo-chart-dialog.tsx
     hits: 2
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
@@ -580,30 +463,6 @@ type_scale:
   - path: apps/console/components/errors/error-state.tsx
     hits: 4
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/evidence/drawer/drift-tab.tsx
-    hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/evidence/drawer/evidence-drawer.tsx
-    hits: 3
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
-  - path: apps/console/components/evidence/drawer/receipt-tab.tsx
-    hits: 16
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 16 hardcoded pixel type sizes here."
-  - path: apps/console/components/evidence/drawer/report-tab.tsx
-    hits: 17
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 17 hardcoded pixel type sizes here."
-  - path: apps/console/components/evidence/drawer/tab-empty.tsx
-    hits: 3
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
-  - path: apps/console/components/evidence/evidence-client.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/evidence/evidence-table.tsx
-    hits: 7
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
-  - path: apps/console/components/evidence/evidence-waivers.tsx
-    hits: 10
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 10 hardcoded pixel type sizes here."
   - path: apps/console/components/forms/accordion-form.tsx
     hits: 3
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
@@ -613,18 +472,9 @@ type_scale:
   - path: apps/console/components/org-switcher.tsx
     hits: 3
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
-  - path: apps/console/components/org/create-org-sheet.tsx
-    hits: 13
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 13 hardcoded pixel type sizes here."
   - path: apps/console/components/org/org-purchase-ui.tsx
-    hits: 18
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 18 hardcoded pixel type sizes here."
-  - path: apps/console/components/org/upgrade-org-sheet.tsx
     hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
-  - path: apps/console/components/plan/resource-card.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+    reason: Buying a plan is a checkout and not a console page, and its two headings keep the display type the pricing page sets them in, so one purchase does not change voice halfway through. The UI ladder tops out at 17px and the display ladder starts at 30px; these sit between them, and a rung invented to house them would be a rung nobody measured.
   - path: apps/console/components/project-switcher.tsx
     hits: 1
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
@@ -750,9 +600,6 @@ empty_state:
   - path: apps/console/app/(private)/[org]/~/runners/runners-client.tsx
     hits: 2
     lifts: "#3619 — the page frame is rebuilt: 2 hand-rolled empty states here."
-  - path: apps/console/components/classification/value-drill-drawer.tsx
-    hits: 2
-    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 2 hand-rolled empty states here."
   - path: apps/console/components/design-project/byo/byo-iac-dialog.tsx
     hits: 1
     lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 1 hand-rolled empty state here."
@@ -765,9 +612,6 @@ empty_state:
   - path: apps/console/components/design-project/canvas/inspector/collection-panel.tsx
     hits: 1
     lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 1 hand-rolled empty state here."
-  - path: apps/console/components/plan/plan-tab.tsx
-    hits: 1
-    lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 hand-rolled empty state here."
   - path: apps/console/components/project-switcher.tsx
     hits: 1
     lifts: "#3619 — the page frame is rebuilt: 1 hand-rolled empty state here."
