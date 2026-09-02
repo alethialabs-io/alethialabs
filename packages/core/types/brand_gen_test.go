@@ -245,13 +245,17 @@ func TestBrandRadiiCollapseSixOntoTwo(t *testing.T) {
 // stopped being true when the console's UI type scale landed (#3733): --text-ui-lg and
 // --text-ui-xl are the console's two heading rungs, and in a terminal — which has one cell size —
 // a heading is bold, so both collapse onto EmphasisHeading beside the display ladder's middle
-// step. FIVE tokens, THREE rungs. Collapsing is what this port is FOR; what must not happen is
-// the rungs themselves collapsing, which is the assertion below and is unchanged.
+// step. #3806 then added a FOURTH display rung, --text-display-xs, for display voice rendered
+// inside the console shell; the browser tells it from --text-display-sm by four pixels and a
+// terminal has no cells to spend on that, so it joins EmphasisBand. SIX tokens, THREE rungs.
+// Collapsing is what this port is FOR; what must not happen is the rungs themselves collapsing,
+// which is the assertion below and is unchanged.
 func TestBrandEmphasisLadderHasThreeDistinctRungs(t *testing.T) {
 	want := map[string]BrandEmphasis{
 		"--text-display-lg": EmphasisDisplay,
 		"--text-display-md": EmphasisHeading,
 		"--text-display-sm": EmphasisBand,
+		"--text-display-xs": EmphasisBand,
 		"--text-ui-lg":      EmphasisHeading,
 		"--text-ui-xl":      EmphasisHeading,
 	}
