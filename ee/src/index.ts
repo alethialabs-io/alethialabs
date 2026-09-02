@@ -12,12 +12,12 @@ import { sso } from "@better-auth/sso";
 import { OpenFgaClient } from "@openfga/sdk";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { organization } from "better-auth/plugins/organization";
-import { sql } from "drizzle-orm";
 import type { Actor, Entitlements } from "@/lib/authz/types";
 import type { CoreContext, EnterpriseModule } from "@/lib/enterprise";
 import { FgaTupleSync } from "./fga-tuple-sync";
 import { resolveInstanceLicense } from "./license";
 import { OpenFgaPdp } from "./openfga-pdp";
+import { resolveActiveScope } from "./scope";
 
 /** One OpenFGA client when configured (shared by the engine + the dual-write writer). */
 function buildFgaClient(core: CoreContext): OpenFgaClient | null {
@@ -300,32 +300,15 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
       },
     ],
 
-    // Map a verified user to their active org. Primary org = earliest membership;
-    // users with no org membership fall back to their personal org (orgId == userId).
+    // Map a verified user to their active org — the personal org named explicitly, else a
+    // membership row for the named org, else the primary (earliest) membership, else the
+    // personal org. Lifted into ./scope so the rules can be driven directly by a test rather
+    // than only through a booted enterprise module; see its JSDoc for why a named org the
+    // caller is not a member of still falls back HERE and is refused by the header's reader.
     // STANDUP follow-up: honor session.activeOrganizationId for active-org switching
     // (needs the session/headers threaded into getActiveScope).
-    resolveScope: async (
-      userId: string,
-      activeOrgId?: string,
-    ): Promise<Actor> => {
-      // Honor the session's selected org, but only if the user is a member of it.
-      if (activeOrgId) {
-        const selected = await core.db.execute<{ id: string }>(sql`
-					select organization_id as id from member
-					where user_id = ${userId}::uuid and organization_id = ${activeOrgId}::uuid
-					limit 1
-				`);
-        if (selected[0]) return { userId, orgId: activeOrgId };
-      }
-      // Else the primary (earliest) membership; else the personal org.
-      const rows = await core.db.execute<{ organization_id: string }>(sql`
-				select organization_id from member
-				where user_id = ${userId}::uuid
-				order by created_at asc
-				limit 1
-			`);
-      return { userId, orgId: rows[0]?.organization_id ?? userId };
-    },
+    resolveScope: (userId: string, activeOrgId?: string): Promise<Actor> =>
+      resolveActiveScope(core.db, userId, activeOrgId),
 
     // Per-org entitlement resolution. A validly-licensed instance unlocks everything
     // (an explicit entitlements claim in the license narrows it, else the full set);
