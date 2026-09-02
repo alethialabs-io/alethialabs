@@ -67,6 +67,10 @@ const TIE_INDEXES = [4, 5, 6];
 const ORG_B_PHASE_US = 61;
 /** Rows for the planner test's own org. Enough that the plan is not a rounding decision. */
 const PLAN_ORG_ROWS = 300;
+/** Production-like rows in the planner org, past the measured composite-index flip point. */
+const PLAN_LARGE_ORG_ROWS = 20_000;
+/** Decoy rows make the planner's table statistics match the measured 200k-row environment. */
+const PLAN_DECOY_ROWS = 180_000;
 
 const ORG_A = randomUUID();
 const ORG_B = randomUUID();
@@ -122,6 +126,16 @@ async function seedAt(
 	offsetsUs: readonly number[],
 ): Promise<string[]> {
 	return seedRows(offsetsUs.map((offsetUs) => ({ orgId, offsetUs })));
+}
+
+/** Seeds a large planner population without expanding one SQL parameter per row. */
+async function seedPlannerRows(orgId: string, count: number): Promise<void> {
+	await getServiceDb().execute(sql`
+		insert into jobs (user_id, org_id, job_type, status, config_snapshot, created_at)
+		select ${orgId}::uuid, ${orgId}::uuid, 'PLAN', 'QUEUED', '{}'::jsonb,
+		       date_trunc('milliseconds', now()) - (i * ${ROW_SPACING_US} * interval '1 microsecond')
+		from generate_series(0, ${count - 1}) as s(i)
+	`);
 }
 
 /** The offsets for one org: `ROW_SPACING_US` apart, with `tieIndexes` collapsed onto one. */
@@ -594,6 +608,53 @@ describeIfDb("CLI paging vocabulary", () => {
 			expect(control).toContain('"Node Type":"Sort"');
 		} finally {
 			await db.delete(jobs).where(eq(jobs.org_id, orgPlan));
+		}
+	});
+
+	it("records the planner's top-N sort at production-like cardinality", async () => {
+		const db = getServiceDb();
+		const orgPlan = randomUUID();
+		const decoyOrg = randomUUID();
+		try {
+			await seedPlannerRows(orgPlan, PLAN_LARGE_ORG_ROWS);
+			await seedPlannerRows(decoyOrg, PLAN_DECOY_ROWS);
+			await db.execute(sql`analyze jobs`);
+
+			const first = await fetchPage(orgPlan, { limit: PAGE_SIZE, after: null });
+			const cursor: CursorPosition = {
+				createdAt: first.items[0].cursor_key,
+				id: first.items[0].id,
+			};
+			let planned = "";
+			await paginate<Row>({
+				db,
+				table: jobs,
+				createdAt: jobs.created_at,
+				id: jobs.id,
+				scope: [eq(jobs.org_id, orgPlan)],
+				cursor: { orgId: orgPlan, list: "jobs" },
+				opts: { limit: PAGE_SIZE, after: cursor },
+				rows: async (q) => {
+					const select = () =>
+						db
+							.select({ id: jobs.id, cursor_key: cursorKey(jobs.created_at) })
+							.from(jobs)
+							.where(q.where)
+							.limit(q.limit);
+					planned = await explain(select().orderBy(...q.orderBy));
+					return [];
+				},
+				positionOf: (row) => ({ createdAt: row.cursor_key, id: row.id }),
+			});
+
+			// At 200k total rows with 20k in the target org, PostgreSQL 17 measurably chooses the
+			// narrower org index and a top-N sort. This is evidence of the current planner choice,
+			// not a promise that the composite index wins at every cardinality.
+			expect(planned).toContain('"Index Name":"idx_jobs_org"');
+			expect(planned).toContain('"Node Type":"Sort"');
+		} finally {
+			await db.delete(jobs).where(eq(jobs.org_id, orgPlan));
+			await db.delete(jobs).where(eq(jobs.org_id, decoyOrg));
 		}
 	});
 

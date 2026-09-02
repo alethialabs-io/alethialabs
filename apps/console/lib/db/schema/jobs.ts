@@ -122,8 +122,11 @@ export const jobs = pgTable(
 		// Cursor paging (lib/cli/paging.ts). The keyset page query is
 		//   WHERE org_id = $1 AND (created_at, id) < ($2, $3)
 		//   ORDER BY created_at DESC NULLS LAST, id DESC NULLS LAST LIMIT n
-		// and this is the index that answers it as one range scan with NO sort node. Two
-		// things have to line up for that. The tiebreak column must be IN the index, which
+		// and this is the index that can answer it as one range scan with NO sort node when the
+		// planner prefers the composite path. At production-like cardinalities PostgreSQL may
+		// choose the narrower org index plus a top-N sort instead; the integration guard covers
+		// both the small-fixture index-only plan and that measured large-fixture plan. Two things
+		// have to line up for the no-sort path. The tiebreak column must be IN the index, which
 		// is why idx_jobs_org (a prefix of this one) plus a sort is not equivalent. And the
 		// NULLS LAST is not decoration: drizzle emits `DESC` here as DESC NULLS LAST, while
 		// Postgres defaults an ORDER BY DESC to NULLS FIRST — pair this index with a plain
