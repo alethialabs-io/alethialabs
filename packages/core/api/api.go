@@ -175,11 +175,19 @@ type ProvisionJob struct {
 	RunnerName  string `json:"runner_name,omitempty"`
 }
 
+// JobsPage is one page of GET /api/jobs.
+//
+// Page is the cursor vocabulary and the field to build on: it carries the next position, the
+// served page size and whether Total is exact or a floor. Total/Limit/Offset are the pre-cursor
+// wire the interactive pager still uses; Total and Limit are the same numbers as Page.Total and
+// Page.Limit, echoed rather than counted twice, and Total is therefore CAPPED — read Page.Mode
+// before rendering it as a precise count.
 type JobsPage struct {
 	Jobs   []ProvisionJob `json:"jobs"`
 	Total  int            `json:"total"`
 	Limit  int            `json:"limit"`
 	Offset int            `json:"offset"`
+	Page   PageInfo       `json:"page"`
 }
 
 type JobLog struct {
