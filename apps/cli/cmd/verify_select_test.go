@@ -245,6 +245,12 @@ func TestVerifyCmds_TakeTheWholeSelector(t *testing.T) {
 		}
 	}
 	// The two leaves must not share one selector value, or narrowing one narrows the other.
+	//
+	// The second half reads `verify show`'s OWN FLAG back, not the verifyShowSelector variable.
+	// The variable is the weaker probe and it passed under the mutation that proves this matters:
+	// point `addJobSelectorFlags(verifyShowCmd, …)` at the RECEIPT selector and verifyShowSelector
+	// is simply never written, so it stays empty and reads as independence. pflag holds the
+	// pointer it was bound to, so a flag's Value is the shared variable when there is one.
 	verifyReceiptSelector, verifyShowSelector = jobSelector{}, jobSelector{}
 	t.Cleanup(func() { verifyReceiptSelector, verifyShowSelector = jobSelector{}, jobSelector{} })
 	if err := verifyReceiptCmd.Flags().Set("type", "PLAN"); err != nil {
@@ -254,9 +260,12 @@ func TestVerifyCmds_TakeTheWholeSelector(t *testing.T) {
 	if verifyReceiptSelector.jobType != "PLAN" {
 		t.Errorf("`verify receipt --type PLAN` did not reach its selector, got %q", verifyReceiptSelector.jobType)
 	}
+	if got := verifyShowCmd.Flags().Lookup("type").Value.String(); got != "" {
+		t.Errorf("`verify receipt --type PLAN` also set `verify show --type` (%q) — the two leaves are "+
+			"bound to one selector, so narrowing either narrows both", got)
+	}
 	if verifyShowSelector.jobType != "" {
-		t.Errorf("`verify receipt --type PLAN` also narrowed `verify show` (%q) — they share a selector",
-			verifyShowSelector.jobType)
+		t.Errorf("`verify receipt --type PLAN` also narrowed `verify show` (%q)", verifyShowSelector.jobType)
 	}
 }
 
