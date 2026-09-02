@@ -424,6 +424,101 @@ reap_guard() { # <registry-json> <include-mine 0|1>
   esac
 }
 
+# ── The idle half of the reap decision ────────────────────────────────────────────
+#
+# `scripts/box/env-registry.sh idle-minutes` answers with a count of minutes OR a word naming an
+# absence (`none` — no env rows at all; `unknown` — a lastSeen that would not parse). Everything
+# here exists so that the difference cannot be lost again.
+#
+# It was lost for months. The registry reported the no-rows case as `999999`, this file compared
+# it against REAP_AFTER_MIN, and 999999 is not less than 90 — so a box with no env rows was
+# maximally idle by construction and the unattended timer deleted it on its FIRST tick. On
+# 2026-09-02 that took out a host carrying a Go toolchain about 25 minutes after it was created,
+# and the message it printed on the way — "most recent activity was 999999m ago" — was about a
+# registry that had recorded no activity at all (#3922).
+
+# Is this report a measured duration, rather than a word standing for the absence of one?
+# Asking is the whole fix: the defect was a sentinel for "no data" being read as a quantity.
+idle_is_measured() { # <idle-report>
+  case "$1" in
+  '' | *[!0-9]*) return 1 ;;
+  *) return 0 ;;
+  esac
+}
+
+# The report as a clause a message can be built from. Every line that used to interpolate
+# "${idle}m ago" goes through this, so no message can claim an activity time that was never
+# measured — which is what made the incident take a traceback rather than a glance.
+idle_phrase() { # <idle-report>
+  case "$1" in
+  none) printf 'no environment activity has ever been recorded on this box' ;;
+  unknown) printf "the box's most recent activity timestamp could not be read" ;;
+  *) printf 'the most recent activity was %sm ago' "$1" ;;
+  esac
+}
+
+# A box provisioned before #3922 runs the OLD env-registry.sh and still says 999999. scripts/box/
+# ships from $MAIN_CHECKOUT at provision time and therefore drifts (see cmd_up), so without this
+# the one box the fix cannot reach is precisely the one still carrying the bug. 999999 minutes is
+# 694 days; no box this reaper has ever seen could report it honestly.
+idle_normalise() { # <idle-report> → the same report, legacy sentinel folded into `none`
+  case "$1" in
+  999999) printf 'none' ;;
+  *) printf '%s' "$1" ;;
+  esac
+}
+
+# Should the reap proceed on idleness grounds? Prints the reason either way.
+#
+#   0  proceed
+#   1  hold off — and this is the timer's COMMON case, so it stays a cheap message and an
+#      exit 0 at the call site, never a refusal
+#
+# Factored out for the reason env_reap_verdict was factored out of its ssh call in #3841: a
+# decision welded to a box round-trip cannot be run, and therefore cannot be wrong out loud.
+# `pnpm env:reap --dry-run` drives this against a fixture registry
+# (scripts/lib/env-reap-test.sh).
+reap_idle_gate() { # <idle-report> <now 0|1>
+  local report="$1" now="${2:-0}"
+
+  if [ "$now" = 1 ]; then
+    # --now is "I am finished for the day" and skips the threshold — but it still has to say
+    # what it measured, and not imply a number it does not have.
+    if ! idle_is_measured "$report"; then
+      echo "⚠ --now, and $(idle_phrase "$report") — reaping on your say-so, not on a measurement."
+    elif [ "$report" -lt 30 ]; then
+      echo "⚠ --now, but something was active ${report}m ago. Reaping anyway; a run in flight will die."
+    fi
+    return 0
+  fi
+
+  if ! idle_is_measured "$report"; then
+    # ABSENCE IS NOT AN IDLE AGE, and this is the branch the incident came through. An empty
+    # registry is a normal state, not an error: a box compiling out of $REMOTE/scratch takes no
+    # env slot and writes no row, so "no rows" and "nobody is here" are different claims.
+    #
+    # The cost of refusing is real and worth naming: an abandoned box with no envs on it now
+    # bills until a person retires it (EUR 69.49/mo up against 0.72 reaped). That is the right
+    # side to be wrong on — an over-billed box is recoverable and a deleted one is not — and
+    # `--now` is the escape hatch. Closing the gap properly needs a box-level liveness signal
+    # that does not go through the env registry at all; #3922 records the design.
+    echo "not reaping: $(idle_phrase "$report"), so there is no idle age to compare against the"
+    echo "  ${REAP_AFTER_MIN}m threshold — and an unmeasured box is not thereby an unused one."
+    echo "  A build running out of $REMOTE/scratch holds no env row and would look exactly like"
+    echo "  this. Refusing rather than assuming; the unattended timer cannot clear it."
+    echo "  Finished with the box?  pnpm env:reap --now"
+    return 1
+  fi
+
+  if [ "$report" -lt "$REAP_AFTER_MIN" ]; then
+    echo "not reaping: most recent activity was ${report}m ago (threshold ${REAP_AFTER_MIN}m)."
+    echo "  Finished for the day?  pnpm env:reap --now"
+    return 1
+  fi
+
+  return 0
+}
+
 # ── Commands ──────────────────────────────────────────────────────────────────────
 
 # A Primary IP can only be attached to a STOPPED server, and the provider does not report
@@ -1478,37 +1573,79 @@ cmd_runner() {
     ALETHIA_WEB_ORIGIN=http://localhost:$cport bash scripts/dev-runner.sh"
 }
 
+# The box's OWN idle-minutes, run against a fixture registry in a throwaway box root.
+#
+# The dry run asks scripts/box/env-registry.sh rather than re-deriving idleness here. A second
+# copy of the rule would agree with itself and not with the box, which is the shape of defect
+# this whole seam exists to catch — and `parse_iso_utc` reads both date dialects precisely so
+# that the box's function can be driven on a Mac.
+fixture_idle_minutes() { # <registry-json path>
+  local root out
+  root="$(mktemp -d)"
+  cp "$1" "$root/envs.json" 2>/dev/null || printf '%s' '{}' >"$root/envs.json"
+  out="$(ALETHIA_BOX_ROOT="$root" bash "$ROOT/scripts/box/env-registry.sh" idle-minutes)"
+  rm -rf "$root"
+  printf '%s' "$out"
+}
+
 # `env:reap --dry-run` — the decision, and nothing else. Writes nothing, needs no state file, and
 # is the seam this guard was missing: before #3841 the only way to find out what the refusal would
 # do was to reap something. ALETHIA_ENV_REGISTRY_FILE substitutes a fixture registry for the box's,
 # and is honoured ONLY here — it can never influence a real reap (scripts/lib/env-reap-test.sh).
-cmd_reap_dry_run() { # <include-mine 0|1>
-  local reg rc=0
+#
+# It reports BOTH gates. Ownership first, because that is the question the dry run was built to
+# answer and it is the one a lane about to reap is asking; then idleness, whose verdict a real
+# reap reaches first. Nothing is destroyed either way, so the printing order is a presentation
+# choice — but the VERDICT and the exit code mirror what `cmd_reap` would do, which is the part
+# that must not drift.
+cmd_reap_dry_run() { # <include-mine 0|1> <now 0|1>
+  local reg idle rc=0
   if [ -n "${ALETHIA_ENV_REGISTRY_FILE:-}" ]; then
     echo "→ dry run against fixture registry ${ALETHIA_ENV_REGISTRY_FILE}"
     reg="$(cat "$ALETHIA_ENV_REGISTRY_FILE")"
+    idle="$(fixture_idle_minutes "$ALETHIA_ENV_REGISTRY_FILE")"
   else
     box_exists || {
       echo "box already down — env:reap would do nothing."
       return 0
     }
     reg="$(read_registry)"
+    idle="$(idle_normalise "$(ssh_box "$REMOTE/bin/env-registry.sh idle-minutes")")"
+  fi
+  # The one report this tree's env-registry.sh can no longer produce is the one a stale box
+  # still sends: `999999`, the pre-#3922 sentinel. scripts/box/ ships from $MAIN_CHECKOUT at
+  # provision time, so a box created before the fix keeps emitting it until it is reprovisioned
+  # — which makes idle_normalise the part of this that matters most in the field and the part a
+  # fixture registry cannot reach. This override exists to drive it, is honoured ONLY in the dry
+  # run, and destroys nothing (scripts/lib/env-reap-test.sh asserts both).
+  if [ -n "${ALETHIA_ENV_IDLE_REPORT:-}" ]; then
+    echo "→ idle report supplied for the dry run: ${ALETHIA_ENV_IDLE_REPORT}"
+    idle="$(idle_normalise "$ALETHIA_ENV_IDLE_REPORT")"
   fi
   echo "→ I am $(env_owner)"
+  echo "→ idle report: $idle — $(idle_phrase "$idle")"
   # reap_guard EXITS on a refusal, so the verdict reaches the caller as this script's exit
   # code (3 = someone else, 4 = my own env, 1 = unreadable). The rc dance is kept anyway: if
   # it is ever changed to return instead, the success line below must not print regardless.
   reap_guard "$reg" "$1" || rc=$?
   [ "$rc" = 0 ] || return "$rc"
   echo ""
-  echo "✓ dry run: nobody is blocking. A real reap would snapshot and DELETE the box."
-  echo "  (This answers the OWNERSHIP gate only — without --now a real reap also waits for"
-  echo "   the box to be idle ${REAP_AFTER_MIN}m.)"
+  # Ownership allows; now the gate a real reap would have hit first. Its refusal is not a
+  # refusal — the timer's common case is "too early", exit 0, nothing destroyed — so the dry
+  # run reports it as exit 0 too rather than inventing a code the real path never returns.
+  if ! reap_idle_gate "$idle" "${2:-0}"; then
+    echo ""
+    echo "✓ dry run: nobody is blocking, but a real reap would stop at the idle gate above"
+    echo "  and destroy nothing."
+    return 0
+  fi
+  echo "✓ dry run: nobody is blocking, and the idle gate does not stop it either."
+  echo "  A real reap would snapshot and DELETE the box."
 }
 
 cmd_reap() {
   need jq
-  local idle now="" include_mine=0 dry="" a
+  local idle now=0 include_mine=0 dry="" a
   for a in "$@"; do
     case "$a" in
     --now) now=1 ;;
@@ -1525,7 +1662,7 @@ cmd_reap() {
   # The dry run mutates nothing, so it does not need the state file and must work from a
   # worktree — which is where an agent asking "would this be safe?" actually is.
   if [ -n "$dry" ]; then
-    cmd_reap_dry_run "$include_mine"
+    cmd_reap_dry_run "$include_mine" "$now"
     return $?
   fi
 
@@ -1534,7 +1671,7 @@ cmd_reap() {
     echo "box already down — nothing billing but the IP (EUR 0.50/mo) and the snapshot."
     return 0
   }
-  idle="$(ssh_box "$REMOTE/bin/env-registry.sh idle-minutes")"
+  idle="$(idle_normalise "$(ssh_box "$REMOTE/bin/env-registry.sh idle-minutes")")"
 
   # --now is "I am finished for the day". The idle threshold assumes several people whose
   # runs must not be reaped out from under them; with one user it mostly means the box is
@@ -1545,21 +1682,15 @@ cmd_reap() {
   # --now every 30 minutes, and its common case is "too early": that has to stay a cheap
   # message and exit 0, not a refusal. Nothing is destroyed either way — the guard still runs
   # before any snapshot or destroy below.
-  if [ -z "$now" ] && [ "$idle" -lt "$REAP_AFTER_MIN" ]; then
-    echo "not reaping: most recent activity was ${idle}m ago (threshold ${REAP_AFTER_MIN}m)."
-    echo "  Finished for the day?  pnpm env:reap --now"
-    return 0
-  fi
+  #
+  # The deciding is in reap_idle_gate, where it can be driven without a box.
+  reap_idle_gate "$idle" "$now" || return 0
 
   reap_guard "$(read_registry)" "$include_mine"
 
-  if [ -n "$now" ] && [ "$idle" -lt 30 ]; then
-    echo "⚠ --now, but something was active ${idle}m ago. Reaping anyway; a run in flight will die."
-  fi
-
   # Snapshot storage is billed per GB, so what is on disk when you reap is what you pay
   # to keep. env:test prunes old traces for this reason.
-  echo "→ snapshotting before delete (last activity ${idle}m ago)"
+  echo "→ snapshotting before delete ($(idle_phrase "$idle"))"
   hc server create-image --type snapshot \
     --description "alethia-sandbox $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --label "$SNAPSHOT_LABEL" "$SERVER_NAME" ||

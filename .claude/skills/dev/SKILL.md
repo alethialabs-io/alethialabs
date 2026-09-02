@@ -101,11 +101,18 @@ be the same machine. Browsers and their OS libraries install on first run, then 
 - **REAPING DELETES THE BOX FOR EVERYONE — check `pnpm env:status` first.** Every
   environment on it goes: the slot, the database, the OpenFGA store, the tunnel. `env:box`
   restores the *box*, not the envs. `env:reap` prints what it is about to destroy, and
-  then refuses in two cases:
+  then declines in three cases:
   - **someone else's env was touched in the last 60 minutes** — refused, and `--now` is
     not a way around it. Ask them to `pnpm env:down`, or wait for it to go idle.
   - **your own env is still live** — also refused, because it dies too. Release it with
     `pnpm env:down` and reap, or say you meant both: `pnpm env:reap --now --include-mine`.
+  - **the box holds no env rows at all** — the *unattended* reap stops here, because "nothing
+    is registered" is not an idle age: a box compiling out of `/opt/alethia/scratch` takes no
+    env slot and writes no row, and would look exactly like an abandoned one. Until 2026-09-02
+    it was the opposite — an empty registry reported `999999` minutes idle, which cleared the
+    90-minute threshold, so the timer deleted such a box on its **first tick** (#3922). The
+    cost of the safe reading is that an abandoned empty box now bills until a person retires
+    it: `pnpm env:reap --now` still does, and is how you finish with a build-only box.
 
   `pnpm env:reap --dry-run` decides and prints without touching anything, and works from a
   worktree. Until 2026-09-02 that first refusal could not fire between two instances on one

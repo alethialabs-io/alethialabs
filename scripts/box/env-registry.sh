@@ -9,7 +9,8 @@
 #   env-registry.sh store   <slug> <id>      # record this env's OpenFGA store id
 #   env-registry.sh release <slug>           # give the ports and the row back
 #   env-registry.sh list                     # the raw JSON
-#   env-registry.sh idle-minutes             # minutes since the most recent lastSeen
+#   env-registry.sh idle-minutes             # minutes since the most recent lastSeen,
+#                                            # or `none` / `unknown` when there isn't one
 #
 # WHY THIS LIVES ON THE BOX rather than in scripts/env.sh: the registry is state
 # SHARED between laptops and between concurrent Claude sessions, so the
@@ -145,31 +146,60 @@ cmd_release() {
   jq --arg s "$slug" 'del(.[$s])' "$REG" | save
 }
 
-# Minutes since the most recently touched env — what env:reap thresholds on. An empty
-# registry reports a very large number so "no envs at all" reaps like "all idle".
+# An ISO-8601 Zulu stamp as epoch seconds, or nothing at all if it will not parse.
+#
+# Two dialects because this has to answer the same way in both places it is asked. The box is
+# Linux (`date -d`); `env:reap --dry-run` runs this very function against a fixture registry on
+# a Mac (`date -j -f`). Answering only on the box is how the empty-registry branch below went
+# months without being exercised — its self-test skipped itself on the machine it was written on.
+parse_iso_utc() { # <iso-8601 Zulu> → epoch seconds on stdout, or nothing
+  date -u -d "$1" +%s 2>/dev/null ||
+    date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null ||
+    true
+}
+
+# How long the box has been idle — what env:reap thresholds on.
+#
+# The answer is EITHER a count of minutes OR a word naming an absence, and the words are the
+# point. This used to answer the no-rows case with `999999`, a sentinel for "no data" written
+# in the units of a quantity — and scripts/env.sh compared it against the 90-minute threshold.
+# 999999 is not less than 90, so a box holding no env rows read as maximally idle and the
+# unattended timer deleted it on its FIRST tick, whatever was running on it. That happened on
+# 2026-09-02 to a host carrying a Go toolchain, ~25 minutes old (#3922).
+#
+# The branch below already stated the rule the sentinel broke: absence must not read as "idle
+# forever", because that reaps a box someone is using. Both branches answer "I cannot tell how
+# long this has been idle"; they now answer it the same way.
+#
+# An absence is therefore no longer a number, which is the property that makes the class of bug
+# impossible rather than merely fixed: a caller that compares this answer as a duration now
+# fails loudly instead of silently reaping.
+#
+#   none      the registry parsed and holds no rows. Nothing has ever been measured, so there
+#             is no idle age — NOT "idle since the beginning of time". A box with no env row
+#             can be doing real work; compiling out of a scratch directory takes no env slot.
+#   unknown   a lastSeen exists but this box cannot parse it.
+#   <N>       minutes since the most recent lastSeen.
 cmd_idle_minutes() {
   ensure
   local latest then_s now_s
   latest="$(jq -r '[.[].lastSeen] | max // empty' "$REG")"
   if [ -z "$latest" ]; then
-    echo 999999
+    echo none
     return 0
   fi
-  # GNU date — this only ever runs on the Linux box, never on the mac.
-  then_s="$(date -u -d "$latest" +%s 2>/dev/null || echo 0)"
+  then_s="$(parse_iso_utc "$latest")"
+  if [ -z "$then_s" ]; then
+    echo unknown
+    return 0
+  fi
   now_s="$(date -u +%s)"
-  if [ "$then_s" -eq 0 ]; then
-    # An unparseable timestamp must NOT read as "idle forever" — that would reap a
-    # box someone is using. Fail safe: report zero idle time.
-    echo 0
-    return 0
-  fi
   echo $(((now_s - then_s) / 60))
 }
 
 # ── Self-test ─────────────────────────────────────────────────────────────────────
-# Runs entirely in a tempdir; touches no real registry. `date -u -d` is GNU-only, so
-# the idle-minutes case is skipped on macOS rather than reported as a failure.
+# Runs entirely in a tempdir; touches no real registry, and skips nothing: `parse_iso_utc`
+# reads both date dialects so the idle-minutes cases assert on a Mac as well as on the box.
 self_test() {
   local tmp pass=0 fail=0
   tmp="$(mktemp -d)"
@@ -227,19 +257,39 @@ self_test() {
   bash "$me" store delta 01ABC
   check "store id recorded" "$(bash "$me" list | jq -r '.delta.storeId')" "01ABC"
 
-  # An empty registry must read as maximally idle so a box with nothing on it reaps.
+  # ── idle-minutes: a quantity, or a word. Never a quantity STANDING FOR a word (#3922). ──
+  # These run everywhere now. The empty-registry case was previously asserted to be 999999
+  # and the timestamp cases were skipped on macOS, so on the machine this file is written on
+  # the whole function was covered by one assertion of the defect itself.
   bash "$me" release cache-engine-aws
   bash "$me" release gamma
   bash "$me" release delta
-  check "empty registry is idle" "$(bash "$me" idle-minutes)" "999999"
+  check "empty registry reports absence, not a duration" "$(bash "$me" idle-minutes)" "none"
 
-  # An unparseable lastSeen must fail SAFE (0 = busy), never reap a box in use.
-  if date -u -d "2020-01-01T00:00:00Z" +%s >/dev/null 2>&1; then
-    echo '{"x":{"consolePort":3100,"lastSeen":"not-a-date"}}' >"$tmp/envs.json"
-    check "bad timestamp fails safe" "$(bash "$me" idle-minutes)" "0"
-  else
-    echo "  · skipped idle-minutes date cases (GNU date not available)"
-  fi
+  # The property, stated separately from the word: whatever absence is called, it must not be
+  # something a caller can compare against a minute threshold and get an answer to.
+  case "$(bash "$me" idle-minutes)" in
+  '' | *[!0-9]*) check "an absent idle age is not a number" "not-a-number" "not-a-number" ;;
+  *) check "an absent idle age is not a number" "$(bash "$me" idle-minutes)" "not-a-number" ;;
+  esac
+
+  # An unparseable lastSeen must ALSO fail safe, and say a different thing: "I could not read
+  # the stamp" and "there was no stamp" are different facts about the box.
+  echo '{"x":{"consolePort":3100,"lastSeen":"not-a-date"}}' >"$tmp/envs.json"
+  check "bad timestamp reports unknown" "$(bash "$me" idle-minutes)" "unknown"
+
+  # …and a stamp it CAN read is still a number, on either date dialect.
+  local recent old
+  recent="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  old="$(date -u -v-6H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+  echo "{\"x\":{\"consolePort\":3100,\"lastSeen\":\"$recent\"}}" >"$tmp/envs.json"
+  check "a fresh stamp is 0 minutes idle" "$(bash "$me" idle-minutes)" "0"
+  echo "{\"x\":{\"consolePort\":3100,\"lastSeen\":\"$old\"}}" >"$tmp/envs.json"
+  check "a six-hour-old stamp is 360 minutes idle" "$(bash "$me" idle-minutes)" "360"
+
+  # The newest row wins, so one live env keeps the box off the reaper's list.
+  echo "{\"x\":{\"lastSeen\":\"$old\"},\"y\":{\"lastSeen\":\"$recent\"}}" >"$tmp/envs.json"
+  check "idle age is the MOST RECENT env's" "$(bash "$me" idle-minutes)" "0"
 
   echo "  ${pass} passed, ${fail} failed"
   [ "$fail" -eq 0 ]

@@ -9,9 +9,15 @@
 # being unreachable, so "the function returns refuse-others" is not the claim that matters — "the
 # command refuses" is.
 #
+# It now also replays #3922, the other half of the same guard: a box with NO env rows was reaped
+# on the unattended timer's first tick, because the registry reported "no data" as 999999 and this
+# file compared it against a 90-minute threshold. Same shape of defect — a decision nobody could
+# run — so it is proved the same way, through `env:reap` itself rather than through the function.
+#
 # Hermetic: no box, no ssh, no hcloud, no network. `env:reap --dry-run` reads the fixture registry
-# named by ALETHIA_ENV_REGISTRY_FILE and destroys nothing. The last case asserts that the override
-# is confined to the dry run, so this seam can never weaken a real reap.
+# named by ALETHIA_ENV_REGISTRY_FILE, derives idleness from scripts/box/env-registry.sh, and
+# destroys nothing. The last cases assert that both overrides are confined to the dry run, so
+# neither seam can weaken a real reap.
 #
 #   bash scripts/lib/env-reap-test.sh
 
@@ -46,6 +52,9 @@ LEGACY="$(id -un)@$(wt_host)" # what every instance wrote before this fix
 
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 old_iso() { date -u -v-6H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ; }
+# 70 minutes: past the 60m ownership window, short of the 90m reap threshold. In that gap the
+# IDLE gate is the only thing holding the box, which is where it has to be exercised.
+mid_iso() { date -u -v-70M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '70 minutes ago' +%Y-%m-%dT%H:%M:%SZ; }
 
 fixture() { # <name> <json> → path
 	printf '%s' "$2" >"$TMP/$1.json"
@@ -168,15 +177,103 @@ rc="$RC"
 if [ "$rc" = 1 ] && has "unknown flag"; then ok "an unknown flag is refused, never ignored"
 else bad "unknown flags must be refused (rc=$rc)"; fi
 
-# ── 6. The test seam cannot weaken a real reap. ─────────────────────────────────────────────────
-# Every mention of the override must sit ABOVE cmd_reap(), i.e. inside the dry-run path only.
-real_start="$(grep -n '^cmd_reap() {' "$ENV_SH" | cut -d: -f1)"
-stray="$(grep -n 'ALETHIA_ENV_REGISTRY_FILE' "$ENV_SH" | cut -d: -f1 | awk -v s="$real_start" '$1 > s')"
-if [ -n "$real_start" ] && [ -z "$stray" ]; then
-	ok "ALETHIA_ENV_REGISTRY_FILE is confined to the dry run — a real reap always reads the box"
+# ── 6. THE IDLE GATE. An absence is not an idle age (#3922). ────────────────────────────────────
+# A box holding no env rows was reaped on the unattended timer's FIRST tick: the registry answered
+# "no data" with 999999, and 999999 is not less than the 90m threshold. These cases run WITHOUT
+# --now, because --now skips the threshold and every case above passes it.
+
+f="$(fixture idle-empty '{}')"
+reap "$f" "$$"
+rc="$RC"
+if [ "$rc" = 0 ] && has "no environment activity has ever been recorded" && has "would stop at the idle gate"; then
+	ok "an EMPTY registry does not reap — no rows is not an idle age (#3922)"
 else
-	bad "ALETHIA_ENV_REGISTRY_FILE leaked into the real reap path (lines: ${stray:-none}, cmd_reap at ${real_start:-?})"
+	bad "an empty registry must not reap unattended (rc=$rc)"
+	printf '%s\n' "$OUT" | sed 's/^/       /'
 fi
+if has "999999"; then bad "the empty case still reports the 999999 sentinel"; else
+	ok "the empty case reports no sentinel quantity at all"
+fi
+if has "most recent activity was"; then
+	bad "the empty case claims a 'most recent activity' the registry never recorded"
+else
+	ok "the empty case does not claim an activity time it never measured"
+fi
+if has 'idle report: none'; then ok "the idle report for an empty registry is a word, not a number"
+else bad "an empty registry should report 'none'"; fi
+
+# …and --now still retires an abandoned empty box. Refusing the timer must not cost the escape
+# hatch: an unreaped box is EUR 69.49/mo against 0.72.
+reap "$f" "$$" --now
+rc="$RC"
+if [ "$rc" = 0 ] && has "would snapshot and DELETE" && has "on your say-so, not on a measurement"; then
+	ok "--now still reaps an empty box, and says it is acting on a say-so not a measurement"
+else
+	bad "--now must still reap an empty box (rc=$rc)"
+	printf '%s\n' "$OUT" | sed 's/^/       /'
+fi
+
+# The MEASURED path is untouched: 70 minutes is past the 60m ownership window and short of the
+# 90m threshold, so nothing blocks except idleness itself.
+f="$(fixture idle-recent "{\"other-lane\":$(row "$THEM" "$(mid_iso)")}")"
+reap "$f" "$$"
+rc="$RC"
+if [ "$rc" = 0 ] && has "most recent activity was 70m ago (threshold 90m)"; then
+	ok "a measured idle age under the threshold still holds, and still says the number"
+else
+	bad "a 70m-idle box must hold on the threshold (rc=$rc)"
+	printf '%s\n' "$OUT" | sed 's/^/       /'
+fi
+
+f="$(fixture idle-old "{\"other-lane\":$(row "$THEM" "$(old_iso)")}")"
+reap "$f" "$$"
+rc="$RC"
+if [ "$rc" = 0 ] && has "the idle gate does not stop it"; then
+	ok "a genuinely idle box still reaps without --now — the gate is not a blanket refusal"
+else
+	bad "a 6h-idle box must pass the idle gate (rc=$rc)"
+	printf '%s\n' "$OUT" | sed 's/^/       /'
+fi
+
+# An unparseable lastSeen is the OTHER absence, and it always failed safe. It must still fail
+# safe, and it must say something different: "could not read the stamp" and "there was no stamp"
+# are different facts about the box. --include-mine because a bad stamp sorts as live.
+f="$(fixture idle-bad "{\"my-lane\":$(row "$ME" "not-a-date")}")"
+reap "$f" "$$" --include-mine
+rc="$RC"
+if [ "$rc" = 0 ] && has "would stop at the idle gate" && has "timestamp could not be read" &&
+	! has "most recent activity was"; then
+	ok "an unreadable timestamp holds the reap and names the reason, without inventing a number"
+else
+	bad "an unreadable timestamp must hold the reap (rc=$rc)"
+	printf '%s\n' "$OUT" | sed 's/^/       /'
+fi
+
+# THE STALE BOX. scripts/box/ ships from the main checkout at provision time, so a box created
+# before this fix keeps sending the old 999999 — the one report a fixture registry cannot
+# produce, and the one that matters in the field until every box is reprovisioned.
+RC=0
+OUT="$(cd "$ROOT" && ALETHIA_ENV_REGISTRY_FILE="$(fixture idle-legacy '{}')" \
+	ALETHIA_ENV_IDLE_REPORT=999999 CLAUDE_PID="$$" \
+	bash "$ENV_SH" reap --dry-run 2>&1)" || RC=$?
+if [ "$RC" = 0 ] && has "no environment activity has ever been recorded" && ! has "999999m ago"; then
+	ok "a pre-#3922 box still reporting 999999 is read as an absence, not as 694 idle days"
+else
+	bad "the legacy 999999 sentinel must normalise to an absence (rc=$RC)"
+	printf '%s\n' "$OUT" | sed 's/^/       /'
+fi
+
+# ── 7. The test seams cannot weaken a real reap. ────────────────────────────────────────────────
+# Every mention of either override must sit ABOVE cmd_reap(), i.e. inside the dry-run path only.
+real_start="$(grep -n '^cmd_reap() {' "$ENV_SH" | cut -d: -f1)"
+for var in ALETHIA_ENV_REGISTRY_FILE ALETHIA_ENV_IDLE_REPORT; do
+	stray="$(grep -n "$var" "$ENV_SH" | cut -d: -f1 | awk -v s="$real_start" '$1 > s')"
+	if [ -n "$real_start" ] && [ -z "$stray" ]; then
+		ok "$var is confined to the dry run — a real reap always reads the box"
+	else
+		bad "$var leaked into the real reap path (lines: ${stray:-none}, cmd_reap at ${real_start:-?})"
+	fi
+done
 
 kill "$OTHER_PID" 2>/dev/null
 if [ "$fails" = 0 ]; then
