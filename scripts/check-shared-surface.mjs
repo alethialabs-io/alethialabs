@@ -132,7 +132,7 @@
 //                  does: a class list does not stop being one for living outside a component, and
 //                  those two roots hold no Tailwind class string at all today, so the wider scope
 //                  costs nothing and closes the hole a className constant would move into.
-//                  Measured on an unmodified dev: 1,079 of them across 23 distinct values and 194
+//                  Measured on the current tree; the guard derives the total from its scan.
 //                  files, against a `packages/brand/src/tokens.css` that carried NO UI type scale
 //                  at all — only `--text-display-lg/md/sm` for marketing headlines, starting at
 //                  30px. So every file picked its own number and the same rung of the same page is
@@ -562,7 +562,7 @@ const RULES = [
 				// half of the console a className constant would move INTO.
 				scope: "console_code",
 				re: /\btext-\[(?:length:)?\d*\.?\d+(?:px|rem|em|pt|ch|%)\]/g,
-				say: "picks its own font size. Use a `--text-ui-*` rung — `text-ui-3xs` … `text-ui-xl` in packages/brand/src/tokens.css. The console carries 1,079 hardcoded sizes across 23 values and there is no reading of a page on which 12px and 12.5px are two different decisions; the rungs are derived from where those 1,079 actually cluster.",
+				say: "picks its own font size. Use a `--text-ui-*` rung — `text-ui-3xs` … `text-ui-xl` in packages/brand/src/tokens.css. The rungs are derived from where the measured sites cluster.",
 				// A VARIANT PREFIX and a HALF-PIXEL value, because both are live shapes and either
 				// one alone would leave a hole a plain `text-[13px]` probe cannot see.
 				probe: 'const a = <p className="md:text-[12.5px] text-text-tertiary">x</p>;',
