@@ -41,6 +41,22 @@
 # index, that is a repo that has MOVED or a chart that is gone, and this file will not excuse it no
 # matter what is written here. That case is precisely when the catalog must change, so it stays red.
 #
+# That distinction is NOT free, and getting it wrong is how this file becomes the thing it was
+# written to prevent. `helm repo add` wraps EVERY index failure in one sentence —
+#
+#     Error: looks like "<url>" is not a valid chart repository or cannot be reached: <the cause>
+#
+# — and that sentence is the first alternative in chart-fetch-network-errors.txt. So the two lines
+#
+#     …cannot be reached: Get "…/index.yaml": dial tcp: lookup X: no such host   <- down, wait
+#     …cannot be reached: failed to fetch …/index.yaml : 404 Not Found           <- MOVED, act
+#
+# classify identically against the shared list, and the first draft of this change duly excused
+# both. `isTransport()` in check-addon-charts-render.mjs reads past the wrapper and classifies what
+# helm WRAPPED, which is what makes the paragraph above true rather than merely intended. An inner
+# message it does not recognise counts as "the host answered" — a red check somebody reads beats a
+# green one that is wrong.
+#
 # ── ADDING A LINE ─────────────────────────────────────────────────────────────────────────────
 #
 # Establish the canonical source from the project's OWN documentation first. An unreachable host is

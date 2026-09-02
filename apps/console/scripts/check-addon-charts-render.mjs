@@ -137,6 +137,73 @@ function outages() {
 	return _outages;
 }
 
+/**
+ * helm's own wrapper around EVERY failure of `DownloadIndexFile`, and the reason the classifier
+ * alone cannot answer "did the host answer?".
+ *
+ * `cmd/helm/repo_add.go` wraps every one of them identically:
+ *
+ *     errors.Wrapf(err, "looks like %q is not a valid chart repository or cannot be reached", url)
+ *
+ * That phrase is the FIRST alternative in chart-fetch-network-errors.txt, so it matches before
+ * anything inside it is considered — and the two failures below are then indistinguishable, which
+ * was measured against helm 3.19.0, not reasoned about:
+ *
+ *   …cannot be reached: Get "…/index.yaml": dial tcp: lookup X: no such host   ← transport, wait
+ *   …cannot be reached: failed to fetch …/index.yaml : 404 Not Found           ← MOVED, act now
+ *
+ * A 404 is already correctly NOT in the classifier (its own self-test asserts so). The wrapper is
+ * what hides it. So the answer is to classify what helm WRAPPED rather than the wrapper.
+ */
+const HELM_UNREACHABLE_WRAPPER = /is not a valid chart repository or cannot be reached:\s*/i;
+
+/**
+ * Is this failure the TRANSPORT's fault, or did the host answer?
+ *
+ * This is the question the outage ledger turns on, and it is a strictly narrower question than the
+ * shared classifier's. `scripts/ci/chart-repo-outages.txt` may excuse a host that is DOWN; it must
+ * never excuse a host that is UP and serving something that is not a chart index, because that is a
+ * repository that has MOVED and the catalog is then wrong. Without this, a recorded outage whose
+ * host recovered onto a 404 stays green forever: the fetch is still "fetch"-shaped, the ledger still
+ * excuses it, and the recovered-entry branch never fires because it needs a clean success.
+ *
+ * UNRECOGNISED INNER TEXT IS TREATED AS "THE HOST ANSWERED", which is the fail-closed direction:
+ * it costs a red check that a human reads, where the other way costs a check that is green and wrong.
+ *
+ * @param {string} stderr
+ * @param {{test: (s: string) => boolean}} [isFetch]
+ * @returns {boolean}
+ */
+export function isTransport(stderr, isFetch) {
+	const re = isFetch ?? fetchRe();
+	const m = HELM_UNREACHABLE_WRAPPER.exec(stderr);
+	// No wrapper at all: a bare TCP error, or the timeout line this script synthesizes. Nothing is
+	// hiding anything, so the classifier's own verdict is the whole answer.
+	if (!m) return re.test(stderr);
+	return re.test(stderr.slice(m.index + m[0].length));
+}
+
+/** The predicate the reachability probe retries on: transport only, never a host that answered. */
+const TRANSPORT_ONLY = { test: (s) => isTransport(s) };
+
+/**
+ * May the outage ledger excuse this render failure?
+ *
+ * Its own function so the self-test can drive THE decision rather than a re-implementation of it —
+ * an assertion that restates the expression it is checking passes for both of them being wrong.
+ *
+ * Three conditions, and dropping any one of them has been a live defect in this file's history:
+ * the failure must be fetch-shaped at all, its repository must be recorded, and — the one added
+ * after review — the failure must be the TRANSPORT's, not a host that answered with a 404.
+ *
+ * @param {{kind: string, stderr: string} | null} err
+ * @param {string} chartRepo
+ * @param {Map<string, unknown>} ledger
+ */
+export function excusable(err, chartRepo, ledger) {
+	return err !== null && err.kind === "fetch" && ledger.has(chartRepo) && isTransport(err.stderr);
+}
+
 let _fetchRe;
 /** The classifier, loaded once. A failure to load is fatal here, never a permissive default. */
 function fetchRe() {
@@ -314,7 +381,12 @@ function reachability(specs) {
 	const recovered = [];
 	try {
 		for (const [repo, ids] of repos) {
-			const err = render({ id: repo, label: repo, chartRepo: repo }, dir, { renderOnce: () => probeOnce(repo, dir) });
+			// TRANSPORT_ONLY, not the shared classifier. helm wraps a 404 and a DNS failure in the
+			// same sentence, and that sentence is the classifier's first alternative — so passing
+			// the bare classifier here would make `kind: "fetch"` mean "helm failed", the `moved`
+			// branch below unreachable, and the ledger able to excuse a repository that has moved.
+			// It also means a host that ANSWERED is not retried: there is nothing to wait for.
+			const err = render({ id: repo, label: repo, chartRepo: repo }, dir, { renderOnce: () => probeOnce(repo, dir), isFetch: TRANSPORT_ONLY });
 			const entry = ledger.get(repo);
 			if (err === null) {
 				process.stdout.write(`  · ${repo}\n`);
@@ -473,7 +545,11 @@ try {
 		// step called `Every add-on renders`. A fetch failure against any OTHER repo stays fatal:
 		// that one is unexplained, and an unexplained fetch failure is exactly what a flake looks
 		// like the first time it is real.
-		const bucket = err === null ? null : err.kind !== "fetch" ? failures : ledger.has(addon.chartRepo) ? outaged : unreachable;
+		// `excusable()` and not `ledger.has(...)` alone: the SAME wrapper hides a 404 here as in the
+		// probe, so without its transport test a moved repository whose old URL is in the ledger
+		// would be excused by the render pass too, and both steps would sit green while the catalog
+		// was wrong.
+		const bucket = err === null ? null : err.kind !== "fetch" ? failures : excusable(err, addon.chartRepo, ledger) ? outaged : unreachable;
 		process.stdout.write(err === null ? `  · ${addon.label}\n` : `  ${bucket === failures ? "✗" : bucket === outaged ? "~" : "?"} ${addon.label}\n`);
 		if (err) bucket.push({ id: addon.label, chart: `${addon.chart}@${addon.version}`, repo: addon.chartRepo, err: err.stderr, attempts: err.attempts, entry: ledger.get(addon.chartRepo) });
 	}
@@ -683,21 +759,53 @@ function selfTest() {
 			ok(`  ledger entry ${url} names an issue and a reason`, /^#\d+$/.test(e.issue) && e.reason.length > 20, JSON.stringify(e));
 		}
 
-		// THE CLASS RULE, which is what stops the ledger becoming a way to ignore a moved repo. The
-		// bucketing in the render pass keys on `kind`, so this asserts the classifier's verdict on
-		// the two shapes that decide it — not the bucketing's own opinion of itself.
-		ok("a host that answers 'not a chart repository' over a live connection is still a FETCH shape", re.test(FETCH_ERR));
-		ok("...but a chart version missing from a reachable index is NOT, so no ledger entry can excuse it", !re.test('Error: chart "cloudnative-pg" version "0.22.1" not found in https://cloudnative-pg.github.io/charts repository'));
+		// ── THE CLASS RULE ────────────────────────────────────────────────────────────────────
+		//
+		// What stops the ledger becoming a way to ignore a moved repository. These assertions were
+		// WRONG in the first draft of this change, in the way that mattered: the "is a move
+		// excusable" case was driven with `Error: chart "x" version "1" not found in … repository`,
+		// which is a `helm template` message. `helm repo add` takes no chart and no version and can
+		// never emit it — so an assertion that the probe distinguishes a move passed against a
+		// message the probe cannot produce, while the real 404 shape sailed through as transport.
+		//
+		// So every string below is a VERBATIM `helm repo add` failure, measured against helm 3.19.0.
+		// The wrapper is identical across all of them, which is the entire point.
+		const W = (url, inner) => `Error: looks like "${url}" is not a valid chart repository or cannot be reached: ${inner}`;
+		const MOVED_404 = W("https://cloudnative-pg.github.io/charts", "failed to fetch https://cloudnative-pg.github.io/charts/index.yaml : 404 Not Found");
+		const DOWN_DNS = W("https://cloudnative-pg.github.io/charts", 'Get "https://cloudnative-pg.io/charts/index.yaml": dial tcp: lookup cloudnative-pg.io: no such host');
+		const DOWN_503 = W("https://a.example", 'Get "https://a.example/index.yaml": 503 Service Unavailable');
+
+		ok("the shared classifier CANNOT tell a 404 from a DNS failure — helm wraps both identically", re.test(MOVED_404) && re.test(DOWN_DNS), "which is why isTransport exists");
+		ok("isTransport reads past the wrapper: a 404 is a host that ANSWERED", !isTransport(MOVED_404, re));
+		ok("...a DNS failure behind the same wrapper is transport", isTransport(DOWN_DNS, re));
+		ok("...and so is a 503 behind it", isTransport(DOWN_503, re));
+		ok("an unwrapped transport error is still transport", isTransport("read tcp 10.1.0.4:52134->1.2.3.4:443: connection reset by peer", re));
+		ok("the synthesized timeout line carries no wrapper and is still transport", isTransport(TIMEOUT_ERR, re));
+		ok("an unrecognised inner message is treated as ANSWERED, not as an outage", !isTransport(W("https://a.example", "error converting YAML to JSON: did not find expected node content"), re), "fail-closed: a red check beats a green wrong one");
 
 		// The probe reuses render()'s retry, so an outage is retried to the ceiling before it is
 		// believed — a ledger entry written against one bad packet would be worse than no ledger.
 		const probeSpec = { id: "https://a.example", label: "https://a.example", chartRepo: "https://a.example" };
-		let pc = 0;
-		const pr = render(probeSpec, led, { attempts: 3, sleepBase: 0, isFetch: re, renderOnce: () => (pc++, FETCH_ERR) });
-		ok("the reachability probe retries an unreachable repo to the ceiling", pc === 3 && pr?.kind === "fetch", `${pc} call(s)`);
-		pc = 0;
-		const pm = render(probeSpec, led, { attempts: 3, sleepBase: 0, isFetch: re, renderOnce: () => (pc++, 'Error: chart "x" version "1" not found in https://a.example repository') });
-		ok("...and does not retry a host that answered, which is a MOVE and never excusable", pc === 1 && pm?.kind === "render", `${pc} call(s)`);
+		const driveProbe = (msg) => {
+			let c = 0;
+			const r = render(probeSpec, led, { attempts: 3, sleepBase: 0, isFetch: TRANSPORT_ONLY, renderOnce: () => (c++, msg) });
+			return { r, c };
+		};
+		let p = driveProbe(DOWN_DNS);
+		ok("the reachability probe retries an unreachable repo to the ceiling", p.c === 3 && p.r?.kind === "fetch", `${p.c} call(s), ${JSON.stringify(p.r?.kind)}`);
+		p = driveProbe(MOVED_404);
+		ok("...and does NOT retry a 404 — the host answered, there is nothing to wait for", p.c === 1, `${p.c} call(s)`);
+		ok("...reporting it as a MOVE, which no ledger entry may excuse", p.r?.kind === "render", JSON.stringify(p.r?.kind));
+
+		// THE RENDER PASS'S OWN DECISION, driven directly. The probe and the render pass are two
+		// separate places the ledger is consulted, and fixing one is not fixing the other: a repo
+		// recorded as down that comes back on a 404 must be excused by NEITHER.
+		const withEntry = new Map([["https://cnpg.example", { issue: "#1", reason: "down" }]]);
+		ok("the render pass excuses a recorded repo that is genuinely DOWN", excusable({ kind: "fetch", stderr: DOWN_DNS }, "https://cnpg.example", withEntry));
+		ok("...and does NOT excuse the same recorded repo answering 404 — that is a move", !excusable({ kind: "fetch", stderr: MOVED_404 }, "https://cnpg.example", withEntry));
+		ok("...nor an unrecorded repo that is down", !excusable({ kind: "fetch", stderr: DOWN_DNS }, "https://other.example", withEntry));
+		ok("...nor a chart that does not render, whatever the ledger says", !excusable({ kind: "render", stderr: RENDER_ERR }, "https://cnpg.example", withEntry));
+		ok("...and an empty ledger excuses nothing at all", !excusable({ kind: "fetch", stderr: DOWN_DNS }, "https://cnpg.example", new Map()));
 	} finally {
 		rmSync(led, { recursive: true, force: true });
 	}
