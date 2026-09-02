@@ -17,7 +17,8 @@
 #   env:check   tsc + lint + vitest ON THE BOX (worktrees are de-hydrated)
 #   env:test    Playwright browser tests ON THE BOX; report + traces rsync'd back
 #   env:runner  a provisioning runner pointed at this env
-#   env:reap    snapshot + DELETE the box (stops the meter)   [--now]
+#   env:reap    snapshot + DELETE the box (stops the meter)
+#               [--now] [--include-mine] [--dry-run = decide and print, destroy nothing]
 #   env:timer   reap the box automatically once idle   [off|status]
 #   env:box     create or restore the box   [--fresh = ignore snapshots]
 set -euo pipefail
@@ -49,6 +50,11 @@ case "$_git_common" in
   MAIN_CHECKOUT="$(cd "$(dirname "$_git_common")" 2>/dev/null && pwd || echo "$ROOT")"
   ;;
 esac
+
+# The env registry's identity and the reap decision. Sourced from THIS tree (not the main
+# checkout): it is a tracked file that ships with the script that uses it.
+# shellcheck source=scripts/lib/env-owner.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/env-owner.sh"
 
 TF_DIR="$MAIN_CHECKOUT/infra/sandbox"
 SERVER_NAME="alethia-sandbox"
@@ -114,7 +120,14 @@ slug() {
   printf '%s' "${b:-dev}"
 }
 
-owner() { printf '%s@%s' "$(id -un)" "$(hostname -s)"; }
+# WHO holds an environment — `env_owner`, from scripts/lib/env-owner.sh, sourced above.
+#
+# It used to be `printf '%s@%s' "$(id -un)" "$(hostname -s)"` right here, and that string is
+# IDENTICAL for every agent, worktree and shell on one machine. The reap guard below tests
+# `.value.owner != $me`, so it could never fire between two local instances — which is how a
+# finished lane deleted the box out from under another lane's live environment (#3841). The
+# identity is now the worktree lease's, so the two isolation primitives on this box agree
+# about what "who" means.
 
 # The env's public hostname. ONE label deep, always.
 #
@@ -319,6 +332,21 @@ require_main_checkout() { # <command>
   fi
 }
 
+# An env touched inside this window counts as IN USE. It must stay BELOW REAP_AFTER_MIN or the
+# unattended timer could never reap anything — cmd_timer asserts that, rather than trusting it.
+REAP_LIVE_WINDOW_MIN=60
+
+reap_cutoff() {
+  date -u -v-${REAP_LIVE_WINDOW_MIN}M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
+    date -u -d "$REAP_LIVE_WINDOW_MIN minutes ago" +%Y-%m-%dT%H:%M:%SZ
+}
+
+# The registry, or nothing. Fails CLOSED at every call site: an empty answer means "assume
+# someone is there", never "nobody is here".
+read_registry() {
+  ssh_box "$REMOTE/bin/env-registry.sh list" 2>/dev/null || true
+}
+
 # THE COMPENSATING CONTROL for letting agents reap.
 #
 # A hook cannot judge this — it does not know who holds which environment. This does: the
@@ -326,31 +354,74 @@ require_main_checkout() { # <command>
 # an instance tidying up after itself must not end someone else's run, and `--now` must not
 # be a way around that.
 #
+# The DECISION lives in scripts/lib/env-owner.sh (`env_reap_verdict`) and is self-tested there
+# against fixture registries. This function is only the box round-trip and the message: the whole
+# reason the defect survived is that the deciding was welded to an ssh call and could not be run.
+#
 # Fails CLOSED: if the registry cannot be read, assume someone is there.
-refuse_if_others_are_working() { # <force-flag>
-  local reg others
-  reg="$(ssh_box "$REMOTE/bin/env-registry.sh list" 2>/dev/null || true)"
-  if [ -z "$reg" ]; then
-    die "cannot read the env registry — refusing to reap a box that might be in use."
+reap_guard() { # <registry-json> <include-mine 0|1>
+  local reg="$1" include_mine="${2:-0}" me cut rows verdict rc=0
+  [ -n "$reg" ] || die "cannot read the env registry — refusing to reap a box that might be in use."
+  me="$(env_owner)"
+  cut="$(reap_cutoff)"
+
+  # WHAT IS ABOUT TO BE DESTROYED, before it is destroyed. Every row, not just the blocking
+  # ones: reaping takes the box, so an idle env dies with it. The reaping lane in #3841 reported
+  # "confirmed box: down" and was, from its own point of view, entirely correct and careful.
+  rows="$(env_reap_rows "$reg" "$me" "$cut" 2>/dev/null || true)"
+  if [ -n "$rows" ]; then
+    echo "→ reaping deletes the box, and with it every environment on it:"
+    printf '%s\n' "$rows" | env_reap_render
+  else
+    echo "→ no environments are registered on the box."
   fi
 
-  # Anyone else's env touched in the last hour counts as in use.
-  others="$(printf '%s' "$reg" | jq -r --arg me "$(owner)" --arg cut "$(date -u -v-60M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
-    date -u -d '60 minutes ago' +%Y-%m-%dT%H:%M:%SZ)" '
-      to_entries[] | select(.value.owner != $me and .value.lastSeen > $cut)
-      | "  \(.key)\t\(.value.owner)\tlast seen \(.value.lastSeen)"' 2>/dev/null || true)"
-
-  if [ -n "$others" ]; then
+  verdict="$(env_reap_verdict "$reg" "$me" "$cut" "$include_mine")" || rc=$?
+  case "$verdict" in
+  allow) return 0 ;;
+  refuse-unreadable)
+    die "the env registry did not parse — refusing to reap a box that might be in use."
+    ;;
+  refuse-others)
     {
+      echo ""
       echo "✗ Not reaping — someone else is working on this box."
       echo ""
-      printf '%s\n' "$others"
+      printf '%s\n' "$rows" | awk -F'\t' '$5 == "live" && $1 != "mine"' | env_reap_render
       echo ""
       echo "  Reaping deletes the box for everyone, so this is refused even with --now."
       echo "  Ask them to run  pnpm env:down,  or wait for their env to go idle."
+      # `… && { … }` here would make the whole group's status non-zero when there is no legacy
+      # row, and `set -e` would kill the script BEFORE the `exit "$rc"` below — turning a
+      # refusal that means "someone else is live" (3) into a bare 1.
+      if printf '%s\n' "$rows" | grep -q '^legacy'; then
+        echo ""
+        echo "  A 'legacy user@host' owner predates #3841 and cannot be attributed to an"
+        echo "  instance. It is counted as someone else's on purpose — that is the safe"
+        echo "  reading. If it is yours, pnpm env:up rewrites it, or pnpm env:down releases it."
+      fi
     } >&2
-    exit 3
-  fi
+    exit "$rc"
+    ;;
+  refuse-mine)
+    {
+      echo ""
+      echo "✗ Not reaping — your own environment is still live."
+      echo ""
+      printf '%s\n' "$rows" | awk -F'\t' '$5 == "live" && $1 == "mine"' | env_reap_render
+      echo ""
+      echo "  Reaping deletes the box, so this env goes too: the slot, its database, its"
+      echo "  OpenFGA store and its tunnel. env:box restores the BOX, not the env."
+      echo ""
+      echo "  Finished with it?   pnpm env:down   (then reap)"
+      echo "  Meant both?         pnpm env:reap --now --include-mine"
+    } >&2
+    exit "$rc"
+    ;;
+  *)
+    die "unrecognised reap verdict '$verdict' — refusing to reap."
+    ;;
+  esac
 }
 
 # ── Commands ──────────────────────────────────────────────────────────────────────
@@ -419,7 +490,7 @@ MSG
 #   Enter a value: Error: error asking for approval: EOF
 # env:reap hit exactly that after taking its snapshot. The prompt is not what makes these
 # safe: guard-iac.sh (raw tofu still blocked), require_main_checkout and
-# refuse_if_others_are_working all run before here. A prompt that only fires for humans
+# reap_guard all run before here. A prompt that only fires for humans
 # adds nothing and breaks every other caller — including the nightly reap the cost model
 # depends on.
 cmd_box() {
@@ -734,7 +805,7 @@ cmd_up() {
   ssh_box "$REMOTE/bin/env-shared.sh"
 
   echo "→ allocating environment '$slug_'"
-  row="$(ssh_box "$REMOTE/bin/env-registry.sh alloc '$slug_' '$(owner)'")" || exit $?
+  row="$(ssh_box "$REMOTE/bin/env-registry.sh alloc '$slug_' '$(env_owner)'")" || exit $?
   cport="$(printf '%s' "$row" | jq -r .consolePort)"
   sport="$(printf '%s' "$row" | jq -r .storagePort)"
   db="$(printf '%s' "$row" | jq -r .database)"
@@ -1064,11 +1135,14 @@ cmd_status() {
   # there would read as "fine", which is the exact failure this is here to stop.
   local scopes
   scopes="$(env_scopes)"
+  # `owner` is now an INSTANCE, not a machine — so this can finally say which one is you.
+  # It is the same string env:reap compares, printed verbatim: a status line that renders a
+  # prettier form of the value the guard tests is a second source of truth waiting to drift.
   ssh_box "$REMOTE/bin/env-registry.sh list" |
-    jq -r --arg d "$domain" --arg scopes "$scopes" '
+    jq -r --arg d "$domain" --arg scopes "$scopes" --arg me "$(env_owner)" '
       ($scopes | split("\n") | map(select(length > 0) | split(" ") | {key: .[0], value: .[1]}) | from_entries) as $sc |
       to_entries[] |
-      "  \(.key)\n    url    https://\(if .key == "dev" then $d else "env" + (((.value.consolePort - 3000) / 100) | tostring) + "-" + $d end)\n    ports  console :\(.value.consolePort)  storage :\(.value.storagePort)\n    scope  \($sc[.key] // "?-not-probed")\n    owner  \(.value.owner)   last seen \(.value.lastSeen)"'
+      "  \(.key)\n    url    https://\(if .key == "dev" then $d else "env" + (((.value.consolePort - 3000) / 100) | tostring) + "-" + $d end)\n    ports  console :\(.value.consolePort)  storage :\(.value.storagePort)\n    scope  \($sc[.key] // "?-not-probed")\n    owner  \(.value.owner)\(if .value.owner == $me then "   ← you" else "" end)   last seen \(.value.lastSeen)"'
   cat <<'NOTE'
 
   Scope: which EDITION that env's console is serving, measured against the running process
@@ -1404,27 +1478,81 @@ cmd_runner() {
     ALETHIA_WEB_ORIGIN=http://localhost:$cport bash scripts/dev-runner.sh"
 }
 
+# `env:reap --dry-run` — the decision, and nothing else. Writes nothing, needs no state file, and
+# is the seam this guard was missing: before #3841 the only way to find out what the refusal would
+# do was to reap something. ALETHIA_ENV_REGISTRY_FILE substitutes a fixture registry for the box's,
+# and is honoured ONLY here — it can never influence a real reap (scripts/lib/env-reap-test.sh).
+cmd_reap_dry_run() { # <include-mine 0|1>
+  local reg rc=0
+  if [ -n "${ALETHIA_ENV_REGISTRY_FILE:-}" ]; then
+    echo "→ dry run against fixture registry ${ALETHIA_ENV_REGISTRY_FILE}"
+    reg="$(cat "$ALETHIA_ENV_REGISTRY_FILE")"
+  else
+    box_exists || {
+      echo "box already down — env:reap would do nothing."
+      return 0
+    }
+    reg="$(read_registry)"
+  fi
+  echo "→ I am $(env_owner)"
+  # reap_guard EXITS on a refusal, so the verdict reaches the caller as this script's exit
+  # code (3 = someone else, 4 = my own env, 1 = unreadable). The rc dance is kept anyway: if
+  # it is ever changed to return instead, the success line below must not print regardless.
+  reap_guard "$reg" "$1" || rc=$?
+  [ "$rc" = 0 ] || return "$rc"
+  echo ""
+  echo "✓ dry run: nobody is blocking. A real reap would snapshot and DELETE the box."
+  echo "  (This answers the OWNERSHIP gate only — without --now a real reap also waits for"
+  echo "   the box to be idle ${REAP_AFTER_MIN}m.)"
+}
+
 cmd_reap() {
-  require_main_checkout "env:reap"
   need jq
-  local idle now=""
-  [ "${1:-}" = "--now" ] && now=1
+  local idle now="" include_mine=0 dry="" a
+  for a in "$@"; do
+    case "$a" in
+    --now) now=1 ;;
+    # "My own other env is running" is also a reason to stop and ask: reaping deletes the box
+    # for everyone, this lane included. A lane that legitimately owns both says so here.
+    --include-mine) include_mine=1 ;;
+    --dry-run) dry=1 ;;
+    # Refused, never ignored — an unrecognised flag that is silently dropped is how
+    # `--include-mine` would look exactly like a reap that was never gated.
+    *) die "unknown flag '$a' — env:reap takes [--now] [--include-mine] [--dry-run]" ;;
+    esac
+  done
+
+  # The dry run mutates nothing, so it does not need the state file and must work from a
+  # worktree — which is where an agent asking "would this be safe?" actually is.
+  if [ -n "$dry" ]; then
+    cmd_reap_dry_run "$include_mine"
+    return $?
+  fi
+
+  require_main_checkout "env:reap"
   box_exists || {
     echo "box already down — nothing billing but the IP (EUR 0.50/mo) and the snapshot."
     return 0
   }
-  refuse_if_others_are_working
   idle="$(ssh_box "$REMOTE/bin/env-registry.sh idle-minutes")"
 
   # --now is "I am finished for the day". The idle threshold assumes several people whose
   # runs must not be reaped out from under them; with one user it mostly means the box is
   # NEVER reaped — and an unreaped box is the entire cost problem, because Hetzner bills a
   # server for as long as it EXISTS, running or not.
+  #
+  # This runs BEFORE the ownership guard on purpose. The unattended timer calls reap without
+  # --now every 30 minutes, and its common case is "too early": that has to stay a cheap
+  # message and exit 0, not a refusal. Nothing is destroyed either way — the guard still runs
+  # before any snapshot or destroy below.
   if [ -z "$now" ] && [ "$idle" -lt "$REAP_AFTER_MIN" ]; then
     echo "not reaping: most recent activity was ${idle}m ago (threshold ${REAP_AFTER_MIN}m)."
     echo "  Finished for the day?  pnpm env:reap --now"
     return 0
   fi
+
+  reap_guard "$(read_registry)" "$include_mine"
+
   if [ -n "$now" ] && [ "$idle" -lt 30 ]; then
     echo "⚠ --now, but something was active ${idle}m ago. Reaping anyway; a run in flight will die."
   fi
@@ -1465,10 +1593,11 @@ cmd_reap() {
 # `pnpm env:timer` — run env:reap on a schedule, so an idle box cannot survive the night.
 #
 # Deliberately runs reap WITHOUT --now: the script already does all the deciding, and it
-# is safe unattended for a reason worth stating. refuse_if_others_are_working only counts
-# envs touched in the last 60 minutes, and REAP_AFTER_MIN is 90 — so by the time a box is
-# reapable, nothing can still be blocking it. The two thresholds cannot deadlock as long
-# as REAP_AFTER_MIN stays above 60, which cmd_timer asserts below rather than trusting.
+# is safe unattended for a reason worth stating. reap_guard only counts envs touched in the
+# last REAP_LIVE_WINDOW_MIN (60) minutes, and REAP_AFTER_MIN is 90 — so by the time a box is
+# reapable, nothing can still be blocking it, MINE INCLUDED: the timer never passes
+# --include-mine and never needs to. The two thresholds cannot deadlock as long as
+# REAP_AFTER_MIN stays above the window, which cmd_timer asserts below rather than trusting.
 #
 # A run that fires too early prints "not reaping" and exits 0. That is the common case and
 # it must stay cheap and silent.
@@ -1510,9 +1639,9 @@ cmd_timer() {
   esac
 
   # A deadlock here is silent and expensive: the box would simply never be reaped.
-  [ "$REAP_AFTER_MIN" -gt 60 ] ||
-    die "REAP_AFTER_MIN is ${REAP_AFTER_MIN}m but refuse_if_others_are_working blocks on
-  activity in the last 60m — the timer could never reap. Raise it above 60."
+  [ "$REAP_AFTER_MIN" -gt "$REAP_LIVE_WINDOW_MIN" ] ||
+    die "REAP_AFTER_MIN is ${REAP_AFTER_MIN}m but reap_guard blocks on activity in the last
+  ${REAP_LIVE_WINDOW_MIN}m — the timer could never reap. Raise it above ${REAP_LIVE_WINDOW_MIN}."
 
   # launchd does NOT give a job your shell's PATH; it gets /usr/bin:/bin:/usr/sbin:/sbin,
   # where none of these live. Resolve them now and embed the real directories, so the
@@ -1601,9 +1730,10 @@ timer)
   cmd_timer "$@"
   ;;
 *)
-  # 5,22 is exactly the header block above. It read 5,25 and so printed `set -euo
-  # pipefail` and the first line of the next comment section as if they were usage.
-  sed -n '5,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # 5,23 is exactly the header block above (it grew a line when env:reap gained its
+  # flags). It read 5,25 once and so printed `set -euo pipefail` and the first line of
+  # the next comment section as if they were usage.
+  sed -n '5,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 1
   ;;
 esac
