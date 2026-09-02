@@ -25,12 +25,14 @@ per environment.`,
 var probesListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List a project's latest per-environment cluster probes",
+	Long: `List the latest cluster-alive probe for each of a project's environments. Name the
+project with --project; omit it on a terminal and you are asked which.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		project, err := currentProject(cmd)
+		project, err := projectFromFlag(cmd, token)
 		if err != nil {
 			fail(err)
 		}
@@ -69,19 +71,21 @@ func reachableLabel(reachable *bool) string {
 	return ui.SymbolOffline + " down"
 }
 
-// probeRows projects probe states into plain table cells; unset message/time render as the dash glyph.
+// probeRows projects probe states into plain table cells.
+//
+// Both nullable cells go through the shared render surface rather than repeating its two branches
+// inline. The Probed cell changes what a reader sees: it used to print the wire's raw RFC3339
+// string, so a table of five environments carried five copies of `2026-09-01T14:03:22.114Z` where
+// every other timestamp in the CLI reads `2026-09-01 14:03`.
 func probeRows(probes []api.ProbeState) [][]string {
 	rows := make([][]string, len(probes))
 	for i, p := range probes {
-		message := ui.SymbolDash
-		if p.Message != nil && *p.Message != "" {
-			message = *p.Message
+		rows[i] = []string{
+			p.Environment,
+			reachableLabel(p.Reachable),
+			ui.StrOrDash(p.Message),
+			ui.StampOrDash(p.ProbedAt),
 		}
-		probed := ui.SymbolDash
-		if p.ProbedAt != nil {
-			probed = *p.ProbedAt
-		}
-		rows[i] = []string{p.Environment, reachableLabel(p.Reachable), message, probed}
 	}
 	return rows
 }
@@ -103,7 +107,8 @@ func runProbesList(c apiClient, out io.Writer, format, project string) error {
 }
 
 func init() {
-	probesCmd.PersistentFlags().StringP("project", "p", "", "Project name or id")
+	probesCmd.PersistentFlags().StringP("project", "p", "",
+		mustGovField("alethia probes list", fieldKeyGovProject).Description+" (name or id)")
 	probesCmd.AddCommand(probesListCmd)
 	rootCmd.AddCommand(probesCmd)
 }
