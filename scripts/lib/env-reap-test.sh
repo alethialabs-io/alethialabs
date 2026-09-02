@@ -9,8 +9,14 @@
 # being unreachable, so "the function returns refuse-others" is not the claim that matters — "the
 # command refuses" is.
 #
+# Section 7 replays a SECOND incident, #3922: `cmd_idle_minutes` reported 999999 for a registry
+# with no rows, which made a box with nothing registered on it maximally idle by construction and
+# handed it to the unattended timer on its first tick. The threshold itself sits behind
+# require_main_checkout and an ssh, so that section drives its two real halves — the box script's
+# `idle-minutes`, and the gate condition lifted verbatim out of env.sh — rather than a copy.
+#
 # Hermetic: no box, no ssh, no hcloud, no network. `env:reap --dry-run` reads the fixture registry
-# named by ALETHIA_ENV_REGISTRY_FILE and destroys nothing. The last case asserts that the override
+# named by ALETHIA_ENV_REGISTRY_FILE and destroys nothing. Section 6 asserts that the override
 # is confined to the dry run, so this seam can never weaken a real reap.
 #
 #   bash scripts/lib/env-reap-test.sh
@@ -176,6 +182,183 @@ if [ -n "$real_start" ] && [ -z "$stray" ]; then
 	ok "ALETHIA_ENV_REGISTRY_FILE is confined to the dry run — a real reap always reads the box"
 else
 	bad "ALETHIA_ENV_REGISTRY_FILE leaked into the real reap path (lines: ${stray:-none}, cmd_reap at ${real_start:-?})"
+fi
+
+# ── 7. THE IDLE THRESHOLD. A box with no env rows is not an idle box (#3922). ───────────────────
+# The dry run above answers the OWNERSHIP question only; the threshold that the unattended timer
+# actually trips on lives further down cmd_reap, behind require_main_checkout, box_exists and an
+# ssh — unreachable from a worktree. So this drives its two real halves instead, neither of them
+# re-implemented here: the box script's `idle-minutes` for the number, and the condition LIFTED
+# VERBATIM out of env.sh for the comparison. Break either one and these go red.
+
+REGISTRY_SH="$ROOT/scripts/box/env-registry.sh"
+
+# The threshold's default is read from env.sh rather than typed here, so raising it cannot leave
+# a fixture silently on the wrong side of it.
+REAP_AFTER_MIN="$(grep -oE 'ALETHIA_REAP_AFTER_MIN:-[0-9]+' "$ENV_SH" | head -1 | sed 's/.*:-//')"
+if [ -n "$REAP_AFTER_MIN" ] && [ "$REAP_AFTER_MIN" -gt 0 ] 2>/dev/null && [ "$REAP_AFTER_MIN" -lt 360 ]; then
+	ok "the reap threshold (${REAP_AFTER_MIN}m) was read from env.sh, and the 6h fixture clears it"
+else
+	bad "could not read a usable REAP_AFTER_MIN default from env.sh (got '${REAP_AFTER_MIN:-}')"
+	REAP_AFTER_MIN=90
+fi
+
+# The gate, lifted. Matched on the threshold rather than on the operator ON PURPOSE: a mutation
+# that flips `-lt` must red an ASSERTION below, not vanish from the grep and be reported as a
+# missing line. Exactly one match is required — zero or several means this stopped watching what
+# it thinks it watches.
+# shellcheck disable=SC2016  # a literal $ — this is a grep pattern matched against env.sh's source
+GATE_LINE="$(grep -n '"\$REAP_AFTER_MIN" \]; then' "$ENV_SH" || true)"
+if [ "$(printf '%s\n' "$GATE_LINE" | grep -c .)" = 1 ]; then
+	ok "the reap gate is a single line in env.sh, and this test is reading it"
+else
+	bad "expected exactly one reap-gate line in env.sh, found: ${GATE_LINE:-none}"
+fi
+# `  if <cond>; then` → `<cond>`
+GATE_COND="$(printf '%s' "$GATE_LINE" | cut -d: -f2- | sed -e 's/^[[:space:]]*if[[:space:]]*//' -e 's/;[[:space:]]*then[[:space:]]*$//')"
+
+gate() { # <idle-minutes> <now-flag: "" or 1> → blocked | proceeds
+	# shellcheck disable=SC2034  # read by the condition lifted out of env.sh
+	local idle="$1" now="$2"
+	if eval "$GATE_COND"; then echo blocked; else echo proceeds; fi
+}
+
+# `date -u -d` is GNU-only and cmd_idle_minutes returns 0 for a timestamp it cannot parse — so on
+# a BSD date EVERY case below would read 0 and "an empty registry must not reap" would pass for
+# the wrong reason while "genuinely old must still reap" failed. Shim it rather than skip: the
+# direction that keeps reaping ALIVE is the one a skip would silently stop running.
+SHIM_DIR=""
+if ! date -u -d "2020-01-01T00:00:00Z" +%s >/dev/null 2>&1; then
+	SHIM_DIR="$TMP/shim"
+	mkdir -p "$SHIM_DIR"
+	cat >"$SHIM_DIR/date" <<'SHIM'
+#!/usr/bin/env bash
+# GNU `date -u -d <iso8601> +%s`, the one form cmd_idle_minutes uses, on a BSD date.
+# Everything else passes straight through. Unparseable input must still FAIL here, because
+# that is the branch env-registry.sh treats as "cannot tell".
+if command -v gdate >/dev/null 2>&1; then exec gdate "$@"; fi
+if [ "${1:-}" = "-u" ] && [ "${2:-}" = "-d" ]; then
+	exec /bin/date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$3" "$4"
+fi
+exec /bin/date "$@"
+SHIM
+	chmod +x "$SHIM_DIR/date"
+fi
+
+BOX_ROOT="$TMP/box"
+mkdir -p "$BOX_ROOT"
+idle_for() { # <registry-json> → what the REAL box script reports
+	printf '%s' "$1" >"$BOX_ROOT/envs.json"
+	PATH="${SHIM_DIR:+$SHIM_DIR:}$PATH" ALETHIA_BOX_ROOT="$BOX_ROOT" \
+		bash "$REGISTRY_SH" idle-minutes 2>/dev/null
+}
+
+# The control, and the proof that the date path works at all. If a 6h-old row does not read as
+# roughly 6h, nothing else in this section means anything.
+old_idle="$(idle_for "{\"other-lane\":$(row "$THEM" "$(old_iso)")}")"
+if [ "${old_idle:-x}" -ge 300 ] 2>/dev/null && [ "$old_idle" -le 420 ] 2>/dev/null; then
+	ok "a 6h-old lastSeen reads as ${old_idle}m — the idle arithmetic is being exercised"
+else
+	bad "a 6h-old lastSeen should read as ~360m, got '${old_idle:-}' (date path broken — the cases below prove nothing)"
+fi
+
+# ── the direction that stops the fix from disabling reaping ──
+if [ "$(gate "$old_idle" "")" = proceeds ]; then
+	ok "a genuinely idle box STILL reaps — failing safe on absence did not switch reaping off"
+else
+	bad "a registry ${old_idle}m stale must clear the ${REAP_AFTER_MIN}m threshold and reap"
+fi
+
+# ── the incident ──
+empty_idle="$(idle_for '{}')"
+if [ "$empty_idle" = "0" ]; then
+	ok "an empty registry reports 0 idle minutes, not 999999"
+else
+	bad "an empty registry must report 0 idle minutes, got '${empty_idle:-}'"
+fi
+if [ "$(gate "$empty_idle" "")" = blocked ]; then
+	ok "a box with NO env rows does not reap — the unattended timer leaves it alone (#3922)"
+else
+	bad "a box with no env rows must not reap: idle-minutes said '${empty_idle:-}', the gate proceeds"
+fi
+
+# The sibling absence case, asserted here too so the two read as one rule rather than two
+# accidents: an unparseable timestamp has always failed safe, and now so does no timestamp.
+bad_idle="$(idle_for '{"x":{"consolePort":3100,"lastSeen":"not-a-date"}}')"
+if [ "$bad_idle" = "0" ] && [ "$(gate "$bad_idle" "")" = blocked ]; then
+	ok "an unparseable lastSeen also fails safe — same question, same answer as no rows"
+else
+	bad "an unparseable lastSeen must fail safe, got '${bad_idle:-}'"
+fi
+
+# A live env is the ordinary "too early" case, and it must still be distinguishable from the two
+# absences above: it blocks for a reason that WAS measured.
+fresh_idle="$(idle_for "{\"other-lane\":$(row "$THEM" "$(now_iso)")}")"
+if [ "${fresh_idle:-x}" -lt 5 ] 2>/dev/null && [ "$(gate "$fresh_idle" "")" = blocked ]; then
+	ok "a freshly touched env blocks the timer, as it always did"
+else
+	bad "a freshly touched env must block (idle '${fresh_idle:-}')"
+fi
+
+# `--now` skips the threshold entirely — which is why failing safe does not strand a box forever.
+if [ "$(gate "$empty_idle" 1)" = proceeds ] && [ "$(gate "$fresh_idle" 1)" = proceeds ]; then
+	ok "--now bypasses the threshold, so a genuinely abandoned empty box is still reapable by hand"
+else
+	bad "--now must bypass the idle threshold"
+fi
+
+# ── the messages. "0m ago" about a registry with no rows in it is a claim nothing measured. ──
+# idle_phrase is lifted and RUN, not grepped for: what matters is what it says, and both the
+# "not reaping" and the "reaping" (snapshot) lines are built from it.
+PHRASE_FN="$(sed -n '/^idle_phrase() {/,/^}/p' "$ENV_SH")"
+if [ -n "$PHRASE_FN" ]; then
+	eval "$PHRASE_FN"
+	empty_msg="$(idle_phrase 0 0)"
+	old_msg="$(idle_phrase 360 1)"
+	unknown_msg="$(idle_phrase 360 "")"
+	if [ "$empty_msg" != "$old_msg" ] && ! grep -q '0m ago' <<<"$empty_msg" && grep -q '360m ago' <<<"$old_msg"; then
+		ok "'no activity recorded' and 'activity was long ago' read as different things"
+	else
+		bad "the reaper says the same thing for an empty registry as for a stale one: '$empty_msg'"
+	fi
+	# The count is best-effort. When it could not be read the wording must fall back to the
+	# plain form, never to the empty-box claim.
+	if [ "$unknown_msg" = "$old_msg" ]; then
+		ok "an unreadable env count falls back to the plain phrasing"
+	else
+		bad "an unreadable env count must not change what the reaper claims (got '$unknown_msg')"
+	fi
+	# …and it has to be WIRED. Found by mutation: deleting the count fetch takes the messages
+	# straight back to "activity was 0m ago" about an empty registry, with every assertion
+	# above still green — idle_phrase passing its own test proves nothing if cmd_reap never
+	# hands it a count.
+	fetch_n="$(grep -cE '^[[:space:]]*envs="\$\(read_registry \| jq' "$ENV_SH" || true)"
+	# shellcheck disable=SC2016  # literal $ again: grep patterns, not expansions
+	calls="$(grep -oE 'idle_phrase "\$idle" "[^"]*"' "$ENV_SH" || true)"
+	call_n="$(printf '%s\n' "$calls" | grep -c . || true)"
+	# shellcheck disable=SC2016
+	bare_n="$(printf '%s\n' "$calls" | grep -vc 'idle_phrase "\$idle" "\$envs"' || true)"
+	if [ "$fetch_n" = 1 ] && [ "$call_n" -ge 2 ] && [ "$bare_n" = 0 ]; then
+		ok "the env count is fetched once and reaches every message that reports idleness"
+	else
+		bad "idle_phrase is not wired: ${fetch_n} count fetch(es), ${call_n} call(s), ${bare_n} not passing \$envs"
+	fi
+	# The `--now` warning on the REAPING side is the one message that is not built from
+	# idle_phrase — it says a different thing in each case, not a different phrasing of one
+	# thing. It has no hermetic seam (it sits after require_main_checkout and an ssh), so this
+	# is deliberately a SOURCE-SHAPE check and is stated as one: the warning block must branch
+	# on the count before it claims "something was active Nm ago". Found by mutation — without
+	# it, deleting that branch left every assertion above green.
+	# shellcheck disable=SC2016  # literal $ — a grep pattern over env.sh's source
+	warn_block="$(sed -n '/\[ -n "\$now" \] && \[ "\$idle" -lt 30 \]/,/^  fi$/p' "$ENV_SH")"
+	# shellcheck disable=SC2016
+	if grep -q '\[ "\$envs" = "0" \]' <<<"$warn_block" && grep -q 'no registered environments' <<<"$warn_block"; then
+		ok "the --now warning branches on the count before claiming something was active"
+	else
+		bad "the --now warning claims 'something was active Nm ago' on a box with no env rows"
+	fi
+else
+	bad "env.sh has no idle_phrase() — the reaper's messages cannot distinguish the two cases"
 fi
 
 kill "$OTHER_PID" 2>/dev/null
