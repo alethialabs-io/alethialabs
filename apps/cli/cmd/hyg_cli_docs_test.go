@@ -48,6 +48,7 @@ var docsGroups = map[string]string{
 	"cluster": "clusters",
 	"addon":   "addons",
 	"agent":   "agents",
+	"runner":  "runners",
 	"org":     "organizations",
 	"members": "organizations",
 	"teams":   "organizations",
