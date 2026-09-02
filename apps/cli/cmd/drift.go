@@ -65,7 +65,9 @@ func driftSummary(p *api.DriftPosture) string {
 	}
 	when := ""
 	if p.ScannedAt != nil {
-		when = fmt.Sprintf(" (scanned %s)", *p.ScannedAt)
+		// The scan stamp went out as the raw wire string. ui.Stamp returns it VERBATIM if it does
+		// not parse, so a wire problem stays reportable rather than becoming a blank.
+		when = fmt.Sprintf(" (scanned %s)", ui.Stamp(*p.ScannedAt))
 	}
 	if p.InSync {
 		return ui.FormatSuccess(fmt.Sprintf("Drift%s: in sync%s", scope, when))
