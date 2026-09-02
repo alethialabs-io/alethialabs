@@ -863,6 +863,25 @@ jobs:
           pnpm gen:shared-surface
           git diff --exit-code -- apps/console/shared-surface-allowlist.yaml \
             || { echo "::error::apps/console/shared-surface-allowlist.yaml's ledger counters are stale — run 'pnpm gen:shared-surface' and commit."; exit 1; }
+      # The connector catalog's `icon_url`s. Eleven of the eighteen icon slugs it named had no file
+      # behind them (#3802): the generator emitted every one verbatim into the TS registry AND
+      # persisted it into `connectors.icon_url`, so the console asked for an asset that 404s on
+      # every render of every connector surface and recovered into the monogram fallback — silently,
+      # which is why it survived. Nothing ran this generator in CI either, so a stale
+      # registry.generated.ts was equally invisible. Both halves are closed here: the run REFUSES a
+      # dangling path, and the diff proves the committed output is what the manifest produces.
+      - name: Every connector icon resolves, and the generated registry + seed are current
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        # `node …` and not `pnpm -C apps/console run gen:connectors`, deliberately: the generator resolves
+        # every path from its own module URL, so the direct call is identical, and it cannot inherit
+        # whatever a package-manager wrapper decides to do with a non-zero exit code.
+        run: |
+          node apps/console/scripts/gen-connectors.mjs
+          git diff --exit-code -- apps/console/lib/connectors/registry.generated.ts apps/console/lib/db/seed/connectors.generated.sql \
+            || { echo "::error::apps/console/lib/connectors/registry.generated.ts or lib/db/seed/connectors.generated.sql is stale — run 'pnpm -C apps/console run gen:connectors' and commit."; exit 1; }
+      - name: ...and that gate is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node apps/console/scripts/gen-connectors.mjs --self-test
       # scripts/lib/console-routes.mjs is the ONE definition of "the console's private route set" —
       # the denominator of every score the console-UI conformance wave reports. It raises rather
       # than returning [] on a renamed route group, an unreadable directory, two pages on one URL
