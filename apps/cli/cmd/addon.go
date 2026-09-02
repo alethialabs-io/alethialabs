@@ -30,7 +30,7 @@ var addonListCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		project, err := currentProject(cmd)
+		project, err := projectFromFlag(cmd, token)
 		if err != nil {
 			fail(err)
 		}
@@ -57,7 +57,15 @@ var addonListCmd = &cobra.Command{
 	},
 }
 
-var addonColumns = []string{"Add-on", "Enabled", "Mode", "Version", "Status", "Health"}
+// addonColumns are the table's columns. SYNC is here and was not, and that is the one change
+// worth stating: the wire has carried `sync` and `last_synced_at` since the endpoint was written
+// and the table rendered neither, so the CLI showed an ArgoCD add-on's HEALTH as the only signal.
+//
+// Those two say different things. Health is the workload's own report — a chart with no readiness
+// probe is "Healthy" the moment its pods schedule. Sync is whether ArgoCD has applied the manifest
+// the control plane asked for at all, and an add-on stuck OutOfSync is the failure an operator is
+// actually looking for: it renders, it says Healthy, and the change never reached the cluster.
+var addonColumns = []string{"Add-on", "Enabled", "Mode", "Version", "Status", "Sync", "Health", "Last synced"}
 
 // addonRows projects installed add-ons into plain table cells.
 func addonRows(addons []api.Addon) [][]string {
@@ -66,10 +74,15 @@ func addonRows(addons []api.Addon) [][]string {
 		rows[i] = []string{
 			a.AddonID,
 			ui.GateGlyph(a.Enabled),
-			a.Mode,
+			ui.OrDash(a.Mode),
 			ui.StrOrDash(a.Version),
-			a.Status,
+			ui.OrDash(a.Status),
+			ui.StrOrDash(a.Sync),
 			ui.StrOrDash(a.Health),
+			// "never" and not a dash: an add-on that has never synced is a DIFFERENT statement
+			// from one whose last sync we failed to read, and it is the one that explains an
+			// Application sitting Progressing since it was enabled.
+			ui.StampOrNever(a.LastSyncedAt),
 		}
 	}
 	return rows

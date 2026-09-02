@@ -303,3 +303,17 @@ var AllTopicSubscriptionProtocols = []TopicSubscriptionProtocol{
 	TopicSubscriptionProtocolEmail,
 	TopicSubscriptionProtocolLambda,
 }
+
+// AddonMode mirrors the addon_mode enum (lib/db/schema/enums.ts).
+type AddonMode string
+
+const (
+	AddonModeManaged AddonMode = "managed"
+	AddonModeGitops  AddonMode = "gitops"
+)
+
+// AllAddonModes is every addon_mode value, in schema order.
+var AllAddonModes = []AddonMode{
+	AddonModeManaged,
+	AddonModeGitops,
+}
