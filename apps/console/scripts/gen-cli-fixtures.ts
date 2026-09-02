@@ -11,7 +11,7 @@
 // fixture diff (CI git-diff) → Go test names the field to add.
 //
 // Determinism is essential — fixed values, schema property order, no randomness —
-// so `git diff` only fires on a real contract change. Run: pnpm -F console gen:cli-fixtures
+// so `git diff` only fires on a real contract change. Run: pnpm -C apps/console run gen:cli-fixtures
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
