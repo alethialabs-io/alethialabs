@@ -46,6 +46,8 @@ import (
 var docsGroups = map[string]string{
 	// group command → docs page basename under apps/docs/content/docs/cli/commands
 	"cluster": "clusters",
+	"addon":   "addons",
+	"agent":   "agents",
 	"org":     "organizations",
 	"members": "organizations",
 	"teams":   "organizations",
