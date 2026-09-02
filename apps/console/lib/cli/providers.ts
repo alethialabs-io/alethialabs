@@ -101,9 +101,19 @@ export async function resolveCliProvider(
 
 	// ── WHICH ORG THIS CALL IS SCOPED TO ──
 	//
-	// These five routes are the ONLY `/api/cli/*` surface that does not go through `authorizeCli`,
-	// so the header handling it owns has to be mirrored here rather than inherited. Getting this
-	// wrong is not a 500: it is the right answer computed about the wrong tenant.
+	// These five routes are the only `/api/cli/*` surface that RESOLVES ITS OWN ORG SCOPE without
+	// going through `authorizeCli`, so the header handling that guard owns has to be mirrored here
+	// rather than inherited. Getting this wrong is not a 500: it is the right answer computed about
+	// the wrong tenant.
+	//
+	// "Resolves its own scope" is the load-bearing half of that sentence, not "does not go through
+	// `authorizeCli`". Three more routes bypass the guard — `api/cli/repositories/{github,gitlab,
+	// bitbucket}/route.ts` each call `verifyCliToken` directly and then read `X-Provider-Token` —
+	// and they are correctly exempt because they resolve NO scope at all: they list what the
+	// caller's git account can see, which is not an org-scoped question, so there is nothing here
+	// for them to mirror. Stated because the shorter claim reads as a complete enumeration, and an
+	// auditor asking "which routes must mirror this membership check" would close the surface three
+	// routes early.
 	//
 	// A SERVICE TOKEN SCOPES TO ITS OWN ORG, not the creator's default one, and it WINS.
 	// `getActiveScope(userId)` with no org resolves whichever org that PERSON last had active —

@@ -162,9 +162,11 @@ describe("resolveCliProvider", () => {
 });
 
 /**
- * These five routes are the only `/api/cli/*` surface that does not go through `authorizeCli`,
- * so the `X-Alethia-Org` handling it owns is mirrored in `resolveCliProvider` rather than
- * inherited. Before this, the header was accepted by the CLI and silently dropped here: the
+ * These five routes are the only `/api/cli/*` surface that RESOLVES ITS OWN ORG SCOPE without
+ * going through `authorizeCli`, so the `X-Alethia-Org` handling that guard owns is mirrored in
+ * `resolveCliProvider` rather than inherited. The `repositories/{github,gitlab,bitbucket}` routes
+ * also bypass the guard, and are exempt because they resolve no scope at all — see the note beside
+ * the check itself. Before this, the header was accepted by the CLI and silently dropped here: the
  * operator named org B and the call answered about org A.
  */
 describe("resolveCliProvider — organization scoping", () => {
