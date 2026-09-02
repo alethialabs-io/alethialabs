@@ -22,15 +22,33 @@ connected cloud account. Show that inventory for a cloud identity.`,
 }
 
 var cloudInventoryCmd = &cobra.Command{
-	Use:   "inventory <cloud-identity-id>",
-	Short: "Show the discovered networking + regions for a cloud identity",
-	Args:  cobra.ExactArgs(1),
+	Use:   "inventory [provider|cloud-identity-id]",
+	Short: "Show the discovered networking + regions for a connected cloud account",
+	Long: `Show the networking (VPCs/VNets, subnets) and regions Alethia discovered in a
+connected cloud account.
+
+Name the account by its PROVIDER — ` + "`alethia cloud inventory aws`" + ` — or omit the
+argument entirely for a picker. The opaque cloud-identity id is still accepted, so an id a
+script already holds keeps working, but nothing makes you copy one out of another command's
+output any more.`,
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		if err := runCloudInventory(api.NewClient(token), os.Stdout, outputFormat(cmd), args[0]); err != nil {
+		client := api.NewClient(token)
+
+		ref := ""
+		if len(args) == 1 {
+			ref = args[0]
+		}
+		identityID, err := resolveCloudIdentityRef(client, ref)
+		if err != nil {
+			fail(err)
+		}
+
+		if err := runCloudInventory(client, os.Stdout, outputFormat(cmd), identityID); err != nil {
 			failf("Failed to get cloud inventory: %v", err)
 		}
 	},
