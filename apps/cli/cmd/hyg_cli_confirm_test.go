@@ -275,6 +275,9 @@ func hygCliConfirmResetFlags() {
 	// explicit list exists to prevent, and which is why a new --yes global must always be added to
 	// it rather than relying on the VisitAll walk above.
 	classificationUnassignYes, jobsCancelYes = false, false
+	// The break-glass group's opt-ins live in one map keyed by command path (ops_fields.go), so
+	// adding a verb never means remembering to extend the line above.
+	resetOpsConfirmFlags()
 	designApplyYes = false
 	designApplyFile, designApplyDryRun, designApplyStage = "", false, false
 }
@@ -419,6 +422,20 @@ var hygCliConfirmDestructive = []struct {
 	{"iac_detach", []string{"iac", "detach", "--project", "p1", "--env", "e1"}},
 	{"classification_unassign", []string{"classification", "unassign", "project_environment", "e1", "gold"}},
 	{"jobs_cancel", []string{"jobs", "cancel", "j1"}},
+	// The break-glass group. Every one of these was EXEMPT until #3702 on the grounds that the
+	// audited --reason or the two-person --approval was a stronger gate; both gate authority, and
+	// neither ever asked the operator whether this was the right resource. Each invocation below
+	// supplies every value from flags on purpose: that is the arm where nothing may be prompted,
+	// and it is the arm where the old code sailed straight through.
+	{"ops_retry_job", []string{"ops", "retry-job", "j1", "--reason", "incident-0001"}},
+	{"ops_cancel_job", []string{"ops", "cancel-job", "j1", "--reason", "incident-0001"}},
+	{"ops_unstick_env", []string{"ops", "unstick-env", "e1", "--from", "PROVISIONING", "--to", "ACTIVE", "--reason", "incident-0001"}},
+	{"ops_drain_runner", []string{"ops", "drain-runner", "r1", "--reason", "incident-0001"}},
+	{"ops_restart_runner", []string{"ops", "restart-runner", "r1", "--reason", "incident-0001"}},
+	{"ops_replay_webhook", []string{"ops", "replay-webhook", "evt_1AbC", "--reason", "incident-0001"}},
+	{"ops_force_release_lock", []string{"ops", "force-release-lock", "projects/p1/default.tfstate", "--approval", "a1", "--reason", "incident-0001"}},
+	{"ops_state_surgery", []string{"ops", "state-surgery", "projects/p1/default.tfstate", "--approval", "a1", "--reason", "incident-0001"}},
+	{"ops_orphan_clean", []string{"ops", "orphan-clean", "--project", "p1", "--approval", "a1", "--reason", "incident-0001"}},
 	// The document's CONTENT is irrelevant here — the server decides the plan, and the fake
 	// below returns one that removes a component, which is the condition the gate fires on.
 	// The path is relative because `go test` runs with the package directory as its cwd.
@@ -653,13 +670,9 @@ var destructiveVerbs = map[string]bool{
 }
 
 // A verb set is itself hand-written, so it has the same decay this file is about — one level
-// further down. `ops drain-runner` and `ops unstick-env` take something away, match no verb, and
-// would sit in neither map with nothing recording why. They are named here so the decision that
-// they are gated by a required --reason is written down rather than implied by their absence.
+// further down: `ops drain-runner` and `ops unstick-env` take something away and match no verb
+// above, so nothing here would see them at all. That is what the next map is for.
 
-// destructiveExemptions are commands that take something away and deliberately do NOT carry --yes,
-// each with the stronger gate it carries instead. An exemption is a decision, not a mute button:
-// the test below fails if one names a command that no longer exists, so the list cannot rot.
 // alsoDestructive are commands that take something away under a verb the set above does not read as
 // destructive. Named explicitly, because "cancel-job" is not "cancel" and `set` is not a verb any
 // heuristic should treat as dangerous — but all of these destroy.
@@ -669,36 +682,45 @@ var destructiveVerbs = map[string]bool{
 // first place, so exempting them was decorative. An exemption for a command the filter never sees
 // is a comment that looks like a rule — which is the same defect as the hand-written list this test
 // replaces, one level up.
-var alsoDestructive = map[string]bool{
-	"alethia ops cancel-job":         true,
-	"alethia ops orphan-clean":       true,
-	"alethia ops force-release-lock": true,
-	"alethia ops state-surgery":      true,
-	"alethia ops drain-runner":       true,
-	"alethia ops unstick-env":        true,
-	"alethia fleet set":              true,
-	"alethia token revoke":           true,
-	// `apply` is not a destructive verb and this command is not destructive in general — an
-	// apply that only adds or updates runs unprompted, which is the workflow it exists for.
-	// But a design document that OMITS a component removes it, so this command can destroy,
-	// and it must therefore be one the derived set watches: the point of listing it is that a
-	// later change cannot quietly drop its --yes while the guard reports green. The maintainer
-	// ruling (2026-09-02) is that the gate fires on the PLAN, not on the invocation; see
-	// designApplyGate in project_design.go.
-	"alethia project design apply": true,
-}
+// The `ops` half is now DERIVED rather than listed, from opsActions in ops_fields.go — which is
+// itself pinned to the server's break-glass catalog by ops_catalog_test.go. Six of the eleven
+// break-glass verbs were named here by hand and `retry-job`, `restart-runner` and `replay-webhook`
+// were not, which is the same decay one level further down again: a hand-written list of what a
+// guard watches stops covering silently. The rule for this group is stateable and so is derivable —
+// EVERY MUTATING BREAK-GLASS ACTION CONFIRMS — so it is derived.
+var alsoDestructive = func() map[string]bool {
+	m := map[string]bool{
+		"alethia fleet set":    true,
+		"alethia token revoke": true,
+		// `apply` is not a destructive verb and this command is not destructive in general — an
+		// apply that only adds or updates runs unprompted, which is the workflow it exists for.
+		// But a design document that OMITS a component removes it, so this command can destroy,
+		// and it must therefore be one the derived set watches: the point of listing it is that a
+		// later change cannot quietly drop its --yes while the guard reports green. The maintainer
+		// ruling (2026-09-02) is that the gate fires on the PLAN, not on the invocation; see
+		// designApplyGate in project_design.go.
+		"alethia project design apply": true,
+	}
+	for _, a := range opsActions {
+		if !a.ReadOnly {
+			m[a.Command] = true
+		}
+	}
+	return m
+}()
 
 // destructiveExemptions are commands in the derived set that deliberately do NOT carry --yes,
 // each naming the stronger gate it carries instead. An exemption is a decision, not a mute
 // button: the stale-entry check fails if one names a command the filter never classifies as
 // destructive, so an exemption cannot quietly become decorative.
+//
+// THE SIX `ops` EXEMPTIONS ARE GONE, and the reason they were wrong is worth keeping: each said
+// the audited `--reason` (or the two-person `--approval`) was the stronger gate. Both are stronger
+// gates on AUTHORITY — may you do this, and is it recorded — and neither is a gate on INTENT. A
+// scripted `ops force-release-lock $KEY --approval $ID --reason "$INCIDENT"` carried every one of
+// them and still fenced out a live writer with nobody asked. `--yes` is the arm that was missing,
+// and on a terminal the operator is now told which resource and what happens to it.
 var destructiveExemptions = map[string]string{
-	"alethia ops cancel-job":         "audited --reason; runOpsAction fails closed on an empty one",
-	"alethia ops orphan-clean":       "two-person --approval, a STRONGER gate than a single operator's --yes",
-	"alethia ops force-release-lock": "two-person --approval",
-	"alethia ops state-surgery":      "two-person --approval",
-	"alethia ops drain-runner":       "audited --reason; runOpsAction fails closed on an empty one",
-	"alethia ops unstick-env":        "audited --reason; runOpsAction fails closed on an empty one",
 	// REVOCATION IS A SAFETY ACTION and its asymmetry runs the other way: revoking a token you did
 	// not mean to is recoverable in one command, while failing to revoke a leaked one is not. A
 	// gate here fails a CI pipeline revoking a compromised credential and LEAVES IT LIVE, which is

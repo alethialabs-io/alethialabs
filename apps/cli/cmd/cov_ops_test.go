@@ -20,23 +20,30 @@ import (
 // executes exactly one action against the single audited endpoint.
 func TestMisc_OpsVerbs(t *testing.T) {
 	run := miscEnv(t, miscFull)
+	// --yes on every MUTATING verb, and on none of the read-only ones. #3702 gave the break-glass
+	// group the same confirmation contract as the rest of the CLI: with prompts disabled a verb
+	// that changes something must be opted into, or it exits non-zero having changed nothing. A
+	// scripted case here without it is asserting the OLD behaviour.
+	//
+	// The statuses are project_status values, which is what the server's zod schema accepts.
+	// This table said `--from APPLYING`, and APPLYING has never been one.
 	cases := [][]string{
 		{"ops"},
 		{"ops", "approve", "state_surgery", "k1", "--reason", "incident-1"},
 		{"ops", "session", "--reason", "incident-1"},
 		{"ops", "inspect-job", "j1", "--reason", "incident-1"},
-		{"ops", "retry-job", "j1", "--reason", "incident-1"},
-		{"ops", "cancel-job", "j1", "--reason", "incident-1"},
-		{"ops", "drain-runner", "r1", "--reason", "incident-1"},
-		{"ops", "restart-runner", "r1", "--reason", "incident-1"},
-		{"ops", "replay-webhook", "evt_1", "--reason", "incident-1"},
-		{"ops", "replay-webhook", "evt_1", "--reason", "incident-1", "--send-emails"},
-		{"ops", "unstick-env", "e1", "--reason", "incident-1", "--from", "APPLYING, ", "--to", "FAILED"},
-		{"ops", "force-release-lock", "k1", "--reason", "incident-1", "--approval", "ap1"},
-		{"ops", "state-surgery", "k1", "--reason", "incident-1", "--approval", "ap1", "--note", "rebind the address"},
-		{"ops", "state-surgery", "k1", "--reason", "incident-1", "--approval", "ap1", "--note", ""},
+		{"ops", "retry-job", "j1", "--reason", "incident-1", "--yes"},
+		{"ops", "cancel-job", "j1", "--reason", "incident-1", "--yes"},
+		{"ops", "drain-runner", "r1", "--reason", "incident-1", "--yes"},
+		{"ops", "restart-runner", "r1", "--reason", "incident-1", "--yes"},
+		{"ops", "replay-webhook", "evt_1", "--reason", "incident-1", "--yes"},
+		{"ops", "replay-webhook", "evt_1", "--reason", "incident-1", "--send-emails", "--yes"},
+		{"ops", "unstick-env", "e1", "--reason", "incident-1", "--from", "PROVISIONING, ", "--to", "FAILED", "--yes"},
+		{"ops", "force-release-lock", "k1", "--reason", "incident-1", "--approval", "ap1", "--yes"},
+		{"ops", "state-surgery", "k1", "--reason", "incident-1", "--approval", "ap1", "--note", "rebind the address", "--yes"},
+		{"ops", "state-surgery", "k1", "--reason", "incident-1", "--approval", "ap1", "--note", "", "--yes"},
 		{"ops", "orphan-detect", "--reason", "incident-1", "--project", "p1"},
-		{"ops", "orphan-clean", "--reason", "incident-1", "--project", "p1", "--approval", "ap1"},
+		{"ops", "orphan-clean", "--reason", "incident-1", "--project", "p1", "--approval", "ap1", "--yes"},
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
