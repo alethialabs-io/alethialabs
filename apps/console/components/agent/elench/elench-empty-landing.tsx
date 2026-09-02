@@ -127,7 +127,7 @@ export function ElenchModalLanding({
 					<div className="flex items-start justify-between gap-3">
 						<div>
 							<div className="text-base font-semibold">Ready to keep going?</div>
-							<div className="mt-0.5 text-[13px] text-muted-foreground">
+							<div className="mt-0.5 text-ui-md text-muted-foreground">
 								Continue your recent exploration.
 							</div>
 						</div>
@@ -142,11 +142,11 @@ export function ElenchModalLanding({
 							>
 								<span
 									title={t.title}
-									className="line-clamp-2 min-w-0 break-words text-[13px] text-foreground"
+									className="line-clamp-2 min-w-0 break-words text-ui-md text-foreground"
 								>
 									{t.title}
 								</span>
-								<span className="mt-4 font-mono text-[11px] text-muted-foreground">
+								<span className="mt-4 font-mono text-ui-xs text-muted-foreground">
 									{relTime(new Date(t.updated_at))}
 								</span>
 							</button>
@@ -162,7 +162,7 @@ export function ElenchModalLanding({
 			<section className="flex items-center justify-between gap-4 border border-border bg-muted/40 p-5">
 				<div>
 					<div className="text-base font-semibold">Draw, describe, go.</div>
-					<div className="mt-0.5 text-[13px] text-muted-foreground">
+					<div className="mt-0.5 text-ui-md text-muted-foreground">
 						Build a live dashboard of your infrastructure — Elench gathers the data and
 						composes it into stat cards and charts in the side panel.
 					</div>
@@ -218,7 +218,7 @@ export function ElenchPanelEmpty({
 	return (
 		<div className="p-3.5">
 			<div className="flex items-center justify-between border border-border bg-background px-3.5 py-2.5">
-				<span className="text-[13px] text-foreground">Need more help?</span>
+				<span className="text-ui-md text-foreground">Need more help?</span>
 				{supportHref && (
 					<Button
 						variant="outline"
@@ -261,7 +261,7 @@ export function ElenchPanelEmpty({
 							<s.icon className="h-4 w-4" />
 						</span>
 						<span className="min-w-0">
-							<span className="block text-[13px] font-medium text-foreground">
+							<span className="block text-ui-md font-medium text-foreground">
 								{s.title}
 							</span>
 							<span className="block text-xs text-muted-foreground">

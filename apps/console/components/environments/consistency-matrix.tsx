@@ -55,12 +55,12 @@ export function ConsistencyMatrix({ consistency }: { consistency: EnvConsistency
 				}
 			/>
 			<div className="overflow-hidden rounded-lg border bg-surface shadow-sm">
-				<Table scroll className="text-[12.5px]">
+				<Table scroll className="text-ui-sm">
 					<TableHeader>
 						<TableRow className="bg-surface-muted">
 							<TableHead
 								scope="col"
-								className="font-mono text-[11px] uppercase tracking-[0.1em] text-text-tertiary"
+								className="font-mono text-ui-xs uppercase tracking-[0.1em] text-text-tertiary"
 							>
 								Component
 							</TableHead>

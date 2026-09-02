@@ -53,7 +53,7 @@ function BuildRow({
 			<div className="flex min-w-0 flex-col gap-0.5">
 				<span className="truncate font-mono text-xs text-foreground">{name}</span>
 				{image && phase === "pushed" && (
-					<span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+					<span className="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
 						<span className="truncate font-mono">{shortDigest(image)}</span>
 						<CopyButton text={image} className="flex-none" />
 					</span>
@@ -106,18 +106,18 @@ export function BuildPane({
 
 	return (
 		<div className="space-y-4">
-			<div className="font-mono text-[11px] tracking-wide text-muted-foreground">
+			<div className="font-mono text-ui-xs tracking-wide text-muted-foreground">
 				{rollup}
 			</div>
 
 			<div>
-				<div className="vx-eyebrow pb-1 text-[9px]">Workloads</div>
+				<div className="vx-eyebrow pb-1 text-ui-3xs">Workloads</div>
 				<div className="border border-border px-3">
 					{states.map((s) => (
 						<BuildRow key={s.name} name={s.name} phase={s.phase} image={s.image} />
 					))}
 				</div>
-				<p className="mx-0.5 mt-1.5 text-[11px] leading-snug text-muted-foreground">
+				<p className="mx-0.5 mt-1.5 text-ui-xs leading-snug text-muted-foreground">
 					Repo-sourced services build in an in-cluster job after the cluster is up, pushing a
 					signed image to the registry — no keys held. Build logs stream in the Logs tab.
 					{prebuilt > 0 &&

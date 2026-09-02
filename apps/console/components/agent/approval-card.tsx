@@ -78,8 +78,8 @@ export function ApprovalCard({
 					<ShieldCheck className="h-3.5 w-3.5" />
 				</span>
 				<div className="min-w-0">
-					<div className="truncate text-[13px] font-medium">{proposal.label}</div>
-					<div className="vx-eyebrow text-[9px]">
+					<div className="truncate text-ui-md font-medium">{proposal.label}</div>
+					<div className="vx-eyebrow text-ui-3xs">
 						{isDeploy ? "Provisions live infrastructure" : "Queues a plan"}
 					</div>
 				</div>
@@ -105,7 +105,7 @@ export function ApprovalCard({
 					   `stats.monthly` is declared to the model as an absolute total for that
 					   reason (`lib/ai/operation.ts`); showing a saving would need a credit
 					   register in `@repo/format`, which does not exist in either language. */
-					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-muted-foreground">
+					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-ui-xs text-muted-foreground">
 						<span className="text-foreground">
 							{proposal.stats.add ?? 0} to add
 						</span>
@@ -129,12 +129,12 @@ export function ApprovalCard({
 				)}
 
 				{phase === "done" ? (
-					<div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+					<div className="flex items-center gap-2 font-mono text-ui-xs text-muted-foreground">
 						<span className="h-1.5 w-1.5 rounded-full bg-foreground" />
 						{isDeploy ? "Approved · deploying…" : "Planning…"} — logs in the panel.
 					</div>
 				) : phase === "rejected" ? (
-					<div className="font-mono text-[11px] text-muted-foreground">
+					<div className="font-mono text-ui-xs text-muted-foreground">
 						Rejected.
 					</div>
 				) : phase === "denied" ? (
@@ -142,7 +142,7 @@ export function ApprovalCard({
 						<span className="mt-0.5 flex h-5 w-5 flex-none items-center justify-center border border-foreground">
 							<X className="h-3 w-3" />
 						</span>
-						<div className="text-[12px] leading-relaxed text-muted-foreground">
+						<div className="text-ui-sm leading-relaxed text-muted-foreground">
 							<span className="font-medium text-foreground">
 								Operation held back.
 							</span>{" "}
@@ -151,7 +151,7 @@ export function ApprovalCard({
 					</div>
 				) : (
 					<div className="flex items-center justify-between gap-3">
-						<span className="text-[11px] text-muted-foreground">
+						<span className="text-ui-xs text-muted-foreground">
 							{isDeploy
 								? "The agent will apply the plan exactly as shown."
 								: "Review the plan in the panel after it runs."}

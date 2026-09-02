@@ -218,7 +218,7 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 	return (
 		<div>
 			{projectId && (
-				<p className="mb-3 text-[13px] text-text-tertiary">
+				<p className="mb-3 text-ui-md text-text-tertiary">
 					Activity in{" "}
 					<span className="font-medium text-text-secondary">
 						{projectName ?? "this project"}
