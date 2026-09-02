@@ -353,7 +353,7 @@ export const LIVE_SECTIONS = /** @type {const} */ ({
 		spec: "apps/console/e2e/audit/permissions.spec.ts",
 		persona: "the `member` persona, compared against the owner of the same org",
 		org: "a SECOND organisation, created by that spec and never touched by the primary run",
-		covers: "the org-only routes — the parameterised ones need a project the persona cannot be given",
+		covers: "only the org-only routes; the parameterised ones need a project the persona cannot be given",
 	},
 });
 
@@ -480,11 +480,26 @@ const RUN_DEPENDENT = /\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}|https?:\/\//;
  * @returns {string}
  */
 export function summariseLiveEvidence(predicate, evidence) {
-	const at = (widths) => (widths.length === 0 ? "" : ` at ${widths.map((w) => `${w}w`).join(", ")}`);
+	const at = (widths) => ` at ${widths.map((w) => `${w}w`).join(", ")}`;
 	const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
+	const isAre = (n) => (n === 1 ? "is" : "are");
+	/**
+	 * THE SUMMARY MUST MIRROR THE VERDICT. Every branch below re-derives, from the same evidence,
+	 * the thing the recorder said was wrong; if it re-derives NOTHING then this file and
+	 * `routes.spec.ts` disagree about the threshold, and the honest output is a refusal rather than
+	 * "0 overlapping pairs" — a diagnosis that contradicts the verdict it is attached to.
+	 */
+	const nonEmpty = (n, what) => {
+		if (n > 0) return n;
+		throw new Error(
+			`${predicate}: the record is a FAIL and this summary finds no ${what} in its evidence. The ` +
+				`recorder and this file have come apart on what the predicate measures.`,
+		);
+	};
 	const detail = (() => {
 		if (predicate === "R1") {
 			const bad = asArray(evidence, predicate).filter((m) => Number(m.scrollWidth) > Number(m.clientWidth) + 1);
+			nonEmpty(bad.length, "overflowing width");
 			return `the body overflows horizontally${at(bad.map((m) => m.width))}`;
 		}
 		if (predicate === "R3") {
@@ -492,28 +507,31 @@ export function summariseLiveEvidence(predicate, evidence) {
 			const bad = rows.filter(
 				(m) => m.containers.length > 1 || (m.containers.length === 1 && m.containers[0].isShellScroller !== true),
 			);
-			const most = Math.max(0, ...bad.map((m) => m.containers.length));
-			return `${plural(most, "scroll container")} that are not the shell's${at(bad.map((m) => m.width))}`;
+			nonEmpty(bad.length, "width with a scroll container that is not the shell's");
+			const most = Math.max(...bad.map((m) => m.containers.length));
+			return `${plural(most, "scroll container")} that ${isAre(most)} not the shell's${at(bad.map((m) => m.width))}`;
 		}
 		if (predicate === "R4") {
 			const rows = asArray(evidence, predicate);
+			nonEmpty(rows.length, "overlapping pair");
 			const widths = [...new Set(rows.map((o) => o.width))];
 			return `${plural(rows.length, "overlapping pair")} of interactive elements${at(widths)}`;
 		}
 		if (predicate === "R2") {
 			const probes = asArray(evidence, predicate);
 			const missed = probes.filter((pr) => (pr.points ?? []).some((pt) => pt.inside !== true));
+			nonEmpty(missed.length, "overlay whose hit-test landed outside it");
 			const kinds = [...new Set(missed.map((pr) => pr.kind))].sort();
 			return `${plural(missed.length, "overlay")} hit-tested below the chrome — ${kinds.join(", ")}`;
 		}
 		if (predicate === "R5") {
-			const rules = asArray(evidence, predicate)
-				.map((v) => `${v.id} (${v.impact}) ×${v.nodes}`)
-				.sort();
-			return rules.join(", ");
+			const violations = asArray(evidence, predicate);
+			nonEmpty(violations.length, "axe violation");
+			return violations.map((v) => `${v.id} (${v.impact}) ×${v.nodes}`).sort().join(", ");
 		}
 		if (predicate === "R6") {
 			const signals = asArray(evidence, predicate);
+			nonEmpty(signals.length, "console error or failed request");
 			const consoles = signals.filter((g) => g.kind === "console").length;
 			const responses = signals.filter((g) => g.kind === "response");
 			const statuses = [...new Set(responses.map((g) => g.status))].sort((a, b) => a - b);
@@ -525,10 +543,13 @@ export function summariseLiveEvidence(predicate, evidence) {
 		}
 		if (predicate === "R7") {
 			// The p95 itself is a property of the runner, not of the page. The BUDGET is a constant.
-			return `p95 over the route's ${asObject(evidence, predicate).budgetMs}ms budget`;
+			const e = asObject(evidence, predicate);
+			nonEmpty(Number(e.budgetMs) || 0, "budget");
+			return `p95 over the route's ${e.budgetMs}ms budget`;
 		}
 		if (predicate === "T5") {
 			const e = asObject(evidence, predicate);
+			nonEmpty((e.handRolled ?? []).length, "hand-rolled empty region");
 			return `${plural(e.handRolled.length, "hand-rolled empty region")}, none resolving to @repo/ui/empty`;
 		}
 		if (predicate === "T6") {
@@ -675,6 +696,18 @@ export function parseLive(text) {
 		const run = body.runs?.[key];
 		if (typeof run !== "object" || run === null || !Array.isArray(run.records)) {
 			throw new Error(`${LIVE_JSON}: \`runs.${key}\` is missing or has no records. ${section.artifact} was never imported.`);
+		}
+		// The file restates what its section is — which artifact, which persona, which organisation —
+		// so that a reader of the JSON alone knows. A restatement that can drift is worse than none,
+		// so it is CHECKED against LIVE_SECTIONS rather than trusted: change the constant and the
+		// committed file must be re-imported in the same commit.
+		for (const field of ["artifact", "spec", "persona", "org", "covers"]) {
+			if (run[field] !== section[field]) {
+				throw new Error(
+					`${LIVE_JSON}: \`runs.${key}.${field}\` says ${JSON.stringify(run[field])} and LIVE_SECTIONS says ` +
+						`${JSON.stringify(section[field])}. Re-import: the committed records describe a section that has moved.`,
+				);
+			}
 		}
 		for (const r of run.records) {
 			if (owned.get(r.predicate) !== key) {
@@ -2265,17 +2298,17 @@ function selfTest() {
 			{ width: 1440, scrollWidth: 1600, clientWidth: 1440, offenders: [] },
 		]) === "the body overflows horizontally at 768w, 1440w",
 	);
-	ok(
-		"...and a one-pixel difference is not an overflow — the spec's own +1 tolerance",
-		summariseLiveEvidence("R1", [{ width: 768, scrollWidth: 769, clientWidth: 768, offenders: [] }]) ===
-			"the body overflows horizontally",
+	raises(
+		"...and a one-pixel difference is not an overflow — the spec's own +1 tolerance, mirrored",
+		() => summariseLiveEvidence("R1", [{ width: 768, scrollWidth: 769, clientWidth: 768, offenders: [] }]),
+		"finds no overflowing width in its evidence",
 	);
 	ok(
-		"R3 counts the containers that are not the shell's",
+		"R3 counts the containers that are not the shell's, and agrees with itself about number",
 		summariseLiveEvidence("R3", [
 			{ width: 768, containers: [{ isShellScroller: false }] },
 			{ width: 1280, containers: [{ isShellScroller: true }] },
-		]) === "1 scroll container that are not the shell's at 768w",
+		]) === "1 scroll container that is not the shell's at 768w",
 	);
 	ok(
 		"...and two containers is the defect even when one of them IS the shell's",
@@ -2336,6 +2369,21 @@ function selfTest() {
 		() => summariseLiveEvidence("R5", { violations: [] }),
 		"expected an array of evidence rows",
 	);
+	// A summary that contradicts the verdict it is attached to is worse than no summary. Each of
+	// these is the recorder and this file disagreeing about what the predicate measures.
+	raises("a FAIL whose axe evidence holds NO violation RAISES", () => summariseLiveEvidence("R5", []), "finds no axe violation");
+	raises("...and a FAIL with no overlapping pair RAISES", () => summariseLiveEvidence("R4", []), "finds no overlapping pair");
+	raises("...and a FAIL with no signal RAISES", () => summariseLiveEvidence("R6", []), "finds no console error or failed request");
+	raises(
+		"...and a T5 FAIL that hand-rolled nothing RAISES",
+		() => summariseLiveEvidence("T5", { shared: 0, handRolled: [], items: 0 }),
+		"finds no hand-rolled empty region",
+	);
+	raises(
+		"...and an R3 FAIL whose only container IS the shell's RAISES",
+		() => summariseLiveEvidence("R3", [{ width: 768, containers: [{ isShellScroller: true }] }]),
+		"finds no width with a scroll container that is not the shell's",
+	);
 	raises(
 		"...and a predicate with no summariser at all RAISES",
 		() => summariseLiveEvidence("S1", []),
@@ -2349,11 +2397,22 @@ function selfTest() {
 	);
 
 	// ── the committed file's own rules ────────────────────────────────────────────────────────
-	const liveText = (over) => JSON.stringify({ version: 1, source: fixtureLive.source, runs: { routes: { runKey: "k", records: [] }, permissions: { runKey: "k", records: [] }, ...over } });
+	const described = (key, over) => ({ ...LIVE_SECTIONS[key], runKey: "k", records: [], ...over });
+	const liveText = (over) =>
+		JSON.stringify({
+			version: 1,
+			source: fixtureLive.source,
+			runs: { routes: described("routes"), permissions: described("permissions"), ...Object.fromEntries(Object.entries(over ?? {}).map(([k, v]) => [k, described(k, v)])) },
+		});
 	ok("a well-formed live file parses", parseLive(liveText({ routes: { runKey: "k", records: [liveRecord("/a", "R1", "PASS")] } })).sections.routes.records.length === 1);
 	raises("a version this file does not know RAISES", () => parseLive(JSON.stringify({ version: 2 })), "expected `version: 1`");
 	raises("a file with no provenance RAISES", () => parseLive(JSON.stringify({ version: 1, runs: {} })), "a baseline nobody can cite is not one");
-	raises("a missing section RAISES", () => parseLive(JSON.stringify({ version: 1, source: fixtureLive.source, runs: { routes: { runKey: "k", records: [] } } })), "runs.permissions");
+	raises("a missing section RAISES", () => parseLive(JSON.stringify({ version: 1, source: fixtureLive.source, runs: { routes: described("routes") } })), "runs.permissions");
+	raises(
+		"a section that describes an artifact LIVE_SECTIONS has moved RAISES rather than reading on",
+		() => parseLive(JSON.stringify({ version: 1, source: fixtureLive.source, runs: { routes: described("routes", { artifact: "test-results/old.json" }), permissions: described("permissions") } })),
+		"describe a section that has moved",
+	);
 	raises(
 		"a T7 record inside the PRIMARY run RAISES — the pooling failure report.ts records",
 		() => parseLive(liveText({ routes: { runKey: "k", records: [liveRecord("/a", "T7", "PASS")] } })),

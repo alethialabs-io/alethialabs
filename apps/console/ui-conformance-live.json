@@ -220,7 +220,7 @@
 					"route": "/[org]/[project]/environments",
 					"predicate": "R3",
 					"verdict": "FAIL",
-					"detail": "1 scroll container that are not the shell's at 768w, 1280w, 1440w, 1920w"
+					"detail": "1 scroll container that is not the shell's at 768w, 1280w, 1440w, 1920w"
 				},
 				{
 					"route": "/[org]/[project]/environments",
@@ -1571,7 +1571,7 @@
 					"route": "/[org]/~/support/ask",
 					"predicate": "R3",
 					"verdict": "FAIL",
-					"detail": "1 scroll container that are not the shell's at 768w, 1280w, 1440w, 1920w"
+					"detail": "1 scroll container that is not the shell's at 768w, 1280w, 1440w, 1920w"
 				},
 				{
 					"route": "/[org]/~/support/ask",
@@ -1892,7 +1892,7 @@
 			"spec": "apps/console/e2e/audit/permissions.spec.ts",
 			"persona": "the `member` persona, compared against the owner of the same org",
 			"org": "a SECOND organisation, created by that spec and never touched by the primary run",
-			"covers": "the org-only routes — the parameterised ones need a project the persona cannot be given",
+			"covers": "only the org-only routes; the parameterised ones need a project the persona cannot be given",
 			"runKey": "e2e-e2e-audit-owner-1788348574968-1",
 			"records": [
 				{
