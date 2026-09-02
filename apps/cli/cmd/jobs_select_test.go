@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -683,6 +684,34 @@ func TestCancellableJobScope_IsASubsetOfTheEnum(t *testing.T) {
 		if containsFold(cancellableJobScope.Values, string(terminal)) {
 			t.Errorf("%s is terminal and the control plane refuses to cancel it", terminal)
 		}
+	}
+}
+
+// TestJobScope_FieldLookupPanicsOnAnUnknownFlag pins the failure branch of the scope's field
+// lookup. A nil field would make jobScope.keeps admit every job and jobScope.applies never fire —
+// a scope that silently narrows nothing, which is the shape of every guard in this repo that
+// reported green. It is a programming error, so it is a panic, at package init, where no test run
+// can miss it.
+func TestJobScope_FieldLookupPanicsOnAnUnknownFlag(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("an unknown flag name returned quietly — a nil field is a scope that keeps every job")
+		}
+		if !strings.Contains(fmt.Sprint(r), "--since") {
+			t.Errorf("the panic %v does not name the flag that could not be resolved", r)
+		}
+	}()
+	_ = jobSelectorFieldByFlag("since")
+}
+
+// TestJobScope_DescribeIsUnchangedForCancel pins the message the generalisation had to preserve.
+// Widening jobStatusScope into jobScope moved the word "job" from describe() into the Noun; a
+// literal here is what makes that a decision rather than something that quietly drifted.
+func TestJobScope_DescribeIsUnchangedForCancel(t *testing.T) {
+	const want = "cancellable job (QUEUED, CLAIMED, PROCESSING)"
+	if got := cancellableJobScope.describe(); got != want {
+		t.Errorf("cancel scope describes itself as %q, want %q", got, want)
 	}
 }
 
