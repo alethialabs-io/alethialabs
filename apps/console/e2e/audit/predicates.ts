@@ -224,3 +224,171 @@ export async function measurePage(page: Page, width: number): Promise<PageMeasur
 	});
 	return { width, ...measured };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// The positive control for the four predicates `measurePage` scores.
+//
+// It lives HERE, next to the instrument, and it runs on every audit invocation — the shape
+// `scripts/check-route-states.mjs` already uses (`positiveControl()` at its entry point, which
+// refuses to score the tree when a predicate has stopped firing). A check that can no longer fail
+// cannot tell a clean page from a page it stopped reading, and the audit was publishing R3
+// verdicts for real routes while R3's own control was red (#3804).
+//
+// It used to live only in `predicate-selftest.spec.ts`, which made it a TEST — something that goes
+// red beside the run rather than something the run consults. `routes.spec.ts` calls it before it
+// scores anything, and withholds the predicates it names.
+
+/** The measurement `measurementControl` drives. Injectable so the control's own failure branch is testable. */
+export type Measure = (page: Page, width: number) => Promise<PageMeasurement>;
+
+/**
+ * Which predicate each `PageMeasurement` field is scored from.
+ *
+ * Keyed by the field rather than by the predicate on purpose: the self-test asserts that every
+ * field `measurePage` actually returns (bar `width`) is named here, so a fifth measurement added
+ * without a control fails the audit instead of being scored by nothing.
+ */
+export const MEASURED_BY = {
+	overflow: "R1",
+	scrollContainers: "R3",
+	overlaps: "R4",
+	empty: "T5",
+} as const satisfies Record<Exclude<keyof PageMeasurement, "width">, string>;
+
+export type MeasuredPredicate = (typeof MEASURED_BY)[keyof typeof MEASURED_BY];
+
+export interface ControlResult {
+	/** The predicates whose control did not fire. Empty means every measurement still works. */
+	broken: MeasuredPredicate[];
+	/** One line per failure, naming what the control expected and what it measured. */
+	lines: string[];
+}
+
+/**
+ * Wrap fixture markup in the document the CONSOLE serves.
+ *
+ * `page.setContent("<div>…</div>")` produces a document with **no doctype**, which Chromium renders
+ * in quirks mode (`document.compatMode === "BackCompat"`). That is not a cosmetic difference for
+ * R3: in quirks mode `document.scrollingElement` is `<body>`, the viewport's overflow is attributed
+ * to `<body>` — whose `overflow-y` is `visible`, so the `scrolls` test skips it — and
+ * `documentElement.scrollHeight` equals its own `clientHeight`, so the `<html>` candidate is
+ * skipped too. A 4000px-tall fixture then reports ZERO scroll containers where the same markup
+ * under a doctype reports exactly one (#3804, measured: BackCompat → html 4016/4016, body
+ * 4016/400, 0 containers; CSS1Compat → html 4000/400, 1 container).
+ *
+ * The answer is to make the fixture render the way the product renders, not to teach the walk about
+ * `<body>`: the console is a Next.js app and serves `<!DOCTYPE html>`, so `documentElement` is the
+ * correct candidate there. A control that only passes in a mode the product never enters is not a
+ * control. The `margin: 0` is the same argument — R1 reads `document.body.clientWidth`, and the UA
+ * default 8px body margin would make it 1264 in a 1280 viewport, which the console's Tailwind
+ * preflight never does.
+ */
+export function controlFixture(body: string): string {
+	return `<!doctype html><html><head><style>body{margin:0}</style></head><body>${body}</body></html>`;
+}
+
+/**
+ * Drive every `measurePage` predicate against a page that VIOLATES it and a page that does not, and
+ * report the ones that no longer answer.
+ *
+ * Both directions, always. A predicate that has stopped firing and a predicate looking at a clean
+ * page produce the same empty result, which is the whole reason this exists.
+ *
+ * The page is left on the last fixture — callers hand over a scratch page, never one under audit.
+ */
+export async function measurementControl(page: Page, measure: Measure = measurePage): Promise<ControlResult> {
+	const broken = new Set<MeasuredPredicate>();
+	const lines: string[] = [];
+	const check = (predicate: MeasuredPredicate, ok: boolean, what: string, saw: unknown): void => {
+		if (ok) return;
+		broken.add(predicate);
+		lines.push(`${predicate}: ${what} — measured ${JSON.stringify(saw)}`);
+	};
+
+	await page.setViewportSize({ width: 1280, height: 400 });
+
+	// ── R1 ────────────────────────────────────────────────────────────────────────────────────
+	await page.setContent(controlFixture(`<main><div style="width: 2400px; height: 40px">wide</div></main>`));
+	const wide = (await measure(page, 1280)).overflow;
+	check("R1", wide.scrollWidth > wide.clientWidth + 1, "a 2400px child should overflow a 1280px viewport", wide);
+	check("R1", wide.offenders.length > 0, "the overflowing element should be NAMED", wide.offenders);
+
+	await page.setContent(controlFixture(`<main><div style="width: 100%; height: 40px">narrow</div></main>`));
+	const narrow = (await measure(page, 1280)).overflow;
+	check("R1", narrow.scrollWidth <= narrow.clientWidth + 1, "a page that fits should not overflow", narrow);
+	check("R1", narrow.offenders.length === 0, "a page that fits should name no offender", narrow.offenders);
+
+	// ── R3 ────────────────────────────────────────────────────────────────────────────────────
+	await page.setContent(
+		controlFixture(`
+			<main style="height: 300px; overflow-y: auto"><div style="height: 2000px">a</div></main>
+			<aside style="height: 200px; overflow-y: auto"><div style="height: 2000px">b</div></aside>`),
+	);
+	const two = (await measure(page, 1280)).scrollContainers;
+	check("R3", two.length > 1, "two scrolling regions should read as two containers", two);
+
+	await page.setContent(
+		controlFixture(`<main style="height: 300px; overflow-y: auto"><div style="height: 2000px">a</div></main>`),
+	);
+	const one = (await measure(page, 1280)).scrollContainers;
+	check("R3", one.length === 1, "one scrolling <main> should read as exactly one container", one);
+	check("R3", one[0]?.isShellScroller === true, "the one scroller is the shell's <main>", one);
+
+	await page.setContent(
+		controlFixture(`<main style="height: 300px; overflow-y: auto"><div style="height: 10px">a</div></main>`),
+	);
+	const declared = (await measure(page, 1280)).scrollContainers;
+	check("R3", declared.length === 0, "a container DECLARED scrollable whose content fits is not scrolling", declared);
+
+	// THE DOCUMENT SCROLLING IS **ONE** CONTAINER, not two. `querySelectorAll("*")` already contains
+	// `<html>`, so an explicit `[documentElement, ...all]` visited it twice and every page whose
+	// document scrolls failed R3 for "two" containers, naming the same element both times.
+	await page.setContent(controlFixture(`<div style="height: 4000px">tall</div>`));
+	const doc = (await measure(page, 1280)).scrollContainers;
+	check("R3", doc.length === 1, "a document that overflows is ONE container, not zero and not two", doc);
+	check("R3", doc[0]?.isShellScroller === true, "the document IS the shell scroller here", doc);
+
+	// ── R4 ────────────────────────────────────────────────────────────────────────────────────
+	await page.setViewportSize({ width: 1280, height: AUDIT_VIEWPORT_HEIGHT });
+	await page.setContent(
+		controlFixture(`
+			<main style="position: relative; height: 400px">
+				<button style="position: absolute; left: 40px; top: 40px; width: 120px; height: 40px">one</button>
+				<button style="position: absolute; left: 100px; top: 60px; width: 120px; height: 40px">two</button>
+			</main>`),
+	);
+	const overlapping = (await measure(page, 1280)).overlaps;
+	check("R4", overlapping.length === 1, "two overlapping buttons should read as one overlapping pair", overlapping);
+	check("R4", (overlapping[0]?.overlapWidth ?? 0) > 2, "the overlap should be measured, not just counted", overlapping);
+
+	await page.setContent(
+		controlFixture(`
+			<main style="position: relative; height: 400px">
+				<a href="#" style="position: absolute; left: 40px; top: 40px; width: 200px; height: 80px">
+					<button style="width: 60px; height: 30px">nested</button>
+				</a>
+				<button style="position: absolute; left: 400px; top: 40px; width: 120px; height: 40px">far</button>
+			</main>`),
+	);
+	const disjoint = (await measure(page, 1280)).overlaps;
+	check("R4", disjoint.length === 0, "nesting is not overlapping", disjoint);
+
+	// ── T5 ────────────────────────────────────────────────────────────────────────────────────
+	await page.setContent(
+		controlFixture(
+			`<main><div style="text-align: center; padding: 40px">No clusters yet. Deploy one to get started.</div></main>`,
+		),
+	);
+	const rolled = (await measure(page, 1280)).empty;
+	check("T5", rolled.shared === 0, "a hand-rolled empty state is not @repo/ui/empty", rolled);
+	check("T5", rolled.handRolled.length > 0, "the hand-rolled empty region should be NAMED", rolled);
+
+	await page.setContent(
+		controlFixture(`<main><div data-slot="empty" style="text-align: center; padding: 40px">No clusters yet.</div></main>`),
+	);
+	const shared = (await measure(page, 1280)).empty;
+	check("T5", shared.shared === 1, "@repo/ui/empty should read as the shared component", shared);
+	check("T5", shared.handRolled.length === 0, "content INSIDE the shared component is not a finding", shared);
+
+	return { broken: [...broken], lines };
+}
