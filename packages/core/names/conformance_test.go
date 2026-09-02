@@ -59,7 +59,7 @@ func loadCases(t *testing.T) nameCases {
 	raw, err := os.ReadFile(casesPath)
 	if err != nil {
 		t.Fatalf("cannot read %s (%v) — this table IS the contract packages/core/names is held to; "+
-			"regenerate it with `pnpm -F console gen:go-names`", casesPath, err)
+			"regenerate it with `pnpm -C apps/console run gen:go-names`", casesPath, err)
 	}
 	// Unknown fields are an error: a section added on the TypeScript side that this file does not
 	// decode would otherwise be silently unenforced, which is exactly how a mirror stops mirroring.

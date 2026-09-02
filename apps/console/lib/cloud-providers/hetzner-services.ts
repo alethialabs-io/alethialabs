@@ -318,7 +318,7 @@ const DNS_1123_LABEL_MAX = 63;
  * Secret and Application name from a node name and refuses anything outside this charset before
  * interpolating one into a kubectl command — and it now does so by construction: `k8sNameRe` in
  * packages/core/argocd/addon_secrets.go IS `names.NamespacePattern`, generated from the same
- * constant and diff-gated by `pnpm -F console gen:go-names:check` (#3665). This file used to
+ * constant and diff-gated by `pnpm -C apps/console run gen:go-names:check` (#3665). This file used to
  * restate the charset twice, once here and once as `K8S_LABEL`, checked against Go by a test that
  * read this file's source text.
  */

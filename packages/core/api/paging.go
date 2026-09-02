@@ -13,7 +13,7 @@ import (
 //
 // ONE shape, both sides. PageInfo mirrors `pageInfoSchema` in
 // apps/console/lib/cli/paging.ts, and the mirror is not a promise: the console generates
-// testdata/page_info.json from that Zod schema (`pnpm -F console gen:cli-fixtures`,
+// testdata/page_info.json from that Zod schema (`pnpm -C apps/console run gen:cli-fixtures`,
 // git-diff-gated in CI) and TestContract_PageInfo below strict-decodes it into this struct. A
 // field added, removed or renamed on the server moves the fixture and reds the decode, which
 // names the field. Nothing here is hand-synchronised.

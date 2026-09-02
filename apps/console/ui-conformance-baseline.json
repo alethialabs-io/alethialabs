@@ -1,6 +1,6 @@
 {
 	"$comment": [
-		"DERIVED — a report, not a source of truth. Never hand-edit; run `pnpm -F console audit:report --write`.",
+		"DERIVED — a report, not a source of truth. Never hand-edit; run `pnpm -C apps/console run audit:report --write`.",
 		"The two ledgers this view is derived from are apps/console/route-states-baseline.yaml and apps/console/shared-surface-allowlist.yaml.",
 		"A merge conflict in this file is resolved by taking either side and regenerating."
 	],
