@@ -31,9 +31,16 @@ import {
 } from "./context";
 import { loadWithInjectedFault, rendersSharedErrorState, type FaultResult } from "./error-state";
 import { consoleRoutes, type RouteRecord } from "./manifest";
-import { AUDIT_VIEWPORT_HEIGHT, measurePage, R1_WIDTHS, type PageMeasurement } from "./predicates";
+import {
+	AUDIT_VIEWPORT_HEIGHT,
+	measurePage,
+	measurementControl,
+	R1_WIDTHS,
+	type ControlResult,
+	type PageMeasurement,
+} from "./predicates";
 import { describeOverlayMisses, probeOverlays } from "./overlays";
-import { createReport } from "./report";
+import { createReport, type PredicateId } from "./report";
 import {
 	attachSignals,
 	navigationsFor,
@@ -52,6 +59,8 @@ const ctx: AuditContext = { orgSlug: "", owner: { userId: "", orgId: "" } };
 // buffer would pool `permissions.spec`'s T7 verdicts into this file's report — see report.ts.
 const report = createReport();
 const record = report.record;
+/** What the rendered predicates' positive control said, read by the first test in the file. */
+let control: ControlResult = { broken: [], lines: [] };
 
 test.beforeAll(async ({ browser }, testInfo) => {
 	// R5's scanner must be REAL before a single route is scored. `helpers/a11y.ts` answers `[]` when
@@ -67,6 +76,27 @@ test.beforeAll(async ({ browser }, testInfo) => {
 	});
 	const page = await context.newPage();
 	try {
+		// R1, R3, R4 and T5 next, and for the same reason: the instrument BEFORE the tree.
+		// `measurementControl` drives each of them against a page that violates it and a page that
+		// does not, and names the ones that no longer answer. Anything it names is withheld for the
+		// whole run — those routes report NOT MEASURED rather than a verdict.
+		//
+		// This runs before `resolveOrgSlug` navigates, on this throwaway context's page, because the
+		// control replaces the document with its own fixtures.
+		//
+		// WHAT THIS DOES NOT COVER, stated rather than implied: R2, R5, R6, R7 and T6 are not
+		// measured by `measurePage` and are not gated here. R5 has its own instrument check one line
+		// above (`requireAxe`), T6 has one at the bottom of this file (a 404 must still be recognised
+		// as the shared ErrorState), and R2/R6/R7 have no control yet — their self-tests are still
+		// only tests. Those are gaps, not exemptions.
+		control = await measurementControl(page);
+		if (control.broken.length > 0) {
+			report.withhold(control.broken, `positive control failed: ${control.lines.join("; ")}`);
+			console.error(
+				`ui-audit: THE POSITIVE CONTROL IS BROKEN for ${control.broken.join(", ")} — refusing to ` +
+					`score ${control.broken.join("/")} on any route.\n  ${control.lines.join("\n  ")}`,
+			);
+		}
 		ctx.orgSlug = await resolveOrgSlug(page);
 		ctx.owner = await resolveOwner(ctx.orgSlug);
 		// A worker that started AFTER the seeding step picks the ids back up here; a worker that
@@ -80,6 +110,9 @@ test.beforeAll(async ({ browser }, testInfo) => {
 test.afterAll(async () => {
 	const file = report.write(ctx.orgSlug);
 	console.log(`ui-audit: ${file}`);
+	for (const [predicate, why] of report.withheld()) {
+		console.log(`ui-audit: ${predicate} was NOT MEASURED on any route — ${why}`);
+	}
 	await closeDb();
 });
 
@@ -274,18 +307,31 @@ async function auditRoute(page: Page, route: RouteRecord): Promise<void> {
 	}
 
 	// ── The assertions ────────────────────────────────────────────────────────────────────────
+	// A withheld predicate asserts NOTHING. A red `expect.soft` IS a published verdict — it is the
+	// line a reader acts on — so a predicate the recorder is refusing to score must not be able to
+	// turn a broken instrument into a page finding. `withheld()` is the same map `record()` reads,
+	// so the report and the failures cannot disagree about which predicates were measured.
+	const withheld = report.withheld();
+	const scored = (predicate: PredicateId): boolean => !withheld.has(predicate);
+	//
 	// SOFT, every one of them. A route that fails R1 usually fails R5 too, and a hard `expect`
 	// would report the first and hide the rest — so the next reader fixes one thing, re-runs, and
 	// discovers the second. The test still fails; it fails with everything it knows.
-	expect.soft(
-		overflowing.map((m) => ({ width: m.width, by: m.overflow.scrollWidth - m.overflow.clientWidth, offenders: m.overflow.offenders })),
-		`R1 ${route.route} (landed on ${landedOn}): horizontal overflow`,
-	).toEqual([]);
-	expect.soft(
-		badScroll.map((m) => ({ width: m.width, containers: m.scrollContainers })),
-		`R3 ${route.route}: expected exactly one scroll container and for it to be the shell's <main>`,
-	).toEqual([]);
-	expect.soft(overlaps, `R4 ${route.route}: interactive elements overlap`).toEqual([]);
+	if (scored("R1")) {
+		expect.soft(
+			overflowing.map((m) => ({ width: m.width, by: m.overflow.scrollWidth - m.overflow.clientWidth, offenders: m.overflow.offenders })),
+			`R1 ${route.route} (landed on ${landedOn}): horizontal overflow`,
+		).toEqual([]);
+	}
+	if (scored("R3")) {
+		expect.soft(
+			badScroll.map((m) => ({ width: m.width, containers: m.scrollContainers })),
+			`R3 ${route.route}: expected exactly one scroll container and for it to be the shell's <main>`,
+		).toEqual([]);
+	}
+	if (scored("R4")) {
+		expect.soft(overlaps, `R4 ${route.route}: interactive elements overlap`).toEqual([]);
+	}
 	expect.soft(violations, `R5 ${route.route}: serious/critical axe violations`).toEqual([]);
 	expect.soft(r6, `R6 ${route.route}: console errors / failed requests`).toEqual([]);
 	expect.soft(
@@ -308,6 +354,18 @@ async function auditRoute(page: Page, route: RouteRecord): Promise<void> {
 		).toBe(true);
 	}
 }
+
+// The instrument, before any page is scored. `beforeAll` has already withheld whatever this names,
+// so the run still produces a full report — it just reports NOT MEASURED for the broken predicates
+// instead of verdicts. This test is what makes that LOUD: a withheld predicate is a red line here,
+// not a quiet column in a JSON file.
+test("the rendered predicates' positive control still fires", () => {
+	expect(
+		control.lines,
+		"a predicate that no longer fires cannot tell a clean page from a page it stopped reading. " +
+			`R1/R3/R4/T5 verdicts are WITHHELD for this whole run (${control.broken.join(", ")}).`,
+	).toEqual([]);
+});
 
 // ── Pass 1: the empty org ────────────────────────────────────────────────────────────────────
 const orgOnly = manifest.routes.filter(needsOnlyOrg);

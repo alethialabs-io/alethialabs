@@ -18,7 +18,14 @@
 import { expect, test, type Page } from "@playwright/test";
 import { errorStateSignature, rendersSharedErrorState } from "./error-state";
 import { hitTest } from "./overlays";
-import { measurePage } from "./predicates";
+import {
+	controlFixture,
+	measurementControl,
+	measurePage,
+	MEASURED_BY,
+	type Measure,
+	type MeasuredPredicate,
+} from "./predicates";
 import { createReport, NA_REASONS } from "./report";
 
 /**
@@ -43,85 +50,140 @@ const CHROME = `
                  background: #123; color: white;">chrome</header>`;
 
 test.describe("the live predicates fail when the page is wrong", () => {
-	test("R1 — a page wider than the viewport is a FAIL, a page that fits is a PASS", async ({ page }) => {
-		await page.setViewportSize({ width: 1280, height: 900 });
-
-		await page.setContent(`<main style="margin:0"><div style="width: 2400px; height: 40px; background: #eee">wide</div></main>`);
-		const bad = await measurePage(page, 1280);
-		expect(bad.overflow.scrollWidth, "the fixture really does overflow").toBeGreaterThan(bad.overflow.clientWidth + 1);
-		expect(bad.overflow.offenders.length, "R1 names what stuck out").toBeGreaterThan(0);
-
-		await page.setContent(`<main style="margin:0"><div style="width: 100%; height: 40px">narrow</div></main>`);
-		const good = await measurePage(page, 1280);
-		expect(good.overflow.scrollWidth).toBeLessThanOrEqual(good.overflow.clientWidth + 1);
-		expect(good.overflow.offenders).toEqual([]);
+	test("R1, R3, R4 and T5 — the shared positive control fires in both directions", async ({ page }) => {
+		// The control is not declared here any more. It lives in `predicates.ts` beside the
+		// instrument, because `routes.spec.ts` RUNS it before it scores a single route and withholds
+		// whatever it names — the shape `scripts/check-route-states.mjs` already uses. A control that
+		// only exists as a test is something that goes red BESIDE a run rather than something the run
+		// consults, which is exactly how #3804 happened: R3's control was failing on `dev` while the
+		// same job published R3 FAILs for two real routes.
+		const control = await measurementControl(page);
+		expect(control.lines, "every measurePage predicate answers on a violating page and a clean one").toEqual([]);
+		expect(control.broken).toEqual([]);
 	});
 
-	test("R3 — a second scroll container is a FAIL; one shell scroller is a PASS", async ({ page }) => {
+	test("the control covers every field measurePage actually returns", async ({ page }) => {
+		// Derived from the instrument at runtime, not from a hand-written list. A fifth measurement
+		// added to `PageMeasurement` with no control behind it is a predicate scored by nothing, and
+		// a hand-typed roster of what a guard watches stops covering silently.
+		await page.setViewportSize({ width: 1280, height: 900 });
+		await page.setContent(controlFixture(`<main>anything</main>`));
+		const measured = await measurePage(page, 1280);
+		const fields = Object.keys(measured).filter((k) => k !== "width");
+		expect(fields.sort(), "every measured field must name the predicate it is scored from").toEqual(
+			Object.keys(MEASURED_BY).sort(),
+		);
+	});
+
+	test("the control's fixtures render in the mode the console runs in", async ({ page }) => {
+		// #3804, pinned. `page.setContent` with no doctype is QUIRKS mode, and R3 cannot see a
+		// scrolling document there: `document.scrollingElement` is `<body>`, whose `overflow-y` is
+		// `visible` so the walk skips it, and `documentElement.scrollHeight` equals its own
+		// `clientHeight` so that candidate is skipped too. Zero containers, from a 4000px page.
+		//
+		// This is asserted in BOTH modes on purpose. The defect is the fixture's, not the walk's —
+		// the console is a Next.js app and serves a real doctype — so the record of what quirks mode
+		// does has to stay here, or the next reader "simplifies" `controlFixture` away and the
+		// control silently stops controlling for the second time.
 		await page.setViewportSize({ width: 1280, height: 400 });
 
-		await page.setContent(`
-			<main style="height: 300px; overflow-y: auto"><div style="height: 2000px">a</div></main>
-			<aside style="height: 200px; overflow-y: auto"><div style="height: 2000px">b</div></aside>`);
-		const two = await measurePage(page, 1280);
-		expect(two.scrollContainers.length, "two containers really are scrolling").toBeGreaterThan(1);
-
-		await page.setContent(`<main style="height: 300px; overflow-y: auto"><div style="height: 2000px">a</div></main>`);
-		const one = await measurePage(page, 1280);
-		expect(one.scrollContainers).toHaveLength(1);
-		expect(one.scrollContainers[0].isShellScroller, "the one scroller is the shell's <main>").toBe(true);
-
-		// And a container DECLARED scrollable whose content fits is not a scroll container.
-		await page.setContent(`<main style="height: 300px; overflow-y: auto"><div style="height: 10px">a</div></main>`);
-		expect((await measurePage(page, 1280)).scrollContainers).toEqual([]);
-
-		// THE DOCUMENT SCROLLING IS **ONE** CONTAINER, not two. `querySelectorAll("*")` already
-		// contains `<html>`, so an explicit `[documentElement, ...all]` visited it twice and every
-		// page whose document scrolls reported two identical containers and failed R3 for having
-		// "two" — naming the same element both times. No earlier fixture made the document
-		// overflow, which is exactly why nothing caught it.
 		await page.setContent(`<div style="height: 4000px">tall</div>`);
-		const doc = await measurePage(page, 1280);
-		expect(doc.scrollContainers).toHaveLength(1);
-		expect(doc.scrollContainers[0].isShellScroller, "the document IS the shell scroller here").toBe(true);
+		expect(await page.evaluate(() => document.compatMode), "no doctype is quirks mode").toBe("BackCompat");
+		expect(await page.evaluate(() => document.scrollingElement?.tagName)).toBe("BODY");
+		expect(
+			(await measurePage(page, 1280)).scrollContainers,
+			"and in quirks mode a 4000px document reports NO scroll container — this is #3804",
+		).toEqual([]);
+
+		await page.setContent(controlFixture(`<div style="height: 4000px">tall</div>`));
+		expect(await page.evaluate(() => document.compatMode), "controlFixture is standards mode").toBe("CSS1Compat");
+		expect(await page.evaluate(() => document.scrollingElement?.tagName)).toBe("HTML");
+		const doc = (await measurePage(page, 1280)).scrollContainers;
+		expect(doc, "a document that overflows is ONE container").toHaveLength(1);
+		expect(doc[0].isShellScroller, "the document IS the shell scroller here").toBe(true);
 	});
 
-	test("R4 — two overlapping buttons are a FAIL; a nested pair and a disjoint pair are not", async ({ page }) => {
-		await page.setViewportSize({ width: 1280, height: 900 });
+	// Each mutant is the REAL measurement with one field neutered — not a re-implementation of it,
+	// which would only verify a copy. A control that cannot name the predicate that stopped firing
+	// is a control that will withhold everything, or nothing, on the day it matters.
+	const MUTANTS: { predicate: MeasuredPredicate; what: string; measure: Measure }[] = [
+		{
+			predicate: "R1",
+			what: "overflow stops naming offenders",
+			measure: async (p, w) => {
+				const m = await measurePage(p, w);
+				return { ...m, overflow: { ...m.overflow, offenders: [] } };
+			},
+		},
+		{
+			predicate: "R3",
+			what: "the scroll walk finds nothing",
+			measure: async (p, w) => ({ ...(await measurePage(p, w)), scrollContainers: [] }),
+		},
+		{
+			predicate: "R4",
+			what: "the overlap pass finds nothing",
+			measure: async (p, w) => ({ ...(await measurePage(p, w)), overlaps: [] }),
+		},
+		{
+			predicate: "T5",
+			what: "the hand-rolled empty-state arm finds nothing",
+			measure: async (p, w) => {
+				const m = await measurePage(p, w);
+				return { ...m, empty: { ...m.empty, handRolled: [] } };
+			},
+		},
+	];
+	for (const mutant of MUTANTS) {
+		test(`the control names ${mutant.predicate} — and only ${mutant.predicate} — when ${mutant.what}`, async ({
+			page,
+		}) => {
+			const control = await measurementControl(page, mutant.measure);
+			expect(control.broken, "the broken predicate is named, and no other is withheld with it").toEqual([
+				mutant.predicate,
+			]);
+			expect(control.lines.join("\n")).toContain(`${mutant.predicate}:`);
+		});
+	}
 
-		await page.setContent(`
-			<main style="position: relative; height: 400px">
-				<button style="position: absolute; left: 40px; top: 40px; width: 120px; height: 40px">one</button>
-				<button style="position: absolute; left: 100px; top: 60px; width: 120px; height: 40px">two</button>
-			</main>`);
-		const overlapping = await measurePage(page, 1280);
-		expect(overlapping.overlaps.length, "the overlap is reported").toBe(1);
-		expect(overlapping.overlaps[0].overlapWidth).toBeGreaterThan(2);
+	test("a withheld predicate publishes NOT MEASURED — not a PASS, not a FAIL, not an N/A", () => {
+		// The gate itself, driven. A gate never seen to fire is not known to be a gate, and the whole
+		// argument of #3804 is that a verdict from a broken instrument is worse than no verdict.
+		const report = createReport();
+		report.withhold(["R3"], "positive control failed: R3 measured 0 containers on a scrolling document");
 
-		await page.setContent(`
-			<main style="position: relative; height: 400px">
-				<a href="#" style="position: absolute; left: 40px; top: 40px; width: 200px; height: 80px">
-					<button style="width: 60px; height: 30px">nested</button>
-				</a>
-				<button style="position: absolute; left: 400px; top: 40px; width: 120px; height: 40px">far</button>
-			</main>`);
-		expect((await measurePage(page, 1280)).overlaps, "nesting is not overlapping").toEqual([]);
-	});
+		const withheld = report.record({ route: "/x", url: "/x", predicate: "R3", verdict: "PASS" });
+		expect(withheld.verdict, "the caller's PASS is DROPPED, not carried through").toBe("NOT MEASURED");
+		expect(withheld.reason).toContain("positive control failed");
+		// An N/A is a claim about the PAGE; this is a claim about the instrument. It must not be
+		// able to hide in a column that already exists.
+		const escaped = report.record({
+			route: "/y",
+			url: "/y",
+			predicate: "R3",
+			verdict: "N/A",
+			reason: "redirect-only",
+		});
+		expect(escaped.verdict).toBe("NOT MEASURED");
 
-	test("T5 — a hand-rolled empty state is a FAIL; @repo/ui/empty is a PASS", async ({ page }) => {
-		await page.setViewportSize({ width: 1280, height: 900 });
+		const untouched = report.record({ route: "/x", url: "/x", predicate: "R1", verdict: "PASS" });
+		expect(untouched.verdict, "a predicate whose control is fine still scores").toBe("PASS");
 
-		await page.setContent(`
-			<main><div style="text-align: center; padding: 40px">No clusters yet. Deploy one to get started.</div></main>`);
-		const rolled = await measurePage(page, 1280);
-		expect(rolled.empty.shared).toBe(0);
-		expect(rolled.empty.handRolled.length, "the hand-rolled empty region is named").toBeGreaterThan(0);
+		const summary = report.summarise();
+		expect(summary.R3, "a withheld predicate scores from nothing — null, never 1").toEqual({
+			pass: 0,
+			fail: 0,
+			na: 0,
+			notMeasured: 2,
+			score: null,
+		});
+		expect(summary.R1).toEqual({ pass: 1, fail: 0, na: 0, notMeasured: 0, score: 1 });
 
-		await page.setContent(`
-			<main><div data-slot="empty" style="text-align: center; padding: 40px">No clusters yet.</div></main>`);
-		const shared = await measurePage(page, 1280);
-		expect(shared.empty.shared).toBe(1);
-		expect(shared.empty.handRolled, "content inside the shared component is not a finding").toEqual([]);
+		// And NOT MEASURED is the recorder's to write. A caller cannot claim it.
+		expect(() =>
+			createReport().record({ route: "/x", url: "/x", predicate: "R4", verdict: "NOT MEASURED", reason: "meh" }),
+		).toThrow(/withhold\(\)/);
+		expect(() => createReport().withhold(["R4"], "  ")).toThrow(/without a reason/);
 	});
 
 	test("R2 — the hit test catches an overlay that a z-index matcher reads as correct", async ({ page }) => {
@@ -130,7 +192,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		// THE SHIPPED SHAPE (packages/ui/src/popover.tsx): the popup names `z-index: 50` but is
 		// `position: static`, on which z-index is a no-op — so the later positioned sibling paints
 		// over it. Every class-name check passes. The hit test does not.
-		await page.setContent(`
+		await page.setContent(controlFixture(`
 			<main style="position: relative; height: 600px">
 				<div style="position: absolute; left: 100px; top: 100px; width: 300px; height: 200px">
 					<div data-slot="popover-content" style="z-index: 50; background: white; border: 1px solid #ccc; height: 200px">
@@ -140,7 +202,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 				<div style="position: absolute; left: 60px; top: 60px; width: 500px; height: 400px; background: rgba(255,0,0,.4)">
 					a later positioned sibling
 				</div>
-			</main>`);
+			</main>`));
 		const behind = await hitTestSlot(page, "popover-content");
 		expect(behind, "the fixture overlay is measurable").not.toBe("off-screen");
 		if (behind === "off-screen") return;
@@ -151,7 +213,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 
 		// The fix that repo comment records is a `position: relative` — nothing a z-index matcher
 		// looks at. With it, the same markup and the same z-index hit-test clean.
-		await page.setContent(`
+		await page.setContent(controlFixture(`
 			<main style="position: relative; height: 600px">
 				<div style="position: absolute; left: 100px; top: 100px; width: 300px; height: 200px">
 					<div data-slot="popover-content" style="position: relative; z-index: 50; background: white; border: 1px solid #ccc; height: 200px">
@@ -161,7 +223,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 				<div style="position: absolute; left: 60px; top: 60px; width: 500px; height: 400px; background: rgba(255,0,0,.4)">
 					a later positioned sibling
 				</div>
-			</main>`);
+			</main>`));
 		const above = await hitTestSlot(page, "popover-content");
 		expect(above).not.toBe("off-screen");
 		if (above === "off-screen") return;
@@ -172,13 +234,13 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		await page.setViewportSize({ width: 1280, height: 900 });
 		// The overlay's centre is clear; only its top edge is under the chrome. A centre-only hit
 		// test would call this clean, which is why the rubric names the four inset corners.
-		await page.setContent(`
+		await page.setContent(controlFixture(`
 			${CHROME}
 			<main style="position: relative; height: 600px">
 				<div data-slot="dialog-content" style="position: absolute; left: 200px; top: 20px; width: 400px; height: 300px; z-index: 10; background: white; border: 1px solid #ccc">
 					dialog body
 				</div>
-			</main>`);
+			</main>`));
 		const measured = await hitTestSlot(page, "dialog-content");
 		expect(measured).not.toBe("off-screen");
 		if (measured === "off-screen") return;
@@ -191,10 +253,10 @@ test.describe("the live predicates fail when the page is wrong", () => {
 
 	test("R2 — a pointer-events:none overlay is measured, not skipped", async ({ page }) => {
 		await page.setViewportSize({ width: 1280, height: 900 });
-		await page.setContent(`
+		await page.setContent(controlFixture(`
 			<main style="position: relative; height: 600px">
 				<div data-slot="tooltip-content" style="position: absolute; left: 200px; top: 200px; width: 200px; height: 80px; z-index: 10; pointer-events: none; background: #222; color: white">tip</div>
-			</main>`);
+			</main>`));
 		const measured = await hitTestSlot(page, "tooltip-content");
 		expect(measured).not.toBe("off-screen");
 		if (measured === "off-screen") return;
@@ -206,10 +268,10 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		const arms = errorStateSignature();
 		expect(arms.length, "at least one layout arm was read out of error-state.tsx").toBeGreaterThan(0);
 
-		await page.setContent(`<main><div class="${arms[0].join(" ")}"><h1>Couldn't load this page</h1></div></main>`);
+		await page.setContent(controlFixture(`<main><div class="${arms[0].join(" ")}"><h1>Couldn't load this page</h1></div></main>`));
 		expect(await rendersSharedErrorState(page), "the real component's class set is recognised").toBe(true);
 
-		await page.setContent(`<main><div class="flex items-center justify-center"><h1>Couldn't load this page</h1></div></main>`);
+		await page.setContent(controlFixture(`<main><div class="flex items-center justify-center"><h1>Couldn't load this page</h1></div></main>`));
 		expect(
 			await rendersSharedErrorState(page),
 			"a hand-rolled error panel with the same COPY is not the shared component",
