@@ -158,25 +158,26 @@ function quotesClosedBefore(line, index) {
 /**
  * Blank every comment, line by line, keeping one output line per input line.
  *
- * ── WHY THIS IS A COPY, AND WHAT SHOULD HAPPEN TO IT ─────────────────────────────────────────
+ * ── THE ONE DEFINITION OF "IS THIS A COMMENT", AND WHY IT LIVES HERE ─────────────────────────
  *
- * This is the reviewed implementation from `scripts/check-shared-surface.mjs`, not a second
- * attempt at the problem. A naive `source.replace(/\/\*[\s\S]*?\*\//g, "")` plus a brace count
- * was written here first and RAISED on `components/agent/agent-knowledge-panel.tsx` — 12 opens
- * against 13 closes — because a bare `/*` mid-line is indistinguishable from a glob inside a
- * string (`"apps/*\/**"`), and blanking from there swallows live code. Two definitions of "is this
- * a comment" means one of them is wrong, and the wrong one here does not report a finding: it
+ * This is the reviewed implementation. A naive `source.replace(/\/\*[\s\S]*?\*\//g, "")` plus a
+ * brace count was written first and RAISED on `components/agent/agent-knowledge-panel.tsx` — 12
+ * opens against 13 closes — because a bare `/*` mid-line is indistinguishable from a glob inside
+ * a string (`"apps/*\/**"`), and blanking from there swallows live code. Two definitions of "is
+ * this a comment" means one of them is wrong, and the wrong one does not report a finding: it
  * refuses a file, or silently blanks the code a predicate was going to read.
  *
- * It is COPIED rather than imported because `scripts/check-shared-surface.mjs` runs its entire
- * check at import time — it has no entrypoint guard, so `import { stripComments } from` it would
- * execute the guard and can `process.exit(1)`. This module IS import-safe (see the CLI guard at
- * the foot of the file).
+ * It was a COPY of `scripts/check-shared-surface.mjs`'s own stripper until #3787 (closing #3689),
+ * which deleted that copy and made the checker import this one. There is now ONE definition, and
+ * a change to it is made in one place. A differential harness over 2,726 repo files plus 18
+ * adversarial cases found 0 divergences before they were collapsed, so nothing was lost.
  *
- * **Hand-off:** unit #2 of this wave owns `check-shared-surface.mjs`. It should import
- * `stripComments` from here and delete its own copy — an edit entirely inside its own scope —
- * which collapses the two definitions back into one. Until then, a change to either must be made
- * to both, and that is a debt, not a design.
+ * THE DIRECTION IS FORCED, AND IT IS NOT AN ACCIDENT OF WHO IMPORTED WHOM FIRST. This module is a
+ * library: importing it runs no check and prints nothing. `check-shared-surface.mjs` is a guard —
+ * importing it is importing a program. That asymmetry is the reason the definition lives here and
+ * not there, and it does not depend on whether the checker happens to carry an entrypoint guard on
+ * any given day. If you are tempted to move this function into the checker and import it back,
+ * that is the second import path #3689 existed to remove.
  *
  * @returns {{lines: string[], unterminated: boolean}} `unterminated` when a block comment was
  *   still open at EOF — the one state in which this has blanked live code, so the caller must
