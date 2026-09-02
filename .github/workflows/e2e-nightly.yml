@@ -767,7 +767,7 @@ jobs:
 
       - name: Migrate the control-plane database (schema + programmables/RLS + app role)
         if: steps.gate.outputs.run == 'true'
-        run: pnpm -F console db:migrate
+        run: pnpm -C apps/console run db:migrate
 
       # ── AWS: exchange the GitHub OIDC token for the ref-bound `alethia-e2e-nightly` role
       #    (no long-lived keys). Only runs for the aws provider once a maintainer has applied
@@ -1156,14 +1156,14 @@ jobs:
         if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'
         run: |
           # ee FIRST, and this ordering is not stylistic. ee/dist is gitignored with no prepare
-          # hook, and `pnpm -F console build` calls the console's own script — bypassing turbo, so
+          # hook, and `pnpm -C apps/console run build` calls the console's own script — bypassing turbo, so
           # `build.dependsOn: ["^build"]` never fires. Without it getEnterprise()'s tolerant require
           # throws and lib/auth/scope.ts falls back to `{ userId, orgId: userId }`, which is how
           # ci.yml's hero job was once VACUOUS (see its note at ci.yml:389). A cli-demo run on a
           # community-scope console would pass while proving the wrong tenancy.
           pnpm -F @alethia/ee build
           test -f ee/dist/index.js || { echo "::error::ee/dist/index.js missing — the console would resolve COMMUNITY scope and this dimension would prove the wrong thing"; exit 1; }
-          pnpm -F console build
+          pnpm -C apps/console run build
 
       - name: cli-demo — seed the org and mint a service token
         if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'

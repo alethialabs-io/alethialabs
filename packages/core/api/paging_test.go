@@ -17,7 +17,7 @@ import (
 // ── the wire shape ────────────────────────────────────────────────────────────────────────
 
 // TestContract_PageInfo is the Go half of the one-shape guarantee. The fixture is generated
-// from apps/console/lib/cli/paging.ts's pageInfoSchema (`pnpm -F console gen:cli-fixtures`,
+// from apps/console/lib/cli/paging.ts's pageInfoSchema (`pnpm -C apps/console run gen:cli-fixtures`,
 // git-diff-gated in CI), so a field added, renamed or dropped on the server moves the file and
 // lands here rather than in a zero-valued struct at runtime.
 func TestContract_PageInfo(t *testing.T) {
