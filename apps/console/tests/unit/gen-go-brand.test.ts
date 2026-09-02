@@ -59,7 +59,10 @@ const css = readFileSync(TOKENS_CSS, "utf8");
 describe("the CSS declaration scanner", () => {
 	it("finds every declaration on a line that carries three", () => {
 		// This is the exact shape the line-anchored grep it replaces gets wrong: the two
-		// breakpoint blocks in tokens.css put three display sizes on one physical line.
+		// breakpoint blocks in tokens.css put every display size on ONE physical line — three
+		// of them when this was written, four since #3806 added --text-display-xs. The fixture
+		// stays at three: what it pins is that the scanner does not stop at the first
+		// declaration, not how many the real sheet happens to carry.
 		const sheet = ":root { --a: 1px; --b: 2px; --c: 3px; }";
 		expect(parseDeclarations(sheet).map((d) => d.name)).toEqual(["--a", "--b", "--c"]);
 	});
