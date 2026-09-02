@@ -30,6 +30,7 @@
     "check:migrations": "node scripts/check-migrations.mjs",
     "check:compat": "node scripts/check-compat.mjs",
     "check:dead-code": "node scripts/check-dead-code.mjs",
+    "audit:report": "node scripts/audit-report.mjs",
     "gen:connectors": "node scripts/gen-connectors.mjs",
     "gen:docs-index": "node scripts/gen-docs-index.mjs",
     "gen:catalog": "node scripts/gen-catalog.mjs",
