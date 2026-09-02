@@ -90,9 +90,11 @@ alethia
 │   └── inventory [provider|cloud_identity_id]
 ├── agent                             # alias: agents — inspect agent identities
 │   ├── list
-│   └── get <agent_id>
-├── addon                             # alias: addons — installed add-ons (-p/--project · -e/--env)
-│   └── list
+│   └── get [agent_id]                # asks when omitted
+├── addon                             # alias: addons — marketplace add-ons (-p/--project · -e/--env)
+│   ├── list
+│   ├── enable [addon_id] [--mode managed|gitops] [--set k=v] [--values-file f]
+│   └── disable [addon_id]            # asks when omitted; --yes to skip the confirmation
 ├── chart                             # alias: charts — BYO Helm charts (-p/--project · -e/--env)
 │   └── list
 ├── iac                               # BYO Terraform/OpenTofu source (-p/--project · -e/--env)
