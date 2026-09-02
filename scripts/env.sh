@@ -1506,9 +1506,25 @@ cmd_reap_dry_run() { # <include-mine 0|1>
   echo "   the box to be idle ${REAP_AFTER_MIN}m.)"
 }
 
+# What the reaper actually measured, in words. "Idle" is derived SOLELY from env lastSeen
+# times, so on a box with no env rows there is nothing for it to have been idle FOR: the
+# registry reports 0 minutes (fail-safe, scripts/box/env-registry.sh) and printing "most
+# recent activity was 0m ago" about it is a claim nothing took a measurement for. That
+# ambiguity is what turned #3922 into a traceback instead of a glance.
+#
+# <env-count> is best-effort and may be empty; an empty count falls back to the plain
+# phrasing. Nothing may branch on it except a message.
+idle_phrase() { # <idle-minutes> <env-count-or-empty>
+  if [ "${2:-}" = "0" ]; then
+    echo "no env activity is recorded — the registry holds no environments at all"
+  else
+    echo "most recent env activity was ${1}m ago"
+  fi
+}
+
 cmd_reap() {
   need jq
-  local idle now="" include_mine=0 dry="" a
+  local idle envs="" now="" include_mine=0 dry="" a
   for a in "$@"; do
     case "$a" in
     --now) now=1 ;;
@@ -1535,6 +1551,10 @@ cmd_reap() {
     return 0
   }
   idle="$(ssh_box "$REMOTE/bin/env-registry.sh idle-minutes")"
+  # Row count, for the MESSAGES only — it is what lets them say "no activity recorded"
+  # rather than "activity was 0m ago". Deliberately fail-soft: a failure leaves it empty
+  # and the wording falls back. It must never reach a decision, only an echo.
+  envs="$(read_registry | jq -r 'length' 2>/dev/null || true)"
 
   # --now is "I am finished for the day". The idle threshold assumes several people whose
   # runs must not be reaped out from under them; with one user it mostly means the box is
@@ -1546,7 +1566,7 @@ cmd_reap() {
   # message and exit 0, not a refusal. Nothing is destroyed either way — the guard still runs
   # before any snapshot or destroy below.
   if [ -z "$now" ] && [ "$idle" -lt "$REAP_AFTER_MIN" ]; then
-    echo "not reaping: most recent activity was ${idle}m ago (threshold ${REAP_AFTER_MIN}m)."
+    echo "not reaping: $(idle_phrase "$idle" "$envs") (threshold ${REAP_AFTER_MIN}m)."
     echo "  Finished for the day?  pnpm env:reap --now"
     return 0
   fi
@@ -1554,12 +1574,20 @@ cmd_reap() {
   reap_guard "$(read_registry)" "$include_mine"
 
   if [ -n "$now" ] && [ "$idle" -lt 30 ]; then
-    echo "⚠ --now, but something was active ${idle}m ago. Reaping anyway; a run in flight will die."
+    if [ "$envs" = "0" ]; then
+      # NOT "something was active 0m ago" — nothing was, because nothing was registered.
+      # The warning still fires: an empty registry is exactly the case where whatever is
+      # using the box is invisible to this command (#3922).
+      echo "⚠ --now on a box with no registered environments. The registry cannot see what else"
+      echo "  may be using it — reaping anyway; anything in flight dies with the box."
+    else
+      echo "⚠ --now, but something was active ${idle}m ago. Reaping anyway; a run in flight will die."
+    fi
   fi
 
   # Snapshot storage is billed per GB, so what is on disk when you reap is what you pay
   # to keep. env:test prunes old traces for this reason.
-  echo "→ snapshotting before delete (last activity ${idle}m ago)"
+  echo "→ snapshotting before delete ($(idle_phrase "$idle" "$envs"))"
   hc server create-image --type snapshot \
     --description "alethia-sandbox $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --label "$SNAPSHOT_LABEL" "$SERVER_NAME" ||
