@@ -529,7 +529,7 @@ yes)
   # `set -euo pipefail` is on, so pipefail makes this `if` test the SEEDER's status, not
   # tee's — a pipe otherwise launders the exit code and a failed seed would read as a
   # successful one, which is this issue's own failure mode in a new disguise.
-  if ! pnpm -F console seed:demo 2>&1 | tee "$SEED_LOG"; then
+  if ! pnpm -C apps/console run seed:demo 2>&1 | tee "$SEED_LOG"; then
     echo "✗ demo seed failed — full output in $SEED_LOG" >&2
     echo "  This is fatal on purpose: an env:up that promises a populated env and quietly" >&2
     echo "  delivers an empty one is the defect this step exists to fix. To bring the env" >&2
@@ -545,7 +545,7 @@ reset)
   # seed-demo.ts refuses to tear down an org that holds projects and is not demo-marked,
   # so this cannot eat hand-made work in an org this mechanism never seeded.
   log "Emptying the demo org ($SEED_WHY)"
-  if ! pnpm -F console seed:demo --reset --reset-only 2>&1 | tee "$SEED_LOG"; then
+  if ! pnpm -C apps/console run seed:demo --reset --reset-only 2>&1 | tee "$SEED_LOG"; then
     echo "✗ demo teardown failed — full output in $SEED_LOG" >&2
     echo "  Fatal on purpose: this boot would otherwise print 'seed: EMPTY' over a" >&2
     echo "  database that still holds the demo org, which is the defect --empty exists" >&2

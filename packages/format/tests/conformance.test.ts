@@ -10,7 +10,7 @@
  *
  * The three layers, and how they fail:
  *   1. this suite            — TS changed and the table did not
- *   2. the CI diff-gate      — the table is stale (`pnpm -F console gen:format-conformance:check`)
+ *   2. the CI diff-gate      — the table is stale (`pnpm -C apps/console run gen:format-conformance:check`)
  *   3. conformance_test.go   — Go disagrees with the table
  *
  * Go cannot write the file, so it has no way to make itself right. Neither side drifts alone.
