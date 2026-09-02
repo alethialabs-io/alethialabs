@@ -81,7 +81,7 @@ export function PurchaseLayout({
 						<span className="rounded-full border border-border-strong px-2.5 py-0.5 font-mono text-ui-2xs uppercase tracking-[0.12em] text-text-secondary">
 							{meta.name}
 						</span>
-						<h1 className="mt-3 font-display text-[22px] font-semibold tracking-[-0.02em] text-text-primary">
+						<h1 className="mt-3 font-display text-display-xs font-semibold tracking-[-0.02em] text-text-primary">
 							{heading}
 						</h1>
 						<p className="mt-1.5 text-ui-sm text-text-tertiary">
@@ -125,7 +125,7 @@ export function InviteView({
 	return (
 		<div className="mx-auto flex w-full max-w-[460px] flex-col gap-4 px-7 py-8">
 			<div className="flex flex-col gap-1">
-				<h1 className="font-display text-[22px] font-semibold tracking-[-0.02em] text-text-primary">
+				<h1 className="font-display text-display-xs font-semibold tracking-[-0.02em] text-text-primary">
 					Invite your team
 				</h1>
 				<p className="text-ui-sm text-text-tertiary">

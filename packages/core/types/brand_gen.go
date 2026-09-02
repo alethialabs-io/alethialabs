@@ -7,7 +7,7 @@
 // Source of truth: packages/brand/src/tokens.css (the values) and apps/console/scripts/lib/brand-projection.ts (the decisions).
 //
 // Every custom property declared in the stylesheet appears in BrandProjections below with
-// exactly one of exact / lossy / none. 63 exact, 18 lossy, 86 none — 167 tokens, no gaps.
+// exactly one of exact / lossy / none. 63 exact, 19 lossy, 86 none — 168 tokens, no gaps.
 // The generator refuses to emit if a declared token has no decision, so a token added to the
 // console fails CI until somebody says what the CLI does with it. A "none" entry is a real
 // answer, not an omission: a spinner has no easing curve and a CLI cannot set a font.
@@ -199,6 +199,7 @@ var BrandProjections = []BrandProjection{
 	{Token: "--text-display-lg", Kind: BrandLossy, Target: "EmphasisDisplay", Note: "56px. Every cell in a terminal is the same size, so a size ladder becomes a WEIGHT-and-CASE ladder: the largest step is bold + uppercase, the treatment that reads as 'this is the headline' with no size to spend."},
 	{Token: "--text-display-md", Kind: BrandLossy, Target: "EmphasisHeading", Note: "40px. The middle step is bold alone — the second rung of the same ladder."},
 	{Token: "--text-display-sm", Kind: BrandLossy, Target: "EmphasisBand", Note: "30px. The quietest display step is normal weight in primary ink; it is a heading only by contrast with the faint body around it."},
+	{Token: "--text-display-xs", Kind: BrandLossy, Target: "EmphasisBand", Note: "24px — display voice rendered INSIDE the console shell: a plan name, a price, an onboarding or purchase heading. It collapses onto the SAME constant as --text-display-sm because the browser separates them by four pixels and a terminal cannot: both are the quiet display step, normal weight in primary ink, and inventing a fourth emphasis constant to carry a size difference the terminal has no cells to spend would publish a distinction the CLI cannot draw."},
 	{Token: "--tracking-display", Kind: BrandNone, Target: "", Note: "negative tracking. The eyebrow's positive tracking projects because a cell can be ADDED; there is no sub-cell to remove, so tightening a display headline has nothing to spend."},
 	{Token: "--leading-display", Kind: BrandNone, Target: "", Note: "line-height 0.96. A terminal row is one row; there is no leading to compress."},
 	{Token: "--text-ui-3xs", Kind: BrandNone, Target: "", Note: "9px — a mono eyebrow or a badge caption, the smallest thing on a console screen. A terminal cell has one size, and the CLI's eyebrow device is already its own treatment (case and tracking, at --tracking-eyebrow); what makes this ink quiet in the console is --text-tertiary, which is projected exactly."},
@@ -576,7 +577,12 @@ const (
 
 	// EmphasisBand is the terminal projection of: --text-display-sm — 30px. The quietest display
 	// step is normal weight in primary ink; it is a heading only by contrast with the faint body
-	// around it.
+	// around it. · --text-display-xs — 24px — display voice rendered INSIDE the console shell: a
+	// plan name, a price, an onboarding or purchase heading. It collapses onto the SAME constant
+	// as --text-display-sm because the browser separates them by four pixels and a terminal
+	// cannot: both are the quiet display step, normal weight in primary ink, and inventing a
+	// fourth emphasis constant to carry a size difference the terminal has no cells to spend would
+	// publish a distinction the CLI cannot draw.
 	EmphasisBand BrandEmphasis = "band"
 )
 
@@ -585,6 +591,7 @@ var BrandEmphasisLadder = map[string]BrandEmphasis{
 	"--text-display-lg": EmphasisDisplay,
 	"--text-display-md": EmphasisHeading,
 	"--text-display-sm": EmphasisBand,
+	"--text-display-xs": EmphasisBand,
 	"--text-ui-lg":      EmphasisHeading,
 	"--text-ui-xl":      EmphasisHeading,
 }
