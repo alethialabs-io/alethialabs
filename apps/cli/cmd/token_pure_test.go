@@ -68,15 +68,16 @@ func TestStampRenderingDistinguishesNeverFromAbsent(t *testing.T) {
 	// otherwise a token that HAS been used would report that it never was, which is the exact
 	// distinction this pair exists to make.
 	used := "2026-08-26T09:41:00Z"
-	if got := ui.StampOrNever(&used); got != "2026-08-26 09:41" {
-		t.Errorf("a used token renders %q, want the UTC minute", got)
+	if got := ui.StampOrNever(&used); got != "26 Aug 2026, 09:41" {
+		t.Errorf("a used token renders %q, want the console's absolute date in UTC", got)
 	}
 	if got := ui.StampOrDash(nil); got != "—" {
 		t.Errorf("an absent timestamp renders %q, want an em dash", got)
 	}
 	stamp := "2026-08-26T09:41:00Z"
-	if got := ui.StampOrDash(&stamp); got != "2026-08-26 09:41" {
-		t.Errorf("stampOrDash = %q, want the UTC minute", got)
+	// #3659 converged StampOrDash onto Stamp's layout; what it still owns is the DASH below.
+	if got := ui.StampOrDash(&stamp); got != "26 Aug 2026, 09:41" {
+		t.Errorf("stampOrDash = %q, want the console's absolute date in UTC", got)
 	}
 	// An unparseable value is shown VERBATIM rather than swallowed: a reader can act on a weird
 	// string, and cannot act on a dash that hid one.
@@ -92,7 +93,7 @@ func TestServiceTokenListTypeCarriesNoSecret(t *testing.T) {
 	rows := tokenRows([]api.ServiceToken{{
 		ID: "id-1", Name: "ci", TokenPrefix: "alethia_sat_abc12345",
 		CreatedAt: "2026-08-26T09:41:00Z",
-	}})
+	}}, ui.FormatTable)
 	if len(rows) != 1 {
 		t.Fatalf("want 1 row, got %d", len(rows))
 	}
