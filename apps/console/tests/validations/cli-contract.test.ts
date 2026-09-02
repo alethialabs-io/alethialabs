@@ -13,6 +13,7 @@ import {
 	cliJobLogsResponse,
 	cliJobResponse,
 	cliJobsPageResponse,
+	cliPageInfo,
 	cliRepositoriesResponse,
 	cliLatestReleaseWire,
 	cliReleasePublishWire,
@@ -55,6 +56,11 @@ const cases: ReadonlyArray<[string, z.ZodType]> = [
 	["cluster_detail.json", cliClusterDetailResponse],
 	["cloud_identities.json", cliCloudIdentitiesResponse],
 	["jobs_page.json", cliJobsPageResponse],
+	// The paging vocabulary's own fixture. It was registered in the contract by #3666 and
+	// never listed here, so it carried `"limit": 0` against `pageInfoSchema`'s `.positive()`
+	// for as long as it existed — the Go side strict-decodes it, which checks the SHAPE and
+	// says nothing about whether the value is one the schema allows.
+	["page_info.json", cliPageInfo],
 	["job.json", jobWire],
 	["job_logs.json", cliJobLogsResponse],
 	["repositories.json", cliRepositoriesResponse],
