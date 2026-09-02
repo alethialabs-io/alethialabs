@@ -471,6 +471,11 @@ const RUN_DEPENDENT = /\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}|https?:\/\//;
  * every runner. Committing any of it would make the generated files churn on a re-run of an
  * unchanged tree, which is the same objection that keeps a wall clock out of the diff-gated region.
  *
+ * THE COUNTS ARE OF WHAT THE RECORDER KEPT, not of what it saw: `routes.spec.ts` caps R4's
+ * evidence at 8 pairs and R6's at 10 signals, and `predicates.ts` caps T5's hand-rolled regions at
+ * 4. A count at one of those numbers is a floor. R6 says so in as many words because it is the one
+ * that reaches its cap on a real route today.
+ *
  * So each shape gets an explicit summary, and **an unrecognised shape RAISES**. The alternative —
  * falling back to "see the artifact" — is the failure mode this repo names most often: a new
  * evidence shape would summarise as nothing and read exactly like a page with no diagnosis to give.
@@ -518,9 +523,13 @@ export function summariseLiveEvidence(predicate, evidence) {
 			return `${plural(rows.length, "overlapping pair")} of interactive elements${at(widths)}`;
 		}
 		if (predicate === "R2") {
+			// MIRRORS `overlays.ts`, which publishes each probe's own `misses` and counts a probe as a
+			// defect only when it was actually `measured` — a `did-not-open` or `off-screen` probe has
+			// no points and proves nothing. Re-deriving that from `points` would be a second definition
+			// of the same verdict, and this file's whole subject is what happens when there are two.
 			const probes = asArray(evidence, predicate);
-			const missed = probes.filter((pr) => (pr.points ?? []).some((pt) => pt.inside !== true));
-			nonEmpty(missed.length, "overlay whose hit-test landed outside it");
+			const missed = probes.filter((pr) => pr.status === "measured" && (pr.misses ?? []).length > 0);
+			nonEmpty(missed.length, "measured overlay whose hit-test landed outside it");
 			const kinds = [...new Set(missed.map((pr) => pr.kind))].sort();
 			return `${plural(missed.length, "overlay")} hit-tested below the chrome — ${kinds.join(", ")}`;
 		}
@@ -639,7 +648,9 @@ export function importLive(raw, provenance) {
 			`IMPORTED — the live half of ${RUBRIC}, measured by the Playwright \`audit\` project in CI.`,
 			`Refresh with \`node apps/console/scripts/audit-report.mjs --import-live=<dir> --run=<url> --commit=<sha>\`,`,
 			"then regenerate the two derived files with `pnpm -F console audit:report --write`.",
-			"No wall clock, no URL, no per-run element id: every byte here is a property of the tree that was measured.",
+			"Apart from `source`, which cites the run: no wall clock, no run-local URL, no per-run org slug and no",
+			"generated element id. Every record below is a property of the TREE that was measured, so re-importing an",
+			"unchanged tree produces the same bytes.",
 		],
 		version: 1,
 		source: { run: provenance.run, commit: provenance.commit },
@@ -2322,13 +2333,20 @@ function selfTest() {
 			{ width: 1280, a: "button#base-ui-_r_9_", b: "span", overlapWidth: 4, overlapHeight: 20 },
 		]) === "2 overlapping pairs of interactive elements at 768w, 1280w",
 	);
+	// The probe shape is `overlays.ts`'s own, `status` and `misses` included — a fixture that carried
+	// only the fields this summary happens to read would not be the wire shape.
 	ok(
 		"R2 names the overlay kinds that hit-tested below the chrome",
 		summariseLiveEvidence("R2", [
-			{ kind: "popover-content", points: [{ inside: true }, { inside: false }] },
-			{ kind: "dialog-content", points: [{ inside: true }] },
-			{ kind: "tooltip-content", points: [{ inside: false }] },
+			{ kind: "popover-content", triggerIndex: 0, trigger: "Switch organization", status: "measured", points: [{ name: "centre", inside: true }, { name: "top-left", inside: false }], misses: [{ name: "top-left", inside: false }] },
+			{ kind: "dialog-content", triggerIndex: 0, trigger: "Open", status: "measured", points: [{ name: "centre", inside: true }], misses: [] },
+			{ kind: "tooltip-content", triggerIndex: 1, trigger: "Help", status: "measured", points: [{ name: "centre", inside: false }], misses: [{ name: "centre", inside: false }] },
 		]) === "2 overlays hit-tested below the chrome — popover-content, tooltip-content",
+	);
+	raises(
+		"...and a probe that never OPENED is not an overlay below the chrome — `overlays.ts` says so, and this mirrors it",
+		() => summariseLiveEvidence("R2", [{ kind: "popover-content", triggerIndex: 0, trigger: "x", status: "did-not-open", points: [], misses: [] }]),
+		"finds no measured overlay whose hit-test landed outside it",
 	);
 	ok(
 		"R5 is the axe rule ids, sorted, with impact and node count",
@@ -2749,16 +2767,23 @@ if (invokedDirectly) {
 				process.exit(1);
 			}
 		}
+		// Reduced AND read back through the reader's own rules BEFORE anything is written. An import
+		// that produces a file the bare check then refuses is a file somebody has to notice; the
+		// reduction and the validation are the same pass here so a bad artifact never lands at all.
 		/** @type {string} */
 		let body;
+		/** @type {ReturnType<typeof parseLive>} */
+		let parsedBack;
 		try {
 			body = importLive(raw, { run: parsed.run, commit: parsed.commit });
+			parsedBack = parseLive(body);
 		} catch (err) {
 			console.error(`audit-report: ${err instanceof Error ? err.message : String(err)}`);
+			console.error(`\n${LIVE_JSON} was NOT written.`);
 			process.exit(1);
 		}
 		writeFileSync(path.join(REPO_ROOT, LIVE_JSON), body);
-		const counts = Object.entries(parseLive(body).sections)
+		const counts = Object.entries(parsedBack.sections)
 			.map(([key, sec]) => `${key} ${sec.records.length}`)
 			.join(" · ");
 		console.log(`wrote ${LIVE_JSON} — ${counts} record(s), from ${parsed.run} @ ${parsed.commit}`);
