@@ -257,12 +257,25 @@ describe("formatMonthlyRate", () => {
 	// — in a headline. In a column of line items a genuine zero has to align with its neighbours.
 	it("distinguishes NOTHING from A LITTLE, and only in the headline register", () => {
 		expect(formatMonthlyRate(0)).toBe("$0/mo");
-		expect(formatMonthlyRate(-1)).toBe("$0/mo");
 		expect(formatMonthlyRate(Number.NaN)).toBe("$0/mo");
 		expect(formatMonthlyRate(Number.POSITIVE_INFINITY)).toBe("$0/mo");
 		expect(formatMonthlyRate(0, "exact")).toBe("$0.00/mo");
-		expect(formatMonthlyRate(-1, "exact")).toBe("$0.00/mo");
 		expect(formatMonthlyRate(Number.NaN, "exact")).toBe("$0.00/mo");
+	});
+
+	// This case is NOT a protection — it is the opposite, and it is split out from the zero case
+	// above so that nobody reads a clamped negative as "nothing provisioned". `<= 0` is ONE test,
+	// so a saving renders exactly as zero does in BOTH registers, including the one that promises
+	// to round nothing away: a column holding a credit will not sum to its own total. There is no
+	// credit register in this package or in `packages/core/format`, and `"exact"` is not one —
+	// rendering a delta or a saving needs a new function, not a new caller. Pinned here so the
+	// gap cannot be closed, or widened, without a reader seeing it.
+	it("LOSES THE SIGN: a negative clamps to zero in both registers, so a saving reads as nothing", () => {
+		expect(formatMonthlyRate(-1)).toBe("$0/mo");
+		expect(formatMonthlyRate(-1, "exact")).toBe("$0.00/mo");
+		expect(formatMonthlyRate(-1240.37, "exact")).toBe("$0.00/mo");
+		expect(formatMonthlyRate(-12.5, "exact", "EUR")).toBe("€0.00/mo");
+		expect(formatMonthlyRate(Number.NEGATIVE_INFINITY, "exact")).toBe("$0.00/mo");
 	});
 
 	// The runner fleet prices in euros. One symbol decision, shared with formatMoney.

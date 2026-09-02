@@ -170,6 +170,13 @@ func Money(cents float64, currency string) string {
 // `0.999` reads `$1.00/mo` rather than `<$1/mo` — it rounds up to a whole unit and saying "less
 // than" of a value that is not less than would be a lie. `0` is `$0/mo`, without decimals, because
 // zero is not an approximation of anything.
+//
+// amount must be an ABSOLUTE cost, not a delta. `<= 0` is one test, so a NEGATIVE is clamped in
+// both registers and its sign is lost: -5 renders `$0/mo` / `$0.00/mo`, identical to nothing
+// running, even in Exact, which otherwise rounds nothing away. That is a known gap, pinned on
+// both sides by the conformance cases `monthlyRate/{estimate,exact}/negative-clamps` and matching
+// the TypeScript `formatMonthlyRate`. There is no credit register here; a saving or a diff needs
+// its own function rather than a caller reaching for Exact and assuming the sign survives.
 func MonthlyRate(amount float64, style RateStyle, currency string) string {
 	decimals := decimalsFor(currency)
 	if math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0 {

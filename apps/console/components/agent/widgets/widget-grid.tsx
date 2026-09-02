@@ -14,6 +14,7 @@ import {
 } from "@dnd-kit/core";
 import { LayoutDashboard } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
+import { EmptyState } from "@repo/ui/empty";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import { cn } from "@repo/ui/utils";
 import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
@@ -266,14 +267,12 @@ export function WidgetGrid({ className }: { className?: string }) {
 					</span>
 				</div>
 				{widgets.length === 0 && !loading && (
-					<div className="flex flex-col items-center gap-2 border border-dashed border-border py-16 text-center">
-						<LayoutDashboard className="h-4 w-4 text-muted-foreground" />
-						<div className="text-[13px] text-foreground">The grid is empty.</div>
-						<div className="max-w-[260px] text-xs text-muted-foreground">
-							Ask Elench for your clusters, jobs, usage, or a full dashboard —
-							structured results pin here as widgets.
-						</div>
-					</div>
+					<EmptyState
+						className="gap-3 border border-border p-8 md:p-8 [&_[data-slot=empty-title]]:text-[13px] [&_[data-slot=empty-title]]:font-normal [&_[data-slot=empty-description]]:text-xs"
+						icon={<LayoutDashboard />}
+						title="The grid is empty."
+						description="Ask Elench for your clusters, jobs, usage, or a full dashboard — structured results pin here as widgets."
+					/>
 				)}
 				<div
 					ref={containerRef}

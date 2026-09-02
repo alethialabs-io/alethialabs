@@ -7,7 +7,9 @@
 // there is no per-service status column — so the surface can't claim more than the read model knows.
 // Build LOGS aren't duplicated here: they stream in the Logs tab (a BUILD is just a job).
 
+import { PANEL_EMPTY } from "@/components/agent/panel-empty";
 import { CopyButton } from "@repo/ui/copy-button";
+import { EmptyState } from "@repo/ui/empty";
 import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import {
 	type BuildJobState,
@@ -79,11 +81,14 @@ export function BuildPane({
 
 	if (states.length === 0) {
 		return (
-			<p className="py-8 text-center text-xs leading-relaxed text-muted-foreground">
-				{prebuilt > 0
-					? "Every service here deploys a prebuilt image — nothing to build."
-					: "No repo-sourced services. Add a service built from a Git repo to see its image build here."}
-			</p>
+			<EmptyState
+				className={PANEL_EMPTY}
+				title={
+					prebuilt > 0
+						? "Every service here deploys a prebuilt image — nothing to build."
+						: "No repo-sourced services. Add a service built from a Git repo to see its image build here."
+				}
+			/>
 		);
 	}
 

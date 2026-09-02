@@ -5,9 +5,11 @@
 import { ChevronLeft, Loader2, MessageSquarePlus, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { ArtifactSharePopover } from "@/components/agent/artifact-share-popover";
+import { GALLERY_EMPTY } from "@/components/agent/gallery-empty";
 import type { AgentArtifact } from "@/lib/db/schema";
 import { WidgetBody } from "@/components/agent/widgets/widget-card";
 import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
 import { ScrollArea } from "@repo/ui/scroll-area";
 
 /** Fixed row height (px) — matches the live grid so a saved artifact previews at true scale. */
@@ -139,9 +141,10 @@ export function AgentArtifactViewer({
 			<ScrollArea className="min-h-0 flex-1">
 				<div className="p-5">
 					{widgets.length === 0 ? (
-						<p className="py-16 text-center text-sm text-muted-foreground">
-							This artifact has no widgets.
-						</p>
+						<EmptyState
+							className={GALLERY_EMPTY}
+							title="This artifact has no widgets."
+						/>
 					) : (
 						<div
 							className="grid grid-cols-5 gap-2"
