@@ -29,12 +29,15 @@ var driftShowCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		project, err := currentProject(cmd)
+		// Format first, then the picker — the order `cost show` states beside the same pair: a
+		// picker opened for `-o json` writes its frames into the document the caller is piping.
+		outFmt := outputFormat(cmd)
+		project, err := byoProject(cmd, token, interactiveTable(cmd))
 		if err != nil {
 			fail(err)
 		}
 		env, _ := cmd.Flags().GetString("env")
-		if err := runDriftShow(api.NewClient(token), os.Stdout, outputFormat(cmd), project, env); err != nil {
+		if err := runDriftShow(api.NewClient(token), os.Stdout, outFmt, project, env); err != nil {
 			failf("Failed to get drift: %v", err)
 		}
 	},
@@ -93,8 +96,8 @@ func runDriftShow(c apiClient, out io.Writer, format, project, env string) error
 }
 
 func init() {
-	driftCmd.PersistentFlags().StringP("project", "p", "", "Project name or id")
-	driftCmd.PersistentFlags().StringP("env", "e", "", "Environment name, stage, or id (default: all)")
+	driftCmd.PersistentFlags().StringP("project", "p", "", byoFlagUsage("alethia drift", byoKeyProject))
+	driftCmd.PersistentFlags().StringP("env", "e", "", byoFlagUsage("alethia drift", byoKeyEnv))
 	driftCmd.AddCommand(driftShowCmd)
 	rootCmd.AddCommand(driftCmd)
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/format"
 	"github.com/dustin/go-humanize"
 )
 
@@ -88,6 +89,34 @@ func StampOrDash(v *string) string {
 		return t.UTC().Format("2006-01-02 15:04")
 	}
 	return *v
+}
+
+// Stamp renders an RFC3339 timestamp string the way the console writes an absolute date —
+// `9 Mar 2026, 15:04` — in UTC.
+//
+// This is `packages/core/format.Date(DateTime, UTC)` with the wire's string form in front of it,
+// and it exists because THREE command files needed exactly that and two of them had written their
+// own: `costCapturedAt` (cost.go) and the raw echo in `staged.go`, which printed
+// `2026-03-09T15:04:05Z` into a column a person reads. StampOrDash below is a DIFFERENT rule
+// (`2006-01-02 15:04`) with its own callers; converging the two changes what those callers show and
+// belongs to the lane that owns them, so this file now states both rather than pretending there is
+// one.
+//
+// A stamp that does not parse is returned VERBATIM rather than dashed — the rule RelativeTime
+// already follows: a timestamp the CLI cannot read is a wire problem, and showing it lets someone
+// report what actually arrived. An EMPTY stamp is the dash, because there is nothing to report.
+//
+// UTC and not the host zone, for the reason format.Date states about its own parameter: a timestamp
+// rendered against an ambient zone is a value that changes depending on which machine printed it.
+func Stamp(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return SymbolDash
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return raw
+	}
+	return format.Date(t, format.DateTime, time.UTC)
 }
 
 // StampOrNever renders an RFC3339 timestamp, or the word "never" when unset.

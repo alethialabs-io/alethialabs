@@ -153,3 +153,34 @@ func TestSmartTimeSwitchesAtTheWeek(t *testing.T) {
 		t.Errorf("an hour outside the week = %q, want absolute", got)
 	}
 }
+
+// TestStamp pins the console's absolute-date rule and the two answers that are NOT a date.
+//
+// The verbatim arm is the one worth naming: a timestamp the CLI cannot parse is a wire problem, and
+// dashing it would hide the evidence. The dash arm is the opposite statement — there was nothing to
+// show — and the two must not collapse into each other.
+func TestStamp(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"an RFC3339 instant":      {"2026-03-09T15:04:05Z", "9 Mar 2026, 15:04"},
+		"converted to UTC":        {"2026-03-09T17:04:05+02:00", "9 Mar 2026, 15:04"},
+		"the 1st is unpadded":     {"2026-03-01T00:00:00Z", "1 Mar 2026, 00:00"},
+		"empty is the dash":       {"", SymbolDash},
+		"blank is the dash":       {"   ", SymbolDash},
+		"unparseable is verbatim": {"yesterday", "yesterday"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := Stamp(tc.in); got != tc.want {
+				t.Errorf("Stamp(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// Stamp and StampOrDash are DIFFERENT rules on purpose, and this records that they disagree so a
+// later reader does not "fix" one into the other without deciding whose callers move.
+func TestStampIsNotStampOrDash(t *testing.T) {
+	raw := "2026-03-09T15:04:05Z"
+	if Stamp(raw) == StampOrDash(&raw) {
+		t.Fatal("the two absolute-stamp rules now agree — if that was deliberate, delete one of them")
+	}
+}
