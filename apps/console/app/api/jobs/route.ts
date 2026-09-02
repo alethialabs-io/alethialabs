@@ -3,7 +3,7 @@
 
 import { createHash } from "crypto";
 import { signedJob } from "@/lib/db/signed-job";
-import { type SQL, and, count, desc, eq, sql } from "drizzle-orm";
+import { type SQL, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import {
 	destroyProject,
@@ -13,11 +13,17 @@ import {
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
-import { ensureCliOrgAccess } from "@/lib/authz/guard";
+import { authorizeCli, ensureCliOrgAccess } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { ForbiddenError } from "@/lib/authz/types";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { verifyCliToken } from "@/lib/cli/auth";
+import {
+	type CursorScope,
+	cursorKey,
+	paginate,
+	parsePageOpts,
+} from "@/lib/cli/paging";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { jobs, runners, projects } from "@/lib/db/schema";
@@ -115,6 +121,11 @@ export async function POST(req: Request) {
 			// so the assigned runner must belong to that same org — the org
 			// claim_next_job will compare `j.org_id` against. Fail closed (404) on a
 			// cross-org / non-existent runner so we never queue an unclaimable job.
+			//
+			// THAT PERSONAL-ORG STAMP IS THE DEFECT #3874 TRACKS: for a member of a
+			// Teams org the row lands under their personal org rather than the org they are acting
+			// in. GET below reads through the `owner_all` disjunction so the row is still listed,
+			// but the stamp itself is wrong and is fixed here, not there. Behaviour unchanged.
 			if (assigned_runner_id) {
 				try {
 					await assertRunnerInOrg(db, assigned_runner_id, userId);
@@ -252,51 +263,203 @@ export async function POST(req: Request) {
 	}
 }
 
-/** Lists the CLI user's jobs with the project project name + runner name attached. */
-export async function GET(req: Request) {
-	const { payload, error: authError } = await verifyCliToken(req);
-	if (authError) return authError;
+/** The collection name a `/api/jobs` cursor is bound to. See {@link CursorScope}. */
+const JOBS_LIST = "jobs";
 
-	const userId = payload?.sub;
-	if (!userId) {
-		return NextResponse.json({ error: "Invalid token payload" }, { status: 401 });
-	}
+/** `?mine=` spellings that mean yes. A bare `?mine` arrives as the empty string. */
+const MINE_TRUE = new Set(["", "true", "1"]);
+/** `?mine=` spellings that mean no. Anything outside either set is a 400, never a silent no. */
+const MINE_FALSE = new Set(["false", "0"]);
+
+/**
+ * Parses `?mine=`.
+ *
+ * NEITHER SET HAS A FALL-THROUGH. `?mine=yes` is a caller who believes they asked for their own
+ * jobs; answering it with the whole org's is a wrong answer that looks like a right one, and the
+ * flag exists precisely to make that distinction visible. So an unrecognised spelling is refused
+ * rather than coerced, and the empty string — what `?mine` with no value produces — is the bare
+ * flag, which is what a shell user types.
+ */
+function parseMine(raw: string | null): { ok: true; mine: boolean } | { ok: false } {
+	if (raw === null) return { ok: true, mine: false };
+	const v = raw.trim().toLowerCase();
+	if (MINE_TRUE.has(v)) return { ok: true, mine: true };
+	if (MINE_FALSE.has(v)) return { ok: true, mine: false };
+	return { ok: false };
+}
+
+/** Parses the legacy `?offset=`: a non-negative integer, or absent. */
+function parseOffset(raw: string | null): { ok: true; offset: number } | { ok: false } {
+	if (raw === null || raw === "") return { ok: true, offset: 0 };
+	if (!/^\d+$/.test(raw)) return { ok: false };
+	const n = Number(raw);
+	return Number.isSafeInteger(n) ? { ok: true, offset: n } : { ok: false };
+}
+
+function badRequest(error: string): NextResponse {
+	return NextResponse.json({ error }, { status: 400 });
+}
+
+/**
+ * Lists every job the caller can see — their org's and their own — cursor-paged, with the project
+ * and runner names joined.
+ *
+ * THE SCOPE IS THE `owner_all` RLS POLICY, QUOTED (#3672). This route used to filter on
+ * `jobs.user_id = <caller>`, so `alethia jobs list` and the console's jobs page — `getJobsPage`,
+ * which reads through RLS — answered the same question differently: a teammate's deploy of the
+ * org's own project was invisible from the terminal and plainly listed in the browser. One
+ * product, two surfaces, two answers. So the predicate here is not a scope invented for the CLI;
+ * it is `owner_all` (programmables.sql:885-889) written out in drizzle:
+ *
+ *     org_id = <caller's org>  OR  user_id = <caller>
+ *
+ * — the same disjunction the console's own reads are filtered by, which is what makes the two
+ * surfaces return the IDENTICAL set. The service role bypasses RLS, so quoting the policy is the
+ * only way to get the policy's answer.
+ *
+ * THE OWNER ARM IS NOT DECORATION, AND THE REASON IS A DATA DEFECT. `jobs.org_id` is stamped on
+ * insert by `jobs_set_org_id` → `set_org_id_from_project` (programmables.sql:827-841): parent
+ * project's org, else the `app.current_org` GUC, else `NEW.user_id`. Two shipped enqueue paths
+ * reach that last fallback — the `DESTROY_RUNNER` branch of this file's POST, and
+ * `/api/cli/runners/deploy` — because both insert a project-less job on `getServiceDb()`, which
+ * sets no GUC. Those rows carry `org_id = <userId>`, the caller's PERSONAL org, so for a member
+ * of a Teams org an `org_id`-only WHERE clause hides the caller's OWN runner jobs, and `?mine=`
+ * could not recover them while it was ANDed onto that clause. The org arm alone is therefore
+ * wrong about rows the product actually writes today.
+ *
+ * That personal-org stamp is a defect at the ENQUEUE SITES, not a paging one — the fix is a
+ * session org on those two inserts (or an explicit `org_id`), and it is tracked separately in
+ * #3874. This route quotes the policy either way: `owner_all` is what the console
+ * already answers with, and it stays correct after those rows stop existing.
+ *
+ * `?mine=true` SUBSTITUTES, IT DOES NOT NARROW. It replaces the disjunction with its owner arm —
+ * `user_id = <caller>` alone — which is exactly the predicate this route carried before #3672, so
+ * the flag genuinely restores the old set rather than intersecting the old set with the new one.
+ * ANDing would have been the looser-looking but wronger rule: it would answer "my jobs that also
+ * happen to be stamped with my org", which drops precisely the personal-org rows above. Being a
+ * scope predicate rather than a post-filter, it moves `total` and `page.total` with the rows; a
+ * count taken from a different set of predicates than the rows is the defect the console's filter
+ * standard exists to prevent.
+ *
+ * `jobs.org_id` is declared nullable and holds pre-trigger history that the migrations backfill
+ * rather than the schema forbid, which is a second reason this is a WHERE clause and not an
+ * assumption that every row has one.
+ *
+ * `X-Alethia-Org` NOW APPLIES HERE. The GET resolved the caller's default scope and consulted no
+ * policy at all; it goes through `authorizeCli` like every sibling CLI job route, so the header
+ * (the `--org` flag), the service-token org pin that refuses a conflicting header, and the
+ * `view job` decision all reach this list. That is strictly more checking than before, not less.
+ *
+ * PAGING: CURSOR, WITH `?offset=` STILL HONOURED. `page` is the shared vocabulary
+ * (`lib/cli/paging.ts`) and `?cursor=` is the mechanism the CLI's paginated table is being built
+ * onto (#3667). Until that lands, `apps/cli/cmd/jobs_table.go:40` still walks this endpoint by
+ * offset, and an offset the server quietly ignored would page the same rows forever — so the
+ * legacy parameter keeps working and is simply one more clause on the same query. The two cannot
+ * be combined: "skip 20 rows after this position" is a question no caller means to ask, and
+ * answering it would hide whichever of the two the caller thought was in effect.
+ *
+ * TWO NUMBERS MOVED WITH THE CONVERSION, both widening and both echoed back in `page.limit`:
+ * `?limit=` now defaults to 50 rather than 20 and clamps at 200 rather than 100, because those
+ * are the vocabulary's shared bounds and a second set here would be a second contract. Every
+ * shipped caller sends an explicit limit, so the default is reachable only by a hand-written
+ * request. What a caller must NOT do is compute a page count from `total` without reading
+ * `page.mode`: an exact `count(*)` per page was the full scan the cap exists to remove, so past
+ * DEFAULT_COUNT_CAP rows `total` is a floor and an offset pager built on it stops at the cap.
+ */
+export async function GET(req: Request) {
+	const auth = await authorizeCli(req, "view", { type: "job" });
+	if ("error" in auth) return auth.error;
+	const { actor } = auth;
 
 	const { searchParams } = new URL(req.url);
-	const status = searchParams.get("status");
-	const limit = Math.min(parseInt(searchParams.get("limit") || "20", 10), 100);
-	const offset = parseInt(searchParams.get("offset") || "0", 10);
 
+	const mine = parseMine(searchParams.get("mine"));
+	if (!mine.ok) return badRequest("mine must be true or false");
+
+	const legacyOffset = parseOffset(searchParams.get("offset"));
+	if (!legacyOffset.ok) return badRequest("offset must be a non-negative integer");
+
+	const cursorScope: CursorScope = { orgId: actor.orgId, list: JOBS_LIST };
+	const parsed = parsePageOpts(searchParams, cursorScope);
+	if (!parsed.ok) return badRequest(parsed.error);
+	const opts = parsed.opts;
+
+	if (opts.after !== null && legacyOffset.offset > 0) {
+		return badRequest("cursor and offset cannot be combined; use cursor");
+	}
+
+	const status = searchParams.get("status");
 	const db = getServiceDb();
 
-	const conds: SQL[] = [eq(jobs.user_id, userId)];
-	if (status) conds.push(sql`${jobs.status}::text = ${status}`);
-	const whereExpr = and(...conds);
+	// THE TENANCY BOUNDARY. These routes read through getServiceDb(), whose role bypasses RLS, so
+	// this predicate is the whole of it — and it is also what a cursor is fingerprinted against, so
+	// a cursor minted in another org is refused above rather than answered here.
+	//
+	// IT IS THE `owner_all` RLS POLICY WRITTEN OUT IN DRIZZLE (programmables.sql:885-889):
+	// `user_id = app.current_owner OR org_id = app.current_org`. Quoting the policy rather than
+	// re-deriving a scope here is the whole point — the console reads this table THROUGH that
+	// policy, so any predicate narrower than it makes the terminal and the browser answer the same
+	// question differently again, which is the defect #3672 closed. `?mine=true` SUBSTITUTES the
+	// owner arm for the disjunction rather than ANDing onto it; see the GET doc above.
+	//
+	// The two `eq()` fragments are embedded in the template rather than written out as
+	// `${jobs.org_id} = ${actor.orgId}` so each parameter still binds through the column's own
+	// drizzle type mapper — a raw interpolation would hand postgres-js a bare string for a `uuid`
+	// column. A `sql` template is used at all because `or()` is typed `SQL | undefined` and this
+	// tuple's first element may not be optional; narrowing it would need an `as`, which is banned.
+	const visible: SQL = mine.mine
+		? eq(jobs.user_id, actor.userId)
+		: sql`(${eq(jobs.org_id, actor.orgId)} or ${eq(jobs.user_id, actor.userId)})`;
 
-	const rows = await db
-		.select({
-			job: jobs,
-			project_name: projects.project_name,
-			runner_name: runners.name,
-		})
-		.from(jobs)
-		.leftJoin(projects, eq(jobs.project_id, projects.id))
-		.leftJoin(runners, eq(jobs.runner_id, runners.id))
-		.where(whereExpr)
-		.orderBy(desc(jobs.created_at))
-		.limit(limit)
-		.offset(offset);
+	const scope: [SQL, ...(SQL | undefined)[]] = [
+		visible,
+		status ? sql`${jobs.status}::text = ${status}` : undefined,
+	];
 
-	const [{ value: total }] = await db
-		.select({ value: count() })
-		.from(jobs)
-		.where(whereExpr);
+	const { items, page } = await paginate({
+		db,
+		table: jobs,
+		createdAt: jobs.created_at,
+		id: jobs.id,
+		scope,
+		cursor: cursorScope,
+		opts,
+		rows: (query) =>
+			db
+				.select({
+					job: jobs,
+					// The ordering key as Postgres renders it — six fractional digits. Reading
+					// `jobs.created_at` here would hand back a millisecond-precision JS Date and the
+					// cursor built from it would silently skip every row in the truncated gap.
+					cursor_key: cursorKey(jobs.created_at),
+					project_name: projects.project_name,
+					runner_name: runners.name,
+				})
+				.from(jobs)
+				.leftJoin(projects, eq(jobs.project_id, projects.id))
+				.leftJoin(runners, eq(jobs.runner_id, runners.id))
+				.where(query.where)
+				.orderBy(...query.orderBy)
+				.limit(query.limit)
+				.offset(legacyOffset.offset),
+		positionOf: (r) => ({ createdAt: r.cursor_key, id: r.job.id }),
+	});
 
-	const result = rows.map((r) => ({
+	const result = items.map((r) => ({
 		...r.job,
 		project_name: r.project_name ?? null,
 		runner_name: r.runner_name ?? null,
 	}));
 
-	return cliJson(cliJobsPageResponse, { jobs: result, total, limit, offset });
+	// `total`/`limit`/`offset` are the pre-cursor wire, kept so the shipped CLI's offset pager
+	// keeps working. `total` IS `page.total` and `limit` IS `page.limit` — echoed, never counted
+	// or clamped a second time, because two fields that must agree are two fields that can
+	// disagree.
+	return cliJson(cliJobsPageResponse, {
+		jobs: result,
+		total: page.total,
+		limit: page.limit,
+		offset: legacyOffset.offset,
+		page,
+	});
 }

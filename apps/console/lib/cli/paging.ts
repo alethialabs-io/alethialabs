@@ -12,8 +12,10 @@
  * side). Change the schema
  * here and the fixture moves; the Go decode then names the field that drifted.
  *
- * WHY CURSORS AND NOT OFFSETS. `/api/jobs` is the one endpoint that paginates today, and it
- * does it with `limit`/`offset`. Under a queue that inserts at the head — which is what the
+ * WHY CURSORS AND NOT OFFSETS. `/api/jobs` was the one endpoint that paginated, and it did it
+ * with `limit`/`offset`; it is the first route converted onto this vocabulary (#3672) and still
+ * accepts `?offset=` while the CLI's own pager is rewritten. Under a queue that inserts at the
+ * head — which is what the
  * jobs table is — offset paging shows the same row on two consecutive pages every time a job
  * is enqueued mid-walk, and hides a row every time one is deleted. A keyset cursor over
  * `(created_at DESC, id DESC)` cannot: each page asks for rows strictly *below* a fixed
