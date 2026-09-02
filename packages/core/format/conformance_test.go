@@ -246,6 +246,38 @@ var requiredIDs = []string{
 	// later reader "fixes" it and every absolute call site starts rendering signed money.
 	"monthlyRate/estimate/negative-REFUSED-see-monthlyDelta",
 	"monthlyRate/exact/negative-REFUSED-see-monthlyDelta",
+	// #3899, and the same argument one register over. `money` had NO pre-round and
+	// `formatMonthlyRate` had one hardcoded to two places, so the four `money` rows below diverged
+	// outright and the three JPY rows double-rounded. Every other row in both sections lives inside
+	// two decimals and a two-decimal currency, where the two implementations cannot disagree — so
+	// both sections looked like they pinned the rounding rule and pinned a weaker one.
+		"money/THREE-DECIMAL-CENTS-ROUND-AWAY-FROM-ZERO",
+	"money/three-decimal-cents-at-one-unit",
+	"money/negative-three-decimal-cents",
+	// `EUR` as well as `USD`, because the divergence is in the shared rounding step and a reader
+	// should not be able to conclude it was ever about the symbol table.
+		"money/three-decimal-cents-EUR",
+	// The SIGN axis, and the reason it is here rather than in the section it passes in: JS
+	// `Math.round` is half-UP and Go's `math.Round` is half-AWAY-FROM-ZERO, so they disagree on
+	// every negative half. This row PASSED before #3899 and must keep passing — it is what fails
+	// the plausible one-line fix that rounds the signed value instead of the magnitude.
+		"money/NEGATIVE-HALF-CENT-ROUNDS-AWAY-FROM-ZERO-NOT-TOWARD-POSITIVE",
+	// The TIE axis. `2.675 * 100` is EXACTLY `267.5`, so this row agrees only because both
+	// languages take a tie away from zero; it reds a fix that reaches for Go-native half-to-even.
+	// A different mechanism from the four above, which is why it is named rather than counted.
+		"money/three-decimal-cents-that-agreed-all-along",
+	// The `<1` test is asked AFTER the single rounding, at the currency's OWN places. The last of
+	// these is the worst failure in the set: at a fixed two places, `0.6` JPY renders `<¥1/mo` —
+	// the register ADMITTING it does not know, about a value that rounds cleanly to one whole unit.
+		"monthlyRate/estimate/JPY-ROUNDS-ONCE-AT-ZERO-PLACES",
+	"monthlyRate/exact/JPY-ROUNDS-ONCE-AT-ZERO-PLACES",
+	"monthlyRate/estimate/JPY-SUB-UNIT-THAT-ROUNDS-UP-IS-NOT-LESS-THAN-ONE",
+	// And the USD three-decimal rows, which did NOT diverge — `formatMonthlyRate` already
+	// pre-rounded. They are required anyway: delete them and the pre-round can go back to being
+	// absent with every layer green, which is the state #3899 measured.
+		"monthlyRate/exact/THREE-DECIMAL-ROUNDS-AWAY-FROM-ZERO",
+	"monthlyRate/estimate/three-decimal-rounds-away-from-zero",
+	"monthlyRate/exact/three-decimal-at-one-unit",
 }
 
 // tableProblems IS the guard. Both the check above and the mutation test that proves it works call
