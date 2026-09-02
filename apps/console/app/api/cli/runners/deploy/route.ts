@@ -19,7 +19,24 @@ import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { deployRunnerWire } from "@/lib/validations/cli-contract";
 
-/** Deploys a runner by creating a runner record + queuing a DEPLOY_RUNNER job. */
+/**
+ * Deploys a runner by creating a runner record + queuing a DEPLOY_RUNNER job.
+ *
+ * TENANCY (#3874). Both inserts run on `getServiceDb()` — a role that bypasses RLS and
+ * sets no `app.current_org` GUC — so the `set_org_id` / `set_org_id_from_project` triggers
+ * fell through to their last branch and stamped `org_id = NEW.user_id`: a member of a Teams
+ * org got a runner and a job in their PERSONAL org. They matched each other, which is why
+ * the pair worked; they were both wrong in the same direction. Both are now stamped
+ * EXPLICITLY with `actor.orgId` — the org already used for the identity check (`:76`) and
+ * the quota — so `claim_next_job`'s `j.org_id = v_runner_org_id` equality holds by
+ * construction rather than by coincidence.
+ *
+ * `assigned_runner_id` (the EXISTING runner that executes the deploy) is deliberately
+ * validated WITHOUT the transitional personal-org admission #3874 added to
+ * `assertRunnerInOrg`: this job is stamped `actor.orgId`, so admitting a personal-org runner
+ * here would queue a job whose org can never equal its executor's — QUEUED forever. The
+ * strict guard refuses it up front instead, which is also the pre-#3874 behaviour.
+ */
 export async function POST(req: Request) {
 	const auth = await authorizeCli(req, "deploy", { type: "runner" });
 	if ("error" in auth) return auth.error;
@@ -112,6 +129,9 @@ export async function POST(req: Request) {
 			.insert(runners)
 			.values({
 				user_id: actor.userId,
+				// Explicit (#3874) — without it the set_org_id trigger stamps user_id here,
+				// because this insert carries no app.current_org GUC.
+				org_id: actor.orgId,
 				name,
 				operator: "self",
 				provisioning: "deployed",
@@ -135,6 +155,9 @@ export async function POST(req: Request) {
 			.insert(jobs)
 			.values(signedJob({
 				user_id: actor.userId,
+				// The SAME org as the runners row above (#3874) — the pair is created in one
+				// request, so they match by construction, not by both being wrong alike.
+				org_id: actor.orgId,
 				cloud_identity_id,
 				job_type: "DEPLOY_RUNNER",
 				initiated_by: "user",

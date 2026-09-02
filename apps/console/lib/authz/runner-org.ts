@@ -33,15 +33,51 @@ import { runners } from "@/lib/db/schema";
  * callers return an identical not-found/unauthorized response and never disclose a
  * runner's existence across a tenancy boundary.
  *
+ * ## `personalOrgId` — a TRANSITIONAL third admission (#3874)
+ *
+ * Two CLI enqueue paths inserted on `getServiceDb()`, whose role bypasses RLS and sets
+ * no `app.current_org` GUC, so the `set_org_id` trigger fell through to its last branch
+ * and stamped `org_id = user_id`: every runner deployed through `alethia runner deploy`
+ * before #3874 carries the deployer's **personal** org, not their team org. #3874 stamps
+ * FORWARD ONLY — the maintainer's ruling refuses a backfill, because rewriting tenancy on
+ * rows already written has no undo and a user in several orgs gives the migration no rule
+ * it could defend. So those runner rows do not move, and a member of a Teams org calling
+ * with `orgId = <team org>` would be refused their own historical runner: it becomes
+ * **undestroyable**, since `DESTROY_RUNNER` fails closed on this guard.
+ *
+ * Passing `personalOrgId` (the caller's `userId` — their personal org is their own id)
+ * admits that third case. It is the SAME reason PR #3857's list keeps the `owner_all`
+ * disjunction's owner arm (`user_id = app.current_owner OR org_id = app.current_org`,
+ * programmables.sql:881-889): with no backfill, the historical rows are reachable only
+ * through the personal-org arm — which is why that arm is now permanent rather than
+ * removable, and why this one is only *transitional* in the sense that it covers rows no
+ * new write can create.
+ *
+ * It is an ALLOWANCE, not a relaxation: `personalOrgId` is the caller's own id, proven by
+ * the CLI token, so a third org's runner is still refused. Callers that do NOT pass it are
+ * unchanged. The two enqueue paths differ deliberately:
+ *   - `POST /api/jobs` `DESTROY_RUNNER` passes it (that is the undestroyable case) and
+ *     stamps the job from the RETURNED org, so job and runner match whichever it was.
+ *   - `POST /api/cli/runners/deploy` does NOT pass it, because it stamps its `DEPLOY_RUNNER`
+ *     job with `actor.orgId`; admitting a personal-org `assigned_runner_id` there would
+ *     queue a job whose org can never equal its executor's and which therefore sits QUEUED
+ *     forever — worse than the defect being fixed.
+ *
  * @param db     A service (RLS-bypassing) db handle or an open transaction.
  * @param runnerId The client-supplied runner id to validate (must be non-null).
  * @param orgId  The caller's active org — the org the job will be scoped to.
+ * @param personalOrgId The caller's personal org (their user id), when the call site wants
+ *   the transitional pre-#3874 admission above. Omit to keep the strict two-case guard.
+ * @returns The runner's own `org_id` — `null` for a managed runner. Enqueue sites stamp the
+ *   job with this so `j.org_id = v_runner_org_id` holds at claim time (`claim_next_job`
+ *   Phase A, programmables.sql:225) rather than being asserted and then discarded.
  */
 export async function assertRunnerInOrg(
 	db: Db | Tx,
 	runnerId: string,
 	orgId: string,
-): Promise<void> {
+	personalOrgId?: string,
+): Promise<string | null> {
 	const [row] = await db
 		.select({ org_id: runners.org_id })
 		.from(runners)
@@ -50,12 +86,20 @@ export async function assertRunnerInOrg(
 
 	// Reject a non-existent runner, OR a self runner owned by another tenant. A managed
 	// runner (org_id IS NULL) is accepted — it mirrors claim_next_job's `v_operator =
-	// 'managed'` admission and belongs to no tenant.
-	if (!row || (row.org_id !== null && row.org_id !== orgId)) {
+	// 'managed'` admission and belongs to no tenant. The caller's PERSONAL org is accepted
+	// only when the call site asked for it (see the JSDoc above).
+	const admitted =
+		row !== undefined &&
+		(row.org_id === null ||
+			row.org_id === orgId ||
+			(personalOrgId !== undefined && row.org_id === personalOrgId));
+
+	if (!row || !admitted) {
 		throw new ForbiddenError(
 			"deploy",
 			{ type: "runner", id: runnerId },
 			"runner not found or not in caller's org",
 		);
 	}
+	return row.org_id;
 }
