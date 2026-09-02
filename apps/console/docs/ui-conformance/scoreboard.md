@@ -82,7 +82,7 @@ RUBRIC.md defines **34 predicates**. This report scores **26** of them —
 | `scripts/check-route-states.mjs` | S1–S4, T1–T4, per route |
 | `apps/console/route-states-baseline.yaml` | the ratchet those eight predicates are held to |
 | `scripts/check-shared-surface.mjs` | every H-family occurrence, per file |
-| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 25`) |
+| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 24`) |
 | `apps/console/ui-conformance-live.json` | T5–T7 and R1–R7 as MEASURED, imported from a CI run of the Playwright `audit` project |
 | `apps/console/docs/ui-conformance/RUBRIC.md` | the predicate set itself, read out of its own tables |
 
@@ -159,7 +159,7 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | id | family | instrument | PASS | FAIL | N/A | NOT MEASURED | score | N/A reasons |
 |---|---|---|---:|---:|---:|---:|---:|---|
 | **S1** | S | `check-route-states` | 35 | 1 | 4 | 0 | 0.97 | `redirect-only` 4 |
-| **S2** | S | `check-route-states` | 32 | 4 | 4 | 0 | 0.89 | `redirect-only` 4 |
+| **S2** | S | `check-route-states` | 31 | 5 | 4 | 0 | 0.86 | `redirect-only` 4 |
 | **S3** | S | `check-route-states` | 35 | 0 | 5 | 0 | 1.00 | `no-loading-boundary` 1, `redirect-only` 4 |
 | **S4** | S | `check-route-states` | 35 | 1 | 4 | 0 | 0.97 | `redirect-only` 4 |
 | **T1** | T | `check-route-states` | 35 | 1 | 4 | 0 | 0.97 | `redirect-only` 4 |
@@ -176,7 +176,7 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **H5** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H6** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H7** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
-| **H8** | H | `check-shared-surface` | 21 | 19 | 0 | 0 | 0.53 | — |
+| **H8** | H | `check-shared-surface` | 22 | 18 | 0 | 0 | 0.55 | — |
 | **H9** | H | `check-shared-surface` | 39 | 1 | 0 | 0 | 0.97 | — |
 | **F1** | F | **none** — #3796 | — | — | — | — | — | — |
 | **F2** | F | **none** — #3796 | — | — | — | — | — | — |
@@ -227,7 +227,7 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/[org]/[project]/settings/activity` | 276 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.92** |
 | `/[org]/[project]` · | 1 | all N/A | 1/2 · 0.50 · 1 withheld | 8/8 · 1.00 | — | 4/4 · 1.00 | **0.93** |
 | `/dashboard/[[...rest]]` · | 125 | all N/A | 2/3 · 0.67 | 8/8 · 1.00 | — | 4/4 · 1.00 | **0.93** |
-| `/[org]/~/jobs/[id]` | 218 | 4/4 · 1.00 | 4/4 · 1.00 · 1 withheld | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.96** |
+| `/[org]/~/jobs/[id]` | 220 | 3/4 · 0.75 | 4/4 · 1.00 · 1 withheld | 8/8 · 1.00 | — | 7/7 · 1.00 | **0.96** |
 | `/[org]/~/settings/billing/invoices` | 192 | 4/4 · 1.00 | 4/4 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.96** |
 | `/[org]/~/settings/classification` | 145 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 6/7 · 0.86 | **0.96** |
 | `/[org]/~/settings/general` | 133 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 6/7 · 0.86 | **0.96** |
@@ -257,7 +257,7 @@ the console errors it produces and the time it takes to land are real and are me
 
 ## Where every shared-surface occurrence landed
 
-`check-shared-surface` found **89 occurrences across 32 files**. This section
+`check-shared-surface` found **79 occurrences across 31 files**. This section
 accounts for all of them twice — once by ledger, once by reach — so a rule or a file falling out
 of the scoreboard cannot be quiet.
 
@@ -270,8 +270,8 @@ of the scoreboard cannot be quiet.
 | `page_title` | H1 | 17 | 17 | 0 | 0 | 7 | 1 | 9 |
 | `section_header` | H2 | 2 | 0 | 2 | 0 | 1 | 1 | 0 |
 | `stat_strip` | H6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `type_scale` | H8 | 61 | 1 | 60 | 0 | 28 | 29 | 4 |
-| **total** | | 89 | 24 | 65 | 0 | 41 | 35 | 13 |
+| `type_scale` | H8 | 51 | 1 | 50 | 0 | 18 | 29 | 4 |
+| **total** | | 79 | 24 | 55 | 0 | 31 | 35 | 13 |
 
 **`unlisted` is the column to read first.** A non-zero value means the guard is red — an
 occurrence neither a `reason:` nor a `lifts:` entry accounts for. It is not a defect of this
