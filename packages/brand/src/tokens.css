@@ -785,7 +785,7 @@
 
 
 /* ── Display type ────────────────────────────────────────────────────────────
-   Three sizes, and no more. Every headline in the repo used to be a hardcoded
+   Four sizes, and no more. Every headline in the repo used to be a hardcoded
    `fontSize:` number — 36/32/42/56/58/64 across five files, all slightly
    different — because the ladder lived in the design skill's typography.css,
    which no app imports.
@@ -803,19 +803,38 @@
    the build on this pairing.
 
    `inline` earns its place only where a theme value is itself a `var()` — the font
-   block at the top of this file is the real case for it. A literal length never is. */
+   block at the top of this file is the real case for it. A literal length never is.
+
+   --text-display-xs is the fourth rung and the only one the CONSOLE reaches for. It
+   exists because the two ladders in this file did not meet: --text-ui-xl tops out at
+   17px and --text-display-sm started at 30px, and five console sites sat in that gap
+   writing their own number — a plan name at 21px, a price at 26px, an onboarding h1 at
+   26px and the two purchase-page h1s at 22px. Those are display voice that happens to
+   render inside the shell (#3806), so the honest fix is a rung on THIS ladder rather
+   than stretching the UI one upward.
+
+   ITS TWO @media VALUES ARE NOT A RATIO APPLIED TO 24. --text-display-sm falls to 23px
+   at the narrow end, so a fixed 24px rung would be LARGER than the rung above it on a
+   phone and the ladder would invert — at the one width where nobody would notice from a
+   desktop. 24/22/20 keeps it strictly under -sm at all three widths (30>24, 26>22,
+   23>20) and strictly over --text-ui-xl's 17px at all three, which is the other bound: a
+   display rung that falls into the UI ladder is not a display rung. The steps shrink
+   less than -sm's do (0.917 and 0.909 against 0.867 and 0.885), continuing this ladder's
+   own pattern — 56px loses a fifth of itself on a phone, 30px loses a fraction of that,
+   and small display type has less to give. */
 @theme {
-  --text-display-lg: 56px;  /* h1 on / and /enterprise */
-  --text-display-md: 40px;  /* h1 on /pricing          */
-  --text-display-sm: 30px;  /* band h2                 */
+  --text-display-lg: 56px;  /* h1 on / and /enterprise      */
+  --text-display-md: 40px;  /* h1 on /pricing               */
+  --text-display-sm: 30px;  /* band h2                      */
+  --text-display-xs: 24px;  /* display voice inside a shell */
   --tracking-display: -0.022em;
   --leading-display: 0.96;
 }
 @media (max-width: 900px) {
-  :root { --text-display-lg: 44px; --text-display-md: 34px; --text-display-sm: 26px; }
+  :root { --text-display-lg: 44px; --text-display-md: 34px; --text-display-sm: 26px; --text-display-xs: 22px; }
 }
 @media (max-width: 620px) {
-  :root { --text-display-lg: 34px; --text-display-md: 28px; --text-display-sm: 23px; }
+  :root { --text-display-lg: 34px; --text-display-md: 28px; --text-display-sm: 23px; --text-display-xs: 20px; }
 }
 
 
@@ -823,9 +842,10 @@
    Seven rungs for the product surface, and they are DERIVED, not designed:
    measured by the shared-surface guard, apps/console carries hardcoded
    `text-[Npx]` sites across 23 distinct values in 194 files, and this file had
-   no UI type scale at all — only the three display sizes above, which are
-   marketing headlines and start at 30px. So every console file picked its own
-   number, and the same rung of the same page is typeset at five sizes.
+   no UI type scale at all — only the display sizes above, which are marketing
+   headlines and, when this was measured, started at 30px. So every console file
+   picked its own number, and the same rung of the same page is typeset at five
+   sizes.
 
    The 23 values are not 23 intentions. They cluster, and the clusters are what
    these rungs are:
@@ -870,6 +890,16 @@
    values across eleven sites is no cluster — but FIVE of the eleven are
    ordinary in-shell console surfaces rather than the display voice, and the
    sweep must judge them one at a time rather than as a group.
+
+   #3806 SETTLED THE FIVE ABOVE THAT ARE NOT DRIFT, and the answer was not a rung
+   here. Three of the first group (org-purchase-ui x2, onboarding-form) and both of
+   the last group (the plan NAME and PRICE) are display voice, so they took
+   --text-display-xs on the DISPLAY ladder above — which is why that ladder now has
+   four rungs and this one still has seven. The OTP input took neither: it is
+   legibility of a code being typed rather than reading type, and it is a recorded
+   `reason:` decision in the allowlist rather than a size waiting for a rung. That
+   leaves five of the eleven, all #3742's: the two still-open members of the first
+   group (cli/login, error-state), the two sheet headings and the one <h2>.
 
    THE NAMES CARRY A `ui-` PREFIX BECAUSE THIS LADDER IS NOT TAILWIND'S. Tailwind's
    `text-sm` is 14px and its `text-xs` is 12px; the console's body rung is 13px and

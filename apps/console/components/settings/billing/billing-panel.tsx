@@ -166,7 +166,7 @@ export function BillingPanel() {
 					<div className="flex flex-wrap items-start justify-between gap-5 px-6 py-[22px]">
 						<div className="flex flex-col gap-[9px]">
 							<div className="flex items-center gap-2.5">
-								<span className="font-display text-[21px] font-semibold tracking-[-0.02em] text-text-primary">
+								<span className="font-display text-display-xs font-semibold tracking-[-0.02em] text-text-primary">
 									{meta.name}
 								</span>
 								{!isHobby && (
@@ -200,7 +200,7 @@ export function BillingPanel() {
 						</div>
 						{!isHobby && (
 							<div className="flex flex-col items-end gap-[3px] text-right">
-								<div className="font-display text-[26px] font-semibold tracking-[-0.03em] text-text-primary">
+								<div className="font-display text-display-xs font-semibold tracking-[-0.03em] text-text-primary">
 									{monthly === null ? (
 										meta.priceLabel
 									) : (
