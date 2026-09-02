@@ -74,18 +74,6 @@ break-glass catalog, so they are the same ones the dispatcher enforces.
 | medium | `unstick-env`, `restart-runner` | yes |
 | HIGH (two-person) | `force-release-lock`, `state-surgery`, `orphan-clean` | yes, plus `--approval` |
 
-## `alethia ops`
-
-The group itself is runnable and prints the verb list with each one's blast radius, which is the
-fastest way to see what break-glass can do without reading this page.
-
-```bash
-alethia ops
-```
-
-It takes no flags and performs no action — listing the surface is not itself a privileged act, so
-it needs neither a `--reason` nor an audit record.
-
 ## `alethia ops session`
 
 Open a standalone time-boxed break-glass session. The action verbs open their own session; this is
