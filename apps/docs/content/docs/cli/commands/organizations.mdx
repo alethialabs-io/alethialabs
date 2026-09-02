@@ -12,8 +12,10 @@ the `X-Alethia-Org` header on every request.
 `--org <id>` targets a different organization for a single invocation, on every command in the CLI
 and not only the ones on this page. It sets the `X-Alethia-Org` header, and for `members` and
 `teams` — the two commands that address the org in their request path — it sets the org in the path
-as well, from the same value. Naming an organization you are not a member of is refused with `403`,
-and a service token's own organization always wins over the flag.
+as well, from the same value. Naming an organization you are not a member of is refused with `403`.
+Under a service token the flag must name the token's own organization: a different one is refused
+with `403` rather than quietly ignored, so a pipeline cannot believe it is acting on one org while
+every write lands in another.
 
 Every command here also accepts the global `--org <id>`,
 [`-o, --output <table|json|csv>`](/cli/identity#output-formats) and `--no-input` flags.

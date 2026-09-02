@@ -13,8 +13,12 @@ a project at when authoring its infrastructure.
 The CLI is a client of the same Console API — it authors nothing locally. `repo list` calls
 `/cli/repositories/PROVIDER` with your [CLI token](/cli/authentication) and the git token captured
 when you logged in. It is the one listing in the CLI that is NOT org-scoped: the repositories you
-can see are the ones your git account can see, so the global `--org <id>` is accepted and changes
-nothing here.
+can see are the ones your git account can see, so the global `--org <id>` changes nothing about the
+result here.
+
+It is still *checked*, though, and under a [service token](/cli/authentication) it must name the
+token's own organization — naming a different one is refused with `403` before this route runs at
+all. A scripted `repo list --org <other>` therefore fails rather than returning the same list.
 </Callout>
 
 ## `alethia repo list`

@@ -21,8 +21,9 @@ import (
 //     first and copy a uuid across by eye — the copied handoff this programme exists to remove.
 //   - `alethia roles delete owner` printed "Role deleted" and deleted nothing: the server's DELETE
 //     filters on `is_builtin = false`, so naming a built-in is a silent no-op that answers ok.
-//   - the docs page for roles/grants/sso said every command takes `--org`. Only `members` and
-//     `teams` register it.
+//   - the docs page for roles/grants/sso said every command takes `--org` while only `members`
+//     and `teams` registered it. Closed by #3817: the ROOT registers it now and every command
+//     inherits it, so the pages were right and the tree was wrong.
 //
 // This is the one place those fields are described. The forms and the refusal messages READ their
 // wording from here rather than repeating it, so the form and the spec cannot disagree by

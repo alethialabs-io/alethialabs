@@ -109,7 +109,7 @@ var shellFields = []shellField{
 		Default: "the active org",
 		// The backquoted word is cobra's own convention for naming a flag's argument in --help.
 		Usage: "Organization `id` to act in for this invocation (defaults to the active org)",
-		Docs:  "Organization to act in for this invocation, instead of the active one. Sent as the `X-Alethia-Org` header on every request, and used as the org in the request path of `members` and `teams`. It selects a scope rather than granting one: the control plane refuses it with `403` when you are not a member of that organization, and a service token's own organization always wins.",
+		Docs:  "Organization to act in for this invocation, instead of the active one. Sent as the `X-Alethia-Org` header on every request, and used as the org in the request path of `members` and `teams`. It selects a scope rather than granting one: the control plane refuses it with `403` when you are not a member of that organization. Under a service token it must name the token's OWN organization — a different one is refused with `403`, never quietly ignored, so a pipeline cannot believe it is acting on one org while every write lands in another.",
 		Pages: shellGlobalFlagPages,
 	},
 	{

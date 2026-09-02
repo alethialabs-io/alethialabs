@@ -126,6 +126,18 @@ export async function resolveCliProvider(
 	// NOT a second copy of the membership query on purpose: a copy would have to be corrected twice,
 	// and #3863 is currently correcting exactly that predicate.
 	const headerOrg = req.headers.get("X-Alethia-Org")?.trim() || undefined;
+	// THE DEFAULT SCOPE IS RESOLVED FIRST AND THAT SECOND RESOLUTION BELOW IS NOT REDUNDANT.
+	//
+	// It looks like one: with a header we resolve a scope here and again three lines down, and the
+	// obvious tightening is to resolve once WITH the header and hand that to `ensureCliOrgAccess`.
+	// That would be a hole. Its first line is `if (actor.orgId === orgId) return null` — a fast path
+	// that is sound only because `actor` is the caller's DEFAULT scope, resolved from a value they
+	// did not supply. Pass it a scope resolved FROM the header and the check compares the header to
+	// itself, returns null, and the membership query never runs: the guard would trust exactly the
+	// input it exists to verify. That is the shape of #3863, one rung lower.
+	//
+	// Calling `isOrgMember` directly instead would skip the extra resolution honestly, but it puts a
+	// second copy of the membership predicate in the tree while #3863 is correcting the first.
 	const defaultScope = await getActiveScope(userId);
 	if (!headerOrg) {
 		return { userId, scope: defaultScope, provider, errorResponse: null };
