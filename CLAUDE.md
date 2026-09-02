@@ -46,6 +46,11 @@ it") and committed the first instance's **uncommitted** work under its own messa
 
 Worktrees are **de-hydrated** — no local `node_modules`. Run their checks with `pnpm env:check`.
 
+If you do have to install one — a generator such as `gen:go-enums` needs a real `node_modules` —
+pass **`--frozen-lockfile`**. pnpm enables it in CI and leaves it OFF everywhere else, so a bare
+`pnpm install` in a worktree re-resolves the dependency graph and can rewrite `pnpm-lock.yaml`.
+That diff then rides into an unrelated PR, where nobody reviewing it is looking at the lockfile.
+
 ## 3. Running the app — the Mac is not a runtime
 
 Everything that *runs* the product runs on the sandbox box, one environment per branch:
