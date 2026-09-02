@@ -403,6 +403,8 @@ jobs:
       BETTER_AUTH_SECRET: e2e-browser-placeholder-secret
       BETTER_AUTH_URL: http://localhost:3000
       NEXT_PUBLIC_APP_URL: http://localhost:3000
+      # `next start` is production mode, but this hermetic job has no trusted ingress proxy.
+      ALETHIA_AUTH_RATE_LIMIT: "0"
       # Storage placeholders (the S3 client connects lazily; the hero path uploads nothing).
       ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
       ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
@@ -515,6 +517,8 @@ jobs:
       BETTER_AUTH_SECRET: e2e-browser-placeholder-secret
       BETTER_AUTH_URL: http://localhost:3000
       NEXT_PUBLIC_APP_URL: http://localhost:3000
+      # `next start` is production mode, but this hermetic job has no trusted ingress proxy.
+      ALETHIA_AUTH_RATE_LIMIT: "0"
       ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
       ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
       ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
