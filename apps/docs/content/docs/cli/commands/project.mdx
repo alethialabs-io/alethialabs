@@ -9,8 +9,9 @@ Projects are infrastructure configurations (an *app* that owns one or more envir
 can both **read** projects (`list`, `get`) and **author** them — create a project, manage its
 environments, and CRUD its component resources — so the whole project lifecycle is scriptable.
 
-All authoring commands operate on the **active organization** (set via `alethia org switch`, or
-`--org`). Every command accepts the global `-o, --output <table|json|csv>` flag.
+All authoring commands operate on the **active organization** (set via `alethia org switch`); there
+is no per-invocation `--org` override. Every command accepts the global
+`-o, --output <table|json|csv>` flag.
 
 ## Two rules that hold for every command on this page
 

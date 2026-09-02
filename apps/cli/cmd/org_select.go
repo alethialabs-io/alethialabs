@@ -879,10 +879,16 @@ func stringOptions(values []string) []huh.Option[string] {
 // The server's answer to a bad enum is a bare "Invalid request body" that does not say which field
 // was wrong; this says which flag and which values.
 func requireOneOf(flag, value string, allowed []string) error {
+	_, err := canonicalOneOf(flag, value, allowed)
+	return err
+}
+
+// canonicalOneOf validates a case-insensitive enum and returns its wire spelling.
+func canonicalOneOf(flag, value string, allowed []string) (string, error) {
 	for _, a := range allowed {
 		if strings.EqualFold(a, value) {
-			return nil
+			return a, nil
 		}
 	}
-	return fmt.Errorf("--%s %q is not one of: %s", flag, value, strings.Join(allowed, ", "))
+	return "", fmt.Errorf("--%s %q is not one of: %s", flag, value, strings.Join(allowed, ", "))
 }

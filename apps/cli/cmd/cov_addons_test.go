@@ -1004,12 +1004,16 @@ func TestAddonEnable_RefusesABadModeBeforeAnyRequest(t *testing.T) {
 // TestAddonEnable_SendsTheCanonicalMode pins the other half: a folded value is accepted and the
 // wire gets the enum's own spelling.
 func TestAddonEnable_SendsTheCanonicalMode(t *testing.T) {
-	s, run := hygCliConfirmEnv(t)
+	s, bodies, run := addonServe(t)
 	if code := run("addon", "enable", "loki", "--project", "p1", "--mode", "GITOPS", "--no-input"); code != 0 {
 		t.Fatalf("exit code = %d, want 0 — the enum holds this value under another case", code)
 	}
 	if !s.saw(http.MethodPost, "/api/cli/projects/p1/addons") {
 		t.Errorf("the enable never reached the control plane; requests = %v", s.requests)
+	}
+	posts := bodies.all()
+	if len(posts) == 0 || !strings.Contains(posts[0], `"mode":"gitops"`) {
+		t.Errorf("the enable sent a non-canonical mode payload: %v", posts)
 	}
 }
 
