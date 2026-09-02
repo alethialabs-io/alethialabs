@@ -135,12 +135,12 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 		<div className="space-y-2">
 			{/* Header: scope + the link out to org-wide usage. */}
 			<div className="flex flex-wrap items-center justify-between gap-3 pb-2">
-				<span className="font-display text-[15px] font-semibold text-text-primary">
+				<span className="font-display text-ui-lg font-semibold text-text-primary">
 					Project usage
 				</span>
 				<Link
 					href={globalHref(orgSlug, "usage")}
-					className="inline-flex items-center gap-1 text-[12.5px] text-text-secondary transition-colors hover:text-text-primary"
+					className="inline-flex items-center gap-1 text-ui-sm text-text-secondary transition-colors hover:text-text-primary"
 				>
 					View organization usage
 					<ArrowUpRight size={13} />
@@ -208,7 +208,7 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 							sub="attributed to this project *"
 						/>
 					</FactList>
-					<div className="flex items-center gap-2 border-t border-border bg-surface-sunken px-6 py-[14px] text-[12px] text-text-tertiary">
+					<div className="flex items-center gap-2 border-t border-border bg-surface-sunken px-6 py-[14px] text-ui-sm text-text-tertiary">
 						<Info size={13} />
 						<span>
 							* AI credits are attributed to a project via the scan job or agent thread
@@ -250,7 +250,7 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 									key={m.id}
 									type="button"
 									onClick={() => setMetric(m.id)}
-									className={`rounded-sm px-2.5 py-1 text-[12px] transition-colors ${
+									className={`rounded-sm px-2.5 py-1 text-ui-sm transition-colors ${
 										metric === m.id
 											? "bg-surface-muted text-text-primary"
 											: "text-text-tertiary hover:text-text-secondary"
@@ -260,7 +260,7 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 								</button>
 							))}
 						</div>
-						<div className="font-mono text-[12px] text-text-secondary">
+						<div className="font-mono text-ui-sm text-text-secondary">
 							{metricTotal.toLocaleString()}{" "}
 							<span className="text-text-tertiary">
 								{METRICS.find((m) => m.id === metric)?.label.toLowerCase()} ·{" "}
@@ -271,14 +271,14 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 					{overTime.data && overTime.data.series.length > 0 ? (
 						<Bars points={overTime.data.series} pick={(p) => p[metric]} />
 					) : (
-						<div className="flex h-28 items-center justify-center font-mono text-[11px] text-text-tertiary">
+						<div className="flex h-28 items-center justify-center font-mono text-ui-xs text-text-tertiary">
 							No usage in this range.
 						</div>
 					)}
 				</div>
 			</SettingsSection>
 
-			<p className="px-1 pt-1 text-[12px] text-text-tertiary">
+			<p className="px-1 pt-1 text-ui-sm text-text-tertiary">
 				Seats, plan limits, and provisioned-runner hours are billed org-wide —{" "}
 				<Link
 					href={globalHref(orgSlug, "usage")}
