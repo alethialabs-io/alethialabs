@@ -70,9 +70,10 @@ replacement concept, and obtain a professional figurative search before filing.
 
 Added 2 September 2026 (issue #3802). The connector catalog
 (`packages/core/categories/catalog.json`) named 18 icon slugs while
-`packages/assets/static/icons/` held 9, so 16 catalog rows asserted a path with
-no file behind it. Those rows now declare `icon_url: null`, which the console
-renders as a monogram tile, and `apps/console/scripts/gen-connectors.mjs`
+`packages/assets/static/icons/` held 9, so 19 catalog rows asserted a path with
+no file behind it. Eighteen of them now declare `icon_url: null`, which the
+console renders as a monogram tile; one (`docr`) was repointed to
+`/digitalocean/favicon_64x64.png`. `apps/console/scripts/gen-connectors.mjs`
 refuses a path that does not resolve. No third-party mark was added, because an
 engineering review on 2 September 2026 could not establish permissive terms for
 any of them:
