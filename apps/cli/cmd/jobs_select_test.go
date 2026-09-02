@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -665,24 +666,52 @@ func jobsCancelSample() []api.ProvisionJob {
 // had silently grown to the whole enum would narrow nothing and every test below would still
 // pass by accident.
 func TestCancellableJobScope_IsASubsetOfTheEnum(t *testing.T) {
-	if len(cancellableJobScope.Statuses) == 0 {
+	if len(cancellableJobScope.Values) == 0 {
 		t.Fatal("the cancellable scope is empty — cancel would resolve to no job at all")
 	}
-	for _, s := range cancellableJobScope.Statuses {
+	for _, s := range cancellableJobScope.Values {
 		if !containsFold(jobStatusValues(), s) {
 			t.Errorf("%q is not a provision_job_status", s)
 		}
 	}
-	if len(cancellableJobScope.Statuses) >= len(jobStatusValues()) {
+	if len(cancellableJobScope.Values) >= len(jobStatusValues()) {
 		t.Errorf("the scope names %d of %d statuses — it excludes nothing",
-			len(cancellableJobScope.Statuses), len(jobStatusValues()))
+			len(cancellableJobScope.Values), len(jobStatusValues()))
 	}
 	// The terminal statuses are the ones the control plane refuses, so naming one here would
 	// re-open the defect this scope closes.
 	for _, terminal := range []types.JobStatus{types.JobStatusSuccess, types.JobStatusFailed, types.JobStatusCancelled} {
-		if containsFold(cancellableJobScope.Statuses, string(terminal)) {
+		if containsFold(cancellableJobScope.Values, string(terminal)) {
 			t.Errorf("%s is terminal and the control plane refuses to cancel it", terminal)
 		}
+	}
+}
+
+// TestJobScope_FieldLookupPanicsOnAnUnknownFlag pins the failure branch of the scope's field
+// lookup. A nil field would make jobScope.keeps admit every job and jobScope.applies never fire —
+// a scope that silently narrows nothing, which is the shape of every guard in this repo that
+// reported green. It is a programming error, so it is a panic, at package init, where no test run
+// can miss it.
+func TestJobScope_FieldLookupPanicsOnAnUnknownFlag(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("an unknown flag name returned quietly — a nil field is a scope that keeps every job")
+		}
+		if !strings.Contains(fmt.Sprint(r), "--since") {
+			t.Errorf("the panic %v does not name the flag that could not be resolved", r)
+		}
+	}()
+	_ = jobSelectorFieldByFlag("since")
+}
+
+// TestJobScope_DescribeIsUnchangedForCancel pins the message the generalisation had to preserve.
+// Widening jobStatusScope into jobScope moved the word "job" from describe() into the Noun; a
+// literal here is what makes that a decision rather than something that quietly drifted.
+func TestJobScope_DescribeIsUnchangedForCancel(t *testing.T) {
+	const want = "cancellable job (QUEUED, CLAIMED, PROCESSING)"
+	if got := cancellableJobScope.describe(); got != want {
+		t.Errorf("cancel scope describes itself as %q, want %q", got, want)
 	}
 }
 
@@ -740,7 +769,7 @@ func TestJobsSelector_CancelScopeNamesItselfWhenNothingMatches(t *testing.T) {
 	if err == nil {
 		t.Fatal("a page of terminal jobs resolved a cancel target")
 	}
-	for _, want := range append([]string{cancellableJobScope.Noun}, cancellableJobScope.Statuses...) {
+	for _, want := range append([]string{cancellableJobScope.Noun}, cancellableJobScope.Values...) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal %q does not name %q", err, want)
 		}
@@ -752,7 +781,7 @@ func TestJobsSelector_CancelScopeNamesItselfWhenNothingMatches(t *testing.T) {
 // terminal. The scope lives in the Long help too, because a flag's behaviour that only the source
 // states is one an operator cannot check.
 func TestJobsCancel_ResolvesInsideTheCancellableScope(t *testing.T) {
-	for _, want := range cancellableJobScope.Statuses {
+	for _, want := range cancellableJobScope.Values {
 		if !strings.Contains(jobsCancelCmd.Long, want) {
 			t.Errorf("`jobs cancel --help` does not say that %s is in the set --latest considers", want)
 		}
