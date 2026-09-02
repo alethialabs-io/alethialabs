@@ -229,7 +229,7 @@ type (
 func opsPickJobID(client jobLister) (string, error) {
 	var page *api.JobsPage
 	var err error
-	ui.RunSpinner("Fetching jobs...", func() {
+	runSpinner("Fetching jobs...", func() {
 		page, err = client.GetJobs("", jobSelectorPageSize, 0)
 	})
 	if err != nil {
@@ -257,7 +257,7 @@ func opsPickJobID(client jobLister) (string, error) {
 func opsPickRunnerID(client opsRunnerLister, verb string) (string, error) {
 	var runners []api.Runner
 	var err error
-	ui.RunSpinner("Fetching runners...", func() {
+	runSpinner("Fetching runners...", func() {
 		runners, err = client.GetRunners()
 	})
 	if err != nil {
@@ -288,7 +288,7 @@ func opsPickRunnerID(client opsRunnerLister, verb string) (string, error) {
 func opsPickProjectID(client opsProjectLister, description string) (string, error) {
 	var configs []types.ConfigurationSummary
 	var err error
-	ui.RunSpinner("Fetching projects...", func() {
+	runSpinner("Fetching projects...", func() {
 		configs, err = client.GetConfigurations()
 	})
 	if err != nil {
@@ -323,7 +323,7 @@ func opsPickEnvironmentID(projects opsProjectLister, envs opsEnvLister) (id, sta
 		return "", "", err
 	}
 	var list []api.Environment
-	ui.RunSpinner("Fetching environments...", func() {
+	runSpinner("Fetching environments...", func() {
 		list, err = envs.ListEnvironments(projectID)
 	})
 	if err != nil {

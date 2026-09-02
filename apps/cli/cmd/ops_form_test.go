@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/huh"
+
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -190,7 +192,10 @@ func opsFormEnv(t *testing.T) (*opsFormServer, *api.BreakglassExecuteParams, fun
 			}
 		}()
 		hygCliConfirmResetFlags()
-		rootCmd.SetArgs(args)
+		// execRootArgs, not rootCmd.SetArgs: it returns --output, --no-input and --token to their
+		// defaults first. cobra keeps a flag's value AND its Changed bit across Execute calls, so a
+		// --no-input this file passes becomes the next file's default.
+		execRootArgs(args)
 		if err := rootCmd.Execute(); err != nil {
 			return 1
 		}
@@ -564,19 +569,28 @@ func TestOpsForm_ScriptedWithoutAnIdNamesThePositional(t *testing.T) {
 	}
 }
 
-// TestOpsForm_RedirectedStdoutRefusesRatherThanDrawingAForm is the requireInteractiveFORM half, and
+// TestOpsForm_NoStreamToDrawOnRefusesRatherThanDrawingAForm is the requireInteractiveFORM half, and
 // it is a real defect elsewhere in this package rather than a hypothetical.
 //
-// noInputMode is derived from STDIN alone. With stdin a terminal and stdout redirected — `alethia
-// ops inspect-job --reason … -o json > out.json`, which is how a break-glass result gets captured —
-// a picker gated on requireInteractive() considers prompting enabled, draws its ANSI frames into
-// the redirected FILE, and hangs waiting for a selection the operator cannot see.
-func TestOpsForm_RedirectedStdoutRefusesRatherThanDrawingAForm(t *testing.T) {
+// noInputMode is derived from STDIN alone, so with stdin a terminal a picker gated on
+// requireInteractive() alone considers prompting enabled, draws its ANSI frames where nobody is
+// looking, and hangs waiting for a selection the operator cannot see.
+//
+// "WHERE NOBODY IS LOOKING" IS THE FORM'S STREAM, NOT STDOUT. This arm stubbed stdoutIsTTY, which
+// was the right lever until #3847 re-pointed requireInteractiveForm at the stream a huh form
+// actually draws on. Stubbing stdout after that leaves the parameter named for a stream the gate no
+// longer reads — the same way the addon picker's arm lost its teeth in that PR's review.
+//
+// The behaviour change is deliberate and this test now records it rather than resisting it: a
+// redirected stdout no longer refuses, because `alethia ops inspect-job -o json > out.json` from a
+// real terminal can draw its picker on the still-attached stderr perfectly well. Refusing there
+// would refuse a question the CLI can ask.
+func TestOpsForm_NoStreamToDrawOnRefusesRatherThanDrawingAForm(t *testing.T) {
 	s, _, run := opsFormEnv(t)
-	prevIn, prevOut := stdinIsTTY, stdoutIsTTY
+	prevIn, prevOut := stdinIsTTY, interactiveOutIsTTY
 	stdinIsTTY = func() bool { return true }
-	stdoutIsTTY = func() bool { return false }
-	t.Cleanup(func() { stdinIsTTY, stdoutIsTTY = prevIn, prevOut })
+	interactiveOutIsTTY = func() bool { return false }
+	t.Cleanup(func() { stdinIsTTY, interactiveOutIsTTY = prevIn, prevOut })
 	authFormNoForm(t)
 
 	if got := run("ops", "inspect-job", "--reason", "incident-4711", "-o", "json"); got != 1 {
@@ -584,6 +598,37 @@ func TestOpsForm_RedirectedStdoutRefusesRatherThanDrawingAForm(t *testing.T) {
 	}
 	if s.sawAny("/api/jobs") {
 		t.Errorf("the listing was fetched for a picker that could never be shown: %v", s.all())
+	}
+}
+
+// TestOpsForm_RedirectedStdoutStillAsks is the control for the arm above.
+//
+// Re-pointing a stub is indistinguishable from deleting the assertion unless something proves the
+// OTHER direction still holds. stdout redirected, the form's stream still a terminal: the picker
+// must get PAST the gate and reach the control plane for its listing. If this refuses, the gate has
+// been aimed at the wrong stream and the arm above would still pass.
+func TestOpsForm_RedirectedStdoutStillAsks(t *testing.T) {
+	_, _, run := opsFormEnv(t)
+	prevIn, prevOut := stdinIsTTY, stdoutIsTTY
+	stdinIsTTY = func() bool { return true }
+	stdoutIsTTY = func() bool { return false }
+	t.Cleanup(func() { stdinIsTTY, stdoutIsTTY = prevIn, prevOut })
+
+	// NOT authFormNoForm: that helper fails the test when a form opens, which is the opposite of
+	// what this arm asserts. Here reaching the form IS the pass condition, so the stub records
+	// rather than refuses.
+	opened := false
+	prevForm := runHuhForm
+	runHuhForm = func(...*huh.Group) error {
+		opened = true
+		return nil
+	}
+	t.Cleanup(func() { runHuhForm = prevForm })
+
+	_ = run("ops", "inspect-job", "--reason", "incident-4711", "-o", "json")
+	if !opened {
+		t.Error("a redirected stdout short-circuited the picker; the form draws on the form's " +
+			"stream, which is still a terminal here, so the gate must let it through")
 	}
 }
 
