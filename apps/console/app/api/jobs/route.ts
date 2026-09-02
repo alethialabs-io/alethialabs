@@ -3,7 +3,7 @@
 
 import { createHash } from "crypto";
 import { signedJob } from "@/lib/db/signed-job";
-import { type SQL, eq, sql } from "drizzle-orm";
+import { type SQL, eq, inArray, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import {
 	destroyProject,
@@ -336,18 +336,31 @@ function badRequest(error: string): NextResponse {
  * Lists every job the caller can see — their org's and their own — cursor-paged, with the project
  * and runner names joined.
  *
- * THE SCOPE IS THE `owner_all` RLS POLICY, QUOTED (#3672). This route used to filter on
- * `jobs.user_id = <caller>`, so `alethia jobs list` and the console's jobs page — `getJobsPage`,
- * which reads through RLS — answered the same question differently: a teammate's deploy of the
- * org's own project was invisible from the terminal and plainly listed in the browser. One
- * product, two surfaces, two answers. So the predicate here is not a scope invented for the CLI;
- * it is `owner_all` (programmables.sql:885-889) written out in drizzle:
+ * THE SCOPE IS ONE COLUMN: `org_id in (<caller's org>, <caller's personal org>)` (#3672). This
+ * route used to filter on `jobs.user_id = <caller>`, so `alethia jobs list` and the console's jobs
+ * page — `getJobsPage`, which reads through RLS — answered the same question differently: a
+ * teammate's deploy of the org's own project was invisible from the terminal and plainly listed in
+ * the browser. One product, two surfaces, two answers.
  *
- *     org_id = <caller's org>  OR  user_id = <caller>
+ * THE FIRST FIX FOR THAT WAS A DISJUNCTION, AND IT WAS A CROSS-TENANT LEAK. It wrote out the
+ * `owner_all` RLS policy (programmables.sql:885-889) verbatim — `org_id = <caller's org> OR
+ * user_id = <caller>` — on the reasoning that quoting the policy the console reads through is the
+ * only way to get the policy's answer while the service role bypasses RLS.
  *
- * — the same disjunction the console's own reads are filtered by, which is what makes the two
- * surfaces return the IDENTICAL set. The service role bypasses RLS, so quoting the policy is the
- * only way to get the policy's answer.
+ * The flaw is that the two are not evaluated against the same subject. RLS sets
+ * `app.current_owner` from the SESSION's human. Here, for a service token, `actor.userId` is the
+ * person who MINTED the credential — `authorizeCli` builds `getActiveScope(mintingUserId,
+ * pinnedOrg)` — and that person may belong to many orgs. So the second arm, unbounded by org,
+ * returned their jobs from every one of them: a consultant in two client orgs mints a token for
+ * client A's CI and A's pipeline lists client B's job names and `config_snapshot`s. The pin is
+ * re-checked on every request in `lib/authz/guard.ts` precisely to stop a token acting outside its
+ * tenant, and this walked past it. A policy quoted out of its enforcement context is not the same
+ * statement.
+ *
+ * The org list is the same row set the owner arm was actually FOR (see below) and expressible on
+ * `org_id` alone, which keeps the tenancy boundary one column wide — there is no second arm for a
+ * caller's identity to widen it through. It also lets the keyset walk use `idx_jobs_org_cursor`:
+ * an `OR` across two columns plans an unordered BitmapOr, so every page would re-sort.
  *
  * THE OWNER ARM IS NOT DECORATION, AND THE REASON IS A DATA DEFECT. `jobs.org_id` is stamped on
  * insert by `jobs_set_org_id` → `set_org_id_from_project` (programmables.sql:827-841): parent
@@ -361,15 +374,18 @@ function badRequest(error: string): NextResponse {
  * That personal-org stamp is a defect at the ENQUEUE SITES, not a paging one, and #3874 has since
  * fixed it there (#3942): both inserts now stamp `org_id` EXPLICITLY. IT STAMPS FORWARD ONLY —
  * that change ships no backfill — so every job those two paths enqueued before it still carries
- * `org_id = <userId>` and is still invisible to an `org_id`-only clause. The owner arm is what
- * keeps that history listed, and the route quotes the policy either way: `owner_all` is what the
- * console already answers with, and it stays correct after those rows stop existing.
+ * `org_id = <userId>`. Naming that id as a second ORG in the list is what keeps that history
+ * listed, and it stays correct after those rows stop existing: the caller's personal org is a real
+ * org they are the sole member of, so listing it is not a widening.
  *
- * `?mine=true` SUBSTITUTES, IT DOES NOT NARROW. It replaces the disjunction with its owner arm —
- * `user_id = <caller>` alone — which is exactly the predicate this route carried before #3672, so
- * the flag genuinely restores the old set rather than intersecting the old set with the new one.
- * ANDing would have been the looser-looking but wronger rule: it would answer "my jobs that also
- * happen to be stamped with my org", which drops precisely the personal-org rows above. Being a
+ * `?mine=true` NARROWS THE ORG SCOPE, IT DOES NOT REPLACE IT. `user_id = <caller> AND org_id in
+ * (...)` — "my jobs in this org", not "my jobs anywhere". Replacing the scope with `user_id`
+ * alone is the same leak as the old default arm reached through the flag instead.
+ *
+ * The earlier worry — that ANDing the org back on drops the personal-org rows — was about
+ * `org_id = <caller's org>` alone. It does not apply to the list: a personal org's id IS the
+ * caller's user id, so those rows are INSIDE the scope, not excluded by it. That is what makes the
+ * AND free. Being a
  * scope predicate rather than a post-filter, it moves `total` and `page.total` with the rows; a
  * count taken from a different set of predicates than the rows is the defect the console's filter
  * standard exists to prevent.
@@ -428,21 +444,51 @@ export async function GET(req: Request) {
 	// this predicate is the whole of it — and it is also what a cursor is fingerprinted against, so
 	// a cursor minted in another org is refused above rather than answered here.
 	//
-	// IT IS THE `owner_all` RLS POLICY WRITTEN OUT IN DRIZZLE (programmables.sql:885-889):
-	// `user_id = app.current_owner OR org_id = app.current_org`. Quoting the policy rather than
-	// re-deriving a scope here is the whole point — the console reads this table THROUGH that
-	// policy, so any predicate narrower than it makes the terminal and the browser answer the same
-	// question differently again, which is the defect #3672 closed. `?mine=true` SUBSTITUTES the
-	// owner arm for the disjunction rather than ANDing onto it; see the GET doc above.
+	// IT IS NOT THE `owner_all` RLS POLICY WRITTEN OUT IN DRIZZLE, and the first cut of this route
+	// said it was. That policy (programmables.sql:885-889) is
+	// `user_id = app.current_owner OR org_id = app.current_org`, and copying it here looked like
+	// the careful choice — the console reads this table THROUGH it, so a narrower predicate should
+	// make the terminal and the browser disagree, which is the defect #3672 closed.
+	//
+	// The copy is unsound because the two are not evaluated against the same actor. RLS runs with
+	// `app.current_owner` set to the SESSION's human. This route runs through `getServiceDb()` with
+	// no RLS at all, and for a service token `actor.userId` is the person who MINTED it, not the
+	// caller. Same shape, different subject: the policy scopes a human to themselves, the copy
+	// scoped a machine credential to somebody's entire cross-org history. A policy quoted out of
+	// its enforcement context is not the same statement.
+	//
+	// `?mine=true` NARROWS the org scope rather than replacing it, for the same reason: it means
+	// "my jobs in this org", not "my jobs anywhere". See the GET doc above.
 	//
 	// The two `eq()` fragments are embedded in the template rather than written out as
 	// `${jobs.org_id} = ${actor.orgId}` so each parameter still binds through the column's own
 	// drizzle type mapper — a raw interpolation would hand postgres-js a bare string for a `uuid`
 	// column. A `sql` template is used at all because `or()` is typed `SQL | undefined` and this
 	// tuple's first element may not be optional; narrowing it would need an `as`, which is banned.
-	const visible: SQL = mine.mine
-		? eq(jobs.user_id, actor.userId)
-		: sql`(${eq(jobs.org_id, actor.orgId)} or ${eq(jobs.user_id, actor.userId)})`;
+	// EVERY ARM IS BOUNDED BY ORG. The first cut was
+	// `(org_id = actor.orgId or user_id = actor.userId)`, quoting the `owner_all` RLS policy
+	// verbatim — and that is a cross-tenant leak here, because this route reads through
+	// `getServiceDb()` with NO RLS, so this predicate is the only boundary and it is evaluated
+	// against a different actor than the policy is.
+	//
+	// `actor.userId` IS THE MINTING HUMAN for a service token: `authorizeCli` builds
+	// `getActiveScope(userId, serviceOrg)`, so `orgId` is the pin and `userId` is the person who
+	// created the credential. An unbounded owner arm therefore returns that person's jobs from
+	// EVERY org they belong to — project names and `config_snapshot` included — through a token
+	// pinned to one. A consultant in two client orgs mints a token for client A's CI and A's
+	// pipeline lists client B's jobs. The pin is re-checked on every request two files over
+	// precisely to stop a token acting outside its tenant; this walked past it.
+	//
+	// `org_id IN (orgId, userId)` is the same row set the owner arm was actually FOR. #3942 stamps
+	// `org_id` forward with no backfill, so pre-#3942 runner jobs still carry `org_id = user_id` —
+	// the caller's personal org, whose id IS their user id. That is the recovery this needs, and it
+	// is expressible on `org_id` alone, which keeps the tenancy boundary one column wide.
+	//
+	// It is also why the walk can still use `idx_jobs_org_cursor`: a disjunction across two columns
+	// plans a BitmapOr, which is unordered, so every page re-sorts. An `IN` on the leading index
+	// column does not.
+	const orgScope: SQL = inArray(jobs.org_id, [actor.orgId, actor.userId]);
+	const visible: SQL = mine.mine ? sql`(${eq(jobs.user_id, actor.userId)} and ${orgScope})` : orgScope;
 
 	const scope: [SQL, ...(SQL | undefined)[]] = [
 		visible,

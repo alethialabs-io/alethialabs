@@ -10,14 +10,20 @@
 //
 //   1. A cursor is a NEW WAY TO ADDRESS ROWS, so it is a new way to address someone else's. The
 //      route reads through getServiceDb(), whose role BYPASSES row-level security, so the
-//      `owner_all` disjunction the handler writes out (`org_id = <caller's org> OR user_id =
-//      <caller>`) is the entire tenancy boundary. Org B is therefore seeded with rows that WOULD
-//      come back if that predicate were dropped, and the walk assertions are written as "exactly
-//      org A's id set", never "at least N rows".
-//   2. The scope changed from `user_id` alone to that disjunction, and a `?mine=true` flag was
-//      added which SUBSTITUTES the owner arm rather than ANDing onto the org. A count taken from
-//      different predicates than the rows is the console filter standard's named defect, so
-//      `total` is asserted against `mine` as well as against the org.
+//      handler's `org_id in (<caller's org>, <caller's personal org>)` is the entire tenancy
+//      boundary. Org B is therefore seeded with rows that WOULD come back if that predicate were
+//      dropped, and the walk assertions are written as "exactly org A's id set", never "at least
+//      N rows".
+//   2. The scope changed from `user_id` alone to that org list, and a `?mine=true` flag was added
+//      which NARROWS it to the caller rather than replacing it. A count taken from different
+//      predicates than the rows is the console filter standard's named defect, so `total` is
+//      asserted against `mine` as well as against the org.
+//
+//      IT WAS A DISJUNCTION FIRST — `org_id = <org> OR user_id = <caller>`, quoting the `owner_all`
+//      RLS policy — and that is a cross-tenant leak when the actor is a service token, whose
+//      `userId` is the human who MINTED it. `memberInForeignOrgId` below is the row that proves it
+//      closed, and nothing else in this file could see it: every other fixture varies the OWNER
+//      while holding the org.
 //
 // A SECOND SUITE FOLLOWS THIS ONE, at the bottom of the file: the org arm is what this suite
 // proves, and the OWNER arm — the rows the trigger stamps with a caller's personal org, which an
@@ -89,10 +95,11 @@ const USER_B = randomUUID();
 /**
  * Org C's own member — NOT `USER_ME`, and that is load-bearing rather than tidiness.
  *
- * The scope is the `owner_all` disjunction (`org_id = <org> OR user_id = <caller>`), so a row a
- * user owns in ANOTHER org is legitimately in their list. Seeding org C's rows under `USER_ME`
- * would therefore have made every later `actingAs(USER_ME, ORG_A)` expectation depend on whether
- * the mid-walk test had already run — the exact order-coupling ORG_C's own comment above exists
+ * The scope is `org_id in (<org>, <caller's personal org>)`, so a row a user owns in another org
+ * is NOT in their list — but that is a property under test, not a property to lean on when
+ * building fixtures. Seeding org C's rows under `USER_ME` would have made every later
+ * `actingAs(USER_ME, ORG_A)` expectation depend on the predicate being right, and on whether the
+ * mid-walk test had already run — the exact order-coupling ORG_C's own comment above exists
  * to avoid, and one the old `org_id`-only predicate happened to hide.
  */
 const USER_C = randomUUID();
@@ -450,17 +457,20 @@ describeIfDb("GET /api/jobs — org scope, ?mine, and cursor paging (#3672)", ()
 });
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────
-// The `owner_all` disjunction, against the rows PRODUCTION actually writes.
+// The PERSONAL-ORG half of the org list, against the rows PRODUCTION actually writes.
 //
-// The suite above proves the org scope. This one proves the OTHER arm, and it exists because an
-// org-only WHERE clause was wrong about rows that already exist in every deployment:
+// The suite above proves the caller's own org. This one proves the SECOND entry in the list, and
+// it exists because a `<team org>`-only WHERE clause was wrong about rows that already exist in
+// every deployment:
 // `set_org_id_from_project` (programmables.sql:827-841) resolves `org_id` as parent project →
 // `app.current_org` GUC → `NEW.user_id`, and two shipped enqueue paths — the `DESTROY_RUNNER`
 // branch of POST /api/jobs and POST /api/cli/runners/deploy — insert a PROJECT-LESS job on
 // `getServiceDb()`, which sets no GUC. Those rows land under the caller's PERSONAL org, so for a
 // member of a Teams org an `org_id = <team>` filter hides the member's own runner jobs while the
-// console, reading through `owner_all`, lists them. That is the two-surfaces-two-answers defect
-// #3672 closed, reappearing through the back door.
+// console, reading through the `owner_all` RLS policy, lists them. That is the
+// two-surfaces-two-answers defect #3672 closed, reappearing through the back door. Naming the
+// personal org as a second ORG recovers exactly those rows without widening the boundary off
+// `org_id` — which quoting `owner_all` here did, and leaked across tenants for.
 //
 // THE FIXTURE LETS THE TRIGGER DO THE STAMPING. `org_id` is omitted from the insert rather than
 // written as `user_id` by hand, because "production writes rows shaped like this" is the claim —
@@ -520,7 +530,7 @@ async function readJob(id: string) {
 	return seededJobSchema.parse(row);
 }
 
-describeIfDb("GET /api/jobs — the `owner_all` disjunction, incl. the personal-org stamp", () => {
+describeIfDb("GET /api/jobs — the org list, incl. the personal-org stamp and the cross-org leak", () => {
 	/** Project-less, trigger-stamped `org_id = USER_MEMBER`. The row an org-only filter hid. */
 	let personalId = "";
 	/** An ordinary org-stamped job of the caller's. */
@@ -536,6 +546,18 @@ describeIfDb("GET /api/jobs — the `owner_all` disjunction, incl. the personal-
 	 * not the rule — the rule names the CALLER. This row is the difference between the two.
 	 */
 	let strangerPersonalId = "";
+	/**
+	 * THE CALLER'S OWN JOB, IN A THIRD ORG. The row that made the first cut of this route a
+	 * cross-tenant leak, and that nothing else in this file could see.
+	 *
+	 * Every other fixture varies the OWNER while holding the org, so an unbounded owner arm
+	 * (`org_id = <caller's org> OR user_id = <caller>`) passed all of them: the caller's rows were
+	 * only ever in the caller's org or in their personal one, whose id IS their user id. This row
+	 * is in NEITHER, and it is the one a service token leaks — `actor.userId` is the person who
+	 * MINTED the token, so a credential pinned to one client's org returned that consultant's jobs
+	 * from another client's.
+	 */
+	let memberInForeignOrgId = "";
 	let allIds: string[] = [];
 
 	beforeAll(async () => {
@@ -544,7 +566,8 @@ describeIfDb("GET /api/jobs — the `owner_all` disjunction, incl. the personal-
 		teamPeerId = await seedJob(USER_PEER, ORG_TEAMS);
 		foreignId = await seedJob(USER_STRANGER, ORG_FOREIGN);
 		strangerPersonalId = await seedJob(USER_STRANGER, null);
-		allIds = [personalId, teamMineId, teamPeerId, foreignId, strangerPersonalId];
+		memberInForeignOrgId = await seedJob(USER_MEMBER, ORG_FOREIGN);
+		allIds = [personalId, teamMineId, teamPeerId, foreignId, strangerPersonalId, memberInForeignOrgId];
 	});
 
 	afterAll(async () => {
@@ -575,14 +598,18 @@ describeIfDb("GET /api/jobs — the `owner_all` disjunction, incl. the personal-
 		expect(body.total).toBe(body.page.total);
 	});
 
-	it("keeps that job under ?mine=true — the flag SUBSTITUTES the owner arm, it does not AND", async () => {
+	it("keeps that job under ?mine=true — the personal org is INSIDE the org scope, so the AND is free", async () => {
 		actingAs(USER_MEMBER, ORG_TEAMS);
 		const body = await get("?mine=true&limit=100");
 		const ids = body.jobs.map((j) => j.id).sort();
-		// The pre-#3672 predicate exactly: everything this caller owns, whatever it is stamped
-		// with. ANDing the org back on would drop `personalId`, which is the one job `?mine` most
-		// obviously means — and the CLI's own `--mine` would then be unable to show a runner job
-		// the same CLI queued.
+		// `?mine=true` ANDs onto the org scope rather than replacing it, and this row is the
+		// reason that costs nothing: `personalId` is stamped `org_id = USER_MEMBER`, and the
+		// caller's user id is the second element of the org list, so the personal-org job is
+		// INSIDE the scope. The earlier worry — that ANDing the org back on would drop the one job
+		// `?mine` most obviously means — was about `org_id = ORG_TEAMS` alone, which this is not.
+		//
+		// Replacing the scope with `user_id = <caller>` is what the leak looked like from the flag
+		// side: it returned this caller's jobs from every org they belong to.
 		expect(ids).toEqual([personalId, teamMineId].sort());
 		expect(body.page.total).toBe(2);
 		expect(body.total).toBe(body.page.total);
@@ -601,8 +628,9 @@ describeIfDb("GET /api/jobs — the `owner_all` disjunction, incl. the personal-
 
 	it("never returns a job in neither the caller's org nor the caller's name — in either mode", async () => {
 		// THE TENANCY ASSERTION. The service role bypasses RLS, so this WHERE clause is the only
-		// thing standing between two tenants; widening it to quote `owner_all` must not have
-		// widened it past `owner_all`.
+		// thing standing between two tenants. The companion assertion below — the caller's own row
+		// in a third org — is the one that catches a boundary widened off `org_id`; this one
+		// catches a boundary that never narrowed to the caller at all.
 		actingAs(USER_MEMBER, ORG_TEAMS);
 		for (const q of ["?limit=100", "?mine=true&limit=100"]) {
 			const ids = (await get(q)).jobs.map((j) => j.id);
@@ -614,15 +642,49 @@ describeIfDb("GET /api/jobs — the `owner_all` disjunction, incl. the personal-
 		}
 	});
 
-	it("is symmetric — the other tenant sees only their own two rows", async () => {
+	it("is symmetric — the other tenant sees their org and their personal rows, and nothing else", async () => {
 		// The inverse of the assertion above, so "absent" cannot be an artefact of the fixture
 		// never being reachable at all.
+		//
+		// THREE rows, not two: `memberInForeignOrgId` is stamped ORG_FOREIGN, and this caller is
+		// scoped to ORG_FOREIGN, so the ORG arm returns it — a teammate's job, exactly like
+		// `teamPeerId` is for the other tenant. That is the point of the pair: the same row is
+		// visible here and invisible to the person who OWNS it while they are scoped elsewhere,
+		// which is what makes the boundary the org rather than the owner.
 		actingAs(USER_STRANGER, ORG_FOREIGN);
 		const body = await get("?limit=100");
 		expect(body.jobs.map((j) => j.id).sort()).toEqual(
-			[foreignId, strangerPersonalId].sort(),
+			[foreignId, strangerPersonalId, memberInForeignOrgId].sort(),
 		);
-		expect(body.page.total).toBe(2);
+		expect(body.page.total).toBe(3);
+		// ...and `?mine=true` drops it again, because it is not this caller's.
+		const mine = await get("?mine=true&limit=100");
+		expect(mine.jobs.map((j) => j.id).sort()).toEqual([foreignId, strangerPersonalId].sort());
+	});
+
+	it("NEVER returns the caller's own job from a third org — in either mode", async () => {
+		// THE LEAK THIS PREDICATE WAS NARROWED FOR. `org_id = <caller's org> OR user_id = <caller>`
+		// answers this row on the second arm, which is unbounded by org. It is not a hypothetical
+		// shape: `authorizeCli` builds a service token's actor as
+		// `getActiveScope(mintingUserId, pinnedOrg)`, so `actor.userId` is a HUMAN who may belong
+		// to many orgs, and the route reads through `getServiceDb()` with RLS bypassed.
+		//
+		// Asserted in BOTH modes because `?mine=true` is the arm that most obviously means "me",
+		// and "me" is exactly the wrong boundary here — it is "me, in the org I am scoped to".
+		actingAs(USER_MEMBER, ORG_TEAMS);
+		for (const q of ["?limit=100", "?mine=true&limit=100"]) {
+			const ids = (await get(q)).jobs.map((j) => j.id);
+			expect(ids).not.toContain(memberInForeignOrgId);
+		}
+	});
+
+	it("and that row IS reachable when the caller is scoped to that org — so its absence means scoping", async () => {
+		// The control for the assertion above. Without it, "not returned" would also be satisfied
+		// by a fixture that was never visible to anyone — and a tenancy test whose negative case
+		// is unreachable proves nothing at all.
+		actingAs(USER_MEMBER, ORG_FOREIGN);
+		const ids = (await get("?limit=100")).jobs.map((j) => j.id);
+		expect(ids).toContain(memberInForeignOrgId);
 	});
 
 	it("pages the disjunction, and every page stays inside it", async () => {

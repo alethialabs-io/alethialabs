@@ -219,49 +219,56 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		expect(vi.mocked(authorizeCli).mock.calls[0][2]).toEqual({ type: "job" });
 	});
 
-	it("scopes the rows to the RLS `owner_all` disjunction — org OR owner, never org alone", async () => {
+	it("scopes the rows on org_id ALONE — the caller's org and their personal org", async () => {
 		await drive("");
 		const where = render(captured.rowsWhere);
 		// The WHOLE parameter list, not a containment check. The bug this route had was
-		// `eq(jobs.user_id, userId)`, and an AND of both ids would satisfy "the org is in there"
-		// while still hiding a teammate's job.
+		// `eq(jobs.user_id, userId)` — one user's jobs where the org's were wanted.
 		expect(where.params).toEqual([ORG, USER]);
+		// BOTH IDS APPEAR, AND BOTH ARE COMPARED TO `org_id`. The second is the caller's user id
+		// used as an ORG id, which is what a personal org's id is: #3942 stamps `org_id` forward
+		// with no backfill, so pre-#3942 runner jobs still carry `org_id = user_id`.
 		expect(where.sql).toContain('"org_id"');
-		expect(where.sql).toContain('"user_id"');
-		// AND THE JOIN MUST BE `or`. Both ids appear in the parameter list either way, so the
-		// parameter assertion above cannot tell the policy from its conjunction — and the
-		// conjunction is a real, shipped set of rows this route would hide: a project-less job
-		// stamped `org_id = user_id` by the trigger's personal-org fallback carries the caller's
-		// id in BOTH columns, but a teammate's org job carries the org in only one.
-		expect(normalized(where.sql)).toContain(
-			'("jobs"."org_id" = $1 or "jobs"."user_id" = $2)',
-		);
-		expect(where.sql).not.toMatch(/"org_id" = \$1 and/i);
+		// `user_id` MUST NOT APPEAR in the default predicate, and this is the assertion that
+		// matters. The first cut was `(org_id = $1 or user_id = $2)`, quoting the `owner_all` RLS
+		// policy — and unbounded by org on the second arm. `actor.userId` is the MINTING HUMAN for
+		// a service token, so that arm returned their jobs from every org they belong to through a
+		// credential pinned to one. Any predicate that mentions `user_id` here has that shape back.
+		expect(where.sql).not.toContain('"user_id"');
+		expect(normalized(where.sql)).toContain('"jobs"."org_id" in ($1, $2)');
 	});
 
 	it("renders the default WHERE as the policy and NOTHING else", async () => {
-		// The whole rendered clause, by hand, `toBe` rather than `toContain`. `owner_all`
-		// (programmables.sql:885-889) is `user_id = app.current_owner OR org_id = app.current_org`
-		// and the two surfaces returning the IDENTICAL set is this route's thesis, so an extra
-		// ANDed arm is as much a defect as a missing one — and a containment check cannot see it.
-		// Written out rather than rebuilt from `sql`/`eq`, because an expectation composed the
-		// same way the route composes it agrees with the route by construction.
+		// The whole rendered clause, by hand, `toBe` rather than `toContain`: an extra ANDed arm is
+		// as much a defect as a missing one, and a containment check cannot see one. Written out
+		// rather than rebuilt from `sql`/`inArray`, because an expectation composed the same way
+		// the route composes it agrees with the route by construction.
+		//
+		// ONE COLUMN. That is the property — the tenancy boundary is `org_id` and nothing else, so
+		// there is no second arm for a caller's identity to widen it through.
 		await drive("");
-		expect(normalized(render(captured.rowsWhere).sql)).toBe(
-			'("jobs"."org_id" = $1 or "jobs"."user_id" = $2)',
-		);
+		expect(normalized(render(captured.rowsWhere).sql)).toBe('"jobs"."org_id" in ($1, $2)');
 	});
 
-	it("SUBSTITUTES the owner arm under ?mine=true rather than ANDing onto the org", async () => {
+	it("NARROWS to the caller INSIDE the org scope under ?mine=true, rather than replacing it", async () => {
 		await drive("?mine=true");
 		const where = render(captured.rowsWhere);
-		// Exactly the predicate this route carried BEFORE #3672 — which is what makes "?mine
-		// restores the old set" literally true. An AND would answer "my jobs that are also
-		// stamped with my org", which drops every job the trigger stamped with my personal org.
-		expect(where.params).toEqual([USER]);
+		// `?mine=true` means "my jobs in this org", not "my jobs anywhere". Replacing the org scope
+		// with `user_id = $1` — which this route did first — is the same cross-tenant leak as the
+		// old default arm, reached through the flag instead: scoped to org A with a token whose
+		// minter also belongs to org B, it answered with B's rows too.
+		//
+		// NOTHING IS DROPPED BY THE NARROWING. The job `?mine` most obviously means is the
+		// project-less one the trigger stamped `org_id = user_id`, and the caller's user id is the
+		// second element of the org list — so the personal-org row is inside the scope, not
+		// excluded by it. That is why this can be an AND at all.
+		expect(where.params).toEqual([USER, ORG, USER]);
 		expect(where.sql).toContain('"user_id"');
-		expect(where.sql).not.toContain('"org_id"');
-		expect(render(captured.countWhere).params).toEqual([USER]);
+		expect(where.sql).toContain('"org_id"');
+		expect(normalized(where.sql)).toBe(
+			'("jobs"."user_id" = $1 and "jobs"."org_id" in ($2, $3))',
+		);
+		expect(render(captured.countWhere).params).toEqual([USER, ORG, USER]);
 	});
 
 	it("adds the status predicate to the rows AND to the count", async () => {
