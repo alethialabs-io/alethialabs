@@ -28,7 +28,7 @@
 // the actor it is handed.
 
 import { randomUUID } from "node:crypto";
-import { inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { describeIfDb } from "./db";
@@ -194,11 +194,17 @@ describeIfDb("GET /api/jobs — org scope, ?mine, and cursor paging (#3672)", ()
 			userId: USER_B,
 			offsetUs: i * ROW_SPACING_US + ORG_B_PHASE_US,
 		}));
-		const ids = await seedRows([...a, ...b]);
-		// `returning` follows the unnest order, so the first ORG_A_ROWS ids are org A's, oldest
-		// offset first — i.e. NEWEST first, since the offset is subtracted from now().
-		orgAIds = ids.slice(0, ORG_A_ROWS);
-		mineIds = orgAIds.filter((_, i) => i % 2 === 0);
+		await seedRows([...a, ...b]);
+		// READ THE IDS BACK rather than slicing `returning`. Postgres does not promise that
+		// `INSERT … SELECT … RETURNING` emits rows in the SELECT's order, and an expectation set
+		// from an order the database is free to change is a test that fails for a reason nothing
+		// in the diff explains.
+		const rows = await getServiceDb()
+			.select({ id: jobs.id, user_id: jobs.user_id })
+			.from(jobs)
+			.where(eq(jobs.org_id, ORG_A));
+		orgAIds = rows.map((r) => r.id);
+		mineIds = rows.filter((r) => r.user_id === USER_ME).map((r) => r.id);
 	});
 
 	afterAll(async () => {
@@ -219,6 +225,11 @@ describeIfDb("GET /api/jobs — org scope, ?mine, and cursor paging (#3672)", ()
 		// rows ⇒ a cursor that truncated to milliseconds would drop one. Without this the walk
 		// assertions below would pass against a fixture that cannot express the bug.
 		expect(row.ms).toBeLessThan(row.n);
+		// And the `mine` half is only interesting if the two sets differ on every page: the org's
+		// rows alternate between two users, so `mineIds` is a strict, interleaved subset.
+		expect(orgAIds.length).toBe(ORG_A_ROWS);
+		expect(mineIds.length).toBeGreaterThan(0);
+		expect(mineIds.length).toBeLessThan(orgAIds.length);
 	});
 
 	it("lists the ORG's jobs, not just the caller's — the teammate's rows are the fix", async () => {

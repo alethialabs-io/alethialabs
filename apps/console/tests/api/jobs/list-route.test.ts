@@ -141,7 +141,10 @@ function fakeDb() {
 /** One list row shaped the way the handler's projection produces it. */
 function listRow(overrides: Record<string, unknown> = {}) {
 	return {
-		job: makeJob({ id: JOB_ID, org_id: ORG, user_id: USER }),
+		// `project_id` is a uuid column on the wire, and makeJob's default ("proj-1") is not one —
+		// cliJson would refuse the envelope and answer 500, which is a contract violation rather
+		// than the thing under test.
+		job: makeJob({ id: JOB_ID, org_id: ORG, user_id: USER, project_id: null }),
 		cursor_key: CURSOR_KEY,
 		project_name: "web",
 		runner_name: null,
@@ -201,13 +204,13 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		expect(vi.mocked(authorizeCli).mock.calls[0][2]).toEqual({ type: "job" });
 	});
 
-	it("scopes the rows to the actor's ORG, and never to the actor's user id", async () => {
+	it("scopes the rows to the actor's ORG, and to nothing else", async () => {
 		await drive("");
 		const where = render(captured.rowsWhere);
-		expect(where.params).toContain(ORG);
-		// The bug this route had: `eq(jobs.user_id, userId)`. Asserting the org id is present is
-		// not enough — an AND of both would satisfy it and still hide a teammate's job.
-		expect(where.params).not.toContain(USER);
+		// The WHOLE parameter list, not a containment check. The bug this route had was
+		// `eq(jobs.user_id, userId)`, and an AND of both ids would satisfy "the org is in there"
+		// while still hiding a teammate's job.
+		expect(where.params).toEqual([ORG]);
 		expect(where.sql).toContain('"org_id"');
 		expect(where.sql).not.toContain('"user_id"');
 	});
@@ -215,9 +218,17 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 	it("adds the user predicate — and nothing else — under ?mine=true", async () => {
 		await drive("?mine=true");
 		const where = render(captured.rowsWhere);
-		expect(where.params).toContain(ORG);
-		expect(where.params).toContain(USER);
+		expect(where.params).toEqual([ORG, USER]);
 		expect(where.sql).toContain('"user_id"');
+	});
+
+	it("adds the status predicate to the rows AND to the count", async () => {
+		await drive("?status=QUEUED");
+		expect(render(captured.rowsWhere).params).toEqual([ORG, "QUEUED"]);
+		// A facet or count taken from different predicates than the rows is the console filter
+		// standard's named defect; here it would report the org's whole job history beside a
+		// single-status page.
+		expect(render(captured.countWhere).params).toEqual([ORG, "QUEUED"]);
 	});
 
 	it("counts over the SCOPE, not over the remainder after the cursor", async () => {
@@ -230,10 +241,9 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		const counted = render(captured.countWhere);
 		// The keyset predicate is on the rows query only. A total that shrank as the caller paged
 		// would read as rows disappearing from under them.
-		expect(rows.sql).toContain("<");
-		expect(rows.params).toContain(CURSOR_KEY);
-		expect(counted.params).not.toContain(CURSOR_KEY);
-		expect(counted.params).toContain(ORG);
+		expect(rows.sql).toContain("::timestamptz");
+		expect(rows.params).toEqual([ORG, CURSOR_KEY, JOB_ID]);
+		expect(counted.params).toEqual([ORG]);
 	});
 
 	it("asks for one row more than the page, so the extra row alone decides `has more`", async () => {
@@ -279,6 +289,7 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 					id: `4444444${i}-4444-4444-8444-444444444444`,
 					org_id: ORG,
 					user_id: USER,
+					project_id: null,
 				}),
 			}),
 		);
