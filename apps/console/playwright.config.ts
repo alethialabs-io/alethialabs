@@ -67,9 +67,13 @@ const LOCAL_ONLY_REASON: Record<string, string> = {
 		"7 per-surface smokes that each drive a FULL email-OTP signup. Better Auth caps OTP issuance " +
 		"at 5/60s per IP (lib/config/auth.ts), so they cannot be poured into a gating job; and at " +
 		"~1 min per signup they would roughly double the hero job. Needs its own non-required job.",
-	qa: "The 320-test QA suite (e2e/flows). Authored 2026-07-05, never executed against the current " +
-		"console, and structurally incomplete: e2e/global-setup.ts creates `ownerHobby` and (best- " +
-		"effort) `ownerTeam` but NOT `member`, so every spec touching that persona throws. Needs " +
+	qa: "The QA suite (e2e/flows), 346 tests as `--project=qa --list` counts them. Authored " +
+		"2026-07-05; first executed against the current console on 2026-09-02 (#3633), which is " +
+		"when its personas were completed — `e2e/global-setup.ts` now builds `member` through the " +
+		"product's own invite → accept endpoints, so no spec is left throwing on a missing one. " +
+		"It stays NON-GATING: the run is triaged, not clean, and the reds are enumerated per spec " +
+		"in apps/console/docs/qa/findings.md. Promoting it needs those worked through AND a " +
+		"workflow job it does not have — both in one change, or this guard's rule 4 fires. Needs " +
 		"ALETHIA_QA_E2E=1. See apps/console/docs/qa/README.md.",
 };
 
