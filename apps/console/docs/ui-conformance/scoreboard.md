@@ -81,7 +81,7 @@ RUBRIC.md defines **33 predicates**. This report scores **15** of them.
 | `scripts/check-route-states.mjs` | S1–S4, T1–T4, per route |
 | `apps/console/route-states-baseline.yaml` | the ratchet those eight predicates are held to |
 | `scripts/check-shared-surface.mjs` | every H-family occurrence, per file |
-| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 15`) and which are measured drift (`debt: 135`) |
+| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 133`) |
 | `apps/console/docs/ui-conformance/RUBRIC.md` | the predicate set itself, read out of its own tables |
 
 ## Which predicates have an instrument
@@ -213,7 +213,7 @@ route-state predicates and passes the H rows on a closure of one file that rende
 
 ## Where every shared-surface occurrence landed
 
-`check-shared-surface` found **715 occurrences across 130 files**. This section
+`check-shared-surface` found **699 occurrences across 130 files**. This section
 accounts for all of them twice — once by ledger, once by reach — so a rule or a file falling out
 of the scoreboard cannot be quiet.
 
@@ -226,8 +226,8 @@ of the scoreboard cannot be quiet.
 | `page_title` | H1 | 17 | 17 | 0 | 0 | 7 | 1 | 9 |
 | `section_header` | H2 | 4 | 0 | 4 | 0 | 3 | 1 | 0 |
 | `stat_strip` | H6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `type_scale` | H8 | 678 | 0 | 678 | 0 | 488 | 152 | 38 |
-| **total** | | 715 | 23 | 692 | 0 | 510 | 158 | 47 |
+| `type_scale` | H8 | 662 | 1 | 661 | 0 | 484 | 152 | 26 |
+| **total** | | 699 | 24 | 675 | 0 | 506 | 158 | 35 |
 
 **`unlisted` is the column to read first.** A non-zero value means the guard is red — an
 occurrence neither a `reason:` nor a `lifts:` entry accounts for. It is not a defect of this
@@ -247,8 +247,8 @@ rather than scored:
 
 | file | occurrences |
 |---|---:|
-| `apps/console/components/auth/onboarding-form.tsx` | 20 |
-| `apps/console/components/auth/auth-form.tsx` | 16 |
+| `apps/console/components/auth/onboarding-form.tsx` | 19 |
+| `apps/console/components/auth/auth-form.tsx` | 5 |
 | `apps/console/components/forms/oauth-consent-form.tsx` | 4 |
 | `apps/console/components/design-project/container-platform-selector.tsx` | 3 |
 | `apps/console/app/(public)/onboarding/page.tsx` | 1 |
