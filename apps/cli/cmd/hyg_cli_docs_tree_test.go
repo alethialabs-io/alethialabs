@@ -210,8 +210,11 @@ var docsTreeComparableLeaves = [][]string{
 	{"project", "env", "add"},       // nested two deep
 	{"project", "component", "add"}, // shares its final name with the line above
 	{"config", "set"},               // two positionals
-	{"alerts", "delete"},            // a REQUIRED positional — the bracket that must stay angled
-	{"runner", "list"},              // none at all
+	{"classification", "show"},      // a REQUIRED positional — the bracket that must stay angled.
+	// Was `alerts delete` until this lane converted the governance groups to flags: the shape this
+	// canary watches for left that leaf, so the sample moved to one that still carries it.
+	// `classification show <kind> <id>` carries two.
+	{"runner", "list"}, // none at all
 }
 
 // TestHygCliDocs_TheTreeAgreesWithTheUsageString compares the two renderings of every leaf's
@@ -226,7 +229,7 @@ var docsTreeComparableLeaves = [][]string{
 // opt in to and the set derives itself.
 //
 // A leaf the tree does NOT show is skipped here and reported separately. That is a real defect —
-// `addon enable`, `chart attach`, `runner register` and the whole `promotion`, `provider` and
+// `addon enable`, `chart attach`, `runner register` and the whole `provider` and
 // `token` groups are missing from the tree — but it is a different one, owned by
 // TestHygCliDocs_EveryLeafIsDocumented, and comparing an absent line would compare "" against ""
 // and always agree.
@@ -453,8 +456,12 @@ func TestHygCliDocs_TreeWalkFindsTheRightLine(t *testing.T) {
 	if docsTreeShows(index, []string{"cluster", "definitely-not-a-leaf"}) {
 		t.Error("an absent leaf was reported as shown")
 	}
-	if docsTreeShows(index, []string{"promotion", "get"}) {
-		t.Error("`promotion` is not in the command tree at all; reporting it as shown would " +
+	// `token` is REGISTERED but carries no docs page, so it is absent from the tree. This was
+	// `promotion get` until this lane added the promotion group and its page — an absent-leaf
+	// canary has to name something still absent, and what it names is exactly what a lane like
+	// this one makes exist.
+	if docsTreeShows(index, []string{"token", "create"}) {
+		t.Error("`token` is not in the command tree at all; reporting it as shown would " +
 			"compare its line against nothing")
 	}
 }

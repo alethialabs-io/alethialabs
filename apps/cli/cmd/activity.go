@@ -62,11 +62,10 @@ func activityRows(entries []api.ActivityEntry) [][]string {
 		if e.ResourceID != "" {
 			resource += " " + ui.TruncID(e.ResourceID)
 		}
-		reason := e.Reason
-		if reason == "" {
-			reason = ui.SymbolDash
+		rows[i] = []string{
+			ui.RelativeTime(e.Ts), actor, e.Action, resource,
+			decisionLabel(e.Decision), ui.OrDash(e.Reason),
 		}
-		rows[i] = []string{ui.RelativeTime(e.Ts), actor, e.Action, resource, decisionLabel(e.Decision), reason}
 	}
 	return rows
 }
@@ -96,6 +95,7 @@ func runActivity(c apiClient, out io.Writer, format string, limit int) error {
 }
 
 func init() {
-	activityCmd.Flags().IntVarP(&activityLimit, "limit", "n", 50, "Maximum number of entries to show")
+	activityCmd.Flags().IntVarP(&activityLimit, "limit", "n", 50,
+		mustGovField("alethia activity", fieldKeyGovLimit).Description)
 	rootCmd.AddCommand(activityCmd)
 }
