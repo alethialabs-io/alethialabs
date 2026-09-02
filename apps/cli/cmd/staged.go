@@ -29,13 +29,15 @@ var stagedListCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		project, err := currentProject(cmd)
+		outFmt := outputFormat(cmd)
+		rich := interactiveTable(cmd)
+		project, err := byoProject(cmd, token, rich)
 		if err != nil {
 			fail(err)
 		}
 		env, _ := cmd.Flags().GetString("env")
 		client := api.NewClient(token)
-		if interactiveTable(cmd) {
+		if rich {
 			var view *api.StagedChanges
 			ui.RunSpinner("Fetching staged changes...", func() {
 				view, err = client.GetProjectStagedChanges(project, env)
@@ -50,7 +52,7 @@ var stagedListCmd = &cobra.Command{
 			_ = ui.ShowTable(stagedColumns, stagedRows(view.Changes), "staged changes")
 			return
 		}
-		if err := runStagedList(client, os.Stdout, outputFormat(cmd), project, env); err != nil {
+		if err := runStagedList(client, os.Stdout, outFmt, project, env); err != nil {
 			failf("Failed to list staged changes: %v", err)
 		}
 	},
@@ -62,7 +64,10 @@ var stagedColumns = []string{"Op", "Component", "Component ID", "Created"}
 func stagedRows(changes []api.StagedChange) [][]string {
 	rows := make([][]string, len(changes))
 	for i, c := range changes {
-		rows[i] = []string{c.Op, c.ComponentType, ui.StrOrDash(c.ComponentID), c.CreatedAt}
+		// The Created cell used to be the wire's RFC3339 echoed back — `2026-03-09T15:04:05Z` in a
+		// column a person reads, while the console showed `9 Mar 2026, 15:04` for the same instant.
+		// ui.Stamp is that one rule, in UTC.
+		rows[i] = []string{c.Op, c.ComponentType, ui.StrOrDash(c.ComponentID), ui.Stamp(c.CreatedAt)}
 	}
 	return rows
 }
@@ -92,8 +97,8 @@ func runStagedList(c apiClient, out io.Writer, format, project, env string) erro
 }
 
 func init() {
-	stagedCmd.PersistentFlags().StringP("project", "p", "", "Project name or id")
-	stagedCmd.PersistentFlags().StringP("env", "e", "", "Environment name, stage, or id (default: the project's default environment)")
+	stagedCmd.PersistentFlags().StringP("project", "p", "", byoFlagUsage("alethia staged", byoKeyProject))
+	stagedCmd.PersistentFlags().StringP("env", "e", "", byoFlagUsage("alethia staged", byoKeyEnv))
 	stagedCmd.AddCommand(stagedListCmd)
 	rootCmd.AddCommand(stagedCmd)
 }

@@ -90,7 +90,7 @@ func runRepoList(c apiClient, out io.Writer, format, provider string) error {
 }
 
 func init() {
-	repoListCmd.Flags().String("provider", "github", "Git provider (github, gitlab, bitbucket)")
+	repoListCmd.Flags().String("provider", gitProviders[0], byoFlagUsage("alethia repo list", byoKeyProvider)+" ("+gitProvidersLabel()+")")
 	repoCmd.AddCommand(repoListCmd)
 	rootCmd.AddCommand(repoCmd)
 }
