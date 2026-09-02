@@ -45,10 +45,11 @@ alethia
 │   ├── create <name>
 │   └── delete <team_id>
 ├── connector                        # manage cloud identities (credential anchors)
-│   ├── gcp [--project <id>] [--manual]
-│   ├── aws [--region <r>] [--role-name <name>] [--manual]
-│   ├── azure [--subscription <id>] [--manual]
-│   ├── alibaba [--region <r>] [--dir <path>]
+│   ├── gcp [--project <id>] [--manual] [--wif-config <f>]
+│   ├── aws [--region <r>] [--role-name <n>] [--manual] [--script] [--role-arn <arn>]
+│   ├── azure [--subscription <id>] [--manual] [--tenant-id <id>] [--client-id <id>]
+│   ├── alibaba [--region <r>] [--dir <path>] [--manual] [--terraform] [--role-arn <arn>]
+│   ├── hetzner [--token <t>] [--token-stdin] [--s3-access-key <k>] [--s3-secret-key <k>]
 │   ├── list
 │   └── remove [provider] [-y/--yes]
 ├── project
@@ -85,7 +86,7 @@ alethia
 ├── repo                              # aliases: repos, repositories — browse connected git repos
 │   └── list [--provider github]      # provider: github, gitlab, bitbucket
 ├── cloud                             # inspect discovered cloud resources
-│   └── inventory <cloud_identity_id>
+│   └── inventory [provider|cloud_identity_id]
 ├── agent                             # alias: agents — inspect agent identities
 │   ├── list
 │   └── get <agent_id>
