@@ -43,15 +43,20 @@ const Dash = "—"
 
 // ── money ──────────────────────────────────────────────────────────────────────────────────────
 
-// RateStyle selects how a recurring cost is written.
+// RateStyle selects how a per-month figure is written. Shared by MonthlyRate and MonthlyDelta,
+// which do NOT read it identically — stated here rather than left to be discovered at a call site.
 type RateStyle string
 
 const (
-	// Estimate is a projection: whole currency units, and an honest `<$1/mo` rather than a
-	// rounded-to-zero number that reads as free.
+	// Estimate is a projection. For MonthlyRate that means it may ADMIT it does not know, with an
+	// honest `<$1/mo` rather than a rounded-to-zero number that reads as free; the minor units are
+	// still shown above one unit. For MonthlyDelta it means WHOLE currency units — `+$13/mo` — and
+	// there is no `<$1/mo`, because a change that rounds to nothing is honestly reported as no
+	// change, while a COST that rounds to nothing would be misreported as free.
 	Estimate RateStyle = "estimate"
 	// Exact is a billed or itemised figure: always minor units, because a column of costs that
-	// sometimes shows cents and sometimes does not is unreadable as a column.
+	// sometimes shows cents and sometimes does not is unreadable as a column. Both functions read
+	// it the same way, and both treat an unknown style as this one.
 	Exact RateStyle = "exact"
 )
 
@@ -173,10 +178,14 @@ func Money(cents float64, currency string) string {
 //
 // amount must be an ABSOLUTE cost, not a delta. `<= 0` is one test, so a NEGATIVE is clamped in
 // both registers and its sign is lost: -5 renders `$0/mo` / `$0.00/mo`, identical to nothing
-// running, even in Exact, which otherwise rounds nothing away. That is a known gap, pinned on
-// both sides by the conformance cases `monthlyRate/{estimate,exact}/negative-clamps` and matching
-// the TypeScript `formatMonthlyRate`. There is no credit register here; a saving or a diff needs
-// its own function rather than a caller reaching for Exact and assuming the sign survives.
+// running, even in Exact, which otherwise rounds nothing away.
+//
+// That is a REFUSAL, and until #3768 it was a gap. This function means an absolute cost; clamping
+// is how it declines input it was never for, and MonthlyDelta is the register a signed amount goes
+// to. Pinned on both sides by the conformance cases
+// `monthlyRate/{estimate,exact}/negative-REFUSED-see-monthlyDelta`, matching the TypeScript
+// `formatMonthlyRate`. Do not reach for Exact and assume the sign survives — it does not, and that
+// is the property the split buys.
 func MonthlyRate(amount float64, style RateStyle, currency string) string {
 	decimals := decimalsFor(currency)
 	if math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0 {
@@ -194,6 +203,68 @@ func MonthlyRate(amount float64, style RateStyle, currency string) string {
 		return "<" + render(1, currency, 0) + "/mo"
 	}
 	return render(rounded, currency, decimals) + "/mo"
+}
+
+// MonthlyDelta renders a CHANGE in a recurring monthly cost, signed: `-$5.00/mo`, `+$12.50/mo`,
+// `$0/mo`. Major units, like MonthlyRate.
+//
+// The credit register MonthlyRate refuses to be. Split rather than bolted on, so a caller has to
+// say which kind of number it holds: making MonthlyRate signed would have let every existing
+// absolute call site render a negative it has no meaning for. The waiting consumer is
+// `packages/core/infracost`'s `Summary.DiffMonthly`, which goes in BOTH directions — a plan can get
+// more expensive — which is also why this is not called MonthlySaving.
+//
+// THE SIGN LEADS THE SYMBOL, which is already `render`'s rule: `$-5.00` is not a form anyone
+// writes. The sign is assembled around the MAGNITUDE here rather than left to `render`'s own
+// negative branch, because `render` has no `+` and the two languages must agree about both.
+//
+// ZERO CARRIES NO SIGN — `+$0/mo` reads as an increase that did not happen — and it drops the minor
+// units in BOTH registers, where MonthlyRate's Exact would say `$0.00/mo`. That padding exists so a
+// column of LEVELS aligns under its total; "no change" is not a level.
+//
+// A CHANGE THAT RENDERS AS ZERO carries no sign either. That is the same rule, not a second one:
+// the sign is decided by the ROUNDED MAGNITUDE, so 0.4 in Estimate (whole units) and 0.001 in Exact
+// (cents) both render `$0/mo`. Deciding it on the raw amount instead yields `+$0/mo` and
+// `+$0.00/mo` — exactly what the rule above forbids.
+//
+// There is deliberately NO `<$1/mo` here. MonthlyRate's admission protects a claim about a LEVEL,
+// where a rounded-to-zero figure reads as FREE; "no change worth showing" is a true reading of a
+// delta. And `-<$1/mo` puts the sign and the `<` in competition for the leading position.
+//
+// A currency with no symbol falls back to the ISO code exactly as everywhere else in this file —
+// which is a Go-side RULING rather than a mirror, so it is tested in format_test.go and not in the
+// conformance table. See that file's header.
+func MonthlyDelta(amount float64, style RateStyle, currency string) string {
+	// One spelling of "no change", reached by two routes: a literal zero and a magnitude that
+	// rounds to one. Both must be UNSIGNED and both drop the minor units, so it is built once
+	// rather than in two branches that could drift.
+	noChange := render(0, currency, 0) + "/mo"
+	if math.IsNaN(amount) || math.IsInf(amount, 0) || amount == 0 {
+		return noChange
+	}
+
+	// ONE test for the register, used by every branch below. MonthlyRate's first cut asked the
+	// question twice with opposite polarity and gave one caller two registers; asking once means an
+	// undefined style lands on Exact everywhere, which is the safe side — showing minor units where
+	// whole units were wanted is cosmetic, the reverse misstates money.
+	decimals := decimalsFor(currency)
+	if style == Estimate {
+		decimals = 0
+	}
+
+	magnitude := render(math.Abs(amount), currency, decimals)
+	// Compared as RENDERED, not as a number. "Does this round to zero" is a question about the
+	// currency's own decimals, and `render` already answers it; re-deriving the threshold here
+	// would be a second copy of `decimalsFor` that can disagree with the first.
+	if magnitude == render(0, currency, decimals) {
+		return noChange
+	}
+
+	sign := "+"
+	if amount < 0 {
+		sign = "-"
+	}
+	return sign + magnitude + "/mo"
 }
 
 // ── time ───────────────────────────────────────────────────────────────────────────────────────
