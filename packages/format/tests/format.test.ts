@@ -10,6 +10,7 @@ import {
 	formatMinutes,
 	formatQuota,
 	formatMoney,
+	formatMonthlyDelta,
 	formatMonthlyRate,
 	formatRelative,
 } from "../src/index";
@@ -263,19 +264,25 @@ describe("formatMonthlyRate", () => {
 		expect(formatMonthlyRate(Number.NaN, "exact")).toBe("$0.00/mo");
 	});
 
-	// This case is NOT a protection — it is the opposite, and it is split out from the zero case
-	// above so that nobody reads a clamped negative as "nothing provisioned". `<= 0` is ONE test,
-	// so a saving renders exactly as zero does in BOTH registers, including the one that promises
-	// to round nothing away: a column holding a credit will not sum to its own total. There is no
-	// credit register in this package or in `packages/core/format`, and `"exact"` is not one —
-	// rendering a delta or a saving needs a new function, not a new caller. Pinned here so the
-	// gap cannot be closed, or widened, without a reader seeing it.
-	it("LOSES THE SIGN: a negative clamps to zero in both registers, so a saving reads as nothing", () => {
+	// Split out from the zero case above so that nobody reads a clamped negative as "nothing
+	// provisioned". `<= 0` is ONE test, so a saving renders exactly as zero does in BOTH registers,
+	// including the one that promises to round nothing away.
+	//
+	// This used to be a pinned GAP. It is now a pinned REFUSAL, and only the second half of that
+	// sentence changed: the rows are the same, and `formatMonthlyDelta` is what makes them mean
+	// something. `formatMonthlyRate` renders an ABSOLUTE cost; declining a delta is not a defect in
+	// it, and `"exact"` is still not a credit register. The last assertion is the one that states
+	// the split rather than the clamp — same input, two functions, two answers — so a change that
+	// made `formatMonthlyRate` signed would fail HERE rather than only in the conformance table.
+	it("REFUSES A SIGNED AMOUNT: a negative clamps in both registers, and formatMonthlyDelta is where it goes", () => {
 		expect(formatMonthlyRate(-1)).toBe("$0/mo");
 		expect(formatMonthlyRate(-1, "exact")).toBe("$0.00/mo");
 		expect(formatMonthlyRate(-1240.37, "exact")).toBe("$0.00/mo");
 		expect(formatMonthlyRate(-12.5, "exact", "EUR")).toBe("€0.00/mo");
 		expect(formatMonthlyRate(Number.NEGATIVE_INFINITY, "exact")).toBe("$0.00/mo");
+
+		expect(formatMonthlyDelta(-1, "exact")).toBe("-$1.00/mo");
+		expect(formatMonthlyDelta(-1, "exact")).not.toBe(formatMonthlyRate(-1, "exact"));
 	});
 
 	// The runner fleet prices in euros. One symbol decision, shared with formatMoney.
@@ -286,5 +293,99 @@ describe("formatMonthlyRate", () => {
 		expect(formatMonthlyRate(1240, "estimate", "EUR")).toBe("€1,240.00/mo");
 		expect(formatMonthlyRate(0.4, "exact", "EUR")).toBe("€0.40/mo");
 		expect(formatMonthlyRate(0, "exact", "EUR")).toBe("€0.00/mo");
+	});
+});
+
+describe("formatMonthlyDelta", () => {
+	// The whole reason this function exists, in one assertion pair. The ruling on #3768 rejected
+	// making formatMonthlyRate signed — that would have let every absolute call site render a
+	// negative it has no meaning for — and rejected `$5.00/mo saved`, which is a sentence rather
+	// than a number: it does not sum, does not right-align, and needs a translation story.
+	it("KEEPS THE SIGN in both directions, where formatMonthlyRate loses it", () => {
+		expect(formatMonthlyDelta(-5, "exact")).toBe("-$5.00/mo");
+		expect(formatMonthlyDelta(12.5, "exact")).toBe("+$12.50/mo");
+		expect(formatMonthlyRate(-5, "exact")).toBe("$0.00/mo");
+	});
+
+	// `$-5.00` is not a form anyone writes. Intl's narrowSymbol puts the minus first and
+	// packages/core/format's `render` mirrors it, so the leading sign is the house rule rather
+	// than a choice made here. Asserted on the CHARACTER, because "contains a minus" passes for
+	// `$-5.00` too.
+	it("puts the sign BEFORE the currency symbol, not between it and the digits", () => {
+		expect(formatMonthlyDelta(-5, "exact")).toMatch(/^-\$/);
+		expect(formatMonthlyDelta(5, "exact")).toMatch(/^\+\$/);
+		expect(formatMonthlyDelta(-12.5, "exact", "EUR")).toBe("-€12.50/mo");
+		expect(formatMonthlyDelta(-12.5, "exact")).not.toContain("$-");
+	});
+
+	// `+$0/mo` reads as an increase that did not happen. And the exact register drops the minor
+	// units here, where formatMonthlyRate keeps them: `$0.00/mo` pads so a column of LEVELS aligns
+	// under its total, and "no change" is not a level.
+	it("gives ZERO no sign, in either register, and no minor units either", () => {
+		expect(formatMonthlyDelta(0)).toBe("$0/mo");
+		expect(formatMonthlyDelta(0, "exact")).toBe("$0/mo");
+		expect(formatMonthlyRate(0, "exact")).toBe("$0.00/mo");
+	});
+
+	// The same rule, reached by the other route, and the one a plausible implementation gets
+	// wrong: decide the sign on the RAW amount and these render `+$0/mo` and `+$0.00/mo`.
+	it("gives a change that ROUNDS to zero no sign either, which is the same rule", () => {
+		expect(formatMonthlyDelta(0.4)).toBe("$0/mo");
+		expect(formatMonthlyDelta(-0.4)).toBe("$0/mo");
+		expect(formatMonthlyDelta(0.001, "exact")).toBe("$0/mo");
+		expect(formatMonthlyDelta(-0.001, "exact")).toBe("$0/mo");
+		// ...and it is genuinely the rounded magnitude doing it, not a hardcoded sub-unit branch:
+		// half a unit rounds UP and the sign comes back.
+		expect(formatMonthlyDelta(0.5)).toBe("+$1/mo");
+	});
+
+	// There is NO `<$1/mo` here, deliberately. formatMonthlyRate's admission protects a claim about
+	// a LEVEL, where "free" is a category the reader would wrongly conclude; "no change worth
+	// showing" is a true reading of a delta that rounds to nothing. And `-<$1/mo` would put the
+	// sign and the `<` in competition for the leading position.
+	it("does NOT borrow formatMonthlyRate's `<$1/mo` admission", () => {
+		expect(formatMonthlyDelta(0.023)).not.toContain("<");
+		expect(formatMonthlyDelta(-0.023)).not.toContain("<");
+		expect(formatMonthlyRate(0.023)).toBe("<$1/mo");
+	});
+
+	// Unlike formatMonthlyRate, the two registers here differ in PRECISION. Same input, one pair.
+	it("reads its two registers as whole units versus minor units", () => {
+		expect(formatMonthlyDelta(0.4, "estimate")).toBe("$0/mo");
+		expect(formatMonthlyDelta(0.4, "exact")).toBe("+$0.40/mo");
+		expect(formatMonthlyDelta(12.5, "estimate")).toBe("+$13/mo");
+		expect(formatMonthlyDelta(12.5, "exact")).toBe("+$12.50/mo");
+	});
+
+	// The defect this package was built to end: Go's %.0f rounds half to EVEN and renders 12, JS
+	// rounds half away from zero and renders 13. Pinned in BOTH directions, because half-to-even
+	// and half-toward-zero disagree with this on different inputs.
+	it("rounds the MAGNITUDE half away from zero, in both directions", () => {
+		expect(formatMonthlyDelta(12.5)).toBe("+$13/mo");
+		expect(formatMonthlyDelta(-12.5)).toBe("-$13/mo");
+		expect(formatMonthlyDelta(13.5)).toBe("+$14/mo");
+		expect(formatMonthlyDelta(12.49)).toBe("+$12/mo");
+	});
+
+	// A non-finite delta is "no change", not "NaN more per month". Same clamp every formatter here
+	// makes, and it must not acquire a sign on the way.
+	it("does not render NaN or Infinity into a cost summary", () => {
+		expect(formatMonthlyDelta(Number.NaN)).toBe("$0/mo");
+		expect(formatMonthlyDelta(Number.NaN, "exact")).toBe("$0/mo");
+		expect(formatMonthlyDelta(Number.POSITIVE_INFINITY)).toBe("$0/mo");
+		expect(formatMonthlyDelta(Number.NEGATIVE_INFINITY, "exact")).toBe("$0/mo");
+	});
+
+	// One symbol decision, shared with formatMoney and formatMonthlyRate, and it has to survive
+	// every branch — including a currency whose minor unit does not exist, where the two registers
+	// therefore give the same answer.
+	it("honours a currency in every branch of both registers", () => {
+		expect(formatMonthlyDelta(12.5, "estimate", "EUR")).toBe("+€13/mo");
+		expect(formatMonthlyDelta(-12.5, "exact", "EUR")).toBe("-€12.50/mo");
+		expect(formatMonthlyDelta(0, "estimate", "EUR")).toBe("€0/mo");
+		expect(formatMonthlyDelta(0.4, "estimate", "EUR")).toBe("€0/mo");
+		expect(formatMonthlyDelta(1240.37, "exact", "EUR")).toBe("+€1,240.37/mo");
+		expect(formatMonthlyDelta(12.5, "estimate", "JPY")).toBe("+¥13/mo");
+		expect(formatMonthlyDelta(12.5, "exact", "JPY")).toBe("+¥13/mo");
 	});
 });
