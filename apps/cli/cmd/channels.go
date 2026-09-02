@@ -85,6 +85,8 @@ var (
 	channelRoutingKey    string
 )
 
+var channelTypes = []string{"webhook", "email", "slack", "rocketchat", "discord", "teams", "mattermost", "googlechat", "pagerduty"}
+
 var channelsCreateCmd = &cobra.Command{
 	Use:   "create <name>",
 	Short: "Create a notification channel",
@@ -128,7 +130,11 @@ func channelConfig() map[string]interface{} {
 
 // runChannelsCreate creates a channel and confirms it.
 func runChannelsCreate(c apiClient, out io.Writer, name, channelType string, config map[string]interface{}) error {
-	ch, err := c.CreateChannel(name, channelType, config)
+	canonical, err := canonicalOneOf("type", channelType, channelTypes)
+	if err != nil {
+		return err
+	}
+	ch, err := c.CreateChannel(name, canonical, config)
 	if err != nil {
 		return err
 	}
