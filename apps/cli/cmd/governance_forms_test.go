@@ -381,7 +381,11 @@ func TestProbeRowsRenderThroughTheSharedSurface(t *testing.T) {
 	if rows[1][2] != msg {
 		t.Errorf("a real message was not carried through: %q", rows[1][2])
 	}
-	if want := "2026-01-01 00:00"; rows[0][3] != want {
+	// `2 Jan 2006, 15:04` — format.DateTime, the ONE absolute-date rendering the CLI has
+	// (packages/core/format/format.go:348). Asserted as the shared surface DEFINES it, not as
+	// this table happens to print it: an expectation copied from observed output agrees with
+	// whatever the code does and stops being a claim about anything.
+	if want := "1 Jan 2026, 00:00"; rows[0][3] != want {
 		t.Errorf("Probed renders %q, want %q — the raw RFC 3339 string is the wire's, not the "+
 			"table's", rows[0][3], want)
 	}
