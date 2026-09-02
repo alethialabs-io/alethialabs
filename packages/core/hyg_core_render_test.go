@@ -14,10 +14,23 @@ import (
 	"testing"
 )
 
-// The core packages have one human-facing render that is deliberately held until #3768 moves
-// Infracost output to the shared formatter. Exemptions are issue-backed decisions, not a mute list.
+// renderExemptions are the files whose human renders this guard has SEEN and a named issue owns.
+// An exemption is an issue-backed decision, not a mute list: the staleness check at the end of
+// TestHygCoreRender_NoUnsharedHumanRenders fails when an entry names a file that no longer
+// produces a finding, so the list cannot rot into a permanent allowance — it only shrinks.
+//
+// #3892 asked for this guard to ship with an EMPTY list, on the measurement that #3888 had already
+// migrated the runner's money and elapsed spans onto packages/core/format. #3888 is still OPEN, so
+// that measurement was taken against a tree that does not exist yet: the four #3888 entries below
+// are what packages/core actually contains today, and #3888 touches exactly those four files.
+// Each is deleted when #3888 lands — that PR's own diff is what makes the entry stale, and the
+// staleness check turns "forgot to delete it" into a red run rather than a silent allowance.
 var renderExemptions = map[string]string{
-	"infracost/infracost.go": "#3768: Infracost's external summary remains a documented migration exception",
+	"infracost/infracost.go":               "#3768: Infracost's external summary remains a documented migration exception",
+	"argocd/webhook_wait.go":               "#3888 (open): the admission-webhook timeout span moves to format.Duration there — remove this entry when #3888 lands",
+	"k8s/probe.go":                         "#3888 (open): both API-server reachability spans move to format.Duration there — remove this entry when #3888 lands",
+	"provisioner/cost_ceiling.go":          "#3888 (open): the two $%.2f ceiling literals move to the shared money formatter there — remove this entry when #3888 lands",
+	"provisioner/destroy_loadbalancers.go": "#3888 (open): the load-balancer release span moves to format.Duration there — remove this entry when #3888 lands",
 }
 
 var moneyLiteral = regexp.MustCompile(`[$€£¥]%[-+ #0-9.*']*[a-zA-Z]`)
@@ -41,14 +54,15 @@ func scanCoreSource(filename, source string) []renderFinding {
 				findings = append(findings, renderFinding{kind: "money", text: n.Value})
 			}
 		case *ast.CallExpr:
-			if !isPrintfCall(n) || len(n.Args) < 1 {
+			at := printfFormatIndex(n)
+			if at < 0 || len(n.Args) <= at {
 				return true
 			}
-			format, ok := n.Args[0].(*ast.BasicLit)
+			format, ok := n.Args[at].(*ast.BasicLit)
 			if !ok || format.Kind != token.STRING || !strings.Contains(format.Value, "%") {
 				return true
 			}
-			for _, arg := range n.Args[1:] {
+			for _, arg := range n.Args[at+1:] {
 				if containsDuration(arg) {
 					findings = append(findings, renderFinding{kind: "duration", text: format.Value})
 					break
@@ -60,13 +74,28 @@ func scanCoreSource(filename, source string) []renderFinding {
 	return findings
 }
 
-// isPrintfCall identifies the standard-library calls whose first string argument is a human render.
-func isPrintfCall(call *ast.CallExpr) bool {
+// printfFormatIndex reports which argument of a Printf-family call carries the human-facing format
+// string, or -1 when the call is not one.
+//
+// Both halves of this were wrong in the first cut, and they hid each other. It accepted only
+// Printf/Sprintf — of which packages/core has 396, not one of them taking a duration — so the
+// duration half of the guard matched zero real sites while reporting green. The four human duration
+// renders here are three fmt.Errorf and one fmt.Fprintf. And Fprintf's format is its SECOND
+// argument: reading argument 0 as the format finds a writer, fails the string-literal test and
+// returns quietly, so merely adding the name to the old one-index check would still have missed
+// provisioner/destroy_loadbalancers.go. The index is the fix; the name list alone is not.
+func printfFormatIndex(call *ast.CallExpr) int {
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
-		return false
+		return -1
 	}
-	return selector.Sel.Name == "Printf" || selector.Sel.Name == "Sprintf"
+	switch selector.Sel.Name {
+	case "Printf", "Sprintf", "Errorf":
+		return 0
+	case "Fprintf":
+		return 1
+	}
+	return -1
 }
 
 // containsDuration reports whether an expression exposes a duration to a human formatter.
@@ -159,6 +188,16 @@ func TestHygCoreRender_NoUnsharedHumanRenders(t *testing.T) {
 		}
 		t.Errorf("%s contains unshared human render(s): %v — use packages/core/format", file, matches)
 	}
+	// A stale exemption is its own failure. renderExemptions is consulted only for files that
+	// PRODUCED a finding, so an entry whose file no longer matches is never read — it sits forever
+	// excusing nothing, while the list still reads as a set of live decisions. That is how the four
+	// #3888 entries above would outlive #3888. apps/cli/cmd/hyg_cli_render_test.go makes the same
+	// assertion about its own list; the direction is the same here: the list only shrinks.
+	for file := range renderExemptions {
+		if _, produced := findings[file]; !produced {
+			t.Errorf("exemption %q names a file that produces no finding — delete it; the list only shrinks", file)
+		}
+	}
 }
 
 func TestHygCoreRender_DetectorSpeaksAndRespectsMachineBoundaries(t *testing.T) {
@@ -168,6 +207,19 @@ func TestHygCoreRender_DetectorSpeaksAndRespectsMachineBoundaries(t *testing.T) 
 		`package p; import ("fmt"; "time"); func f(){ fmt.Printf("cost: $%.2f", 1.25) }`:                                    true,
 		"package p; func f(){ _ = \"cost: $12.50\" }":                                                                       false,
 		`package p; import ("os/exec"; "time"); func f(){ exec.Command("tool", time.Since(time.Now()).String()) }`:          false,
+
+		// The shapes packages/core actually uses. Every real duration render here is an Errorf or an
+		// Fprintf, and every one of them rounds first — so a detector that handles neither passes the
+		// three cases above and still matches nothing in the tree it is guarding.
+		`package p; import ("fmt"; "time"); func f() error { return fmt.Errorf("still waiting after %s", time.Since(time.Now())) }`:                    true,
+		`package p; import ("fmt"; "time"); func f() error { return fmt.Errorf("still waiting after %s", time.Since(time.Now()).Round(time.Second)) }`: true,
+		`package p; import ("fmt"; "os"; "time"); func f(){ fmt.Fprintf(os.Stdout, "released after %s", time.Since(time.Now()).Round(time.Second)) }`:  true,
+
+		// Fprintf's writer is not its format. If argument 0 were read as the format string these two
+		// would flip: the first would go quiet (a writer is not a string literal) and the second would
+		// start scanning the format itself as a value argument.
+		`package p; import ("fmt"; "os"; "time"); func f(){ fmt.Fprintf(os.Stdout, "released after %s", format.Duration(time.Since(time.Now()))) }`: false,
+		`package p; import ("fmt"; "os"); func f(){ fmt.Fprintf(os.Stdout) }`:                                                                       false,
 	}
 	for source, want := range cases {
 		got := len(scanCoreSource("fixture.go", source)) > 0
