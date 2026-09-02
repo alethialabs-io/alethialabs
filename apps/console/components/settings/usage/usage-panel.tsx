@@ -170,11 +170,11 @@ export function UsagePanel() {
 			{/* Header: plan standing + the upgrade / manage affordance. */}
 			<div className="flex flex-wrap items-center justify-between gap-3 pb-2">
 				<div className="flex items-baseline gap-2">
-					<span className="font-display text-[15px] font-semibold text-text-primary">
+					<span className="font-display text-ui-lg font-semibold text-text-primary">
 						{planMeta(summary.plan).name} plan
 					</span>
 					{usage && (
-						<span className="font-mono text-[11px] text-text-tertiary">
+						<span className="font-mono text-ui-xs text-text-tertiary">
 							period to {formatDate(usage.periodEnd)}
 						</span>
 					)}
@@ -187,7 +187,7 @@ export function UsagePanel() {
 				) : (
 					<Link
 						href={`/${orgSlug}/settings/billing`}
-						className="inline-flex items-center gap-1 text-[12.5px] text-text-secondary transition-colors hover:text-text-primary"
+						className="inline-flex items-center gap-1 text-ui-sm text-text-secondary transition-colors hover:text-text-primary"
 					>
 						Manage billing
 						<ArrowUpRight size={13} />
@@ -252,7 +252,7 @@ export function UsagePanel() {
 
 					{/* Spend control: pause at the included allowance instead of overage. */}
 					{usage && usage.plan !== "community" && (
-						<label className="flex cursor-pointer items-center gap-2 border-t border-border px-6 py-3 text-[12px] text-text-tertiary">
+						<label className="flex cursor-pointer items-center gap-2 border-t border-border px-6 py-3 text-ui-sm text-text-tertiary">
 							<input
 								type="checkbox"
 								className="accent-ink"
@@ -275,7 +275,7 @@ export function UsagePanel() {
 						</label>
 					)}
 
-					<div className="flex items-center gap-2 border-t border-border bg-surface-sunken px-6 py-[14px] text-[12px] text-text-tertiary">
+					<div className="flex items-center gap-2 border-t border-border bg-surface-sunken px-6 py-[14px] text-ui-sm text-text-tertiary">
 						<Info size={13} />
 						Your cloud-resource spend is billed separately by your provider.
 					</div>
@@ -340,7 +340,7 @@ export function UsagePanel() {
 									key={m.id}
 									type="button"
 									onClick={() => setMetric(m.id)}
-									className={`rounded-sm px-2.5 py-1 text-[12px] transition-colors ${
+									className={`rounded-sm px-2.5 py-1 text-ui-sm transition-colors ${
 										metric === m.id
 											? "bg-surface-muted text-text-primary"
 											: "text-text-tertiary hover:text-text-secondary"
@@ -350,7 +350,7 @@ export function UsagePanel() {
 								</button>
 							))}
 						</div>
-						<div className="font-mono text-[12px] text-text-secondary">
+						<div className="font-mono text-ui-sm text-text-secondary">
 							{metricTotal.toLocaleString()}{" "}
 							<span className="text-text-tertiary">
 								{METRICS.find((m) => m.id === metric)?.label.toLowerCase()} ·{" "}
@@ -361,7 +361,7 @@ export function UsagePanel() {
 					{overTime && overTime.series.length > 0 ? (
 						<Bars points={overTime.series} pick={(p) => p[metric]} />
 					) : (
-						<div className="flex h-28 items-center justify-center font-mono text-[11px] text-text-tertiary">
+						<div className="flex h-28 items-center justify-center font-mono text-ui-xs text-text-tertiary">
 							No usage in this range.
 						</div>
 					)}
