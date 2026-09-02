@@ -38,7 +38,7 @@ var addonListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var view *api.ProjectAddons
-			ui.RunSpinner("Fetching add-ons...", func() {
+			runSpinner("Fetching add-ons...", func() {
 				view, err = client.GetProjectAddons(project, env)
 			})
 			if err != nil {

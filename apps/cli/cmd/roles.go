@@ -35,7 +35,7 @@ var rolesListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var roles []api.Role
-			ui.RunSpinner("Fetching roles...", func() { roles, err = client.ListRoles() })
+			runSpinner("Fetching roles...", func() { roles, err = client.ListRoles() })
 			if err != nil {
 				failf("Failed to list roles: %v", err)
 			}
@@ -110,7 +110,7 @@ Authoring custom roles requires an Enterprise license.`,
 		// A role with no permissions is one the server accepts (`permission_keys` defaults to []),
 		// so a scripted caller who omits --permission is not refused. On a terminal it is asked,
 		// because a role that grants nothing is almost never what someone meant to create.
-		if len(permissions) == 0 && formAvailable() {
+		if len(permissions) == 0 && canPromptForm() {
 			permissions, err = promptRolePermissions(client, nil)
 			if err != nil {
 				fail(err)

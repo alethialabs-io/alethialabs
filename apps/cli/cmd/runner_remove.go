@@ -45,7 +45,7 @@ that already pass one; passing both is refused rather than resolved by precedenc
 		}
 
 		if runnerID == "" {
-			if noInputMode {
+			if !canPromptForm() {
 				failf("no runner given: pass --runner (its name or its id), or the runner id as the argument")
 			}
 			runnerID, err = selectRunner(token, "")
@@ -65,7 +65,7 @@ that already pass one; passing both is refused rather than resolved by precedenc
 			return
 		}
 
-		ui.RunSpinner("Removing runner...", func() {
+		runSpinner("Removing runner...", func() {
 			err = apiClient.RemoveRunner(runnerID)
 		})
 

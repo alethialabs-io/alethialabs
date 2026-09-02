@@ -110,7 +110,7 @@ var projectComponentListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var comps []api.Component
-			ui.RunSpinner("Fetching components...", func() {
+			runSpinner("Fetching components...", func() {
 				comps, err = client.ListComponents(project, componentListKind, currentComponentEnv(cmd))
 			})
 			if err != nil {
@@ -290,7 +290,7 @@ func componentKindOptions(seed string) []huh.Option[string] {
 // thing that reads it is a deploy — so offering the names that exist beats accepting a typo
 // that the server resolves to the default environment.
 func promptComponentAdd(c apiClient, project string, seed componentAddSpec) (componentAddSpec, error) {
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return seed, err
 	}
 	out := seed
@@ -631,7 +631,7 @@ var projectComponentRemoveCmd = &cobra.Command{
 // promptComponentKind asks which kind to act on. Only reached with no --kind, so there is no
 // seed to keep on the list.
 func promptComponentKind() (string, error) {
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return "", err
 	}
 	kind := componentKinds[0]
@@ -655,7 +655,7 @@ func promptComponentKind() (string, error) {
 // no --env it spans every environment, matching what `component list` shows, while the delete
 // itself is scoped to the default environment, which is what the confirmation says.
 func promptComponentName(c apiClient, project, kind, env string) (string, error) {
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return "", err
 	}
 	var name string

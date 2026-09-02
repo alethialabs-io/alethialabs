@@ -38,7 +38,7 @@ var promotionListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var promos []api.Promotion
-			ui.RunSpinner("Fetching promotions...", func() {
+			runSpinner("Fetching promotions...", func() {
 				promos, err = client.GetProjectPromotions(project, env)
 			})
 			if err != nil {

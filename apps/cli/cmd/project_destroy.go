@@ -46,7 +46,7 @@ var projectDestroyCmd = &cobra.Command{
 		// The runner picker cannot be answered with prompting disabled, and the
 		// assignment is optional — an empty id is the picker's own "Any available"
 		// default — so a scripted teardown simply leaves the job unassigned.
-		if projectDestroyRunnerID == "" && !noInputMode {
+		if projectDestroyRunnerID == "" && canPromptForm() {
 			projectDestroyRunnerID, err = selectRunner(token, "")
 			if err != nil {
 				fail(err)

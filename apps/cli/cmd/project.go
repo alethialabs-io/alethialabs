@@ -287,7 +287,7 @@ func projectRefFor(configs []types.ConfigurationSummary, id string) string {
 func projectsForPicker(token string) ([]types.ConfigurationSummary, error) {
 	var configs []types.ConfigurationSummary
 	var err error
-	ui.RunSpinner("Fetching projects...", func() {
+	runSpinner("Fetching projects...", func() {
 		configs, err = api.NewClient(token).GetConfigurations()
 	})
 	if err != nil {
@@ -313,7 +313,7 @@ func projectsForPicker(token string) ([]types.ConfigurationSummary, error) {
 // endpoint and apps repo is a silent wrong read — the case cli-config.ts records as worse than an
 // error for a provisioning tool.
 func promptProjectNameRef(token string) (string, error) {
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return "", err
 	}
 	configs, err := projectsForPicker(token)
@@ -374,7 +374,7 @@ func promptProjectNameRef(token string) (string, error) {
 // id and nothing else. This one feeds a flag the server resolves either way, and its answer
 // is printed back to a human.
 func promptProjectRef(token string) (string, error) {
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return "", err
 	}
 	configs, err := projectsForPicker(token)
@@ -555,15 +555,15 @@ func printReplay(out io.Writer, format string, asked bool, args ...string) {
 
 // promptsEnabled reports whether this invocation may ask a question.
 //
-// noInputMode ALONE, deliberately. The obvious extra condition — "and the output format is
+// The SHARED gate, deliberately. The obvious extra condition — "and the output format is
 // table" — would make the project group the only group in the CLI whose prompting depends on
 // --output, and every other selector in the tree (selectProject, selectRunner,
-// pickCloudIdentity) consults noInputMode and nothing else. A group that disagrees with the
+// pickCloudIdentity) consults canPromptForm and nothing else. A group that disagrees with the
 // rest of the product about when it may ask a question is the "two implementations of one
 // product" defect this epic exists to close, one directory down. The format split belongs to
 // what is PRINTED, which is where printReplay above applies it.
 func promptsEnabled() bool {
-	return !noInputMode
+	return canPromptForm()
 }
 
 func init() {

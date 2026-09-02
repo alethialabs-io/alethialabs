@@ -263,7 +263,7 @@ func parseEnvMatrix(specs []string) ([]api.EnvironmentSpec, error) {
 // through parseEnvMatrix means the interactive path is tested by everything that tests the flag,
 // and TestProj_EnvFormAndEnvFlagAreOneSpec proves the two agree rather than assuming it.
 func promptEnvMatrix() ([]string, error) {
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return nil, err
 	}
 	declare, err := askYesNo(
@@ -308,7 +308,7 @@ func promptEnvMatrix() ([]string, error) {
 
 // promptProjectName asks for the project's name when it was not passed as the argument.
 func promptProjectName() (string, error) {
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return "", err
 	}
 	name, err := askLine("Project name", "The app this infrastructure belongs to, e.g. boutique")
@@ -327,7 +327,7 @@ func promptProjectName() (string, error) {
 // error for a missing region names the field, and refusing locally would turn a dismissed
 // form into a message about a flag the person was in the middle of answering.
 func promptRegion() (string, error) {
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return "", err
 	}
 	return askLine("Region", "The cloud region to provision into (e.g. eu-west-1)")

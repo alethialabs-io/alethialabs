@@ -167,9 +167,19 @@ func TestAddonSelect_IdIsPassedThroughUntouched(t *testing.T) {
 // TestResolveAddonID_RefusesBeforeAnyCallWhenItCannotAsk covers both ways the picker is
 // unavailable, and asserts the refusal costs no round trip.
 //
-// Both arms, because they are different conditions with different fixes: --no-input is a choice
-// the caller made, and a redirected stdout is not — `alethia addon disable -p web > out.txt` from
-// an interactive shell would otherwise draw the form's ANSI frames into the file and look hung.
+// Both arms, because they are different conditions with different fixes: --no-input is a choice the
+// caller made, and having nowhere to draw is not.
+//
+// "Nowhere to draw" means the stream a huh form actually draws on, which is NOT stdout. This arm
+// used to stub stdoutIsTTY, and its reason was that `alethia addon disable -p web > out.txt` would
+// otherwise paint the form's ANSI frames into the file. That reason no longer holds: forms and
+// spinners now draw on ui.InteractiveOutput(), so a redirected stdout leaves them on the terminal
+// where the person is. Refusing on stdout would now refuse a question it can perfectly well ask.
+//
+// The third case is the control for exactly that, and it is the one that would have caught this
+// silently: with stdout redirected and the form stream still a terminal the picker must NOT
+// short-circuit — it must get past the gate and do its round trip. Without it, re-pointing the stub
+// above would look identical to deleting the arm.
 func TestResolveAddonID_RefusesBeforeAnyCallWhenItCannotAsk(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -180,11 +190,9 @@ func TestResolveAddonID_RefusesBeforeAnyCallWhenItCannotAsk(t *testing.T) {
 			addonFormInteractive(t)
 			hygCliConfirmSetNoInput(t, true)
 		}, errNoInput.Error()},
-		{"stdout is not a terminal", func(t *testing.T) {
+		{"the stream a form draws on is not a terminal", func(t *testing.T) {
 			addonFormInteractive(t)
-			prev := stdoutIsTTY
-			stdoutIsTTY = func() bool { return false }
-			t.Cleanup(func() { stdoutIsTTY = prev })
+			withInteractiveOutputRedirected(t)
 		}, errNoTTY.Error()},
 	}
 	for _, tc := range cases {
@@ -207,6 +215,29 @@ func TestResolveAddonID_RefusesBeforeAnyCallWhenItCannotAsk(t *testing.T) {
 					"not depend on it", lister.calls)
 			}
 		})
+	}
+}
+
+// TestResolveAddonID_RedirectedStdoutStillAsks is the control for the arm above.
+//
+// stdout redirected, the form stream still a terminal: the picker must get PAST the gate. If it
+// refuses here the gate has been re-pointed at the wrong stream, and the refusal arm above would
+// still pass — which is what makes this the assertion that carries the change.
+func TestResolveAddonID_RedirectedStdoutStillAsks(t *testing.T) {
+	addonFormInteractive(t)
+	prev := stdoutIsTTY
+	stdoutIsTTY = func() bool { return false }
+	t.Cleanup(func() { stdoutIsTTY = prev })
+
+	lister := &addonFakeLister{view: addonTestView()}
+	_, err := resolveAddonID(lister, nil, "web", "production", addonDisablePrompt)
+	if errors.Is(err, errAddonIDRequired) {
+		t.Fatalf("err = %v; a redirected stdout must no longer refuse — the form draws on "+
+			"ui.InteractiveOutput(), which is still a terminal here", err)
+	}
+	if lister.calls != 1 {
+		t.Errorf("the control plane was listed %d time(s); the picker must reach it to ask",
+			lister.calls)
 	}
 }
 

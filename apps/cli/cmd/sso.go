@@ -32,7 +32,7 @@ var ssoListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var providers []api.SsoProvider
-			ui.RunSpinner("Fetching SSO providers...", func() { providers, err = client.ListSsoProviders() })
+			runSpinner("Fetching SSO providers...", func() { providers, err = client.ListSsoProviders() })
 			if err != nil {
 				failf("Failed to list SSO providers: %v", err)
 			}
@@ -101,7 +101,7 @@ it serves; with neither, pick from the org's providers.`,
 			fail(err)
 		}
 		var provider *api.SsoProvider
-		ui.RunSpinner("Fetching SSO provider...", func() { provider, err = client.GetSsoProvider(ref.ID) })
+		runSpinner("Fetching SSO provider...", func() { provider, err = client.GetSsoProvider(ref.ID) })
 		if err != nil {
 			failf("Failed to get SSO provider: %v", err)
 		}

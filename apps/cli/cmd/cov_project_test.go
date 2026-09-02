@@ -329,7 +329,7 @@ func projResetFlags() {
 	_ = rootCmd.PersistentFlags().Set("output", "table")
 	_ = rootCmd.PersistentFlags().Set("no-input", "false")
 	projClearChanged(rootCmd)
-	rootCmd.SetArgs(nil)
+	execRootArgs(nil)
 }
 
 // projClearChanged resets every flag in the tree to its default AND clears cobra's `Changed`
@@ -401,7 +401,7 @@ func projEnv(t *testing.T, s *projServer) projHarness {
 			}
 		}()
 		projResetFlags()
-		rootCmd.SetArgs(args)
+		execRootArgs(args)
 		if err := rootCmd.Execute(); err != nil {
 			t.Errorf("execute %v: %v", args, err)
 		}
@@ -412,11 +412,19 @@ func projEnv(t *testing.T, s *projServer) projHarness {
 
 // projTTY forces the terminal seams on, which is what makes the `interactiveTable`
 // arm of every list command and the huh-backed selectors reachable at all.
+//
+// noInputMode is SET here, not merely saved. It is derived from stdin rather than bound to a flag,
+// so stubbing stdinIsTTY does not change it until the next PersistentPreRun — and the tests that
+// call a selector directly never reach one. It was reading whatever the previously-run test file
+// had left behind, which is a pass that depends on the alphabet: splitting cov_misc_test.go by
+// subject changed which file ran before this one and four subtests here started refusing with
+// "--no-input is set".
 func projTTY(t *testing.T) {
 	t.Helper()
 	prevIn, prevOut, prevNoInput := stdinIsTTY, stdoutIsTTY, noInputMode
 	stdinIsTTY = func() bool { return true }
 	stdoutIsTTY = func() bool { return true }
+	noInputMode = false
 	t.Cleanup(func() {
 		stdinIsTTY, stdoutIsTTY, noInputMode = prevIn, prevOut, prevNoInput
 	})

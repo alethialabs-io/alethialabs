@@ -28,7 +28,7 @@ var listProjectsCmd = &cobra.Command{
 
 		var configs []types.ConfigurationSummary
 
-		ui.RunSpinner("Fetching projects...", func() {
+		runSpinner("Fetching projects...", func() {
 			configs, err = api.NewClient(token).GetConfigurations()
 		})
 
@@ -83,7 +83,7 @@ func projectRows(configs []types.ConfigurationSummary) [][]string {
 		rows[i] = []string{
 			v.ProjectName,
 			string(v.EnvironmentStage),
-			fmt.Sprintf("%s %s", ui.PlainStatusDot(status), strings.ToLower(status)),
+			ui.StatusCell(status),
 			provider,
 			region,
 			cost,

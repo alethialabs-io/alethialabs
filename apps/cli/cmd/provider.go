@@ -58,7 +58,7 @@ func resolveProviderRef(lister cloudIdentityLister, args []string) (string, erro
 	if len(args) == 1 {
 		return args[0], nil
 	}
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return "", fmt.Errorf(
 			"no provider given: pass one (%s) as the argument (%w)",
 			strings.Join(connectorProviderNames(), ", "), err,
@@ -67,7 +67,7 @@ func resolveProviderRef(lister cloudIdentityLister, args []string) (string, erro
 
 	var identities []api.CloudIdentity
 	var err error
-	ui.RunSpinner("Fetching cloud connections...", func() {
+	runSpinner("Fetching cloud connections...", func() {
 		identities, err = lister.GetCloudIdentities()
 	})
 	if err != nil {

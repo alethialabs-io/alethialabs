@@ -29,7 +29,7 @@ var connectorListCmd = &cobra.Command{
 		apiClient := api.NewClient(token)
 
 		var identities []api.CloudIdentity
-		ui.RunSpinner("Fetching cloud connections...", func() {
+		runSpinner("Fetching cloud connections...", func() {
 			identities, err = apiClient.GetCloudIdentities()
 		})
 		if err != nil {

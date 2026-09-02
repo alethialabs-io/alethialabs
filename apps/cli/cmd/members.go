@@ -53,7 +53,7 @@ var membersListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var members []api.Member
-			ui.RunSpinner("Fetching members...", func() { members, err = client.ListMembers(orgID) })
+			runSpinner("Fetching members...", func() { members, err = client.ListMembers(orgID) })
 			if err != nil {
 				failf("Failed to list members: %v", err)
 			}
@@ -130,7 +130,7 @@ terminal; with neither, the form asks for both, offering the org's own roles.`,
 		//
 		// `Changed` and not emptiness: `--role ""` is a caller who said something, and the form
 		// re-asking it would be the CLI ignoring the flag it advertises.
-		if email == "" || (!cmd.Flags().Changed("role") && formAvailable()) {
+		if email == "" || (!cmd.Flags().Changed("role") && canPromptForm()) {
 			// The role LIST is the active org's — `GET /api/cli/roles` reads the X-Alethia-Org
 			// header, which `--org` does not change. Offering it for another org would name roles
 			// that do not exist where the invitation lands.

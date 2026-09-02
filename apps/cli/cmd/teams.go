@@ -36,7 +36,7 @@ var teamsListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var teams []api.Team
-			ui.RunSpinner("Fetching teams...", func() { teams, err = client.ListTeams(orgID) })
+			runSpinner("Fetching teams...", func() { teams, err = client.ListTeams(orgID) })
 			if err != nil {
 				failf("Failed to list teams: %v", err)
 			}

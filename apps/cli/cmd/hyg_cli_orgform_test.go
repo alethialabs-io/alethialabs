@@ -261,7 +261,7 @@ func orgFormEnv(t *testing.T, p orgFormPayloads) (*orgFormServer, func(args ...s
 			}
 		}()
 		hygCliConfirmResetFlags()
-		rootCmd.SetArgs(args)
+		execRootArgs(args)
 		if err := rootCmd.Execute(); err != nil {
 			return 1, ""
 		}
@@ -1248,28 +1248,48 @@ func TestHygCliOrgForm_FormsRefuseByNamingTheFlagWhenScripted(t *testing.T) {
 
 // TestHygCliOrgForm_FormAvailabilityReadsBothStreams pins the condition the pickers use.
 //
-// noInputMode is derived from stdin alone, so `alethia teams delete > out.txt` from an interactive
-// shell left prompting "enabled" and drew the form's ANSI frames into the file. A picker must agree
-// with the tables, which have read stdout since #3738.
+// noInputMode is derived from stdin alone, so `alethia teams delete 2> log` from an interactive
+// shell left prompting "enabled" and drew the form's ANSI frames into the log file.
+//
+// The second stream is the one a form DRAWS on, which is STDERR — huh v0.8.0 builds its bubbletea
+// program with tea.WithOutput(os.Stderr), and ui.InteractiveOutput states that once for the CLI.
+// This test read stdout when it was written, which is wrong in both directions: it refused
+// `alethia teams delete -o json > f`, whose picker would have rendered fine on the attached stderr,
+// and it permitted the redirect that actually hangs. Measured against the shipped binary under a
+// real pty before this was corrected.
+//
+// The tables are the one widget that does read stdout, and correctly: ui.ShowTable takes
+// bubbletea's own default output, and a table is not narration — it IS the answer.
 func TestHygCliOrgForm_FormAvailabilityReadsBothStreams(t *testing.T) {
-	prevIn, prevOut, prevMode := stdinIsTTY, stdoutIsTTY, noInputMode
-	t.Cleanup(func() { stdinIsTTY, stdoutIsTTY, noInputMode = prevIn, prevOut, prevMode })
+	prevIn, prevOut, prevForm, prevMode := stdinIsTTY, stdoutIsTTY, interactiveOutIsTTY, noInputMode
+	t.Cleanup(func() {
+		stdinIsTTY, stdoutIsTTY, interactiveOutIsTTY, noInputMode = prevIn, prevOut, prevForm, prevMode
+	})
 
 	stdinIsTTY = func() bool { return true }
 	stdoutIsTTY = func() bool { return true }
+	interactiveOutIsTTY = func() bool { return true }
 	noInputMode = false
-	if !formAvailable() {
+	if !canPromptForm() {
 		t.Error("both streams a terminal and prompting on: a form can be shown")
 	}
 
+	interactiveOutIsTTY = func() bool { return false }
+	if canPromptForm() {
+		t.Error("the form's stream redirected: it would draw into the redirection and the user " +
+			"would see nothing")
+	}
+
+	interactiveOutIsTTY = func() bool { return true }
 	stdoutIsTTY = func() bool { return false }
-	if formAvailable() {
-		t.Error("stdout redirected: the form would draw into the redirection and the user would see nothing")
+	if !canPromptForm() {
+		t.Error("a redirected STDOUT must not stop a form that draws on stderr — " +
+			"`alethia teams delete -o json > f` at a terminal is a working invocation")
 	}
 
 	stdoutIsTTY = func() bool { return true }
 	noInputMode = true
-	if formAvailable() {
+	if canPromptForm() {
 		t.Error("--no-input: no form may be shown")
 	}
 }

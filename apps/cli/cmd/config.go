@@ -379,7 +379,7 @@ var promptConfigSet = func(key, value string) (string, string, error) {
 	if key != "" && value != "" {
 		return key, value, nil
 	}
-	if noInputMode {
+	if !canPromptForm() {
 		return "", "", fmt.Errorf(
 			"config set needs a key and a value when prompts are disabled: alethia config set <%s> <value>",
 			configKeyList(true))

@@ -535,7 +535,10 @@ func runnerEnv(t *testing.T) (*runnerEnvServer, func(args ...string) int) {
 		}()
 		hygCliConfirmResetFlags()
 		runnerResetGroupFlags()
-		rootCmd.SetArgs(args)
+		// execRootArgs, not rootCmd.SetArgs: it returns --output, --no-input and --token to their
+		// defaults first. cobra keeps a flag's value AND its Changed bit across Execute calls, so
+		// a --no-input one file passed becomes the next file's default.
+		execRootArgs(args)
 		if err := rootCmd.Execute(); err != nil {
 			return 1
 		}

@@ -300,13 +300,17 @@ func fleetEnv(t *testing.T, opts fleetOpts) (*fleetServer, func(args ...string) 
 	t.Setenv("ALETHIA_WEB_ORIGIN", srv.URL)
 	t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
 
-	oldIn, oldOut := stdinIsTTY, stdoutIsTTY
+	oldIn, oldOut, oldMode := stdinIsTTY, stdoutIsTTY, noInputMode
 	stdinIsTTY = func() bool { return true }
 	stdoutIsTTY = func() bool { return true }
+	// noInputMode is derived from stdinIsTTY at PersistentPreRun, not bound to it, so a --no-input
+	// left set by an earlier file survives the seam stub. Setting it makes this env independent of
+	// the order `go test` reached the files in.
+	noInputMode = false
 	oldExit := exitFunc
 	exitFunc = func(code int) { panic(fleetExit{code: code}) }
 	t.Cleanup(func() {
-		stdinIsTTY, stdoutIsTTY = oldIn, oldOut
+		stdinIsTTY, stdoutIsTTY, noInputMode = oldIn, oldOut, oldMode
 		exitFunc = oldExit
 		fleetResetState()
 	})
@@ -322,7 +326,7 @@ func fleetEnv(t *testing.T, opts fleetOpts) (*fleetServer, func(args ...string) 
 				code = e.code
 			}
 		}()
-		rootCmd.SetArgs(args)
+		execRootArgs(args)
 		if err := rootCmd.Execute(); err != nil {
 			return 1
 		}

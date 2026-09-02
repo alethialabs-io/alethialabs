@@ -122,7 +122,7 @@ func resolveHetznerS3(access, secret string) (string, string, error) {
 	if access != "" || secret != "" {
 		return validateHetznerS3Pair(access, secret)
 	}
-	if requireInteractive() != nil {
+	if requireInteractiveForm() != nil {
 		return "", "", nil
 	}
 
@@ -188,7 +188,7 @@ func resolveHetznerToken(stdin io.Reader) (string, error) {
 	if connectorHetznerToken != "" {
 		return validateHetznerToken(strings.TrimSpace(connectorHetznerToken))
 	}
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return "", fmt.Errorf("no token given: pass --token, or pipe it with --token-stdin (%w)", err)
 	}
 	var entered string

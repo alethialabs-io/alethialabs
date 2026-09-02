@@ -211,7 +211,7 @@ func runnerAskOrDefault(target *string, title, description, def string) error {
 	if *target != "" {
 		return nil
 	}
-	if noInputMode {
+	if !canPromptForm() {
 		*target = def
 		ui.Muted(fmt.Sprintf("%s: %s (default)", title, def))
 		return nil

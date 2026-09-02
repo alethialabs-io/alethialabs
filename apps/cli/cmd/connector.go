@@ -49,7 +49,7 @@ func init() {
 func initProviderIdentity(apiClient *api.Client, provider string) (*api.InitIdentityResponse, error) {
 	var resp *api.InitIdentityResponse
 	var err error
-	ui.RunSpinner("Initializing connection...", func() {
+	runSpinner("Initializing connection...", func() {
 		resp, err = apiClient.InitProviderIdentity(provider)
 	})
 	return resp, err
@@ -65,7 +65,7 @@ func finalizeConnection(
 ) error {
 	var resp *api.ConnectIdentityResponse
 	var err error
-	ui.RunSpinner("Submitting credentials & running connection test...", func() {
+	runSpinner("Submitting credentials & running connection test...", func() {
 		resp, err = apiClient.ConnectProviderIdentity(provider, identityID, creds)
 	})
 	if err != nil {
@@ -124,7 +124,7 @@ func resolveCloudIdentityRef(lister cloudIdentityLister, ref string) (string, er
 	}
 
 	if ref == "" {
-		if err := requireInteractive(); err != nil {
+		if err := requireInteractiveForm(); err != nil {
 			return "", fmt.Errorf(
 				"no cloud account given: pass a provider (%s) or a cloud-identity id as the argument (%w)",
 				strings.Join(connectorProviderNames(), ", "), err,
@@ -134,7 +134,7 @@ func resolveCloudIdentityRef(lister cloudIdentityLister, ref string) (string, er
 
 	var identities []api.CloudIdentity
 	var err error
-	ui.RunSpinner("Fetching cloud connections...", func() {
+	runSpinner("Fetching cloud connections...", func() {
 		identities, err = lister.GetCloudIdentities()
 	})
 	if err != nil {

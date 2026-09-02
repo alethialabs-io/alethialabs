@@ -59,7 +59,7 @@ lose it, register another runner and remove this one.`, runners.DeployProvidersL
 			// The interactive path this command never had. Before it, an omitted name exited 1
 			// with the flag spelled out — correct for a script and useless at a terminal, where
 			// the whole group's other commands ask.
-			if noInputMode {
+			if !canPromptForm() {
 				failf("a runner name is required: pass it as the argument, or --name")
 			}
 			if err := runHuhForm(
@@ -80,7 +80,7 @@ lose it, register another runner and remove this one.`, runners.DeployProvidersL
 		if err != nil {
 			fail(err)
 		}
-		if identityID == "" && !noInputMode {
+		if identityID == "" && canPromptForm() {
 			identityID, err = offerRunnerCloudBinding(apiClient)
 			if err != nil {
 				fail(err)
@@ -118,7 +118,7 @@ func registerIdentityID(c cloudIdentityLister, ref, id string) (string, error) {
 func offerRunnerCloudBinding(c cloudIdentityLister) (string, error) {
 	var identities []api.CloudIdentity
 	var err error
-	ui.RunSpinner("Fetching cloud accounts...", func() {
+	runSpinner("Fetching cloud accounts...", func() {
 		identities, err = c.GetCloudIdentities()
 	})
 	if err != nil {

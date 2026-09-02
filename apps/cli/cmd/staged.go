@@ -39,7 +39,7 @@ var stagedListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if rich {
 			var view *api.StagedChanges
-			ui.RunSpinner("Fetching staged changes...", func() {
+			runSpinner("Fetching staged changes...", func() {
 				view, err = client.GetProjectStagedChanges(project, env)
 			})
 			if err != nil {
