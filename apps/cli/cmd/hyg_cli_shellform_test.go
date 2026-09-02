@@ -143,11 +143,16 @@ func TestHygCliShell_EveryFieldHasItsDocsRow(t *testing.T) {
 			}
 			checked++
 
-			token := "`--" + f.Flag + "`"
-			if f.Flag == "" {
-				token = "`" + f.Arg + "`"
+			// The token as the page writes it. For a POSITIONAL there is no flag spelling to fall
+			// back to, and building one anyway gave `"-- "` — a string a prose page contains by
+			// accident, which made this arm pass without looking at anything.
+			token := "`" + f.Arg + "`"
+			mentioned := strings.Contains(body, token)
+			if f.Flag != "" {
+				token = "`--" + f.Flag + "`"
+				mentioned = strings.Contains(body, token) || strings.Contains(body, "--"+f.Flag+" ")
 			}
-			if !strings.Contains(body, token) && !strings.Contains(body, "--"+f.Flag+" ") {
+			if !mentioned {
 				t.Errorf("%s does not mention %s at all", page, token)
 				continue
 			}
