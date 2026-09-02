@@ -520,13 +520,18 @@ func TestFleet_GrantsAddNeedsExactlyOneBinding(t *testing.T) {
 
 // TestFleet_GrantsAddAssignsARoleOrAPermission pins that a well-formed grant is posted
 // for either binding, scoped to the resource flags.
+//
+// The ids are real uuids because `--principal` and `--role` are now LOOKUP KEYS: anything that is
+// not already a uuid is resolved against the org's members/teams/roles, since `principal_id` and
+// `role_id` are `z.uuid()` on the wire and a non-uuid was always a 400. "u1" now names nothing and
+// is refused by the CLI instead of by the server.
 func TestFleet_GrantsAddAssignsARoleOrAPermission(t *testing.T) {
 	s, run := fleetEnv(t, fleetOpts{})
 	cases := [][]string{
-		{"grants", "add", "--principal", "u1", "--role", "ro1"},
-		{"grants", "add", "--principal", "t1", "--principal-type", "team",
+		{"grants", "add", "--principal", "11111111-1111-4111-8111-111111111111", "--role", "33333333-3333-4333-8333-333333333333"},
+		{"grants", "add", "--principal", "22222222-2222-4222-8222-222222222222", "--principal-type", "team",
 			"--permission", "project:deploy", "--effect", "deny",
-			"--resource-type", "project", "--resource", "p1"},
+			"--resource-type", "project", "--resource", "44444444-4444-4444-8444-444444444444"},
 	}
 	for _, args := range cases {
 		s.forget()
