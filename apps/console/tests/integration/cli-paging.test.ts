@@ -67,10 +67,19 @@ const TIE_INDEXES = [4, 5, 6];
 const ORG_B_PHASE_US = 61;
 /** Rows for the planner test's own org. Enough that the plan is not a rounding decision. */
 const PLAN_ORG_ROWS = 300;
-/** Production-like rows in the planner org, past the measured composite-index flip point. */
-const PLAN_LARGE_ORG_ROWS = 20_000;
-/** Decoy rows make the planner's table statistics match the measured 200k-row environment. */
-const PLAN_DECOY_ROWS = 180_000;
+/**
+ * The large fixture: rows in the scale guard's own org, and the decoys sharing the table with it.
+ *
+ * NOT the 200k the first draft of this guard seeded. Every one of those rows fires two per-row
+ * plpgsql triggers — jobs_set_scheduling runs an org_effective_plan SELECT, jobs_runner_wake a
+ * pg_notify — and then comes back out across seven indexes. That is a FIXED multi-minute cost, and
+ * it timed out in CI against `testTimeout: 30_000` rather than flaking, so a re-run could not have
+ * cleared it. 30k fits the 60s `hookTimeout` the seed now runs under, and it is still far past the
+ * point where a seq scan of `jobs` is free — which is all this guard needs, because it asserts the
+ * SHAPE the unconstrained planner picks and not which of the two org indexes it picks.
+ */
+const PLAN_SCALE_ORG_ROWS = 5_000;
+const PLAN_SCALE_DECOY_ROWS = 25_000;
 
 const ORG_A = randomUUID();
 const ORG_B = randomUUID();
@@ -86,6 +95,9 @@ interface Row {
 }
 
 const insertedIdsSchema = z.array(z.object({ id: z.uuid() }));
+
+/** The per-org row census the scale fixture is checked against. Parsed, never cast. */
+const censusSchema = z.array(z.object({ org_id: z.uuid(), n: z.number() }));
 
 /**
  * Inserts one job per entry at `now()` minus that entry's microsecond offset, and returns the ids.
@@ -244,7 +256,7 @@ function strictlyBefore(a: Row, b: Row): boolean {
 const explainSchema = z.array(z.object({ "QUERY PLAN": z.array(z.unknown()) }));
 
 /**
- * Returns `query`'s plan as JSON text, with sequential scans disabled.
+ * Returns `query`'s plan as JSON text, by default with sequential scans disabled.
  *
  * Disabling seqscan asks the question that matters on any table small enough to live in a test —
  * CAN this index answer the query, ordering and all — rather than whether Postgres bothers.
@@ -252,10 +264,21 @@ const explainSchema = z.array(z.object({ "QUERY PLAN": z.array(z.unknown()) }));
  * construction. The one setting is SET LOCAL inside a transaction because postgres-js pools
  * connections and a bare SET would land on whichever one it liked, leaving the EXPLAIN to run on a
  * connection that never saw it.
+ *
+ * `seqscan: "on"` leaves the planner alone, and is NOT interchangeable with the default. A plan
+ * recorded with seqscan OFF cannot report drift toward a seq scan at all — that candidate was
+ * removed from the choice set before the planner ran — so it answers "can this index serve the
+ * query", never "is this what Postgres picks". Any assertion about a planner CHOICE has to pass
+ * "on".
  */
-async function explain(query: SQLWrapper): Promise<string> {
+async function explain(
+	query: SQLWrapper,
+	seqscan: "off" | "on" = "off",
+): Promise<string> {
 	const rows = await getServiceDb().transaction(async (tx) => {
-		await tx.execute(sql`set local enable_seqscan = off`);
+		if (seqscan === "off") {
+			await tx.execute(sql`set local enable_seqscan = off`);
+		}
 		return tx.execute(sql`explain (format json) ${query}`);
 	});
 	return JSON.stringify(explainSchema.parse(rows));
@@ -611,53 +634,6 @@ describeIfDb("CLI paging vocabulary", () => {
 		}
 	});
 
-	it("records the planner's top-N sort at production-like cardinality", async () => {
-		const db = getServiceDb();
-		const orgPlan = randomUUID();
-		const decoyOrg = randomUUID();
-		try {
-			await seedPlannerRows(orgPlan, PLAN_LARGE_ORG_ROWS);
-			await seedPlannerRows(decoyOrg, PLAN_DECOY_ROWS);
-			await db.execute(sql`analyze jobs`);
-
-			const first = await fetchPage(orgPlan, { limit: PAGE_SIZE, after: null });
-			const cursor: CursorPosition = {
-				createdAt: first.items[0].cursor_key,
-				id: first.items[0].id,
-			};
-			let planned = "";
-			await paginate<Row>({
-				db,
-				table: jobs,
-				createdAt: jobs.created_at,
-				id: jobs.id,
-				scope: [eq(jobs.org_id, orgPlan)],
-				cursor: { orgId: orgPlan, list: "jobs" },
-				opts: { limit: PAGE_SIZE, after: cursor },
-				rows: async (q) => {
-					const select = () =>
-						db
-							.select({ id: jobs.id, cursor_key: cursorKey(jobs.created_at) })
-							.from(jobs)
-							.where(q.where)
-							.limit(q.limit);
-					planned = await explain(select().orderBy(...q.orderBy));
-					return [];
-				},
-				positionOf: (row) => ({ createdAt: row.cursor_key, id: row.id }),
-			});
-
-			// At 200k total rows with 20k in the target org, PostgreSQL 17 measurably chooses the
-			// narrower org index and a top-N sort. This is evidence of the current planner choice,
-			// not a promise that the composite index wins at every cardinality.
-			expect(planned).toContain('"Index Name":"idx_jobs_org"');
-			expect(planned).toContain('"Node Type":"Sort"');
-		} finally {
-			await db.delete(jobs).where(eq(jobs.org_id, orgPlan));
-			await db.delete(jobs).where(eq(jobs.org_id, decoyOrg));
-		}
-	});
-
 	it("serves the module's default page size against the real table", async () => {
 		// DEFAULT_PAGE_SIZE is above this fixture, so the whole org is one page and the walk
 		// terminates immediately — the single-page path, which the multi-page tests skip.
@@ -701,5 +677,115 @@ describeIfDb("CLI paging vocabulary", () => {
 				positionOf: (row) => ({ createdAt: row.cursor_key, id: row.id }),
 			}),
 		).rejects.toThrow(/requires a uuid key column, got text/);
+	});
+});
+
+// The scale guard, and it is a SEPARATE SUITE on purpose.
+//
+// Two reasons, both load-bearing. Its fixture is tens of thousands of rows plus an `analyze` on the
+// shared `jobs` table, and the suite above contains a plan guard that asserts an exact plan shape
+// on a 300-row org — those rows underneath it change what the planner does. And a suite-scoped
+// `beforeAll` runs under `hookTimeout: 60_000` rather than `testTimeout: 30_000`, which is the
+// difference between this seed fitting and this seed being the red check it was in #3906.
+describeIfDb("jobs cursor plan at scale", () => {
+	const ORG_SCALE = randomUUID();
+	const ORG_SCALE_DECOY = randomUUID();
+
+	beforeAll(async () => {
+		await seedPlannerRows(ORG_SCALE, PLAN_SCALE_ORG_ROWS);
+		await seedPlannerRows(ORG_SCALE_DECOY, PLAN_SCALE_DECOY_ROWS);
+		// Without stats the planner estimates ONE matching row and every plan below is a rounding
+		// decision — the same coin flip the small-fixture guard documents.
+		await getServiceDb().execute(sql`analyze jobs`);
+	});
+
+	afterAll(async () => {
+		// ONE statement for both orgs. Two sequential deletes leak the decoys if anything throws
+		// between them, and an aborted run is exactly that case. In CI the container is disposable;
+		// on the shared sandbox database it would be a permanent 25k-row leak into a table every
+		// other integration file reads.
+		await getServiceDb()
+			.delete(jobs)
+			.where(inArray(jobs.org_id, [ORG_SCALE, ORG_SCALE_DECOY]));
+	});
+
+	// THE CENSUS (#3879). The guard below reads "the planner does not seq scan this table", and
+	// that is only a statement about the index if the table is big enough for a seq scan to be a
+	// real candidate. A silently short seed makes a seq scan the planner's honest answer, so
+	// without this the guard's failure would name the index when the defect was the fixture.
+	it("seeded a fixture large enough for a seq scan to be a real candidate", async () => {
+		const counted = await getServiceDb().execute(sql`
+			select org_id, count(*)::int as n
+			from jobs
+			where org_id in (${ORG_SCALE}::uuid, ${ORG_SCALE_DECOY}::uuid)
+			group by org_id
+		`);
+		const census = censusSchema.parse(counted);
+		const rowsIn = (orgId: string): number | undefined =>
+			census.find((r) => r.org_id === orgId)?.n;
+		expect(rowsIn(ORG_SCALE)).toBe(PLAN_SCALE_ORG_ROWS);
+		expect(rowsIn(ORG_SCALE_DECOY)).toBe(PLAN_SCALE_DECOY_ROWS);
+	});
+
+	// WHAT THIS CLAIMS, AND WHAT IT DELIBERATELY DOES NOT. The guard in the suite above asks
+	// whether idx_jobs_org_cursor CAN answer the page query with no sort, and asks it with seqscan
+	// disabled — the right question on a 300-row fixture, and one that cannot see this one: with
+	// the seq scan removed from the planner's choice set, drift TOWARD a seq scan is invisible by
+	// construction.
+	//
+	// So this EXPLAIN leaves the planner alone and asserts the SHAPE only: at this cardinality the
+	// page is still reached through an org index. It does not pin idx_jobs_org_cursor over
+	// idx_jobs_org, and it does not pin the presence or absence of a Sort node. Both of those are
+	// correct answers to this query — the composite index orders the rows for free, the narrower
+	// one plus a top-N sort is cheaper to walk — and the choice between them moves with the
+	// statistics and the row width. A guard pinning either would go red on a plan that is not a
+	// defect. Losing the index is the defect, and a Seq Scan here is what reports it.
+	it("reaches the page through an org index, not a seq scan, at scale", async () => {
+		const db = getServiceDb();
+		const first = await fetchPage(ORG_SCALE, { limit: PAGE_SIZE, after: null });
+		const cursor: CursorPosition = {
+			createdAt: first.items[0].cursor_key,
+			id: first.items[0].id,
+		};
+		let planned = "";
+		await paginate<Row>({
+			db,
+			table: jobs,
+			createdAt: jobs.created_at,
+			id: jobs.id,
+			scope: [eq(jobs.org_id, ORG_SCALE)],
+			cursor: { orgId: ORG_SCALE, list: "jobs" },
+			opts: { limit: PAGE_SIZE, after: cursor },
+			rows: async (q) => {
+				// The EXPLAINed statement is the one the module builds, taken from `paginate`'s own
+				// PageQuery rather than hand-typed — the same discipline as the guard above.
+				planned = await explain(
+					db
+						.select({ id: jobs.id, cursor_key: cursorKey(jobs.created_at) })
+						.from(jobs)
+						.where(q.where)
+						.orderBy(...q.orderBy)
+						.limit(q.limit),
+					"on",
+				);
+				return [];
+			},
+			positionOf: (row) => ({ createdAt: row.cursor_key, id: row.id }),
+		});
+
+		// THE CONTROL. Same table, same cardinality, filtered on a column no index covers, so a
+		// seq scan is the only plan available. If this does NOT report one, the assertion below is
+		// matching a string this plan JSON never carries and is true of every plan it could see.
+		const control = await explain(
+			db
+				.select({ id: jobs.id })
+				.from(jobs)
+				.where(sql`${jobs.error_message} is not null`),
+			"on",
+		);
+		expect(control).toContain('"Node Type":"Seq Scan"');
+
+		expect(planned).not.toContain('"Node Type":"Seq Scan"');
+		expect(planned).toMatch(/"Index Name":"idx_jobs_org(_cursor)?"/);
 	});
 });
