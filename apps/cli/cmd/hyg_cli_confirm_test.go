@@ -4,7 +4,9 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -77,17 +79,48 @@ func hygCliConfirmClearYes(t *testing.T, cmd *cobra.Command) {
 	})
 }
 
-// hygCliConfirmServer records every request the CLI made, as "METHOD path".
+// hygCliConfirmServer records every request the CLI made, as "METHOD path", plus each request's
+// body.
+//
+// The body is recorded SEPARATELY rather than folded into the request line, so every existing
+// `saw` and `mutations` assertion keeps comparing exactly what it always compared. It is needed
+// because several of this API's endpoints put the thing being acted on in the PAYLOAD and not in
+// the path — `DELETE /cli/projects/p/byo-charts` with `{"id": "…"}` — so a path-only recorder
+// cannot tell "detached the chart the user picked" from "detached a different one".
 type hygCliConfirmServer struct {
 	mu       sync.Mutex
 	requests []string
+	bodies   []string
 }
 
-// record notes one inbound request.
+// record notes one inbound request and its body.
+//
+// The body is put back before the handler runs. The handler here never reads one, but a recorder
+// that silently consumed the request would be a trap for the next case added to it.
 func (s *hygCliConfirmServer) record(r *http.Request) {
+	body := ""
+	if r.Body != nil {
+		if raw, err := io.ReadAll(r.Body); err == nil {
+			body = string(raw)
+			r.Body = io.NopCloser(bytes.NewReader(raw))
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requests = append(s.requests, r.Method+" "+r.URL.Path)
+	s.bodies = append(s.bodies, body)
+}
+
+// sentBody reports whether some request carried this exact JSON fragment in its payload.
+func (s *hygCliConfirmServer) sentBody(fragment string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, b := range s.bodies {
+		if strings.Contains(b, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 // mutations returns the requests that would have changed control-plane state.
@@ -121,6 +154,7 @@ func (s *hygCliConfirmServer) forget() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requests = nil
+	s.bodies = nil
 }
 
 // hygCliConfirmResetFlags puts the shared cobra tree back to its defaults. rootCmd
@@ -188,6 +222,17 @@ func hygCliConfirmEnv(t *testing.T) (*hygCliConfirmServer, func(args ...string) 
 				"provider": strings.TrimPrefix(p, "/api/cli/fleet/"),
 				"warm_min": 1, "max": 4, "slots_per_runner": 1, "enabled": false,
 			}})
+		case strings.HasSuffix(p, "/byo-charts") && r.Method == http.MethodGet:
+			// One attached chart, so `chart detach` and `chart scan` with no id can reach their
+			// picker. Nothing that passes an id ever calls this endpoint — an id is a lookup key
+			// and is sent to the server as given — so adding it changes no existing case.
+			_ = enc.Encode(map[string]interface{}{
+				"environment": "e1",
+				"charts": []map[string]interface{}{
+					{"id": "c1", "repo_url": "https://github.com/acme/charts", "chart_path": "charts/api",
+						"ref": "main", "status": "Synced", "scan_status": "done"},
+				},
+			})
 		case p == "/api/jobs" && r.Method == http.MethodPost:
 			_ = enc.Encode(map[string]interface{}{"job": map[string]interface{}{
 				"id": "j1", "job_type": "DESTROY", "status": "PENDING",

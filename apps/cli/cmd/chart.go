@@ -30,13 +30,17 @@ var chartListCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		project, err := currentProject(cmd)
+		// Format first, then the picker: interactiveTable is both the "may I draw a rich table"
+		// question and the "may I open a form on stdout" one, and they have the same answer.
+		outFmt := outputFormat(cmd)
+		rich := interactiveTable(cmd)
+		project, err := byoProject(cmd, token, rich)
 		if err != nil {
 			fail(err)
 		}
 		env, _ := cmd.Flags().GetString("env")
 		client := api.NewClient(token)
-		if interactiveTable(cmd) {
+		if rich {
 			var view *api.ProjectByoCharts
 			ui.RunSpinner("Fetching charts...", func() {
 				view, err = client.GetProjectByoCharts(project, env)
@@ -51,7 +55,7 @@ var chartListCmd = &cobra.Command{
 			_ = ui.ShowTable(chartColumns, chartRows(view.Charts), "charts")
 			return
 		}
-		if err := runChartList(client, os.Stdout, outputFormat(cmd), project, env); err != nil {
+		if err := runChartList(client, os.Stdout, outFmt, project, env); err != nil {
 			failf("Failed to list charts: %v", err)
 		}
 	},
@@ -63,7 +67,10 @@ var chartColumns = []string{"Chart", "Repo", "Path", "Ref", "Status", "Scan"}
 func chartRows(charts []api.ByoChart) [][]string {
 	rows := make([][]string, len(charts))
 	for i, c := range charts {
-		rows[i] = []string{c.ID, c.RepoURL, c.ChartPath, c.Ref, c.Status, c.ScanStatus}
+		// OrDash on the two OPTIONAL cells. An OCI chart carries no path and a chart tracking its
+		// repository's default branch carries no ref, and both rendered as an empty cell — which
+		// reads as missing data rather than as "this chart does not have one".
+		rows[i] = []string{c.ID, c.RepoURL, ui.OrDash(c.ChartPath), ui.OrDash(c.Ref), c.Status, c.ScanStatus}
 	}
 	return rows
 }
@@ -93,8 +100,8 @@ func runChartList(c apiClient, out io.Writer, format, project, env string) error
 }
 
 func init() {
-	chartCmd.PersistentFlags().StringP("project", "p", "", "Project name or id")
-	chartCmd.PersistentFlags().StringP("env", "e", "", "Environment name, stage, or id (default: the project's default environment)")
+	chartCmd.PersistentFlags().StringP("project", "p", "", byoFlagUsage("alethia chart", byoKeyProject))
+	chartCmd.PersistentFlags().StringP("env", "e", "", byoFlagUsage("alethia chart", byoKeyEnv))
 	chartCmd.AddCommand(chartListCmd)
 	rootCmd.AddCommand(chartCmd)
 }
