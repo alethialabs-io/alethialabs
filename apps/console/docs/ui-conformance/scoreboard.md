@@ -72,8 +72,9 @@ lowers a number here in the same commit as its code.
 
 **40 private routes** · 4 redirect-only · 36 real pages.
 
-RUBRIC.md defines **33 predicates**. This report scores **15** of them.
-10 are live and land here with #3634; 8 have no instrument anywhere today.
+RUBRIC.md defines **34 predicates**. This report scores **26** of them —
+16 from the tree and 10 from the committed live audit records.
+8 have no instrument anywhere today.
 
 | source | what it contributes |
 |---|---|
@@ -82,22 +83,24 @@ RUBRIC.md defines **33 predicates**. This report scores **15** of them.
 | `apps/console/route-states-baseline.yaml` | the ratchet those eight predicates are held to |
 | `scripts/check-shared-surface.mjs` | every H-family occurrence, per file |
 | `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 15`) and which are measured drift (`debt: 135`) |
+| `apps/console/ui-conformance-live.json` | T5–T7 and R1–R7 as MEASURED, imported from a CI run of the Playwright `audit` project |
 | `apps/console/docs/ui-conformance/RUBRIC.md` | the predicate set itself, read out of its own tables |
 
 ## Which predicates have an instrument
 
 An un-instrumented predicate is rendered `—` everywhere below, never as a pass and never
 omitted. The generator refuses to run unless every rubric predicate lands in exactly one row
-of this table.
+of this table. A **live** predicate is instrumented: it is measured in a browser by the
+Playwright `audit` project and joined in from the committed records, not inferred from the tree.
 
-| family | predicates | scored here | live (#3634) | no instrument |
+| family | predicates | static | live | no instrument |
 |---|---:|---:|---:|---:|
 | **S** — shell & width | 4 | 4 | 0 | 0 |
 | **T** — states | 7 | 4 | 3 | 0 |
-| **H** — shared surface | 8 | 7 | 0 | 1 |
+| **H** — shared surface | 9 | 8 | 0 | 1 |
 | **F** — filter standard | 7 | 0 | 0 | 7 |
 | **R** — rendered integrity | 7 | 0 | 7 | 0 |
-| **total** | 33 | 15 | 10 | 8 |
+| **total** | 34 | 16 | 10 | 8 |
 
 The un-instrumented eight, each with the issue that owns it:
 
@@ -112,46 +115,83 @@ The un-instrumented eight, each with the issue that owns it:
 | **F6** | #3796 | the filter standard — `keepPreviousData` plus the placeholder dim. |
 | **F7** | #3796 | the filter standard — the server builder's separate unfiltered facet pass. A unit test by design, per RUBRIC.md. |
 
+## The live half — two artifacts, two personas, two organisations
+
+T5–T7 and R1–R7 are measured in a browser, not read off the tree. The records below were
+imported from **https://github.com/alethialabs-io/alethialabs/actions/runs/33623272631** at commit `1a3bdeb73a36d488a238dfe2d2e4235b35105832` and committed to
+`apps/console/ui-conformance-live.json`; refresh them with `--import-live`. They come from **two files, joined and never
+pooled** — `e2e/audit/report.ts` records what pooling them cost, and the split is checked here:
+each section declares the predicates it may carry, and a record in the wrong one refuses to parse.
+
+| section | artifact | persona | organisation | predicates | records | routes |
+|---|---|---|---|---|---:|---:|
+| `routes` | `test-results/ui-audit.json` | the run's own owner | a fresh, empty organisation created for the run | T5, T6, R1, R2, R3, R4, R5, R6, R7 | 360 | 40 |
+| `permissions` | `test-results/ui-audit-permissions.json` | the `member` persona, compared against the owner of the same org | a SECOND organisation, created by that spec and never touched by the primary run | T7 | 27 | 27 |
+
+**A cell no artifact carries is `NOT MEASURED`, never N/A and never a pass.** An N/A is a claim
+about the page — RUBRIC.md's rule 2 requires it to be derivable from the route record — and
+"the instrument did not reach this route" is a claim about the instrument. It gets its own column
+below and is never folded into N/A; `score` stays `PASS ÷ (PASS + FAIL)`, so a withheld verdict
+leaves the denominator and a predicate withheld everywhere scores `—`, never `1.00`.
+
+| withheld | routes | why the instrument did not answer |
+|---|---:|---|
+| **T7** | 13 | the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given |
+
+**Nothing is suppressed.** R5, R6 and R7 declare no N/A reason at all, so an N/A on one of them
+is a parse error rather than a verdict. What still fails is recorded debt with an owner, and the
+generator checks that ledger in both directions — a row that stops being true fails the build as
+loudly as a missing one:
+
+| predicate | FAIL | owner | what is failing |
+|---|---:|---|---|
+| **R3** | 2 | #3885 | two nested scroll containers that are not the shell's — a chip `ScrollArea` on `~/support/ask` and a `@repo/ui/table` wrapper on `[project]/environments` — each overflowing by 3px at all four widths. Trustworthy for the first time now that #3804 has made R3's own positive control green. |
+| **R4** | 7 | #3805 | ONE shell defect, not N page defects: `components/shell/topbar.tsx` centres the breadcrumb out of flow (`absolute left-1/2`) beside an `ml-auto` action cluster that nothing reserves space for, so the two collide from `md:` up. #3805 keeps it deliberately rather than folding it into #3619 — the fix is a layout decision, and only R4's geometry can prove either answer. |
+| **R5** | 12 | #3805 | the axe residue. `color-contrast` fails EVERY failing route on its own, so R5 cannot move at all until that clears — `button-name` went 3 → 0 in #3756 and the score did not budge. The console is dark-first and grayscale by design, so each node is a judgement between a token fix in `packages/brand/src/tokens.css` and a recorded decision. |
+| **R6** | 2 | #3805 | two routes. `~/connectors` fires 400s from `/_next/image` for connector icons that do not exist (#3802, fixed by #3876); `[project]/…/support/cases/[id]` 404s the parent list route's RSC prefetch ~70 times in one visit, which is a prefetch storm as well as a 404. |
+
 ## Per predicate
 
 `score = PASS ÷ (PASS + FAIL)`. N/A leaves the denominator, so the N/A column is first-class:
-a predicate whose N/A count grows is a predicate being escaped.
+a predicate whose N/A count grows is a predicate being escaped. `NOT MEASURED` leaves it too, and
+has a column of its own for the same reason — it is a fact about the instrument, not about a page.
 
-| id | family | instrument | PASS | FAIL | N/A | score | N/A reasons |
-|---|---|---|---:|---:|---:|---:|---|
-| **S1** | S | `check-route-states` | 35 | 1 | 4 | 0.97 | `redirect-only` 4 |
-| **S2** | S | `check-route-states` | 19 | 17 | 4 | 0.53 | `redirect-only` 4 |
-| **S3** | S | `check-route-states` | 31 | 4 | 5 | 0.89 | `no-loading-boundary` 1, `redirect-only` 4 |
-| **S4** | S | `check-route-states` | 34 | 2 | 4 | 0.94 | `redirect-only` 4 |
-| **T1** | T | `check-route-states` | 32 | 4 | 4 | 0.89 | `redirect-only` 4 |
-| **T2** | T | `check-route-states` | 40 | 0 | 0 | 1.00 | — |
-| **T3** | T | `check-route-states` | 0 | 10 | 30 | 0.00 | `does-not-call-not-found` 30 |
-| **T4** | T | `check-route-states` | 33 | 7 | 0 | 0.82 | — |
-| **T5** | T | live — #3634 | — | — | — | — | — |
-| **T6** | T | live — #3634 | — | — | — | — | — |
-| **T7** | T | live — #3634 | — | — | — | — | — |
-| **H1** | H | `check-shared-surface` | 40 | 0 | 0 | 1.00 | — |
-| **H2** | H | `check-shared-surface` | 38 | 2 | 0 | 0.95 | — |
-| **H3** | H | **none** — #3797 | — | — | — | — | — |
-| **H4** | H | `check-shared-surface` | 40 | 0 | 0 | 1.00 | — |
-| **H5** | H | `check-shared-surface` | 40 | 0 | 0 | 1.00 | — |
-| **H6** | H | `check-shared-surface` | 40 | 0 | 0 | 1.00 | — |
-| **H7** | H | `check-shared-surface` | 39 | 1 | 0 | 0.97 | — |
-| **H8** | H | `check-shared-surface` | 8 | 32 | 0 | 0.20 | — |
-| **F1** | F | **none** — #3796 | — | — | — | — | — |
-| **F2** | F | **none** — #3796 | — | — | — | — | — |
-| **F3** | F | **none** — #3796 | — | — | — | — | — |
-| **F4** | F | **none** — #3796 | — | — | — | — | — |
-| **F5** | F | **none** — #3796 | — | — | — | — | — |
-| **F6** | F | **none** — #3796 | — | — | — | — | — |
-| **F7** | F | **none** — #3796 | — | — | — | — | — |
-| **R1** | R | live — #3634 | — | — | — | — | — |
-| **R2** | R | live — #3634 | — | — | — | — | — |
-| **R3** | R | live — #3634 | — | — | — | — | — |
-| **R4** | R | live — #3634 | — | — | — | — | — |
-| **R5** | R | live — #3634 | — | — | — | — | — |
-| **R6** | R | live — #3634 | — | — | — | — | — |
-| **R7** | R | live — #3634 | — | — | — | — | — |
+| id | family | instrument | PASS | FAIL | N/A | NOT MEASURED | score | N/A reasons |
+|---|---|---|---:|---:|---:|---:|---:|---|
+| **S1** | S | `check-route-states` | 35 | 1 | 4 | 0 | 0.97 | `redirect-only` 4 |
+| **S2** | S | `check-route-states` | 19 | 17 | 4 | 0 | 0.53 | `redirect-only` 4 |
+| **S3** | S | `check-route-states` | 31 | 4 | 5 | 0 | 0.89 | `no-loading-boundary` 1, `redirect-only` 4 |
+| **S4** | S | `check-route-states` | 34 | 2 | 4 | 0 | 0.94 | `redirect-only` 4 |
+| **T1** | T | `check-route-states` | 32 | 4 | 4 | 0 | 0.89 | `redirect-only` 4 |
+| **T2** | T | `check-route-states` | 40 | 0 | 0 | 0 | 1.00 | — |
+| **T3** | T | `check-route-states` | 0 | 10 | 30 | 0 | 0.00 | `does-not-call-not-found` 30 |
+| **T4** | T | `check-route-states` | 33 | 7 | 0 | 0 | 0.82 | — |
+| **T5** | T | live — `routes` | 14 | 0 | 26 | 0 | 1.00 | `no-empty-state` 26 |
+| **T6** | T | live — `routes` | 36 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
+| **T7** | T | live — `permissions` | 0 | 0 | 27 | 13 | — | `no-restricted-surface` 27 |
+| **H1** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
+| **H2** | H | `check-shared-surface` | 38 | 2 | 0 | 0 | 0.95 | — |
+| **H3** | H | **none** — #3797 | — | — | — | — | — | — |
+| **H4** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
+| **H5** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
+| **H6** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
+| **H7** | H | `check-shared-surface` | 39 | 1 | 0 | 0 | 0.97 | — |
+| **H8** | H | `check-shared-surface` | 8 | 32 | 0 | 0 | 0.20 | — |
+| **H9** | H | `check-shared-surface` | 38 | 2 | 0 | 0 | 0.95 | — |
+| **F1** | F | **none** — #3796 | — | — | — | — | — | — |
+| **F2** | F | **none** — #3796 | — | — | — | — | — | — |
+| **F3** | F | **none** — #3796 | — | — | — | — | — | — |
+| **F4** | F | **none** — #3796 | — | — | — | — | — | — |
+| **F5** | F | **none** — #3796 | — | — | — | — | — | — |
+| **F6** | F | **none** — #3796 | — | — | — | — | — | — |
+| **F7** | F | **none** — #3796 | — | — | — | — | — | — |
+| **R1** | R | live — `routes` | 36 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
+| **R2** | R | live — `routes` | 39 | 0 | 1 | 0 | 1.00 | `opens-no-overlay` 1 |
+| **R3** | R | live — `routes` | 34 | 2 | 4 | 0 | 0.94 | `redirect-only` 4 |
+| **R4** | R | live — `routes` | 29 | 7 | 4 | 0 | 0.81 | `redirect-only` 4 |
+| **R5** | R | live — `routes` | 28 | 12 | 0 | 0 | 0.70 | — |
+| **R6** | R | live — `routes` | 38 | 2 | 0 | 0 | 0.95 | — |
+| **R7** | R | live — `routes` | 40 | 0 | 0 | 0 | 1.00 | — |
 
 The static H half emits **no N/A at all**, which is why those rows are empty rather than
 carrying the rubric's `renders-no-table` / `renders-no-formatted-value` / `declares-no-z-index`.
@@ -162,54 +202,58 @@ on it. Every page is asked, and a page with no table passes H4 by not hand-rolli
 ## Per route
 
 Each cell is `PASS/scored · score` over that family's instrumented predicates —
-S 4/4, T 4/7, H 7/8, F 0/7, R 0/7. `surface` is the number of console modules the
+S 4/4, T 7/7, H 8/9, F 0/7, R 7/7. `surface` is the number of console modules the
 page's own import graph reaches, which is the denominator the H column was measured over.
+A `· n withheld` suffix means n of that family's predicates were NOT MEASURED on this route: the
+score is over the rest, and the cell says so rather than letting a narrower measurement read wider.
 
 | route | surface | S | T | H | F | R | overall |
 |---|---:|---|---|---|---|---|---|
-| `/cli/login` | 4 | 1/3 · 0.33 | 1/3 · 0.33 | 6/7 · 0.86 | — | — | **0.62** |
-| `/[org]/[project]/architecture` | 381 | 3/4 · 0.75 | 3/4 · 0.75 | 4/7 · 0.57 | — | — | **0.67** |
-| `/[org]/~/usage` | 182 | 2/4 · 0.50 | 2/3 · 0.67 | 6/7 · 0.86 | — | — | **0.71** |
-| `/[org]/[project]/environments` | 234 | 2/4 · 0.50 | 3/4 · 0.75 | 6/7 · 0.86 | — | — | **0.73** |
-| `/[org]/~/alerts` | 288 | 2/4 · 0.50 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.79** |
-| `/[org]/~/jobs/[id]` | 218 | 3/4 · 0.75 | 2/3 · 0.67 | 6/7 · 0.86 | — | — | **0.79** |
-| `/[org]/~/new` | 356 | 2/4 · 0.50 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.79** |
-| `/[org]/~/runners` | 270 | 3/4 · 0.75 | 3/3 · 1.00 | 5/7 · 0.71 | — | — | **0.79** |
-| `/[org]/~/settings/classification` | 145 | 3/4 · 0.75 | 2/3 · 0.67 | 6/7 · 0.86 | — | — | **0.79** |
-| `/[org]/~/support` | 7 | 2/4 · 0.50 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.79** |
-| `/[org]/[project]/clusters` | 163 | 3/4 · 0.75 | 3/4 · 0.75 | 6/7 · 0.86 | — | — | **0.80** |
-| `/[org]/[project]/jobs` | 219 | 3/4 · 0.75 | 3/4 · 0.75 | 6/7 · 0.86 | — | — | **0.80** |
-| `/[org]/[project]/settings/activity` | 275 | 4/4 · 1.00 | 2/4 · 0.50 | 6/7 · 0.86 | — | — | **0.80** |
-| `/[org]/[project]/usage` | 146 | 3/4 · 0.75 | 3/4 · 0.75 | 6/7 · 0.86 | — | — | **0.80** |
-| `/[org]` | 281 | 3/4 · 0.75 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.86** |
-| `/[org]/~/clusters` | 162 | 3/4 · 0.75 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.86** |
-| `/[org]/~/evidence` | 149 | 3/4 · 0.75 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.86** |
-| `/[org]/~/jobs` | 218 | 3/4 · 0.75 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.86** |
-| `/[org]/~/settings/billing/invoices` | 192 | 4/4 · 1.00 | 2/3 · 0.67 | 6/7 · 0.86 | — | — | **0.86** |
-| `/[org]/[project]/settings/access` | 212 | 4/4 · 1.00 | 3/4 · 0.75 | 6/7 · 0.86 | — | — | **0.87** |
-| `/[org]/[project]/settings/general` | 213 | 4/4 · 1.00 | 3/4 · 0.75 | 6/7 · 0.86 | — | — | **0.87** |
-| `/[org]/[project]/settings/preview` | 141 | 4/4 · 1.00 | 3/4 · 0.75 | 6/7 · 0.86 | — | — | **0.87** |
-| `/[org]/[project]` · | 1 | all N/A | 1/2 · 0.50 | 7/7 · 1.00 | — | — | **0.89** |
-| `/[org]/[project]/settings` · | 1 | all N/A | 1/2 · 0.50 | 7/7 · 1.00 | — | — | **0.89** |
-| `/[org]/~/settings` · | 1 | all N/A | 1/2 · 0.50 | 7/7 · 1.00 | — | — | **0.89** |
-| `/dashboard/[[...rest]]` · | 125 | all N/A | 1/2 · 0.50 | 7/7 · 1.00 | — | — | **0.89** |
-| `/[org]/~/connectors` | 208 | 3/4 · 0.75 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **0.93** |
-| `/[org]/~/settings/access` | 211 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/settings/activity` | 275 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/settings/billing` | 191 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/settings/general` | 133 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/settings/members` | 219 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/settings/roles` | 222 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/settings/sso` | 211 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/settings/teams` | 212 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/support/ask` | 197 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/support/my-cases` | 147 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/support/cases/[id]` | 155 | 4/4 · 1.00 | 3/4 · 0.75 | 7/7 · 1.00 | — | — | **0.93** |
-| `/[org]/~/support/abuse` | 134 | 4/4 · 1.00 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
-| `/[org]/~/support/submit` | 144 | 4/4 · 1.00 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
+| `/[org]/[project]/architecture` | 381 | 3/4 · 0.75 | 4/5 · 0.80 · 1 withheld | 4/8 · 0.50 | — | 6/7 · 0.86 | **0.71** |
+| `/[org]/[project]/environments` | 234 | 2/4 · 0.50 | 4/5 · 0.80 · 1 withheld | 7/8 · 0.88 | — | 4/7 · 0.57 | **0.71** |
+| `/cli/login` | 4 | 1/3 · 0.33 | 2/4 · 0.50 | 7/8 · 0.88 | — | 6/6 · 1.00 | **0.76** |
+| `/[org]/~/settings/classification` | 145 | 3/4 · 0.75 | 3/4 · 0.75 | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.83** |
+| `/[org]/~/usage` | 182 | 2/4 · 0.50 | 3/4 · 0.75 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.83** |
+| `/[org]/[project]/settings/general` | 213 | 4/4 · 1.00 | 4/5 · 0.80 · 1 withheld | 7/8 · 0.88 | — | 5/7 · 0.71 | **0.83** |
+| `/[org]/[project]/settings/preview` | 141 | 4/4 · 1.00 | 4/5 · 0.80 · 1 withheld | 7/8 · 0.88 | — | 5/7 · 0.71 | **0.83** |
+| `/[org]/[project]/usage` | 146 | 3/4 · 0.75 | 4/5 · 0.80 · 1 withheld | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.83** |
+| `/[org]/~/runners` | 270 | 3/4 · 0.75 | 5/5 · 1.00 | 5/8 · 0.63 | — | 7/7 · 1.00 | **0.83** |
+| `/[org]/[project]/settings/activity` | 275 | 4/4 · 1.00 | 4/6 · 0.67 · 1 withheld | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.84** |
+| `/[org]/[project]/settings` · | 1 | all N/A | 1/2 · 0.50 · 1 withheld | 8/8 · 1.00 | — | 3/4 · 0.75 | **0.86** |
+| `/[org]/~/settings` · | 1 | all N/A | 1/2 · 0.50 | 8/8 · 1.00 | — | 3/4 · 0.75 | **0.86** |
+| `/[org]/~/connectors` | 208 | 3/4 · 0.75 | 4/4 · 1.00 | 8/8 · 1.00 | — | 5/7 · 0.71 | **0.87** |
+| `/[org]/~/jobs/[id]` | 218 | 3/4 · 0.75 | 3/4 · 0.75 · 1 withheld | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.87** |
+| `/[org]/~/new` | 356 | 2/4 · 0.50 | 4/4 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.87** |
+| `/[org]/~/support` | 7 | 2/4 · 0.50 | 4/4 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.87** |
+| `/[org]/[project]/jobs` | 219 | 3/4 · 0.75 | 4/5 · 0.80 · 1 withheld | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.88** |
+| `/[org]/~/alerts` | 288 | 2/4 · 0.50 | 5/5 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.88** |
+| `/[org]/~/support/cases/[id]` | 155 | 4/4 · 1.00 | 4/5 · 0.80 · 1 withheld | 8/8 · 1.00 | — | 5/7 · 0.71 | **0.88** |
+| `/[org]/[project]/clusters` | 163 | 3/4 · 0.75 | 5/6 · 0.83 · 1 withheld | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.88** |
+| `/[org]/[project]/settings/access` | 212 | 4/4 · 1.00 | 5/6 · 0.83 · 1 withheld | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.88** |
+| `/[org]/~/settings/activity` | 275 | 4/4 · 1.00 | 4/4 · 1.00 | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.91** |
+| `/[org]/~/settings/billing/invoices` | 192 | 4/4 · 1.00 | 3/4 · 0.75 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.91** |
+| `/[org]/~/settings/general` | 133 | 4/4 · 1.00 | 4/4 · 1.00 | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.91** |
+| `/[org]/~/settings/members` | 219 | 4/4 · 1.00 | 4/4 · 1.00 | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.91** |
+| `/[org]/~/settings/roles` | 222 | 4/4 · 1.00 | 4/4 · 1.00 | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.91** |
+| `/[org]/~/support/ask` | 197 | 4/4 · 1.00 | 4/4 · 1.00 | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.91** |
+| `/[org]` | 281 | 3/4 · 0.75 | 5/5 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.92** |
+| `/[org]/~/clusters` | 162 | 3/4 · 0.75 | 5/5 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.92** |
+| `/[org]/~/evidence` | 149 | 3/4 · 0.75 | 5/5 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.92** |
+| `/[org]/~/jobs` | 218 | 3/4 · 0.75 | 5/5 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.92** |
+| `/[org]/[project]` · | 1 | all N/A | 1/2 · 0.50 · 1 withheld | 8/8 · 1.00 | — | 4/4 · 1.00 | **0.93** |
+| `/dashboard/[[...rest]]` · | 125 | all N/A | 2/3 · 0.67 | 8/8 · 1.00 | — | 4/4 · 1.00 | **0.93** |
+| `/[org]/~/settings/billing` | 191 | 4/4 · 1.00 | 4/4 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.96** |
+| `/[org]/~/settings/access` | 211 | 4/4 · 1.00 | 5/5 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.96** |
+| `/[org]/~/settings/sso` | 211 | 4/4 · 1.00 | 5/5 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.96** |
+| `/[org]/~/settings/teams` | 212 | 4/4 · 1.00 | 5/5 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.96** |
+| `/[org]/~/support/my-cases` | 147 | 4/4 · 1.00 | 5/5 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.96** |
+| `/[org]/~/support/abuse` | 134 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
+| `/[org]/~/support/submit` | 144 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
 
 `·` marks a redirect-only route: no JSX, a `redirect()` call. It is N/A for six of the eight
-route-state predicates and passes the H rows on a closure of one file that renders nothing.
+route-state predicates and passes the H rows on a closure of one file that renders nothing. It is
+**not** N/A for R5, R6 and R7: hitting one of those URLs is a navigation a person really makes, so
+the console errors it produces and the time it takes to land are real and are measured.
 
 ## Where every shared-surface occurrence landed
 
@@ -220,7 +264,7 @@ of the scoreboard cannot be quiet.
 | rule | predicate | total | recorded decision | measured drift | unlisted | in a page's surface | shared chrome only | outside the private tree |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
 | `data_table` | H4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `empty_state` | **none** — #3798 | 9 | 0 | 9 | 0 | 8 | 1 | 0 |
+| `empty_state` | H9 | 9 | 0 | 9 | 0 | 8 | 1 | 0 |
 | `format` | H5 | 6 | 6 | 0 | 0 | 3 | 3 | 0 |
 | `layer_token` | H7 | 1 | 0 | 1 | 0 | 1 | 0 | 0 |
 | `page_title` | H1 | 17 | 17 | 0 | 0 | 7 | 1 | 9 |
@@ -233,7 +277,11 @@ of the scoreboard cannot be quiet.
 occurrence neither a `reason:` nor a `lifts:` entry accounts for. It is not a defect of this
 report; run `pnpm check:shared-surface`.
 
-**`empty_state` maps to no rubric predicate** (#3798). CLAUDE.md §6's EmptyState row. RUBRIC.md's H table has no row for it — the rubric files the empty state as T5, which it declares LIVE. The static matcher asks a different question (does this file hand-roll a centred empty region?), so reporting it as T5 would be one instrument reported as another. Counted in the table above, scored nowhere.
+**Every matcher maps to a rubric predicate.** `empty_state` was the one that did not — it guarded
+CLAUDE.md §6's `@repo/ui/empty` row and the rubric's H table had no row for it, so its occurrences
+were counted here and scored nowhere. #3798 gave the rubric **H9**, and it is scored like any other
+H row. The live T5 asks the other half of the question: what the empty region resolved to when a
+browser actually rendered it against an empty org.
 
 **Reachable only from the shared layout chain** — 35 files. These are real
 occurrences in the sidebar, topbar, breadcrumbs and shells that every route renders. They are not
