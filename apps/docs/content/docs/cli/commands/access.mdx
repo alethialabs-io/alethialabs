@@ -15,10 +15,10 @@ Alethia's authorization model has three CLI-manageable parts:
 - **SSO providers** are the configured OIDC/SAML identity providers (read-only from the CLI).
 
 All commands operate on the **active organization**, set with
-[`alethia org switch`](/cli/commands/organizations). There is no `--org` override here: that flag
-exists on `members` and `teams` only, because those two carry the org in their request path while
-everything else is scoped by the active context. Every command accepts the global
-[`-o, --output <table|json|csv>`](/cli/identity#output-formats) and `--no-input` flags.
+[`alethia org switch`](/cli/commands/organizations), or on the organization named by the global
+`--org <id>` for a single invocation. `--org` selects a scope rather than granting one: naming an
+organization you are not a member of is refused with `403`. Every command accepts it, along with the
+global [`-o, --output <table|json|csv>`](/cli/identity#output-formats) and `--no-input` flags.
 
 <Callout type="info">
 Authoring **custom roles** and **access grants** requires an **Enterprise** license. Listing roles

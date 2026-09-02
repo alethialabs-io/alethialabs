@@ -12,7 +12,8 @@ latest one.
 <Callout type="info">
 The CLI is a client of the same Console API. `cost show` calls `/cli/projects/<project>/cost` with
 your [CLI token](/cli/authentication) and operates on the **active organization**
-(`alethia org switch`). There is no per-invocation `--org` override.
+(`alethia org switch`). Pass `--org <id>` to scope a single invocation to a different organization —
+it is refused with `403` if you are not a member of it.
 </Callout>
 
 ## `alethia cost show`

@@ -12,8 +12,9 @@ with a `clusters` alias, so both forms work interchangeably.
 <Callout type="info">
 The CLI is a client of the same Console API. These commands call `/cli/clusters` with your
 [CLI token](/cli/authentication) and operate on the **active organization**, which you change with
-`alethia org switch`. There is no per-invocation override here: `--org` exists on `members` and
-`teams` only, and `alethia cluster list --org …` is refused as an unknown flag.
+`alethia org switch`. For one invocation, `alethia cluster list --org <id>` scopes the call to a
+different organization instead — `--org` is a global flag, accepted on every command, and refused
+with `403` if you are not a member of the organization you name.
 </Callout>
 
 ## `alethia cluster list`

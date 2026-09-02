@@ -590,12 +590,17 @@ func permissionCatalog(roles []api.Role) []string {
 // plain string, so it is offered as an option even when it is not one of the org's role names —
 // refusing to show the caller their own default would be the CLI disagreeing with itself.
 //
-// offerOrgRoles is FALSE when the invitation targets an org other than the active one. `GET
-// /api/cli/roles` is scoped by the X-Alethia-Org header, and `--org` changes only the request PATH
-// of the members endpoint — so the list this call returns belongs to the ACTIVE org, and offering
-// it for a different one would put names in front of the operator that mean nothing where the
-// invitation lands. `role` is a free string on the wire, so the honest question there is a typed
-// one; a list we cannot vouch for is worse than no list.
+// offerOrgRoles says whether the role list can be vouched for. `GET /api/cli/roles` is scoped by
+// the X-Alethia-Org header, so the question is whether that header names the same org the
+// invitation lands in — and a list we cannot vouch for is worse than no list, because `role` is a
+// free string on the wire and a name that does not exist there reads as a valid choice.
+//
+// It USED to be false whenever `--org` was passed: the flag was registered on `members`/`teams`
+// alone and moved only the request PATH, leaving the header on the active context. #3817 made
+// `--org` a root persistent flag that sets BOTH — currentOrgID and api.setAuthHeaders read one
+// value — so the two can no longer disagree and the caller passes true. The parameter stays because
+// it is the property being relied on, not a constant: if a future scope ever reaches the path
+// without reaching the header, this is the argument that has to become false again.
 func promptMembersAdd(c roleLister, email, current string, offerOrgRoles bool) (string, string, error) {
 	emailField := mustOrgField("alethia members add", orgFieldKeyEmail)
 	roleField := mustOrgField("alethia members add", orgFieldKeyRole)

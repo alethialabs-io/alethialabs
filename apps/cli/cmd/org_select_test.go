@@ -673,16 +673,19 @@ func TestOrgSelect_GrantsAddFormNeedsAnActiveOrg(t *testing.T) {
 	}
 }
 
-// TestOrgSelect_ForeignOrgInviteAsksInsteadOfListing pins the scoping defect this pass found in its
-// own first cut.
+// TestOrgSelect_ForeignOrgInviteAsksInsteadOfListing pins the BEHAVIOUR behind promptMembersAdd's
+// offerOrgRoles argument, in both directions.
 //
-// `GET /api/cli/roles` is scoped by the X-Alethia-Org header; `--org` changes only the members
-// endpoint's PATH. So a role picker filled from that call, shown while inviting into a DIFFERENT
-// org, names roles that do not exist where the invitation lands — and `role` is a free string on the
-// wire, so nothing downstream would object.
+// `GET /api/cli/roles` is scoped by the X-Alethia-Org header. When that header names a different
+// org from the one the invitation lands in, a role picker filled from that call names roles that do
+// not exist where the invitation goes — and `role` is a free string on the wire, so nothing
+// downstream would object. Withholding the list and asking is the only honest answer.
 //
-// Both arms are asserted: the active org gets the list, a foreign org gets a typed answer and NO
-// roles call at all.
+// Since #3817 the caller passes true: `--org` is a root persistent flag that sets the header and the
+// members path from ONE value, so the two can no longer disagree. The false arm is kept and driven
+// here anyway, because it is the property the argument exists to carry — if a future scope reaches
+// the path without reaching the header, this is the behaviour that has to come back, and a
+// deleted-because-unreached branch is one nobody would think to restore.
 func TestOrgSelect_ForeignOrgInviteAsksInsteadOfListing(t *testing.T) {
 	t.Run("the active org is offered its own roles", func(t *testing.T) {
 		orgFormInteractive(t)

@@ -12,7 +12,8 @@ diverged from their provisioned state; this command shows the latest result.
 <Callout type="info">
 The CLI is a client of the same Console API. `drift show` calls `/cli/projects/PROJECT/drift`
 with your [CLI token](/cli/authentication) and operates on the **active organization**
-(switch it with `alethia org switch`).
+(switch it with `alethia org switch`). Pass the global `--org <id>` to scope a single invocation to
+a different organization — it is refused with `403` if you are not a member of it.
 </Callout>
 
 ## `alethia drift show`
