@@ -8,8 +8,8 @@
 // or reset to community.
 //
 // Usage:
-//   pnpm -F console org:set-plan <org-slug> <community|team|enterprise> [--status active] [--months 12]
-//   pnpm -F console org:set-plan <org-slug> enterprise --perpetual
+//   pnpm -C apps/console run org:set-plan <org-slug> <community|team|enterprise> [--status active] [--months 12]
+//   pnpm -C apps/console run org:set-plan <org-slug> enterprise --perpetual
 //
 // `active`/`trialing` grant the plan's entitlements; `community` (or --status none) resets.
 //
