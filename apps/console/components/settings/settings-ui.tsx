@@ -1,11 +1,20 @@
+"use client";
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Shared Settings layout primitives — the authored claude.ai/design "settings" look,
 // built from shadcn/ui + Tailwind token utilities (bg-surface, text-text-tertiary,
 // border-border-strong, …). Every settings page composes these; there is no bespoke
-// CSS module. Presentational only (server-safe — no hooks).
+// CSS module.
+//
+// This file USED TO SAY "presentational only (server-safe — no hooks)". It is now a client
+// module, because `SettingsField` has to mint an id for its label and `SettingsSelect` has to
+// read it back (see below) — and both need a hook. That costs nothing: every one of the fifteen
+// modules that import from here already carries `"use client"`, so the directive only makes the
+// boundary explicit instead of inherited, and it stops a future server component from importing
+// `SettingsSection` and crashing on a hook it cannot see.
 
+import { createContext, useContext, useId } from "react";
 import { Search } from "lucide-react";
 import type { ReactNode } from "react";
 import {
@@ -88,6 +97,34 @@ export function SettingsPanel({
 	);
 }
 
+/**
+ * The id of the `SettingsField` label a control is currently rendered under, or `null` outside one.
+ *
+ * A settings row's label is a `<span>`, not a `<label>` — the control column can hold several
+ * controls, and a `<label for>` binds exactly one — so the association has to be published rather
+ * than inferred. Publishing the ID is what lets a control point `aria-labelledby` at the text the
+ * user can already see, instead of every call site being asked to retype that text as an
+ * `aria-label` and half of them forgetting (#3756: two on `…/settings/general` did).
+ */
+const SettingsFieldLabelContext = createContext<string | null>(null);
+
+/**
+ * The id of the enclosing `SettingsField`'s visible label, for a control that has to name itself.
+ *
+ * Only worth reaching for when a control cannot be named from its own contents — a
+ * `<button role="combobox">` (which every `@repo/ui/select` trigger is) takes its name from the
+ * author ONLY, so its visible text is not its accessible name.
+ *
+ * Deliberately NOT exported. A raw `<Select>` written directly on a settings page cannot use it
+ * anyway: those live inside a `Controller` `render` prop, which is called as a function rather
+ * than mounted as a component, so a hook there would be a hooks-order violation — and the page
+ * component itself sits ABOVE the provider, where the answer is null. Those three write their own
+ * `aria-label`. Export it when a second CONTROL component needs it, not before.
+ */
+function useSettingsFieldLabelId(): string | null {
+	return useContext(SettingsFieldLabelContext);
+}
+
 /** A labeled form row: 200px label/hint column + a control column. */
 export function SettingsField({
 	label,
@@ -98,17 +135,24 @@ export function SettingsField({
 	hint?: ReactNode;
 	children: ReactNode;
 }) {
+	const labelId = useId();
 	return (
 		<div className="grid grid-cols-[200px_1fr] items-start gap-6 border-b border-border px-[22px] py-[15px] last:border-b-0">
 			<div className="flex flex-col gap-1">
-				<span className="text-[13px] font-medium text-text-primary">{label}</span>
+				<span id={labelId} className="text-[13px] font-medium text-text-primary">
+					{label}
+				</span>
 				{hint && (
 					<span className="text-[11.5px] leading-[1.45] text-text-tertiary">
 						{hint}
 					</span>
 				)}
 			</div>
-			<div className="flex min-w-0 flex-col gap-2">{children}</div>
+			<div className="flex min-w-0 flex-col gap-2">
+				<SettingsFieldLabelContext.Provider value={labelId}>
+					{children}
+				</SettingsFieldLabelContext.Provider>
+			</div>
 		</div>
 	);
 }
@@ -174,6 +218,18 @@ export const settingsControlSize = "h-[38px] px-3";
  * option with an empty-string `value` is treated as the placeholder (Radix forbids
  * empty item values), so existing call sites that pass a `{ value: "", label: "…" }`
  * leading option keep working.
+ *
+ * NAMING. base-ui stamps `role="combobox"` on the trigger unconditionally
+ * (`SelectTrigger.js:115`, re-forced at `:193`), and here the role is TRUE — there is a real owned
+ * listbox and an `aria-haspopup="listbox"` to go with it. What it also means is that the trigger is
+ * named from the AUTHOR only: `namedFromContents` is false for `combobox`, so axe's
+ * `button-has-visible-text` check yields `''` and a trigger reading `eu-west-1 · Frankfurt` scores
+ * `button-name` CRITICAL with its label right there on screen.
+ *
+ * So the name is taken from the enclosing `SettingsField`'s label by default — the text the user
+ * can see, pointed at rather than retyped. An explicit `aria-label` still wins (for the call sites
+ * that are NOT inside a field row), and the two are never set together: `aria-labelledby` beats
+ * `aria-label` in the accname algorithm, so passing both would silently discard the explicit one.
  */
 export function SettingsSelect({
 	value,
@@ -193,9 +249,14 @@ export function SettingsSelect({
 }) {
 	const ph = placeholder ?? options.find((o) => o.value === "")?.label;
 	const items = options.filter((o) => o.value !== "");
+	const fieldLabelId = useSettingsFieldLabelId();
 	return (
 		<Select value={value || undefined} onValueChange={onChange}>
-			<SelectTrigger aria-label={ariaLabel} className={cn("w-full", className)}>
+			<SelectTrigger
+				aria-label={ariaLabel}
+				aria-labelledby={ariaLabel ? undefined : (fieldLabelId ?? undefined)}
+				className={cn("w-full", className)}
+			>
 				<SelectValue placeholder={ph} />
 			</SelectTrigger>
 			<SelectContent>
