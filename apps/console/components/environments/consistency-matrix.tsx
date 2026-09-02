@@ -66,12 +66,12 @@ export function ConsistencyMatrix({ consistency }: { consistency: EnvConsistency
 				    4px of block-end padding covers both. Block END only: a scroll container's scrollable
 				    overflow region extends at the block end, so the first row's 2px above is clipped and
 				    unreachable rather than scrollable, and padding it would only inset the header row. */}
-				<Table scroll containerClassName="pb-1" className="text-[12.5px]">
+				<Table scroll containerClassName="pb-1" className="text-ui-sm">
 					<TableHeader>
 						<TableRow className="bg-surface-muted">
 							<TableHead
 								scope="col"
-								className="font-mono text-[11px] uppercase tracking-[0.1em] text-text-tertiary"
+								className="font-mono text-ui-xs uppercase tracking-[0.1em] text-text-tertiary"
 							>
 								Component
 							</TableHead>

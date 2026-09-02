@@ -174,21 +174,21 @@ export function BillingPanel() {
 										<span
 											className={
 												isEntitled
-													? "rounded-full border border-ink bg-ink px-2 py-[3px] font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-foreground"
-													: "rounded-full border border-border-strong px-2 py-[3px] font-mono text-[9.5px] uppercase tracking-[0.1em] text-text-secondary"
+													? "rounded-full border border-ink bg-ink px-2 py-[3px] font-mono text-ui-3xs uppercase tracking-[0.1em] text-ink-foreground"
+													: "rounded-full border border-border-strong px-2 py-[3px] font-mono text-ui-3xs uppercase tracking-[0.1em] text-text-secondary"
 											}
 										>
 											{STATE_LABEL[state]}
 										</span>
 										{isEntitled && (
-											<span className="rounded-full border border-border-strong px-2 py-[3px] font-mono text-[9.5px] uppercase tracking-[0.1em] text-text-secondary">
+											<span className="rounded-full border border-border-strong px-2 py-[3px] font-mono text-ui-3xs uppercase tracking-[0.1em] text-text-secondary">
 												Monthly
 											</span>
 										)}
 									</>
 								)}
 							</div>
-							<div className="flex flex-wrap items-center gap-2 text-[12.5px] text-text-tertiary">
+							<div className="flex flex-wrap items-center gap-2 text-ui-sm text-text-tertiary">
 								<span>{meta.tagline}</span>
 								{periodLabel && (
 									<>
@@ -206,20 +206,20 @@ export function BillingPanel() {
 									) : (
 										<>
 											{formatMoney(monthly * 100)}
-											<span className="font-mono text-[12px] font-normal text-text-tertiary">
+											<span className="font-mono text-ui-sm font-normal text-text-tertiary">
 												/mo
 											</span>
 										</>
 									)}
 								</div>
 								{meta.perSeat && unit !== null && monthly !== null && monthly > 0 && (
-									<div className="font-mono text-[10.5px] text-text-tertiary">
+									<div className="font-mono text-ui-2xs text-text-tertiary">
 										{formatMoney(unit * 100)}/seat · {seatCount} seat
 										{seatCount === 1 ? "" : "s"}
 									</div>
 								)}
 								{showNextCharge && monthly !== null && summary.currentPeriodEnd && (
-									<div className="font-mono text-[10.5px] text-text-tertiary">
+									<div className="font-mono text-ui-2xs text-text-tertiary">
 										next charge {formatMoney(monthly * 100)} ·{" "}
 										{formatDate(summary.currentPeriodEnd)}
 									</div>
@@ -229,7 +229,7 @@ export function BillingPanel() {
 					</div>
 
 					<div className="flex flex-wrap items-center justify-between gap-4 border-t border-border bg-surface-sunken px-6 py-[14px]">
-						<div className="flex items-center gap-2 text-[12px] text-text-tertiary">
+						<div className="flex items-center gap-2 text-ui-sm text-text-tertiary">
 							<Info size={13} />
 							Your cloud-resource spend is billed separately by your provider.
 						</div>
