@@ -265,9 +265,13 @@ func (d channelDraft) hasDestination() bool {
 		return len(d.Recipients) > 0
 	case channelDestRoutingKey:
 		return strings.TrimSpace(d.RoutingKey) != ""
-	default:
+	case channelDestURL:
 		return strings.TrimSpace(d.URL) != ""
 	}
+	// Unreachable: destinationFor returns one of the three. Named rather than left to `default`
+	// so `exhaustive` fails when a fourth destination is added instead of silently routing it to
+	// the URL arm — a new destination reported as "needs --url" is the wrong refusal.
+	return strings.TrimSpace(d.URL) != ""
 }
 
 // missingDestinationErr names the flag this type needs, rather than listing all three.
@@ -277,9 +281,10 @@ func (d channelDraft) missingDestinationErr() error {
 		return fmt.Errorf("an %s channel needs at least one --recipient", d.Type)
 	case channelDestRoutingKey:
 		return fmt.Errorf("a %s channel needs --routing-key", d.Type)
-	default:
+	case channelDestURL:
 		return fmt.Errorf("a %s channel needs --url", d.Type)
 	}
+	return fmt.Errorf("a %s channel needs --url", d.Type)
 }
 
 // askChannelDraft opens the create form for whatever the flags did not supply.
@@ -333,7 +338,7 @@ func askChannelDestination(draft channelDraft) (channelDraft, error) {
 			Title(f.Title).Description(f.Description).Value(&draft.RoutingKey))); err != nil {
 			return draft, err
 		}
-	default:
+	case channelDestURL:
 		f := mustGovField("alethia channels create", fieldKeyChannelURL)
 		if err := runHuhForm(huh.NewGroup(huh.NewInput().
 			Title(f.Title).Description(f.Description).Value(&draft.URL))); err != nil {
