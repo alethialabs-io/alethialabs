@@ -44,6 +44,25 @@
 // containers. A rule requiring `w-full` is blind to two of the defects this gate exists to find,
 // including one the issue itself names.
 //
+// ── T3 READS LAYOUTS, AND WHAT IT DELIBERATELY DOES NOT MEASURE ──────────────────────────────
+//
+// T3's placement half (see the note on the predicate) needs to know which layouts in a route's
+// chain call `notFound()`, so this file reads `record.layoutChain` as well as the page. Two bounds
+// are stated here rather than left to be inferred, because an unstated exception is how the next
+// reader concludes the whole predicate is enforced:
+//
+//   1. THE N/A GATE IS STILL THE PAGE'S. `callsNotFound` is the page source and only the page
+//      source, so a route whose page never calls `notFound()` is N/A even when a layout above it
+//      does. `[org]/layout.tsx` throws for an unknown org and its throw escapes `[org]/not-found.tsx`
+//      by exactly the mechanism below — that defect is real and T3 does not report it, on any of
+//      the ~30 routes it touches. Widening the gate would charge one layout's defect to every
+//      route beneath it; the org boundary is its own unit of work.
+//   2. ONLY LAYOUTS AT OR BELOW THE ROUTE'S FRAME COUNT — the innermost dynamic segment, or the
+//      page's own segment for a static route. A layout above the frame throws about an OUTER
+//      resource, and whether ITS boundary is placed right is measured on the routes whose
+//      innermost segment that one is, not here. Without this bound `[org]/layout.tsx` would fail
+//      every project route for a reason that has nothing to do with the project.
+//
 // ── THE PERMANENT POSITIVE CONTROL ───────────────────────────────────────────────────────────
 //
 // EVERY run — not just `--self-test` — scores two fixture trees before it scores the real one:
@@ -148,10 +167,33 @@ function readStrippedLines(abs) {
 	return lines;
 }
 
-/** The same source as one string — for the import scan, which is not width-sensitive. */
+/**
+ * The same source as one string — for the import scan, which is not width-sensitive.
+ */
 function readStripped(abs) {
 	const lines = readStrippedLines(abs);
 	return lines === null ? null : lines.join("\n");
+}
+
+/**
+ * Source of a file the MANIFEST said exists, or a raised error.
+ *
+ * `readStripped` answers `null` for "not there", which is a legitimate answer when the caller is
+ * asking whether a boundary exists. It is NOT a legitimate answer here: every path handed to this
+ * comes from the manifest's own filesystem walk, so an unreadable one means the tree moved under us
+ * or the walk is wrong. Coalescing that to `""` would make the regex below find no `notFound()` and
+ * report the route CLEAN — absence and error giving the same answer, which is the shape that keeps
+ * biting this repo. Raise instead: a scan that cannot read its own subject has not scored it.
+ */
+function readManifestFile(abs) {
+	const src = readStripped(abs);
+	if (src === null) {
+		throw new Error(
+			`${abs}: the route manifest names this file but it could not be read — refusing to score, ` +
+				`because "unreadable" and "contains no notFound()" must not look the same`,
+		);
+	}
+	return src;
 }
 
 /**
@@ -302,7 +344,7 @@ export function buildContexts(manifest, repoRoot) {
 	const routeByDir = new Map(manifest.routes.map((r) => [r.dir, r]));
 
 	return manifest.routes.map((record) => {
-		const pageSrc = readStripped(path.join(repoRoot, record.file)) ?? "";
+		const pageSrc = readManifestFile(path.join(repoRoot, record.file));
 		const page = resolveWidth(repoRoot, record.file);
 		const shellWidth = record.shell === null ? null : (shellsByName.get(record.shell) ?? null);
 
@@ -328,6 +370,20 @@ export function buildContexts(manifest, repoRoot) {
 			}
 		}
 
+		// The frame T3 measures this route's boundary against: the innermost dynamic segment when
+		// there is one, else the page's own segment. A layout ABOVE the frame throws about an
+		// OUTER resource, and its boundary is the business of the routes whose innermost segment
+		// that one is — not of this route. See the T3 note in this file's header.
+		const frameDir = innermostParamDir ?? record.dir;
+		// The layouts in this route's chain, at or below that frame, whose body calls notFound().
+		// The manifest hands over every path opened here; nothing is discovered by walking.
+		const notFoundThrowingLayouts = record.layoutChain.filter((layoutRel) => {
+			const layoutDir = path.dirname(layoutRel);
+			const inFrame = layoutDir === frameDir || layoutDir.startsWith(frameDir + path.sep);
+			if (!inFrame) return false;
+			return /\bnotFound\s*\(/.test(readManifestFile(path.join(repoRoot, layoutRel)));
+		});
+
 		return {
 			record,
 			shellWidth,
@@ -344,6 +400,12 @@ export function buildContexts(manifest, repoRoot) {
 			loadingOwnerIsOwnPage: loadingOwner === undefined ? false : !loadingOwner.isRedirectOnly,
 			callsNotFound: /\bnotFound\s*\(/.test(pageSrc),
 			innermostParamDir,
+			/**
+			 * Repo-relative layout files whose notFound() this route's boundary must be able to
+			 * catch — the placement half of T3. A LAYOUT's throw unwinds outside its own segment's
+			 * not-found.tsx, so this is not the same question as the page's.
+			 */
+			notFoundThrowingLayouts,
 		};
 	});
 }
@@ -434,12 +496,52 @@ export const CHECKS = {
 			? PASS(`${c.record.boundaries.error.file}@${c.record.boundaries.error.distance}`)
 			: FAIL("no error.tsx anywhere in its chain"),
 
+	// T3 has TWO halves, and the second one is the reason a `not-found.tsx` existing beside the
+	// throw is not the predicate. SCOPE: the boundary must answer for the resource the innermost
+	// dynamic segment names — `[org]/not-found.tsx` says "Organization not found" for a project
+	// that is missing while its org is fine. PLACEMENT: the boundary must be able to FIRE.
+	//
+	// A segment's `not-found.tsx` is handed to the `LayoutRouter` for that segment's CHILDREN slot
+	// (`next/dist/server/app-render/create-component-tree.js`: `notFoundComponent =
+	// isChildrenRouteKey ? notFoundElement : undefined`), so the boundary mounts INSIDE that
+	// segment's own layout. A page's throw is inside it; that segment's OWN LAYOUT's throw is not,
+	// and unwinds to the next boundary above. The only case that wraps a segment's own layout is
+	// `isRootLayoutWithChildrenSlotAndAtLeastOneMoreSlot`, whose own comment calls it a hack for
+	// unmatched parallel routes and which requires the ROOT layout with more than one slot.
+	//
+	// So a layout at segment X that throws needs a boundary STRICTLY ABOVE X — and when X is the
+	// innermost dynamic segment, that is unsatisfiable together with the scope half: no file can
+	// be both above `[project]` and scoped to it. That is not a gap in the rule, it is the finding
+	// (#3880), and it is why nine `[project]/**` routes failed while a `not-found.tsx` beside the
+	// layout would have flipped them all to a false PASS.
 	T3: (c) => {
 		if (!c.callsNotFound) return NA("does-not-call-not-found");
 		const nf = c.record.boundaries["not-found"];
 		if (nf.file === null) return FAIL("calls notFound() with no not-found.tsx in its chain");
-		if (c.innermostParamDir === null) return PASS(nf.file);
 		const nfDir = path.dirname(nf.file);
+		// ── placement ───────────────────────────────────────────────────────────────────────
+		// The unsatisfiable case first, so it is reported as itself rather than as whichever half
+		// happens to be tested first: a layout throwing AT the resource's own segment.
+		const atFrame = c.notFoundThrowingLayouts.find(
+			(rel) => c.innermostParamDir !== null && path.dirname(rel) === c.innermostParamDir,
+		);
+		if (atFrame !== undefined) {
+			return FAIL(
+				`${atFrame} calls notFound() at ${c.innermostParamDir}; that segment's own ` +
+					`not-found.tsx mounts inside it and cannot catch it, and one above it answers ` +
+					`for a different resource`,
+			);
+		}
+		for (const rel of c.notFoundThrowingLayouts) {
+			if (!path.dirname(rel).startsWith(nfDir + path.sep)) {
+				return FAIL(
+					`${rel} calls notFound() and ${nf.file} is not above it — the throw unwinds ` +
+						`past that boundary`,
+				);
+			}
+		}
+		// ── scope ───────────────────────────────────────────────────────────────────────────
+		if (c.innermostParamDir === null) return PASS(nf.file);
 		const scoped = nfDir === c.innermostParamDir || nfDir.startsWith(c.innermostParamDir + path.sep);
 		return scoped
 			? PASS(nf.file)
@@ -807,6 +909,27 @@ function buildProbeTree() {
 	// T3 — calls notFound(), and the nearest not-found.tsx is scoped to [org], not to [thing].
 	put(root, "apps/console/app/(private)/[org]/[thing]/page.tsx",
 		META + "import { notFound } from 'next/navigation';\nexport default function T() { notFound(); return <div />; }\n");
+	// T3's PLACEMENT half — the shape the old rule scored as a PASS and #3880 found. The LAYOUT at
+	// the innermost dynamic segment throws, and a not-found.tsx sits right beside it. That file is
+	// handed to the segment's CHILDREN slot, so it mounts inside the very layout that throws and
+	// can never catch it; a boundary above `[res]` could catch it but would answer for `[org]`.
+	// A rule that only asked "is the nearest not-found.tsx at or below the innermost param dir"
+	// passes this route, which is the whole defect.
+	put(root, "apps/console/app/(private)/[org]/sec/[res]/layout.tsx",
+		"import { notFound } from 'next/navigation';\nexport default function RL({ children }) { notFound(); return <div>{children}</div>; }\n");
+	put(root, "apps/console/app/(private)/[org]/sec/[res]/not-found.tsx", "export default function RNF() { return <div />; }\n");
+	put(root, "apps/console/app/(private)/[org]/sec/[res]/page.tsx",
+		META + "import { notFound } from 'next/navigation';\nexport default function R() { notFound(); return <div />; }\n");
+	// The SAME defect one level below the resource segment, which is the branch that is NOT the
+	// unsatisfiable one: `[thing]/sub/layout.tsx` throws and `[thing]/sub/not-found.tsx` sits in
+	// the same directory, so the scope half passes (it is below `[thing]`) and the placement half
+	// still fails — a boundary at `[thing]` WOULD have caught this one. Without this fixture the
+	// "strictly above" arm of the rule is never driven, and only the unsatisfiable arm is.
+	put(root, "apps/console/app/(private)/[org]/[thing]/sub/layout.tsx",
+		"import { notFound } from 'next/navigation';\nexport default function SL({ children }) { notFound(); return <div>{children}</div>; }\n");
+	put(root, "apps/console/app/(private)/[org]/[thing]/sub/not-found.tsx", "export default function SNF() { return <div />; }\n");
+	put(root, "apps/console/app/(private)/[org]/[thing]/sub/page.tsx",
+		META + "import { notFound } from 'next/navigation';\nexport default function S() { notFound(); return <div />; }\n");
 	return root;
 }
 
@@ -818,8 +941,13 @@ function buildAntiProbeTree() {
 	put(root, "apps/console/app/layout.tsx", "export default function L({ children }) { return <div>{children}</div>; }\n");
 	put(root, "apps/console/app/error.tsx", "export default function E() { return <div />; }\n");
 	put(root, "apps/console/app/(private)/layout.tsx", "export default function PL({ children }) { return <div>{children}</div>; }\n");
+	// The org layout THROWS, exactly as the console's does. That throw escapes `[org]/not-found.tsx`
+	// by the same mechanism as every other layout's — and it is out of frame for every route below
+	// `[org]` whose own innermost segment is deeper. This is the control on bound 2 in the header:
+	// a rule that read the whole layout chain instead of the part at or below the route's frame
+	// would fail `/[org]/[thing]` here for a defect belonging to `[org]`.
 	put(root, "apps/console/app/(private)/[org]/layout.tsx",
-		"import { AppShell } from '@/components/shell/app-shell';\nexport default function O({ children }) { return <AppShell>{children}</AppShell>; }\n");
+		"import { notFound } from 'next/navigation';\nimport { AppShell } from '@/components/shell/app-shell';\nexport default function O({ children }) { if (!children) notFound(); return <AppShell>{children}</AppShell>; }\n");
 	put(root, "apps/console/app/(private)/[org]/loading.tsx", "export default function LS() { return <div />; }\n");
 	put(root, "apps/console/app/(private)/[org]/not-found.tsx", "export default function NF() { return <div />; }\n");
 	put(root, "apps/console/app/(private)/[org]/page.tsx", META + PAGE());
@@ -828,6 +956,15 @@ function buildAntiProbeTree() {
 	put(root, "apps/console/app/(private)/[org]/[thing]/not-found.tsx", "export default function TNF() { return <div />; }\n");
 	put(root, "apps/console/app/(private)/[org]/[thing]/page.tsx",
 		META + "import { notFound } from 'next/navigation';\nexport default function T() { notFound(); return <div />; }\n");
+	// T3's PLACEMENT half, the OTHER direction: a layout that throws is fine when the boundary is
+	// STRICTLY ABOVE it. `[thing]/deep/layout.tsx` throws and `[thing]/not-found.tsx` is one
+	// segment up, so it does catch — and it still names the resource `[thing]`. Without this
+	// fixture "any layout in the chain calls notFound() → FAIL" would pass the control, and that
+	// rule would fail every correctly-nested boundary in the tree.
+	put(root, "apps/console/app/(private)/[org]/[thing]/deep/layout.tsx",
+		"import { notFound } from 'next/navigation';\nexport default function DL({ children }) { notFound(); return <div>{children}</div>; }\n");
+	put(root, "apps/console/app/(private)/[org]/[thing]/deep/page.tsx",
+		META + "import { notFound } from 'next/navigation';\nexport default function D() { notFound(); return <div />; }\n");
 	// T1 — a redirect-only segment whose loading.tsx exists only for the sub-pages beneath it.
 	put(root, "apps/console/app/(private)/[org]/sect/page.tsx", REDIRECT);
 	put(root, "apps/console/app/(private)/[org]/sect/loading.tsx", "export default function SL() { return <div />; }\n");
@@ -879,6 +1016,12 @@ export function positiveControl() {
 		expect(p, "probe", "/[org]/list/detail", "T1", "FAIL");
 		expect(p, "probe", "/loose", "T2", "FAIL");
 		expect(p, "probe", "/[org]/[thing]", "T3", "FAIL");
+		// T3's placement half: a not-found.tsx BESIDE a throwing layout scores the scope half
+		// perfectly and still cannot fire. This is the fixture that separates the two rules.
+		expect(p, "probe", "/[org]/sec/[res]", "T3", "FAIL");
+		// …and the other arm: a throwing layout BELOW the resource segment, whose own directory's
+		// not-found.tsx is scoped correctly and still cannot catch it.
+		expect(p, "probe", "/[org]/[thing]/sub", "T3", "FAIL");
 		expect(p, "probe", "/loose", "T4", "FAIL");
 
 		// S4's BOUNDARY, asserted in the probe tree because that is where the shape lives:
@@ -891,7 +1034,8 @@ export function positiveControl() {
 		// ── the antiProbes: no predicate may fire on a page that does the thing ─────────────
 		for (const id of ["S1", "S2", "S3", "S4", "T1", "T2", "T4"]) expect(a, "antiProbe", "/[org]", id, "PASS");
 		expect(a, "antiProbe", "/[org]", "T3", "N/A:does-not-call-not-found");
-		expect(a, "antiProbe", "/[org]/[thing]", "T3", "PASS");
+		expect(a, "antiProbe", "/[org]/[thing]", "T3", "PASS"); // the PAGE throws, inside the boundary
+		expect(a, "antiProbe", "/[org]/[thing]/deep", "T3", "PASS"); // a layout throws BELOW it
 		expect(a, "antiProbe", "/[org]/sect/leaf", "T1", "PASS");
 		expect(a, "antiProbe", "/[org]/matchw", "S3", "PASS");
 
@@ -1007,6 +1151,7 @@ function selfTest() {
 			loadingOwnerIsOwnPage: false,
 			callsNotFound: false,
 			innermostParamDir: null,
+			notFoundThrowingLayouts: [],
 		},
 	];
 	const withCheck = (id, impl, fn) => {
