@@ -147,18 +147,18 @@ alethia
 ├── activity [-n/--limit <N>]         # org delivery/activity log
 └── ops                              # break-glass incident recovery (privileged · audited · gated)
     ├── session --reason <r>                                     # open a time-boxed session
-    ├── approve <action> <resource_id> --reason <r>              # 2nd operator mints a two-person token
-    ├── inspect-job <job_id> --reason <r>                        # blast: none (read-only, cross-tenant)
-    ├── retry-job <job_id> --reason <r>                          # blast: low
-    ├── cancel-job <job_id> --reason <r>                         # blast: low
-    ├── drain-runner <runner_id> --reason <r>                    # blast: low
-    ├── restart-runner <runner_id> --reason <r>                  # blast: medium
-    ├── unstick-env <env_id> --from <s,…> --to <s> --reason <r>  # blast: medium (status CAS)
-    ├── orphan-detect --project <id> --reason <r>                # blast: none (read-only, run-scoped)
-    ├── replay-webhook <stripe_event_id> [--send-emails] --reason <r>  # blast: low
-    ├── force-release-lock <state_key> --approval <id> --reason <r>    # blast: HIGH, two-person
-    ├── state-surgery <state_key> --approval <id> [--note <n>] --reason <r>  # HIGH, two-person, INERT
-    └── orphan-clean --project <id> --approval <id> --reason <r>       # HIGH, two-person, INERT
+    ├── approve [action] [resource_id] --reason <r>              # 2nd operator mints a two-person token
+    ├── inspect-job [job_id] --reason <r>                        # blast: none (read-only, cross-tenant)
+    ├── retry-job [job_id] --reason <r> [-y]                     # blast: low
+    ├── cancel-job [job_id] --reason <r> [-y]                    # blast: low
+    ├── drain-runner [runner_id] --reason <r> [-y]               # blast: low
+    ├── restart-runner [runner_id] --reason <r> [-y]             # blast: medium
+    ├── unstick-env [env_id] [--from <s,…>] [--to <s>] --reason <r> [-y]  # blast: medium (status CAS)
+    ├── orphan-detect [--project <id>] --reason <r>              # blast: none (read-only, run-scoped)
+    ├── replay-webhook [stripe_event_id] [--send-emails] --reason <r> [-y]  # blast: low
+    ├── force-release-lock [state_key] --approval <id> --reason <r> [-y]    # blast: HIGH, two-person
+    ├── state-surgery [state_key] --approval <id> [--note <n>] --reason <r> [-y]  # HIGH, two-person, INERT
+    └── orphan-clean [--project <id>] --approval <id> --reason <r> [-y]     # HIGH, two-person, INERT
 ```
 
 <Callout type="info">
@@ -184,7 +184,9 @@ typed-confirms the resource id server-side. The whole group is gated behind
 that hasn't armed it) is refused with `403`/`404`. High-blast verbs (`force-release-lock`,
 `state-surgery`, `orphan-clean`) additionally require a two-person `--approval` token minted by a
 **different** operator via `alethia ops approve`, and `state-surgery`/`orphan-clean` ship **INERT**
-(fail-closed — they refuse rather than perform an unscoped mutation).
+(fail-closed — they refuse rather than perform an unscoped mutation). Every mutating verb also
+confirms at the terminal, naming the resource and the consequence; `-y`/`--yes` is how a runbook
+opts in ahead of time. Every id is optional: omit it and the command offers a list.
 </Callout>
 
 ## Interactive Selection

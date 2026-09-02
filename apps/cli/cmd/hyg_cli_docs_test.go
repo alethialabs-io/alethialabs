@@ -56,6 +56,9 @@ var docsGroups = map[string]string{
 	"grants":  "access",
 	"sso":     "access",
 	"verify":  "verify",
+	// The break-glass group (#3702). Its page is `ops`; registering it here is what puts its
+	// leaves under the same docs guards every other group answers to.
+	"ops": "ops",
 	// The BYO-IaC group (#3707). All five at once because they are one noun group and one pass:
 	// `chart` and `iac` are the two halves of bring-your-own, `repo` is where their repository
 	// picker gets its list, and `drift` and `staged` are the two read-only leaves that share the
