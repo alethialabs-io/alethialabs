@@ -85,7 +85,7 @@ export function AgentArtifactGallery({
 			{/* Gallery top bar — mirrors the conversation top bar's height/rhythm. */}
 			<div className="flex flex-none items-center gap-2 border-b border-border px-3 py-2.5">
 				<div className="text-sm font-medium text-foreground">Artifacts</div>
-				<span className="font-mono text-[11px] text-muted-foreground">
+				<span className="font-mono text-ui-xs text-muted-foreground">
 					{items ? items.length : ""}
 				</span>
 				<div className="ml-3 flex items-center border border-border">
@@ -95,7 +95,7 @@ export function AgentArtifactGallery({
 							type="button"
 							onClick={() => setTab(t)}
 							className={cn(
-								"px-2.5 py-1 text-[12px] transition-colors",
+								"px-2.5 py-1 text-ui-sm transition-colors",
 								tab === t
 									? "bg-muted text-foreground"
 									: "text-muted-foreground hover:text-foreground",
@@ -179,13 +179,13 @@ export function AgentArtifactGallery({
 									</span>
 									<span
 										title={a.name}
-										className="line-clamp-2 min-w-0 break-words text-[14px] font-medium text-foreground"
+										className="line-clamp-2 min-w-0 break-words text-ui-lg font-medium text-foreground"
 									>
 										{a.name}
 									</span>
 								</button>
 								<div className="mt-4 flex items-center justify-between">
-									<span className="font-mono text-[10px] uppercase text-muted-foreground">
+									<span className="font-mono text-ui-2xs uppercase text-muted-foreground">
 										{a.kind} · {a.spec.widgets.length}{" "}
 										{a.spec.widgets.length === 1 ? "widget" : "widgets"}
 									</span>
