@@ -889,6 +889,24 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-route-states.mjs --self-test
+      # The console's published conformance score. #3618 landed apps/console/scripts/audit-report.mjs
+      # and the two artifacts it owns — apps/console/docs/ui-conformance/scoreboard.md and
+      # apps/console/ui-conformance-baseline.json — with the two-mode contract PROGRAMME.md uses:
+      # `--write` regenerates, a bare invocation checks them against the tree and exits 2 naming the
+      # command that fixes it. Nothing invoked either mode, so the numbers could go stale on `dev`
+      # the moment any conformance lane of #3613 landed — and a scoreboard nobody re-runs is exactly
+      # the defect this wave exists to kill: a guard that reports green by never running. Measured
+      # rather than predicted: this generator, run against #3809's type-scale tree, reds with both
+      # artifacts STALE. It shells out to scripts/check-shared-surface.mjs in a child process and
+      # reads only committed files, so it needs the checkout and `node` and nothing else — no build,
+      # no database, no sandbox env — and takes about two seconds. Do NOT pipe either invocation
+      # into `tail`/`head`: a pipe reports the exit code of the LAST command in it.
+      - name: The console UI conformance scoreboard is in sync with the tree
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm -F console audit:report
+      - name: ...and that generator is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm -F console audit:report --self-test
       # packages/brand/src/ramp-srgb.ts is a hand-maintained sRGB copy of the OKLCH ramp in
       # tokens.css, for the three surfaces that cannot read a custom property (email, Stripe
       # Elements across an iframe, next/og). It fixed three disagreeing transcriptions by
