@@ -65,7 +65,11 @@ function forbidden(): Response {
 }
 
 /** True if `userId` has a `member` row in `orgId` (the personal org — orgId === userId
- *  — is always the user's own, so it needs no membership row). */
+ *  — is always the user's own, so it needs no membership row).
+ *
+ *  Passing this is NOT the same as being scoped to `orgId`: the personal-org branch is true
+ *  for a value every caller can supply about themselves, and #3863 rode exactly that gap.
+ *  {@link resolveNamedOrgScope} is what turns a named org into the scope actually served. */
 async function isOrgMember(userId: string, orgId: string): Promise<boolean> {
 	if (orgId === userId) return true;
 	const [m] = await getServiceDb()
@@ -74,6 +78,30 @@ async function isOrgMember(userId: string, orgId: string): Promise<boolean> {
 		.where(and(eq(member.userId, userId), eq(member.organizationId, orgId)))
 		.limit(1);
 	return Boolean(m);
+}
+
+/**
+ * Resolves `userId`'s scope for an org THE REQUEST NAMED — a CLI `--org` header, or a service
+ * token's org pin — and returns null when resolution landed on any other org.
+ *
+ * The scope resolver treats its org argument as a PREFERENCE: it also serves the console session,
+ * whose stored `activeOrganizationId` can name an org the user has since left, and locking somebody
+ * out of the console over stale session state would be the wrong trade — so on a miss it falls back
+ * to an org they do belong to. A header is not a preference. It is an assertion about this one
+ * request, and following the fallback there answers the request from a scope the caller never named.
+ *
+ * That is #3863: a personal org's id IS the user's id, so `X-Alethia-Org: <own user id>` passed
+ * {@link isOrgMember}, found no `member` row, and came back scoped to a TEAM org — on a path
+ * `jobs cancel --latest` also walks. ee/src/scope.ts now resolves the personal org explicitly, and
+ * this refuses whatever else the resolver may substitute rather than serving it.
+ *
+ * `null` means exactly "resolution did not land on the org you named". A lookup that FAILS is never
+ * reported that way: getActiveScope's rejection propagates, so a database outage surfaces as an
+ * error, not as a denial and not as a different tenant's rows.
+ */
+async function resolveNamedOrgScope(userId: string, orgId: string): Promise<Actor | null> {
+	const actor = await getActiveScope(userId, orgId);
+	return actor.orgId === orgId ? actor : null;
 }
 
 /**
@@ -99,7 +127,9 @@ export async function ensureCliOrgAccess(
  *
  * An optional `X-Alethia-Org` header selects which org the call is scoped to (the CLI
  * `--org` flag). It is honoured only after verifying the caller is a member of that org
- * (else 403); absent, behaviour is identical to resolving the default active scope.
+ * (else 403) AND that the resolved scope is that same org — a resolver that falls back to
+ * some other org of theirs is a 403 here, never a silent substitution (#3863). Absent,
+ * behaviour is identical to resolving the default active scope.
  *
  * A SERVICE-ACCOUNT token overrides that entirely: its org is fixed at mint time, a conflicting
  * header is refused rather than ignored, and the minting profile's membership is re-checked on every
@@ -145,7 +175,10 @@ export async function authorizeCli(
 		if (!(await isOrgMember(userId, serviceOrg))) {
 			return { error: forbidden() };
 		}
-		const serviceActor = await getActiveScope(userId, serviceOrg);
+		// The pin is a named org like a header is, so it gets the same treatment: a scope that
+		// resolves to anything other than the pinned org is refused, never substituted.
+		const serviceActor = await resolveNamedOrgScope(userId, serviceOrg);
+		if (!serviceActor) return { error: forbidden() };
 		try {
 			await getPdp().enforce(serviceActor, action, { type: resource.type, id: resource.id });
 		} catch (e) {
@@ -158,9 +191,13 @@ export async function authorizeCli(
 	if (headerOrg && !(await isOrgMember(userId, headerOrg))) {
 		return { error: forbidden() };
 	}
+	// With a header the org is part of the REQUEST, so the resolved scope must BE it (see
+	// resolveNamedOrgScope). Without one there is nothing to compare against: resolving the
+	// caller's default scope is the whole intent, and that path is left alone.
 	const actor = headerOrg
-		? await getActiveScope(userId, headerOrg)
+		? await resolveNamedOrgScope(userId, headerOrg)
 		: await getActiveScope(userId);
+	if (!actor) return { error: forbidden() };
 	try {
 		await getPdp().enforce(actor, action, { type: resource.type, id: resource.id });
 	} catch (e) {
