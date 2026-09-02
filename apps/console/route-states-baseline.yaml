@@ -30,22 +30,9 @@ predicates:
       - /dashboard/[[...rest]]: redirect-only
   S2:
     fail:
-      - /[org]
-      - /[org]/[project]/architecture
-      - /[org]/[project]/clusters
       - /[org]/[project]/environments
-      - /[org]/[project]/jobs
-      - /[org]/[project]/usage
       - /[org]/~/alerts
-      - /[org]/~/clusters
-      - /[org]/~/connectors
-      - /[org]/~/evidence
-      - /[org]/~/jobs
-      - /[org]/~/jobs/[id]
       - /[org]/~/new
-      - /[org]/~/runners
-      - /[org]/~/support
-      - /[org]/~/usage
       - /cli/login
     na:
       - /[org]/[project]/settings: redirect-only
@@ -53,11 +40,7 @@ predicates:
       - /[org]/~/settings: redirect-only
       - /dashboard/[[...rest]]: redirect-only
   S3:
-    fail:
-      - /[org]/[project]/environments
-      - /[org]/~/new
-      - /[org]/~/settings/classification
-      - /[org]/~/support
+    fail: []
     na:
       - /[org]/[project]/settings: redirect-only
       - /[org]/[project]: redirect-only
@@ -67,7 +50,6 @@ predicates:
   S4:
     fail:
       - /[org]/~/alerts
-      - /[org]/~/usage
     na:
       - /[org]/[project]/settings: redirect-only
       - /[org]/[project]: redirect-only
@@ -75,9 +57,6 @@ predicates:
       - /dashboard/[[...rest]]: redirect-only
   T1:
     fail:
-      - /[org]/~/jobs/[id]
-      - /[org]/~/settings/billing/invoices
-      - /[org]/~/settings/classification
       - /cli/login
     na:
       - /[org]/[project]/settings: redirect-only
@@ -88,17 +67,7 @@ predicates:
     fail: []
     na: []
   T3:
-    fail:
-      - /[org]/[project]/architecture
-      - /[org]/[project]/clusters
-      - /[org]/[project]/environments
-      - /[org]/[project]/jobs
-      - /[org]/[project]/settings/access
-      - /[org]/[project]/settings/activity
-      - /[org]/[project]/settings/general
-      - /[org]/[project]/settings/preview
-      - /[org]/[project]/usage
-      - /[org]/~/support/cases/[id]
+    fail: []
     na:
       - /[org]/[project]/settings: does-not-call-not-found
       - /[org]/[project]: does-not-call-not-found
@@ -134,9 +103,6 @@ predicates:
     fail:
       - /[org]/[project]
       - /[org]/[project]/settings
-      - /[org]/[project]/settings/activity
       - /[org]/~/settings
-      - /[org]/~/usage
-      - /cli/login
       - /dashboard/[[...rest]]
     na: []
