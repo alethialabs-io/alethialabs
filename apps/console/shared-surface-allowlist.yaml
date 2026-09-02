@@ -111,8 +111,8 @@
 #                      the thing review stops. The floors sit a few percent under the live count
 #                      so an ordinary refactor need not touch them.
 
-baseline: 15
-debt: 135
+baseline: 16
+debt: 133
 
 scanned:
   - scope: console_code
@@ -321,14 +321,14 @@ type_scale:
     hits: 4
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
   - path: apps/console/components/auth/auth-form.tsx
-    hits: 12
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
+    hits: 1
+    reason: The 6-digit sign-in code is typeset at 22px monospace so the person entering it can see which character they are on and catch a transposed digit before submitting. That is legibility of a code being typed, not reading type, so no rung of either ladder is the right answer — #3806.
   - path: apps/console/components/auth/auth-shell.tsx
     hits: 3
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
   - path: apps/console/components/auth/onboarding-form.tsx
-    hits: 18
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 18 hardcoded pixel type sizes here."
+    hits: 17
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 17 hardcoded pixel type sizes here."
   - path: apps/console/components/clusters/cluster-card.tsx
     hits: 12
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
@@ -461,9 +461,6 @@ type_scale:
   - path: apps/console/components/org-switcher.tsx
     hits: 3
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
-  - path: apps/console/components/org/org-purchase-ui.tsx
-    hits: 2
-    lifts: "#3806 — the four type sites above the UI ladder get a decision, not a rung: 2 sites here render display type between the UI ladder's 17px top and the display ladder's 30px bottom, and become `--text-display-xs`."
   - path: apps/console/components/project-switcher.tsx
     hits: 1
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
@@ -480,8 +477,8 @@ type_scale:
     hits: 1
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
   - path: apps/console/components/settings/billing/billing-panel.tsx
-    hits: 10
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 10 hardcoded pixel type sizes here."
+    hits: 8
+    lifts: "#3742 — the console adopts the --text-ui-* type scale: 8 hardcoded pixel type sizes here."
   - path: apps/console/components/settings/billing/invoice-preview-dialog.tsx
     hits: 2
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
