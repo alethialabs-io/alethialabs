@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/format"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
 )
@@ -48,7 +51,7 @@ var listProjectsCmd = &cobra.Command{
 			// that did not size its columns to its contents. The shared entry point measures
 			// them, truncates at the shared MaxColWidth, and sorts by the first column's real
 			// title.
-			if err := ui.ShowTable(projectListColumns, projectRows(configs), "projects"); err != nil {
+			if err := ui.ShowTable(projectListColumns, projectRows(configs, ui.FormatTable), "projects"); err != nil {
 				failf("Table error: %v", err)
 			}
 			return
@@ -61,7 +64,16 @@ var listProjectsCmd = &cobra.Command{
 }
 
 // projectRows projects each configuration summary into a plain table row.
-func projectRows(configs []types.ConfigurationSummary) [][]string {
+// wireTime renders an instant for a machine: RFC3339 in UTC, and empty for the zero time,
+// which is the absence a reader sees as the dash.
+func wireTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func projectRows(configs []types.ConfigurationSummary, outFmt string) [][]string {
 	rows := make([][]string, len(configs))
 	for i, v := range configs {
 		provider := strings.ToUpper(string(v.CloudProvider))
@@ -76,9 +88,21 @@ func projectRows(configs []types.ConfigurationSummary) [][]string {
 		if status == "" {
 			status = "DRAFT"
 		}
-		cost := ui.SymbolDash
+		// A machine gets the bare number and an empty field for "unpriced"; a reader gets the
+		// rendered rate and the dash. Same split, and the same reason, as cost.go's Monthly cell.
+		cost := ui.Cell(outFmt, "", ui.SymbolDash)
 		if v.EstimatedMonthlyCost != nil {
-			cost = fmt.Sprintf("$%.0f/mo", *v.EstimatedMonthlyCost)
+			// `$%.0f/mo` was the live half-to-even defect: Go's %f rounds half to EVEN, so an
+			// estimate of 12.5 printed `$12/mo` against a billing page showing `$12.50`. Estimate
+			// keeps the minor units above one unit, so the cell now reads `$12.50/mo`.
+			//
+			// USD is ASSUMED, as the `$` glyph before it was: `types.ConfigurationSummary` carries no
+			// currency at all, so a euro org is shown a dollar sign. That is a WIRE gap, not a
+			// rendering one — `cost show` gets this right because its response carries `Currency` —
+			// and it is visible here rather than hidden inside a format string.
+			cost = ui.Cell(outFmt,
+				strconv.FormatFloat(*v.EstimatedMonthlyCost, 'f', 2, 64),
+				format.MonthlyRate(*v.EstimatedMonthlyCost, format.Estimate, "USD"))
 		}
 		rows[i] = []string{
 			v.ProjectName,
@@ -87,7 +111,9 @@ func projectRows(configs []types.ConfigurationSummary) [][]string {
 			provider,
 			region,
 			cost,
-			ui.SmartTime(v.UpdatedAt),
+			// Updated already parsed and SORTED for a script — SmartTime's absolute arm was
+			// `2006-01-02` before #3659 moved it to `9 Mar 2026`. RFC3339 keeps both properties.
+			ui.Cell(outFmt, wireTime(v.UpdatedAt), ui.SmartTime(v.UpdatedAt)),
 		}
 	}
 	return rows
@@ -101,7 +127,7 @@ func renderProjects(out io.Writer, format string, configs []types.ConfigurationS
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: projectListColumns,
-		Rows:    projectRows(configs),
+		Rows:    projectRows(configs, format),
 	}, configs)
 }
 

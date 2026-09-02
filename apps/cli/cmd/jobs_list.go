@@ -15,7 +15,6 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/format"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 )
 
@@ -122,12 +121,12 @@ func renderJobs(out io.Writer, outFormat string, jobs []api.ProvisionJob) error 
 	}
 	return ui.Render(out, outFormat, ui.TableSpec{
 		Columns: jobListColumns,
-		Rows:    jobRowsPlain(jobs),
+		Rows:    jobRowsPlain(jobs, outFormat),
 	}, jobs)
 }
 
 // jobRowsPlain projects each job into a plain table row.
-func jobRowsPlain(jobs []api.ProvisionJob) [][]string {
+func jobRowsPlain(jobs []api.ProvisionJob, outFmt string) [][]string {
 	rows := make([][]string, len(jobs))
 	for i, j := range jobs {
 		typeLabel := jobTypeLabels[j.JobType]
@@ -156,7 +155,7 @@ func jobRowsPlain(jobs []api.ProvisionJob) [][]string {
 			j.Status,
 			project,
 			runner,
-			humanize.Time(j.CreatedAt),
+			ui.Cell(outFmt, wireTime(j.CreatedAt), ui.SmartTime(j.CreatedAt)),
 			formatDuration(j.StartedAt, j.CompletedAt),
 		}
 	}

@@ -72,7 +72,8 @@ func TestPrintConfigurationFullyPopulated(t *testing.T) {
 	for _, want := range []string{
 		"Configuration Details",
 		"atlas", "production", "eks",
-		"2026-03-04 05:06:07",
+		// #3659: `format.Date(DateTime)`, not the `2006-01-02 15:04:05` literal. Seconds go with it.
+		"4 Mar 2026, 05:06",
 		"123456789012", "eu-central-1",
 		"Network CIDR:", "10.0.0.0/16",
 		"DNS Zone:", "Z123",
