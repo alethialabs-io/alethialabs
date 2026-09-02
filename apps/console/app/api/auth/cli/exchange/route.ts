@@ -6,10 +6,10 @@ import * as jose from "jose";
 import { env } from "next-runtime-env";
 import {
 	CLI_DEVICE_RATE_LIMIT,
-	cliDeviceRateLimitKey,
 	isDeviceCodeExpired,
 	isValidDeviceCode,
 } from "@/lib/auth/cli-device-code";
+import { cliDeviceRateLimitKey } from "@/lib/auth/trusted-ip";
 import { getServiceDb } from "@/lib/db";
 import { cliLogins, profiles } from "@/lib/db/schema";
 import { checkRateLimit } from "@/lib/rate-limit";
