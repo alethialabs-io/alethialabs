@@ -901,12 +901,20 @@ jobs:
       # reads only committed files, so it needs the checkout and `node` and nothing else — no build,
       # no database, no sandbox env — and takes about two seconds. Do NOT pipe either invocation
       # into `tail`/`head`: a pipe reports the exit code of the LAST command in it.
+      #
+      # `-C apps/console run`, NOT `-F console`, and that is the whole point of this step. MEASURED
+      # on this branch's first CI run, before #3618's generator existed on `dev`: `pnpm -F console
+      # audit:report` printed `None of the selected packages has a "audit:report" script` and EXITED
+      # 0. Both steps concluded `success` having run nothing — a wiring step whose own failure mode
+      # is the defect it was added to prevent. `pnpm -C apps/console run` fails that case loudly
+      # (`ERR_PNPM_NO_SCRIPT`, exit 1) while still going through the package.json alias the error
+      # message tells you to run, so a renamed or deleted script reds here instead of going quiet.
       - name: The console UI conformance scoreboard is in sync with the tree
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console audit:report
+        run: pnpm -C apps/console run audit:report
       - name: ...and that generator is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console audit:report --self-test
+        run: pnpm -C apps/console run audit:report --self-test
       # packages/brand/src/ramp-srgb.ts is a hand-maintained sRGB copy of the OKLCH ramp in
       # tokens.css, for the three surfaces that cannot read a custom property (email, Stripe
       # Elements across an iframe, next/og). It fixed three disagreeing transcriptions by
