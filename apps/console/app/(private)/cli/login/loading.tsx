@@ -36,6 +36,14 @@ export function CliLoginBodySkeleton() {
 			{/* the device-code plate */}
 			<Skeleton className="h-[60px] w-full rounded-none" />
 
+			{/* "Approving gives that terminal …" — the consent block */}
+			<div className="space-y-2 border border-border/60 px-4 py-3">
+				<Skeleton className="h-3 w-40" />
+				<Skeleton className="h-2.5 w-52" />
+				<Skeleton className="h-2.5 w-56" />
+				<Skeleton className="h-2.5 w-48" />
+			</div>
+
 			{/* approve · decline */}
 			<div className="flex flex-col gap-2">
 				<Skeleton className="h-9 w-full rounded-sm" />

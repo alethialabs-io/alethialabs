@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { headers } from "next/headers";
 import { AuthCard, AuthShell } from "@/components/auth/auth-shell";
+import { auth } from "@/lib/auth";
 import { pageMetadata } from "@/lib/seo/page-metadata";
+import { CliAccountProvider } from "./cli-session";
 
 // The page itself is a client component (it owns the approval gesture and its stages), so it
 // cannot export metadata. This layout is where the route's title lives.
@@ -10,6 +13,31 @@ export const metadata = pageMetadata({
 	title: "Approve CLI sign-in",
 	description: "Confirm the device code your terminal printed to sign the Alethia CLI in.",
 });
+
+/**
+ * Which account an approval on this page would bind — read here, on the server, so the
+ * approval UI needs no request of its own.
+ *
+ * Best-effort by design, and it mirrors `lib/auth/owner.ts`'s `safeGetSession`: a stale token
+ * that the optimistic proxy let through makes the session-table read throw, and this page must
+ * still render the approval prompt in that case rather than 500. The consequence is stated
+ * where it lands — `null` omits the line rather than showing an empty or guessed identity.
+ *
+ * It is NOT an authorization gate, and must not be mistaken for one. The gate is
+ * `/api/auth/cli/generate`, which 401s without a session and refuses a device code already
+ * bound to another account. Gating here would also be actively worse than the proxy that
+ * already does it: a layout cannot read `searchParams`, so any `next=` it built would drop
+ * `device_code`/`user_code` and strand the user on an error state after signing in.
+ */
+async function signedInEmail(): Promise<string | null> {
+	try {
+		const session = await auth.api.getSession({ headers: await headers() });
+		return session?.user?.email ?? null;
+	} catch (error) {
+		console.error("[cli-login] session lookup failed:", error);
+		return null;
+	}
+}
 
 /**
  * The frame for `/cli/login` — and #3834 left the question of whether there should be one to
@@ -27,14 +55,17 @@ export const metadata = pageMetadata({
  * `AuthShell` is a client component; rendering one from a server layout is ordinary, and it is
  * what keeps `metadata` above exportable.
  */
-export default function CliLoginLayout({
+export default async function CliLoginLayout({
 	children,
 }: {
 	children: React.ReactNode;
 }) {
+	const email = await signedInEmail();
 	return (
 		<AuthShell>
-			<AuthCard>{children}</AuthCard>
+			<AuthCard>
+				<CliAccountProvider email={email}>{children}</CliAccountProvider>
+			</AuthCard>
 		</AuthShell>
 	);
 }

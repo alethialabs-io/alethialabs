@@ -2733,7 +2733,7 @@
 		{
 			"route": "/cli/login",
 			"redirectOnly": false,
-			"surfaceFiles": 3,
+			"surfaceFiles": 4,
 			"families": {
 				"S": {
 					"instrumented": 4,
