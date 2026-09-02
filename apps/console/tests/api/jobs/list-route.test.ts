@@ -40,8 +40,9 @@ vi.mock("@/app/server/actions/projects", () => ({
 
 import { GET } from "@/app/api/jobs/route";
 import { authorizeCli } from "@/lib/authz/guard";
-import { encodeCursor } from "@/lib/cli/paging";
+import { cursorKey, encodeCursor } from "@/lib/cli/paging";
 import { getServiceDb } from "@/lib/db";
+import { jobs } from "@/lib/db/schema";
 import { makeJob } from "../../fixtures/jobs";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -66,6 +67,8 @@ function render(fragment: SQL | undefined): {
 
 /** What one drive of the route recorded. */
 interface Captured {
+	/** The rows query's projection, so the cursor-key EXPRESSION can be read, not just its value. */
+	rowsProjection: Record<string, unknown> | undefined;
 	rowsWhere: SQL | undefined;
 	rowsLimit: number | undefined;
 	rowsOffset: number | undefined;
@@ -133,6 +136,7 @@ function fakeDb() {
 			const keys = Object.keys(projection ?? {});
 			if (keys.length === 1 && keys[0] === "hit") return chain("capped");
 			if (keys.length === 1 && keys[0] === "n") return chain("count");
+			captured.rowsProjection = projection;
 			return chain("rows");
 		},
 	};
@@ -184,6 +188,7 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 	beforeEach(() => {
 		vi.clearAllMocks();
 		captured = {
+			rowsProjection: undefined,
 			rowsWhere: undefined,
 			rowsLimit: undefined,
 			rowsOffset: undefined,
@@ -279,6 +284,25 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		expect(parsed.offset).toBe(10);
 		expect(parsed.page.mode).toBe("exact");
 		expect(parsed.page.next_cursor).toBeNull();
+	});
+
+	it("projects the ordering key at MICROSECOND precision, using the vocabulary's own expression", async () => {
+		// THIS TEST EXISTS BECAUSE A MUTANT SURVIVED. Swapping `cursorKey(jobs.created_at)` for a
+		// millisecond `to_char` left every assertion in this file green: the fake never executes
+		// SQL, so the projection is never evaluated and `cursor_key` is whatever the fixture says
+		// — two distinct code paths returning the same value. The expression itself has to be
+		// read, not its result.
+		await drive("");
+		const projection = captured.rowsProjection;
+		if (projection === undefined) throw new Error("the rows query was never built");
+		const key = render(projection.cursor_key as SQL);
+		// Independent of `cursorKey`: `US` is postgres' six-digit microsecond field. `MS` is three,
+		// and three silently drops every row written in the same millisecond as the page boundary.
+		expect(key.sql).toContain('US"Z"');
+		expect(key.sql).not.toContain("MS");
+		// And it must be the vocabulary's expression rather than a look-alike of the route's own,
+		// so a second definition cannot drift from the one paging.ts proves against Postgres.
+		expect(key.sql).toBe(render(cursorKey(jobs.created_at)).sql);
 	});
 
 	it("mints the next cursor from the projected key, not from the row's Date", async () => {
