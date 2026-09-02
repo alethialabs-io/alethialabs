@@ -88,7 +88,7 @@ var shellFields = []shellField{
 		Flag:    "no-input",
 		Default: "off",
 		Usage:   "Disable interactive prompts (fail instead of prompting)",
-		Docs:    "Disable interactive prompts; fail instead of prompting. Auto-enabled when stdin is not a terminal, or when the stream a prompt draws on is redirected.",
+		Docs:    "Disable interactive prompts; fail instead of prompting. Auto-enabled when stdin is not a terminal. A form is refused separately when the stream it would draw on is redirected, so `alethia … 2> log` still renders the rich table.",
 		Pages:   shellGlobalFlagPages,
 	},
 	{

@@ -146,8 +146,18 @@ func TestHygCliShell_EveryFieldHasItsDocsRow(t *testing.T) {
 			// The token as the page writes it. For a POSITIONAL there is no flag spelling to fall
 			// back to, and building one anyway gave `"-- "` — a string a prose page contains by
 			// accident, which made this arm pass without looking at anything.
+			// A pipe inside a Markdown TABLE CELL must be written `\|`: GFM splits a row on its
+			// pipes before any inline parsing, so a backtick span does not protect one, and the
+			// row silently loses a column. `[console|docs]` is therefore spelled two legal ways
+			// depending on where it appears — raw in prose, escaped in a table — and this guard
+			// accepts both rather than forcing the page to choose the one that renders wrong.
+			//
+			// Which of the two a given row must use is NOT this guard's question. That is a
+			// structural property of the table and it is enforced by
+			// TestHygCliDocs_EveryTableRowHasItsHeadersColumns, which counts cells. Answering it
+			// here with a substring match is what let the broken row through in the first place.
 			token := "`" + f.Arg + "`"
-			mentioned := strings.Contains(body, token)
+			mentioned := strings.Contains(body, token) || strings.Contains(body, docsEscapePipes(token))
 			if f.Flag != "" {
 				token = "`--" + f.Flag + "`"
 				mentioned = strings.Contains(body, token) || strings.Contains(body, "--"+f.Flag+" ")
@@ -302,3 +312,6 @@ func TestHygCliShell_NoInputCanStillDoEverything(t *testing.T) {
 		}
 	}
 }
+
+// docsEscapePipes spells a token the way a Markdown table cell must carry it.
+func docsEscapePipes(s string) string { return strings.ReplaceAll(s, "|", "\\|") }
