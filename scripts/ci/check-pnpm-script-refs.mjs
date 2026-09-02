@@ -42,21 +42,27 @@
 //
 // ── THE TWO RULES ─────────────────────────────────────────────────────────────────────────────
 //
-// R1 · RESOLUTION. Every pnpm script named ANYWHERE in `.github/workflows/**` — in a `run:`, in
-//      an `::error::` string that tells a human what to run, in a header comment that states the
-//      remediation — resolves to a script that exists in the target `package.json`, and its
-//      filter selects a workspace package that exists. Prose that tells someone to run a script
-//      that was renamed is the same defect with a slower fuse.
+// The corpus is two populations, DERIVED from `git ls-files`: every workflow, and every tracked
+// file under a `scripts/` directory — the guards and generators themselves, whose `::error::` and
+// "Regenerate with:" lines are what a human copy-pastes. #3810's audit-report emits "run
+// `pnpm -F console audit:report --write` and commit"; follow that after a rename and you get one
+// line of output and exit 0, and conclude you have fixed it.
 //
-// R2 · SHAPE. A `pnpm -F <selector> <script>` in COMMAND POSITION, where the selector names
-//      exactly one workspace package, is refused: it is the silent-exit-0 form, and
-//      `pnpm -C <dir> run <script>` is the loud equivalent with identical working-directory
-//      semantics (both run with cwd = the package directory). R1 alone would catch a rename
-//      today; R2 is what stops the shape coming back tomorrow and re-arming the whole class.
+// R1 · RESOLUTION. Every pnpm script named anywhere in that corpus — in a `run:`, in an
+//      `::error::` string, in a `// Run:` usage header — resolves to a script that exists in the
+//      target `package.json`, and its filter selects a workspace package that exists. Prose that
+//      tells someone to run a script that was renamed is the same defect with a slower fuse.
 //
-//      Command position matters. `echo "… run 'pnpm -F console gen:matrix' and commit."` is
-//      prose about a command, not a command; R1 still holds it to a real script name, R2 does
-//      not ask it to change form.
+// R2 · SHAPE. A `pnpm -F <selector> <script>` whose selector names exactly one workspace package
+//      is refused, WHEREVER it is written — a command, an error string, a usage comment. It is
+//      the silent-exit-0 form, and `pnpm -C <dir> run <script>` is the loud equivalent with
+//      identical working-directory semantics and identical `--` argument passing (both probed).
+//      R1 alone would catch a rename today; R2 is what stops the shape coming back tomorrow and
+//      re-arming the whole class.
+//
+// Command position still decides one thing — whether an UNFILTERED `pnpm <script>` is an
+// invocation at all — because `- name: Every pnpm script a workflow names exists` parses as one.
+// See isCommandPosition / isQuotedMention.
 //
 // ── WHAT IS DELIBERATELY EXEMPT ───────────────────────────────────────────────────────────────
 //
@@ -82,9 +88,12 @@
 // This is a line parser (the `yaml` package is a dependency of apps/console, not of the root,
 // and this runs under plain `node` — the same constraint as check-workflow-shape.mjs and
 // check-guards-independent.mjs). A line parser that stops matching finds nothing and reports
-// success. So "found nothing" and "found nothing wrong" are given DIFFERENT exit codes: zero
-// workflows parsed, zero invocations extracted, or a workspace index that does not contain the
-// console are hard errors, not clean bills of health.
+// success. So "found nothing" and "found nothing wrong" are given DIFFERENT exit codes. Each of
+// these is a hard error, not a clean bill of health: fewer workflows/corpus files/invocations
+// than the floors below, a workspace index that does not contain the console, and — found by
+// mutation — a tracked corpus file the disk could not produce. That last one mattered: deleting
+// `.github/workflows/` left `git ls-files` reporting all 37, the read errors were swallowed, and
+// the check reported GREEN over 106 fewer invocations.
 //
 //   node scripts/ci/check-pnpm-script-refs.mjs
 //   node scripts/ci/check-pnpm-script-refs.mjs --self-test
@@ -133,9 +142,12 @@ const RESERVED = new Set([
 	"doctor", "env", "exec", "fetch", "i", "import", "init", "install", "licenses", "link",
 	"list", "ln", "ls", "node", "outdated", "pack", "patch", "patch-commit", "patch-remove",
 	"prune", "publish", "rb", "rebuild", "recursive", "remove", "rm", "root", "run", "self-update",
-	"server", "setup", "start", "store", "test", "un", "uninstall", "unlink", "up", "update",
-	"why",
+	"server", "setup", "store", "un", "uninstall", "unlink", "up", "update", "why",
 ]);
+
+// NOT in that set, deliberately: `test` and `start`. pnpm treats them as ALIASES for
+// `run test` / `run start`, so `pnpm -F console test` is the defective form, not a
+// subcommand — and it is one of the commonest spellings of it in this repo.
 
 /** Flags that consume the following token, so a value is never mistaken for a script name. */
 const VALUE_FLAGS = new Set(["-F", "--filter", "-C", "--dir", "--reporter", "--loglevel", "--filter-prod", "--workspace-concurrency"]);
@@ -406,9 +418,8 @@ export function resolveFilter(sel, pkgs) {
 	// model. It says so rather than passing them — an unmodelled selector is exactly how a new
 	// silent form would enter unnoticed.
 	if (/[*!{}\[\]^]|\.\.\./.test(sel)) return { kind: "unmodelled" };
-	if (sel.startsWith("./") || sel.startsWith("../") || sel.includes("/") === false || sel.startsWith("@") === false) {
-		// fall through to the name/path matching below
-	}
+	// Three spellings pnpm accepts for one package, tried in the order it resolves them: a
+	// directory path, the full package name, then the name without its scope.
 	const asPath = sel.replace(/^\.\//, "").replace(/\/$/, "");
 	if (pkgs.has(asPath) && asPath !== ".") return { kind: "dirs", dirs: [asPath] };
 	const byName = [...pkgs].filter(([d, p]) => d !== "." && p.name === sel);
