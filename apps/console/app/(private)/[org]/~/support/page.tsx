@@ -51,7 +51,7 @@ export default async function SupportPage({
 					className="pointer-events-none absolute inset-0"
 					style={HERO_GRID_STYLE}
 				/>
-				<div className="relative mx-auto max-w-4xl px-2 pt-14 pb-16">
+				<div className="relative px-2 pt-14 pb-16">
 					<p className="mb-4 text-center font-mono text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
 						Alethia Support
 					</p>
