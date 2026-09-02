@@ -77,26 +77,61 @@ func hygCliConfirmClearYes(t *testing.T, cmd *cobra.Command) {
 	})
 }
 
-// hygCliConfirmServer records every request the CLI made, as "METHOD path".
+// hygCliConfirmRequest is one inbound request. The dry-run flag is kept because the METHOD
+// alone stopped being a sound proxy for "this changed something" — see mutations().
+type hygCliConfirmRequest struct {
+	Method string
+	Path   string
+	DryRun bool
+}
+
+// String renders a request for a failure message.
+func (r hygCliConfirmRequest) String() string {
+	if r.DryRun {
+		return r.Method + " " + r.Path + " (dry run)"
+	}
+	return r.Method + " " + r.Path
+}
+
+// hygCliConfirmServer records every request the CLI made.
 type hygCliConfirmServer struct {
 	mu       sync.Mutex
-	requests []string
+	requests []hygCliConfirmRequest
 }
 
 // record notes one inbound request.
 func (s *hygCliConfirmServer) record(r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.requests = append(s.requests, r.Method+" "+r.URL.Path)
+	s.requests = append(s.requests, hygCliConfirmRequest{
+		Method: r.Method,
+		Path:   r.URL.Path,
+		DryRun: r.URL.Query().Get("dry_run") == "1",
+	})
 }
 
 // mutations returns the requests that would have changed control-plane state.
-func (s *hygCliConfirmServer) mutations() []string {
+//
+// A write METHOD is the proxy; `dry_run=1` is the one documented exception, and it is an
+// exception to the PROXY rather than to the claim. `project design apply` gates on what the
+// plan would do, which is only knowable by asking the server — so it issues its own dry run
+// first, and that is a POST because it carries the document in its body. Counting it as a
+// state change would report the gate WORKING as the gate failing.
+//
+// Narrow on purpose: only a request that names itself a dry run, and the server route treats
+// that flag as write-nothing. It is not a general "reads may POST" allowance. The exclusion
+// cannot hide a real apply either — TestHygCliConfirm_ADryRunPreflightIsNotAWrite below
+// asserts positively that the refused run made the preflight and NOTHING else, so a command
+// that sent dry_run=1 and then wrote anyway still fails.
+func (s *hygCliConfirmServer) mutations() []hygCliConfirmRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var out []string
+	var out []hygCliConfirmRequest
 	for _, req := range s.requests {
-		switch strings.SplitN(req, " ", 2)[0] {
+		if req.DryRun {
+			continue
+		}
+		switch req.Method {
 		case http.MethodPost, http.MethodDelete, http.MethodPatch, http.MethodPut:
 			out = append(out, req)
 		}
@@ -104,16 +139,23 @@ func (s *hygCliConfirmServer) mutations() []string {
 	return out
 }
 
-// saw reports whether the CLI made this exact request.
+// saw reports whether the CLI made this exact request, dry runs included.
 func (s *hygCliConfirmServer) saw(method, path string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, req := range s.requests {
-		if req == method+" "+path {
+		if req.Method == method && req.Path == path {
 			return true
 		}
 	}
 	return false
+}
+
+// snapshotRequests copies what was recorded.
+func (s *hygCliConfirmServer) snapshotRequests() []hygCliConfirmRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]hygCliConfirmRequest{}, s.requests...)
 }
 
 // forget clears the recorded requests so consecutive runs assert independently.
@@ -121,6 +163,43 @@ func (s *hygCliConfirmServer) forget() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requests = nil
+}
+
+// TestHygCliConfirm_ADryRunPreflightIsNotAWrite is the other half of the dry-run exclusion in
+// mutations(). The exclusion says a request naming itself a dry run does not count as a state
+// change; this says the refused run made THAT REQUEST AND NOTHING ELSE, so the exclusion
+// cannot be used to smuggle a real write past the --no-input contract.
+//
+// Written as a test rather than left to the comment because an exception documented only in
+// prose is the shape that rots: the next person removes the guard's teeth and the guard agrees.
+func TestHygCliConfirm_ADryRunPreflightIsNotAWrite(t *testing.T) {
+	s, run := hygCliConfirmEnv(t)
+	s.forget()
+
+	if got := run("project", "design", "apply", "--project", "p1",
+		"-f", "testdata/design-document.json", "--no-input"); got != 1 {
+		t.Fatalf("exit code = %d, want 1 — the plan removes a component and no --yes was given", got)
+	}
+
+	reqs := s.snapshotRequests()
+	writes := 0
+	preflights := 0
+	for _, r := range reqs {
+		switch r.Method {
+		case http.MethodPost, http.MethodDelete, http.MethodPatch, http.MethodPut:
+			if r.DryRun {
+				preflights++
+			} else {
+				writes++
+			}
+		}
+	}
+	if preflights != 1 {
+		t.Errorf("the refused run made %d dry-run preflight(s), want exactly 1; requests = %v", preflights, reqs)
+	}
+	if writes != 0 {
+		t.Errorf("the refused run made %d real write(s) — the dry-run exclusion is hiding one; requests = %v", writes, reqs)
+	}
 }
 
 // hygCliConfirmResetFlags puts the shared cobra tree back to its defaults. rootCmd
@@ -156,6 +235,8 @@ func hygCliConfirmResetFlags() {
 	// explicit list exists to prevent, and which is why a new --yes global must always be added to
 	// it rather than relying on the VisitAll walk above.
 	classificationUnassignYes, jobsCancelYes = false, false
+	designApplyYes = false
+	designApplyFile, designApplyDryRun, designApplyStage = "", false, false
 }
 
 // hygCliConfirmEnv stands up isolated credentials, an active org and a fake control
@@ -187,6 +268,21 @@ func hygCliConfirmEnv(t *testing.T) (*hygCliConfirmServer, func(args ...string) 
 			_ = enc.Encode(map[string]interface{}{"pool": map[string]interface{}{
 				"provider": strings.TrimPrefix(p, "/api/cli/fleet/"),
 				"warm_min": 1, "max": 4, "slots_per_runner": 1, "enabled": false,
+			}})
+		case strings.HasSuffix(p, "/design"):
+			// A plan that REMOVES a component. `project design apply` is in the derived
+			// destructive set because it CAN destroy, and it only gates when the plan says it
+			// will — so a fake returning an empty plan would let the apply through unprompted
+			// and both --no-input assertions above would be testing the ungated path.
+			//
+			// The dry-run preflight and the real apply hit the same path; the mode is read off
+			// the query so each is answered as itself.
+			mode := "applied"
+			if r.URL.Query().Get("dry_run") == "1" {
+				mode = "dry-run"
+			}
+			_ = enc.Encode(map[string]interface{}{"ok": true, "mode": mode, "changes": []map[string]interface{}{
+				{"kind": "storage_buckets", "name": "receipts", "action": "DELETE"},
 			}})
 		case p == "/api/jobs" && r.Method == http.MethodPost:
 			_ = enc.Encode(map[string]interface{}{"job": map[string]interface{}{
@@ -257,6 +353,12 @@ var hygCliConfirmDestructive = []struct {
 	{"iac_detach", []string{"iac", "detach", "--project", "p1", "--env", "e1"}},
 	{"classification_unassign", []string{"classification", "unassign", "project_environment", "e1", "gold"}},
 	{"jobs_cancel", []string{"jobs", "cancel", "j1"}},
+	// The document's CONTENT is irrelevant here — the server decides the plan, and the fake
+	// below returns one that removes a component, which is the condition the gate fires on.
+	// The path is relative because `go test` runs with the package directory as its cwd.
+	{"project_design_apply", []string{
+		"project", "design", "apply", "--project", "p1", "-f", "testdata/design-document.json",
+	}},
 }
 
 // TestHygCliConfirm_NoInputWithoutYesIsFatal is the regression this lane exists for.
@@ -510,6 +612,14 @@ var alsoDestructive = map[string]bool{
 	"alethia ops unstick-env":        true,
 	"alethia fleet set":              true,
 	"alethia token revoke":           true,
+	// `apply` is not a destructive verb and this command is not destructive in general — an
+	// apply that only adds or updates runs unprompted, which is the workflow it exists for.
+	// But a design document that OMITS a component removes it, so this command can destroy,
+	// and it must therefore be one the derived set watches: the point of listing it is that a
+	// later change cannot quietly drop its --yes while the guard reports green. The maintainer
+	// ruling (2026-09-02) is that the gate fires on the PLAN, not on the invocation; see
+	// designApplyGate in project_design.go.
+	"alethia project design apply": true,
 }
 
 // destructiveExemptions are commands in the derived set that deliberately do NOT carry --yes,

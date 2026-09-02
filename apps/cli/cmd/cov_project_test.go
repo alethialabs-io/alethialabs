@@ -46,6 +46,10 @@ type projServer struct {
 	failOn []string
 	// configs overrides the project list; nil means the single default project.
 	configs []map[string]any
+	// designChanges overrides the plan a design apply reports. nil means the default plan,
+	// which includes a DELETE; an empty (non-nil) slice is an add-only plan. The distinction
+	// is the whole subject of the delete gate, so it has to be expressible.
+	designChanges []map[string]any
 	// posts records the body of every mutating request, so a test can compare what an
 	// ANSWERED FORM sent with what the equivalent flags sent. Two paths that claim to be one
 	// spec are only one spec if they put the same bytes on the wire.
@@ -115,6 +119,10 @@ type projPost struct {
 	Method string
 	Path   string
 	Body   map[string]any
+	// DryRun marks a request the server treats as write-nothing. `project design apply`
+	// preflights its own plan with one, so "a POST happened" stopped being the same statement
+	// as "something was written".
+	DryRun bool
 }
 
 // recordPost notes a mutating request's decoded body. A body that does not decode is recorded
@@ -135,7 +143,10 @@ func (s *projServer) recordPost(r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.posts = append(s.posts, projPost{Method: r.Method, Path: r.URL.Path, Body: body})
+	s.posts = append(s.posts, projPost{
+		Method: r.Method, Path: r.URL.Path, Body: body,
+		DryRun: r.URL.Query().Get("dry_run") == "1",
+	})
 }
 
 // lastPost returns the most recent mutating request, or false when none was made.
@@ -166,7 +177,7 @@ func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	envs, comps, dims, assigns, channels, config := s.snapshot()
 	s.mu.Lock()
-	configs := s.configs
+	configs, designChanges := s.configs, s.designChanges
 	s.mu.Unlock()
 
 	switch {
@@ -223,10 +234,14 @@ func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case r.URL.Query().Get("stage") == "1":
 			mode = "staged"
 		}
-		_ = enc.Encode(map[string]any{"ok": true, "mode": mode, "changes": []map[string]any{
-			{"kind": "databases", "name": "orders", "action": "UPDATE"},
-			{"kind": "storage_buckets", "name": "receipts", "action": "DELETE"},
-		}})
+		changes := designChanges
+		if changes == nil {
+			changes = []map[string]any{
+				{"kind": "databases", "name": "orders", "action": "UPDATE"},
+				{"kind": "storage_buckets", "name": "receipts", "action": "DELETE"},
+			}
+		}
+		_ = enc.Encode(map[string]any{"ok": true, "mode": mode, "changes": changes})
 	case strings.Contains(p, "/components"):
 		switch r.Method {
 		case http.MethodPost:
@@ -304,7 +319,7 @@ func projResetFlags() {
 	projectEnvPlacement, projectEnvFabric = "", ""
 	projectEnvNamespace, projectEnvLifecycle = "", ""
 	designApplyFile = ""
-	designApplyDryRun, designApplyStage = false, false
+	designApplyDryRun, designApplyStage, designApplyYes = false, false, false
 	componentRemoveYes, projectDestroyYes = false, false
 	channelType, channelURL, channelSigningSecret, channelRoutingKey = "", "", "", ""
 	channelRecipients = nil
@@ -3870,5 +3885,350 @@ func projCaptureStdout(t *testing.T) func() string {
 		_ = w.Close()
 		captured = <-done
 		return captured
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// The design-apply delete gate (maintainer ruling, 2026-09-02)
+// ════════════════════════════════════════════════════════════════════════════════════════
+//
+// "Confirm only when it would DELETE." An apply that adds or updates runs unprompted, as CI
+// replay needs; one whose plan removes a component requires --yes under --no-input.
+//
+// The two arms are tested as EQUALS. Only asserting the refusal would leave a gate that
+// refused everything looking correct — and a gate that prompts on every replay is the exact
+// failure the ruling exists to avoid, not a safe over-approximation of it.
+
+// projDesignDoc writes a design document and returns its path.
+func projDesignDoc(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "design.json")
+	if err := os.WriteFile(path, []byte(`{"components":[]}`), 0o600); err != nil {
+		t.Fatalf("write design document: %v", err)
+	}
+	return path
+}
+
+// projRealWrites counts the recorded requests that were not dry runs.
+func projRealWrites(s *projServer) []projPost {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []projPost
+	for _, p := range s.posts {
+		if !p.DryRun {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// TestProj_DesignApplyAddOnlyRunsUnprompted is the arm the ruling protects, and the one a
+// flat "confirm every apply" rule would have broken. A pipeline replaying a document that
+// only adds a cache must not need a human in it.
+func TestProj_DesignApplyAddOnlyRunsUnprompted(t *testing.T) {
+	s := &projServer{designChanges: []map[string]any{
+		{"kind": "caches", "name": "sessions", "action": "CREATE"},
+		{"kind": "databases", "name": "orders", "action": "UPDATE"},
+	}}
+	h := projEnv(t, s)
+	asked := 0
+	prev := confirm
+	confirm = func(string, string) bool { asked++; return false }
+	t.Cleanup(func() { confirm = prev })
+
+	if h.run("project", "design", "apply", "--project", "web", "-f", projDesignDoc(t), "--no-input") {
+		t.Fatal("an add-only apply must run under --no-input without --yes")
+	}
+	if asked != 0 {
+		t.Errorf("an add-only apply asked %d confirmation(s)", asked)
+	}
+	if len(projRealWrites(s)) != 1 {
+		t.Errorf("an add-only apply made %d real write(s), want exactly 1: %+v", len(projRealWrites(s)), s.posts)
+	}
+}
+
+// TestProj_DesignApplyDeletingIsRefusedWithoutYes is the other arm.
+func TestProj_DesignApplyDeletingIsRefusedWithoutYes(t *testing.T) {
+	s := &projServer{designChanges: []map[string]any{
+		{"kind": "storage_buckets", "name": "receipts", "action": "DELETE"},
+	}}
+	h := projEnv(t, s)
+
+	if !h.run("project", "design", "apply", "--project", "web", "-f", projDesignDoc(t), "--no-input") {
+		t.Fatal("an apply whose plan removes a component must be refused without --yes")
+	}
+	// The preflight is allowed; the apply is not.
+	if w := projRealWrites(s); len(w) != 0 {
+		t.Errorf("the refused apply still wrote: %+v", w)
+	}
+	if len(s.posts) != 1 || !s.posts[0].DryRun {
+		t.Errorf("want exactly one request and it a dry-run preflight; got %+v", s.posts)
+	}
+}
+
+// TestProj_DesignApplyDeletingProceedsWithYes pins the opt-in. Without this the test above
+// would be satisfied by a gate that refuses unconditionally.
+func TestProj_DesignApplyDeletingProceedsWithYes(t *testing.T) {
+	s := &projServer{designChanges: []map[string]any{
+		{"kind": "storage_buckets", "name": "receipts", "action": "DELETE"},
+	}}
+	h := projEnv(t, s)
+
+	if h.run("project", "design", "apply", "--project", "web", "-f", projDesignDoc(t), "--no-input", "--yes") {
+		t.Fatal("--yes must let a deleting apply through")
+	}
+	if len(projRealWrites(s)) != 1 {
+		t.Errorf("--yes did not reach the control plane: %+v", s.posts)
+	}
+}
+
+// TestProj_DesignApplyRefusalNamesWhyYesIsNeeded pins the wording the ruling asked for.
+//
+// A pipeline author reading "this command is destructive, pass --yes" adds the flag
+// permanently, which converts every later replay into one that may remove components. The
+// refusal has to say that the flag is required for THIS PLAN.
+func TestProj_DesignApplyRefusalNamesWhyYesIsNeeded(t *testing.T) {
+	err := errDesignApplyWouldDelete([]api.DesignChange{
+		{Kind: "storage_buckets", Name: strPtr("receipts"), Action: "DELETE"},
+	})
+	msg := err.Error()
+	for _, want := range []string{"--yes", "DELETE", "THIS PLAN", "only adds or updates runs unprompted"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the scripted refusal never says %q:\n%s", want, msg)
+		}
+	}
+	// It must NOT read as a blanket statement about the command.
+	if !strings.Contains(msg, "not because") {
+		t.Errorf("the refusal does not distinguish this plan from the command in general:\n%s", msg)
+	}
+}
+
+// TestProj_DesignApplyGateArms drives the gate directly, which is the only way to reach the
+// interactive decline and the fail-closed preflight.
+func TestProj_DesignApplyGateArms(t *testing.T) {
+	deleting := &api.DesignApplyResult{OK: true, Mode: "dry-run", Changes: []api.DesignChange{
+		{Kind: "storage_buckets", Name: strPtr("receipts"), Action: "DELETE"},
+	}}
+	addOnly := &api.DesignApplyResult{OK: true, Mode: "dry-run", Changes: []api.DesignChange{
+		{Kind: "caches", Name: strPtr("sessions"), Action: "CREATE"},
+	}}
+	params := api.ApplyDesignParams{Project: "shop", Env: "dev", Document: []byte("{}")}
+
+	t.Run("an interactive decline is a quiet no-op", func(t *testing.T) {
+		projConfirm(t, false)
+		var out strings.Builder
+		got, err := designApplyGate(&fakeClient{designResult: deleting}, &out, params, false)
+		if err != nil {
+			t.Fatalf("a declined confirmation is not an error: %v", err)
+		}
+		if got != designApplyDeclined {
+			t.Errorf("gate = %v, want declined", got)
+		}
+		// The prompt is only meaningful if the reader can see WHAT goes.
+		for _, want := range []string{"DELETE", "storage_buckets", "receipts"} {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("the gate never named %q before asking:\n%s", want, out.String())
+			}
+		}
+	})
+
+	t.Run("an interactive accept proceeds", func(t *testing.T) {
+		projConfirm(t, true)
+		var out strings.Builder
+		got, err := designApplyGate(&fakeClient{designResult: deleting}, &out, params, false)
+		if err != nil || got != designApplyProceed {
+			t.Fatalf("gate = (%v, %v), want (proceed, nil)", got, err)
+		}
+	})
+
+	t.Run("an add-only plan is never asked about", func(t *testing.T) {
+		asked := 0
+		prev := confirm
+		confirm = func(string, string) bool { asked++; return false }
+		t.Cleanup(func() { confirm = prev })
+		var out strings.Builder
+		got, err := designApplyGate(&fakeClient{designResult: addOnly}, &out, params, false)
+		if err != nil || got != designApplyProceed {
+			t.Fatalf("gate = (%v, %v), want (proceed, nil)", got, err)
+		}
+		if asked != 0 {
+			t.Errorf("an add-only plan was asked about %d time(s)", asked)
+		}
+		// Nothing printed either: a pipeline log that gains a paragraph per replay is its own
+		// regression, and this is the path every CI run takes.
+		if out.String() != "" {
+			t.Errorf("an add-only plan printed %q", out.String())
+		}
+	})
+
+	t.Run("an unreadable preflight fails closed", func(t *testing.T) {
+		var out strings.Builder
+		got, err := designApplyGate(&fakeClient{err: errProjTestBoom}, &out, params, false)
+		if err == nil {
+			t.Fatal("an unreadable plan must be refused, not applied blind")
+		}
+		if got != designApplyDeclined {
+			t.Errorf("gate = %v, want declined", got)
+		}
+		for _, want := range []string{"--yes", "--dry-run", "remove components"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the fail-closed refusal never says %q:\n%s", want, err.Error())
+			}
+		}
+	})
+
+	t.Run("an unreadable preflight with --yes proceeds", func(t *testing.T) {
+		var out strings.Builder
+		got, err := designApplyGate(&fakeClient{err: errProjTestBoom}, &out, params, true)
+		if err != nil || got != designApplyProceed {
+			t.Fatalf("gate = (%v, %v), want (proceed, nil) — --yes is the escape hatch", got, err)
+		}
+	})
+
+	t.Run("a nil result fails closed too", func(t *testing.T) {
+		var out strings.Builder
+		if _, err := designApplyGate(projNilDesignClient{}, &out, params, false); err == nil {
+			t.Fatal("a server that returned no plan must be refused, not applied blind")
+		}
+	})
+}
+
+// TestProj_DesignApplyPreflightAsksForAPlanAndNotAWrite pins the shape of the preflight
+// itself: it must carry dry_run, and it must never carry --stage, or the "check" would write
+// the document to the review tray as a side effect of checking it.
+func TestProj_DesignApplyPreflightAsksForAPlanAndNotAWrite(t *testing.T) {
+	f := &fakeClient{designResult: &api.DesignApplyResult{OK: true, Mode: "dry-run"}}
+	var out strings.Builder
+	if _, err := designApplyGate(f, &out, api.ApplyDesignParams{
+		Project: "shop", Env: "dev", Document: []byte("{}"), Stage: true,
+	}, false); err != nil {
+		t.Fatalf("designApplyGate: %v", err)
+	}
+	if !f.appliedDesign.DryRun {
+		t.Error("the preflight did not ask for a dry run — it would have APPLIED the document")
+	}
+	if f.appliedDesign.Stage {
+		t.Error("the preflight carried --stage; checking a plan must not write it to the review tray")
+	}
+	if f.appliedDesign.Project != "shop" || f.appliedDesign.Env != "dev" {
+		t.Errorf("the preflight asked about %s/%s, not the environment being applied to",
+			f.appliedDesign.Project, f.appliedDesign.Env)
+	}
+}
+
+// projNilDesignClient answers ApplyDesign with (nil, nil) — a server that reported neither a
+// plan nor an error. The shared fakeClient cannot express it, and fake_test.go belongs to
+// another lane, so the interface is embedded to inherit every other method: none of them is
+// called on this path, and a nil embedded interface panics loudly rather than silently
+// answering if that ever stops being true.
+type projNilDesignClient struct{ apiClient }
+
+func (projNilDesignClient) ApplyDesign(api.ApplyDesignParams) (*api.DesignApplyResult, error) {
+	return nil, nil
+}
+
+// TestProj_DesignDeletionsMatchTheActionNotItsSpelling pins the classifier. Under-matching
+// costs a silent removal; over-matching costs a confirmation nobody needed, so the comparison
+// is exact about the action and lenient about its case.
+func TestProj_DesignDeletionsMatchTheActionNotItsSpelling(t *testing.T) {
+	changes := []api.DesignChange{
+		{Kind: "a", Action: "DELETE"},
+		{Kind: "b", Action: "delete"},
+		{Kind: "c", Action: " DELETE "},
+		{Kind: "d", Action: "CREATE"},
+		{Kind: "e", Action: "UPDATE"},
+		{Kind: "f", Action: "DELETED_STALE"},
+	}
+	got := designDeletions(changes)
+	if len(got) != 3 {
+		t.Fatalf("designDeletions found %d, want the three spellings of DELETE: %+v", len(got), got)
+	}
+	for _, ch := range got {
+		if ch.Kind == "d" || ch.Kind == "e" || ch.Kind == "f" {
+			t.Errorf("%q was read as a deletion", ch.Action)
+		}
+	}
+	if len(designDeletions(nil)) != 0 {
+		t.Error("an empty plan has no deletions")
+	}
+}
+
+// TestProj_DesignApplyGateIsSkippedForDryRunAndStage pins that neither mode pays for a
+// preflight. `--dry-run` writes nothing and `--stage` goes to a review tray where a person
+// sees the removals before they take effect; a confirmation in front of either would be
+// asking about something that is not about to happen.
+func TestProj_DesignApplyGateIsSkippedForDryRunAndStage(t *testing.T) {
+	for _, mode := range []string{"--dry-run", "--stage"} {
+		t.Run(mode, func(t *testing.T) {
+			s := &projServer{designChanges: []map[string]any{
+				{"kind": "storage_buckets", "name": "receipts", "action": "DELETE"},
+			}}
+			h := projEnv(t, s)
+			asked := 0
+			prev := confirm
+			confirm = func(string, string) bool { asked++; return false }
+			t.Cleanup(func() { confirm = prev })
+
+			if h.run("project", "design", "apply", "--project", "web", "-f", projDesignDoc(t), mode, "--no-input") {
+				t.Fatalf("%s must not be gated", mode)
+			}
+			if asked != 0 {
+				t.Errorf("%s asked %d confirmation(s)", mode, asked)
+			}
+			if len(s.posts) != 1 {
+				t.Errorf("%s made %d request(s), want exactly 1 — it must not pay for a preflight: %+v",
+					mode, len(s.posts), s.posts)
+			}
+		})
+	}
+}
+
+// projAnsi strips ANSI escape sequences.
+var projAnsi = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// projFlatten renders styled terminal output as one whitespace-normalised line.
+//
+// Needed because lipgloss styles and may hard-wrap what it renders, so a phrase that is one
+// line in the source can arrive split across two with padding in between. Asserting on the raw
+// bytes would make these tests fail on a change to the terminal width rather than to the
+// message, and asserting on single words would let a rewritten sentence pass.
+func projFlatten(s string) string {
+	return strings.Join(strings.Fields(projAnsi.ReplaceAllString(s, "")), " ")
+}
+
+// TestProj_DesignApplyRefusalTheCOMMANDPrintsNamesTheReason is the assertion that
+// TestProj_DesignApplyRefusalNamesWhyYesIsNeeded is NOT.
+//
+// That one drives errDesignApplyWouldDelete directly and proves the sentence can be
+// constructed. It says nothing about whether the command ever reaches it — and it does not,
+// if the `noInputMode && !yes` check is removed: confirmDestructive is still underneath and
+// still refuses, with the generic "this command is destructive" wording. The command would
+// keep exiting 1, every other test here would stay green, and the one thing the ruling asked
+// for — that a pipeline author be told adding --yes is not a blanket weakening — would be
+// silently gone. Measured: deleting that check leaves this file green except for this test.
+func TestProj_DesignApplyRefusalTheCOMMANDPrintsNamesTheReason(t *testing.T) {
+	s := &projServer{designChanges: []map[string]any{
+		{"kind": "storage_buckets", "name": "receipts", "action": "DELETE"},
+	}}
+	h := projEnv(t, s)
+	out := projCaptureStdout(t)
+
+	if !h.run("project", "design", "apply", "--project", "web", "-f", projDesignDoc(t), "--no-input") {
+		t.Fatal("a deleting apply must be refused without --yes")
+	}
+	got := projFlatten(out())
+	for _, want := range []string{
+		"--yes",
+		"THIS PLAN removes components",
+		"an apply that only adds or updates runs unprompted",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the refusal the command printed never says %q.\n  printed: %s", want, got)
+		}
+	}
+	// The generic wording alone is the failure mode: it leads a pipeline author to add --yes
+	// permanently, which opts every later replay into removing components.
+	if strings.Contains(got, "this command is destructive and interactive prompts are disabled") {
+		t.Errorf("the command fell through to the GENERIC destructive refusal:\n  %s", got)
 	}
 }
