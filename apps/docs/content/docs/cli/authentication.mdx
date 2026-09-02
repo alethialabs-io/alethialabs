@@ -20,15 +20,21 @@ alethia login
 
 <Steps>
 
-### CLI generates device code
-A UUID identifying this login attempt.
+### CLI generates two codes
+A UUID `device_code` identifying this login attempt, and a short `user_code` printed to your terminal.
+
+### CLI registers the request
+It sends both codes, its own name and version to `POST /api/auth/cli/start`. Console stores them with the
+IP and browser agent it saw, so the approval page can tell you who is asking.
 
 ### Browser opens
-Navigates to `{console_url}/cli/login?device_code={code}`.
+Navigates to `{console_url}/cli/login?device_code={code}&user_code={user_code}`.
 
 ### Approve in browser
-Sign in with any OAuth provider (GitHub, GitLab, Bitbucket, Google) or email OTP. Console binds the pending
-`device_code` to your account and approves it — nothing is typed back into the terminal.
+Sign in with any OAuth provider (GitHub, GitLab, Bitbucket, Google) or email OTP. The page names the
+account that is about to be bound, what approval hands over, who is asking and how long is left. Check
+that the code on screen is the one your terminal printed, then approve — nothing is typed back into the
+terminal.
 
 ### CLI polls for the token
 While you approve in the browser, the CLI shows a spinner and polls `POST /api/auth/cli/exchange` with the
@@ -38,6 +44,20 @@ While you approve in the browser, the CLI shows a spinner and polls `POST /api/a
 Saved to `~/.config/alethia/credentials.json`.
 
 </Steps>
+
+## Refusing a login you did not start
+
+If the code on screen is not the one your terminal printed, or you did not run `alethia login` at all,
+press **This isn't me**.
+
+That records the refusal in Console rather than only in the browser. Three things follow:
+
+- The device that is polling is told at once, with the standard `access_denied` error, instead of waiting
+  out its own timeout.
+- Nothing is handed over — no access token, no refresh token, and none of your linked git provider's
+  OAuth token.
+- The refusal is final for that link. Opening it again cannot approve it; a genuine sign-in needs a fresh
+  `alethia login`.
 
 ### Force Re-authentication
 

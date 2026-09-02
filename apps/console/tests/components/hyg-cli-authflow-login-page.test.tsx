@@ -66,14 +66,43 @@ describe("/cli/login", () => {
 		expect(await screen.findByText(/authentication successful/i)).toBeInTheDocument();
 	});
 
-	it("lets the user decline without sending anything", async () => {
+	// This test asserted the DEFECT (#3887): "declines without sending anything" was
+	// literally true — the press set React state and the server was never told, so the
+	// polling CLI kept waiting and re-opening the same link offered the prompt again.
+	// A refusal has to reach the server to be worth anything.
+	it("records the refusal server-side when the user declines", async () => {
 		const user = userEvent.setup();
 		render(<CliLoginPage />);
 
 		await user.click(await screen.findByRole("button", { name: /isn't me/i }));
 
+		await waitFor(() => expect(hygCliAuthflowFetch).toHaveBeenCalledTimes(1));
+		const [url, init] = hygCliAuthflowFetch.mock.calls[0];
+		expect(url).toBe("/api/auth/cli/deny");
+		expect(JSON.parse(init.body)).toEqual({
+			device_code: HYG_CLI_AUTHFLOW_DEVICE_CODE,
+			user_code: HYG_CLI_AUTHFLOW_USER_CODE,
+		});
 		expect(await screen.findByText(/not approved/i)).toBeInTheDocument();
-		expect(hygCliAuthflowFetch).not.toHaveBeenCalled();
+	});
+
+	// Telling somebody their refusal was recorded when it was not is worse than telling
+	// them to close the terminal, so the failure is surfaced rather than swallowed into
+	// the reassuring "Sign-in not approved" screen.
+	it("does not claim the refusal was recorded when the server refuses it", async () => {
+		hygCliAuthflowFetch.mockResolvedValue({
+			ok: false,
+			json: async () => ({ error: "This login request belongs to another account" }),
+		});
+		const user = userEvent.setup();
+		render(<CliLoginPage />);
+
+		await user.click(await screen.findByRole("button", { name: /isn't me/i }));
+
+		expect(
+			await screen.findByText(/belongs to another account/i),
+		).toBeInTheDocument();
+		expect(screen.queryByText(/refusal has been recorded/i)).toBeNull();
 	});
 
 	it("refuses a link with no user_code instead of offering to approve it", async () => {
