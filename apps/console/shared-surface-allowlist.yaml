@@ -99,7 +99,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 15
-debt: 234
+debt: 198
 
 scanned:
   - scope: console_code
@@ -193,12 +193,6 @@ section_header:
   - path: apps/console/components/connectors/connectors-page.tsx
     hits: 1
     lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
-  - path: apps/console/components/create-project/configure-project.tsx
-    hits: 1
-    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw section heading here."
-  - path: apps/console/components/create-project/repo-import-panel.tsx
-    hits: 1
-    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw section heading here."
   - path: apps/console/components/design-project/canvas/env-settings-sheet.tsx
     hits: 2
     lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 2 raw section headings here."
@@ -208,18 +202,9 @@ section_header:
   - path: apps/console/components/evidence/evidence-waivers.tsx
     hits: 1
     lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 raw section heading here."
-  - path: apps/console/components/onboarding/setup-guide.tsx
-    hits: 1
-    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw section heading here."
   - path: apps/console/components/plan/plan-tab.tsx
     hits: 2
     lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 2 raw section headings here."
-  - path: apps/console/components/runners/add-runner-dialog.tsx
-    hits: 1
-    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw section heading here."
-  - path: apps/console/components/runners/pool-card.tsx
-    hits: 1
-    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw section heading here."
   - path: apps/console/components/shell/account-settings-dialog.tsx
     hits: 1
     lifts: "#3619 — the page frame is rebuilt: 1 raw section heading here."
@@ -475,27 +460,6 @@ type_scale:
   - path: apps/console/components/connectors/provider-config-fields.tsx
     hits: 1
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/create-project/configure-project.tsx
-    hits: 8
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 8 hardcoded pixel type sizes here."
-  - path: apps/console/components/create-project/create-project-form.tsx
-    hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/create-project/environment-placement.tsx
-    hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/create-project/region-select.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/create-project/repo-import-panel.tsx
-    hits: 3
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
-  - path: apps/console/components/create-project/source-summary.tsx
-    hits: 12
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
-  - path: apps/console/components/create-project/start-from-scratch-cards.tsx
-    hits: 3
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
   - path: apps/console/components/design-project/byo/byo-chart-dialog.tsx
     hits: 2
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
@@ -646,15 +610,6 @@ type_scale:
   - path: apps/console/components/forms/oauth-consent-form.tsx
     hits: 2
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
-  - path: apps/console/components/jobs/columns.tsx
-    hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/jobs/job-author.tsx
-    hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
-  - path: apps/console/components/onboarding/setup-guide.tsx
-    hits: 6
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
   - path: apps/console/components/org-switcher.tsx
     hits: 3
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
@@ -667,63 +622,15 @@ type_scale:
   - path: apps/console/components/org/upgrade-org-sheet.tsx
     hits: 2
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
-  - path: apps/console/components/overview/alerts-card.tsx
-    hits: 5
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
-  - path: apps/console/components/overview/overview-toolbar.tsx
-    hits: 12
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
-  - path: apps/console/components/overview/project-card.tsx
-    hits: 6
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
-  - path: apps/console/components/overview/project-row.tsx
-    hits: 6
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
-  - path: apps/console/components/overview/recent-jobs-card.tsx
-    hits: 7
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
-  - path: apps/console/components/overview/usage-card.tsx
-    hits: 7
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
   - path: apps/console/components/plan/resource-card.tsx
     hits: 1
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
   - path: apps/console/components/project-switcher.tsx
     hits: 1
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/projects/duplicate-project-dialog.tsx
-    hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
   - path: apps/console/components/repository-selector.tsx
     hits: 4
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/runners/add-runner-dialog.tsx
-    hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/runners/fleet-pool-wizard.tsx
-    hits: 12
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
-  - path: apps/console/components/runners/pool-card.tsx
-    hits: 10
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 10 hardcoded pixel type sizes here."
-  - path: apps/console/components/runners/release-notes-popover.tsx
-    hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
-  - path: apps/console/components/runners/runner-actions.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/runners/runner-card.tsx
-    hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/runners/runner-select-popover.tsx
-    hits: 3
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
-  - path: apps/console/components/runners/runners-pager.tsx
-    hits: 3
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
-  - path: apps/console/components/runners/versions-panel.tsx
-    hits: 5
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
   - path: apps/console/components/settings/access/access-manager.tsx
     hits: 13
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 13 hardcoded pixel type sizes here."
@@ -858,24 +765,12 @@ empty_state:
   - path: apps/console/components/design-project/canvas/inspector/collection-panel.tsx
     hits: 1
     lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 1 hand-rolled empty state here."
-  - path: apps/console/components/overview/alerts-card.tsx
-    hits: 2
-    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 2 hand-rolled empty states here."
-  - path: apps/console/components/overview/recent-jobs-card.tsx
-    hits: 2
-    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 2 hand-rolled empty states here."
   - path: apps/console/components/plan/plan-tab.tsx
     hits: 1
     lifts: "#3626 — billing, connectors, evidence and classification adopt the shared surface: 1 hand-rolled empty state here."
   - path: apps/console/components/project-switcher.tsx
     hits: 1
     lifts: "#3619 — the page frame is rebuilt: 1 hand-rolled empty state here."
-  - path: apps/console/components/runners/add-runner-dialog.tsx
-    hits: 1
-    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 hand-rolled empty state here."
-  - path: apps/console/components/runners/pool-card.tsx
-    hits: 1
-    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 hand-rolled empty state here."
 
 stat_strip:
   # --- debt only: 12 stat-card cells and the 2 Stat primitives they render, measured
@@ -886,9 +781,6 @@ layer_token:
   - path: apps/console/components/design-project/canvas/inspector/config-fields.tsx
     hits: 1
     lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 1 raw stacking level here."
-  - path: apps/console/components/onboarding/setup-guide.tsx
-    hits: 1
-    lifts: "#3624 — runners, overview, jobs and project creation adopt the shared surface: 1 raw stacking level here."
 
 # `data_table:` had three entries and no longer has a section: #3622 converted the alerts activity
 # ledger to `DataTable`, the consistency matrix to the `@repo/ui/table` primitives, and the alerts
