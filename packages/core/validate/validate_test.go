@@ -12,7 +12,7 @@ import (
 // empty Specs map proves nothing at all.
 func TestSpecsIsNotEmpty(t *testing.T) {
 	if len(Specs) == 0 {
-		t.Fatal("Specs is empty — regenerate with `pnpm -F console gen:go-validation`")
+		t.Fatal("Specs is empty — regenerate with `pnpm -C apps/console run gen:go-validation`")
 	}
 	for id, spec := range Specs {
 		if len(spec.Steps) == 0 {

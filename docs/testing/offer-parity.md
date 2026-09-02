@@ -214,4 +214,4 @@ above with an issue; a ⚠️ cell in neither list fails the build.
 
 ---
 
-Regenerate with `pnpm -F console check:offer-parity -- --matrix`. CI runs the guard on every PR.
+Regenerate with `pnpm -C apps/console run check:offer-parity -- --matrix`. CI runs the guard on every PR.
