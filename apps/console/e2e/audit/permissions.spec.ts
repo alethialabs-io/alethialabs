@@ -1,9 +1,50 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// T7 — "as the `member` persona, a forbidden page renders a deliberate state, not a blank."
+// T7 — "a forbidden page renders a deliberate state, not a blank."
 //
-// The persona has to be REAL. There is no `member` persona anywhere in this repo today
+// WHICH PERSONA IS FORBIDDEN ANYTHING IS A MEASUREMENT, AND THE FIRST ANSWER WAS WRONG.
+//
+// This spec first ran (#3894) with a Better Auth `member`, which `MEMBERSHIP_ROLE_ALIASES`
+// resolves to Alethia's `viewer`. It found nothing: all 27 org-only routes came back
+// `no-restricted-surface`, T7 rendered `—`, and a predicate that cannot fail is not yet a check
+// (#3898). Neither the fixture nor the predicate was the gap. The gap was the PRIVILEGE LADDER the
+// predicate assumed, and there isn't one.
+//
+// MEASURED against `lib/authz/registry.ts` — whose role bundles are DERIVED below rather than
+// re-typed here, so a registry edit moves this file's answer instead of silently outdating it:
+//
+//   · The console refuses a route at RENDER TIME in exactly three places. Each is a server
+//     component that awaits a bootstrap, catches `ForbiddenError`, and renders a deliberate
+//     no-access `Alert` — which is precisely the thing T7 exists to measure:
+//
+//         app/(private)/[org]/~/alerts/page.tsx           needs `alert:view_alerts`
+//         app/(private)/[org]/~/settings/roles/page.tsx   needs `member:view`
+//         app/(private)/[org]/~/settings/sso/page.tsx     needs `member:view`
+//
+//     Everywhere else the console authorizes at the ACTION level: the page renders for anybody in
+//     the org and a capability flag (`canManage`, `canManageCaps`, `seeAll`, `canInvite`) takes
+//     affordances away rather than refusing the route. `~/settings/billing` and `~/settings/activity`
+//     are client panels whose read actions resolve `currentActor()` and enforce nothing at all.
+//
+//   · A `viewer` holds BOTH `member:view` and `alert:view_alerts`, so it is refused none of the
+//     three — which is the whole of #3898's `—`. An `operator` holds neither of the member-
+//     management ones, so it is refused TWO of them. The two roles are INCOMPARABLE, and
+//     `org-access-control.ts` says so in `toPdpRole`'s own doc ("a viewer may read members and
+//     activity; an operator may deploy"): "least privileged" is not a total order here, and the
+//     least-privileged actor for the console's route-level gates is the operator, not the viewer.
+//
+//   · `~/alerts` is refused to NO built-in role. Only a custom (Enterprise) role or a member left
+//     with zero grants (#3754) can reach that branch, and neither is a persona this spec builds.
+//     Recorded, not measured — see the arithmetic test below, which counts the subjects it has.
+//
+// So the persona is an `operator` (PERSONA_ROLE), invited through the same endpoint the console's
+// own invite dialog calls, with a role that dialog offers. AND NOTHING IS SEEDED FOR IT: both
+// surfaces it is refused exist in every org on every plan with no rows written. That is what makes
+// #3898's answer "the persona was wrong" rather than "the fixture was thin" — there was no thin
+// fixture to thicken.
+//
+// The persona has to be REAL. There is no second persona anywhere in this repo today
 // (`e2e/global-setup.ts` says so in a comment: it creates ownerHobby and, best-effort, ownerTeam,
 // and leaves member "for a later step"), so this spec builds one — and it builds it through the
 // PRODUCT'S OWN endpoints, better-auth's organization plugin, the same ones the invite dialog
@@ -27,12 +68,18 @@
 //     cannot, the instrument is broken and this spec says so instead of scoring.
 //
 // And for the same reason RESTRICTION IS MEASURED AS A DIFFERENCE. Every route is driven twice —
-// once as the member, once as the OWNER of the same org — and a route counts as restricted only
+// once as the persona, once as the OWNER of the same org — and a route counts as restricted only
 // where the two disagree. A redirect on its own proves nothing: `/dashboard` and `~/settings`
-// redirect every caller, so reading "the member was bounced" as refusal scored T7 PASS on routes
+// redirect every caller, so reading "the persona was bounced" as refusal scored T7 PASS on routes
 // that restrict nobody.
 
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import {
+	BUILT_IN_ROLES,
+	PERMISSIONS,
+	type BuiltInRole,
+	type PermissionKey,
+} from "@/lib/authz/registry";
 import { closeDb, db, orgIdBySlug } from "../helpers/db";
 import { signUpWithOtp } from "../fixtures/auth";
 import { materialize, needsOnlyOrg, type AuditContext } from "./context";
@@ -46,11 +93,57 @@ const ctx: AuditContext = { orgSlug: "", owner: { userId: "", orgId: "" } };
 const report = createReport();
 const record = report.record;
 
-let memberContext: BrowserContext | null = null;
-let memberPage: Page | null = null;
-let memberEmail = "";
+/**
+ * The role T7's persona is invited with — the least-privileged actor for the console's
+ * ROUTE-LEVEL gates, which is not the least-privileged role overall. See the header.
+ *
+ * It is a `BuiltInRole`, not a string: a role this repo has renamed or dropped must be a compile
+ * error here, not a 400 from `invite-member` two minutes into a run.
+ */
+const PERSONA_ROLE: BuiltInRole = "operator";
+
+/**
+ * The permission each of the console's render-time gates enforces, with the file that enforces it.
+ *
+ * HAND-MAINTAINED, and that is a liability this comment names rather than hides: the gates are a
+ * `try { await bootstrap() } catch (e) { if (e instanceof ForbiddenError) … }` shape, which no grep
+ * derives honestly. So it decays in both directions — a gate the console GROWS is missing here, and
+ * a gate the console DELETES lingers here, which would leave the arithmetic below claiming a
+ * subject T7 no longer has. That second one is the dangerous direction, and it is why these routes
+ * double as T7'S POSITIVE CONTROL: a route on this list whose permission the persona provably lacks
+ * and that nevertheless reads as unrestricted FAILS its own test (see the per-route branch below),
+ * rather than recording a quiet N/A. A stale entry therefore turns the run RED and names itself; it
+ * cannot manufacture a subject that only exists in this array.
+ */
+const ROUTE_LEVEL_GATES: readonly { route: string; permission: PermissionKey; file: string }[] = [
+	{
+		route: "/[org]/~/alerts",
+		permission: "alert:view_alerts",
+		file: "app/(private)/[org]/~/alerts/page.tsx",
+	},
+	{
+		route: "/[org]/~/settings/roles",
+		permission: "member:view",
+		file: "app/(private)/[org]/~/settings/roles/page.tsx",
+	},
+	{
+		route: "/[org]/~/settings/sso",
+		permission: "member:view",
+		file: "app/(private)/[org]/~/settings/sso/page.tsx",
+	},
+];
+
+/** The permission keys a built-in role grants, read out of the registry (`"*"` = all of them). */
+function bundleOf(role: BuiltInRole): ReadonlySet<PermissionKey> {
+	const grant = BUILT_IN_ROLES[role];
+	return new Set(grant === "*" ? PERMISSIONS.map((p) => p.key) : grant);
+}
+
+let personaContext: BrowserContext | null = null;
+let personaPage: Page | null = null;
+let personaEmail = "";
 // The OWNER stays open for the whole spec. T7's question is comparative — see `observe` below —
-// and answering it needs the same route driven by somebody who is not the member.
+// and answering it needs the same route driven by somebody who is not the persona.
 let ownerContext: BrowserContext | null = null;
 let ownerPage: Page | null = null;
 
@@ -185,28 +278,36 @@ test.beforeAll(async ({ browser }, testInfo) => {
 		// THE INVITEE SIGNS UP FIRST, then is invited at whatever address it ended up with. The
 		// other order coupled the invitation to an address chosen before the signup ran, so a retry
 		// that (correctly) minted a fresh one would have invited an account that does not exist.
-		memberContext = await browser.newContext({ baseURL, storageState: undefined });
-		const invitee = await memberContext.newPage();
-		memberPage = invitee;
-		const member = await signUpWithRetry(invitee, (i) => `e2e-audit-member-${stamp}-${i}@alethia.test`);
-		memberEmail = member.email;
+		personaContext = await browser.newContext({ baseURL, storageState: undefined });
+		const invitee = await personaContext.newPage();
+		personaPage = invitee;
+		const persona = await signUpWithRetry(invitee, (i) => `e2e-audit-${PERSONA_ROLE}-${stamp}-${i}@alethia.test`);
+		personaEmail = persona.email;
 
+		// `PERSONA_ROLE`, not better-auth's default `member`. The organization plugin is configured
+		// with OUR role vocabulary (`ee/src/index.ts`: `ac: core.orgAc, roles: core.orgRoles`), and
+		// `components/settings/members/invite-member-dialog.tsx` offers exactly this role — so this
+		// is the product's own invitation, not a role invented for a test.
 		const invited = await authApi(asOwner, "invite-member", {
-			email: memberEmail,
-			role: "member",
+			email: personaEmail,
+			role: PERSONA_ROLE,
 			organizationId: orgId,
 		});
 		expect(
 			invited.status,
-			`inviting the member persona failed (${invited.status}): ${invited.text}\n` +
+			`inviting the ${PERSONA_ROLE} persona failed (${invited.status}): ${invited.text}\n` +
 				`  org ${ctx.orgSlug} (${orgId}) billing=${JSON.stringify(granted[0])}\n` +
+				`  A 400 naming the ROLE means the organization plugin is not carrying our vocabulary:\n` +
+				`  better-auth's own roles are owner/admin/member, and "${PERSONA_ROLE}" exists only\n` +
+				`  because ee/src/index.ts passes \`ac: core.orgAc, roles: core.orgRoles\`. Same cause as\n` +
+				`  the 403 below — @alethia/ee did not load — so check that first.\n` +
 				`  A 403 "upgrade_required" WITH a team/active billing row means the console resolved\n` +
 				`  COMMUNITY entitlements, which happens when it did not load @alethia/ee: without the\n` +
 				`  enterprise module lib/auth/scope.ts falls back to { orgId: userId }, an org with no\n` +
 				`  billing record. Build it (\`pnpm -F @alethia/ee build\`) and restart the console. Note\n` +
 				`  that ee/dist is gitignored, so an rsync-based deploy can delete it — measured on a\n` +
 				`  sandbox env, where \`pnpm env:push\` left the console silently in community scope.\n` +
-				`  T7 cannot be measured without a member — do not let this become a skipped predicate.`,
+				`  T7 cannot be measured without the persona — do not let this become a skipped predicate.`,
 		).toBeLessThan(400);
 
 		// Not `helpers/db.ts:pendingInvitationId` — it quotes `"organizationId"`, and the real column
@@ -214,25 +315,37 @@ test.beforeAll(async ({ browser }, testInfo) => {
 		// `casing: "snake_case"`), so that helper throws on every call. Flagged; out of scope here.
 		const pending = await db()<{ id: string }[]>`
 			select id from invitation
-			where organization_id = ${orgId} and email = ${memberEmail} and status = 'pending'
+			where organization_id = ${orgId} and email = ${personaEmail} and status = 'pending'
 			order by created_at desc limit 1`;
 		const invitationId = pending[0]?.id ?? null;
-		expect(invitationId, `no pending invitation for ${memberEmail} in ${orgId}`).toBeTruthy();
+		expect(invitationId, `no pending invitation for ${personaEmail} in ${orgId}`).toBeTruthy();
 		const accepted = await authApi(invitee, "accept-invitation", { invitationId });
 		expect(accepted.status, `accepting the invitation failed (${accepted.status}): ${accepted.text}`).toBeLessThan(400);
-		// Same: best-effort. The member now belongs to two orgs, and the org layout resolves the
+		// Same: best-effort. The persona now belongs to two orgs, and the org layout resolves the
 		// scope from the URL segment, so the routes below are driven in the audited org regardless.
 		await authApi(invitee, "set-active", { organizationId: orgId });
 
 		const role = await db()<{ role: string }[]>`
 			select role from member
-			where organization_id = ${orgId} and user_id = (select id from "user" where email = ${memberEmail})`;
-		expect(role[0]?.role, `${memberEmail} is not a member row in ${orgId}`).toBeTruthy();
+			where organization_id = ${orgId} and user_id = (select id from "user" where email = ${personaEmail})`;
+		const stored = role[0]?.role;
+		expect(stored, `${personaEmail} is not a member row in ${orgId}`).toBeTruthy();
+		// THE STORED ROLE, not just the row. `member.role` DEFAULTS to better-auth's `member` — which
+		// aliases to `viewer`, which is refused nothing — so a plugin that quietly dropped the invited
+		// role would rebuild #3898's persona exactly, and T7 would go back to reporting 27 N/A with
+		// nothing anywhere saying why. Read the way the product reads it (the org plugin stores a
+		// comma-joined list and splits on read), so a legitimate multi-role value is not a failure.
+		expect(
+			(stored ?? "").split(",").map((r) => r.trim()),
+			`${personaEmail} was invited as "${PERSONA_ROLE}" and stored as "${stored}". T7's subject ` +
+				`is the set of routes this role is refused; a different role means a different subject, ` +
+				`and possibly none at all.`,
+		).toContain(PERSONA_ROLE);
 	}
 });
 
 test.afterAll(async () => {
-	await memberContext?.close();
+	await personaContext?.close();
 	await ownerContext?.close();
 	report.write(ctx.orgSlug, "ui-audit-permissions.json");
 	await closeDb();
@@ -265,7 +378,7 @@ async function observe(page: Page): Promise<Observation> {
 		sharedErrorState,
 		denialCopy:
 			// NOT a bare /permission/: `~/settings/roles` is a page ABOUT permissions and says the
-			// word all over its ordinary content, so the loose form would read a page the member is
+			// word all over its ordinary content, so the loose form would read a page the persona is
 			// fully allowed to see as a refusal — and then score T7 PASS on it.
 			/(don'?t have (access|permission)|do not have (access|permission)|not authori[sz]ed|no permission|forbidden|403|not found|404|ask an (owner|admin))/i.test(
 				text,
@@ -280,29 +393,53 @@ async function visit(page: Page, url: string): Promise<Observation> {
 	return observe(page);
 }
 
-test("the member persona really is a member — otherwise T7 measures the org 404, not permissions", async () => {
-	expect(memberPage, "no member page was created").not.toBeNull();
-	if (!memberPage) return;
-	const seen = await visit(memberPage, `/${ctx.orgSlug}`);
+// THE PREDICATE MUST HAVE A SUBJECT, and this is the test that says so out loud.
+//
+// #3898's finding was not a failing route. It was a column of N/A: the persona was refused nothing,
+// so T7 rendered `—` and could not fail. Nothing anywhere distinguished that from "not run yet",
+// and nothing would have noticed if the console's last route-level gate were deleted tomorrow.
+//
+// So the subject is COUNTED, from the registry's own role bundles, and an empty count is a FAILURE
+// rather than a quiet column of dashes. It drives no page: the question is arithmetic — does this
+// role lack a permission some page refuses on? — so its answer cannot be lost to a flaky render.
+test(`the ${PERSONA_ROLE} persona is refused something — otherwise T7 has no subject and can only report "—"`, () => {
+	const held = bundleOf(PERSONA_ROLE);
+	const refused = ROUTE_LEVEL_GATES.filter((g) => !held.has(g.permission));
+	expect(
+		refused.map((g) => `${g.route} (${g.permission}, ${g.file})`),
+		`"${PERSONA_ROLE}" holds every permission the console's route-level gates enforce ` +
+			`(${ROUTE_LEVEL_GATES.map((g) => g.permission).join(", ")}), so every route below will ` +
+			`record N/A "no-restricted-surface" and T7 will measure nothing — exactly #3898.\n` +
+			`  This is a FACT ABOUT THE CONSOLE, not a broken test: either the gates changed, or the ` +
+			`role bundles in lib/authz/registry.ts did. Re-derive which role is refused what and ` +
+			`re-point PERSONA_ROLE (and RUBRIC.md's T7 row) at it — do NOT relax this assertion.`,
+	).not.toEqual([]);
+});
+
+test(`the ${PERSONA_ROLE} persona really is in the org — otherwise T7 measures the org 404, not permissions`, async () => {
+	expect(personaPage, "no persona page was created").not.toBeNull();
+	if (!personaPage) return;
+	const seen = await visit(personaPage, `/${ctx.orgSlug}`);
 	expect(
 		seen.path.startsWith(`/${ctx.orgSlug}`),
-		`the member was bounced off the org overview to ${seen.path} — it has no access to the ` +
+		`the persona was bounced off the org overview to ${seen.path} — it has no access to the ` +
 			`audited org at all, so every T7 verdict below would be about the org 404. Fix the ` +
 			`invitation path before believing any T7 number.`,
 	).toBe(true);
 	expect(
 		seen.sharedErrorState || seen.denialCopy,
-		`the org overview rendered a denial for a member: "${seen.text}"`,
+		`the org overview rendered a denial for the ${PERSONA_ROLE} persona: "${seen.text}". It holds ` +
+			`project:view, so this is the instrument breaking, not a permission being enforced.`,
 	).toBe(false);
 });
 
-test.describe("T7 · what the member persona gets on each route", () => {
+test.describe(`T7 · what the ${PERSONA_ROLE} persona gets on each route`, () => {
 	for (const route of manifest.routes.filter(needsOnlyOrg)) {
 		test(`${route.route}`, async () => {
-			expect(memberPage).not.toBeNull();
-			if (!memberPage) return;
+			expect(personaPage).not.toBeNull();
+			if (!personaPage) return;
 			// A redirect-only route has no surface to restrict: it exists to send the caller
-			// somewhere else, and reading that redirect as "the member was refused" would score a
+			// somewhere else, and reading that redirect as "the persona was refused" would score a
 			// T7 PASS on the product working normally.
 			if (route.isRedirectOnly) {
 				record({
@@ -316,29 +453,29 @@ test.describe("T7 · what the member persona gets on each route", () => {
 				return;
 			}
 			const url = materialize(route, ctx);
-			const seen = await visit(memberPage, url);
+			const seen = await visit(personaPage, url);
 
 			// RESTRICTION IS A DIFFERENCE, NOT A REDIRECT.
 			//
-			// The first version read "the member was redirected" as evidence of refusal on its own,
+			// The first version read "the persona was redirected" as evidence of refusal on its own,
 			// and that scores a PASS on routes that redirect EVERYONE: `/dashboard` is the app's
 			// "where do I belong" hop (JSX beside its `redirect()`, so `isRedirectOnly` does not
 			// catch it) and `~/settings` sends every caller to its default tab. Both bounced the
-			// member, both were recorded restricted-and-deliberate, and T7 reported green over a
+			// persona, both were recorded restricted-and-deliberate, and T7 reported green over a
 			// route that restricted nothing — the exact column-of-PASSes failure this file's header
 			// warns about.
 			//
 			// So the same URL is driven by the OWNER of the same org, and only a difference counts:
-			// the member ends up somewhere the owner does not, or sees a denial the owner does not.
+			// the persona ends up somewhere the owner does not, or sees a denial the owner does not.
 			const byOwner = ownerPage ? await visit(ownerPage, url) : null;
-			const memberRedirected = !seen.path.startsWith(url.replace(/\/$/, ""));
+			const personaRedirected = !seen.path.startsWith(url.replace(/\/$/, ""));
 			const ownerRedirectedSameWay = byOwner !== null && byOwner.path === seen.path;
-			const redirectedAway = memberRedirected && !ownerRedirectedSameWay;
+			const redirectedAway = personaRedirected && !ownerRedirectedSameWay;
 			const deniedWhereOwnerIsNot =
 				(seen.sharedErrorState && !(byOwner?.sharedErrorState ?? false)) ||
 				(seen.denialCopy && !(byOwner?.denialCopy ?? false));
 			const restricted = redirectedAway || deniedWhereOwnerIsNot;
-			const evidence = { member: seen, owner: byOwner, redirectedAway, deniedWhereOwnerIsNot };
+			const evidence = { persona: seen, owner: byOwner, redirectedAway, deniedWhereOwnerIsNot };
 
 			if (!restricted) {
 				record({
@@ -349,6 +486,27 @@ test.describe("T7 · what the member persona gets on each route", () => {
 					reason: "no-restricted-surface",
 					evidence,
 				});
+				// THE POSITIVE CONTROL, and the record above stands whichever way this goes: the run
+				// really did observe no restricted surface, and saying otherwise would be inventing a
+				// verdict. What must not happen is this observation passing QUIETLY on a route the
+				// registry says the persona cannot load — that is #3898's column of N/A with nothing
+				// red anywhere, one route at a time.
+				const gate = ROUTE_LEVEL_GATES.find((g) => g.route === route.route);
+				const provablyRefused = gate !== undefined && !bundleOf(PERSONA_ROLE).has(gate.permission);
+				expect(
+					provablyRefused,
+					`T7 ${route.route}: "${PERSONA_ROLE}" does not hold \`${gate?.permission}\`, which ` +
+						`${gate?.file} enforces at render — so this page must have refused it, and it did ` +
+						`not. Three things do this, in the order worth checking:\n` +
+						`  1. the gate was DELETED or now enforces something else — fix ROUTE_LEVEL_GATES, ` +
+						`and re-derive whether ${PERSONA_ROLE} is still the right persona at all;\n` +
+						`  2. the persona is not really a ${PERSONA_ROLE} — an invitation that lands with no ` +
+						`grant (#3754) or the default role would both leave it reading as a viewer;\n` +
+						`  3. the observation missed the refusal — the no-access Alert is plain page copy, so ` +
+						`a slow render inside the 4s networkidle window looks identical to no refusal.\n` +
+						`  Do NOT drop the route from ROUTE_LEVEL_GATES to make this green: that is exactly ` +
+						`how T7 went back to measuring nothing.`,
+				).toBe(false);
 				return;
 			}
 			// A blank is never a deliberate state — that is the whole of T7.
@@ -362,7 +520,7 @@ test.describe("T7 · what the member persona gets on each route", () => {
 			});
 			expect(
 				deliberate,
-				`T7 ${route.route}: the member is refused this page and it renders a BLANK ` +
+				`T7 ${route.route}: the ${PERSONA_ROLE} persona is refused this page and it renders a BLANK ` +
 					`(${seen.length} characters in <main>), not a state.`,
 			).toBe(true);
 		});

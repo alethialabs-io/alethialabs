@@ -91,7 +91,7 @@ the first would let the second spread as the fix.
 | **T4** | the page declares metadata | `hasMetadata` — on the page, or on its own layout for a client page | never — a redirect still owns a title |
 | **T5** | the empty state renders through `EmptyState` | driven against an empty org, the rendered empty region resolves to `@repo/ui/empty` | `no-empty-state` (the page has no list, tab or panel that can be empty) |
 | **T6** | the error state renders through the shared error component | fault-injected, the page renders `components/errors/error-state` | `redirect-only` |
-| **T7** | permission-denied renders a real state | as the `member` persona, a forbidden page renders a deliberate state, not a blank | `no-restricted-surface` |
+| **T7** | permission-denied renders a real state | as the `operator` persona — which is the restricted one, and the `member`/`viewer` persona is not; see below — a forbidden page renders a deliberate state, not a blank | `no-restricted-surface` |
 
 **T1 is "the nearest one", not "one exists".** Next.js gives a page the closest ancestor-or-self
 `loading.tsx`, so the question is which skeleton actually renders. Measured today:
@@ -139,6 +139,52 @@ Two bounds are stated in `scripts/check-route-states.mjs` rather than left impli
 still the **page's** `notFound()` (a layout-only throw, such as `[org]/layout.tsx`'s, is not
 reported), and only layouts **at or below** the route's innermost dynamic segment are read (one
 above it throws about an outer resource and is measured on that resource's own routes).
+
+**T7's persona is a measurement, and the first one measured nothing.** #3894 ran T7 as a Better Auth
+`member` — which `MEMBERSHIP_ROLE_ALIASES` resolves to Alethia's `viewer` — and all 27 org-only
+routes came back `no-restricted-surface` (#3898). T7 rendered `—`, honestly, and could not fail.
+Neither the predicate nor the fixture was the gap. The **privilege ladder the predicate assumed**
+was, and there isn't one.
+
+The console refuses a route at *render* time in exactly three places — a server component that awaits
+a bootstrap, catches `ForbiddenError`, and renders a deliberate no-access `Alert`:
+
+| page | needs | refused to |
+|---|---|---|
+| `app/(private)/[org]/~/alerts/page.tsx` | `alert:view_alerts` | **no built-in role** |
+| `app/(private)/[org]/~/settings/roles/page.tsx` | `member:view` | `operator` |
+| `app/(private)/[org]/~/settings/sso/page.tsx` | `member:view` | `operator` |
+
+Everywhere else the console authorizes at the **action** level: the page renders for anybody in the
+org, and a capability flag (`canManage`, `canManageCaps`, `seeAll`, `canInvite`) takes affordances
+away rather than refusing the route. `~/settings/billing` and `~/settings/activity` are client panels
+whose read actions resolve `currentActor()` and enforce nothing at all.
+
+So a `viewer`, which holds both `member:view` and `alert:view_alerts`, is refused none of the three;
+an `operator` is refused two. The two roles are **incomparable** — `lib/authz/org-access-control.ts`
+says so in `toPdpRole`'s own doc: a viewer may read members, an operator may deploy. "Least
+privileged" is not a total order here, and the least-privileged actor for the console's *route-level*
+gates is the operator. T7's persona is therefore an `operator`, invited through the same endpoint the
+console's own invite dialog calls with a role that dialog offers — and **nothing is seeded for it**:
+both surfaces exist in every org, on every plan, with no rows written. That is what makes the answer
+"the persona was wrong" rather than "the fixture was thin". There was no thin fixture to thicken.
+
+Two consequences this file owns rather than leaves implicit:
+
+- **T7's subject is small, and named.** Two routes of 27. The other 25 record `no-restricted-surface`
+  and mean it. A predicate over two routes can fail; a predicate over none cannot, and that is the
+  only distinction that matters here.
+- **The subject is asserted, not assumed, in both directions.** `e2e/audit/permissions.spec.ts`
+  derives the persona's permission bundle from `lib/authz/registry.ts` and **fails** if the persona
+  turns out to be refused nothing. And the two gated routes are T7's **positive control**: a route
+  the registry says the persona cannot load, which nevertheless reads as unrestricted, fails rather
+  than recording a quiet `no-restricted-surface`. So the day the last route-level gate goes, T7 says
+  so — instead of returning to a column of dashes that nobody can tell from "not run yet", which is
+  the failure this wave exists to prevent.
+
+`~/alerts`'s no-access branch is reachable by **no built-in role at all** — only a custom (Enterprise)
+role, or a member left with zero grants (#3754). Recorded here, deliberately not measured: inventing a
+custom role to reach it would be fabricating the subject rather than finding it.
 
 ## Family H — the shared surface  ·  static
 
