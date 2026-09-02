@@ -46,17 +46,26 @@
 # Establish the canonical source from the project's OWN documentation first. An unreachable host is
 # not evidence that the URL moved, and a speculative URL change is worse than the outage: it ships a
 # guess to every user, and it is still wrong after the host comes back.
-
-# The 301 target does not resolve. `https://cloudnative-pg.github.io/charts/index.yaml` answers
-# `301 -> https://cloudnative-pg.io/charts/index.yaml`, and `cloudnative-pg.io` SERVFAILs: the .io
-# registry still delegates it to four Route53 nameservers (ns-560.awsdns-06.net and three siblings)
-# and ALL FOUR answer REFUSED, which is a hosted zone that is gone, not a domain that moved. It is
-# not NXDOMAIN and there is no DS record, so this is neither a deleted registration nor a DNSSEC
-# failure — it is a stale delegation on the project's side.
 #
-# The content is fine and still in place: fetched with `--resolve cloudnative-pg.io:443:185.199.108.153`
-# the same URL returns `200 text/yaml` from GitHub Pages. And the canonical URL is UNCHANGED — the
-# project's own operator-chart README on `main` says `helm repo add cnpg
-# https://cloudnative-pg.github.io/charts`, which is exactly what the catalog ships. So there is
-# nothing to fix here but the wait, and changing the URL would be a guess that is wrong twice.
-https://cloudnative-pg.github.io/charts  #3961  cloudnative-pg.io SERVFAILs; all four delegated Route53 NS answer REFUSED. The 301 target serves 200 by IP and the project's own README still names this URL, so the catalog is right and the DNS is not.
+# ── THE WORKED EXAMPLE, WHICH IS ALSO THE ONLY ENTRY THIS FILE HAS EVER HELD ───────────────────
+#
+# #3961, the outage this file was written for, was recorded and then RETIRED inside one session:
+#
+#     https://cloudnative-pg.github.io/charts  #3961  cloudnative-pg.io SERVFAILs; …
+#
+# That URL answered `301 -> https://cloudnative-pg.io/charts/index.yaml` and cloudnative-pg.io
+# SERVFAILed, because the four Route53 nameservers the .io registry delegated it to ALL answered
+# REFUSED — a hosted zone that was gone. Not NXDOMAIN, no DS record: a stale delegation on the
+# project's side, not a move. The catalog URL was never wrong; the project's own operator-chart
+# README on `main` names that exact string, and the content was in place the whole time
+# (`--resolve cloudnative-pg.io:443:185.199.108.153` returned `200 text/yaml` from GitHub Pages).
+#
+# Then, hours later, the registry delegation was REPLACED — ns-865.awsdns-44.net and three new
+# siblings, in place of the four that were refusing — the name resolved again, and the probe's
+# "REACHABLE + listed here" branch went red demanding this entry be deleted. Which is the entire
+# argument for that branch existing, made on this file's first and so far only entry: an excuse
+# that had stopped being true was retired by a check, hours after it was written, and not by
+# somebody remembering to look.
+#
+# THE FILE IS EMPTY BELOW THIS LINE, AND THAT IS THE NORMAL STATE. Empty means every unreachable
+# repository reds the probe. Keep it that way unless you have measured otherwise.

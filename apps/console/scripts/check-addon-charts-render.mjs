@@ -342,15 +342,17 @@ function reachability(specs) {
 
 	// Reported even when it is the only thing that happened, because "two charts were not checked
 	// this run" is a fact about this run's coverage and must never be inferable only from silence.
+	// On stdout for the same reason as the render pass's block below — it shares a stream with the
+	// `✓` line it qualifies, so the two cannot arrive out of order.
 	if (known.length > 0) {
-		console.warn(`\n~ ${known.length} of ${repos.size} chart repositor(ies) are DOWN and recorded as known outages — the charts behind them are NOT CHECKED this run:\n`);
+		console.log(`\n~ ${known.length} of ${repos.size} chart repositor(ies) are DOWN and recorded as known outages — the charts behind them are NOT CHECKED this run:\n`);
 		for (const k of known) {
-			console.warn(`  ${k.repo}  ${k.entry.issue}  (${k.ids.join(", ")})  after ${k.attempts} attempt(s)`);
-			console.warn(`      ${k.entry.reason}`);
-			for (const line of k.err.split("\n")) console.warn(`      ${line}`);
-			console.warn("");
+			console.log(`  ${k.repo}  ${k.entry.issue}  (${k.ids.join(", ")})  after ${k.attempts} attempt(s)`);
+			console.log(`      ${k.entry.reason}`);
+			for (const line of k.err.split("\n")) console.log(`      ${line}`);
+			console.log("");
 		}
-		console.warn(
+		console.log(
 			`::warning title=known chart-repo outage (#3961)::${known.length} chart repositor(ies) are unreachable and recorded in scripts/ci/chart-repo-outages.txt, so ${known.reduce((n, k) => n + k.ids.length, 0)} chart(s) were not rendered this run. This is somebody else's uptime, not this PR. The entry is deleted — and this check goes RED until it is — the moment the host answers again.`,
 		);
 	}
@@ -487,10 +489,16 @@ if (outaged.length === specs.length) {
 	die(`every one of the ${specs.length} spec(s) failed to fetch against a repository recorded in scripts/ci/chart-repo-outages.txt. Not one chart was rendered, so this run checked nothing — and a check that measures nothing must never report success, whatever the ledger says.`);
 }
 
+// ON STDOUT, NOT STDERR, and that is not a style choice. The per-spec lines and the final `✓` are
+// stdout; putting this block on stderr interleaved it in the live run — the first CI run of this
+// change printed the "2 chart(s) were NOT CHECKED" header, then the `✓` line, THEN the two chart
+// names, so the success line landed in the middle of the caveat qualifying it. This block is the one
+// place a reader learns what this run did not measure, so it shares a stream with the claim it
+// qualifies. The failure blocks below stay on stderr: nothing follows them but an exit.
 if (outaged.length > 0) {
-	console.warn(`\n~ ${outaged.length} of ${specs.length} chart(s) were NOT CHECKED — their repository is a recorded outage:\n`);
-	for (const f of outaged) console.warn(`  ${f.id}  (${f.chart})  ${f.repo}  ${f.entry.issue}`);
-	console.warn(
+	console.log(`\n~ ${outaged.length} of ${specs.length} chart(s) were NOT CHECKED — their repository is a recorded outage:\n`);
+	for (const f of outaged) console.log(`  ${f.id}  (${f.chart})  ${f.repo}  ${f.entry.issue}`);
+	console.log(
 		`\n::warning title=charts not checked (#3961)::${outaged.length} chart(s) were not rendered because their repository is recorded as down in scripts/ci/chart-repo-outages.txt. This run says nothing about their values. The reachability step owns that outage and goes red the moment the host answers again.`,
 	);
 }
