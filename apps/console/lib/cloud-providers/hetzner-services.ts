@@ -52,13 +52,30 @@ const NS = {
  * repos at `tofu apply` time (not exercisable under type-check); bump here as the SSOT.
  */
 export const HETZNER_CHARTS = {
-	/** CloudNativePG operator — installed once per cluster when ≥1 Postgres node exists. */
+	/**
+	 * CloudNativePG operator — installed once per cluster when ≥1 Postgres node exists.
+	 *
+	 * ⚠️ THIS URL IS CORRECT AND CURRENTLY UNREACHABLE. DO NOT "FIX" IT (#3961). The project's own
+	 * operator-chart README on `main` still says `helm repo add cnpg
+	 * https://cloudnative-pg.github.io/charts` — that is the primary source and it names exactly
+	 * this string. What is broken is the project's DNS: the URL answers `301 ->
+	 * https://cloudnative-pg.io/charts/index.yaml`, and `cloudnative-pg.io` SERVFAILs because all
+	 * four Route53 nameservers the .io registry still delegates it to answer REFUSED. Not NXDOMAIN,
+	 * no DS record — a stale delegation, not a move. The content is untouched: the same URL returns
+	 * `200 text/yaml` from GitHub Pages when fetched with `--resolve cloudnative-pg.io:443:185.199.108.153`.
+	 *
+	 * So there is nothing here to change, and changing it would be wrong twice — a guessed URL ships
+	 * to every user who adds Postgres, and it is still a guess after the name resolves again. The
+	 * outage is recorded in `scripts/ci/chart-repo-outages.txt`, which is enforced in BOTH
+	 * directions: the entry goes red the moment the host answers, so it cannot outlive the outage.
+	 */
 	cnpgOperator: {
 		chartRepo: "https://cloudnative-pg.github.io/charts",
 		chart: "cloudnative-pg",
 		version: "0.22.1",
 	},
-	/** CloudNativePG `cluster` chart — one Application per database node (a Cluster CR). */
+	/** CloudNativePG `cluster` chart — one Application per database node (a Cluster CR). Same repo,
+	 *  same #3961 outage, same instruction: the URL is right, the project's DNS is not. */
 	cnpgCluster: {
 		chartRepo: "https://cloudnative-pg.github.io/charts",
 		chart: "cluster",

@@ -2344,6 +2344,19 @@ jobs:
       # returns the same shape as one that tried three times.
       - name: ...and the fetch-vs-render classifier is not too eager
         run: node apps/console/scripts/check-addon-charts-render.mjs --self-test
+      # ITS OWN STEP, AND THAT IS THE FIX (#3961). "we could not reach the repository" and "the chart
+      # does not render with our values" are different diagnoses with different owners, and until
+      # this they shared one exit code under one name — so a reader could not tell a third party's
+      # downtime from our defect without opening the log, which is how a gate becomes one people
+      # re-run without reading. Split, the checks list answers it: red HERE is somebody else's
+      # uptime, red BELOW is this repo's values.
+      #
+      # It probes every distinct chart repo the generated fixtures name — derived from them, never
+      # a typed list — and scores each against scripts/ci/chart-repo-outages.txt. An outage a human
+      # has recorded there does not red it; a NEW one does, and so does a recorded one that has
+      # RECOVERED, which is what stops the ledger outliving the outage it excuses.
+      - name: Chart repositories are reachable (third-party uptime, not this repo's code)
+        run: node apps/console/scripts/check-addon-charts-render.mjs --reachability
       - name: Every add-on renders with its pinned chart and its own defaults
         run: node apps/console/scripts/check-addon-charts-render.mjs
 

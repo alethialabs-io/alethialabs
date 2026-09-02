@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# CHART REPOSITORIES THAT ARE KNOWN TO BE DOWN RIGHT NOW, one per line:
+#
+#     <repo-url><space+><#issue><space+><reason>
+#
+# Blank lines and `#` comments are ignored. A line that is not empty and does not parse is FATAL —
+# a ledger that silently drops the entry it could not read excuses nothing and reports success.
+#
+# ── WHAT THIS IS FOR (#3961) ──────────────────────────────────────────────────────────────────
+#
+# `Add-on charts render` asks two questions with one exit code: "does this chart render with the
+# values this repo emits" (ours, always our defect) and "could we reach the repository at all"
+# (a third party's uptime, which nothing in a PR can affect). They want different responses, and
+# reporting them identically is how a gate becomes one people re-run without reading — including
+# the day it goes red for the reason it exists to catch.
+#
+# So the reachability probe is a SEPARATE CI step with its own name and its own outcome, and an
+# outage that a human has looked at and recorded here does not red it. What is recorded is a
+# CLAIM, dated by its issue: "we established this host is down, the chart is fine, the catalog is
+# right, and there is nothing to do but wait."
+#
+# ── WHY IT CANNOT GO STALE ────────────────────────────────────────────────────────────────────
+#
+# The probe checks BOTH directions, which is the only reason this file is safe to have:
+#
+#   unreachable + listed here   reported as a known outage, not fatal
+#   unreachable + NOT listed    FATAL. A new outage is a human decision, never an automatic pass.
+#   REACHABLE   + listed here   FATAL. The outage is over — delete the entry.
+#   listed here + no longer in the catalog   FATAL. The repo is not shipped any more.
+#
+# The third row is the one that matters. A recorded fact carried forward and never re-checked is
+# how an excuse outlives the thing it excused; here the excuse deletes itself the moment it stops
+# being true, and the deletion is a red check rather than a note somebody has to remember.
+#
+# ── WHAT IT DOES NOT EXCUSE ───────────────────────────────────────────────────────────────────
+#
+# ONLY a TRANSPORT failure — the shapes in chart-fetch-network-errors.txt. If helm reaches the host
+# and the host answers that this is not a chart repository, or that the pinned version is not in the
+# index, that is a repo that has MOVED or a chart that is gone, and this file will not excuse it no
+# matter what is written here. That case is precisely when the catalog must change, so it stays red.
+#
+# ── ADDING A LINE ─────────────────────────────────────────────────────────────────────────────
+#
+# Establish the canonical source from the project's OWN documentation first. An unreachable host is
+# not evidence that the URL moved, and a speculative URL change is worse than the outage: it ships a
+# guess to every user, and it is still wrong after the host comes back.
+
+# The 301 target does not resolve. `https://cloudnative-pg.github.io/charts/index.yaml` answers
+# `301 -> https://cloudnative-pg.io/charts/index.yaml`, and `cloudnative-pg.io` SERVFAILs: the .io
+# registry still delegates it to four Route53 nameservers (ns-560.awsdns-06.net and three siblings)
+# and ALL FOUR answer REFUSED, which is a hosted zone that is gone, not a domain that moved. It is
+# not NXDOMAIN and there is no DS record, so this is neither a deleted registration nor a DNSSEC
+# failure — it is a stale delegation on the project's side.
+#
+# The content is fine and still in place: fetched with `--resolve cloudnative-pg.io:443:185.199.108.153`
+# the same URL returns `200 text/yaml` from GitHub Pages. And the canonical URL is UNCHANGED — the
+# project's own operator-chart README on `main` says `helm repo add cnpg
+# https://cloudnative-pg.github.io/charts`, which is exactly what the catalog ships. So there is
+# nothing to fix here but the wait, and changing the URL would be a guess that is wrong twice.
+https://cloudnative-pg.github.io/charts  #3961  cloudnative-pg.io SERVFAILs; all four delegated Route53 NS answer REFUSED. The 301 target serves 200 by IP and the project's own README still names this URL, so the catalog is right and the DNS is not.
