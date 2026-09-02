@@ -3,7 +3,7 @@
 
 import { createHash } from "crypto";
 import { signedJob } from "@/lib/db/signed-job";
-import { type SQL, and, count, desc, eq, sql } from "drizzle-orm";
+import { type SQL, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import {
 	destroyProject,
@@ -13,11 +13,17 @@ import {
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
-import { ensureCliOrgAccess } from "@/lib/authz/guard";
+import { authorizeCli, ensureCliOrgAccess } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { ForbiddenError } from "@/lib/authz/types";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { verifyCliToken } from "@/lib/cli/auth";
+import {
+	type CursorScope,
+	cursorKey,
+	paginate,
+	parsePageOpts,
+} from "@/lib/cli/paging";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { jobs, runners, projects } from "@/lib/db/schema";
@@ -289,51 +295,158 @@ export async function POST(req: Request) {
 	}
 }
 
-/** Lists the CLI user's jobs with the project project name + runner name attached. */
-export async function GET(req: Request) {
-	const { payload, error: authError } = await verifyCliToken(req);
-	if (authError) return authError;
+/** The collection name a `/api/jobs` cursor is bound to. See {@link CursorScope}. */
+const JOBS_LIST = "jobs";
 
-	const userId = payload?.sub;
-	if (!userId) {
-		return NextResponse.json({ error: "Invalid token payload" }, { status: 401 });
-	}
+/** `?mine=` spellings that mean yes. A bare `?mine` arrives as the empty string. */
+const MINE_TRUE = new Set(["", "true", "1"]);
+/** `?mine=` spellings that mean no. Anything outside either set is a 400, never a silent no. */
+const MINE_FALSE = new Set(["false", "0"]);
+
+/**
+ * Parses `?mine=`.
+ *
+ * NEITHER SET HAS A FALL-THROUGH. `?mine=yes` is a caller who believes they asked for their own
+ * jobs; answering it with the whole org's is a wrong answer that looks like a right one, and the
+ * flag exists precisely to make that distinction visible. So an unrecognised spelling is refused
+ * rather than coerced, and the empty string — what `?mine` with no value produces — is the bare
+ * flag, which is what a shell user types.
+ */
+function parseMine(raw: string | null): { ok: true; mine: boolean } | { ok: false } {
+	if (raw === null) return { ok: true, mine: false };
+	const v = raw.trim().toLowerCase();
+	if (MINE_TRUE.has(v)) return { ok: true, mine: true };
+	if (MINE_FALSE.has(v)) return { ok: true, mine: false };
+	return { ok: false };
+}
+
+/** Parses the legacy `?offset=`: a non-negative integer, or absent. */
+function parseOffset(raw: string | null): { ok: true; offset: number } | { ok: false } {
+	if (raw === null || raw === "") return { ok: true, offset: 0 };
+	if (!/^\d+$/.test(raw)) return { ok: false };
+	const n = Number(raw);
+	return Number.isSafeInteger(n) ? { ok: true, offset: n } : { ok: false };
+}
+
+function badRequest(error: string): NextResponse {
+	return NextResponse.json({ error }, { status: 400 });
+}
+
+/**
+ * Lists the caller's ORGANIZATION's jobs, cursor-paged, with the project and runner names joined.
+ *
+ * THE SCOPE WAS THE USER AND IS NOW THE ORG, AND THAT IS THE FIX (#3672). This route used to
+ * filter on `jobs.user_id = <caller>`, so `alethia jobs list` and the console's jobs page —
+ * `getJobsPage`, which reads through RLS at `org_id` — answered the same question differently:
+ * a teammate's deploy of the org's own project was invisible from the terminal and plainly
+ * listed in the browser. One product, two surfaces, two answers. The org is the tenancy scope
+ * everywhere else in the schema (`jobs.org_id` is trigger-populated from the parent project, so
+ * it is never null and never drifts from `projects.org_id`), so the org is what this lists.
+ *
+ * `?mine=true` is what makes the OLD behaviour addressable instead of implicit. It narrows to the
+ * caller's own jobs, and — being a scope predicate rather than a post-filter — it narrows `total`
+ * and `page.total` with the rows. A count taken from a different set of predicates than the rows
+ * is the defect the console's filter standard exists to prevent.
+ *
+ * `X-Alethia-Org` NOW APPLIES HERE. The GET resolved the caller's default scope and consulted no
+ * policy at all; it goes through `authorizeCli` like every sibling CLI job route, so the header
+ * (the `--org` flag), the service-token org pin that refuses a conflicting header, and the
+ * `view job` decision all reach this list. That is strictly more checking than before, not less.
+ *
+ * PAGING: CURSOR, WITH `?offset=` STILL HONOURED. `page` is the shared vocabulary
+ * (`lib/cli/paging.ts`) and `?cursor=` is the mechanism the CLI's paginated table is being built
+ * onto (#3667). Until that lands, `apps/cli/cmd/jobs_table.go:40` still walks this endpoint by
+ * offset, and an offset the server quietly ignored would page the same rows forever — so the
+ * legacy parameter keeps working and is simply one more clause on the same query. The two cannot
+ * be combined: "skip 20 rows after this position" is a question no caller means to ask, and
+ * answering it would hide whichever of the two the caller thought was in effect.
+ *
+ * TWO NUMBERS MOVED WITH THE CONVERSION, both widening and both echoed back in `page.limit`:
+ * `?limit=` now defaults to 50 rather than 20 and clamps at 200 rather than 100, because those
+ * are the vocabulary's shared bounds and a second set here would be a second contract. Every
+ * shipped caller sends an explicit limit, so the default is reachable only by a hand-written
+ * request. What a caller must NOT do is compute a page count from `total` without reading
+ * `page.mode`: an exact `count(*)` per page was the full scan the cap exists to remove, so past
+ * DEFAULT_COUNT_CAP rows `total` is a floor and an offset pager built on it stops at the cap.
+ */
+export async function GET(req: Request) {
+	const auth = await authorizeCli(req, "view", { type: "job" });
+	if ("error" in auth) return auth.error;
+	const { actor } = auth;
 
 	const { searchParams } = new URL(req.url);
-	const status = searchParams.get("status");
-	const limit = Math.min(parseInt(searchParams.get("limit") || "20", 10), 100);
-	const offset = parseInt(searchParams.get("offset") || "0", 10);
 
+	const mine = parseMine(searchParams.get("mine"));
+	if (!mine.ok) return badRequest("mine must be true or false");
+
+	const legacyOffset = parseOffset(searchParams.get("offset"));
+	if (!legacyOffset.ok) return badRequest("offset must be a non-negative integer");
+
+	const cursorScope: CursorScope = { orgId: actor.orgId, list: JOBS_LIST };
+	const parsed = parsePageOpts(searchParams, cursorScope);
+	if (!parsed.ok) return badRequest(parsed.error);
+	const opts = parsed.opts;
+
+	if (opts.after !== null && legacyOffset.offset > 0) {
+		return badRequest("cursor and offset cannot be combined; use cursor");
+	}
+
+	const status = searchParams.get("status");
 	const db = getServiceDb();
 
-	const conds: SQL[] = [eq(jobs.user_id, userId)];
-	if (status) conds.push(sql`${jobs.status}::text = ${status}`);
-	const whereExpr = and(...conds);
+	// THE TENANCY BOUNDARY. These routes read through getServiceDb(), whose role bypasses RLS, so
+	// this predicate is the whole of it — and it is also what a cursor is fingerprinted against, so
+	// a cursor minted in another org is refused above rather than answered here.
+	const scope: [SQL, ...(SQL | undefined)[]] = [
+		eq(jobs.org_id, actor.orgId),
+		mine.mine ? eq(jobs.user_id, actor.userId) : undefined,
+		status ? sql`${jobs.status}::text = ${status}` : undefined,
+	];
 
-	const rows = await db
-		.select({
-			job: jobs,
-			project_name: projects.project_name,
-			runner_name: runners.name,
-		})
-		.from(jobs)
-		.leftJoin(projects, eq(jobs.project_id, projects.id))
-		.leftJoin(runners, eq(jobs.runner_id, runners.id))
-		.where(whereExpr)
-		.orderBy(desc(jobs.created_at))
-		.limit(limit)
-		.offset(offset);
+	const { items, page } = await paginate({
+		db,
+		table: jobs,
+		createdAt: jobs.created_at,
+		id: jobs.id,
+		scope,
+		cursor: cursorScope,
+		opts,
+		rows: (query) =>
+			db
+				.select({
+					job: jobs,
+					// The ordering key as Postgres renders it — six fractional digits. Reading
+					// `jobs.created_at` here would hand back a millisecond-precision JS Date and the
+					// cursor built from it would silently skip every row in the truncated gap.
+					cursor_key: cursorKey(jobs.created_at),
+					project_name: projects.project_name,
+					runner_name: runners.name,
+				})
+				.from(jobs)
+				.leftJoin(projects, eq(jobs.project_id, projects.id))
+				.leftJoin(runners, eq(jobs.runner_id, runners.id))
+				.where(query.where)
+				.orderBy(...query.orderBy)
+				.limit(query.limit)
+				.offset(legacyOffset.offset),
+		positionOf: (r) => ({ createdAt: r.cursor_key, id: r.job.id }),
+	});
 
-	const [{ value: total }] = await db
-		.select({ value: count() })
-		.from(jobs)
-		.where(whereExpr);
-
-	const result = rows.map((r) => ({
+	const result = items.map((r) => ({
 		...r.job,
 		project_name: r.project_name ?? null,
 		runner_name: r.runner_name ?? null,
 	}));
 
-	return cliJson(cliJobsPageResponse, { jobs: result, total, limit, offset });
+	// `total`/`limit`/`offset` are the pre-cursor wire, kept so the shipped CLI's offset pager
+	// keeps working. `total` IS `page.total` and `limit` IS `page.limit` — echoed, never counted
+	// or clamped a second time, because two fields that must agree are two fields that can
+	// disagree.
+	return cliJson(cliJobsPageResponse, {
+		jobs: result,
+		total: page.total,
+		limit: page.limit,
+		offset: legacyOffset.offset,
+		page,
+	});
 }
