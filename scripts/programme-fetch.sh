@@ -54,17 +54,59 @@ done
 # PR stale the moment it was opened. The rollup reads it to report staleness.
 derived_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# Open issues. `--limit 500` is well above the ~40 the board carries; if it is ever hit the count
-# below makes the truncation visible rather than silently dropping the tail.
-issues="$(gh issue list --repo "$REPO" --state open --limit 500 \
+# ── A COUNT CANNOT DISTINGUISH "EXACTLY N" FROM "CAPPED AT N". ──
+#
+# This is the defect #3652 names, and the comment that used to sit here was the whole of it: "if it
+# is ever hit the count below makes the truncation visible". It does not. `--limit 500` returned
+# exactly 500 closed issues for weeks and the trailing printf said `500 closed issues` — byte
+# identical to a repo that happens to have 500. 228 closed issues were being dropped every night.
+#
+# The consequence is not cosmetic. `issueState()` answers `unknown` for an issue that is in neither
+# list, and `staleCitations` fires only on `closed` — so a red cell citing a DROPPED issue stays
+# `failing` forever, which is the #1714/#1722/#2058 defect reintroduced by truncation rather than by
+# logic.
+#
+# So the limit is raised well clear of the corpus (728 closed at the time of writing) AND the cap is
+# CHECKED: a returned count at the limit is reported as capped, recorded in the snapshot as a fact
+# the rollup can render, and annotated `::error::` in the run.
+#
+# WHY THIS DOES NOT `exit 1`. programme.yml runs this under `set -e` and opens its PR in a LATER
+# step, so a non-zero exit here means no snapshot lands at all — and PROGRAMME.md's live half then
+# FAILS `pnpm check:programme` for everybody a week later, which that workflow's own header calls
+# the dangerous failure. Loud beats fatal: the snapshot still refreshes, carrying the flag that says
+# what it is missing.
+OPEN_LIMIT="${PROGRAMME_OPEN_LIMIT:-1000}"
+CLOSED_LIMIT="${PROGRAMME_CLOSED_LIMIT:-3000}"
+
+# Open issues.
+issues="$(gh issue list --repo "$REPO" --state open --limit "$OPEN_LIMIT" \
 	--json number,title,labels,createdAt,updatedAt \
 	--jq '[.[] | {number, title, labels: [.labels[].name], createdAt, updatedAt}]')"
 
 # Issues the tree CITES must be resolvable even when closed — that is the whole point of the
 # stale-citation check — so closed issues are captured too, most-recently-updated first.
-closed="$(gh issue list --repo "$REPO" --state closed --limit 500 \
-	--json number,title,labels \
-	--jq '[.[] | {number, title, labels: [.labels[].name]}]')"
+#
+# `createdAt` and `closedAt` are captured because a red is EVIDENCE whether or not its issue is
+# still open. A nightly RED filed at 09:46Z and closed at 11:25Z, with the snapshot derived at
+# 11:32Z, entered neither `open_issues` (it was already closed) nor the stale-citation check (no
+# cell cites it), so PROGRAMME.md published `0 failing` on a day that leg failed. Without these two
+# fields the rollup cannot tell that red apart from one closed six months ago.
+closed="$(gh issue list --repo "$REPO" --state closed --limit "$CLOSED_LIMIT" \
+	--json number,title,labels,createdAt,closedAt \
+	--jq '[.[] | {number, title, labels: [.labels[].name], createdAt, closedAt}]')"
+
+open_count="$(printf '%s' "$issues" | jq 'length')"
+closed_count="$(printf '%s' "$closed" | jq 'length')"
+open_truncated=false
+closed_truncated=false
+if [ "$open_count" -ge "$OPEN_LIMIT" ]; then
+	open_truncated=true
+	echo "::error::programme-fetch: the OPEN issue query came back at its limit ($OPEN_LIMIT), so it is TRUNCATED and the tail was dropped. Raise PROGRAMME_OPEN_LIMIT / the default in scripts/programme-fetch.sh; until then every dropped issue reads as \`unknown\`." >&2
+fi
+if [ "$closed_count" -ge "$CLOSED_LIMIT" ]; then
+	closed_truncated=true
+	echo "::error::programme-fetch: the CLOSED issue query came back at its limit ($CLOSED_LIMIT), so it is TRUNCATED and the tail was dropped. Raise PROGRAMME_CLOSED_LIMIT / the default in scripts/programme-fetch.sh; until then a red cell citing a dropped issue can never be reclassified \`stale\`." >&2
+fi
 
 # Gate reality: NAMES ONLY (see the header).
 #
@@ -89,17 +131,39 @@ closed="$(gh issue list --repo "$REPO" --state closed --limit 500 \
 # reporting ten gates as unknown while all ten were wired.
 #
 # So a failed read CARRIES FORWARD what the previous snapshot held, and records WHEN that was
-# actually observed. A variable name does not rot quickly, and the snapshot's own 7-day staleness
-# rule still bounds how long a carried reading can stand.
+# actually observed. A variable name does not rot quickly, and `inventory_observed_at` is what
+# bounds how long a carried reading may stand.
+#
+# ⚠️ THAT BOUND WAS A CLAIM, NOT A RULE, UNTIL #3652. This comment used to point at "the snapshot's
+# own 7-day staleness rule", meaning `programme-rollup.mjs`'s check on `derived_at` — which the same
+# run re-stamps every night, so it could never age out a carried inventory. `inventory_observed_at`
+# was written here and read by NOTHING: `derived_at` reached 2026-09-01 while this field sat at
+# 2026-08-27, and deleting a gate variable would have left its row rendering `✅ wired` forever. The
+# rollup now measures this field against `derived_at` — two persisted timestamps, so the rendered
+# output stays a pure function of the snapshot — and degrades every declared gate to `unknown` once
+# the gap exceeds a week.
 prev_vars='[]'
 prev_secrets='[]'
 prev_observed=''
 prev_reaper='[]'
+# THE START OF THE DERIVATION WINDOW, recorded rather than guessed.
+#
+# The rollup needs to know which issues closed since the LAST snapshot, because a red that is filed
+# and closed between two refreshes is seen by neither one's `open_issues`. The previous snapshot's
+# own `derived_at` is the exact boundary, and it is already on disk here — so it is carried into the
+# new snapshot rather than reconstructed downstream from a cadence constant.
+#
+# It is the last COMMITTED refresh, not the last RUN one: programme.yml checks out `dev` and opens a
+# PR, so if that PR sits unmerged for three days this reads three days old. That widens the window,
+# which over-reports a red rather than missing one — the safe direction, and the reason this is
+# preferred to `derived_at - 24h`.
+prev_derived=''
 if [ -f "$OUT" ]; then
 	prev_vars="$(jq -c '.variables // []' "$OUT" 2>/dev/null || echo '[]')"
 	prev_secrets="$(jq -c '.secrets // []' "$OUT" 2>/dev/null || echo '[]')"
 	prev_observed="$(jq -r '.inventory_observed_at // ""' "$OUT" 2>/dev/null || echo '')"
 	prev_reaper="$(jq -c '.orphan_reaper_observations // []' "$OUT" 2>/dev/null || echo '[]')"
+	prev_derived="$(jq -r '.derived_at // ""' "$OUT" 2>/dev/null || echo '')"
 fi
 
 inventory_observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -303,9 +367,12 @@ fi
 
 jq -n \
 	--arg derived_at "$derived_at" \
+	--arg previous_derived_at "$prev_derived" \
 	--arg repo "$REPO" \
 	--argjson open_issues "$issues" \
 	--argjson closed_issues "$closed" \
+	--argjson open_issues_truncated "$open_truncated" \
+	--argjson closed_issues_truncated "$closed_truncated" \
 	--argjson variables "$vars" \
 	--argjson secrets "$secrets" \
 	--argjson gate_observations "$observations" \
@@ -314,9 +381,12 @@ jq -n \
 	'{
     "_doc": "GENERATED by scripts/programme-fetch.sh. Do not edit. The LIVE board and orphan-reaper state PROGRAMME.md cannot derive from the tree. Variable and secret NAMES only — never values.",
     derived_at: $derived_at,
+    previous_derived_at: $previous_derived_at,
     repo: $repo,
     open_issues: $open_issues,
     closed_issues: $closed_issues,
+    open_issues_truncated: $open_issues_truncated,
+    closed_issues_truncated: $closed_issues_truncated,
     variables: $variables,
     secrets: $secrets,
     inventory_observed_at: $inventory_observed_at,
@@ -324,10 +394,18 @@ jq -n \
     orphan_reaper_observations: $orphan_reaper_observations
   }' >"$OUT"
 
-printf 'programme-fetch: wrote %s — %s open / %s closed issues, %s variables, %s secrets, %s gate observations, %s reaper observations\n' \
+# The counts say CAPPED or not. A bare number is the thing that read identically at "500 total" and
+# "500 dropped 228", which is how this went unnoticed for weeks.
+open_note=''
+closed_note=''
+if [ "$open_truncated" = true ]; then open_note=" (CAPPED at $OPEN_LIMIT — TRUNCATED)"; fi
+if [ "$closed_truncated" = true ]; then closed_note=" (CAPPED at $CLOSED_LIMIT — TRUNCATED)"; fi
+printf 'programme-fetch: wrote %s — %s open%s / %s closed%s issues, %s variables, %s secrets, %s gate observations, %s reaper observations\n' \
 	"$OUT" \
 	"$(jq '.open_issues | length' "$OUT")" \
+	"$open_note" \
 	"$(jq '.closed_issues | length' "$OUT")" \
+	"$closed_note" \
 	"$(jq '.variables | length' "$OUT")" \
 	"$(jq '.secrets | length' "$OUT")" \
 	"$(jq '.gate_observations | length' "$OUT")" \

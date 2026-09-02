@@ -243,7 +243,7 @@ Work is claimed from the board, never hand-picked: `scripts/coordinate.sh --repo
 
 ## Where the programme actually is
 
-**23 of 35 proof cells are proven.** 0 failing · 0 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
+**23 of 35 proof cells are proven.** 0 failing · 1 contested (the ledger and the board disagree) · 0 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -362,18 +362,22 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 ### Open REDs
 
+⚠️ **This snapshot predates the truncation check**, so whether its issue list is complete is unknown — and it is not evidence that it is: the query that wrote it was capped at 500 and reported the same count whether or not it dropped the tail. The next refresh answers it.
+
 No cell is failing or blocked.
-### ⚠️ Contested — proven by the ledger, contradicted by an open red
+### ⚠️ Contested — proven by the ledger, contradicted by a red
 
 A nightly that goes red files an **issue** and writes **no ledger row**. So from the ledger's point of view that failure never happened, and a cell proven earlier stays ✅ forever: PASS is durable, a later FAIL is invisible. That makes the grid a **high-water mark** presented as current state, in the one direction that overstates — which is the thing this whole file exists to prevent.
 
-| cell | proven by a run dated | open red | filed |
-|---|:---:|---|:---:|
-| `gcp/floor` | 2026-08-28 | #3855 | 2026-09-02 |
+| cell | proven by a run dated | red | filed | red's state |
+|---|:---:|---|:---:|---|
+| `gcp/floor` | 2026-08-28 | #3855 | 2026-09-02 | open |
 
 `contested` takes **no side**. Whether a later red is a flake or a regression needs someone to read the run, and guessing either way is worse than naming the contradiction. It claims only what is derivable — the two sources disagree, so the ✅ is not trustworthy right now.
 
 **Two human acts clear it, and either one is fine:** close the issue if that run was a flake, or append a `FAIL` row for it if it was not. The next derivation picks the answer up.
+
+A row marked **closed … inside this refresh window** is a red that was filed and closed between two snapshots, so it was never in anybody's `open_issues` and no derivation ever saw it. It is shown once, here, and clears on the next refresh — the closing act has already happened. That is the whole of it: a red is evidence whether or not its issue is still open, and `0 failing` is a claim about **today**.
 
 
 ### Orphan reaper — nothing standing
@@ -437,6 +441,8 @@ Every number above is derived from these, and from nothing else:
 Live board snapshot: taken **2026-09-02T11:16:57Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
+
+Gate inventory observed: **2026-08-27T19:15:55Z** — carried forward on every refresh whose token cannot list repo variables or secrets. Past 7 days behind the snapshot it stops being a measurement of today, and every declared gate degrades to `unknown`.
 
 Ledger rows read: **61** · surviving claims: **27** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
 
