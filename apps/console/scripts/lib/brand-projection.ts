@@ -294,6 +294,12 @@ export const PROJECTIONS: Readonly<Record<string, Projection>> = {
 		to: "EmphasisBand",
 		why: "30px. The quietest display step is normal weight in primary ink; it is a heading only by contrast with the faint body around it.",
 	},
+	"--text-display-xs": {
+		kind: "lossy",
+		port: "emphasis",
+		to: "EmphasisBand",
+		why: "24px — display voice rendered INSIDE the console shell: a plan name, a price, an onboarding or purchase heading. It collapses onto the SAME constant as --text-display-sm because the browser separates them by four pixels and a terminal cannot: both are the quiet display step, normal weight in primary ink, and inventing a fourth emphasis constant to carry a size difference the terminal has no cells to spend would publish a distinction the CLI cannot draw.",
+	},
 
 	// ── The UI type scale → ink, mostly, and two rungs of the same weight ladder ──────────
 	// Seven rungs of 9–17px, derived from where the console's 1,079 hardcoded sizes cluster
