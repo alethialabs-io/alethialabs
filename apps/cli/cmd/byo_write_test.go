@@ -279,7 +279,7 @@ func byoEnv(t *testing.T, status int) (func(args ...string) error, *byoRec) {
 	t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
 	resetByoFlags(t)
 	return func(args ...string) error {
-		rootCmd.SetArgs(args)
+		execRootArgs(args)
 		return rootCmd.Execute()
 	}, rec
 }
@@ -516,7 +516,7 @@ func TestByoWritesFailLoudly(t *testing.T) {
 			t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
 			resetByoFlags(t)
 			run := func(a ...string) error {
-				rootCmd.SetArgs(a)
+				execRootArgs(a)
 				return rootCmd.Execute()
 			}
 			exited, code, err := connInvoke(t, run, args...)

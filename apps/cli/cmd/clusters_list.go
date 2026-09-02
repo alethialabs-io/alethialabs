@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -36,7 +35,7 @@ or with --no-input it prints the static one. Use ` + "`alethia cluster get`" + `
 		apiClient := api.NewClient(token)
 		var clusters []api.ClusterSummary
 
-		ui.RunSpinner("Fetching clusters...", func() {
+		runSpinner("Fetching clusters...", func() {
 			clusters, err = apiClient.GetClusters()
 		})
 
@@ -82,7 +81,7 @@ func clusterRows(clusters []api.ClusterSummary) [][]string {
 		nodes := fmt.Sprintf("%d/%d/%d", c.NodeMinSize, c.NodeDesiredSize, c.NodeMaxSize)
 		// Surface the status message inline — it's the actionable detail when a
 		// cluster is FAILED/degraded (the raw field is also in -o json).
-		status := fmt.Sprintf("%s %s", ui.PlainStatusDot(c.Status), strings.ToLower(c.Status))
+		status := ui.StatusCell(c.Status)
 		if c.StatusMessage != "" {
 			status += " — " + c.StatusMessage
 		}

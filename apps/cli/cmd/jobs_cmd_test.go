@@ -166,7 +166,7 @@ func jobsCmdEnv(t *testing.T) (*jobsCmdServer, func(args ...string) int) {
 			}
 		}()
 		jobsCmdResetFlags()
-		rootCmd.SetArgs(args)
+		execRootArgs(args)
 		if err := rootCmd.Execute(); err != nil {
 			return 1
 		}

@@ -76,9 +76,9 @@ alethia
 │   └── remove [--runner <name>] [-y/--yes]
 ├── jobs
 │   ├── list [--status <S>] [-n/--limit <N>]
-│   ├── get <job_id>
-│   ├── logs <job_id> [-f/--follow]
-│   └── cancel <job_id>
+│   ├── get [job_id]                  # asks when omitted, or --latest
+│   ├── logs [job_id] [-f/--follow]
+│   └── cancel [job_id] [-y/--yes]
 ├── verify                            # the signed evidence receipt behind a job
 │   ├── receipt -j <job_id> [--key-file <f>] [--allow-unsigned] [--allow-untrusted]
 │   └── show    -j <job_id>           # the per-control report, incl. not_evaluable + waivers

@@ -155,7 +155,7 @@ func alibabaTerraformFlow(issuer string) (string, error) {
 
 // promptAlibabaRoleArn asks the user to paste the RAM role ARN and validates it is non-empty.
 func promptAlibabaRoleArn() (string, error) {
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return "", fmt.Errorf("no role ARN given: pass --role-arn (%w)", err)
 	}
 	var roleArn string

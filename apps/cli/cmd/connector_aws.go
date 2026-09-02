@@ -146,7 +146,7 @@ func awsManualFlow(issuerURL string) (string, error) {
 	fmt.Printf("  1. Open the CloudFormation quick-create link:\n\n     %s\n\n", ui.LinkStyle.Render(quickCreate))
 	fmt.Println("  2. Create the stack (it trusts the Alethia issuer — no external id), then copy its RoleArn output below.")
 
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return "", fmt.Errorf("no role ARN given: pass --role-arn (%w)", err)
 	}
 

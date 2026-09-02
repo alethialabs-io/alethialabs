@@ -76,7 +76,7 @@ var jobsListCmd = &cobra.Command{
 
 		var page *api.JobsPage
 
-		ui.RunSpinner("Fetching jobs...", func() {
+		runSpinner("Fetching jobs...", func() {
 			page, err = apiClient.GetJobs(status, pageSize, 0)
 		})
 

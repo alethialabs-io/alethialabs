@@ -240,7 +240,7 @@ func errDesignPreflightUnreadable(cause error) error {
 // wrote, and there is no sensible guess. Asking is still better than refusing, because the
 // caller who forgot the flag is on a terminal and has the path in their head.
 func promptDesignFile() (string, error) {
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return "", err
 	}
 	return askLine("Design document",

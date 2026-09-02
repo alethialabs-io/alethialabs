@@ -55,7 +55,7 @@ command works under --no-input with no gcloud on the machine.`,
 
 		ui.PrintStepper(steps, 0)
 		if connectorGcpProject == "" {
-			if err := requireInteractive(); err != nil {
+			if err := requireInteractiveForm(); err != nil {
 				failf("no project given: pass --project (%v)", err)
 			}
 			if err := runHuhForm(huh.NewGroup(
@@ -138,7 +138,7 @@ func gcpManualFlow(projectID string) (string, error) {
 	)
 	fmt.Println("  3. Paste the config it prints (between START CONFIG and END CONFIG) below.")
 
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return "", fmt.Errorf("no WIF config given: pass --wif-config <path|-> (%w)", err)
 	}
 

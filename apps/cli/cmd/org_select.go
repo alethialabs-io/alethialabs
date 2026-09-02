@@ -142,21 +142,10 @@ func refuseNoForm(fields ...orgField) error {
 		tokens[i] = orgFieldToken(f)
 	}
 	return fmt.Errorf(
-		"interactive prompts are disabled (--no-input, or stdin is not a terminal): pass %s",
+		"interactive prompts are unavailable (--no-input, or stdin is not a terminal, "+
+			"or the stream a prompt draws on is redirected): pass %s",
 		strings.Join(tokens, " and "))
 }
-
-// formAvailable reports whether an interactive form can be shown at all.
-//
-// It is requireInteractiveForm read as a QUESTION rather than as a refusal, and it exists for the
-// fields that already have a working answer when nobody types one: `--role` on `members add`
-// defaults to `member`, and `roles create` accepts an empty permission set. A scripted caller must
-// not be refused for omitting either — the flag contract is complete without them — but a person at
-// a terminal should still be asked, because a default is rarely what they meant.
-//
-// The fields with NO default go through resolveOrgChoice/promptName instead, which refuse and name
-// the flag to pass.
-func formAvailable() bool { return requireInteractiveForm() == nil }
 
 // resolveOrgChoice answers "which one" from the positional id, the selector flag, or the picker.
 //
@@ -610,7 +599,7 @@ func permissionCatalog(roles []api.Role) []string {
 func promptMembersAdd(c roleLister, email, current string, offerOrgRoles bool) (string, string, error) {
 	emailField := mustOrgField("alethia members add", orgFieldKeyEmail)
 	roleField := mustOrgField("alethia members add", orgFieldKeyRole)
-	if !formAvailable() {
+	if !canPromptForm() {
 		return "", "", refuseNoForm(emailField, roleField)
 	}
 
@@ -699,7 +688,7 @@ func requireNonEmpty(what string) func(string) error {
 // promptName asks for a single required name, described by its own spec entry.
 func promptName(command, key string) (string, error) {
 	field := mustOrgField(command, key)
-	if !formAvailable() {
+	if !canPromptForm() {
 		return "", refuseNoForm(field)
 	}
 	var name string
@@ -724,7 +713,7 @@ func promptName(command, key string) (string, error) {
 // cannot answer, and "the server returned no roles" is a different problem from "you chose none".
 func promptRolePermissions(c roleLister, current []string) ([]string, error) {
 	field := mustOrgField("alethia roles create", orgFieldKeyPermissions)
-	if !formAvailable() {
+	if !canPromptForm() {
 		return nil, refuseNoForm(field)
 	}
 	roles, err := c.ListRoles()
@@ -783,7 +772,7 @@ func promptGrantsAdd(c interface {
 	principalField := mustOrgField("alethia grants add", orgFieldKeyPrincipal)
 	roleField := mustOrgField("alethia grants add", orgFieldKeyBoundRole)
 	permField := mustOrgField("alethia grants add", orgFieldKeyPermission)
-	if !formAvailable() {
+	if !canPromptForm() {
 		return in, refuseNoForm(principalField, roleField, permField)
 	}
 

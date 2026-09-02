@@ -33,7 +33,7 @@ var agentListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var agents []api.Agent
-			ui.RunSpinner("Fetching agents...", func() {
+			runSpinner("Fetching agents...", func() {
 				agents, err = client.ListAgents()
 			})
 			if err != nil {

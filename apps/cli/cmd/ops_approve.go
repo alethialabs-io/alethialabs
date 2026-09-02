@@ -34,7 +34,7 @@ var opsApproveCmd = &cobra.Command{
 		client := api.NewClient(token)
 
 		var approval *api.BreakglassApproval
-		ui.RunSpinner("Minting approval...", func() {
+		runSpinner("Minting approval...", func() {
 			approval, err = client.MintBreakglassApproval(action, resourceID, reason, nil)
 		})
 		if err != nil {
@@ -63,7 +63,7 @@ var opsSessionCmd = &cobra.Command{
 		client := api.NewClient(token)
 
 		var session *api.BreakglassSession
-		ui.RunSpinner("Opening break-glass session...", func() {
+		runSpinner("Opening break-glass session...", func() {
 			session, err = client.OpenBreakglassSession(reason)
 		})
 		if err != nil {

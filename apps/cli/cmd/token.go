@@ -148,7 +148,7 @@ var tokenExpiryOptions = []struct {
 //
 // A package variable for the reason seams.go records — see promptConfigSet.
 var promptTokenCreate = func(name string, expiresInDays int) (string, int, error) {
-	if strings.TrimSpace(name) != "" || noInputMode {
+	if strings.TrimSpace(name) != "" || !canPromptForm() {
 		// Nothing to ask, or nothing that could answer. runTokenCreate reports the
 		// missing --name; it holds that rule already and this must not grow a second
 		// copy of it.
@@ -293,12 +293,12 @@ var tokenRevokeCmd = &cobra.Command{
 //
 // A package variable for the reason seams.go records — see promptConfigSet.
 var selectServiceToken = func(c apiClient) (string, error) {
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return "", err
 	}
 	var tokens []api.ServiceToken
 	var err error
-	ui.RunSpinner("Fetching service tokens...", func() {
+	runSpinner("Fetching service tokens...", func() {
 		tokens, err = c.ListServiceTokens()
 	})
 	if err != nil {

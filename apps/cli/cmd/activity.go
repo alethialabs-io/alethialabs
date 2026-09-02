@@ -29,7 +29,7 @@ number of rows.`,
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var entries []api.ActivityEntry
-			ui.RunSpinner("Fetching activity...", func() { entries, err = client.ListActivity(activityLimit) })
+			runSpinner("Fetching activity...", func() { entries, err = client.ListActivity(activityLimit) })
 			if err != nil {
 				failf("Failed to read activity: %v", err)
 			}

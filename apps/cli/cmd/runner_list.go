@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -30,7 +29,7 @@ var runnerListCmd = &cobra.Command{
 		apiClient := api.NewClient(token)
 		var runners []api.Runner
 
-		ui.RunSpinner("Fetching runners...", func() {
+		runSpinner("Fetching runners...", func() {
 			runners, err = apiClient.GetRunners()
 		})
 
@@ -82,7 +81,7 @@ func runnerRows(runners []api.Runner) [][]string {
 		rows[i] = []string{
 			w.Name,
 			runnerOperatorLabel(w),
-			fmt.Sprintf("%s %s", ui.PlainStatusDot(w.Status), strings.ToLower(w.Status)),
+			ui.StatusCell(w.Status),
 			version,
 			defaultLabel,
 			heartbeat,

@@ -139,7 +139,7 @@ func verifyEnv(t *testing.T, sr *verify.SignedReceipt, keys []map[string]any) fu
 	resetVerifyFlags(t)
 
 	return func(args ...string) error {
-		rootCmd.SetArgs(args)
+		execRootArgs(args)
 		return rootCmd.Execute()
 	}
 }
@@ -334,7 +334,7 @@ func TestVerifyRequiresAuth(t *testing.T) {
 			t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
 			resetVerifyFlags(t)
 			run := func(a ...string) error {
-				rootCmd.SetArgs(a)
+				execRootArgs(a)
 				return rootCmd.Execute()
 			}
 			exited, code, err := connInvoke(t, run, args...)

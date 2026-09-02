@@ -228,10 +228,11 @@ func TestResolveCostProjectRefusesAnEmptySelection(t *testing.T) {
 }
 
 // TestResolveCostProjectDoesNotPickForAMachineReadableRun is the reason the picker takes a gate at
-// all. ui.NewForm and ui.RunSpinner both write to os.Stdout, so opening a picker for
-// `alethia cost show -o json > cost.json` puts spinner frames and a rendered select in the file
-// ahead of the JSON document, and the file stops parsing. The caller passes interactiveTable's
-// verdict, which is false for json/csv, for --no-input, and for a redirected stdout.
+// all: `alethia cost show -o json` has nobody to answer a question, so opening a picker is a
+// command that waits forever rather than one that prints. (It also used to garble the file, because
+// both widgets drew on os.Stdout; they draw on ui.InteractiveOutput now, so that half is fixed at
+// the source.) The caller passes interactiveTable's verdict, which is false for json/csv, for
+// --no-input, and for a redirected stdout.
 func TestResolveCostProjectDoesNotPickForAMachineReadableRun(t *testing.T) {
 	picked := false
 	_, err := resolveCostProject(newCostTestCmd(), false, func() (string, error) { picked = true; return "picked-id", nil })
@@ -301,7 +302,7 @@ func costPickerEnv(t *testing.T) (func(args ...string) error, func() []string) {
 	t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
 
 	run := func(args ...string) error {
-		rootCmd.SetArgs(args)
+		execRootArgs(args)
 		return rootCmd.Execute()
 	}
 	paths := func() []string {
@@ -391,10 +392,9 @@ func TestCostShowDoesNotPriceAnythingWhenThePickerIsAborted(t *testing.T) {
 }
 
 // TestCostShowNeverPromptsForAMachineReadableRun is the regression the picker gate exists
-// for. ui.NewForm and ui.RunSpinner both default to os.Stdout, so a picker opened for
-// `alethia cost show -o json > cost.json` writes spinner frames and a rendered select into
-// the file ahead of the document and the file stops parsing. The refusal names --project
-// instead, which is what the invocation did before the picker existed.
+// for: a machine-readable run has nobody to answer a picker, so `alethia cost show -o json`
+// would wait rather than print. The refusal names --project instead, which is what the
+// invocation did before the picker existed.
 func TestCostShowNeverPromptsForAMachineReadableRun(t *testing.T) {
 	miscTTY(t)
 	t.Cleanup(covListResetFlags)

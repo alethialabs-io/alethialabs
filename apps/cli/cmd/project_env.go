@@ -70,7 +70,7 @@ var projectEnvListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var envs []api.Environment
-			ui.RunSpinner("Fetching environments...", func() { envs, err = client.ListEnvironments(project) })
+			runSpinner("Fetching environments...", func() { envs, err = client.ListEnvironments(project) })
 			if err != nil {
 				failf("Failed to list environments: %v", err)
 			}
@@ -272,7 +272,7 @@ var askEnvironmentSpec = promptEnvironmentSpec
 // promptEnvironmentSpec asks the four environment questions, seeded from a, and writes the
 // answers back through it.
 func promptEnvironmentSpec(a *envAnswers, isFirst bool) error {
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return err
 	}
 	if a.Stage == "" {

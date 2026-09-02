@@ -33,7 +33,7 @@ var channelsListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var channels []api.Channel
-			ui.RunSpinner("Fetching channels...", func() { channels, err = client.ListChannels() })
+			runSpinner("Fetching channels...", func() { channels, err = client.ListChannels() })
 			if err != nil {
 				failf("Failed to list channels: %v", err)
 			}

@@ -55,7 +55,7 @@ machine.`,
 
 		ui.PrintStepper(steps, 0)
 		if connectorAzureSubscription == "" {
-			if err := requireInteractive(); err != nil {
+			if err := requireInteractiveForm(); err != nil {
 				failf("no subscription given: pass --subscription (%v)", err)
 			}
 			if err := runHuhForm(huh.NewGroup(
@@ -134,7 +134,7 @@ func azureManualFlow(subscriptionID string) (*cloudshell.AzureIDs, error) {
 	)
 	fmt.Println("  Then paste the values it prints below.")
 
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return nil, fmt.Errorf("no identity ids given: pass --tenant-id and --client-id (%w)", err)
 	}
 

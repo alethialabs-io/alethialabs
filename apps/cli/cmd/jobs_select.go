@@ -261,7 +261,7 @@ type jobRef struct {
 // rendering of the spec that nothing keeps in step, and the reader of this message is exactly
 // the person who cannot afford to be told about two of the three flags that exist.
 var errJobIDRequired = errors.New(
-	"no job id given, and interactive prompts are disabled (--no-input, or stdin is not a terminal): " +
+	"no job id given, and the picker cannot be shown: " +
 		"pass the job id, or --latest to take the most recent job (narrow it with " +
 		strings.Join(jobSelectorFlagNames(), "/") + ")",
 )
@@ -315,8 +315,11 @@ func resolveJobIn(client jobLister, args []string, sel jobSelector, statusScope 
 		return jobRef{}, err
 	}
 	if !sel.latest {
-		if err := requireInteractive(); err != nil {
-			return jobRef{}, errJobIDRequired
+		// The gate's own error is kept as a second cause rather than dropped. "Prompts are
+		// disabled" and "the stream the prompt draws on is redirected" have different next
+		// steps, and this message can only carry the half it knows.
+		if err := requireInteractiveForm(); err != nil {
+			return jobRef{}, fmt.Errorf("%w (%w)", errJobIDRequired, err)
 		}
 	}
 

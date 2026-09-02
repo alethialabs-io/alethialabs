@@ -30,7 +30,7 @@ any projects that referenced it. Pass a provider to skip the picker.`,
 		apiClient := api.NewClient(token)
 
 		var identities []api.CloudIdentity
-		ui.RunSpinner("Fetching cloud connections...", func() {
+		runSpinner("Fetching cloud connections...", func() {
 			identities, err = apiClient.GetCloudIdentities()
 		})
 		if err != nil {
@@ -77,7 +77,7 @@ func pickIdentity(identities []api.CloudIdentity, args []string) (*api.CloudIden
 	// Refuse before opening a form that can never be answered. Without this the scripted
 	// no-argument case died on huh's raw "could not open a new TTY" — a message about a device
 	// file, for a user whose actual mistake was omitting the provider argument.
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return nil, fmt.Errorf(
 			"no connection given: pass a provider (%s) as the argument (%w)",
 			strings.Join(connectorProviderNames(), ", "), err,

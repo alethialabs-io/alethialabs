@@ -59,7 +59,7 @@ target of a cancel meant for the deploy that is still running.`,
 			return
 		}
 
-		ui.RunSpinner("Cancelling job...", func() {
+		runSpinner("Cancelling job...", func() {
 			err = apiClient.CancelJob(ref.ID)
 		})
 

@@ -42,7 +42,7 @@ var chartListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if rich {
 			var view *api.ProjectByoCharts
-			ui.RunSpinner("Fetching charts...", func() {
+			runSpinner("Fetching charts...", func() {
 				view, err = client.GetProjectByoCharts(project, env)
 			})
 			if err != nil {

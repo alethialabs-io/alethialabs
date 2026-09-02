@@ -47,7 +47,7 @@ cluster is an error, not an empty screen.`,
 
 		apiClient := api.NewClient(token)
 		var clusters []api.ClusterSummary
-		ui.RunSpinner("Fetching clusters...", func() {
+		runSpinner("Fetching clusters...", func() {
 			clusters, err = apiClient.GetClusters()
 		})
 		if err != nil {
@@ -173,7 +173,7 @@ func resolveCluster(clusters []api.ClusterSummary, query string) (*api.ClusterSu
 
 	// Ambiguous. With prompting off the only safe answer is to refuse and name the candidates:
 	// picking one would be picking FOR the caller, which is the defect above wearing a new hat.
-	if noInputMode {
+	if !canPromptForm() {
 		return nil, fmt.Errorf(
 			"%q matches %d clusters (%s) — re-run with one of the bracketed names or ids",
 			query, len(matches), clusterChoices(matches),
@@ -190,9 +190,10 @@ func resolveCluster(clusters []api.ClusterSummary, query string) (*api.ClusterSu
 // that is not in the list" arm to leave unreachable and untested. huh writes the answer through a
 // pointer no test stub can reach, so a stubbed form yields the default — which is a real cluster.
 func pickCluster(clusters []api.ClusterSummary, title string) (*api.ClusterSummary, error) {
-	// Form, not table: the gate is requireInteractiveForm, which also requires a terminal on
-	// STDOUT. `cluster get -o json > f` from an interactive shell has a TTY stdin and no screen
-	// to draw on, and the frames would land in the file ahead of the JSON.
+	// Form, not table: the gate is requireInteractiveForm, which also requires a terminal on the
+	// stream a form draws on — STDERR, not stdout (ui.InteractiveOutput records the measurement).
+	// `alethia cluster get 2> err.log` from an interactive shell has a TTY stdin and no screen to
+	// draw on, so the frames land in the log and the command waits for a keystroke nobody sees.
 	if err := requireInteractiveForm(); err != nil {
 		return nil, err
 	}
@@ -241,7 +242,7 @@ func renderCluster(out io.Writer, outFormat string, c *api.ClusterSummary, g *ap
 // the ArgoCD access block + GitOps posture when the cluster is provisioned.
 func clusterFieldRows(c *api.ClusterSummary, g *api.ClusterGitops) [][]string {
 	rows := [][]string{
-		{"Status", fmt.Sprintf("%s %s", ui.PlainStatusDot(c.Status), strings.ToLower(c.Status))},
+		{"Status", ui.StatusCell(c.Status)},
 	}
 	if c.StatusMessage != "" {
 		rows = append(rows, []string{"Message", c.StatusMessage})

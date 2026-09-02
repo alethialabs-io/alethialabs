@@ -37,7 +37,7 @@ var probesListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var probes []api.ProbeState
-			ui.RunSpinner("Fetching probes...", func() {
+			runSpinner("Fetching probes...", func() {
 				probes, err = client.GetProjectProbes(project)
 			})
 			if err != nil {
