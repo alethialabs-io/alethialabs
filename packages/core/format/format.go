@@ -14,6 +14,28 @@
 // because Go's %f rounds half to EVEN, while JavaScript rounds half away from zero and the billing
 // page shows `$12.50`. Five CLI call sites did exactly that.
 //
+// ── The rounding rule, and which language defers ────────────────────────────────────────────────
+//
+// "This package matches JavaScript" was written here and is NOT true, which #3899 measured rather
+// than assumed. Both languages round half away from zero; they disagree about WHAT they round.
+// This side scales the BINARY double and rounds the product (`math.Round(x*p)/p`). Intl rounds the
+// shortest round-tripping DECIMAL — the literal a human typed. The two part company wherever the
+// scaled product lands on the far side of a half from that decimal: `8.165 * 100` is
+// `816.4999999999999`, so this side renders `$8.16` where Intl reads "8.165" and renders `$8.17`.
+//
+// THE RULE IS: this side's answer is the shared one, and TYPESCRIPT DEFERS. Not because scaling a
+// double is more correct — it is less correct, and `$8.17` is what a reader would call right — but
+// because the CLI and the console must print ONE string for one number, and matching Intl from here
+// would mean a decimal formatter in Go, while matching this from there costs one function. The
+// deferral is implemented in `@repo/format`'s own `roundHalfAwayFromZero`, which mirrors the one
+// below including its multiply-first shape, and is applied in `money`, the mirror of `render`.
+//
+// ROUNDING THEREFORE HAPPENS AT ONE SEAM PER LANGUAGE — `render` here, `money` there — at the
+// places that call is about to print. That placement is load-bearing and is what #3899 fixed:
+// TypeScript used to round in its three CALLERS instead, and two of them were wrong (one omitted it,
+// one hardcoded a scale of 100 and so rounded a zero-decimal currency twice). A rule a caller has to
+// remember is a rule the fourth caller will not.
+//
 // Everything here is pure: same input, same output, no clock, no locale guessing, no I/O. The
 // locale is fixed at en-GB — day-first dates, `,` grouping, `.` decimal — so output cannot vary by
 // where the code runs.
@@ -110,11 +132,18 @@ func render(amount float64, currency string, decimals int) string {
 	return sign + digits + " " + strings.ToUpper(currency)
 }
 
-// roundHalfAwayFromZero rounds to `decimals` places the way JavaScript does.
+// roundHalfAwayFromZero rounds to `decimals` places, half away from zero, by scaling the double.
 //
 // This function is the reason the package exists. `strconv.FormatFloat(12.5, 'f', 0, 64)` gives
 // "12" — Go rounds half to EVEN — while JavaScript gives "13". math.Round is half-away-from-zero,
-// so scaling through it reproduces the JS answer exactly.
+// so scaling through it reproduces the JS answer for every value that survives the scaling.
+//
+// NOT every value does, and the doc comment here used to say "the way JavaScript does" without that
+// qualifier. `x*p` is a binary multiply and can cross a half: `8.165 * 100` is `816.4999999999999`,
+// so this rounds DOWN where Intl, rounding the decimal `8.165`, rounds up. Measured in #3899.
+// The multiply is not a defect to remove — it is the shared answer both languages are held to, and
+// `@repo/format` mirrors this shape deliberately. See the rounding-rule section in the package doc
+// before "fixing" it, because making this match Intl moves Money, MonthlyRate and MonthlyDelta.
 func roundHalfAwayFromZero(x float64, decimals int) float64 {
 	if math.IsNaN(x) || math.IsInf(x, 0) {
 		return 0

@@ -217,6 +217,31 @@ export const MONEY: MoneyCase[] = [
 	{ id: "money/THOUSANDS-SEPARATOR", cents: 124037, currency: "USD" },
 	{ id: "money/EUR-NARROW-SYMBOL-NOT-EUR-PREFIX", cents: 1250, currency: "EUR" },
 	{ id: "money/GBP-narrow-symbol", cents: 1250, currency: "GBP" },
+	// A THIRD DECIMAL IS THE AXIS THE TWO LANGUAGES DIVERGE ON, and every row above sits on the
+	// agreeing side of it. `cents / 100` hands `816.5` to the renderer as `8.165`; Go scales the
+	// BINARY double back up and `8.165 * 100` is `816.4999999999999`, so Go rounded DOWN while Intl,
+	// reading the shortest round-tripping decimal `8.165`, rounded UP. Two currencies, because the
+	// divergence is in the shared rounding step and not in the symbol table.
+	{ id: "money/THREE-DECIMAL-CENTS-ROUND-AWAY-FROM-ZERO", cents: 816.5, currency: "USD" },
+	{ id: "money/three-decimal-cents-at-one-unit", cents: 100.5, currency: "USD" },
+	{ id: "money/three-decimal-cents-EUR", cents: 816.5, currency: "EUR" },
+	// The SIGN is a second axis, and it is the one a naive fix breaks: JS `Math.round` is half-UP
+	// (toward +∞) while Go's `math.Round` is half-AWAY-from-zero, so they disagree on every negative
+	// half. `render` extracts the sign BEFORE rounding the magnitude; anything mirroring it must too.
+	// `-812.5` is the row that catches a fix that rounds the signed value instead.
+	{ id: "money/NEGATIVE-HALF-CENT-ROUNDS-AWAY-FROM-ZERO-NOT-TOWARD-POSITIVE", cents: -812.5, currency: "USD" },
+	{ id: "money/negative-three-decimal-cents", cents: -816.5, currency: "USD" },
+	// NEGATIVE ZERO IS ABSENT AND CANNOT BE ADDED — recorded here so the next reader does not
+	// "fix" the gap with a row that proves nothing. `JSON.stringify(-0)` is `"0"`, so a `cents: -0`
+	// case reaches Go as `+0` and passes whatever either language does with the sign. It is a real
+	// asymmetry (Go's `render` tests `amount < 0`, which is false for `-0`, and then
+	// `strconv.FormatFloat` emits the `-` anyway) and this table is structurally unable to see it.
+	// It needs a Go-side unit test if it is ever worth pinning; no caller produces `-0` today.
+	//
+	// A CONTROL, and it is why "add a three-decimal row" is not the whole instruction: `2.675`
+	// scales to `267.49999999999994`, the same side of the half as the decimal, so this pair agreed
+	// all along. A table of three-decimal values that happened to pick only these proves nothing.
+	{ id: "money/three-decimal-cents-that-agreed-all-along", cents: 267.5, currency: "USD" },
 ];
 
 /**
@@ -256,6 +281,22 @@ export const MONTHLY_RATE: MonthlyRateCase[] = [
 	{ id: "monthlyRate/exact/and-their-total", amount: 105.35, style: "exact", currency: "USD" },
 	{ id: "monthlyRate/estimate/JPY-HAS-NO-MINOR-UNIT", amount: 1240, style: "estimate", currency: "JPY" },
 	{ id: "monthlyRate/estimate/EUR-NARROW-SYMBOL", amount: 12.5, style: "estimate", currency: "EUR" },
+	// The three-decimal axis again. This register takes MAJOR units, so there is no `/100` in front
+	// of it and the value reaches the rounding step exactly as written — which makes these rows a
+	// cleaner statement of the same divergence than `money`'s.
+	{ id: "monthlyRate/exact/THREE-DECIMAL-ROUNDS-AWAY-FROM-ZERO", amount: 8.165, style: "exact", currency: "USD" },
+	{ id: "monthlyRate/estimate/three-decimal-rounds-away-from-zero", amount: 8.165, style: "estimate", currency: "USD" },
+	{ id: "monthlyRate/exact/three-decimal-at-one-unit", amount: 1.005, style: "exact", currency: "USD" },
+	// A ZERO-DECIMAL CURRENCY IS A SECOND AXIS, and `JPY-HAS-NO-MINOR-UNIT` above misses it by
+	// being a whole number. The question these ask is AT HOW MANY PLACES the single rounding
+	// happens: Go rounds at `decimalsFor(currency)` — 0 for JPY — while the TypeScript pre-round is
+	// written against a hardcoded 100. `12.496` is the value that separates rounding once at zero
+	// places from rounding to cents and letting the formatter round a second time.
+	{ id: "monthlyRate/estimate/JPY-ROUNDS-ONCE-AT-ZERO-PLACES", amount: 12.496, style: "estimate", currency: "JPY" },
+	{ id: "monthlyRate/exact/JPY-ROUNDS-ONCE-AT-ZERO-PLACES", amount: 12.496, style: "exact", currency: "JPY" },
+	// And the `<1` boundary is asked AFTER that single rounding, so in a zero-decimal currency a
+	// sub-unit amount that rounds UP to one unit is not "less than one unit" and must not say so.
+	{ id: "monthlyRate/estimate/JPY-SUB-UNIT-THAT-ROUNDS-UP-IS-NOT-LESS-THAN-ONE", amount: 0.6, style: "estimate", currency: "JPY" },
 ];
 
 /**
