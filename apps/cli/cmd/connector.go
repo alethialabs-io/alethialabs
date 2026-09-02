@@ -90,13 +90,6 @@ func finalizeConnection(
 	return nil
 }
 
-// cloudIdentityLister is the slice of the API client the reference resolver needs — kept
-// small so the resolution is unit-testable with a fake (the concrete *api.Client satisfies
-// it), and so this group needs no edit to the shared apiClient interface.
-type cloudIdentityLister interface {
-	GetCloudIdentities() ([]api.CloudIdentity, error)
-}
-
 // isCloudProviderSlug reports whether ref names a cloud provider.
 //
 // The set is types.AllCloudProviders — the GENERATED mirror of the `cloud_provider` Postgres
