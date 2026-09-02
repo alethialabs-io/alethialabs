@@ -1,0 +1,5851 @@
+{
+	"$comment": [
+		"DERIVED — a report, not a source of truth. Never hand-edit; run `pnpm -F console audit:report --write`.",
+		"The two ledgers this view is derived from are apps/console/route-states-baseline.yaml and apps/console/shared-surface-allowlist.yaml.",
+		"A merge conflict in this file is resolved by taking either side and regenerating."
+	],
+	"version": 1,
+	"generator": "apps/console/scripts/audit-report.mjs",
+	"sources": {
+		"routes": "scripts/lib/console-routes.mjs",
+		"routeStates": "scripts/check-route-states.mjs · apps/console/route-states-baseline.yaml",
+		"sharedSurface": "scripts/check-shared-surface.mjs · apps/console/shared-surface-allowlist.yaml",
+		"rubric": "apps/console/docs/ui-conformance/RUBRIC.md"
+	},
+	"totals": {
+		"routes": 40,
+		"redirectOnly": 4,
+		"real": 36,
+		"predicates": 33,
+		"scoredHere": 15,
+		"live": 10,
+		"notInstrumented": 8,
+		"findings": 1141,
+		"findingFiles": 204
+	},
+	"ledgers": {
+		"baseline": 15,
+		"debt": 234
+	},
+	"predicates": {
+		"S1": {
+			"family": "S",
+			"instrument": "check-route-states",
+			"owner": null,
+			"pass": 35,
+			"fail": 1,
+			"na": 4,
+			"naReasons": {
+				"redirect-only": 4
+			},
+			"score": 0.9722
+		},
+		"S2": {
+			"family": "S",
+			"instrument": "check-route-states",
+			"owner": null,
+			"pass": 19,
+			"fail": 17,
+			"na": 4,
+			"naReasons": {
+				"redirect-only": 4
+			},
+			"score": 0.5278
+		},
+		"S3": {
+			"family": "S",
+			"instrument": "check-route-states",
+			"owner": null,
+			"pass": 31,
+			"fail": 4,
+			"na": 5,
+			"naReasons": {
+				"redirect-only": 4,
+				"no-loading-boundary": 1
+			},
+			"score": 0.8857
+		},
+		"S4": {
+			"family": "S",
+			"instrument": "check-route-states",
+			"owner": null,
+			"pass": 34,
+			"fail": 2,
+			"na": 4,
+			"naReasons": {
+				"redirect-only": 4
+			},
+			"score": 0.9444
+		},
+		"T1": {
+			"family": "T",
+			"instrument": "check-route-states",
+			"owner": null,
+			"pass": 32,
+			"fail": 4,
+			"na": 4,
+			"naReasons": {
+				"redirect-only": 4
+			},
+			"score": 0.8889
+		},
+		"T2": {
+			"family": "T",
+			"instrument": "check-route-states",
+			"owner": null,
+			"pass": 40,
+			"fail": 0,
+			"na": 0,
+			"naReasons": {},
+			"score": 1
+		},
+		"T3": {
+			"family": "T",
+			"instrument": "check-route-states",
+			"owner": null,
+			"pass": 0,
+			"fail": 10,
+			"na": 30,
+			"naReasons": {
+				"does-not-call-not-found": 30
+			},
+			"score": 0
+		},
+		"T4": {
+			"family": "T",
+			"instrument": "check-route-states",
+			"owner": null,
+			"pass": 33,
+			"fail": 7,
+			"na": 0,
+			"naReasons": {},
+			"score": 0.825
+		},
+		"T5": {
+			"family": "T",
+			"instrument": "live",
+			"owner": "#3634"
+		},
+		"T6": {
+			"family": "T",
+			"instrument": "live",
+			"owner": "#3634"
+		},
+		"T7": {
+			"family": "T",
+			"instrument": "live",
+			"owner": "#3634"
+		},
+		"H1": {
+			"family": "H",
+			"instrument": "check-shared-surface",
+			"owner": null,
+			"pass": 40,
+			"fail": 0,
+			"na": 0,
+			"naReasons": {},
+			"score": 1
+		},
+		"H2": {
+			"family": "H",
+			"instrument": "check-shared-surface",
+			"owner": null,
+			"pass": 32,
+			"fail": 8,
+			"na": 0,
+			"naReasons": {},
+			"score": 0.8
+		},
+		"H8": {
+			"family": "H",
+			"instrument": "check-shared-surface",
+			"owner": null,
+			"pass": 6,
+			"fail": 34,
+			"na": 0,
+			"naReasons": {},
+			"score": 0.15
+		},
+		"H3": {
+			"family": "H",
+			"instrument": "none",
+			"owner": "#3797"
+		},
+		"H4": {
+			"family": "H",
+			"instrument": "check-shared-surface",
+			"owner": null,
+			"pass": 40,
+			"fail": 0,
+			"na": 0,
+			"naReasons": {},
+			"score": 1
+		},
+		"H5": {
+			"family": "H",
+			"instrument": "check-shared-surface",
+			"owner": null,
+			"pass": 25,
+			"fail": 15,
+			"na": 0,
+			"naReasons": {},
+			"score": 0.625
+		},
+		"H6": {
+			"family": "H",
+			"instrument": "check-shared-surface",
+			"owner": null,
+			"pass": 40,
+			"fail": 0,
+			"na": 0,
+			"naReasons": {},
+			"score": 1
+		},
+		"H7": {
+			"family": "H",
+			"instrument": "check-shared-surface",
+			"owner": null,
+			"pass": 39,
+			"fail": 1,
+			"na": 0,
+			"naReasons": {},
+			"score": 0.975
+		},
+		"F1": {
+			"family": "F",
+			"instrument": "none",
+			"owner": "#3796"
+		},
+		"F2": {
+			"family": "F",
+			"instrument": "none",
+			"owner": "#3796"
+		},
+		"F3": {
+			"family": "F",
+			"instrument": "none",
+			"owner": "#3796"
+		},
+		"F4": {
+			"family": "F",
+			"instrument": "none",
+			"owner": "#3796"
+		},
+		"F5": {
+			"family": "F",
+			"instrument": "none",
+			"owner": "#3796"
+		},
+		"F6": {
+			"family": "F",
+			"instrument": "none",
+			"owner": "#3796"
+		},
+		"F7": {
+			"family": "F",
+			"instrument": "none",
+			"owner": "#3796"
+		},
+		"R1": {
+			"family": "R",
+			"instrument": "live",
+			"owner": "#3634"
+		},
+		"R2": {
+			"family": "R",
+			"instrument": "live",
+			"owner": "#3634"
+		},
+		"R3": {
+			"family": "R",
+			"instrument": "live",
+			"owner": "#3634"
+		},
+		"R4": {
+			"family": "R",
+			"instrument": "live",
+			"owner": "#3634"
+		},
+		"R5": {
+			"family": "R",
+			"instrument": "live",
+			"owner": "#3634"
+		},
+		"R6": {
+			"family": "R",
+			"instrument": "live",
+			"owner": "#3634"
+		},
+		"R7": {
+			"family": "R",
+			"instrument": "live",
+			"owner": "#3634"
+		}
+	},
+	"routes": [
+		{
+			"route": "/[org]",
+			"redirectOnly": false,
+			"surfaceFiles": 280,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 11,
+				"fail": 3,
+				"na": 1,
+				"score": 0.7857
+			}
+		},
+		{
+			"route": "/[org]/[project]",
+			"redirectOnly": true,
+			"surfaceFiles": 1,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 0,
+					"fail": 0,
+					"na": 4,
+					"score": null
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 1,
+					"fail": 1,
+					"na": 2,
+					"score": 0.5
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 7,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 8,
+				"fail": 1,
+				"na": 6,
+				"score": 0.8889
+			}
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"redirectOnly": false,
+			"surfaceFiles": 381,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 4,
+					"fail": 3,
+					"na": 0,
+					"score": 0.5714
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 10,
+				"fail": 5,
+				"na": 0,
+				"score": 0.6667
+			}
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"redirectOnly": false,
+			"surfaceFiles": 163,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 3,
+				"na": 0,
+				"score": 0.8
+			}
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"redirectOnly": false,
+			"surfaceFiles": 234,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 2,
+					"fail": 2,
+					"na": 0,
+					"score": 0.5
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 11,
+				"fail": 4,
+				"na": 0,
+				"score": 0.7333
+			}
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"redirectOnly": false,
+			"surfaceFiles": 219,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 3,
+				"na": 0,
+				"score": 0.8
+			}
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"redirectOnly": true,
+			"surfaceFiles": 1,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 0,
+					"fail": 0,
+					"na": 4,
+					"score": null
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 1,
+					"fail": 1,
+					"na": 2,
+					"score": 0.5
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 7,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 8,
+				"fail": 1,
+				"na": 6,
+				"score": 0.8889
+			}
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"redirectOnly": false,
+			"surfaceFiles": 212,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 3,
+				"na": 0,
+				"score": 0.8
+			}
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"redirectOnly": false,
+			"surfaceFiles": 275,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 2,
+					"fail": 2,
+					"na": 0,
+					"score": 0.5
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 11,
+				"fail": 4,
+				"na": 0,
+				"score": 0.7333
+			}
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"redirectOnly": false,
+			"surfaceFiles": 213,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 13,
+				"fail": 2,
+				"na": 0,
+				"score": 0.8667
+			}
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"redirectOnly": false,
+			"surfaceFiles": 141,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 13,
+				"fail": 2,
+				"na": 0,
+				"score": 0.8667
+			}
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"redirectOnly": false,
+			"surfaceFiles": 146,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 3,
+				"na": 0,
+				"score": 0.8
+			}
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"redirectOnly": false,
+			"surfaceFiles": 288,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 2,
+					"fail": 2,
+					"na": 0,
+					"score": 0.5
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 10,
+				"fail": 4,
+				"na": 1,
+				"score": 0.7143
+			}
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"redirectOnly": false,
+			"surfaceFiles": 162,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 2,
+				"na": 1,
+				"score": 0.8571
+			}
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"redirectOnly": false,
+			"surfaceFiles": 208,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 11,
+				"fail": 3,
+				"na": 1,
+				"score": 0.7857
+			}
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"redirectOnly": false,
+			"surfaceFiles": 149,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 11,
+				"fail": 3,
+				"na": 1,
+				"score": 0.7857
+			}
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"redirectOnly": false,
+			"surfaceFiles": 218,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 2,
+				"na": 1,
+				"score": 0.8571
+			}
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"redirectOnly": false,
+			"surfaceFiles": 218,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 2,
+					"fail": 1,
+					"na": 1,
+					"score": 0.6667
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 11,
+				"fail": 3,
+				"na": 1,
+				"score": 0.7857
+			}
+		},
+		{
+			"route": "/[org]/~/new",
+			"redirectOnly": false,
+			"surfaceFiles": 356,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 2,
+					"fail": 2,
+					"na": 0,
+					"score": 0.5
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 4,
+					"fail": 3,
+					"na": 0,
+					"score": 0.5714
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 9,
+				"fail": 5,
+				"na": 1,
+				"score": 0.6429
+			}
+		},
+		{
+			"route": "/[org]/~/runners",
+			"redirectOnly": false,
+			"surfaceFiles": 270,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 4,
+					"fail": 3,
+					"na": 0,
+					"score": 0.5714
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 10,
+				"fail": 4,
+				"na": 1,
+				"score": 0.7143
+			}
+		},
+		{
+			"route": "/[org]/~/settings",
+			"redirectOnly": true,
+			"surfaceFiles": 1,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 0,
+					"fail": 0,
+					"na": 4,
+					"score": null
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 1,
+					"fail": 1,
+					"na": 2,
+					"score": 0.5
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 7,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 8,
+				"fail": 1,
+				"na": 6,
+				"score": 0.8889
+			}
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"redirectOnly": false,
+			"surfaceFiles": 211,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 2,
+				"na": 1,
+				"score": 0.8571
+			}
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"redirectOnly": false,
+			"surfaceFiles": 275,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 2,
+				"na": 1,
+				"score": 0.8571
+			}
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"redirectOnly": false,
+			"surfaceFiles": 191,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 2,
+				"na": 1,
+				"score": 0.8571
+			}
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"redirectOnly": false,
+			"surfaceFiles": 192,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 2,
+					"fail": 1,
+					"na": 1,
+					"score": 0.6667
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 2,
+				"na": 1,
+				"score": 0.8571
+			}
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"redirectOnly": false,
+			"surfaceFiles": 145,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 2,
+					"fail": 1,
+					"na": 1,
+					"score": 0.6667
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 10,
+				"fail": 4,
+				"na": 1,
+				"score": 0.7143
+			}
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"redirectOnly": false,
+			"surfaceFiles": 133,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 13,
+				"fail": 1,
+				"na": 1,
+				"score": 0.9286
+			}
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"redirectOnly": false,
+			"surfaceFiles": 219,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 2,
+				"na": 1,
+				"score": 0.8571
+			}
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"redirectOnly": false,
+			"surfaceFiles": 222,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 2,
+				"na": 1,
+				"score": 0.8571
+			}
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"redirectOnly": false,
+			"surfaceFiles": 211,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 2,
+				"na": 1,
+				"score": 0.8571
+			}
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"redirectOnly": false,
+			"surfaceFiles": 212,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 2,
+				"na": 1,
+				"score": 0.8571
+			}
+		},
+		{
+			"route": "/[org]/~/support",
+			"redirectOnly": false,
+			"surfaceFiles": 7,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 2,
+					"fail": 2,
+					"na": 0,
+					"score": 0.5
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 10,
+				"fail": 4,
+				"na": 1,
+				"score": 0.7143
+			}
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"redirectOnly": false,
+			"surfaceFiles": 134,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 7,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 14,
+				"fail": 0,
+				"na": 1,
+				"score": 1
+			}
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"redirectOnly": false,
+			"surfaceFiles": 197,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 12,
+				"fail": 2,
+				"na": 1,
+				"score": 0.8571
+			}
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"redirectOnly": false,
+			"surfaceFiles": 155,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 13,
+				"fail": 2,
+				"na": 0,
+				"score": 0.8667
+			}
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"redirectOnly": false,
+			"surfaceFiles": 147,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 13,
+				"fail": 1,
+				"na": 1,
+				"score": 0.9286
+			}
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"redirectOnly": false,
+			"surfaceFiles": 144,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 13,
+				"fail": 1,
+				"na": 1,
+				"score": 0.9286
+			}
+		},
+		{
+			"route": "/[org]/~/usage",
+			"redirectOnly": false,
+			"surfaceFiles": 182,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 2,
+					"fail": 2,
+					"na": 0,
+					"score": 0.5
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 2,
+					"fail": 1,
+					"na": 1,
+					"score": 0.6667
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"score": 0.7143
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 9,
+				"fail": 5,
+				"na": 1,
+				"score": 0.6429
+			}
+		},
+		{
+			"route": "/cli/login",
+			"redirectOnly": false,
+			"surfaceFiles": 4,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 1,
+					"fail": 2,
+					"na": 1,
+					"score": 0.3333
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 1,
+					"fail": 2,
+					"na": 1,
+					"score": 0.3333
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 8,
+				"fail": 5,
+				"na": 2,
+				"score": 0.6154
+			}
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"redirectOnly": true,
+			"surfaceFiles": 125,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 0,
+					"fail": 0,
+					"na": 4,
+					"score": null
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 1,
+					"fail": 1,
+					"na": 2,
+					"score": 0.5
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 7,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 8,
+				"fail": 1,
+				"na": 6,
+				"score": 0.8889
+			}
+		}
+	],
+	"verdicts": [
+		{
+			"route": "/[org]",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "95 occurrence(s) in 13 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "the page declares max-w-[1360px]; AppShell declares none"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "S1",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "S2",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "S3",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "S4",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "T1",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "T4",
+			"verdict": "FAIL",
+			"detail": "no metadata title on the page or its own layout"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "H2",
+			"verdict": "FAIL",
+			"detail": "2 occurrence(s) in 1 file(s), worst apps/console/components/design-project/canvas/env-settings-sheet.tsx (2)"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "H7",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/design-project/canvas/inspector/config-fields.tsx (1)"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "160 occurrence(s) in 30 file(s), worst apps/console/components/design-project/byo/chart-scan-sheet.tsx (19)"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "no max-width anywhere — ProjectShell declares none"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "T3",
+			"verdict": "FAIL",
+			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "17 occurrence(s) in 3 file(s), worst apps/console/components/clusters/cluster-card.tsx (12)"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "no max-width anywhere — ProjectShell declares none"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "T3",
+			"verdict": "FAIL",
+			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "77 occurrence(s) in 10 file(s), worst apps/console/components/environments/promotion-detail-overlay.tsx (22)"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "the page declares max-w-4xl; ProjectShell declares none"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "S3",
+			"verdict": "FAIL",
+			"detail": "page max-w-4xl vs skeleton max-w-3xl"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "T3",
+			"verdict": "FAIL",
+			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "12 occurrence(s) in 4 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "no max-width anywhere — ProjectShell declares none"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "T3",
+			"verdict": "FAIL",
+			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "S1",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "S2",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "S3",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "S4",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "T1",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "T4",
+			"verdict": "FAIL",
+			"detail": "no metadata title on the page or its own layout"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "71 occurrence(s) in 8 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "T3",
+			"verdict": "FAIL",
+			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "57 occurrence(s) in 8 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "T3",
+			"verdict": "FAIL",
+			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "T4",
+			"verdict": "FAIL",
+			"detail": "no metadata title on the page or its own layout"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "12 occurrence(s) in 3 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "T3",
+			"verdict": "FAIL",
+			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "23 occurrence(s) in 3 file(s), worst apps/console/components/settings/preview/preview-settings.tsx (10)"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T3",
+			"verdict": "FAIL",
+			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "26 occurrence(s) in 4 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "no max-width anywhere — ProjectShell declares none"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "T3",
+			"verdict": "FAIL",
+			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/[project]"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "97 occurrence(s) in 15 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "the page declares max-w-[1200px]; AppShell declares none"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "S4",
+			"verdict": "FAIL",
+			"detail": "the page hand-rolls max-w-[1200px], a width a shell already owns"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "17 occurrence(s) in 3 file(s), worst apps/console/components/clusters/cluster-card.tsx (12)"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "no max-width anywhere — AppShell declares none"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "H2",
+			"verdict": "FAIL",
+			"detail": "3 occurrence(s) in 2 file(s), worst apps/console/components/connectors/connector-detail-sheet.tsx (2)"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "29 occurrence(s) in 12 file(s), worst apps/console/components/connectors/connection-ui.tsx (6)"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "no max-width anywhere — AppShell declares none"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "H2",
+			"verdict": "FAIL",
+			"detail": "2 occurrence(s) in 2 file(s), worst apps/console/components/evidence/evidence-client.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "65 occurrence(s) in 9 file(s), worst apps/console/components/evidence/drawer/report-tab.tsx (17)"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "no max-width anywhere — AppShell declares none"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "12 occurrence(s) in 4 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "no max-width anywhere — AppShell declares none"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "21 occurrence(s) in 5 file(s), worst apps/console/app/(private)/[org]/~/jobs/[id]/page.tsx (10)"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "no max-width anywhere — AppShell declares none"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "T1",
+			"verdict": "FAIL",
+			"detail": "renders apps/console/app/(private)/[org]/~/jobs/loading.tsx at distance 1 — that segment's own page skeleton"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "H2",
+			"verdict": "FAIL",
+			"detail": "2 occurrence(s) in 2 file(s), worst apps/console/components/create-project/configure-project.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "111 occurrence(s) in 21 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "the page declares max-w-5xl; AppShell declares none"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "S3",
+			"verdict": "FAIL",
+			"detail": "page max-w-5xl vs skeleton max-w-[920px]"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "H2",
+			"verdict": "FAIL",
+			"detail": "3 occurrence(s) in 3 file(s), worst apps/console/app/(private)/[org]/~/runners/runners-client.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "108 occurrence(s) in 20 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "the page declares max-w-[1360px]; AppShell declares none"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "S1",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "S2",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "S3",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "S4",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "T1",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "T4",
+			"verdict": "FAIL",
+			"detail": "no metadata title on the page or its own layout"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "71 occurrence(s) in 8 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "57 occurrence(s) in 8 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "129 occurrence(s) in 16 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "16 occurrence(s) in 4 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "T1",
+			"verdict": "FAIL",
+			"detail": "renders apps/console/app/(private)/[org]/~/settings/billing/loading.tsx at distance 1 — that segment's own page skeleton"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "H2",
+			"verdict": "FAIL",
+			"detail": "3 occurrence(s) in 3 file(s), worst apps/console/components/classification/classification-manager.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "75 occurrence(s) in 8 file(s), worst apps/console/components/classification/dimension-detail.tsx (22)"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "S3",
+			"verdict": "FAIL",
+			"detail": "page max-w-[1200px] vs skeleton max-w-[1360px]"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "T1",
+			"verdict": "FAIL",
+			"detail": "renders apps/console/app/(private)/[org]/loading.tsx at distance 3 — that segment's own page skeleton"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "16 occurrence(s) in 2 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "58 occurrence(s) in 8 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "71 occurrence(s) in 10 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "73 occurrence(s) in 9 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "66 occurrence(s) in 8 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "H2",
+			"verdict": "FAIL",
+			"detail": "4 occurrence(s) in 3 file(s), worst apps/console/components/support/support-topics.tsx (2)"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "2 occurrence(s) in 2 file(s), worst apps/console/app/(private)/[org]/~/support/page.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "two widths: SupportShell max-w-[1200px] and the page's max-w-4xl"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "S3",
+			"verdict": "FAIL",
+			"detail": "page max-w-4xl vs skeleton max-w-[1200px]"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "55 occurrence(s) in 7 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "2 occurrence(s) in 2 file(s), worst apps/console/components/classification/classification-picker.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "T3",
+			"verdict": "FAIL",
+			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/~/support/cases/[id]"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "H2",
+			"verdict": "FAIL",
+			"detail": "5 occurrence(s) in 5 file(s), worst apps/console/components/support/submit/steps/step-category.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H5",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "119 occurrence(s) in 13 file(s), worst apps/console/components/billing/billing-checkout-form.tsx (24)"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "the page declares max-w-[1200px]; AppShell declares none"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "S4",
+			"verdict": "FAIL",
+			"detail": "the page hand-rolls max-w-[1200px], a width a shell already owns"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "T4",
+			"verdict": "FAIL",
+			"detail": "no metadata title on the page or its own layout"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "H8",
+			"verdict": "FAIL",
+			"detail": "4 occurrence(s) in 2 file(s), worst apps/console/components/auth/auth-shell.tsx (3)"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "S1",
+			"verdict": "FAIL",
+			"detail": "no known shell in the layout chain"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "S2",
+			"verdict": "FAIL",
+			"detail": "no max-width anywhere — no shell declares none"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "S3",
+			"verdict": "N/A",
+			"reason": "no-loading-boundary"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "T1",
+			"verdict": "FAIL",
+			"detail": "no loading.tsx anywhere in its chain"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "T4",
+			"verdict": "FAIL",
+			"detail": "no metadata title on the page or its own layout"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "S1",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "S2",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "S3",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "S4",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "T1",
+			"verdict": "N/A",
+			"reason": "redirect-only"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "T4",
+			"verdict": "FAIL",
+			"detail": "no metadata title on the page or its own layout"
+		}
+	],
+	"reconciliation": {
+		"byRule": {
+			"page_title": {
+				"total": 17,
+				"decision": 17,
+				"debt": 0,
+				"unlisted": 0,
+				"inPageClosure": 7,
+				"chromeOnly": 1,
+				"offTree": 9,
+				"predicate": "H1",
+				"owner": null
+			},
+			"section_header": {
+				"total": 29,
+				"decision": 0,
+				"debt": 29,
+				"unlisted": 0,
+				"inPageClosure": 24,
+				"chromeOnly": 2,
+				"offTree": 3,
+				"predicate": "H2",
+				"owner": null
+			},
+			"data_table": {
+				"total": 0,
+				"decision": 0,
+				"debt": 0,
+				"unlisted": 0,
+				"inPageClosure": 0,
+				"chromeOnly": 0,
+				"offTree": 0,
+				"predicate": "H4",
+				"owner": null
+			},
+			"format": {
+				"total": 7,
+				"decision": 6,
+				"debt": 1,
+				"unlisted": 0,
+				"inPageClosure": 4,
+				"chromeOnly": 3,
+				"offTree": 0,
+				"predicate": "H5",
+				"owner": null
+			},
+			"stat_strip": {
+				"total": 0,
+				"decision": 0,
+				"debt": 0,
+				"unlisted": 0,
+				"inPageClosure": 0,
+				"chromeOnly": 0,
+				"offTree": 0,
+				"predicate": "H6",
+				"owner": null
+			},
+			"layer_token": {
+				"total": 2,
+				"decision": 0,
+				"debt": 2,
+				"unlisted": 0,
+				"inPageClosure": 1,
+				"chromeOnly": 1,
+				"offTree": 0,
+				"predicate": "H7",
+				"owner": null
+			},
+			"type_scale": {
+				"total": 1068,
+				"decision": 0,
+				"debt": 1068,
+				"unlisted": 0,
+				"inPageClosure": 869,
+				"chromeOnly": 158,
+				"offTree": 41,
+				"predicate": "H8",
+				"owner": null
+			},
+			"empty_state": {
+				"total": 18,
+				"decision": 0,
+				"debt": 18,
+				"unlisted": 0,
+				"inPageClosure": 16,
+				"chromeOnly": 1,
+				"offTree": 1,
+				"predicate": null,
+				"owner": "#3798"
+			}
+		},
+		"chromeOnlyFiles": [
+			{
+				"file": "apps/console/components/agent/artifact-panel.tsx",
+				"hits": 22
+			},
+			{
+				"file": "apps/console/components/agent/agent-knowledge-panel.tsx",
+				"hits": 13
+			},
+			{
+				"file": "apps/console/components/agent/widgets/artifact-controls.tsx",
+				"hits": 10
+			},
+			{
+				"file": "apps/console/components/agent/widgets/bodies/blocks.tsx",
+				"hits": 8
+			},
+			{
+				"file": "apps/console/components/onboarding/setup-guide.tsx",
+				"hits": 8
+			},
+			{
+				"file": "apps/console/components/agent/approval-card.tsx",
+				"hits": 7
+			},
+			{
+				"file": "apps/console/components/agent/elench/elench-empty-landing.tsx",
+				"hits": 7
+			},
+			{
+				"file": "apps/console/components/shell/account-settings-dialog.tsx",
+				"hits": 7
+			},
+			{
+				"file": "apps/console/components/agent/artifact-share-popover.tsx",
+				"hits": 6
+			},
+			{
+				"file": "apps/console/components/agent/elench/elench-conversation-switcher.tsx",
+				"hits": 6
+			},
+			{
+				"file": "apps/console/components/design-project/canvas/ai/proposal-diff.tsx",
+				"hits": 6
+			},
+			{
+				"file": "apps/console/components/agent/thread-rail.tsx",
+				"hits": 5
+			},
+			{
+				"file": "apps/console/components/shell/notifications-popover.tsx",
+				"hits": 5
+			},
+			{
+				"file": "apps/console/components/agent/agent-artifact-gallery.tsx",
+				"hits": 4
+			},
+			{
+				"file": "apps/console/components/agent/agent-artifact-viewer.tsx",
+				"hits": 4
+			},
+			{
+				"file": "apps/console/components/agent/build-pane.tsx",
+				"hits": 4
+			},
+			{
+				"file": "apps/console/components/agent/widgets/widget-card.tsx",
+				"hits": 4
+			},
+			{
+				"file": "apps/console/components/shell/sidebar-profile.tsx",
+				"hits": 4
+			},
+			{
+				"file": "apps/console/components/agent/elench/elench-controls.tsx",
+				"hits": 3
+			},
+			{
+				"file": "apps/console/components/agent/elench/mention-typeahead.tsx",
+				"hits": 3
+			},
+			{
+				"file": "apps/console/components/agent/widgets/bodies/tables.tsx",
+				"hits": 3
+			},
+			{
+				"file": "apps/console/components/agent/widgets/widget-grid.tsx",
+				"hits": 3
+			},
+			{
+				"file": "apps/console/components/org-switcher.tsx",
+				"hits": 3
+			},
+			{
+				"file": "apps/console/components/shell/switcher-trigger.tsx",
+				"hits": 3
+			},
+			{
+				"file": "apps/console/components/agent/agent-tool-views.tsx",
+				"hits": 2
+			},
+			{
+				"file": "apps/console/components/agent/render-tool-parts/org-tool-parts.tsx",
+				"hits": 2
+			},
+			{
+				"file": "apps/console/components/agent/render-tool-parts/project-tool-parts.tsx",
+				"hits": 2
+			},
+			{
+				"file": "apps/console/components/project-switcher.tsx",
+				"hits": 2
+			},
+			{
+				"file": "apps/console/components/shell/nav-row.tsx",
+				"hits": 2
+			},
+			{
+				"file": "apps/console/components/shell/sidebar-nav.tsx",
+				"hits": 2
+			},
+			{
+				"file": "apps/console/components/agent/elench/suggestion-carousel.tsx",
+				"hits": 1
+			},
+			{
+				"file": "apps/console/components/agent/render-tool-parts/dashboard-pinned.tsx",
+				"hits": 1
+			},
+			{
+				"file": "apps/console/components/agent/widgets/cell-prompt.tsx",
+				"hits": 1
+			},
+			{
+				"file": "apps/console/components/download-cli-button.tsx",
+				"hits": 1
+			},
+			{
+				"file": "apps/console/components/shell/sidebar-drill.tsx",
+				"hits": 1
+			},
+			{
+				"file": "apps/console/components/shell/sidebar-rail.tsx",
+				"hits": 1
+			}
+		],
+		"offTreeFiles": [
+			{
+				"file": "apps/console/components/auth/onboarding-form.tsx",
+				"hits": 20
+			},
+			{
+				"file": "apps/console/components/auth/auth-form.tsx",
+				"hits": 16
+			},
+			{
+				"file": "apps/console/components/forms/oauth-consent-form.tsx",
+				"hits": 4
+			},
+			{
+				"file": "apps/console/components/design-project/container-platform-selector.tsx",
+				"hits": 3
+			},
+			{
+				"file": "apps/console/components/plan/plan-tab.tsx",
+				"hits": 3
+			},
+			{
+				"file": "apps/console/components/billing/plan-picker.tsx",
+				"hits": 2
+			},
+			{
+				"file": "apps/console/app/(public)/onboarding/page.tsx",
+				"hits": 1
+			},
+			{
+				"file": "apps/console/components/agent/chat-top-bar.tsx",
+				"hits": 1
+			},
+			{
+				"file": "apps/console/components/billing/plan-chooser.tsx",
+				"hits": 1
+			},
+			{
+				"file": "apps/console/components/design-project/canvas/nodes/zone-node.tsx",
+				"hits": 1
+			},
+			{
+				"file": "apps/console/components/legal/accept-terms-form.tsx",
+				"hits": 1
+			},
+			{
+				"file": "apps/console/components/plan/resource-card.tsx",
+				"hits": 1
+			}
+		]
+	}
+}
