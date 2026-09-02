@@ -361,6 +361,10 @@ export function formatMonthlyRate(amount: number, style: MonthlyRateStyle = "est
  * ZERO, the same rule and therefore the same answer as the exact register for `12.5` at a
  * zero-decimal currency, so the two can never disagree about a half.
  *
+ * THE MAGNITUDE IS PRE-ROUNDED, AND THAT IS NOT AN ACCURACY IMPROVEMENT — see the comment in the
+ * body. It exists to reproduce a LOSS that `packages/core/format` takes, because the two must
+ * print one string and Go is the reference.
+ *
  * A currency with no symbol behaves exactly as it does in {@link formatMonthlyRate}, because both
  * go through the same one Intl call. On the Go side that is a four-entry table and an ISO-code
  * fallback, which is a RULING rather than a mirror — see `packages/core/format/format_test.go`.
@@ -381,11 +385,36 @@ export function formatMonthlyDelta(amount: number, style: MonthlyRateStyle = "es
 	// `undefined` keeps the currency's own decimals (2 for USD, 0 for JPY) — the same choice
 	// `formatMoney` and `formatMonthlyRate` make, so the three cannot disagree about JPY.
 	const decimals = style === "estimate" ? 0 : undefined;
-	const magnitude = money(Math.abs(amount), currency, decimals);
+
+	// PRE-ROUND, MULTIPLY-FIRST. DO NOT DELETE THIS AS A REDUNDANT ROUND BEFORE INTL'S OWN — it is
+	// not here because it is more accurate. It is here because it is LESS accurate, in exactly the
+	// way `packages/core/format` is.
+	//
+	// Go's `render` rounds through `roundHalfAwayFromZero`, which is `math.Round(x*p)/p`: it scales
+	// the BINARY double first and rounds whatever comes out. Intl rounds the shortest round-tripping
+	// DECIMAL instead. The two disagree wherever the scaled product lands on the far side of a half
+	// from the literal a human typed — `8.165 * 100` is `816.4999999999999` as a double, so Go
+	// renders `+$8.16/mo` while Intl, reading "8.165", renders `+$8.17/mo`. `1.005` is the same
+	// story. (`2.675` and `0.125` scale to a value on the same side of the half and agreed all
+	// along, which is why a table of two-decimal inputs never found this.)
+	//
+	// Go is the reference here, not the winner on merit: the console and the CLI have to print ONE
+	// string for one number, and the lossier of two answers is still the shared one. Making Go
+	// round the decimal instead would mean a decimal formatter in Go; making both sides agree in
+	// TypeScript costs this line. `formatMonthlyRate` already carries the identical pre-round for
+	// the identical reason — which is why THAT function never diverged.
+	//
+	// The scale is the register's OWN places, not a fixed 100. Rounding to cents and then letting
+	// Intl round that to whole units rounds TWICE: `12.496` estimate would come out `+$13/mo`
+	// against Go's `+$12/mo`, a fresh divergence in a register the unrounded code got right. Go
+	// rounds once, at the places it is about to print, and so does this.
+	const places = decimals ?? minorUnits(currency);
+	const scale = 10 ** places;
+	const magnitude = money(Math.round(Math.abs(amount) * scale) / scale, currency, decimals);
 	// Compared as RENDERED, not as a number, because "does this round to zero" is a question about
 	// the currency's own decimals — which Intl holds and this module deliberately does not
 	// duplicate. A second table of minor units here is how `formatMoney`'s KNOWN LIMITATION got
-	// its second half.
+	// its second half. `minorUnits` above obeys the same rule: it ASKS Intl rather than tabulating.
 	if (magnitude === money(0, currency, decimals)) return noChange;
 
 	return `${amount < 0 ? "-" : "+"}${magnitude}${suffix}`;
@@ -409,6 +438,34 @@ function money(amount: number, currency: string, decimals?: number): string {
 		currencyDisplay: "narrowSymbol",
 		...digits,
 	}).format(amount);
+}
+
+/**
+ * How many fraction digits {@link money} will print for a currency when it is not told — 2 for USD,
+ * 0 for JPY.
+ *
+ * ASKED OF INTL, NOT TABULATED. A second table of minor units in this module is precisely how
+ * {@link formatMoney}'s KNOWN LIMITATION got its second half, and the question here is a DISPLAY
+ * question, which is the one CLDR is the authority for. (The divisor question — how many minor
+ * units a PAYMENT is quoted in — has a different authority and is not asked here.)
+ *
+ * It exists so {@link formatMonthlyDelta} can pre-round at the same places it is about to print,
+ * the way `packages/core/format`'s `render` does. Reading it back off the formatter keeps the two
+ * numbers the same number by construction.
+ */
+function minorUnits(currency: string): number {
+	// Counted off a rendered zero rather than read from `resolvedOptions()`, which types
+	// `maximumFractionDigits` as optional and would need a fallback branch no input can reach —
+	// and an unreachable fallback holding the number `2` is the tabulated minor unit this function
+	// exists to avoid, smuggled back in as a default. A currency with no minor unit simply has no
+	// `fraction` part.
+	const parts = new Intl.NumberFormat(LOCALE, {
+		style: "currency",
+		currency,
+		currencyDisplay: "narrowSymbol",
+	}).formatToParts(0);
+	const fraction = parts.find((part) => part.type === "fraction");
+	return fraction === undefined ? 0 : fraction.value.length;
 }
 
 /** Coerce the accepted input shapes to a valid Date, or null when it cannot be read. */

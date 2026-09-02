@@ -209,16 +209,38 @@ var requiredIDs = []string{
 	// A currency with no minor unit, and one whose symbol is not its ISO prefix.
 	"monthlyRate/estimate/JPY-HAS-NO-MINOR-UNIT",
 	"money/EUR-NARROW-SYMBOL-NOT-EUR-PREFIX",
-	// The credit register (#3768). Four separate mistakes each render most of these rows
-	// correctly, so all four are named: dropping the sign, signing the zero, rounding half to EVEN
-	// — which is this package's founding defect, met again at a register that rounds to whole
-	// units — and deciding the sign on the raw amount rather than on the rendered magnitude, which
-	// resurrects `+$0/mo` for a change too small to show.
+	// The credit register (#3768, #3895). ONE ROW PER WAY OF GETTING IT WRONG, and every one of
+	// those mistakes renders the REST of the block correctly, which is what makes each row
+	// load-bearing rather than decorative: dropping the sign, signing the zero, rounding half to
+	// EVEN — this package's founding defect, met again at a register that rounds to whole units —
+	// deciding the sign on the raw amount rather than on the rendered magnitude, which resurrects
+	// `+$0/mo` for a change too small to show, rounding the decimal a human typed rather than the
+	// binary product the scale produces, and pre-rounding at a fixed two places rather than at the
+	// places being printed.
+	//
+	// NO COUNT IN THAT SENTENCE, deliberately. It read "Four separate mistakes ... so all four are
+	// named" over five ids, and had been wrong since the fifth was added: a hand-typed number in a
+	// comment beside a list is a second source of truth for the list's length and decays the first
+	// time the list grows. The identical sentence carried the identical error in
+	// packages/format/tests/conformance.test.ts.
 	"monthlyDelta/estimate/A-SAVING-KEEPS-ITS-SIGN",
 	"monthlyDelta/estimate/AN-INCREASE-IS-SIGNED-TOO",
 	"monthlyDelta/exact/ZERO-CARRIES-NO-SIGN-AND-NO-MINOR-UNITS",
 	"monthlyDelta/exact/JPY-HALF-ROUNDS-AWAY-FROM-ZERO",
 	"monthlyDelta/estimate/A-SUB-UNIT-INCREASE-ROUNDS-TO-NO-CHANGE",
+	// #3895. Three decimals, so `roundHalfAwayFromZero`'s multiply lands on the far side of a half
+	// from the literal — `8.165 * 100` is 816.4999999999999. Every other row in this section stays
+	// inside two decimals, where the binary product is exact and the two languages cannot disagree,
+	// so the section looked like it pinned the rounding rule and pinned a different one.
+	"monthlyDelta/exact/BINARY-SCALE-8.165-ROUNDS-DOWN",
+	"monthlyDelta/exact/BINARY-SCALE-8.165-ROUNDS-DOWN-A-SAVING-TOO",
+	"monthlyDelta/exact/BINARY-SCALE-1.005-ROUNDS-DOWN",
+	"monthlyDelta/exact/BINARY-SCALE-1.005-ROUNDS-DOWN-A-SAVING-TOO",
+	// ...and the rows that hold the OTHER side to `render`'s "round once, at the places you print"
+	// rule. A TypeScript pre-round hardcoded to two places double-rounds 12.496 up to 13 in every
+	// zero-decimal register, against Go's 12.
+	"monthlyDelta/estimate/DOUBLE-ROUNDING-12.496-IS-NOT-A-HALF",
+	"monthlyDelta/exact/DOUBLE-ROUNDING-12.496-IS-NOT-A-HALF-AT-JPY",
 	// MonthlyRate clamps a negative, and that is a REFUSAL rather than a gap now that MonthlyDelta
 	// exists. These two rows are the only statement that the clamp is deliberate; without them a
 	// later reader "fixes" it and every absolute call site starts rendering signed money.

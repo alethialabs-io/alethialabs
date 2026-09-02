@@ -657,6 +657,76 @@
         "style": "exact",
         "currency": "EUR",
         "want": "-€12.50/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/BINARY-SCALE-8.165-ROUNDS-DOWN",
+        "amount": 8.165,
+        "style": "exact",
+        "currency": "USD",
+        "want": "+$8.16/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/BINARY-SCALE-8.165-ROUNDS-DOWN-A-SAVING-TOO",
+        "amount": -8.165,
+        "style": "exact",
+        "currency": "USD",
+        "want": "-$8.16/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/BINARY-SCALE-1.005-ROUNDS-DOWN",
+        "amount": 1.005,
+        "style": "exact",
+        "currency": "USD",
+        "want": "+$1.00/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/BINARY-SCALE-1.005-ROUNDS-DOWN-A-SAVING-TOO",
+        "amount": -1.005,
+        "style": "exact",
+        "currency": "USD",
+        "want": "-$1.00/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/BINARY-SCALE-8.165-AT-WHOLE-UNITS",
+        "amount": 8.165,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "+$8/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/BINARY-SCALE-8.165-AT-WHOLE-UNITS-A-SAVING-TOO",
+        "amount": -8.165,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "-$8/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/BINARY-SCALE-1.005-AT-WHOLE-UNITS",
+        "amount": 1.005,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "+$1/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/BINARY-SCALE-1.005-AT-WHOLE-UNITS-A-SAVING-TOO",
+        "amount": -1.005,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "-$1/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/DOUBLE-ROUNDING-12.496-IS-NOT-A-HALF",
+        "amount": 12.496,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "+$12/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/DOUBLE-ROUNDING-12.496-IS-NOT-A-HALF-AT-JPY",
+        "amount": 12.496,
+        "style": "exact",
+        "currency": "JPY",
+        "want": "+¥12/mo"
       }
     ]
   }

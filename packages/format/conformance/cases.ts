@@ -273,13 +273,40 @@ export const MONTHLY_RATE: MonthlyRateCase[] = [
  * 3. THE REGISTERS DIFFER IN PRECISION here, which they do NOT in `monthlyRate`. `0.4` is the pair
  *    that states it: `$0/mo` as an estimate, `+$0.40/mo` as an exact line. An implementation that
  *    copied `monthlyRate`'s register rule wholesale renders `+$0.40/mo` for both and fails one.
+ * 4. WHICH VALUE THE ROUNDING SEES — the binary double, or the decimal a human typed. That is the
+ *    `BINARY-SCALE-*` block, and it needs a THREE-decimal input; read the next paragraph before
+ *    adding a row here.
  *
  * The half-away-from-zero rounding that this whole package exists for is pinned in both
  * directions (`12.5`, `-12.5`) at the estimate register, and once more at the EXACT register
- * through JPY — which has no minor unit, so `12.5` meets the same half there. A half-CENT case
- * would have been the obvious way to cover the exact register in USD and is deliberately absent:
- * 12.505 is not exactly representable as a double, so the row would pin a floating-point artefact
- * rather than the rounding rule, in a table another language has to reproduce exactly.
+ * through JPY — which has no minor unit, so `12.5` meets the same half there.
+ *
+ * ── A THIRD DECIMAL IS REQUIRED, and this is where the table was blind ────────────────────
+ *
+ * Every row above carries at most TWO decimals, which is exactly the region where the two
+ * implementations cannot disagree: a two-decimal literal scales by 100 to a whole number with no
+ * representation error, so rounding the BINARY product and rounding the DECIMAL string give the
+ * same answer by construction. `monthlyDelta/exact/JPY-HALF-ROUNDS-AWAY-FROM-ZERO` looks like the
+ * row that locks the exact register's rounding and does not: JPY has no minor unit, so it only
+ * ever exercises the whole-unit path. The table LOOKED like it pinned the rounding rule and pinned
+ * a different one — and `formatMonthlyDelta` shipped rendering `+$8.17/mo` against Go's
+ * `+$8.16/mo` for four weeks with every layer green (#3895).
+ *
+ * A third decimal is what separates them. `8.165 * 100` is `816.4999999999999` as a double, so a
+ * multiply-first rounder (Go's `roundHalfAwayFromZero`, and now this side's pre-round) goes DOWN
+ * while a decimal rounder reading "8.165" goes UP. `1.005` is the same. `2.675` and `0.125` are
+ * three-decimal too and agree, which is why a third decimal is necessary but not sufficient —
+ * the value must also scale to the far side of a half.
+ *
+ * This paragraph replaces one that argued the opposite, and the argument is worth stating so it is
+ * not reinstated: a half-cent case was called "deliberately absent" because `12.505` is not
+ * exactly representable and the row "would pin a floating-point artefact rather than the rounding
+ * rule". That is backwards. The floating-point artefact IS the rounding rule as far as two
+ * languages sharing one string are concerned, and declining to pin it is what let them diverge.
+ * The rows are still generated from the real implementation, so no expectation is hand-guessed.
+ *
+ * A NEW ROW HERE SHOULD CARRY THREE DECIMALS unless it is pinning something other than rounding.
+ * Two decimals rebuild the blind spot.
  *
  * No currency without a symbol appears here, for the same reason none appears under `monthlyRate`
  * or `money`: TypeScript delegates to Intl, which knows a narrow symbol or an ISO code for every
@@ -311,6 +338,31 @@ export const MONTHLY_DELTA: MonthlyDeltaCase[] = [
 	{ id: "monthlyDelta/exact/JPY-HALF-ROUNDS-AWAY-FROM-ZERO", amount: 12.5, style: "exact", currency: "JPY" },
 	{ id: "monthlyDelta/estimate/EUR-NARROW-SYMBOL", amount: 12.5, style: "estimate", currency: "EUR" },
 	{ id: "monthlyDelta/exact/EUR-SIGN-LEADS-THE-SYMBOL", amount: -12.5, style: "exact", currency: "EUR" },
+
+	// ── The binary-scale block (#3895). Three decimals, so the two languages can differ at all.
+	//
+	// 8.165 and 1.005 both scale to a double just BELOW the half (816.4999999999999,
+	// 100.49999999999999), so a multiply-first rounder rounds down and a decimal rounder rounds up.
+	// Both signs, because the sign is applied to the magnitude and a rounder that special-cases
+	// negatives would pass the positive rows alone. Both registers, because the exact register is
+	// where they diverged and the estimate register is what proves the fix did not break the one
+	// that already agreed — its scale is 1, so these must still land on plain whole units.
+	{ id: "monthlyDelta/exact/BINARY-SCALE-8.165-ROUNDS-DOWN", amount: 8.165, style: "exact", currency: "USD" },
+	{ id: "monthlyDelta/exact/BINARY-SCALE-8.165-ROUNDS-DOWN-A-SAVING-TOO", amount: -8.165, style: "exact", currency: "USD" },
+	{ id: "monthlyDelta/exact/BINARY-SCALE-1.005-ROUNDS-DOWN", amount: 1.005, style: "exact", currency: "USD" },
+	{ id: "monthlyDelta/exact/BINARY-SCALE-1.005-ROUNDS-DOWN-A-SAVING-TOO", amount: -1.005, style: "exact", currency: "USD" },
+	{ id: "monthlyDelta/estimate/BINARY-SCALE-8.165-AT-WHOLE-UNITS", amount: 8.165, style: "estimate", currency: "USD" },
+	{ id: "monthlyDelta/estimate/BINARY-SCALE-8.165-AT-WHOLE-UNITS-A-SAVING-TOO", amount: -8.165, style: "estimate", currency: "USD" },
+	{ id: "monthlyDelta/estimate/BINARY-SCALE-1.005-AT-WHOLE-UNITS", amount: 1.005, style: "estimate", currency: "USD" },
+	{ id: "monthlyDelta/estimate/BINARY-SCALE-1.005-AT-WHOLE-UNITS-A-SAVING-TOO", amount: -1.005, style: "estimate", currency: "USD" },
+
+	// The other half of the same rule: the pre-round must happen at the places the row is PRINTED
+	// at, not at a fixed two. 12.496 rounds to 12.50 at cents and then to 13 at whole units, but Go
+	// rounds once and says 12. These two rows fail against a pre-round hardcoded to `* 100` — the
+	// obvious spelling, and the one that trades this divergence for a new one at every
+	// zero-decimal register: `estimate` in any currency, and `exact` in JPY.
+	{ id: "monthlyDelta/estimate/DOUBLE-ROUNDING-12.496-IS-NOT-A-HALF", amount: 12.496, style: "estimate", currency: "USD" },
+	{ id: "monthlyDelta/exact/DOUBLE-ROUNDING-12.496-IS-NOT-A-HALF-AT-JPY", amount: 12.496, style: "exact", currency: "JPY" },
 ];
 
 /**
