@@ -220,9 +220,17 @@ export function formatMoney(cents: number, currency = "USD"): string {
 }
 
 /**
- * Which question a monthly figure is answering. The two registers differ ONLY in whether the
- * figure is allowed to round away detail it does not have; they never differ in precision for the
- * same number, which is what lets a line and a total sit in one column.
+ * Which question a monthly figure is answering. Shared by both per-month registers, and they do
+ * NOT read it identically — stated here rather than discovered at a call site.
+ *
+ * For {@link formatMonthlyRate} the two differ only in whether the figure may ADMIT it does not
+ * know (`<$1/mo`); they never differ in precision for the same number, which is what lets a line
+ * and a total sit in one column.
+ *
+ * For {@link formatMonthlyDelta} they differ in PRECISION: `"estimate"` renders whole currency
+ * units (`+$13/mo`), `"exact"` renders minor units (`+$12.50/mo`). A delta headline is read for
+ * its DIRECTION and its order of magnitude, where a cent is noise; a delta in a column is read
+ * against the rows above it, where a cent is the point.
  */
 export type MonthlyRateStyle = "estimate" | "exact";
 
@@ -269,26 +277,24 @@ export type MonthlyRateStyle = "estimate" | "exact";
  * the exception and runs FIRST, on the raw value — 0.001 is a real cost that must not round into
  * "nothing is running".
  *
- * A NEGATIVE IS CLAMPED IN BOTH REGISTERS, AND THAT IS A KNOWN GAP — not a rounding rule. `<= 0`
- * is ONE test, so -5 renders exactly as 0 does: `$0/mo` in the estimate register, `$0.00/mo` in
- * the exact one. A saving therefore reads as "nothing is running", and the exact register's
- * promise above does not survive it: a column holding a credit will not sum to the total printed
- * under it. Nothing here narrows that to the estimate register, and no caller can opt out of it.
+ * A NEGATIVE IS CLAMPED IN BOTH REGISTERS, AND THAT IS A REFUSAL — not a rounding rule, and no
+ * longer a gap. `<= 0` is ONE test, so -5 renders exactly as 0 does: `$0/mo` in the estimate
+ * register, `$0.00/mo` in the exact one. Until #3768 that was a hole, because a saving had
+ * nowhere else to go; it now says something. This function means AN ABSOLUTE COST, and clamping
+ * is how it declines input it was never for. A signed amount has its own register:
+ * {@link formatMonthlyDelta}.
  *
- * This package has NO credit register. Nothing renders `-$5.00/mo` or `$5.00/mo saved`, and
- * `packages/core/format`'s `MonthlyRate` clamps identically because the conformance table pins
- * both sides (`monthlyRate/estimate/negative-clamps`, `monthlyRate/exact/negative-clamps`).
- * Adding one is a cross-language contract change across two implementations, the frozen
- * conformance fixture and both suites — deliberately not carried here.
+ * The two conformance cases that pin it are named for what they are —
+ * `monthlyRate/{estimate,exact}/negative-REFUSED-see-monthlyDelta` — and `packages/core/format`'s
+ * `MonthlyRate` clamps identically because the table holds both sides to the same answer.
  *
- * What makes the clamp tolerable TODAY is that no live call site holds a negative: every one
- * passes an ABSOLUTE cost — infracost's `totalMonthlyCost`, a resource's `monthlyCost`, a
- * `cost_delta_threshold` that `z.number().min(0)` bounds — and never infracost's
- * `diffTotalMonthlyCost`. The one input with no numeric bound is the agent-supplied
- * `stats.monthly` on the approval card (`apps/console/lib/ai/operation.ts`), which is documented
- * to the model as an absolute total for exactly this reason. If a delta, a saving or a credit
- * ever has to be rendered, it needs a register of its own: do NOT reach for `"exact"` and assume
- * the sign survives, because it does not.
+ * So the question at a call site is which KIND of number this is, not which register rounds less.
+ * A LEVEL comes here: infracost's `totalMonthlyCost`, a resource's `monthlyCost`, a
+ * `cost_delta_threshold` that `z.number().min(0)` bounds, and the agent-supplied `stats.monthly`
+ * on the approval card (`apps/console/lib/ai/operation.ts`), which is documented to the model as
+ * an absolute total for exactly this reason. A CHANGE goes to {@link formatMonthlyDelta}:
+ * infracost's `diffTotalMonthlyCost`, and `Summary.DiffMonthly` on the Go side. Do NOT reach for
+ * `"exact"` and assume the sign survives — it does not, and that is deliberate.
  *
  * NO `~`. Three call sites prefixed one and thirteen did not, which is the disagreement, not the
  * fix — the same field cannot be approximate on one screen and exact on the next. A page that
@@ -296,7 +302,8 @@ export type MonthlyRateStyle = "estimate" | "exact";
  *
  * @param amount a recurring monthly cost in major units (dollars, euros). Must be an absolute
  *               cost, not a delta: a negative is clamped to 0 in BOTH registers and its sign is
- *               lost, so a saving is indistinguishable from nothing running. See the gap above.
+ *               lost. That is this register declining input it is not for — render a delta, a
+ *               saving or a credit with {@link formatMonthlyDelta}.
  * @param style which register — see above. Defaults to the headline `"estimate"`.
  * @param currency ISO 4217 code; defaults to USD.
  */
@@ -306,8 +313,8 @@ export function formatMonthlyRate(amount: number, style: MonthlyRateStyle = "est
 	// `formatMoney` makes, so a breakdown line and a billed amount cannot disagree about JPY.
 	//
 	// `<= 0`, not `=== 0`: a negative is CLAMPED here, in both registers, and its sign is gone.
-	// That is the documented gap, not an oversight — this function renders absolute costs, and
-	// there is no credit register to fall through to.
+	// That is a refusal, not an oversight — this function renders absolute costs, and a signed
+	// amount has a register of its own in `formatMonthlyDelta` rather than a branch in this one.
 	if (!Number.isFinite(amount) || amount <= 0) {
 		return `${money(0, currency, style === "exact" ? undefined : 0)}${suffix}`;
 	}
@@ -317,8 +324,105 @@ export function formatMonthlyRate(amount: number, style: MonthlyRateStyle = "est
 }
 
 /**
- * The one Intl currency call both money functions go through, so `formatMoney` and
- * `formatMonthlyRate` cannot disagree about the symbol.
+ * A CHANGE in a recurring monthly cost, signed — `-$5.00/mo`, `+$12.50/mo`, `$0/mo`.
+ *
+ * The credit register {@link formatMonthlyRate} refuses to be. Split rather than bolted on, so a
+ * caller has to say which kind of number it holds and cannot render a diff as an absolute by
+ * accident: making `formatMonthlyRate` signed would have let every existing absolute call site
+ * render a negative it has no meaning for. `$5.00/mo saved` was the other rejected shape — it is a
+ * sentence rather than a number, so it does not sum, does not right-align in a column, and needs a
+ * translation story.
+ *
+ * THE SIGN LEADS THE SYMBOL — `-$5.00/mo`, not `$-5.00/mo`, which is not a form anyone writes.
+ * That is already this package's house rule (Intl's `narrowSymbol` puts it there, and
+ * `packages/core/format`'s `render` mirrors it), so the sign here is assembled around the
+ * MAGNITUDE rather than handed to Intl: `signDisplay` would place `+` by the locale's rules and
+ * the two languages would have to agree about that as well.
+ *
+ * ZERO CARRIES NO SIGN. `+$0/mo` reads as an increase that did not happen. `$0/mo` is the answer
+ * in BOTH registers — including `"exact"`, where {@link formatMonthlyRate} would say `$0.00/mo`:
+ * that padding exists so a column of LEVELS aligns under its total, and "no change" is not a level.
+ *
+ * ...AND NEITHER DOES A CHANGE THAT RENDERS AS ZERO, which is the same rule and not a second one.
+ * The sign is decided by the ROUNDED MAGNITUDE, so `+0.4` in the estimate register (whole units)
+ * and `+0.001` in the exact one (cents) both render `$0/mo`. Deciding it on the raw amount instead
+ * would produce `+$0.00/mo` — precisely the increase-that-did-not-happen the rule above forbids.
+ *
+ * THERE IS NO `<$1/mo` EQUIVALENT, and that is a decision rather than an omission.
+ * {@link formatMonthlyRate}'s admission exists because `$0.02/mo` for a whole project reads as a
+ * broken number rather than a cheap one — it protects a claim about a LEVEL, where "free" is a
+ * category the reader would wrongly conclude. A change that rounds to nothing is different: "no
+ * change worth showing" is a TRUE reading of it. And the shapes it would need — `-<$1/mo`,
+ * `+<$1/mo` — put the sign and the `<` in competition for the leading position, which is the
+ * ambiguity the house rule above exists to remove.
+ *
+ * THE REGISTERS DIFFER IN PRECISION HERE, unlike in {@link formatMonthlyRate}; see
+ * {@link MonthlyRateStyle}. `"estimate"` rounds the magnitude to whole units — half AWAY FROM
+ * ZERO, the same rule and therefore the same answer as the exact register for `12.5` at a
+ * zero-decimal currency, so the two can never disagree about a half.
+ *
+ * THE MAGNITUDE IS PRE-ROUNDED, AND THAT IS NOT AN ACCURACY IMPROVEMENT — see the comment in the
+ * body. It exists to reproduce a LOSS that `packages/core/format` takes, because the two must
+ * print one string and Go is the reference.
+ *
+ * A currency with no symbol behaves exactly as it does in {@link formatMonthlyRate}, because both
+ * go through the same one Intl call. On the Go side that is a four-entry table and an ISO-code
+ * fallback, which is a RULING rather than a mirror — see `packages/core/format/format_test.go`.
+ *
+ * @param amount the CHANGE in a recurring monthly cost, in major units. Negative is a saving,
+ *               positive an increase, and both keep their sign. A non-finite value is "no change".
+ * @param style which register — see above. Defaults to the headline `"estimate"`.
+ * @param currency ISO 4217 code; defaults to USD.
+ */
+export function formatMonthlyDelta(amount: number, style: MonthlyRateStyle = "estimate", currency = "USD"): string {
+	const suffix = "/mo";
+	// One spelling of "no change", reached by two routes: a literal zero and a magnitude that
+	// rounds to one. Both must be UNSIGNED and both must drop the minor units, so they are one
+	// string built once rather than two branches that could drift.
+	const noChange = `${money(0, currency, 0)}${suffix}`;
+	if (!Number.isFinite(amount) || amount === 0) return noChange;
+
+	// `undefined` keeps the currency's own decimals (2 for USD, 0 for JPY) — the same choice
+	// `formatMoney` and `formatMonthlyRate` make, so the three cannot disagree about JPY.
+	const decimals = style === "estimate" ? 0 : undefined;
+
+	// PRE-ROUND, MULTIPLY-FIRST. DO NOT DELETE THIS AS A REDUNDANT ROUND BEFORE INTL'S OWN — it is
+	// not here because it is more accurate. It is here because it is LESS accurate, in exactly the
+	// way `packages/core/format` is.
+	//
+	// Go's `render` rounds through `roundHalfAwayFromZero`, which is `math.Round(x*p)/p`: it scales
+	// the BINARY double first and rounds whatever comes out. Intl rounds the shortest round-tripping
+	// DECIMAL instead. The two disagree wherever the scaled product lands on the far side of a half
+	// from the literal a human typed — `8.165 * 100` is `816.4999999999999` as a double, so Go
+	// renders `+$8.16/mo` while Intl, reading "8.165", renders `+$8.17/mo`. `1.005` is the same
+	// story. (`2.675` and `0.125` scale to a value on the same side of the half and agreed all
+	// along, which is why a table of two-decimal inputs never found this.)
+	//
+	// Go is the reference here, not the winner on merit: the console and the CLI have to print ONE
+	// string for one number, and the lossier of two answers is still the shared one. Making Go
+	// round the decimal instead would mean a decimal formatter in Go; making both sides agree in
+	// TypeScript costs this line. `formatMonthlyRate` already carries the identical pre-round for
+	// the identical reason — which is why THAT function never diverged.
+	//
+	// The scale is the register's OWN places, not a fixed 100. Rounding to cents and then letting
+	// Intl round that to whole units rounds TWICE: `12.496` estimate would come out `+$13/mo`
+	// against Go's `+$12/mo`, a fresh divergence in a register the unrounded code got right. Go
+	// rounds once, at the places it is about to print, and so does this.
+	const places = decimals ?? minorUnits(currency);
+	const scale = 10 ** places;
+	const magnitude = money(Math.round(Math.abs(amount) * scale) / scale, currency, decimals);
+	// Compared as RENDERED, not as a number, because "does this round to zero" is a question about
+	// the currency's own decimals — which Intl holds and this module deliberately does not
+	// duplicate. A second table of minor units here is how `formatMoney`'s KNOWN LIMITATION got
+	// its second half. `minorUnits` above obeys the same rule: it ASKS Intl rather than tabulating.
+	if (magnitude === money(0, currency, decimals)) return noChange;
+
+	return `${amount < 0 ? "-" : "+"}${magnitude}${suffix}`;
+}
+
+/**
+ * The one Intl currency call every money function goes through, so `formatMoney`,
+ * `formatMonthlyRate` and `formatMonthlyDelta` cannot disagree about the symbol.
  *
  * `currencyDisplay: "narrowSymbol"` is load-bearing: en-GB renders USD as "US$12.50" by default,
  * which is wrong for a product that bills in dollars. narrowSymbol gives "$12.50", "€12.50",
@@ -334,6 +438,34 @@ function money(amount: number, currency: string, decimals?: number): string {
 		currencyDisplay: "narrowSymbol",
 		...digits,
 	}).format(amount);
+}
+
+/**
+ * How many fraction digits {@link money} will print for a currency when it is not told — 2 for USD,
+ * 0 for JPY.
+ *
+ * ASKED OF INTL, NOT TABULATED. A second table of minor units in this module is precisely how
+ * {@link formatMoney}'s KNOWN LIMITATION got its second half, and the question here is a DISPLAY
+ * question, which is the one CLDR is the authority for. (The divisor question — how many minor
+ * units a PAYMENT is quoted in — has a different authority and is not asked here.)
+ *
+ * It exists so {@link formatMonthlyDelta} can pre-round at the same places it is about to print,
+ * the way `packages/core/format`'s `render` does. Reading it back off the formatter keeps the two
+ * numbers the same number by construction.
+ */
+function minorUnits(currency: string): number {
+	// Counted off a rendered zero rather than read from `resolvedOptions()`, which types
+	// `maximumFractionDigits` as optional and would need a fallback branch no input can reach —
+	// and an unreachable fallback holding the number `2` is the tabulated minor unit this function
+	// exists to avoid, smuggled back in as a default. A currency with no minor unit simply has no
+	// `fraction` part.
+	const parts = new Intl.NumberFormat(LOCALE, {
+		style: "currency",
+		currency,
+		currencyDisplay: "narrowSymbol",
+	}).formatToParts(0);
+	const fraction = parts.find((part) => part.type === "fraction");
+	return fraction === undefined ? 0 : fraction.value.length;
 }
 
 /** Coerce the accepted input shapes to a valid Date, or null when it cannot be read. */
