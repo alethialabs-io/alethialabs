@@ -554,10 +554,27 @@ export function summariseLiveEvidence(predicate, evidence) {
 			nonEmpty(signals.length, "console error or failed request");
 			const consoles = signals.filter((g) => g.kind === "console").length;
 			const responses = signals.filter((g) => g.kind === "response");
+			// `pageerror` is the THIRD kind the recorder emits (e2e/audit/signals.ts: `page.on("pageerror")`),
+			// and cross-cutting.spec.ts calls it the FATAL subset. Counting only the other two rendered
+			// "0 console errors, 0 failed requests" for a FAIL made entirely of page errors — a summary
+			// contradicting its own verdict, which is what nonEmpty above exists to refuse. It could not
+			// catch this one: the signal list was non-empty, only the RENDERING dropped them.
+			const pageErrors = signals.filter((g) => g.kind === "pageerror").length;
 			const statuses = [...new Set(responses.map((g) => g.status))].sort((a, b) => a - b);
+			// A kind the recorder gains and this file does not is the same defect again, so refuse it
+			// rather than let it read as zero of everything.
+			const known = new Set(["console", "response", "pageerror"]);
+			const unknown = [...new Set(signals.map((g) => g.kind).filter((k) => !known.has(k)))];
+			if (unknown.length > 0) {
+				throw new Error(
+					`R6: the recorder emitted kind(s) [${unknown.join(", ")}] this summary does not render. ` +
+						`Add them here — a kind counted by nothing reads as zero of everything.`,
+				);
+			}
 			// The record is capped at 10 by routes.spec.ts, so these are counts of what was KEPT.
 			return (
-				`${plural(consoles, "console error")}, ${plural(responses.length, "failed request")}` +
+				`${plural(pageErrors, "uncaught page error")}, ${plural(consoles, "console error")}, ` +
+				`${plural(responses.length, "failed request")}` +
 				`${statuses.length > 0 ? ` (${statuses.join(", ")})` : ""}, of the first 10 recorded`
 			);
 		}
@@ -2367,12 +2384,37 @@ function selfTest() {
 		]) === "color-contrast (serious) ×9, label (critical) ×4",
 	);
 	ok(
-		"R6 counts the two kinds and the distinct statuses — no URL, no timestamp",
+		"R6 counts ALL THREE kinds and the distinct statuses — no URL, no timestamp",
 		summariseLiveEvidence("R6", [
 			{ kind: "response", status: 400, url: "http://localhost:3000/x", at: "2026-09-02T11:31:07.746Z" },
 			{ kind: "console", text: "Failed to load resource", at: "2026-09-02T11:31:07.747Z" },
 			{ kind: "response", status: 404, url: "http://localhost:3000/y", at: "2026-09-02T11:31:07.749Z" },
-		]) === "1 console error, 2 failed requests (400, 404), of the first 10 recorded",
+			{ kind: "pageerror", text: "TypeError: x is not a function", at: "2026-09-02T11:31:07.750Z" },
+		]) ===
+			"1 uncaught page error, 1 console error, 2 failed requests (400, 404), of the first 10 recorded",
+	);
+	// THE CASE THAT USED TO RENDER "0 console errors, 0 failed requests" FOR A FAIL. `pageerror` is
+	// the kind cross-cutting.spec.ts calls fatal, and the old summary counted only the other two, so
+	// the sentence contradicted its own verdict. nonEmpty could not catch it — the signal list was
+	// non-empty; only the rendering dropped them. This is the row that would have.
+	ok(
+		"R6 built only of page errors does not render a summary that contradicts the FAIL",
+		summariseLiveEvidence("R6", [
+			{ kind: "pageerror", text: "TypeError: a", at: "2026-09-02T11:31:07.750Z" },
+			{ kind: "pageerror", text: "TypeError: b", at: "2026-09-02T11:31:07.751Z" },
+		]) === "2 uncaught page errors, 0 console errors, 0 failed requests, of the first 10 recorded",
+	);
+	// A kind the recorder gains and this file does not must RAISE, not read as zero of everything.
+	ok(
+		"R6 refuses a kind it cannot render rather than silently dropping it",
+		(() => {
+			try {
+				summariseLiveEvidence("R6", [{ kind: "websocket", at: "2026-09-02T11:31:07.752Z" }]);
+				return false;
+			} catch (e) {
+				return /websocket/.test(String(e.message));
+			}
+		})(),
 	);
 	ok(
 		"R7 names the BUDGET, which is a constant, and never the p95, which is the runner's",
