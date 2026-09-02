@@ -391,14 +391,14 @@
         "want": "$0.00/mo"
       },
       {
-        "id": "monthlyRate/estimate/negative-clamps",
+        "id": "monthlyRate/estimate/negative-REFUSED-see-monthlyDelta",
         "amount": -3,
         "style": "estimate",
         "currency": "USD",
         "want": "$0/mo"
       },
       {
-        "id": "monthlyRate/exact/negative-clamps",
+        "id": "monthlyRate/exact/negative-REFUSED-see-monthlyDelta",
         "amount": -3,
         "style": "exact",
         "currency": "USD",
@@ -501,6 +501,232 @@
         "style": "estimate",
         "currency": "EUR",
         "want": "€12.50/mo"
+      }
+    ],
+    "monthlyDelta": [
+      {
+        "id": "monthlyDelta/estimate/ZERO-CARRIES-NO-SIGN",
+        "amount": 0,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "$0/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/ZERO-CARRIES-NO-SIGN-AND-NO-MINOR-UNITS",
+        "amount": 0,
+        "style": "exact",
+        "currency": "USD",
+        "want": "$0/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/nonfinite-is-no-change",
+        "amount": null,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "$0/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/nonfinite-is-no-change",
+        "amount": null,
+        "style": "exact",
+        "currency": "USD",
+        "want": "$0/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/A-SAVING-KEEPS-ITS-SIGN",
+        "amount": -5,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "-$5/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/A-SAVING-KEEPS-ITS-SIGN",
+        "amount": -5,
+        "style": "exact",
+        "currency": "USD",
+        "want": "-$5.00/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/AN-INCREASE-IS-SIGNED-TOO",
+        "amount": 12.5,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "+$13/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/AN-INCREASE-KEEPS-ITS-CENTS",
+        "amount": 12.5,
+        "style": "exact",
+        "currency": "USD",
+        "want": "+$12.50/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/HALF-UNIT-ROUNDS-AWAY-FROM-ZERO-DOWNWARD-TOO",
+        "amount": -12.5,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "-$13/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/below-the-half-rounds-down",
+        "amount": 12.49,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "+$12/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/half-a-unit-rounds-UP-to-a-signed-one",
+        "amount": 0.5,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "+$1/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/A-SUB-UNIT-INCREASE-ROUNDS-TO-NO-CHANGE",
+        "amount": 0.4,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "$0/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/A-SUB-UNIT-SAVING-ROUNDS-TO-NO-CHANGE",
+        "amount": -0.4,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "$0/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/the-same-sub-unit-change-KEEPS-ITS-CENTS",
+        "amount": 0.4,
+        "style": "exact",
+        "currency": "USD",
+        "want": "+$0.40/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/the-same-sub-unit-saving-KEEPS-ITS-CENTS",
+        "amount": -0.4,
+        "style": "exact",
+        "currency": "USD",
+        "want": "-$0.40/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/A-SUB-CENT-CHANGE-ROUNDS-TO-NO-CHANGE",
+        "amount": 0.001,
+        "style": "exact",
+        "currency": "USD",
+        "want": "$0/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/thousands-separator",
+        "amount": 1240.37,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "+$1,240/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/thousands-separator-on-a-saving",
+        "amount": -1240.37,
+        "style": "exact",
+        "currency": "USD",
+        "want": "-$1,240.37/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/JPY-HAS-NO-MINOR-UNIT",
+        "amount": -1240,
+        "style": "estimate",
+        "currency": "JPY",
+        "want": "-¥1,240/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/JPY-HALF-ROUNDS-AWAY-FROM-ZERO",
+        "amount": 12.5,
+        "style": "exact",
+        "currency": "JPY",
+        "want": "+¥13/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/EUR-NARROW-SYMBOL",
+        "amount": 12.5,
+        "style": "estimate",
+        "currency": "EUR",
+        "want": "+€13/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/EUR-SIGN-LEADS-THE-SYMBOL",
+        "amount": -12.5,
+        "style": "exact",
+        "currency": "EUR",
+        "want": "-€12.50/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/BINARY-SCALE-8.165-ROUNDS-DOWN",
+        "amount": 8.165,
+        "style": "exact",
+        "currency": "USD",
+        "want": "+$8.16/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/BINARY-SCALE-8.165-ROUNDS-DOWN-A-SAVING-TOO",
+        "amount": -8.165,
+        "style": "exact",
+        "currency": "USD",
+        "want": "-$8.16/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/BINARY-SCALE-1.005-ROUNDS-DOWN",
+        "amount": 1.005,
+        "style": "exact",
+        "currency": "USD",
+        "want": "+$1.00/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/BINARY-SCALE-1.005-ROUNDS-DOWN-A-SAVING-TOO",
+        "amount": -1.005,
+        "style": "exact",
+        "currency": "USD",
+        "want": "-$1.00/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/BINARY-SCALE-8.165-AT-WHOLE-UNITS",
+        "amount": 8.165,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "+$8/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/BINARY-SCALE-8.165-AT-WHOLE-UNITS-A-SAVING-TOO",
+        "amount": -8.165,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "-$8/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/BINARY-SCALE-1.005-AT-WHOLE-UNITS",
+        "amount": 1.005,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "+$1/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/BINARY-SCALE-1.005-AT-WHOLE-UNITS-A-SAVING-TOO",
+        "amount": -1.005,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "-$1/mo"
+      },
+      {
+        "id": "monthlyDelta/estimate/DOUBLE-ROUNDING-12.496-IS-NOT-A-HALF",
+        "amount": 12.496,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "+$12/mo"
+      },
+      {
+        "id": "monthlyDelta/exact/DOUBLE-ROUNDING-12.496-IS-NOT-A-HALF-AT-JPY",
+        "amount": 12.496,
+        "style": "exact",
+        "currency": "JPY",
+        "want": "+¥12/mo"
       }
     ]
   }
