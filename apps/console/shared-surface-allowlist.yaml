@@ -206,9 +206,6 @@ type_scale:
   - path: apps/console/app/(private)/[org]/~/support/page.tsx
     hits: 1
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/app/(private)/cli/login/page.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
   - path: apps/console/app/(public)/onboarding/page.tsx
     hits: 1
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
