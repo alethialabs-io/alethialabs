@@ -8,7 +8,8 @@ description: Complete reference for all alethia CLI commands organized by group.
 alethia organizes its commands into groups (`connector`, `project`, `runner`, `jobs`, `cluster`,
 `org`, `members`, `teams`, `channels`, `alerts`, `roles`, `grants`, `sso`, `fleet`,
 `classification`, `ops`), a set of read-only inspection groups (`repo`, `cloud`, `agent`, `addon`,
-`chart`, `iac`, `cost`, `drift`, `staged`, `verify`, `probes`), plus top-level auth (`login`/`logout`/`init`), identity
+`chart`, `iac`, `cost`, `drift`, `staged`, `verify`, `probes`, `protection`, `promotion`), plus top-level
+auth (`login`/`logout`/`init`), identity
 (`whoami`/`config`/`open`), `billing`, `usage`, `activity`, and utility commands. All commands
 communicate with the Alethia [Console](/concepts/glossary) API — they never run
 [OpenTofu](/concepts/glossary) (the `tofu` binary) locally. Provisioning (`tofu plan`/`apply`/
@@ -113,15 +114,20 @@ alethia
 │   └── list
 ├── probes                            # alias: probe — cluster-alive probes (-p/--project)
 │   └── list
+├── protection                        # alias: protect — promotion gates per env (-p/--project)
+│   └── list
+├── promotion                         # aliases: promotions, promo (-p/--project · -e/--env)
+│   ├── list
+│   └── get [promotion]               # id or id prefix — asks when omitted
 ├── channels                          # alias: channel
 │   ├── list
-│   ├── create <name> --type <t> [--recipient <e>] [--url <u>] [--signing-secret <s>] [--routing-key <k>]
-│   ├── verify <id>
-│   └── delete <id>
+│   ├── create [name] [--type <t>] [--recipient <e>] [--url <u>] [--signing-secret <s>] [--routing-key <k>]
+│   ├── verify [channel]              # name or id — asks when omitted
+│   └── delete [channel] [-y/--yes]
 ├── alerts                            # alias: alert
 │   ├── list
-│   ├── create <name> --event <pat> --channel <id> [--severity warning]
-│   └── delete <id>
+│   ├── create [name] [--event <pat>] [--channel <name|id>] [--severity warning]
+│   └── delete [rule] [-y/--yes]      # name or id — asks when omitted
 ├── roles                             # alias: role
 │   ├── list                          # built-in templates + custom roles
 │   ├── create [name] [--permission <key>…]   # offers the server's catalog
@@ -137,12 +143,12 @@ alethia
 ├── usage                             # seats, runner-minutes, projects, AI credits
 ├── fleet                             # managed warm pools (self-managed only)
 │   ├── list
-│   └── set <provider> [--warm-min <n>] [--max <n>] [--slots <n>] [--enabled] [--channel <c>] [--version <v>]
+│   └── set [provider] [--warm-min <n>] [--max <n>] [--slots <n>] [--enabled] [--channel <c>] [--version <v>]
 ├── classification                   # alias: class — governed taxonomy on resources
 │   ├── dimensions                   # list the org's dimensions + their values
 │   ├── show <kind> <id>             # values assigned to a resource
-│   ├── assign <kind> <id> <dimension-key> <value-slug>
-│   └── unassign <kind> <id> <value-slug>
+│   ├── assign <kind> <id> [dimension-key] [value-slug]   # asks for the slugs when omitted
+│   └── unassign <kind> <id> [value-slug] [-y/--yes]
 ├── activity [-n/--limit <N>]         # org delivery/activity log
 └── ops                              # break-glass incident recovery (privileged · audited · gated)
     ├── session --reason <r>                                     # open a time-boxed session

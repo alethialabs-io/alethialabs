@@ -317,3 +317,47 @@ var AllAddonModes = []AddonMode{
 	AddonModeManaged,
 	AddonModeGitops,
 }
+
+// AlertChannelType mirrors the alert_channel_type enum (lib/db/schema/enums.ts).
+type AlertChannelType string
+
+const (
+	AlertChannelTypeWebhook    AlertChannelType = "webhook"
+	AlertChannelTypeEmail      AlertChannelType = "email"
+	AlertChannelTypeSlack      AlertChannelType = "slack"
+	AlertChannelTypeRocketchat AlertChannelType = "rocketchat"
+	AlertChannelTypeDiscord    AlertChannelType = "discord"
+	AlertChannelTypeTeams      AlertChannelType = "teams"
+	AlertChannelTypeMattermost AlertChannelType = "mattermost"
+	AlertChannelTypeGooglechat AlertChannelType = "googlechat"
+	AlertChannelTypePagerduty  AlertChannelType = "pagerduty"
+)
+
+// AllAlertChannelTypes is every alert_channel_type value, in schema order.
+var AllAlertChannelTypes = []AlertChannelType{
+	AlertChannelTypeWebhook,
+	AlertChannelTypeEmail,
+	AlertChannelTypeSlack,
+	AlertChannelTypeRocketchat,
+	AlertChannelTypeDiscord,
+	AlertChannelTypeTeams,
+	AlertChannelTypeMattermost,
+	AlertChannelTypeGooglechat,
+	AlertChannelTypePagerduty,
+}
+
+// AlertSeverity mirrors the alert_severity enum (lib/db/schema/enums.ts).
+type AlertSeverity string
+
+const (
+	AlertSeverityInfo     AlertSeverity = "info"
+	AlertSeverityWarning  AlertSeverity = "warning"
+	AlertSeverityCritical AlertSeverity = "critical"
+)
+
+// AllAlertSeveritys is every alert_severity value, in schema order.
+var AllAlertSeveritys = []AlertSeverity{
+	AlertSeverityInfo,
+	AlertSeverityWarning,
+	AlertSeverityCritical,
+}

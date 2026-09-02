@@ -17,6 +17,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	addonMode,
+	alertChannelType,
+	alertSeverity,
 	cacheEngine,
 	chartWorkloadKind,
 	cloudProvider,
@@ -74,6 +76,8 @@ const ENUMS: EnumSpec[] = [
 	{ typeName: "ServiceBindingFacet", dbName: "service_binding_facet", values: serviceBindingFacet.enumValues },
 	{ typeName: "TopicSubscriptionProtocol", dbName: "topic_subscription_protocol", values: topicSubscriptionProtocol.enumValues },
 	{ typeName: "AddonMode", dbName: "addon_mode", values: addonMode.enumValues },
+	{ typeName: "AlertChannelType", dbName: "alert_channel_type", values: alertChannelType.enumValues },
+	{ typeName: "AlertSeverity", dbName: "alert_severity", values: alertSeverity.enumValues },
 ];
 
 function renderEnum(e: EnumSpec): string {
