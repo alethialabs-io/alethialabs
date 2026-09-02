@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -23,6 +24,14 @@ import (
 
 // verifyJobsSample is a page of jobs, newest first, whose newest entry carries NO receipt. That
 // ordering is the whole point: unscoped, `--latest` lands on the drift job.
+//
+// It spans BOTH axes on which a job can fail to carry one, because the scope only narrows one of
+// them. `job-drift`/`job-probe` are the wrong TYPE — no run of theirs ever writes a receipt. But
+// `job-plan-queued` is the right type and has not FINISHED, which is the ordinary state of the
+// newest PLAN in a real org: `alethia project plan` returns as soon as the job is enqueued unless
+// `-w` was passed, so the operator's very next command sees it. A fixture that was entirely
+// `Status: "SUCCESS"` could not tell "filters by type" apart from "filters by type and
+// completion", and every assertion about the scope would have held under either.
 func verifyJobsSample() []api.ProvisionJob {
 	base := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
 	return []api.ProvisionJob{
@@ -30,11 +39,27 @@ func verifyJobsSample() []api.ProvisionJob {
 			ProjectID: "p-web-0001", ProjectName: "web", CreatedAt: base},
 		{ID: "job-probe", JobType: string(types.JobTypeProbeCluster), Status: "SUCCESS",
 			ProjectID: "p-web-0001", ProjectName: "web", CreatedAt: base.Add(-30 * time.Minute)},
+		{ID: "job-plan-queued", JobType: string(types.JobTypePlan), Status: string(types.JobStatusQueued),
+			ProjectID: "p-web-0001", ProjectName: "web", CreatedAt: base.Add(-45 * time.Minute)},
 		{ID: "job-deploy", JobType: string(types.JobTypeDeploy), Status: "SUCCESS",
 			ProjectID: "p-web-0001", ProjectName: "web", CreatedAt: base.Add(-time.Hour)},
 		{ID: "job-plan", JobType: string(types.JobTypePlan), Status: "SUCCESS",
 			ProjectID: "p-web-0001", ProjectName: "web", CreatedAt: base.Add(-2 * time.Hour)},
 	}
+}
+
+// verifyJobByID returns one fixture job. It FAILS when the fixture no longer carries that id
+// rather than returning a zero job, because a zero job carries no status and every assertion that
+// turns on one would then pass by testing nothing.
+func verifyJobByID(t *testing.T, id string) api.ProvisionJob {
+	t.Helper()
+	for _, j := range verifyJobsSample() {
+		if j.ID == id {
+			return j
+		}
+	}
+	t.Fatalf("the fixture has no job %q — this test's subject is gone", id)
+	return api.ProvisionJob{}
 }
 
 // verifyFlagCmd is a bare command carrying only the persistent --job flag, so resolveVerifyJob can
@@ -104,11 +129,46 @@ func TestVerifySelector_LatestSkipsJobsWithNoReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify-scoped resolveVerifyJob: %v", err)
 	}
-	if ref.ID != "job-deploy" {
-		t.Errorf("verify --latest resolved %q, want job-deploy — the newest job that carries a receipt", ref.ID)
+	if ref.ID != "job-plan-queued" {
+		t.Errorf("verify --latest resolved %q, want job-plan-queued — the newest job of a "+
+			"receipt-bearing TYPE", ref.ID)
 	}
 	if ref.Summary == "" {
 		t.Error("a job the CLI chose must carry a summary, so the command can say which one it took")
+	}
+
+	// The bound, stated: the scope narrows by type and NOT by completion, so the job it resolves
+	// can still be one with no receipt yet. That is not a defect in the scope — a scope that also
+	// skipped unfinished jobs would silently answer `verify receipt --latest` with a plan from an
+	// hour ago while the one the operator just ran was still going. It is the reason the refusal
+	// below has to carry the remedy.
+	if scoped.gotStat != "" {
+		t.Errorf("the resolver asked the server for status %q without being told to", scoped.gotStat)
+	}
+}
+
+// TestVerifySelector_StatusNarrowsToAFinishedJob pins the remedy noReceiptErr names. An error that
+// tells the reader to pass a flag which does not in fact reach a finished job is worse than the
+// bare refusal, so the instruction is tested against the same resolver the operator would run.
+func TestVerifySelector_StatusNarrowsToAFinishedJob(t *testing.T) {
+	jobsSelectNoInput(t)
+	f := &jobsSelectLister{jobs: verifyJobsSample()}
+	ref, err := resolveVerifyJob(f, verifyFlagCmd(t, ""), nil,
+		jobSelector{latest: true, status: string(types.JobStatusSuccess)})
+	if err != nil {
+		t.Fatalf("resolveVerifyJob --latest --status SUCCESS: %v", err)
+	}
+	// job-deploy is the newest job that is BOTH a receipt-bearing type and finished. job-drift is
+	// a newer SUCCESS, so landing there would mean --status had disarmed the type scope and the
+	// remedy had walked the reader from one receiptless job straight onto another.
+	if ref.ID != "job-deploy" {
+		t.Errorf("--latest --status SUCCESS resolved %q, want job-deploy — the newest FINISHED "+
+			"receipt-bearing job. The remedy noReceiptErr prints must actually reach one.", ref.ID)
+	}
+	// And it reaches it through the server, which indexes status: the narrowing must not silently
+	// become a client-side filter over a page that never contained the job.
+	if f.gotStat != string(types.JobStatusSuccess) {
+		t.Errorf("the resolver asked the server for status %q, want %s", f.gotStat, types.JobStatusSuccess)
 	}
 }
 
@@ -145,6 +205,84 @@ func TestVerifySelector_RefusalNamesTheScope(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal %q does not name %q", err, want)
 		}
+	}
+}
+
+// --- the refusal for a job that has not finished ----------------------------------------------
+
+// TestNoReceiptErr_TellsAnUnfinishedJobHowToFinishTheSentence is the dead end the type scope leaves
+// open. `alethia project plan` returns as soon as the job is enqueued, so
+//
+//	alethia project plan
+//	alethia verify receipt --latest
+//
+// resolves a QUEUED plan — the newest job of a receipt-bearing type — and a bare "this job carries
+// no evidence receipt" reads as "plans do not produce receipts". The remedy is what makes the
+// refusal an instruction, so the remedy is what is asserted.
+func TestNoReceiptErr_TellsAnUnfinishedJobHowToFinishTheSentence(t *testing.T) {
+	queued := verifyJobByID(t, "job-plan-queued")
+	_, err := receiptFromJob(&queued)
+	if err == nil {
+		t.Fatal("a queued plan carries no receipt and must be refused")
+	}
+	if !errors.Is(err, errNoReceipt) {
+		t.Errorf("the refusal stopped wrapping errNoReceipt, so every caller matching on it "+
+			"silently stops matching: %v", err)
+	}
+	for _, want := range []string{"--status SUCCESS", string(types.JobStatusQueued), "finish"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
+	}
+
+	// The other direction, and the reason the condition is completion rather than "no receipt":
+	// job-drift succeeded an hour ago and will NEVER carry one. Telling its reader to wait would
+	// be false, and telling them to pass --status SUCCESS would walk them onto the same answer.
+	drift := verifyJobByID(t, "job-drift")
+	_, err = receiptFromJob(&drift)
+	if err == nil {
+		t.Fatal("a DETECT_DRIFT job carries no receipt and must be refused")
+	}
+	if strings.Contains(err.Error(), "--status") || strings.Contains(err.Error(), "finish") {
+		t.Errorf("a FINISHED receiptless job was told to wait for it to finish: %q", err)
+	}
+}
+
+// TestNoReceiptErr_PartitionsTheWholeStatusEnum walks every provision_job_status rather than the
+// two the fixture happens to hold, so a status added to the enum cannot land on the wrong side of
+// the remedy unnoticed. The expectation is written out here and NOT read from
+// unfinishedJobStatuses: a test that took its answer from the value under test would agree with
+// any value at all.
+func TestNoReceiptErr_PartitionsTheWholeStatusEnum(t *testing.T) {
+	if len(types.AllJobStatuses) == 0 {
+		t.Fatal("the status enum is empty — every case below is vacuous")
+	}
+	unfinished := map[types.JobStatus]bool{
+		types.JobStatusQueued:     true,
+		types.JobStatusClaimed:    true,
+		types.JobStatusProcessing: true,
+	}
+	for _, s := range types.AllJobStatuses {
+		job := api.ProvisionJob{ID: "j", Status: string(s)}
+		_, err := receiptFromJob(&job)
+		if err == nil {
+			t.Fatalf("status %s: a job with no execution_metadata resolved a receipt", s)
+		}
+		named := strings.Contains(err.Error(), "--status SUCCESS")
+		if named != unfinished[s] {
+			t.Errorf("status %s: the refusal names --status = %v, want %v — %q", s, named, unfinished[s], err)
+		}
+	}
+	// And the set the production code reads is drawn from that same enum, so a value dropped from
+	// provision_job_status cannot leave a member here matching nothing.
+	for _, s := range unfinishedJobStatuses {
+		if !containsFold(jobStatusValues(), string(s)) {
+			t.Errorf("%q is not a provision_job_status", s)
+		}
+	}
+	if len(unfinishedJobStatuses) >= len(types.AllJobStatuses) {
+		t.Errorf("every status is unfinished (%d of %d) — nothing would ever get the bare refusal",
+			len(unfinishedJobStatuses), len(types.AllJobStatuses))
 	}
 }
 
@@ -337,22 +475,57 @@ func TestReceiptRowsRenderTheStampThroughTheSharedRule(t *testing.T) {
 			EvaluatedAt: "2026-03-09T15:04:05Z",
 		},
 	}
-	rows := receiptRows(sr, signatureVerdict{Verified: true, Trust: string(trustOrg), Reason: "ok"})
-	var evaluated string
-	found := false
-	for _, r := range rows {
-		if r[0] == "Evaluated" {
-			evaluated, found = r[1], true
-		}
-	}
-	if !found {
-		t.Fatal("the card has no Evaluated row — this test covered nothing")
-	}
+	evaluated := receiptRowValue(t, receiptRows(sr, signatureVerdict{
+		Verified: true, Trust: string(trustOrg), Reason: "ok"}, ui.FormatTable), "Evaluated")
 	if evaluated != "9 Mar 2026, 15:04" {
 		t.Errorf("Evaluated = %q, want the shared date rendering", evaluated)
 	}
 	if strings.Contains(evaluated, "T") || strings.Contains(evaluated, "Z") {
 		t.Errorf("Evaluated %q is still the raw RFC3339", evaluated)
+	}
+}
+
+// receiptRowValue returns one card row's value, failing when the row is absent — an absent row and
+// a row holding the expected string must not read the same.
+func receiptRowValue(t *testing.T, rows [][]string, field string) string {
+	t.Helper()
+	for _, r := range rows {
+		if len(r) >= 2 && r[0] == field {
+			return r[1]
+		}
+	}
+	t.Fatalf("the card has no %q row — the assertion about it covered nothing", field)
+	return ""
+}
+
+// TestReceiptRows_CSVKeepsTheWireTimestamp is the machine half of the same cell, and the defect
+// humanising it introduced.
+//
+// ui.RenderCard hands these rows STRAIGHT to the CSV renderer, so a cell formatted for a person is
+// what `alethia verify receipt -o csv` emits. `9 Mar 2026, 15:04` does not sort, does not parse,
+// and has dropped the seconds and the zone the signed receipt actually carries — a silent change
+// of shape in a machine format, which is what #3736 was corrected for in `cost show`.
+func TestReceiptRows_CSVKeepsTheWireTimestamp(t *testing.T) {
+	const wire = "2026-03-09T15:04:05Z"
+	sr := &verify.SignedReceipt{
+		Algorithm: "ed25519",
+		Receipt: verify.Receipt{
+			Verdict:     verify.StatusPass,
+			PlanSHA256:  "3b1f",
+			EvaluatedAt: wire,
+		},
+	}
+	v := signatureVerdict{Verified: true, Trust: string(trustOrg), Reason: "ok"}
+
+	csv := receiptRowValue(t, receiptRows(sr, v, ui.FormatCSV), "Evaluated")
+	if csv != wire {
+		t.Errorf("`-o csv` Evaluated = %q, want the receipt's own %q — CSV is the machine reading "+
+			"of a piece of evidence and must carry the value unaltered", csv, wire)
+	}
+	table := receiptRowValue(t, receiptRows(sr, v, ui.FormatTable), "Evaluated")
+	if csv == table {
+		t.Errorf("the card and `-o csv` both render %q — the output format is not what decides, "+
+			"so one of the two is wrong whichever way it is read", csv)
 	}
 }
 

@@ -45,6 +45,15 @@ two types** — otherwise the newest job in a busy org is usually a scheduled `D
 `verify` can do nothing with. Naming a `--type` yourself overrides that, and an id on the command
 line is always taken as given.
 
+The receipt is written when the run **finishes**, and `--latest` narrows by type, not by
+completion. `alethia project plan` returns as soon as the job is queued unless you passed `-w`, so
+the newest `PLAN` is often one that is still running — `verify` says so, and says what to do about
+it. Add `--status SUCCESS` to take the newest job that has already finished:
+
+```bash
+alethia verify receipt --latest --status SUCCESS
+```
+
 The search covers the 50 most recent jobs, newest first. A `--type` or `--status` value outside the
 enum is refused, and the message lists the values that exist.
 

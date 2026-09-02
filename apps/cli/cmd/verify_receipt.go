@@ -233,7 +233,9 @@ func verifyReceipt(sr *verify.SignedReceipt, fetchKeys func() ([]api.SigningKey,
 // runVerifyReceipt fetches a job's receipt, verifies it, renders the result, and returns the
 // error that sets a non-zero exit. json emits the whole verdict object plus the receipt;
 // table/csv render the summary card.
-func runVerifyReceipt(c apiClient, out io.Writer, format, jobID string, opts verifyOpts) error {
+// The output-format parameter is `outFmt` and not `format`, which would shadow the
+// packages/core/format import this file renders its timestamps through.
+func runVerifyReceipt(c apiClient, out io.Writer, outFmt, jobID string, opts verifyOpts) error {
 	job, err := c.GetJob(jobID)
 	if err != nil {
 		return err
@@ -251,13 +253,13 @@ func runVerifyReceipt(c apiClient, out io.Writer, format, jobID string, opts ver
 		Receipt:   sr,
 	}
 
-	if format == ui.FormatJSON {
-		if err := ui.Render(out, format, ui.TableSpec{}, result); err != nil {
+	if outFmt == ui.FormatJSON {
+		if err := ui.Render(out, outFmt, ui.TableSpec{}, result); err != nil {
 			return err
 		}
 		return verifyErr
 	}
-	if err := ui.RenderCard(out, format, "alethia · verify receipt", receiptRows(sr, verdict), result); err != nil {
+	if err := ui.RenderCard(out, outFmt, "alethia · verify receipt", receiptRows(sr, verdict, outFmt), result); err != nil {
 		return err
 	}
 	return verifyErr
@@ -303,9 +305,32 @@ func receiptStamp(raw string) string {
 	return format.Date(t, format.DateTime, time.UTC)
 }
 
+// receiptEvaluatedCell renders the Evaluated cell: the shared date rule for a person, and the
+// receipt's own wire value for CSV.
+//
+// ui.RenderCard hands these rows to ui.Render VERBATIM in its CSV branch, so humanising the cell
+// unconditionally would change what `alethia verify receipt -o csv` emits — from
+// `2026-03-09T15:04:05Z` to `9 Mar 2026, 15:04`, which no longer sorts, no longer parses, and has
+// dropped the seconds and the zone the signed document actually carries. CSV is the machine
+// reading of a piece of evidence and gets the value unaltered; the card is the human one.
+// `-o json` emits the receipt struct and never came through here either way.
+//
+// The same split cost.go's costMonthlyCell makes, for the same reason: #3736 shipped a humanised
+// cell into a shared row builder and had to be corrected for exactly this.
+func receiptEvaluatedCell(raw, outFmt string) string {
+	if outFmt == ui.FormatCSV {
+		return raw
+	}
+	return receiptStamp(raw)
+}
+
 // receiptRows projects a receipt and its signature verdict into field/value cells. Status reads
 // by glyph, never by colour — the CLI palette is grayscale.
-func receiptRows(sr *verify.SignedReceipt, v signatureVerdict) [][]string {
+//
+// outFmt is taken because these rows are BOTH renderings: RenderCard prints them as a card for a
+// person and emits them as-is for `-o csv`. Every cell that reads differently for a machine has to
+// decide here, where the format is known, rather than in a formatter that cannot see it.
+func receiptRows(sr *verify.SignedReceipt, v signatureVerdict, outFmt string) [][]string {
 	rows := [][]string{
 		{"Signature", fmt.Sprintf("%s %s", signatureGlyph(v), v.Reason)},
 		{"Trust", v.Trust},
@@ -331,7 +356,7 @@ func receiptRows(sr *verify.SignedReceipt, v signatureVerdict) [][]string {
 		rows = append(rows, []string{"Runner", sr.Receipt.Runner})
 	}
 	if sr.Receipt.EvaluatedAt != "" {
-		rows = append(rows, []string{"Evaluated", receiptStamp(sr.Receipt.EvaluatedAt)})
+		rows = append(rows, []string{"Evaluated", receiptEvaluatedCell(sr.Receipt.EvaluatedAt, outFmt)})
 	}
 	if r := sr.Receipt.Report; r != nil {
 		rows = append(rows, []string{"Controls", fmt.Sprintf("%d pass, %d fail, %d warn, %d n/a",

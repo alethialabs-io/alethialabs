@@ -91,6 +91,61 @@ func resolveVerifyJob(client jobLister, cmd *cobra.Command, args []string, sel j
 // caller can say WHY rather than reporting a verification failure for something never signed.
 var errNoReceipt = fmt.Errorf("this job carries no evidence receipt")
 
+// unfinishedJobStatuses are the states a job passes through before it has an outcome.
+//
+// The receipt is written when the run COMPLETES — executePlan posts the verify_receipt metadata
+// after the sandbox stage returns — so a job in one of these states has no receipt YET, which is a
+// different fact from a DETECT_DRIFT that will never have one, and needs a different answer.
+//
+// Through the generated constants so a status renamed or dropped from the drizzle enum fails the
+// CLI build. A status ADDED to the enum falls through as finished, which is the safe direction:
+// the worst that does is give the generic refusal to a job that is still running, where the
+// opposite would tell a reader to wait for a job that has already stopped.
+var unfinishedJobStatuses = []types.JobStatus{
+	types.JobStatusQueued,
+	types.JobStatusClaimed,
+	types.JobStatusProcessing,
+}
+
+// jobUnfinished reports whether a job has not yet reached an outcome.
+func jobUnfinished(job *api.ProvisionJob) bool {
+	if job == nil {
+		return false
+	}
+	for _, s := range unfinishedJobStatuses {
+		if strings.EqualFold(job.Status, string(s)) {
+			return true
+		}
+	}
+	return false
+}
+
+// noReceiptErr is the refusal for a receiptless job, and it says WHICH kind of receiptless.
+//
+// receiptBearingJobScope narrows `--latest` by job TYPE, and cannot narrow by completion: the
+// newest PLAN is very often one that has only just been queued, because `alethia project plan`
+// returns as soon as the job is enqueued unless `-w` was passed. So the headline flow of this
+// pass —
+//
+//	alethia project plan
+//	alethia verify receipt --latest
+//
+// resolves that queued PLAN, and a bare "this job carries no evidence receipt" reads as "plans do
+// not produce receipts": the dead end the scope exists to prevent, one axis over. Naming
+// `--status SUCCESS` turns it into an instruction, because that flag composes with the scope —
+// `--latest --status SUCCESS` is the newest FINISHED PLAN or DEPLOY.
+//
+// It WRAPS errNoReceipt rather than replacing it, so `errors.Is(err, errNoReceipt)` still answers
+// "this job had no receipt" for every caller, and the added sentence is only the remedy.
+func noReceiptErr(job *api.ProvisionJob) error {
+	if !jobUnfinished(job) {
+		return errNoReceipt
+	}
+	return fmt.Errorf("%w: it is %s, and the receipt is written when the run completes — "+
+		"wait for it, or add --status SUCCESS to take the newest job that has already finished",
+		errNoReceipt, job.Status)
+}
+
 // receiptFromJob extracts the typed SignedReceipt from a job's execution_metadata.
 //
 // execution_metadata arrives as an untyped map (api.ProvisionJob.ExecutionMetadata), so the
@@ -99,11 +154,11 @@ var errNoReceipt = fmt.Errorf("this job carries no evidence receipt")
 // typed round trip is what reproduces the signed bytes. Hand-walking the map would not.
 func receiptFromJob(job *api.ProvisionJob) (*verify.SignedReceipt, error) {
 	if job == nil || job.ExecutionMetadata == nil {
-		return nil, errNoReceipt
+		return nil, noReceiptErr(job)
 	}
 	raw, ok := (*job.ExecutionMetadata)["verify_receipt"]
 	if !ok || raw == nil {
-		return nil, errNoReceipt
+		return nil, noReceiptErr(job)
 	}
 	blob, err := json.Marshal(raw)
 	if err != nil {
