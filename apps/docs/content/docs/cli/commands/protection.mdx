@@ -11,7 +11,9 @@ environment: the gates that must pass before a promotion deploys into that envir
 <Callout type="info">
 The CLI is a client of the same Console API. `protection list` calls
 `/cli/projects/<project>/protection` with your [CLI token](/cli/authentication) and operates on the
-**active organization** (`alethia org switch`, or `--org <id>` per invocation).
+**active organization**, which you change with `alethia org switch`. There is no per-invocation
+override here: `--org` exists on `members` and `teams` only, and `alethia protection list --org …`
+is refused as an unknown flag.
 </Callout>
 
 ## `alethia protection list`
@@ -19,13 +21,19 @@ The CLI is a client of the same Console API. `protection list` calls
 List a project's per-environment protection rules.
 
 ```bash
+alethia protection list
 alethia protection list --project my-project
 alethia protection list -p my-project -o json
 ```
 
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--project`, `-p` | Yes | Project name or id. |
+Name the project with `--project`; omit it at a terminal and you are asked which project to read,
+from the ones you have.
+
+{/* fieldspec: alethia protection list */}
+
+| Field | What it is | Set with |
+|-------|------------|----------|
+| Project | Whose environments' promotion gates to read | `--project` |
 
 Columns: **Environment**, **Predecessor** (predecessor stage must be deployed + in-sync),
 **Verify** (elench verify must pass), **Approval** (a human must approve), **Approvers** (minimum
