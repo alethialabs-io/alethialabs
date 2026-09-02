@@ -513,8 +513,19 @@ export function summariseLiveEvidence(predicate, evidence) {
 				(m) => m.containers.length > 1 || (m.containers.length === 1 && m.containers[0].isShellScroller !== true),
 			);
 			nonEmpty(bad.length, "width with a scroll container that is not the shell's");
+			// R3 fails two distinct ways and the summary must not conflate them. `most` is the TOTAL
+			// container count in the worst row; `foreign` is how many of those are not the shell's.
+			// In the ordinary shape — `<main>` overflows AND a nested box overflows — those are 2 and
+			// 1, so phrasing the total as "…that are not the shell's" overstates by one and names a
+			// count nothing measured. Say which defect it is instead.
 			const most = Math.max(...bad.map((m) => m.containers.length));
-			return `${plural(most, "scroll container")} that ${isAre(most)} not the shell's${at(bad.map((m) => m.width))}`;
+			const foreign = Math.max(
+				...bad.map((m) => m.containers.filter((c) => c.isShellScroller !== true).length),
+			);
+			const widths = at(bad.map((m) => m.width));
+			return most > 1
+				? `${plural(most, "scroll container")} where only the shell's is allowed${widths}`
+				: `${plural(foreign, "scroll container")} that ${isAre(foreign)} not the shell's${widths}`;
 		}
 		if (predicate === "R4") {
 			const rows = asArray(evidence, predicate);
@@ -2322,9 +2333,9 @@ function selfTest() {
 		]) === "1 scroll container that is not the shell's at 768w",
 	);
 	ok(
-		"...and two containers is the defect even when one of them IS the shell's",
+		"...and two containers is the defect even when one of them IS the shell's — counted as a TOTAL, not as 'not the shell's'",
 		summariseLiveEvidence("R3", [{ width: 1920, containers: [{ isShellScroller: true }, { isShellScroller: false }] }]) ===
-			"2 scroll containers that are not the shell's at 1920w",
+			"2 scroll containers where only the shell's is allowed at 1920w",
 	);
 	ok(
 		"R4 counts pairs and names the widths, and carries NO element description",

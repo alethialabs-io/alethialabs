@@ -172,7 +172,7 @@ while passing the other: it can import `EmptyState` and still render a blank reg
 empty, and it can hand-roll a centred div that the audit's empty org never reaches — 26 of the 40
 routes are `no-empty-state` for T5 today, so the static matcher is the only instrument that sees
 them at all. `check-shared-surface.mjs`'s `empty_state` rule had no row here until this one existed:
-its 18 occurrences were counted in the scoreboard's reconciliation and scored nowhere, which is what
+its occurrences were counted in the scoreboard's reconciliation and scored nowhere, which is what
 #3798 was opened to end. Folding it into T5 was the alternative, and it was refused for the reason
 this rubric states everywhere else — one predicate per question. The count moved 33 → 34.
 
