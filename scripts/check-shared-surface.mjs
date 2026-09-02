@@ -132,13 +132,14 @@
 //                  does: a class list does not stop being one for living outside a component, and
 //                  those two roots hold no Tailwind class string at all today, so the wider scope
 //                  costs nothing and closes the hole a className constant would move into.
-//                  Measured on an unmodified dev: 1,079 of them across 23 distinct values and 194
-//                  files, against a `packages/brand/src/tokens.css` that carried NO UI type scale
-//                  at all — only `--text-display-lg/md/sm` for marketing headlines, starting at
-//                  30px. So every file picked its own number and the same rung of the same page is
-//                  typeset at five sizes. The scale is seven rungs DERIVED from where those 1,079
-//                  cluster, and the whole census is recorded as `lifts:` debt so it can only
-//                  shrink. The unit alternation is wider than anything live — there is not one
+//                  The census is measured by this matcher on every run, never written down here:
+//                  it spans 23 distinct values across 194 files, against a
+//                  `packages/brand/src/tokens.css` that carried NO UI type scale at all — only
+//                  `--text-display-lg/md/sm` for marketing headlines, starting at 30px. So every
+//                  file picked its own number and the same rung of the same page is typeset at
+//                  five sizes. The scale is seven rungs DERIVED from where those sites cluster,
+//                  and the whole census is recorded as `lifts:` debt so it can only shrink. The
+//                  unit alternation is wider than anything live — there is not one
 //                  `rem`/`em`/`pt` font size in the console today — because px is not the rule: a
 //                  flagged `text-[13px]` rewritten as `text-[0.8125rem]` would otherwise silence
 //                  the guard while changing nothing, which is the shape a "fix" takes. A SECOND
@@ -529,10 +530,11 @@ const RULES = [
 	{
 		// THE TYPE SCALE, added in #3733 with the ladder it points at. Everything above this rule is
 		// about a COMPONENT being reached for; this one is about a VALUE, and it is the largest
-		// single census in this file: 1,079 occurrences across 23 distinct values and 194 files,
-		// measured on an unmodified dev. `packages/brand/src/tokens.css` had no UI type scale at all
-		// until the same commit, so there was nothing to reach for — which is why every one of the
-		// 1,079 is `lifts:` debt and not one of them is a decision.
+		// single census in this file: hardcoded sizes across 23 distinct values and 194 files, and
+		// the total is whatever this matcher counts on the run, never a number typed here.
+		// `packages/brand/src/tokens.css` had no UI type scale at all until the same commit, so
+		// there was nothing to reach for — which is why every one of them is `lifts:` debt and not
+		// one of them is a decision.
 		//
 		// WHY THE UNIT ALTERNATION IS WIDER THAN THE TREE. There is not one `rem`, `em`, `pt`, `ch`
 		// or `%` font size in the console today, and the matcher reads all of them anyway. px is not
@@ -562,7 +564,7 @@ const RULES = [
 				// half of the console a className constant would move INTO.
 				scope: "console_code",
 				re: /\btext-\[(?:length:)?\d*\.?\d+(?:px|rem|em|pt|ch|%)\]/g,
-				say: "picks its own font size. Use a `--text-ui-*` rung — `text-ui-3xs` … `text-ui-xl` in packages/brand/src/tokens.css. The console carries 1,079 hardcoded sizes across 23 values and there is no reading of a page on which 12px and 12.5px are two different decisions; the rungs are derived from where those 1,079 actually cluster.",
+				say: "picks its own font size. Use a `--text-ui-*` rung — `text-ui-3xs` … `text-ui-xl` in packages/brand/src/tokens.css. The rungs are derived from where the measured sites cluster.",
 				// A VARIANT PREFIX and a HALF-PIXEL value, because both are live shapes and either
 				// one alone would leave a hole a plain `text-[13px]` probe cannot see.
 				probe: 'const a = <p className="md:text-[12.5px] text-text-tertiary">x</p>;',
@@ -1572,7 +1574,7 @@ function selfTest() {
 	// ── the type scale: a hardcoded SIZE, in any unit and behind any variant ─────────────────
 	// The largest census in this file, and the only rule about a VALUE rather than a component.
 	ok("a hardcoded pixel font size is flagged", flags('const a = <p className="text-[13px]">x</p>;'));
-	ok("...including the half-pixel values, which are 230 of the 1,079 live sites", flags('const a = <p className="text-[12.5px]">x</p>;') && flags('const a = <p className="text-[11.5px]">x</p>;'));
+	ok("...including the half-pixel values, which the census counts alongside the whole-pixel ones", flags('const a = <p className="text-[12.5px]">x</p>;') && flags('const a = <p className="text-[11.5px]">x</p>;'));
 	// THE VARIANT PREFIX. `layer_token` shipped for a year with a lookbehind that excluded `:`, so
 	// `md:z-50` read as clean and the rule taught its own evasion. This one is written to admit
 	// every prefix, and these three are how that is proved rather than asserted.
