@@ -40,7 +40,7 @@ import { cn } from "@repo/ui/utils";
  * flashes before.
  */
 const KNOWLEDGE_EMPTY =
-	"gap-3 p-8 md:p-8 [&_[data-slot=empty-title]]:text-[13px] [&_[data-slot=empty-title]]:font-normal [&_[data-slot=empty-description]]:text-xs";
+	"gap-3 p-8 md:p-8 [&_[data-slot=empty-title]]:text-ui-md [&_[data-slot=empty-title]]:font-normal [&_[data-slot=empty-description]]:text-xs";
 
 /** "2.1k" / "840" — knowledge size reads as a budget, so it's always a bare figure. */
 function size(n: number): string {
@@ -211,12 +211,12 @@ export function AgentKnowledgePanel({
 				</div>
 				<div className="ml-auto flex items-center gap-2">
 					{!loading && !canEdit ? (
-						<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+						<span className="flex items-center gap-1 text-ui-xs text-muted-foreground">
 							<Lock className="h-3 w-3" />
 							Read-only
 						</span>
 					) : (
-						<span className="text-[11px] text-muted-foreground">
+						<span className="text-ui-xs text-muted-foreground">
 							{state === "saving"
 								? "Saving…"
 								: state === "saved"
@@ -255,7 +255,7 @@ export function AgentKnowledgePanel({
 
 							{/* ── Instructions ──────────────────────────────────────── */}
 							<section className="space-y-2">
-								<div className="vx-eyebrow text-[9px]">Instructions</div>
+								<div className="vx-eyebrow text-ui-3xs">Instructions</div>
 								<p className="text-xs text-muted-foreground">
 									How Elench should behave in{" "}
 									{projectId ? "this project" : "org chats"}. Rides every turn.
@@ -282,10 +282,10 @@ export function AgentKnowledgePanel({
 							{/* ── Knowledge documents ───────────────────────────────── */}
 							<section className="space-y-2">
 								<div className="flex items-baseline justify-between gap-2">
-									<div className="vx-eyebrow text-[9px]">Knowledge</div>
+									<div className="vx-eyebrow text-ui-3xs">Knowledge</div>
 									<span
 										className={cn(
-											"font-mono text-[10px]",
+											"font-mono text-ui-2xs",
 											over ? "text-foreground" : "text-muted-foreground",
 										)}
 									>
@@ -340,11 +340,11 @@ export function AgentKnowledgePanel({
 												<span className="min-w-0 flex-1">
 													<span
 														title={d.title}
-														className="block truncate text-[13px] font-medium text-foreground"
+														className="block truncate text-ui-md font-medium text-foreground"
 													>
 														{d.title}
 													</span>
-													<span className="block font-mono text-[10px] text-muted-foreground">
+													<span className="block font-mono text-ui-2xs text-muted-foreground">
 														{size(d.content.length)} · {relTime(d.updated_at)}
 													</span>
 												</span>
@@ -395,7 +395,7 @@ export function AgentKnowledgePanel({
 											className="rounded-none text-sm"
 										/>
 										<div className="flex items-center justify-between">
-											<span className="font-mono text-[10px] text-muted-foreground">
+											<span className="font-mono text-ui-2xs text-muted-foreground">
 												{size(editing.content.length)}
 											</span>
 											<span className="flex items-center gap-1.5">
@@ -445,7 +445,7 @@ export function AgentKnowledgePanel({
 										onClick={() => setDerivedOpen((o) => !o)}
 										className="flex w-full items-center gap-1.5 text-left"
 									>
-										<span className="vx-eyebrow text-[9px]">
+										<span className="vx-eyebrow text-ui-3xs">
 											Already known · auto-derived
 										</span>
 										<ChevronDown
@@ -466,10 +466,10 @@ export function AgentKnowledgePanel({
 													key={`${r.label}-${i}`}
 													className="flex gap-4 px-3 py-2"
 												>
-													<dt className="w-40 flex-none text-[12px] text-muted-foreground">
+													<dt className="w-40 flex-none text-ui-sm text-muted-foreground">
 														{r.label || "—"}
 													</dt>
-													<dd className="min-w-0 flex-1 break-words font-mono text-[11px] text-foreground">
+													<dd className="min-w-0 flex-1 break-words font-mono text-ui-xs text-foreground">
 														{r.value}
 													</dd>
 												</div>

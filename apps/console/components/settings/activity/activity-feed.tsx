@@ -95,7 +95,7 @@ export function ActivityFeed({
 											className="size-6 shrink-0 rounded-full border border-border object-cover"
 										/>
 									) : (
-										<span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-surface-muted font-mono text-[9px] text-text-secondary">
+										<span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-surface-muted font-mono text-ui-3xs text-text-secondary">
 											{userInitials({
 												name: row.actorName,
 												email: row.actorEmail,
@@ -106,12 +106,12 @@ export function ActivityFeed({
 									<span
 										title={e.denied ? (e.detail ?? undefined) : undefined}
 										className={cn(
-											"min-w-0 flex-1 truncate text-[13px]",
+											"min-w-0 flex-1 truncate text-ui-md",
 											e.denied ? "text-text-secondary" : "text-text-primary",
 										)}
 									>
 										{e.denied && (
-											<span className="mr-1.5 rounded-full border border-border-strong px-1.5 py-px align-middle font-mono text-[9px] uppercase tracking-wide text-text-tertiary">
+											<span className="mr-1.5 rounded-full border border-border-strong px-1.5 py-px align-middle font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary">
 												Denied
 											</span>
 										)}
@@ -131,7 +131,7 @@ export function ActivityFeed({
 									<time
 										dateTime={row.ts}
 										title={formatDate(row.ts, "datetime")}
-										className="shrink-0 whitespace-nowrap font-mono text-[11px] text-text-tertiary"
+										className="shrink-0 whitespace-nowrap font-mono text-ui-xs text-text-tertiary"
 									>
 										{formatRelative(row.ts)}
 									</time>
