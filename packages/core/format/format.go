@@ -191,6 +191,17 @@ func group(s string) string {
 //
 // There is no Go caller today. It is mirrored anyway so the contract is STATED for the day one is
 // written, rather than rediscovered — the same argument the TypeScript side makes for Bytes.
+//
+// The first one is proposed in #3659, which would point `apps/cli`'s `ui.FloatOrDash` here for
+// `protection list`'s `Cost Δ` — it wants an exact amount with no `/mo`, which is this function and
+// not MonthlyRate — multiplying by 100 to meet the minor-unit signature and passing "USD"
+// explicitly, because a `cost_delta_threshold` carries no currency on the wire. Stated in the
+// conditional because that lane has not landed: `ui.FloatOrDash` still renders `$%.2f` at this
+// commit, and a doc that describes a caller before it exists is the stale-forward note this file
+// spends its length warning about.
+//
+// When it does land, the KNOWN LIMITATION above governs it unchanged — both the divisor and the
+// assumed currency stay two-decimal, which is the only shape this function is honest about.
 func Money(cents float64, currency string) string {
 	return render(cents/100, currency, decimalsFor(currency))
 }

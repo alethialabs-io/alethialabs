@@ -233,14 +233,27 @@ export const MONEY: MoneyCase[] = [
 	{ id: "money/negative-three-decimal-cents", cents: -816.5, currency: "USD" },
 	// NEGATIVE ZERO IS ABSENT AND CANNOT BE ADDED — recorded here so the next reader does not
 	// "fix" the gap with a row that proves nothing. `JSON.stringify(-0)` is `"0"`, so a `cents: -0`
-	// case reaches Go as `+0` and passes whatever either language does with the sign. It is a real
-	// asymmetry (Go's `render` tests `amount < 0`, which is false for `-0`, and then
-	// `strconv.FormatFloat` emits the `-` anyway) and this table is structurally unable to see it.
-	// It needs a Go-side unit test if it is ever worth pinning; no caller produces `-0` today.
+	// case reaches Go as `+0` and passes whatever either language does with the sign. This table is
+	// structurally unable to see it.
 	//
-	// A CONTROL, and it is why "add a three-decimal row" is not the whole instruction: `2.675`
-	// scales to `267.49999999999994`, the same side of the half as the decimal, so this pair agreed
-	// all along. A table of three-decimal values that happened to pick only these proves nothing.
+	// AND THE TWO LANGUAGES DO DISAGREE ABOUT IT. Go's `render` tests `amount < 0`, which is false
+	// for `-0`, so it adds no sign — and then `strconv.FormatFloat(-0, 'f', 2, 64)` emits one
+	// anyway, giving `$-0.00`, a form nobody writes and the opposite of this package's
+	// sign-leads-the-symbol rule. TypeScript answered `-$0.00` before #3899 and answers `$0.00`
+	// after it, because `roundHalfAwayFromZero` rounds the magnitude and `-0 < 0` is false.
+	//
+	// A CALLER REACHES IT: `apps/console/components/agent/widgets/registry.tsx`'s `usd()` is
+	// `formatMoney(Math.round(v * 100))`, and `Math.round(-0.001 * 100)` IS `-0`, so any
+	// `overage_cost_usd` in `[-0.005, 0)` lands here. "No caller produces -0" was written in this
+	// comment and was wrong. Pinning it needs a Go-side unit test and a decision about which answer
+	// is right; `$-0.00` is the one that is clearly not.
+	//
+	// A CONTROL, and it is why "add a three-decimal row" is not the whole instruction. `2.675`
+	// agrees, and NOT for the reason first written here: `2.675 * 100` is EXACTLY `267.5` as a
+	// double — the product lands precisely ON the half, where both languages round away from zero
+	// and cannot disagree. The divergent case needs a product that lands just BELOW the half, like
+	// `8.165 * 100` = `816.4999999999999`. Picking controls by "it has three decimals" selects this
+	// class as often as that one, which is how the original blind spot survived.
 	{ id: "money/three-decimal-cents-that-agreed-all-along", cents: 267.5, currency: "USD" },
 ];
 

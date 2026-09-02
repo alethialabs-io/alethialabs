@@ -328,6 +328,22 @@ export function formatMonthlyRate(amount: number, style: MonthlyRateStyle = "est
 	//
 	// `money` rounds again at the same places, which is idempotent and is the point: the rule lives
 	// in one function and this call site only has to name the places its own BRANCH asks about.
+	//
+	// KNOWN GAP, and #3899 WIDENED it rather than opening it. `minorUnits` asks Intl; Go's
+	// `decimalsFor` reads a map that contains exactly one entry, JPY. Intl calls HUF, ISK, UGX, KRW,
+	// CLP and VND zero-decimal too, so for those six the two languages already disagree about how
+	// many digits to PRINT — that part predates this function. What is new is that the `<1` test now
+	// inherits the disagreement: `formatMonthlyRate(0.6, "estimate", "HUF")` rounds to 1 here and
+	// says `Ft 1/mo`, where Go rounds at 2 places, stays at 0.6, and says `<1 HUF/mo`. The old
+	// hardcoded `100` matched Go only by accident — it agreed with `decimalsFor`'s *fallback* of 2.
+	//
+	// Not closed here, and not by adding the six to Go's map either. That map is display-only and
+	// CLDR is the right authority for display, so the addition looks obviously correct — but HUF,
+	// ISK and UGX are exactly the currencies Stripe documents as TWO-decimal for charges while CLDR
+	// calls them zero, which is the collision #3581 exists to resolve. Making the display table
+	// agree while the divisor question is open would freeze half an answer. No caller passes any of
+	// the six today, and the conformance table deliberately covers two-decimal currencies only, so
+	// neither language's answer is pinned as the contract.
 	const rounded = roundHalfAwayFromZero(amount, minorUnits(currency));
 	if (style === "estimate" && rounded < 1) return `<${money(1, currency, 0)}${suffix}`;
 	return `${money(rounded, currency)}${suffix}`;
@@ -477,6 +493,9 @@ function roundHalfAwayFromZero(x: number, places: number): number {
 	return x < 0 ? -magnitude : magnitude;
 }
 
+/** Memo for {@link minorUnits}; see the note inside it for why it is safe to keep. */
+const minorUnitsByCurrency = new Map<string, number>();
+
 /**
  * How many fraction digits {@link money} will print for a currency when it is not told — 2 for USD,
  * 0 for JPY.
@@ -486,11 +505,31 @@ function roundHalfAwayFromZero(x: number, places: number): number {
  * question, which is the one CLDR is the authority for. (The divisor question — how many minor
  * units a PAYMENT is quoted in — has a different authority and is not asked here.)
  *
- * It exists so {@link formatMonthlyDelta} can pre-round at the same places it is about to print,
- * the way `packages/core/format`'s `render` does. Reading it back off the formatter keeps the two
+ * It exists so the money functions can pre-round at the same places they are about to print, the
+ * way `packages/core/format`'s `render` does. Reading it back off the formatter keeps the two
  * numbers the same number by construction.
  */
 function minorUnits(currency: string): number {
+	// MEMOISED because #3899 moved this onto the hot path. `money` is the one Intl call every money
+	// function goes through, and it now asks this question on every invocation where the caller did
+	// not fix the decimals — so `formatMonthlyRate` went from building one `Intl.NumberFormat` per
+	// call to three, and `formatMonthlyDelta("exact")` to four. Measured on Node: 13.0 µs → 41.5 µs
+	// per `formatMonthlyRate`, and the canvas renders one cost chip per node while the billing and
+	// invoice tables render one per row, so it is hundreds of calls per paint.
+	//
+	// Safe to cache for the life of the module: the answer is a pure function of the currency code
+	// and of `LOCALE`, which is a fixed constant in this file precisely so output cannot vary by
+	// where the code runs. An unsupported code throws inside `Intl` before anything is stored, so a
+	// bad currency is never cached as an answer.
+	const cached = minorUnitsByCurrency.get(currency);
+	if (cached !== undefined) return cached;
+	const computed = uncachedMinorUnits(currency);
+	minorUnitsByCurrency.set(currency, computed);
+	return computed;
+}
+
+/** Asks Intl the question {@link minorUnits} caches: how many fraction digits `currency` prints. */
+function uncachedMinorUnits(currency: string): number {
 	// Counted off a rendered zero rather than read from `resolvedOptions()`, which types
 	// `maximumFractionDigits` as optional and would need a fallback branch no input can reach —
 	// and an unreachable fallback holding the number `2` is the tabulated minor unit this function
