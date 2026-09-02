@@ -25,12 +25,15 @@ import (
 // are what packages/core actually contains today, and #3888 touches exactly those four files.
 // Each is deleted when #3888 lands — that PR's own diff is what makes the entry stale, and the
 // staleness check turns "forgot to delete it" into a red run rather than a silent allowance.
+// The four #3888 entries are GONE, which is the staleness check doing its job. Each said
+// "remove this entry when #3888 lands"; #3888 landed, the four files now render through
+// packages/core/format, and the check below failed on all four at once — "names a file that
+// produces no finding — delete it; the list only shrinks".
+//
+// That is the property worth keeping: an exemption written against a tree that has since moved
+// cannot sit here reading as evidence the defect survives.
 var renderExemptions = map[string]string{
-	"infracost/infracost.go":               "#3768: Infracost's external summary remains a documented migration exception",
-	"argocd/webhook_wait.go":               "#3888 (open): the admission-webhook timeout span moves to format.Duration there — remove this entry when #3888 lands",
-	"k8s/probe.go":                         "#3888 (open): both API-server reachability spans move to format.Duration there — remove this entry when #3888 lands",
-	"provisioner/cost_ceiling.go":          "#3888 (open): the two $%.2f ceiling literals move to the shared money formatter there — remove this entry when #3888 lands",
-	"provisioner/destroy_loadbalancers.go": "#3888 (open): the load-balancer release span moves to format.Duration there — remove this entry when #3888 lands",
+	"infracost/infracost.go": "#3768: Infracost's external summary remains a documented migration exception",
 }
 
 var moneyLiteral = regexp.MustCompile(`[$€£¥]%[-+ #0-9.*']*[a-zA-Z]`)
