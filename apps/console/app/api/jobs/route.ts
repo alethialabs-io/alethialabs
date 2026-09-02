@@ -303,8 +303,12 @@ function badRequest(error: string): NextResponse {
  * `getJobsPage`, which reads through RLS at `org_id` — answered the same question differently:
  * a teammate's deploy of the org's own project was invisible from the terminal and plainly
  * listed in the browser. One product, two surfaces, two answers. The org is the tenancy scope
- * everywhere else in the schema (`jobs.org_id` is trigger-populated from the parent project, so
- * it is never null and never drifts from `projects.org_id`), so the org is what this lists.
+ * everywhere else in the schema, so the org is what this lists. `jobs.org_id` is stamped on
+ * insert by `jobs_set_org_id` (programmables.sql), which derives it from the parent project and
+ * falls back to the session org and then to `user_id` — `user_id` is NOT NULL, so the trigger has
+ * no path that leaves the column unset. The column is nonetheless declared nullable and holds
+ * pre-trigger history, which the migrations backfill rather than the schema forbid; that is why
+ * this is a WHERE clause on org_id and not an assumption that every row has one.
  *
  * `?mine=true` is what makes the OLD behaviour addressable instead of implicit. It narrows to the
  * caller's own jobs, and — being a scope predicate rather than a post-filter — it narrows `total`
