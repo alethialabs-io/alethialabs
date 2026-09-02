@@ -87,7 +87,7 @@ the first would let the second spread as the fix.
 |---|---|---|---|
 | **T1** | the page's loading skeleton is *its own or a correct ancestor's* | `boundaries.loading.own`, **or** an inherited one whose page shape genuinely matches (see below) | `redirect-only` |
 | **T2** | an error boundary covers the segment | `boundaries.error.file` is non-null | never — every route can throw |
-| **T3** | `notFound()` has a `not-found.tsx` in its own chain | the page calls `notFound()` and the nearest `not-found.tsx` is scoped to the same resource | `does-not-call-not-found` |
+| **T3** | `notFound()` has a `not-found.tsx` in its own chain | the page calls `notFound()`, the nearest `not-found.tsx` is scoped to the same resource, **and it can fire** — no layout at that resource's own segment throws past it | `does-not-call-not-found` |
 | **T4** | the page declares metadata | `hasMetadata` — on the page, or on its own layout for a client page | never — a redirect still owns a title |
 | **T5** | the empty state renders through `EmptyState` | driven against an empty org, the rendered empty region resolves to `@repo/ui/empty` | `no-empty-state` (the page has no list, tab or panel that can be empty) |
 | **T6** | the error state renders through the shared error component | fault-injected, the page renders `components/errors/error-state` | `redirect-only` |
@@ -117,10 +117,28 @@ not "the two pages share a shell and a width". Sharing a width is a property of 
 today: `~/settings/billing/invoices` shares both with `~/settings/billing` and still renders the
 billing **panel** skeleton over an invoice table, which is the defect this row is measuring.
 
-**T3 is about the resource, not the file.** 38 of 40 private routes resolve to `[org]/not-found.tsx`
-— including every project-scoped route, so a bad *project* slug answers "Organization not found… or
-you don't have access". The nearest boundary existing is not the predicate; the nearest boundary
-naming the right thing is.
+**T3 is about the resource, not the file.** Before #3880, 38 of 40 private routes resolved to
+`[org]/not-found.tsx` — including every project-scoped route, so a bad *project* slug answered
+"Organization not found… or you don't have access". The nearest boundary existing is not the
+predicate; the nearest boundary naming the right thing is.
+
+**And it is about the boundary being able to fire.** A segment's `not-found.tsx` is handed to the
+`LayoutRouter` for that segment's **children** slot, so it mounts *inside* that segment's own
+layout: a `notFound()` thrown in a **page** is caught by its segment's boundary, and one thrown in
+that segment's own **layout** is not — it unwinds to the next boundary above. #3880 is that
+distinction. Nine `[project]/**` routes failed T3 because their layout threw, and dropping a
+`not-found.tsx` beside that layout would have flipped all nine to a PASS the boundary could never
+deliver, which is why the predicate reads the layout chain and not only the page. The rule:
+
+- the throw is in the **page** → the segment's own `not-found.tsx` catches it;
+- the throw is in a **layout** at segment X → the catching boundary must be **strictly above** X,
+  and when X *is* the innermost dynamic segment that is unsatisfiable together with the scope half.
+  The fix is to move the throw, not to move the file.
+
+Two bounds are stated in `scripts/check-route-states.mjs` rather than left implicit: the N/A gate is
+still the **page's** `notFound()` (a layout-only throw, such as `[org]/layout.tsx`'s, is not
+reported), and only layouts **at or below** the route's innermost dynamic segment are read (one
+above it throws about an outer resource and is measured on that resource's own routes).
 
 ## Family H — the shared surface  ·  static
 
