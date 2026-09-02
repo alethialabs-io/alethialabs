@@ -24,7 +24,7 @@ Both commands act on one job. The id is optional, and there are three ways to sa
 mean:
 
 ```bash
-alethia verify receipt 8f3c2a1e-...   # an id you already have
+alethia verify receipt 8f3c2a1e-4b7d-4c2a-9f1e-2d3c4b5a6978  # an id you already have
 alethia verify receipt --latest       # the most recent PLAN or DEPLOY — no id needed
 alethia verify receipt                # a picker, on a terminal
 ```
@@ -63,7 +63,7 @@ Fetch a job's receipt and verify it.
 
 ```bash
 alethia verify receipt --latest
-alethia verify receipt 4f3c2b1a-... -o json
+alethia verify receipt 4f3c2b1a-9d6e-4a3b-8c17-5e2f1a9b7c04 -o json
 alethia verify receipt --latest --key-file alethia-receipts.pub
 ```
 
@@ -147,7 +147,7 @@ Print the per-control report the receipt seals.
 
 ```bash
 alethia verify show --latest
-alethia verify show 4f3c2b1a-... -o json
+alethia verify show 4f3c2b1a-9d6e-4a3b-8c17-5e2f1a9b7c04 -o json
 ```
 
 The selector flags from [Choosing the job](#choosing-the-job) are the only ones this command takes.
