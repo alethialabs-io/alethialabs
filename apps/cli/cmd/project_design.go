@@ -167,7 +167,7 @@ func designApplyGate(c apiClient, out io.Writer, p api.ApplyDesignParams, yes bo
 	// Checked BEFORE confirmDestructive so the refusal can say why --yes is needed here. The
 	// shared error names the contract; this one names the reason, which is what a pipeline
 	// author has to understand before adding the flag.
-	if noInputMode && !yes {
+	if !canPromptForm() && !yes {
 		return designApplyDeclined, errDesignApplyWouldDelete(deletes)
 	}
 	if !confirmDestructive(yes, "Apply a design that REMOVES components?",
