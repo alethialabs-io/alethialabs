@@ -16,6 +16,7 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+	addonMode,
 	cacheEngine,
 	chartWorkloadKind,
 	cloudProvider,
@@ -72,6 +73,7 @@ const ENUMS: EnumSpec[] = [
 	{ typeName: "ServiceBindingKind", dbName: "service_binding_kind", values: serviceBindingKind.enumValues },
 	{ typeName: "ServiceBindingFacet", dbName: "service_binding_facet", values: serviceBindingFacet.enumValues },
 	{ typeName: "TopicSubscriptionProtocol", dbName: "topic_subscription_protocol", values: topicSubscriptionProtocol.enumValues },
+	{ typeName: "AddonMode", dbName: "addon_mode", values: addonMode.enumValues },
 ];
 
 function renderEnum(e: EnumSpec): string {
