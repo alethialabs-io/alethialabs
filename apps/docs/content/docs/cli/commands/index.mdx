@@ -163,10 +163,11 @@ alethia
 
 <Callout type="info">
 Every org-scoped command operates on the **active organization**, which you set with
-`alethia org switch`. There is one per-invocation override, `--org <id>`, and it exists on
-`members` and `teams` only — no other group accepts it, so `alethia cluster list --org …` is
-refused as an unknown flag. The `cluster` command is singular with a `clusters` alias, so both
-`alethia cluster list` and `alethia clusters list` work.
+`alethia org switch`. `--org <id>` overrides that for a single invocation, and it is a GLOBAL flag —
+`alethia cluster list --org acme` works, and so does the same flag on every other group. It selects
+a scope rather than granting one: an organization you are not a member of is refused with `403`, and
+a service token's own organization always wins. The `cluster` command is singular with a `clusters`
+alias, so both `alethia cluster list` and `alethia clusters list` work.
 </Callout>
 
 <Callout type="info">

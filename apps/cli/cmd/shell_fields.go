@@ -13,7 +13,7 @@ import (
 //
 // A CLI value is rendered four times: as a flag or a positional, as a question in an interactive
 // form, as a key somewhere on disk, and as a row in the docs. The auth group's spec
-// (auth_fields.go) is the same idea for a noun group; this is the same idea for the three values
+// (auth_fields.go) is the same idea for a noun group; this is the same idea for the four values
 // that are not any group's, because every command in the tree inherits them.
 //
 // They had already drifted, in the way a global always does — nobody owns it, so nothing checks it:
@@ -57,6 +57,7 @@ const (
 	shellKeyOutput  = "output"
 	shellKeyNoInput = "no-input"
 	shellKeyToken   = "token"
+	shellKeyOrg     = "org"
 	shellKeyTarget  = "target"
 )
 
@@ -99,6 +100,16 @@ var shellFields = []shellField{
 		// The backquoted word is cobra's own convention for naming a flag's argument in --help.
 		Usage: "Service-account `token` for non-interactive use (or set $" + ServiceTokenEnv + "). Skips the interactive login entirely.",
 		Docs:  "Service-account token for non-interactive use. Prefer the `ALETHIA_TOKEN` environment variable in CI: a flag value lands in the process table and in shell history.",
+		Pages: shellGlobalFlagPages,
+	},
+	{
+		Command: "alethia",
+		Key:     shellKeyOrg,
+		Flag:    "org",
+		Default: "the active org",
+		// The backquoted word is cobra's own convention for naming a flag's argument in --help.
+		Usage: "Organization `id` to act in for this invocation (defaults to the active org)",
+		Docs:  "Organization to act in for this invocation, instead of the active one. Sent as the `X-Alethia-Org` header on every request, and used as the org in the request path of `members` and `teams`. It selects a scope rather than granting one: the control plane refuses it with `403` when you are not a member of that organization, and a service token's own organization always wins.",
 		Pages: shellGlobalFlagPages,
 	},
 	{
@@ -185,4 +196,10 @@ func registerShellGlobalFlags(cmd *cobra.Command) {
 	// questions, this one gives it an answer to the only question a pipeline cannot answer.
 	token := mustShellField("alethia", shellKeyToken)
 	cmd.PersistentFlags().StringVar(&serviceTokenFlag, token.Flag, "", token.Usage)
+
+	// The TENANCY selector, beside the credential because they answer the same shape of question:
+	// which identity, and whose data. Registered on the root and NOWHERE else — see org_scope.go
+	// for why a second registration on `members`/`teams` would be worse than none (#3817).
+	org := mustShellField("alethia", shellKeyOrg)
+	cmd.PersistentFlags().StringVar(&orgFlag, org.Flag, "", org.Usage)
 }

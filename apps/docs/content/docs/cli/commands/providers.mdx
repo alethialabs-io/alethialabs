@@ -12,7 +12,18 @@ these commands only inspect and re-probe one.
 <Callout type="info">
 The CLI is a client of the same Console API. These subcommands call `/cli/providers/<provider>/*`
 with your [CLI token](/cli/authentication) and operate on the **active organization**
-(`alethia org switch`). There is no per-invocation `--org` override.
+(`alethia org switch`).
+</Callout>
+
+<Callout type="warn">
+**`--org` is accepted here but not honoured.** The global flag scopes a request by sending the
+organization as a header, and the cloud-identity endpoints behind the `connector` and `provider`
+commands are the only ones in the CLI that resolve their organization from your active context
+without reading it. So `alethia provider status aws --org other-org` inspects your ACTIVE
+organization rather than the one you named, and says nothing about having done so. Use
+`alethia org switch` to move scope for these commands until that is fixed. A service token is
+unaffected: its organization is fixed when it is minted, and a request naming a different one is
+refused with `403`.
 </Callout>
 
 ## `alethia provider status`

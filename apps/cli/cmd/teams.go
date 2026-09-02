@@ -29,7 +29,7 @@ var teamsListCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		orgID, err := currentOrgID(cmd)
+		orgID, err := currentOrgID()
 		if err != nil {
 			fail(err)
 		}
@@ -94,7 +94,7 @@ no name, the form asks for one.`,
 		if err != nil {
 			fail(err)
 		}
-		orgID, err := currentOrgID(cmd)
+		orgID, err := currentOrgID()
 		if err != nil {
 			fail(err)
 		}
@@ -143,7 +143,7 @@ neither, pick from the org's teams.`,
 		if err != nil {
 			fail(err)
 		}
-		orgID, err := currentOrgID(cmd)
+		orgID, err := currentOrgID()
 		if err != nil {
 			fail(err)
 		}
@@ -177,7 +177,8 @@ func runTeamsDelete(c apiClient, out io.Writer, orgID, teamID string) error {
 
 func init() {
 	addYesFlag(teamsDeleteCmd, &teamsDeleteYes)
-	teamsCmd.PersistentFlags().String("org", "", "Organization id (defaults to the active org)")
+	// No `--org` here — it is a ROOT persistent flag now (shell_fields.go, #3817). See the note in
+	// members.go's init for why a second registration on the group would be worse than none.
 	teamsDeleteCmd.Flags().StringVar(&teamsDeleteName, "name", "",
 		"Delete the team with this name, instead of naming a team id")
 	teamsCmd.AddCommand(teamsListCmd)

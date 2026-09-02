@@ -40,6 +40,16 @@ with `alethia connector gcp` immediately shows up in the console Connectors page
 versa.
 </Callout>
 
+<Callout type="warn">
+**`--org` is accepted here but not honoured.** The global flag scopes a request by sending the
+organization as a header, and the cloud-identity endpoints behind the `connector` and `provider`
+commands are the only ones in the CLI that resolve their organization from your active context
+without reading it. So `alethia connector remove --org other-org` acts on your ACTIVE organization
+rather than the one you named, and says nothing about having done so. Use `alethia org switch` to
+move scope for these commands until that is fixed. A service token is unaffected: its organization
+is fixed when it is minted, and a request naming a different one is refused with `403`.
+</Callout>
+
 ## How It Works
 
 Each `connector` subcommand runs the same three-stage pipeline, verified server-side:

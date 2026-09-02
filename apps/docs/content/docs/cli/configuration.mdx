@@ -177,13 +177,14 @@ environment documented with the runner deployment method.
 
 ## Global Flags
 
-Three persistent flags are available on every command:
+Four persistent flags are available on every command:
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-o, --output <table\|json\|csv>` | `table` | Output format. `json`/`csv` print static, machine-readable output, and never open an interactive table. |
 | `--no-input` | off | Disable interactive prompts; fail instead of prompting. Auto-enabled when stdin is not a terminal. A form is refused separately when the stream it would draw on is redirected, so `alethia … 2> log` still renders the rich table. |
 | `--token <token>` | unset | Service-account token for non-interactive use. Prefer the `ALETHIA_TOKEN` environment variable in CI: a flag value lands in the process table and in shell history. |
+| `--org <id>` | the active org | Organization to act in for this invocation, instead of the active one. Sent as the `X-Alethia-Org` header on every request, and used as the org in the request path of `members` and `teams`. It selects a scope rather than granting one: the control plane refuses it with `403` when you are not a member of that organization, and a service token's own organization always wins. |
 
 See [Identity & Global Options](/cli/identity) for output-format examples and scripting tips.
 

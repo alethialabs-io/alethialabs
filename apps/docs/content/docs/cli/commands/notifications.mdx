@@ -12,8 +12,9 @@ Alethia's notification system has three parts, all manageable from the CLI:
 - **Alert rules** bind product events (event-key patterns) to one or more channels.
 - The **activity log** is a durable record of every action, denial, and alert delivery.
 
-All commands operate on the **active organization** (set via `alethia org switch`); there is no
-per-invocation `--org` override. Every command accepts the global
+All commands operate on the **active organization** (set via `alethia org switch`), or on the
+organization named by the global `--org <id>` for a single invocation — which is refused with `403`
+if you are not a member of it. Every command accepts the global
 [`-o, --output <table|json|csv>`](/cli/identity#output-formats) flag.
 
 <Callout type="info">

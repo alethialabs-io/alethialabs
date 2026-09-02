@@ -12,7 +12,8 @@ disable it, or list what is installed.
 <Callout type="info">
 The CLI is a client of the same Console API. These subcommands call `/cli/projects/<project>/addons`
 with your [CLI token](/cli/authentication) and operate on the **active organization**
-(`alethia org switch`). There is no per-invocation `--org` override.
+(`alethia org switch`). Pass `--org <id>` to scope a single invocation to a different organization —
+it is refused with `403` if you are not a member of it.
 </Callout>
 
 ## No id is copied between commands
