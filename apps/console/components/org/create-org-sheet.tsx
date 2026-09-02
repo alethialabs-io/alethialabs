@@ -434,7 +434,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 												setView("name");
 												setClientSecret(null);
 											}}
-											className="text-left text-[12.5px] text-text-tertiary transition-colors hover:text-text-primary"
+											className="text-left text-ui-sm text-text-tertiary transition-colors hover:text-text-primary"
 										>
 											← Back
 										</button>
@@ -533,24 +533,24 @@ function NamePanel({
 					}}
 				/>
 				<div className="flex items-center justify-between pt-1">
-					<span className="font-mono text-[11.5px] text-text-tertiary">
+					<span className="font-mono text-ui-xs text-text-tertiary">
 						{orgHost()}/<span className="text-text-secondary">{slug || "org"}</span>
 					</span>
 					<button
 						type="button"
 						onClick={() => setShowUrl(!showUrl)}
-						className="font-mono text-[11px] text-text-tertiary transition-colors hover:text-text-primary"
+						className="font-mono text-ui-xs text-text-tertiary transition-colors hover:text-text-primary"
 					>
 						{showUrl ? "Done" : "Customize URL"}
 					</button>
 				</div>
 				{showUrl && (
 					<div className="flex h-9 items-center overflow-hidden rounded-sm border border-input bg-transparent focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
-						<span className="whitespace-nowrap pl-3 pr-0.5 font-mono text-[12px] text-text-tertiary">
+						<span className="whitespace-nowrap pl-3 pr-0.5 font-mono text-ui-sm text-text-tertiary">
 							{orgHost()}/
 						</span>
 						<input
-							className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-[12px] text-text-primary outline-none"
+							className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-ui-sm text-text-primary outline-none"
 							placeholder="acme-cloud"
 							autoComplete="off"
 							value={slug}
@@ -564,7 +564,7 @@ function NamePanel({
 					</div>
 				)}
 				{form.formState.errors.slug?.message && (
-					<p className="text-[11px] text-destructive">
+					<p className="text-ui-xs text-destructive">
 						{form.formState.errors.slug.message}
 					</p>
 				)}
@@ -601,21 +601,21 @@ function TrialPanel({
 			<button
 				type="button"
 				onClick={onBack}
-				className="text-[12.5px] text-text-tertiary transition-colors hover:text-text-primary"
+				className="text-ui-sm text-text-tertiary transition-colors hover:text-text-primary"
 			>
 				← Back
 			</button>
 
 			<div className="rounded-lg border border-border">
 				<div className="flex items-center justify-between border-b border-border px-4 py-3">
-					<span className="text-[13px] font-medium text-text-primary">Due today</span>
-					<span className="font-display text-[18px] font-semibold text-text-primary">
+					<span className="text-ui-md font-medium text-text-primary">Due today</span>
+					<span className="font-display text-ui-xl font-semibold text-text-primary">
 						$0
 					</span>
 				</div>
-				<div className="flex items-center justify-between px-4 py-3 text-[12.5px] text-text-secondary">
+				<div className="flex items-center justify-between px-4 py-3 text-ui-sm text-text-secondary">
 					<span>After your {trialDays}-day free trial</span>
-					<span className="font-mono text-[12px] text-text-primary">
+					<span className="font-mono text-ui-sm text-text-primary">
 						{priceLabel}
 					</span>
 				</div>
@@ -625,7 +625,7 @@ function TrialPanel({
 				{busy ? "Setting up…" : `Start ${trialDays}-day free trial`}
 				<ArrowRight size={15} />
 			</Button>
-			<p className="text-center font-mono text-[10px] text-text-tertiary">
+			<p className="text-center font-mono text-ui-2xs text-text-tertiary">
 				No charge during the trial · cancel anytime
 			</p>
 		</div>
@@ -636,7 +636,7 @@ function TrialPanel({
 function RetrySetup({ busy, onRetry }: { busy: boolean; onRetry: () => void }) {
 	return (
 		<div className="space-y-3">
-			<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-[12.5px] text-text-secondary">
+			<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
 				Your payment went through, but we couldn&apos;t finish setting up the team. You
 				won&apos;t be charged again — retry to complete setup.
 			</p>
