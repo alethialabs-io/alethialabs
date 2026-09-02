@@ -210,7 +210,7 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 					>
 						{!error && (
 							<div className="mb-3 flex items-center justify-between">
-								<span className="text-[12px] text-text-secondary">Billing currency</span>
+								<span className="text-ui-sm text-text-secondary">Billing currency</span>
 								<CurrencyToggle
 									value={currency}
 									onChange={setSelected}
@@ -220,7 +220,7 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 						)}
 						{error ? (
 							<div className="space-y-3">
-								<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-[12.5px] text-text-secondary">
+								<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
 									{error}
 								</p>
 								<Button
