@@ -64,11 +64,14 @@ function resolve<T>(
  */
 function RegionSelect({
 	ctx,
+	id,
 	provider,
 	value,
 	onChange,
 }: {
 	ctx: FieldCtx;
+	/** Ties the trigger to its `<Label htmlFor>` — see `OptionSelect`. */
+	id?: string;
 	provider: CloudProviderSlug;
 	value: string;
 	onChange: (v: string) => void;
@@ -76,7 +79,7 @@ function RegionSelect({
 	const groups = groupRegions(regionCodes(ctx), provider);
 	return (
 		<Select value={value || ""} onValueChange={onChange}>
-			<SelectTrigger className="h-9 text-sm">
+			<SelectTrigger id={id} className="h-9 text-sm">
 				<SelectValue placeholder="Region" />
 			</SelectTrigger>
 			<SelectContent>
@@ -195,6 +198,26 @@ export function OptionCombobox({
 
 	return (
 		<div className="relative">
+			{/* The `role="combobox"` STAYS, against #3756's third bullet, and the two claims that
+			    bullet rests on were both measured false against the pinned versions:
+
+			    1. "The role is untrue: no text input." There IS one — this control is an `<input>` the
+			       user types into, and `<input role="combobox">` is the ARIA 1.2 combobox pattern
+			       itself. The other two sites the issue names are `<button>`s inside a base-ui
+			       Popover, where the role is untrue and comes off; this one is the opposite shape,
+			       which is why it is the one the issue asked to check before changing.
+			    2. "axe covers it under `aria-input-field-name`." It does not. That rule's `matches` is
+			       `noNamingMethodMatches`, which excludes any element whose host language already
+			       gives it a naming method — and `<input>` has one. Driven against axe-core 4.13.0 in
+			       jsdom, `<input role="combobox">` with no name at all comes back INAPPLICABLE to all
+			       three name rules, not violating. The rule fires on `<div role="combobox">`, where
+			       there is no native label to fall back on.
+
+			    What names this input is the same thing that names it without the role: it is a
+			    labelable element, `FieldRow` renders a real `<Label htmlFor>`, and the accessible name
+			    is the field's label. Removing a true role to satisfy a rule that never applied would
+			    have traded a working typeahead announcement for nothing. The sweep asserts the NAME,
+			    so the claim survives either way. */}
 			<Input
 				id={id}
 				value={value}
@@ -383,6 +406,7 @@ function FieldControl({
 			return provider ? (
 				<RegionSelect
 					ctx={ctx}
+					id={id}
 					provider={provider}
 					value={toStr(raw)}
 					onChange={patch}
@@ -542,13 +566,20 @@ function FieldRow({
 		field.type === "subresource" ||
 		field.type === "bindings";
 
-	// Composite controls (list / subresource / bindings / radio-card) label their own inner rows, so
-	// the section label stays decorative for those; everything else gets a real label→control binding.
+	// Composite controls (list / subresource / bindings / radio-card / repository) label their own
+	// inner rows, so the section label stays decorative for those; everything else gets a real
+	// label→control binding.
+	//
+	// `repository` joined that list in #3756. `RepositorySelector` is a SHELL of three controls — a
+	// provider select, the repository trigger, and a refresh/relink button — and `htmlFor` binds
+	// exactly one element, so the id it was being handed matched nothing at all and the `<Label>`
+	// was decorative in fact while claiming otherwise. Each of those controls now names itself.
 	const composite =
 		field.type === "list" ||
 		field.type === "subresource" ||
 		field.type === "bindings" ||
-		field.type === "radio-card";
+		field.type === "radio-card" ||
+		field.type === "repository";
 
 	return (
 		<div className={cn("space-y-1.5", full && "col-span-full")}>
