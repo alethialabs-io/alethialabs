@@ -106,8 +106,8 @@ function buildColumns(
 							className="mt-1 shrink-0"
 						/>
 						<div className="min-w-0">
-							<div className="truncate text-[13px]">{d.title}</div>
-							<div className="truncate font-mono text-[10.5px] text-muted-foreground">
+							<div className="truncate text-ui-md">{d.title}</div>
+							<div className="truncate font-mono text-ui-2xs text-muted-foreground">
 								{d.event_key}
 							</div>
 							<ClassificationChips
@@ -117,7 +117,7 @@ function buildColumns(
 								className="mt-1 flex"
 							/>
 							{d.last_error && (
-								<div className="mt-1 break-words font-mono text-[10.5px] text-muted-foreground/70">
+								<div className="mt-1 break-words font-mono text-ui-2xs text-muted-foreground/70">
 									{d.last_error}
 								</div>
 							)}
@@ -132,7 +132,7 @@ function buildColumns(
 			enableSorting: false,
 			// The dot in the Event cell already carries the tier; this column carries its word.
 			cell: ({ row }) => (
-				<span className="font-mono text-[11px] uppercase text-muted-foreground">
+				<span className="font-mono text-ui-xs uppercase text-muted-foreground">
 					{deliveryBadge(row.original.status).label}
 				</span>
 			),
@@ -142,7 +142,7 @@ function buildColumns(
 			header: "Attempts",
 			enableSorting: false,
 			cell: ({ row }) => (
-				<span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+				<span className="font-mono text-ui-xs tabular-nums text-muted-foreground">
 					{row.original.attempts}
 				</span>
 			),
@@ -152,7 +152,7 @@ function buildColumns(
 			header: () => <div className="w-full text-right">When</div>,
 			enableSorting: false,
 			cell: ({ row }) => (
-				<div className="text-right font-mono text-[10.5px] text-muted-foreground">
+				<div className="text-right font-mono text-ui-2xs text-muted-foreground">
 					{formatDate(row.original.created_at, "datetime")}
 				</div>
 			),

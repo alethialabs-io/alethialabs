@@ -20,12 +20,12 @@
 		"scoredHere": 15,
 		"live": 10,
 		"notInstrumented": 8,
-		"findings": 715,
-		"findingFiles": 130
+		"findings": 257,
+		"findingFiles": 62
 	},
 	"ledgers": {
 		"baseline": 15,
-		"debt": 135
+		"debt": 64
 	},
 	"predicates": {
 		"S1": {
@@ -160,11 +160,11 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 8,
-			"fail": 32,
+			"pass": 13,
+			"fail": 27,
 			"na": 0,
 			"naReasons": {},
-			"score": 0.2
+			"score": 0.325
 		},
 		"H3": {
 			"family": "H",
@@ -519,10 +519,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"F": {
 					"instrumented": 0,
@@ -542,10 +542,10 @@
 				}
 			},
 			"overall": {
-				"pass": 11,
-				"fail": 4,
+				"pass": 12,
+				"fail": 3,
 				"na": 0,
-				"score": 0.7333
+				"score": 0.8
 			}
 		},
 		{
@@ -784,10 +784,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"F": {
 					"instrumented": 0,
@@ -807,10 +807,10 @@
 				}
 			},
 			"overall": {
-				"pass": 13,
-				"fail": 2,
+				"pass": 14,
+				"fail": 1,
 				"na": 0,
-				"score": 0.8667
+				"score": 0.9333
 			}
 		},
 		{
@@ -1632,10 +1632,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"F": {
 					"instrumented": 0,
@@ -1655,10 +1655,10 @@
 				}
 			},
 			"overall": {
-				"pass": 11,
-				"fail": 3,
+				"pass": 12,
+				"fail": 2,
 				"na": 1,
-				"score": 0.7857
+				"score": 0.8571
 			}
 		},
 		{
@@ -1685,10 +1685,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"F": {
 					"instrumented": 0,
@@ -1708,10 +1708,10 @@
 				}
 			},
 			"overall": {
-				"pass": 13,
-				"fail": 1,
+				"pass": 14,
+				"fail": 0,
 				"na": 1,
-				"score": 0.9286
+				"score": 1
 			}
 		},
 		{
@@ -2056,10 +2056,10 @@
 				"H": {
 					"instrumented": 7,
 					"of": 8,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"F": {
 					"instrumented": 0,
@@ -2079,10 +2079,10 @@
 				}
 			},
 			"overall": {
-				"pass": 13,
-				"fail": 1,
+				"pass": 14,
+				"fail": 0,
 				"na": 1,
-				"score": 0.9286
+				"score": 1
 			}
 		},
 		{
@@ -2439,7 +2439,7 @@
 			"route": "/[org]",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 2 file(s), worst apps/console/components/org/org-purchase-ui.tsx (2)"
+			"detail": "2 occurrence(s) in 1 file(s), worst apps/console/components/org/org-purchase-ui.tsx (2)"
 		},
 		{
 			"route": "/[org]",
@@ -2601,7 +2601,7 @@
 			"route": "/[org]/[project]/architecture",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "154 occurrence(s) in 27 file(s), worst apps/console/components/design-project/byo/chart-scan-sheet.tsx (19)"
+			"detail": "143 occurrence(s) in 26 file(s), worst apps/console/components/design-project/byo/chart-scan-sheet.tsx (19)"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -2679,7 +2679,7 @@
 			"route": "/[org]/[project]/clusters",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "16 occurrence(s) in 2 file(s), worst apps/console/components/clusters/cluster-card.tsx (12)"
+			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -2756,8 +2756,7 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "76 occurrence(s) in 9 file(s), worst apps/console/components/environments/promotion-detail-overlay.tsx (22)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -2996,7 +2995,7 @@
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "25 occurrence(s) in 4 file(s), worst apps/console/components/settings/access/access-manager.tsx (13)"
+			"detail": "2 occurrence(s) in 1 file(s), worst apps/console/components/org/org-purchase-ui.tsx (2)"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -3073,7 +3072,7 @@
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "11 occurrence(s) in 4 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"detail": "6 occurrence(s) in 2 file(s), worst apps/console/components/errors/error-state.tsx (4)"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -3150,8 +3149,7 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "11 occurrence(s) in 2 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
@@ -3228,7 +3226,7 @@
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "23 occurrence(s) in 3 file(s), worst apps/console/components/settings/preview/preview-settings.tsx (10)"
+			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/repository-selector.tsx (4)"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
@@ -3305,7 +3303,7 @@
 			"route": "/[org]/[project]/usage",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "26 occurrence(s) in 4 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
+			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
 		},
 		{
 			"route": "/[org]/[project]/usage",
@@ -3383,7 +3381,7 @@
 			"route": "/[org]/~/alerts",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "50 occurrence(s) in 10 file(s), worst apps/console/components/alerts/policies-panel.tsx (12)"
+			"detail": "2 occurrence(s) in 1 file(s), worst apps/console/components/org/org-purchase-ui.tsx (2)"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -3462,7 +3460,7 @@
 			"route": "/[org]/~/clusters",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "16 occurrence(s) in 2 file(s), worst apps/console/components/clusters/cluster-card.tsx (12)"
+			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -3932,7 +3930,7 @@
 			"route": "/[org]/~/runners",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "11 occurrence(s) in 4 file(s), worst apps/console/app/(private)/[org]/~/runners/runners-client.tsx (4)"
+			"detail": "10 occurrence(s) in 3 file(s), worst apps/console/app/(private)/[org]/~/runners/runners-client.tsx (4)"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -4092,7 +4090,7 @@
 			"route": "/[org]/~/settings/access",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "25 occurrence(s) in 4 file(s), worst apps/console/components/settings/access/access-manager.tsx (13)"
+			"detail": "2 occurrence(s) in 1 file(s), worst apps/console/components/org/org-purchase-ui.tsx (2)"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -4169,7 +4167,7 @@
 			"route": "/[org]/~/settings/activity",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "11 occurrence(s) in 4 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"detail": "6 occurrence(s) in 2 file(s), worst apps/console/components/errors/error-state.tsx (4)"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -4246,7 +4244,7 @@
 			"route": "/[org]/~/settings/billing",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "49 occurrence(s) in 9 file(s), worst apps/console/components/settings/billing/billing-panel.tsx (10)"
+			"detail": "4 occurrence(s) in 2 file(s), worst apps/console/components/org/org-purchase-ui.tsx (2)"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
@@ -4323,7 +4321,7 @@
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "16 occurrence(s) in 4 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
+			"detail": "5 occurrence(s) in 2 file(s), worst apps/console/components/errors/error-state.tsx (4)"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -4400,8 +4398,7 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "9 occurrence(s) in 1 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
@@ -4479,8 +4476,7 @@
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "16 occurrence(s) in 2 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/general",
@@ -4557,7 +4553,7 @@
 			"route": "/[org]/~/settings/members",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "11 occurrence(s) in 3 file(s), worst apps/console/components/settings/members/members-table.tsx (7)"
+			"detail": "2 occurrence(s) in 1 file(s), worst apps/console/components/org/org-purchase-ui.tsx (2)"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -4634,7 +4630,7 @@
 			"route": "/[org]/~/settings/roles",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "24 occurrence(s) in 5 file(s), worst apps/console/components/settings/roles/roles-manager.tsx (11)"
+			"detail": "5 occurrence(s) in 2 file(s), worst apps/console/components/forms/accordion-form.tsx (3)"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -4711,7 +4707,7 @@
 			"route": "/[org]/~/settings/sso",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "27 occurrence(s) in 5 file(s), worst apps/console/components/settings/sso/sso-manager.tsx (13)"
+			"detail": "5 occurrence(s) in 2 file(s), worst apps/console/components/forms/accordion-form.tsx (3)"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -4788,7 +4784,7 @@
 			"route": "/[org]/~/settings/teams",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "20 occurrence(s) in 4 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
+			"detail": "2 occurrence(s) in 1 file(s), worst apps/console/components/org/org-purchase-ui.tsx (2)"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -5019,8 +5015,7 @@
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "2 occurrence(s) in 2 file(s), worst apps/console/components/agent/agent-chat.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/ask",
@@ -5326,7 +5321,7 @@
 			"route": "/[org]/~/usage",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "39 occurrence(s) in 6 file(s), worst apps/console/components/settings/settings-ui.tsx (9)"
+			"detail": "2 occurrence(s) in 1 file(s), worst apps/console/components/org/org-purchase-ui.tsx (2)"
 		},
 		{
 			"route": "/[org]/~/usage",
@@ -5406,7 +5401,7 @@
 			"route": "/cli/login",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 2 file(s), worst apps/console/components/auth/auth-shell.tsx (3)"
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/app/(private)/cli/login/page.tsx (1)"
 		},
 		{
 			"route": "/cli/login",
@@ -5606,13 +5601,13 @@
 				"owner": null
 			},
 			"type_scale": {
-				"total": 678,
+				"total": 220,
 				"decision": 0,
-				"debt": 678,
+				"debt": 220,
 				"unlisted": 0,
-				"inPageClosure": 488,
-				"chromeOnly": 152,
-				"offTree": 38,
+				"inPageClosure": 176,
+				"chromeOnly": 35,
+				"offTree": 9,
 				"predicate": "H8",
 				"owner": null
 			},
@@ -5630,88 +5625,20 @@
 		},
 		"chromeOnlyFiles": [
 			{
-				"file": "apps/console/components/agent/artifact-panel.tsx",
-				"hits": 22
-			},
-			{
-				"file": "apps/console/components/agent/agent-knowledge-panel.tsx",
-				"hits": 13
-			},
-			{
-				"file": "apps/console/components/agent/widgets/artifact-controls.tsx",
-				"hits": 10
-			},
-			{
-				"file": "apps/console/components/agent/widgets/bodies/blocks.tsx",
-				"hits": 8
-			},
-			{
-				"file": "apps/console/components/agent/approval-card.tsx",
-				"hits": 7
-			},
-			{
-				"file": "apps/console/components/agent/elench/elench-empty-landing.tsx",
-				"hits": 7
-			},
-			{
 				"file": "apps/console/components/shell/account-settings-dialog.tsx",
 				"hits": 7
-			},
-			{
-				"file": "apps/console/components/agent/artifact-share-popover.tsx",
-				"hits": 6
-			},
-			{
-				"file": "apps/console/components/agent/elench/elench-conversation-switcher.tsx",
-				"hits": 6
 			},
 			{
 				"file": "apps/console/components/design-project/canvas/ai/proposal-diff.tsx",
 				"hits": 6
 			},
 			{
-				"file": "apps/console/components/agent/thread-rail.tsx",
-				"hits": 5
-			},
-			{
 				"file": "apps/console/components/shell/notifications-popover.tsx",
 				"hits": 5
 			},
 			{
-				"file": "apps/console/components/agent/agent-artifact-gallery.tsx",
-				"hits": 4
-			},
-			{
-				"file": "apps/console/components/agent/agent-artifact-viewer.tsx",
-				"hits": 4
-			},
-			{
-				"file": "apps/console/components/agent/build-pane.tsx",
-				"hits": 4
-			},
-			{
-				"file": "apps/console/components/agent/widgets/widget-card.tsx",
-				"hits": 4
-			},
-			{
 				"file": "apps/console/components/shell/sidebar-profile.tsx",
 				"hits": 4
-			},
-			{
-				"file": "apps/console/components/agent/elench/elench-controls.tsx",
-				"hits": 3
-			},
-			{
-				"file": "apps/console/components/agent/elench/mention-typeahead.tsx",
-				"hits": 3
-			},
-			{
-				"file": "apps/console/components/agent/widgets/bodies/tables.tsx",
-				"hits": 3
-			},
-			{
-				"file": "apps/console/components/agent/widgets/widget-grid.tsx",
-				"hits": 3
 			},
 			{
 				"file": "apps/console/components/org-switcher.tsx",
@@ -5722,15 +5649,7 @@
 				"hits": 3
 			},
 			{
-				"file": "apps/console/components/agent/agent-tool-views.tsx",
-				"hits": 2
-			},
-			{
-				"file": "apps/console/components/agent/render-tool-parts/org-tool-parts.tsx",
-				"hits": 2
-			},
-			{
-				"file": "apps/console/components/agent/render-tool-parts/project-tool-parts.tsx",
+				"file": "apps/console/components/agent/widgets/bodies/blocks.tsx",
 				"hits": 2
 			},
 			{
@@ -5746,15 +5665,11 @@
 				"hits": 2
 			},
 			{
-				"file": "apps/console/components/agent/elench/suggestion-carousel.tsx",
+				"file": "apps/console/components/agent/agent-knowledge-panel.tsx",
 				"hits": 1
 			},
 			{
-				"file": "apps/console/components/agent/render-tool-parts/dashboard-pinned.tsx",
-				"hits": 1
-			},
-			{
-				"file": "apps/console/components/agent/widgets/cell-prompt.tsx",
+				"file": "apps/console/components/agent/elench/elench-empty-landing.tsx",
 				"hits": 1
 			},
 			{
@@ -5772,16 +5687,16 @@
 		],
 		"offTreeFiles": [
 			{
-				"file": "apps/console/components/auth/onboarding-form.tsx",
-				"hits": 20
-			},
-			{
 				"file": "apps/console/components/auth/auth-form.tsx",
-				"hits": 16
+				"hits": 5
 			},
 			{
 				"file": "apps/console/components/forms/oauth-consent-form.tsx",
 				"hits": 4
+			},
+			{
+				"file": "apps/console/components/auth/onboarding-form.tsx",
+				"hits": 3
 			},
 			{
 				"file": "apps/console/components/design-project/container-platform-selector.tsx",
@@ -5789,10 +5704,6 @@
 			},
 			{
 				"file": "apps/console/app/(public)/onboarding/page.tsx",
-				"hits": 1
-			},
-			{
-				"file": "apps/console/components/agent/chat-top-bar.tsx",
 				"hits": 1
 			},
 			{

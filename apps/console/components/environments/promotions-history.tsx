@@ -42,25 +42,25 @@ export function PromotionsHistory({
 							<StatusDot tier={status.tier} className="shrink-0" />
 							<div className="min-w-0 flex-1">
 								<div className="flex items-center gap-2.5">
-									<span className="font-mono text-[13px] text-text-primary">
+									<span className="font-mono text-ui-md text-text-primary">
 										{envName(p.source_environment_id)} → {envName(p.target_environment_id)}
 									</span>
-									<span className="text-[11px] text-text-tertiary">
+									<span className="text-ui-xs text-text-tertiary">
 										{formatRelative(p.created_at)}
 									</span>
 									{active && (
-										<span className="rounded-full border px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-text-tertiary">
+										<span className="rounded-full border px-1.5 py-px font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary">
 											Active
 										</span>
 									)}
 								</div>
 								{p.error_message && (
-									<div className="mt-0.5 font-mono text-[11px] text-text-tertiary">
+									<div className="mt-0.5 font-mono text-ui-xs text-text-tertiary">
 										{p.error_message}
 									</div>
 								)}
 							</div>
-							<span className="shrink-0 rounded-full border px-2 py-px font-mono text-[9px] uppercase tracking-wide text-text-tertiary">
+							<span className="shrink-0 rounded-full border px-2 py-px font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary">
 								{status.label}
 							</span>
 							{active && (
