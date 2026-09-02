@@ -335,6 +335,21 @@ func hygCliConfirmEnv(t *testing.T) (*hygCliConfirmServer, func(args ...string) 
 			_ = enc.Encode(map[string]interface{}{"ok": true, "mode": mode, "changes": []map[string]interface{}{
 				{"kind": "storage_buckets", "name": "receipts", "action": "DELETE"},
 			}})
+		// `channels create` and `grants add` READ BACK what they created to confirm it, so the
+		// default `{"ok":true}` decodes to a nil *Channel / *Grant and the printer dereferences
+		// it. Both are needed by the canonical-enum tests, which have to drive the real command
+		// all the way to the wire; neither path is reached by any other case here (the confirm
+		// list only ever DELETEs a channel or a grant).
+		case p == "/api/cli/channels" && r.Method == http.MethodPost:
+			_ = enc.Encode(map[string]interface{}{"channel": map[string]interface{}{
+				"id": "ch1", "type": "slack", "name": "ops", "enabled": true, "is_verified": true,
+				"created_at": "2026-01-01T00:00:00Z",
+			}})
+		case p == "/api/cli/grants" && r.Method == http.MethodPost:
+			_ = enc.Encode(map[string]interface{}{"grant": map[string]interface{}{
+				"id": "g1", "principal_type": "user", "principal_id": "u1", "effect": "deny",
+				"role": "viewer", "resource_type": "org",
+			}})
 		case p == "/api/jobs" && r.Method == http.MethodPost:
 			_ = enc.Encode(map[string]interface{}{"job": map[string]interface{}{
 				"id": "j1", "job_type": "DESTROY", "status": "PENDING",
