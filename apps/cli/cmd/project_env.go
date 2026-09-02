@@ -27,8 +27,9 @@ production, …). List a project's environments or add a new one. The project is
 // takes the project's NAME or its id — the server accepts either, so nothing is resolved
 // client-side here and the CLI holds no second opinion about which project a name means.
 //
-// Kept flag-only, and kept at this signature: seven commands outside the project group call
-// it (addon, chart, byo, …) and each belongs to a lane that has not adopted the picker yet.
+// Kept flag-only, and kept at this signature: commands outside the project group call it
+// (chart, byo, …) and each belongs to a lane that has not adopted the picker yet — the addon
+// group adopted projectFromFlag in #3710, and the rest follow one lane at a time.
 // The project group asks through projectFromFlag below.
 func currentProject(cmd *cobra.Command) (string, error) {
 	if p, _ := cmd.Flags().GetString("project"); strings.TrimSpace(p) != "" {
