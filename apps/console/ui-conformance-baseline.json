@@ -21,13 +21,13 @@
 		"scoredHere": 16,
 		"live": 10,
 		"notInstrumented": 8,
-		"findings": 89,
+		"findings": 88,
 		"findingFiles": 32,
 		"liveNotMeasured": 13
 	},
 	"ledgers": {
 		"baseline": 16,
-		"debt": 25
+		"debt": 24
 	},
 	"live": {
 		"source": {
@@ -96,41 +96,40 @@
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 35,
-			"fail": 1,
+			"pass": 36,
+			"fail": 0,
 			"na": 4,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
-			"score": 0.9722
+			"score": 1
 		},
 		"S2": {
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 32,
-			"fail": 4,
+			"pass": 33,
+			"fail": 3,
 			"na": 4,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
-			"score": 0.8889
+			"score": 0.9167
 		},
 		"S3": {
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 35,
+			"pass": 36,
 			"fail": 0,
-			"na": 5,
+			"na": 4,
 			"notMeasured": 0,
 			"naReasons": {
-				"redirect-only": 4,
-				"no-loading-boundary": 1
+				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -153,15 +152,15 @@
 			"family": "T",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 35,
-			"fail": 1,
+			"pass": 36,
+			"fail": 0,
 			"na": 4,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
-			"score": 0.9722
+			"score": 1
 		},
 		"T2": {
 			"family": "T",
@@ -276,13 +275,13 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 21,
-			"fail": 19,
+			"pass": 22,
+			"fail": 18,
 			"na": 0,
 			"notMeasured": 0,
 			"naReasons": {},
 			"notMeasuredReasons": {},
-			"score": 0.525
+			"score": 0.55
 		},
 		"H3": {
 			"family": "H",
@@ -2739,29 +2738,29 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 1,
-					"fail": 2,
-					"na": 1,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
 					"notMeasured": 0,
-					"score": 0.3333
+					"score": 1
 				},
 				"T": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 0,
@@ -2783,11 +2782,11 @@
 				}
 			},
 			"overall": {
-				"pass": 17,
-				"fail": 4,
-				"na": 5,
+				"pass": 22,
+				"fail": 0,
+				"na": 4,
 				"notMeasured": 0,
-				"score": 0.8095
+				"score": 1
 			}
 		},
 		{
@@ -7992,8 +7991,7 @@
 		{
 			"route": "/cli/login",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/app/(private)/cli/login/page.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
@@ -8039,20 +8037,17 @@
 		{
 			"route": "/cli/login",
 			"predicate": "S1",
-			"verdict": "FAIL",
-			"detail": "no known shell in the layout chain"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "no max-width anywhere — no shell declares none"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
 			"predicate": "S3",
-			"verdict": "N/A",
-			"reason": "no-loading-boundary"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
@@ -8062,8 +8057,7 @@
 		{
 			"route": "/cli/login",
 			"predicate": "T1",
-			"verdict": "FAIL",
-			"detail": "no loading.tsx anywhere in its chain"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
@@ -8310,11 +8304,11 @@
 				"owner": null
 			},
 			"type_scale": {
-				"total": 61,
+				"total": 60,
 				"decision": 1,
-				"debt": 60,
+				"debt": 59,
 				"unlisted": 0,
-				"inPageClosure": 28,
+				"inPageClosure": 27,
 				"chromeOnly": 29,
 				"offTree": 4,
 				"predicate": "H8",

@@ -7,6 +7,7 @@ import { useSearchParams } from "next/navigation";
 import { CheckCircle, Loader2, XCircle } from "lucide-react";
 import { Button } from "@repo/ui/button";
 import { isValidDeviceCode, isValidUserCode } from "@/lib/auth/cli-device-code";
+import { useCliAccount } from "./cli-session";
 import { CliLoginBodySkeleton } from "./loading";
 
 type Stage = "confirm" | "approving" | "declining" | "approved" | "declined" | "error";
@@ -50,6 +51,7 @@ function approvalErrorMessage(body: unknown): string {
  * it was a bug in WHO started it.
  */
 function CliLoginContent() {
+	const account = useCliAccount();
 	const searchParams = useSearchParams();
 	const deviceCode = searchParams.get("device_code");
 	const userCode = searchParams.get("user_code");
@@ -149,6 +151,42 @@ function CliLoginContent() {
 					aria-label="Device confirmation code"
 				>
 					{userCode}
+				</div>
+
+				{/* WHAT APPROVAL ACTUALLY HANDS OVER. The screen used to say only "a device is
+				    asking to sign in to your account", and a consent screen that does not name
+				    what it is consenting to is a button, not a decision. Every line below is read
+				    off `app/api/auth/cli/generate/route.ts` and `exchange/route.ts` — the access
+				    token, the 90-day refresh token, and the raw OAuth token of the first linked
+				    git provider, which is materially more than "sign in".
+
+				    The git-provider line is conditional in the prose because it is conditional in
+				    the code: `generate` takes the FIRST linked provider and swallows a failure to
+				    read its token, so "if one is linked" is the honest tense.
+
+				    NOT here, because the data does not exist and inventing it would be worse than
+				    omitting it: who is asking (no client identity, IP or user-agent is stored) and
+				    how long the request has left (the link carries no `expires_in`, and
+				    `DEVICE_CODE_TTL_MS` is the POST-approval redemption window, not this one).
+				    Both are #3889's server half. */}
+				<div className="space-y-1.5 border border-border/60 bg-surface-sunken/40 px-4 py-3">
+					<p className="text-xs font-medium text-text-primary">
+						Approving gives that terminal
+					</p>
+					<ul className="list-disc space-y-1 pl-4 text-xs text-text-secondary">
+						<li>a sign-in token for this account</li>
+						<li>a refresh token that stays valid for 90 days</li>
+						<li>
+							the access token of your linked git provider, if you have one linked
+						</li>
+					</ul>
+					{account ? (
+						<p className="pt-1 text-xs text-text-secondary">
+							Signed in as{" "}
+							<span className="font-medium text-text-primary">{account}</span>. Approval
+							binds the terminal to this account.
+						</p>
+					) : null}
 				</div>
 
 				<div className="flex flex-col gap-2">

@@ -112,7 +112,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 16
-debt: 25
+debt: 24
 
 scanned:
   - scope: console_code
