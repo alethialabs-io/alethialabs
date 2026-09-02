@@ -37,8 +37,8 @@ export function SettingsColumns({ children }: { children: ReactNode }) {
  *
  * The heading comes from `@repo/ui/section-heading` rather than a local `<h2>`, and this one call
  * site is why the rule is worth having: every settings page composes `SettingsSection`, so its
- * hand-written `font-display text-[14.5px]` was one of the five sizes the console rendered the
- * same outline rung at. It briefly went through `PageHeader level={2}`, which typeset it at 18px
+ * hand-written `font-display` heading, typeset at 14.5px, was one of the five sizes the console
+ * rendered the same outline rung at. It briefly went through `PageHeader level={2}`, which typeset it at 18px
  * whatever the level — the jump from 14.5px to 18px is what surfaced the missing type scale.
  * `level={2}` keeps the document outline exactly as it was; the size is now the `--text-ui-lg`
  * rung, which is where the console's section headings already clustered.
@@ -139,11 +139,11 @@ export function SettingsField({
 	return (
 		<div className="grid grid-cols-[200px_1fr] items-start gap-6 border-b border-border px-[22px] py-[15px] last:border-b-0">
 			<div className="flex flex-col gap-1">
-				<span id={labelId} className="text-[13px] font-medium text-text-primary">
+				<span id={labelId} className="text-ui-md font-medium text-text-primary">
 					{label}
 				</span>
 				{hint && (
-					<span className="text-[11.5px] leading-[1.45] text-text-tertiary">
+					<span className="text-ui-xs leading-[1.45] text-text-tertiary">
 						{hint}
 					</span>
 				)}
@@ -168,7 +168,7 @@ export function SettingsCardFoot({
 	return (
 		<div className="flex items-center justify-between gap-4 border-t border-border bg-surface-sunken px-[22px] py-[13px]">
 			{note ? (
-				<span className="text-[11.5px] text-text-tertiary">{note}</span>
+				<span className="text-ui-xs text-text-tertiary">{note}</span>
 			) : (
 				<span />
 			)}
@@ -190,10 +190,10 @@ export function SettingsDangerRow({
 	return (
 		<div className="flex items-center justify-between gap-5 border-b border-border px-[22px] py-4 last:border-b-0">
 			<div className="min-w-0">
-				<div className="mb-[3px] text-[13px] font-medium text-text-primary">
+				<div className="mb-[3px] text-ui-md font-medium text-text-primary">
 					{title}
 				</div>
-				<div className="max-w-[52ch] text-[11.5px] leading-[1.45] text-text-tertiary">
+				<div className="max-w-[52ch] text-ui-xs leading-[1.45] text-text-tertiary">
 					{description}
 				</div>
 			</div>
@@ -208,7 +208,7 @@ export function SettingsDangerRow({
  * Input: `className={cn(settingsControl, "...")}`.
  */
 export const settingsControl =
-	"w-full rounded-sm border border-border-strong bg-surface-sunken text-[13.5px] text-text-primary outline-none transition-[border-color,box-shadow] placeholder:text-text-disabled focus:border-ring focus:ring-2 focus:ring-ring/15";
+	"w-full rounded-sm border border-border-strong bg-surface-sunken text-ui-md text-text-primary outline-none transition-[border-color,box-shadow] placeholder:text-text-disabled focus:border-ring focus:ring-2 focus:ring-ring/15";
 
 /** Height + padding for single-line controls (inputs, selects). */
 export const settingsControlSize = "h-[38px] px-3";
@@ -290,7 +290,7 @@ export function SettingsTabs<T extends string>({
 						type="button"
 						onClick={() => onChange(t.value)}
 						className={cn(
-							"inline-flex items-center gap-[7px] rounded-[4px] px-3 py-1.5 text-[12.5px] font-medium capitalize transition-colors",
+							"inline-flex items-center gap-[7px] rounded-[4px] px-3 py-1.5 text-ui-sm font-medium capitalize transition-colors",
 							on
 								? "bg-surface text-text-primary shadow-sm"
 								: "text-text-tertiary hover:text-text-secondary",
@@ -298,7 +298,7 @@ export function SettingsTabs<T extends string>({
 					>
 						{t.label}
 						{t.count !== undefined && (
-							<span className="font-mono text-[10px] text-text-tertiary">
+							<span className="font-mono text-ui-2xs text-text-tertiary">
 								{t.count}
 							</span>
 						)}
@@ -330,7 +330,7 @@ export function SettingsSearch({
 		>
 			<Search className="size-[15px] shrink-0 text-text-tertiary" />
 			<input
-				className="w-full border-0 bg-transparent text-[13px] text-text-primary outline-none placeholder:text-text-disabled"
+				className="w-full border-0 bg-transparent text-ui-md text-text-primary outline-none placeholder:text-text-disabled"
 				placeholder={placeholder}
 				autoComplete="off"
 				value={value}
