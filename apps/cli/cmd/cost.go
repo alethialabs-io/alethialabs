@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -127,19 +126,12 @@ func costMonthlyCell(amount float64, currency, outFmt string) string {
 // costCapturedAt renders the capture stamp the way the console writes a date — `1 Jan 2026, 00:00`
 // — rather than echoing the wire's RFC3339 back at the reader.
 //
-// A stamp that does not parse is returned VERBATIM rather than dashed, the same rule ui.RelativeTime
-// follows: a timestamp the CLI cannot read is a wire problem, and showing it lets someone report
-// what actually arrived.
-//
-// UTC, not the local zone. Every other absolute stamp the CLI prints (ui.StampOrDash) is UTC, and a
-// cost capture time that means a different instant depending on which laptop printed it is worse
-// than one that is always the same instant.
+// The rule itself is `ui.Stamp` and no longer lives here. It was written out in this file first;
+// `staged list` then needed the same rule, and a second copy of a formatting decision is how the
+// two halves of one product come to disagree. The reasons — verbatim on a parse failure, UTC and
+// not the host zone — are stated once, beside the implementation.
 func costCapturedAt(raw string) string {
-	t, err := time.Parse(time.RFC3339, raw)
-	if err != nil {
-		return raw
-	}
-	return format.Date(t, format.DateTime, time.UTC)
+	return ui.Stamp(raw)
 }
 
 // costSummary renders the one-line cost headline (priced / total monthly).

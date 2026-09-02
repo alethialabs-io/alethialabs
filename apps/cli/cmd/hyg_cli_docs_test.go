@@ -54,6 +54,15 @@ var docsGroups = map[string]string{
 	"roles":   "access",
 	"grants":  "access",
 	"sso":     "access",
+	// The BYO-IaC group (#3707). All five at once because they are one noun group and one pass:
+	// `chart` and `iac` are the two halves of bring-your-own, `repo` is where their repository
+	// picker gets its list, and `drift` and `staged` are the two read-only leaves that share the
+	// same project/env selectors.
+	"chart":  "charts",
+	"iac":    "iac",
+	"repo":   "repositories",
+	"drift":  "drift",
+	"staged": "staged",
 }
 
 // docsGroupsOnPage inverts the registry: which groups share one page.
@@ -124,20 +133,39 @@ func docsLeaves(group *cobra.Command) [][]string {
 // Only fenced blocks, because inline code is prose — "run `alethia org switch`" names a command
 // without claiming to be a complete invocation. Anything after a pipe belongs to the next process,
 // and a trailing comment is not part of the command.
+//
+// A trailing backslash JOINS the next line. That is not cosmetic: a wrapped example was previously
+// cut at the backslash and the backslash itself was read as a POSITIONAL ARGUMENT, so
+// `alethia chart attach api -p shop \` arrived here as two arguments to a command that accepts one,
+// and every flag on the continuation line — the half of the example most likely to have rotted —
+// was never checked at all. Both failure modes are silent for a page nobody has registered yet, and
+// both fire the moment one is.
 func docsFencedExamples(page string) []string {
 	var out []string
 	fenced := false
+	pending := ""
 	for _, line := range strings.Split(page, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
 			fenced = !fenced
+			// A continuation that never terminated does not escape its block: the next fence starts
+			// a new example, and carrying the fragment forward would splice two unrelated commands.
+			pending = ""
 			continue
 		}
 		if !fenced {
 			continue
 		}
 		cmd := strings.TrimSpace(line)
-		if !strings.HasPrefix(cmd, "alethia ") {
+		if pending == "" && !strings.HasPrefix(cmd, "alethia ") {
 			continue
+		}
+		if strings.HasSuffix(cmd, `\`) {
+			pending = strings.TrimSpace(pending + " " + strings.TrimSpace(strings.TrimSuffix(cmd, `\`)))
+			continue
+		}
+		if pending != "" {
+			cmd = strings.TrimSpace(pending + " " + cmd)
+			pending = ""
 		}
 		if i := strings.Index(cmd, "|"); i >= 0 {
 			cmd = cmd[:i]
@@ -148,6 +176,116 @@ func docsFencedExamples(page string) []string {
 		out = append(out, strings.TrimSpace(cmd))
 	}
 	return out
+}
+
+// docsPlaceholderToken reports whether one token of an example is a placeholder a reader must
+// substitute rather than a literal they can paste.
+//
+// THREE shapes, and the third is the one this exists for. `<job-id>` and `[selector]` announce
+// themselves; `…` and `...` are how a truncated id is written, and `8f3c2a1e-...` is exactly the
+// token a reader would copy, paste, and get a 404 from.
+//
+// A token is judged whole. `--repo=<url>` is a placeholder because its value is one; `oci://x/y` is
+// not, because nothing in it is a substitution.
+func docsPlaceholderToken(token string) bool {
+	if strings.ContainsAny(token, "<>") {
+		return true
+	}
+	if strings.Contains(token, "…") || strings.Contains(token, "...") {
+		return true
+	}
+	return strings.HasPrefix(token, "[") && strings.HasSuffix(token, "]") && len(token) > 2
+}
+
+// docsPlaceholderRatchetGroups is the EXPLICIT opt-in list for the placeholder ratchet below.
+//
+// It is written out by hand, and deliberately NOT derived from docsGroups, because the two answer
+// different questions. docsGroups says "this group has a docs page"; this list says "a pass has
+// read every example on that page and confirmed it is runnable as written".
+//
+// Iterating docsGroups conflated them, and that is a ratchet nobody can keep green. Groups are
+// registered by whichever lane finishes them, landing on dev independently and AFTER this ratchet
+// was measured — so a sibling lane's merge could turn this test red on a page the author of the
+// failing branch has never touched and is not theirs to change. A guard whose verdict depends on
+// what merged elsewhere this week is a guard that gets deleted rather than fixed.
+//
+// TO ADD A GROUP: read every fenced `alethia …` example on its page, remove or replace each
+// placeholder — prefer a form of the command that resolves the value itself over a literal — and
+// then add the group's name here, in the same pass. Adding the name without doing the reading is
+// the only way this list can lie.
+//
+// Registering a group in docsGroups does NOT enrol it here; that is the point. The other tests in
+// this file still hold every registered group to its page.
+var docsPlaceholderRatchetGroups = []string{
+	"chart",
+	"cluster",
+	"drift",
+	"iac",
+	"members",
+	"org",
+	"repo",
+	"staged",
+	"teams",
+}
+
+// TestHygCliDocs_NoDocumentedExampleCarriesAPlaceholder is the `cli_ux` ratchet's docs half: an
+// enrolled group's examples must be runnable AS WRITTEN.
+//
+// The programme's target number is "copied placeholders in the golden-path docs", and this is what
+// makes it a number rather than an intention. An example carrying `<job-id>` is not an example — it
+// is an instruction to go and find a value in some earlier command's output, which is the ergonomic
+// failure the whole CLI programme exists to remove. Every such token in this group had a fix
+// available in the tree already (`jobs logs --latest`, an id the picker resolves), so what the
+// placeholder recorded was that nobody had gone back to the page.
+//
+// It inspects the groups ENROLLED in docsPlaceholderRatchetGroups, and that list only grows, so
+// this is a ratchet: a page is held to it from the pass that enrols its group onward, and can never
+// quietly regress.
+func TestHygCliDocs_NoDocumentedExampleCarriesAPlaceholder(t *testing.T) {
+	if len(docsPlaceholderRatchetGroups) == 0 {
+		t.Fatal("the enrolment list is empty — every assertion in this test would be vacuous")
+	}
+	// One page can carry several enrolled groups (organizations.mdx carries org, members and
+	// teams); read it once so a violation is reported once rather than per group.
+	seen := map[string]bool{}
+	var pages []string
+	for _, group := range docsPlaceholderRatchetGroups {
+		page, ok := docsGroups[group]
+		if !ok {
+			t.Errorf("%q is enrolled in docsPlaceholderRatchetGroups but is not in docsGroups.\n"+
+				"      An enrolled group that no longer has a page is a stale entry, not a row to\n"+
+				"      skip: remove it here in the same change that removes it from the registry.", group)
+			continue
+		}
+		if seen[page] {
+			continue
+		}
+		seen[page] = true
+		pages = append(pages, page)
+	}
+	sort.Strings(pages)
+	checked := 0
+	for _, page := range pages {
+		body := docsRead(t, docsPagePath(page))
+		examples := docsFencedExamples(body)
+		if len(examples) == 0 {
+			continue // reported by TestHygCliDocs_EveryDocumentedExampleResolves
+		}
+		for _, example := range examples {
+			checked++
+			for _, token := range strings.Fields(example) {
+				if docsPlaceholderToken(token) {
+					t.Errorf("%s.mdx shows %q, which carries the placeholder %q.\n"+
+						"      A reader cannot run that line; they have to find the value somewhere else\n"+
+						"      first, which is the handoff this programme removes. Use a literal, or a\n"+
+						"      form of the command that resolves the value itself.", page, example, token)
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no example was inspected — every assertion above was vacuous")
+	}
 }
 
 // docsLookupFlag resolves one flag token against a command, long or short, `--flag`, `-f` or
@@ -424,5 +562,78 @@ func TestHygCliDocs_EveryLeafIsShownAtLeastOnce(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("no leaf was checked — every assertion above was vacuous")
+	}
+}
+
+// TestHygCliDocs_FencedExamplesJoinContinuations pins the line-continuation rule on a FIXTURE.
+//
+// A fixture and not a real page, deliberately: whether any registered page currently wraps an
+// example is an editorial accident, so a test that only read the live pages would pass today and
+// stop testing anything the moment somebody unwrapped a line. The behaviour has to be pinned where
+// it cannot be silently un-exercised.
+//
+// Two failures are pinned, and they are different. Un-joined, the trailing backslash arrives as a
+// POSITIONAL ARGUMENT — which is what made `alethia chart attach api -p shop \` look like a
+// two-argument invocation of a command that takes one — and everything on the continuation lines is
+// never examined at all, which is where a renamed flag would hide.
+func TestHygCliDocs_FencedExamplesJoinContinuations(t *testing.T) {
+	const page = "```bash\n" +
+		"alethia chart attach api -p shop \\\n" +
+		"  --repo https://github.com/acme/charts \\\n" +
+		"  --chart-path charts/api\n" +
+		"```\n"
+
+	got := docsFencedExamples(page)
+	if len(got) != 1 {
+		t.Fatalf("a wrapped example is ONE invocation, got %d: %v", len(got), got)
+	}
+	want := "alethia chart attach api -p shop --repo https://github.com/acme/charts --chart-path charts/api"
+	if got[0] != want {
+		t.Errorf("continuation lines were not joined:\n got %q\nwant %q", got[0], want)
+	}
+	if strings.Contains(got[0], `\`) {
+		t.Errorf("the backslash must not survive into the argument list: %q", got[0])
+	}
+}
+
+// The other half: a continuation that never terminates must not splice itself onto the next block.
+func TestHygCliDocs_AnUnterminatedContinuationStaysInItsBlock(t *testing.T) {
+	const page = "```bash\nalethia cluster list \\\n```\n\n```bash\nalethia cluster get api\n```\n"
+	got := docsFencedExamples(page)
+	for _, ex := range got {
+		if strings.Contains(ex, "list") && strings.Contains(ex, "get") {
+			t.Fatalf("two fenced blocks were spliced into one example: %q", ex)
+		}
+	}
+	found := false
+	for _, ex := range got {
+		if ex == "alethia cluster get api" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the second block's example was lost: %v", got)
+	}
+}
+
+// TestHygCliDocs_PlaceholderTokenNamesTheThreeShapes pins the classifier the ratchet rests on,
+// including the shape that does NOT announce itself.
+func TestHygCliDocs_PlaceholderTokenNamesTheThreeShapes(t *testing.T) {
+	for token, want := range map[string]bool{
+		"<job-id>":                 true,
+		"--job=<id>":               true,
+		"[selector]":               true,
+		"8f3c2a1e-...":             true,
+		"8f3c2a1e-…":               true,
+		"api":                      false,
+		"--repo":                   false,
+		"oci://registry.io/acme/a": false,
+		"replicas=2":               false,
+		"[]":                       false,
+		"./api-values.yaml":        false,
+	} {
+		if got := docsPlaceholderToken(token); got != want {
+			t.Errorf("docsPlaceholderToken(%q) = %v, want %v", token, got, want)
+		}
 	}
 }

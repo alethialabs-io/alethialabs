@@ -8,7 +8,7 @@ description: Complete reference for all alethia CLI commands organized by group.
 alethia organizes its commands into groups (`connector`, `project`, `runner`, `jobs`, `cluster`,
 `org`, `members`, `teams`, `channels`, `alerts`, `roles`, `grants`, `sso`, `fleet`,
 `classification`, `ops`), a set of read-only inspection groups (`repo`, `cloud`, `agent`, `addon`,
-`chart`, `iac`, `cost`, `drift`, `verify`, `probes`), plus top-level auth (`login`/`logout`/`init`), identity
+`chart`, `iac`, `cost`, `drift`, `staged`, `verify`, `probes`), plus top-level auth (`login`/`logout`/`init`), identity
 (`whoami`/`config`/`open`), `billing`, `usage`, `activity`, and utility commands. All commands
 communicate with the Alethia [Console](/concepts/glossary) API — they never run
 [OpenTofu](/concepts/glossary) (the `tofu` binary) locally. Provisioning (`tofu plan`/`apply`/
@@ -96,13 +96,21 @@ alethia
 │   ├── enable [addon_id] [--mode managed|gitops] [--set k=v] [--values-file f]
 │   └── disable [addon_id]            # asks when omitted; --yes to skip the confirmation
 ├── chart                             # alias: charts — BYO Helm charts (-p/--project · -e/--env)
-│   └── list
+│   ├── list
+│   ├── attach [id] [--repo <u>] [--chart-path <p>] [--ref <r>] [--namespace <n>] [--set k=v] [--values-file <f>]
+│   ├── scan [id]                     # asks which chart when omitted
+│   └── detach [id] [-y/--yes]        # asks which chart when omitted
 ├── iac                               # BYO Terraform/OpenTofu source (-p/--project · -e/--env)
-│   └── show
+│   ├── show
+│   ├── attach [--repo <u>] [--path <p>] [--ref <r>] [--var k=v]
+│   ├── scan
+│   └── detach [-y/--yes]
 ├── cost                              # infrastructure cost (-p/--project · -e/--env)
 │   └── show
 ├── drift                             # day-2 drift posture (-p/--project · -e/--env)
 │   └── show
+├── staged                            # pending canvas changes (-p/--project · -e/--env)
+│   └── list
 ├── probes                            # alias: probe — cluster-alive probes (-p/--project)
 │   └── list
 ├── channels                          # alias: channel
