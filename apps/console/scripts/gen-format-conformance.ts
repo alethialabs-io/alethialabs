@@ -40,7 +40,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import * as fmt from "@repo/format";
-import { BYTES, DATE, DURATION, EXCLUDED, MINUTES, MONEY, MONTHLY_RATE, QUOTA } from "@repo/format/conformance";
+import { BYTES, DATE, DURATION, EXCLUDED, MINUTES, MONEY, MONTHLY_DELTA, MONTHLY_RATE, QUOTA } from "@repo/format/conformance";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // apps/console/scripts -> repo root is three levels up.
@@ -87,6 +87,13 @@ function build() {
 			style: c.style,
 			currency: c.currency,
 			want: fmt.formatMonthlyRate(c.amount, c.style, c.currency),
+		})),
+		monthlyDelta: MONTHLY_DELTA.map((c) => ({
+			id: c.id,
+			amount: c.amount,
+			style: c.style,
+			currency: c.currency,
+			want: fmt.formatMonthlyDelta(num(c.amount), c.style, c.currency),
 		})),
 	};
 }
