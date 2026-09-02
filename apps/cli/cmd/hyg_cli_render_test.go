@@ -39,7 +39,12 @@ import (
 var renderExemptions = map[string]string{
 	"fleetVersionCell": "takes an api.FleetPool and encodes fleet version-vs-channel semantics — a domain cell, not a renderer",
 	"reachableLabel":   "takes a probe's *bool and pairs the glyph with probe-specific wording (never probed / up / down)",
-	"formatDuration":   "takes a started/completed PAIR and appends the running-job ellipsis; replaced wholesale by packages/core/format.Duration in #3659, so hoisting it here would move it twice",
+	// The reason here USED to be "replaced wholesale by packages/core/format.Duration in #3659, so
+	// hoisting it would move it twice". That has happened — the body is `format.Duration(...)`
+	// today — so the reason described a future that had already arrived, while the exemption itself
+	// stayed correctly live. The staleness check below cannot catch that: it asks whether the func
+	// still MATCHES, not whether the sentence next to it is still true.
+	"formatDuration": "takes a started/completed PAIR: the elapsed rule is packages/core/format.Duration, but the dash for a job that never started and the ellipsis that says the number is still climbing are this command's own semantics, not a shared render",
 }
 
 var renderFuncInCmd = regexp.MustCompile(`(?s)\nfunc (\w+)\([^)]*\)[^{]*\{(.*?)\n\}`)
