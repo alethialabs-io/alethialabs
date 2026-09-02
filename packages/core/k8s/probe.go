@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/format"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 )
 
@@ -40,7 +41,12 @@ func probeImage() string {
 func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bool, stdout io.Writer) error {
 	started := time.Now()
 	deadline := started.Add(timeout)
-	fmt.Fprintf(stdout, "Waiting for the cluster to become reachable (timeout %s)...\n", timeout)
+	// The budget is announced here and quoted again in both failure messages below. All three go
+	// through format.Duration so one run cannot print the same configured value two ways: the
+	// default 15m budget is `15m0s` from Duration.String() and `15m 0s` from format.Duration, and
+	// a banner and a failure message disagreeing about it makes the reader guess which is the
+	// setting they configured.
+	fmt.Fprintf(stdout, "Waiting for the cluster to become reachable (timeout %s)...\n", format.Duration(timeout))
 
 	// 1. API server reachable — poll readyz, but keep WHY it fails (auth vs network vs not-ready)
 	// so a timeout is diagnosable at a glance, and fast-fail on a persistent auth rejection (an
@@ -82,7 +88,7 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 		// context.DeadlineExceeded; the last probe error stays as colour but drives nothing.
 		if errors.Is(apiErr, context.Canceled) || errors.Is(apiErr, context.DeadlineExceeded) {
 			return fmt.Errorf("waiting for the cluster API server was cancelled after %s (timeout %s) — the caller's context ended, so this is NOT a cluster fault%s: %w",
-				time.Since(started).Round(time.Second), timeout, lastProbeDetail(lastErr), apiErr)
+				format.Duration(time.Since(started)), format.Duration(timeout), lastProbeDetail(lastErr), apiErr)
 		}
 		if lastErr == nil {
 			lastErr = apiErr
@@ -90,8 +96,14 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 		// Report ELAPSED, not the configured timeout. The fast-fail path gives up after ~60s, so
 		// quoting the 15m budget made a rejected token read as a hang and sent readers looking for a
 		// slow endpoint (#1259).
+		//
+		// ELAPSED and BUDGET are rendered by the SAME function, deliberately. They are two spans of
+		// the same kind sitting in one sentence, and the reader's whole job here is to compare them:
+		// `after 1m 2s (timeout 15m0s)` invites reading two different units. format.Duration drops
+		// seconds only once a span passes an hour, and it drops them from BOTH numbers at the same
+		// threshold, so the comparison never becomes apples-to-oranges.
 		return fmt.Errorf("cluster API server did not become reachable after %s (timeout %s) — %s: %w",
-			time.Since(started).Round(time.Second), timeout, classifyReachability(lastErr, lastOut), lastErr)
+			format.Duration(time.Since(started)), format.Duration(timeout), classifyReachability(lastErr, lastOut), lastErr)
 	}
 	fmt.Fprintln(stdout, "Cluster API server is reachable.")
 
