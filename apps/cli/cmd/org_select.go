@@ -133,7 +133,7 @@ func orgFieldToken(f orgField) string {
 // refuseNoForm is the refusal when a form is the only remaining source for a value and no form can
 // be shown.
 //
-// It NAMES what to pass, from the spec. "interactive input required but --no-input is set" — the
+// It NAMES what to pass, from the spec. "interactive input required but prompts are disabled" — the
 // package's generic answer — tells a scripted caller that they are stuck without telling them how
 // to become unstuck, and the flags it would have named are exactly the ones a reader cannot guess.
 func refuseNoForm(fields ...orgField) error {

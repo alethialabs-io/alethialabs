@@ -16,7 +16,12 @@ import (
 var noInputMode bool
 
 // errNoInput is returned by selectors when interactive prompts are disabled.
-var errNoInput = errors.New("interactive input required but --no-input is set (pass the id/name as a flag/argument)")
+//
+// It names BOTH ways that happens. noInputMode is set by --no-input and equally by a stdin that is
+// not a terminal, so "--no-input is set" was a false statement to the larger half of the people who
+// saw it: a pipeline that never passed the flag was told it had.
+var errNoInput = errors.New("interactive input required but prompts are disabled " +
+	"(--no-input, or stdin is not a terminal): pass the id/name as a flag/argument")
 
 // resolveInputMode computes noInputMode from the command's --no-input flag and
 // whether stdin is a terminal. Wired as the root PersistentPreRun.
