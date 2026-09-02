@@ -158,7 +158,7 @@ whatever the level — so a section heading converted to it jumped to 18px from 
 missing type scale, and H8. The answer is now `SectionHeading` from `@repo/ui/section-heading`: one
 rung (`--text-ui-lg`, 15px), with `level` setting the tag and nothing else.
 
-**H8 is a ratchet, not a pass/fail on day one.** All 1,079 live occurrences are recorded as `lifts:`
+**H8 is a ratchet, not a pass/fail on day one.** All measured live occurrences are recorded as `lifts:`
 debt in `apps/console/shared-surface-allowlist.yaml` against #3742, so a page scores FAIL on H8 today
 and the number can only shrink. A page with no arbitrary size left scores PASS. Nothing about H8 is
 N/A for a page that renders text.
