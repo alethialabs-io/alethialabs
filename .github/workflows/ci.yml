@@ -856,6 +856,21 @@ jobs:
       - name: ...and that manifest is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/lib/console-routes.mjs --self-test
+      # RUBRIC.md's S1–S4 and T1–T4 scored over that same manifest, against the shrink-only
+      # baseline in apps/console/route-states-baseline.yaml. It lands red-by-record rather than
+      # red: today's tree HAS 45 failing route-predicate pairs, every one of them written into the
+      # baseline, so the step is green until a route regresses or a recorded failure is fixed
+      # without deleting its line. Nothing invoked this file between #3690 and here, which is the
+      # failure mode it exists to catch — a baseline nothing re-runs goes stale on `dev` where the
+      # regression cannot be attributed to the PR that caused it. Do NOT pipe this into
+      # `tail`/`head`: the script's own header says so, because a pipe reports the exit code of
+      # the LAST command in it.
+      - name: Route states (RUBRIC.md S1-S4, T1-T4) have not regressed against the baseline
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:route-states
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-route-states.mjs --self-test
       # packages/brand/src/ramp-srgb.ts is a hand-maintained sRGB copy of the OKLCH ramp in
       # tokens.css, for the three surfaces that cannot read a custom property (email, Stripe
       # Elements across an iframe, next/og). It fixed three disagreeing transcriptions by
