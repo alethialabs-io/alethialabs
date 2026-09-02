@@ -216,15 +216,11 @@ export function RunnersClient() {
 	// Hosted tenants without the BYO-runners entitlement get the upsell in place of the page.
 	// (Self-managed operators are never gated here.)
 	if (isHosted && !canByoRunners) {
-		return (
-			<div className="mx-auto w-full max-w-[1360px]">
-				<FeatureUpsell feature="byoRunners" />
-			</div>
-		);
+		return <FeatureUpsell feature="byoRunners" />;
 	}
 
 	return (
-		<div className="mx-auto w-full max-w-[1360px]">
+		<>
 			<div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(320px,0.36fr)_minmax(0,0.64fr)]">
 				{/* Left column — pools (self-managed only), then versions. */}
 				<div className="flex flex-col gap-6">
@@ -353,7 +349,7 @@ export function RunnersClient() {
 					usedProviders={poolConfigs.map((c) => c.provider)}
 				/>
 			)}
-		</div>
+		</>
 	);
 }
 
