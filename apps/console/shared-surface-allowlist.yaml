@@ -112,7 +112,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 15
-debt: 146
+debt: 135
 
 scanned:
   - scope: console_code
@@ -191,30 +191,6 @@ section_header:
   - path: apps/console/components/shell/account-settings-dialog.tsx
     hits: 1
     lifts: "#3619 — the page frame is rebuilt: 1 raw section heading here."
-  - path: apps/console/components/support/submit/steps/step-category.tsx
-    hits: 1
-    lifts: "#3625 — support adopts the shared surface: 1 raw section heading here."
-  - path: apps/console/components/support/submit/steps/step-contact.tsx
-    hits: 1
-    lifts: "#3625 — support adopts the shared surface: 1 raw section heading here."
-  - path: apps/console/components/support/submit/steps/step-details.tsx
-    hits: 1
-    lifts: "#3625 — support adopts the shared surface: 1 raw section heading here."
-  - path: apps/console/components/support/submit/steps/step-severity.tsx
-    hits: 1
-    lifts: "#3625 — support adopts the shared surface: 1 raw section heading here."
-  - path: apps/console/components/support/submit/steps/step-type.tsx
-    hits: 1
-    lifts: "#3625 — support adopts the shared surface: 1 raw section heading here."
-  - path: apps/console/components/support/support-card.tsx
-    hits: 1
-    lifts: "#3625 — support adopts the shared surface: 1 raw section heading here."
-  - path: apps/console/components/support/support-topics.tsx
-    hits: 2
-    lifts: "#3629 — the support hub is rebuilt: 2 raw section headings here."
-  - path: apps/console/components/support/support-whats-new.tsx
-    hits: 1
-    lifts: "#3629 — the support hub is rebuilt: 1 raw section heading here."
 
 type_scale:
   # --- debt only: 1,079 hardcoded pixel type sizes across 194 files and 23 distinct values,
@@ -596,15 +572,6 @@ type_scale:
   - path: apps/console/components/shell/switcher-trigger.tsx
     hits: 3
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
-  - path: apps/console/components/support/ask/support-case-approval-card.tsx
-    hits: 7
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 7 hardcoded pixel type sizes here."
-  - path: apps/console/components/support/cases/case-thread.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/support/support-topics.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
 
 empty_state:
   # --- debt only: 33 hand-rolled centred empty states across 24 files, six different heights,
