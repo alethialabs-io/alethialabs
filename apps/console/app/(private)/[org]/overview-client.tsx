@@ -100,7 +100,7 @@ export function OverviewClient({
 		Boolean(state.q) || state.clouds.length > 0 || state.repos.length > 0;
 
 	return (
-		<div className="mx-auto w-full max-w-[1360px] space-y-5">
+		<div className="space-y-5">
 			<OverviewToolbar
 				orgSlug={orgSlug}
 				state={state}
