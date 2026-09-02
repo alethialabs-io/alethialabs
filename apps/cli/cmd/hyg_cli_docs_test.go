@@ -39,6 +39,7 @@ import (
 var docsGroups = map[string]string{
 	// group command → docs page basename under apps/docs/content/docs/cli/commands
 	"cluster": "clusters",
+	"runner":  "runners",
 }
 
 // docsRepoRoot is the repo root as seen from apps/cli/cmd.

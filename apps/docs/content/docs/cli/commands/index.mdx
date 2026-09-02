@@ -68,10 +68,11 @@ alethia
 │   ├── apply [--project-id <id>] [--runner-id <id>] [--plan-job-id <id>] [-w/--wait]
 │   └── destroy [--project-id <id>] [--runner-id <id>] [-w/--wait]
 ├── runner
-│   ├── deploy [--cloud-identity-id <id>] [--name <name>] [--region <r>] [--assigned-runner-id <id>] [-w/--wait]
+│   ├── deploy [--cloud-account <label>] [--name <name>] [--region <r>] [--assigned-runner <name>] [-w/--wait]
+│   ├── register [name] [--name <name>] [--cloud-account <label>]
 │   ├── list
-│   ├── destroy [--runner-id <id>] [--assigned-runner-id <id>] [-w/--wait]
-│   └── remove [runner_id]
+│   ├── destroy [--runner <name>] [--assigned-runner <name>] [-w/--wait] [-y/--yes]
+│   └── remove [--runner <name>] [-y/--yes]
 ├── jobs
 │   ├── list [--status <S>] [-n/--limit <N>]
 │   ├── get <job_id>
