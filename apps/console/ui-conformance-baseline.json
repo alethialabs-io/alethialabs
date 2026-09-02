@@ -44,43 +44,6 @@
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 19,
-			"fail": 17,
-			"na": 4,
-			"naReasons": {
-				"redirect-only": 4
-			},
-			"score": 0.5278
-		},
-		"S3": {
-			"family": "S",
-			"instrument": "check-route-states",
-			"owner": null,
-			"pass": 31,
-			"fail": 4,
-			"na": 5,
-			"naReasons": {
-				"redirect-only": 4,
-				"no-loading-boundary": 1
-			},
-			"score": 0.8857
-		},
-		"S4": {
-			"family": "S",
-			"instrument": "check-route-states",
-			"owner": null,
-			"pass": 34,
-			"fail": 2,
-			"na": 4,
-			"naReasons": {
-				"redirect-only": 4
-			},
-			"score": 0.9444
-		},
-		"T1": {
-			"family": "T",
-			"instrument": "check-route-states",
-			"owner": null,
 			"pass": 32,
 			"fail": 4,
 			"na": 4,
@@ -88,6 +51,43 @@
 				"redirect-only": 4
 			},
 			"score": 0.8889
+		},
+		"S3": {
+			"family": "S",
+			"instrument": "check-route-states",
+			"owner": null,
+			"pass": 35,
+			"fail": 0,
+			"na": 5,
+			"naReasons": {
+				"redirect-only": 4,
+				"no-loading-boundary": 1
+			},
+			"score": 1
+		},
+		"S4": {
+			"family": "S",
+			"instrument": "check-route-states",
+			"owner": null,
+			"pass": 35,
+			"fail": 1,
+			"na": 4,
+			"naReasons": {
+				"redirect-only": 4
+			},
+			"score": 0.9722
+		},
+		"T1": {
+			"family": "T",
+			"instrument": "check-route-states",
+			"owner": null,
+			"pass": 35,
+			"fail": 1,
+			"na": 4,
+			"naReasons": {
+				"redirect-only": 4
+			},
+			"score": 0.9722
 		},
 		"T2": {
 			"family": "T",
@@ -103,23 +103,23 @@
 			"family": "T",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 0,
-			"fail": 10,
+			"pass": 1,
+			"fail": 9,
 			"na": 30,
 			"naReasons": {
 				"does-not-call-not-found": 30
 			},
-			"score": 0
+			"score": 0.1
 		},
 		"T4": {
 			"family": "T",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 33,
-			"fail": 7,
+			"pass": 36,
+			"fail": 4,
 			"na": 0,
 			"naReasons": {},
-			"score": 0.825
+			"score": 0.9
 		},
 		"T5": {
 			"family": "T",
@@ -291,10 +291,10 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"T": {
 					"instrumented": 4,
@@ -330,10 +330,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 2,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.8571
+				"score": 0.9286
 			}
 		},
 		{
@@ -397,10 +397,10 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"T": {
 					"instrumented": 4,
@@ -436,10 +436,10 @@
 				}
 			},
 			"overall": {
-				"pass": 10,
-				"fail": 5,
+				"pass": 11,
+				"fail": 4,
 				"na": 0,
-				"score": 0.6667
+				"score": 0.7333
 			}
 		},
 		{
@@ -450,10 +450,10 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"T": {
 					"instrumented": 4,
@@ -489,10 +489,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 3,
+				"pass": 13,
+				"fail": 2,
 				"na": 0,
-				"score": 0.8
+				"score": 0.8667
 			}
 		},
 		{
@@ -503,59 +503,6 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 2,
-					"fail": 2,
-					"na": 0,
-					"score": 0.5
-				},
-				"T": {
-					"instrumented": 4,
-					"of": 7,
-					"pass": 3,
-					"fail": 1,
-					"na": 0,
-					"score": 0.75
-				},
-				"H": {
-					"instrumented": 7,
-					"of": 8,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"score": 0.8571
-				},
-				"F": {
-					"instrumented": 0,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 0,
-					"score": null
-				},
-				"R": {
-					"instrumented": 0,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 0,
-					"score": null
-				}
-			},
-			"overall": {
-				"pass": 11,
-				"fail": 4,
-				"na": 0,
-				"score": 0.7333
-			}
-		},
-		{
-			"route": "/[org]/[project]/jobs",
-			"redirectOnly": false,
-			"surfaceFiles": 219,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
 					"pass": 3,
 					"fail": 1,
 					"na": 0,
@@ -599,6 +546,59 @@
 				"fail": 3,
 				"na": 0,
 				"score": 0.8
+			}
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"redirectOnly": false,
+			"surfaceFiles": 219,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"score": 0.75
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 13,
+				"fail": 2,
+				"na": 0,
+				"score": 0.8667
 			}
 		},
 		{
@@ -710,7 +710,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 275,
+			"surfaceFiles": 276,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -723,10 +723,10 @@
 				"T": {
 					"instrumented": 4,
 					"of": 7,
-					"pass": 2,
-					"fail": 2,
+					"pass": 3,
+					"fail": 1,
 					"na": 0,
-					"score": 0.5
+					"score": 0.75
 				},
 				"H": {
 					"instrumented": 7,
@@ -754,10 +754,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 3,
+				"pass": 13,
+				"fail": 2,
 				"na": 0,
-				"score": 0.8
+				"score": 0.8667
 			}
 		},
 		{
@@ -874,10 +874,10 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"T": {
 					"instrumented": 4,
@@ -913,10 +913,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 3,
+				"pass": 13,
+				"fail": 2,
 				"na": 0,
-				"score": 0.8
+				"score": 0.8667
 			}
 		},
 		{
@@ -980,10 +980,10 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"T": {
 					"instrumented": 4,
@@ -1019,10 +1019,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 2,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.8571
+				"score": 0.9286
 			}
 		},
 		{
@@ -1033,10 +1033,10 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"T": {
 					"instrumented": 4,
@@ -1072,10 +1072,10 @@
 				}
 			},
 			"overall": {
-				"pass": 13,
-				"fail": 1,
+				"pass": 14,
+				"fail": 0,
 				"na": 1,
-				"score": 0.9286
+				"score": 1
 			}
 		},
 		{
@@ -1086,10 +1086,10 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"T": {
 					"instrumented": 4,
@@ -1125,10 +1125,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 2,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.8571
+				"score": 0.9286
 			}
 		},
 		{
@@ -1139,6 +1139,112 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 13,
+				"fail": 1,
+				"na": 1,
+				"score": 0.9286
+			}
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"redirectOnly": false,
+			"surfaceFiles": 218,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 13,
+				"fail": 1,
+				"na": 1,
+				"score": 0.9286
+			}
+		},
+		{
+			"route": "/[org]/~/new",
+			"redirectOnly": false,
+			"surfaceFiles": 356,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
 					"pass": 3,
 					"fail": 1,
 					"na": 0,
@@ -1185,112 +1291,6 @@
 			}
 		},
 		{
-			"route": "/[org]/~/jobs/[id]",
-			"redirectOnly": false,
-			"surfaceFiles": 218,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 3,
-					"fail": 1,
-					"na": 0,
-					"score": 0.75
-				},
-				"T": {
-					"instrumented": 4,
-					"of": 7,
-					"pass": 2,
-					"fail": 1,
-					"na": 1,
-					"score": 0.6667
-				},
-				"H": {
-					"instrumented": 7,
-					"of": 8,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"score": 0.8571
-				},
-				"F": {
-					"instrumented": 0,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 0,
-					"score": null
-				},
-				"R": {
-					"instrumented": 0,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 0,
-					"score": null
-				}
-			},
-			"overall": {
-				"pass": 11,
-				"fail": 3,
-				"na": 1,
-				"score": 0.7857
-			}
-		},
-		{
-			"route": "/[org]/~/new",
-			"redirectOnly": false,
-			"surfaceFiles": 356,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 2,
-					"fail": 2,
-					"na": 0,
-					"score": 0.5
-				},
-				"T": {
-					"instrumented": 4,
-					"of": 7,
-					"pass": 3,
-					"fail": 0,
-					"na": 1,
-					"score": 1
-				},
-				"H": {
-					"instrumented": 7,
-					"of": 8,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"score": 0.8571
-				},
-				"F": {
-					"instrumented": 0,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 0,
-					"score": null
-				},
-				"R": {
-					"instrumented": 0,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 0,
-					"score": null
-				}
-			},
-			"overall": {
-				"pass": 11,
-				"fail": 3,
-				"na": 1,
-				"score": 0.7857
-			}
-		},
-		{
 			"route": "/[org]/~/runners",
 			"redirectOnly": false,
 			"surfaceFiles": 270,
@@ -1298,10 +1298,10 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"T": {
 					"instrumented": 4,
@@ -1337,10 +1337,10 @@
 				}
 			},
 			"overall": {
-				"pass": 11,
-				"fail": 3,
+				"pass": 12,
+				"fail": 2,
 				"na": 1,
-				"score": 0.7857
+				"score": 0.8571
 			}
 		},
 		{
@@ -1571,10 +1571,10 @@
 				"T": {
 					"instrumented": 4,
 					"of": 7,
-					"pass": 2,
-					"fail": 1,
+					"pass": 3,
+					"fail": 0,
 					"na": 1,
-					"score": 0.6667
+					"score": 1
 				},
 				"H": {
 					"instrumented": 7,
@@ -1602,10 +1602,10 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
-				"fail": 2,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.8571
+				"score": 0.9286
 			}
 		},
 		{
@@ -1616,18 +1616,18 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"T": {
 					"instrumented": 4,
 					"of": 7,
-					"pass": 2,
-					"fail": 1,
+					"pass": 3,
+					"fail": 0,
 					"na": 1,
-					"score": 0.6667
+					"score": 1
 				},
 				"H": {
 					"instrumented": 7,
@@ -1655,10 +1655,10 @@
 				}
 			},
 			"overall": {
-				"pass": 11,
-				"fail": 3,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.7857
+				"score": 0.9286
 			}
 		},
 		{
@@ -1934,10 +1934,10 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 2,
-					"fail": 2,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.5
+					"score": 1
 				},
 				"T": {
 					"instrumented": 4,
@@ -1973,10 +1973,10 @@
 				}
 			},
 			"overall": {
-				"pass": 11,
-				"fail": 3,
+				"pass": 13,
+				"fail": 1,
 				"na": 1,
-				"score": 0.7857
+				"score": 0.9286
 			}
 		},
 		{
@@ -2101,10 +2101,10 @@
 				"T": {
 					"instrumented": 4,
 					"of": 7,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"H": {
 					"instrumented": 7,
@@ -2132,10 +2132,10 @@
 				}
 			},
 			"overall": {
-				"pass": 14,
-				"fail": 1,
+				"pass": 15,
+				"fail": 0,
 				"na": 0,
-				"score": 0.9333
+				"score": 1
 			}
 		},
 		{
@@ -2247,15 +2247,68 @@
 		{
 			"route": "/[org]/~/usage",
 			"redirectOnly": false,
-			"surfaceFiles": 182,
+			"surfaceFiles": 183,
 			"families": {
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 2,
-					"fail": 2,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
-					"score": 0.5
+					"score": 1
+				},
+				"T": {
+					"instrumented": 4,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 7,
+					"of": 8,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"score": 0.8571
+				},
+				"F": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 0,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 13,
+				"fail": 1,
+				"na": 1,
+				"score": 0.9286
+			}
+		},
+		{
+			"route": "/cli/login",
+			"redirectOnly": false,
+			"surfaceFiles": 4,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 1,
+					"fail": 2,
+					"na": 1,
+					"score": 0.3333
 				},
 				"T": {
 					"instrumented": 4,
@@ -2291,63 +2344,10 @@
 				}
 			},
 			"overall": {
-				"pass": 10,
+				"pass": 9,
 				"fail": 4,
-				"na": 1,
-				"score": 0.7143
-			}
-		},
-		{
-			"route": "/cli/login",
-			"redirectOnly": false,
-			"surfaceFiles": 4,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 1,
-					"fail": 2,
-					"na": 1,
-					"score": 0.3333
-				},
-				"T": {
-					"instrumented": 4,
-					"of": 7,
-					"pass": 1,
-					"fail": 2,
-					"na": 1,
-					"score": 0.3333
-				},
-				"H": {
-					"instrumented": 7,
-					"of": 8,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"score": 0.8571
-				},
-				"F": {
-					"instrumented": 0,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 0,
-					"score": null
-				},
-				"R": {
-					"instrumented": 0,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 0,
-					"score": null
-				}
-			},
-			"overall": {
-				"pass": 8,
-				"fail": 5,
 				"na": 2,
-				"score": 0.6154
+				"score": 0.6923
 			}
 		},
 		{
@@ -2449,8 +2449,7 @@
 		{
 			"route": "/[org]",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "the page declares max-w-[1360px]; AppShell declares none"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]",
@@ -2611,8 +2610,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "no max-width anywhere — ProjectShell declares none"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -2689,8 +2687,7 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "no max-width anywhere — ProjectShell declares none"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -2768,13 +2765,12 @@
 			"route": "/[org]/[project]/environments",
 			"predicate": "S2",
 			"verdict": "FAIL",
-			"detail": "the page declares max-w-4xl; ProjectShell declares none"
+			"detail": "two widths: ProjectShell max-w-[1200px] and the page's max-w-4xl"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "S3",
-			"verdict": "FAIL",
-			"detail": "page max-w-4xl vs skeleton max-w-3xl"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -2846,8 +2842,7 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "no max-width anywhere — ProjectShell declares none"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -3114,8 +3109,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "T4",
-			"verdict": "FAIL",
-			"detail": "no metadata title on the page or its own layout"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
@@ -3315,8 +3309,7 @@
 		{
 			"route": "/[org]/[project]/usage",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "no max-width anywhere — ProjectShell declares none"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/usage",
@@ -3394,7 +3387,7 @@
 			"route": "/[org]/~/alerts",
 			"predicate": "S2",
 			"verdict": "FAIL",
-			"detail": "the page declares max-w-[1200px]; AppShell declares none"
+			"detail": "two widths: AppShell max-w-[1200px] and the page's max-w-[1200px]"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -3405,7 +3398,7 @@
 			"route": "/[org]/~/alerts",
 			"predicate": "S4",
 			"verdict": "FAIL",
-			"detail": "the page hand-rolls max-w-[1200px], a width a shell already owns"
+			"detail": "AppShell already owns the width; the page re-declares max-w-[1200px]"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -3472,8 +3465,7 @@
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "no max-width anywhere — AppShell declares none"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -3549,8 +3541,7 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "no max-width anywhere — AppShell declares none"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -3627,8 +3618,7 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "no max-width anywhere — AppShell declares none"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -3705,8 +3695,7 @@
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "no max-width anywhere — AppShell declares none"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -3783,8 +3772,7 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "no max-width anywhere — AppShell declares none"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -3799,8 +3787,7 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "T1",
-			"verdict": "FAIL",
-			"detail": "renders apps/console/app/(private)/[org]/~/jobs/loading.tsx at distance 1 — that segment's own page skeleton"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -3863,13 +3850,12 @@
 			"route": "/[org]/~/new",
 			"predicate": "S2",
 			"verdict": "FAIL",
-			"detail": "the page declares max-w-5xl; AppShell declares none"
+			"detail": "two widths: AppShell max-w-[1200px] and the page's max-w-5xl"
 		},
 		{
 			"route": "/[org]/~/new",
 			"predicate": "S3",
-			"verdict": "FAIL",
-			"detail": "page max-w-5xl vs skeleton max-w-[920px]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -3942,8 +3928,7 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "the page declares max-w-[1360px]; AppShell declares none"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -4348,8 +4333,7 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "T1",
-			"verdict": "FAIL",
-			"detail": "renders apps/console/app/(private)/[org]/~/settings/billing/loading.tsx at distance 1 — that segment's own page skeleton"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -4416,8 +4400,7 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "S3",
-			"verdict": "FAIL",
-			"detail": "page max-w-[1200px] vs skeleton max-w-[1360px]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
@@ -4427,8 +4410,7 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "T1",
-			"verdict": "FAIL",
-			"detail": "renders apps/console/app/(private)/[org]/loading.tsx at distance 3 — that segment's own page skeleton"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
@@ -4875,14 +4857,12 @@
 		{
 			"route": "/[org]/~/support",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "two widths: SupportShell max-w-[1200px] and the page's max-w-4xl"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support",
 			"predicate": "S3",
-			"verdict": "FAIL",
-			"detail": "page max-w-4xl vs skeleton max-w-[1200px]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support",
@@ -5131,8 +5111,7 @@
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "T3",
-			"verdict": "FAIL",
-			"detail": "resolves to apps/console/app/(private)/[org]/not-found.tsx, which is above apps/console/app/(private)/[org]/~/support/cases/[id]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
@@ -5336,8 +5315,7 @@
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "the page declares max-w-[1200px]; AppShell declares none"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/usage",
@@ -5347,8 +5325,7 @@
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "S4",
-			"verdict": "FAIL",
-			"detail": "the page hand-rolls max-w-[1200px], a width a shell already owns"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/usage",
@@ -5369,8 +5346,7 @@
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "T4",
-			"verdict": "FAIL",
-			"detail": "no metadata title on the page or its own layout"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
@@ -5451,8 +5427,7 @@
 		{
 			"route": "/cli/login",
 			"predicate": "T4",
-			"verdict": "FAIL",
-			"detail": "no metadata title on the page or its own layout"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/dashboard/[[...rest]]",
