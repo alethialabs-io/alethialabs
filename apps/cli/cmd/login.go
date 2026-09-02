@@ -56,12 +56,27 @@ var (
 )
 
 // resolveLogin handles the "not authenticated" branch of getAuthTokenInternal:
-// it errors fast when prompting is disabled, otherwise offers an interactive
-// "log in now?" prompt, runs the device flow, and returns the fresh token. This
-// is irreducible interactive glue, kept out of the unit-tested token-state logic.
+// it errors fast when prompting is disabled or when the confirm has no terminal to
+// draw on, otherwise offers an interactive "log in now?" prompt, runs the device
+// flow, and returns the fresh token. This is irreducible interactive glue, kept out
+// of the unit-tested token-state logic.
 func resolveLogin(credsPath string, promptLogin bool) (string, error) {
 	if !promptLogin {
 		return "", fmt.Errorf("authentication required. Please run `alethia login`")
+	}
+
+	// A confirm that cannot be SEEN cannot be answered. getAuthToken hardcodes
+	// promptLogin=true, so before this gate the "log in now?" form was the one huh widget
+	// in the CLI with no stream check at all: with stdin a terminal and the form's stream
+	// redirected — `alethia … 2> log` — the ANSI frames went into the log and the process
+	// then blocked on a keystroke against a terminal showing nothing. The user sees a hang.
+	//
+	// requireInteractiveForm is the refusing predicate the rest of the package already
+	// uses before opening a form, and its errors say WHICH condition failed (errNoInput
+	// for --no-input, errNoTTY for a redirected stream) — so wrap rather than replace,
+	// while saying the same thing the promptLogin=false arm above says.
+	if err := requireInteractiveForm(); err != nil {
+		return "", fmt.Errorf("authentication required. Please run `alethia login`: %w", err)
 	}
 
 	confirmLogin, err := authRequiredPrompt()
