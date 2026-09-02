@@ -55,7 +55,18 @@ export function ConsistencyMatrix({ consistency }: { consistency: EnvConsistency
 				}
 			/>
 			<div className="overflow-hidden rounded-lg border bg-surface shadow-sm">
-				<Table scroll className="text-[12.5px]">
+				{/* `containerClassName="pb-1"` is the ROW CLAMP'S REACH, not spacing. `scroll` gives the
+				    wrapper `overflow-x-auto`, and per spec that computes `overflow-y` to `auto` as well —
+				    the coupling `@repo/ui/table`'s own doc comment names. Every `TableRow` carries
+				    `.vx-clamp--tight`, whose corner marks are a `::before` drawn 2px OUTSIDE the row
+				    (`inset: calc(-1 * var(--cl-gap))`), and a scroll container measures that decoration as
+				    content — so the last row put 2px of marks, plus the row's fractional height, below the
+				    wrapper's content box and the wrapper scrolled vertically by 3px with nothing in it
+				    (86/83 at 768, 1280, 1440 and 1920 — R3's only FAIL on this route, #3885).
+				    4px of block-end padding covers both. Block END only: a scroll container's scrollable
+				    overflow region extends at the block end, so the first row's 2px above is clipped and
+				    unreachable rather than scrollable, and padding it would only inset the header row. */}
+				<Table scroll containerClassName="pb-1" className="text-[12.5px]">
 					<TableHeader>
 						<TableRow className="bg-surface-muted">
 							<TableHead

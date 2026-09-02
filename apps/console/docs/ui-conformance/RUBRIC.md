@@ -220,6 +220,25 @@ said `z-[var(--z-overlay)]` the whole time. The fix was a `relative`, which no z
 at. A page can name every token correctly and still put its popover behind the chrome; only a
 hit-test knows.
 
+**R3's first two honest FAILs were both DECORATION, and the predicate was right to report them**
+(#3885). The support chip strip (`components/ai-elements/suggestion.tsx`) and the environments
+consistency matrix each scrolled vertically by 3–4px, identically at all four widths, inside a
+container that only ever wanted a *horizontal* affordance. One cause, in both: `.vx-clamp`
+(`packages/brand/src/tokens.css`) draws its corner marks as a `::before` at
+`inset: calc(-1 * var(--cl-gap))` — 2px or 4px **outside** the element — precisely so that a control
+never reflows when it clamps. A scroll container measures that decoration as content, so any
+`.vx-clamp` element flush against a scroll container's block end adds `--cl-gap` of phantom scroll.
+The general shape, for the next reader: an unexplained few-pixel R3 finding is decoration reaching
+past a box, not a layout that is genuinely too tall.
+
+**The predicate was not made axis-aware, and no N/A was declared.** R3 already reads only
+`overflowY` and `scrollHeight`, so it is vertical-only in the sense that matters — a horizontal strip
+whose content fits vertically has never been a finding, and admitting `data-slot=scroll-area-viewport`
+would have exempted every inner scroller on every route to excuse two. An "only if it overflows by
+more than *N* pixels" arm would have been worse: a threshold picked to clear the two pages in front
+of it is the guard weakened until the defect fits through, and the pages would have re-failed the
+day a chip grew a pixel. The two containers reserve `--cl-gap` on the block axis instead.
+
 **R5 needs one thing fixing before it can be believed.** `e2e/helpers/a11y.ts` currently returns `[]`
 when `@axe-core/playwright` cannot be imported. A silent empty result is indistinguishable from a
 clean page — it must raise.
