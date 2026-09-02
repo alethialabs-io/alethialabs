@@ -1290,8 +1290,10 @@ func TestMisc_AccessSurfaceMutations(t *testing.T) {
 	miscAlwaysConfirm(t, true)
 
 	for _, args := range [][]string{
-		{"grants", "add", "--principal", "u1", "--role", "role1", "--permission", "", "--resource", "p1", "--resource-type", "project"},
-		{"grants", "add", "--principal", "t1", "--principal-type", "team", "--role", "", "--permission", "project:destroy", "--effect", "deny", "--resource", ""},
+		// Real uuids: `--principal` and `--role` are lookup keys now, and a value that is not
+		// already a uuid is resolved against the org rather than posted to a `z.uuid()` field.
+		{"grants", "add", "--principal", "11111111-1111-4111-8111-111111111111", "--role", "33333333-3333-4333-8333-333333333333", "--permission", "", "--resource", "44444444-4444-4444-8444-444444444444", "--resource-type", "project"},
+		{"grants", "add", "--principal", "22222222-2222-4222-8222-222222222222", "--principal-type", "team", "--role", "", "--permission", "project:destroy", "--effect", "deny", "--resource", ""},
 		{"grants", "remove", "g1"},
 		{"roles", "create", "deployer", "--permission", "project:deploy"},
 		{"roles", "delete", "role2"},

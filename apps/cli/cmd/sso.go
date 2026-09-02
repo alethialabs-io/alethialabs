@@ -76,18 +76,32 @@ func runSsoList(c apiClient, out io.Writer, format string) error {
 	}, providers)
 }
 
+// ssoGetDomain is the --domain selector: name the provider by the email domain it serves instead of
+// copying a provider id out of `sso list`.
+var ssoGetDomain string
+
 var ssoGetCmd = &cobra.Command{
-	Use:   "get <id>",
+	Use:   "get [id]",
 	Short: "Show a single SSO provider",
-	Args:  cobra.ExactArgs(1),
+	Long: `Show one configured SSO provider. Pass its id, or --domain to name it by the email domain
+it serves; with neither, pick from the org's providers.`,
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
 		client := api.NewClient(token)
+		id := ""
+		if len(args) > 0 {
+			id = args[0]
+		}
+		ref, err := resolveOrgChoice(ssoPickSpec, id, ssoGetDomain, ssoChoices(client))
+		if err != nil {
+			fail(err)
+		}
 		var provider *api.SsoProvider
-		ui.RunSpinner("Fetching SSO provider...", func() { provider, err = client.GetSsoProvider(args[0]) })
+		ui.RunSpinner("Fetching SSO provider...", func() { provider, err = client.GetSsoProvider(ref.ID) })
 		if err != nil {
 			failf("Failed to get SSO provider: %v", err)
 		}
@@ -115,6 +129,8 @@ func ssoFieldRows(p *api.SsoProvider) [][]string {
 }
 
 func init() {
+	ssoGetCmd.Flags().StringVar(&ssoGetDomain, "domain", "",
+		"Show the provider serving this email domain, instead of naming a provider id")
 	ssoCmd.AddCommand(ssoListCmd)
 	ssoCmd.AddCommand(ssoGetCmd)
 	rootCmd.AddCommand(ssoCmd)
