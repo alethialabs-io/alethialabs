@@ -10,7 +10,13 @@ import { Suspense, useState } from 'react'
 import { CheckCircle, Loader2, XCircle } from 'lucide-react'
 import { isValidDeviceCode, isValidUserCode } from '@/lib/auth/cli-device-code'
 
-type Stage = 'confirm' | 'approving' | 'approved' | 'declined' | 'error'
+type Stage =
+  | 'confirm'
+  | 'approving'
+  | 'declining'
+  | 'approved'
+  | 'declined'
+  | 'error'
 
 /**
  * The browser half of the CLI device flow (RFC 8628). It approves NOTHING on mount:
@@ -64,7 +70,46 @@ function CliLoginContent() {
     }
   }
 
-  if (stage === 'confirm' || stage === 'approving') {
+  /**
+   * Records the refusal server-side — only ever from the "This isn't me" button.
+   *
+   * This used to be `setStage('declined')` and nothing else, which made the screen's own
+   * copy untrue in the way that matters: the refusal lived in React state, so re-opening
+   * the link offered the approval prompt again, and the CLI that is polling never learned
+   * it had been refused. A failure here is surfaced rather than swallowed — telling
+   * somebody their refusal was recorded when it was not is worse than telling them to
+   * close the terminal.
+   */
+  async function declineDevice() {
+    setStage('declining')
+    try {
+      const response = await fetch('/api/auth/cli/deny', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ device_code: deviceCode, user_code: userCode }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        setError(
+          errorData.error ||
+            'Could not record the refusal. Close your terminal to be sure nothing is shared.',
+        )
+        setStage('error')
+        return
+      }
+      setStage('declined')
+    } catch {
+      setError(
+        'Could not reach the control plane to record the refusal. Close your terminal to be sure nothing is shared.',
+      )
+      setStage('error')
+    }
+  }
+
+  if (stage === 'confirm' || stage === 'approving' || stage === 'declining') {
     return (
       <div className="flex flex-col gap-6">
         <div className="space-y-2 text-center">
@@ -85,7 +130,7 @@ function CliLoginContent() {
         </div>
 
         <div className="flex flex-col gap-2">
-          <Button onClick={approveDevice} disabled={stage === 'approving'}>
+          <Button onClick={approveDevice} disabled={stage !== 'confirm'}>
             {stage === 'approving' ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -97,10 +142,17 @@ function CliLoginContent() {
           </Button>
           <Button
             variant="ghost"
-            onClick={() => setStage('declined')}
-            disabled={stage === 'approving'}
+            onClick={declineDevice}
+            disabled={stage !== 'confirm'}
           >
-            This isn&apos;t me
+            {stage === 'declining' ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Refusing…
+              </>
+            ) : (
+              "This isn't me"
+            )}
           </Button>
         </div>
 
@@ -140,7 +192,9 @@ function CliLoginContent() {
             Sign-in not approved
           </p>
           <p className="text-xs text-text-secondary">
-            Nothing was shared. You can close this window.
+            Nothing was shared, and the refusal has been recorded — the device has
+            been told, and this link cannot be approved later. You can close this
+            window.
           </p>
         </div>
       </div>
