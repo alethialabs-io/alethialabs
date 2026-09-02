@@ -86,8 +86,28 @@ function sample(node: unknown, root: JsonSchema): unknown {
 			if (schema.format === "date-time") return SAMPLE_TS;
 			return "string";
 		case "integer":
-		case "number":
+		case "number": {
+			// A BOUND ON THE NUMBER IS PART OF THE CONTRACT, and sampling the type's default of 0
+			// ignores it — `z.number().int().positive()` renders as `exclusiveMinimum: 0`, so the
+			// fixture came out holding a value the very schema it was generated from rejects. That
+			// is not hypothetical: `page_info.json` has carried `"limit": 0` against
+			// `pageInfoSchema`'s `.positive()` since #3666, and nothing caught it because the
+			// fixture is not in `cli-contract.test.ts`'s list (see the note there).
+			//
+			// ZERO UNLESS ZERO IS OUT OF RANGE — deliberately not "the schema's minimum". Zod
+			// renders every `.int()` with the SAFE-INTEGER bounds as its `minimum`/`maximum`, so
+			// reading `minimum` unconditionally replaces every integer in every fixture with
+			// -9007199254740991: a number no wire ever carries, in 19 files, to fix two. The bound
+			// is consulted only to decide whether the existing placeholder is legal.
+			//
+			// Only the LOWER bound is consulted, because a field whose maximum excludes zero does
+			// not exist in this contract; adding the branch would be code no schema can reach.
+			const exclusive = schema.exclusiveMinimum;
+			if (typeof exclusive === "number" && exclusive >= 0) return exclusive + 1;
+			const minimum = schema.minimum;
+			if (typeof minimum === "number" && minimum > 0) return minimum;
 			return 0;
+		}
 		case "boolean":
 			return false;
 		case "null":
