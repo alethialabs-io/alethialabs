@@ -296,7 +296,12 @@ export function PreviewSettings({
 										value={field.value ?? "namespace"}
 										onValueChange={field.onChange}
 									>
-										<SelectTrigger className="w-full">
+										{/* Three selects share two `SettingsField` rows here, so the row label
+										    cannot name them — "Placement" would be the accessible name of two
+										    different controls. Each carries its own, and each keeps the visible
+										    row label inside it (WCAG 2.5.3): a user who says "placement mode"
+										    must reach a control a user who reads "Placement" can find. */}
+										<SelectTrigger aria-label="Placement mode" className="w-full">
 											<SelectValue />
 										</SelectTrigger>
 										<SelectContent>
@@ -331,7 +336,7 @@ export function PreviewSettings({
 												field.onChange(value === "default" ? null : value)
 											}
 										>
-											<SelectTrigger className="w-full">
+											<SelectTrigger aria-label="Placement fabric" className="w-full">
 												<SelectValue placeholder="Default fabric" />
 											</SelectTrigger>
 											<SelectContent>
@@ -384,7 +389,7 @@ export function PreviewSettings({
 											field.onChange(value === "none" ? null : value)
 										}
 									>
-										<SelectTrigger className="w-full">
+										<SelectTrigger aria-label="Credentials" className="w-full">
 											<SelectValue placeholder="None - public repos only" />
 										</SelectTrigger>
 										<SelectContent>
