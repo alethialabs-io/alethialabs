@@ -16,6 +16,7 @@
 
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NAME_REQUIRED, unnamedControls } from "../support/accessible-names";
 
 const { pathname, environments } = vi.hoisted(() => ({
 	pathname: { current: "/acme/~/support/my-cases" },
@@ -74,25 +75,11 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 const { AppSidebar } = await import("@/components/shell/app-sidebar");
 const { Topbar } = await import("@/components/shell/topbar");
 
-// The command roles axe enforces a discernible name on, across BOTH of its rules — `button-name`
-// (`selector: 'button'`, critical) and `aria-command-name` (`[role="link"], [role="button"],
-// [role="menuitem"]`, serious). `scanA11y` keeps serious AND critical, so both are inside the
-// audit's denominator and both must be inside this sweep's. Native `<button>` alone is not enough:
-// `SwitcherTrigger` renders the org body with `nativeButton={false}`, and base-ui's `useButton`
-// stamps `role="button"` on the resulting `<a>` — an element a `button` query never sees.
-const COMMAND_ROLES = 'button, [role="button"], [role="link"], [role="menuitem"]';
-
-/** Every command-role element under `root` that jest-dom cannot find an accessible name for. */
-function unnamedButtons(root: HTMLElement): string[] {
-	return Array.from(root.querySelectorAll(COMMAND_ROLES)).flatMap((button) => {
-		try {
-			expect(button).toHaveAccessibleName();
-			return [];
-		} catch {
-			return [button.outerHTML.slice(0, 200)];
-		}
-	});
-}
+// The denominator moved to tests/support/accessible-names.ts in #3756 so a second sweep — over the
+// page-owned components that carry the same name-from-author-only idiom — measures the same thing
+// this one does, and `NAME_REQUIRED` widened there from the two COMMAND rules to all three of axe's
+// name rules. `scanA11y` keeps serious AND critical, so every one of the three is inside the audit's
+// denominator and must be inside a sweep's.
 
 beforeEach(() => {
 	pathname.current = "/acme/~/support/my-cases";
@@ -102,8 +89,8 @@ beforeEach(() => {
 describe("shell chrome — accessible names", () => {
 	it("names every button in the topbar at org scope", () => {
 		const { container } = render(<Topbar onOpenSidebar={() => {}} />);
-		expect(container.querySelectorAll(COMMAND_ROLES).length).toBeGreaterThan(0);
-		expect(unnamedButtons(container)).toEqual([]);
+		expect(container.querySelectorAll(NAME_REQUIRED).length).toBeGreaterThan(0);
+		expect(unnamedControls(container)).toEqual([]);
 	});
 
 	it("names every button in the topbar inside a project, with the env switcher mounted", async () => {
@@ -113,7 +100,7 @@ describe("shell chrome — accessible names", () => {
 		// The env switcher only mounts once its list resolves — wait for it, or this asserts
 		// against a topbar that never rendered the control the audit flagged.
 		await screen.findByRole("button", { name: /Switch environment/i });
-		expect(unnamedButtons(container)).toEqual([]);
+		expect(unnamedControls(container)).toEqual([]);
 	});
 
 	// Both flags change WHAT the sidebar renders — `selfRunners` builds a different nav (whose
@@ -129,8 +116,8 @@ describe("shell chrome — accessible names", () => {
 		const { container } = render(
 			<AppSidebar isHosted={isHosted} selfRunners={selfRunners} />,
 		);
-		expect(container.querySelectorAll(COMMAND_ROLES).length).toBeGreaterThan(0);
-		expect(unnamedButtons(container)).toEqual([]);
+		expect(container.querySelectorAll(NAME_REQUIRED).length).toBeGreaterThan(0);
+		expect(unnamedControls(container)).toEqual([]);
 	});
 
 	it("puts the switcher's purpose ahead of the current selection", async () => {
