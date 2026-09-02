@@ -12,15 +12,10 @@
 //   node scripts/check-route-states.mjs --self-test     # the fixture suite
 //   node scripts/check-route-states.mjs --help
 //
-// `pnpm check:route-states` DOES NOT EXIST YET, and nothing in CI runs this file. Adding the alias
-// means editing the root `package.json`, which is outside this unit's scope (see #3616's `scope:`
-// line), so the script is runnable as `node scripts/check-route-states.mjs` until then.
-//
-// THAT HAND-OFF HAS AN OWNER: **#3759** carries the `package.json` alias and the CI step, and
-// deletes this paragraph. Named rather than left as a caveat, because the risk is not that the
-// check is missing — it is that the baseline below goes stale on `dev` where nobody is watching,
-// and whoever wires the step later inherits a red gate they did not cause and cannot attribute.
-// A check nothing invokes is a check that reports green by never running.
+// `pnpm check:route-states` is the bare form above, and `Authz / open-core guards` in
+// `.github/workflows/ci.yml` runs BOTH — the check and the `--self-test` — as two separate steps,
+// because one step that does both cannot distinguish "nothing found" from "nothing ran" (#3759).
+// Do not pipe either into `tail`/`head`: a pipe reports the exit code of its LAST command.
 //
 // ── WHY IT READS THE MANIFEST AND DOES NOT WALK THE TREE ─────────────────────────────────────
 //
