@@ -41,11 +41,26 @@ func probeImage() string {
 func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bool, stdout io.Writer) error {
 	started := time.Now()
 	deadline := started.Add(timeout)
-	// The budget is announced here and quoted again in both failure messages below. All three go
+	// The budget is announced here and quoted again in all THREE failure messages below — the
+	// cancelled-context one, the unreachable-API one, and the no-Ready-node one. All four renders go
 	// through format.Duration so one run cannot print the same configured value two ways: the
 	// default 15m budget is `15m0s` from Duration.String() and `15m 0s` from format.Duration, and
 	// a banner and a failure message disagreeing about it makes the reader guess which is the
 	// setting they configured.
+	//
+	// COUNT THE RENDERS, not the messages. The first draft of this migrated three of the four and
+	// left the no-Ready-node one raw — which is the DEFAULT path (clusterReadyRequireNode is true
+	// unless explicitly disabled), so it turned a tree where all four agreed at `15m0s` into one
+	// where the banner and the commonest failure disagreed. Exactly the defect this comment gives
+	// as the reason the banner had to move.
+	//
+	// KNOWN LOSS, accepted: format.Duration drops seconds above an hour, so a budget of
+	// `1h30m45s` echoes as `1h 30m`. Rounding a MEASUREMENT is free; rounding a value the operator
+	// TYPED is not obviously free, and this is the latter. It is accepted because seconds survive
+	// intact below an hour (a `90s` budget is `1m 30s`, exactly) and an hour-plus budget with
+	// second precision is not a thing anyone sets. If it ever matters, the fix is to echo the raw
+	// ALETHIA_CLUSTER_READY_TIMEOUT string the operator set rather than re-rendering the parsed
+	// Duration — re-rendering can never be lossless, whichever formatter it uses.
 	fmt.Fprintf(stdout, "Waiting for the cluster to become reachable (timeout %s)...\n", format.Duration(timeout))
 
 	// 1. API server reachable — poll readyz, but keep WHY it fails (auth vs network vs not-ready)
@@ -133,7 +148,8 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 		if reasons := NotReadyReasons(lastNodesRaw); len(reasons) > 0 {
 			detail = " — NotReady: " + strings.Join(reasons, "; ")
 		}
-		return fmt.Errorf("no cluster node reached Ready within %s (%d/%d ready)%s: %w", timeout, lastReady, lastTotal, detail, err)
+		return fmt.Errorf("no cluster node reached Ready within %s (%d/%d ready)%s: %w",
+			format.Duration(timeout), lastReady, lastTotal, detail, err)
 	}
 	fmt.Fprintf(stdout, "%d/%d nodes Ready.\n", lastReady, lastTotal)
 	return nil
