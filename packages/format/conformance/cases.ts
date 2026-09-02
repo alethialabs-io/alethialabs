@@ -70,6 +70,20 @@ export interface MonthlyRateCase {
 }
 
 /**
+ * A case for `formatMonthlyDelta(amount, style, currency)`. Structurally identical to
+ * {@link MonthlyRateCase} and kept separate anyway: the two functions answer different questions,
+ * and a shared type would let a case be moved between the sections by editing one word, in a file
+ * whose whole purpose is that a moved expectation is visible.
+ */
+export interface MonthlyDeltaCase {
+	id: string;
+	/** `null` is "not a finite number", the same sentinel {@link NumberCase} uses. */
+	amount: number | null;
+	style: "estimate" | "exact";
+	currency: string;
+}
+
+/**
  * `formatMinutes` — rounds ONCE, before the hour test, so a value cannot round differently in
  * two branches. The pair either side of 59.5 is what pins that.
  */
@@ -214,17 +228,20 @@ export const MONEY: MoneyCase[] = [
  * `<$1/mo` beside a `$1.00/mo`. The `<= 0` test runs FIRST on the raw value, because 0.001 is
  * a real cost that must not round into "nothing is running".
  *
- * The two `negative-clamps` cases freeze a GAP, not a guarantee. `<= 0` is one test, so a
- * negative loses its sign in BOTH registers and a saving renders as `$0/mo` / `$0.00/mo` —
- * including in the register that promises to round nothing away. They are here so the two
- * implementations cannot drift apart on it, not because clamping is the right answer for a
- * credit: neither language has a credit register, and adding one changes this frozen table.
+ * The two `negative-REFUSED-see-monthlyDelta` cases freeze a REFUSAL, and they used to freeze a
+ * GAP. `<= 0` is one test, so a negative loses its sign in BOTH registers and a saving renders as
+ * `$0/mo` / `$0.00/mo` — including in the register that promises to round nothing away. Until
+ * #3768 that was a hole with nowhere for a signed amount to go; the rows are unchanged and their
+ * MEANING is not, because `formatMonthlyDelta` now exists. `formatMonthlyRate` means an absolute
+ * cost, clamping is how it declines a delta, and these two rows are what stop either language
+ * quietly deciding otherwise. The ids say so: a reader who finds `negative-clamps` here and reads
+ * it as an unfixed bug would be reading the table correctly and the tree wrongly.
  */
 export const MONTHLY_RATE: MonthlyRateCase[] = [
 	{ id: "monthlyRate/estimate/zero-is-not-a-bill", amount: 0, style: "estimate", currency: "USD" },
 	{ id: "monthlyRate/exact/zero-is-a-column-entry", amount: 0, style: "exact", currency: "USD" },
-	{ id: "monthlyRate/estimate/negative-clamps", amount: -3, style: "estimate", currency: "USD" },
-	{ id: "monthlyRate/exact/negative-clamps", amount: -3, style: "exact", currency: "USD" },
+	{ id: "monthlyRate/estimate/negative-REFUSED-see-monthlyDelta", amount: -3, style: "estimate", currency: "USD" },
+	{ id: "monthlyRate/exact/negative-REFUSED-see-monthlyDelta", amount: -3, style: "exact", currency: "USD" },
 	{ id: "monthlyRate/estimate/sub-dollar-ADMITS-IT", amount: 0.02, style: "estimate", currency: "USD" },
 	{ id: "monthlyRate/exact/sub-dollar-DOES-NOT", amount: 0.02, style: "exact", currency: "USD" },
 	{ id: "monthlyRate/estimate/a-tenth-of-a-cent-is-still-running", amount: 0.001, style: "estimate", currency: "USD" },
@@ -239,6 +256,61 @@ export const MONTHLY_RATE: MonthlyRateCase[] = [
 	{ id: "monthlyRate/exact/and-their-total", amount: 105.35, style: "exact", currency: "USD" },
 	{ id: "monthlyRate/estimate/JPY-HAS-NO-MINOR-UNIT", amount: 1240, style: "estimate", currency: "JPY" },
 	{ id: "monthlyRate/estimate/EUR-NARROW-SYMBOL", amount: 12.5, style: "estimate", currency: "EUR" },
+];
+
+/**
+ * `formatMonthlyDelta` — MAJOR units, SIGNED. The register `formatMonthlyRate` refuses to be, so
+ * the rows below are chosen to pin the three things that are new here rather than to re-cover
+ * ground the `monthlyRate` section already holds.
+ *
+ * 1. THE SIGN, IN BOTH DIRECTIONS AND IN BOTH REGISTERS, leading the currency symbol. A port that
+ *    drops it, or that hands the job to a locale-aware `signDisplay` and gets `$+13`, fails four
+ *    rows rather than one.
+ * 2. ZERO IS UNSIGNED, and so is a change that ROUNDS to zero — one rule, reached by two routes,
+ *    so both routes are pinned. `sub-unit-*-ROUNDS-TO-NO-CHANGE` is the row that fails if the sign
+ *    is decided on the raw amount instead of the rendered magnitude: that spelling produces
+ *    `+$0/mo` and `+$0.00/mo`, the increase-that-did-not-happen the ruling forbids.
+ * 3. THE REGISTERS DIFFER IN PRECISION here, which they do NOT in `monthlyRate`. `0.4` is the pair
+ *    that states it: `$0/mo` as an estimate, `+$0.40/mo` as an exact line. An implementation that
+ *    copied `monthlyRate`'s register rule wholesale renders `+$0.40/mo` for both and fails one.
+ *
+ * The half-away-from-zero rounding that this whole package exists for is pinned in both
+ * directions (`12.5`, `-12.5`) at the estimate register, and once more at the EXACT register
+ * through JPY — which has no minor unit, so `12.5` meets the same half there. A half-CENT case
+ * would have been the obvious way to cover the exact register in USD and is deliberately absent:
+ * 12.505 is not exactly representable as a double, so the row would pin a floating-point artefact
+ * rather than the rounding rule, in a table another language has to reproduce exactly.
+ *
+ * No currency without a symbol appears here, for the same reason none appears under `monthlyRate`
+ * or `money`: TypeScript delegates to Intl, which knows a narrow symbol or an ISO code for every
+ * currency and PREFIXES it, while `packages/core/format` carries a deliberate four-entry table and
+ * SUFFIXES the code — `CHF\u00a012.50` against `12.50 CHF`. That divergence is a recorded ruling
+ * rather than a mirror (see the header of `packages/core/format/format_test.go`), so it belongs in
+ * Go's own tests, and a row here would freeze a disagreement instead of a contract.
+ */
+export const MONTHLY_DELTA: MonthlyDeltaCase[] = [
+	{ id: "monthlyDelta/estimate/ZERO-CARRIES-NO-SIGN", amount: 0, style: "estimate", currency: "USD" },
+	{ id: "monthlyDelta/exact/ZERO-CARRIES-NO-SIGN-AND-NO-MINOR-UNITS", amount: 0, style: "exact", currency: "USD" },
+	{ id: "monthlyDelta/estimate/nonfinite-is-no-change", amount: null, style: "estimate", currency: "USD" },
+	{ id: "monthlyDelta/exact/nonfinite-is-no-change", amount: null, style: "exact", currency: "USD" },
+	{ id: "monthlyDelta/estimate/A-SAVING-KEEPS-ITS-SIGN", amount: -5, style: "estimate", currency: "USD" },
+	{ id: "monthlyDelta/exact/A-SAVING-KEEPS-ITS-SIGN", amount: -5, style: "exact", currency: "USD" },
+	{ id: "monthlyDelta/estimate/AN-INCREASE-IS-SIGNED-TOO", amount: 12.5, style: "estimate", currency: "USD" },
+	{ id: "monthlyDelta/exact/AN-INCREASE-KEEPS-ITS-CENTS", amount: 12.5, style: "exact", currency: "USD" },
+	{ id: "monthlyDelta/estimate/HALF-UNIT-ROUNDS-AWAY-FROM-ZERO-DOWNWARD-TOO", amount: -12.5, style: "estimate", currency: "USD" },
+	{ id: "monthlyDelta/estimate/below-the-half-rounds-down", amount: 12.49, style: "estimate", currency: "USD" },
+	{ id: "monthlyDelta/estimate/half-a-unit-rounds-UP-to-a-signed-one", amount: 0.5, style: "estimate", currency: "USD" },
+	{ id: "monthlyDelta/estimate/A-SUB-UNIT-INCREASE-ROUNDS-TO-NO-CHANGE", amount: 0.4, style: "estimate", currency: "USD" },
+	{ id: "monthlyDelta/estimate/A-SUB-UNIT-SAVING-ROUNDS-TO-NO-CHANGE", amount: -0.4, style: "estimate", currency: "USD" },
+	{ id: "monthlyDelta/exact/the-same-sub-unit-change-KEEPS-ITS-CENTS", amount: 0.4, style: "exact", currency: "USD" },
+	{ id: "monthlyDelta/exact/the-same-sub-unit-saving-KEEPS-ITS-CENTS", amount: -0.4, style: "exact", currency: "USD" },
+	{ id: "monthlyDelta/exact/A-SUB-CENT-CHANGE-ROUNDS-TO-NO-CHANGE", amount: 0.001, style: "exact", currency: "USD" },
+	{ id: "monthlyDelta/estimate/thousands-separator", amount: 1240.37, style: "estimate", currency: "USD" },
+	{ id: "monthlyDelta/exact/thousands-separator-on-a-saving", amount: -1240.37, style: "exact", currency: "USD" },
+	{ id: "monthlyDelta/estimate/JPY-HAS-NO-MINOR-UNIT", amount: -1240, style: "estimate", currency: "JPY" },
+	{ id: "monthlyDelta/exact/JPY-HALF-ROUNDS-AWAY-FROM-ZERO", amount: 12.5, style: "exact", currency: "JPY" },
+	{ id: "monthlyDelta/estimate/EUR-NARROW-SYMBOL", amount: 12.5, style: "estimate", currency: "EUR" },
+	{ id: "monthlyDelta/exact/EUR-SIGN-LEADS-THE-SYMBOL", amount: -12.5, style: "exact", currency: "EUR" },
 ];
 
 /**

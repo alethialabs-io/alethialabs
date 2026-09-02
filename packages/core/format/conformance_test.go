@@ -119,6 +119,9 @@ var drivers = map[string]func(*testing.T, map[string]any) string{
 	"monthlyRate": func(t *testing.T, r map[string]any) string {
 		return MonthlyRate(num(t, r, "amount"), RateStyle(str(t, r, "style")), str(t, r, "currency"))
 	},
+	"monthlyDelta": func(t *testing.T, r map[string]any) string {
+		return MonthlyDelta(num(t, r, "amount"), RateStyle(str(t, r, "style")), str(t, r, "currency"))
+	},
 	"date": func(t *testing.T, r map[string]any) string {
 		loc, err := time.LoadLocation(str(t, r, "timeZone"))
 		if err != nil {
@@ -206,6 +209,21 @@ var requiredIDs = []string{
 	// A currency with no minor unit, and one whose symbol is not its ISO prefix.
 	"monthlyRate/estimate/JPY-HAS-NO-MINOR-UNIT",
 	"money/EUR-NARROW-SYMBOL-NOT-EUR-PREFIX",
+	// The credit register (#3768). Four separate mistakes each render most of these rows
+	// correctly, so all four are named: dropping the sign, signing the zero, rounding half to EVEN
+	// — which is this package's founding defect, met again at a register that rounds to whole
+	// units — and deciding the sign on the raw amount rather than on the rendered magnitude, which
+	// resurrects `+$0/mo` for a change too small to show.
+	"monthlyDelta/estimate/A-SAVING-KEEPS-ITS-SIGN",
+	"monthlyDelta/estimate/AN-INCREASE-IS-SIGNED-TOO",
+	"monthlyDelta/exact/ZERO-CARRIES-NO-SIGN-AND-NO-MINOR-UNITS",
+	"monthlyDelta/exact/JPY-HALF-ROUNDS-AWAY-FROM-ZERO",
+	"monthlyDelta/estimate/A-SUB-UNIT-INCREASE-ROUNDS-TO-NO-CHANGE",
+	// MonthlyRate clamps a negative, and that is a REFUSAL rather than a gap now that MonthlyDelta
+	// exists. These two rows are the only statement that the clamp is deliberate; without them a
+	// later reader "fixes" it and every absolute call site starts rendering signed money.
+	"monthlyRate/estimate/negative-REFUSED-see-monthlyDelta",
+	"monthlyRate/exact/negative-REFUSED-see-monthlyDelta",
 }
 
 // tableProblems IS the guard. Both the check above and the mutation test that proves it works call

@@ -93,6 +93,10 @@ const DRIVERS: Record<string, { fn: string; run: (r: Row) => string }> = {
 		fn: "formatMonthlyRate",
 		run: (r) => fmt.formatMonthlyRate(n(r.amount), rateStyle(r.style), s(r.currency)),
 	},
+	monthlyDelta: {
+		fn: "formatMonthlyDelta",
+		run: (r) => fmt.formatMonthlyDelta(n(r.amount), rateStyle(r.style), s(r.currency)),
+	},
 };
 
 /** Narrow the imported file without an `any` escaping or a cast. */
@@ -153,6 +157,19 @@ const REQUIRED_IDS = [
 	"duration/many-hours",
 	// hourCycle h23, not hour12:false.
 	"date/MIDNIGHT-IS-00-NOT-24",
+	// The credit register. Four rows, because four separate mistakes each render three of them
+	// correctly: dropping the sign, signing the zero, rounding half to even, and deciding the sign
+	// on the raw amount rather than on the rendered magnitude.
+	"monthlyDelta/estimate/A-SAVING-KEEPS-ITS-SIGN",
+	"monthlyDelta/estimate/AN-INCREASE-IS-SIGNED-TOO",
+	"monthlyDelta/exact/ZERO-CARRIES-NO-SIGN-AND-NO-MINOR-UNITS",
+	"monthlyDelta/exact/JPY-HALF-ROUNDS-AWAY-FROM-ZERO",
+	"monthlyDelta/estimate/A-SUB-UNIT-INCREASE-ROUNDS-TO-NO-CHANGE",
+	// `monthlyRate` clamps a negative, and that is now a REFUSAL rather than a gap — the register
+	// a signed amount belongs in exists. Deleting these two would delete the only statement that
+	// the clamp is deliberate.
+	"monthlyRate/estimate/negative-REFUSED-see-monthlyDelta",
+	"monthlyRate/exact/negative-REFUSED-see-monthlyDelta",
 ];
 
 /**
@@ -171,6 +188,9 @@ const SECTION_FLOOR: Record<string, number> = {
 	bytes: 8,
 	money: 6,
 	monthlyRate: 15,
+	// Set to the row count, not below it. The paragraph above is a complaint about floors that
+	// lagged the sections they guard; a new section starting three rows slack would re-earn it.
+	monthlyDelta: 22,
 };
 
 describe("format conformance table", () => {
