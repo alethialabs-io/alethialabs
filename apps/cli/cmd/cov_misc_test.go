@@ -53,7 +53,8 @@ type miscExit struct{ code int }
 func miscEnvelope(mode miscMode) map[string]any {
 	if mode == miscEmpty {
 		return map[string]any{
-			"orgs": []any{}, "alert_rules": []any{}, "sso_providers": []any{},
+			"orgs": []any{}, "alert_rules": []any{}, "channels": []any{}, "sso_providers": []any{},
+			"dimensions": []any{}, "assignments": []any{},
 			"activity": []any{}, "repositories": []any{}, "agents": []any{},
 			"clusters": []any{}, "rules": []any{}, "probes": []any{},
 			"addons": []any{}, "charts": []any{}, "changes": []any{},
@@ -95,6 +96,33 @@ func miscEnvelope(mode miscMode) map[string]any {
 			},
 		},
 		"alert_rule": map[string]any{"id": "ar2", "name": "new rule", "severity": "warning"},
+		// The single-record envelopes the mutating channel/fleet commands read back. Their absence
+		// is itself a case — see TestGovCmd_ARecordlessSuccessIsReportedNotDereferenced.
+		"channel": map[string]any{"id": "ch1", "name": "ops", "type": "slack", "is_verified": true, "enabled": true},
+		"pool": map[string]any{
+			"provider": "aws", "warm_min": 2, "max": 10, "slots_per_runner": 1, "enabled": true,
+		},
+		// The governance pickers read the org's taxonomy and a resource's current labels.
+		"dimensions": []any{
+			map[string]any{
+				"id": "d1", "key": "environment", "label": "Environment", "multi": false,
+				"applies_to": []string{"project_environment"},
+				"values": []any{
+					map[string]any{"id": "v1", "value": "dev", "label": "Dev"},
+					map[string]any{"id": "v2", "value": "prod", "label": "Prod"},
+				},
+			},
+		},
+		"assignments": []any{
+			map[string]any{"dimension_key": "environment", "dimension_label": "Environment",
+				"value": "prod", "value_label": "Prod"},
+		},
+		// `alerts create --channel` resolves its argument against the org's channels, so a rule
+		// can name a channel the way a person does. The envelope carries them for that lookup as
+		// well as for `channels list`.
+		"channels": []any{
+			map[string]any{"id": "ch1", "name": "ops", "type": "slack", "is_verified": true, "enabled": true},
+		},
 		"sso_providers": []any{
 			map[string]any{"id": "sso1", "provider_type": "oidc", "domain": "acme.com", "issuer": "https://idp.acme.com", "enabled": true},
 		},
@@ -302,7 +330,11 @@ func miscReadCommands() [][]string {
 		{"protection", "list", "-p", "web"},
 		{"probes", "list", "-p", "web"},
 		{"promotion", "list", "-p", "web", "-e", "production"},
-		{"promotion", "get", "pr1", "-p", "web"},
+		// `promotion get` is NOT here, for the same reason `cluster get` is not: this list is run
+		// against an EMPTY envelope by TestMisc_EmptyResultsAreReported, and a project with no
+		// promotions is not an empty answer for a get — it is a miss, and a miss is fatal rather
+		// than a muted line and exit 0. Its arms — resolved by id, by prefix, ambiguous, absent,
+		// and no selector with --no-input — are owned by governance_select_test.go.
 		{"cost", "show", "-p", "web", "-e", "production"},
 		{"iac", "show", "-p", "web", "-e", "production"},
 		{"drift", "show", "-p", "web", "-e", "production"},

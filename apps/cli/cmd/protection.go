@@ -25,12 +25,14 @@ window, or a cost-delta ceiling. List the rules configured per environment.`,
 var protectionListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List a project's per-environment protection rules",
+	Long: `List the protection rules configured for each of a project's environments. Name the
+project with --project; omit it on a terminal and you are asked which.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		project, err := currentProject(cmd)
+		project, err := projectFromFlag(cmd, token)
 		if err != nil {
 			fail(err)
 		}
@@ -93,7 +95,8 @@ func runProtectionList(c apiClient, out io.Writer, format, project string) error
 }
 
 func init() {
-	protectionCmd.PersistentFlags().StringP("project", "p", "", "Project name or id")
+	protectionCmd.PersistentFlags().StringP("project", "p", "",
+		mustGovField("alethia protection list", fieldKeyGovProject).Description+" (name or id)")
 	protectionCmd.AddCommand(protectionListCmd)
 	rootCmd.AddCommand(protectionCmd)
 }
