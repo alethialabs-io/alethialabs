@@ -199,27 +199,36 @@ See [Connector Commands](/cli/commands/connector) for AWS and Azure flows.
 
 ```bash
 # 1. Plan
-alethia project plan --project-id <id>
-# Note the job ID from output
+alethia project plan --project boutique
 
-# 2. Stream logs to review
-alethia jobs logs <plan-job-id> --follow
+# 2. Review what it decided — --latest resolves the job you just started
+alethia jobs logs --latest --follow
 
 # 3. Apply
-alethia project apply --project-id <id> --plan-job-id <plan-job-id>
+alethia project apply --project boutique
+```
+
+`--project` takes the project's NAME. Omit it on a terminal and you are asked; `--latest` picks
+the most recent job, so no id has to travel from one command's output into the next one's
+arguments.
+
+To pin the apply to one specific reviewed plan rather than re-planning, name that plan's job id:
+
+```bash
+alethia project apply --project boutique --plan-job-id 4f3c2b1a-9d6e-4a3b-8c17-5e2f1a9b7c04
 ```
 
 ### Scripting with --wait
 
 ```bash
 # Block until plan completes, then apply
-alethia project plan --project-id <id> --wait
-alethia project apply --project-id <id> --plan-job-id <id> --wait
+alethia project plan --project boutique --wait
+alethia project apply --project boutique --wait
 ```
 
 ### Log Tailing
 
 ```bash
 # Stream logs like tail -f
-alethia jobs logs <job-id> --follow
+alethia jobs logs --latest --follow
 ```
