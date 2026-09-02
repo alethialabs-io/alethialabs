@@ -97,7 +97,7 @@ func hygCliAuthstreamsEnv(t *testing.T) (run func(args ...string) error, replant
 		}
 	}
 	run = func(args ...string) error {
-		rootCmd.SetArgs(args)
+		execRootArgs(args)
 		return rootCmd.Execute()
 	}
 	return run, replant, &served
@@ -140,21 +140,31 @@ func hygCliAuthstreamsDecodeAll(s string) error {
 //
 // The ledger is checked in BOTH directions: a command listed here whose document has
 // become clean fails too, so the list cannot quietly outlive the defect it names.
-var hygCliAuthstreamsSpinnerOnStdout = map[string]string{
-	"sso get sso1": "`Fetching SSO provider...` spinner",
-	"cluster list": "`Fetching clusters...` spinner",
-}
+//
+// #3847 LANDED (dev bce91194) and moved those spinners to ui.InteractiveOutput(), so both
+// entries were removed — the both-directions check above is what reported it, exactly as
+// designed. The map stays declared and empty: emptiness is the claim that every command
+// under this guard emits a clean document, and a later regression re-earns its entry here
+// with an issue number rather than silently widening the guard.
+var hygCliAuthstreamsSpinnerOnStdout = map[string]string{}
 
 // hygCliAuthstreamsStreams pins what the CLI believes about its terminals for one test:
 // whether stdin and the form's stream are terminals, and whether --no-input was passed.
+//
+// formStream drives interactiveOutIsTTY, which is the predicate requireInteractiveForm
+// actually consults — NOT stdoutIsTTY. A huh form draws on stderr and the Bubble Tea table
+// draws on stdout, so stubbing stdout alone left the gate reading the real terminal and the
+// confirm was reached with its stream redirected. stdoutIsTTY is stubbed to the same answer
+// so a command whose spinner reads stdout sees one consistent story.
 func hygCliAuthstreamsStreams(t *testing.T, stdin, formStream, noInput bool) {
 	t.Helper()
-	prevIn, prevOut, prevMode := stdinIsTTY, stdoutIsTTY, noInputMode
+	prevIn, prevOut, prevForm, prevMode := stdinIsTTY, stdoutIsTTY, interactiveOutIsTTY, noInputMode
 	stdinIsTTY = func() bool { return stdin }
 	stdoutIsTTY = func() bool { return formStream }
+	interactiveOutIsTTY = func() bool { return formStream }
 	noInputMode = noInput
 	t.Cleanup(func() {
-		stdinIsTTY, stdoutIsTTY, noInputMode = prevIn, prevOut, prevMode
+		stdinIsTTY, stdoutIsTTY, interactiveOutIsTTY, noInputMode = prevIn, prevOut, prevForm, prevMode
 	})
 }
 
