@@ -106,7 +106,7 @@ export function ThreadRail({
 						type="button"
 						onClick={onOpenArtifacts}
 						className={cn(
-							"flex w-full items-center gap-2 rounded-none border border-transparent px-2.5 py-1.5 text-[13px] text-foreground transition-colors hover:bg-muted",
+							"flex w-full items-center gap-2 rounded-none border border-transparent px-2.5 py-1.5 text-ui-md text-foreground transition-colors hover:bg-muted",
 							artifactsActive && "border-border bg-muted",
 						)}
 					>
@@ -119,7 +119,7 @@ export function ThreadRail({
 						type="button"
 						onClick={onOpenKnowledge}
 						className={cn(
-							"flex w-full items-center gap-2 rounded-none border border-transparent px-2.5 py-1.5 text-[13px] text-foreground transition-colors hover:bg-muted",
+							"flex w-full items-center gap-2 rounded-none border border-transparent px-2.5 py-1.5 text-ui-md text-foreground transition-colors hover:bg-muted",
 							knowledgeActive && "border-border bg-muted",
 						)}
 					>
@@ -156,7 +156,7 @@ export function ThreadRail({
 					)}
 					{groups.map((g) => (
 						<div key={g.label}>
-							<div className="vx-eyebrow px-2 pb-1.5 pt-3 text-[9px]">
+							<div className="vx-eyebrow px-2 pb-1.5 pt-3 text-ui-3xs">
 								{g.label}
 							</div>
 							{g.items.map((t) => (
@@ -173,7 +173,7 @@ export function ThreadRail({
 									<span className="flex min-w-0 items-center justify-between gap-2">
 										<span
 											title={t.title}
-											className="min-w-0 flex-1 truncate text-[12.5px] text-foreground"
+											className="min-w-0 flex-1 truncate text-ui-sm text-foreground"
 										>
 											{t.title}
 										</span>
@@ -186,7 +186,7 @@ export function ThreadRail({
 											className="h-3 w-3 flex-none text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
 										/>
 									</span>
-									<span className="flex items-center gap-1.5 font-mono text-[9.5px] text-muted-foreground">
+									<span className="flex items-center gap-1.5 font-mono text-ui-3xs text-muted-foreground">
 										<span className="h-1 w-1 rounded-full bg-muted-foreground/60" />
 										{relTime(new Date(t.updated_at))}
 									</span>
