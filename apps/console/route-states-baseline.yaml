@@ -89,15 +89,6 @@ predicates:
     na: []
   T3:
     fail:
-      - /[org]/[project]/architecture
-      - /[org]/[project]/clusters
-      - /[org]/[project]/environments
-      - /[org]/[project]/jobs
-      - /[org]/[project]/settings/access
-      - /[org]/[project]/settings/activity
-      - /[org]/[project]/settings/general
-      - /[org]/[project]/settings/preview
-      - /[org]/[project]/usage
       - /[org]/~/support/cases/[id]
     na:
       - /[org]/[project]/settings: does-not-call-not-found
