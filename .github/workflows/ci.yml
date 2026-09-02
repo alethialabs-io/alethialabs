@@ -832,6 +832,20 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-shared-surface.mjs --self-test
+      # The allowlist's `baseline:` and `debt:` are entry counts over its own rows, and the file is
+      # shared by every conformance lane of #3613. Typed by hand they had two failure shapes: two
+      # lanes writing DIFFERENT values conflict and the resolution is arithmetic (recount, then
+      # probe N±1 to prove the number is unique), and two lanes writing the SAME value — ten rows
+      # removed here, ten different rows removed there — merge cleanly and wrongly, failing on `dev`
+      # and blaming whichever PR landed second. Derived, that second shape cannot happen. This runs
+      # the generator and diffs, the same shape as the offer-parity / config-carriage gates below:
+      # the comparison is against the committed FILE, not against a number the script recomputed.
+      - name: Shared-surface ledger counters are derived from the rows, not typed
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          pnpm gen:shared-surface
+          git diff --exit-code -- apps/console/shared-surface-allowlist.yaml \
+            || { echo "::error::apps/console/shared-surface-allowlist.yaml's ledger counters are stale — run 'pnpm gen:shared-surface' and commit."; exit 1; }
       # scripts/lib/console-routes.mjs is the ONE definition of "the console's private route set" —
       # the denominator of every score the console-UI conformance wave reports. It raises rather
       # than returning [] on a renamed route group, an unreadable directory, two pages on one URL

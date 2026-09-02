@@ -43,6 +43,19 @@
 # The shrink-only property is enforced by REVIEW — the same way the checked-in coverage floors
 # are. A `baseline` or a `debt` that goes UP in a diff is the thing to stop.
 #
+# DO NOT TYPE THE TWO NUMBERS. They are DERIVED from the rows below: `pnpm gen:shared-surface`
+# writes them, `check:shared-surface` refuses a file whose counters disagree with its rows, and CI
+# runs the generator and diffs. ON A MERGE CONFLICT AT THOSE TWO LINES, TAKE EITHER SIDE AND RUN
+# THE GENERATOR — the result is a function of the merged rows and never of which hunk was picked,
+# so there is nothing to recount and nothing to get wrong. Hand-typed, this file is shared by every
+# conformance lane of #3613 and the counter had two failure shapes: different values conflict and
+# the resolution is arithmetic, and the SAME value — one lane removing ten rows, another removing
+# ten DIFFERENT rows — merges silently onto a file that now holds twenty fewer, failing later on
+# `dev` and blaming whichever PR landed second (#3788).
+#
+# The ROWS are still hand-authored and still merge as ordinary text, which is correct: a conflict
+# among them is a real disagreement about what is excluded, and a generator must not resolve it.
+#
 # `hits` is the same ratchet one level down — granted per OCCURRENCE, not per file, so a new
 # `<h2>` in a file already carrying two is new drift.
 #

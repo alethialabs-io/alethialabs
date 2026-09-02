@@ -33,11 +33,35 @@
 // `md:z-50`. A guard whose cheapest escape route is to deepen the defect is worse than no guard.
 // Where a bound is now wider than anything live, that is deliberate and the comment says so.
 //
-//   node scripts/check-shared-surface.mjs
+//   node scripts/check-shared-surface.mjs             # scan, and check the ledger counters
+//   node scripts/check-shared-surface.mjs --write      # rewrite the ledger counters (pnpm gen:shared-surface)
 //   node scripts/check-shared-surface.mjs --self-test
+//   node scripts/check-shared-surface.mjs --help
 //
 // Do NOT pipe it. `node scripts/check-shared-surface.mjs | tail` reports TAIL's exit code, which
 // is always 0, and every failure below becomes invisible.
+//
+// ── THE LEDGER COUNTERS ARE DERIVED, NOT TYPED (#3788) ───────────────────────────────────────
+//
+// `baseline:` and `debt:` are entry counts over the allowlist's own rows. They used to be typed by
+// hand, and the file is shared by every conformance lane of #3613, which gave the counter two
+// failure shapes. Different values conflict textually, and resolving that conflict was ARITHMETIC:
+// recount the rows on the merged tree, then probe N±1 to prove the number is unique. The same
+// value is worse — if one lane removes ten rows and another removes ten DIFFERENT rows, both write
+// the same integer, git merges the line silently, and the file is wrong on `dev` with the failure
+// blaming whichever PR landed second.
+//
+// So `--write` rewrites those two lines from the parsed row set and nothing else, and a bare
+// invocation refuses a file whose counters disagree with its rows, naming the command that fixes
+// it. Resolving the conflict becomes: take either side, run `pnpm gen:shared-surface`, and let CI
+// prove the result. The same-value silent-wrong merge becomes structurally impossible, because the
+// committed number is no longer something a human chose.
+//
+// WHAT THIS DOES NOT DO. It is not a way to ratify drift. `--write` reports the number the rows
+// ALREADY say — it never adds, removes or reorders a row, and it cannot lower a count on its own.
+// Adding an exception still moves the integer in the diff, and a `baseline:` or a `debt:` that goes
+// UP is the thing REVIEW stops; that has always been where the shrink-only property lives (the
+// allowlist's own header says so), and it is unchanged. What is gone is the arithmetic.
 //
 // ── WHAT IS GUARDED, AND WHAT IS NOT ─────────────────────────────────────────────────────────
 //
@@ -287,9 +311,11 @@
 // `scripts/`, and its fixtures are strings held in this file, never files on disk. The self-test
 // asserts both.
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const ALLOWLIST = "apps/console/shared-surface-allowlist.yaml";
@@ -1102,6 +1128,76 @@ export function parseAllowlist(text) {
 	return { baseline, debt, entries, floors };
 }
 
+// ── the ledger counters, derived ──────────────────────────────────────────────────────────────
+
+/**
+ * The two ledger counters as the ROWS say them. This is the only definition of either number, and
+ * `check` compares the committed integers against it in both directions.
+ *
+ * @param {{entries: Entry[]}} list
+ * @returns {{baseline: number, debt: number}}
+ */
+export function ledgerCounts(list) {
+	return {
+		baseline: list.entries.filter((e) => e.kind === "decision").length,
+		debt: list.entries.filter((e) => e.kind === "debt").length,
+	};
+}
+
+/** The two lines `--write` may touch, and the ONLY two. Anchored, so a `#`-commented copy in the
+ * file's own header is not one of them — every header line starts with `#`. */
+const LEDGER_LINE = /^(baseline|debt): (\d+)$/;
+
+/**
+ * Render the allowlist with its counters set to what its rows say — the whole of `--write`.
+ *
+ * It rewrites TWO LINES and nothing else. The rows are hand-authored: their order carries the
+ * sections' reading order, their `reason:` and `lifts:` text is prose in the product's voice, and a
+ * generator that reformatted them would make every conformance lane's diff unreadable for the sake
+ * of two integers. So this does not re-emit the file from the parse; it substitutes in place over
+ * `text.split("\n")` and then ASSERTS the result differs from the input at nothing but a
+ * `baseline:`/`debt:` line — compared against the rendered text, not against the intent.
+ *
+ * Deliberately a pure function of the allowlist's own bytes: it does not scan the tree. A generator
+ * that gated on the console being clean would refuse to run in the one situation that needs it —
+ * a lane whose fix is half-landed — and the counters are a function of the ROWS, never of the tree.
+ * The tree is what `check` reads.
+ *
+ * @param {string} text
+ * @returns {{text: string, want: {baseline: number, debt: number}, have: {baseline: number, debt: number}, stale: boolean}}
+ */
+export function renderAllowlist(text) {
+	const list = parseAllowlist(text);
+	const want = ledgerCounts(list);
+	const have = { baseline: list.baseline, debt: list.debt };
+	const before = text.split("\n");
+	const after = text.split("\n");
+	const seen = { baseline: 0, debt: 0 };
+	for (let i = 0; i < after.length; i++) {
+		const m = after[i].match(LEDGER_LINE);
+		if (m === null) continue;
+		const key = m[1] === "baseline" ? "baseline" : "debt";
+		seen[key] += 1;
+		after[i] = `${key}: ${want[key]}`;
+	}
+	// `parseAllowlist` already refuses a second `baseline:` or `debt:`, so this cannot be reached by
+	// a duplicate. What it catches is the other direction — a line the PARSER counted that this
+	// matcher does not see, which would write a file whose counter never moved and report success.
+	for (const key of /** @type {const} */ (["baseline", "debt"])) {
+		if (seen[key] !== 1) {
+			throw new Error(`${ALLOWLIST}: ${seen[key]} \`${key}:\` line(s) to rewrite, expected exactly 1 — the generator and the parser disagree about this file.`);
+		}
+	}
+	for (let i = 0; i < after.length; i++) {
+		if (after[i] === before[i]) continue;
+		if (!LEDGER_LINE.test(before[i]) || !LEDGER_LINE.test(after[i])) {
+			throw new Error(`${ALLOWLIST}:${i + 1}: \`--write\` changed a line that is not a ledger counter (\`${before[i]}\` → \`${after[i]}\`). It rewrites two lines and nothing else.`);
+		}
+	}
+	const out = after.join("\n");
+	return { text: out, want, have, stale: out !== text };
+}
+
 // ── the check ─────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -1286,29 +1382,39 @@ export function check(readFile, listDir) {
 	// mark computed at run time. They are counted SEPARATELY so that neither can be spent as the
 	// other: converting a debt row into a "decision" would otherwise be free, and that conversion
 	// is exactly how a drift census turns back into a mute button.
+	//
+	// Since #3788 the committed integers are DERIVED — `pnpm gen:shared-surface` writes them from
+	// these same counts — so the two directions below are no longer arithmetic the reader has to
+	// redo; they name the command. The shrink-only property is untouched by that and still lives
+	// where it always did: in REVIEW, on a diff in which the number goes UP. A generator that can
+	// only report what the rows say cannot grant headroom, and it never removes a row.
+	const counts = ledgerCounts(list);
 	const ledgers = [
 		{
 			key: "baseline",
 			want: list.baseline,
-			have: list.entries.filter((e) => e.kind === "decision").length,
+			have: counts.baseline,
 			noun: "recorded decision(s)",
 			fix: "Fix the site to use the shared component instead of adding an exception.",
 		},
 		{
 			key: "debt",
 			want: list.debt,
-			have: list.entries.filter((e) => e.kind === "debt").length,
+			have: counts.debt,
 			noun: "file(s) of measured drift",
 			fix: "New drift is not debt — debt is what was measured when the rule landed. Fix the site.",
 		},
 	];
 	for (const l of ledgers) {
 		if (l.have > l.want) {
-			problems.push(`${ALLOWLIST} has ${l.have} ${l.noun} against a \`${l.key}:\` of ${l.want}. This ledger only shrinks. ${l.fix}`);
+			problems.push(
+				`${ALLOWLIST} has ${l.have} ${l.noun} against a \`${l.key}:\` of ${l.want}. This ledger only shrinks. ${l.fix} ` +
+					`If the row really belongs there, \`pnpm gen:shared-surface\` writes the number — and a \`${l.key}:\` that goes UP is what review stops.`,
+			);
 		} else if (l.have < l.want) {
 			problems.push(
 				`${ALLOWLIST} is down to ${l.have} ${l.noun} from a \`${l.key}:\` of ${l.want} — a win. ` +
-					`Lower \`${l.key}:\` to ${l.have} in the same commit, so it cannot be spent again.`,
+					`Run \`pnpm gen:shared-surface\`, which lowers \`${l.key}:\` to ${l.have}, and commit it so the win cannot be spent again.`,
 			);
 		}
 	}
@@ -1851,7 +1957,7 @@ function selfTest() {
 	const grew = withFloors(`baseline: 0\ndebt: 0\n\nformat:\n  - path: apps/console/components/a.tsx\n    hits: 1\n    reason: because.\n`);
 	ok("the list may never grow past its baseline", says(run(tree, grew), /only shrinks/));
 	const shrank = withFloors(`baseline: 2\ndebt: 0\n\nformat:\n  - path: apps/console/components/a.tsx\n    hits: 1\n    reason: because.\n`);
-	ok("...and a shrink must be recorded, not left as headroom", says(run(tree, shrank), /Lower `baseline:` to 1/));
+	ok("...and a shrink must be recorded, not left as headroom", says(run(tree, shrank), /gen:shared-surface`, which lowers `baseline:` to 1/));
 
 	// THE SECOND LEDGER, both directions, and the one that matters most: the two must not be
 	// interchangeable. A debt row counted against `baseline` would let a fake decision be paid for
@@ -1863,7 +1969,7 @@ function selfTest() {
 	ok("a debt row passes, and pays out of `debt` rather than `baseline`", asDebt.problems.length === 0 && asDebt.debt === 1 && asDebt.decisions === 0, JSON.stringify(asDebt.problems));
 	ok("...and its recorded note is printed when its hits stop agreeing", says(run({ ...tree, "apps/console/components/a.tsx": "const a = n.toFixed(2);\nconst b = n.toFixed(1);" }, debtEntry(0, 1, LIFTS)), /THE RECORDED DEBT/));
 	ok("a debt ledger may never grow past its number", says(run(tree, debtEntry(0, 0, LIFTS)), /against a `debt:` of 0/));
-	ok("...and a debt shrink must be recorded too", says(run(tree, debtEntry(0, 2, LIFTS)), /Lower `debt:` to 1/));
+	ok("...and a debt shrink must be recorded too", says(run(tree, debtEntry(0, 2, LIFTS)), /gen:shared-surface`, which lowers `debt:` to 1/));
 	// The conversion, in both directions, proved by moving ONE row between the two kinds and
 	// leaving both numbers alone. Each direction reds against a DIFFERENT ledger.
 	ok("a decision row does not pay out of `debt`", says(run(tree, debtEntry(0, 1, "reason: because.")), /against a `baseline:` of 0/));
@@ -1915,6 +2021,98 @@ function selfTest() {
 	// actually running, or a copy of this guard would check the pristine original and pass.
 	ok("this file holds no NUL byte, so ripgrep will still print it", !fs.readFileSync(import.meta.filename, "utf8").includes("\u0000"));
 
+	// ── the derived ledger counters (#3788) ──────────────────────────────────────────────────
+	//
+	// A fixture allowlist whose counters are WRONG BY CONSTRUCTION, so nothing below can be
+	// comparing the generator against a value the generator produced. The rows are the input; the
+	// integers are typed here to disagree with them, in both directions, on purpose.
+	const SECTION = RULES[0].id;
+	/** @param {number} decisions @param {number} debts @param {number} baselineSays @param {number} debtSays */
+	const ledgerFixture = (decisions, debts, baselineSays, debtSays) => {
+		const rows = [];
+		for (let i = 0; i < decisions; i++) rows.push(`  - path: apps/console/components/d${i}.tsx\n    hits: 1\n    reason: this surface is a different thing`);
+		for (let i = 0; i < debts; i++) rows.push(`  - path: apps/console/components/x${i}.tsx\n    hits: 2\n    lifts: "#3613 — measured drift"`);
+		return (
+			"# a header line that says baseline: 999 and debt: 999 and must never be rewritten\n" +
+			`baseline: ${baselineSays}\ndebt: ${debtSays}\n\nscanned:\n` +
+			`${Object.keys(SCOPES)
+				.map((id) => `  - scope: ${id}\n    floor: 0\n`)
+				.join("")}\n${SECTION}:\n${rows.join("\n")}\n`
+		);
+	};
+
+	{
+		// TOO HIGH in both ledgers, then TOO LOW in both, then RIGHT. `--write` must land on the same
+		// rendered file from either side, and the number it lands on is read back OUT of the rendered
+		// text — never taken from `want` — so this cannot pass by asserting the fix against itself.
+		const rowsSay = { baseline: 3, debt: 4 };
+		/** @param {string} rendered @param {"baseline"|"debt"} key */
+		const readBack = (rendered, key) => {
+			const line = rendered.split("\n").find((l) => l.startsWith(`${key}: `));
+			return line === undefined ? null : Number(line.slice(key.length + 2));
+		};
+		for (const [label, says] of /** @type {[string, {baseline: number, debt: number}][]} */ ([
+			["too high", { baseline: 9, debt: 9 }],
+			["too low", { baseline: 0, debt: 1 }],
+			["already right", rowsSay],
+		])) {
+			const text = ledgerFixture(rowsSay.baseline, rowsSay.debt, says.baseline, says.debt);
+			const r = renderAllowlist(text);
+			ok(
+				`a \`${label}\` ledger renders to ${rowsSay.baseline}/${rowsSay.debt}`,
+				readBack(r.text, "baseline") === rowsSay.baseline && readBack(r.text, "debt") === rowsSay.debt,
+				`got ${readBack(r.text, "baseline")}/${readBack(r.text, "debt")}`,
+			);
+			const shouldBeStale = says.baseline !== rowsSay.baseline || says.debt !== rowsSay.debt;
+			ok(`...and a \`${label}\` ledger is reported ${shouldBeStale ? "STALE" : "in sync"}`, r.stale === shouldBeStale);
+			// The bare invocation's OTHER half must agree with it. The shrink-only check inside
+			// `check` still fails in BOTH directions, so deleting the staleness gate could not make a
+			// wrong counter pass. Asserted through `check`, over the same fixture rows.
+			const viaCheck = run(ballast(), text);
+			ok(
+				`...and \`check\` ${shouldBeStale ? "still refuses" : "accepts"} it`,
+				viaCheck.problems.some((p) => /only shrinks|— a win/.test(p)) === shouldBeStale,
+				JSON.stringify(viaCheck.problems),
+			);
+		}
+
+		const text = ledgerFixture(rowsSay.baseline, rowsSay.debt, 9, 9);
+		const once = renderAllowlist(text).text;
+		ok("`--write` is idempotent", renderAllowlist(once).text === once);
+		// THE INVARIANT THAT MAKES A GENERATOR SAFE ON A HAND-AUTHORED FILE: two lines change, and
+		// the count of changed lines is measured on the RENDERED text rather than asserted in prose.
+		const afterLines = once.split("\n");
+		const changed = text.split("\n").filter((l, i) => l !== afterLines[i]);
+		ok("...and it touches exactly the two counter lines, no row and no comment", changed.length === 2 && changed.every((l) => /^(baseline|debt): \d+$/.test(l)), JSON.stringify(changed));
+		ok("...leaving the line count untouched", text.split("\n").length === afterLines.length);
+		ok("...and a `# … baseline: 999 …` header comment is not a counter", once.includes("baseline: 999 and debt: 999"));
+	}
+
+	// ── the argument parser ──────────────────────────────────────────────────────────────────
+	ok("no argument is the check", parseCliArgs([]).mode === "check" && parseCliArgs([]).error === null);
+	ok("`--write` is the generator", parseCliArgs(["--write"]).mode === "write");
+	ok("`--self-test` still resolves", parseCliArgs(["--self-test"]).mode === "self-test");
+	ok("`--help` and `-h` resolve", parseCliArgs(["--help"]).mode === "help" && parseCliArgs(["-h"]).mode === "help");
+	// The whole reason the parser exists: `process.argv.includes("--self-test")` made a typo
+	// indistinguishable from a successful run — `--wrte` scanned the tree and reported GREEN.
+	ok("a typo'd flag is an ERROR, never a fall-through to the check", parseCliArgs(["--wrte"]).mode === null && /unrecognised argument/.test(parseCliArgs(["--wrte"]).error ?? ""));
+	ok("...and so is an unknown flag beside a known one", parseCliArgs(["--write", "--wrte"]).error !== null);
+	ok("two modes at once is an error", parseCliArgs(["--write", "--self-test"]).error !== null);
+	ok("...but the same mode twice is not", parseCliArgs(["--write", "--write"]).mode === "write");
+
+	// The parser is only half the claim: the DISPATCH has to be wired to it. Driven as a real
+	// subprocess, because "the parser returned an error" and "the process exited non-zero" are two
+	// different facts, and a guard that proves the first while the second is false is this repo's
+	// most-paid-for defect.
+	{
+		const typo = spawnSync(process.execPath, [import.meta.filename, "--wrte"], { encoding: "utf8" });
+		ok("an unknown flag exits NON-ZERO from the real entry point", typo.status !== 0 && typo.status !== null, `status ${typo.status}`);
+		ok("...naming the flag it could not read", /--wrte/.test(typo.stderr ?? ""), typo.stderr);
+		ok("...and it does not fall through and scan the tree", !/files per rule/.test(`${typo.stdout}${typo.stderr}`));
+		const help = spawnSync(process.execPath, [import.meta.filename, "--help"], { encoding: "utf8" });
+		ok("`--help` exits 0 and names `--write`", help.status === 0 && /--write/.test(help.stdout ?? ""), `status ${help.status}`);
+	}
+
 	if (fails > 0) {
 		console.error(`\ncheck-shared-surface self-test: ${fails} failure(s)`);
 		process.exit(1);
@@ -1924,9 +2122,71 @@ function selfTest() {
 
 // ── entry ─────────────────────────────────────────────────────────────────────────────────────
 
-if (process.argv.includes("--self-test")) {
+export const USAGE = [
+	"Usage: node scripts/check-shared-surface.mjs [--write|--self-test|--help]",
+	"",
+	"  (no argument)  scan the console for hand-rolled shared surfaces, and refuse a",
+	`                 ${ALLOWLIST} whose \`baseline:\`/\`debt:\` disagree with its rows`,
+	"  --write        rewrite those two counter lines from the rows (pnpm gen:shared-surface)",
+	"  --self-test    run the fixture suite; exit 1 on any failure",
+	"  --help, -h     this text",
+].join("\n");
+
+/**
+ * The whole argument parser. An unrecognised argument is an ERROR (exit 2), never a fall-through to
+ * the default mode — the same rule, and the same reason, as `check-route-states.mjs`: a caller's
+ * typo must not be indistinguishable from a successful run. Until #3788 the dispatch was
+ * `process.argv.includes("--self-test")`, so `--wrte` scanned the tree and reported green.
+ *
+ * @param {string[]} argv
+ * @returns {{mode: "check"|"write"|"self-test"|"help"|null, error: string|null}}
+ */
+export function parseCliArgs(argv) {
+	const MODES = {
+		"--write": "write",
+		"--self-test": "self-test",
+		"--help": "help",
+		"-h": "help",
+	};
+	if (argv.length === 0) return { mode: "check", error: null };
+	const unknown = argv.filter((a) => !(a in MODES));
+	if (unknown.length > 0) {
+		return { mode: null, error: `unrecognised argument${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}` };
+	}
+	if (argv.some((a) => MODES[a] === "help")) return { mode: "help", error: null };
+	const distinct = [...new Set(argv.map((a) => MODES[a]))];
+	if (distinct.length > 1) return { mode: null, error: `${distinct.join(" and ")} cannot both be asked for` };
+	return { mode: distinct[0], error: null };
+}
+
+// Importing this module must not RUN it. `scripts/lib/console-routes.mjs` carries a copy of
+// `stripComments` rather than importing this one, and says why: "check-shared-surface.mjs runs its
+// entire check at import time — it has no entrypoint guard, so importing from it would execute the
+// guard and can `process.exit(1)`." This is that guard.
+const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+const parsed = invokedDirectly ? parseCliArgs(process.argv.slice(2)) : { mode: null, error: null };
+
+if (invokedDirectly && parsed.error !== null) {
+	console.error(`check-shared-surface: ${parsed.error}\n\n${USAGE}`);
+	process.exit(2);
+} else if (parsed.mode === "help") {
+	console.log(USAGE);
+} else if (parsed.mode === "self-test") {
 	selfTest();
-} else {
+} else if (parsed.mode === "write") {
+	// The generator. It reads the allowlist and writes the allowlist; it does not scan the tree, for
+	// the reason `renderAllowlist` states — a generator that gated on a clean console would refuse
+	// to run in the one situation that needs it.
+	const file = path.join(ROOT, ALLOWLIST);
+	const text = fs.readFileSync(file, "utf8");
+	const { text: rendered, want, have, stale } = renderAllowlist(text);
+	if (stale) fs.writeFileSync(file, rendered);
+	console.log(
+		`${stale ? "wrote" : "unchanged"} ${ALLOWLIST} — baseline: ${have.baseline} → ${want.baseline}, debt: ${have.debt} → ${want.debt}. ` +
+			"The rows decide these numbers; a counter that goes UP in the diff is still what review stops.",
+	);
+} else if (parsed.mode === "check") {
 	const readFile = (p) => fs.readFileSync(path.join(ROOT, p), "utf8");
 	/** @param {string} dir */
 	const listDir = (dir) => {
@@ -1959,6 +2219,26 @@ if (process.argv.includes("--self-test")) {
 	}
 	const breakdown = [...perRoot].map(([label, n]) => `${label} ${n}`).join(", ");
 	const rules = [...perRule].map(([id, n]) => `${id} ${n}`).join(", ");
+
+	// THE STALENESS GATE, and it is deliberately a comparison against the RENDERED FILE — the bytes
+	// `--write` would produce — rather than a second reading of the same integers. It exits 2, its
+	// own code, so a stale counter is distinguishable from console drift (1) and from a typo'd flag
+	// (2 at the parser, before anything is scanned).
+	//
+	// It does NOT replace the shrink-only check inside `check`: that one still fails in both
+	// directions and its message is what says which way the ledger moved. This one adds the command.
+	const ledger = renderAllowlist(readFile(ALLOWLIST));
+	if (ledger.stale) {
+		console.error(
+			`::error::shared-surface: ${ALLOWLIST}'s ledger counters are STALE — its rows say ` +
+				`\`baseline: ${ledger.want.baseline}\` and \`debt: ${ledger.want.debt}\`, the file says ` +
+				`${ledger.have.baseline} and ${ledger.have.debt}. Run \`pnpm gen:shared-surface\` and commit — ` +
+				"do not recount by hand, and on a merge conflict at those two lines take either side and run it.",
+		);
+		console.error(`\n${problems.length} problem(s) (files per rule — ${rules}; per root — ${breakdown}).`);
+		process.exit(2);
+	}
+
 	if (problems.length > 0) {
 		console.error(`\n${problems.length} problem(s) (files per rule — ${rules}; per root — ${breakdown}).`);
 		process.exit(1);
@@ -1967,6 +2247,7 @@ if (process.argv.includes("--self-test")) {
 		`✓ check-shared-surface: files per rule — ${rules}; per root — ${breakdown}. ` +
 			`Every hand-rolled ${RULES.map((r) => r.surface).join(" / ")} site is one of the ${allowed} ` +
 			`occurrence(s) that ${ALLOWLIST} accounts for — across ${decisions} recorded decision(s) and ` +
-			`${debt} file(s) of measured drift still owed to the board.`,
+			`${debt} file(s) of measured drift still owed to the board, which is what its \`baseline:\` ` +
+			"and `debt:` say, derived.",
 	);
 }

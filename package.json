@@ -35,6 +35,7 @@
     "check:addon-published-defaults": "bash scripts/addons/check-published-defaults.sh",
     "check:addon-resource-fit": "bash scripts/addons/check-resource-fit.sh",
     "check:shared-surface": "node scripts/check-shared-surface.mjs",
+    "gen:shared-surface": "node scripts/check-shared-surface.mjs --write",
     "check:console-routes": "node scripts/lib/console-routes.mjs --summary",
     "check:ramp-transcription": "node scripts/check-ramp-transcription.mjs",
     "check:one-board": "node scripts/check-one-board.mjs",
