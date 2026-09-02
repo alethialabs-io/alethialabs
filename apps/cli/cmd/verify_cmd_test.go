@@ -23,22 +23,6 @@ import (
 
 // --- the flag resolvers ---------------------------------------------------------------------
 
-func TestCurrentJob(t *testing.T) {
-	cmd := &cobra.Command{}
-	cmd.Flags().StringP("job", "j", "", "")
-
-	if _, err := currentJob(cmd); err == nil || !strings.Contains(err.Error(), "--job is required") {
-		t.Errorf("an absent --job must be a named error, got %v", err)
-	}
-	if err := cmd.Flags().Set("job", "job-7"); err != nil {
-		t.Fatal(err)
-	}
-	got, err := currentJob(cmd)
-	if err != nil || got != "job-7" {
-		t.Errorf("want job-7, got (%q, %v)", got, err)
-	}
-}
-
 func TestVerifyOptsFrom(t *testing.T) {
 	pub, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -144,9 +128,15 @@ func verifyEnv(t *testing.T, sr *verify.SignedReceipt, keys []map[string]any) fu
 	}
 }
 
-// resetVerifyFlags clears the group's persistent --job and the receipt command's own flags.
-// cobra never resets a persistent flag between Execute calls, so without this one test's --job
-// leaks into the next and the "no job" arm becomes unreachable.
+// resetVerifyFlags clears the group's persistent --job, the receipt command's own flags, and the
+// selector flags on both leaves. cobra never resets a flag between Execute calls, so without this
+// one test's --job leaks into the next and the "no job" arm becomes unreachable.
+//
+// The selector flags are cleared FROM THE SPEC rather than by name: a narrowing field added to
+// jobSelectorFields and not to a hand-written list here would leak between subtests, and the
+// symptom — one arm resolving a job another arm proved unresolvable — reads as a resolver bug.
+// `--latest` and the two selector VALUES are reset too, because addJobSelectorFlags binds each
+// flag straight into the package-level jobSelector.
 func resetVerifyFlags(t *testing.T) {
 	t.Helper()
 	reset := func() {
@@ -155,6 +145,13 @@ func resetVerifyFlags(t *testing.T) {
 		_ = verifyReceiptCmd.Flags().Set("key-file", "")
 		_ = verifyReceiptCmd.Flags().Set("allow-unsigned", "false")
 		_ = verifyReceiptCmd.Flags().Set("allow-untrusted", "false")
+		for _, cmd := range []*cobra.Command{verifyReceiptCmd, verifyShowCmd} {
+			_ = cmd.Flags().Set("latest", "false")
+			for _, f := range jobSelectorFields {
+				_ = cmd.Flags().Set(f.Flag, "")
+			}
+		}
+		verifyReceiptSelector, verifyShowSelector = jobSelector{}, jobSelector{}
 	}
 	reset()
 	t.Cleanup(reset)
@@ -229,9 +226,12 @@ func TestVerifyReceiptCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("--job is required", func(t *testing.T) {
+	// No id, no --latest, and a headless `go test` process: the resolver refuses rather than
+	// opening a picker nobody can answer. It is the same refusal `jobs get` takes.
+	t.Run("no id and no terminal is refused", func(t *testing.T) {
 		sr, pub := signedFixture(t, sampleReport())
 		run := verifyEnv(t, sr, []map[string]any{wireKey(pub, "platform")})
+		jobsSelectNoInput(t)
 		exited, code, err := connInvoke(t, run, "verify", "receipt")
 		if err != nil {
 			t.Fatalf("execute: %v", err)
@@ -309,9 +309,10 @@ func TestVerifyShowCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("--job is required", func(t *testing.T) {
+	t.Run("no id and no terminal is refused", func(t *testing.T) {
 		sr, _ := signedFixture(t, sampleReport())
 		run := verifyEnv(t, sr, []map[string]any{})
+		jobsSelectNoInput(t)
 		exited, code, err := connInvoke(t, run, "verify", "show")
 		if err != nil {
 			t.Fatalf("execute: %v", err)

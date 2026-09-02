@@ -79,8 +79,8 @@ alethia
 │   ├── logs <job_id> [-f/--follow]
 │   └── cancel <job_id>
 ├── verify                            # the signed evidence receipt behind a job
-│   ├── receipt -j <job_id> [--key-file <f>] [--allow-unsigned] [--allow-untrusted]
-│   └── show    -j <job_id>           # the per-control report, incl. not_evaluable + waivers
+│   ├── receipt [job_id] [--latest] [--key-file <f>] [--allow-unsigned] [--allow-untrusted]
+│   └── show    [job_id] [--latest]   # the per-control report, incl. not_evaluable + waivers
 ├── cluster                           # alias: clusters
 │   ├── list
 │   └── get [selector]                # project name, cluster name or id — asks when omitted

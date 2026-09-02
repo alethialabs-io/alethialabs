@@ -665,22 +665,22 @@ func jobsCancelSample() []api.ProvisionJob {
 // had silently grown to the whole enum would narrow nothing and every test below would still
 // pass by accident.
 func TestCancellableJobScope_IsASubsetOfTheEnum(t *testing.T) {
-	if len(cancellableJobScope.Statuses) == 0 {
+	if len(cancellableJobScope.Values) == 0 {
 		t.Fatal("the cancellable scope is empty — cancel would resolve to no job at all")
 	}
-	for _, s := range cancellableJobScope.Statuses {
+	for _, s := range cancellableJobScope.Values {
 		if !containsFold(jobStatusValues(), s) {
 			t.Errorf("%q is not a provision_job_status", s)
 		}
 	}
-	if len(cancellableJobScope.Statuses) >= len(jobStatusValues()) {
+	if len(cancellableJobScope.Values) >= len(jobStatusValues()) {
 		t.Errorf("the scope names %d of %d statuses — it excludes nothing",
-			len(cancellableJobScope.Statuses), len(jobStatusValues()))
+			len(cancellableJobScope.Values), len(jobStatusValues()))
 	}
 	// The terminal statuses are the ones the control plane refuses, so naming one here would
 	// re-open the defect this scope closes.
 	for _, terminal := range []types.JobStatus{types.JobStatusSuccess, types.JobStatusFailed, types.JobStatusCancelled} {
-		if containsFold(cancellableJobScope.Statuses, string(terminal)) {
+		if containsFold(cancellableJobScope.Values, string(terminal)) {
 			t.Errorf("%s is terminal and the control plane refuses to cancel it", terminal)
 		}
 	}
@@ -740,7 +740,7 @@ func TestJobsSelector_CancelScopeNamesItselfWhenNothingMatches(t *testing.T) {
 	if err == nil {
 		t.Fatal("a page of terminal jobs resolved a cancel target")
 	}
-	for _, want := range append([]string{cancellableJobScope.Noun}, cancellableJobScope.Statuses...) {
+	for _, want := range append([]string{cancellableJobScope.Noun}, cancellableJobScope.Values...) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal %q does not name %q", err, want)
 		}
@@ -752,7 +752,7 @@ func TestJobsSelector_CancelScopeNamesItselfWhenNothingMatches(t *testing.T) {
 // terminal. The scope lives in the Long help too, because a flag's behaviour that only the source
 // states is one an operator cannot check.
 func TestJobsCancel_ResolvesInsideTheCancellableScope(t *testing.T) {
-	for _, want := range cancellableJobScope.Statuses {
+	for _, want := range cancellableJobScope.Values {
 		if !strings.Contains(jobsCancelCmd.Long, want) {
 			t.Errorf("`jobs cancel --help` does not say that %s is in the set --latest considers", want)
 		}
