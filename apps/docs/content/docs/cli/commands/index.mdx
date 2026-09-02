@@ -35,15 +35,16 @@ alethia
 ├── completion [bash|zsh|fish|powershell]
 ├── org                               # aliases: orgs
 │   ├── list
-│   └── switch [org]
+│   ├── switch [org]                  # id, slug or name — asks when omitted
+│   └── settings                      # the active org's general settings
 ├── members                           # alias: member
 │   ├── list
-│   ├── add <email> [--role member]
-│   └── remove <member_id>
+│   ├── add [email] [--role <r>]      # asks for both when omitted
+│   └── remove [member_id] [--email <e>] [-y/--yes]
 ├── teams                             # alias: team
 │   ├── list
-│   ├── create <name>
-│   └── delete <team_id>
+│   ├── create [name]
+│   └── delete [team_id] [--name <n>] [-y/--yes]
 ├── connector                        # manage cloud identities (credential anchors)
 │   ├── gcp [--project <id>] [--manual] [--wif-config <f>]
 │   ├── aws [--region <r>] [--role-name <n>] [--manual] [--script] [--role-arn <arn>]
@@ -113,15 +114,15 @@ alethia
 │   └── delete <id>
 ├── roles                             # alias: role
 │   ├── list                          # built-in templates + custom roles
-│   ├── create <name> --permission <key>…
-│   └── delete <id>
+│   ├── create [name] [--permission <key>…]   # offers the server's catalog
+│   └── delete [role_id] [--name <n>] [-y/--yes]   # custom roles only
 ├── grants                            # aliases: grant, access
 │   ├── list
-│   ├── add --principal <id> (--role <id> | --permission <key>) [--effect allow] [--resource-type org] [--resource <id>]
-│   └── remove <id>
+│   ├── add [--principal <email|team|id>] (--role <name|id> | --permission <key>) [--effect allow] [--resource-type org] [--resource <id>]
+│   └── remove [grant_id] [-y/--yes]
 ├── sso
 │   ├── list
-│   └── get <id>
+│   └── get [id] [--domain <d>]
 ├── billing                           # active org plan, status, seats, period
 ├── usage                             # seats, runner-minutes, projects, AI credits
 ├── fleet                             # managed warm pools (self-managed only)

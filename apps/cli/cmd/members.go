@@ -23,6 +23,11 @@ var membersCmd = &cobra.Command{
 
 // currentOrgID resolves the org to operate on: the --org flag if set, otherwise
 // the active organization from the CLI config.
+//
+// `--org` is registered on `members` and `teams` ONLY. Those two address the org in their request
+// PATH (`/api/cli/orgs/:id/members`), so a different one can be targeted per invocation; roles,
+// grants and sso are scoped by the X-Alethia-Org header the active context sets, and have no such
+// flag. access.mdx claimed otherwise until this pass.
 func currentOrgID(cmd *cobra.Command) (string, error) {
 	if o, _ := cmd.Flags().GetString("org"); o != "" {
 		return o, nil
@@ -67,8 +72,9 @@ var membersListCmd = &cobra.Command{
 
 var memberListColumns = []string{"ID", "Email", "Name", "Role", "Status"}
 
-// memberRows projects members into plain table rows. The ID column is included
-// because `members remove <member_id>` addresses a member by it.
+// memberRows projects members into plain table rows. The ID column is for a script that wants the
+// member id in `-o json`/`-o csv`; a person never needs to copy it, because `members remove` takes
+// `--email` and offers a picker.
 func memberRows(members []api.Member) [][]string {
 	rows := make([][]string, len(members))
 	for i, m := range members {
@@ -97,9 +103,11 @@ func runMembersList(c apiClient, out io.Writer, format, orgID string) error {
 var membersAddRole string
 
 var membersAddCmd = &cobra.Command{
-	Use:   "add <email>",
+	Use:   "add [email]",
 	Short: "Invite a member to the active organization",
-	Args:  cobra.ExactArgs(1),
+	Long: `Invite someone to the active organization. Pass their email and --role to run without a
+terminal; with neither, the form asks for both, offering the org's own roles.`,
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -109,7 +117,29 @@ var membersAddCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		if err := runMembersAdd(api.NewClient(token), os.Stdout, orgID, args[0], membersAddRole); err != nil {
+		client := api.NewClient(token)
+
+		email := ""
+		if len(args) > 0 {
+			email = args[0]
+		}
+		role := membersAddRole
+		// Two different questions. The EMAIL has no default, so a missing one must be asked for or
+		// refused. The ROLE has one, so a scripted `members add ada@example.com` must keep working —
+		// but on a terminal it is worth asking, because `member` is rarely what the inviter meant.
+		//
+		// `Changed` and not emptiness: `--role ""` is a caller who said something, and the form
+		// re-asking it would be the CLI ignoring the flag it advertises.
+		if email == "" || (!cmd.Flags().Changed("role") && formAvailable()) {
+			// The role LIST is the active org's — `GET /api/cli/roles` reads the X-Alethia-Org
+			// header, which `--org` does not change. Offering it for another org would name roles
+			// that do not exist where the invitation lands.
+			email, role, err = promptMembersAdd(client, email, role, orgID == types.LoadCliConfig().ActiveOrgID)
+			if err != nil {
+				fail(err)
+			}
+		}
+		if err := runMembersAdd(client, os.Stdout, orgID, email, role); err != nil {
 			failf("Failed to invite member: %v", err)
 		}
 	},
@@ -129,10 +159,16 @@ func runMembersAdd(c apiClient, out io.Writer, orgID, email, role string) error 
 // command usable with --no-input).
 var membersRemoveYes bool
 
+// membersRemoveEmail is the --email selector: name the member to remove by their address instead of
+// copying a member id out of `members list`.
+var membersRemoveEmail string
+
 var membersRemoveCmd = &cobra.Command{
-	Use:   "remove <member_id>",
+	Use:   "remove [member_id]",
 	Short: "Remove a member from the active organization",
-	Args:  cobra.ExactArgs(1),
+	Long: `Remove a member from the active organization. Pass the member id, or --email to name them
+by address; with neither, pick from the org's members.`,
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -142,10 +178,23 @@ var membersRemoveCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
+		client := api.NewClient(token)
+
+		id := ""
+		if len(args) > 0 {
+			id = args[0]
+		}
+		ref, err := resolveOrgChoice(memberPickSpec, id, membersRemoveEmail, memberChoices(client, orgID))
+		if err != nil {
+			fail(err)
+		}
+		// Announced BEFORE the confirmation, not after: "Remove this member?" is not a question
+		// anyone can answer about a member the CLI chose and never named.
+		announceResolvedChoice(ref.Summary, "Removing")
 		if !confirmDestructive(membersRemoveYes, "Remove this member?", "They will lose access to the organization.") {
 			return
 		}
-		if err := runMembersRemove(api.NewClient(token), os.Stdout, orgID, args[0]); err != nil {
+		if err := runMembersRemove(client, os.Stdout, orgID, ref.ID); err != nil {
 			failf("Failed to remove member: %v", err)
 		}
 	},
@@ -163,7 +212,10 @@ func runMembersRemove(c apiClient, out io.Writer, orgID, memberID string) error 
 func init() {
 	addYesFlag(membersRemoveCmd, &membersRemoveYes)
 	membersCmd.PersistentFlags().String("org", "", "Organization id (defaults to the active org)")
-	membersAddCmd.Flags().StringVar(&membersAddRole, "role", "member", "Role for the invited member")
+	membersAddCmd.Flags().StringVar(&membersAddRole, "role", "member",
+		"Role for the invited member (any of the org's roles)")
+	membersRemoveCmd.Flags().StringVar(&membersRemoveEmail, "email", "",
+		"Remove the member with this email, instead of naming a member id")
 	membersCmd.AddCommand(membersListCmd)
 	membersCmd.AddCommand(membersAddCmd)
 	membersCmd.AddCommand(membersRemoveCmd)

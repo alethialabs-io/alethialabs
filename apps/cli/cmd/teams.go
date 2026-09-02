@@ -55,8 +55,9 @@ var teamsListCmd = &cobra.Command{
 
 var teamListColumns = []string{"ID", "Name", "Members"}
 
-// teamRows projects teams into plain table rows. The ID column is included
-// because `teams delete <team_id>` addresses a team by it.
+// teamRows projects teams into plain table rows. The ID column is for a script that wants the team
+// id in `-o json`/`-o csv`; a person never needs to copy it, because `teams delete` takes `--name`
+// and offers a picker.
 func teamRows(teams []api.Team) [][]string {
 	rows := make([][]string, len(teams))
 	for i, t := range teams {
@@ -83,9 +84,11 @@ func runTeamsList(c apiClient, out io.Writer, format, orgID string) error {
 }
 
 var teamsCreateCmd = &cobra.Command{
-	Use:   "create <name>",
+	Use:   "create [name]",
 	Short: "Create a team in the active organization",
-	Args:  cobra.ExactArgs(1),
+	Long: `Create a team in the active organization. Pass the name to run without a terminal; with
+no name, the form asks for one.`,
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -95,7 +98,17 @@ var teamsCreateCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		if err := runTeamsCreate(api.NewClient(token), os.Stdout, orgID, args[0]); err != nil {
+		name := ""
+		if len(args) > 0 {
+			name = args[0]
+		}
+		if name == "" {
+			name, err = promptName("alethia teams create", orgFieldKeyName)
+			if err != nil {
+				fail(err)
+			}
+		}
+		if err := runTeamsCreate(api.NewClient(token), os.Stdout, orgID, name); err != nil {
 			failf("Failed to create team: %v", err)
 		}
 	},
@@ -115,10 +128,16 @@ func runTeamsCreate(c apiClient, out io.Writer, orgID, name string) error {
 // command usable with --no-input).
 var teamsDeleteYes bool
 
+// teamsDeleteName is the --name selector: name the team to delete instead of copying a team id out
+// of `teams list`.
+var teamsDeleteName string
+
 var teamsDeleteCmd = &cobra.Command{
-	Use:   "delete <team_id>",
+	Use:   "delete [team_id]",
 	Short: "Delete a team from the active organization",
-	Args:  cobra.ExactArgs(1),
+	Long: `Delete a team from the active organization. Pass the team id, or --name to name it; with
+neither, pick from the org's teams.`,
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -128,10 +147,20 @@ var teamsDeleteCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
+		client := api.NewClient(token)
+		id := ""
+		if len(args) > 0 {
+			id = args[0]
+		}
+		ref, err := resolveOrgChoice(teamPickSpec, id, teamsDeleteName, teamChoices(client, orgID))
+		if err != nil {
+			fail(err)
+		}
+		announceResolvedChoice(ref.Summary, "Deleting")
 		if !confirmDestructive(teamsDeleteYes, "Delete this team?", "Members will lose their team grants. This cannot be undone.") {
 			return
 		}
-		if err := runTeamsDelete(api.NewClient(token), os.Stdout, orgID, args[0]); err != nil {
+		if err := runTeamsDelete(client, os.Stdout, orgID, ref.ID); err != nil {
 			failf("Failed to delete team: %v", err)
 		}
 	},
@@ -149,6 +178,8 @@ func runTeamsDelete(c apiClient, out io.Writer, orgID, teamID string) error {
 func init() {
 	addYesFlag(teamsDeleteCmd, &teamsDeleteYes)
 	teamsCmd.PersistentFlags().String("org", "", "Organization id (defaults to the active org)")
+	teamsDeleteCmd.Flags().StringVar(&teamsDeleteName, "name", "",
+		"Delete the team with this name, instead of naming a team id")
 	teamsCmd.AddCommand(teamsListCmd)
 	teamsCmd.AddCommand(teamsCreateCmd)
 	teamsCmd.AddCommand(teamsDeleteCmd)
