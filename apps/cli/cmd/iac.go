@@ -29,12 +29,15 @@ var iacShowCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		project, err := currentProject(cmd)
+		// The output format is resolved BEFORE the project: `-o bogus` is rejected without first
+		// opening a picker, and interactiveTable is what decides whether the picker may run at all.
+		outFmt := outputFormat(cmd)
+		project, err := byoProject(cmd, token, interactiveTable(cmd))
 		if err != nil {
 			fail(err)
 		}
 		env, _ := cmd.Flags().GetString("env")
-		if err := runIacShow(api.NewClient(token), os.Stdout, outputFormat(cmd), project, env); err != nil {
+		if err := runIacShow(api.NewClient(token), os.Stdout, outFmt, project, env); err != nil {
 			failf("Failed to get IaC source: %v", err)
 		}
 	},
@@ -73,8 +76,8 @@ func runIacShow(c apiClient, out io.Writer, format, project, env string) error {
 }
 
 func init() {
-	iacCmd.PersistentFlags().StringP("project", "p", "", "Project name or id")
-	iacCmd.PersistentFlags().StringP("env", "e", "", "Environment name, stage, or id (default: the project's default environment)")
+	iacCmd.PersistentFlags().StringP("project", "p", "", byoFlagUsage("alethia iac", byoKeyProject))
+	iacCmd.PersistentFlags().StringP("env", "e", "", byoFlagUsage("alethia iac", byoKeyEnv))
 	iacCmd.AddCommand(iacShowCmd)
 	rootCmd.AddCommand(iacCmd)
 }
