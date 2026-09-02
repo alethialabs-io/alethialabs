@@ -62,21 +62,21 @@ func runTokenList(c apiClient, out io.Writer, format string) error {
 		fmt.Fprintln(out, ui.MutedStyle.Render("No service tokens. Create one with `alethia token create --name ci`."))
 		return nil
 	}
-	return ui.Render(out, format, ui.TableSpec{Columns: tokenListColumns, Rows: tokenRows(tokens)}, tokens)
+	return ui.Render(out, format, ui.TableSpec{Columns: tokenListColumns, Rows: tokenRows(tokens, format)}, tokens)
 }
 
 var tokenListColumns = []string{"ID", "Name", "Prefix", "Created", "Expires", "Last used", "Status"}
 
-func tokenRows(tokens []api.ServiceToken) [][]string {
+func tokenRows(tokens []api.ServiceToken, outFmt string) [][]string {
 	rows := make([][]string, 0, len(tokens))
 	for _, t := range tokens {
 		rows = append(rows, []string{
 			t.ID,
 			t.Name,
 			t.TokenPrefix,
-			ui.StampOrDash(&t.CreatedAt),
-			ui.StampOrNever(t.ExpiresAt),
-			ui.StampOrNever(t.LastUsedAt),
+			ui.Cell(outFmt, t.CreatedAt, ui.StampOrDash(&t.CreatedAt)),
+			ui.Cell(outFmt, ui.Wire(t.ExpiresAt), ui.StampOrNever(t.ExpiresAt)),
+			ui.Cell(outFmt, ui.Wire(t.LastUsedAt), ui.StampOrNever(t.LastUsedAt)),
 			tokenStatus(t),
 		})
 	}

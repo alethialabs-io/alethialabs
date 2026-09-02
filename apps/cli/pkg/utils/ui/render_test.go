@@ -258,3 +258,55 @@ func TestStatusCell(t *testing.T) {
 		}
 	}
 }
+
+// Cell is the human/machine switch #3659 owes for the three cells it would otherwise have taken
+// away from scripts. Both arms are asserted, because a switch that always returns one side is the
+// bug in either direction.
+func TestCellPicksTheMachineFormOnlyForCSV(t *testing.T) {
+	const machine, human = "2026-03-09T15:04:05Z", "9 Mar 2026, 15:04"
+	for name, outFmt := range map[string]string{
+		"csv": FormatCSV,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := Cell(outFmt, machine, human); got != machine {
+				t.Errorf("Cell(%q) = %q, want the machine form %q", outFmt, got, machine)
+			}
+		})
+	}
+	// Everything that is not CSV is a person: the table, JSON's fallthrough, and the empty default
+	// `Render` treats as a table. Enumerated rather than asserted on one value, because "not csv"
+	// is the branch a future format lands in by default and it must land on the readable side.
+	for name, outFmt := range map[string]string{
+		"table":       FormatTable,
+		"json":        FormatJSON,
+		"unset":       "",
+		"unknown":     "yaml",
+		"nearly csv":  "CSV",
+		"csv w/space": " csv",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := Cell(outFmt, machine, human); got != human {
+				t.Errorf("Cell(%q) = %q, want the human form %q", outFmt, got, human)
+			}
+		})
+	}
+}
+
+// Wire is StrOrDash's machine counterpart: empty where a reader gets the dash.
+func TestWireIsEmptyWhereStrOrDashIsTheDash(t *testing.T) {
+	if got := Wire(nil); got != "" {
+		t.Errorf("Wire(nil) = %q, want empty", got)
+	}
+	if got := StrOrDash(nil); got != SymbolDash {
+		t.Errorf("StrOrDash(nil) = %q, want the dash — the pair only means something if they differ", got)
+	}
+	v := "2026-03-09T15:04:05Z"
+	if got := Wire(&v); got != v {
+		t.Errorf("Wire(%q) = %q, want it unchanged", v, got)
+	}
+	// An empty string is a value the wire sent, not an absence, and Wire does not editorialise.
+	blank := ""
+	if got := Wire(&blank); got != "" {
+		t.Errorf("Wire(pointer to empty) = %q, want empty", got)
+	}
+}

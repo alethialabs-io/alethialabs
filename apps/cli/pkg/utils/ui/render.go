@@ -91,6 +91,44 @@ func FloatOrDash(v *float64) string {
 	return format.Money(*v*100, "USD")
 }
 
+// Cell picks the MACHINE projection of a value under `-o csv`, and the human rendering otherwise.
+//
+// `Render`'s CSV branch writes `spec.Rows` verbatim (`output.go`), so whatever a row builder made
+// for a person to read is also what a script receives. That is a live defect across eight tables
+// and it has its own unit, #4033.
+//
+// What this function is for is narrower and is #3659's own debt: three cells were ALREADY
+// machine-readable and this lane would otherwise have taken that away. `promotion list` emitted the
+// wire's RFC3339; `token list` emitted `2026-08-26 09:41`, which sorts lexically; `project list`'s
+// Updated emitted `2006-01-02`, which sorts and parses. Humanising them turns all three into
+// `26 Aug 2026, 09:41` — and the COMMA is the part that bites, because it forces RFC-4180 quoting
+// and every naive `cut -d,` consumer shifts a column. Improving a table for a reader must not
+// silently break the scripts already reading it.
+//
+// So the rule this encodes is a floor, not the whole fix: DO NOT REGRESS A CELL THAT PARSED. The
+// remaining humanised cells — the dash glyph, the gate ticks, the status glyph, the truncated id —
+// were never machine-readable and are #4033's to decide, together and once.
+//
+// Both arguments are evaluated; every renderer here is pure, so that costs a string and buys a call
+// site that reads as the pair it is.
+func Cell(outFmt, machine, human string) string {
+	if outFmt == FormatCSV {
+		return machine
+	}
+	return human
+}
+
+// Wire returns a nullable wire value unchanged, or empty when it is absent.
+//
+// The machine counterpart of StrOrDash, for the CSV half of Cell: a script wants an EMPTY field
+// where a reader wants an em dash, and `—` is not a value any parser has a use for.
+func Wire(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
 // StampOrDash renders an RFC3339 timestamp the way the console writes an absolute date —
 // `9 Mar 2026, 15:04` — in UTC, or the dash when unset.
 //
@@ -239,11 +277,24 @@ func TruncID(id string) string {
 // The week cutoff is the point where "ago" stops helping — nobody converts "5 weeks ago" back to a
 // date in their head, and nobody wants a calendar date for something that happened this morning.
 //
-// THIS IS THE ONE RULE NOW. It was one of three — RelativeTime (always relative, from an RFC3339
-// string) and two bare `humanize.Time` calls in the job listings were the others — and #3659 is the
-// lane that owns converging them. They took different input types and only this one had a cutoff,
-// which is why #3696 could only put them in one file and not merge them. RelativeTime is now this
-// function with a parse in front of it.
+// This is the rule the other renderings converge ON. It was one of three — RelativeTime (always
+// relative, from an RFC3339 string) and two bare `humanize.Time` calls in the job listings were the
+// others — and #3659 is the lane that owns converging them. They took different input types and
+// only this one had a cutoff, which is why #3696 could only put them in one file and not merge
+// them. RelativeTime is now this function with a parse in front of it, and `jobs_list.go` calls it
+// directly.
+//
+// ONE CALLER IS STILL UNCONVERGED: `jobs_select.go`'s interactive picker calls `humanize.Time` bare,
+// so it prints "3 months ago" where `jobs list` now prints a date. That file is outside #3659's
+// `scope:` and belongs to the jobs noun group; it is a one-line change in their lane. Stated rather
+// than glossed, because a doc comment claiming "the one rule" while a second rule is live is how
+// the next reader concludes there is nothing left to do.
+//
+// A PAST INSTANT UNDER A FUTURE-TENSE LABEL reads worse here than the relative form did, and
+// `billing.go`'s `Trial ends` is the case: an expired trial past the cutoff now renders
+// `Trial ends  12 Aug 2026`, where `3 weeks ago` said "it ended" without arithmetic. That call site
+// is out of scope too, and the honest fix is billing choosing a label that matches the tense of
+// what it holds, not this function growing a branch for one caller's wording.
 //
 // The absolute half is `format.Date(DateOnly)`, not a layout literal: `2006-01-02` was a sixth
 // spelling of a date in a tree that had just finished agreeing on one. It renders `9 Mar 2026`.

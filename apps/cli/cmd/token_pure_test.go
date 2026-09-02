@@ -93,7 +93,7 @@ func TestServiceTokenListTypeCarriesNoSecret(t *testing.T) {
 	rows := tokenRows([]api.ServiceToken{{
 		ID: "id-1", Name: "ci", TokenPrefix: "alethia_sat_abc12345",
 		CreatedAt: "2026-08-26T09:41:00Z",
-	}})
+	}}, ui.FormatTable)
 	if len(rows) != 1 {
 		t.Fatalf("want 1 row, got %d", len(rows))
 	}

@@ -48,7 +48,7 @@ var promotionListCmd = &cobra.Command{
 				ui.Muted("No promotions yet.")
 				return
 			}
-			_ = ui.ShowTable(promotionColumns, promotionListRows(promos), "promotions")
+			_ = ui.ShowTable(promotionColumns, promotionListRows(promos, ui.FormatTable), "promotions")
 			return
 		}
 		if err := runPromotionList(client, os.Stdout, outputFormat(cmd), project, env); err != nil {
@@ -60,13 +60,13 @@ var promotionListCmd = &cobra.Command{
 var promotionColumns = []string{"ID", "Source", "Target", "Status", "Created"}
 
 // promotionListRows projects promotions into plain table cells.
-func promotionListRows(promos []api.Promotion) [][]string {
+func promotionListRows(promos []api.Promotion, outFmt string) [][]string {
 	rows := make([][]string, len(promos))
 	for i, p := range promos {
 		// The Created cell echoed the wire's RFC3339 — `2026-03-09T15:04:05Z` in a column a person
 		// reads, while the console showed `9 Mar 2026, 15:04` for the same instant. Handed to this
 		// lane by the governance lane (#3703), which was right to wait: `ui.Stamp` did not exist yet.
-		rows[i] = []string{p.ID, p.Source, p.Target, p.Status, ui.Stamp(p.CreatedAt)}
+		rows[i] = []string{p.ID, p.Source, p.Target, p.Status, ui.Cell(outFmt, p.CreatedAt, ui.Stamp(p.CreatedAt))}
 	}
 	return rows
 }
@@ -83,7 +83,7 @@ func runPromotionList(c apiClient, out io.Writer, format, project, env string) e
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: promotionColumns,
-		Rows:    promotionListRows(promos),
+		Rows:    promotionListRows(promos, format),
 	}, promos)
 }
 
@@ -109,13 +109,14 @@ var promotionGetCmd = &cobra.Command{
 var approvalColumns = []string{"Status", "Approver", "Role", "Decided"}
 
 // approvalRows projects a promotion's approval slots into plain table cells.
-func approvalRows(approvals []api.PromotionApproval) [][]string {
+func approvalRows(approvals []api.PromotionApproval, outFmt string) [][]string {
 	rows := make([][]string, len(approvals))
 	for i, a := range approvals {
 		// StampOrDash, not StrOrDash: `decided_at` is a TIMESTAMP, and passing it through the string
 		// helper printed the wire form while dashing correctly. The dash rule is the same; the
 		// rendering was the accident.
-		rows[i] = []string{a.Status, ui.StrOrDash(a.Name), ui.StrOrDash(a.RequiredRole), ui.StampOrDash(a.DecidedAt)}
+		rows[i] = []string{a.Status, ui.StrOrDash(a.Name), ui.StrOrDash(a.RequiredRole),
+			ui.Cell(outFmt, ui.Wire(a.DecidedAt), ui.StampOrDash(a.DecidedAt))}
 	}
 	return rows
 }
@@ -136,7 +137,7 @@ func runPromotionGet(c apiClient, out io.Writer, format, project, promotionID st
 		{"status", p.Status},
 		{"approvals", fmt.Sprintf("%d/%d", p.Approved, p.Required)},
 		{"initiator", ui.StrOrDash(p.Initiator)},
-		{"created", ui.Stamp(p.CreatedAt)},
+		{"created", ui.Cell(format, p.CreatedAt, ui.Stamp(p.CreatedAt))},
 	}
 	if p.ErrorMessage != nil && *p.ErrorMessage != "" {
 		rows = append(rows, []string{"error", *p.ErrorMessage})
@@ -148,7 +149,7 @@ func runPromotionGet(c apiClient, out io.Writer, format, project, promotionID st
 		fmt.Fprintln(out)
 		_ = ui.Render(out, format, ui.TableSpec{
 			Columns: approvalColumns,
-			Rows:    approvalRows(p.Approvals),
+			Rows:    approvalRows(p.Approvals, format),
 		}, p.Approvals)
 	}
 	return nil
