@@ -179,9 +179,9 @@ there is neither breadcrumb nor sidebar (sign-in, the CLI hand-off, buying a pla
 in-shell headings that say something other than the route's name (a question, an invitation, an
 error). Each is a recorded decision in `apps/console/shared-surface-allowlist.yaml`.
 
-**The type scale is derived, not designed.** The console carried 1,079 hardcoded `text-[Npx]` across
+**The type scale is derived, not designed.** The console's hardcoded sizes are measured by the shared-surface guard.
 23 values against a token file with no UI scale in it at all; the seven rungs are the seven bands
-those 1,079 cluster into. The `ui-` prefix is load-bearing — this ladder is denser than Tailwind's
+those sites cluster into. The `ui-` prefix is load-bearing — this ladder is denser than Tailwind's
 and must not be read as it: `text-ui-sm` is 12px, `text-sm` is 14px.
 
 **Minutes are read by a person.** `0.943 minutes / 200 minutes` is a number the code happens to
