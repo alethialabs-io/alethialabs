@@ -209,6 +209,7 @@ cat shop.json | alethia project design apply -p shop -f -
 | `-e`, `--env` | No | Environment name, stage, or id. Omit for the project's default. |
 | `--dry-run` | No | Print the changes that would be made and write nothing. |
 | `--stage` | No | Stage the change for review instead of applying it. |
+| `-y`, `--yes` | No | Confirm an apply whose plan **removes** a component. Required with `--no-input` only in that case. |
 
 Both `--dry-run` and a real apply print one row per component with the action taken:
 
@@ -219,11 +220,37 @@ Both `--dry-run` and a real apply print one row per component with the action ta
   DELETE  storage_buckets receipts
 ```
 
+### The gate is on the plan, not on the command
+
+An apply can **delete**: a kind the document omits is a kind the environment loses. So the
+confirmation appears exactly where that happens, and nowhere else.
+
+- A plan that only **adds or updates** applies unprompted, including under `--no-input`. A design
+  document is what a repository commits and CI replays, and a pipeline that adds a cache does not
+  need a human in it.
+- A plan that **removes** a component prints what would go, then confirms. Under `--no-input` it
+  requires `-y`, `--yes`.
+
+To decide which it is, a real apply asks the server for its own `--dry-run` first, so the prompt
+names the components rather than asking in the abstract:
+
+```
+This apply would DELETE 1 component(s) in dev:
+  DELETE  storage_buckets receipts
+```
+
+If that check cannot be read at all, the apply is **refused** rather than run blind — `--yes`
+applies without it.
+
 <Callout type="warn">
-  An apply can **delete**. A kind the document omits is a kind the environment loses, so the rows are
-  printed for a real apply and not only for `--dry-run` — read them. `--dry-run` first is still the
-  safe habit.
+  `--yes` on a `design apply` is not a blanket "this command is destructive" switch. It opts *that
+  invocation* into removing components. Leaving it on a pipeline permanently means every later
+  replay may remove components too; if a replay is suddenly asking for it, the usual cause is a
+  document that stopped declaring something you meant to keep.
 </Callout>
+
+The rows are printed for a real apply as well as for `--dry-run`, so what actually went is visible
+next to what was predicted.
 
 `--dry-run` and `--stage` are mutually exclusive — one writes nothing, the other writes to the review
 tray — so passing both is refused rather than silently resolved to one.
