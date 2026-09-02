@@ -50,6 +50,18 @@ func secretJSON(data map[string]string) string {
 	return string(raw)
 }
 
+// labelledSecretJSON is one existing Secret with both data and metadata labels.
+func labelledSecretJSON(data, labels map[string]string) string {
+	raw, err := json.Marshal(map[string]any{
+		"data":     data,
+		"metadata": map[string]any{"labels": labels},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return string(raw)
+}
+
 // secretValue pulls one key back out of a rendered Secret manifest, decoded. Reading the APPLIED
 // BYTES is the point: "an apply happened" and "the right credential was written" are different
 // claims, and only the second one is this fix.
@@ -177,11 +189,16 @@ func TestHetznerQueuesReportEveryNameTheyRefuse(t *testing.T) {
 
 // A COMPLETE Secret is left exactly as it is. Re-applying would hand a running RabbitMQ a new
 // erlang cookie, which partitions the cluster.
-func TestEnsureQueueCredentialSecretLeavesACompleteSecretAlone(t *testing.T) {
-	stub := newKubectlStub(t, 0, stubRule{Match: "get secret rabbitmq-jobs-credentials", Stdout: secretJSON(map[string]string{
-		rabbitmqPasswordKey:     b64("live-password"),
-		rabbitmqErlangCookieKey: b64("live-cookie"),
-	})})
+func TestEnsureQueueCredentialSecretLeavesALabelledCompleteSecretAlone(t *testing.T) {
+	// Supply the correct labels without changing the shared data fixture's deliberately minimal
+	// shape: this test pins the common path's zero-write behaviour.
+	stub := newKubectlStub(t, 0, stubRule{Match: "get secret rabbitmq-jobs-credentials", Stdout: labelledSecretJSON(
+		map[string]string{
+			rabbitmqPasswordKey:     b64("live-password"),
+			rabbitmqErlangCookieKey: b64("live-cookie"),
+		},
+		map[string]string{"alethia.io/managed-by": "addon-marketplace", addonSecretLabelKey: "queue-jobs"},
+	)})
 	var out strings.Builder
 	if err := EnsureQueueCredentialSecret(oneQueue(t, "jobs"), &out, io.Discard); err != nil {
 		t.Fatalf("EnsureQueueCredentialSecret: %v", err)
@@ -189,8 +206,57 @@ func TestEnsureQueueCredentialSecretLeavesACompleteSecretAlone(t *testing.T) {
 	if applied := stub.appliedManifests(); applied != "" {
 		t.Fatalf("rewrote a complete queue credential:\n%s", applied)
 	}
+	if stub.calledWith("label secret") {
+		t.Fatalf("rewrote already-correct labels; calls = %v", stub.calls())
+	}
 	if !strings.Contains(out.String(), "is complete") {
 		t.Errorf("did not report the complete secret: %q", out.String())
+	}
+}
+
+// A hand-created complete Secret must enter the same lifecycle as runner-created add-on Secrets:
+// metadata repair makes it visible to the real sweep, without ever applying its credential data.
+func TestEnsureQueueCredentialSecretLabelsACompleteSecretForPruning(t *testing.T) {
+	secret := secretJSON(map[string]string{
+		rabbitmqPasswordKey:     b64("live-password"),
+		rabbitmqErlangCookieKey: b64("live-cookie"),
+	})
+	listed := `{"items":[{"metadata":{"name":"rabbitmq-jobs-credentials","namespace":"queues","labels":{"alethia.io/managed-by":"addon-marketplace","alethia.io/addon-secret":"queue-jobs"}}}]}`
+	stub := newKubectlStub(t, 0,
+		stubRule{Match: "get secret rabbitmq-jobs-credentials", Stdout: secret},
+		stubRule{Match: "get secrets -A", Stdout: listed},
+	)
+	if err := EnsureQueueCredentialSecret(oneQueue(t, "jobs"), io.Discard, io.Discard); err != nil {
+		t.Fatalf("EnsureQueueCredentialSecret: %v", err)
+	}
+	PruneAddOnSecrets(nil, io.Discard, io.Discard)
+
+	if !stub.calledWith("label secret -n queues rabbitmq-jobs-credentials alethia.io/managed-by=addon-marketplace alethia.io/addon-secret=queue-jobs --overwrite") {
+		t.Fatalf("complete Secret never received sweep labels; calls = %v", stub.calls())
+	}
+	if !stub.calledWith("delete secret -n queues rabbitmq-jobs-credentials --ignore-not-found=true") {
+		t.Fatalf("labelled Secret was invisible to prune; calls = %v", stub.calls())
+	}
+	if applied := stub.appliedManifests(); applied != "" {
+		t.Fatalf("metadata repair rewrote credential data:\n%s", applied)
+	}
+}
+
+// A label failure is surfaced and must never fall through to a credential apply.
+func TestEnsureQueueCredentialSecretStopsWhenMetadataRepairFails(t *testing.T) {
+	stub := newKubectlStub(t, 0,
+		stubRule{Match: "get secret rabbitmq-jobs-credentials", Stdout: secretJSON(map[string]string{
+			rabbitmqPasswordKey:     b64("live-password"),
+			rabbitmqErlangCookieKey: b64("live-cookie"),
+		})},
+		stubRule{Match: "label secret", Exit: 1},
+	)
+	err := EnsureQueueCredentialSecret(oneQueue(t, "jobs"), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "label complete queue credential secret") {
+		t.Fatalf("label failure = %v, want a surfaced metadata-repair error", err)
+	}
+	if applied := stub.appliedManifests(); applied != "" {
+		t.Fatalf("label failure rewrote credential data:\n%s", applied)
 	}
 }
 
