@@ -1506,6 +1506,32 @@ cmd_reap_dry_run() { # <include-mine 0|1>
   echo "   the box to be idle ${REAP_AFTER_MIN}m.)"
 }
 
+# Fold an idle report this tree can no longer produce into the one it can.
+#
+# #3922 fixed the PRODUCER: cmd_idle_minutes reports 0 for a registry with no rows instead of
+# 999999, so an empty box is no longer maximally idle by construction. But `scripts/box/` ships
+# to the box at PROVISION time, so a box created before that fix keeps running the old
+# env-registry.sh and keeps answering 999999 until something re-ships it. The boxes the fix
+# misses are therefore exactly the ones it was written for: a long-lived host nobody has run
+# `env:up` against — which is the same thing as "a box that looks idle" (#4009).
+#
+# Normalising on ARRIVAL is what makes it retroactive, because the caller is always current
+# even when the box is not.
+#
+# The answer stays a NUMBER, deliberately, and that is #3922's decision rather than a new one:
+# the comparison below is `-lt`, and a word where a number is expected does not fail the
+# comparison — it makes `[` exit 2, which reads as FALSE and falls through to the DESTROY path.
+# Which is also why the catch-all is here: an ssh that returned nothing, or a truncated answer,
+# used to reach `-lt` as a non-integer and reap the box. Absence is not idleness, so both fold
+# to 0 — the same fail-safe answer, for the same reason, as the two branches in cmd_idle_minutes.
+idle_normalise() { # <idle-report> → a non-negative integer; 0 means "cannot tell"
+  case "$1" in
+  999999) printf '0' ;;
+  '' | *[!0-9]*) printf '0' ;;
+  *) printf '%s' "$1" ;;
+  esac
+}
+
 # What the reaper actually measured, in words. "Idle" is derived SOLELY from env lastSeen
 # times, so on a box with no env rows there is nothing for it to have been idle FOR: the
 # registry reports 0 minutes (fail-safe, scripts/box/env-registry.sh) and printing "most
@@ -1550,7 +1576,7 @@ cmd_reap() {
     echo "box already down — nothing billing but the IP (EUR 0.50/mo) and the snapshot."
     return 0
   }
-  idle="$(ssh_box "$REMOTE/bin/env-registry.sh idle-minutes")"
+  idle="$(idle_normalise "$(ssh_box "$REMOTE/bin/env-registry.sh idle-minutes")")"
   # Row count, for the MESSAGES only — it is what lets them say "no activity recorded"
   # rather than "activity was 0m ago". Deliberately fail-soft: a failure leaves it empty
   # and the wording falls back. It must never reach a decision, only an echo.
