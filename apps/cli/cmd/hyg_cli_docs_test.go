@@ -55,6 +55,7 @@ var docsGroups = map[string]string{
 	"roles":   "access",
 	"grants":  "access",
 	"sso":     "access",
+	"verify":  "verify",
 	// The BYO-IaC group (#3707). All five at once because they are one noun group and one pass:
 	// `chart` and `iac` are the two halves of bring-your-own, `repo` is where their repository
 	// picker gets its list, and `drift` and `staged` are the two read-only leaves that share the
@@ -129,11 +130,24 @@ func docsLeaves(group *cobra.Command) [][]string {
 	return leaves
 }
 
-// docsFencedExamples returns every `alethia …` invocation inside a fenced code block.
+// docsShellFences are the info strings that mark a fenced block as commands a reader runs.
+var docsShellFences = map[string]bool{"bash": true, "sh": true, "shell": true, "console": true}
+
+// docsFencedExamples returns every `alethia …` invocation inside a SHELL-fenced code block.
 //
 // Only fenced blocks, because inline code is prose — "run `alethia org switch`" names a command
 // without claiming to be a complete invocation. Anything after a pipe belongs to the next process,
 // and a trailing comment is not part of the command.
+//
+// And only fences tagged as a shell, because an UNTAGGED fence on these pages is rendered OUTPUT,
+// which can perfectly well start with the word alethia: `verify receipt` prints a card headed
+// `alethia · verify receipt`, and taking that for an invocation made this guard report
+// `unknown command "·"` against a page with nothing wrong with it. A guard that fails on correct
+// documentation gets the documentation changed to suit the guard.
+//
+// The cost is that a command fence someone forgets to tag is skipped. That is not silent:
+// TestHygCliDocs_EveryLeafIsShownAtLeastOnce requires a runnable example for every leaf, so an
+// untagged command fence takes its leaf's only example away with it and fails there.
 //
 // A trailing backslash JOINS the next line. That is not cosmetic: a wrapped example was previously
 // cut at the backslash and the backslash itself was read as a POSITIONAL ARGUMENT, so
@@ -141,19 +155,27 @@ func docsLeaves(group *cobra.Command) [][]string {
 // and every flag on the continuation line — the half of the example most likely to have rotted —
 // was never checked at all. Both failure modes are silent for a page nobody has registered yet, and
 // both fire the moment one is.
+//
+// The two rules are orthogonal and both are load-bearing: the shell tag decides WHICH lines are
+// invocations, the backslash decides WHERE one ends.
 func docsFencedExamples(page string) []string {
 	var out []string
-	fenced := false
+	fenced, shell := false, false
 	pending := ""
 	for _, line := range strings.Split(page, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			fenced = !fenced
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "```") {
 			// A continuation that never terminated does not escape its block: the next fence starts
 			// a new example, and carrying the fragment forward would splice two unrelated commands.
 			pending = ""
+			if fenced {
+				fenced, shell = false, false
+				continue
+			}
+			fenced = true
+			shell = docsShellFences[strings.ToLower(strings.TrimSpace(strings.TrimPrefix(trimmed, "```")))]
 			continue
 		}
-		if !fenced {
+		if !fenced || !shell {
 			continue
 		}
 		cmd := strings.TrimSpace(line)
@@ -286,6 +308,32 @@ func TestHygCliDocs_NoDocumentedExampleCarriesAPlaceholder(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("no example was inspected — every assertion above was vacuous")
+	}
+}
+
+// TestHygCliDocs_ExamplesComeOnlyFromShellFences pins the collection rule on a fixture, in both
+// directions: an invocation inside a ```bash fence is collected, and a line inside an untagged
+// OUTPUT fence that happens to begin with "alethia" is not.
+//
+// A fixture and not a real page, because both arms must be reachable regardless of which pages are
+// in the registry today — and the output line below is the exact one that made this rule necessary.
+func TestHygCliDocs_ExamplesComeOnlyFromShellFences(t *testing.T) {
+	const page = "# V\n\n```bash\nalethia verify receipt --latest\n```\n\n```\nalethia · verify receipt\n  Trust  org\n```\n\nRun `alethia verify show` to see the report.\n"
+
+	got := docsFencedExamples(page)
+	if len(got) != 1 || got[0] != "alethia verify receipt --latest" {
+		t.Fatalf("collected %q, want exactly the one shell-fenced invocation", got)
+	}
+	for _, ex := range got {
+		if strings.Contains(ex, "·") {
+			t.Errorf("a rendered card title was collected as an invocation: %q", ex)
+		}
+	}
+	// The other direction: drop the shell tag and the example goes with it, which is what
+	// TestHygCliDocs_EveryLeafIsShownAtLeastOnce is there to catch. Asserting it here proves the
+	// tag is what decides, rather than something else about the fixture.
+	if got := docsFencedExamples(strings.Replace(page, "```bash", "```", 1)); len(got) != 0 {
+		t.Errorf("an untagged fence yielded %q — the shell tag is not what the rule turns on", got)
 	}
 }
 

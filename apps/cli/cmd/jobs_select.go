@@ -177,8 +177,8 @@ func containsFold(vals []string, v string) bool {
 	return false
 }
 
-// jobStatusScope is the set of statuses a COMMAND can act on, as distinct from the narrowing the
-// user asked for.
+// jobScope is the set of jobs a COMMAND can act on, as distinct from the narrowing the user
+// asked for.
 //
 // `cancel` has one and `get`/`logs` do not. The control plane refuses to cancel a job that has
 // already finished, so an unscoped `--latest` lands on whatever ran most recently — a PLAN that
@@ -186,13 +186,37 @@ func containsFold(vals []string, v string) bool {
 // the deploy they meant keeps running, or, under `--yes`, silently cancels the wrong job.
 //
 // Narrowing the candidates is validate()'s "provable subset" rule read the other way round: the
-// CLI may skip only what the server would CERTAINLY refuse. A job outside this set cannot be
-// cancelled by anyone, so declining to resolve to it hides nothing the operator could have had.
-type jobStatusScope struct {
-	// Statuses is the closed set. Empty means every status, which is the get/logs case.
-	Statuses []string
-	// Noun describes the set in an error message: "cancellable".
+// CLI may skip only what the command would CERTAINLY fail on. A job outside `cancel`'s set cannot
+// be cancelled by anyone, so declining to resolve to it hides nothing the operator could have had.
+//
+// It constrains ONE field of the selector spec — the field is a value here, not a name matched by
+// hand, so the scope reuses that field's Match rather than carrying a second matcher that could
+// come to disagree with it. `cancel` scopes `--status`; `verify` scopes `--type`, because only a
+// PLAN or a DEPLOY job ever carries an evidence receipt.
+type jobScope struct {
+	// Field is the selector field this scope constrains. Nil means unscoped.
+	Field *jobSelectorField
+	// Values is the closed set. Empty means every job, which is the get/logs case.
+	Values []string
+	// Noun is the whole noun phrase for an error message: "cancellable job". The whole phrase
+	// and not an adjective, because the two scopes do not share a shape — "cancellable" + " job"
+	// reads right and "job with an evidence receipt" + " job" does not.
 	Noun string
+}
+
+// jobSelectorFieldByFlag returns the spec field with this flag name.
+//
+// It PANICS when there is none. Every argument is a constant in this file, so an unresolvable one
+// is a programming error — and the alternative, a nil field, is the failure mode this codebase
+// keeps hitting: the scope would silently keep every job and the guard would report green. A panic
+// at package init cannot survive a single `go test` run.
+func jobSelectorFieldByFlag(flag string) *jobSelectorField {
+	for i := range jobSelectorFields {
+		if jobSelectorFields[i].Flag == flag {
+			return &jobSelectorFields[i]
+		}
+	}
+	panic("no job selector field named --" + flag)
 }
 
 // cancellableJobScope mirrors what `POST /api/cli/jobs/[id]/cancel` accepts.
@@ -200,32 +224,43 @@ type jobStatusScope struct {
 // Through the generated constants and not string literals, so a status renamed or dropped from
 // the drizzle enum fails the CLI build rather than leaving a stale set that silently stops
 // matching. `TestCancellableJobScope_IsASubsetOfTheEnum` pins the other direction.
-var cancellableJobScope = jobStatusScope{
-	Statuses: []string{
+var cancellableJobScope = jobScope{
+	Field: jobSelectorFieldByFlag("status"),
+	Values: []string{
 		string(types.JobStatusQueued),
 		string(types.JobStatusClaimed),
 		string(types.JobStatusProcessing),
 	},
-	Noun: "cancellable",
+	Noun: "cancellable job",
 }
 
 // applies reports whether the scope narrows this selector.
 //
-// An explicit `--status` wins: `jobs cancel --status SUCCESS --latest` still reaches the server's
-// refusal, because a CLI that answered "no such job" to a status the operator named by hand would
-// be lying about a job they can see in `jobs list`.
-func (s jobStatusScope) applies(sel jobSelector) bool {
-	return len(s.Statuses) > 0 && sel.status == ""
+// An explicit value for the scoped field WINS: `jobs cancel --status SUCCESS --latest` still
+// reaches the server's refusal, because a CLI that answered "no such job" to a status the operator
+// named by hand would be lying about a job they can see in `jobs list`. The same rule is what
+// keeps `verify receipt --type DESTROY --latest` reachable if a third job type ever starts
+// carrying a receipt: the scope narrows a DEFAULT, it never removes an answer.
+func (s jobScope) applies(sel jobSelector) bool {
+	return len(s.Values) > 0 && s.Field != nil && *s.Field.Target(&sel) == ""
 }
 
-// keeps reports whether a job's status is inside the scope.
-func (s jobStatusScope) keeps(j api.ProvisionJob) bool {
-	return containsFold(s.Statuses, j.Status)
+// keeps reports whether a job is inside the scope, through the spec field's own Match.
+func (s jobScope) keeps(j api.ProvisionJob) bool {
+	if s.Field == nil {
+		return true
+	}
+	for _, v := range s.Values {
+		if s.Field.Match(j, v) {
+			return true
+		}
+	}
+	return false
 }
 
 // describe names the scope for an error: "cancellable job (QUEUED, CLAIMED, PROCESSING)".
-func (s jobStatusScope) describe() string {
-	return s.Noun + " job (" + strings.Join(s.Statuses, ", ") + ")"
+func (s jobScope) describe() string {
+	return s.Noun + " (" + strings.Join(s.Values, ", ") + ")"
 }
 
 // jobLister is the slice of the API client the resolver needs — small enough that the resolution
@@ -292,13 +327,13 @@ func announceResolvedJob(ref jobRef, verb string) {
 // resolveJob answers "which job" from the positional argument, `--latest`, or the picker, over
 // every job the org has.
 func resolveJob(client jobLister, args []string, sel jobSelector) (jobRef, error) {
-	return resolveJobIn(client, args, sel, jobStatusScope{})
+	return resolveJobIn(client, args, sel, jobScope{})
 }
 
-// resolveJobIn is resolveJob for a command that can only act on some statuses. The scope applies
+// resolveJobIn is resolveJob for a command that can only act on some jobs. The scope applies
 // to `--latest` and to the picker; an id on the command line is still the answer, because the
-// server's refusal names the status and is the better place to learn it.
-func resolveJobIn(client jobLister, args []string, sel jobSelector, statusScope jobStatusScope) (jobRef, error) {
+// server's own refusal is more specific and is the better place to learn it.
+func resolveJobIn(client jobLister, args []string, sel jobSelector, scope jobScope) (jobRef, error) {
 	if len(args) > 0 && args[0] != "" {
 		if sel.latest {
 			return jobRef{}, fmt.Errorf("pass a job id or --latest, not both (%q was given)", args[0])
@@ -320,7 +355,7 @@ func resolveJobIn(client jobLister, args []string, sel jobSelector, statusScope 
 		}
 	}
 
-	matches, err := narrowJobs(client, sel, statusScope)
+	matches, err := narrowJobs(client, sel, scope)
 	if err != nil {
 		return jobRef{}, err
 	}
@@ -330,8 +365,8 @@ func resolveJobIn(client jobLister, args []string, sel jobSelector, statusScope 
 			where = "with " + narrowed + " " + where
 		}
 		noun := "job"
-		if statusScope.applies(sel) {
-			noun = statusScope.describe()
+		if scope.applies(sel) {
+			noun = scope.describe()
 		}
 		return jobRef{}, fmt.Errorf("no %s %s — run `alethia jobs list` to see what there is", noun, where)
 	}
@@ -349,7 +384,7 @@ func resolveJobIn(client jobLister, args []string, sel jobSelector, statusScope 
 // GET /api/jobs takes no other filter. That split is invisible to the caller and stays correct
 // if the endpoint grows one (#3672). The scope is a SET and the endpoint takes one status, so it
 // is applied here too.
-func narrowJobs(client jobLister, sel jobSelector, statusScope jobStatusScope) ([]api.ProvisionJob, error) {
+func narrowJobs(client jobLister, sel jobSelector, scope jobScope) ([]api.ProvisionJob, error) {
 	page, err := client.GetJobs(strings.ToUpper(sel.status), jobSelectorPageSize, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch jobs: %w", err)
@@ -357,10 +392,10 @@ func narrowJobs(client jobLister, sel jobSelector, statusScope jobStatusScope) (
 	if page == nil {
 		return nil, nil
 	}
-	scoped := statusScope.applies(sel)
+	scoped := scope.applies(sel)
 	var out []api.ProvisionJob
 	for _, j := range page.Jobs {
-		if scoped && !statusScope.keeps(j) {
+		if scoped && !scope.keeps(j) {
 			continue
 		}
 		keep := true
