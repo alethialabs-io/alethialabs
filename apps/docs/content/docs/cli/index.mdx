@@ -93,12 +93,16 @@ alethia org switch
 # Connect a cloud account (AWS, GCP, or Azure)
 alethia connector gcp --project my-gcp-project
 
-# Plan infrastructure (Projects are created in the console)
-alethia project plan --project-id <id>
+# Create a project, or name one you already have
+alethia project create boutique
 
-# Stream logs
-alethia jobs logs <job-id> --follow
+# Plan infrastructure — --project takes the NAME
+alethia project plan --project boutique --wait
+
+# Or queue it and follow the logs of the job you just started
+alethia project plan --project boutique
+alethia jobs logs --latest --follow
 
 # Deploy
-alethia project apply --project-id <id> --plan-job-id <plan-job-id>
+alethia project apply --project boutique --wait
 ```
