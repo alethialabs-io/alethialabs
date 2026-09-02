@@ -21,7 +21,7 @@ const (
 
 func init() {
 	rootCmd.Version = version.Version
-	// The three flags every command in the tree inherits, registered from the ONE place they are
+	// The four flags every command in the tree inherits, registered from the ONE place they are
 	// described. Their usage strings, their defaults and the rows the docs tables carry for them
 	// all come from shellFields — see shell_fields.go for why a global is the value most likely to
 	// drift, and hyg_cli_shellform_test.go for what holds the renderings together.
@@ -34,10 +34,16 @@ var rootCmd = &cobra.Command{
 	Long: `alethia is the command-line interface to the Alethia control plane.
 Configure infrastructure visually, then plan, deploy, and tear it down across
 AWS, GCP, and Azure from the terminal.`,
-	// Resolves the input mode (--no-input / non-TTY stdin) before any subcommand
-	// runs, so the interactive selectors know whether prompting is allowed.
+	// Resolves the input mode (--no-input / non-TTY stdin) and the org scope (--org) before any
+	// subcommand runs, so the interactive selectors know whether prompting is allowed and every
+	// request the command makes names the same organization.
+	//
+	// This is the ONLY PersistentPreRun in the tree, and that is load-bearing rather than
+	// incidental: cobra runs the nearest one and no others, so a subcommand growing its own would
+	// silently stop resolving both. hyg_cli_orgscope_test.go asserts it.
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		resolveInputMode(cmd)
+		applyOrgScope()
 	},
 	// Runs after any subcommand that doesn't override it — surfaces the upgrade
 	// notice once per day without ever blocking the command.

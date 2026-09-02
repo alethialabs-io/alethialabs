@@ -278,12 +278,13 @@ type QueueJobParams struct {
 
 // --- Helpers ---
 
-// setAuthHeaders applies the bearer token and, when an active organization is
-// selected in the CLI config, the X-Alethia-Org header. Routing every request
-// through this keeps org context (the tenancy boundary) uniform across the API.
+// setAuthHeaders applies the bearer token and, when an organization is in scope, the
+// X-Alethia-Org header. Routing every request through this keeps org context (the tenancy
+// boundary) uniform across the API. The scope is the `--org` override when one was named,
+// otherwise the CLI config's active organization — see resolveOrgScope in org_scope.go.
 func (c *Client) setAuthHeaders(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.authToken)
-	if org := types.LoadCliConfig().ActiveOrgID; org != "" {
+	if org := resolveOrgScope(); org != "" {
 		req.Header.Set("X-Alethia-Org", org)
 	}
 }

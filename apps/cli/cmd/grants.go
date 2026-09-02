@@ -123,7 +123,7 @@ whole grant is asked for.`,
 		// Resolved but NOT required. A grant whose principal and role are already ids needs no
 		// member list, so an org that cannot be resolved must not fail a command that never asks
 		// for one; the error is carried and reported only by a lookup that actually needs it.
-		orgID, orgErr := currentOrgID(cmd)
+		orgID, orgErr := currentOrgID()
 
 		answers := grantsAddAnswers{
 			PrincipalType: grantPrincipalType,
