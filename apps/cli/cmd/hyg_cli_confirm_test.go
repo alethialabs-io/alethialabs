@@ -297,6 +297,19 @@ func hygCliConfirmEnv(t *testing.T) (*hygCliConfirmServer, func(args ...string) 
 			_ = enc.Encode(map[string]interface{}{"cloud_identities": []map[string]interface{}{
 				{"id": "ci1", "provider": "aws", "label": "prod-account", "created_at": "2026-01-01T00:00:00Z"},
 			}})
+		// `alerts delete` and `channels delete` RESOLVE their argument against the org's list
+		// before they confirm, so the confirmation can name what it is about to remove. The
+		// default `{"ok": true}` below decodes to an empty list, which the resolver correctly
+		// refuses — so these two commands cannot reach their confirmation gate at all unless the
+		// fake control plane actually holds the record they name.
+		case p == "/api/cli/alerts" && r.Method == http.MethodGet:
+			_ = enc.Encode(map[string]interface{}{"alert_rules": []map[string]interface{}{
+				{"id": "ar1", "name": "job failures", "severity": "critical", "enabled": true},
+			}})
+		case p == "/api/cli/channels" && r.Method == http.MethodGet:
+			_ = enc.Encode(map[string]interface{}{"channels": []map[string]interface{}{
+				{"id": "ch1", "name": "ops", "type": "slack", "is_verified": true, "enabled": true},
+			}})
 		case strings.HasPrefix(p, "/api/cli/fleet/"):
 			_ = enc.Encode(map[string]interface{}{"pool": map[string]interface{}{
 				"provider": strings.TrimPrefix(p, "/api/cli/fleet/"),
