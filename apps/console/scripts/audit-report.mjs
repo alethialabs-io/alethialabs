@@ -675,7 +675,7 @@ export function importLive(raw, provenance) {
 		$comment: [
 			`IMPORTED — the live half of ${RUBRIC}, measured by the Playwright \`audit\` project in CI.`,
 			`Refresh with \`node apps/console/scripts/audit-report.mjs --import-live=<dir> --run=<url> --commit=<sha>\`,`,
-			"then regenerate the two derived files with `pnpm -F console audit:report --write`.",
+			"then regenerate the two derived files with `pnpm -C apps/console run audit:report --write`.",
 			"Apart from `source`, which cites the run: no wall clock, no run-local URL, no per-run org slug and no",
 			"generated element id. Every record below is a property of the TREE that was measured, so re-importing an",
 			"unchanged tree produces the same bytes.",
@@ -2840,7 +2840,7 @@ if (invokedDirectly) {
 			.map(([key, sec]) => `${key} ${sec.records.length}`)
 			.join(" · ");
 		console.log(`wrote ${LIVE_JSON} — ${counts} record(s), from ${parsed.run} @ ${parsed.commit}`);
-		console.log(`Now run \`pnpm -F console audit:report --write\` and commit both.`);
+		console.log(`Now run \`pnpm -C apps/console run audit:report --write\` and commit both.`);
 		process.exit(0);
 	}
 
