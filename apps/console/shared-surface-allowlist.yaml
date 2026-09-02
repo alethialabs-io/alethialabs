@@ -112,7 +112,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 16
-debt: 60
+debt: 25
 
 scanned:
   - scope: console_code
@@ -185,9 +185,6 @@ section_header:
   - path: apps/console/app/(private)/[org]/~/runners/runners-client.tsx
     hits: 1
     lifts: "#3619 — the page frame is rebuilt: 1 raw section heading here."
-  - path: apps/console/components/design-project/canvas/env-settings-sheet.tsx
-    hits: 2
-    lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 2 raw section headings here."
   - path: apps/console/components/shell/account-settings-dialog.tsx
     hits: 1
     lifts: "#3619 — the page frame is rebuilt: 1 raw section heading here."
@@ -218,93 +215,6 @@ type_scale:
   - path: apps/console/components/auth/auth-form.tsx
     hits: 1
     reason: The 6-digit sign-in code is typeset at 22px monospace so the person entering it can see which character they are on and catch a transposed digit before submitting. That is legibility of a code being typed, not reading type, so no rung of either ladder is the right answer — #3806.
-  - path: apps/console/components/design-project/byo/byo-chart-dialog.tsx
-    hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/byo/byo-iac-dialog.tsx
-    hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/byo/chart-scan-sheet.tsx
-    hits: 19
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 19 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/byo/iac-node.tsx
-    hits: 6
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/byo/iac-scan-sheet.tsx
-    hits: 19
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 19 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/activity-rail.tsx
-    hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/ai/proposal-diff.tsx
-    hits: 6
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/canvas-command-palette.tsx
-    hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/canvas-controls.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/design-project/canvas/cost-chip.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/design-project/canvas/design-project-canvas.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/design-project/canvas/env-settings-sheet.tsx
-    hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/inspector/bindings-field.tsx
-    hits: 10
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 10 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/inspector/chart-workload-panel.tsx
-    hits: 9
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 9 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/inspector/collection-panel.tsx
-    hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/inspector/config-fields.tsx
-    hits: 5
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/inspector/connector-select.tsx
-    hits: 3
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/inspector/external-panel.tsx
-    hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/inspector/subresource-field.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/design-project/canvas/node-inspector.tsx
-    hits: 9
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 9 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/node-palette.tsx
-    hits: 3
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/nodes/base-node.tsx
-    hits: 12
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 12 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/nodes/chart-node.tsx
-    hits: 5
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/nodes/collection-node.tsx
-    hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/nodes/zone-node.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/components/design-project/canvas/pending-changes-bar.tsx
-    hits: 6
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/canvas/run-menu.tsx
-    hits: 5
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/container-platform-selector.tsx
-    hits: 3
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
-  - path: apps/console/components/design-project/placement-selector.tsx
-    hits: 5
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
   - path: apps/console/components/download-cli-button.tsx
     hits: 1
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
@@ -358,18 +268,6 @@ empty_state:
   - path: apps/console/app/(private)/[org]/~/runners/runners-client.tsx
     hits: 2
     lifts: "#3619 — the page frame is rebuilt: 2 hand-rolled empty states here."
-  - path: apps/console/components/design-project/byo/byo-iac-dialog.tsx
-    hits: 1
-    lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 1 hand-rolled empty state here."
-  - path: apps/console/components/design-project/byo/chart-scan-sheet.tsx
-    hits: 2
-    lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 2 hand-rolled empty states here."
-  - path: apps/console/components/design-project/byo/iac-scan-sheet.tsx
-    hits: 2
-    lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 2 hand-rolled empty states here."
-  - path: apps/console/components/design-project/canvas/inspector/collection-panel.tsx
-    hits: 1
-    lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 1 hand-rolled empty state here."
   - path: apps/console/components/project-switcher.tsx
     hits: 1
     lifts: "#3619 — the page frame is rebuilt: 1 hand-rolled empty state here."
@@ -380,10 +278,6 @@ stat_strip:
 
 layer_token:
   # --- debt only: the two raw stacking levels in the gap the token scale leaves empty.
-  - path: apps/console/components/design-project/canvas/inspector/config-fields.tsx
-    hits: 1
-    lifts: "#3627 — the canvas and BYO sheets adopt the shared surface: 1 raw stacking level here."
-
 # `data_table:` had three entries and no longer has a section: #3622 converted the alerts activity
 # ledger to `DataTable`, the consistency matrix to the `@repo/ui/table` primitives, and the alerts
 # event picker to the flex row it always was, so the console records NO grid-as-table drift. The

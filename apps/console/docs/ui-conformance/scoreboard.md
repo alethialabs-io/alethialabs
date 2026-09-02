@@ -82,7 +82,7 @@ RUBRIC.md defines **34 predicates**. This report scores **26** of them —
 | `scripts/check-route-states.mjs` | S1–S4, T1–T4, per route |
 | `apps/console/route-states-baseline.yaml` | the ratchet those eight predicates are held to |
 | `scripts/check-shared-surface.mjs` | every H-family occurrence, per file |
-| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 60`) |
+| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 25`) |
 | `apps/console/ui-conformance-live.json` | T5–T7 and R1–R7 as MEASURED, imported from a CI run of the Playwright `audit` project |
 | `apps/console/docs/ui-conformance/RUBRIC.md` | the predicate set itself, read out of its own tables |
 
@@ -170,14 +170,14 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **T6** | T | live — `routes` | 36 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
 | **T7** | T | live — `permissions` | 0 | 0 | 27 | 13 | — | `no-restricted-surface` 27 |
 | **H1** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
-| **H2** | H | `check-shared-surface` | 38 | 2 | 0 | 0 | 0.95 | — |
+| **H2** | H | `check-shared-surface` | 39 | 1 | 0 | 0 | 0.97 | — |
 | **H3** | H | **none** — #3797 | — | — | — | — | — | — |
 | **H4** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H5** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H6** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
-| **H7** | H | `check-shared-surface` | 39 | 1 | 0 | 0 | 0.97 | — |
+| **H7** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H8** | H | `check-shared-surface` | 21 | 19 | 0 | 0 | 0.53 | — |
-| **H9** | H | `check-shared-surface` | 38 | 2 | 0 | 0 | 0.95 | — |
+| **H9** | H | `check-shared-surface` | 39 | 1 | 0 | 0 | 0.97 | — |
 | **F1** | F | **none** — #3796 | — | — | — | — | — | — |
 | **F2** | F | **none** — #3796 | — | — | — | — | — | — |
 | **F3** | F | **none** — #3796 | — | — | — | — | — | — |
@@ -209,7 +209,6 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 
 | route | surface | S | T | H | F | R | overall |
 |---|---:|---|---|---|---|---|---|
-| `/[org]/[project]/architecture` | 381 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 4/8 · 0.50 | — | 6/7 · 0.86 | **0.79** |
 | `/cli/login` | 4 | 1/3 · 0.33 | 3/4 · 0.75 | 7/8 · 0.88 | — | 6/6 · 1.00 | **0.81** |
 | `/[org]/[project]/environments` | 234 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 8/8 · 1.00 | — | 4/7 · 0.57 | **0.83** |
 | `/[org]/[project]/settings` · | 1 | all N/A | 1/2 · 0.50 · 1 withheld | 8/8 · 1.00 | — | 3/4 · 0.75 | **0.86** |
@@ -220,6 +219,7 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/[org]/~/new` | 356 | 3/4 · 0.75 | 4/4 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.91** |
 | `/[org]/~/settings/activity` | 275 | 4/4 · 1.00 | 4/4 · 1.00 | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.91** |
 | `/[org]/~/settings/roles` | 222 | 4/4 · 1.00 | 4/4 · 1.00 | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.91** |
+| `/[org]/[project]/architecture` | 381 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.92** |
 | `/[org]/[project]/settings/general` | 213 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 8/8 · 1.00 | — | 5/7 · 0.71 | **0.92** |
 | `/[org]/[project]/usage` | 146 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.92** |
 | `/[org]/~/alerts` | 288 | 2/4 · 0.50 | 5/5 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **0.92** |
@@ -257,21 +257,21 @@ the console errors it produces and the time it takes to land are real and are me
 
 ## Where every shared-surface occurrence landed
 
-`check-shared-surface` found **252 occurrences across 61 files**. This section
+`check-shared-surface` found **89 occurrences across 32 files**. This section
 accounts for all of them twice — once by ledger, once by reach — so a rule or a file falling out
 of the scoreboard cannot be quiet.
 
 | rule | predicate | total | recorded decision | measured drift | unlisted | in a page's surface | shared chrome only | outside the private tree |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
 | `data_table` | H4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `empty_state` | H9 | 9 | 0 | 9 | 0 | 8 | 1 | 0 |
+| `empty_state` | H9 | 3 | 0 | 3 | 0 | 2 | 1 | 0 |
 | `format` | H5 | 6 | 6 | 0 | 0 | 3 | 3 | 0 |
-| `layer_token` | H7 | 1 | 0 | 1 | 0 | 1 | 0 | 0 |
+| `layer_token` | H7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `page_title` | H1 | 17 | 17 | 0 | 0 | 7 | 1 | 9 |
-| `section_header` | H2 | 4 | 0 | 4 | 0 | 3 | 1 | 0 |
+| `section_header` | H2 | 2 | 0 | 2 | 0 | 1 | 1 | 0 |
 | `stat_strip` | H6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `type_scale` | H8 | 215 | 1 | 214 | 0 | 172 | 35 | 8 |
-| **total** | | 252 | 24 | 228 | 0 | 194 | 41 | 17 |
+| `type_scale` | H8 | 61 | 1 | 60 | 0 | 28 | 29 | 4 |
+| **total** | | 89 | 24 | 65 | 0 | 41 | 35 | 13 |
 
 **`unlisted` is the column to read first.** A non-zero value means the guard is red — an
 occurrence neither a `reason:` nor a `lifts:` entry accounts for. It is not a defect of this
@@ -283,12 +283,12 @@ were counted here and scored nowhere. #3798 gave the rubric **H9**, and it is sc
 H row. The live T5 asks the other half of the question: what the empty region resolved to when a
 browser actually rendered it against an empty org.
 
-**Reachable only from the shared layout chain** — 15 files. These are real
+**Reachable only from the shared layout chain** — 14 files. These are real
 occurrences in the sidebar, topbar, breadcrumbs and shells that every route renders. They are not
 in any route's H column, because attributing the chrome's drift to all 40 routes would say the
 console is 40 times worse than it is. The full list is in `ui-conformance-baseline.json`.
 
-**Outside every private route's module graph** — 7 files. Public routes (sign-in,
+**Outside every private route's module graph** — 5 files. Public routes (sign-in,
 onboarding, OAuth consent, accepting terms) and modules no private page imports. The route manifest
 is scoped to `app/(private)`, so these are outside the rubric's stated subject and are listed here
 rather than scored:
@@ -297,10 +297,8 @@ rather than scored:
 |---|---:|
 | `apps/console/components/auth/auth-form.tsx` | 5 |
 | `apps/console/components/forms/oauth-consent-form.tsx` | 4 |
-| `apps/console/components/design-project/container-platform-selector.tsx` | 3 |
 | `apps/console/components/auth/onboarding-form.tsx` | 2 |
 | `apps/console/app/(public)/onboarding/page.tsx` | 1 |
-| `apps/console/components/design-project/canvas/nodes/zone-node.tsx` | 1 |
 | `apps/console/components/legal/accept-terms-form.tsx` | 1 |
 
 _Generated by `apps/console/scripts/audit-report.mjs`. Do not edit below the marker — run `pnpm -C apps/console run audit:report --write`._

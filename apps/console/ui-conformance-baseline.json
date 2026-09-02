@@ -21,13 +21,13 @@
 		"scoredHere": 16,
 		"live": 10,
 		"notInstrumented": 8,
-		"findings": 252,
-		"findingFiles": 61,
+		"findings": 89,
+		"findingFiles": 32,
 		"liveNotMeasured": 13
 	},
 	"ledgers": {
 		"baseline": 16,
-		"debt": 60
+		"debt": 25
 	},
 	"live": {
 		"source": {
@@ -264,13 +264,13 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 38,
-			"fail": 2,
+			"pass": 39,
+			"fail": 1,
 			"na": 0,
 			"notMeasured": 0,
 			"naReasons": {},
 			"notMeasuredReasons": {},
-			"score": 0.95
+			"score": 0.975
 		},
 		"H8": {
 			"family": "H",
@@ -329,6 +329,18 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
+			"pass": 40,
+			"fail": 0,
+			"na": 0,
+			"notMeasured": 0,
+			"naReasons": {},
+			"notMeasuredReasons": {},
+			"score": 1
+		},
+		"H9": {
+			"family": "H",
+			"instrument": "check-shared-surface",
+			"owner": null,
 			"pass": 39,
 			"fail": 1,
 			"na": 0,
@@ -336,18 +348,6 @@
 			"naReasons": {},
 			"notMeasuredReasons": {},
 			"score": 0.975
-		},
-		"H9": {
-			"family": "H",
-			"instrument": "check-shared-surface",
-			"owner": null,
-			"pass": 38,
-			"fail": 2,
-			"na": 0,
-			"notMeasured": 0,
-			"naReasons": {},
-			"notMeasuredReasons": {},
-			"score": 0.95
 		},
 		"F1": {
 			"family": "F",
@@ -633,11 +633,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 4,
-					"fail": 4,
+					"pass": 7,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.5
+					"score": 0.875
 				},
 				"F": {
 					"instrumented": 0,
@@ -659,11 +659,11 @@
 				}
 			},
 			"overall": {
-				"pass": 19,
-				"fail": 5,
+				"pass": 22,
+				"fail": 2,
 				"na": 1,
 				"notMeasured": 1,
-				"score": 0.7917
+				"score": 0.9167
 			}
 		},
 		{
@@ -3134,8 +3134,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "H2",
-			"verdict": "FAIL",
-			"detail": "2 occurrence(s) in 1 file(s), worst apps/console/components/design-project/canvas/env-settings-sheet.tsx (2)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -3155,20 +3154,18 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "H7",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/design-project/canvas/inspector/config-fields.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "143 occurrence(s) in 26 file(s), worst apps/console/components/design-project/byo/chart-scan-sheet.tsx (19)"
+			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/repository-selector.tsx (4)"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "H9",
-			"verdict": "FAIL",
-			"detail": "6 occurrence(s) in 4 file(s), worst apps/console/components/design-project/byo/chart-scan-sheet.tsx (2)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -5312,7 +5309,7 @@
 			"route": "/[org]/~/new",
 			"predicate": "H8",
 			"verdict": "FAIL",
-			"detail": "9 occurrence(s) in 2 file(s), worst apps/console/components/design-project/placement-selector.tsx (5)"
+			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/repository-selector.tsx (4)"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -8258,11 +8255,11 @@
 				"owner": null
 			},
 			"section_header": {
-				"total": 4,
+				"total": 2,
 				"decision": 0,
-				"debt": 4,
+				"debt": 2,
 				"unlisted": 0,
-				"inPageClosure": 3,
+				"inPageClosure": 1,
 				"chromeOnly": 1,
 				"offTree": 0,
 				"predicate": "H2",
@@ -8302,33 +8299,33 @@
 				"owner": null
 			},
 			"layer_token": {
-				"total": 1,
+				"total": 0,
 				"decision": 0,
-				"debt": 1,
+				"debt": 0,
 				"unlisted": 0,
-				"inPageClosure": 1,
+				"inPageClosure": 0,
 				"chromeOnly": 0,
 				"offTree": 0,
 				"predicate": "H7",
 				"owner": null
 			},
 			"type_scale": {
-				"total": 215,
+				"total": 61,
 				"decision": 1,
-				"debt": 214,
+				"debt": 60,
 				"unlisted": 0,
-				"inPageClosure": 172,
-				"chromeOnly": 35,
-				"offTree": 8,
+				"inPageClosure": 28,
+				"chromeOnly": 29,
+				"offTree": 4,
 				"predicate": "H8",
 				"owner": null
 			},
 			"empty_state": {
-				"total": 9,
+				"total": 3,
 				"decision": 0,
-				"debt": 9,
+				"debt": 3,
 				"unlisted": 0,
-				"inPageClosure": 8,
+				"inPageClosure": 2,
 				"chromeOnly": 1,
 				"offTree": 0,
 				"predicate": "H9",
@@ -8339,10 +8336,6 @@
 			{
 				"file": "apps/console/components/shell/account-settings-dialog.tsx",
 				"hits": 7
-			},
-			{
-				"file": "apps/console/components/design-project/canvas/ai/proposal-diff.tsx",
-				"hits": 6
 			},
 			{
 				"file": "apps/console/components/shell/notifications-popover.tsx",
@@ -8407,19 +8400,11 @@
 				"hits": 4
 			},
 			{
-				"file": "apps/console/components/design-project/container-platform-selector.tsx",
-				"hits": 3
-			},
-			{
 				"file": "apps/console/components/auth/onboarding-form.tsx",
 				"hits": 2
 			},
 			{
 				"file": "apps/console/app/(public)/onboarding/page.tsx",
-				"hits": 1
-			},
-			{
-				"file": "apps/console/components/design-project/canvas/nodes/zone-node.tsx",
 				"hits": 1
 			},
 			{
