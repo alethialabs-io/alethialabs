@@ -3,12 +3,14 @@
 		"IMPORTED — the live half of apps/console/docs/ui-conformance/RUBRIC.md, measured by the Playwright `audit` project in CI.",
 		"Refresh with `node apps/console/scripts/audit-report.mjs --import-live=<dir> --run=<url> --commit=<sha>`,",
 		"then regenerate the two derived files with `pnpm -F console audit:report --write`.",
-		"No wall clock, no URL, no per-run element id: every byte here is a property of the tree that was measured."
+		"Apart from `source`, which cites the run: no wall clock, no run-local URL, no per-run org slug and no",
+		"generated element id. Every record below is a property of the TREE that was measured, so re-importing an",
+		"unchanged tree produces the same bytes."
 	],
 	"version": 1,
 	"source": {
-		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/33621968826",
-		"commit": "8c4fdd43f28a1398e91bb573598d7ea9e2ee4433"
+		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/33623272631",
+		"commit": "1a3bdeb73a36d488a238dfe2d2e4235b35105832"
 	},
 	"runs": {
 		"routes": {
@@ -17,7 +19,7 @@
 			"persona": "the run's own owner",
 			"org": "a fresh, empty organisation created for the run",
 			"covers": "every route the manifest names",
-			"runKey": "e2e-e2e-1788348570542-852621",
+			"runKey": "e2e-e2e-1788350508586-48574",
 			"records": [
 				{
 					"route": "/[org]",
@@ -1634,7 +1636,7 @@
 					"route": "/[org]/~/support/cases/[id]",
 					"predicate": "R6",
 					"verdict": "FAIL",
-					"detail": "6 console errors, 4 failed requests (404), of the first 10 recorded"
+					"detail": "4 console errors, 4 failed requests (404), of the first 10 recorded"
 				},
 				{
 					"route": "/[org]/~/support/cases/[id]",
@@ -1893,7 +1895,7 @@
 			"persona": "the `member` persona, compared against the owner of the same org",
 			"org": "a SECOND organisation, created by that spec and never touched by the primary run",
 			"covers": "only the org-only routes; the parameterised ones need a project the persona cannot be given",
-			"runKey": "e2e-e2e-audit-owner-1788348574968-1",
+			"runKey": "e2e-e2e-audit-owner-1788350512918-1",
 			"records": [
 				{
 					"route": "/[org]",
