@@ -27,10 +27,20 @@ import (
 //     a refusal.
 //
 //  2. The gate is requireInteractiveFORM, not requireInteractive. noInputMode is derived from
-//     stdin alone, so `alethia ops … > out.log` from a real shell leaves prompting "enabled": a huh
-//     form then draws its ANSI frames into the redirected file, the terminal shows nothing, and the
-//     command looks hung. Every picker below asks for a terminal on STDOUT, which is where the form
-//     draws.
+//     stdin alone, so `alethia ops … 2> err.log` from a real shell leaves prompting "enabled": a
+//     huh form then draws its ANSI frames into the redirected file, the terminal shows nothing, and
+//     the command looks hung.
+//
+//     The stream is STDERR. huh v0.8.0 builds its bubbletea program with `tea.WithOutput(os.Stderr)`
+//     (form.go:112), which #3712 established by driving the real binary under a pty rather than
+//     reading the gate's name. An earlier version of this comment said stdout, and a gate written
+//     against stdout is wrong in BOTH directions — it refuses a picker that would have rendered
+//     fine, and it lets through the redirect that actually hangs. The predicate is corrected in
+//     #3712 across all 37 sites; nothing in this file re-implements it.
+//
+//     `opsConfirm` below delegates to `confirmDestructive`, which is one of those sites. It is
+//     deliberately NOT fixed here: two lanes fixing one shared helper is a merge conflict at best
+//     and two disagreeing gates at worst.
 
 // opsReasonMinLength and opsReasonMaxLength mirror `reason: z.string().min(8).max(1000)` in
 // apps/console/lib/validations/breakglass.ts.
