@@ -24,52 +24,6 @@ import (
 // brackets in the command's own Use string, which is the string cobra prints in --help. Two
 // renderings of one fact, checked against each other rather than typed twice.
 
-// docsTreeOnlyGroups holds groups the COMMAND TREE contract applies to but whose page does not yet
-// satisfy the full page contract in hyg_cli_docs_test.go.
-//
-// One notch finer than that file's registry, and for a reason it names itself: a guard turned on
-// for everything at once is red for months and gets switched off rather than fixed. The tree
-// contract is cheap to satisfy — it is one line per leaf in one file — and it is the half that was
-// actually wrong, so it can go first.
-//
-// `jobs` is here rather than in docsGroups because jobs.mdx does not yet satisfy two of that
-// registry's assertions, both of which are real work in someone else's scope and neither of which
-// is this defect:
-//
-//   - its `jobs logs` fence shows a USAGE line (`alethia jobs logs [job_id] [-f/--follow]`) rather
-//     than an invocation. #3784's rewrite of docsFencedExamples — collect only from shell-TAGGED
-//     fences — does not reach it, because that fence IS tagged; the line needs replacing with a
-//     runnable example, and #3801's placeholder ratchet will require the same thing.
-//   - its "Waiting for jobs" section shows `alethia project plan` and `alethia project apply` in a
-//     cross-group workflow, which the page contract reads as a page documenting another group's
-//     command. That rule is not wrong; the exception is real, and deciding how a page declares one
-//     is a change to the shared docs guard rather than to this group.
-//
-// Entries move OUT of this map into docsGroups. It is not a place to leave things.
-var docsTreeOnlyGroups = map[string]string{
-	"jobs": "jobs",
-}
-
-// docsTreeContractGroups is every group the tree contract applies to.
-func docsTreeContractGroups(t *testing.T) map[string]string {
-	t.Helper()
-	out := map[string]string{}
-	for group, page := range docsGroups {
-		out[group] = page
-	}
-	for group, page := range docsTreeOnlyGroups {
-		if _, already := out[group]; already {
-			t.Errorf("%q is in BOTH docsGroups and docsTreeOnlyGroups — the tree-only map is a "+
-				"staging area, and an entry that has graduated must leave it", group)
-		}
-		out[group] = page
-	}
-	if len(out) == 0 {
-		t.Fatal("no group is under the tree contract — every assertion below would be vacuous")
-	}
-	return out
-}
-
 // docsLeafPages registers TOP-LEVEL LEAF commands — the ones that are not a group and so cannot be
 // reached by docsGroups, whose every assertion starts by walking a group's subcommands.
 //
@@ -140,21 +94,92 @@ func docsParseArgSpec(tail string) docsTreeArgSpec {
 	return spec
 }
 
-// docsTreeLine returns the tree line for one command path, or "" when the tree does not show it.
+// docsTreeDepth is the nesting depth of a tree line, in the four-column steps the tree draws with.
 //
-// The path is matched by its LAST element inside the group's block, which is how
-// TestHygCliDocs_EveryLeafIsDocumented already reads the tree; this adds the tail of the line.
-func docsTreeLine(index, group, leaf string) string {
-	block := docsIndexBlock(index, group)
-	if block == "" {
+// The tree indents with `│   ` and `    `, both four columns wide, so a leaf's depth is the width of
+// everything before its `├── ` or `└── ` marker divided by four.
+func docsTreeDepth(line string) int {
+	i := strings.Index(line, "├── ")
+	if i < 0 {
+		i = strings.Index(line, "└── ")
+	}
+	if i < 0 {
+		return -1
+	}
+	return len([]rune(line[:i])) / 4
+}
+
+// docsTreeName is the command name a tree line declares, or "" when the line declares none.
+func docsTreeName(line string) string {
+	d := docsTreeDepth(line)
+	if d < 0 {
 		return ""
 	}
-	entry := regexp.MustCompile(`(?m)^[│ ]*[├└]── ` + regexp.QuoteMeta(leaf) + `\b(.*)$`)
-	m := entry.FindStringSubmatch(block)
-	if m == nil {
+	rest := line
+	if i := strings.Index(rest, "├── "); i >= 0 {
+		rest = rest[i+len("├── "):]
+	} else if i := strings.Index(rest, "└── "); i >= 0 {
+		rest = rest[i+len("└── "):]
+	}
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
 		return ""
 	}
-	line := m[1]
+	return fields[0]
+}
+
+// docsTreeLinePath returns the argument tail of the tree line for one full command path, walking
+// the tree by DEPTH rather than searching for the last element by name.
+//
+// The depth walk is not fastidiousness. `project` has both `env add` and `component add`, and a
+// search for the last element found whichever came first — so the guard compared `component add`
+// against the line for `env add` and reported a mismatch that named the wrong command. A comparison
+// guard that lines up the wrong pair is worse than no guard: it sends a reader to fix something
+// that is correct.
+//
+// An empty result means the tree does not show this command. That is a real defect and a DIFFERENT
+// one — "the tree omits a leaf" belongs to TestHygCliDocs_EveryLeafIsDocumented, which is registry
+// scoped — so it is reported by the caller as "not comparable" rather than silently compared as
+// two empty strings, which would always agree.
+func docsTreeLinePath(index string, path []string) string {
+	tree := docsCommandTree(index)
+	if tree == "" || len(path) == 0 {
+		return ""
+	}
+	lines := strings.Split(tree, "\n")
+	depth := 0
+	start := 0
+	for _, want := range path {
+		found := -1
+		for i := start; i < len(lines); i++ {
+			d := docsTreeDepth(lines[i])
+			if d < 0 {
+				continue
+			}
+			if d < depth {
+				break // left the parent's block without finding it
+			}
+			if d == depth && docsTreeName(lines[i]) == want {
+				found = i
+				break
+			}
+		}
+		if found < 0 {
+			return ""
+		}
+		start, depth = found+1, depth+1
+	}
+	line := lines[start-1]
+	if i := strings.Index(line, "├── "); i >= 0 {
+		line = line[i+len("├── "):]
+	} else if i := strings.Index(line, "└── "); i >= 0 {
+		line = line[i+len("└── "):]
+	}
+	fields := strings.Fields(line)
+	if len(fields) <= 1 {
+		return ""
+	}
+	line = strings.Join(fields[1:], " ")
 	// A trailing `# …` comment is prose, not part of the invocation.
 	if i := strings.Index(line, "#"); i >= 0 {
 		line = line[:i]
@@ -171,41 +196,181 @@ func docsUseTail(cmd *cobra.Command) string {
 	return strings.Join(fields[1:], " ")
 }
 
-// TestHygCliDocs_TheTreeAgreesWithTheUsageString compares the two renderings of each registered
-// leaf's argument arity.
+// docsTreeComparableLeaves are commands the tree MUST show and MUST agree with.
+//
+// Named cases, not a count. The walk below covers every leaf the tree shows — 92 of them — and the
+// way that silently becomes worthless is the walk finding nothing and comparing zero pairs. A
+// threshold ("at least 50 leaves") would drift down with the tree; these six are one per shape the
+// walk has to get right: a top-level leaf, a nested leaf, two leaves under one group sharing a
+// final name, a leaf with a required positional, one with an optional positional, and one with
+// none. If the walk stops seeing any of them it has broken, whatever the total says.
+var docsTreeComparableLeaves = [][]string{
+	{"cluster", "get"},              // optional positional, the shape #3740 introduced
+	{"jobs", "get"},                 // the leaf whose brackets were stale for five weeks
+	{"project", "env", "add"},       // nested two deep
+	{"project", "component", "add"}, // shares its final name with the line above
+	{"config", "set"},               // two positionals
+	{"alerts", "delete"},            // a REQUIRED positional — the bracket that must stay angled
+	{"runner", "list"},              // none at all
+}
+
+// TestHygCliDocs_TheTreeAgreesWithTheUsageString compares the two renderings of every leaf's
+// argument arity: the brackets in the command tree, and the brackets in the command's own Use
+// string — which is what cobra prints in `--help`.
+//
+// DERIVED from the live tree, with no registry. The first cut of this guard was opt-in like the
+// page registry beside it, and that was wrong for a reason a mutation test found: an opt-in list
+// can silently EMPTY. Deleting the one entry left the guard green, and the contract it was supposed
+// to hold `jobs` to simply stopped existing. The page contract needs an opt-in because a page has
+// to be written; a tree line already exists for every leaf the tree shows, so there is nothing to
+// opt in to and the set derives itself.
+//
+// A leaf the tree does NOT show is skipped here and reported separately. That is a real defect —
+// `addon enable`, `chart attach`, `runner register` and the whole `promotion`, `provider` and
+// `token` groups are missing from the tree — but it is a different one, owned by
+// TestHygCliDocs_EveryLeafIsDocumented, and comparing an absent line would compare "" against ""
+// and always agree.
 func TestHygCliDocs_TheTreeAgreesWithTheUsageString(t *testing.T) {
 	index := docsRead(t, docsPagePath("index"))
-	checked := 0
+	compared := map[string]bool{}
+	var absent []string
 
-	for group := range docsTreeContractGroups(t) {
-		groupCmd, _, err := rootCmd.Find([]string{group})
-		if err != nil || groupCmd == rootCmd {
-			t.Errorf("group %q is under the tree contract but does not resolve", group)
-			continue
-		}
-		for _, leaf := range docsLeaves(groupCmd) {
-			name := leaf[len(leaf)-1]
-			line := docsTreeLine(index, group, name)
-			cmd, _, err := rootCmd.Find(append([]string{group}, leaf...))
-			if err != nil {
-				t.Errorf("`alethia %s %s` does not resolve", group, strings.Join(leaf, " "))
+	var walk func(cmd *cobra.Command, path []string)
+	walk = func(cmd *cobra.Command, path []string) {
+		for _, sub := range cmd.Commands() {
+			if sub.Hidden || sub.Name() == "help" || sub.Name() == "completion" {
 				continue
 			}
-			checked++
-			want := docsParseArgSpec(docsUseTail(cmd))
-			got := docsParseArgSpec(line)
-			if got != want {
-				t.Errorf("the command tree in index.mdx shows `%s %s` with %d required and %d "+
-					"optional argument(s), but `%s` takes %d required and %d optional.\n"+
-					"      Angle brackets tell a reader to go and find a value first. `%s`",
-					name, line, got.required, got.optional,
-					cmd.CommandPath(), want.required, want.optional, cmd.Use)
+			next := append(append([]string{}, path...), sub.Name())
+			if sub.Runnable() {
+				line := docsTreeLinePath(index, next)
+				key := strings.Join(next, " ")
+				if docsTreeLinePath(index, next) == "" && !docsTreeShows(index, next) {
+					absent = append(absent, key)
+				} else {
+					compared[key] = true
+					want := docsParseArgSpec(docsUseTail(sub))
+					if got := docsParseArgSpec(line); got != want {
+						t.Errorf("the command tree in index.mdx shows `%s %s` with %d required and "+
+							"%d optional argument(s), but `%s` takes %d required and %d optional.\n"+
+							"      Angle brackets tell a reader to go and find a value first. `%s`",
+							sub.Name(), line, got.required, got.optional,
+							sub.CommandPath(), want.required, want.optional, sub.Use)
+					}
+				}
 			}
+			walk(sub, next)
 		}
 	}
-	if checked == 0 {
-		t.Fatal("no leaf was compared — the registry resolved nothing, so this guard read nothing")
+	walk(rootCmd, nil)
+
+	for _, leaf := range docsTreeComparableLeaves {
+		if !compared[strings.Join(leaf, " ")] {
+			t.Errorf("`alethia %s` was not compared — the tree walk cannot see it, so this "+
+				"guard's silence says nothing about the other leaves either",
+				strings.Join(leaf, " "))
+		}
 	}
+	if len(compared) == 0 {
+		t.Fatal("no leaf was compared — the walk read nothing")
+	}
+	t.Logf("%d leaves compared; %d not shown in the tree at all (a separate defect, see "+
+		"TestHygCliDocs_EveryLeafIsDocumented): %s",
+		len(compared), len(absent), strings.Join(absent, ", "))
+}
+
+// TestHygCliDocs_TheBackstopCoversItsShapes checks docsTreeComparableLeaves against the properties
+// its comment claims, rather than against its length.
+//
+// A hand-written canary list decays the way every hand-written list does: an entry is deleted and
+// nothing objects, because the remaining entries still pass. Found by mutation — removing the one
+// leaf that shares its final name with another left this file green, and with it the only case that
+// can catch a depth-blind walk. So the list is held to its SHAPES, which are derived from the live
+// command tree: if a shape stops being represented, the list has lost its point whatever its size.
+func TestHygCliDocs_TheBackstopCoversItsShapes(t *testing.T) {
+	var nested, sharedFinalName, required, optional, none bool
+	finals := map[string]int{}
+	for _, leaf := range docsTreeComparableLeaves {
+		if len(leaf) > 2 {
+			nested = true
+		}
+		// Keyed on the GROUP and the final name together. Keying on the final name alone counted
+		// `cluster get` and `jobs get` as a shared pair — and they are not the shape this canary
+		// exists for, because they live under different parents and no walk could confuse them.
+		// The collision that matters is two leaves sharing a final name under ONE parent, which is
+		// `project env add` and `project component add`, and only that pair can catch a walk that
+		// matches a name at any depth.
+		finals[leaf[0]+" "+leaf[len(leaf)-1]]++
+		cmd, _, err := rootCmd.Find(leaf)
+		if err != nil {
+			t.Errorf("the backstop names `alethia %s`, which does not resolve", strings.Join(leaf, " "))
+			continue
+		}
+		switch spec := docsParseArgSpec(docsUseTail(cmd)); {
+		case spec.required > 0:
+			required = true
+		case spec.optional > 0:
+			optional = true
+		default:
+			none = true
+		}
+	}
+	for _, n := range finals {
+		if n > 1 {
+			sharedFinalName = true
+		}
+	}
+	for _, c := range []struct {
+		ok   bool
+		what string
+	}{
+		{nested, "a leaf nested more than one level deep"},
+		{sharedFinalName, "two leaves that share a final name — the only shape that catches a depth-blind walk"},
+		{required, "a leaf with a required positional"},
+		{optional, "a leaf with an optional positional"},
+		{none, "a leaf with no positional at all"},
+	} {
+		if !c.ok {
+			t.Errorf("docsTreeComparableLeaves no longer covers %s. It is a canary, not a sample: "+
+				"a shape it stops representing is a way the walk can break in silence", c.what)
+		}
+	}
+}
+
+// docsTreeShows reports whether the tree carries a line for this command path at all, whether or
+// not that line has any arguments after the name.
+//
+// Separate from docsTreeLinePath because that function returns "" for BOTH "no such line" and "a
+// line with no arguments" — and `runner list` is the second. Without this, every argument-less leaf
+// would be filed as missing from the tree.
+func docsTreeShows(index string, path []string) bool {
+	tree := docsCommandTree(index)
+	if tree == "" || len(path) == 0 {
+		return false
+	}
+	lines := strings.Split(tree, "\n")
+	depth, start := 0, 0
+	for _, want := range path {
+		found := -1
+		for i := start; i < len(lines); i++ {
+			d := docsTreeDepth(lines[i])
+			if d < 0 {
+				continue
+			}
+			if d < depth {
+				break
+			}
+			if d == depth && docsTreeName(lines[i]) == want {
+				found = i
+				break
+			}
+		}
+		if found < 0 {
+			return false
+		}
+		start, depth = found+1, depth+1
+	}
+	return true
 }
 
 // TestHygCliDocs_ArgSpecParserReadsTheTreesSpellings is the parser's own test.
@@ -238,33 +403,85 @@ func TestHygCliDocs_ArgSpecParserReadsTheTreesSpellings(t *testing.T) {
 	}
 }
 
-// TestHygCliDocs_TreeLineIsFoundForARealLeaf proves docsTreeLine finds lines at all.
+// TestHygCliDocs_TreeWalkFindsTheRightLine proves the depth walk lines up the pairs it compares.
 //
-// Without it the guard above compares {0,0} against {0,0} for a leaf whose tree line it failed to
-// locate, and reports clean — the "nothing found is not nothing wrong" shape, which for a
-// comparison guard is invisible because both sides collapse to the same empty value.
-func TestHygCliDocs_TreeLineIsFoundForARealLeaf(t *testing.T) {
+// Without it the guard above compares "" against "" for a leaf whose line it failed to locate and
+// reports clean — the "nothing found is not nothing wrong" shape, which for a COMPARISON guard is
+// invisible because both sides collapse to the same empty value. Worse, the walk it replaced lined
+// up the WRONG pair: it searched a group's block for the leaf's final name, so `project component
+// add` was compared against the line for `project env add`.
+func TestHygCliDocs_TreeWalkFindsTheRightLine(t *testing.T) {
 	index := docsRead(t, docsPagePath("index"))
-	found := 0
-	for group := range docsTreeContractGroups(t) {
-		groupCmd, _, err := rootCmd.Find([]string{group})
-		if err != nil || groupCmd == rootCmd {
-			continue
-		}
-		for _, leaf := range docsLeaves(groupCmd) {
-			if docsTreeLine(index, group, leaf[len(leaf)-1]) != "" {
-				found++
-			}
-		}
+
+	// The two leaves that share a final name must resolve to DIFFERENT lines.
+	envAdd := docsTreeLinePath(index, []string{"project", "env", "add"})
+	compAdd := docsTreeLinePath(index, []string{"project", "component", "add"})
+	if envAdd == "" || compAdd == "" {
+		t.Fatalf("the walk lost a nested leaf: env add = %q, component add = %q", envAdd, compAdd)
 	}
-	if found == 0 {
-		t.Fatal("docsTreeLine matched no leaf line anywhere in the registry's groups — every " +
-			"comparison in TestHygCliDocs_TheTreeAgreesWithTheUsageString is empty against empty")
+	if envAdd == compAdd {
+		t.Errorf("`project env add` and `project component add` resolved to the same line %q — "+
+			"the walk is matching on the final name rather than the path", envAdd)
+	}
+	if !strings.Contains(compAdd, "--kind") {
+		t.Errorf("`project component add` resolved to %q, which is not its line", compAdd)
 	}
 
-	// A leaf that is genuinely absent must come back empty rather than matching something else.
-	if got := docsTreeLine(index, "cluster", "definitely-not-a-leaf"); got != "" {
-		t.Errorf("an absent leaf matched %q", got)
+	// The sharp case, and the one a walk that matched a name at ANY depth would fail. `project` has
+	// no direct `add` child — `add` exists only two levels down, under `env` and under `component`
+	// — so a depth-blind search starting after the `project` line finds `env add` and hands back a
+	// line for a command that does not exist. Both of the assertions above still pass with the
+	// depth check removed; this one does not.
+	if got := docsTreeLinePath(index, []string{"project", "add"}); got != "" {
+		t.Errorf("`alethia project add` is not a command, but the walk resolved it to %q — it is "+
+			"matching a name at any depth and will line up the wrong pair", got)
+	}
+	if docsTreeShows(index, []string{"project", "add"}) {
+		t.Error("`alethia project add` does not exist, but docsTreeShows claims the tree has it")
+	}
+
+	// A leaf with no arguments has an empty tail but IS shown; the two must not be confused.
+	if got := docsTreeLinePath(index, []string{"runner", "list"}); got != "" {
+		t.Errorf("`runner list` takes no arguments, so its tail is empty, got %q", got)
+	}
+	if !docsTreeShows(index, []string{"runner", "list"}) {
+		t.Error("`runner list` is in the tree, but docsTreeShows says it is not — every " +
+			"argument-less leaf would be filed as missing")
+	}
+
+	// A leaf that is genuinely absent must come back absent rather than matching something else.
+	if docsTreeShows(index, []string{"cluster", "definitely-not-a-leaf"}) {
+		t.Error("an absent leaf was reported as shown")
+	}
+	if docsTreeShows(index, []string{"promotion", "get"}) {
+		t.Error("`promotion` is not in the command tree at all; reporting it as shown would " +
+			"compare its line against nothing")
+	}
+}
+
+// TestHygCliDocs_TreeDepthReadsTheDrawing pins the indentation arithmetic the walk rests on.
+func TestHygCliDocs_TreeDepthReadsTheDrawing(t *testing.T) {
+	cases := []struct {
+		line  string
+		depth int
+		name  string
+	}{
+		{"├── project", 0, "project"},
+		{"└── ops", 0, "ops"},
+		{"│   ├── list", 1, "list"},
+		{"│   └── add <name>", 1, "add"},
+		{"│   │   ├── list", 2, "list"},
+		{"│       └── remove --kind <k>", 2, "remove"},
+		{"alethia", -1, ""},
+		{"", -1, ""},
+	}
+	for _, tc := range cases {
+		if got := docsTreeDepth(tc.line); got != tc.depth {
+			t.Errorf("docsTreeDepth(%q) = %d, want %d", tc.line, got, tc.depth)
+		}
+		if got := docsTreeName(tc.line); got != tc.name {
+			t.Errorf("docsTreeName(%q) = %q, want %q", tc.line, got, tc.name)
+		}
 	}
 }
 
