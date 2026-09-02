@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -36,9 +37,38 @@ import (
 // them at once would be red for months and would be switched off rather than fixed. A group is
 // added by the pass that finishes it, and the map only grows. #3664 is where it stops being a
 // registry and becomes "every group".
+//
+// A page may carry MORE THAN ONE group — `organizations.mdx` documents org, members and teams, and
+// `access.mdx` documents roles, grants and sso — so the "this example is outside the group" check
+// below reads every group registered for the page rather than the one it is currently walking.
+// Without that, a `alethia members list` example on the org group's page fails as foreign to `org`,
+// and the only way to register the group would be to split the docs.
 var docsGroups = map[string]string{
 	// group command → docs page basename under apps/docs/content/docs/cli/commands
 	"cluster": "clusters",
+	"org":     "organizations",
+	"members": "organizations",
+	"teams":   "organizations",
+	"roles":   "access",
+	"grants":  "access",
+	"sso":     "access",
+}
+
+// docsGroupsOnPage inverts the registry: which groups share one page.
+//
+// Derived from docsGroups rather than written beside it, because a second list of the same fact is
+// a list that stops agreeing — and the failure would be silent in the safe direction: an example
+// wrongly reported as foreign, or worse, a foreign one accepted because the page was thought to
+// carry a group it does not.
+func docsGroupsOnPage(page string) []string {
+	var out []string
+	for group, p := range docsGroups {
+		if p == page {
+			out = append(out, group)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // docsRepoRoot is the repo root as seen from apps/cli/cmd.
@@ -310,7 +340,14 @@ func TestHygCliDocs_EveryDocumentedExampleResolves(t *testing.T) {
 		t.Fatal("the registry is empty — every assertion in this file would be vacuous")
 	}
 	checkedExamples := 0
-	for group, page := range docsGroups {
+	// Over PAGES, not over groups: a page shared by three groups would otherwise have every one of
+	// its examples checked three times, and each miss reported three times.
+	seenPage := map[string]bool{}
+	for _, page := range docsGroups {
+		if seenPage[page] {
+			continue
+		}
+		seenPage[page] = true
 		body := docsRead(t, docsPagePath(page))
 		examples := docsFencedExamples(body)
 		if len(examples) == 0 {
@@ -333,9 +370,17 @@ func TestHygCliDocs_EveryDocumentedExampleResolves(t *testing.T) {
 					"print help and exit 0", example, cmd.CommandPath())
 				continue
 			}
-			if !strings.HasPrefix(cmd.CommandPath(), "alethia "+group+" ") {
-				t.Errorf("%q is on %s.mdx but resolves to `%s`, outside the %q group",
-					example, page, cmd.CommandPath(), group)
+			owners := docsGroupsOnPage(page)
+			owned := false
+			for _, owner := range owners {
+				if strings.HasPrefix(cmd.CommandPath(), "alethia "+owner+" ") {
+					owned = true
+					break
+				}
+			}
+			if !owned {
+				t.Errorf("%q is on %s.mdx but resolves to `%s`, outside the group(s) %v that page documents",
+					example, page, cmd.CommandPath(), owners)
 			}
 			args := docsSplitArgs(t, cmd, rest, example)
 			if err := cmd.ValidateArgs(args); err != nil {
