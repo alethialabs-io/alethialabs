@@ -1195,6 +1195,20 @@ jobs:
       - name: Worktree lease guard — replays incident #1247
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-lease-hook-test.sh
+      # The env registry used to key ownership on `user@host`, which every agent, worktree and shell
+      # on one machine shares — so env:reap's "someone else is working on this box" could not fire
+      # locally, and a finished lane deleted the box out from under a live one (#3841). The identity
+      # is now the worktree lease's. The first step pins the identity and the decision; the second
+      # drives `env:reap --dry-run` itself against fixture registries, because the defect was never
+      # in the decision's logic — it was that nothing could reach it.
+      - name: Env ownership identity + reap decision (#3841)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/lib/env-owner.sh --self-test
+      # Quoted: an unquoted " #3841" is a YAML COMMENT, and the step name would lose the issue
+      # number it exists to carry (the #1247 step above has that bug).
+      - name: "env:reap refusal — replays incident #3841 against env.sh"
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/lib/env-reap-test.sh
       - name: Worktree landed-detection (squash merges; merged-PR-plus-new-commit is NOT landed)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-landed-test.sh
