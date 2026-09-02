@@ -52,7 +52,7 @@ import {
 	AlertDialogTitle,
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
-import { CountPill } from "@repo/ui/count-pill";
+import { SectionHeading } from "@repo/ui/section-heading";
 import { EmptyState } from "@repo/ui/empty";
 import { PageToolbar } from "@repo/ui/page-toolbar";
 import { Sheet, SheetContent } from "@repo/ui/sheet";
@@ -437,10 +437,7 @@ export function ConnectorsPage({
 									<span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground">
 										<Icon className="size-3.5" />
 									</span>
-									<h2 className="font-display text-[15px] font-semibold tracking-tight">
-										{group.label}
-									</h2>
-									<CountPill count={items.length} />
+									<SectionHeading level={2} title={group.label} count={items.length} />
 									<a
 										href={group.docsHref}
 										target="_blank"
@@ -453,7 +450,7 @@ export function ConnectorsPage({
 									<span className="hidden max-w-[52ch] text-xs text-muted-foreground md:inline">
 										{group.description}
 									</span>
-									<span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
+									<span className="ml-auto shrink-0 font-mono text-ui-2xs text-muted-foreground">
 										{connected} connected
 									</span>
 								</div>
