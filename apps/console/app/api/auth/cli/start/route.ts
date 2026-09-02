@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, eq, isNull, lt } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, lt } from "drizzle-orm";
 import {
 	CLI_DEVICE_START_RATE_LIMIT,
 	clientMetadataField,
@@ -70,30 +70,57 @@ export async function POST(req: Request) {
 	const db = getServiceDb();
 	const pendingExpiresAt = pendingDeviceCodeExpiresAt();
 
-	// Sweep the undecided and refused rows this route is the sole source of, before adding
-	// another. They carry `request_ip` — personal data — and, unlike an approved row, no
-	// profile_id, so the subject-erasure plan (lib/privacy/erasure-plan.ts, which matches
-	// cli_logins rows by subject) cannot reach them and nothing else deletes them either:
-	// before this table only ever held approved rows, and the exchange's claiming DELETE
-	// removed each one as it was redeemed. Bounded by `created_at` rather than
-	// `pending_expires_at` so it also collects a denial marker, whose window is over by
-	// definition. `profile_id IS NULL` keeps it away from every approved row.
+	// Two statements, and they are NOT the same statement with a different filter.
+	//
+	// An UNDECIDED row is deleted. It carries `request_ip` — personal data — and, unlike an
+	// approved row, no profile_id, so the subject-erasure plan (lib/privacy/erasure-plan.ts,
+	// which matches cli_logins rows by subject) cannot reach it and nothing else deletes it.
+	//
+	// A REFUSED row is NOT deleted, and the first cut of this route got that wrong. It swept
+	// denial markers too, reasoning that a denial's window is over by definition — but
+	// `onConflictDoNothing` below is the only thing standing between a refused device_code and
+	// its re-registration, and it can only refuse a row that still EXISTS. Delete the marker
+	// and the same phished link becomes approvable again ten minutes later, by the attacker
+	// simply calling this route a second time with the device_code they already control. That
+	// is precisely the defect #3887 was filed about — "declining is not durable" — reintroduced
+	// on a timer, under copy that tells the user "this link cannot be approved later".
+	//
+	// The retention argument behind that sweep was sound; its conclusion was not. Both things
+	// are available: keep the marker, drop the personal data. So a refused row past its window
+	// has `request_ip` and `client_metadata` NULLed and keeps `denied_at`, which is all
+	// `onConflictDoNothing` needs. What is retained is a random 122-bit device_code, its
+	// user_code and a timestamp — not a subject.
 	//
 	// Opportunistic and best-effort: a failure here must not stop somebody logging in.
+	const staleBefore = new Date(Date.now() - PENDING_DEVICE_CODE_TTL_MS);
 	try {
 		await db
 			.delete(cliLogins)
 			.where(
 				and(
 					isNull(cliLogins.profile_id),
-					lt(
-						cliLogins.created_at,
-						new Date(Date.now() - PENDING_DEVICE_CODE_TTL_MS),
-					),
+					isNull(cliLogins.denied_at),
+					lt(cliLogins.created_at, staleBefore),
 				),
 			);
 	} catch (err) {
 		console.error("Error sweeping stale CLI login requests:", err);
+	}
+
+	try {
+		await db
+			.update(cliLogins)
+			.set({ request_ip: null, client_metadata: null })
+			.where(
+				and(
+					isNull(cliLogins.profile_id),
+					isNotNull(cliLogins.denied_at),
+					lt(cliLogins.created_at, staleBefore),
+					isNotNull(cliLogins.request_ip),
+				),
+			);
+	} catch (err) {
+		console.error("Error scrubbing refused CLI login requests:", err);
 	}
 
 	try {

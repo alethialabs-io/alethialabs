@@ -71,10 +71,19 @@ prints a warning and continues, and the browser then shows less about the reques
 ### Read the request in the browser
 The CLI opens `${web-origin}/cli/login?device_code=<uuid>&user_code=<code>`. The page
 (`apps/console/app/(private)/cli/login/page.tsx`) requires an authenticated Better Auth session and
-reads `GET /api/auth/cli/request`, which answers with the account that approval would bind, what
-approval hands over, who is asking, and how long is left. Every field comes from the registration
-rather than from the link, so nothing on the screen is under the sender's control except the codes —
-and those must match what was registered.
+shows the `user_code` from the link.
+
+`GET /api/auth/cli/request` answers with the account that approval would bind, what approval hands
+over, who is asking, and how long is left — every field from the registration rather than from the
+link, so nothing it returns is under the sender's control except the codes, which must match what
+was registered.
+
+<Callout type="warn">
+  **The page does not read that route yet.** The endpoint and the columns behind it ship ahead of
+  the screen that displays them; the richer consent screen is the page rebuild tracked in #3889 and
+  #3631. Until then the browser shows the `user_code` and a generic prompt, and this section
+  describes the route's contract rather than what a user currently sees.
+</Callout>
 
 ### Approve in the browser
 The page `POST`s to `/api/auth/cli/generate`. That route binds the `device_code` to

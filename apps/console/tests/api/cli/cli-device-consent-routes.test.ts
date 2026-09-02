@@ -50,7 +50,7 @@ const OWNER = "victim";
 
 /** One statement the route issued, as the fake db saw it. */
 interface ConsentOp {
-	kind: "select" | "insert" | "delete";
+	kind: "select" | "insert" | "update" | "delete";
 	where?: unknown;
 	values?: Record<string, unknown>;
 	conflict?: "doUpdate" | "doNothing";
@@ -78,6 +78,7 @@ function consentDb() {
 	Object.assign(db, {
 		select: () => start("select"),
 		insert: () => start("insert"),
+		update: () => start("update"),
 		delete: () => start("delete"),
 		from: () => db,
 		limit: () => db,
@@ -88,6 +89,13 @@ function consentDb() {
 			return db;
 		},
 		values: (v: Record<string, unknown>) => {
+			if (current) current.values = v;
+			return db;
+		},
+		// drizzle's UPDATE payload. Recorded into `values` so an update reads like an insert
+		// at the assertion site — what is under test is the pair (payload, predicate), and
+		// that is the same question for both.
+		set: (v: Record<string, unknown>) => {
 			if (current) current.values = v;
 			return db;
 		},
@@ -103,8 +111,12 @@ function consentDb() {
 			if (current) current.conflict = "doNothing";
 			return db;
 		},
+		// An UPDATE does not consume a seeded result-set. Nothing awaits rows from one here —
+		// the scrub is bookkeeping — and letting it shift the FIFO would make every test that
+		// seeds a later SELECT depend on how many housekeeping statements the route happens to
+		// issue. That coupling is how adding one statement broke two unrelated assertions.
 		then: (resolve: (v: unknown) => void) =>
-			resolve(queue.length ? queue.shift() : []),
+			resolve(current?.kind === "update" ? [] : queue.length ? queue.shift() : []),
 	});
 	return { db, queue, ops };
 }
@@ -265,9 +277,9 @@ describe("POST /api/auth/cli/start", () => {
 		expect(res.status).toBe(500);
 	});
 
-	// Pending and refused rows carry a request IP, have no profile_id, and so are outside
-	// the reach of the subject-erasure plan. Nothing else deletes them.
-	it("sweeps stale undecided rows before adding another", async () => {
+	// Undecided rows carry a request IP, have no profile_id, and so are outside the reach of
+	// the subject-erasure plan. Nothing else deletes them.
+	it("sweeps stale UNDECIDED rows before adding another", async () => {
 		fake.queue.push([], [], [{ user_code: USER_CODE }]);
 		await START(post("/api/auth/cli/start", { device_code: DEVICE_CODE, user_code: USER_CODE }));
 
@@ -278,6 +290,43 @@ describe("POST /api/auth/cli/start", () => {
 		expect(terms).toContain("created_at");
 		// Scoped to unowned rows: an approved row is somebody's live login.
 		expect(terms.join(" ")).toContain("is null");
+		// AND to undecided ones. See the next two tests for why this is the whole fix.
+		expect(terms).toContain("denied_at");
+	});
+
+	// THE REFUSAL HAS TO OUTLIVE ITS WINDOW, and this is the test that says so.
+	//
+	// `onConflictDoNothing` on the insert below is the only thing stopping a refused
+	// device_code being re-registered, and it can only refuse a row that still EXISTS. The
+	// first cut of this route swept denial markers on the same `created_at` bound as
+	// undecided ones, reasoning that a denial's window is over by definition — which handed
+	// the attacker the same phished link back ten minutes later. That is #3887's own defect,
+	// "declining is not durable", reintroduced on a timer.
+	it("does NOT delete a refusal, or the same phished link becomes approvable again", async () => {
+		fake.queue.push([], [], [{ user_code: USER_CODE }]);
+		await START(post("/api/auth/cli/start", { device_code: DEVICE_CODE, user_code: USER_CODE }));
+
+		const sweep = fake.ops.find((o) => o.kind === "delete");
+		// A DELETE that does not mention denied_at reaches every refusal in the table.
+		expect(sqlTerms(sweep?.where)).toContain("denied_at");
+	});
+
+	// …and the retention argument that motivated deleting them is still answered: the marker
+	// is kept, the SUBJECT is not. What survives is a random 122-bit device_code, its
+	// user_code and a timestamp.
+	it("scrubs a stale refusal's personal data instead of deleting the marker", async () => {
+		fake.queue.push([], [], [{ user_code: USER_CODE }]);
+		await START(post("/api/auth/cli/start", { device_code: DEVICE_CODE, user_code: USER_CODE }));
+
+		const scrub = fake.ops.find((o) => o.kind === "update");
+		expect(scrub, "no UPDATE — a refused row keeps its request_ip forever").toBeDefined();
+		expect(scrub?.values).toHaveProperty("request_ip", null);
+		expect(scrub?.values).toHaveProperty("client_metadata", null);
+		const terms = sqlTerms(scrub?.where);
+		expect(terms).toContain("denied_at");
+		expect(terms).toContain("created_at");
+		// Never an approved row: that is somebody's live login and its IP is theirs.
+		expect(terms).toContain("profile_id");
 	});
 
 	it("throttles on its own, tighter budget", async () => {
