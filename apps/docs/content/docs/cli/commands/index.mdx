@@ -25,7 +25,7 @@ alethia
 ├── logout
 ├── whoami                            # current user, active org, role, plan, default runner
 ├── config                            # show resolved config + file paths + web-origin source
-│   ├── set <key> <value>            # key: web-origin
+│   ├── set [key] [value]            # key: web-origin — asks when omitted
 │   ├── get [web-origin|active-org]
 │   ├── clear-context                 # clear the active org
 │   └── export [project] [--format <f>] [--out <file>]  # export a project's resolved config
@@ -55,11 +55,11 @@ alethia
 │   └── remove [provider] [-y/--yes]
 ├── project
 │   ├── list
-│   ├── get <project_name> [--open]
-│   ├── create <name> --region <r> [--cloud-identity-id <id>] [--stage <s>] [--iac-version <v>]
+│   ├── get [project_name] [--open]   # asks when omitted
+│   ├── create [name] [--region <r>] [--cloud-identity-id <id>] [--stage <s>] [--iac-version <v>]
 │   ├── env                           # manage a project's environments (--project <p>)
 │   │   ├── list
-│   │   └── add <name> [--stage <s>] [--region <r>]
+│   │   └── add [name] [--stage <s>] [--region <r>]
 │   ├── component                     # alias: components, comp (--project <p>)
 │   │   ├── kinds
 │   │   ├── list [--kind <k>] [--env <e>]
@@ -73,12 +73,12 @@ alethia
 │   ├── register [name] [--name <name>] [--cloud-account <label>]
 │   ├── list
 │   ├── destroy [--runner <name>] [--assigned-runner <name>] [-w/--wait] [-y/--yes]
-│   └── remove [--runner <name>] [-y/--yes]
+│   └── remove [runner-id] [--runner <name>] [-y/--yes]
 ├── jobs
 │   ├── list [--status <S>] [-n/--limit <N>]
-│   ├── get <job_id>
-│   ├── logs <job_id> [-f/--follow]
-│   └── cancel <job_id>
+│   ├── get [job_id]                  # asks when omitted, or --latest
+│   ├── logs [job_id] [-f/--follow]
+│   └── cancel [job_id] [-y/--yes]
 ├── verify                            # the signed evidence receipt behind a job
 │   ├── receipt -j <job_id> [--key-file <f>] [--allow-unsigned] [--allow-untrusted]
 │   └── show    -j <job_id>           # the per-control report, incl. not_evaluable + waivers

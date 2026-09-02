@@ -34,7 +34,7 @@ var alertsListCmd = &cobra.Command{
 		client := api.NewClient(token)
 		if interactiveTable(cmd) {
 			var rules []api.AlertRule
-			ui.RunSpinner("Fetching alert rules...", func() { rules, err = client.ListAlertRules() })
+			runSpinner("Fetching alert rules...", func() { rules, err = client.ListAlertRules() })
 			if err != nil {
 				failf("Failed to list alert rules: %v", err)
 			}

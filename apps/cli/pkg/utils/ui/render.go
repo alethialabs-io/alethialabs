@@ -131,6 +131,26 @@ func StampOrNever(v *string) string {
 	return StampOrDash(v)
 }
 
+// StatusCell renders a status as the table cell every list shows it in: the unstyled glyph, a
+// space, and the status in lower case.
+//
+// Four files spelled this `fmt.Sprintf("%s %s", ui.PlainStatusDot(s), strings.ToLower(s))` —
+// clusters_list.go, clusters_get.go, project_list.go and runner_list.go — and it is the last of the
+// duplicated renders #3694 left behind. It was deliberately NOT hoisted by the runner lane, which
+// was right to leave it: two lanes adding the same symbol to this file is a `redeclared in this
+// block` failure that appears only at MERGE, with each branch green on its own, which is exactly
+// what #3737 hit with cloudIdentityLister. It lands once, in the lane that owns this file.
+//
+// Lower case, because these statuses arrive SHOUTING from the wire — ACTIVE, PROVISIONING — and a
+// table of capitals reads as a table of alarms. The glyph already carries the severity.
+//
+// It does NOT take the status message. clusters_list appends one and clusters_get puts it on its
+// own row; folding that in would make the two disagree about a cell this function exists to make
+// them agree about.
+func StatusCell(status string) string {
+	return PlainStatusDot(status) + " " + strings.ToLower(status)
+}
+
 // YesNo renders a boolean as a filled glyph or the dash.
 func YesNo(b bool) string {
 	if b {

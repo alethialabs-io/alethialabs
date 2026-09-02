@@ -56,11 +56,13 @@ var costShowCmd = &cobra.Command{
 // selectProject directly so both arms are reachable without a terminal or a network.
 //
 // `mayPick` is the caller's interactiveTable verdict, and it is a correctness gate rather than a
-// nicety: ui.NewForm and ui.RunSpinner both default to os.Stdout (huh's `cmp.Or(f.output,
-// os.Stdout)`), so a picker opened for `-o json` or `-o csv` — or for a table redirected into a
-// file — writes its spinner frames and its rendered select into the machine-readable stream ahead
-// of the document. When picking is not allowed, an omitted --project is refused the same way
-// --no-input refuses it, which is what the invocation did before the picker existed.
+// nicety. It USED to be a gate against stream corruption — both widgets drew on os.Stdout, so a
+// picker opened for `-o json > cost.json` put spinner frames and a rendered select in the file
+// ahead of the document and the file stopped parsing. That is now fixed at the source: both draw on
+// ui.InteractiveOutput, which is stderr. The gate remains for the reason that outlives it — a
+// machine-readable run has nobody to answer a question, so asking one is a hang, not a garbled
+// file. When picking is not allowed, an omitted --project is refused the same way --no-input
+// refuses it, which is what the invocation did before the picker existed.
 //
 // Under --no-input the picker returns errNoInput, whose message is "interactive input required".
 // That is true and useless here: it does not say WHICH input. The refusal is rewritten to name the

@@ -107,7 +107,7 @@ Linux packages, Docker images, and non-writable installations receive an exact m
 alethia update
 ```
 
-The command does not elevate privileges. See [Installation](/cli/installation#update-alethia) for
+The command does not elevate privileges. See [Installation](/cli/installation#alethia-update) for
 the behavior of each install channel.
 
 ### `alethia open`
@@ -120,7 +120,13 @@ alethia open docs       # opens the documentation
 alethia open console    # explicit
 ```
 
-`alethia docs` (the alias) defaults to the docs target.
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `[console\|docs]` | `console` | Which surface to open. Defaults to the console; the `docs` alias defaults to the documentation. |
+
+`alethia docs` (the alias) defaults to the docs target. The argument is optional and has a default,
+so `alethia open --no-input` opens the console rather than asking — this is the one shell value a
+person supplies, and it is answered rather than prompted for.
 
 ### `alethia completion`
 

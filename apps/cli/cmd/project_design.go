@@ -167,7 +167,7 @@ func designApplyGate(c apiClient, out io.Writer, p api.ApplyDesignParams, yes bo
 	// Checked BEFORE confirmDestructive so the refusal can say why --yes is needed here. The
 	// shared error names the contract; this one names the reason, which is what a pipeline
 	// author has to understand before adding the flag.
-	if noInputMode && !yes {
+	if !canPromptForm() && !yes {
 		return designApplyDeclined, errDesignApplyWouldDelete(deletes)
 	}
 	if !confirmDestructive(yes, "Apply a design that REMOVES components?",
@@ -240,7 +240,7 @@ func errDesignPreflightUnreadable(cause error) error {
 // wrote, and there is no sensible guess. Asking is still better than refusing, because the
 // caller who forgot the flag is on a terminal and has the path in their head.
 func promptDesignFile() (string, error) {
-	if err := requireInteractive(); err != nil {
+	if err := requireInteractiveForm(); err != nil {
 		return "", err
 	}
 	return askLine("Design document",
