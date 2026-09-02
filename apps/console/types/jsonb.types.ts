@@ -1535,3 +1535,25 @@ export interface PrivacyExportManifest {
 	/** The key that signed it, so the signature can be checked later. Null when unsigned. */
 	signingKeyId: string | null;
 }
+
+/**
+ * What the client that ran `alethia login` said about itself, on `cli_logins.client_metadata`.
+ *
+ * Every field here is **attacker-controllable** — it arrives on the unauthenticated
+ * `/api/auth/cli/start` request, from a process nobody has authenticated yet. That is exactly
+ * why the three of them live together in one column instead of being spread across the table
+ * next to `request_ip`: `request_ip` is read from the deployment's trusted proxy header and is
+ * server-derived, these are not, and a reader of the schema must not have to guess which is
+ * which. Render them as a claim the user is being asked to weigh ("this device says it is
+ * alethia-cli v0.42 on macOS"), never as a fact the control plane is asserting.
+ *
+ * Null on any row written before the client registered, and on any field the client omitted.
+ */
+export interface CliDeviceClientMetadata {
+	/** The product name the client reported, e.g. `alethia-cli`. */
+	client_name: string | null;
+	/** The version the client reported, e.g. `0.42.1`. */
+	client_version: string | null;
+	/** The `user-agent` header on the registration request. */
+	user_agent: string | null;
+}

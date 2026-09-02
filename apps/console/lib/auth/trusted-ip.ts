@@ -10,9 +10,25 @@ export function trustedClientIp(headers: Headers): string | null {
   return value && isIP(value) !== 0 ? value : null;
 }
 
+/**
+ * The CLI device-code routes that carry their own limiter bucket.
+ *
+ * Each route gets its OWN key rather than sharing one, because their honest traffic shapes
+ * are nothing alike: `exchange` is polled every two seconds for the whole login, while
+ * `start`, `generate`, `deny` and `request` are pressed once or twice. Bucketing them
+ * together would mean one ordinary login's polling could throttle the very button the user
+ * has to press to finish it.
+ */
+export type CliDeviceRoute =
+  | "start"
+  | "generate"
+  | "exchange"
+  | "deny"
+  | "request";
+
 /** Builds the in-memory limiter key for one CLI device-code request. */
 export function cliDeviceRateLimitKey(
-  route: "generate" | "exchange",
+  route: CliDeviceRoute,
   headers: Headers,
 ): string | null {
   const ip = trustedClientIp(headers);
