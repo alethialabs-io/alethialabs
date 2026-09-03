@@ -112,7 +112,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 16
-debt: 25
+debt: 24
 
 scanned:
   - scope: console_code
@@ -204,9 +204,6 @@ type_scale:
     hits: 1
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
   - path: apps/console/app/(private)/[org]/~/support/page.tsx
-    hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
-  - path: apps/console/app/(private)/cli/login/page.tsx
     hits: 1
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
   - path: apps/console/app/(public)/onboarding/page.tsx

@@ -21,8 +21,7 @@ redirectOnly: 4
 real: 36
 predicates:
   S1:
-    fail:
-      - /cli/login
+    fail: []
     na:
       - /[org]/[project]/settings: redirect-only
       - /[org]/[project]: redirect-only
@@ -33,7 +32,6 @@ predicates:
       - /[org]/[project]/environments
       - /[org]/~/alerts
       - /[org]/~/new
-      - /cli/login
     na:
       - /[org]/[project]/settings: redirect-only
       - /[org]/[project]: redirect-only
@@ -45,7 +43,6 @@ predicates:
       - /[org]/[project]/settings: redirect-only
       - /[org]/[project]: redirect-only
       - /[org]/~/settings: redirect-only
-      - /cli/login: no-loading-boundary
       - /dashboard/[[...rest]]: redirect-only
   S4:
     fail:
@@ -56,8 +53,7 @@ predicates:
       - /[org]/~/settings: redirect-only
       - /dashboard/[[...rest]]: redirect-only
   T1:
-    fail:
-      - /cli/login
+    fail: []
     na:
       - /[org]/[project]/settings: redirect-only
       - /[org]/[project]: redirect-only
