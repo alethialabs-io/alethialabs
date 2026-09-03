@@ -4142,8 +4142,13 @@ func (projNilDesignClient) ApplyDesign(api.ApplyDesignParams) (*api.DesignApplyR
 }
 
 // TestProj_DesignDeletionsMatchTheActionNotItsSpelling pins the classifier. Under-matching
-// costs a silent removal; over-matching costs a confirmation nobody needed, so the comparison
-// is exact about the action and lenient about its case.
+// costs a silent removal; over-matching costs a confirmation nobody needed, so the classifier
+// is exact about the SAFE actions and lenient about their case.
+//
+// `DELETED_STALE` was recorded here as a NON-deletion, on the reasoning that a prefix match would
+// over-match it. That reasoning was about the wrong axis: the fix for a bad prefix match is an
+// exact one, not a lenient direction, and the exact match let every unrecognised action through as
+// safe. It is a deletion now, along with every other action outside the safe set.
 func TestProj_DesignDeletionsMatchTheActionNotItsSpelling(t *testing.T) {
 	changes := []api.DesignChange{
 		{Kind: "a", Action: "DELETE"},
@@ -4154,11 +4159,12 @@ func TestProj_DesignDeletionsMatchTheActionNotItsSpelling(t *testing.T) {
 		{Kind: "f", Action: "DELETED_STALE"},
 	}
 	got := designDeletions(changes)
-	if len(got) != 3 {
-		t.Fatalf("designDeletions found %d, want the three spellings of DELETE: %+v", len(got), got)
+	if len(got) != 4 {
+		t.Fatalf("designDeletions found %d, want the three spellings of DELETE plus the "+
+			"unrecognised action: %+v", len(got), got)
 	}
 	for _, ch := range got {
-		if ch.Kind == "d" || ch.Kind == "e" || ch.Kind == "f" {
+		if ch.Kind == "d" || ch.Kind == "e" {
 			t.Errorf("%q was read as a deletion", ch.Action)
 		}
 	}
@@ -4244,5 +4250,35 @@ func TestProj_DesignApplyRefusalTheCOMMANDPrintsNamesTheReason(t *testing.T) {
 	// permanently, which opts every later replay into removing components.
 	if strings.Contains(got, "this command is destructive and interactive prompts are disabled") {
 		t.Errorf("the command fell through to the GENERIC destructive refusal:\n  %s", got)
+	}
+}
+
+// TestProj_DesignDeletionsFailClosedOnAnUnrecognisedAction pins the DIRECTION the classifier fails
+// in. An exact match against "DELETE" reads every other spelling as non-destructive, so a server
+// that starts sending `REMOVE` or `DELETE_ORPHAN` would apply removals unprompted — and the same
+// function already fails CLOSED on an unreadable preflight, so the two halves disagreed.
+//
+// The safe set is the closed TS union the wire is generated from — CREATE and UPDATE
+// (apps/console/lib/config-diff.ts) — and everything outside it is a removal. An action nobody
+// recognises costs at most a confirmation, or a refusal under --no-input that NAMES the plan; the
+// other direction costs a component.
+func TestProj_DesignDeletionsFailClosedOnAnUnrecognisedAction(t *testing.T) {
+	for _, action := range []string{"REMOVE", "DELETE_ORPHAN", "DETACH", "", "  ", "destroy"} {
+		t.Run("action="+action, func(t *testing.T) {
+			got := designDeletions([]api.DesignChange{{Kind: "storage_buckets", Action: action}})
+			if len(got) != 1 {
+				t.Errorf("action %q was read as non-destructive; an action this build does not "+
+					"recognise must reach the confirmation, not bypass it", action)
+			}
+		})
+	}
+	// The other direction, so "everything is a deletion" cannot pass this: the two safe ops stay
+	// safe under any case, which is what keeps an add-only apply running unprompted in CI.
+	for _, action := range []string{"CREATE", "create", " UPDATE ", "Update"} {
+		t.Run("safe="+action, func(t *testing.T) {
+			if got := designDeletions([]api.DesignChange{{Kind: "a", Action: action}}); len(got) != 0 {
+				t.Errorf("action %q was read as a removal; an add-only apply must run unprompted", action)
+			}
+		})
 	}
 }

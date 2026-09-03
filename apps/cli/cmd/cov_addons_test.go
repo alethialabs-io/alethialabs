@@ -370,12 +370,31 @@ func TestAddonModeValues_AreTheGeneratedEnum(t *testing.T) {
 			t.Errorf("addonModeValues[%d] = %q, want %q (schema order)", i, got[i], want)
 		}
 	}
-	// The other direction: the flag's help must offer what the enum holds, so a mode that exists
-	// and is never mentioned is a capability the CLI has quietly lost.
+	// The other direction: the flag's help must SAY WHAT EACH MODE DOES.
+	//
+	// This asserted `strings.Contains(usage, m)` and could not fail. The usage string is built as
+	// `"Delivery mode (" + strings.Join(addonModeValues(), ", ") + "): …"`, so every value in `got`
+	// is in it BY CONSTRUCTION — the assertion re-derived its expectation from the thing it was
+	// checking, and a third mode added to the schema joined the list, joined the assertion, and
+	// passed. Measured, not reasoned: adding `AddonModeFlux` to the generated enum leaves this
+	// whole test green with `flux` offered and explained by nobody.
+	//
+	// What actually decays is the HAND-WRITTEN half after the colon, and that is what is asserted
+	// here — over the segment past the generated list, so the tautology cannot creep back by
+	// widening the haystack.
 	usage := addonEnableCmd.Flags().Lookup("mode").Usage
+	listed := "(" + strings.Join(got, ", ") + ")"
+	at := strings.Index(usage, listed)
+	if at < 0 {
+		t.Fatalf("--mode help %q no longer offers the enum's list %q; the assertion below is "+
+			"about the OTHER half and would be measuring the whole string", usage, listed)
+	}
+	explained := usage[at+len(listed):]
 	for _, m := range got {
-		if !strings.Contains(usage, m) {
-			t.Errorf("--mode help %q does not offer %q", usage, m)
+		if !strings.Contains(explained, m+" =") {
+			t.Errorf("--mode help does not say what %q DOES — %q explains only %q. A mode added to "+
+				"the schema joins the generated list for free; the sentence a person reads is "+
+				"typed by hand and is what stops covering.", m, usage, explained)
 		}
 	}
 }
