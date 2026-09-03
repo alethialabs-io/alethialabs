@@ -771,6 +771,20 @@ func (c *Client) GetClustersPage(opts PageOpts) (*ClustersPage, error) {
 	if err := c.doGet(endpoint, &page); err != nil {
 		return nil, fmt.Errorf("failed to get clusters: %w", err)
 	}
+	// A server older than #3672 answers with no `page` object at all, which decodes to the ZERO
+	// PageInfo — Mode "", Limit 0, Total 0. That is a third mode the vocabulary does not define,
+	// and it is not merely undefined but WRONG for a caller rendering a pager: Total 0 beside a
+	// non-empty Clusters slice, and IsCapped() false for a reason it never established. The old
+	// response is a complete, exact, single page of everything, so it is described as one.
+	// GetClusters is unaffected either way — NextCursor stays empty, so the walk still terminates
+	// in one request.
+	if page.Page.Mode == "" {
+		page.Page = PageInfo{
+			Mode:  PageModeExact,
+			Limit: len(page.Clusters),
+			Total: len(page.Clusters),
+		}
+	}
 	return &page, nil
 }
 
@@ -782,9 +796,10 @@ func (c *Client) GetClustersPage(opts PageOpts) (*ClustersPage, error) {
 // itself would be a second implementation of the three termination bugs AllPages documents, and a
 // command that did not walk would print a plausible, short list with no error.
 //
-// A page whose response carries no `page` object at all decodes to the zero PageInfo, whose
-// NextCursor is empty — so this also does the right thing against a server older than the
-// conversion, in one request.
+// A page whose response carries no `page` object at all has an empty NextCursor either way — so
+// this also does the right thing against a server older than the conversion, in one request.
+// GetClustersPage additionally rewrites that absent page into an exact single page, so the pager
+// case is not left holding a mode the vocabulary does not define.
 func (c *Client) GetClusters() ([]ClusterSummary, error) {
 	return AllPages(func(cursor string) ([]ClusterSummary, PageInfo, error) {
 		page, err := c.GetClustersPage(PageOpts{Cursor: cursor})

@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { authorizeCli } from "@/lib/authz/guard";
 import {
 	type CursorScope,
+	MAX_PAGE_SIZE,
 	cursorKey,
 	paginate,
 	parsePageOpts,
@@ -105,8 +106,9 @@ const CLUSTERS_LIST = "clusters";
  * reads `clusters` and stops. `packages/core/api/api.go`'s `GetClusters` is changed in the same
  * change to walk the cursor to exhaustion through `api.AllPages`, which keeps `alethia cluster
  * list` and `alethia cluster get`'s picker listing the whole collection. An OLDER CLI binary
- * against a newer server sees the first page only; that is stated in the PR, and it is why the
- * default page size matters more here than it did for a list that already paginated.
+ * against a newer server still sees ONE page — it has no walk — which is why a request carrying
+ * neither `limit` nor `cursor` is served at MAX_PAGE_SIZE rather than at the default; see the
+ * handler. That does not make an old binary correct, it moves the cliff from 50 to 200.
  */
 export async function GET(req: Request) {
 	const auth = await authorizeCli(req, "view", { type: "project" });
@@ -117,7 +119,32 @@ export async function GET(req: Request) {
 	const cursorScope: CursorScope = { orgId: actor.orgId, list: CLUSTERS_LIST };
 	const parsed = parsePageOpts(searchParams, cursorScope);
 	if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
-	const opts = parsed.opts;
+
+	// A CLIENT THAT ASKED FOR NO PAGE GETS THE CEILING, NOT THE DEFAULT PAGE.
+	//
+	// This endpoint returned the whole collection until #3672, so a caller that sends neither
+	// `limit` nor `cursor` is one that has never heard of paging — a pre-#3672 binary. Serving it
+	// DEFAULT_PAGE_SIZE truncates silently at 50, and for one of the two callers that is worse than
+	// a short list: `cluster get <name>` feeds this straight into `resolveCluster`, which reads "no
+	// match in this slice" as a hard error, so the 51st cluster reports "no cluster matches your
+	// selector" — indistinguishable from a typo. The ordering change compounds it, because the
+	// reachable window is now newest-CREATED rather than most-recently-touched, so the long-lived
+	// clusters someone is most likely to name by hand are exactly the ones that fall off.
+	//
+	// MAX_PAGE_SIZE moves that cliff to 200, above realistic org sizes, while keeping the response
+	// bounded — which is the whole point of the conversion. It is not a fix for the truncation (a
+	// pre-#3672 binary still cannot walk); it is choosing the bound that makes the truncation
+	// unreachable in practice instead of reachable at 50.
+	//
+	// An empty value is absent, matching parsePageOpts, so `?limit=` is not read as "asked".
+	const asked = (key: string) => {
+		const raw = searchParams.get(key);
+		return raw !== null && raw !== "";
+	};
+	const opts =
+		!asked("limit") && !asked("cursor")
+			? { ...parsed.opts, limit: MAX_PAGE_SIZE }
+			: parsed.opts;
 
 	try {
 		const db = getServiceDb();

@@ -359,11 +359,30 @@ describe("GET /api/cli/clusters — a joined scope restated on one column (#3672
 		expect(captured.rowsLimit).toBe(4);
 	});
 
-	it("defaults and clamps to the vocabulary's shared bounds", async () => {
+	it("clamps to the vocabulary's ceiling, and serves the CEILING to a client that asked for no page", async () => {
+		// NOT `DEFAULT_PAGE_SIZE`, and the difference is the whole of this route's back-compat
+		// story. A request carrying neither `limit` nor `cursor` is a pre-#3672 binary that reads
+		// `clusters` once and stops; `cluster get` then feeds that slice to `resolveCluster`, which
+		// reports "no cluster matches your selector" for anything outside it. The ceiling moves that
+		// cliff from 50 to 200. See the handler's note.
 		await drive("");
-		expect(captured.rowsLimit).toBe(DEFAULT_PAGE_SIZE + 1);
+		expect(captured.rowsLimit).toBe(MAX_PAGE_SIZE + 1);
+		// An EXPLICIT limit is still the caller's, clamped at the ceiling — asking for a page is
+		// what distinguishes a paging client from a pre-#3672 one.
 		await drive(`?limit=${MAX_PAGE_SIZE * 2}`);
 		expect(captured.rowsLimit).toBe(MAX_PAGE_SIZE + 1);
+		await drive("?limit=10");
+		expect(captured.rowsLimit).toBe(11);
+		// And an EMPTY limit is absent, not "asked" — same reading parsePageOpts gives it.
+		await drive("?limit=");
+		expect(captured.rowsLimit).toBe(MAX_PAGE_SIZE + 1);
+		// A cursor alone also counts as asking: a walker gets the default page size.
+		const cursor = encodeCursor(
+			{ orgId: ORG, list: "clusters" },
+			{ createdAt: CURSOR_KEY, id: CLUSTER_ID },
+		);
+		await drive(`?cursor=${encodeURIComponent(cursor)}`);
+		expect(captured.rowsLimit).toBe(DEFAULT_PAGE_SIZE + 1);
 	});
 
 	it("mints next_cursor only when the extra row came back", async () => {
@@ -446,6 +465,26 @@ describe("GET /api/cli/clusters — a joined scope restated on one column (#3672
 		// every parameter it knows.
 		await drive("?offset=20");
 		expect(normalized(render(captured.rowsWhere).sql)).toBe(EXPECTED_SCOPE);
-		expect(captured.rowsLimit).toBe(DEFAULT_PAGE_SIZE + 1);
+		// The ceiling, because `?offset=` is neither `limit` nor `cursor` — an offset-sending
+		// caller has still not asked for a page. See the defaults test above.
+		expect(captured.rowsLimit).toBe(MAX_PAGE_SIZE + 1);
+	});
+
+	it("returns the guard's refusal untouched", async () => {
+		// The header claims this file owns every refusal, and this is the route's FIRST one — the
+		// `if ("error" in auth) return auth.error` that precedes every query. The integration
+		// sibling always stubs an authorized actor and SKIPS when Postgres is unreachable, so
+		// without this the branch is covered nowhere. Mirrors tests/api/jobs/list-route.test.ts.
+		vi.mocked(authorizeCli).mockResolvedValue({
+			error: new Response(JSON.stringify({ error: "Forbidden" }), {
+				status: 403,
+			}),
+		});
+		const { status, body } = await drive("");
+		expect(status).toBe(403);
+		expect(errorSchema.parse(body).error).toBe("Forbidden");
+		// And it returns BEFORE the first query, which is the property that makes the refusals
+		// real here rather than DB-gated.
+		expect(captured.rowsWhere).toBeUndefined();
 	});
 });
