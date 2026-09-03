@@ -18,12 +18,12 @@
 		"redirectOnly": 4,
 		"real": 36,
 		"predicates": 34,
-		"scoredHere": 16,
+		"scoredHere": 23,
 		"live": 10,
-		"notInstrumented": 8,
+		"notInstrumented": 1,
 		"findings": 77,
 		"findingFiles": 31,
-		"liveNotMeasured": 13
+		"liveNotMeasured": 14
 	},
 	"ledgers": {
 		"baseline": 16,
@@ -350,38 +350,103 @@
 		},
 		"F1": {
 			"family": "F",
-			"instrument": "none",
-			"owner": "#3796"
+			"instrument": "check-filter-standard",
+			"owner": null,
+			"pass": 16,
+			"fail": 0,
+			"na": 24,
+			"notMeasured": 0,
+			"naReasons": {
+				"not-a-list-page": 24
+			},
+			"notMeasuredReasons": {},
+			"score": 1
 		},
 		"F2": {
 			"family": "F",
-			"instrument": "none",
-			"owner": "#3796"
+			"instrument": "check-filter-standard",
+			"owner": null,
+			"pass": 16,
+			"fail": 0,
+			"na": 24,
+			"notMeasured": 0,
+			"naReasons": {
+				"not-a-list-page": 24
+			},
+			"notMeasuredReasons": {},
+			"score": 1
 		},
 		"F3": {
 			"family": "F",
-			"instrument": "none",
-			"owner": "#3796"
+			"instrument": "check-filter-standard",
+			"owner": null,
+			"pass": 11,
+			"fail": 5,
+			"na": 24,
+			"notMeasured": 0,
+			"naReasons": {
+				"not-a-list-page": 24
+			},
+			"notMeasuredReasons": {},
+			"score": 0.6875
 		},
 		"F4": {
 			"family": "F",
-			"instrument": "none",
-			"owner": "#3796"
+			"instrument": "check-filter-standard",
+			"owner": null,
+			"pass": 16,
+			"fail": 0,
+			"na": 24,
+			"notMeasured": 0,
+			"naReasons": {
+				"not-a-list-page": 24
+			},
+			"notMeasuredReasons": {},
+			"score": 1
 		},
 		"F5": {
 			"family": "F",
-			"instrument": "none",
-			"owner": "#3796"
+			"instrument": "check-filter-standard",
+			"owner": null,
+			"pass": 12,
+			"fail": 4,
+			"na": 24,
+			"notMeasured": 0,
+			"naReasons": {
+				"not-a-list-page": 24
+			},
+			"notMeasuredReasons": {},
+			"score": 0.75
 		},
 		"F6": {
 			"family": "F",
-			"instrument": "none",
-			"owner": "#3796"
+			"instrument": "check-filter-standard",
+			"owner": null,
+			"pass": 5,
+			"fail": 11,
+			"na": 24,
+			"notMeasured": 0,
+			"naReasons": {
+				"not-a-list-page": 24
+			},
+			"notMeasuredReasons": {},
+			"score": 0.3125
 		},
 		"F7": {
 			"family": "F",
-			"instrument": "none",
-			"owner": "#3796"
+			"instrument": "check-filter-standard",
+			"owner": null,
+			"pass": 12,
+			"fail": 3,
+			"na": 24,
+			"notMeasured": 1,
+			"naReasons": {
+				"not-a-list-page": 24
+			},
+			"notMeasuredReasons": {
+				"the only facet-bearing builder(s) this page reaches (getJobsPage) are declared undriven — F7 is a behaviour and nothing ran it here": 1
+			},
+			"score": 0.8
 		},
 		"R1": {
 			"family": "R",
@@ -521,11 +586,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -542,7 +607,7 @@
 			"overall": {
 				"pass": 24,
 				"fail": 0,
-				"na": 2,
+				"na": 9,
 				"notMeasured": 0,
 				"score": 1
 			}
@@ -580,11 +645,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -601,7 +666,7 @@
 			"overall": {
 				"pass": 13,
 				"fail": 1,
-				"na": 11,
+				"na": 18,
 				"notMeasured": 1,
 				"score": 0.9286
 			}
@@ -639,11 +704,11 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -660,7 +725,7 @@
 			"overall": {
 				"pass": 22,
 				"fail": 2,
-				"na": 1,
+				"na": 8,
 				"notMeasured": 1,
 				"score": 0.9167
 			}
@@ -698,11 +763,11 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -719,7 +784,7 @@
 			"overall": {
 				"pass": 24,
 				"fail": 1,
-				"na": 0,
+				"na": 7,
 				"notMeasured": 1,
 				"score": 0.96
 			}
@@ -757,11 +822,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -778,7 +843,7 @@
 			"overall": {
 				"pass": 20,
 				"fail": 4,
-				"na": 1,
+				"na": 8,
 				"notMeasured": 1,
 				"score": 0.8333
 			}
@@ -816,13 +881,13 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 7,
@@ -835,11 +900,11 @@
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 1,
+				"pass": 29,
+				"fail": 2,
 				"na": 1,
 				"notMeasured": 1,
-				"score": 0.9583
+				"score": 0.9355
 			}
 		},
 		{
@@ -875,11 +940,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -896,7 +961,7 @@
 			"overall": {
 				"pass": 12,
 				"fail": 2,
-				"na": 11,
+				"na": 18,
 				"notMeasured": 1,
 				"score": 0.8571
 			}
@@ -934,13 +999,13 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 7,
@@ -953,11 +1018,11 @@
 				}
 			},
 			"overall": {
-				"pass": 24,
-				"fail": 1,
+				"pass": 30,
+				"fail": 2,
 				"na": 0,
 				"notMeasured": 1,
-				"score": 0.96
+				"score": 0.9375
 			}
 		},
 		{
@@ -993,13 +1058,13 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 7,
@@ -1012,11 +1077,11 @@
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 2,
+				"pass": 29,
+				"fail": 3,
 				"na": 0,
 				"notMeasured": 1,
-				"score": 0.92
+				"score": 0.9063
 			}
 		},
 		{
@@ -1052,11 +1117,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -1073,7 +1138,7 @@
 			"overall": {
 				"pass": 22,
 				"fail": 2,
-				"na": 1,
+				"na": 8,
 				"notMeasured": 1,
 				"score": 0.9167
 			}
@@ -1111,11 +1176,11 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -1132,7 +1197,7 @@
 			"overall": {
 				"pass": 21,
 				"fail": 3,
-				"na": 1,
+				"na": 8,
 				"notMeasured": 1,
 				"score": 0.875
 			}
@@ -1170,11 +1235,11 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -1191,7 +1256,7 @@
 			"overall": {
 				"pass": 22,
 				"fail": 2,
-				"na": 1,
+				"na": 8,
 				"notMeasured": 1,
 				"score": 0.9167
 			}
@@ -1229,13 +1294,13 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 4,
+					"fail": 3,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.5714
 				},
 				"R": {
 					"instrumented": 7,
@@ -1248,11 +1313,11 @@
 				}
 			},
 			"overall": {
-				"pass": 22,
-				"fail": 2,
+				"pass": 26,
+				"fail": 5,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9167
+				"score": 0.8387
 			}
 		},
 		{
@@ -1288,11 +1353,11 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -1309,7 +1374,7 @@
 			"overall": {
 				"pass": 23,
 				"fail": 1,
-				"na": 2,
+				"na": 9,
 				"notMeasured": 0,
 				"score": 0.9583
 			}
@@ -1347,13 +1412,13 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 7,
@@ -1366,11 +1431,11 @@
 				}
 			},
 			"overall": {
-				"pass": 21,
-				"fail": 2,
+				"pass": 27,
+				"fail": 3,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 0.913
+				"score": 0.9
 			}
 		},
 		{
@@ -1406,13 +1471,13 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 7,
@@ -1425,11 +1490,11 @@
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 1,
+				"pass": 29,
+				"fail": 2,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9583
+				"score": 0.9355
 			}
 		},
 		{
@@ -1465,13 +1530,13 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 7,
@@ -1484,11 +1549,11 @@
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 1,
+				"pass": 29,
+				"fail": 2,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9583
+				"score": 0.9355
 			}
 		},
 		{
@@ -1524,11 +1589,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -1545,7 +1610,7 @@
 			"overall": {
 				"pass": 22,
 				"fail": 1,
-				"na": 2,
+				"na": 9,
 				"notMeasured": 1,
 				"score": 0.9565
 			}
@@ -1583,11 +1648,11 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -1604,7 +1669,7 @@
 			"overall": {
 				"pass": 21,
 				"fail": 2,
-				"na": 3,
+				"na": 10,
 				"notMeasured": 0,
 				"score": 0.913
 			}
@@ -1642,13 +1707,13 @@
 					"score": 0.625
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 3,
+					"fail": 3,
 					"na": 0,
-					"notMeasured": 0,
-					"score": null
+					"notMeasured": 1,
+					"score": 0.5
 				},
 				"R": {
 					"instrumented": 7,
@@ -1661,11 +1726,11 @@
 				}
 			},
 			"overall": {
-				"pass": 21,
-				"fail": 3,
+				"pass": 24,
+				"fail": 6,
 				"na": 2,
-				"notMeasured": 0,
-				"score": 0.875
+				"notMeasured": 1,
+				"score": 0.8
 			}
 		},
 		{
@@ -1701,11 +1766,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -1722,7 +1787,7 @@
 			"overall": {
 				"pass": 12,
 				"fail": 2,
-				"na": 12,
+				"na": 19,
 				"notMeasured": 0,
 				"score": 0.8571
 			}
@@ -1760,13 +1825,13 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 7,
@@ -1779,11 +1844,11 @@
 				}
 			},
 			"overall": {
-				"pass": 24,
-				"fail": 0,
+				"pass": 30,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 1
+				"score": 0.9677
 			}
 		},
 		{
@@ -1819,13 +1884,13 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 7,
@@ -1838,11 +1903,11 @@
 				}
 			},
 			"overall": {
-				"pass": 21,
-				"fail": 2,
+				"pass": 27,
+				"fail": 3,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 0.913
+				"score": 0.9
 			}
 		},
 		{
@@ -1878,11 +1943,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -1899,7 +1964,7 @@
 			"overall": {
 				"pass": 23,
 				"fail": 0,
-				"na": 3,
+				"na": 10,
 				"notMeasured": 0,
 				"score": 1
 			}
@@ -1937,13 +2002,13 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 7,
@@ -1956,11 +2021,11 @@
 				}
 			},
 			"overall": {
-				"pass": 22,
-				"fail": 1,
+				"pass": 28,
+				"fail": 2,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 0.9565
+				"score": 0.9333
 			}
 		},
 		{
@@ -1996,11 +2061,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -2017,7 +2082,7 @@
 			"overall": {
 				"pass": 22,
 				"fail": 1,
-				"na": 3,
+				"na": 10,
 				"notMeasured": 0,
 				"score": 0.9565
 			}
@@ -2055,11 +2120,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -2076,7 +2141,7 @@
 			"overall": {
 				"pass": 22,
 				"fail": 1,
-				"na": 3,
+				"na": 10,
 				"notMeasured": 0,
 				"score": 0.9565
 			}
@@ -2114,13 +2179,13 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 5,
+					"fail": 2,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.7143
 				},
 				"R": {
 					"instrumented": 7,
@@ -2133,11 +2198,11 @@
 				}
 			},
 			"overall": {
-				"pass": 22,
-				"fail": 1,
+				"pass": 27,
+				"fail": 3,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 0.9565
+				"score": 0.9
 			}
 		},
 		{
@@ -2173,13 +2238,13 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 7,
@@ -2192,11 +2257,11 @@
 				}
 			},
 			"overall": {
-				"pass": 21,
-				"fail": 2,
+				"pass": 27,
+				"fail": 3,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 0.913
+				"score": 0.9
 			}
 		},
 		{
@@ -2232,13 +2297,13 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 7,
@@ -2251,11 +2316,11 @@
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 1,
+				"pass": 29,
+				"fail": 2,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9583
+				"score": 0.9355
 			}
 		},
 		{
@@ -2291,13 +2356,13 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 5,
+					"fail": 2,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.7143
 				},
 				"R": {
 					"instrumented": 7,
@@ -2310,11 +2375,11 @@
 				}
 			},
 			"overall": {
-				"pass": 24,
-				"fail": 0,
+				"pass": 29,
+				"fail": 2,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 1
+				"score": 0.9355
 			}
 		},
 		{
@@ -2350,11 +2415,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -2371,7 +2436,7 @@
 			"overall": {
 				"pass": 23,
 				"fail": 0,
-				"na": 3,
+				"na": 10,
 				"notMeasured": 0,
 				"score": 1
 			}
@@ -2409,11 +2474,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -2430,7 +2495,7 @@
 			"overall": {
 				"pass": 23,
 				"fail": 0,
-				"na": 3,
+				"na": 10,
 				"notMeasured": 0,
 				"score": 1
 			}
@@ -2468,11 +2533,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -2489,7 +2554,7 @@
 			"overall": {
 				"pass": 22,
 				"fail": 1,
-				"na": 3,
+				"na": 10,
 				"notMeasured": 0,
 				"score": 0.9565
 			}
@@ -2527,11 +2592,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -2548,7 +2613,7 @@
 			"overall": {
 				"pass": 22,
 				"fail": 2,
-				"na": 1,
+				"na": 8,
 				"notMeasured": 1,
 				"score": 0.9167
 			}
@@ -2586,13 +2651,13 @@
 					"score": 0.875
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
-					"pass": 0,
-					"fail": 0,
+					"pass": 5,
+					"fail": 2,
 					"na": 0,
 					"notMeasured": 0,
-					"score": null
+					"score": 0.7143
 				},
 				"R": {
 					"instrumented": 7,
@@ -2605,11 +2670,11 @@
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 1,
+				"pass": 28,
+				"fail": 3,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9583
+				"score": 0.9032
 			}
 		},
 		{
@@ -2645,11 +2710,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -2666,7 +2731,7 @@
 			"overall": {
 				"pass": 23,
 				"fail": 0,
-				"na": 3,
+				"na": 10,
 				"notMeasured": 0,
 				"score": 1
 			}
@@ -2704,11 +2769,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -2725,7 +2790,7 @@
 			"overall": {
 				"pass": 23,
 				"fail": 0,
-				"na": 3,
+				"na": 10,
 				"notMeasured": 0,
 				"score": 1
 			}
@@ -2763,11 +2828,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -2784,7 +2849,7 @@
 			"overall": {
 				"pass": 22,
 				"fail": 0,
-				"na": 4,
+				"na": 11,
 				"notMeasured": 0,
 				"score": 1
 			}
@@ -2822,11 +2887,11 @@
 					"score": 1
 				},
 				"F": {
-					"instrumented": 0,
+					"instrumented": 7,
 					"of": 7,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
+					"na": 7,
 					"notMeasured": 0,
 					"score": null
 				},
@@ -2843,13 +2908,55 @@
 			"overall": {
 				"pass": 14,
 				"fail": 1,
-				"na": 11,
+				"na": 18,
 				"notMeasured": 0,
 				"score": 0.9333
 			}
 		}
 	],
 	"verdicts": [
+		{
+			"route": "/[org]",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
 		{
 			"route": "/[org]",
 			"predicate": "H1",
@@ -2981,6 +3088,48 @@
 			"predicate": "T7",
 			"verdict": "N/A",
 			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]",
@@ -3127,6 +3276,48 @@
 		},
 		{
 			"route": "/[org]/[project]/architecture",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -3261,6 +3452,48 @@
 		},
 		{
 			"route": "/[org]/[project]/clusters",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -3390,6 +3623,48 @@
 			"predicate": "T7",
 			"verdict": "NOT MEASURED",
 			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -3529,6 +3804,43 @@
 		},
 		{
 			"route": "/[org]/[project]/jobs",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "F5",
+			"verdict": "FAIL",
+			"detail": "useJobsFilters: no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`)"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "F6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -3659,6 +3971,48 @@
 			"predicate": "T7",
 			"verdict": "NOT MEASURED",
 			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/settings",
@@ -3806,6 +4160,43 @@
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "F6",
+			"verdict": "FAIL",
+			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one · useAccessFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -3935,6 +4326,43 @@
 			"predicate": "T7",
 			"verdict": "NOT MEASURED",
 			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "F6",
+			"verdict": "FAIL",
+			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -4071,6 +4499,48 @@
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -4202,6 +4672,48 @@
 			"predicate": "T7",
 			"verdict": "NOT MEASURED",
 			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
@@ -4340,6 +4852,48 @@
 		},
 		{
 			"route": "/[org]/[project]/usage",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/usage",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -4471,6 +5025,45 @@
 			"predicate": "T7",
 			"verdict": "NOT MEASURED",
 			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F3",
+			"verdict": "FAIL",
+			"detail": "useAlertPolicyFilters: the normalized query object is not in the TanStack key: every `qk.*()` call in this surface's neighbourhood takes the org and nothing else, so every filtered view shares one cache entry · useAlertChannelFilters: the normalized query object is not in the TanStack key: every `qk.*()` call in this surface's neighbourhood takes the org and nothing else, so every filtered view shares one cache entry · useAlertActivityFilters: the normalized query object is not in the TanStack key: every `qk.*()` call in this surface's neighbourhood takes the org and nothing else, so every filtered view shares one cache entry"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F5",
+			"verdict": "FAIL",
+			"detail": "useAlertPolicyFilters: no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`) · useAlertChannelFilters: no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`) · useAlertActivityFilters: no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`)"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F6",
+			"verdict": "FAIL",
+			"detail": "useAlertPolicyFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change · useAlertChannelFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change · useAlertActivityFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -4608,6 +5201,48 @@
 		},
 		{
 			"route": "/[org]/~/clusters",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/clusters",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -4738,6 +5373,42 @@
 			"predicate": "T7",
 			"verdict": "N/A",
 			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "F6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "F7",
+			"verdict": "FAIL",
+			"detail": "this page owns useConnectorFilters and its closure reaches no server read that returns facets — so its filter options come from somewhere other than the unfiltered universe"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -4876,6 +5547,42 @@
 		},
 		{
 			"route": "/[org]/~/evidence",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "F6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
+			"predicate": "F7",
+			"verdict": "FAIL",
+			"detail": "this page owns useEvidenceFilters and its closure reaches no server read that returns facets — so its filter options come from somewhere other than the unfiltered universe"
+		},
+		{
+			"route": "/[org]/~/evidence",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -5009,6 +5716,43 @@
 		},
 		{
 			"route": "/[org]/~/jobs",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "F5",
+			"verdict": "FAIL",
+			"detail": "useJobsFilters: no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`)"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "F6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+		},
+		{
+			"route": "/[org]/~/jobs",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -5139,6 +5883,48 @@
 			"predicate": "T7",
 			"verdict": "N/A",
 			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -5273,6 +6059,48 @@
 			"predicate": "T7",
 			"verdict": "NOT MEASURED",
 			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/new",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -5411,6 +6239,45 @@
 		},
 		{
 			"route": "/[org]/~/runners",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "F3",
+			"verdict": "FAIL",
+			"detail": "useRunnerFilters: no `normalize*Query()` — the filters reach the server (and the cache key) in whatever shape the store holds them"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "F5",
+			"verdict": "FAIL",
+			"detail": "useRunnerFilters: no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`)"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "F6",
+			"verdict": "FAIL",
+			"detail": "useRunnerFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change"
+		},
+		{
+			"route": "/[org]/~/runners",
+			"predicate": "F7",
+			"verdict": "NOT MEASURED",
+			"reason": "the only facet-bearing builder(s) this page reaches (getJobsPage) are declared undriven — F7 is a behaviour and nothing ran it here"
+		},
+		{
+			"route": "/[org]/~/runners",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -5543,6 +6410,48 @@
 			"predicate": "T7",
 			"verdict": "N/A",
 			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/settings",
@@ -5690,6 +6599,43 @@
 		},
 		{
 			"route": "/[org]/~/settings/access",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "F6",
+			"verdict": "FAIL",
+			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one · useAccessFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change"
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+		},
+		{
+			"route": "/[org]/~/settings/access",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -5819,6 +6765,43 @@
 			"predicate": "T7",
 			"verdict": "N/A",
 			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "F6",
+			"verdict": "FAIL",
+			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -5957,6 +6940,48 @@
 		},
 		{
 			"route": "/[org]/~/settings/billing",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -6087,6 +7112,43 @@
 			"predicate": "T7",
 			"verdict": "N/A",
 			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "F6",
+			"verdict": "FAIL",
+			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -6224,6 +7286,48 @@
 		},
 		{
 			"route": "/[org]/~/settings/classification",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -6355,6 +7459,48 @@
 			"predicate": "T7",
 			"verdict": "N/A",
 			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/settings/general",
@@ -6492,6 +7638,44 @@
 		},
 		{
 			"route": "/[org]/~/settings/members",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F3",
+			"verdict": "FAIL",
+			"detail": "useMembersFilters: the normalized query object is not in the TanStack key: every `qk.*()` call in this surface's neighbourhood takes the org and nothing else, so every filtered view shares one cache entry"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F6",
+			"verdict": "FAIL",
+			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one · useMembersFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+		},
+		{
+			"route": "/[org]/~/settings/members",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -6623,6 +7807,43 @@
 			"predicate": "T7",
 			"verdict": "N/A",
 			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F6",
+			"verdict": "FAIL",
+			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one · useRolesFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -6761,6 +7982,43 @@
 		},
 		{
 			"route": "/[org]/~/settings/sso",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "F6",
+			"verdict": "FAIL",
+			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one · useSsoFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -6894,6 +8152,44 @@
 		},
 		{
 			"route": "/[org]/~/settings/teams",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "F3",
+			"verdict": "FAIL",
+			"detail": "useTeamsFilters: the normalized query object is not in the TanStack key: every `qk.*()` call in this surface's neighbourhood takes the org and nothing else, so every filtered view shares one cache entry"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "F6",
+			"verdict": "FAIL",
+			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one · useTeamsFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -7026,6 +8322,48 @@
 		},
 		{
 			"route": "/[org]/~/support",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -7142,144 +8480,186 @@
 		},
 		{
 			"route": "/[org]/~/support",
-			"predicate": "T5",
-			"verdict": "N/A",
-			"reason": "no-empty-state"
-		},
-		{
-			"route": "/[org]/~/support",
-			"predicate": "T6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support",
-			"predicate": "T7",
-			"verdict": "N/A",
-			"reason": "no-restricted-surface"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T3",
-			"verdict": "N/A",
-			"reason": "does-not-call-not-found"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
 			"predicate": "T5",
 			"verdict": "N/A",
 			"reason": "no-empty-state"
 		},
 		{
+			"route": "/[org]/~/support",
+			"predicate": "T6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "T7",
+			"verdict": "N/A",
+			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T5",
+			"verdict": "N/A",
+			"reason": "no-empty-state"
+		},
+		{
 			"route": "/[org]/~/support/abuse",
 			"predicate": "T6",
 			"verdict": "PASS"
@@ -7289,6 +8669,48 @@
 			"predicate": "T7",
 			"verdict": "N/A",
 			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/support/ask",
@@ -7426,6 +8848,48 @@
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -7557,6 +9021,43 @@
 			"predicate": "T7",
 			"verdict": "NOT MEASURED",
 			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "F3",
+			"verdict": "FAIL",
+			"detail": "useSupportFilters: the normalized query object is not in the TanStack key: every `qk.*()` call in this surface's neighbourhood takes the org and nothing else, so every filtered view shares one cache entry"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "F6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
+			"predicate": "F7",
+			"verdict": "FAIL",
+			"detail": "this page owns useSupportFilters and its closure reaches no server read that returns facets — so its filter options come from somewhere other than the unfiltered universe"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
@@ -7693,6 +9194,48 @@
 		},
 		{
 			"route": "/[org]/~/support/submit",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/submit",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -7826,6 +9369,48 @@
 		},
 		{
 			"route": "/[org]/~/usage",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/usage",
 			"predicate": "H1",
 			"verdict": "PASS"
 		},
@@ -7956,6 +9541,48 @@
 			"predicate": "T7",
 			"verdict": "N/A",
 			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/cli/login",
@@ -8090,6 +9717,48 @@
 			"predicate": "T7",
 			"verdict": "N/A",
 			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/dashboard/[[...rest]]",
