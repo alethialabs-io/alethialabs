@@ -42,6 +42,11 @@ writes a date, `9 Mar 2026, 15:04` in UTC, rather than the raw wire timestamp). 
 stays console-only. Prints `No staged changes.` when the environment is in sync. Backing call:
 `GET /cli/projects/PROJECT/staged`.
 
+Both of those renderings are for a person reading a column. Under `-o csv` a script gets the wire
+values instead: **Created** is the RFC3339 stamp the API returned, which sorts and parses and still
+carries the seconds and the zone, and a create's absent **Component ID** is an empty cell rather
+than `—`. This is the same split `alethia config get` makes.
+
 ## See also
 
 - [Promotion Commands](/cli/commands/promotions) — moving a proven design between environments.
