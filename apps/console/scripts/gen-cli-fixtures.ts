@@ -124,7 +124,7 @@ const FIXTURES: Record<keyof typeof cliContract, string> = {
 	ByoScanResponse: "byo_scan.json",
 	RunnerRegistrationResponse: "runner_registration.json",
 	DesignApplyResponse: "design_apply.json",
-	ClustersResponse: "clusters.json",
+	ClustersPageResponse: "clusters_page.json",
 	ClusterDetailResponse: "cluster_detail.json",
 	CloudIdentitiesResponse: "cloud_identities.json",
 	JobsPageResponse: "jobs_page.json",

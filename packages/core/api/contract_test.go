@@ -81,11 +81,13 @@ func TestContract_Runners(t *testing.T) {
 	}{resp.Runners})
 }
 
-func TestContract_Clusters(t *testing.T) {
-	var resp struct {
-		Clusters []ClusterSummary `json:"clusters"`
+func TestContract_ClustersPage(t *testing.T) {
+	var page ClustersPage
+	strictDecode(t, "clusters_page.json", &page)
+	// Values are sampled deterministically, so assert structure only.
+	if len(page.Clusters) != 1 {
+		t.Fatalf("unexpected clusters page: %+v", page)
 	}
-	strictDecode(t, "clusters.json", &resp)
 }
 
 func TestContract_ClusterDetail(t *testing.T) {

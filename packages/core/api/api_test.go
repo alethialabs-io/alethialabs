@@ -211,6 +211,59 @@ func TestGetClusters_Success(t *testing.T) {
 	}
 }
 
+// TestGetClusters_WalksEveryPage proves GetClusters is a WALK, not one request.
+//
+// The endpoint returned the whole collection until #3672 and now returns a page. A client that
+// read `clusters` and stopped would silently truncate at the server's default page size — a
+// plausible, short list with no error, which is the failure mode AllPages exists to remove. The
+// previous test above still passes against a paged server BECAUSE its response carries no `page`
+// object, so it proves back-compatibility and says nothing about paging.
+//
+// The cursor is asserted as SENT, not just as followed: a walk that re-requested page 1 forever
+// would be caught by AllPages' visited set as a re-issued cursor, but a walk that dropped the
+// cursor and got page 1 again from a server that ignores it would not.
+func TestGetClusters_WalksEveryPage(t *testing.T) {
+	var cursors []string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		if r.URL.Path != "/api/cli/clusters" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		cursor := r.URL.Query().Get("cursor")
+		cursors = append(cursors, cursor)
+		if cursor == "" {
+			json.NewEncoder(w).Encode(map[string]any{
+				"clusters": []map[string]any{{"id": "c1", "cluster_name": "one"}},
+				"page": map[string]any{
+					"mode": "exact", "limit": 1, "total": 2, "next_cursor": "CURSOR-2",
+				},
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"clusters": []map[string]any{{"id": "c2", "cluster_name": "two"}},
+			"page": map[string]any{
+				"mode": "exact", "limit": 1, "total": 2, "next_cursor": nil,
+			},
+		})
+	}))
+
+	clusters, err := client.GetClusters()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(clusters) != 2 {
+		t.Fatalf("expected both pages' rows, got %d: %+v", len(clusters), clusters)
+	}
+	if clusters[0].ID != "c1" || clusters[1].ID != "c2" {
+		t.Errorf("pages concatenated out of order: %+v", clusters)
+	}
+	// Two requests, and the second carried the cursor the first handed back.
+	if len(cursors) != 2 || cursors[0] != "" || cursors[1] != "CURSOR-2" {
+		t.Errorf("expected [\"\", \"CURSOR-2\"], got %q", cursors)
+	}
+}
+
 // --- GetCloudIdentities ---
 
 func TestGetCloudIdentities_Success(t *testing.T) {
