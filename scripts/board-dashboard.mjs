@@ -27,6 +27,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { readScope, scopeGapReason, scopeListsOverlap } from "./lib/scope-overlap.mjs";
 
 const LEASE_TTL = Number(process.env.ALETHIA_LEASE_TTL || "3600");
 const args = process.argv.slice(2);
@@ -87,15 +88,19 @@ function stateOf(o) {
 	return "READY";
 }
 
-/** Parse the `scope:` glob line from an issue body (the files a unit owns). */
-function scopeGlobs(body) {
-	const m = (body || "").match(/^\s*scope:\s*(.+)$/im);
-	if (!m) return [];
-	return m[1]
-		.trim()
-		.split(/\s+/)
-		.filter(Boolean);
+/**
+ * The reason a unit's `scope:` could not be (fully) compared, or "" when it could.
+ *
+ * A unit whose scope cannot be read is NOT a unit with a disjoint scope. Before #4115 this file
+ * simply filtered those out (`u.scope.length > 0`) and reported "no collisions detected" over
+ * whatever was left, which is the same silence the terminal report was filed for.
+ */
+function scopeGapOf(body) {
+	const scope = readScope(body);
+	if (scope.globs.length > 0 && scope.unusable.length === 0) return "";
+	return scopeGapReason(scope);
 }
+
 
 /**
  * The body's lines with every CLOSED fenced block (``` or ~~~, delimiters included) removed.
@@ -197,28 +202,6 @@ function humanAge(sec) {
 	return `${m}m`;
 }
 
-/**
- * Do two scope-glob lists overlap? A conservative reuse of the disjoint-scope invariant: two units
- * collide if any glob from one is a prefix-or-equal of a glob from the other (ignoring `**`/`*`
- * suffixes). It's the same "no two claimable units in a wave share a scope glob" rule coordinate.sh
- * relies on — surfaced visually so the maintainer can eyeball a tangle before it happens.
- */
-function scopesOverlap(a, b) {
-	const norm = (g) => g.replace(/\*+$/g, "").replace(/\/+$/g, "");
-	for (const x of a) {
-		const nx = norm(x);
-		if (!nx) continue;
-		for (const y of b) {
-			const ny = norm(y);
-			if (!ny) continue;
-			if (nx === ny || nx.startsWith(ny + "/") || ny.startsWith(nx + "/") || nx.startsWith(ny) || ny.startsWith(nx)) {
-				return true;
-			}
-		}
-	}
-	return false;
-}
-
 /** Roll a PR's statusCheckRollup into one of: green / red / pending / none. */
 function checksRollup(pr) {
 	const rollup = pr.statusCheckRollup || [];
@@ -305,7 +288,12 @@ const unitModel = boardUnits.map((i) => {
 		needsDesign: labels.has("needs:design"),
 		mutexMigration: labels.has("mutex:migration"),
 		blockedBy: blockedBy(i.body),
-		scope: scopeGlobs(i.body),
+		// `readScope` is the shared parser (scripts/lib/scope-overlap.mjs). It separates "declares no
+		// scope" from "declares one this parser cannot read" — a backtick-wrapped `scope:` line reads
+		// as scoped to a human and as unscoped to every parser — so the panel below can say which
+		// units it could NOT compare instead of quietly dropping them out of the comparison.
+		scope: readScope(i.body).globs,
+		scopeGap: scopeGapOf(i.body),
 	};
 });
 
@@ -345,19 +333,28 @@ if (claimedMigrations.length > 1) {
 		units: claimedMigrations.map((u) => u.number),
 	});
 }
-// (2) overlapping scope: globs among the claimable/claimed set (the disjoint-scope invariant).
-const active = unitModel.filter((u) => (u.state === "READY" || u.state === "CLAIMED") && u.scope.length > 0);
+// (2) overlapping scope: globs among the claimable/claimed set (the disjoint-scope invariant),
+// decided by the SHARED matcher so this panel and coordinate.sh's report cannot disagree.
+const workable = unitModel.filter((u) => u.state === "READY" || u.state === "CLAIMED");
+const active = workable.filter((u) => u.scope.length > 0);
 for (let x = 0; x < active.length; x++) {
 	for (let y = x + 1; y < active.length; y++) {
-		if (scopesOverlap(active[x].scope, active[y].scope)) {
+		const hit = scopeListsOverlap(active[x].scope, active[y].scope);
+		if (hit) {
 			collisions.push({
 				kind: "scope-overlap",
-				text: `#${active[x].number} and #${active[y].number} share a scope glob (${active[x].state.toLowerCase()} ∩ ${active[y].state.toLowerCase()})`,
+				text: `#${active[x].number} "${hit.g1}" overlaps #${active[y].number} "${hit.g2}" (${active[x].state.toLowerCase()} ∩ ${active[y].state.toLowerCase()})`,
 				units: [active[x].number, active[y].number],
 			});
 		}
 	}
 }
+// The units this panel could NOT compare. Kept OUT of `collisions` — an unread scope is not a
+// disjoint one — and rendered separately, because "no collisions found" over a set that silently
+// excluded half the board is the failure #4115 was filed for.
+const scopeUnchecked = workable.filter((u) => u.scopeGap).map((u) => ({ number: u.number, why: u.scopeGap }));
+const scopeWorkable = workable.length;
+const scopeCompared = active.length;
 
 // ── the NEEDS-YOU set ───────────────────────────────────────────────────────
 const needsHumanUnits = unitModel.filter((u) => u.needsHuman);
@@ -377,7 +374,7 @@ const totals = {
 	prsGreen: prModel.filter((p) => !p.draft && p.checks.state === "green").length,
 };
 
-const model = { generatedAt: new Date().toISOString(), leaseTtlSec: LEASE_TTL, totals, byWave, prs: prModel, collisions, needsYou: { units: needsYouUnits, redPRs } };
+const model = { generatedAt: new Date().toISOString(), leaseTtlSec: LEASE_TTL, totals, byWave, prs: prModel, collisions, scopeUnchecked, scopeCompared, scopeWorkable, needsYou: { units: needsYouUnits, redPRs } };
 
 if (DUMP_JSON) console.log(JSON.stringify(model, null, 2));
 
@@ -480,12 +477,23 @@ function needsYouSection() {
 	return `<ul class="needs-list">${parts.join("\n")}</ul>`;
 }
 
-/** The collisions-to-eyeball panel. */
+/**
+ * The collisions-to-eyeball panel — collisions AND the units whose scope could not be read.
+ * Three outcomes, never two: found / checked-and-clean / could-not-check.
+ */
 function collisionSection() {
-	if (collisions.length === 0) return '<p class="dim">No scope/migration collisions detected.</p>';
+	const checked = `<p class="dim">Compared ${scopeCompared} of ${scopeWorkable} claimed-or-ready unit(s) for overlapping scope globs.</p>`;
+	const gaps = scopeUnchecked.length
+		? `<p class="dim">⚠ NOT compared — ${scopeUnchecked.length} unit(s) whose <code>scope:</code> could not be read: ${scopeUnchecked
+				.map((u) => esc(`#${u.number} (${u.why})`))
+				.join(" · ")}</p>`
+		: "";
+	if (collisions.length === 0) {
+		return `<p class="dim">No scope/migration collisions detected.</p>${checked}${gaps}`;
+	}
 	return `<ul class="coll-list">${collisions
 		.map((c) => `<li><span class="pill warn">${esc(c.kind)}</span> ${esc(c.text)}</li>`)
-		.join("\n")}</ul>`;
+		.join("\n")}</ul>${checked}${gaps}`;
 }
 
 const html = `<!doctype html>
