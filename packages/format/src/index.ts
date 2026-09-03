@@ -23,7 +23,11 @@ import { stripeChargeDivisor } from "./minor-units";
 // holding a Stripe amount needs, and a second transcription of it elsewhere in the repo is the
 // failure mode `minor-units.ts` documents. Its name does not begin with `format`, so the
 // conformance generator does not demand a table section for it — it is data, not a formatter.
-export { stripeChargeDivisor } from "./minor-units";
+//
+// The SET travels with the function (#4123). `apps/console/scripts/gen-format-conformance.ts`
+// publishes it into the conformance table so Go's copy can be held to it; neither the generator
+// nor anything else may re-type the codes. Same rule about the `format` prefix applies.
+export { stripeChargeDivisor, STRIPE_ZERO_DECIMAL_CHARGE } from "./minor-units";
 
 /** Locale for every Intl call here. Fixed, so output cannot vary by where the code runs. */
 const LOCALE = "en-GB";

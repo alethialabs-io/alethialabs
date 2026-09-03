@@ -47,8 +47,14 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = resolve(HERE, "../../../packages/format/conformance/format-cases.json");
 const REL = "packages/format/conformance/format-cases.json";
 
-/** The table's schema version. Bump only for a shape change, never for a value change. */
-const VERSION = 1;
+/**
+ * The table's schema version. Bump only for a shape change, never for a value change.
+ *
+ * 2 — #4123 added the top-level `zeroDecimalCharge` key. That IS a shape change: `conformance_test.go`
+ *     refuses a table below this version rather than reading the absent key as an empty set, which
+ *     would have made an old table look like agreement.
+ */
+const VERSION = 2;
 
 /** `null` in a case file means "not a finite number" — the branch every formatter clamps. */
 const num = (v: number | null): number => (v === null ? Number.NaN : v);
@@ -96,6 +102,45 @@ function build() {
 			want: fmt.formatMonthlyDelta(num(c.amount), c.style, c.currency),
 		})),
 	};
+}
+
+/**
+ * The zero-decimal CHARGE set, published across the language boundary (#4123).
+ *
+ * This is not a formatter and gets no `cases` section: the rows in `cases.money` pin how six
+ * currencies RENDER, and a row can only ever pin a code it names. What the two implementations
+ * can actually disagree about is set MEMBERSHIP — a sixteenth code added to TypeScript's map and
+ * not to Go's changes no row's expectation — so membership is what is emitted, and both
+ * conformance suites assert their own copy against it.
+ *
+ * Read from `@repo/format` rather than re-typed here, which is the whole point; a second
+ * transcription in the generator would drift from the first exactly as the two languages did.
+ *
+ * The two refusals below are cheap and both are reachable failures. An EMPTY list would be
+ * published as `[]`, and the TypeScript assertion compares the artifact against the live export,
+ * so `[] === []` passes on that side — only Go would be red, and it would name every one of its
+ * fifteen codes with no hint that the producer was the problem. An UNSORTED list still compares
+ * equal on both sides (both compare sorted), but its diff stops naming the code that moved, and a
+ * generated file whose diff is noise is a file reviewers skim.
+ */
+function zeroDecimalCharge(): string[] {
+	const codes = [...fmt.STRIPE_ZERO_DECIMAL_CHARGE];
+	if (codes.length === 0) {
+		console.error(
+			"FAIL: @repo/format exports an EMPTY STRIPE_ZERO_DECIMAL_CHARGE. Publishing that would " +
+				"hand Go an empty set to agree with, and 'nothing to compare' must not exit like 'nothing wrong'.",
+		);
+		process.exit(1);
+	}
+	const sorted = [...codes].sort();
+	if (codes.join(",") !== sorted.join(",")) {
+		console.error(
+			`FAIL: STRIPE_ZERO_DECIMAL_CHARGE is not sorted, so its diff would not name the code that ` +
+				`moved.\n  got   ${codes.join(" ")}\n  want  ${sorted.join(" ")}`,
+		);
+		process.exit(1);
+	}
+	return codes;
 }
 
 /**
@@ -215,6 +260,9 @@ function main(): void {
 			`Regenerating rewrites an EXPECTATION — read the diff, do not skim it.`,
 		version: VERSION,
 		excluded: EXCLUDED,
+		// Top-level, beside `cases` rather than inside it: it is not a case and has no `id`/`want`,
+		// so a section would break every loop that walks `cases`.
+		zeroDecimalCharge: zeroDecimalCharge(),
 		cases,
 	};
 	// Two-space JSON with a trailing newline: one line per field, so a diff is reviewable.
