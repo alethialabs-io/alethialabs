@@ -54,6 +54,17 @@ function makeDb() {
 	const db: Record<string, unknown> = {};
 	Object.assign(db, {
 		select: () => db,
+		// The #4022 fleet scan. It resolves to [] rather than shifting the FIFO queue, because it
+		// is not one of the action's own sequential reads and every seeded queue in this file was
+		// written without it. In practice it is never reached here: `authorize` is stubbed with no
+		// active org, so `resolveUnassignedRunnerJobOrg` short-circuits on its "no scope, no
+		// resolution" guard. THIS FILE THEREFORE DOES NOT COVER THE RESOLUTION — the org it picks
+		// is proven against real Postgres in `tests/integration/runner-org-validate.test.ts`, and
+		// the enqueue sites that consult it in the route suites. This stub exists so that fact is
+		// a stated choice rather than a TypeError waiting for the day the actor gains an org.
+		selectDistinct: () => ({
+			from: () => ({ where: () => Promise.resolve([]) }),
+		}),
 		from: () => db,
 		leftJoin: () => db,
 		innerJoin: () => db,

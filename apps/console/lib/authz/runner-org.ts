@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { ForbiddenError } from "@/lib/authz/types";
 import type { Db, Tx } from "@/lib/db";
 import { runners } from "@/lib/db/schema";
@@ -58,10 +58,13 @@ import { runners } from "@/lib/db/schema";
  * unchanged. The two enqueue paths differ deliberately:
  *   - `POST /api/jobs` `DESTROY_RUNNER` passes it (that is the undestroyable case) and
  *     stamps the job from the RETURNED org, so job and runner match whichever it was.
- *   - `POST /api/cli/runners/deploy` does NOT pass it, because it stamps its `DEPLOY_RUNNER`
- *     job with `actor.orgId`; admitting a personal-org `assigned_runner_id` there would
- *     queue a job whose org can never equal its executor's and which therefore sits QUEUED
- *     forever — worse than the defect being fixed.
+ *   - `POST /api/cli/runners/deploy` does NOT pass it, because when an executor IS named that
+ *     route stamps its `DEPLOY_RUNNER` job with `actor.orgId`; admitting a personal-org
+ *     `assigned_runner_id` there would queue a job whose org can never equal its executor's
+ *     and which therefore sits QUEUED forever — worse than the defect being fixed. That is a
+ *     statement about the ASSIGNED path only: with no executor named, that route now resolves
+ *     the stamp from the fleet like every other unassigned enqueue (#4022, see
+ *     {@link resolveUnassignedRunnerJobOrg}).
  *
  * @param db     A service (RLS-bypassing) db handle or an open transaction.
  * @param runnerId The client-supplied runner id to validate (must be non-null).
@@ -129,17 +132,49 @@ export async function assertRunnerInOrg(
  * org and their personal one (the same pair `assertRunnerInOrg`'s transitional admission
  * accepts, and for the same no-backfill reason).
  *
- * The preference is deliberate and makes this a STRICT improvement rather than a trade:
+ * BOTH PHASE B ARMS ARE ASKED, because only the ELSE arm is the one this can help. An earlier
+ * cut of this function scanned `operator = 'self'` alone and called the result a STRICT
+ * improvement — "the personal org is taken only where the previous value was provably
+ * unclaimable". That claim was FALSE wherever a managed pool exists. Phase B's managed arm
+ * ignores org entirely, and the unassigned path is exactly the one the CLI documents as "an
+ * empty id leaves the teardown job for any available runner" (`apps/cli/cmd/runner_destroy.go`),
+ * so for an org that runs on the shared pool the old active-org stamp WAS claimable and moving
+ * it is a trade, not an improvement. What is traded, for org T on `team` whose member M has only
+ * pre-#3874 runners:
+ *
+ *   | | old (T) | new (M) |
+ *   |---|---|---|
+ *   | `jobs_set_scheduling` priority | `plan_priority('team') + 2 = 12` | `0 + 2 = 2` |
+ *   | managed Phase B cap | `plan_max_concurrency('team') = 8` | `plan_max_concurrency('community') = 2` |
+ *   | `assertJobQuotaAllowed` | unbounded (paid) | community 25 jobs / 24h |
+ *
+ * — and the quota one is not merely slower: `UsageLimitError` is caught by the enqueue route's
+ * outer `catch` and returned as an HTTP 500, not a 402. So the resolution asks about the managed
+ * pool BEFORE it prefers the personal org, and the preference becomes:
  *
  *   - a self runner in the ACTIVE org exists → the active org, which is what the route
  *     already stamped and is the forward-correct tenancy. A mixed-vintage fleet lands here,
  *     and the modern runner claims it;
- *   - otherwise a self runner in the PERSONAL org exists → the personal org. This is the
- *     only value that changes, and it changes only where the previous one was provably
- *     unclaimable by any self runner the caller has;
- *   - otherwise → the active org. Nothing to prefer it over: a MANAGED runner claims either
- *     stamp (its Phase B arm ignores org entirely), and a fleet with no runner at all has
- *     nothing to satisfy, so the job keeps the more correct tenancy.
+ *   - otherwise NO self runner in the personal org either → the active org. An empty fleet has
+ *     nothing to satisfy, so the job keeps the more correct tenancy;
+ *   - otherwise a MANAGED runner exists → the active org. The old stamp is claimable after all,
+ *     and moving it would cost the three rows above for no gain;
+ *   - otherwise → the personal org. This is the only value that changes, and it now changes
+ *     only where the active-org stamp is claimable by NOTHING — the QUEUED-forever job of #4022.
+ *
+ * THE MANAGED PROBE IS THE CHEAPEST SOUND QUESTION, DELIBERATELY: *does any managed runner row
+ * exist*, not *could this particular managed runner claim this particular job*. The precise
+ * question would have to evaluate `supported_providers`, `p_cloud_identity_id`, DRAINING and the
+ * per-org cap — and every one of those is a way to answer "no managed runner can claim it" when
+ * one can. This probe fails the other way: it over-reports "managed can claim", and over-reporting
+ * there means KEEPING THE STAMP THE ROUTE ALREADY WROTE. So the resolver can only ever fix a
+ * provably-dead job and can never trade a live one down a plan band. The cost of the imprecision
+ * is bounded and named: on a hosted install whose managed pool cannot in fact serve this job's
+ * provider, #4022 stays unfixed — the status quo, not a regression.
+ *
+ * `requires_self_runner` is not consulted for the same reason it cannot bite: nothing in the
+ * console ever sets it, so a runner-lifecycle row carries the column's `false` default and the
+ * managed arm's only job-side gate is satisfied by construction.
  *
  * Note the runner being torn down is itself a candidate here, and that is not an oversight:
  * `claim_next_job` Phase B does not exclude it either, and a resolution that disagreed with
@@ -151,6 +186,14 @@ export async function assertRunnerInOrg(
  * runner registered with no `cloud_identity_id` and no `supported_providers` from claiming
  * ANY org's queued job and being handed that job's decrypted cloud credential.
  *
+ * EVERY UNASSIGNED RUNNER-LIFECYCLE ENQUEUE CALLS THIS — there are five, and the class is only
+ * closed if all five do. `POST /api/jobs` (DESTROY_RUNNER), `POST /api/cli/runners/deploy`
+ * (DEPLOY_RUNNER), and the three server actions `deployRunner()`, `destroyRunner()` and
+ * `updateRunner()`. The three actions insert under `withActorScope`, where the GUC branch of
+ * `set_org_id_from_project` stamps `actor.orgId` — the same value, reached by a different route —
+ * so they stamp `org_id` explicitly from here instead, and the trigger's fallback never runs.
+ * `updateRunner()` takes no executor argument at all, so it is ALWAYS the unassigned case.
+ *
  * @param db A service (RLS-bypassing) db handle or an open transaction.
  * @param orgId The caller's active org.
  * @param personalOrgId The caller's personal org (their user id).
@@ -161,22 +204,35 @@ export async function resolveUnassignedRunnerJobOrg(
 	orgId: string,
 	personalOrgId: string,
 ): Promise<string> {
-	// A community/personal caller: the two orgs are the same value, so there is nothing to
-	// resolve and no reason to read the fleet.
-	if (orgId === personalOrgId) return orgId;
+	// No scope, no resolution — the same shape `assertJobQuotaAllowed` uses. And a
+	// community/personal caller's two orgs are the SAME value, so there is nothing to choose
+	// between and no reason to read the fleet at all.
+	if (!orgId || orgId === personalOrgId) return orgId;
 
+	// ONE read, both Phase B arms. The `self` half is the ELSE arm's admission — it takes exactly
+	// one org value, so the only candidates are the caller's two admissible orgs. The `managed`
+	// half is the org-agnostic arm asked as a yes/no: a managed runner's `org_id` IS NULL, so it
+	// could never appear in the `self` half, and asking separately would be a second round trip
+	// for a column this row set already carries.
 	const rows = await db
-		.selectDistinct({ org_id: runners.org_id })
+		.selectDistinct({ operator: runners.operator, org_id: runners.org_id })
 		.from(runners)
-		// `operator = 'self'` is the branch selector, not a filter for its own sake: a managed
-		// runner takes the org-agnostic arm and its `org_id` is NULL, so it could not appear
-		// here anyway. Stating it keeps this query readable as the ELSE arm's admission.
 		.where(
-			and(eq(runners.operator, "self"), inArray(runners.org_id, [orgId, personalOrgId])),
+			or(
+				and(eq(runners.operator, "self"), inArray(runners.org_id, [orgId, personalOrgId])),
+				eq(runners.operator, "managed"),
+			),
 		);
 
-	const orgs = new Set(rows.map((r) => r.org_id));
-	if (orgs.has(orgId)) return orgId;
-	if (orgs.has(personalOrgId)) return personalOrgId;
-	return orgId;
+	const selfOrgs = new Set(
+		rows.filter((r) => r.operator === "self").map((r) => r.org_id),
+	);
+	if (selfOrgs.has(orgId)) return orgId;
+	if (!selfOrgs.has(personalOrgId)) return orgId;
+
+	// A legacy-only fleet. The active-org stamp is dead to the ELSE arm — but only MOVE it if the
+	// managed arm cannot take it either, because moving it costs a plan band, a concurrency cap
+	// and a daily quota (see the table above). Over-reporting "managed can claim" keeps the stamp
+	// the caller's route already wrote, which is the harmless direction to be wrong in.
+	return rows.some((r) => r.operator === "managed") ? orgId : personalOrgId;
 }

@@ -92,6 +92,50 @@ async function seedTeamRunner(
 	return row.id;
 }
 
+/** Thrown to roll a probe transaction back. Never escapes {@link resolveWithEmptyManagedPool}. */
+class RollbackProbe extends Error {}
+
+/**
+ * Resolves with the MANAGED pool emptied, inside a transaction that ALWAYS rolls back.
+ *
+ * The managed probe is a property of the whole `runners` table, not of one caller's fleet — a
+ * managed runner belongs to no tenant and its Phase B arm ignores org — so a resolution that must
+ * be read with the pool empty cannot be arranged by choosing ids. THIS FIXTURE'S OWN `beforeAll`
+ * seeds `managedRunner`, and other files sharing this database may seed more, so an assertion
+ * about the empty-pool arm written against the live table would be answering a question about
+ * whichever rows happened to exist. The delete is real inside the transaction and discarded on the
+ * way out, so nothing another test can observe ever changes.
+ *
+ * The rollback is a sentinel error rather than `tx.rollback()` because drizzle's own rollback
+ * signal is a driver-level detail; a class declared here is unambiguous, and a failure that is NOT
+ * the sentinel is rethrown rather than swallowed into a pass.
+ */
+async function resolveWithEmptyManagedPool(
+	orgId: string,
+	personalOrgId: string,
+): Promise<string> {
+	// An array rather than a `let … | null`: the assignment happens inside a callback, where
+	// TypeScript's control-flow narrowing does not follow it, so a nullable local would read as
+	// `null` at the check below and as `never` after it.
+	const answer: string[] = [];
+	try {
+		await getServiceDb().transaction(async (tx) => {
+			await tx.delete(runners).where(eq(runners.operator, "managed"));
+			answer.push(await resolveUnassignedRunnerJobOrg(tx, orgId, personalOrgId));
+			throw new RollbackProbe();
+		});
+	} catch (e: unknown) {
+		if (!(e instanceof RollbackProbe)) throw e;
+	}
+	// A probe that never reached the resolver would otherwise hand back a value that reads like
+	// an answer. There is no "no result" branch: this throws rather than reporting one.
+	if (answer.length !== 1)
+		throw new Error(
+			`probe transaction resolved ${answer.length} orgs, expected exactly 1`,
+		);
+	return answer[0];
+}
+
 describeIfDb("assertRunnerInOrg (defense-in-depth enqueue guard)", () => {
 	beforeAll(async () => {
 		runnerA = await seedSelfRunner(ORG_A, `it-runner-a-${ORG_A.slice(0, 8)}`);
@@ -233,9 +277,16 @@ describeIfDb("assertRunnerInOrg (defense-in-depth enqueue guard)", () => {
 		).resolves.toBe(TEAM_ORG);
 	});
 
-	it("resolve: falls to the PERSONAL org when every runner the caller has is pre-#3874", async () => {
+	it("resolve: falls to the PERSONAL org when the fleet is pre-#3874 and there is NO managed pool", async () => {
 		// The #4022 failing input, built the way production built it: the trigger stamps the
 		// personal org, and the caller then acts in a Teams org they have no runner in.
+		//
+		// It runs with the managed pool emptied, and that condition is the finding rather than a
+		// fixture detail. A self-only scan called this a STRICT improvement; it is not, wherever a
+		// managed runner exists, because Phase B's managed arm has no org predicate and would have
+		// claimed the active-org stamp. So the personal org is only correct when nothing at all
+		// can take the other value — which is the case this arranges, and the case below is its
+		// twin with the single missing row put back.
 		const legacyUser = randomUUID();
 		const legacyRunner = await seedSelfRunner(
 			legacyUser,
@@ -243,21 +294,58 @@ describeIfDb("assertRunnerInOrg (defense-in-depth enqueue guard)", () => {
 		);
 		try {
 			await expect(
-				resolveUnassignedRunnerJobOrg(getServiceDb(), randomUUID(), legacyUser),
+				resolveWithEmptyManagedPool(randomUUID(), legacyUser),
 			).resolves.toBe(legacyUser);
 		} finally {
 			await getServiceDb().delete(runners).where(eq(runners.id, legacyRunner));
 		}
 	});
 
+	it("resolve: KEEPS the active org on that same fleet once a managed runner exists", async () => {
+		// The control for the case above, and the review finding stated as a test. The fleet is
+		// identical — one pre-#3874 self runner, a Teams org the caller has none in — and the only
+		// difference is `managedRunner`, seeded by this file's beforeAll and left in place here.
+		// Moving the stamp anyway would cost the job `plan_priority('team') + 2 = 12` → `2`, a
+		// concurrency cap of 8 → 2, and the paid exemption from the 25/24h job quota, in exchange
+		// for nothing: the managed arm could always claim it.
+		const legacyUser = randomUUID();
+		const legacyRunner = await seedSelfRunner(
+			legacyUser,
+			`it-4022-managed-${legacyUser.slice(0, 8)}`,
+		);
+		const activeOrg = randomUUID();
+		try {
+			// The premise, asserted rather than assumed — this case means nothing if the pool the
+			// beforeAll seeded is not actually there.
+			const [managed] = await getServiceDb()
+				.select({ id: runners.id })
+				.from(runners)
+				.where(eq(runners.id, managedRunner))
+				.limit(1);
+			expect(managed?.id).toBe(managedRunner);
+
+			await expect(
+				resolveUnassignedRunnerJobOrg(getServiceDb(), activeOrg, legacyUser),
+			).resolves.toBe(activeOrg);
+			// Named explicitly, because it is the value the earlier reading produced.
+			await expect(
+				resolveUnassignedRunnerJobOrg(getServiceDb(), activeOrg, legacyUser),
+			).resolves.not.toBe(legacyUser);
+		} finally {
+			await getServiceDb().delete(runners).where(eq(runners.id, legacyRunner));
+		}
+	});
+
 	it("resolve: keeps the ACTIVE org when the caller has no self runner at all", async () => {
-		// Nothing to prefer the personal org over — a managed runner claims either stamp, and an
-		// empty fleet has nothing to satisfy. This is also the tenancy assertion: other tenants'
-		// runners exist right now, and a scan that widened past the caller's two admissible orgs
-		// would return one of theirs instead.
+		// An empty fleet has nothing to satisfy, so the job keeps the forward-correct tenancy.
+		// This is also the tenancy assertion: other tenants' runners exist right now — ORG_A's,
+		// ORG_B's and USER_MULTI's pair — and a scan that widened past the caller's two admissible
+		// orgs would return one of theirs instead. It runs with the managed pool EMPTIED so the
+		// answer is the empty-fleet arm rather than the managed one arriving at the same value for
+		// a different reason; a test that cannot tell two arms apart pins neither.
 		const orphanOrg = randomUUID();
 		await expect(
-			resolveUnassignedRunnerJobOrg(getServiceDb(), orphanOrg, randomUUID()),
+			resolveWithEmptyManagedPool(orphanOrg, randomUUID()),
 		).resolves.toBe(orphanOrg);
 	});
 

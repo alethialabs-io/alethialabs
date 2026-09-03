@@ -31,6 +31,14 @@
 // 2b and 2c are the two fleets that resolve differently — which is why 2c seeds its own caller
 // rather than reusing the shared one, whose fleet deliberately holds both vintages.
 //
+// 2c also depends on a property of the WHOLE runners table rather than of its own caller: the
+// resolver moves a stamp only when the MANAGED pool cannot claim the old one either, because that
+// arm has no org predicate at all. A managed row left behind by another file would make 2c measure
+// the opposite arm and pass for the wrong reason, so 2c asserts the pool is empty before it reads
+// the answer. The arm itself — the same fleet resolving the other way once a managed runner exists
+// — is pinned in `runner-org-validate.test.ts`, which can empty the pool inside a rolled-back
+// transaction because it calls the resolver directly rather than through the route.
+//
 // The PDP and the CLI token are stubbed (they are proven in the authz suite); the database is
 // not, and it is the subject.
 
@@ -293,6 +301,18 @@ describeIfDb("CLI enqueue org stamp (#3874)", () => {
 		// runner the CLI deployed before #3874.
 		expect(row.org_id).toBe(legacyUser);
 
+		// The SECOND premise, and the one that is not local to this test. `claim_next_job` Phase
+		// B's managed arm ignores org entirely, so a managed runner would claim the team-org stamp
+		// and the resolver would correctly leave it alone — this case would then assert the wrong
+		// arm and pass. Stated as an assertion rather than an assumption, because a leaked managed
+		// row from another integration file is invisible from here.
+		const managedPool = await getServiceDb()
+			.select({ id: runners.id })
+			.from(runners)
+			.where(eq(runners.operator, "managed"))
+			.limit(1);
+		expect(managedPool).toHaveLength(0);
+
 		vi.mocked(verifyCliToken).mockResolvedValue({
 			payload: { sub: legacyUser },
 			error: null,
@@ -324,7 +344,17 @@ describeIfDb("CLI enqueue org stamp (#3874)", () => {
 		await getServiceDb().delete(runners).where(eq(runners.user_id, legacyUser));
 	});
 
-	// ── 3. DEPLOY_RUNNER stamps the pair identically, by construction ───────────────────────
+	// ── 3. DEPLOY_RUNNER on THIS fleet stamps the pair identically ──────────────────────────
+	//
+	// The heading used to read "by construction", and #4022 narrowed that. The two stamps are no
+	// longer written from one value: the runners row takes the actor's org because that is the
+	// forward-correct tenancy for a runner being created, while the job takes the org of the fleet
+	// that must CLAIM it — and on the unassigned path those are resolved separately. They agree
+	// here because this fixture's fleet contains `modernRunner`, a self runner already in
+	// TEAM_ORG, which is the ordinary case. On a legacy-only fleet with no managed pool they would
+	// legitimately diverge, and that is sound: `claim_next_job` compares the job against the org
+	// of the runner that claims it, and the row this request creates cannot claim its own deploy
+	// job — it does not exist yet. So this assertion keeps its value and loses its universality.
 	it("DEPLOY_RUNNER stamps the runners row and the jobs row with the SAME org", async () => {
 		const res = await deployRunnerPost(
 			new Request("https://console.local/api/cli/runners/deploy", {
@@ -359,8 +389,9 @@ describeIfDb("CLI enqueue org stamp (#3874)", () => {
 
 		expect(runnerRow.org_id).toBe(TEAM_ORG);
 		expect(job.org_id).toBe(TEAM_ORG);
-		// The pair, stated as a pair: they match because one request wrote both, not because
-		// both fell through the same trigger branch in the same wrong direction.
+		// The pair, stated as a pair: they match because this caller's fleet can claim their
+		// active org, not because both fell through the same trigger branch in the same wrong
+		// direction — and not, since #4022, because one value was written to both.
 		expect(job.org_id).toBe(runnerRow.org_id);
 		// Neither is the personal org the trigger would have chosen.
 		expect(job.org_id).not.toBe(USER);
