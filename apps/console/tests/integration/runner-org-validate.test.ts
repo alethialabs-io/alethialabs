@@ -12,11 +12,15 @@
 // claim_next_job compares against `v_runner_org_id` — so this exercises the exact
 // notion of "the runner's org" the execution guard uses. `org_id` is backfilled to
 // `user_id` by the set_org_id trigger on insert, which this test also asserts.
+//
+// The file also covers `resolveUnassignedRunnerJobOrg` (#4022) — the same "which org does this
+// job take" question asked where NO runner is named, so there is no row to read it from. It sits
+// here, on the same fixture, because both answers must agree with the same claim predicate.
 
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { assertRunnerInOrg } from "@/lib/authz/runner-org";
+import { assertRunnerInOrg, resolveUnassignedRunnerJobOrg } from "@/lib/authz/runner-org";
 import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import { runners } from "@/lib/db/schema";
@@ -206,5 +210,62 @@ describeIfDb("assertRunnerInOrg (defense-in-depth enqueue guard)", () => {
 		await expect(
 			assertRunnerInOrg(getServiceDb(), runnerB, USER_MULTI, USER_MULTI),
 		).rejects.toBeInstanceOf(ForbiddenError);
+	});
+
+	// ── `resolveUnassignedRunnerJobOrg` — the same question with no runner to ask (#4022) ────
+	//
+	// Every enqueue that NAMES an executor stamps the job with the value `assertRunnerInOrg`
+	// returns above. One that names none has no row to read, and the actor's org was taken to
+	// be the safe answer on the reading that `claim_next_job` Phase B is org-agnostic. Only its
+	// MANAGED arm is; the `ELSE` arm a self runner takes repeats Phase A's equality, so for a
+	// caller whose fleet is entirely pre-#3874 that answer was unclaimable by every runner they
+	// had — QUEUED forever, no error.
+	//
+	// The resolver reads the fleet instead, and these live in THIS describe, on THIS fixture,
+	// because the property they pin is one no mock can: the scan sees the caller's two
+	// admissible orgs and nothing else, while ORG_A / ORG_B / USER_MULTI's pair sit in the same
+	// table as third parties.
+	it("resolve: prefers the ACTIVE org when a self runner of that org exists (mixed-vintage fleet)", async () => {
+		// USER_MULTI holds both vintages. `runnerTeam` can claim a TEAM_ORG job, so the
+		// forward-correct tenancy is kept and the legacy row does not drag the stamp back.
+		await expect(
+			resolveUnassignedRunnerJobOrg(getServiceDb(), TEAM_ORG, USER_MULTI),
+		).resolves.toBe(TEAM_ORG);
+	});
+
+	it("resolve: falls to the PERSONAL org when every runner the caller has is pre-#3874", async () => {
+		// The #4022 failing input, built the way production built it: the trigger stamps the
+		// personal org, and the caller then acts in a Teams org they have no runner in.
+		const legacyUser = randomUUID();
+		const legacyRunner = await seedSelfRunner(
+			legacyUser,
+			`it-4022-legacy-${legacyUser.slice(0, 8)}`,
+		);
+		try {
+			await expect(
+				resolveUnassignedRunnerJobOrg(getServiceDb(), randomUUID(), legacyUser),
+			).resolves.toBe(legacyUser);
+		} finally {
+			await getServiceDb().delete(runners).where(eq(runners.id, legacyRunner));
+		}
+	});
+
+	it("resolve: keeps the ACTIVE org when the caller has no self runner at all", async () => {
+		// Nothing to prefer the personal org over — a managed runner claims either stamp, and an
+		// empty fleet has nothing to satisfy. This is also the tenancy assertion: other tenants'
+		// runners exist right now, and a scan that widened past the caller's two admissible orgs
+		// would return one of theirs instead.
+		const orphanOrg = randomUUID();
+		await expect(
+			resolveUnassignedRunnerJobOrg(getServiceDb(), orphanOrg, randomUUID()),
+		).resolves.toBe(orphanOrg);
+	});
+
+	it("resolve: answers without reading the fleet when the two orgs are the same value", async () => {
+		// A community/personal caller: `orgId === personalOrgId`, so there is nothing to choose
+		// between. ORG_A has a runner and ORG_B's exists too; neither can change this answer.
+		await expect(
+			resolveUnassignedRunnerJobOrg(getServiceDb(), ORG_A, ORG_A),
+		).resolves.toBe(ORG_A);
 	});
 });

@@ -23,6 +23,14 @@
 // follows the RUNNER that will execute it, and this file drives that against the real
 // equality rather than against a promise.
 //
+// #4022 EXTENDED THAT RULE TO THE CASE WITH NO RUNNER TO FOLLOW. The unassigned enqueue was
+// stamped `actor.orgId` on the reading that Phase B is the org-agnostic phase. Only its MANAGED
+// arm is; the `ELSE` arm a self runner takes repeats Phase A's equality verbatim, so a Teams
+// member whose fleet is entirely pre-#3874 got exactly the QUEUED-forever job the paragraph above
+// exists to prevent. The org is now resolved from the fleet that would have to claim it, and cases
+// 2b and 2c are the two fleets that resolve differently — which is why 2c seeds its own caller
+// rather than reusing the shared one, whose fleet deliberately holds both vintages.
+//
 // The PDP and the CLI token are stubbed (they are proven in the authz suite); the database is
 // not, and it is the subject.
 
@@ -226,12 +234,94 @@ describeIfDb("CLI enqueue org stamp (#3874)", () => {
 		expect(Array.from(claimable)).toHaveLength(1);
 	});
 
-	// ── 2b. No runner named: the actor's org, which is the half the defect got wrong ────────
-	it("DESTROY_RUNNER with no assigned runner falls back to the ACTOR's org, not the personal org", async () => {
+	// ── 2b. No runner named, MIXED fleet: the actor's org — and it is claimable ─────────────
+	//
+	// This assertion's VALUE survived #4022 and its reasoning did not, so both are restated.
+	// It was written as "falls back to the ACTOR's org, not the personal org", on the ground
+	// that the personal org was what the trigger chose and the trigger was the defect. That
+	// half is still right: the stamp is explicit, so a GUC-less service connection no longer
+	// picks the tenancy. What it did NOT establish — and what #4022 found — is that the actor's
+	// org is the right VALUE whatever the fleet looks like. Nothing about the unassigned path
+	// is org-agnostic: `claim_next_job` Phase B's self arm repeats Phase A's equality, so the
+	// stamp is only correct here because THIS fixture's fleet contains `modernRunner`, a self
+	// runner already in TEAM_ORG. Case 2c is the same enqueue against a fleet that has none,
+	// where the old reasoning produced a job nothing could ever claim.
+	//
+	// So the claimability is now asserted rather than assumed, by the same Phase B predicate
+	// Postgres evaluates — the thing the original assertion left to inference.
+	it("DESTROY_RUNNER with no assigned runner takes the ACTOR's org when a runner of that org exists", async () => {
 		const jobId = await createdJobId(await destroyRunnerJob(null));
-		// This is the branch the trigger used to decide, and it decided `user_id`. The stamp is
-		// now explicit, so the GUC-less service connection no longer chooses the tenancy.
 		expect(await jobOrg(jobId)).toBe(TEAM_ORG);
+		expect(await jobOrg(jobId)).not.toBe(USER);
+
+		// `claim_next_job` Phase B, ELSE arm: an UNASSIGNED job is offered to a self runner only
+		// where `j.org_id = v_runner_org_id`. A row means modernRunner would claim it.
+		const claimable = await getServiceDb().execute(sql`
+			select j.id from jobs j
+			  join runners r on r.org_id = j.org_id
+			 where j.id = ${jobId}::uuid
+			   and j.status = 'QUEUED'
+			   and j.assigned_runner_id is null
+			   and r.id = ${modernRunner}::uuid
+			   and r.operator = 'self'
+		`);
+		expect(Array.from(claimable)).toHaveLength(1);
+	});
+
+	// ── 2c. #4022: no runner named, LEGACY-ONLY fleet ───────────────────────────────────────
+	//
+	// The failing input from #4022, and the one case 2b's fixture cannot express: a Teams
+	// member whose runners are ALL pre-#3874, so every one carries `org_id = user_id`. A
+	// TEAM_ORG stamp is unclaimable by every runner they have — QUEUED forever, no error.
+	// Because the fleet is the subject, this case needs its own caller with its own fleet;
+	// the shared USER's fleet deliberately contains both vintages.
+	it("DESTROY_RUNNER with no assigned runner takes the PERSONAL org when the whole fleet is pre-#3874", async () => {
+		const legacyUser = randomUUID();
+		const legacyUserOrg = randomUUID();
+		const [row] = await getServiceDb()
+			.insert(runners)
+			.values({
+				user_id: legacyUser,
+				name: `it-4022-${randomUUID().slice(0, 12)}`,
+				operator: "self",
+				provisioning: "deployed",
+				token_hash: `hash-4022-${legacyUser}`,
+				status: "OFFLINE",
+			})
+			.returning({ id: runners.id, org_id: runners.org_id });
+		// The fixture's own premise: the trigger stamped the personal org, as it did for every
+		// runner the CLI deployed before #3874.
+		expect(row.org_id).toBe(legacyUser);
+
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: { sub: legacyUser },
+			error: null,
+		} as never);
+		vi.mocked(getActiveScope).mockResolvedValue({
+			userId: legacyUser,
+			orgId: legacyUserOrg,
+		} as never);
+
+		const jobId = await createdJobId(await destroyRunnerJob(null));
+
+		// Stated three ways, as case 1 is: the claim, the wrong answer named explicitly (the
+		// value this route stamped before #4022), and the predicate Postgres evaluates.
+		expect(await jobOrg(jobId)).toBe(legacyUser);
+		expect(await jobOrg(jobId)).not.toBe(legacyUserOrg);
+
+		const claimable = await getServiceDb().execute(sql`
+			select j.id from jobs j
+			  join runners r on r.org_id = j.org_id
+			 where j.id = ${jobId}::uuid
+			   and j.status = 'QUEUED'
+			   and j.assigned_runner_id is null
+			   and r.id = ${row.id}::uuid
+			   and r.operator = 'self'
+		`);
+		expect(Array.from(claimable)).toHaveLength(1);
+
+		await getServiceDb().delete(jobs).where(eq(jobs.user_id, legacyUser));
+		await getServiceDb().delete(runners).where(eq(runners.user_id, legacyUser));
 	});
 
 	// ── 3. DEPLOY_RUNNER stamps the pair identically, by construction ───────────────────────
