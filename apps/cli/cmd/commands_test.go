@@ -474,7 +474,9 @@ func TestRunRolesList(t *testing.T) {
 	if err := runRolesList(&fakeClient{roles: sampleRoles()}, &buf, "table"); err != nil {
 		t.Fatalf("runRolesList: %v", err)
 	}
-	for _, want := range []string{"owner", "deployers", ui.SymbolDefault, "2"} {
+	// "●" and not ui.SymbolDefault: the Builtin column is ui.YesNo, which stopped answering with
+	// the "this is the default one" badge when #3660 put booleans on the status vocabulary.
+	for _, want := range []string{"owner", "deployers", "●", "2"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("roles missing %q:\n%s", want, buf.String())
 		}
@@ -680,11 +682,17 @@ func TestRenderSsoProviderJSON(t *testing.T) {
 }
 
 func TestYesNo(t *testing.T) {
-	if ui.YesNo(true) != ui.SymbolDefault {
-		t.Errorf("ui.YesNo(true) = %q", ui.YesNo(true))
+	// `◆ / —` until #3660. The "no" arm was the EMPTY-VALUE SENTINEL, so a channel that is switched
+	// off and one whose `enabled` field never arrived printed the same cell; a boolean now borrows
+	// the two tiers that already mean present-and-active and present-and-inert.
+	if ui.YesNo(true) != "●" {
+		t.Errorf("ui.YesNo(true) = %q, want the active dot", ui.YesNo(true))
 	}
-	if ui.YesNo(false) != ui.SymbolDash {
-		t.Errorf("ui.YesNo(false) = %q", ui.YesNo(false))
+	if ui.YesNo(false) != "◌" {
+		t.Errorf("ui.YesNo(false) = %q, want the disabled tier's dotted outline", ui.YesNo(false))
+	}
+	if ui.YesNo(false) == ui.SymbolDash {
+		t.Error("ui.YesNo(false) is the empty-value sentinel — 'no' and 'we could not read this' must not be one cell")
 	}
 }
 

@@ -200,7 +200,7 @@ func pickCluster(clusters []api.ClusterSummary, title string) (*api.ClusterSumma
 
 	options := make([]huh.Option[int], len(clusters))
 	for i := range clusters {
-		label := ui.PlainStatusDot(clusters[i].Status) + " " + clusterLabel(clusters[i])
+		label := ui.PlainGlyph(clusters[i].Status) + " " + clusterLabel(clusters[i])
 		if clusters[i].ClusterName != "" {
 			label += " " + ui.SymbolBullet + " " + clusters[i].ClusterName
 		}
