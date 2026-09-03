@@ -753,8 +753,15 @@ export const NODE_REGISTRY: NodeRegistry = {
 				{ label: "Syncs", value: "ArgoCD" },
 				// Shown only when SET. apps_path reaches EVERY placement — `user-apps.yaml:34`
 				// renders it with no placement branch, and naming a path is what turns overlay
-				// discovery OFF (`user-apps-overlays.yaml` gates on `not .AppsPath`, pinned by
-				// TestRender_AppsPathOnDedicatedReplacesDiscovery). It stays conditional because
+				// discovery OFF (`user-apps-overlays.yaml` gates on `not .AppsPath`).
+				//
+				// TWO TESTS, because one covers one half. The discovery claim is pinned by
+				// TestRender_AppsPathOnDedicatedReplacesDiscovery (packages/core/argocd), which is
+				// DEDICATED-ONLY — citing it alone invites the reader to conclude it covers all
+				// three modes. The namespace and vcluster halves are pinned by
+				// TestNamespaceTenantInputCarriesAppsPath and TestVClusterAppInputCarriesAppsPath
+				// (packages/core/provisioner), which assert the path reaches those templates at
+				// all; there is no discovery there to replace. It stays conditional because
 				// a fact that always read "Path: repository root" would assert a default the
 				// operator never chose — a statement about the card, not about what the runner reads.
 				...(config.apps_path ? [{ label: "Overlay", value: config.apps_path }] : []),
