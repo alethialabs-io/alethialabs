@@ -31,6 +31,7 @@
 // on both branches, so the invariant is load-bearing rather than decorative.
 
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -183,6 +184,36 @@ describe("useActiveOrgSlug — the session fallback, off the `[org]` shell", () 
 	});
 });
 
+/**
+ * `next.config.ts`'s source text.
+ *
+ * Resolved by walking up from the working directory, NOT from `import.meta.url`: under Vitest the
+ * module URL is not a `file:` URL, so `new URL("…", import.meta.url)` throws "The URL must be of
+ * scheme file" — which is exactly how the first version of this test failed in CI. `turbo run test`
+ * runs the suite with the package as cwd, and the walk also finds the file from the repo root.
+ *
+ * It THROWS when it finds nothing, rather than returning "". An empty string would satisfy every
+ * "does not contain" assertion below, so a lookup failure would report an all-clear it never
+ * measured — the one failure mode a check like this must not have.
+ */
+async function readNextConfigSource(): Promise<string> {
+	const candidates = ["next.config.ts", "apps/console/next.config.ts"];
+	let dir = process.cwd();
+	for (let up = 0; up < 6; up += 1) {
+		for (const rel of candidates) {
+			try {
+				return await readFile(path.join(dir, rel), "utf8");
+			} catch {
+				// Not at this level — try the next candidate, then the parent directory.
+			}
+		}
+		const parent = path.dirname(dir);
+		if (parent === dir) break;
+		dir = parent;
+	}
+	throw new Error(`next.config.ts not found walking up from ${process.cwd()}`);
+}
+
 describe("the client Router Cache must not serve `/{org}/…` (#4089)", () => {
 	// The invisible assumption the whole fix rides on. Re-scoping the session happens ONLY
 	// because Next 16's default `staleTimes.dynamic = 0` re-runs the dynamic segment on every
@@ -197,10 +228,7 @@ describe("the client Router Cache must not serve `/{org}/…` (#4089)", () => {
 	// for an assignment (`staleTimes:`) rather than a mention — the prose above the key in
 	// next.config.ts names `staleTimes` several times and must not trip it.
 	it("next.config.ts sets no experimental.staleTimes", async () => {
-		const source = await readFile(
-			new URL("../../next.config.ts", import.meta.url),
-			"utf8",
-		);
+		const source = await readNextConfigSource();
 		// Strip comments before matching. The `[^:]` guard keeps `https://…` inside a string
 		// literal from being read as the start of a line comment.
 		const code = source
