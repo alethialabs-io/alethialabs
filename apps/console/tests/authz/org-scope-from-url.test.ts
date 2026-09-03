@@ -48,17 +48,39 @@ vi.mock("@/lib/auth/owner", () => ({
 		activeOrgId: ORG_A,
 	})),
 }));
-vi.mock("@/lib/auth/scope", () => ({ getActiveScope: vi.fn(async (userId: string, orgId?: string) => ({ userId, orgId: orgId ?? userId })) }));
+/**
+ * WHICH EDITION'S SCOPE RESOLVER IS ANSWERING. This is not decoration — it is the axis the first
+ * version of this suite got wrong, and the reason a defect that would have 500'd every `/{org}/…`
+ * page in the AGPL build passed every test.
+ *
+ *  · `enterprise` honours its org argument (ee/src/scope.ts validates the `member` row).
+ *  · `community` IGNORES it and always answers the personal scope — `lib/auth/scope.ts` takes the
+ *    `: { userId, orgId: userId }` branch whenever `getEnterprise()` is null, while community still
+ *    provisions real organizations with real slugs and real `member` rows.
+ *
+ * Mocking only the first is mocking the assumption under test.
+ */
+let edition: "enterprise" | "community" = "enterprise";
+vi.mock("@/lib/auth/scope", () => ({
+	getActiveScope: vi.fn(async (userId: string, orgId?: string) => ({ userId, orgId: orgId ?? userId })),
+}));
 
 import { currentActor } from "@/lib/authz/guard";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
+import { ForbiddenError } from "@/lib/authz/types";
 
 /** The org id `currentActor()` handed to the scope resolver — what every reader is scoped by. */
 const scopedWith = () => vi.mocked(getActiveScope).mock.calls.at(-1)?.[1];
 
 beforeEach(() => {
-	vi.mocked(getActiveScope).mockClear();
+	vi.mocked(getActiveScope).mockReset();
+	vi.mocked(getActiveScope).mockImplementation(async (userId: string, orgId?: string) =>
+		edition === "community"
+			? { userId, orgId: userId }
+			: { userId, orgId: orgId ?? userId },
+	);
+	edition = "enterprise";
 	orgRow = [];
 	requestPath = null;
 });
@@ -137,7 +159,44 @@ describe("what is a refusal, and is not a fallback", () => {
 		orgRow = [{ id: ORG_B }];
 		const ORG_C = "org-cccccccc-0000-0000-0000-000000000003";
 		vi.mocked(getActiveScope).mockResolvedValueOnce({ userId: USER, orgId: ORG_C });
-		await expect(currentActor()).rejects.toThrow(/NOT served from a substituted org/);
+		await expect(currentActor()).rejects.toThrow(/landed on a different organization/);
+	});
+
+	// A REFUSAL MUST BE A ForbiddenError, not a bare Error: `authorize`'s callers classify on the
+	// type to answer 403, and `[org]/layout.tsx` matches the bare string "Unauthorized" exactly to
+	// bounce to sign-in — which a valid session with a wrong address must not do.
+	it("...and both refusals are ForbiddenError, so they are classified rather than 500s", async () => {
+		requestPath = "/not-my-org/evidence";
+		orgRow = [];
+		await expect(currentActor()).rejects.toBeInstanceOf(ForbiddenError);
+		requestPath = "/acme/x";
+		orgRow = [{ id: ORG_B }];
+		vi.mocked(getActiveScope).mockResolvedValueOnce({ userId: USER, orgId: "org-c" });
+		await expect(currentActor()).rejects.toBeInstanceOf(ForbiddenError);
+	});
+});
+
+// THE ARM WHOSE ABSENCE WOULD HAVE TAKEN THE WHOLE OPEN-CORE BUILD DOWN. Community's resolver
+// ignores its org argument and always answers the personal scope, so in that edition EVERY org slug
+// resolves to `orgId === userId`. Read as a substitution, that is a refusal on every `/{org}/…`
+// page in the AGPL build; read correctly, it is what "single tenant" means. The membership join has
+// already proved the caller belongs to the named org — community just has one tenant to put them in.
+describe("the single-tenant edition is not a substitution", () => {
+	beforeEach(() => {
+		edition = "community";
+	});
+
+	it("community resolves a real org slug to the personal scope instead of refusing", async () => {
+		requestPath = "/acme/hero-app/environments";
+		orgRow = [{ id: ORG_B }];
+		const actor = await currentActor();
+		expect(actor.orgId).toBe(USER);
+	});
+
+	it("...and an org the caller is NOT a member of is still refused there", async () => {
+		requestPath = "/not-my-org/evidence";
+		orgRow = [];
+		await expect(currentActor()).rejects.toBeInstanceOf(ForbiddenError);
 	});
 
 
@@ -147,7 +206,7 @@ describe("what is a refusal, and is not a fallback", () => {
 	it("an address naming an org the caller is not in THROWS, and never yields the session's org", async () => {
 		requestPath = "/not-my-org/evidence";
 		orgRow = [];
-		await expect(currentActor()).rejects.toThrow(/^Forbidden: .*not a member of/);
+		await expect(currentActor()).rejects.toThrow(/not a member of/);
 		expect(getActiveScope).not.toHaveBeenCalled();
 	});
 });

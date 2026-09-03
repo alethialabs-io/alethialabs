@@ -33,17 +33,38 @@ import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { cache } from "react";
 import { ORG_PATH_HEADER } from "@/lib/authz/org-path";
+import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import { member, organization } from "@/lib/db/schema";
 import { PERSONAL_ORG_SLUG, RESERVED_SLUGS } from "@/lib/routing";
+
+/**
+ * Is this the "called outside a request" error, as opposed to a real failure?
+ *
+ * Next throws for a `headers()` call with no request context — a script, a unit test, a module
+ * evaluated at build time. That is the only condition the null fallback below is written for.
+ * Matched on the message because Next exports no error type for it; a message that stops matching
+ * turns this into a rethrow, which is the safe direction: a loud failure rather than a silent
+ * return to session-derived tenancy.
+ */
+function isOutsideRequestScope(err: unknown): boolean {
+	const message = err instanceof Error ? err.message : String(err);
+	return /outside a request scope|was called outside a request|headers\(\) .*outside/i.test(message);
+}
 
 /** The `{org}` segment of the current request, or null when the address names no org. */
 async function urlOrgSlug(): Promise<string | null> {
 	let path: string | null = null;
 	try {
 		path = (await headers()).get(ORG_PATH_HEADER);
-	} catch {
-		// Outside a request scope (a script, a unit test, the MCP path before it binds an actor).
+	} catch (err) {
+		// NARROW ON PURPOSE. `return null` here means "the address names no org", which sends
+		// `currentActor()` back to the session — i.e. every failure inside `headers()` would
+		// silently restore the exact defect this module removes. That is the inverse of the rule
+		// stated two files away (`guard.ts`: "A lookup that FAILS is never reported that way"), so
+		// only the one condition the fallback is FOR is swallowed: there is no request to read.
+		// Anything else propagates.
+		if (!isOutsideRequestScope(err)) throw err;
 		return null;
 	}
 	if (!path) return null;
@@ -90,11 +111,14 @@ export const urlScopedOrgId = cache(
 		// tree turns this into the 404 it already renders for an unknown org
 		// (`[org]/layout.tsx` → `notFound()`); a reader reached some other way gets an error.
 		if (!org) {
-			// "Forbidden", not "Unauthorized" — `[org]/layout.tsx` matches the bare word EXACTLY to
-			// redirect to sign-in, and a session that is perfectly valid must not be sent there.
-			throw new Error(
-				`Forbidden: the address names organization \`${slug}\`, which this account is not a ` +
-					"member of. The scope was NOT silently resolved from the session instead.",
+			// A ForbiddenError, not a bare Error: callers classify on that type to answer 403, and
+			// `[org]/layout.tsx` matches the bare string "Unauthorized" EXACTLY to bounce to
+			// sign-in — a session that is perfectly valid must not be sent there.
+			throw new ForbiddenError(
+				"view",
+				{ type: "org" },
+				`the address names organization \`${slug}\`, which this account is not a member of; ` +
+					"the scope was NOT resolved from the session instead",
 			);
 		}
 		return org.id;

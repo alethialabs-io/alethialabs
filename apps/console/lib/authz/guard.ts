@@ -33,24 +33,40 @@ export async function currentActor(): Promise<Actor> {
 	const urlOrgId = await urlScopedOrgId(userId);
 	if (urlOrgId === null) return getActiveScope(userId, activeOrgId);
 
-	// AND IT GOES THROUGH resolveNamedOrgScope, NOT STRAIGHT TO getActiveScope. An address segment
-	// is a named org in exactly the sense that function means: an assertion about THIS request, not
-	// a stored preference. The resolver may substitute — on a miss it falls back to an org the user
-	// does belong to, deliberately, because a stale session must not lock anyone out of the console
-	// — and following that substitution here would answer a request addressed to B from some third
-	// org's scope. #3863 is that bug on the CLI's `--org` header; the URL segment is the same shape.
-	const actor = await resolveNamedOrgScope(userId, urlOrgId);
-	if (!actor) {
-		// NOT the bare string "Unauthorized": `[org]/layout.tsx` matches that EXACTLY to bounce to
-		// sign-in, and this is not a session problem — the session is fine and the address is not
-		// the caller's to ask for. Falling through to that layout's `notFound()` is the right
-		// landing, and it matches how `resolveOrgScope` already answers an unknown org.
-		throw new Error(
-			"Forbidden: the address names an organization this account's scope did not resolve to. " +
-				"The request was NOT served from a substituted org.",
-		);
-	}
-	return actor;
+	// WHAT COUNTS AS THE RESOLVER AGREEING. `getActiveScope` treats its org argument as a
+	// PREFERENCE and substitutes on a miss — deliberately, so a stale session cannot lock anyone
+	// out — so the answer has to be checked rather than trusted. But the check is THREE-WAY here,
+	// not the two-way `resolveNamedOrgScope` applies to a CLI `--org` header, and the third arm is
+	// the difference between this working and the open-core build serving nothing at all:
+	const actor = await getActiveScope(userId, urlOrgId);
+
+	// 1. It landed on the org the address named. The multi-tenant answer.
+	if (actor.orgId === urlOrgId) return actor;
+
+	// 2. It collapsed to the PERSONAL scope — which is what a single-tenant edition means, not a
+	//    substitution. `lib/auth/scope.ts` ignores its org argument entirely when `getEnterprise()`
+	//    is null and always answers `orgId === userId`, while community still provisions real
+	//    organizations with real slugs and real `member` rows (`lib/auth/onboarding.ts`
+	//    provisionPrimaryOrg). So in community EVERY org slug resolves here, and refusing this arm
+	//    would 500 every `/{org}/…` page in the AGPL build. The membership join in
+	//    `org-scope.ts` has already proved the caller belongs to the named org; community simply
+	//    has one tenant to put them in. `ensureCliOrgAccess` carries the same rescue for the same
+	//    reason.
+	if (actor.orgId === userId) return actor;
+
+	// 3. A DIFFERENT named org. That is the substitution, and following it would answer a request
+	//    addressed to B from some third org's scope — #3863, on the CLI's `--org` header, reaching
+	//    the console by a second route.
+	//
+	//    A ForbiddenError, not a bare Error: `authorize`'s callers classify on that type to answer
+	//    403, and `[org]/layout.tsx` matches the bare string "Unauthorized" EXACTLY to bounce to
+	//    sign-in — which this is not. The session is fine; the address is not the caller's to ask
+	//    for.
+	throw new ForbiddenError(
+		"view",
+		{ type: "org", id: urlOrgId },
+		"the scope resolver landed on a different organization; the request was NOT served from it",
+	);
 }
 
 /**

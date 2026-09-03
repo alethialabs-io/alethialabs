@@ -36,6 +36,26 @@ import { orgHref } from "@/lib/routing";
  * split button: clicking the org name/avatar navigates to the org home, only the chevron opens
  * the switcher.
  */
+/**
+ * Where choosing `orgId` should navigate to, or null when there is nowhere to go.
+ *
+ * A pure function because the decision is the testable half and the dropdown is not: the switcher's
+ * menu renders through a portal that needs layout, which jsdom does not have, so a component test
+ * can click the trigger and never see the item. This keeps the part #4133 depends on — that a
+ * switch produces the TARGET org's url and not a refresh of the one being left — pinned at unit
+ * speed, and leaves only the two-line `push`/`refresh` wiring to the e2e path.
+ */
+export function switchTargetHref(
+	// `slug: string | null`, not `string`: #4134 made `WorkspaceOrg.slug` nullable so a slugless org
+	// stops impersonating the personal workspace. A `string` parameter here would not type-check
+	// against the store's own value, and the `slug ?` guard below already answers the null case.
+	organizations: readonly { id: string; slug: string | null }[],
+	orgId: string,
+): string | null {
+	const slug = organizations.find((o) => o.id === orgId)?.slug;
+	return slug ? orgHref(slug) : null;
+}
+
 export function OrgSwitcher() {
 	const router = useRouter();
 	const orgSlug = useActiveOrgSlug();
@@ -54,37 +74,32 @@ export function OrgSwitcher() {
 	const handleSelect = (orgId: string) => {
 		setOpen(false);
 		if (orgId === activeOrgId) return;
-		const target = organizations.find((o) => o.id === orgId);
-		// NO `~` FALLBACK. `organizations.slug` is `text().unique()` with no notNull, so a real org
-		// can have none. This used to read `orgHref(target?.slug ?? PERSONAL_ORG_SLUG)` while
-		// `getWorkspaceContext` ALSO aliased a null slug onto `~` — two layers agreeing to call a
-		// real org the personal workspace, so picking it navigated to a different tenant silently,
-		// and left the store pointing at the org that was asked for, which made the
-		// `orgId === activeOrgId` early return above block every retry.
+		// The extracted, TESTED helper from this branch (tests/components/org-switcher-target.test.ts),
+		// kept over the inline lookup that #4134 landed — same answer, and this one is reachable from
+		// a test without mounting the component.
+		const target = switchTargetHref(organizations, orgId);
+		// NO `~` FALLBACK, AND NO REFRESH FALLBACK. `organizations.slug` is `text().unique()` with no
+		// notNull, so a real org can have none, and `getWorkspaceContext` used to alias that onto `~`
+		// — two layers agreeing to call a real org the personal workspace, so picking it navigated to
+		// a different tenant silently. #4134 removed both halves; `WorkspaceOrg.slug` is
+		// `string | null` now and reports the truth.
 		//
-		// Both halves are gone: `WorkspaceOrg.slug` is `string | null` and reports the truth, and
-		// there is no URL to build here for a null. Refusing to move is the only honest branch —
-		// not moving beats moving somewhere else. The list renders such an org disabled, so this is
-		// the second line of defence rather than the first.
-		if (!target?.slug) return;
-		// NAVIGATE to the chosen org, don't refresh in place, and do NOT persist the session
-		// first. The `{org}` URL segment is what scopes the request — `[org]/layout.tsx` calls
-		// `resolveOrgScope`, which itself calls `setActiveOrganization` — so a `router.refresh()`
-		// here re-runs that layout against the org still in the address bar and switches the
-		// session straight back.
+		// This branch originally answered a null target with `router.refresh()`. That is the same bug
+		// from the other side: a refresh re-resolves the tenant from the URL being LEFT, so the chip
+		// would read the new org while every server read stayed on the old one. Refusing to move is
+		// the only honest branch — not moving beats moving somewhere else. The list renders such an
+		// org disabled, so this is the second line of defence rather than the first.
+		if (!target) return;
+		// NAVIGATE, and do NOT persist the session first. The `{org}` URL segment is what scopes the
+		// request — `[org]/layout.tsx` calls `resolveOrgScope`, which itself calls
+		// `setActiveOrganization` — so the destination writes the session.
 		//
-		// The `await switchOrg(orgId)` that used to sit above this comment was the same bug in the
-		// other direction: it persisted the session to the TARGET org before navigating, so every
-		// server action, in-flight refetch and prefetch still running on the CURRENT page executed
-		// under an org its URL did not name — the exact session-disagrees-with-URL window this PR
-		// exists to close. The destination layout writes the session, so nothing needed it.
-		//
-		// It looked like it worked before #4089 only because the sidebar built its hrefs from
-		// the store rather than the URL: `switchOrg` moved the store, the nav silently repointed
-		// at the other org, and the switch took effect on the user's next click. That is the same
-		// href-disagrees-with-address-bar conflation that let a PREFETCH move the tenant, so it
-		// is not a mechanism to keep. The URL is authoritative now, and a switch has to move it.
-		router.push(orgHref(target.slug));
+		// The `await switchOrg(orgId)` this branch had here persisted the session to the TARGET org
+		// BEFORE navigating, so every server action, in-flight refetch and prefetch still running on
+		// the CURRENT page executed under an org its URL did not name — the exact
+		// session-disagrees-with-URL window both #4133 and #4134 exist to close. #4134 removed it and
+		// it is not reinstated here; `switchOrg` is no longer destructured in this component.
+		router.push(target);
 	};
 
 	const startCreate = () => {
