@@ -264,6 +264,118 @@ func TestGetClusters_WalksEveryPage(t *testing.T) {
 	}
 }
 
+// TestGetClustersPage_AbsentPageBecomesAnExactSinglePage covers the state the WIRE cannot produce
+// but the DECODER can.
+//
+// `page` is a value, not a pointer, so a response from a control plane older than #3672 — which
+// sends no `page` object at all — decodes to the ZERO PageInfo. That is harmless to GetClusters
+// (NextCursor is "", so the walk stops after one request) and silently wrong to anything that
+// renders it: Total 0 beside a screenful of rows, and a Mode that is neither "exact" nor "capped".
+// The server's schema makes `mode` required precisely so a renderer never meets a third state;
+// without the fill-in the CLIENT reintroduces one.
+//
+// Driven through GetClustersPage rather than asserted on a PageInfo literal, because the method is
+// where the fill-in lives and the pager is the caller that reaches it.
+func TestGetClustersPage_AbsentPageBecomesAnExactSinglePage(t *testing.T) {
+	cases := []struct {
+		name string
+		rows []map[string]any
+		want PageInfo
+	}{
+		{
+			name: "the whole collection, as a pre-#3672 server sends it",
+			rows: []map[string]any{
+				{"id": "c1", "cluster_name": "one"},
+				{"id": "c2", "cluster_name": "two"},
+				{"id": "c3", "cluster_name": "three"},
+			},
+			want: PageInfo{Mode: PageModeExact, Limit: 3, Total: 3, NextCursor: ""},
+		},
+		{
+			// A whole-collection response with nothing in it. Limit 0 is not a page size the
+			// server served; it is the honest reading of "everything, and everything is none".
+			name: "an empty collection",
+			rows: []map[string]any{},
+			want: PageInfo{Mode: PageModeExact, Limit: 0, Total: 0, NextCursor: ""},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertAuth(t, r)
+				if r.URL.Path != "/api/cli/clusters" {
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+				// No `page` key at all — the shape this test exists for.
+				json.NewEncoder(w).Encode(map[string]any{"clusters": tc.rows})
+			}))
+
+			page, err := client.GetClustersPage(PageOpts{})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(page.Clusters) != len(tc.rows) {
+				t.Fatalf("expected %d clusters, got %d", len(tc.rows), len(page.Clusters))
+			}
+			if page.Page != tc.want {
+				t.Errorf("Page = %+v, want %+v", page.Page, tc.want)
+			}
+			// The two things a pager reads, stated as the properties rather than as the struct:
+			// Total must match the rows on screen, and there must be nothing to follow, because a
+			// legacy response IS the whole collection.
+			if page.Page.Total != len(page.Clusters) {
+				t.Errorf("Total %d disagrees with the %d rows returned", page.Page.Total, len(page.Clusters))
+			}
+			if page.Page.HasMore() {
+				t.Error("HasMore() on a whole-collection response: the walk would never end")
+			}
+			// Neither "exact" nor "capped" is the third state the vocabulary forbids, and it is
+			// what an un-filled zero PageInfo would leave here.
+			if page.Page.Mode != PageModeExact && page.Page.Mode != PageModeCapped {
+				t.Errorf("Mode %q is neither %q nor %q", page.Page.Mode, PageModeExact, PageModeCapped)
+			}
+		})
+	}
+}
+
+// TestGetClustersPage_RealPageIsNotRewritten is the NEGATIVE CONTROL for the test above, and the
+// reason the fill-in keys on Mode rather than on a zero-looking number.
+//
+// A capped page is the case that would hurt: Total is a FLOOR there — the server stopped counting
+// at its ceiling — so a discriminator of `Total == 0` or `Limit == 0`, or an unconditional
+// overwrite, turns "1000+" into the two rows in hand. That is a wrong answer that looks precise,
+// which is the exact failure PageModeCapped exists to prevent.
+func TestGetClustersPage_RealPageIsNotRewritten(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		json.NewEncoder(w).Encode(map[string]any{
+			"clusters": []map[string]any{
+				{"id": "c1", "cluster_name": "one"},
+				{"id": "c2", "cluster_name": "two"},
+			},
+			"page": map[string]any{
+				"mode": "capped", "limit": 2, "total": 1000, "next_cursor": "CURSOR-2",
+			},
+		})
+	}))
+
+	page, err := client.GetClustersPage(PageOpts{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := PageInfo{Mode: PageModeCapped, Limit: 2, Total: 1000, NextCursor: "CURSOR-2"}
+	if page.Page != want {
+		t.Errorf("Page = %+v, want %+v", page.Page, want)
+	}
+	// Said as the property too: the floor survives, and it is NOT the row count.
+	if page.Page.Total == len(page.Clusters) {
+		t.Errorf("the capped floor was overwritten with the %d rows in hand", len(page.Clusters))
+	}
+	if !page.Page.IsCapped() {
+		t.Error("IsCapped() false on a page the server marked capped")
+	}
+}
+
 // --- GetCloudIdentities ---
 
 func TestGetCloudIdentities_Success(t *testing.T) {

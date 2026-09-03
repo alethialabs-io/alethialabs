@@ -53,7 +53,7 @@ vi.mock("@/lib/authz/guard", () => ({
 
 import { GET } from "@/app/api/cli/clusters/route";
 import { authorizeCli } from "@/lib/authz/guard";
-import type { PageInfo } from "@/lib/cli/paging";
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, type PageInfo } from "@/lib/cli/paging";
 import { getServiceDb } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 
@@ -344,6 +344,42 @@ describeIfDb("GET /api/cli/clusters — a joined scope, counted and walked (#367
 		expect(rows).toHaveLength(1);
 		// `production` is the default; `staging` exists on the same project and must not appear.
 		expect(rows[0].environment).toBe("production");
+	});
+
+	it("serves the WHOLE collection to a caller that asked for no page — the old-binary path", async () => {
+		// THE COMPATIBILITY CLAIM, DRIVEN END TO END. Every other case in this file names a
+		// `?limit=`, so this is the only one that sends what a DEPLOYED CLI binary actually sends:
+		// neither a limit nor a cursor.
+		//
+		// Why it earns a database. This endpoint returned the whole collection until #3672, so
+		// every binary older than the conversion reads `clusters` once and stops. For
+		// `alethia cluster list` that is a short list. For `alethia cluster get <name>` it is
+		// worse: `resolveCluster` (apps/cli/cmd/clusters_get.go) treats "no match in this slice"
+		// as a HARD ERROR — "no cluster matches your selector" — about a cluster that plainly
+		// exists, indistinguishable from a typo. So a request that asked for no page is served at
+		// MAX_PAGE_SIZE, and this is where that is a fact about a RESPONSE rather than a fact
+		// about a fake.
+		actingAs(USER_A, ORG_A);
+		const body = await get("");
+
+		// THE DISCRIMINATING ASSERTION, and the only one here that is. `page.limit` echoes what
+		// was served, so it is red the moment the route falls back to DEFAULT_PAGE_SIZE — which
+		// the row assertions below CANNOT see, because ORG_A_CLUSTERS (16) sits under BOTH
+		// defaults. Seeding 50+ clustered projects to make the row set discriminating would cost
+		// the suite far more than this line does and would prove the same thing.
+		expect(body.page.limit).toBe(MAX_PAGE_SIZE);
+		expect(MAX_PAGE_SIZE).toBeGreaterThan(DEFAULT_PAGE_SIZE);
+
+		// And the claim itself: one request, no cursor, the entire collection, nothing to follow.
+		// A caller that reads `clusters` and stops here has lost nothing.
+		expect(body.clusters.map((c) => c.id).sort()).toEqual(
+			[...orgAClusterIds].sort(),
+		);
+		expect(body.page.next_cursor).toBeNull();
+		expect(body.page.mode).toBe("exact");
+		expect(body.page.total).toBe(ORG_A_CLUSTERS);
+		// Still the org's own collection: raising the page widened the WINDOW, not the scope.
+		for (const c of body.clusters) expect(orgBClusterIds).not.toContain(c.id);
 	});
 
 	it("walks the cursors to exhaustion with no gap and no duplicate", async () => {
