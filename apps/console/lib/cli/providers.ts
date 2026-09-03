@@ -127,6 +127,40 @@ export async function resolveCliProvider(
 			? payload.service_token_org_id
 			: undefined;
 	if (pinnedOrg) {
+		// THE MINTING PROFILE'S MEMBERSHIP IS RE-CHECKED ON EVERY REQUEST, and until #4041 it was
+		// not — this branch resolved the pinned scope and returned. `authorizeCli` has always done
+		// the re-check (guard.ts, the `service_token_org_id` branch) and says why: a token acts as
+		// the profile that created it, so it must stop working the moment that profile stops being
+		// a member. These five provider routes deliberately bypass `authorizeCli`, so they
+		// inherited none of it — and they are the routes that CREATE AND RESET CLOUD IDENTITIES.
+		//
+		// The case is offboarding, which is the one a service token most needs to get right: a
+		// token is dropped into CI, its author leaves, nobody revokes it because revoking tokens is
+		// not part of removing a person. Reachable with NO header at all, from every scripted
+		// `connector` call in existence.
+		//
+		// THE ACTOR PASSED IN IS THE DEFAULT SCOPE, NOT THE PINNED ONE, and that is the whole
+		// correctness of it — the same reasoning the header branch below states at length.
+		// `ensureCliOrgAccess` opens with `if (actor.orgId === orgId) return null`, a fast path
+		// sound only when `actor` was resolved from something the caller did not supply. Hand it a
+		// scope resolved FROM `pinnedOrg` and it compares the pin to itself, returns null, and the
+		// membership query never runs: the check would trust exactly the input it exists to verify.
+		//
+		// That fast path cannot mask an offboarded caller here. `getActiveScope(userId)` with no
+		// org resolves the caller's earliest REMAINING membership, else their personal org
+		// (ee/src/scope.ts, case 3) — never an org they have been removed from. So a departed
+		// member's default can never equal the pin, the query always runs for them, and the answer
+		// is a 403. A still-member whose default happens to BE the pin takes the fast path, which
+		// is the correct answer by a cheaper route.
+		//
+		// Absence is not error: `resolveActiveScope` lets a failed lookup propagate rather than
+		// reporting it as a missing membership, so a database blip surfaces as a 500 and never as
+		// a silent refusal or a silent fallback.
+		const defaultScope = await getActiveScope(userId);
+		const denied = await ensureCliOrgAccess(defaultScope, userId, pinnedOrg);
+		if (denied) {
+			return { userId: null, scope: null, provider: null, errorResponse: denied };
+		}
 		return { userId, scope: await getActiveScope(userId, pinnedOrg), provider, errorResponse: null };
 	}
 
