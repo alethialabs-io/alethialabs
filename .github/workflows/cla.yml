@@ -19,10 +19,19 @@ on:
 # PR #3562, which re-triggers every `pull_request` workflow on EVERY merge into dev. `CI` had
 # already cancelled its own superseded runs and showed 1; these seven each showed a full stack.
 #
-# Scoped to `github.ref`, so this only ever cancels an OLDER run of the SAME workflow on the SAME
-# PR or branch — the ordinary "I pushed again" case. It cannot cancel a run for a different ref.
+# Keyed on the PR NUMBER rather than `github.ref`, and this workflow is the ONE of the seven that
+# must be. The other six trigger on `pull_request`, where GitHub sets `GITHUB_REF` to
+# `refs/pull/<N>/merge` — already per-PR, so `github.ref` is correct there and should stay.
+# This one triggers on `pull_request_target`, where `GITHUB_REF` is the BASE branch instead. Every
+# open PR in the repo would therefore render the SAME group, `contribution-legal-refs/heads/dev`,
+# and each new PR would cancel the CLA check of every other open PR — strictly worse than the
+# queueing this comment was written to fix, and invisible until two PRs are open at once.
+#
+# `|| github.ref` covers any trigger with no pull-request context. Note that this form is NOT a
+# blanket improvement: `infra-sandbox.yml` and `infra-templates.yml` also fire on `push`, where the
+# number renders EMPTY, so sweeping them to it would collapse every push to `main` into one group.
 concurrency:
-  group: contribution-legal-${{ github.ref }}
+  group: contribution-legal-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
