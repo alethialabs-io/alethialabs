@@ -69,7 +69,19 @@ func promotionListRows(promos []api.Promotion, outFmt string) [][]string {
 		// The Created cell echoed the wire's RFC3339 — `2026-03-09T15:04:05Z` in a column a person
 		// reads, while the console showed `9 Mar 2026, 15:04` for the same instant. Handed to this
 		// lane by the governance lane (#3703), which was right to wait: `ui.Stamp` did not exist yet.
-		rows[i] = []string{p.ID, p.Source, p.Target, p.Status, ui.Cell(outFmt, p.CreatedAt, ui.Stamp(p.CreatedAt))}
+		//
+		// The Status cell echoed the raw enum — `PENDING_APPROVAL`, shouting, with no glyph — while
+		// every other list in the CLI and the whole console drew the same statuses as a dot and a
+		// word. It goes through ui.StatusCell now, which is #3660 case 7: a promotion status is an
+		// ordinary word in the one vocabulary and needed no special case, only a renderer.
+		//
+		// Through ui.Cell, because this cell PARSED: a script reading `-o csv` got `SUCCEEDED`, and
+		// #3659's floor is that improving a table for a reader must not take that away. The other
+		// four status tables were never machine-readable, which is why they pass StatusCell
+		// directly and #4033 owns deciding all of them together.
+		rows[i] = []string{p.ID, p.Source, p.Target,
+			ui.Cell(outFmt, p.Status, ui.StatusCell(p.Status)),
+			ui.Cell(outFmt, p.CreatedAt, ui.Stamp(p.CreatedAt))}
 	}
 	return rows
 }
@@ -143,7 +155,17 @@ func approvalRows(approvals []api.PromotionApproval, outFmt string) [][]string {
 		// StampOrDash, not StrOrDash: `decided_at` is a TIMESTAMP, and passing it through the string
 		// helper printed the wire form while dashing correctly. The dash rule is the same; the
 		// rendering was the accident.
-		rows[i] = []string{a.Status, ui.StrOrDash(a.Name), ui.StrOrDash(a.RequiredRole),
+		// approval_status is `pending | approved | rejected`, and until #4117 the vocabulary had a
+		// word for only the first: the other two fell to the idle fallback and drew ○, whose own
+		// documented meaning is "present, reachable, and not doing anything". On the one table an
+		// operator reads to find out who is holding a promotion up, that is not a missing signal
+		// but a wrong one — every row a hollow dot, and `approved` and `rejected` identical.
+		//
+		// The five words are in STATUS_TIER now (approved → active, rejected/blocked → failed,
+		// pending_approval/pending_plan → pending; see RULINGS in status-vocab.ts for why each),
+		// so both surfaces resolve them the same way and neither has to special-case a promotion.
+		rows[i] = []string{ui.Cell(outFmt, a.Status, ui.StatusCell(a.Status)),
+			ui.StrOrDash(a.Name), ui.StrOrDash(a.RequiredRole),
 			ui.Cell(outFmt, ui.Wire(a.DecidedAt), ui.StampOrDash(a.DecidedAt))}
 	}
 	return rows
@@ -162,7 +184,7 @@ func runPromotionGet(c apiClient, out io.Writer, format, project, promotionID st
 	rows := [][]string{
 		{"id", p.ID},
 		{"promotion", fmt.Sprintf("%s %s %s", p.Source, ui.SymbolArrow, p.Target)},
-		{"status", p.Status},
+		{"status", ui.Cell(format, p.Status, ui.StatusCell(p.Status))},
 		{"approvals", fmt.Sprintf("%d/%d", p.Approved, p.Required)},
 		{"initiator", ui.StrOrDash(p.Initiator)},
 		{"created", ui.Cell(format, p.CreatedAt, ui.Stamp(p.CreatedAt))},

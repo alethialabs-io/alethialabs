@@ -24,6 +24,41 @@ func TestDashIsTheEmDash(t *testing.T) {
 	}
 }
 
+// TestYesNoIsNotTheAbsenceSentinel is the negative half, and the reason YesNo changed at all: an
+// alert rule that is switched off and one whose `enabled` field never arrived rendered the same
+// cell. The dash means "we could not fill this"; a disabled rule is a fact.
+func TestYesNoIsNotTheAbsenceSentinel(t *testing.T) {
+	if YesNo(false) == SymbolDash {
+		t.Errorf("YesNo(false) = %q, the empty-value sentinel — 'no' and 'we do not know' must not be one cell", YesNo(false))
+	}
+	if YesNo(true) == SymbolDefault {
+		t.Errorf("YesNo(true) = %q, which is the 'this is the default one' badge — two statements, one glyph", YesNo(true))
+	}
+}
+
+// TestDefaultCellIsTheOneMarkForTheOneRow pins the OTHER half of that separation, which the first
+// cut of #3660 got wrong: `project env list` drew its Default column through YesNo while
+// `runner list` and `org list` drew the same fact as `◆`, so one product marked the default
+// environment `●` and the default runner `◆`.
+//
+// The wants are the runes and the empty string, written out rather than read back from
+// SymbolDefault — a test that asked the implementation what it does would pass for the split.
+func TestDefaultCellIsTheOneMarkForTheOneRow(t *testing.T) {
+	if got := DefaultCell(true); got != "◆" {
+		t.Errorf("DefaultCell(true) = %q, want the brand's default mark ◆", got)
+	}
+	if got := DefaultCell(false); got != "" {
+		t.Errorf("DefaultCell(false) = %q, want an empty cell — the column asks WHICH ONE, so every other row is blank", got)
+	}
+	// It is NOT the boolean renderer, and the two must not converge back onto one glyph.
+	if DefaultCell(true) == YesNo(true) {
+		t.Error("DefaultCell(true) and YesNo(true) are the same glyph — 'this is the default one' and 'this row is switched on' are two statements")
+	}
+	if DefaultCell(false) == SymbolDash {
+		t.Error("DefaultCell(false) is the empty-value sentinel; a non-default row is a fact, not a cell nobody could fill")
+	}
+}
+
 func TestOrDashFamily(t *testing.T) {
 	s := "value"
 	empty := ""
@@ -31,18 +66,23 @@ func TestOrDashFamily(t *testing.T) {
 	f := 12.5
 
 	cases := map[string]struct{ got, want string }{
-		"OrDash passes a value through":      {OrDash("x"), "x"},
-		"OrDash on empty":                    {OrDash(""), SymbolDash},
-		"StrOrDash passes a value through":   {StrOrDash(&s), "value"},
-		"StrOrDash on nil":                   {StrOrDash(nil), SymbolDash},
-		"StrOrDash on a pointer to empty":    {StrOrDash(&empty), SymbolDash},
-		"IntOrDash renders the number":       {IntOrDash(&n), "7"},
-		"IntOrDash on nil":                   {IntOrDash(nil), SymbolDash},
-		"IntOrDash renders a legitimate 0":   {IntOrDash(new(int)), "0"},
-		"FloatOrDash renders the amount":     {FloatOrDash(&f), "$12.50"},
-		"FloatOrDash on nil":                 {FloatOrDash(nil), SymbolDash},
-		"YesNo true":                         {YesNo(true), SymbolDefault},
-		"YesNo false":                        {YesNo(false), SymbolDash},
+		"OrDash passes a value through":    {OrDash("x"), "x"},
+		"OrDash on empty":                  {OrDash(""), SymbolDash},
+		"StrOrDash passes a value through": {StrOrDash(&s), "value"},
+		"StrOrDash on nil":                 {StrOrDash(nil), SymbolDash},
+		"StrOrDash on a pointer to empty":  {StrOrDash(&empty), SymbolDash},
+		"IntOrDash renders the number":     {IntOrDash(&n), "7"},
+		"IntOrDash on nil":                 {IntOrDash(nil), SymbolDash},
+		"IntOrDash renders a legitimate 0": {IntOrDash(new(int)), "0"},
+		"FloatOrDash renders the amount":   {FloatOrDash(&f), "$12.50"},
+		"FloatOrDash on nil":               {FloatOrDash(nil), SymbolDash},
+		// YesNo no longer returns the dash: `Enabled  —` said "we could not read this", which is a
+		// different statement from "this is switched off". It borrows the two tiers that already
+		// mean present-and-active and present-and-inert. The wants are the runes, not
+		// PlainGlyph("active") — a test that asked the implementation what it does would pass for
+		// the `◆ / —` pair this replaced.
+		"YesNo true":                         {YesNo(true), "●"},
+		"YesNo false":                        {YesNo(false), "◌"},
 		"GateGlyph on":                       {GateGlyph(true), SymbolSuccess},
 		"GateGlyph off":                      {GateGlyph(false), SymbolDash},
 		"TruncID leaves a short id alone":    {TruncID("abc"), "abc"},
@@ -235,14 +275,19 @@ func TestStatusCell(t *testing.T) {
 		"ACTIVE":       SymbolOnline + " active",
 		"ONLINE":       SymbolOnline + " online",
 		"PROVISIONING": SymbolPending + " provisioning",
-		"DRAINING":     SymbolPending + " draining",
+		"DRAINING":     SymbolOffline + " draining",
 		"QUEUED":       SymbolPending + " queued",
 		"CREATING":     SymbolPending + " creating",
 		"UPDATING":     SymbolPending + " updating",
 		"FAILED":       SymbolError + " failed",
-		"DESTROYED":    SymbolDash + " destroyed",
+		"DESTROYED":    "◌ destroyed",
 		"OFFLINE":      SymbolOffline + " offline",
 		"":             SymbolOffline + " ",
+		// The wire shouts for six pgEnums and whispers for the rest; the cell folds either way.
+		// `clusters_list.go` derived the glyph and the label from differently-cased inputs in one
+		// expression before this, so the two halves of one cell could disagree.
+		"active":     SymbolOnline + " active",
+		"destroying": SymbolPending + " destroying",
 	}
 	for status, want := range cases {
 		if got := StatusCell(status); got != want {
@@ -250,11 +295,11 @@ func TestStatusCell(t *testing.T) {
 		}
 	}
 
-	// The glyph must be the SAME decision PlainStatusDot makes, not a copy of its table. A second
+	// The glyph must be the SAME decision PlainGlyph makes, not a copy of its table. A second
 	// switch here would be the duplication this function was hoisted to end, one package over.
-	for _, status := range []string{"ACTIVE", "DRAINING", "FAILED", "DESTROYED", "WHATEVER"} {
-		if !strings.HasPrefix(StatusCell(status), PlainStatusDot(status)+" ") {
-			t.Errorf("StatusCell(%q) does not lead with PlainStatusDot(%q)", status, status)
+	for _, status := range []string{"ACTIVE", "DRAINING", "FAILED", "DESTROYED", "WHATEVER", "active"} {
+		if !strings.HasPrefix(StatusCell(status), PlainGlyph(status)+" ") {
+			t.Errorf("StatusCell(%q) does not lead with PlainGlyph(%q)", status, status)
 		}
 	}
 }
