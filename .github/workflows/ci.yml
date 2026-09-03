@@ -412,7 +412,10 @@ jobs:
       # The Playwright webServer boots `next start` and tees stdout here; the OTP helper reads it.
       DEV_CONSOLE_LOG: /tmp/alethia-e2e-console.log
     steps:
-      - uses: actions/checkout@v7
+      # `id:` so the upload at the bottom can ask whether there is a workspace — the `services:`
+      # block above starts before this step, and its failure skips this one, not that one (#4084).
+      - id: checkout
+        uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -463,8 +466,10 @@ jobs:
           echo "$list" | grep -qE "Total: [1-9][0-9]* test" || { echo "::error::--project=hero matched 0 tests (testMatch drift?)"; exit 1; }
       - name: Run the hero happy-path (Playwright boots `next start` via webServer)
         run: pnpm -F console exec playwright test --project=hero
+      # Gated on the checkout, not on `!cancelled()` alone: a service container that fails to pull
+      # skips every step here, and this one would then report SUCCESS having uploaded nothing (#4084).
       - name: Upload Playwright report
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report
@@ -535,7 +540,12 @@ jobs:
       # test. Scoped to this job's env only — production policy is untouched.
       ALETHIA_AUTH_RATE_LIMIT: "0"
     steps:
-      - uses: actions/checkout@v7
+      # `id:` so the two `!cancelled()` steps at the bottom of this job can ask whether there is a
+      # WORKSPACE before they run. The `services:` block above starts in `Initialize containers`,
+      # which is step ZERO — it runs BEFORE this checkout — so a failed image pull skips everything
+      # here and leaves the tree empty, while `cancelled()` stays false. See #4084.
+      - id: checkout
+        uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -604,13 +614,22 @@ jobs:
       #     scored it as zero: `R4 7 → 0`, a broken run wearing the exact shape of a fixed lane.
       #     A withheld predicate now carries a floor and no delta, and a section that is withheld
       #     end to end raises like the empty one it is.
+      #
+      # …and NOT `!cancelled()` alone (#4084). On run 33710964528 the postgres service failed to
+      # pull, `Initialize containers` went red, all thirteen real steps were SKIPPED — and this one
+      # ran anyway, against an empty workspace, so the last line of the job read
+      # `Cannot find module … apps/console/scripts/audit-report.mjs` for a file that is present on
+      # dev at 173450 bytes. The job's own log accused the console of a missing script. Conjoining
+      # the checkout's outcome puts `Initialize containers` back as the last thing that failed.
       - name: Per-predicate summary of the audit, against the recorded baseline
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: |
           node apps/console/scripts/audit-report.mjs \
             --step-summary=apps/console >> "$GITHUB_STEP_SUMMARY"
+      # Same conjunct, milder symptom: on that run this step reported SUCCESS having uploaded
+      # nothing, which is the harder half to notice.
       - name: Upload the audit report
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: ui-audit
@@ -668,7 +687,10 @@ jobs:
       # off by default and only the literal "1" engages it).
       ALETHIA_AI_MOCK: "1"
     steps:
-      - uses: actions/checkout@v7
+      # `id:` so the upload at the bottom can ask whether there is a workspace — the `services:`
+      # block above starts before this step, and its failure skips this one, not that one (#4084).
+      - id: checkout
+        uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -717,8 +739,10 @@ jobs:
           echo "$list" | grep -qE "Total: [1-9][0-9]* test" || { echo "::error::--project=elench-ai matched 0 tests (testMatch drift?)"; exit 1; }
       - name: Run the Elench AI journeys (scripted model, real pipeline)
         run: pnpm -F console exec playwright test --project=elench-ai
+      # Gated on the checkout, not on `!cancelled()` alone: a service container that fails to pull
+      # skips every step here, and this one would then report SUCCESS having uploaded nothing (#4084).
       - name: Upload Playwright report
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report-elench-ai
@@ -2172,6 +2196,7 @@ jobs:
           version: v3.16.4
       - uses: azure/setup-kubectl@v5
       - name: Install kind CLI (independent kubeconfig + cluster-leak cleanup)
+        id: kind
         run: |
           go install sigs.k8s.io/kind@v0.30.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
@@ -2194,8 +2219,13 @@ jobs:
       - name: T1 — real runner claims from the control plane and provisions kind
         working-directory: test/e2e
         run: GOWORK=off go test -tags=e2e_t1 ./... -run TestT1RealRunnerKindProvisioning -count=1 -timeout 30m -v
+      # `always()` is deliberate — a leaked cluster must be swept on a CANCEL too, which is the one
+      # thing `!cancelled()` would not do. What it must not do is run when `kind` was never
+      # installed: this job has `services:`, so a failed image pull reds `Initialize containers`
+      # before checkout and skips every step here, and `kind delete` would then be a
+      # command-not-found swallowed by `|| true` — a green step that swept nothing (#4084).
       - name: Teardown any leaked kind clusters (safety net)
-        if: always()
+        if: always() && steps.kind.outcome == 'success'
         run: kind delete clusters --all || true
 
   go-coverage-badge:
