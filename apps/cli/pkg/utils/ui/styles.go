@@ -9,6 +9,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/ui/theme"
 	"github.com/alethialabs-io/alethialabs/packages/core/format"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -69,16 +70,26 @@ var (
 
 // --- Symbols ---
 //
-// Geometric, monochrome glyphs only — no colorful emoji. Status reads by fill
-// and shape: solid (●) active, half (◐) in-progress, hollow (○) idle, dash (—)
-// gone, ✗ failed.
+// Geometric, monochrome glyphs only — no colorful emoji. Status reads by fill and shape: solid
+// (●) active, half (◐) in flight, hollow (○) idle, ✗ failed, and a spent point (·) for gone.
+//
+// THE FOUR STATUS GLYPHS ARE ALIASES OF THE GENERATED VOCABULARY (packages/core/types/vocab_gen.go),
+// not literals. They were literals, decided here, against a console that decided them again in
+// packages/ui/src/status-badge.tsx — and the two answers had drifted apart on seven measured
+// cases. There is one table now and this file is not it. The dash is absent from that table
+// deliberately: it is the empty-value sentinel below, and a status drawn as the dash cannot be
+// told apart from a cell nobody could fill.
 
 const (
+	// SymbolSuccess is the MESSAGE tick — ui.Success, ui.FormatSuccess, ui.GateGlyph. It is not a
+	// status glyph and no tier draws it, which is why it stays a literal here.
 	SymbolSuccess = "✓"
-	SymbolError   = "✗"
-	SymbolOnline  = "●"
-	SymbolOffline = "○"
-	SymbolPending = "◐"
+	// SymbolError is the failed tier's glyph, under the name the message helpers already used. One
+	// rune, one owner: ui.Error and a FAILED row are the same statement about the same thing.
+	SymbolError   = types.StatusGlyphFailed
+	SymbolOnline  = types.StatusGlyphActive
+	SymbolOffline = types.StatusGlyphIdle
+	SymbolPending = types.StatusGlyphPending
 	SymbolDefault = "◆"
 	// SymbolDash IS format.Dash — one definition, in `packages/core`, because that is the half
 	// the runner and the console-facing formatter can both see and `packages/core` cannot import
@@ -92,7 +103,19 @@ const (
 	// another lane's files is the exact tangle the board's disjoint scopes exist to prevent. The
 	// DRIFT is closed today; the RENAME is owed, and each noun group can pay it in its own lane
 	// without coordinating with anyone.
-	SymbolDash   = format.Dash
+	SymbolDash = format.Dash
+	// SymbolBullet is the SEPARATOR between the segments of a picker label ("● web · prod · abc123").
+	// It is not an alias of any status glyph: a separator and a status are two meanings, and tying
+	// them together would make a change to either move the other.
+	//
+	// IT USED TO BE THE SAME RUNE AS THE DISABLED TIER, and that was not a harmless coincidence.
+	// opsPickProjectID builds its label as `PlainGlyph(status) + name + SymbolBullet + …`, so a
+	// DESTROYED project rendered as `· my-project · prod · a1b2c3d4` — the leading glyph
+	// indistinguishable from a separator, the label reading as though it opened on an empty field.
+	// The disabled tier is `◌` for that reason (the separator is the older and wider convention;
+	// the tier is what moved), and TestStatusGlyphsAreDisjointFromSymbols holds the two
+	// vocabularies apart. The generator can only see collisions BETWEEN TIERS — this half of the
+	// question lives here, where the non-status runes are.
 	SymbolBullet = "·"
 	SymbolArrow  = "→"
 	SymbolPoint  = "▸"
@@ -154,37 +177,78 @@ func FormatError(msg string) string {
 }
 
 // --- Status Helpers ---
+//
+// ONE status renderer, over one generated vocabulary. There were three: `StatusDot` (styled
+// glyph), `PlainStatusDot` (unstyled glyph) and `formatJobStatus` in cmd/job_wait.go (styled
+// text, no glyph at all), each with its own switch over its own set of words. `PlainStatusDot`
+// knew nine uppercase words against the console's 28 lower-cased ones, so six pgEnums that shout
+// on the wire fell through its default arm, and `clusters_list.go` derived the glyph and the
+// label from differently-cased inputs IN THE SAME EXPRESSION.
+//
+// Nothing here decides anything any more. The word → tier map and the tier → glyph table are
+// both generated from packages/ui/src/status-badge.tsx (see packages/core/types/vocab_gen.go);
+// what stays on this side is the INK, because a lipgloss style is not something the console has
+// an opinion about.
 
-func StatusDot(status string) string {
-	switch status {
-	case "ONLINE", "ACTIVE":
-		return StrongStyle.Render(SymbolOnline)
-	case "DRAINING", "CREATING", "UPDATING", "PROVISIONING", "QUEUED":
-		return SecondaryStyle.Render(SymbolPending)
-	case "FAILED":
-		return StrongStyle.Render(SymbolError)
-	case "DESTROYED":
-		return FaintStyle.Render(SymbolDash)
-	default:
-		return MutedStyle.Render(SymbolOffline)
-	}
+// statusInk is the terminal weight each tier is drawn in.
+//
+// It is exhaustive over types.AllStatusTiers, and TestStatusInkCoversEveryTier holds it there by
+// reading that generated slice rather than a list typed here — a tier added to the console must
+// get an ink or fail the build, which is the same refusal the generator makes for a glyph.
+//
+// `active` and `failed` share StrongStyle on purpose: the palette carries no hue, so the pair is
+// separated by shape (● vs ✗) exactly as the brand requires. `disabled` is the faintest readable
+// ink because a destroyed thing should recede without vanishing.
+var statusInk = map[types.StatusTier]lipgloss.Style{
+	types.StatusTierActive:   StrongStyle,
+	types.StatusTierPending:  SecondaryStyle,
+	types.StatusTierIdle:     MutedStyle,
+	types.StatusTierFailed:   StrongStyle,
+	types.StatusTierDisabled: FaintStyle,
+	types.StatusTierLive:     StrongStyle,
 }
 
-// PlainStatusDot returns an unstyled status symbol safe for use inside
-// bubbles/table cells (ANSI codes break column width calculation).
-func PlainStatusDot(status string) string {
-	switch status {
-	case "ONLINE", "ACTIVE":
-		return SymbolOnline
-	case "DRAINING", "CREATING", "UPDATING", "PROVISIONING", "QUEUED":
-		return SymbolPending
-	case "FAILED":
-		return SymbolError
-	case "DESTROYED":
-		return SymbolDash
-	default:
-		return SymbolOffline
-	}
+// PlainGlyph returns the unstyled glyph for a status of any casing — safe inside bubbles/huh
+// widgets and table cells, where ANSI codes break column width calculation.
+//
+// Replaces PlainStatusDot. Two behaviours changed and both were defects: the lookup now FOLDS
+// CASE, so a lower-case pgEnum value gets its real glyph instead of the default arm, and
+// DESTROYED is `·` rather than the em dash it shared with "we could not fill this cell".
+func PlainGlyph(status string) string {
+	return types.StatusGlyphOf(status)
+}
+
+// Status renders a status the way a person reads it: the glyph, a space, the word in lower case,
+// all in its tier's ink.
+//
+// This is StatusCell in the tier's ink, deliberately built from that one function rather than
+// beside it — a styled renderer that agreed with the table cell on ACTIVE and not on DESTROYED
+// would be the drift this unit exists to end, one line apart.
+//
+// It replaces StatusDot AND cmd/job_wait.go's formatJobStatus, which rendered the status TEXT in
+// one of five styles and no glyph. Three of those five styles resolve to the same bold strong
+// ink in a grayscale palette, so `job wait` printed SUCCESS and FAILED identically — a status
+// distinguished by nothing at all. Shape carries it now.
+func Status(status string) string {
+	return statusInk[types.StatusTierOf(status)].Render(StatusCell(status))
+}
+
+// StatusVerbatim renders a status for a PLAIN-TEXT LINE rather than a table cell: the glyph, a
+// space, and the status EXACTLY AS THE WIRE SPELLED IT, in its tier's ink.
+//
+// A STATED DECISION, not a variant somebody liked better. `Status` is StatusCell in ink and
+// StatusCell lower-cases, for a reason that holds in a table and does not hold here — a column of
+// capitals reads as a column of alarms, one closing line does not. The two callers are
+// `jobs logs --follow` and `job wait`, and NEITHER has a machine format: `--follow` has no `-o`
+// at all, so its last line IS the machine contract. Routing them through the table cell silently
+// changed `--- Job SUCCESS ---` to `--- Job ● success ---` and broke every `grep -q SUCCESS` in
+// somebody's CI script. Keeping the wire's own casing keeps that grep and gains the glyph, which
+// is why this exists rather than the two commands simply reverting to a bare status echo.
+//
+// It is built from PlainGlyph and statusInk, the same two pieces Status is built from, so it
+// cannot come to a different answer about what a word means — only about how it is spelled.
+func StatusVerbatim(status string) string {
+	return statusInk[types.StatusTierOf(status)].Render(PlainGlyph(status) + " " + status)
 }
 
 func DefaultBadge() string {

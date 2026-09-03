@@ -43,6 +43,8 @@
     "gen:go-validation:self-test": "tsx scripts/gen-go-validation.ts --self-test",
     "gen:go-names": "tsx scripts/gen-go-names.ts --write",
     "gen:go-names:check": "tsx scripts/gen-go-names.ts",
+    "gen:go-vocab": "tsx scripts/gen-go-vocab.ts",
+    "gen:go-vocab:check": "tsx scripts/gen-go-vocab.ts --check",
     "gen:format-conformance": "tsx scripts/gen-format-conformance.ts --write",
     "gen:format-conformance:check": "tsx scripts/gen-format-conformance.ts",
     "gen:matrix": "node scripts/gen-matrix.mjs",

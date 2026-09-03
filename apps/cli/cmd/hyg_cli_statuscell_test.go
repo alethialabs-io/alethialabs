@@ -12,7 +12,7 @@ import (
 
 // The status cell is the last of the renders #3694 hoisted, and this is what keeps it hoisted.
 //
-// `fmt.Sprintf("%s %s", ui.PlainStatusDot(s), strings.ToLower(s))` was written out in four command
+// `fmt.Sprintf("%s %s", ui.PlainGlyph(s), strings.ToLower(s))` was written out in four command
 // files — clusters_list.go, clusters_get.go, project_list.go and runner_list.go — which is one more
 // than any of the helpers that hoist named. It is ui.StatusCell now.
 //
@@ -27,7 +27,7 @@ import (
 // The two halves may be up to ~80 characters apart so a wrapped call still matches; anchoring them
 // adjacently would let `gofmt` splitting the line across two lines defeat the guard, which is the
 // cheapest escape route and therefore the one to close.
-var statusCellShape = regexp.MustCompile(`(?s)(ui\.PlainStatusDot\(.{0,80}?strings\.ToLower\(|strings\.ToLower\(.{0,80}?ui\.PlainStatusDot\()`)
+var statusCellShape = regexp.MustCompile(`(?s)(ui\.PlainGlyph\(.{0,80}?strings\.ToLower\(|strings\.ToLower\(.{0,80}?ui\.PlainGlyph\()`)
 
 // TestHygCliStatusCell_NoCommandFileBuildsItsOwn fails on a hand-built status cell in cmd/.
 func TestHygCliStatusCell_NoCommandFileBuildsItsOwn(t *testing.T) {
@@ -39,7 +39,7 @@ func TestHygCliStatusCell_NoCommandFileBuildsItsOwn(t *testing.T) {
 		}
 		if loc := statusCellShape.FindIndex(body); loc != nil {
 			line := 1 + strings.Count(string(body[:loc[0]]), "\n")
-			t.Errorf("%s:%d pairs ui.PlainStatusDot with strings.ToLower by hand.\n"+
+			t.Errorf("%s:%d pairs ui.PlainGlyph with strings.ToLower by hand.\n"+
 				"      That is the status table cell, and it is ui.StatusCell — four files spelled\n"+
 				"      it out before the hoist and they could not have been changed together.\n"+
 				"      %s", file, line, strings.TrimSpace(string(body[loc[0]:loc[1]])))
@@ -55,15 +55,20 @@ func TestHygCliStatusCell_NoCommandFileBuildsItsOwn(t *testing.T) {
 // expressions it must NOT claim.
 //
 // It calls statusCellShape, the same variable the guard uses, rather than restating the pattern.
+//
+// The four "as deleted" expressions are spelled with ui.PlainGlyph rather than the
+// ui.PlainStatusDot they actually carried, because #3660 renamed the glyph function: a fixture
+// naming a symbol that no longer exists would keep passing against a matcher that had stopped
+// covering the live spelling, which is the failure this mutation test exists to make impossible.
 func TestHygCliStatusCell_TheShapeMatcherWorks(t *testing.T) {
 	mustMatch := map[string]string{
-		"clusters_list.go, as deleted": `status := fmt.Sprintf("%s %s", ui.PlainStatusDot(c.Status), strings.ToLower(c.Status))`,
-		"clusters_get.go, as deleted":  `{"Status", fmt.Sprintf("%s %s", ui.PlainStatusDot(c.Status), strings.ToLower(c.Status))},`,
-		"project_list.go, as deleted":  `fmt.Sprintf("%s %s", ui.PlainStatusDot(status), strings.ToLower(status)),`,
-		"runner_list.go, as deleted":   `fmt.Sprintf("%s %s", ui.PlainStatusDot(w.Status), strings.ToLower(w.Status)),`,
-		"the other operand order":      `strings.ToLower(w.Status) + " " + ui.PlainStatusDot(w.Status)`,
-		"wrapped across lines":         "fmt.Sprintf(\"%s %s\",\n\t\tui.PlainStatusDot(w.Status),\n\t\tstrings.ToLower(w.Status))",
-		"concatenated, no Sprintf":     `ui.PlainStatusDot(s) + " " + strings.ToLower(s)`,
+		"clusters_list.go, as deleted": `status := fmt.Sprintf("%s %s", ui.PlainGlyph(c.Status), strings.ToLower(c.Status))`,
+		"clusters_get.go, as deleted":  `{"Status", fmt.Sprintf("%s %s", ui.PlainGlyph(c.Status), strings.ToLower(c.Status))},`,
+		"project_list.go, as deleted":  `fmt.Sprintf("%s %s", ui.PlainGlyph(status), strings.ToLower(status)),`,
+		"runner_list.go, as deleted":   `fmt.Sprintf("%s %s", ui.PlainGlyph(w.Status), strings.ToLower(w.Status)),`,
+		"the other operand order":      `strings.ToLower(w.Status) + " " + ui.PlainGlyph(w.Status)`,
+		"wrapped across lines":         "fmt.Sprintf(\"%s %s\",\n\t\tui.PlainGlyph(w.Status),\n\t\tstrings.ToLower(w.Status))",
+		"concatenated, no Sprintf":     `ui.PlainGlyph(s) + " " + strings.ToLower(s)`,
 	}
 	for name, src := range mustMatch {
 		if !statusCellShape.MatchString(src) {
@@ -72,10 +77,10 @@ func TestHygCliStatusCell_TheShapeMatcherWorks(t *testing.T) {
 	}
 
 	mustNotMatch := map[string]string{
-		"the glyph alone, with a different label": `ui.PlainStatusDot(clusters[i].Status) + " " + clusterLabel(clusters[i])`,
+		"the glyph alone, with a different label": `ui.PlainGlyph(clusters[i].Status) + " " + clusterLabel(clusters[i])`,
 		"a lowercase with no glyph":               `strings.ToLower(provider)`,
 		"the hoisted call itself":                 `ui.StatusCell(w.Status)`,
-		"two unrelated statements far apart": `ui.PlainStatusDot(a)` + strings.Repeat("\n\t// filler filler filler", 6) +
+		"two unrelated statements far apart": `ui.PlainGlyph(a)` + strings.Repeat("\n\t// filler filler filler", 6) +
 			`strings.ToLower(b)`,
 	}
 	for name, src := range mustNotMatch {
