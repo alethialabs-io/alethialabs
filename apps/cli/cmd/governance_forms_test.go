@@ -433,7 +433,7 @@ func TestActivityRowsRenderTheReasonThroughTheSharedSurface(t *testing.T) {
 			ResourceType: "project", ResourceID: "p1", Decision: true},
 		{Ts: "2026-01-01T00:00:00Z", ActorID: "u2", Action: "project.destroy",
 			ResourceType: "project", Decision: false, Reason: "denied by policy"},
-	})
+	}, ui.FormatTable)
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows, want 2", len(rows))
 	}

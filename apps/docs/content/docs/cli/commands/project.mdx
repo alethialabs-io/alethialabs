@@ -55,6 +55,16 @@ On a terminal this is the shared navigable table (sort, filter, quit); piped or 
 | Cost | Estimated monthly cost |
 | Updated | Last change |
 
+**Status**, **Provider**, **Region** and **Cost** are rendered for a person: the status carries a
+glyph and is folded to lower case, the provider is upper-cased, an unset provider or region is `—`,
+and a project the wire sent no status for reads as `draft` — an inference that tells a reader the
+project has not been applied yet, rather than leaving a blank that looks like a broken table.
+
+Under `-o csv` a script gets the values instead: each is the wire value, and each is an **empty
+cell when the wire sent nothing** — including the status, because handing a script a status the
+server never sent is the one thing a machine format must not do. **Cost** is a bare number and
+**Updated** an RFC3339 stamp.
+
 ## `alethia project get`
 
 Print a project's full configuration.

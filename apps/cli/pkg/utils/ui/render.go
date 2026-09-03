@@ -5,6 +5,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,6 +128,49 @@ func Wire(v *string) string {
 		return ""
 	}
 	return *v
+}
+
+// WireBool renders a boolean as `true`/`false`, the machine counterpart of the three glyph
+// renderings of a boolean above — GateGlyph's tick, YesNo's dot, and DefaultCell's `◆`.
+//
+// The three exist because a reader is asking three different questions (is this gate on · is this
+// row active · which one is the default), and the glyphs answer them at a glance. A script asks one
+// question and wants one answer, so all three collapse here rather than growing three machine
+// spellings. `true`/`false` and not `1`/`0`: it is what `-o json` marshals for the same field, and
+// the two machine formats of one product must not disagree about what a boolean looks like.
+//
+// DefaultCell's false arm is the empty string rather than a glyph, so it is the one case where the
+// human cell is ALREADY parseable. It still routes through here: `Default,` and `Default,false` are
+// both readable, but a column that is empty on nine rows and `◆` on the tenth is a column a script
+// has to know about, and `false` is the answer to the question actually being asked.
+func WireBool(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+// WireInt renders a nullable int as its digits, or empty when unset. The machine counterpart of
+// IntOrDash.
+func WireInt(v *int) string {
+	if v == nil {
+		return ""
+	}
+	return strconv.Itoa(*v)
+}
+
+// WireFloat renders a nullable float as a bare fixed-point number, or empty when unset. The machine
+// counterpart of FloatOrDash.
+//
+// Two decimals and `strconv.FormatFloat(…, 'f', …)`, matching costMonthlyCell in `cost.go` — the
+// precedent this generalises. NOT `format.Money`: the human arm's `$` is an ASSUMPTION about a
+// currency the wire does not carry (see FloatOrDash), and a symbol a script has to strip is worse
+// than a number. `'f'` and never `'g'`, so a large threshold cannot arrive in exponent notation.
+func WireFloat(v *float64) string {
+	if v == nil {
+		return ""
+	}
+	return strconv.FormatFloat(*v, 'f', 2, 64)
 }
 
 // StampOrDash renders an RFC3339 timestamp the way the console writes an absolute date —
