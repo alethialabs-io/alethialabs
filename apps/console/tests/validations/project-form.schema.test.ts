@@ -3,9 +3,11 @@
 
 import { describe, it, expect } from "vitest";
 import {
-	projectFormSchema,
-	helmRegistryProviderConfigSchema,
+	PROJECT_NAME_MAX_LENGTH,
 	environmentMatrixSchema,
+	helmRegistryProviderConfigSchema,
+	pickFreeProjectName,
+	projectFormSchema,
 } from "@/lib/validations/project-form.schema";
 import { getProvidersForCategory } from "@/lib/connectors/registry.generated";
 import {
@@ -62,10 +64,23 @@ describe("projectFormSchema", () => {
 			expect(result.success).toBe(false);
 		});
 
-		it("rejects project_name > 50 chars", () => {
-			const data = { ...validProject, project: { ...validProject.project, project_name: "a".repeat(51) } };
-			const result = projectFormSchema.safeParse(data);
-			expect(result.success).toBe(false);
+		// The bound moved from 50 to PROJECT_NAME_MAX_LENGTH (100) in #3145. Create and rename
+		// disagreed — this schema refused anything over 50 while updateProjectName refused only
+		// over 100 — so a name between 51 and 100 characters was reachable by renaming and
+		// un-creatable by the form. Unified on the permissive bound, because narrowing would have
+		// refused existing names on their next edit.
+		//
+		// Asserted against the CONSTANT and at both sides of the boundary, not at a literal 101:
+		// a test written against a hard-coded number silently stops testing the rule the day the
+		// rule moves, which is exactly how these two drifted apart in the first place.
+		it(`accepts project_name of exactly ${PROJECT_NAME_MAX_LENGTH} chars`, () => {
+			const data = { ...validProject, project: { ...validProject.project, project_name: "a".repeat(PROJECT_NAME_MAX_LENGTH) } };
+			expect(projectFormSchema.safeParse(data).success).toBe(true);
+		});
+
+		it(`rejects project_name > ${PROJECT_NAME_MAX_LENGTH} chars`, () => {
+			const data = { ...validProject, project: { ...validProject.project, project_name: "a".repeat(PROJECT_NAME_MAX_LENGTH + 1) } };
+			expect(projectFormSchema.safeParse(data).success).toBe(false);
 		});
 	});
 
@@ -759,5 +774,39 @@ describe("hetznerNodeNameProblem — the rule, where the provider is known (#358
 		expect(Object.keys(HETZNER_ADDON_ID_PREFIXES).sort()).toEqual(
 			["caches", "databases", "queues", "registries", "tables", "topics"].sort(),
 		);
+	});
+});
+
+// `pickFreeProjectName` — the derived name a cross-cloud clone gets (#3145).
+//
+// It exists because `duplicateProjectForProvider` rebuilds a project through `createProject` and
+// `convertProjectConfig` never touches `project_name`, so without it the clone carries the SOURCE
+// project's name in the source project's own org — which the uniqueness check matches against the
+// source row itself. The dialog has no name field, so that failed 100% of the time.
+describe("pickFreeProjectName", () => {
+	it("leaves a free name alone", () => {
+		expect(pickFreeProjectName("My App (gcp)", ["My App"])).toBe("My App (gcp)");
+	});
+
+	it("suffixes when the name is taken", () => {
+		expect(pickFreeProjectName("My App (gcp)", ["My App", "My App (gcp)"])).toBe("My App (gcp) 2");
+	});
+
+	it("...and keeps counting past a taken suffix rather than colliding again", () => {
+		expect(
+			pickFreeProjectName("My App (gcp)", ["My App (gcp)", "My App (gcp) 2", "My App (gcp) 3"]),
+		).toBe("My App (gcp) 4");
+	});
+
+	// THE PREDICATE MUST MATCH THE INDEX. `projects_org_id_project_name_key` is UNIQUE on
+	// (org_id, lower(project_name)), so a case-sensitive check here would hand back a name the
+	// database then refuses — skipping the friendly error and surfacing a raw 23505.
+	it("compares case-insensitively, because that is what the index enforces", () => {
+		expect(pickFreeProjectName("My App (gcp)", ["MY APP (GCP)"])).toBe("My App (gcp) 2");
+		expect(pickFreeProjectName("api", ["API", "Api 2"])).toBe("api 3");
+	});
+
+	it("an empty org has nothing to avoid", () => {
+		expect(pickFreeProjectName("My App (aws)", [])).toBe("My App (aws)");
 	});
 });

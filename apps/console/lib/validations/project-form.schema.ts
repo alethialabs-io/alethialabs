@@ -44,6 +44,11 @@ import type {
 	TopicSubscription,
 } from "@/types/jsonb.types";
 
+
+/** Longest a project display name may be. One value, because create and rename used to disagree
+ * (50 vs 100) and a name in between was reachable by only one of them. */
+export const PROJECT_NAME_MAX_LENGTH = 100;
+
 // Insert schemas derived from the Drizzle tables (drizzle-zod) — the replacement
 // for the retired supazod `public*InsertSchema` schemas. JSONB columns get their
 // typed shapes back via z.custom refinements (drizzle-zod emits z.unknown()
@@ -397,10 +402,18 @@ const projectSchema = projectsInsert
 	.extend({
 		// Free-text display name (Vercel-style): the URL slug is derived from it via
 		// `slugify` in createProject. We only require it slugifies to something non-empty.
+		//
+		// The cap is PROJECT_NAME_MAX_LENGTH rather than a literal, because this schema and
+		// `updateProjectName` disagreed: create refused anything over 50, rename refused only
+		// over 100. So a name between 51 and 100 characters was reachable by renaming and
+		// un-reachable by creating, and the create form could not reproduce a project the rename
+		// path had already made. Unified on the PERMISSIVE bound: narrowing to 50 would refuse
+		// existing names on their next edit, and nothing downstream needs the shorter one — the
+		// slug is capped independently at 63 by `slugify`.
 		project_name: z
 			.string()
 			.min(1, "Project name is required")
-			.max(50)
+			.max(PROJECT_NAME_MAX_LENGTH)
 			.refine((v) => canSlugify(v), "Enter at least one letter or number"),
 		region: z.string().min(1, "Region is required"),
 		cloud_identity_id: z.string().min(1, "Cloud account is required"),
@@ -791,3 +804,32 @@ export {
 	dnsSchema,
 	repositoriesSchema,
 };
+
+/**
+ * A project name the org does not already hold, for a clone the user did not get to name.
+ *
+ * `duplicateProjectForProvider` rebuilds a project through `createProject`, and
+ * `convertProjectConfig` never touches `project_name` — the same-provider branch is a bare
+ * `structuredClone`. Without a derived name the clone carries the SOURCE project's name in the
+ * source project's own org, which #3145's uniqueness check matches against the source row itself:
+ * the cross-cloud duplicate dialog has no name field, so it failed 100% of the time.
+ *
+ * Mirrors `pickFreeSlug`'s shape but compares CASE-INSENSITIVELY, because that is what
+ * `projects_org_id_project_name_key` enforces — UNIQUE on `(org_id, lower(project_name))`. Checking
+ * with a different predicate than the index enforces is how a friendly message gets skipped and a
+ * raw 23505 reaches the user instead.
+ *
+ * A suggestion, not a guarantee: two concurrent duplicates can derive the same name, and the index
+ * is what refuses the loser — mapped onto `ProjectNameTakenError` like any other collision.
+ *
+ * It lives here rather than beside its caller because that caller is a `"use server"` module, where
+ * every export must be an async function — so a pure helper there can be neither exported nor
+ * unit-tested.
+ */
+export function pickFreeProjectName(base: string, taken: string[]): string {
+	const used = new Set(taken.map((n) => n.toLowerCase()));
+	if (!used.has(base.toLowerCase())) return base;
+	let n = 2;
+	while (used.has(`${base} ${n}`.toLowerCase())) n++;
+	return `${base} ${n}`;
+}
