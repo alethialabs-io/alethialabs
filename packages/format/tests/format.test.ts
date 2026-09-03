@@ -13,6 +13,7 @@ import {
 	formatMonthlyDelta,
 	formatMonthlyRate,
 	formatRelative,
+	stripeChargeDivisor,
 } from "../src/index";
 
 describe("formatMinutes", () => {
@@ -200,6 +201,84 @@ describe("formatMoney", () => {
 
 	it("does not render NaN into a billing table", () => {
 		expect(formatMoney(Number.NaN)).toBe("$0.00");
+	});
+
+	// ── #3581 ────────────────────────────────────────────────────────────────────────────────
+	// The `/ 100` used to be unconditional. Everything below is also pinned in the conformance
+	// table EXCEPT the HUF case, which cannot be — see it for why.
+
+	it("does NOT divide a zero-decimal currency: the minor unit IS the unit", () => {
+		// The issue's own example. This rendered `¥1,240` for a ¥124,000 invoice.
+		expect(formatMoney(124000, "JPY")).toBe("¥124,000");
+		// And not only JPY. Stripe publishes fifteen more.
+		expect(formatMoney(124000, "KRW")).toBe("₩124,000");
+	});
+
+	it("still divides what Stripe documents as two-decimal FOR CHARGES, whatever CLDR prints", () => {
+		// "to charge 5 ISK, provide an `amount` value of `500`" — while CLDR prints ISK with no
+		// fraction digits at all. Both are true, of different questions. Reading the divisor off
+		// CLDR renders `kr 500` here, which is the same defect as JPY's pointing the other way.
+		expect(formatMoney(500, "ISK")).toBe("kr\u00a05");
+		// UGX is the one that also catches a table transcribed from Stripe's zero-decimal LIST: it
+		// is IN that list and ALSO in the Special cases table saying to send two-decimal amounts.
+		expect(formatMoney(500, "UGX")).toBe("UGX\u00a05");
+	});
+
+	it("does not read the divisor off the symbol — CLP and TWD share one and not the other", () => {
+		expect(formatMoney(124000, "CLP")).toBe("$124,000");
+		expect(formatMoney(124000, "TWD")).toBe("$1,240.00");
+	});
+
+	// HUF IS PINNED HERE AND NOWHERE ELSE, and the assertion is deliberately loose about the
+	// decimals. CLDR's display digits for HUF moved from 2 to 0 between ICU 75.1 (Node 20) and
+	// ICU 78.3 (Node 24), so `Ft 1,240.00` and `Ft 1,240` are the same correct answer on two
+	// runners. What must not move is the NUMBER: `Ft 124,000` is the inverted defect, and it is
+	// what a CLDR-derived divisor produces. Asserting the whole string instead would make this a
+	// report on whichever Node `actions/setup-node` resolved that morning.
+	it("divides HUF, whose CLDR display digits are not stable across ICU versions", () => {
+		expect(formatMoney(124000, "HUF")).toMatch(/^Ft\u00a01,240(\.00)?$/);
+		expect(stripeChargeDivisor("HUF")).toBe(100);
+	});
+});
+
+describe("stripeChargeDivisor", () => {
+	// The whole set, not a sample: the conformance table pins six of these fifteen, so without this
+	// a currency could be dropped from the table in `minor-units.ts` with every layer green.
+	it("carries Stripe's published zero-decimal set", () => {
+		const zeroDecimal = ["BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA", "PYG", "RWF", "VND", "VUV", "XAF", "XOF", "XPF"];
+		expect(zeroDecimal.map(stripeChargeDivisor)).toEqual(zeroDecimal.map(() => 1));
+	});
+
+	// THE ROW THIS FILE EXISTS FOR. UGX is published in Stripe's zero-decimal list, so the obvious
+	// implementation — transcribe the list — answers 1 and renders every UGX invoice 100x
+	// overstated. The Special cases table on the same page says otherwise, and it is about charges.
+	it("EXCLUDES UGX, which Stripe publishes in that list and contradicts in Special cases", () => {
+		expect(stripeChargeDivisor("UGX")).toBe(100);
+	});
+
+	// And the mirror trap: HUF and TWD appear in Special cases too, for PAYOUTS, so a reader
+	// excluding everything the page calls zero-decimal drops them for a reason that does not apply.
+	it("keeps the ordinary divisor for the payout-only special cases", () => {
+		expect(stripeChargeDivisor("HUF")).toBe(100);
+		expect(stripeChargeDivisor("TWD")).toBe(100);
+		expect(stripeChargeDivisor("ISK")).toBe(100);
+	});
+
+	// `invoices.currency` mirrors Stripe verbatim and Stripe quotes currencies lowercase; the
+	// console call sites upper-case first. Both spellings reach this function in practice.
+	it("is case-insensitive", () => {
+		expect(stripeChargeDivisor("jpy")).toBe(1);
+		expect(stripeChargeDivisor("Jpy")).toBe(1);
+	});
+
+	// Two decimals is the right refusal for something unrecognised: it renders 100x too SMALL,
+	// which is visibly absurd, where a guessed 1 renders 100x too LARGE and reads as a real bill.
+	it("answers 100 for an unknown code rather than guessing 1", () => {
+		expect(stripeChargeDivisor("ZZZ")).toBe(100);
+		expect(stripeChargeDivisor("")).toBe(100);
+		// Three-decimal currencies are NOT in the table — Stripe publishes no list to cite — so
+		// they take this default. Stated as a test so the gap is recorded rather than assumed.
+		expect(stripeChargeDivisor("BHD")).toBe(100);
 	});
 });
 

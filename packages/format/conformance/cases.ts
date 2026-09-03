@@ -196,18 +196,38 @@ export const BYTES: NumberCase[] = [
 /**
  * `formatMoney` — MINOR units (cents), which is how Stripe and the billing tables store it.
  *
- * TWO-DECIMAL CURRENCIES ONLY, deliberately. `formatMoney` divides by 100 unconditionally, which
- * is right for every currency Alethia bills in (USD, EUR, GBP) and wrong for JPY and the rest of
- * Stripe's zero-decimal list. That is a real defect — see the KNOWN LIMITATION on `formatMoney` —
- * and it is being fixed separately, because getting it right needs Stripe's CHARGE-context minor
- * units and NOT the CLDR display table. A first attempt took the exponent from CLDR and inverted
- * the bug onto HUF, ISK and UGX, which Stripe documents as two-decimal for charges while CLDR
- * calls them zero-decimal.
+ * ── THE DIVISOR AXIS (#3581) ──────────────────────────────────────────────────────────────
  *
- * So no non-two-decimal currency appears below. A case here becomes the contract
- * `packages/core/format` must reproduce, and freezing either the understatement or the
- * overstatement would make Go faithfully copy a money bug. The absence is the honest state, and
- * this comment is the record of why — not an oversight.
+ * This section carried two-decimal currencies ONLY until #3581, because the `/ 100` was
+ * unconditional and pinning a zero-decimal currency would have frozen a money bug as the contract
+ * Go must reproduce. The divisor now comes from `src/minor-units.ts` — Stripe's CHARGE-context
+ * table — and the rows below are chosen so that BOTH ways of getting it wrong are red:
+ *
+ *   - dividing everything by 100 (the original defect) reds every JPY/KRW/CLP row;
+ *   - taking the exponent from CLDR instead (the plausible fix, which inverts it) reds ISK, UGX
+ *     and TWD, whose CHARGE divisor is 100 while CLDR prints 0, 0 and 2 fraction digits.
+ *
+ * `UGX-IS-IN-STRIPES-ZERO-DECIMAL-LIST-AND-IS-STILL-DIVIDED` is the single highest-value row here.
+ * UGX appears in Stripe's own published zero-decimal list AND in that page's Special cases table
+ * saying to send two-decimal amounts for a charge. A table transcribed from the list — the obvious
+ * implementation — renders it 100x overstated and passes every other row in this section.
+ *
+ * CLP and TWD are the second pair: both narrow-render as `$`, and their divisors differ. A fix
+ * keyed on anything the SYMBOL can see passes one and fails the other.
+ *
+ * ── WHAT IS DELIBERATELY ABSENT, AND WHY IT IS NOT AN OVERSIGHT ───────────────────────────
+ *
+ * HUF. It is the fourth currency `minor-units.ts` names, and it CANNOT be pinned here: its CLDR
+ * DISPLAY digits moved from 2 to 0 between ICU 75.1 (Node 20) and ICU 78.3 (Node 24), measured on
+ * this machine. `actions/setup-node` with `node-version: 22` resolves to whatever 22.x is current
+ * on the day, so a HUF row would be a contract that changes under a runner upgrade nobody made —
+ * and the generator's own stale-table message already warns that a CLDR bump moves expectations.
+ * Its DIVISOR is pinned instead, in `tests/format.test.ts`, by an assertion that reads the number
+ * and tolerates the decimals. Every currency below was verified identical on both ICU versions.
+ *
+ * Three-decimal currencies (BHD, JOD, KWD, OMR, TND). Stripe publishes no three-decimal list to
+ * cite any more, so `minor-units.ts` asserts no divisor for them and they take the two-decimal
+ * default. Pinning that here would freeze a guess.
  */
 export const MONEY: MoneyCase[] = [
 	{ id: "money/zero", cents: 0, currency: "USD" },
@@ -255,6 +275,40 @@ export const MONEY: MoneyCase[] = [
 	// `8.165 * 100` = `816.4999999999999`. Picking controls by "it has three decimals" selects this
 	// class as often as that one, which is how the original blind spot survived.
 	{ id: "money/three-decimal-cents-that-agreed-all-along", cents: 267.5, currency: "USD" },
+	// ── zero-decimal: the amount IS the charge, so it is NOT divided ────────────────────────────
+	// The issue's own example. `¥1,240` was what this rendered for a ¥124,000 invoice.
+	{ id: "money/JPY-HAS-NO-MINOR-UNIT-SO-IT-IS-NOT-DIVIDED", cents: 124000, currency: "JPY" },
+	// A second one, because "the zero-decimal set" must not be readable as "JPY". Stripe publishes
+	// fifteen more, and a symbol that is not a `$`-family glyph.
+	{ id: "money/KRW-IS-ZERO-DECIMAL-TOO-NOT-JUST-JPY", cents: 124000, currency: "KRW" },
+	{ id: "money/JPY-zero-carries-no-minor-units", cents: 0, currency: "JPY" },
+	// A HALF AT THE UNIT BOUNDARY, which no two-decimal row in this section can reach: with the
+	// divisor at 1 the rounding step runs at 0 places, so `1234.5` is the tie. Before #3581 this
+	// input was 12.345 by the time it reached the renderer and rounded to a whole 12.
+	{ id: "money/JPY-half-unit-rounds-away-from-zero", cents: 1234.5, currency: "JPY" },
+	// ...and its sign, the axis a fix that rounds the signed value gets wrong: JS `Math.round` is
+	// half-UP and Go's `math.Round` is half-AWAY-FROM-ZERO, so they part company on every negative
+	// half. The two-decimal row of this shape is `NEGATIVE-HALF-CENT-...`; this is it at 0 places.
+	{ id: "money/JPY-NEGATIVE-HALF-UNIT-ROUNDS-AWAY-FROM-ZERO-NOT-TOWARD-POSITIVE", cents: -1234.5, currency: "JPY" },
+	// ── divided by 100, printed with no decimals: the pair that reds a CLDR-derived divisor ─────
+	// Stripe: "to charge 5 ISK, provide an `amount` value of `500`". CLDR prints ISK with no
+	// fraction digits. Both are true and they are answers to different questions; `kr 5` is what
+	// asking each of them the right one produces. A CLDR-derived divisor renders `kr 500`.
+	{ id: "money/ISK-IS-CLDR-ZERO-DECIMAL-AND-STRIPE-TWO-DECIMAL", cents: 500, currency: "ISK" },
+	// THE ROW THAT CATCHES A TABLE TRANSCRIBED FROM STRIPE'S LIST. UGX is IN the published
+	// zero-decimal list and ALSO in the Special cases table, which says to send two-decimal amounts
+	// for a charge. Take the list at face value and this renders `UGX 500` — 100x overstated — while
+	// every other row here still passes.
+	{ id: "money/UGX-IS-IN-STRIPES-ZERO-DECIMAL-LIST-AND-IS-STILL-DIVIDED", cents: 500, currency: "UGX" },
+	// A half at the unit boundary again, reached the other way round: divided by 100 and printed at
+	// 0 places, so `850` lands on the tie that a two-decimal currency never puts there.
+	{ id: "money/ISK-half-unit-rounds-away-from-zero", cents: 850, currency: "ISK" },
+	// ── one symbol, two divisors ────────────────────────────────────────────────────────────────
+	// CLP and TWD both narrow-render as `$` in en-GB, and CLP is zero-decimal for charges while TWD
+	// is not. Together they state that the divisor is not a property of the symbol — which is what a
+	// reader concludes from a section where every zero-decimal row also has a distinctive glyph.
+	{ id: "money/CLP-AND-TWD-SHARE-A-SYMBOL-AND-NOT-A-DIVISOR", cents: 124000, currency: "CLP" },
+	{ id: "money/TWD-shares-CLPs-symbol-and-is-divided", cents: 124000, currency: "TWD" },
 ];
 
 /**
