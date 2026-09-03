@@ -26,6 +26,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -37,10 +38,19 @@ const tableRel = "packages/format/conformance/format-cases.json"
 const regenerate = "If the TABLE is stale, regenerate it from TypeScript: pnpm -C apps/console run gen:format-conformance"
 
 type tableFile struct {
-	Version  int                         `json:"version"`
-	Excluded map[string]string           `json:"excluded"`
-	Cases    map[string][]map[string]any `json:"cases"`
+	Version  int               `json:"version"`
+	Excluded map[string]string `json:"excluded"`
+	// ZeroDecimalCharge is the TypeScript side's zero-decimal CHARGE set, published verbatim from
+	// `STRIPE_ZERO_DECIMAL_CHARGE` in packages/format/src/minor-units.ts (schema v2, #4123). It is
+	// not a case section: it has no inputs and no expectation, it is the SET itself.
+	ZeroDecimalCharge []string                    `json:"zeroDecimalCharge"`
+	Cases             map[string][]map[string]any `json:"cases"`
 }
+
+// schemaVersion is the lowest table shape this file can be held to — the one that carries
+// `zeroDecimalCharge`. Checked as a FLOOR rather than an equality: a later shape change bumps the
+// version for a reason of its own and must not red this mirror for adding something Go ignores.
+const schemaVersion = 2
 
 // monorepoRoot walks up to the directory holding go.work. Returns "" outside a monorepo checkout, so
 // packages/core stays vendorable standalone — the same escape secrets_runtime_read_mirror_test uses.
@@ -355,6 +365,21 @@ func tableProblems(tbl tableFile) []string {
 		}
 	}
 
+	// ── #4123. THE SET, NOT THE ROWS ───────────────────────────────────────────────────────────
+	//
+	// `stripeZeroDecimalCharge` in format.go and `STRIPE_ZERO_DECIMAL_CHARGE` in
+	// packages/format/src/minor-units.ts are the same fifteen codes, and until this check nothing
+	// held them together. The rows above pin how six currencies RENDER, and a row can only pin a
+	// code it NAMES — so a sixteenth code added to one language moved no expectation in this file,
+	// and format_test.go's own hand-typed list only ever caught a REMOVAL from the map beside it.
+	// Adding a row per currency would have pinned fifteen and left the identical hole at sixteen.
+	// The axis the two implementations differ on is set MEMBERSHIP, so membership is what crosses.
+	//
+	// The expected value comes from the ARTIFACT and from nowhere else. A second list typed here
+	// would be a copy of what it is checking: it would agree with Go's map because the same hand
+	// wrote both, and a TypeScript-only addition would still land green.
+	problems = append(problems, zeroDecimalProblems(tbl)...)
+
 	// Named rows, present AND still carrying their recorded answer. Presence alone is not enough: a
 	// row retained but regenerated to a different expectation proves nothing about the boundary it
 	// was written for.
@@ -375,6 +400,79 @@ func tableProblems(tbl tableFile) []string {
 					"rows this mirror exists to lock. If it is genuinely obsolete, delete it from requiredIDs "+
 					"in the same commit and say why in the PR.", id))
 		}
+	}
+	return problems
+}
+
+// zeroDecimalProblems holds `stripeZeroDecimalCharge` to the set TypeScript published (#4123).
+//
+// Three refusals precede the comparison, and each one exists because its absence would read as
+// agreement rather than as a failure to measure:
+//
+//   - VERSION. A table written before the key existed decodes `ZeroDecimalCharge` as nil, which is
+//     indistinguishable at this point from TypeScript deliberately emptying the set. The version
+//     floor separates them, and it is why the generator bumped VERSION to 2 rather than quietly
+//     adding a key.
+//   - EMPTY. `nil` compared against a map of fifteen would fire fifteen "TypeScript has no such
+//     code" messages naming everything except the actual problem, so say the actual problem.
+//   - GO'S OWN MAP EMPTY. The inverse, and it is not hypothetical in the way it sounds: `Money`
+//     would then divide every currency by 100 — the exact defect #3581 was — and a comparison
+//     against an equally empty published list would call it conformant.
+//
+// Order-insensitive: both sides are sorted before the diff. Sortedness of the ARTIFACT is asserted
+// on the TypeScript side, where it is a claim about the file that side writes.
+func zeroDecimalProblems(tbl tableFile) []string {
+	if tbl.Version < schemaVersion {
+		return []string{fmt.Sprintf(
+			"%s is at schema version %d; this mirror needs %d, the shape that carries `zeroDecimalCharge`. "+
+				"Below that the key is absent and its absence is indistinguishable from an empty set.\n%s",
+			tableRel, tbl.Version, schemaVersion, regenerate)}
+	}
+	if len(tbl.ZeroDecimalCharge) == 0 {
+		return []string{fmt.Sprintf(
+			"%s carries no `zeroDecimalCharge` codes. Go's own set has %d, and 'nothing to compare' must "+
+				"not exit like 'nothing wrong'.\n%s", tableRel, len(stripeZeroDecimalCharge), regenerate)}
+	}
+	if len(stripeZeroDecimalCharge) == 0 {
+		return []string{"stripeZeroDecimalCharge is empty — Money would divide every currency by 100, which is #3581. " +
+			"An empty set cannot be held to a published list; it agrees with nothing."}
+	}
+
+	published := map[string]bool{}
+	for _, code := range tbl.ZeroDecimalCharge {
+		published[strings.ToUpper(code)] = true
+	}
+
+	var problems []string
+	var missing, extra []string
+	for code := range published {
+		if !stripeZeroDecimalCharge[code] {
+			missing = append(missing, code)
+		}
+	}
+	for code := range stripeZeroDecimalCharge {
+		if !published[code] {
+			extra = append(extra, code)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+
+	if len(missing) > 0 {
+		problems = append(problems, fmt.Sprintf(
+			"TypeScript treats %s as zero-decimal for CHARGES and `stripeZeroDecimalCharge` in format.go does not. "+
+				"Add them there — an amount in one of these renders 100x too SMALL in Go. Do NOT regenerate the "+
+				"table to make this pass: the table is TypeScript's statement, not Go's.",
+			strings.Join(missing, ", ")))
+	}
+	if len(extra) > 0 {
+		problems = append(problems, fmt.Sprintf(
+			"`stripeZeroDecimalCharge` in format.go treats %s as zero-decimal for CHARGES and TypeScript does not. "+
+				"Either remove them there, or — if Stripe really publishes them for charges — add them to "+
+				"STRIPE_ZERO_DECIMAL_CHARGE in packages/format/src/minor-units.ts and regenerate. An amount in one "+
+				"of these renders 100x too LARGE in Go, which reads as a plausible bill. UGX is the code to check "+
+				"first: it is IN Stripe's published list and excluded here on purpose.",
+			strings.Join(extra, ", ")))
 	}
 	return problems
 }
@@ -417,6 +515,58 @@ func TestTableGuardFailsOnEachMutation(t *testing.T) {
 		}
 	})
 
+	// ── #4123. The mutation this whole change exists for: a code added to ONE language.
+	//
+	// Driven in BOTH directions, because they fail for different reasons and only one of them is
+	// the one a reader expects. A TypeScript-only addition arrives here as a code the artifact
+	// carries and Go's map does not; a Go-only addition arrives as its mirror image, and that is
+	// the direction no layer could see before — the conformance rows pin only the codes they name,
+	// and format_test.go's hand-typed list only catches a removal.
+	t.Run("a code TypeScript added and Go did not is detected", func(t *testing.T) {
+		mutated := clone(base)
+		mutated.ZeroDecimalCharge = append(mutated.ZeroDecimalCharge, "ZWG")
+		problems := zeroDecimalProblems(mutated)
+		if len(problems) != 1 || !strings.Contains(problems[0], "ZWG") {
+			t.Fatalf("a published code missing from stripeZeroDecimalCharge must be reported by name, got %v", problems)
+		}
+		// And through the real guard, not only the helper — the check must actually be WIRED.
+		if wired := tableProblems(mutated); len(wired) != 1 || !strings.Contains(wired[0], "ZWG") {
+			t.Fatalf("tableProblems does not carry the zero-decimal check, got %v", wired)
+		}
+	})
+
+	t.Run("a code Go added and TypeScript did not is detected", func(t *testing.T) {
+		mutated := clone(base)
+		// Dropping a code from the PUBLISHED list is the same shape as adding it to Go's map:
+		// either way Go's set is the larger one. Mutating the artifact rather than the package-level
+		// map keeps the subtests independent of each other's ordering.
+		victim := mutated.ZeroDecimalCharge[0]
+		mutated.ZeroDecimalCharge = append([]string(nil), mutated.ZeroDecimalCharge[1:]...)
+		problems := zeroDecimalProblems(mutated)
+		if len(problems) != 1 || !strings.Contains(problems[0], victim) {
+			t.Fatalf("a Go-only code must be reported by name, got %v", problems)
+		}
+	})
+
+	t.Run("an absent or empty zero-decimal set is detected", func(t *testing.T) {
+		mutated := clone(base)
+		mutated.ZeroDecimalCharge = nil
+		problems := zeroDecimalProblems(mutated)
+		if len(problems) != 1 || !strings.Contains(problems[0], "zeroDecimalCharge") {
+			t.Fatalf("an empty published set must be reported as such, not as fifteen missing codes, got %v", problems)
+		}
+	})
+
+	t.Run("a table below the schema version is detected", func(t *testing.T) {
+		mutated := clone(base)
+		mutated.Version = schemaVersion - 1
+		mutated.ZeroDecimalCharge = nil // what an older generator would have produced
+		problems := zeroDecimalProblems(mutated)
+		if len(problems) != 1 || !strings.Contains(problems[0], "schema version") {
+			t.Fatalf("a pre-v2 table must be refused for its SHAPE, not read as an empty set, got %v", problems)
+		}
+	})
+
 	t.Run("an empty table is detected", func(t *testing.T) {
 		problems := tableProblems(tableFile{Cases: map[string][]map[string]any{}})
 		if len(problems) != 1 || !strings.Contains(problems[0], "vacuously") {
@@ -426,7 +576,15 @@ func TestTableGuardFailsOnEachMutation(t *testing.T) {
 }
 
 func clone(in tableFile) tableFile {
-	out := tableFile{Version: in.Version, Excluded: map[string]string{}, Cases: map[string][]map[string]any{}}
+	out := tableFile{
+		Version:  in.Version,
+		Excluded: map[string]string{},
+		// Copied, not shared: the mutations below append to it, and `append` on a shared backing
+		// array can write THROUGH into the base table and make a later subtest measure a mutated
+		// input while reporting on the original.
+		ZeroDecimalCharge: append([]string(nil), in.ZeroDecimalCharge...),
+		Cases:             map[string][]map[string]any{},
+	}
 	for k, v := range in.Excluded {
 		out.Excluded[k] = v
 	}
