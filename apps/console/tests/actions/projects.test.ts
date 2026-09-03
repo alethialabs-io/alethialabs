@@ -36,6 +36,8 @@ vi.mock("@/lib/cloud-providers/unsupported-kinds", async (importOriginal) => {
 	return { ...actual, unsupportedKindsFor: vi.fn(actual.unsupportedKindsFor) };
 });
 
+import { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { ProjectNameTakenError } from "@/lib/queries/projects";
 import {
 	addEnvironment,
@@ -2524,7 +2526,7 @@ describe("getProjectEnvironments", () => {
 });
 
 describe("addEnvironment", () => {
-	it("slugifies the name, inherits the org, and persists a non-default DRAFT env", async () => {
+	it("slugifies the name, inherits the org, and derives is_default rather than hard-coding it", async () => {
 		const { valuesSpy } = setupDb({
 			select: new Map([[projects, [{ org_id: "org-1" }]]]),
 			insert: new Map([
@@ -2542,16 +2544,36 @@ describe("addEnvironment", () => {
 			type: "project",
 			id: "p1",
 		});
-		expect(valuesFor(valuesSpy, projectEnvironments)).toEqual({
+		const { is_default: isDefault, ...literals } = valuesFor(
+			valuesSpy,
+			projectEnvironments,
+		);
+		expect(literals).toEqual({
 			project_id: "p1",
 			user_id: "user-1",
 			org_id: "org-1",
 			name: "my-staging",
 			stage: "staging",
 			status: "DRAFT",
-			is_default: false,
 			region: null,
 		});
+
+		// `is_default` IS NO LONGER A LITERAL `false`, and asserting the rendered predicate is the
+		// point rather than pedantry (#4127). `project_environments_one_default_check` refuses a
+		// commit in which a project has environments and none is the default, and a project can
+		// legitimately hold zero environments — so a hard-coded `false` made THIS action, the only
+		// one that could repair such a project, the one insert the database rejects. Asserting
+		// merely "some SQL object" would pass for any expression at all, including the wrong one.
+		if (!(isDefault instanceof SQL)) {
+			throw new Error("addEnvironment no longer derives is_default in SQL");
+		}
+		const rendered = new PgDialect().sqlToQuery(isDefault);
+		expect(rendered.sql).toContain("NOT EXISTS");
+		expect(rendered.sql).toContain("is_default");
+		// Scoped to THIS project — a predicate that forgot the parameter would be true whenever any
+		// project anywhere still lacked a default.
+		expect(rendered.params).toEqual(["p1"]);
+
 		expect(r).toEqual({ environment: { id: "env-2", name: "my-staging" } });
 	});
 
