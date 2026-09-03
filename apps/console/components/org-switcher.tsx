@@ -36,6 +36,29 @@ import { orgHref } from "@/lib/routing";
  * split button: clicking the org name/avatar navigates to the org home, only the chevron opens
  * the switcher.
  */
+/**
+ * Where choosing `orgId` should navigate to, or null when there is nowhere to go.
+ *
+ * A pure function because the decision is the testable half and the dropdown is not: the switcher's
+ * menu renders through a portal that needs layout, which jsdom does not have, so a component test
+ * can click the trigger and never see the item. This keeps the part #4133 depends on — that a
+ * switch produces the TARGET org's url and not a refresh of the one being left — pinned at unit
+ * speed, and leaves only the two-line `push`/`refresh` wiring to the e2e path.
+ *
+ * ⚠ It can only be as good as the slug it is given. `getWorkspaceContext` substitutes the reserved
+ * personal segment for an org whose `slug` column is null (`organization.slug` is nullable), so a
+ * slug-less TEAM org arrives here indistinguishable from the personal one and this would navigate
+ * to `/~` while `switchOrg` has already written the session to that team. The substitution is the
+ * defect and it is upstream of this file; nothing here can tell the two apart.
+ */
+export function switchTargetHref(
+	organizations: readonly { id: string; slug: string }[],
+	orgId: string,
+): string | null {
+	const slug = organizations.find((o) => o.id === orgId)?.slug;
+	return slug ? orgHref(slug) : null;
+}
+
 export function OrgSwitcher() {
 	const router = useRouter();
 	const orgSlug = useActiveOrgSlug();
@@ -56,7 +79,19 @@ export function OrgSwitcher() {
 		setOpen(false);
 		if (orgId === activeOrgId) return;
 		await switchOrg(orgId);
-		router.refresh(); // re-fetch server data under the new active org
+		// NAVIGATE, don't refresh (#4133). This used to be `router.refresh()`, which re-renders the
+		// CURRENT url — and that url still names the org being switched away from. That was already
+		// odd (the address bar disagreed with the switcher chip until the next click); once the
+		// tenant is read from the address rather than from the session it is the whole gesture: a
+		// refresh resolves straight back to the org you just left, so the chip would read the new
+		// org while every server read stayed on the old one. Which is the confusion #4133 exists to
+		// remove, arrived at from the other side.
+		//
+		// Falls back to a refresh only when the target has no slug to navigate to, which the
+		// workspace context should never produce — personal scope carries the reserved `~`.
+		const target = switchTargetHref(organizations, orgId);
+		if (target) router.push(target);
+		else router.refresh();
 	};
 
 	const startCreate = () => {
