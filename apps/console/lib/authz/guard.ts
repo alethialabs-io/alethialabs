@@ -50,18 +50,31 @@ export async function currentActor(): Promise<Actor> {
 	//    provisionPrimaryOrg). So in community EVERY org slug resolves here, and refusing this arm
 	//    would 500 every `/{org}/…` page in the AGPL build. The membership join in
 	//    `org-scope.ts` has already proved the caller belongs to the named org; community simply
-	//    has one tenant to put them in. `ensureCliOrgAccess` carries the same rescue for the same
-	//    reason.
+	//    has one tenant to put them in.
+	//
+	//    ⚠ THIS ARM IS ONLY IN `currentActor()`. `resolveNamedOrgScope` below is still strictly
+	//    two-way, so in community it returns null for every real org id — which is why the CLI's
+	//    `X-Alethia-Org` path and `authorizeInOrg` refuse there. That is not a regression (both
+	//    behaved the same before this change) and `requireHostedBilling` bounds the billing case,
+	//    but it is an inconsistency, not a symmetry, and saying otherwise would be a comment
+	//    asserting a property the code does not have.
 	if (actor.orgId === userId) return actor;
 
 	// 3. A DIFFERENT named org. That is the substitution, and following it would answer a request
 	//    addressed to B from some third org's scope — #3863, on the CLI's `--org` header, reaching
 	//    the console by a second route.
 	//
-	//    A ForbiddenError, not a bare Error: `authorize`'s callers classify on that type to answer
-	//    403, and `[org]/layout.tsx` matches the bare string "Unauthorized" EXACTLY to bounce to
-	//    sign-in — which this is not. The session is fine; the address is not the caller's to ask
-	//    for.
+	//    A ForbiddenError, not a bare Error, on two counts: API and CLI routes classify on that
+	//    type to answer 403, and `[org]/layout.tsx` matches the bare string "Unauthorized" EXACTLY
+	//    to bounce to sign-in — which this is not. The session is fine; the address is not the
+	//    caller's to ask for.
+	//
+	//    ⚠ It does NOT become a 404 on a page render. `[org]/layout.tsx`'s try/catch wraps only
+	//    `resolveOrgScope`, which never calls this; a throw from a page's own reader escapes to
+	//    `app/error.tsx`. Reaching this at all means the layout's own membership check has already
+	//    passed and the RESOLVER then disagreed, which is a genuine internal inconsistency and not
+	//    a stale link — so a 500 is arguably the honest answer. Stated because the alternative is a
+	//    comment claiming a landing the tree does not provide.
 	throw new ForbiddenError(
 		"view",
 		{ type: "org", id: urlOrgId },

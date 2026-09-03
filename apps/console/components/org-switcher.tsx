@@ -44,6 +44,12 @@ import { orgHref } from "@/lib/routing";
  * can click the trigger and never see the item. This keeps the part #4133 depends on — that a
  * switch produces the TARGET org's url and not a refresh of the one being left — pinned at unit
  * speed, and leaves only the two-line `push`/`refresh` wiring to the e2e path.
+ *
+ * ⚠ It can only be as good as the slug it is given. `getWorkspaceContext` substitutes the reserved
+ * personal segment for an org whose `slug` column is null (`organization.slug` is nullable), so a
+ * slug-less TEAM org arrives here indistinguishable from the personal one and this would navigate
+ * to `/~` while `switchOrg` has already written the session to that team. The substitution is the
+ * defect and it is upstream of this file; nothing here can tell the two apart.
  */
 export function switchTargetHref(
 	organizations: readonly { id: string; slug: string }[],

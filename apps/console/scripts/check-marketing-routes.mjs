@@ -274,7 +274,11 @@ for (const root of navigationRoots) {
 	}
 }
 
-// ── Check 4: every top-level CONSOLE route is a reserved org slug ────────────────────
+// ── Check 5: every top-level CONSOLE route is a reserved org slug ────────────────────
+//
+// The success line below reports this count, because a green that mentions only the marketing
+// half says nothing about whether this half ran.
+let consoleSegmentCount = 0;
 //
 // The marketing half of this file has been guarded since it was written; the console's own routes
 // never were, and #4133 is the bill. `RESERVED_SLUGS` is what tells a first path segment naming an
@@ -292,23 +296,75 @@ for (const root of navigationRoots) {
 // compares the app tree against the static list directly.
 const CONSOLE_APP = "app";
 const routingSrc = readFileSync("lib/routing.ts", "utf8");
-// Read the STATIC list from source rather than importing it: this script is plain node with no
-// bundler, `lib/routing.ts` is TypeScript, and it transitively imports the marketing zone. The
-// marketing half is already checked above, so the static half is the part that needs reading.
-const staticBlock = /const STATIC_RESERVED_SLUGS = \[([\s\S]*?)\n\];/.exec(routingSrc);
-if (!staticBlock) {
+
+/**
+ * Strip comments so a quoted word inside PROSE is never read as a slug.
+ *
+ * LINE COMMENTS FIRST, and the order is not stylistic. `lib/routing.ts` carries the line
+ *
+ *     // PostHog reverse-proxy path (next.config.ts rewrites /ingest/* → eu.i.posthog.com).
+ *
+ * and `/ingest/*` opens a block comment as far as a naive block pass is concerned. Stripping
+ * blocks first therefore deleted from there to the next `*&#47;` far below — taking the rest of the
+ * array and its closing bracket with it, and leaving a list that ran on into the NEXT array in the
+ * file. Removing line comments first leaves that `/*` nothing to open.
+ */
+function stripComments(src) {
+	return src.replace(/(^|[^:])\/\/[^\n]*/gm, "$1").replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+/**
+ * The literals in `const <name> = [ … ]`, read by BALANCING BRACKETS rather than by a regex.
+ *
+ * Both details are bought experience, from a review of the first version of this very check:
+ *
+ *  · A regex over the raw text counted any double-quoted token inside a COMMENT as a slug. The
+ *    array's own comment discusses `/login`; one edit from backticks to quotes and this guard went
+ *    green on the exact entry it exists to protect. Comments are stripped first.
+ *  · `/\[([\s\S]*?)\n\];/` terminates on `\n];`, so writing `] as const;` did not fail — the lazy
+ *    match ran on to the NEXT array in the file and silently absorbed its contents. Balancing
+ *    brackets ends where the array ends, however it is punctuated.
+ *
+ * Returns null when the declaration is absent, which the caller treats as a failure — a check that
+ * stops finding its input must not report the same thing as a check that found nothing wrong.
+ */
+function arrayLiterals(src, name) {
+	const start = src.indexOf(`const ${name} = [`);
+	if (start === -1) return null;
+	let depth = 0;
+	let i = src.indexOf("[", start);
+	const open = i;
+	for (; i < src.length; i++) {
+		if (src[i] === "[") depth++;
+		else if (src[i] === "]" && --depth === 0) break;
+	}
+	if (depth !== 0) return null;
+	return [...src.slice(open, i).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+}
+
+const staticList = arrayLiterals(stripComments(routingSrc), "STATIC_RESERVED_SLUGS");
+if (staticList === null) {
 	failures.push(
-		"lib/routing.ts: could not find `const STATIC_RESERVED_SLUGS = [ … ];`. This check reads that\n" +
-			"    block as text; if it was renamed or reshaped, update this guard rather than deleting it —\n" +
-			"    a route-shadow check that silently stops finding its input is worse than none.",
+		"lib/routing.ts: could not read `const STATIC_RESERVED_SLUGS = [ … ]`. This check reads that\n" +
+			"    declaration from source; if it was renamed or reshaped, update this guard rather than\n" +
+			"    deleting it — a route-shadow check that silently stops finding its input is worse than none.",
 	);
 } else {
-	const staticSlugs = new Set(
-		[...staticBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]),
-	);
+	const staticSlugs = new Set(staticList);
 	// PERSONAL_ORG_SLUG is referenced by name, not as a literal, so it is not in the matches above.
 	staticSlugs.add("~");
+	// GUARD THE GUARD. Everything below is a set difference, and an empty or truncated left side
+	// makes it vacuously green. `dashboard` has been in this list since it was written; its absence
+	// means the read went wrong, not that the route stopped being reserved.
+	if (!staticSlugs.has("dashboard") || staticSlugs.size < 8) {
+		failures.push(
+			`lib/routing.ts: read only ${staticSlugs.size} slug(s) from STATIC_RESERVED_SLUGS and no ` +
+				"`dashboard`. That is a parse failure, not a small list — refusing rather than reporting\n" +
+				"    every console route as unreserved, or none of them.",
+		);
+	}
 	const consoleSegments = existsSync(CONSOLE_APP) ? collectSegments(CONSOLE_APP) : null;
+	consoleSegmentCount = consoleSegments === null ? 0 : consoleSegments.size;
 	if (consoleSegments === null) {
 		failures.push(`Console app dir not found at ${CONSOLE_APP}.`);
 	} else {
@@ -341,5 +397,6 @@ if (failures.length > 0) {
 }
 
 console.log(
-	`OK — ${mfPaths.length} marketing paths and static first-party navigation targets resolve across every route mirror.`,
+	`OK — ${mfPaths.length} marketing paths and static first-party navigation targets resolve across every route mirror,` +
+		` and all ${consoleSegmentCount} top-level console route(s) are reserved org slugs.`,
 );
