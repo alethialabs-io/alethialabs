@@ -21,13 +21,13 @@
 		"scoredHere": 16,
 		"live": 10,
 		"notInstrumented": 8,
-		"findings": 89,
+		"findings": 88,
 		"findingFiles": 32,
 		"liveNotMeasured": 13
 	},
 	"ledgers": {
 		"baseline": 16,
-		"debt": 25
+		"debt": 24
 	},
 	"live": {
 		"source": {
@@ -276,13 +276,13 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 21,
-			"fail": 19,
+			"pass": 22,
+			"fail": 18,
 			"na": 0,
 			"notMeasured": 0,
 			"naReasons": {},
 			"notMeasuredReasons": {},
-			"score": 0.525
+			"score": 0.55
 		},
 		"H3": {
 			"family": "H",
@@ -2344,11 +2344,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 0,
@@ -2370,11 +2370,11 @@
 				}
 			},
 			"overall": {
-				"pass": 22,
-				"fail": 1,
+				"pass": 23,
+				"fail": 0,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 0.9565
+				"score": 1
 			}
 		},
 		{
@@ -7058,8 +7058,7 @@
 		{
 			"route": "/[org]/~/support",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/app/(private)/[org]/~/support/page.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support",
@@ -8310,11 +8309,11 @@
 				"owner": null
 			},
 			"type_scale": {
-				"total": 61,
+				"total": 60,
 				"decision": 1,
-				"debt": 60,
+				"debt": 59,
 				"unlisted": 0,
-				"inPageClosure": 28,
+				"inPageClosure": 27,
 				"chromeOnly": 29,
 				"offTree": 4,
 				"predicate": "H8",

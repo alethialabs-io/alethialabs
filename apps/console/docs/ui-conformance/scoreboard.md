@@ -82,7 +82,7 @@ RUBRIC.md defines **34 predicates**. This report scores **26** of them —
 | `scripts/check-route-states.mjs` | S1–S4, T1–T4, per route |
 | `apps/console/route-states-baseline.yaml` | the ratchet those eight predicates are held to |
 | `scripts/check-shared-surface.mjs` | every H-family occurrence, per file |
-| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 25`) |
+| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 24`) |
 | `apps/console/ui-conformance-live.json` | T5–T7 and R1–R7 as MEASURED, imported from a CI run of the Playwright `audit` project |
 | `apps/console/docs/ui-conformance/RUBRIC.md` | the predicate set itself, read out of its own tables |
 
@@ -176,7 +176,7 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **H5** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H6** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H7** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
-| **H8** | H | `check-shared-surface` | 21 | 19 | 0 | 0 | 0.53 | — |
+| **H8** | H | `check-shared-surface` | 22 | 18 | 0 | 0 | 0.55 | — |
 | **H9** | H | `check-shared-surface` | 39 | 1 | 0 | 0 | 0.97 | — |
 | **F1** | F | **none** — #3796 | — | — | — | — | — | — |
 | **F2** | F | **none** — #3796 | — | — | — | — | — | — |
@@ -232,7 +232,6 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/[org]/~/settings/classification` | 145 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 6/7 · 0.86 | **0.96** |
 | `/[org]/~/settings/general` | 133 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 6/7 · 0.86 | **0.96** |
 | `/[org]/~/settings/members` | 219 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 6/7 · 0.86 | **0.96** |
-| `/[org]/~/support` | 7 | 4/4 · 1.00 | 4/4 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.96** |
 | `/[org]/~/support/ask` | 197 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 6/7 · 0.86 | **0.96** |
 | `/[org]/[project]/jobs` | 219 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.96** |
 | `/[org]/~/clusters` | 162 | 4/4 · 1.00 | 5/5 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.96** |
@@ -246,6 +245,7 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/[org]/~/settings/access` | 211 | 4/4 · 1.00 | 5/5 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/settings/billing` | 192 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/settings/teams` | 212 | 4/4 · 1.00 | 5/5 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
+| `/[org]/~/support` | 7 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/support/abuse` | 134 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/support/submit` | 144 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/usage` | 183 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
@@ -257,7 +257,7 @@ the console errors it produces and the time it takes to land are real and are me
 
 ## Where every shared-surface occurrence landed
 
-`check-shared-surface` found **89 occurrences across 32 files**. This section
+`check-shared-surface` found **88 occurrences across 32 files**. This section
 accounts for all of them twice — once by ledger, once by reach — so a rule or a file falling out
 of the scoreboard cannot be quiet.
 
@@ -270,8 +270,8 @@ of the scoreboard cannot be quiet.
 | `page_title` | H1 | 17 | 17 | 0 | 0 | 7 | 1 | 9 |
 | `section_header` | H2 | 2 | 0 | 2 | 0 | 1 | 1 | 0 |
 | `stat_strip` | H6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `type_scale` | H8 | 61 | 1 | 60 | 0 | 28 | 29 | 4 |
-| **total** | | 89 | 24 | 65 | 0 | 41 | 35 | 13 |
+| `type_scale` | H8 | 60 | 1 | 59 | 0 | 27 | 29 | 4 |
+| **total** | | 88 | 24 | 64 | 0 | 40 | 35 | 13 |
 
 **`unlisted` is the column to read first.** A non-zero value means the guard is red — an
 occurrence neither a `reason:` nor a `lifts:` entry accounts for. It is not a defect of this
