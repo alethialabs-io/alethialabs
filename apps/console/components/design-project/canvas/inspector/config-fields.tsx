@@ -139,7 +139,7 @@ export function OptionSelect({
 							</span>
 							{o.advisory ? (
 								<span
-									className="vx-eyebrow shrink-0 text-[9px] text-muted-foreground"
+									className="vx-eyebrow shrink-0 text-ui-3xs text-muted-foreground"
 									title={o.advisory.note}
 								>
 									{o.advisory.level === "unavailable" ? "unavailable" : "unverified"}
@@ -233,8 +233,12 @@ export function OptionCombobox({
 				onFocus={() => setOpen(true)}
 				onBlur={() => setOpen(false)}
 			/>
+			{/* The list below is a typeahead popover, so it takes the overlay rung by NAME. `z-50`
+			    sat in the gap the scale leaves empty (its in-flow lifts stop at 30, its chrome
+			    starts at 100), so it painted under the site header and under the sheet this
+			    inspector opens inside — the one place a combobox must never be. */}
 			{open && options.length > 0 ? (
-				<div className="absolute top-full left-0 z-50 mt-1 w-full rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
+				<div className="absolute top-full left-0 z-[var(--z-overlay)] mt-1 w-full rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
 					<div className="max-h-56 overflow-y-auto">
 						{filtered.length === 0 ? (
 							// Not an error: an unlisted value is a legitimate pin, so the input keeps it.
@@ -264,7 +268,7 @@ export function OptionCombobox({
 									</span>
 									{o.advisory ? (
 										<span
-											className="vx-eyebrow shrink-0 text-[9px] text-muted-foreground"
+											className="vx-eyebrow shrink-0 text-ui-3xs text-muted-foreground"
 											title={o.advisory.note}
 										>
 											{o.advisory.level === "unavailable" ? "unavailable" : "unverified"}
@@ -529,7 +533,7 @@ function FieldRow({
 						{/* Same typography as the option advisory above, a DIFFERENT mechanism: that one
 						    is ink-only and must never disable (#918), this one marks a real gate. */}
 						{unavailable && (
-							<span className="vx-eyebrow shrink-0 text-[9px] text-muted-foreground">
+							<span className="vx-eyebrow shrink-0 text-ui-3xs text-muted-foreground">
 								unavailable
 							</span>
 						)}
@@ -606,7 +610,7 @@ function FieldRow({
 			    whole catalog? The fail-open is invisible in the options by design, so without this the
 			    two read identically. Informational only — it gates nothing. */}
 			{provenance && (
-				<p className="vx-eyebrow text-[10px] text-muted-foreground">{provenance}</p>
+				<p className="vx-eyebrow text-ui-2xs text-muted-foreground">{provenance}</p>
 			)}
 		</div>
 	);
@@ -703,7 +707,7 @@ function Section({
 					</span>
 					{/* Badge the cloud whose knobs these are, so it's obvious the field is not portable. */}
 					{advanced && ctx.provider && (
-						<span className="ml-1 inline-flex shrink-0 items-center gap-1 border border-border-strong px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-muted-foreground">
+						<span className="ml-1 inline-flex shrink-0 items-center gap-1 border border-border-strong px-1.5 py-0.5 font-mono text-ui-3xs uppercase tracking-wide text-muted-foreground">
 							<ProviderIcon provider={ctx.provider} size={10} />
 							only
 						</span>
