@@ -9,12 +9,17 @@
 #   report   per-wave board status + collisions to eyeball + UI units awaiting the human +
 #            possibly-shipped units (open, but a merged PR references them — de-stale the board)
 #
+#            Collisions are BOTH halves COORDINATION.md promises: >1 claimed `mutex:migration`, and
+#            overlapping `scope:` globs among the units workable at once. Each prints a verdict
+#            either way, in THREE states — found · compared and clean · could not compare — because
+#            until #4115 the scope half did not exist and its silence read as an all-clear.
+#
 # Usage:
 #   scripts/coordinate.sh                 # reclaim + unblock + report
 #   scripts/coordinate.sh --report        # report only (no mutations)
 #   scripts/coordinate.sh --close-shipped # close open board units a MERGED PR CLOSES (kw + #n)
 #   scripts/coordinate.sh --init-labels   # create/refresh the board's label set (once)
-#   scripts/coordinate.sh --self-test     # offline board-body parser fixtures
+#   scripts/coordinate.sh --self-test     # offline: board-body parser + scope-report wiring
 #
 # --close-shipped is the manual BACKSTOP for the close-on-dev-merge Action: it reclaims/unblocks
 # NOTHING, but for each open, still-claimable board unit that a MERGED PR CLOSES — a closing
@@ -85,6 +90,50 @@ blocked_by_from_body() {
     | grep -oE '#[0-9]+' | tr -d '#' | sort -nu || true
 }
 
+# ── scope collisions: the anti-tangle invariant, asked CONTINUOUSLY ──────────
+#
+# COORDINATION.md has always said this report flags "any collisions to eyeball (two claimed issues
+# sharing `mutex:migration` OR AN OVERLAPPING `scope:`)". The second half was never written: until
+# #4115 the whole collision check was the `mutex:migration` count below, and there was no `scope:`
+# parsing anywhere in this file. So the ABSENCE of a warning line meant "at most one claimed
+# migration unit" while reading as "no two claimed units share a scope" — a guard whose
+# "nothing found" branch is indistinguishable from its "nothing wrong" branch.
+#
+# The predicate is NOT reimplemented here. scripts/lib/scope-overlap.mjs holds the one matcher (lifted
+# out of decompose-validate.mjs, where it was module-private), so the seed-time check, this report
+# and the dashboard cannot drift into three different answers — the hazard scripts/lib/board-pr.sh
+# was created for. This function's only job is to CALL it and to make sure the reader can tell the
+# three outcomes apart: overlap found · compared and clean · could not compare.
+#
+# Every branch prints. A `node` that is missing, a matcher that is absent from the checkout, a
+# matcher that dies — each says so in the report rather than passing for silence.
+SCOPE_MATCHER="${ALETHIA_SCOPE_MATCHER:-scripts/lib/scope-overlap.mjs}"
+scope_collision_report() {
+  local rc=0 out
+  if ! command -v node >/dev/null 2>&1; then
+    echo "  ── scope collisions (the anti-tangle invariant) ──"
+    echo "  ⚠ scope collisions NOT CHECKED: node is not on PATH, so $SCOPE_MATCHER could not run."
+    return 0
+  fi
+  if [ ! -f "$SCOPE_MATCHER" ]; then
+    echo "  ── scope collisions (the anti-tangle invariant) ──"
+    echo "  ⚠ scope collisions NOT CHECKED: $SCOPE_MATCHER is missing from this checkout."
+    return 0
+  fi
+  # 0 clean · 3 collisions · 4 nothing comparable · 5 clean but some units unreadable. Anything
+  # else is the matcher itself failing, and that is the third outcome too — not an all-clear.
+  out="$(node "$SCOPE_MATCHER" --report 2>&1)" || rc=$?
+  case "$rc" in
+    0|3|4|5) printf '%s\n' "$out" ;;
+    *)
+      echo "  ── scope collisions (the anti-tangle invariant) ──"
+      echo "  ⚠ scope collisions NOT CHECKED: $SCOPE_MATCHER exited $rc."
+      [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/      /'
+      ;;
+  esac
+  return 0
+}
+
 # Exercise the shell parser against the contract shared with the dashboard parser.
 run_board_body_self_test() {
   local fixtures="scripts/lib/board-body-fixtures.json" fails=0 checks=0 cases fixture name body expected actual
@@ -128,8 +177,99 @@ run_board_body_self_test() {
   echo "self-test: all $checks passed"
 }
 
+# Exercise the SHELL half of the scope-collision check: that this file actually calls the matcher,
+# renders whatever it says, and still prints a verdict when it cannot call it at all.
+#
+# The matcher's own semantics are proved by `node scripts/lib/scope-overlap.mjs --self-test` against
+# the same fixture file. What THAT cannot see is the wiring — a guard that exists but is never
+# invoked, or one whose failure branch prints nothing, looks exactly like a guard that is holding.
+run_scope_wiring_self_test() {
+  local fixtures="scripts/lib/board-body-fixtures.json" fails=0 checks=0 cases fixture name verdict board out want stub
+
+  command -v node >/dev/null 2>&1 || {
+    echo "self-test: node is required to exercise the scope-collision wiring" >&2
+    exit 1
+  }
+  cases="$(jq -c '.boardCases[]' "$fixtures")" || {
+    echo "self-test: could not read .boardCases[] from $fixtures — unreadable fixtures are a" >&2
+    echo "  FAILURE, not an empty suite." >&2
+    exit 1
+  }
+
+  while IFS= read -r fixture; do
+    [ -n "$fixture" ] || continue
+    name="$(jq -r '.name' <<<"$fixture")"
+    verdict="$(jq -r '.verdict' <<<"$fixture")"
+    board="$(jq -c '.board' <<<"$fixture")"
+    out="$(printf '%s' "$board" | scope_collision_report)"
+
+    case "$verdict" in
+      COLLISIONS) want="⚠ SCOPE COLLISION" ;;
+      NOT-CHECKED) want="NOT CHECKED" ;;
+      CLEAN|CLEAN-WITH-GAPS) want="✓ compared, no overlap" ;;
+      *) echo "self-test: fixture '$name' declares unknown verdict '$verdict'" >&2; exit 1 ;;
+    esac
+
+    checks=$((checks + 1))
+    if printf '%s\n' "$out" | grep -qF "$want"; then
+      echo "ok   - report renders $verdict: $name"
+    else
+      echo "FAIL - report renders $verdict: $name — no '$want' in:" >&2
+      printf '%s\n' "$out" | sed 's/^/    /' >&2
+      fails=$((fails + 1))
+    fi
+
+    # THE FAILING CASE THIS SUITE EXISTS FOR: a board nothing could be compared on must never
+    # render the clean marker, and must never render as an empty block either. Both of those are
+    # the silence #4115 was filed for, one level down.
+    checks=$((checks + 1))
+    if [ "$verdict" = "NOT-CHECKED" ] && printf '%s\n' "$out" | grep -qF "✓ compared, no overlap"; then
+      echo "FAIL - a NOT-CHECKED board claimed a clean comparison: $name" >&2
+      fails=$((fails + 1))
+    elif [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
+      echo "FAIL - the report block was EMPTY for $verdict: $name" >&2
+      fails=$((fails + 1))
+    else
+      echo "ok   - $verdict is distinguishable from a clean pass: $name"
+    fi
+  done <<<"$cases"
+
+  # The two ways the shell half itself can fail to check anything. Both must still SAY so.
+  # Both run inside `$( … )`, a SUBSHELL, so overriding SCOPE_MATCHER for the call cannot leak
+  # back into this function — a bash variable assignment prefixed to a FUNCTION persists, unlike
+  # one prefixed to an external command, and a leaked override would silently disarm every check
+  # that ran after it.
+  stub="$(mktemp -t alethia-scope-stub)"
+  checks=$((checks + 1))
+  out="$(printf '[]' | SCOPE_MATCHER="$stub-does-not-exist.mjs" scope_collision_report)" || true
+  if printf '%s\n' "$out" | grep -qF "NOT CHECKED"; then
+    echo "ok   - an absent matcher reports NOT CHECKED, not silence"
+  else
+    echo "FAIL - an absent matcher printed no verdict" >&2; fails=$((fails + 1))
+  fi
+
+  # A matcher that dies with an unexpected status is also "could not check".
+  printf '%s\n' '#!/usr/bin/env node' 'process.exit(9);' >"$stub.mjs"
+  checks=$((checks + 1))
+  out="$(printf '[]' | SCOPE_MATCHER="$stub.mjs" scope_collision_report)" || true
+  if printf '%s\n' "$out" | grep -qF "NOT CHECKED"; then
+    echo "ok   - a matcher that dies reports NOT CHECKED, not silence"
+  else
+    echo "FAIL - a dying matcher printed no verdict" >&2; fails=$((fails + 1))
+  fi
+  rm -f "$stub" "$stub.mjs"
+
+  [ "$checks" -gt 0 ] || {
+    echo "self-test: $fixtures contains NO boardCases — asserting nothing is not passing." >&2
+    exit 1
+  }
+  [ "$fails" -eq 0 ] || { echo "self-test: $fails of $checks scope-wiring check(s) FAILED" >&2; exit 1; }
+  echo "self-test: all $checks scope-wiring checks passed"
+}
+
 if [ "$MODE" = "self-test" ]; then
   run_board_body_self_test
+  run_scope_wiring_self_test
   exit 0
 fi
 
@@ -359,9 +499,16 @@ echo "$board" | jq -r '
   + "   epics: \(map(select(.labels|map(.name)|index("epic")))|length)"
 '
 
-# Collisions to eyeball: >1 claimed mutex:migration.
+# Collisions to eyeball, BOTH halves of what COORDINATION.md promises: >1 claimed
+# mutex:migration, and overlapping `scope:` globs among the units that can be worked at once.
+# Each prints its verdict either way — "no line" was the whole defect (#4115).
 migc="$(echo "$board" | jq '[.[]|select((.labels|map(.name)|index("claimed")) and (.labels|map(.name)|index("mutex:migration")))]|length')"
-[ "$migc" -gt 1 ] && echo "  ⚠ COLLISION: $migc claimed migration units at once — only one may generate migrations."
+if [ "$migc" -gt 1 ]; then
+  echo "  ⚠ COLLISION: $migc claimed migration units at once — only one may generate migrations."
+else
+  echo "  ✓ mutex:migration: $migc claimed (a collision needs 2 or more)."
+fi
+printf '%s' "$board" | scope_collision_report
 
 # UI awaiting the human.
 uis="$(echo "$board" | jq -r '[.[]|select(.labels|map(.name)|index("class:ui"))|select(.labels|map(.name)|index("needs:design") or (.labels|map(.name)|index("needs:human")))|"#\(.number) \(.title)"][]' 2>/dev/null || true)"
