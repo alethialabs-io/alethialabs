@@ -271,7 +271,7 @@ func TestGovAnswered_AlertCreateFormFillsTheDraft(t *testing.T) {
 	if draft.Severity != "critical" {
 		t.Errorf("Severity = %q, want critical (two moves down the generated set)", draft.Severity)
 	}
-	if err := validAlertSeverity(draft.Severity); err != nil {
+	if _, err := canonicalOneOf("severity", draft.Severity, alertSeverityNames()); err != nil {
 		t.Errorf("the form produced a severity the server would refuse: %v", err)
 	}
 }
@@ -297,6 +297,63 @@ func TestGovAnswered_AlertCreateResolvesChannelNamesFromTheFlag(t *testing.T) {
 	// alert_severity enum would refuse.
 	if draft.Severity != "warning" {
 		t.Errorf("Severity = %q, want the flag default", draft.Severity)
+	}
+}
+
+// TestGovAnswered_AlertSeverityReachesTheDraftCanonical is the CALL-SITE half of #3825, and the
+// half a helper test cannot cover.
+//
+// `TestCanonicalAlertSeverity` proves the matcher RETURNS the wire spelling. It cannot prove the
+// caller USES the return, and that was the entire defect: `resolveAlertDraft` matched with
+// `EqualFold` and then assigned `strings.TrimSpace(alertSeverity)` — the value the operator typed.
+// `--severity Critical` passed the client gate and posted "Critical" to a case-SENSITIVE
+// `z.enum(alertSeverity.enumValues)`, and the server answered a bare "Invalid request body" naming
+// no field. So the assertion is on the DRAFT, not on the helper.
+//
+// The severity flag is set through cobra rather than by assigning `alertSeverity`, because the
+// branch under test is gated on `cmd.Flags().Changed("severity")` — writing the variable alone
+// leaves Changed false and the test would exercise the default path while appearing to pass.
+// `govAnsweredResetAlertFlags` restores the VARIABLES and not that bit, so the Changed bit is
+// restored here: cobra keeps it across Execute calls, and a leaked one turns the next file's
+// default path into a flag-given one.
+func TestGovAnswered_AlertSeverityReachesTheDraftCanonical(t *testing.T) {
+	hygCliConfirmSetNoInput(t, true)
+	govAnsweredResetAlertFlags(t)
+	alertEventPatterns = []string{"system.job.failed"}
+	alertChannelRefs = []string{"ch2"}
+	c := &fakeClient{channels: govAnsweredChannels()}
+
+	sev := alertsCreateCmd.Flags().Lookup("severity")
+	if sev == nil {
+		t.Fatal("no --severity flag on alerts create — this test would be vacuous")
+	}
+	wasChanged := sev.Changed
+	t.Cleanup(func() {
+		_ = alertsCreateCmd.Flags().Set("severity", "warning")
+		sev.Changed = wasChanged
+	})
+
+	names := alertSeverityNames()
+	if len(names) == 0 {
+		t.Fatal("no severities — vacuous")
+	}
+	want := names[len(names)-1]
+	typed := strings.ToUpper(want)
+	if typed == want {
+		t.Fatalf("severity %q is already upper case — this test cannot tell folding from a no-op", want)
+	}
+	if err := alertsCreateCmd.Flags().Set("severity", typed); err != nil {
+		t.Fatalf("set --severity %q: %v", typed, err)
+	}
+
+	draft, err := resolveAlertDraft(c, alertsCreateCmd, []string{"Job failures"})
+	if err != nil {
+		t.Fatalf("resolveAlertDraft: %v", err)
+	}
+	if draft.Severity != want {
+		t.Errorf("--severity %q reached the draft as %q, want the canonical %q — the caller's "+
+			"spelling is refused by the alert_severity enum with a 400 that names no field",
+			typed, draft.Severity, want)
 	}
 }
 

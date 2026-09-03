@@ -152,23 +152,40 @@ func TestErrChannelTypeRequiredNamesEveryType(t *testing.T) {
 // The accepted cases come from the generated slice rather than from literals, so a severity added
 // to the schema is accepted here without anyone editing this test; the rejected cases are the
 // shapes a person actually types.
-func TestValidAlertSeverity(t *testing.T) {
+// IT ASSERTS THE RETURNED VALUE, not just the absence of an error, and that is the whole point of
+// #3825. The predecessor of this test called `validAlertSeverity`, which returned only an `error`,
+// so it proved an uppercase severity was ACCEPTED and was structurally unable to see that the
+// caller's spelling was then posted verbatim to a case-sensitive `z.enum` — a 400 naming no field,
+// which is the outcome the validator existed to prevent. A matcher that folds case has to hand the
+// canonical value back, or every caller is one line away from reintroducing the defect.
+func TestCanonicalAlertSeverity(t *testing.T) {
 	names := alertSeverityNames()
 	if len(names) == 0 {
 		t.Fatal("no severities — the accept half of this test is vacuous")
 	}
 	for _, name := range names {
-		if err := validAlertSeverity(name); err != nil {
-			t.Errorf("validAlertSeverity(%q) = %v, want nil", name, err)
+		got, err := canonicalOneOf("severity", name, names)
+		if err != nil {
+			t.Errorf("canonicalOneOf(%q) = %v, want nil", name, err)
 		}
-		if err := validAlertSeverity(strings.ToUpper(name)); err != nil {
-			t.Errorf("validAlertSeverity(%q) = %v — --severity is typed by a person", strings.ToUpper(name), err)
+		if got != name {
+			t.Errorf("canonicalOneOf(%q) = %q, want it unchanged", name, got)
+		}
+		// THE REGRESSION. `--severity CRITICAL` must come back as `critical`, the wire spelling.
+		upper := strings.ToUpper(name)
+		got, err = canonicalOneOf("severity", upper, names)
+		if err != nil {
+			t.Errorf("canonicalOneOf(%q) = %v — --severity is typed by a person", upper, err)
+		}
+		if got != name {
+			t.Errorf("canonicalOneOf(%q) = %q, want the canonical %q — posting the caller's "+
+				"spelling to the alert_severity enum is a 400 that names no field", upper, got, name)
 		}
 	}
 	for _, bad := range []string{"", "warn", "CRITICAL!", "high", "info ", "0"} {
-		err := validAlertSeverity(bad)
+		_, err := canonicalOneOf("severity", bad, names)
 		if err == nil {
-			t.Errorf("validAlertSeverity(%q) accepted a value the alert_severity enum would refuse", bad)
+			t.Errorf("canonicalOneOf(%q) accepted a value the alert_severity enum would refuse", bad)
 			continue
 		}
 		for _, name := range names {

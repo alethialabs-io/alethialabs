@@ -149,22 +149,6 @@ var (
 var errAlertChannelRequired = fmt.Errorf(
 	"at least one --channel is required — pass a channel name or id (see `alethia channels list`)")
 
-// validAlertSeverity checks a severity against the generated alert_severity set.
-//
-// Client-side validation here is SOUND rather than merely helpful: severity is a Postgres enum, so
-// a value outside the set is certainly refused by the server. That is the bound the programme puts
-// on the CLI's validation — reject only what the server would certainly reject — and the payoff is
-// that the refusal names the three legal values instead of surfacing a 400.
-func validAlertSeverity(severity string) error {
-	for _, s := range alertSeverityNames() {
-		if strings.EqualFold(s, severity) {
-			return nil
-		}
-	}
-	return fmt.Errorf("--severity %q is not an alert severity (want one of: %s)",
-		severity, strings.Join(alertSeverityNames(), ", "))
-}
-
 // resolveAlertDraft fills a draft from the flags, then asks for whatever is still missing.
 //
 // The channel list is fetched UNCONDITIONALLY and used for both jobs the channels need —
@@ -182,12 +166,29 @@ func resolveAlertDraft(c apiClient, cmd *cobra.Command, args []string) (alertDra
 		Name:   strings.TrimSpace(alertName(args)),
 		Events: alertEventPatterns,
 	}
+	// THE MATCHED VALUE, NOT THE TYPED ONE. This read
+	// `draft.Severity = strings.TrimSpace(alertSeverity)` followed by a validator that returned
+	// only an error, so `--severity Critical` passed a case-insensitive gate and then posted
+	// "Critical" to a case-SENSITIVE `z.enum(alertSeverity.enumValues)`. The server's answer is a
+	// bare "Invalid request body" naming no field — which is the exact outcome the validator was
+	// added to prevent. #3825.
+	//
+	// `canonicalOneOf` rather than a local `validAlertSeverity`: it is the same helper the
+	// `grants` and `channels` groups moved onto in #3910, and this was the last of the three
+	// spellings of "fold case then post the caller's". One helper means the next closed vocabulary
+	// cannot reintroduce the fourth.
+	//
+	// Client-side validation is SOUND here rather than merely helpful — severity is a Postgres
+	// enum, so a value outside the set is certainly refused by the server. That is the bound the
+	// programme puts on the CLI's validation (reject only what the server would certainly reject),
+	// and the payoff is a refusal that names the legal values instead of surfacing a 400.
 	severityGiven := cmd.Flags().Changed("severity")
 	if severityGiven {
-		draft.Severity = strings.TrimSpace(alertSeverity)
-		if err := validAlertSeverity(draft.Severity); err != nil {
+		canonical, err := canonicalOneOf("severity", strings.TrimSpace(alertSeverity), alertSeverityNames())
+		if err != nil {
 			return draft, err
 		}
+		draft.Severity = canonical
 	}
 
 	channels, err := c.ListChannels()
