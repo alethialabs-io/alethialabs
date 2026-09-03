@@ -46,7 +46,7 @@ export function FeatureUpsell({
 			description={
 				<>
 					{meta.blurb}
-					<span className="mt-2 block text-[12px] font-medium text-text-secondary">
+					<span className="mt-2 block text-ui-sm font-medium text-text-secondary">
 						Available on the {planName} plan.
 					</span>
 				</>
