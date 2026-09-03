@@ -52,13 +52,30 @@ const NS = {
  * repos at `tofu apply` time (not exercisable under type-check); bump here as the SSOT.
  */
 export const HETZNER_CHARTS = {
-	/** CloudNativePG operator — installed once per cluster when ≥1 Postgres node exists. */
+	/**
+	 * CloudNativePG operator — installed once per cluster when ≥1 Postgres node exists.
+	 *
+	 * ⚠️ THIS URL WENT UNREACHABLE FOR A DAY AND IS STILL CORRECT. DO NOT "FIX" IT (#3961). It
+	 * answers `301 -> https://cloudnative-pg.io/charts/index.yaml`, and for a while
+	 * `cloudnative-pg.io` SERVFAILed: the four Route53 nameservers the .io registry delegated it to
+	 * all answered REFUSED — a hosted zone that was gone. Not NXDOMAIN, no DS record, so a stale
+	 * delegation rather than a move, and the content was in place throughout (`--resolve
+	 * cloudnative-pg.io:443:185.199.108.153` returned `200 text/yaml` from GitHub Pages). The
+	 * project has since re-delegated the domain to a new nameserver set and it resolves again.
+	 *
+	 * The primary source never changed and still names this exact string — the project's own
+	 * operator-chart README on `main` says `helm repo add cnpg https://cloudnative-pg.github.io/charts`.
+	 * Recording it here because the next reader will meet a red fetch before they meet that README,
+	 * and the tempting repair — repointing at the 301 target, or at a guessed OCI ref — would have
+	 * shipped to every user who adds Postgres and would still have been wrong once the name came back.
+	 */
 	cnpgOperator: {
 		chartRepo: "https://cloudnative-pg.github.io/charts",
 		chart: "cloudnative-pg",
 		version: "0.22.1",
 	},
-	/** CloudNativePG `cluster` chart — one Application per database node (a Cluster CR). */
+	/** CloudNativePG `cluster` chart — one Application per database node (a Cluster CR). Same repo,
+	 *  and the same #3961 note applies: the URL is right; it was the project's DNS that was not. */
 	cnpgCluster: {
 		chartRepo: "https://cloudnative-pg.github.io/charts",
 		chart: "cluster",
