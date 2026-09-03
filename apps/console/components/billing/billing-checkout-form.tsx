@@ -127,8 +127,12 @@ type FormData = z.infer<typeof schema>;
  * surface renders `$29.00`, and because the symbol was a VARIABLE rather than a literal, no
  * `$`-in-front-of-an-interpolation guard could see it.
  *
- * `SupportedCurrency` is `"usd" | "eur"` — both two-decimal, so `formatMoney`'s documented
- * zero-decimal limitation (JPY and Stripe's zero-decimal list) cannot be reached from here.
+ * `SupportedCurrency` is `"usd" | "eur"` — both two-decimal for charges, so the zero-decimal
+ * split `formatMoney` now applies (Stripe's charge table, see `packages/format/src/minor-units.ts`)
+ * resolves to a divisor of 100 either way and cannot change what this file renders. It is stated
+ * as a property of the TYPE rather than of `formatMoney`, because `formatMoney` no longer has the
+ * limitation this sentence used to cite — it divides by the charge divisor now, and the reason
+ * this call site is safe is that its currency union cannot reach the other branch.
  */
 function toCents(amount: number): number {
   return Math.round(amount * 100);

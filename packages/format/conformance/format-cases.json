@@ -409,6 +409,66 @@
         "cents": 267.5,
         "currency": "USD",
         "want": "$2.68"
+      },
+      {
+        "id": "money/JPY-HAS-NO-MINOR-UNIT-SO-IT-IS-NOT-DIVIDED",
+        "cents": 124000,
+        "currency": "JPY",
+        "want": "¥124,000"
+      },
+      {
+        "id": "money/KRW-IS-ZERO-DECIMAL-TOO-NOT-JUST-JPY",
+        "cents": 124000,
+        "currency": "KRW",
+        "want": "₩124,000"
+      },
+      {
+        "id": "money/JPY-zero-carries-no-minor-units",
+        "cents": 0,
+        "currency": "JPY",
+        "want": "¥0"
+      },
+      {
+        "id": "money/JPY-half-unit-rounds-away-from-zero",
+        "cents": 1234.5,
+        "currency": "JPY",
+        "want": "¥1,235"
+      },
+      {
+        "id": "money/JPY-NEGATIVE-HALF-UNIT-ROUNDS-AWAY-FROM-ZERO-NOT-TOWARD-POSITIVE",
+        "cents": -1234.5,
+        "currency": "JPY",
+        "want": "-¥1,235"
+      },
+      {
+        "id": "money/ISK-IS-CLDR-ZERO-DECIMAL-AND-STRIPE-TWO-DECIMAL",
+        "cents": 500,
+        "currency": "ISK",
+        "want": "kr 5"
+      },
+      {
+        "id": "money/UGX-IS-IN-STRIPES-ZERO-DECIMAL-LIST-AND-IS-STILL-DIVIDED",
+        "cents": 500,
+        "currency": "UGX",
+        "want": "UGX 5"
+      },
+      {
+        "id": "money/ISK-half-unit-rounds-away-from-zero",
+        "cents": 850,
+        "currency": "ISK",
+        "want": "kr 9"
+      },
+      {
+        "id": "money/CLP-AND-TWD-SHARE-A-SYMBOL-AND-NOT-A-DIVISOR",
+        "cents": 124000,
+        "currency": "CLP",
+        "want": "$124,000"
+      },
+      {
+        "id": "money/TWD-shares-CLPs-symbol-and-is-divided",
+        "cents": 124000,
+        "currency": "TWD",
+        "want": "$1,240.00"
       }
     ],
     "monthlyRate": [
