@@ -593,8 +593,17 @@ jobs:
       # failure this wave exists to prevent.
       #
       # `!cancelled()` and NOT `success()`: the summary is worth most when the audit FAILED, which
-      # is nearly always. `--step-summary` writes nothing and refuses a truncated artifact rather
-      # than rendering it as zero failures, so it cannot turn a broken run into good news.
+      # is nearly always. It cannot turn a broken run into good news, and there are TWO ways a run
+      # can be broken, which is worth stating separately because the first version of this comment
+      # claimed only the first and read as though it covered both:
+      #
+      #   - a truncated ARTIFACT — a missing or empty `records` array, or no sections. It raises.
+      #   - a withheld MEASUREMENT — `record()` rewrites every verdict for a withheld predicate to
+      #     `NOT MEASURED`, so the array is FULL and only the verdicts changed. That is the shape
+      #     this audit actually produces when a positive control breaks, and counting only FAIL
+      #     scored it as zero: `R4 7 → 0`, a broken run wearing the exact shape of a fixed lane.
+      #     A withheld predicate now carries a floor and no delta, and a section that is withheld
+      #     end to end raises like the empty one it is.
       - name: Per-predicate summary of the audit, against the recorded baseline
         if: ${{ !cancelled() }}
         run: |

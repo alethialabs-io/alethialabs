@@ -1947,7 +1947,20 @@ function selfTest() {
 		// prints `${route.route}` beside the real failures, reading as 9 R4 routes where the artifact
 		// says 7) cannot happen here. What IS worth pinning is that only FAIL is counted.
 		ok(
-			"only FAIL counts — a PASS, an N/A and a NOT MEASURED are not failures",
+			"only FAIL counts — a PASS and an N/A are not failures",
+			renderStepSummary(
+				run([
+					{ route: "/a", predicate: "R5", verdict: "PASS" },
+					{ route: "/b", predicate: "R5", verdict: "N/A" },
+					{ route: "/c", predicate: "R5", verdict: "FAIL" },
+				]),
+				run(base),
+			).includes("| **R5** | 1 | — | new predicate"),
+		);
+		// ...but a NOT MEASURED among them is NOT just "not a failure". It makes the 1 a floor, and
+		// the row says so instead of printing a number a lane would act on.
+		ok(
+			"a NOT MEASURED alongside real verdicts makes the count a floor, not a total",
 			renderStepSummary(
 				run([
 					{ route: "/a", predicate: "R5", verdict: "PASS" },
@@ -1956,10 +1969,36 @@ function selfTest() {
 					{ route: "/d", predicate: "R5", verdict: "FAIL" },
 				]),
 				run(base),
-			).includes("| **R5** | 1 | — | new predicate"),
+			).includes("| **R5** | 1+ | — | ⚠ 1 of 4 NOT MEASURED in this run — no comparison |"),
 		);
 
-		// The three refusals. Each one is a way a summary could read as good news having measured
+		// ── THE WITHHELD MEASUREMENT ────────────────────────────────────────────────────────
+		// The reported defect, reproduced as `withhold()` actually produces it: `record()` rewrites
+		// EVERY verdict for the withheld predicate to `NOT MEASURED`, so the records are all still
+		// there and only the verdicts changed. Before the fix this printed `▼2` for R4 — a broken
+		// run wearing the exact shape of a lane that fixed something.
+		{
+			const withheld = base.map((r) => (r.predicate === "R4" ? { ...r, verdict: "NOT MEASURED" } : r));
+			const out2 = renderStepSummary(run(withheld), run(base));
+			ok("a wholly withheld predicate is NOT reported as a drop to zero", !/▼2/.test(out2), out2);
+			ok("...its count is a floor, and the row names what was withheld", out2.includes("| **R4** | 0+ | 2 | ⚠ 2 of 2 NOT MEASURED in this run — no comparison |"), out2);
+			ok("...it is excluded from the headline rather than counted as movement", out2.includes("No predicate moved against the recorded baseline."), out2);
+			ok("...and the warning sits ABOVE the table, where it is read before the numbers", out2.indexOf("not fully measured") < out2.indexOf("| predicate |"), out2);
+			ok("...naming the predicate", /⚠ \*\*R4\*\* was not fully measured/.test(out2), out2);
+			// The measured predicate in the same run still compares normally — a withheld R4 must not
+			// suppress R3's real movement, or the fix would trade one blind summary for another.
+			const mixed = withheld.map((r) => (r.predicate === "R3" && r.verdict === "FAIL" ? { ...r, verdict: "PASS" } : r));
+			const out3 = renderStepSummary(run(mixed), run(base));
+			ok("...while a FULLY measured predicate in the same run still reports its movement", /Moved: \*\*R3\*\* 1 → 0/.test(out3), out3);
+		}
+		// And the same rewrite applied to EVERY record is the zero-records case wearing a full array.
+		raises(
+			"a section whose every record is NOT MEASURED RAISES — a full array that measured nothing",
+			() => renderStepSummary(run(base.map((r) => ({ ...r, verdict: "NOT MEASURED" }))), run(base)),
+			"EVERY one is NOT MEASURED",
+		);
+
+		// The remaining refusals. Each one is a way a summary could read as good news having measured
 		// nothing, which is the failure this whole job exists to surface rather than commit.
 		raises(
 			"a section with no `records` array RAISES rather than rendering zero failures",
@@ -2793,13 +2832,23 @@ export function renderStepSummary(fresh, baseline) {
 	// summary at all, because it reads like the good news the lane was hoping for. The first cut of
 	// this function had `section?.records ?? []` and would have done exactly that.
 	/**
+	 * Failures AND withheld measurements per predicate.
+	 *
+	 * Counting only FAIL was the defect. `e2e/audit/report.ts` `record()` rewrites every verdict for
+	 * a withheld predicate to `NOT MEASURED`, and `routes.spec.ts` withholds R1/R3/R4/T5 for the whole
+	 * run when the positive control breaks. The records are still there — one per route — so `records`
+	 * is non-empty, every refusal below passes, and a predicate that was never measured counts ZERO
+	 * failures. Against a baseline of 7 that renders as `▼7`: a broken run printing the exact shape of
+	 * a lane that fixed something. A withheld measurement is the one input this summary must never
+	 * turn into good news, and it is the input the audit is actually built to produce.
+	 *
 	 * @param {Record<string, {records: {predicate: string, verdict: string}[]}>} runs
 	 * @param {string} what
 	 */
-	const failsByPredicate = (runs, what) => {
+	const statsByPredicate = (runs, what) => {
 		const sections = Object.entries(runs ?? {});
 		if (sections.length === 0) throw new Error(`${what}: no sections at all — that is a broken input, not a clean board.`);
-		/** @type {Map<string, number>} */
+		/** @type {Map<string, {fails: number, withheld: number, total: number}>} */
 		const out = new Map();
 		for (const [key, section] of sections) {
 			if (!Array.isArray(section?.records)) {
@@ -2808,40 +2857,80 @@ export function renderStepSummary(fresh, baseline) {
 			if (section.records.length === 0) {
 				throw new Error(`${what}: section \`${key}\` has ZERO records — a run that measured nothing must not summarise as a clean board.`);
 			}
+			// A section whose every record is withheld is the zero-records case wearing a full array —
+			// it measured nothing. It refuses for the same reason and says which shape it found.
+			if (section.records.every((r) => r.verdict === "NOT MEASURED")) {
+				throw new Error(
+					`${what}: section \`${key}\` has ${section.records.length} records and EVERY one is NOT MEASURED — the run measured nothing, which must not summarise as a clean board.`,
+				);
+			}
 			for (const r of section.records) {
-				if (!out.has(r.predicate)) out.set(r.predicate, 0);
-				if (r.verdict === "FAIL") out.set(r.predicate, (out.get(r.predicate) ?? 0) + 1);
+				const e = out.get(r.predicate) ?? { fails: 0, withheld: 0, total: 0 };
+				e.total += 1;
+				if (r.verdict === "FAIL") e.fails += 1;
+				if (r.verdict === "NOT MEASURED") e.withheld += 1;
+				out.set(r.predicate, e);
 			}
 		}
 		return out;
 	};
-	const now = failsByPredicate(fresh, "this run");
-	const was = failsByPredicate(baseline, "the committed baseline");
+
+	const now = statsByPredicate(fresh, "this run");
+	const was = statsByPredicate(baseline, "the committed baseline");
 
 	// The UNION, sorted. A predicate that appears in only one side is the interesting case, not an
 	// edge case: it means the run measured something the baseline did not, or stopped measuring
 	// something it did. Dropping either would hide exactly the movement this table exists to show.
 	const ids = [...new Set([...now.keys(), ...was.keys()])].sort();
+
+	// A predicate with ANY withheld record has an INCOMPLETE count on that side, so its number is a
+	// floor and not a total. Two things follow, and both matter more than the cell itself: it may not
+	// carry a delta, and it may not be called moved. A floor differenced against a total is not a
+	// measurement of movement — it is the arithmetic that turned "we measured nothing" into `▼7`.
+	const withheldOn = (s) => (s?.withheld ?? 0) > 0;
+	const incomplete = (id) => withheldOn(now.get(id)) || withheldOn(was.get(id));
+
 	const rows = ids.map((id) => {
 		const n = now.get(id);
 		const b = was.get(id);
-		const cell = (v) => (v === undefined ? "—" : String(v));
+		// `3+` reads as "at least 3, and the rest was not looked at" — deliberately not a bare number,
+		// because a bare number in this column is the thing a lane acts on.
+		const cell = (s) => (s === undefined ? "—" : withheldOn(s) ? `${s.fails}+` : String(s.fails));
 		let delta = "";
-		if (n !== undefined && b !== undefined && n !== b) delta = n < b ? `▼${b - n}` : `▲${n - b}`;
-		else if (n === undefined) delta = "not measured this run";
+		if (incomplete(id)) {
+			const side = withheldOn(now.get(id)) ? now.get(id) : was.get(id);
+			const where = withheldOn(now.get(id)) ? "this run" : "the baseline";
+			delta = `⚠ ${side.withheld} of ${side.total} NOT MEASURED in ${where} — no comparison`;
+		} else if (n !== undefined && b !== undefined && n.fails !== b.fails) {
+			delta = n.fails < b.fails ? `▼${b.fails - n.fails}` : `▲${n.fails - b.fails}`;
+		} else if (n === undefined) delta = "not measured this run";
 		else if (b === undefined) delta = "new predicate";
 		return `| **${id}** | ${cell(n)} | ${cell(b)} | ${delta} |`;
 	});
 
-	const moved = ids.filter((id) => now.get(id) !== was.get(id));
+	const withheld = ids.filter(incomplete);
+	const moved = ids.filter((id) => !incomplete(id) && now.get(id)?.fails !== was.get(id)?.fails);
 	const headline =
 		moved.length === 0
 			? "No predicate moved against the recorded baseline."
-			: `Moved: ${moved.map((id) => `**${id}** ${was.get(id) ?? "—"} → ${now.get(id) ?? "—"}`).join(" · ")}`;
+			: `Moved: ${moved.map((id) => `**${id}** ${was.get(id)?.fails ?? "—"} → ${now.get(id)?.fails ?? "—"}`).join(" · ")}`;
+
+	// The warning goes ABOVE the table, not in a footnote. The table is what a lane reads instead of
+	// the log, so a caveat placed after it is a caveat that arrives after the decision.
+	const caveat = withheld.length
+		? [
+				`> ⚠ ${withheld.map((id) => `**${id}**`).join(", ")} ${withheld.length === 1 ? "was" : "were"} not fully measured in this run.`,
+				"> Those rows carry a floor (`n+`), no delta, and are excluded from the headline. A withheld",
+				"> predicate means the positive control refused to vouch for the measurement — read the job log,",
+				"> not this table, for those rows.",
+				"",
+			]
+		: [];
 
 	return [
 		"### UI conformance audit — failures per predicate",
 		"",
+		...caveat,
 		headline,
 		"",
 		"| predicate | this run | baseline | |",
