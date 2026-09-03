@@ -3,7 +3,7 @@
 
 import "server-only";
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import type { Db, Tx } from "@/lib/db";
 import type {
 	CloudProvider,
@@ -202,7 +202,15 @@ export async function getCliConfig(
 		.where(
 			and(
 				eq(projects.user_id, opts.userId),
-				eq(projects.project_name, opts.projectName),
+				// CASE-INSENSITIVE, matching `projects_org_id_project_name_key` — UNIQUE on
+				// (org_id, lower(project_name)) — and matching `resolveCliProject`, the OTHER CLI
+				// front door. `alethia project get` does not go through that one: it hits
+				// `GET /api/cli/configurations/by-project-name/{name}`, which lands here. Leaving
+				// this exact while that one folded case made the two doors disagree about the same
+				// name — every authoring command resolving `Api` at any casing while
+				// `alethia project get api` answered 404. That split is what this programme exists
+				// to close, so it is closed on both sides or neither.
+				sql`lower(${projects.project_name}) = lower(${opts.projectName})`,
 			),
 		)
 		.orderBy(asc(projects.created_at), asc(projects.id))

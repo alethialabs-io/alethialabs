@@ -175,6 +175,15 @@ export interface CreateProjectCoreResult {
  * The org-scoped slug select filters `org_id` EXPLICITLY so it is correct under a service-role
  * (BYPASSRLS) transaction as well as an RLS-scoped one — never rely on RLS alone for uniqueness here.
  */
+
+/**
+ * The name collision, as something a caller can catch.
+ *
+ * Raised by BOTH write paths — `insertProjectWithDefaultFabric` on create and `updateProjectName`
+ * on rename — so a duplicate reads the same whether it was found by the pre-check or by the index
+ * losing a race. Without it the caller sees drizzle's wrapper, whose message is
+ * `Failed query: insert into …`, and the console answers a 500 for a thing the user can fix.
+ */
 export class ProjectNameTakenError extends Error {
 	constructor(readonly project_name: string) {
 		super(
@@ -281,6 +290,22 @@ export async function insertProjectWithDefaultFabric(
 	//
 	// A name violation cannot be another tenant's: the index is keyed on (org_id, ...), so a
 	// conflict is necessarily inside the caller's own org and the message leaks nothing.
+	// A SLUG COLLISION MUST NOT RAISE, and that is the whole reason for `onConflictDoNothing`
+	// here rather than a try/catch around a plain insert.
+	//
+	// This function always runs inside the CALLER's transaction — `withScope` →
+	// `getAppDb().transaction(...)` on the console path, `db.transaction(...)` at
+	// `app/api/cli/projects/route.ts` on the CLI path — and neither drizzle nor postgres-js opens
+	// an implicit savepoint per statement. So a 23505 puts the whole transaction in the aborted
+	// state, and the next command on that connection fails with 25P02 `current transaction is
+	// aborted`. A retry written as catch-then-re-read therefore CANNOT succeed: it replaces a raw
+	// slug violation with a stranger error, and only under the concurrency it was written for, so
+	// every test with distinct names stays green over it.
+	//
+	// Targeting the slug constraint alone keeps the two conflicts distinguishable: a slug race
+	// returns zero rows and is retried, while a NAME violation still raises and is mapped below.
+	// (`onConflictDoNothing()` untargeted would swallow both and silently return nothing for a
+	// duplicate name — the friendly error replaced by no error at all.)
 	const insertProject = (withSlug: string) =>
 		tx
 			.insert(projects)
@@ -293,6 +318,7 @@ export async function insertProjectWithDefaultFabric(
 				user_id: input.owner,
 				org_id: input.orgId,
 			})
+			.onConflictDoNothing({ target: [projects.org_id, projects.slug] })
 			.returning();
 
 	let inserted: Awaited<ReturnType<typeof insertProject>>;
@@ -302,22 +328,30 @@ export async function insertProjectWithDefaultFabric(
 		if (violates(err, "projects_org_id_project_name_key")) {
 			throw new ProjectNameTakenError(input.project_name);
 		}
-		// A slug collision is the derived value losing the race, and the remedy is the same one
-		// pickFreeSlug already implements — take the next free suffix. Re-read rather than
-		// incrementing blindly, so the retry sees whatever the winner actually took. ONE retry: a
-		// second failure is no longer a race, and a loop here would hide a real defect.
-		if (violates(err, "projects_org_id_slug_key")) {
-			const now = await tx
-				.select({ slug: projects.slug })
-				.from(projects)
-				.where(eq(projects.org_id, input.orgId));
+		throw err;
+	}
+
+	// Zero rows means the slug lost a race — the derived value, not the user's. The remedy is the
+	// one pickFreeSlug already implements: re-read so the retry sees whatever the winner actually
+	// took, rather than incrementing blindly. ONE retry, because a second miss is no longer a race
+	// and a loop here would hide a real defect. The transaction is healthy at this point, which is
+	// exactly what the catch-based version could not say.
+	if (inserted.length === 0) {
+		const now = await tx
+			.select({ slug: projects.slug })
+			.from(projects)
+			.where(eq(projects.org_id, input.orgId));
+		try {
 			inserted = await insertProject(
 				pickFreeSlug(slugify(input.project_name, "project"), [
 					...now.map((r) => r.slug).filter((s): s is string => Boolean(s)),
 					...RESERVED_PROJECT_CHILD_SLUGS,
 				]),
 			);
-		} else {
+		} catch (err) {
+			if (violates(err, "projects_org_id_project_name_key")) {
+				throw new ProjectNameTakenError(input.project_name);
+			}
 			throw err;
 		}
 	}

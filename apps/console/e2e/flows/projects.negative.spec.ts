@@ -13,6 +13,7 @@
 // parallel QA run).
 
 import { test, expect } from "../fixtures/qa";
+import { db } from "../helpers/db";
 import { seedProject, type Owner } from "../helpers/seed";
 
 /** The persona's Owner id tuple for seeding. */
@@ -83,6 +84,14 @@ test.describe("Projects — duplicate name behavior", () => {
 		await expect(owner.page).not.toHaveURL(
 			new RegExp(`/${owner.orgSlug}/${first.slug}(/|$)`),
 		);
+		// "AND NO SECOND PROJECT IS CREATED" — the half of this test's own name that nothing was
+		// checking. Staying on the form is consistent with a refusal AND with a create that
+		// succeeded while the redirect failed, and the two differ by exactly one row.
+		const [{ count }] = await db()`
+			select count(*)::int as count from projects
+			where org_id = ${owner.orgId!} and lower(project_name) = lower(${name})
+		`;
+		expect(count).toBe(1);
 	});
 
 	test("a name differing only in CASE is refused too", async ({ owner }) => {

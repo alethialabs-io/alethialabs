@@ -2301,10 +2301,16 @@ describe("duplicateProjectForProvider", () => {
 					project_name: "My App",
 				},
 			],
+			// The org's project names, read to derive a free name for the clone. THE SOURCE PROJECT
+			// IS IN THIS LIST, because it is in the org being duplicated within — the shape
+			// production always has, and the one an earlier fixture here did not.
+			[{ project_name: "My App" }],
 			// createProject's existing-project list: slug + project_name, the two columns
-			// insertProjectWithDefaultFabric selects (#3145). Named differently from the project
-			// under test, so this is a slug collision and not a name collision.
-			[{ slug: "my-app", project_name: "Some Other Project" }],
+			// insertProjectWithDefaultFabric selects (#3145). It carries the SOURCE project's own
+			// name for the same reason. An earlier version of this fixture said "Some Other
+			// Project" — a shape that cannot occur — and that is why it went green while the
+			// cross-cloud duplicate threw `ProjectNameTakenError` on every single attempt.
+			[{ slug: "my-app", project_name: "My App" }],
 		];
 
 		const { valuesSpy } = setupDb({
@@ -2385,6 +2391,11 @@ describe("duplicateProjectForProvider", () => {
 			cloud_identity_id: "ci-target",
 			user_id: "user-1",
 		});
+		// AND WITH A NAME THE ORG DOES NOT ALREADY HOLD. `convertProjectConfig` never touches
+		// `project_name` and the dialog has no name field, so without a derived name this is the
+		// source project's own name in the source project's own org — which #3145's uniqueness
+		// check refuses, making the duplicate fail 100% of the time.
+		expect(projVals).toMatchObject({ project_name: "My App (gcp)" });
 	});
 
 	it("throws when the target cloud identity is missing", async () => {

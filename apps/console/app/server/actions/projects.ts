@@ -2451,6 +2451,26 @@ export async function getProjectAsFormData(
 }
 
 /** Duplicates a project config for a different cloud provider, mapping provider-specific values. */
+/**
+ * A project name the org does not already hold, for a clone the user did not get to name.
+ *
+ * Mirrors `pickFreeSlug`'s shape but compares CASE-INSENSITIVELY, because that is what
+ * `projects_org_id_project_name_key` enforces — UNIQUE on `(org_id, lower(project_name))`. Checking
+ * with a different predicate than the index is how a friendly message gets skipped and a raw 23505
+ * reaches the user instead.
+ *
+ * It is a suggestion, not a guarantee: two concurrent duplicates can still derive the same name, and
+ * the index is what actually refuses the loser — mapped to `ProjectNameTakenError` like any other
+ * collision.
+ */
+function pickFreeProjectName(base: string, taken: string[]): string {
+	const used = new Set(taken.map((n) => n.toLowerCase()));
+	if (!used.has(base.toLowerCase())) return base;
+	let n = 2;
+	while (used.has(`${base} ${n}`.toLowerCase())) n++;
+	return `${base} ${n}`;
+}
+
 export async function duplicateProjectForProvider(
 	sourceProjectId: string,
 	targetCloudIdentityId: string,
@@ -2467,13 +2487,17 @@ export async function duplicateProjectForProvider(
 	const { formData, provider: sourceProvider } =
 		await getProjectAsFormData(sourceProjectId);
 
-	const targetIdentity = await withActorScope(actor, async (tx) => {
+	const { targetIdentity, takenNames } = await withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.select({ provider: cloudIdentities.provider })
 			.from(cloudIdentities)
 			.where(eq(cloudIdentities.id, targetCloudIdentityId))
 			.limit(1);
-		return row;
+		const names = await tx
+			.select({ project_name: projects.project_name })
+			.from(projects)
+			.where(eq(projects.org_id, actor.orgId));
+		return { targetIdentity: row, takenNames: names.map((n) => n.project_name) };
 	});
 
 	if (!targetIdentity) throw new Error("Target cloud identity not found");
@@ -2488,6 +2512,16 @@ export async function duplicateProjectForProvider(
 
 	converted.project.region = targetRegion;
 	converted.project.cloud_identity_id = targetCloudIdentityId;
+	// THE CLONE NEEDS ITS OWN NAME. `convertProjectConfig` translates services and never touches
+	// `project_name`, and the same-provider branch is a bare `structuredClone` — so without this the
+	// name handed to `createProject` is the SOURCE project's, in the source project's own org, and
+	// #3145's uniqueness check matches the source row itself. The dialog has no name field, so the
+	// cross-cloud duplicate would end in "A project named … already exists" every single time and no
+	// project would ever be created.
+	converted.project.project_name = pickFreeProjectName(
+		`${formData.project.project_name} (${targetProvider})`,
+		takenNames,
+	);
 
 	const { project } = await createProject(converted);
 	if (!project.slug) throw new Error("Duplicated project is missing a slug");
