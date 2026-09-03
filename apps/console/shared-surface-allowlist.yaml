@@ -182,89 +182,114 @@ page_title:
 
 section_header:
   # --- debt only: 46 raw <h2>-<h6> across 39 files, measured 2026-09-01 on an unmodified dev.
+  # RE-ATTRIBUTED 2026-09-03 (#3828): both rows named #3619, which CLOSED without converting them.
+  # See the note under `type_scale:` — this is the same defect, and #4141 owns all of it.
   - path: apps/console/app/(private)/[org]/~/runners/runners-client.tsx
     hits: 1
-    lifts: "#3619 — the page frame is rebuilt: 1 raw section heading here."
+    lifts: "#4141 — the drift #3619 left behind: 1 raw section heading here."
   - path: apps/console/components/shell/account-settings-dialog.tsx
     hits: 1
-    lifts: "#3619 — the page frame is rebuilt: 1 raw section heading here."
+    lifts: "#4141 — the drift #3619 left behind: 1 raw section heading here."
 
 type_scale:
   # --- debt only: hardcoded pixel type sizes across 194 files and 23 distinct values,
   # measured 2026-09-01 on an unmodified dev by this rule's own matcher. Not one of
   # them is a decision: packages/brand/src/tokens.css carried NO UI type scale until the commit
   # that added this rule, so there was nothing for any of these files to have reached for.
+  #
+  # RE-ATTRIBUTED 2026-09-03 (#3828). Every row here used to name #3742 — which CLOSED with PR
+  # #3809 after converting 74 files, leaving the twenty it did not reach naming a finished issue. A
+  # `lifts:` naming a closed issue is debt with NO OWNER, and the guard cannot see it: it checks
+  # that a row names an issue and that its `hits:` still match, not that the issue is open. So the
+  # rows now name the lane that actually removes each one:
+  #
+  #   #3631 — the page whose own rebuild lane deletes the size as a side effect. `support/page.tsx`
+  #           was the same shape and went to #3629; #4054 has since landed and deleted that row.
+  #   #4141 — the other 48 occurrences across 18 files, filed for exactly this purpose.
+  #
+  # #4141 also takes the FOUR rows in `section_header:` and `empty_state:` that named #3619 — the
+  # same defect, found by auditing every `lifts:` owner in this file rather than trusting #3828’s
+  # title, which says `type_scale`. 22 rows / 53 occurrences now have one live owner, and no row
+  # in this file names a closed issue.
+  #
+  # #4141 exists rather than a `sed` because the mechanical move is WRONG for 24 of those 48:
+  # `apps/console/components/shell/**` is inside #3805’s `scope:` glob, but #3805 is the audit-fix
+  # lane — R4 overlap, R5 axe, R6 a prefetch 404 — and nothing in it removes a `text-[13px]`. Point
+  # a row at a lane that will not lift it and it orphans again the day that lane closes, which is
+  # the same staleness one level up. A GLOB MATCH IS NOT OWNERSHIP.
   - path: apps/console/app/(private)/[org]/~/runners/runners-client.tsx
     hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 4 hardcoded pixel type sizes here."
   - path: apps/console/app/(private)/[org]/~/settings/billing/invoices/page.tsx
     hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 1 hardcoded pixel type size here."
   - path: apps/console/app/(private)/cli/login/page.tsx
     hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+    lifts: "#3631 — the CLI device-approval page is rebuilt: 1 hardcoded pixel type size here."
   - path: apps/console/app/(public)/onboarding/page.tsx
     hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 1 hardcoded pixel type size here."
   - path: apps/console/components/auth/auth-form.tsx
     hits: 1
     reason: The 6-digit sign-in code is typeset at 22px monospace so the person entering it can see which character they are on and catch a transposed digit before submitting. That is legibility of a code being typed, not reading type, so no rung of either ladder is the right answer — #3806.
   - path: apps/console/components/download-cli-button.tsx
     hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 1 hardcoded pixel type size here."
   - path: apps/console/components/errors/error-state.tsx
     hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 4 hardcoded pixel type sizes here."
   - path: apps/console/components/forms/accordion-form.tsx
     hits: 3
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 3 hardcoded pixel type sizes here."
   - path: apps/console/components/forms/oauth-consent-form.tsx
     hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 2 hardcoded pixel type sizes here."
   - path: apps/console/components/org-switcher.tsx
     hits: 3
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 3 hardcoded pixel type sizes here."
   - path: apps/console/components/project-switcher.tsx
     hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 1 hardcoded pixel type size here."
   - path: apps/console/components/repository-selector.tsx
     hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 4 hardcoded pixel type sizes here."
   - path: apps/console/components/shell/account-settings-dialog.tsx
     hits: 6
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 6 hardcoded pixel type sizes here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 6 hardcoded pixel type sizes here."
   - path: apps/console/components/shell/nav-row.tsx
     hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 2 hardcoded pixel type sizes here."
   - path: apps/console/components/shell/notifications-popover.tsx
     hits: 5
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 5 hardcoded pixel type sizes here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 5 hardcoded pixel type sizes here."
   - path: apps/console/components/shell/sidebar-drill.tsx
     hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 1 hardcoded pixel type size here."
   - path: apps/console/components/shell/sidebar-nav.tsx
     hits: 2
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 2 hardcoded pixel type sizes here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 2 hardcoded pixel type sizes here."
   - path: apps/console/components/shell/sidebar-profile.tsx
     hits: 4
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 4 hardcoded pixel type sizes here."
   - path: apps/console/components/shell/sidebar-rail.tsx
     hits: 1
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 1 hardcoded pixel type size here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 1 hardcoded pixel type size here."
   - path: apps/console/components/shell/switcher-trigger.tsx
     hits: 3
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 3 hardcoded pixel type sizes here."
+    lifts: "#4141 — the 48 type sizes #3742 did not reach: 3 hardcoded pixel type sizes here."
 
 empty_state:
+  # RE-ATTRIBUTED 2026-09-03 (#3828): both rows named #3619, which CLOSED without converting them.
+  # See the note under `type_scale:` — this is the same defect, and #4141 owns all of it.
   # --- debt only: 33 hand-rolled centred empty states across 24 files, six different heights,
   #     measured 2026-09-01 on an unmodified dev. That census is the starting line, not a live
   #     count — the rows below it are the live count, and they only shrink.
   - path: apps/console/app/(private)/[org]/~/runners/runners-client.tsx
     hits: 2
-    lifts: "#3619 — the page frame is rebuilt: 2 hand-rolled empty states here."
+    lifts: "#4141 — the drift #3619 left behind: 2 hand-rolled empty states here."
   - path: apps/console/components/project-switcher.tsx
     hits: 1
-    lifts: "#3619 — the page frame is rebuilt: 1 hand-rolled empty state here."
+    lifts: "#4141 — the drift #3619 left behind: 1 hand-rolled empty state here."
 
 stat_strip:
   # --- debt only: 12 stat-card cells and the 2 Stat primitives they render, measured
