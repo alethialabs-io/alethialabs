@@ -1,24 +1,26 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Where the broker-password reconciliation sits in RunDeployV2 is the whole of its correctness, and
+// Where the broker-password reconciliation sits in RunDeployV2 is part of its correctness, and
 // nothing else can see it.
 //
-// THE TWO BOUNDS. `convergeInClusterQueuePasswords` execs into a Ready broker pod, so:
+// THE BOUND THAT IS REAL: it must run AFTER `WaitAddOnsHealthy`. It execs into a Ready broker pod,
+// and before the wait none is Ready on the deploy that creates a queue and few are on one that
+// restarts it — so the reconciliation would skip on every run and defer the repair forever, while
+// reporting "no broker yet" each time, which reads like an environmental hiccup rather than a
+// placement bug. Moving that call up compiles, gofmts, lints and leaves every other test in this
+// package green, so it is asserted structurally, in the idiom argocd_preflight_order_test.go
+// established.
 //
-//   - AFTER `WaitAddOnsHealthy`. Before the wait, no broker is Ready on the deploy that creates the
-//     queue and few are Ready on one that restarts it, so the reconciliation would skip on every
-//     run and defer the repair forever — while reporting "no broker yet" each time, which reads
-//     like an environmental hiccup rather than a placement bug.
-//   - BEFORE `ReadDataEndpoints`. That read is what PUBLISHES the credential Secret to the console
-//     as the queue's endpoint credential. Converging after it publishes the password from #3590 —
-//     the one the broker does not accept — and then fixes the broker a moment later, so the console
-//     is briefly right about a credential it displayed as wrong. Converging first means the value
-//     the console publishes is one that works when it is published.
-//
-// Moving either statement past its bound compiles, gofmts, lints, and leaves every other test in
-// this package green. So the order is asserted structurally, on the source, in the idiom
-// argocd_preflight_order_test.go established.
+// THE BOUND THAT IS NOT, recorded because the first version of this file asserted it and a review
+// showed the premise was false: `ReadDataEndpoints` does NOT publish the Secret's contents.
+// `readSecretRef` returns `"<namespace>/<name>"` and its own doc says it never reads or returns the
+// Secret's data — the password is resolved later, at binding-resolution time, from whatever the
+// Secret holds then. So converging after the endpoint read would publish an identical reference and
+// change nothing about which password an application ends up using. The assertion is gone rather
+// than restated: a guard whose failure message asserts something that cannot happen is worse than
+// no guard, because it costs the next person a real investigation to disbelieve it.
+
 package provisioner
 
 import (
@@ -28,7 +30,7 @@ import (
 	"testing"
 )
 
-func TestQueuePasswordConvergesAfterTheHealthWaitAndBeforeTheEndpointRead(t *testing.T) {
+func TestQueuePasswordConvergesAfterTheAddOnHealthWait(t *testing.T) {
 	const file = "deploy.go"
 	fset := token.NewFileSet()
 	parsed, err := parser.ParseFile(fset, file, nil, 0)
@@ -50,23 +52,16 @@ func TestQueuePasswordConvergesAfterTheHealthWaitAndBeforeTheEndpointRead(t *tes
 
 	// Walk the whole body, so a call nested in an `if` or a closure is located rather than skipped.
 	const notFound = -1
-	wait, converge, read := notFound, notFound, notFound
+	wait, converge := notFound, notFound
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
 		switch f := call.Fun.(type) {
-		case *ast.SelectorExpr: // argocd.WaitAddOnsHealthy(...), argocd.ReadDataEndpoints(...)
-			pkg, isIdent := f.X.(*ast.Ident)
-			if !isIdent || pkg.Name != "argocd" {
-				return true
-			}
-			switch f.Sel.Name {
-			case "WaitAddOnsHealthy":
+		case *ast.SelectorExpr: // argocd.WaitAddOnsHealthy(...)
+			if pkg, isIdent := f.X.(*ast.Ident); isIdent && pkg.Name == "argocd" && f.Sel.Name == "WaitAddOnsHealthy" {
 				wait = int(call.Pos())
-			case "ReadDataEndpoints":
-				read = int(call.Pos())
 			}
 		case *ast.Ident: // convergeInClusterQueuePasswords(...)
 			if f.Name == "convergeInClusterQueuePasswords" {
@@ -77,7 +72,7 @@ func TestQueuePasswordConvergesAfterTheHealthWaitAndBeforeTheEndpointRead(t *tes
 	})
 
 	// EACH SUBJECT IS CHECKED FOR SEPARATELY. A renamed or deleted call would otherwise leave its
-	// position at notFound, and `notFound < anything` makes the ordering assertions pass — a guard
+	// position at notFound, and `notFound < anything` makes the ordering assertion pass — a guard
 	// reporting green over a subject that is no longer there.
 	for _, s := range []struct {
 		name string
@@ -85,19 +80,14 @@ func TestQueuePasswordConvergesAfterTheHealthWaitAndBeforeTheEndpointRead(t *tes
 	}{
 		{"argocd.WaitAddOnsHealthy", wait},
 		{"convergeInClusterQueuePasswords", converge},
-		{"argocd.ReadDataEndpoints", read},
 	} {
 		if s.pos == notFound {
-			t.Fatalf("%s is not called in RunDeployV2 — this guard proved nothing about the rest", s.name)
+			t.Fatalf("%s is not called in RunDeployV2 — this guard proved nothing about the ordering", s.name)
 		}
 	}
 
 	if converge < wait {
 		t.Errorf("convergeInClusterQueuePasswords runs BEFORE argocd.WaitAddOnsHealthy: no broker is " +
 			"Ready yet, so it would skip on every deploy and never repair a pre-#3304 queue")
-	}
-	if converge > read {
-		t.Errorf("convergeInClusterQueuePasswords runs AFTER argocd.ReadDataEndpoints: the console " +
-			"would be handed the credential the broker does not accept, which is the #3590 defect itself")
 	}
 }

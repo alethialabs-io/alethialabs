@@ -4,6 +4,7 @@
 package provisioner
 
 import (
+	"context"
 	"io"
 	"strings"
 	"testing"
@@ -22,7 +23,7 @@ func TestConvergeInClusterQueuePasswordsIsAHetznerOnlyNoOp(t *testing.T) {
 			Queues:   []types.ProjectQueueConfig{{Name: "jobs"}},
 		}
 		var out, errOut strings.Builder
-		convergeInClusterQueuePasswords(vc, &out, &errOut)
+		convergeInClusterQueuePasswords(context.Background(), vc, &out, &errOut)
 		if out.Len() != 0 || errOut.Len() != 0 {
 			t.Errorf("%s attempted to reconcile a broker password: out=%q err=%q", provider, out.String(), errOut.String())
 		}
@@ -43,7 +44,7 @@ func TestConvergeInClusterQueuePasswordsIsNonFatal(t *testing.T) {
 	// deploy must carry on regardless.
 	t.Setenv("PATH", t.TempDir())
 	var errOut strings.Builder
-	convergeInClusterQueuePasswords(vc, io.Discard, &errOut)
+	convergeInClusterQueuePasswords(context.Background(), vc, io.Discard, &errOut)
 	if !strings.Contains(errOut.String(), "jobs") {
 		t.Errorf("a failure was not reported against the queue it belongs to: %q", errOut.String())
 	}
@@ -58,8 +59,27 @@ func TestConvergeInClusterQueuePasswordsIsSilentWithNoQueues(t *testing.T) {
 	vc := &types.ProjectConfig{Provider: "hetzner"}
 	t.Setenv("PATH", t.TempDir())
 	var out, errOut strings.Builder
-	convergeInClusterQueuePasswords(vc, &out, &errOut)
+	convergeInClusterQueuePasswords(context.Background(), vc, &out, &errOut)
 	if out.Len() != 0 || errOut.Len() != 0 {
 		t.Errorf("a project with no queue produced output: out=%q err=%q", out.String(), errOut.String())
+	}
+}
+
+// A CANCELLED DEPLOY MUST NOT SHELL OUT PER QUEUE. `WaitAddOnsHealthy` returns immediately on
+// `ctx.Done()`, so a timed-out deploy falls straight through to this step — the reason both siblings
+// (`credentialInClusterRegistries`, `bootstrapInClusterVault`) take a context too.
+func TestConvergeInClusterQueuePasswordsHonoursACancelledContext(t *testing.T) {
+	vc := &types.ProjectConfig{
+		Provider: "hetzner",
+		Queues:   []types.ProjectQueueConfig{{Name: "jobs"}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var errOut strings.Builder
+	convergeInClusterQueuePasswords(ctx, vc, io.Discard, &errOut)
+	// Still non-fatal and still REPORTED — a cancelled deploy that silently skips the repair is the
+	// same "nothing happened and nothing said so" this whole file is written against.
+	if !strings.Contains(errOut.String(), "jobs") {
+		t.Errorf("a cancelled deploy skipped the queue without saying so: %q", errOut.String())
 	}
 }

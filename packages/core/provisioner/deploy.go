@@ -1374,7 +1374,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			//
 			// It is a no-op on a queue whose broker already accepts it, which is every queue created
 			// after #3304 — this exists for the ones created before it.
-			convergeInClusterQueuePasswords(vc, stdout, stderr)
+			convergeInClusterQueuePasswords(ctx, vc, stdout, stderr)
 
 			// In-cluster data services (Hetzner database/cache/queue) are ArgoCD Applications, so
 			// they have no tofu output carrying a connection string — the console showed NO endpoint
@@ -1895,9 +1895,13 @@ func credentialInClusterRegistries(ctx context.Context, vc *types.ProjectConfig,
 // Non-fatal per queue, like the registry and add-on paths: a queue whose broker is not reachable yet
 // must not fail an otherwise-healthy cluster. The next deploy re-runs this, and it is a no-op for
 // every queue whose broker already accepts its Secret.
-func convergeInClusterQueuePasswords(vc *types.ProjectConfig, stdout, stderr io.Writer) {
+// It takes `ctx` for the reason its two siblings do — `credentialInClusterRegistries` and
+// `bootstrapInClusterVault` both carry one. `WaitAddOnsHealthy` returns immediately on `ctx.Done()`,
+// so a cancelled or timed-out deploy falls STRAIGHT THROUGH to this step; without a context to
+// consult it would then shell out per queue against a broker that may never answer.
+func convergeInClusterQueuePasswords(ctx context.Context, vc *types.ProjectConfig, stdout, stderr io.Writer) {
 	for _, q := range argocd.HetznerQueues(vc, stderr) {
-		if err := argocd.ConvergeQueuePassword(q, stdout, stderr); err != nil {
+		if err := argocd.ConvergeQueuePassword(ctx, q, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: in-cluster queue %s broker password not reconciled: %v\n", q.Name, err)
 		}
 	}
