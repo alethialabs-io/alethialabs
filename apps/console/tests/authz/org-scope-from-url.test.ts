@@ -159,10 +159,16 @@ describe("what is a refusal, and is not a fallback", () => {
 	// would produce. The message is ANCHORED: `ForbiddenError` renders as `Forbidden: view on org
 	// (…)`, and pinning the start is what stops this ever reading as an authentication failure —
 	// `[org]/layout.tsx` bounces the bare word "Unauthorized" to sign-in.
-	it("an address naming an org the caller is not in THROWS, and never yields the session's org", async () => {
+	it("an address naming an org the caller is not in 404s, and never yields the session's org", async () => {
 		requestPath = "/not-my-org/evidence";
 		orgRow = [];
-		await expect(currentActor()).rejects.toThrow(/^Forbidden: .*not a member of/);
+		// `notFound()`, not a `ForbiddenError`. The refusal was always right; the LANDING was the
+		// defect. The layout catches only around its own resolver call and Next renders layout and
+		// page concurrently, so a reader's `ForbiddenError` escaped the layout entirely and every
+		// stale link, shared URL and crawler hit answered 500 where `resolve.ts` promises a 404.
+		// 404 also refuses to confirm the slug exists, so org names cannot be enumerated by status.
+		await expect(currentActor()).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK/);
+		// The part that must NOT change: no substitution was attempted on the way out.
 		expect(getActiveScope).not.toHaveBeenCalled();
 	});
 
@@ -174,13 +180,20 @@ describe("what is a refusal, and is not a fallback", () => {
 		await expect(currentActor()).rejects.toThrow(/landed on a different organization/);
 	});
 
-	// A REFUSAL MUST BE A ForbiddenError, not a bare Error: `authorize`'s callers classify on the
-	// type to answer 403, and `[org]/layout.tsx` matches the bare string "Unauthorized" exactly to
-	// bounce to sign-in — which a valid session with a wrong address must not do.
-	it("...and both refusals are ForbiddenError, so they are classified rather than 500s", async () => {
+	// THE TWO REFUSALS LAND DIFFERENTLY, ON PURPOSE, and that is the point of this case.
+	//
+	// Not-a-member is a fact about the ADDRESS — the same fact as an org that does not exist — so it
+	// answers 404 and reveals nothing about which slugs are real. A resolver that SUBSTITUTES is a
+	// fact about the SYSTEM: the caller may well belong here, and something answered with the wrong
+	// tenant. That stays a `ForbiddenError` so `authorize`'s callers can classify it to a 403, and it
+	// must never render as a 404, which would read as "no such page" for a genuine internal fault.
+	//
+	// Neither is a bare `Error`: `[org]/layout.tsx` matches the bare string "Unauthorized" exactly to
+	// bounce to sign-in, which a valid session with a wrong address must not do.
+	it("...and the two refusals land differently: 404 for the address, ForbiddenError for a substitution", async () => {
 		requestPath = "/not-my-org/evidence";
 		orgRow = [];
-		await expect(currentActor()).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(currentActor()).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK/);
 		requestPath = "/acme/x";
 		orgRow = [{ id: ORG_B }];
 		vi.mocked(getActiveScope).mockResolvedValueOnce({ userId: USER, orgId: "org-c" });
@@ -208,6 +221,8 @@ describe("the single-tenant edition is not a substitution", () => {
 	it("...and an org the caller is NOT a member of is still refused there", async () => {
 		requestPath = "/not-my-org/evidence";
 		orgRow = [];
-		await expect(currentActor()).rejects.toBeInstanceOf(ForbiddenError);
+		// Community refuses on the same membership join, and lands the same way. The edition changes
+		// which org a RESOLVED slug maps to, never whether an unresolvable one is answered.
+		await expect(currentActor()).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK/);
 	});
 });

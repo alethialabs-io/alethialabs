@@ -31,9 +31,9 @@
 
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
+import { notFound } from "next/navigation";
 import { cache } from "react";
 import { ORG_PATH_HEADER } from "@/lib/authz/org-path";
-import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import { member, organization } from "@/lib/db/schema";
 import { PERSONAL_ORG_SLUG, RESERVED_SLUGS } from "@/lib/routing";
@@ -116,15 +116,36 @@ export const urlScopedOrgId = cache(
 		// tree turns this into the 404 it already renders for an unknown org
 		// (`[org]/layout.tsx` → `notFound()`); a reader reached some other way gets an error.
 		if (!org) {
-			// A ForbiddenError, not a bare Error: callers classify on that type to answer 403, and
-			// `[org]/layout.tsx` matches the bare string "Unauthorized" EXACTLY to bounce to
-			// sign-in — a session that is perfectly valid must not be sent there.
-			throw new ForbiddenError(
-				"view",
-				{ type: "org" },
-				`the address names organization \`${slug}\`, which this account is not a member of; ` +
-					"the scope was NOT resolved from the session instead",
-			);
+			// `notFound()`, NOT a ForbiddenError — and the landing is the whole of the change.
+			//
+			// The refusal itself was right: answering a request addressed to an org the caller is not
+			// in with the caller's OWN tenant is the substitution this issue removes. What was wrong
+			// was where it landed. `[org]/layout.tsx` catches only around its own `resolveOrgScope`
+			// call, and Next renders layout and page CONCURRENTLY — it does not wait for the layout to
+			// settle before invoking the page. So for `/{an-org-i-am-not-in}` both fired: the layout's
+			// `notFound()`, and a `ForbiddenError` out of every reader on the page, which escapes the
+			// layout entirely. `onRequestError` filters `NEXT_NOT_FOUND`, not `ForbiddenError`, so
+			// every stale link, every shared URL and every crawler hit answered 500 and flooded error
+			// tracking — the exact behaviour `app/server/actions/resolve.ts` says it was shaped to
+			// avoid, on the same condition, one function away.
+			//
+			// AN `error.tsx` CANNOT DO THIS, which is worth writing down because it is the obvious
+			// suggestion. A route-level error boundary is a CLIENT component, and Next replaces a
+			// server error's message with a generic string before it crosses that boundary, leaving
+			// only `digest`. There is no supported way to ask "was this a ForbiddenError?" there, so
+			// the mapping has to happen on the server, at the throw.
+			//
+			// SAFE HERE SPECIFICALLY, because this branch cannot run outside a page render:
+			// `urlOrgSlug()` returns null whenever the address names no org — `/api/**`, `/dashboard`,
+			// `/cli/login` and every other `RESERVED_SLUGS` prefix — and `currentActor()` falls back to
+			// the session on null without ever reaching this query. A route handler therefore still
+			// gets its catchable `ForbiddenError` from `enforce()`; only a `/{org}/` page reaches here.
+			//
+			// And 404 rather than 403 is the better answer on its own terms: a 403 confirms the slug
+			// exists, so a stranger could enumerate org names by reading status codes. The unknown-org
+			// and not-a-member cases are now indistinguishable from outside, which is what they should
+			// have been.
+			notFound();
 		}
 		return org.id;
 	},
