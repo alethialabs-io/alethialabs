@@ -44,7 +44,9 @@ Columns: **Chart** (its per-env id and release name), **Repo** (the git or OCI U
 chart directory, a dash for an OCI chart), **Ref** (the git ref, a dash when it tracks the default
 branch), **Status**, **Scan** (chart-safety scan lifecycle: `unscanned`, `scanning`, `done`,
 `failed`). Add `-o json` for the full view — the elench scan report itself is console-only — or
-`-o csv` for the rows. Backing call: `GET /cli/projects/PROJECT/byo-charts`.
+`-o csv` for the rows. The dashes in **Path** and **Ref** are for a person reading a column; under
+`-o csv` a chart that has neither gets an empty cell, the same split `alethia config get` makes.
+Backing call: `GET /cli/projects/PROJECT/byo-charts`.
 
 ## `alethia chart attach`
 

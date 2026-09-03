@@ -177,17 +177,33 @@ func designApplyGate(c apiClient, out io.Writer, p api.ApplyDesignParams, yes bo
 	return designApplyProceed, nil
 }
 
+// designNonRemovingActions is the CLOSED set of actions that leave every component standing.
+//
+// It mirrors `apps/console/lib/config-diff.ts`'s `type Op = "CREATE" | "UPDATE" | "DELETE"`, whose
+// rows the design-apply route passes to `DesignChange.Action` verbatim. Two of the three are safe,
+// so the safe set is what this names — and `api.DesignChange.Action` is a bare Go `string` against
+// that closed TS union, which is why a drift here is a judgement call rather than a compile error.
+var designNonRemovingActions = map[string]struct{}{"CREATE": {}, "UPDATE": {}}
+
 // designDeletions returns the changes that REMOVE a component.
 //
-// Matched case-insensitively against the whole action rather than by prefix: the wire says
-// "DELETE" today, and a prefix match would also read a future "DELETED_STALE" as a deletion
-// while a case-sensitive one would miss a server that starts sending "delete". Over-matching
-// here costs a confirmation nobody needed; under-matching costs a silent removal, so the
-// comparison is the one that is exact about the thing and lenient about its spelling.
+// IT ASKS WHICH ACTIONS ARE SAFE, NOT WHICH ONE IS "DELETE", and the direction is the whole point.
+// An exact `EqualFold(action, "DELETE")` reads every other spelling as non-destructive, so a
+// server that started sending `REMOVE`, `DELETE_ORPHAN` or `DETACH` — or one that sent an empty
+// action because something upstream broke — would apply removals with no confirmation at all. The
+// caller already fails CLOSED when it cannot read the preflight; failing OPEN on an action it does
+// not recognise made the two halves of one gate disagree.
+//
+// The asymmetry of the two errors is what settles it. An unrecognised action costs at most a
+// confirmation nobody needed, or — under --no-input — a refusal that NAMES the plan and the flag.
+// The other direction costs a component, silently. So an action outside the safe set is a removal.
+//
+// Case-insensitive and trimmed on the safe side too, so a server that starts sending "create" is
+// still recognised as safe rather than turning every add-only apply into a prompt.
 func designDeletions(changes []api.DesignChange) []api.DesignChange {
 	var out []api.DesignChange
 	for _, ch := range changes {
-		if strings.EqualFold(strings.TrimSpace(ch.Action), "DELETE") {
+		if _, safe := designNonRemovingActions[strings.ToUpper(strings.TrimSpace(ch.Action))]; !safe {
 			out = append(out, ch)
 		}
 	}
