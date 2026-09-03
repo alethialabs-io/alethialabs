@@ -155,6 +155,17 @@ const REQUIRED_IDS = [
 	// is stronger than saying how many.
 	"duration/hours-and-minutes-drop-the-seconds",
 	"duration/many-hours",
+	// The charge-divisor rows the floor was leaving unprotected, named rather than counted — the
+	// same remedy the `duration` pair above got, and for the same reason. A zero-decimal currency
+	// has two independently wrong renderings and one row cannot pin both: `JPY-zero` fixes the
+	// value at the divisor's identity (0 divided wrongly is still 0, so it is the row that catches
+	// a divisor applied to the WRONG side), and the two half-unit rows fix the rounding at the
+	// boundary where a divisor of 1 and a divisor of 100 disagree by a whole unit rather than a
+	// hundredth. ISK carries its own because it is the split's hardest case: CLDR zero-decimal,
+	// Stripe two-decimal, so it is the row that fails if the divisor is taken from CLDR.
+	"money/JPY-zero-carries-no-minor-units",
+	"money/JPY-half-unit-rounds-away-from-zero",
+	"money/ISK-half-unit-rounds-away-from-zero",
 	// hourCycle h23, not hour12:false.
 	"date/MIDNIGHT-IS-00-NOT-24",
 	// The credit register — ONE ROW PER WAY OF GETTING IT WRONG, listed below rather than counted.
@@ -264,10 +275,12 @@ const SECTION_FLOOR: Record<string, number> = {
 	duration: 13,
 	date: 10,
 	bytes: 8,
-	// Raised 6 -> 13 and 15 -> 24 with the money/monthlyRate rounding rows (#3899), for the reason
-	// the paragraph above gives: the sections grew and the floors did not, so the twelve rows that
-	// pin the rounding rule could have been deleted and regenerated away with every layer green.
-	money: 13,
+	// Raised 6 -> 13 and 15 -> 24 with the money/monthlyRate rounding rows (#3899), then 13 -> 23
+	// with the charge-divisor rows, for the reason the paragraph above gives: the sections grew and
+	// the floors did not, so the twelve rows that pin the rounding rule could have been deleted and
+	// regenerated away with every layer green. The divisor rows re-earned the same complaint the
+	// moment they landed — the section went to 23 and this still said 13.
+	money: 23,
 	monthlyRate: 24,
 	// Set to the row count, not below it. The paragraph above is a complaint about floors that
 	// lagged the sections they guard; a new section starting three rows slack would re-earn it.

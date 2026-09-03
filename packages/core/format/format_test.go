@@ -7,14 +7,20 @@
 // have. Three things here are outside that:
 //
 //   - The ISO-code fallback for a currency with no symbol. TypeScript delegates to Intl, which
-//     knows every currency; Go carries a deliberate four-entry table and falls back. That is a
-//     RULING, not a mirror, and a ruling with no test is a comment. Measured, so that nobody
-//     later adds the row the table looks like it is missing: en-GB Intl renders CHF as
-//     `CHF\u00a012.50` — the ISO code, PREFIXED, with a non-breaking space — where this file
-//     renders `12.50 CHF`; and for HUF it finds a narrow symbol, `Ft 13`, which Go has no table
-//     for at all. A conformance row over any currency outside the four would freeze that
-//     disagreement rather than a contract, so both MonthlyRate's fallback and MonthlyDelta's are
-//     asserted here instead.
+//     knows every currency; Go carries a deliberate SHORT table (nine entries — USD, EUR, GBP,
+//     JPY, KRW, CLP, TWD, ISK, UGX) and falls back for everything else. That is a RULING, not a
+//     mirror, and a ruling with no test is a comment. Measured, so that nobody later adds the row
+//     the table looks like it is missing: en-GB Intl renders CHF as `CHF\u00a012.50` — the ISO
+//     code, PREFIXED, with a non-breaking space — where this file renders `12.50 CHF`; and for HUF
+//     it finds a narrow symbol, `Ft 13`, which Go has no table for at all. A conformance row over
+//     a currency OUTSIDE that table would freeze that disagreement rather than a contract, so both
+//     MonthlyRate's fallback and MonthlyDelta's are asserted here instead.
+//
+//     THE BOUND IS THE TABLE, NOT A NUMBER. This said "four-entry" until the table was nine, which
+//     read as an instruction to delete the ISK/UGX/CLP/TWD/KRW conformance rows that are perfectly
+//     legitimate — every one of them is INSIDE currencySymbol. A hand-typed count beside a map is
+//     a second source of truth for the map's size; the rule is "outside currencySymbol", and that
+//     phrase stays right however the map grows.
 //   - `Dash`, and the shapes that return it. The table's date section reaches the em dash through a
 //     null date; nothing exercises the sentinel as a value other callers will use.
 //   - Go-only input shapes: a zero time.Time, a negative time.Duration, an unknown DateStyle.
@@ -26,6 +32,7 @@
 package format
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -61,13 +68,19 @@ func TestMoneyFallsBackToTheISOCodeAndNeverGuessesASymbol(t *testing.T) {
 	//
 	// ISK, UGX and TWD USED TO BE IN THIS LIST and were moved out by #3581, which added them to
 	// currencySymbol because the conformance table now pins them. Left here, TWD would have failed
-	// outright — its narrow symbol is `$` — and ISK and UGX would have passed for the wrong reason,
-	// because the comparison is one BYTE wide and their prefixes are multi-byte. A list of "the
-	// currencies we do not know" is a second source of truth for a map, and this is what it costs.
+	// outright — its narrow symbol is `$` — and ISK and UGX would have passed for the wrong reason.
+	// A list of "the currencies we do not know" is a second source of truth for a map, and this is
+	// what it costs.
+	//
+	// THE COMPARISON IS A PREFIX, NOT A BYTE, and the paragraph above is why: it used to be
+	// `got[0:1]`, one byte against whole map values. `$` is the only single-byte entry in
+	// currencySymbol, so as the map grew to nine the loop quietly narrowed to "did it borrow a
+	// dollar sign" — a borrowed `¥`, `€`, `£`, `₩`, `kr ` or `UGX ` could not be
+	// expressed as a failure at all. The comment named that defect and then kept it.
 	for _, unknown := range []string{"HUF", "SEK", "ZZZ", ""} {
 		got := Money(1250, unknown)
 		for symbol := range currencySymbol {
-			if len(got) > 0 && got[0:1] == currencySymbol[symbol] {
+			if strings.HasPrefix(got, currencySymbol[symbol]) {
 				t.Errorf("Money(1250, %q) = %q — it borrowed the %s symbol; a guessed symbol on a billed amount is the failure this rule exists to prevent", unknown, got, symbol)
 			}
 		}
