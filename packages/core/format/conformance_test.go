@@ -406,7 +406,7 @@ func tableProblems(tbl tableFile) []string {
 
 // zeroDecimalProblems holds `stripeZeroDecimalCharge` to the set TypeScript published (#4123).
 //
-// Three refusals precede the comparison, and each one exists because its absence would read as
+// Four refusals precede the comparison, and each one exists because its absence would read as
 // agreement rather than as a failure to measure:
 //
 //   - VERSION. A table written before the key existed decodes `ZeroDecimalCharge` as nil, which is
@@ -418,6 +418,28 @@ func tableProblems(tbl tableFile) []string {
 //   - GO'S OWN MAP EMPTY. The inverse, and it is not hypothetical in the way it sounds: `Money`
 //     would then divide every currency by 100 — the exact defect #3581 was — and a comparison
 //     against an equally empty published list would call it conformant.
+//   - NOT UPPER CASE (#4174). A malformed artifact, refused before the diff runs rather than
+//     repaired into one. See below; this is the refusal that replaced a `strings.ToUpper`.
+//
+// ── WHY THIS SIDE NO LONGER NORMALISES (#4174) ──────────────────────────────────────────────
+//
+// This function used to index the artifact as `published[strings.ToUpper(code)]`. TypeScript
+// normalises only the QUERY — `ZERO_DECIMAL_CHARGE.has(currency.toUpperCase())` — so a lowercase
+// entry is INERT there while Go read it as an upper-case code TypeScript had declared. The two
+// sides disagreed about what the artifact MEANS, and the disagreement was invisible because every
+// layer passed it: the generator's sortedness refusal (a lowercase code sorts after `XPF`), the
+// `not.toContain("UGX")` assertions (`===`, so no match), and the equality assertion (the same
+// literal on both sides). What fired instead was the `missing` branch below, saying "TypeScript
+// treats UGX as zero-decimal … Add them there" — FALSE, and a reader who followed it added UGX to
+// `stripeZeroDecimalCharge` and got the 100x-overstated invoice #4101 exists to prevent, with this
+// guard then green. Measured on 09b01b60 with `kwd`: the whole Go suite passed afterwards, and
+// `Money(500, "KWD")` answered "500.00 KWD" against TypeScript's "KWD 5.000".
+//
+// So it is refused rather than normalised, and DELETING the ToUpper alone would not have been
+// enough: a lowercase code would still have reached the diff and still produced that same
+// sentence, one case-fold different. A consumer that repairs its input cannot report on it.
+// The producer refuses it too (`zeroDecimalCharge()` in gen-format-conformance.ts) — this is the
+// half that also covers an artifact already carrying one, which the producer's refusal cannot.
 //
 // Order-insensitive: both sides are sorted before the diff. Sortedness of the ARTIFACT is asserted
 // on the TypeScript side, where it is a claim about the file that side writes.
@@ -438,9 +460,28 @@ func zeroDecimalProblems(tbl tableFile) []string {
 			"An empty set cannot be held to a published list; it agrees with nothing."}
 	}
 
+	var notUpper []string
 	published := map[string]bool{}
 	for _, code := range tbl.ZeroDecimalCharge {
-		published[strings.ToUpper(code)] = true
+		if code != strings.ToUpper(code) {
+			notUpper = append(notUpper, code)
+			continue
+		}
+		published[code] = true
+	}
+	// Returned rather than accumulated, so the diff below never runs on an artifact this side
+	// cannot read. Falling through would compare a set with a hole in it and report the hole as a
+	// Go-only code — a second false message, arrived at from the same normalising instinct.
+	if len(notUpper) > 0 {
+		sort.Strings(notUpper)
+		return []string{fmt.Sprintf(
+			"%s publishes %s in `zeroDecimalCharge`, which is not upper case. This is a MALFORMED ARTIFACT, "+
+				"not a code TypeScript declared: `stripeChargeDivisor` uppercases the query and never the "+
+				"entries, so TypeScript's own set does not contain it either and `stripeChargeDivisor` still "+
+				"answers 100 for it. Do NOT add it to `stripeZeroDecimalCharge` — for UGX that is precisely the "+
+				"100x-overstated invoice #4101 exists to prevent. Fix the case in STRIPE_ZERO_DECIMAL_CHARGE in "+
+				"packages/format/src/minor-units.ts and regenerate.\n%s",
+			tableRel, strings.Join(notUpper, ", "), regenerate)}
 	}
 
 	var problems []string
@@ -545,6 +586,55 @@ func TestTableGuardFailsOnEachMutation(t *testing.T) {
 		problems := zeroDecimalProblems(mutated)
 		if len(problems) != 1 || !strings.Contains(problems[0], victim) {
 			t.Fatalf("a Go-only code must be reported by name, got %v", problems)
+		}
+	})
+
+	// ── #4174. The mutation the guard used to answer FALSELY.
+	//
+	// Not "does it fail" — it always failed. What is asserted is WHICH failure, because the one it
+	// used to give named a fix that causes the defect. The negative assertion quotes the OLD
+	// message, so it is hand-authored from the guard as it stood at 09b01b60 rather than built out
+	// of the refusal being added; if somebody restores the normalising read, this subtest is what
+	// goes red, and it goes red on the sentence rather than on the exit code.
+	t.Run("a lowercase published code is refused, not read as a TypeScript declaration", func(t *testing.T) {
+		mutated := clone(base)
+		mutated.ZeroDecimalCharge = append(mutated.ZeroDecimalCharge, "ugx")
+		problems := zeroDecimalProblems(mutated)
+		if len(problems) != 1 {
+			t.Fatalf("a lowercase published code must be reported as exactly 1 problem, got %d: %v", len(problems), problems)
+		}
+		if !strings.Contains(problems[0], "ugx") {
+			t.Errorf("the refusal must name the code AS PUBLISHED, so the reader can find it: %q", problems[0])
+		}
+		// The whole point. This is the sentence the guard used to emit, and following it is what
+		// produced the 100x-overstated UGX invoice.
+		if strings.Contains(problems[0], "Add them there") {
+			t.Errorf("the guard is still prescribing the defect — a lowercase entry is INERT in TypeScript, "+
+				"so telling the reader to add it to stripeZeroDecimalCharge is false: %q", problems[0])
+		}
+		if strings.Contains(problems[0], "TypeScript treats") {
+			t.Errorf("a lowercase entry is not something TypeScript treats as anything: %q", problems[0])
+		}
+		// And through the real guard, not only the helper — the refusal must actually be WIRED.
+		if wired := tableProblems(mutated); len(wired) != 1 || !strings.Contains(wired[0], "ugx") {
+			t.Fatalf("tableProblems does not carry the case refusal, got %v", wired)
+		}
+	})
+
+	// The refusal must not be satisfiable by dropping the offending code and diffing the rest: that
+	// would compare a set with a hole in it and report the hole as a Go-only code, which is the same
+	// false-message shape one step along. A lowercase spelling of a code Go's map DOES hold is the
+	// case that separates the two — `published` would be short one entry either way.
+	t.Run("a lowercase spelling of a code Go holds is still refused for its CASE", func(t *testing.T) {
+		mutated := clone(base)
+		victim := mutated.ZeroDecimalCharge[0]
+		mutated.ZeroDecimalCharge[0] = strings.ToLower(victim)
+		problems := zeroDecimalProblems(mutated)
+		if len(problems) != 1 || !strings.Contains(problems[0], strings.ToLower(victim)) {
+			t.Fatalf("a lowercased %s must be refused as malformed, got %v", victim, problems)
+		}
+		if strings.Contains(problems[0], "treats "+victim) {
+			t.Errorf("%s was reported as a Go-only code rather than as a case problem: %q", victim, problems[0])
 		}
 	})
 
