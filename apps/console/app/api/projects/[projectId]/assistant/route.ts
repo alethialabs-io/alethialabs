@@ -98,7 +98,7 @@ function systemPrompt(projectId: string, canvas: CanvasContext | undefined): str
 		"  - queue: name, ordered, visibility_timeout · topic: name",
 		'  - nosql: name, partition_key, partition_key_type ("S"|"N"|"B"), capacity_mode, point_in_time_recovery',
 		"  - dns: enabled, domain_name, managed_certificate, waf_enabled · secret: name, generate, length",
-		'  - repositories: apps_destination_repo, apps_path (repo-relative overlay subpath, e.g. "overlays/dev"; empty = repo root; namespace/vcluster placements only)',
+		'  - repositories: apps_destination_repo, apps_path (repo-relative overlay subpath, e.g. "overlays/dev"; empty = repo root; read on EVERY placement — on a dedicated cluster an empty value also enables overlays/* discovery, which naming a path replaces)',
 		"",
 		"PROVISION (plan → deploy) WITH PROOF:",
 		"- To plan or deploy, call `propose_operation` to ask the user to APPROVE (never run it yourself).",
