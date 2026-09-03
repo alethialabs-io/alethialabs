@@ -63,15 +63,34 @@
 
 /**
  * The currencies whose Stripe `amount` is already in major units, so a charge amount must NOT be
- * divided.
+ * divided. Sorted, ISO 4217, upper case.
  *
  * Transcribed from the `ZeroDecimalCurrencies` list published at https://docs.stripe.com/currencies
  * (fetched 2026-09-03) — BIF, CLP, DJF, GNF, JPY, KMF, KRW, MGA, PYG, RWF, UGX, VND, VUV, XAF,
  * XOF, XPF — MINUS UGX, which that same page's Special cases table documents as two-decimal for
  * charges. Sixteen published, fifteen here, and the missing one is the whole point; see the module
  * doc above before adding it back.
+ *
+ * ── WHY THIS IS EXPORTED, AND WHY IT IS AN ARRAY ─────────────────────────────────────────────
+ *
+ * `packages/core/format` (Go) carries the same fifteen codes in `stripeZeroDecimalCharge`, and
+ * before #4123 NOTHING held the two lists together. The conformance table pins only the codes it
+ * CONTAINS — JPY, KRW, ISK, UGX, CLP, TWD — so a sixteenth code added to one language changed
+ * nothing any row measured, and each side's unit test enumerates its own hand-typed copy, so it
+ * only ever caught a REMOVAL from the map beside it. Adding a row per currency would not have
+ * closed that: it pins fifteen instead of six and leaves the identical hole for the sixteenth.
+ * The axis the two implementations can differ on is set MEMBERSHIP, not per-currency rendering,
+ * so membership itself is what crosses the boundary — published into
+ * `conformance/format-cases.json` under `zeroDecimalCharge` and asserted from both sides.
+ *
+ * An array rather than the `Set`, because JSON has no set and a sorted list is a reviewable diff.
+ *
+ * THE ARRAY IS THE ONLY LITERAL. `ZERO_DECIMAL_CHARGE` below is built FROM it, so the list that
+ * is published and the set `stripeChargeDivisor` consults cannot disagree — there is nothing to
+ * keep in step. Exporting a second transcription for the generator to read would have reproduced,
+ * one level up, the exact defect this export exists to close.
  */
-const ZERO_DECIMAL_CHARGE: ReadonlySet<string> = new Set([
+export const STRIPE_ZERO_DECIMAL_CHARGE: readonly string[] = [
 	"BIF",
 	"CLP",
 	"DJF",
@@ -87,7 +106,10 @@ const ZERO_DECIMAL_CHARGE: ReadonlySet<string> = new Set([
 	"XAF",
 	"XOF",
 	"XPF",
-]);
+];
+
+/** The lookup form of {@link STRIPE_ZERO_DECIMAL_CHARGE}. Derived, never transcribed. */
+const ZERO_DECIMAL_CHARGE: ReadonlySet<string> = new Set(STRIPE_ZERO_DECIMAL_CHARGE);
 
 /**
  * How many minor units one unit of `currency` is worth in a Stripe CHARGE amount: 1 for the
