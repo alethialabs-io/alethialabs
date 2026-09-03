@@ -13,15 +13,20 @@ import { CliLoginBodySkeleton } from "./loading";
 type Stage = "confirm" | "approving" | "declining" | "approved" | "declined" | "error";
 
 /**
- * Pulls the `error` string out of what `/api/auth/cli/generate` answered, falling back when the
- * body is not the shape that route documents.
+ * Pulls the `error` string out of what the approve or deny route answered, falling back to the
+ * CALLER'S sentence when the body is not the shape that route documents.
+ *
+ * The fallback is a parameter and not a constant because the two callers are not interchangeable.
+ * A failed approval and a failed refusal need different words — and the refusal's words carry an
+ * instruction ("close your terminal") that a person who pressed "This isn't me" must not lose to
+ * a proxy error page.
  *
  * `response.json()` is typed `any`, and CLAUDE.md §6 forbids one — so the body is taken as
  * `unknown` and narrowed. It is not merely a style rule here: this string is rendered to the
  * user as the reason their sign-in failed, and reaching through `any` would let `undefined`,
  * a number or an object land in that sentence.
  */
-function approvalErrorMessage(body: unknown): string {
+function serverErrorMessage(body: unknown, fallback: string): string {
 	if (
 		typeof body === "object" &&
 		body !== null &&
@@ -31,7 +36,7 @@ function approvalErrorMessage(body: unknown): string {
 	) {
 		return body.error;
 	}
-	return "Failed to approve device.";
+	return fallback;
 }
 
 /**
@@ -81,7 +86,7 @@ function CliLoginContent() {
 
 			if (!response.ok) {
 				const body: unknown = await response.json().catch(() => null);
-				setError(approvalErrorMessage(body));
+				setError(serverErrorMessage(body, "Failed to approve device."));
 				setStage("error");
 				return;
 			}
@@ -114,7 +119,18 @@ function CliLoginContent() {
 			});
 			if (!response.ok) {
 				const body: unknown = await response.json().catch(() => ({}));
-				setError(approvalErrorMessage(body));
+				setError(
+					serverErrorMessage(
+						body,
+						// NOT the approval fallback. A deny that fails with a body carrying no
+						// `error` — a 502 HTML page from the proxy, a Next error page, an edge
+						// rate-limit page — would otherwise tell somebody who pressed "This isn't
+						// me" that APPROVAL failed, and drop the one instruction that matters when
+						// a refusal did not record. The sibling `catch` arm below says the same
+						// thing for the same reason.
+						"Could not record the refusal. Close your terminal to be sure nothing is shared.",
+					),
+				);
 				setStage("error");
 				return;
 			}
@@ -301,12 +317,12 @@ export default function CliLoginPage() {
 		<>
 			<div className="mb-6 text-center">
 				<p className="vx-eyebrow">Device authorization</p>
-				{/* `text-display-xs` — the rung #3830 adds for display type rendered inside a shell,
+				{/* `text-display-xs` — the display rung for type rendered inside a shell,
 				    24/22/20px. It replaces this file's own `text-[22px]`, which was one of the five
 				    console sites sitting in the gap between the UI ladder's 17px top and the display
-				    ladder's 30px bottom. This file is not in #3830's scope, so the rung is CONSUMED
-				    here rather than invented; until #3830 lands the class resolves to nothing and the
-				    heading inherits. */}
+				    ladder's 30px bottom. The rung is CONSUMED here rather than invented: #3806 added
+				    it to packages/brand/src/tokens.css's `@theme`, where it resolves today — four
+				    other console files already read it. */}
 				<h1 className="mt-2 font-grotesk text-display-xs font-semibold tracking-[-0.03em] text-text-primary">
 					CLI Authentication
 				</h1>

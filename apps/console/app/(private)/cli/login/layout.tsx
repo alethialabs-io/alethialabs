@@ -55,12 +55,17 @@ async function signedInEmail(): Promise<string | null> {
  * `AuthShell` is a client component; rendering one from a server layout is ordinary, and it is
  * what keeps `metadata` above exportable.
  */
-export default async function CliLoginLayout({
+export default function CliLoginLayout({
 	children,
 }: {
 	children: React.ReactNode;
 }) {
-	const email = await signedInEmail();
+	// NOT awaited here. This layout sits ABOVE the Suspense boundary `loading.tsx` creates, so
+	// awaiting the session would block the shell and the skeleton behind it — the blank viewport
+	// that skeleton exists to remove. The promise is handed down and resolved with `use()` inside
+	// `page.tsx`'s own boundary. `signedInEmail` never rejects (it catches and returns null), so an
+	// un-awaited promise cannot surface as an unhandled rejection.
+	const email = signedInEmail();
 	return (
 		<AuthShell>
 			<AuthCard>

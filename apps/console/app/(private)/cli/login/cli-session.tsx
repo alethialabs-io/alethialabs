@@ -6,7 +6,7 @@
    reason `components/auth/auth-shell.tsx` states at its top. */
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, use, useContext } from "react";
 
 /**
  * The account the approval would bind, resolved on the server and handed down.
@@ -24,14 +24,24 @@ import { createContext, useContext } from "react";
  * render it — gets `null` and simply omits the line. It must never be shown as "unknown
  * account" or as an empty string beside "Approving as".
  */
-const CliAccountContext = createContext<string | null>(null);
+const CliAccountContext = createContext<Promise<string | null> | null>(null);
 
-/** Publishes the signed-in account's email to the approval UI below it. */
+/**
+ * Publishes the signed-in account's email to the approval UI below it.
+ *
+ * IT TAKES THE PROMISE, NOT THE RESOLVED VALUE, and that is the whole point. Next renders a
+ * layout ABOVE the Suspense boundary `loading.tsx` creates — `<Layout><Suspense fallback=…>` —
+ * so a layout that awaits the session resolves before the skeleton can paint, and a slow session
+ * read reproduces exactly the blank viewport that skeleton was added to remove. Handing the
+ * un-awaited promise down moves the wait to `use()` in `useCliAccount`, which runs inside
+ * `page.tsx`'s own `<Suspense>`: the shell, the card and the heading paint immediately and the
+ * body skeleton covers the account line until it arrives.
+ */
 export function CliAccountProvider({
 	email,
 	children,
 }: {
-	email: string | null;
+	email: Promise<string | null>;
 	children: React.ReactNode;
 }) {
 	return (
@@ -41,7 +51,14 @@ export function CliAccountProvider({
 	);
 }
 
-/** The signed-in account's email, or `null` when it could not be resolved. */
+/**
+ * The signed-in account's email, or `null` when it could not be resolved.
+ *
+ * `use()` is called conditionally on purpose, which is legal for `use` and for nothing else in
+ * React: a page rendered WITHOUT the provider — which is how the unit tests render it — reads the
+ * context default and must get `null` without suspending on a promise that does not exist.
+ */
 export function useCliAccount(): string | null {
-	return useContext(CliAccountContext);
+	const pending = useContext(CliAccountContext);
+	return pending === null ? null : use(pending);
 }
