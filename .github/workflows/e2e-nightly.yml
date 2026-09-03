@@ -1154,6 +1154,28 @@ jobs:
       #    `pnpm install` + `db:migrate` ran above. ──
       - name: cli-demo — build @alethia/ee, then the console
         if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'
+        # ── THE BUILD NEEDS THE AUTH SETTINGS TOO, AND THAT IS NOT OBVIOUS ──
+        # These were originally given only to the step that STARTS the console, on the reasonable
+        # assumption that a build is not a runtime. It is not true of Next: `next build` collects
+        # page data by EVALUATING each route module, and `/sso/[slug]` pulls `lib/auth/index.ts`,
+        # which builds the better-auth config at module scope. `lib/config/auth.ts:128` then throws
+        # on an absent secret/baseURL and the whole build fails at "Collecting page data".
+        #
+        # That is why `cli-demo` was 0/5 on the proof grid with no cloud ever implicated: its very
+        # first dispatch (hetzner, run 33723313317) died here, before `project apply` and before any
+        # runner — so nothing was ever provisioned and nothing named a cause. See #4088.
+        #
+        # The set below is ci.yml's build smoke (ci.yml:181-187), which is the configuration already
+        # PROVEN to build this console, plus NEXT_PUBLIC_APP_URL to match the start step. The auth
+        # values must stay identical to that step's; GitHub Actions does not support YAML anchors,
+        # so this is a copy, and the two drifting apart is precisely the defect #4088 records.
+        env:
+          BETTER_AUTH_SECRET: e2e-cli-demo-placeholder-secret
+          BETTER_AUTH_URL: http://localhost:3000
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+          ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
+          ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
+          ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
         run: |
           # ee FIRST, and this ordering is not stylistic. ee/dist is gitignored with no prepare
           # hook, and `pnpm -C apps/console run build` calls the console's own script — bypassing turbo, so
