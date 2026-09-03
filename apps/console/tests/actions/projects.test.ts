@@ -36,6 +36,7 @@ vi.mock("@/lib/cloud-providers/unsupported-kinds", async (importOriginal) => {
 	return { ...actual, unsupportedKindsFor: vi.fn(actual.unsupportedKindsFor) };
 });
 
+import { ProjectNameTakenError } from "@/lib/queries/projects";
 import {
 	addEnvironment,
 	createProject,
@@ -50,6 +51,7 @@ import {
 	getProjectsList,
 	planProject,
 	provisionProject,
+	updateProjectName,
 } from "@/app/server/actions/projects";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize, currentActor } from "@/lib/authz/guard";
@@ -152,6 +154,9 @@ type RowsResolver = Rows | (() => Rows);
 function setupDb(cfg: {
 	select?: Map<unknown, RowsResolver>;
 	insert?: Map<unknown, RowsResolver>;
+	/** Per-table result for `tx.update(...)`. A resolver that THROWS models a constraint violation
+	 *  on the write — the only way to reach a catch branch that maps a driver error. */
+	update?: Map<unknown, RowsResolver>;
 	default?: Rows;
 	/** Result of the env-status CAS RPC (set_env_status via tx.execute). true = env moved. */
 	envCasUpdated?: boolean;
@@ -206,7 +211,9 @@ function setupDb(cfg: {
 						? resolve(cfg.insert, from)
 						: op === "select"
 							? resolve(cfg.select, from)
-							: def,
+							: op === "update"
+								? resolve(cfg.update, from)
+								: def,
 				),
 		});
 		return c;
@@ -2059,6 +2066,67 @@ describe("deleteProject", () => {
 		});
 		expect(deleteSpy).toHaveBeenCalledWith(projects);
 		expect(r).toEqual({ success: true });
+	});
+});
+
+// ============================================================
+// updateProjectName — the RENAME half of #3145's uniqueness guarantee
+// ============================================================
+//
+// The rename path had no test at all, while create had several. That asymmetry is the defect:
+// #3145's promise is "project names are unique per org", and a rename is the other way to break it
+// — the one that takes a name a teammate is already using rather than minting a new collision.
+
+describe("updateProjectName", () => {
+	it("REFUSES a name another project in the org already holds", async () => {
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				// 1. the project being renamed, 2. the case-insensitive clash probe finds a rival
+				[projects, (() => { let n = 0; return () => (n++ === 0 ? [{ org_id: "org-1" }] : [{ id: "other" }]); })()],
+			]),
+		});
+		await expect(updateProjectName("p1", "Taken")).rejects.toThrow(ProjectNameTakenError);
+	});
+
+	it("...and allows a name only this project holds — re-saving must not collide with itself", async () => {
+		const { setSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([
+				// The clash probe excludes `ne(projects.id, projectId)`, so it comes back empty.
+				[projects, (() => { let n = 0; return () => (n++ === 0 ? [{ org_id: "org-1" }] : []); })()],
+			]),
+			default: [{ project_name: "Renamed" }],
+		});
+		await updateProjectName("p1", "Renamed");
+		expect(setSpy).toHaveBeenCalledWith(projects, expect.objectContaining({ project_name: "Renamed" }));
+	});
+
+	// THE PRE-CHECK IS OPTIMISTIC; THE INDEX IS THE AUTHORITY. Two concurrent renames both read an
+	// empty clash probe at READ COMMITTED and both proceed — the loser gets a 23505, and mapping it
+	// here is what makes the race and the ordinary case give the user the same message instead of a
+	// raw Postgres error.
+	it("maps a 23505 the pre-check could not see onto the same friendly error", async () => {
+		const violation = Object.assign(new Error("Failed query: update projects"), {
+			cause: { code: "23505", constraint_name: "projects_org_id_project_name_key" },
+		});
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projects, (() => { let n = 0; return () => (n++ === 0 ? [{ org_id: "org-1" }] : []); })()],
+			]),
+			update: new Map<unknown, RowsResolver>([[projects, () => { throw violation; }]]),
+		});
+		await expect(updateProjectName("p1", "Racy")).rejects.toThrow(ProjectNameTakenError);
+	});
+
+	// The null-org branch mirrors the INDEX rather than being tidier than it: a btree unique treats
+	// NULLs as DISTINCT, so a row with no org is not constrained by that index and pre-checking it
+	// would refuse a rename Postgres would accept.
+	it("skips the friendly pre-check when the row carries no org, because the index does too", async () => {
+		const { setSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([[projects, () => [{ org_id: null }]]]),
+			default: [{ project_name: "Orphan" }],
+		});
+		await updateProjectName("p1", "Orphan");
+		expect(setSpy).toHaveBeenCalledWith(projects, expect.objectContaining({ project_name: "Orphan" }));
 	});
 });
 

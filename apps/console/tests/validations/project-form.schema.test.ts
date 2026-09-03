@@ -6,6 +6,7 @@ import {
 	PROJECT_NAME_MAX_LENGTH,
 	environmentMatrixSchema,
 	helmRegistryProviderConfigSchema,
+	pickFreeProjectName,
 	projectFormSchema,
 } from "@/lib/validations/project-form.schema";
 import { getProvidersForCategory } from "@/lib/connectors/registry.generated";
@@ -773,5 +774,39 @@ describe("hetznerNodeNameProblem — the rule, where the provider is known (#358
 		expect(Object.keys(HETZNER_ADDON_ID_PREFIXES).sort()).toEqual(
 			["caches", "databases", "queues", "registries", "tables", "topics"].sort(),
 		);
+	});
+});
+
+// `pickFreeProjectName` — the derived name a cross-cloud clone gets (#3145).
+//
+// It exists because `duplicateProjectForProvider` rebuilds a project through `createProject` and
+// `convertProjectConfig` never touches `project_name`, so without it the clone carries the SOURCE
+// project's name in the source project's own org — which the uniqueness check matches against the
+// source row itself. The dialog has no name field, so that failed 100% of the time.
+describe("pickFreeProjectName", () => {
+	it("leaves a free name alone", () => {
+		expect(pickFreeProjectName("My App (gcp)", ["My App"])).toBe("My App (gcp)");
+	});
+
+	it("suffixes when the name is taken", () => {
+		expect(pickFreeProjectName("My App (gcp)", ["My App", "My App (gcp)"])).toBe("My App (gcp) 2");
+	});
+
+	it("...and keeps counting past a taken suffix rather than colliding again", () => {
+		expect(
+			pickFreeProjectName("My App (gcp)", ["My App (gcp)", "My App (gcp) 2", "My App (gcp) 3"]),
+		).toBe("My App (gcp) 4");
+	});
+
+	// THE PREDICATE MUST MATCH THE INDEX. `projects_org_id_project_name_key` is UNIQUE on
+	// (org_id, lower(project_name)), so a case-sensitive check here would hand back a name the
+	// database then refuses — skipping the friendly error and surfacing a raw 23505.
+	it("compares case-insensitively, because that is what the index enforces", () => {
+		expect(pickFreeProjectName("My App (gcp)", ["MY APP (GCP)"])).toBe("My App (gcp) 2");
+		expect(pickFreeProjectName("api", ["API", "Api 2"])).toBe("api 3");
+	});
+
+	it("an empty org has nothing to avoid", () => {
+		expect(pickFreeProjectName("My App (aws)", [])).toBe("My App (aws)");
 	});
 });

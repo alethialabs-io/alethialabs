@@ -804,3 +804,32 @@ export {
 	dnsSchema,
 	repositoriesSchema,
 };
+
+/**
+ * A project name the org does not already hold, for a clone the user did not get to name.
+ *
+ * `duplicateProjectForProvider` rebuilds a project through `createProject`, and
+ * `convertProjectConfig` never touches `project_name` — the same-provider branch is a bare
+ * `structuredClone`. Without a derived name the clone carries the SOURCE project's name in the
+ * source project's own org, which #3145's uniqueness check matches against the source row itself:
+ * the cross-cloud duplicate dialog has no name field, so it failed 100% of the time.
+ *
+ * Mirrors `pickFreeSlug`'s shape but compares CASE-INSENSITIVELY, because that is what
+ * `projects_org_id_project_name_key` enforces — UNIQUE on `(org_id, lower(project_name))`. Checking
+ * with a different predicate than the index enforces is how a friendly message gets skipped and a
+ * raw 23505 reaches the user instead.
+ *
+ * A suggestion, not a guarantee: two concurrent duplicates can derive the same name, and the index
+ * is what refuses the loser — mapped onto `ProjectNameTakenError` like any other collision.
+ *
+ * It lives here rather than beside its caller because that caller is a `"use server"` module, where
+ * every export must be an async function — so a pure helper there can be neither exported nor
+ * unit-tested.
+ */
+export function pickFreeProjectName(base: string, taken: string[]): string {
+	const used = new Set(taken.map((n) => n.toLowerCase()));
+	if (!used.has(base.toLowerCase())) return base;
+	let n = 2;
+	while (used.has(`${base} ${n}`.toLowerCase())) n++;
+	return `${base} ${n}`;
+}

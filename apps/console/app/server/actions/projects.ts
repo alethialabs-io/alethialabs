@@ -6,8 +6,9 @@ import { notFound } from "next/navigation";
 import { evaluate } from "@/lib/compat";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import {
-	helmRegistryProviderConfigSchema,
 	PROJECT_NAME_MAX_LENGTH,
+	helmRegistryProviderConfigSchema,
+	pickFreeProjectName,
 } from "@/lib/validations/project-form.schema";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize, currentActor } from "@/lib/authz/guard";
@@ -2451,26 +2452,6 @@ export async function getProjectAsFormData(
 }
 
 /** Duplicates a project config for a different cloud provider, mapping provider-specific values. */
-/**
- * A project name the org does not already hold, for a clone the user did not get to name.
- *
- * Mirrors `pickFreeSlug`'s shape but compares CASE-INSENSITIVELY, because that is what
- * `projects_org_id_project_name_key` enforces — UNIQUE on `(org_id, lower(project_name))`. Checking
- * with a different predicate than the index is how a friendly message gets skipped and a raw 23505
- * reaches the user instead.
- *
- * It is a suggestion, not a guarantee: two concurrent duplicates can still derive the same name, and
- * the index is what actually refuses the loser — mapped to `ProjectNameTakenError` like any other
- * collision.
- */
-function pickFreeProjectName(base: string, taken: string[]): string {
-	const used = new Set(taken.map((n) => n.toLowerCase()));
-	if (!used.has(base.toLowerCase())) return base;
-	let n = 2;
-	while (used.has(`${base} ${n}`.toLowerCase())) n++;
-	return `${base} ${n}`;
-}
-
 export async function duplicateProjectForProvider(
 	sourceProjectId: string,
 	targetCloudIdentityId: string,
