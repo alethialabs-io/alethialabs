@@ -25,6 +25,13 @@ It reads that list through the stored OAuth token — see [Authentication](/conc
 
 ## What the repository must contain
 
+<Callout type="info">
+  **This section describes a dedicated cluster.** The `apps` Application, the `addons` Application
+  and the `apps-overlays` ApplicationSet are rendered only for an environment placed on its own
+  cluster. A namespace or vcluster placement gets a single Application instead — see
+  [What a placed environment gets](#what-a-placed-environment-gets).
+</Callout>
+
 Naming a repository creates one ArgoCD Application called `apps`. It points at that repository,
 tracks `HEAD` — the repository's default branch — and syncs one path. No field changes the tracked
 revision.
@@ -41,8 +48,10 @@ Two layout details follow from how the Application is declared:
 - **`addons/` is a separate Application.** Alethia also creates an `addons` Application that syncs
   the `addons/` directory of the same repository, and that one does recurse. It holds the
   marketplace add-ons you run in GitOps mode. Alethia creates the directory when it seeds the first
-  such add-on. Until then the directory does not exist, and the `addons` Application has nothing to
-  resolve.
+  such add-on. The Application is rendered either way, at `path: addons`, so until that directory
+  exists in Git **ArgoCD reports the `addons` Application as a ComparisonError** — a red Application
+  in the ArgoCD UI, after a deploy that reported success. It resolves itself the moment the first
+  GitOps add-on is enabled, or you can create an empty `addons/` directory to settle it sooner.
 
 ### Overlay discovery
 
@@ -62,7 +71,11 @@ The Application syncs automatically, prunes, and self-heals. In practice:
 - A commit to the default branch deploys on its own. No Alethia deploy, no approval step.
 - Deleting a manifest deletes the resource it created.
 - Editing a resource by hand puts it back at the next sync.
-- A manifest may name any namespace, and ArgoCD creates a namespace that does not exist yet.
+- A manifest may name any namespace, but **the namespace has to exist already**. `CreateNamespace`
+  creates only the Application's own destination namespace, and this Application declares no
+  destination namespace at all — it names a server and nothing else. A manifest pointing at a
+  namespace that is not there fails to sync. Create the namespace in the same directory (ArgoCD
+  applies a `Namespace` object like any other resource) or out of band.
 
 <Callout type="warn">
   **Write access to the default branch is deploy access to the environment.** The Application tracks
@@ -103,7 +116,9 @@ hand you a different directory from the one you asked for.
 ## What Alethia commits back into the repository
 
 Alethia can push to the repository. Both cases below need a Git token, and both leave your own files
-alone.
+alone. **Both are dedicated-cluster only** — a namespace or vcluster placement never receives a
+scaffold or a seeded add-on manifest, for the reason given in
+[What a placed environment gets](#what-a-placed-environment-gets).
 
 **Generated service manifests.** If the project has services that render, Alethia scaffolds
 manifests for them, commits them, and pushes. It does this **only** when the repository root holds
@@ -123,6 +138,23 @@ out for good.
 overwritten, so your edits survive. Alethia removes only the files it authored — they carry an
 `alethia.io/managed-by: addon-marketplace` label — when the add-on is no longer in GitOps mode.
 Files without that label are left alone.
+
+## What a placed environment gets
+
+A namespace or vcluster placement is wired before the deploy reaches the code that renders the
+`apps` and `addons` Applications, the `apps-overlays` ApplicationSet, the generated service
+manifests and the seeded add-on files. None of those exists for a placed environment.
+
+What it gets instead is a single Application, `app-<project>-<namespace>`, under an AppProject named
+`tenant-<project>-<namespace>`. It syncs the same repository at the same `apps_path` — the field
+means the same thing on all three placements — and the AppProject bounds it as the table under
+[What the apps project permits](#what-the-apps-project-permits) describes.
+
+Two consequences worth stating, because the sections above would otherwise imply the opposite:
+
+- **Overlay discovery does not run.** There is no ApplicationSet, so `overlays/*` directories are
+  not turned into Applications. A placed environment syncs exactly one path.
+- **Nothing is committed back.** Bring your own manifests; no scaffold arrives.
 
 ## Access to the repository
 
