@@ -176,7 +176,7 @@ export function EnvironmentsView({
 
 				{groups.map((g) => (
 					<div key={g.stage} className="space-y-2.5">
-						<div className="font-mono text-[10px] uppercase tracking-[0.16em] text-text-tertiary">
+						<div className="font-mono text-ui-2xs uppercase tracking-[0.16em] text-text-tertiary">
 							{g.label}
 						</div>
 						{g.envs.map((env) => (

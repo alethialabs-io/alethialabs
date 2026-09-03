@@ -81,7 +81,7 @@ RUBRIC.md defines **33 predicates**. This report scores **15** of them.
 | `scripts/check-route-states.mjs` | S1–S4, T1–T4, per route |
 | `apps/console/route-states-baseline.yaml` | the ratchet those eight predicates are held to |
 | `scripts/check-shared-surface.mjs` | every H-family occurrence, per file |
-| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 133`) |
+| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 60`) |
 | `apps/console/docs/ui-conformance/RUBRIC.md` | the predicate set itself, read out of its own tables |
 
 ## Which predicates have an instrument
@@ -137,7 +137,7 @@ a predicate whose N/A count grows is a predicate being escaped.
 | **H5** | H | `check-shared-surface` | 40 | 0 | 0 | 1.00 | — |
 | **H6** | H | `check-shared-surface` | 40 | 0 | 0 | 1.00 | — |
 | **H7** | H | `check-shared-surface` | 39 | 1 | 0 | 0.97 | — |
-| **H8** | H | `check-shared-surface` | 8 | 32 | 0 | 0.20 | — |
+| **H8** | H | `check-shared-surface` | 21 | 19 | 0 | 0.53 | — |
 | **F1** | F | **none** — #3796 | — | — | — | — | — |
 | **F2** | F | **none** — #3796 | — | — | — | — | — |
 | **F3** | F | **none** — #3796 | — | — | — | — | — |
@@ -168,52 +168,52 @@ page's own import graph reaches, which is the denominator the H column was measu
 | route | surface | S | T | H | F | R | overall |
 |---|---:|---|---|---|---|---|---|
 | `/cli/login` | 4 | 1/3 · 0.33 | 2/3 · 0.67 | 6/7 · 0.86 | — | — | **0.69** |
-| `/[org]/~/alerts` | 288 | 2/4 · 0.50 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.79** |
 | `/[org]/[project]/architecture` | 381 | 4/4 · 1.00 | 4/4 · 1.00 | 4/7 · 0.57 | — | — | **0.80** |
+| `/[org]/~/alerts` | 288 | 2/4 · 0.50 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **0.86** |
 | `/[org]/~/new` | 356 | 3/4 · 0.75 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.86** |
 | `/[org]/~/runners` | 270 | 4/4 · 1.00 | 3/3 · 1.00 | 5/7 · 0.71 | — | — | **0.86** |
-| `/[org]/[project]/environments` | 234 | 3/4 · 0.75 | 4/4 · 1.00 | 6/7 · 0.86 | — | — | **0.87** |
 | `/[org]/[project]` · | 1 | all N/A | 1/2 · 0.50 | 7/7 · 1.00 | — | — | **0.89** |
 | `/[org]/[project]/settings` · | 1 | all N/A | 1/2 · 0.50 | 7/7 · 1.00 | — | — | **0.89** |
 | `/[org]/~/settings` · | 1 | all N/A | 1/2 · 0.50 | 7/7 · 1.00 | — | — | **0.89** |
 | `/dashboard/[[...rest]]` · | 125 | all N/A | 1/2 · 0.50 | 7/7 · 1.00 | — | — | **0.89** |
-| `/[org]` | 281 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
 | `/[org]/~/clusters` | 162 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
 | `/[org]/~/evidence` | 149 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
 | `/[org]/~/jobs` | 218 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
 | `/[org]/~/jobs/[id]` | 218 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/settings/access` | 211 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
 | `/[org]/~/settings/activity` | 275 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/settings/billing` | 191 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
 | `/[org]/~/settings/billing/invoices` | 192 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/settings/classification` | 145 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/settings/general` | 133 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/settings/members` | 219 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
 | `/[org]/~/settings/roles` | 222 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
 | `/[org]/~/settings/sso` | 211 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/settings/teams` | 212 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
 | `/[org]/~/support` | 7 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/support/ask` | 197 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
 | `/[org]/~/support/my-cases` | 147 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/~/usage` | 183 | 4/4 · 1.00 | 3/3 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
 | `/[org]/[project]/clusters` | 163 | 4/4 · 1.00 | 4/4 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
+| `/[org]/[project]/environments` | 234 | 3/4 · 0.75 | 4/4 · 1.00 | 7/7 · 1.00 | — | — | **0.93** |
 | `/[org]/[project]/jobs` | 219 | 4/4 · 1.00 | 4/4 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/[project]/settings/access` | 212 | 4/4 · 1.00 | 4/4 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
 | `/[org]/[project]/settings/activity` | 276 | 4/4 · 1.00 | 4/4 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
-| `/[org]/[project]/settings/general` | 213 | 4/4 · 1.00 | 4/4 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
 | `/[org]/[project]/settings/preview` | 141 | 4/4 · 1.00 | 4/4 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
 | `/[org]/[project]/usage` | 146 | 4/4 · 1.00 | 4/4 · 1.00 | 6/7 · 0.86 | — | — | **0.93** |
+| `/[org]` | 281 | 4/4 · 1.00 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
+| `/[org]/[project]/settings/access` | 212 | 4/4 · 1.00 | 4/4 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
+| `/[org]/[project]/settings/general` | 213 | 4/4 · 1.00 | 4/4 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
 | `/[org]/~/connectors` | 208 | 4/4 · 1.00 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
+| `/[org]/~/settings/access` | 211 | 4/4 · 1.00 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
+| `/[org]/~/settings/billing` | 191 | 4/4 · 1.00 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
+| `/[org]/~/settings/classification` | 145 | 4/4 · 1.00 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
+| `/[org]/~/settings/general` | 133 | 4/4 · 1.00 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
+| `/[org]/~/settings/members` | 219 | 4/4 · 1.00 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
+| `/[org]/~/settings/teams` | 212 | 4/4 · 1.00 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
 | `/[org]/~/support/abuse` | 134 | 4/4 · 1.00 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
+| `/[org]/~/support/ask` | 197 | 4/4 · 1.00 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
 | `/[org]/~/support/cases/[id]` | 155 | 4/4 · 1.00 | 4/4 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
 | `/[org]/~/support/submit` | 144 | 4/4 · 1.00 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
+| `/[org]/~/usage` | 183 | 4/4 · 1.00 | 3/3 · 1.00 | 7/7 · 1.00 | — | — | **1.00** |
 
 `·` marks a redirect-only route: no JSX, a `redirect()` call. It is N/A for six of the eight
 route-state predicates and passes the H rows on a closure of one file that renders nothing.
 
 ## Where every shared-surface occurrence landed
 
-`check-shared-surface` found **699 occurrences across 130 files**. This section
+`check-shared-surface` found **252 occurrences across 61 files**. This section
 accounts for all of them twice — once by ledger, once by reach — so a rule or a file falling out
 of the scoreboard cannot be quiet.
 
@@ -226,8 +226,8 @@ of the scoreboard cannot be quiet.
 | `page_title` | H1 | 17 | 17 | 0 | 0 | 7 | 1 | 9 |
 | `section_header` | H2 | 4 | 0 | 4 | 0 | 3 | 1 | 0 |
 | `stat_strip` | H6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `type_scale` | H8 | 662 | 1 | 661 | 0 | 484 | 152 | 26 |
-| **total** | | 699 | 24 | 675 | 0 | 506 | 158 | 35 |
+| `type_scale` | H8 | 215 | 1 | 214 | 0 | 172 | 35 | 8 |
+| **total** | | 252 | 24 | 228 | 0 | 194 | 41 | 17 |
 
 **`unlisted` is the column to read first.** A non-zero value means the guard is red — an
 occurrence neither a `reason:` nor a `lifts:` entry accounts for. It is not a defect of this
@@ -235,24 +235,23 @@ report; run `pnpm check:shared-surface`.
 
 **`empty_state` maps to no rubric predicate** (#3798). CLAUDE.md §6's EmptyState row. RUBRIC.md's H table has no row for it — the rubric files the empty state as T5, which it declares LIVE. The static matcher asks a different question (does this file hand-roll a centred empty region?), so reporting it as T5 would be one instrument reported as another. Counted in the table above, scored nowhere.
 
-**Reachable only from the shared layout chain** — 35 files. These are real
+**Reachable only from the shared layout chain** — 15 files. These are real
 occurrences in the sidebar, topbar, breadcrumbs and shells that every route renders. They are not
 in any route's H column, because attributing the chrome's drift to all 40 routes would say the
 console is 40 times worse than it is. The full list is in `ui-conformance-baseline.json`.
 
-**Outside every private route's module graph** — 8 files. Public routes (sign-in,
+**Outside every private route's module graph** — 7 files. Public routes (sign-in,
 onboarding, OAuth consent, accepting terms) and modules no private page imports. The route manifest
 is scoped to `app/(private)`, so these are outside the rubric's stated subject and are listed here
 rather than scored:
 
 | file | occurrences |
 |---|---:|
-| `apps/console/components/auth/onboarding-form.tsx` | 19 |
 | `apps/console/components/auth/auth-form.tsx` | 5 |
 | `apps/console/components/forms/oauth-consent-form.tsx` | 4 |
 | `apps/console/components/design-project/container-platform-selector.tsx` | 3 |
+| `apps/console/components/auth/onboarding-form.tsx` | 2 |
 | `apps/console/app/(public)/onboarding/page.tsx` | 1 |
-| `apps/console/components/agent/chat-top-bar.tsx` | 1 |
 | `apps/console/components/design-project/canvas/nodes/zone-node.tsx` | 1 |
 | `apps/console/components/legal/accept-terms-form.tsx` | 1 |
 

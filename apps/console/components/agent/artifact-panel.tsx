@@ -318,7 +318,7 @@ export function ArtifactPanel() {
 								) : logs.length === 0 ? (
 									<EmptyState title="Waiting for logs…" className={PANEL_EMPTY} />
 								) : (
-									<div className="space-y-0.5 font-mono text-[11px] leading-relaxed">
+									<div className="space-y-0.5 font-mono text-ui-xs leading-relaxed">
 										{logs.map((l) => (
 											<div
 												key={l.id}
@@ -346,7 +346,7 @@ export function ArtifactPanel() {
 function Section({ title, children }: { title: string; children: ReactNode }) {
 	return (
 		<div>
-			<div className="vx-eyebrow pb-1 text-[9px]">{title}</div>
+			<div className="vx-eyebrow pb-1 text-ui-3xs">{title}</div>
 			<div className="border border-border px-3">{children}</div>
 		</div>
 	);
@@ -354,7 +354,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function Row({ k, v }: { k: string; v: ReactNode }) {
 	return (
-		<div className="flex items-center justify-between gap-3 border-b border-border py-2 font-mono text-[11px] last:border-0">
+		<div className="flex items-center justify-between gap-3 border-b border-border py-2 font-mono text-ui-xs last:border-0">
 			<span className="text-muted-foreground">{k}</span>
 			<span className="truncate text-right text-foreground">{v || "—"}</span>
 		</div>
@@ -388,7 +388,7 @@ function ConfigPane({ project }: { project: ProjectDetail | null }) {
 		<div className="space-y-4">
 			<div className="border border-border bg-muted/40 p-3">
 				<div className="text-sm font-medium">{project.project.project_name}</div>
-				<div className="vx-eyebrow mt-1 text-[9px]">
+				<div className="vx-eyebrow mt-1 text-ui-3xs">
 					{cloudProvider} · {project.project.region ?? "—"} ·{" "}
 					{project.project.environment_stage}
 				</div>
@@ -467,7 +467,7 @@ function CostPane({ cost }: { cost: { items: CostItem[]; total: number } | null 
 							{item.detail && (
 								<Badge
 									variant="outline"
-									className="shrink-0 rounded-none px-1 py-0 text-[9px]"
+									className="shrink-0 rounded-none px-1 py-0 text-ui-3xs"
 								>
 									{item.detail}
 								</Badge>
@@ -507,7 +507,7 @@ function PlanCountTile({ n, label }: { n: number; label: string }) {
 				// tabular figures, locale separators, the null guard — comes from the component.
 				className="bg-transparent px-0 py-0 text-base font-semibold text-foreground"
 			/>
-			<div className="vx-eyebrow text-[8px]">{label}</div>
+			<div className="vx-eyebrow text-ui-3xs">{label}</div>
 		</div>
 	);
 }
@@ -549,41 +549,41 @@ export function VerifyBlock({ report }: { report: VerifyReport }) {
 	return (
 		<Section title="Verification">
 			<div className="flex items-center justify-between border-b border-border py-2">
-				<span className="font-mono text-[10px] text-muted-foreground">
+				<span className="font-mono text-ui-2xs text-muted-foreground">
 					{report.provider} · {report.catalog_version}
 				</span>
 				<StatusBadge
 					status={report.verdict}
 					tier={VERDICT_TIER[report.verdict]}
 					label={VERDICT_LABEL[report.verdict]}
-					className="text-[9px]"
+					className="text-ui-3xs"
 				/>
 			</div>
 			{report.controls.map((c) => (
 				<div key={c.id} className="border-b border-border py-2 last:border-0">
 					<div className="flex items-center justify-between gap-2">
-						<span className="font-mono text-[11px] text-foreground">{c.id}</span>
+						<span className="font-mono text-ui-xs text-foreground">{c.id}</span>
 						<StatusBadge
 							status={c.status}
 							tier={VERDICT_TIER[c.status]}
 							label={c.status.replace("_", " ")}
-							className="text-[9px]"
+							className="text-ui-3xs"
 						/>
 					</div>
-					<div className="text-[10px] text-muted-foreground">
+					<div className="text-ui-2xs text-muted-foreground">
 						{c.title}
 						{c.frameworks?.length ? ` · ${c.frameworks.join(", ")}` : ""}
 					</div>
 					{(c.findings ?? []).map((f, i) => (
 						<div
 							key={`${f.address}-${i}`}
-							className="mt-1 font-mono text-[10px] text-foreground"
+							className="mt-1 font-mono text-ui-2xs text-foreground"
 						>
 							<span className="text-muted-foreground">{f.address}</span> — {f.message}
 						</div>
 					))}
 					{c.coverage && (
-						<div className="mt-1 text-[10px] italic text-muted-foreground">
+						<div className="mt-1 text-ui-2xs italic text-muted-foreground">
 							coverage: {c.coverage}
 						</div>
 					)}
@@ -604,38 +604,38 @@ export function CompatBlock({ report }: { report: CompatReport }) {
 	return (
 		<Section title="Compatibility">
 			<div className="flex items-center justify-between border-b border-border py-2">
-				<span className="font-mono text-[10px] text-muted-foreground">
+				<span className="font-mono text-ui-2xs text-muted-foreground">
 					compat · {report.catalog_version}
 				</span>
 				<StatusBadge
 					status={report.verdict}
 					tier={VERDICT_TIER[report.verdict]}
 					label={VERDICT_LABEL[report.verdict]}
-					className="text-[9px]"
+					className="text-ui-3xs"
 				/>
 			</div>
 			{report.controls.map((c) => (
 				<div key={c.id} className="border-b border-border py-2 last:border-0">
 					<div className="flex items-center justify-between gap-2">
-						<span className="font-mono text-[11px] text-foreground">{c.id}</span>
+						<span className="font-mono text-ui-xs text-foreground">{c.id}</span>
 						<StatusBadge
 							status={c.status}
 							tier={VERDICT_TIER[c.status]}
 							label={c.status.replace("_", " ")}
-							className="text-[9px]"
+							className="text-ui-3xs"
 						/>
 					</div>
-					<div className="text-[10px] text-muted-foreground">{c.title}</div>
+					<div className="text-ui-2xs text-muted-foreground">{c.title}</div>
 					{(c.findings ?? []).map((f, i) => (
 						<div
 							key={`${f.address}-${i}`}
-							className="mt-1 font-mono text-[10px] text-foreground"
+							className="mt-1 font-mono text-ui-2xs text-foreground"
 						>
 							<span className="text-muted-foreground">{f.address}</span> — {f.message}
 						</div>
 					))}
 					{c.coverage && (
-						<div className="mt-1 text-[10px] italic text-muted-foreground">
+						<div className="mt-1 text-ui-2xs italic text-muted-foreground">
 							coverage: {c.coverage}
 						</div>
 					)}
@@ -681,7 +681,7 @@ function ReceiptBlock({ receipt, jobId }: { receipt: SignedReceipt; jobId: strin
 				<button
 					type="button"
 					onClick={download}
-					className="w-full border border-border px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
+					className="w-full border border-border px-2 py-1 text-ui-2xs uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
 				>
 					Download receipt
 				</button>
@@ -723,7 +723,7 @@ function PlanPane({
 						{plan.planSummary.resources.map((r) => (
 							<div
 								key={r.address}
-								className="flex items-center justify-between gap-2 px-3 py-1.5 font-mono text-[11px]"
+								className="flex items-center justify-between gap-2 px-3 py-1.5 font-mono text-ui-xs"
 							>
 								<span className="truncate text-foreground">
 									{r.displayName} · {r.name}
