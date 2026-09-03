@@ -75,7 +75,7 @@ import {
 	queryRunningJobs,
 	type ResourceCounts,
 } from "@/lib/queries/usage-counts";
-import { authorize, authorizeQuiet, currentActor } from "@/lib/authz/guard";
+import { authorize, authorizeInOrg, authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import type {
 	BillingPlan,
@@ -1124,11 +1124,13 @@ export async function linkSubscriptionToNewOrg(input: {
 	 */
 	payer?: { capacity: PayerCapacity | null; billingCountry: string | null };
 }): Promise<void> {
-	const actor = await authorize("manage_billing", { type: "billing" });
+	// NAMED, not ambient (#4133). This runs from a sheet on the CURRENT org's page, against the org
+	// just created — so the address and the target genuinely differ, and always did. It used to work
+	// by asking for the verb in the ambient scope and then asserting that scope WAS the new org,
+	// which held only because `setActiveOrganization` had already landed. Asking in the named org
+	// says the same thing without depending on that write, or on the order it happened in.
+	const actor = await authorizeInOrg("manage_billing", { type: "billing" }, input.orgId);
 	requireHostedBilling();
-	if (actor.orgId !== input.orgId) {
-		throw new Error("The new organization must be the active organization.");
-	}
 
 	const sub = await getStripe().subscriptions.retrieve(input.subscriptionId);
 	const subCustomerId =

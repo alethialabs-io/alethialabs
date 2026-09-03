@@ -6,6 +6,7 @@ import { getOwnerScope } from "@/lib/auth/owner";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import { getInjectedActor } from "@/lib/authz/actor-context";
+import { urlScopedOrgId } from "@/lib/authz/org-scope";
 import type { Action, Resource } from "@/lib/authz/registry";
 import { type Actor, ForbiddenError, type ResourceRef } from "@/lib/authz/types";
 import { verifyCliToken } from "@/lib/cli/auth";
@@ -23,7 +24,33 @@ export async function currentActor(): Promise<Actor> {
 	const injected = getInjectedActor();
 	if (injected) return injected;
 	const { userId, activeOrgId } = await getOwnerScope();
-	return getActiveScope(userId, activeOrgId);
+	// THE ADDRESS DECIDES THE TENANT (#4133). `active_organization_id` is a per-session default and
+	// was the only input here, so a session pointing at A while the URL named B rendered A's data
+	// under B's slug — silently, because nothing compared the two. Where the address names an org,
+	// that is the scope; the session is the fallback only where it names none (`/dashboard`,
+	// `/cli/login`, `/api/**`, the MCP token path). See `lib/authz/org-scope.ts` for why the URL
+	// wins rather than the mismatch throwing.
+	const urlOrgId = await urlScopedOrgId(userId);
+	if (urlOrgId === null) return getActiveScope(userId, activeOrgId);
+
+	// AND IT GOES THROUGH resolveNamedOrgScope, NOT STRAIGHT TO getActiveScope. An address segment
+	// is a named org in exactly the sense that function means: an assertion about THIS request, not
+	// a stored preference. The resolver may substitute — on a miss it falls back to an org the user
+	// does belong to, deliberately, because a stale session must not lock anyone out of the console
+	// — and following that substitution here would answer a request addressed to B from some third
+	// org's scope. #3863 is that bug on the CLI's `--org` header; the URL segment is the same shape.
+	const actor = await resolveNamedOrgScope(userId, urlOrgId);
+	if (!actor) {
+		// NOT the bare string "Unauthorized": `[org]/layout.tsx` matches that EXACTLY to bounce to
+		// sign-in, and this is not a session problem — the session is fine and the address is not
+		// the caller's to ask for. Falling through to that layout's `notFound()` is the right
+		// landing, and it matches how `resolveOrgScope` already answers an unknown org.
+		throw new Error(
+			"Forbidden: the address names an organization this account's scope did not resolve to. " +
+				"The request was NOT served from a substituted org.",
+		);
+	}
+	return actor;
 }
 
 /**
@@ -81,8 +108,9 @@ async function isOrgMember(userId: string, orgId: string): Promise<boolean> {
 }
 
 /**
- * Resolves `userId`'s scope for an org THE REQUEST NAMED — a CLI `--org` header, or a service
- * token's org pin — and returns null when resolution landed on any other org.
+ * Resolves `userId`'s scope for an org THE REQUEST NAMED — a CLI `--org` header, a service token's
+ * org pin, or the console URL's `{org}` segment (#4133) — and returns null when resolution landed
+ * on any other org.
  *
  * The scope resolver treats its org argument as a PREFERENCE: it also serves the console session,
  * whose stored `activeOrganizationId` can name an org the user has since left, and locking somebody
@@ -98,10 +126,48 @@ async function isOrgMember(userId: string, orgId: string): Promise<boolean> {
  * `null` means exactly "resolution did not land on the org you named". A lookup that FAILS is never
  * reported that way: getActiveScope's rejection propagates, so a database outage surfaces as an
  * error, not as a denial and not as a different tenant's rows.
+ *
+ * The console URL joined this list in #4133. It belongs here for the same reason the CLI header
+ * does and the SESSION does not: `/{org}/…` is what the user is looking at while they act, so it
+ * is an assertion about this request. `active_organization_id` is a preference that survives
+ * between them, and reading tenancy from it is how a stale one served another org's rows under
+ * this org's address.
  */
 async function resolveNamedOrgScope(userId: string, orgId: string): Promise<Actor | null> {
 	const actor = await getActiveScope(userId, orgId);
 	return actor.orgId === orgId ? actor : null;
+}
+
+/**
+ * Like {@link authorize}, but for an org the CALLER NAMED rather than the one the request is
+ * addressed to — and it enforces the permission in THAT org, not in the ambient scope.
+ *
+ * Exactly one flow needs this, and it is the flow #4133 broke: creating an organization opens a
+ * sheet on the CURRENT org's page (`components/org-switcher.tsx` renders `CreateOrgSheet` inside
+ * the shell), calls `setActiveOrganization(new)`, and then finishes the subscription against the
+ * NEW org from that same page. While the tenant came from the session that worked, because the
+ * write had already landed. Now the tenant comes from the address — which still names the old org,
+ * correctly, because that is the page the user is on — so `actor.orgId !== input.orgId` and the
+ * flow would refuse itself.
+ *
+ * The old guard was `authorize(verb)` in the ambient scope plus `actor.orgId === input.orgId`. That
+ * is not weaker in intent, only in expression: it asked for the verb wherever the session happened
+ * to be pointing and then checked that this was the org meant. Naming the org makes the same
+ * question order-independent, and `resolveNamedOrgScope` refuses a substituted org rather than
+ * enforcing the verb somewhere the caller never named (#3863).
+ */
+export async function authorizeInOrg(
+	action: Action,
+	resource: { type: Resource; id?: string },
+	orgId: string,
+): Promise<Actor> {
+	const { userId } = await getOwnerScope();
+	const actor = await resolveNamedOrgScope(userId, orgId);
+	if (!actor) {
+		throw new ForbiddenError(action, { type: resource.type, id: resource.id }, `not scoped to organization ${orgId}`);
+	}
+	await getPdp().enforce(actor, action, { type: resource.type, id: resource.id });
+	return actor;
 }
 
 /**
