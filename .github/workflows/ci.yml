@@ -580,6 +580,26 @@ jobs:
           echo "$list" | grep -qE "Total: [1-9][0-9]* test" || { echo "::error::--project=audit matched 0 tests (testMatch drift?)"; exit 1; }
       - name: Run the UI conformance audit (Playwright boots `next start` via webServer)
         run: pnpm -F console exec playwright test --project=audit
+      # THE JOB IS LEGITIMATELY, PERMANENTLY RED — R3, R5 and R6 carry real debt `LIVE_DEBT` owns —
+      # so "did the check go green" answers nothing about any single lane. #3893 is the case that
+      # made it concrete: it removed the topbar overlap, its check was red before and red after, and
+      # the only way to see that it had worked was to break the run down by predicate BY HAND
+      # (`R4 7 → 0, nothing else moved`). Nobody does that per lane, so an unreadable check gets
+      # ignored — and an ignored check is one nobody notices going MORE red.
+      #
+      # This prints the per-predicate table to the run summary. It is a rendering of numbers that
+      # already exist, not a new measurement, and it is NOT a step toward making the job required:
+      # it cannot be while it is honestly red, and forcing it green by suppressing the debt is the
+      # failure this wave exists to prevent.
+      #
+      # `!cancelled()` and NOT `success()`: the summary is worth most when the audit FAILED, which
+      # is nearly always. `--step-summary` writes nothing and refuses a truncated artifact rather
+      # than rendering it as zero failures, so it cannot turn a broken run into good news.
+      - name: Per-predicate summary of the audit, against the recorded baseline
+        if: ${{ !cancelled() }}
+        run: |
+          node apps/console/scripts/audit-report.mjs \
+            --step-summary=apps/console >> "$GITHUB_STEP_SUMMARY"
       - name: Upload the audit report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7

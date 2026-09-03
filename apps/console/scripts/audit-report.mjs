@@ -1921,6 +1921,70 @@ function selfTest() {
 		console.error(`FAIL - ${what}: it did not raise`);
 	};
 
+	// ── the step summary: a rendering, and its refusals ──────────────────────────────────────
+	{
+		const run = (recs) => ({ routes: { runKey: "k", records: recs } });
+		const base = [
+			{ route: "/a", predicate: "R4", verdict: "FAIL" },
+			{ route: "/b", predicate: "R4", verdict: "FAIL" },
+			{ route: "/c", predicate: "R3", verdict: "FAIL" },
+			{ route: "/d", predicate: "R3", verdict: "PASS" },
+		];
+		// #3893's shape, which is the case the issue was filed over: one predicate goes to zero and
+		// nothing else moves. A red total says the same thing before and after; this does not.
+		const fixed = base.map((r) => (r.predicate === "R4" ? { ...r, verdict: "PASS" } : r));
+		const out = renderStepSummary(run(fixed), run(base));
+		ok("the step summary reports the predicate that moved, and its direction", /\*\*R4\*\* \| 0 \| 2 \| ▼2/.test(out), out);
+		ok("...and says so in one line above the table", /Moved: \*\*R4\*\* 2 → 0/.test(out), out);
+		ok("a predicate that did NOT move carries no delta", /\*\*R3\*\* \| 1 \| 1 \| {2}\|/.test(out), out);
+		ok(
+			"a run with nothing moved says so rather than printing an empty headline",
+			renderStepSummary(run(base), run(base)).includes("No predicate moved against the recorded baseline."),
+		);
+
+		// COUNTS COME FROM RECORDS, NOT FROM A LOG. The function takes parsed records and has no
+		// path to console output, so the over-counting the issue warns about (the assertion template
+		// prints `${route.route}` beside the real failures, reading as 9 R4 routes where the artifact
+		// says 7) cannot happen here. What IS worth pinning is that only FAIL is counted.
+		ok(
+			"only FAIL counts — a PASS, an N/A and a NOT MEASURED are not failures",
+			renderStepSummary(
+				run([
+					{ route: "/a", predicate: "R5", verdict: "PASS" },
+					{ route: "/b", predicate: "R5", verdict: "N/A" },
+					{ route: "/c", predicate: "R5", verdict: "NOT MEASURED" },
+					{ route: "/d", predicate: "R5", verdict: "FAIL" },
+				]),
+				run(base),
+			).includes("| **R5** | 1 | — | new predicate"),
+		);
+
+		// The three refusals. Each one is a way a summary could read as good news having measured
+		// nothing, which is the failure this whole job exists to surface rather than commit.
+		raises(
+			"a section with no `records` array RAISES rather than rendering zero failures",
+			() => renderStepSummary({ routes: { runKey: "k" } }, run(base)),
+			"missing or truncated artifact",
+		);
+		raises(
+			"a section with ZERO records RAISES — a run that measured nothing is not a clean board",
+			() => renderStepSummary(run([]), run(base)),
+			"must not summarise as a clean board",
+		);
+		raises(
+			"no sections at all RAISES",
+			() => renderStepSummary({}, run(base)),
+			"broken input, not a clean board",
+		);
+		// And the baseline gets the same treatment: comparing against a truncated baseline would
+		// report every predicate as newly broken.
+		raises(
+			"a truncated BASELINE raises too, and names itself",
+			() => renderStepSummary(run(base), run([])),
+			"the committed baseline",
+		);
+	}
+
 	// ── the rubric is the predicate universe ─────────────────────────────────────────────────
 	const RUBRIC_FIXTURE = [
 		"# r",
@@ -2698,6 +2762,97 @@ function selfTest() {
 
 // ── CLI ──────────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The per-predicate line the `ui-audit` job prints to its own run summary.
+ *
+ * WHY THIS EXISTS. The job is legitimately, permanently RED — R3, R5 and R6 carry real debt that
+ * `LIVE_DEBT` owns and that this wave has not paid yet — so "did the check go green" answers
+ * nothing about any single lane. #3893 is the case that made it concrete: it removed the topbar
+ * overlap, its check was red before and red after, and the only way to see that it had worked was
+ * to break the run down by predicate BY HAND. `R4 7 → 0, nothing else moved` is a clean, strong
+ * result the check itself did not surface, and nobody does that arithmetic per lane.
+ *
+ * So this is a RENDERING of numbers that already exist, not a new measurement. It is NOT a case
+ * for making the job required: it cannot be, while it is honestly red, and forcing it green by
+ * suppressing the debt is the failure this whole wave exists to prevent. The point is to make an
+ * honest red READABLE.
+ *
+ * COUNTS COME FROM THE ARTIFACT, and this function's signature is how that is enforced: it takes
+ * parsed records and has no access to a log. Grepping the job's console output over-counts —
+ * the assertion template prints `${route.route}` alongside the real failures, which reads as 9 R4
+ * routes where the artifact says 7 — so the structured JSON exists precisely so nobody has to.
+ *
+ * @param {Record<string, {records: {predicate: string, verdict: string}[]}>} fresh  this run
+ * @param {Record<string, {records: {predicate: string, verdict: string}[]}>} baseline  committed
+ * @returns {string} markdown
+ */
+export function renderStepSummary(fresh, baseline) {
+	// A MISSING OR EMPTY `records` ARRAY RAISES — it is never treated as "no failures". This is the
+	// same refusal `importLive` makes, for the same reason, and it is the whole defect class this
+	// summary exists to fix: a truncated artifact rendering as a clean board is worse than no
+	// summary at all, because it reads like the good news the lane was hoping for. The first cut of
+	// this function had `section?.records ?? []` and would have done exactly that.
+	/**
+	 * @param {Record<string, {records: {predicate: string, verdict: string}[]}>} runs
+	 * @param {string} what
+	 */
+	const failsByPredicate = (runs, what) => {
+		const sections = Object.entries(runs ?? {});
+		if (sections.length === 0) throw new Error(`${what}: no sections at all — that is a broken input, not a clean board.`);
+		/** @type {Map<string, number>} */
+		const out = new Map();
+		for (const [key, section] of sections) {
+			if (!Array.isArray(section?.records)) {
+				throw new Error(`${what}: section \`${key}\` has no \`records\` array — a missing or truncated artifact, not an empty run.`);
+			}
+			if (section.records.length === 0) {
+				throw new Error(`${what}: section \`${key}\` has ZERO records — a run that measured nothing must not summarise as a clean board.`);
+			}
+			for (const r of section.records) {
+				if (!out.has(r.predicate)) out.set(r.predicate, 0);
+				if (r.verdict === "FAIL") out.set(r.predicate, (out.get(r.predicate) ?? 0) + 1);
+			}
+		}
+		return out;
+	};
+	const now = failsByPredicate(fresh, "this run");
+	const was = failsByPredicate(baseline, "the committed baseline");
+
+	// The UNION, sorted. A predicate that appears in only one side is the interesting case, not an
+	// edge case: it means the run measured something the baseline did not, or stopped measuring
+	// something it did. Dropping either would hide exactly the movement this table exists to show.
+	const ids = [...new Set([...now.keys(), ...was.keys()])].sort();
+	const rows = ids.map((id) => {
+		const n = now.get(id);
+		const b = was.get(id);
+		const cell = (v) => (v === undefined ? "—" : String(v));
+		let delta = "";
+		if (n !== undefined && b !== undefined && n !== b) delta = n < b ? `▼${b - n}` : `▲${n - b}`;
+		else if (n === undefined) delta = "not measured this run";
+		else if (b === undefined) delta = "new predicate";
+		return `| **${id}** | ${cell(n)} | ${cell(b)} | ${delta} |`;
+	});
+
+	const moved = ids.filter((id) => now.get(id) !== was.get(id));
+	const headline =
+		moved.length === 0
+			? "No predicate moved against the recorded baseline."
+			: `Moved: ${moved.map((id) => `**${id}** ${was.get(id) ?? "—"} → ${now.get(id) ?? "—"}`).join(" · ")}`;
+
+	return [
+		"### UI conformance audit — failures per predicate",
+		"",
+		headline,
+		"",
+		"| predicate | this run | baseline | |",
+		"|---|---:|---:|---|",
+		...rows,
+		"",
+		"This job is **not required** and is honestly red: R3, R5 and R6 carry debt `LIVE_DEBT` owns.",
+		"A red total says nothing about one lane; the column that moved does.",
+	].join("\n");
+}
+
 export const USAGE = [
 	"Usage: node apps/console/scripts/audit-report.mjs [--write|--json|--self-test|--import-live=<dir>|--help]",
 	"",
@@ -2706,6 +2861,10 @@ export const USAGE = [
 	"                 apps/console/ui-conformance-baseline.json",
 	"  --json         print the derived view; write nothing",
 	"  --self-test    run the fixture suite; exit 1 on any failure",
+	"",
+	"  --step-summary=<dir>  print the per-predicate failure table for a run's `ui-audit`",
+	"                        artifact, against the committed baseline. Writes nothing;",
+	"                        the audit job appends it to $GITHUB_STEP_SUMMARY.",
 	"",
 	"  --import-live=<dir>   rewrite apps/console/ui-conformance-live.json from a CI run's",
 	"                        `ui-audit` artifact. <dir> is the unpacked artifact (or the",
@@ -2726,7 +2885,7 @@ export const USAGE = [
  */
 export function parseCliArgs(argv) {
 	const MODES = { "--write": "write", "--json": "json", "--self-test": "self-test", "--help": "help", "-h": "help" };
-	const VALUED = ["--import-live", "--run", "--commit"];
+	const VALUED = ["--import-live", "--run", "--commit", "--step-summary"];
 	if (argv.length === 0) return { mode: "check", error: null };
 
 	/** @type {Record<string, string>} */
@@ -2760,6 +2919,12 @@ export function parseCliArgs(argv) {
 		}
 		return { mode: "import-live", error: null, dir: values["--import-live"], run: values["--run"], commit: values["--commit"] };
 	}
+	if ("--step-summary" in values) {
+		if (distinct.length > 0) return { mode: null, error: `--step-summary and ${distinct.join(" and ")} cannot both be asked for` };
+		const extra = Object.keys(values).filter((k) => k !== "--step-summary");
+		if (extra.length > 0) return { mode: null, error: `${extra.join(" and ")} only mean something with --import-live` };
+		return { mode: "step-summary", error: null, dir: values["--step-summary"] };
+	}
 	const orphans = Object.keys(values);
 	if (orphans.length > 0) return { mode: null, error: `${orphans.join(" and ")} only mean something with --import-live` };
 	if (distinct.length > 1) return { mode: null, error: `${distinct.join(" and ")} cannot both be asked for` };
@@ -2786,6 +2951,51 @@ if (invokedDirectly) {
 			console.error("self-test: 1 FAILED");
 			process.exit(1);
 		}
+	}
+
+	if (parsed.mode === "step-summary") {
+		// Same discovery as --import-live: both layouts a person or a CI step actually has in front
+		// of them — the unpacked `ui-audit` artifact, which contains `test-results/`, and that
+		// directory itself.
+		const base = path.resolve(parsed.dir);
+		const candidates = [path.join(base, "test-results"), base];
+		/** @type {Record<string, unknown>} */
+		const fresh = {};
+		for (const [key, section] of Object.entries(LIVE_SECTIONS)) {
+			const leaf = path.basename(section.artifact);
+			const found = candidates.map((d) => path.join(d, leaf)).find((f) => {
+				try {
+					return statSync(f).isFile();
+				} catch {
+					return false;
+				}
+			});
+			// A MISSING ARTIFACT IS NOT AN EMPTY ONE. Reporting "0 failures" for a section whose file
+			// never arrived is the exact shape this whole job exists to stop — a summary that reads
+			// like good news because nothing was measured.
+			if (found === undefined) {
+				console.error(
+					`audit-report: could not find \`${leaf}\` under ${candidates.join(" or ")}. ` +
+						`Refusing to summarise: a section with no artifact would render as zero failures.`,
+				);
+				process.exit(1);
+			}
+			try {
+				fresh[key] = JSON.parse(readFileSync(found, "utf8"));
+			} catch (err) {
+				console.error(`audit-report: ${found} is not valid JSON (${err instanceof Error ? err.message : String(err)}).`);
+				process.exit(1);
+			}
+		}
+		let baselineRuns;
+		try {
+			baselineRuns = JSON.parse(readFileSync(path.join(REPO_ROOT, LIVE_JSON), "utf8")).runs;
+		} catch (err) {
+			console.error(`audit-report: could not read ${LIVE_JSON} (${err instanceof Error ? err.message : String(err)}).`);
+			process.exit(1);
+		}
+		console.log(renderStepSummary(fresh, baselineRuns));
+		process.exit(0);
 	}
 
 	if (parsed.mode === "import-live") {
