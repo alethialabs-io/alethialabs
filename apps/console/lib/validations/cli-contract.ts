@@ -489,7 +489,23 @@ export const cliDesignApplyResponse = z.object({
 		}),
 	),
 });
-export const cliClustersResponse = z.object({ clusters: z.array(clusterWire) });
+/**
+ * GET /api/cli/clusters — the org's project clusters, cursor-paged (#3672).
+ *
+ * `page` is the shared vocabulary and there is nothing beside it: unlike `cliJobsPageResponse`,
+ * this envelope carries no `total`/`limit`/`offset` twins, because this endpoint never had them.
+ * It returned the whole collection, so there is no pre-cursor caller whose offset walk has to
+ * keep working — and adding the twins to look like the jobs envelope would be inventing a second
+ * mechanism to be consistent with a compatibility shim.
+ *
+ * The array key stays `clusters`, so a reader that only wants the rows is unchanged; what changed
+ * is that the rows may now be one page of them. `packages/core/api/api.go`'s `GetClusters` walks
+ * `page.next_cursor` to exhaustion through `AllPages` for exactly that reason.
+ */
+export const cliClustersPageResponse = z.object({
+	clusters: z.array(clusterWire),
+	page: pageInfoSchema,
+});
 export const cliCloudIdentitiesResponse = z.object({
 	cloud_identities: z.array(cloudIdentityWire),
 });
@@ -881,7 +897,7 @@ export const cliContract = {
 	ByoScanResponse: cliByoScanResponse,
 	RunnerRegistrationResponse: cliRunnerRegistrationResponse,
 	DesignApplyResponse: cliDesignApplyResponse,
-	ClustersResponse: cliClustersResponse,
+	ClustersPageResponse: cliClustersPageResponse,
 	ClusterDetailResponse: cliClusterDetailResponse,
 	CloudIdentitiesResponse: cliCloudIdentitiesResponse,
 	JobsPageResponse: cliJobsPageResponse,
