@@ -25,7 +25,7 @@ import {
 	useActiveOrgSlug,
 	useWorkspaceStore,
 } from "@/lib/stores/use-workspace-store";
-import { orgHref } from "@/lib/routing";
+import { orgHref, PERSONAL_ORG_SLUG } from "@/lib/routing";
 
 /**
  * Header organization switcher (Vercel-style). Lists the organizations the user
@@ -55,8 +55,19 @@ export function OrgSwitcher() {
 	const handleSelect = async (orgId: string) => {
 		setOpen(false);
 		if (orgId === activeOrgId) return;
+		const target = organizations.find((o) => o.id === orgId);
 		await switchOrg(orgId);
-		router.refresh(); // re-fetch server data under the new active org
+		// NAVIGATE to the chosen org, don't refresh in place. The `{org}` URL segment is what
+		// scopes the request — `[org]/layout.tsx` resolves it and writes the session's active
+		// org on every render — so a `router.refresh()` here re-runs that layout against the
+		// org still in the address bar and switches the session straight back.
+		//
+		// It looked like it worked before #4089 only because the sidebar built its hrefs from
+		// the store rather than the URL: `switchOrg` moved the store, the nav silently repointed
+		// at the other org, and the switch took effect on the user's next click. That is the same
+		// href-disagrees-with-address-bar conflation that let a PREFETCH move the tenant, so it
+		// is not a mechanism to keep. The URL is authoritative now, and a switch has to move it.
+		router.push(orgHref(target?.slug ?? PERSONAL_ORG_SLUG));
 	};
 
 	const startCreate = () => {
