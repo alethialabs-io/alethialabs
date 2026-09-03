@@ -82,25 +82,103 @@ const (
 	Exact RateStyle = "exact"
 )
 
-// currencySymbol is the narrow symbol for the currencies Alethia actually bills in.
+// currencySymbol is the narrow-symbol PREFIX for the currencies this package is held to, verbatim
+// from what Intl produces in @repo/format's fixed en-GB locale — INCLUDING the separator, which for
+// some currencies is a NO-BREAK SPACE (U+00A0) and not nothing. `Intl.NumberFormat("en-GB", {style:
+// "currency", currency: "ISK", currencyDisplay: "narrowSymbol"})` emits the parts
+// `[currency "kr"][literal U+00A0][integer …]`, so "kr" alone would render `kr1,240` against
+// TypeScript's `kr 1,240` and diverge on the space rather than on the number. Storing the joined
+// prefix keeps render's `sign + symbol + digits` shape and puts the whole claim in one string.
 //
-// A currency that is NOT here renders its ISO code instead — `12.50 HUF` — and never guesses. That
-// is the whole rule: a guessed symbol on a billed amount is the worst failure available, and an
-// error return is worse still, because at a table cell the only answers to an error are a dash or
-// ignoring it, and a dash loses the number entirely.
+// A currency that is NOT here renders its ISO code SUFFIXED instead — `12.50 HUF` — and never
+// guesses. That is the whole rule: a guessed symbol on a billed amount is the worst failure
+// available, and an error return is worse still, because at a table cell the only answers to an
+// error are a dash or ignoring it, and a dash loses the number entirely.
+//
+// THE SET IS EXACTLY WHAT THE CONFORMANCE TABLE PINS, deliberately, and it is smaller than the set
+// Money now divides correctly. An entry here is a claim about CLDR that only a table row can check;
+// an unpinned entry is a claim nothing can check, and CLDR moves — HUF's DISPLAY digits went 2 -> 0
+// between ICU 75.1 and ICU 78.3, which is why HUF is pinned by neither this map nor the table. Add
+// a currency here and add its row in the same change, or leave it to the ISO-code fallback, which
+// is honest about not knowing.
 var currencySymbol = map[string]string{
 	"USD": "$",
 	"EUR": "€",
 	"GBP": "£",
 	"JPY": "¥",
+	"KRW": "₩",
+	// CLP and TWD both narrow-render as `$`, and they sit on OPPOSITE sides of the divisor split —
+	// CLP is zero-decimal for charges, TWD is two-decimal. One symbol, two divisors, which is why
+	// both are pinned: a fix keyed on the rendered symbol passes one and fails the other.
+	"CLP": "$",
+	"TWD": "$",
+	"ISK": "kr\u00a0",
+	"UGX": "UGX\u00a0",
 }
 
 // currencyDecimals is the number of minor-unit digits to DISPLAY.
 //
-// Display only. This is not the divisor Money uses — see the KNOWN LIMITATION on Money, which is
-// precisely about those two questions having different authorities.
+// Display only. This is NOT the divisor Money uses — see chargeDivisorFor, and the two genuinely
+// disagree: UGX is divided by 100 and printed with no fraction digits at all.
+//
+// Unlisted means two, via decimalsFor. The same "pin it or leave it out" rule as currencySymbol
+// applies, for the same reason.
 var currencyDecimals = map[string]int{
 	"JPY": 0,
+	"KRW": 0,
+	"CLP": 0,
+	"ISK": 0,
+	"UGX": 0,
+}
+
+// stripeZeroDecimalCharge is the set of currencies whose Stripe `amount` is ALREADY in major units,
+// so a charge amount must not be divided. The Go half of packages/format/src/minor-units.ts; that
+// file carries the reasoning and the citations, and this comment states only what a Go reader needs
+// in order not to "correct" the list.
+//
+// Transcribed from the zero-decimal list at https://docs.stripe.com/currencies (fetched 2026-09-03)
+// — BIF, CLP, DJF, GNF, JPY, KMF, KRW, MGA, PYG, RWF, UGX, VND, VUV, XAF, XOF, XPF — MINUS UGX.
+// Sixteen published, fifteen here. UGX appears in Stripe's own zero-decimal list AND in the same
+// page's Special cases table, verbatim: "UGX transitioned to a zero-decimal currency, but backwards
+// compatibility requires you to represent it as a two-decimal value, where the decimal amount is
+// always `00`. For example, to charge 5 UGX, provide an `amount` value of `500`." The special case
+// wins because it is the more specific statement and it is about CHARGES, which is the only context
+// Money is ever handed. Restoring UGX to this set renders every UGX invoice 100x overstated, and
+// the conformance row `money/UGX-IS-IN-STRIPES-ZERO-DECIMAL-LIST-AND-IS-STILL-DIVIDED` is what says
+// so out loud.
+//
+// HUF and TWD are absent for the opposite reason and it is not an oversight: their Special cases
+// entries are about PAYOUTS ("even though you can charge two-decimal amounts"), so their charge
+// divisor is the ordinary 100 and they need no entry.
+var stripeZeroDecimalCharge = map[string]bool{
+	"BIF": true,
+	"CLP": true,
+	"DJF": true,
+	"GNF": true,
+	"JPY": true,
+	"KMF": true,
+	"KRW": true,
+	"MGA": true,
+	"PYG": true,
+	"RWF": true,
+	"VND": true,
+	"VUV": true,
+	"XAF": true,
+	"XOF": true,
+	"XPF": true,
+}
+
+// chargeDivisorFor reports how many minor units one unit of `currency` is worth in a Stripe charge
+// amount: 1 for the zero-decimal set, 100 for everything else.
+//
+// An unknown code answers 100, matching decimalsFor's direction of error. That refusal is chosen
+// rather than inherited: 100x too SMALL is visibly absurd, while a made-up 1 renders 100x too LARGE
+// and reads as a plausible bill.
+func chargeDivisorFor(currency string) float64 {
+	if stripeZeroDecimalCharge[strings.ToUpper(currency)] {
+		return 1
+	}
+	return 100
 }
 
 // decimalsFor reports how many fraction digits a currency displays. Unknown currencies get two,
@@ -170,24 +248,20 @@ func group(s string) string {
 
 // Money renders an amount given in MINOR units (cents) — `1250, "USD"` is `$12.50`.
 //
-// KNOWN LIMITATION — the `/ 100` is correct only for two-decimal currencies, which is every
-// currency Alethia bills in today (USD, EUR, GBP). It is wrong for JPY and the rest of Stripe's
-// zero-decimal list, where the minor unit IS the unit, so a ¥124,000 invoice renders `¥1,240`.
+// TWO QUESTIONS, TWO AUTHORITIES. The DIVISOR comes from chargeDivisorFor, whose authority is
+// Stripe, because Stripe produced the number. The DISPLAY decimals come from decimalsFor, whose
+// authority is CLDR. They are not one table and they legitimately disagree — UGX is divided by 100
+// and printed with no fraction digits — which is why they are two functions and why neither is
+// derived from the other.
 //
-// Do NOT "fix" this by reading the exponent from CLDR. That was tried on the TypeScript side and it
-// INVERTS the defect, because CLDR is the DISPLAY table and the divisor's authority is the PAYMENT
-// PROCESSOR, and the two legitimately disagree. Stripe's own currency documentation, verbatim:
+// #3581 was the first half of that: the `/ 100` used to be unconditional, so every zero-decimal
+// currency rendered at 1/100 of its value and a ¥124,000 invoice showed as `¥1,240`. Reading the
+// exponent off CLDR is the OTHER half and is worse — it fixes JPY and renders HUF, ISK, UGX and TWD
+// 100x overstated, which reads as a plausible bill where 100x understated reads as absurd. See
+// chargeDivisorFor above and packages/format/src/minor-units.ts for the citations.
 //
-//	ISK — "transitioned to a zero-decimal currency, but backward compatibility requires you to
-//	       represent it as a two-decimal value … to charge 5 ISK, provide an amount value of 500"
-//	UGX — same wording
-//	HUF — "zero-decimal … for payouts, even though you can charge two-decimal amounts"
-//
-// CLDR calls all three zero-decimal, so taking the divisor from it renders an HUF, ISK or UGX
-// invoice 100x OVERSTATED — the same defect as JPY's, pointing the other way. The real fix needs an
-// explicit table of Stripe's CHARGE-context minor units, separate from the display data. Tracked as
-// #3581; the conformance table deliberately covers two-decimal currencies only, so neither error can
-// be frozen as the contract this function must reproduce.
+// STILL NOT COVERED: three-decimal currencies. Stripe no longer publishes a three-decimal list to
+// cite, so none is asserted and BHD/JOD/KWD/OMR/TND fall to the two-decimal default.
 //
 // There is no Go caller today. It is mirrored anyway so the contract is STATED for the day one is
 // written, rather than rediscovered — the same argument the TypeScript side makes for Bytes.
@@ -200,10 +274,11 @@ func group(s string) string {
 // commit, and a doc that describes a caller before it exists is the stale-forward note this file
 // spends its length warning about.
 //
-// When it does land, the KNOWN LIMITATION above governs it unchanged — both the divisor and the
-// assumed currency stay two-decimal, which is the only shape this function is honest about.
+// When it does land it passes "USD" explicitly, which chargeDivisorFor answers 100 for, so nothing
+// about #3581 changes its arithmetic — but it inherits the split above rather than a hardcoded 100,
+// which is the property that matters the day a second currency appears on that wire.
 func Money(cents float64, currency string) string {
-	return render(cents/100, currency, decimalsFor(currency))
+	return render(cents/chargeDivisorFor(currency), currency, decimalsFor(currency))
 }
 
 // MonthlyRate renders a recurring cost given in MAJOR units, with a `/mo` suffix.

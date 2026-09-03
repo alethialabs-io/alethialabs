@@ -58,13 +58,83 @@ func TestMoneyFallsBackToTheISOCodeAndNeverGuessesASymbol(t *testing.T) {
 
 	// The property behind the ruling, stated as a property rather than a table: an unknown currency
 	// must never borrow another currency's glyph.
-	for _, unknown := range []string{"HUF", "ISK", "UGX", "TWD", "SEK", "ZZZ", ""} {
+	//
+	// ISK, UGX and TWD USED TO BE IN THIS LIST and were moved out by #3581, which added them to
+	// currencySymbol because the conformance table now pins them. Left here, TWD would have failed
+	// outright — its narrow symbol is `$` — and ISK and UGX would have passed for the wrong reason,
+	// because the comparison is one BYTE wide and their prefixes are multi-byte. A list of "the
+	// currencies we do not know" is a second source of truth for a map, and this is what it costs.
+	for _, unknown := range []string{"HUF", "SEK", "ZZZ", ""} {
 		got := Money(1250, unknown)
 		for symbol := range currencySymbol {
 			if len(got) > 0 && got[0:1] == currencySymbol[symbol] {
 				t.Errorf("Money(1250, %q) = %q — it borrowed the %s symbol; a guessed symbol on a billed amount is the failure this rule exists to prevent", unknown, got, symbol)
 			}
 		}
+	}
+}
+
+// #3581. Money divided by 100 unconditionally, so every zero-decimal currency rendered at 1/100 of
+// its value — a ¥124,000 invoice as `¥1,240`.
+//
+// The rows here are the ones the conformance table CANNOT carry, plus the property behind the
+// table's rows. HUF is the important one: its CLDR display digits moved from 2 to 0 between ICU
+// 75.1 and ICU 78.3, so `@repo/format` cannot state a stable rendering for it and no conformance
+// row can exist — but Go renders HUF through the ISO fallback at a fixed two decimals, so the
+// DIVISOR is still assertable exactly here, on the side that does not ask CLDR anything.
+func TestMoneyDividesByStripesChargeMinorUnitsNotByCLDRs(t *testing.T) {
+	cases := map[string]struct {
+		cents    float64
+		currency string
+		want     string
+	}{
+		// The zero-decimal set: the amount IS the charge.
+		"the issue's own example":               {124000, "JPY", "¥124,000"},
+		"not only JPY":                          {124000, "KRW", "₩124,000"},
+		"lowercase reaches the same table":      {124000, "jpy", "¥124,000"},
+		"a zero-decimal currency with no glyph": {124000, "VND", "124,000.00 VND"},
+		// Divided by 100 and printed with none: the two questions disagreeing, visibly.
+		"Stripe says send 500 to charge 5 ISK": {500, "ISK", "kr\u00a05"},
+		"and the same for UGX":                 {500, "UGX", "UGX\u00a05"},
+		// The payout-only special cases keep the ordinary divisor.
+		"HUF is two-decimal for a CHARGE":   {124000, "HUF", "1,240.00 HUF"},
+		"TWD is two-decimal for a CHARGE":   {124000, "TWD", "$1,240.00"},
+		"and TWD shares CLP's symbol":       {124000, "CLP", "$124,000"},
+		"an unknown code is not guessed at": {124000, "ZZZ", "1,240.00 ZZZ"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := Money(c.cents, c.currency); got != c.want {
+				t.Errorf("Money(%v, %q) = %q, want %q", c.cents, c.currency, got, c.want)
+			}
+		})
+	}
+}
+
+// The divisor table itself, asserted against the two facts Stripe's page states that a transcription
+// of its zero-decimal LIST alone would get wrong.
+//
+// UGX is published IN that list and ALSO in the Special cases table, which says to send two-decimal
+// amounts for a charge. HUF and TWD are in Special cases for the opposite reason — their entries are
+// about PAYOUTS — so a reader excluding everything the page calls "zero-decimal" drops them too.
+func TestChargeDivisorFollowsTheSpecialCasesNotTheList(t *testing.T) {
+	// Restating the whole set is the point: this is what stops a currency being dropped from
+	// stripeZeroDecimalCharge with every conformance row still green, since the table pins six of
+	// them and Stripe publishes fifteen.
+	for _, c := range []string{"BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA", "PYG", "RWF", "VND", "VUV", "XAF", "XOF", "XPF"} {
+		if got := chargeDivisorFor(c); got != 1 {
+			t.Errorf("chargeDivisorFor(%q) = %v, want 1 — it is in Stripe's published zero-decimal list", c, got)
+		}
+	}
+	for _, c := range []string{"UGX", "ISK", "HUF", "TWD", "USD", "EUR", "GBP", "BHD", "ZZZ", ""} {
+		if got := chargeDivisorFor(c); got != 100 {
+			t.Errorf("chargeDivisorFor(%q) = %v, want 100", c, got)
+		}
+	}
+	// Case, because `invoices.currency` mirrors Stripe verbatim and Stripe quotes currencies in
+	// lowercase, while every console call site upper-cases before it gets here. Both must work.
+	if chargeDivisorFor("jpy") != chargeDivisorFor("JPY") {
+		t.Error("chargeDivisorFor is case-sensitive; Stripe quotes currencies lowercase")
 	}
 }
 

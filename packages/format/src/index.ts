@@ -17,6 +17,14 @@
 
 import { formatDistance } from "date-fns";
 
+import { stripeChargeDivisor } from "./minor-units";
+
+// Re-exported, not merely used: the charge divisor is a FACT about Stripe that any surface
+// holding a Stripe amount needs, and a second transcription of it elsewhere in the repo is the
+// failure mode `minor-units.ts` documents. Its name does not begin with `format`, so the
+// conformance generator does not demand a table section for it — it is data, not a formatter.
+export { stripeChargeDivisor } from "./minor-units";
+
 /** Locale for every Intl call here. Fixed, so output cannot vary by where the code runs. */
 const LOCALE = "en-GB";
 
@@ -188,33 +196,33 @@ export function formatBytes(bytes: number): string {
  * Takes minor units on purpose: every bug in this area starts with someone passing 12.5 where
  * 1250 was meant, and a signature that says `cents` makes that visible at the call site.
  *
- * KNOWN LIMITATION — the `/ 100` is correct only for two-decimal currencies, which is every
- * currency Alethia bills in today (USD, EUR, GBP). It is wrong for JPY and the rest of Stripe's
- * zero-decimal list, where the minor unit IS the unit, so a ¥124,000 invoice renders `¥1,240`.
+ * TWO QUESTIONS, TWO AUTHORITIES, and this function asks both. The DIVISOR — how many minor units
+ * the caller's number is in — comes from {@link stripeChargeDivisor}, whose authority is the
+ * payment processor that produced the number. The DISPLAY decimals come from {@link minorUnits},
+ * whose authority is CLDR. They are not the same table and they legitimately disagree: Stripe
+ * documents UGX as two-decimal for charges while CLDR prints it with no fraction digits at all, so
+ * `formatMoney(500, "UGX")` is `UGX 5` — divided by 100, printed with none.
  *
- * Do NOT "fix" this by reading the exponent from Intl/CLDR. That was tried and it inverts the
- * defect, because CLDR is the DISPLAY table and the divisor's authority is the PAYMENT PROCESSOR,
- * and the two legitimately disagree. Stripe's own currency documentation, verbatim:
+ * #3581 WAS THE FIRST HALF OF THAT, and reading the exponent off CLDR would have been the second.
+ * The `/ 100` used to be unconditional, so every zero-decimal currency rendered at 1/100 of its
+ * value — a ¥124,000 invoice as `¥1,240`. Taking the divisor from CLDR instead fixes JPY and breaks
+ * HUF, ISK, UGX and TWD by the same factor in the other direction, which is worse: 100x too small
+ * is visibly absurd, 100x too large reads as a plausible bill. `minor-units.ts` carries the table,
+ * the citations and the UGX contradiction that makes transcribing Stripe's list insufficient.
  *
- *   ISK — "transitioned to a zero-decimal currency, but backward compatibility requires you to
- *          represent it as a two-decimal value … to charge 5 ISK, provide an amount value of 500"
- *   UGX — same wording
- *   HUF — "zero-decimal … for payouts, even though you can charge two-decimal amounts"
+ * WHAT IS STILL NOT COVERED: three-decimal currencies. `formatMoney(1240, "BHD")` divides by 100
+ * and prints CLDR's three digits, giving `BHD 12.400`. Stripe no longer publishes a three-decimal
+ * list to cite, so no divisor is asserted for them — see the module doc in `minor-units.ts`. It is
+ * unreachable for the same reason the zero-decimal defect was: `SupportedCurrency` in
+ * `@repo/plan-catalog` is `"usd" | "eur"` and `resolveCurrency` can return nothing else, so no
+ * third currency reaches a Stripe charge today. `invoices.currency` is free `text()` mirrored from
+ * Stripe, so the day one is added, it reaches here.
  *
- * CLDR calls all three zero-decimal. Taking the divisor from CLDR therefore renders an HUF, ISK
- * or UGX invoice 100x OVERSTATED — the same defect as JPY's, pointing the other way.
- *
- * The real fix needs an explicit table of Stripe's CHARGE-context minor units, separate from the
- * CLDR data that drives display, with HUF/ISK/UGX/TWD pinned as cases — because those are exactly
- * the currencies a table built from JPY, KRW and BHD alone cannot catch. Tracked separately; the
- * conformance table deliberately covers only two-decimal currencies so it cannot freeze either
- * error as the contract Go must reproduce.
- *
- * @param cents amount in minor units, for a two-decimal currency.
+ * @param cents amount in minor units, as Stripe quotes a charge in this currency.
  * @param currency ISO 4217 code; defaults to USD.
  */
 export function formatMoney(cents: number, currency = "USD"): string {
-	const amount = Number.isFinite(cents) ? cents / 100 : 0;
+	const amount = Number.isFinite(cents) ? cents / stripeChargeDivisor(currency) : 0;
 	// No explicit decimals: a billed amount keeps the currency's own (2 for USD, 0 for JPY).
 	return money(amount, currency);
 }
@@ -427,8 +435,9 @@ export function formatMonthlyDelta(amount: number, style: MonthlyRateStyle = "es
 	const magnitude = money(Math.abs(amount), currency, decimals);
 	// Compared as RENDERED, not as a number, because "does this round to zero" is a question about
 	// the currency's own decimals — which Intl holds and this module deliberately does not
-	// duplicate. A second table of minor units here is how `formatMoney`'s KNOWN LIMITATION got
-	// its second half. `minorUnits` above obeys the same rule: it ASKS Intl rather than tabulating.
+	// duplicate. A DISPLAY table here is how #3581's near-miss fix would have got its second half.
+	// `minorUnits` above obeys the same rule: it ASKS Intl rather than tabulating. `minor-units.ts`
+	// tabulates the OTHER question — the charge divisor — and is a separate file for that reason.
 	if (magnitude === money(0, currency, decimals)) return noChange;
 
 	return `${amount < 0 ? "-" : "+"}${magnitude}${suffix}`;
@@ -500,10 +509,11 @@ const minorUnitsByCurrency = new Map<string, number>();
  * How many fraction digits {@link money} will print for a currency when it is not told — 2 for USD,
  * 0 for JPY.
  *
- * ASKED OF INTL, NOT TABULATED. A second table of minor units in this module is precisely how
- * {@link formatMoney}'s KNOWN LIMITATION got its second half, and the question here is a DISPLAY
- * question, which is the one CLDR is the authority for. (The divisor question — how many minor
- * units a PAYMENT is quoted in — has a different authority and is not asked here.)
+ * ASKED OF INTL, NOT TABULATED, and the question here is a DISPLAY question, which is the one CLDR
+ * is the authority for. The divisor question — how many minor units a CHARGE is quoted in — has a
+ * different authority and is NOT asked here; it lives in `minor-units.ts`, and the two answers
+ * differ for real currencies (UGX: divide by 100, print 0 digits). Answering one with the other in
+ * either direction is #3581 and #3581's near-miss fix respectively.
  *
  * It exists so the money functions can pre-round at the same places they are about to print, the
  * way `packages/core/format`'s `render` does. Reading it back off the formatter keeps the two

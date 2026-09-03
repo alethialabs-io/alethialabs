@@ -210,6 +210,32 @@ const REQUIRED_IDS = [
 	// languages take a tie away from zero; it reds a fix that reaches for Go-native half-to-even.
 	// A different mechanism from the four above, which is why it is named rather than counted.
 		"money/three-decimal-cents-that-agreed-all-along",
+	// ── #3581, THE DIVISOR AXIS ─────────────────────────────────────────────────────────────────
+	// `formatMoney` divided by 100 unconditionally, so every zero-decimal currency rendered at 1/100
+	// of its value. These rows exist because BOTH ways of being wrong render the rest of this
+	// section correctly, and because the second way is the one a reader reaches for first.
+	//
+	// Dividing everything by 100 reds the JPY, KRW and CLP rows. Taking the exponent from CLDR
+	// instead — the plausible fix — reds ISK, UGX and TWD, whose CHARGE divisor is 100 while CLDR
+	// prints 0, 0 and 2 fraction digits. UGX is the sharpest of the set: it is IN Stripe's published
+	// zero-decimal list AND in that page's Special cases table saying to send two-decimal amounts,
+	// so a table transcribed from the list alone renders it 100x overstated and passes everything
+	// else here. CLP and TWD share the narrow symbol `$` and not a divisor, which is what stops the
+	// divisor being read as a property of the symbol.
+	//
+	// HUF is the fourth currency the divisor table names and is deliberately NOT pinned: its CLDR
+	// display digits moved 2 -> 0 between ICU 75.1 and ICU 78.3, so a row for it would change under
+	// a Node upgrade nobody made. Its divisor is pinned in the TypeScript unit tests instead.
+	"money/JPY-HAS-NO-MINOR-UNIT-SO-IT-IS-NOT-DIVIDED",
+	"money/KRW-IS-ZERO-DECIMAL-TOO-NOT-JUST-JPY",
+	"money/ISK-IS-CLDR-ZERO-DECIMAL-AND-STRIPE-TWO-DECIMAL",
+	"money/UGX-IS-IN-STRIPES-ZERO-DECIMAL-LIST-AND-IS-STILL-DIVIDED",
+	"money/CLP-AND-TWD-SHARE-A-SYMBOL-AND-NOT-A-DIVISOR",
+	"money/TWD-shares-CLPs-symbol-and-is-divided",
+	// The sign at a tie the two-decimal rows cannot reach: with the divisor at 1 the rounding step
+	// runs at 0 places, so `-1234.5` IS the half. JS `Math.round` is half-UP and Go `math.Round` is
+	// half-away-from-zero, so a fix that rounds the signed value renders `-¥1,234` here.
+	"money/JPY-NEGATIVE-HALF-UNIT-ROUNDS-AWAY-FROM-ZERO-NOT-TOWARD-POSITIVE",
 	// The `<1` test is asked AFTER the single rounding, at the currency's OWN places. The last of
 	// these is the worst failure in the set: at a fixed two places, `0.6` JPY renders `<¥1/mo` —
 	// the register ADMITTING it does not know, about a value that rounds cleanly to one whole unit.
