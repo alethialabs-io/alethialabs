@@ -15,6 +15,11 @@
 # require_main_checkout and an ssh, so that section drives its two real halves — the box script's
 # `idle-minutes`, and the gate condition lifted verbatim out of env.sh — rather than a copy.
 #
+# Section 7 also covers #4009, the half #3922 could not reach: a box PROVISIONED before that
+# fix runs the old box script and still answers 999999, so the consuming side folds it on
+# arrival. That is driven through the real idle_normalise, and its WIRING is asserted too --
+# a fold nothing calls is inert and every property of it still passes.
+#
 # Hermetic: no box, no ssh, no hcloud, no network. `env:reap --dry-run` reads the fixture registry
 # named by ALETHIA_ENV_REGISTRY_FILE and destroys nothing. Section 6 asserts that the override
 # is confined to the dry run, so this seam can never weaken a real reap.
@@ -305,6 +310,59 @@ if [ "$(gate "$empty_idle" 1)" = proceeds ] && [ "$(gate "$fresh_idle" 1)" = pro
 	ok "--now bypasses the threshold, so a genuinely abandoned empty box is still reapable by hand"
 else
 	bad "--now must bypass the idle threshold"
+fi
+
+# ── #4009: the box that still answers 999999 ──────────────────────────────────────────────
+# Everything above drives THIS tree's env-registry.sh, which can no longer emit 999999. A box
+# provisioned before #3922 runs the old copy and still can, so the consuming side has to fold
+# it. idle_normalise is lifted and RUN, not grepped for — the same reason idle_phrase is.
+NORM_FN="$(sed -n '/^idle_normalise() {/,/^}/p' "$ENV_SH")"
+if [ -n "$NORM_FN" ]; then
+	eval "$NORM_FN"
+
+	# The incident. A stale box's sentinel must reach the gate as "cannot tell", and be BLOCKED.
+	stale="$(idle_normalise 999999)"
+	if [ "$stale" = "0" ] && [ "$(gate "$stale" "")" = blocked ]; then
+		ok "a pre-#3922 box still answering 999999 is folded to 0 and does NOT reap (#4009)"
+	else
+		bad "999999 from a stale box must fold to 0 and block, got '${stale:-}' / $(gate "${stale:-x}" "")"
+	fi
+
+	# The direction that stops the fold from disabling reaping. A real measurement must survive
+	# it unchanged, or the fix has quietly switched reaping off for everyone.
+	if [ "$(idle_normalise "$old_idle")" = "$old_idle" ] &&
+		[ "$(gate "$(idle_normalise "$old_idle")" "")" = proceeds ]; then
+		ok "a real ${old_idle}m measurement passes through the fold untouched and still reaps"
+	else
+		bad "idle_normalise must not alter a genuine measurement (${old_idle}m)"
+	fi
+
+	# The catch-all, and it is not decoration: a non-integer does not fail `-lt`, it makes `[`
+	# exit 2, which reads as FALSE and falls through to the DESTROY path. An ssh that returned
+	# nothing used to reap the box.
+	for junk in "" "none" "12 34" "-5"; do
+		if [ "$(idle_normalise "$junk")" = "0" ] && [ "$(gate "$(idle_normalise "$junk")" "")" = blocked ]; then
+			ok "an unusable idle report ('${junk}') folds to 0 and blocks, rather than reaping"
+		else
+			bad "an unusable idle report ('${junk}') must fold to 0 and block"
+		fi
+	done
+
+	# …and it has to be WIRED. Found by mutation, exactly as the idle_phrase count fetch was:
+	# deleting the wrapper leaves every assertion above green, because they all call
+	# idle_normalise directly. What they cannot see is whether cmd_reap does. The ssh answer is
+	# the ONLY arrival point for an idle report, so it must be the one place this is applied.
+	# shellcheck disable=SC2016  # literal $ — grep patterns over env.sh's source
+	arrivals="$(grep -cE 'env-registry\.sh idle-minutes' "$ENV_SH" || true)"
+	# shellcheck disable=SC2016
+	wrapped="$(grep -cE 'idle_normalise "\$\(ssh_box .*idle-minutes' "$ENV_SH" || true)"
+	if [ "$arrivals" = 1 ] && [ "$wrapped" = 1 ]; then
+		ok "the box's idle report is folded at its single arrival point in env.sh"
+	else
+		bad "idle_normalise is not wired: ${arrivals} arrival(s), ${wrapped} folded"
+	fi
+else
+	bad "env.sh has no idle_normalise() — a pre-#3922 box's 999999 reaches the threshold raw"
 fi
 
 # ── the messages. "0m ago" about a registry with no rows in it is a claim nothing measured. ──
