@@ -100,13 +100,23 @@ const DRIVERS: Record<string, { fn: string; run: (r: Row) => string }> = {
 };
 
 /** Narrow the imported file without an `any` escaping or a cast. */
-function loadTable(): { version: number; cases: Record<string, Row[]> } {
+function loadTable(): { version: number; zeroDecimalCharge: string[]; cases: Record<string, Row[]> } {
 	const parsed: unknown = caseFile;
 	if (parsed === null || typeof parsed !== "object") throw new TypeError(`${FILE} is not an object`);
 	const doc: Record<string, unknown> = { ...parsed };
 
 	const version = doc.version;
 	if (typeof version !== "number") throw new TypeError(`${FILE} has no numeric \`version\``);
+
+	// A THROW, not a default. `?? []` here would make an absent key read as an empty set, and the
+	// assertion below compares the artifact against the live export — so a table generated before
+	// the key existed would fail on TypeScript's fifteen codes rather than saying the key is gone.
+	const rawSet = doc.zeroDecimalCharge;
+	if (!Array.isArray(rawSet)) throw new TypeError(`${FILE} has no \`zeroDecimalCharge\` array (schema v2, #4123)`);
+	const zeroDecimalCharge = rawSet.map((code, i) => {
+		if (typeof code !== "string") throw new TypeError(`zeroDecimalCharge[${i}] is ${typeof code}, want a string`);
+		return code;
+	});
 
 	const rawCases = doc.cases;
 	if (rawCases === null || typeof rawCases !== "object") throw new TypeError(`${FILE} has no \`cases\` object`);
@@ -120,7 +130,7 @@ function loadTable(): { version: number; cases: Record<string, Row[]> } {
 			return { ...row, id: s(row.id), want: s(row.want) };
 		});
 	}
-	return { version, cases };
+	return { version, zeroDecimalCharge, cases };
 }
 
 const table = loadTable();
@@ -294,6 +304,61 @@ describe("format conformance table", () => {
 		expect(Object.keys(table.cases).length).toBeGreaterThan(0);
 		const total = Object.values(table.cases).reduce((acc, rows) => acc + rows.length, 0);
 		expect(total).toBeGreaterThanOrEqual(60);
+	});
+
+	// ── #4123. The set, not the rows.
+	//
+	// `cases.money` pins how six currencies render, and a row can only ever pin a code it NAMES.
+	// The two implementations' remaining axis of disagreement is set MEMBERSHIP: a sixteenth code
+	// added to `minor-units.ts` and not to `packages/core/format/format.go` moves no expectation
+	// in this table, and each language's unit test enumerates its own hand-typed copy, so it only
+	// catches a REMOVAL from the map beside it. Adding fifteen rows would have pinned fifteen codes
+	// and left the identical hole for the sixteenth.
+	//
+	// So the artifact carries the list, and this is the assertion that makes it TypeScript's list
+	// rather than a third opinion. `conformance_test.go` holds Go's map to the same array.
+	describe("the zero-decimal charge set", () => {
+		it("is what @repo/format actually consults", () => {
+			expect(table.zeroDecimalCharge).toEqual([...fmt.STRIPE_ZERO_DECIMAL_CHARGE]);
+		});
+
+		// Vacuity, stated separately: the assertion above compares the artifact against the live
+		// export, so if BOTH went empty it would pass. Go would be the only red, naming fifteen
+		// codes and not the cause.
+		it("is not empty", () => {
+			expect(table.zeroDecimalCharge.length).toBeGreaterThan(0);
+		});
+
+		// Sorted, so a diff on the generated file NAMES the code that moved. Both sides compare
+		// sorted, so this is about review rather than correctness — which is why it is its own
+		// assertion and not folded into the equality above.
+		it("is sorted", () => {
+			expect(table.zeroDecimalCharge).toEqual([...table.zeroDecimalCharge].sort());
+		});
+
+		// The key is a shape change and the generator bumped VERSION for it. Go refuses a table
+		// below 2 rather than reading the absent key as an empty set; assert the producer's half of
+		// that here, so a VERSION reverted to 1 is red where it is written rather than only in Go.
+		it("arrived with the schema version that announces it", () => {
+			expect(table.version).toBeGreaterThanOrEqual(2);
+		});
+
+		// The set is a claim about Stripe's CHARGE context, and #4101 recorded that it is NOT
+		// Stripe's published list: UGX is in that list and in the same page's Special cases table
+		// saying to send two-decimal amounts for a charge. Sixteen published, fifteen here. An
+		// equality assertion alone would happily ratify a set "fixed" back to the raw sixteen, so
+		// the exclusion is named. HUF and TWD are absent for the opposite reason — their special
+		// cases are about PAYOUTS — and are named too, so a later reader cannot read their absence
+		// as an oversight and add them.
+		it("excludes UGX, and does not exclude the payout-only special cases by mistake", () => {
+			expect(table.zeroDecimalCharge).not.toContain("UGX");
+			expect(table.zeroDecimalCharge).not.toContain("HUF");
+			expect(table.zeroDecimalCharge).not.toContain("TWD");
+			expect(table.zeroDecimalCharge).not.toContain("ISK");
+			// ...and it is the real set, not an empty one trivially satisfying the four above.
+			expect(table.zeroDecimalCharge).toContain("JPY");
+			expect(table.zeroDecimalCharge).toContain("CLP");
+		});
 	});
 
 	it("meets a floor in every section, not just in total", () => {
