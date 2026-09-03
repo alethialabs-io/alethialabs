@@ -335,17 +335,35 @@ describe("repository selector — accessible names", () => {
 				onChange={() => {}}
 			/>,
 		);
+		// The role came OFF the popover trigger, so base-ui's own `aria-haspopup="dialog"` is no
+		// longer contradicted by a `combobox` that owns no listbox.
+		//
+		// THE NAME AND THE ATTRIBUTE ARE AWAITED TOGETHER, and that is the whole point of the
+		// `waitFor`. They come from different writers on different renders:
+		//
+		//  - the accessible name is written by this app's own JSX (`components/repository-selector.tsx`)
+		//    and lands in the same flush as `repositories` + the end of `fetchingRepos`, so it is
+		//    present on render N;
+		//  - `aria-haspopup` is written by base-ui. `PopoverTrigger` reads it out of the popover
+		//    store (`popover/trigger/PopoverTrigger.js:87`, `store.useState('triggerProps', …)`),
+		//    whose `activeTriggerProps`/`inactiveTriggerProps` are initialised to `EMPTY_OBJECT`
+		//    (`utils/popups/store.js:27-28`) and are only filled by `PopoverRoot` through
+		//    `store.useSyncedValues({ activeTriggerProps, inactiveTriggerProps, … })`
+		//    (`popover/root/PopoverRoot.js:99-115`) — which is a LAYOUT EFFECT
+		//    (`@base-ui-components/utils/store/ReactStore.js:81-95`, `useIsoLayoutEffect`). It
+		//    therefore reaches the DOM on render N+1.
+		//
+		// So waiting for the NAME and then asserting the ATTRIBUTE waits for the earlier of the two
+		// and asserts the later one: the trigger is guaranteed to exist, correctly named, one render
+		// before it can carry `aria-haspopup`. That is the 111 ms-fail / 306–706 ms-pass signature
+		// of #4079 — it is a race, not a wrong expectation, and it only ever failed by losing it.
+		// `getByRole` still throws when the name is wrong, so the name claim in this test's title is
+		// unchanged; it is only no longer used as the synchronisation point for someone else's write.
 		await waitFor(() =>
 			expect(
 				screen.getByRole("button", { name: "Select repository: acme/shop" }),
-			).toBeInTheDocument(),
+			).toHaveAttribute("aria-haspopup", "dialog"),
 		);
-		// The role came OFF the popover trigger, so base-ui's own `aria-haspopup="dialog"` is no
-		// longer contradicted by a `combobox` that owns no listbox.
-		const trigger = screen.getByRole("button", {
-			name: "Select repository: acme/shop",
-		});
-		expect(trigger).toHaveAttribute("aria-haspopup", "dialog");
 		expect(unnamedControls(container)).toEqual([]);
 	});
 });
