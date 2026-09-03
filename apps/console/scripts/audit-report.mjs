@@ -511,6 +511,76 @@ const CL_GAP_PX = /** @type {const} */ ({ base: 4, tight: 2, tolerance: 1 });
  * @param {unknown} evidence
  * @returns {string}
  */
+/**
+ * R5's colour diagnosis — the half of the record #4099 exists to restore.
+ *
+ * `e2e/helpers/a11y.ts` groups a violation's nodes by their axe check data and keeps up to
+ * `A11Y_GROUP_CAP` of those groups, so `color-contrast` arrives here carrying `fgColor`, `bgColor`,
+ * `contrastRatio` and `expectedContrastRatio`. This renders them, because "color-contrast (serious)
+ * ×9" is a fact about the page that names nothing a person could act on, and every tokens.css change
+ * aimed at R5 was a guess for as long as that was the whole record.
+ *
+ * IT REFUSES TWO WAYS, and both are the same rule this file states elsewhere — a summary that
+ * re-derives nothing must refuse rather than render a confident blank:
+ *
+ *   - a violation with no `groups` array at all: the recorder has been re-narrowed, and the ONE
+ *     thing this issue closed has been reopened somewhere upstream;
+ *   - a `color-contrast` violation whose groups yield no colour pair: it was measured, and the
+ *     measurement was withheld. That reads identically to a page with nothing to say, which is the
+ *     failure class the repo names most often.
+ *
+ * A non-contrast rule legitimately carries no colour pair and renders its count alone.
+ *
+ * @param {Record<string, unknown>} v one violation row
+ * @returns {string} a bracketed diagnosis, or "" when the rule has no colour to name
+ */
+function r5Diagnosis(v) {
+	const groups = v.groups;
+	if (!Array.isArray(groups)) {
+		throw new Error(
+			`R5: violation \`${String(v.id)}\` carries no \`groups\` array, so no node's check data ` +
+				"reached this summary. e2e/helpers/a11y.ts has been re-narrowed and #4099 is reopen: a " +
+				"contrast FAIL would once again name a count and nothing actionable.",
+		);
+	}
+	/** @type {string[]} */
+	const pairs = [];
+	for (const group of groups) {
+		for (const check of Array.isArray(group?.checks) ? group.checks : []) {
+			const d = check?.data;
+			if (check?.id !== "color-contrast" || typeof d !== "object" || d === null) continue;
+			const fg = "fgColor" in d ? String(d.fgColor) : "";
+			const bg = "bgColor" in d ? String(d.bgColor) : "";
+			const got = "contrastRatio" in d ? Number(d.contrastRatio) : Number.NaN;
+			const want = "expectedContrastRatio" in d ? String(d.expectedContrastRatio) : "";
+			if (!fg || !bg || !Number.isFinite(got)) continue;
+			// `expectedContrastRatio` is already a string like "4.5:1"; the measured one is a number.
+			const line = `${fg} on ${bg} — ${got.toFixed(2)}:1${want ? `, wants ${want}` : ""}`;
+			if (!pairs.includes(line)) pairs.push(line);
+		}
+	}
+	if (v.id === "color-contrast" && pairs.length === 0) {
+		throw new Error(
+			"R5: a `color-contrast` FAIL whose evidence names no colour pair. It was measured and the " +
+				"measurement was withheld — which is what #4099 was filed for. Expected `fgColor`, " +
+				"`bgColor` and `contrastRatio` on a `color-contrast` check under one of the node groups.",
+		);
+	}
+	// The cap is reported wherever it BIT, and a MISSING count is refused rather than coerced.
+	// `Number(undefined) || 0` would read "the producer stopped telling us" as "nothing was
+	// withheld" — the same substitution of silence for a measurement that this whole unit is about.
+	if (typeof v.omittedNodes !== "number" || !Number.isFinite(v.omittedNodes)) {
+		throw new Error(
+			`R5: violation \`${String(v.id)}\` carries no numeric \`omittedNodes\`, so how much the ` +
+				"group cap withheld is unknown. An absent count is not a count of zero.",
+		);
+	}
+	const omitted = v.omittedNodes;
+	const tail = omitted > 0 ? `, +${omitted} node(s) beyond the group cap` : "";
+	if (pairs.length === 0) return tail ? ` [${tail.slice(2)}]` : "";
+	return ` [${pairs.join("; ")}${tail}]`;
+}
+
 export function summariseLiveEvidence(predicate, evidence) {
 	const at = (widths) => ` at ${widths.map((w) => `${w}w`).join(", ")}`;
 	const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
@@ -579,7 +649,10 @@ export function summariseLiveEvidence(predicate, evidence) {
 		if (predicate === "R5") {
 			const violations = asArray(evidence, predicate);
 			nonEmpty(violations.length, "axe violation");
-			return violations.map((v) => `${v.id} (${v.impact}) ×${v.nodes}`).sort().join(", ");
+			return violations
+				.map((v) => `${v.id} (${v.impact}) ×${v.nodes}${r5Diagnosis(v)}`)
+				.sort()
+				.join(", ");
 		}
 		if (predicate === "R6") {
 			const signals = asArray(evidence, predicate);
@@ -2649,12 +2722,67 @@ function selfTest() {
 		() => summariseLiveEvidence("R2", [{ kind: "popover-content", triggerIndex: 0, trigger: "x", status: "did-not-open", points: [], misses: [] }]),
 		"finds no measured overlay whose hit-test landed outside it",
 	);
+	// R5's fixtures carry the shape `e2e/helpers/a11y.ts` actually emits — node groups with axe's
+	// own check payload — because the point of #4099 is that the OLD shape (a count and one locator)
+	// could not say what failed. The colour values below are axe's verbatim field names and formats:
+	// `contrastRatio` a number, `expectedContrastRatio` a string like "4.5:1".
+	const contrastGroup = (fg, bg, ratio, count = 1) => ({
+		target: "div.x",
+		count,
+		checks: [
+			{
+				id: "color-contrast",
+				data: { fgColor: fg, bgColor: bg, contrastRatio: ratio, expectedContrastRatio: "4.5:1" },
+			},
+		],
+	});
 	ok(
-		"R5 is the axe rule ids, sorted, with impact and node count",
+		"R5 names the FAILING COLOUR PAIR and its ratio, not just a rule id and a count",
 		summariseLiveEvidence("R5", [
-			{ id: "label", impact: "critical", nodes: 4 },
-			{ id: "color-contrast", impact: "serious", nodes: 9 },
-		]) === "color-contrast (serious) ×9, label (critical) ×4",
+			{ id: "label", impact: "critical", nodes: 4, groups: [{ target: "input", count: 4, checks: [] }], omittedNodes: 0 },
+			{ id: "color-contrast", impact: "serious", nodes: 9, groups: [contrastGroup("#8a8f98", "#0d0f12", 3.7148, 9)], omittedNodes: 0 },
+		]) === "color-contrast (serious) ×9 [#8a8f98 on #0d0f12 — 3.71:1, wants 4.5:1], label (critical) ×4",
+	);
+	ok(
+		"...every DISTINCT pair is named, because one token fix does not answer for another",
+		summariseLiveEvidence("R5", [
+			{
+				id: "color-contrast",
+				impact: "serious",
+				nodes: 39,
+				groups: [contrastGroup("#8a8f98", "#0d0f12", 3.7148, 30), contrastGroup("#6b7280", "#111318", 2.9, 9)],
+				omittedNodes: 0,
+			},
+		]) ===
+			"color-contrast (serious) ×39 [#8a8f98 on #0d0f12 — 3.71:1, wants 4.5:1; #6b7280 on #111318 — 2.90:1, wants 4.5:1]",
+	);
+	// THE CAP MUST BE IN THE RENDERING, NOT ONLY IN THE RECORD. "measured and clean" and "measured,
+	// then truncated" are different facts and this is where a reader meets them.
+	ok(
+		"...and a violation whose groups were capped SAYS SO, with the number withheld",
+		summariseLiveEvidence("R5", [
+			{ id: "color-contrast", impact: "serious", nodes: 41, groups: [contrastGroup("#8a8f98", "#0d0f12", 3.7148, 30)], omittedNodes: 11 },
+		]) === "color-contrast (serious) ×41 [#8a8f98 on #0d0f12 — 3.71:1, wants 4.5:1, +11 node(s) beyond the group cap]",
+	);
+	ok(
+		"...a non-contrast rule that was CAPPED still says so — the cap is not a contrast-only fact",
+		summariseLiveEvidence("R5", [
+			{ id: "label", impact: "critical", nodes: 20, groups: [{ target: "input", count: 12, checks: [] }], omittedNodes: 8 },
+		]) === "label (critical) ×20 [+8 node(s) beyond the group cap]",
+	);
+	raises(
+		"...and a violation with no numeric omittedNodes RAISES — absent is not zero",
+		() =>
+			summariseLiveEvidence("R5", [
+				{ id: "label", impact: "critical", nodes: 2, groups: [{ target: "input", count: 2, checks: [] }] },
+			]),
+		"carries no numeric `omittedNodes`",
+	);
+	ok(
+		"...a non-contrast rule renders its count alone — it has no colour to name",
+		summariseLiveEvidence("R5", [
+			{ id: "label", impact: "critical", nodes: 2, groups: [{ target: "input", count: 2, checks: [] }], omittedNodes: 0 },
+		]) === "label (critical) ×2",
 	);
 	ok(
 		"R6 counts ALL THREE kinds and the distinct statuses — no URL, no timestamp",
@@ -2713,6 +2841,22 @@ function selfTest() {
 		() => summariseLiveEvidence("R5", { violations: [] }),
 		"expected an array of evidence rows",
 	);
+	// THE TWO REFUSALS #4099 EXISTS FOR. Both describe a measurement that HAPPENED and was withheld
+	// — the state that renders identically to a clean page and is why R5 scored 0.75 while being
+	// unfixable. Neither can be satisfied by a recorder that merely runs.
+	raises(
+		"a violation carrying NO groups RAISES — the recorder has been re-narrowed",
+		() => summariseLiveEvidence("R5", [{ id: "color-contrast", impact: "serious", nodes: 9 }]),
+		"carries no `groups` array",
+	);
+	raises(
+		"...and a color-contrast FAIL whose groups name no COLOUR PAIR RAISES",
+		() =>
+			summariseLiveEvidence("R5", [
+				{ id: "color-contrast", impact: "serious", nodes: 9, groups: [{ target: "div", count: 9, checks: [] }], omittedNodes: 0 },
+			]),
+		"names no colour pair",
+	);
 	// A summary that contradicts the verdict it is attached to is worse than no summary. Each of
 	// these is the recorder and this file disagreeing about what the predicate measures.
 	raises("a FAIL whose axe evidence holds NO violation RAISES", () => summariseLiveEvidence("R5", []), "finds no axe violation");
@@ -2736,7 +2880,10 @@ function selfTest() {
 	// The one that would otherwise ship a wall clock into a diff-gated region.
 	raises(
 		"a summary that carries a timestamp or a URL RAISES",
-		() => summariseLiveEvidence("R5", [{ id: "x at 2026-09-02T11:31:07.746Z", impact: "serious", nodes: 1 }]),
+		() =>
+			summariseLiveEvidence("R5", [
+				{ id: "x at 2026-09-02T11:31:07.746Z", impact: "serious", nodes: 1, groups: [{ target: "a", count: 1, checks: [] }], omittedNodes: 0 },
+			]),
 		"carries a timestamp or a URL",
 	);
 
@@ -2897,7 +3044,32 @@ function selfTest() {
 			summary: {},
 			records: [
 				{ route: "/b", url: "/e2e-org-1/b", predicate: "R1", verdict: "PASS", evidence: [{ width: 768, scrollWidth: 768, clientWidth: 768 }] },
-				{ route: "/a", url: "/e2e-org-1", predicate: "R5", verdict: "FAIL", evidence: [{ id: "color-contrast", impact: "serious", nodes: 9 }] },
+				{
+					route: "/a",
+					url: "/e2e-org-1",
+					predicate: "R5",
+					verdict: "FAIL",
+					evidence: [
+						{
+							id: "color-contrast",
+							impact: "serious",
+							nodes: 9,
+							groups: [
+								{
+									target: "div.x",
+									count: 9,
+									checks: [
+										{
+											id: "color-contrast",
+											data: { fgColor: "#8a8f98", bgColor: "#0d0f12", contrastRatio: 3.7148, expectedContrastRatio: "4.5:1" },
+										},
+									],
+								},
+							],
+							omittedNodes: 0,
+						},
+					],
+				},
 				{ route: "/a", url: "/e2e-org-1", predicate: "R1", verdict: "N/A", reason: "redirect-only", evidence: [] },
 			],
 		},
@@ -2908,7 +3080,13 @@ function selfTest() {
 	ok("...and records the provenance the baseline is cited by", imported.source.run === "https://example.invalid/runs/7" && imported.source.commit === "abc123");
 	ok("...and sorts the records, so two imports of one run are byte-identical", imported.runs.routes.records.map((r) => `${r.route} ${r.predicate}`).join(",") === "/a R1,/a R5,/b R1");
 	ok("...and strips generatedAt, url and evidence", !("generatedAt" in imported) && imported.runs.routes.records.every((r) => !("url" in r) && !("evidence" in r)));
-	ok("...and summarises a FAIL into a run-independent detail", imported.runs.routes.records[1].detail === "color-contrast (serious) ×9");
+	// The detail that lands in the COMMITTED artifact. Before #4099 this read "color-contrast
+	// (serious) ×9" — true, run-independent, and useless: no file in the repo named a failing
+	// colour, so every tokens.css change aimed at R5 was a guess. It still carries no run state.
+	ok(
+		"...and summarises a FAIL into a run-independent detail that NAMES THE COLOUR PAIR",
+		imported.runs.routes.records[1].detail === "color-contrast (serious) ×9 [#8a8f98 on #0d0f12 — 3.71:1, wants 4.5:1]",
+	);
 	ok("...and carries no wall clock anywhere", !/\d{4}-\d{2}-\d{2}/.test(JSON.stringify(imported)));
 	ok("...and re-parses through the same rules it will be read by", parseLive(importLive(rawArtifacts, { run: "r", commit: "c" })).sections.routes.records.length === 3);
 	raises(
