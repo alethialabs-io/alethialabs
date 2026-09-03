@@ -488,16 +488,31 @@ jobs:
     # protect-dev ruleset; scripts/ci/check-required-checks.mjs compares those two, so this job
     # joining a required check can only ever be a deliberate edit to both.
     #
-    # WHEN: on a PR that touches the console surface (the same `console` filter the hero path uses,
-    # which covers apps/console/** and the @repo packages the console depends on), and in full every
-    # night at 03:00 UTC. The nightly is what keeps the audit honest on routes no PR happened to
-    # touch. `github.event.schedule` is matched EXACTLY rather than `event_name == 'schedule'`,
-    # because ci.yml already carries a Monday cron for the mutation job and a bare event_name test
-    # would silently sign that job up for a nightly run too.
+    # WHEN: nightly at 03:00 UTC, and on demand. NOT on every console PR any more (#4173).
+    #
+    # It used to add `needs.detect-changes.outputs.console == 'true'`, so every console PR paid for
+    # a console build, a Chromium install and a Postgres service — 11 minutes median — to produce a
+    # result the job's own comment above promises WILL BE RED until the conformance lanes land. A
+    # non-required check that is expected to fail teaches a reader to skim past it, and it was doing
+    # that at the cost of a runner slot per console PR.
+    #
+    # That cost is not measured in minutes. Measured 2026-09-03 across 500 runs: jobs spend 5,376
+    # minutes WAITING for a runner against 1,802 executing, with a zero-dependency job waiting a
+    # median of 15 minutes. The currency is slots REQUESTED, so removing a job from the per-PR path
+    # gives back more than its own runtime.
+    #
+    # ⚠️ WHAT THIS GIVES UP, stated so it can be reversed knowingly: a console PR no longer gets
+    # per-PR conformance feedback. The nightly still drives every private route and still produces
+    # the `ui-audit` artifact — that artifact is what R5's colour-contrast diagnosis is read from
+    # (#4099). If a conformance lane starts needing per-PR feedback, put it back behind a LABEL
+    # rather than the broad `console` filter, so the routes that want it pay and the rest do not.
+    #
+    # `github.event.schedule` is matched EXACTLY rather than `event_name == 'schedule'`, because
+    # ci.yml also carries a Monday cron for the mutation job and a bare event_name test would
+    # silently sign that job up for a nightly run too.
     if: >-
       github.event.schedule == '0 3 * * *'
       || github.event_name == 'workflow_dispatch'
-      || needs.detect-changes.outputs.console == 'true'
     # Same hermetic recipe as the hero job: real Postgres, a production console booted by the
     # Playwright `webServer`, email-OTP with the code scraped from the teed log. No sandbox box, no
     # cloud credentials — this costs CI minutes, not an environment slot.
@@ -1625,6 +1640,15 @@ jobs:
       - name: Workflow health classifier (skipped is not a failure)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/ci/workflow-health.mjs --self-test
+      # How much CI this repo ASKS FOR, and how long it waits to get it (#4173). The load-bearing
+      # part is which jobs count as "waiting": a job with `needs:` is created when its DEPENDENCY
+      # finishes, so it starts at once and its ~0 wait is not evidence about runner availability.
+      # Two earlier definitions of the metric were dominated by exactly that and reported a healthy
+      # 0.0 min against a measured 15-minute median — both are pinned here as fixtures, along with
+      # the refusals for an empty or untimed sample.
+      - name: CI demand classifier (a dependent job's instant start is not spare capacity)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/ci-demand.mjs --self-test
       # A TIMER must never start an unpriced real apply. The weekly `17 5 * * 0` full-bar cron fanned
       # the 11-kind surface across all five clouds while ALETHIA_COST_CEILING_MONTHLY_USD was wired
       # for aws alone, and bought a standing monthly alibaba CR EE subscription each week (#2340
@@ -2188,15 +2212,27 @@ jobs:
 
   provision-e2e:
     name: Provisioning E2E (T1 · real runner → kind)
-    # MERGE-QUEUE ONLY. A real runner PROCESS claims a QUEUED job from a real
-    # Postgres-backed control plane and drives the full RunDeployV2 spine against a
-    # genuine `kind` cluster — kind boot + provider/image pulls are heavy, so this
-    # keystone runs when a PR enters the merge queue, not on every push. The `e2e_t1`
-    # build tag keeps it out of the fast per-PR Go suite; ALETHIA_E2E_T1_REQUIRE=1
-    # turns a missing prerequisite (docker/kind/tofu) into a HARD FAIL, never a green
-    # skip, so the signal can't hollow out. Extends the in-process T0 (which stays in
-    # the `go` job as a compile check).
-    if: github.event_name == 'merge_group'
+    # ⚠️ THIS JOB HAS NOT RUN SINCE 2026-07-21, AND THE COMMENT HERE SAID OTHERWISE FOR SIX WEEKS.
+    #
+    # It used to read "runs when a PR enters the merge queue". `merge_group` fires only under
+    # GitHub's NATIVE merge queue, and `.mergify.yml` replaced that queue on 2026-07-21 — precisely
+    # because this job, being merge_group-only, failed on missing auth env and wedged every queued
+    # PR. Measured 2026-09-03: all 107 merge_group CI runs in the repo are dated 2026-07-18..21,
+    # and the last twelve all FAILED. So the T1 provisioning keystone has had no live trigger at
+    # all, while its own comment asserted a schedule it no longer had.
+    #
+    # `workflow_dispatch` is added so it is at least RUNNABLE while its home is decided (#4173).
+    # It is deliberately NOT put on a schedule: it failed 12/12 on missing auth env, so arming it
+    # nightly would buy a nightly red rather than a signal, and giving it that env is a maintainer
+    # decision, not a workflow edit.
+    #
+    # What it does, when it runs: a real runner PROCESS claims a QUEUED job from a real
+    # Postgres-backed control plane and drives the full RunDeployV2 spine against a genuine `kind`
+    # cluster. kind boot + provider/image pulls are heavy, which is why it was never per-push. The
+    # `e2e_t1` build tag keeps it out of the fast per-PR Go suite; ALETHIA_E2E_T1_REQUIRE=1 turns a
+    # missing prerequisite (docker/kind/tofu) into a HARD FAIL, never a green skip, so the signal
+    # cannot hollow out. Extends the in-process T0 (which stays in the `go` job as a compile check).
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     services:
       # Mirrors the `integration` job: a throwaway Postgres that db:migrate turns into

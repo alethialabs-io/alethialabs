@@ -22,6 +22,19 @@ on:
       - '.github/workflows/deploy-console.yml'
   workflow_dispatch:
 
+# SERIALIZE deploys; never cancel one. Two merges to `main` in quick succession currently run two
+# full 15-job deploys concurrently, racing the same `compose pull && up -d` on the box — which is
+# how a green deploy ships a half-updated stack.
+#
+# ⚠ `cancel-in-progress: FALSE`, deliberately, and this is the one place the default is wrong. Every
+# other group added alongside this one cancels, because a superseded CI run is not evidence and
+# holding a runner is its only cost. THIS workflow ssh's into the box and restarts containers:
+# cancelling it mid-flight leaves the deploy half-applied, which is strictly worse than the race it
+# was meant to fix. Queueing gets the serialization without ever killing a live deploy.
+concurrency:
+  group: deploy-console
+  cancel-in-progress: false
+
 permissions:
   contents: read
   packages: write

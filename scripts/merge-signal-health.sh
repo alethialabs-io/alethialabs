@@ -17,13 +17,29 @@
 #   scripts/merge-signal-health.sh              # human report to stdout
 #   scripts/merge-signal-health.sh --issue <n>  # ALSO upsert the report onto tracking issue #<n>
 #
-# Env: RUNS (merge_group runs to sample, default 60), MIN_RUNS (default 20), PROMOTE_RATE (default 95).
+# Env: RUNS (merge_group runs to sample, default 60), MIN_RUNS (default 20), PROMOTE_RATE (default
+#      95), MAX_AGE_DAYS (how recent a run must be to count as evidence, default 14).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 RUNS="${RUNS:-60}"
 MIN_RUNS="${MIN_RUNS:-20}"
 PROMOTE_RATE="${PROMOTE_RATE:-95}"
+# A PASS-RATE IS A CLAIM ABOUT TODAY, AND A RUN IS ONLY EVIDENCE WHILE IT IS RECENT.
+#
+# Measured 2026-09-03: every one of the 107 `merge_group` CI runs in the repo is dated 2026-07-18 to
+# 2026-07-21 — `.mergify.yml` replaced GitHub's native queue on the 21st and the event has not fired
+# since. This script had no age bound, so it graded those six-week-old runs as current and printed
+#
+#     READY TO PROMOTE — "E2E (browser · Playwright hero path)"  (60/60 = 100%)
+#
+# while that same check was failing on EVERY open PR. Promotion adds a check to
+# var.required_status_checks; acting on that recommendation would have made a universally-failing
+# job required and wedged the entire repository.
+#
+# That is worse than the silent-green it looks like: the script was not saying nothing, it was
+# confidently recommending a repo-wide outage from data that had stopped being true.
+MAX_AGE_DAYS="${MAX_AGE_DAYS:-14}"
 ISSUE=""
 [ "${1:-}" = "--issue" ] && ISSUE="${2:-}"
 
@@ -37,11 +53,49 @@ SIGNALS=(
 
 echo "→ sampling the last $RUNS merge_group CI runs…" >&2
 # The queued-merge builds are CI runs with event=merge_group. Grab their ids (most recent first).
-run_ids=$(gh run list --workflow ci.yml --event merge_group -L "$RUNS" --json databaseId --jq '.[].databaseId')
+runs_json=$(gh run list --workflow ci.yml --event merge_group -L "$RUNS" --json databaseId,createdAt)
+cutoff=$(date -u -d "${MAX_AGE_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+  || date -u -v-"${MAX_AGE_DAYS}"d +%Y-%m-%dT%H:%M:%SZ)
+newest=$(printf '%s' "$runs_json" | jq -r '[.[].createdAt] | max // ""')
+run_ids=$(printf '%s' "$runs_json" | jq -r --arg c "$cutoff" '.[] | select(.createdAt >= $c) | .databaseId')
+
+if [ -n "$newest" ] && [ -z "$run_ids" ]; then
+  echo "✗ Every merge_group CI run is older than ${MAX_AGE_DAYS} days (newest: $newest)." >&2
+  echo "" >&2
+  echo "  The runs exist, so this is NOT 'no data yet' — the EVENT SOURCE HAS STOPPED." >&2
+  echo "  \`merge_group\` fires only under GitHub's native merge queue, which .mergify.yml" >&2
+  echo "  replaced on 2026-07-21. Grading those runs would report a pass-rate from a mechanism" >&2
+  echo "  that no longer exists, and PROMOTE on it — which adds a check to" >&2
+  echo "  var.required_status_checks and would wedge every PR if that check now fails." >&2
+  echo "" >&2
+  echo "  Point SOURCE at an event that actually fires, or retire the promotion path. See #4173." >&2
+  exit 1
+fi
 
 if [ -z "$run_ids" ]; then
-  echo "No merge_group CI runs yet — the queue hasn't built anything. Nothing to evaluate."
-  exit 0
+  # THIS USED TO `exit 0`, AND THAT IS WHY NOBODY NOTICED.
+  #
+  # `merge_group` fires only under GitHub's NATIVE merge queue. `.mergify.yml` replaced that queue
+  # on 2026-07-21 (the native queue's merge_group-only T1 job failed on missing auth env and wedged
+  # every queued PR), so the event has not fired since — measured 2026-09-03: the last twelve
+  # merge_group CI runs are all dated 2026-07-21 and all twelve FAILED.
+  #
+  # So for six weeks this script has printed "nothing to evaluate", exited 0, and reported green
+  # every Monday, while the promote-on-data mechanism it exists to drive had no data source at all.
+  # A guard whose "nothing found" branch is indistinguishable from "nothing wrong" is the failure
+  # this repo names most often; here it was reporting on its own liveness.
+  #
+  # Fails loudly instead. If the event source is deliberately gone, the fix is to change SOURCE
+  # below — not to make this quiet again.
+  echo "✗ No CI runs found for event=merge_group." >&2
+  echo "" >&2
+  echo "  This script grades the observe-only heavy signals over merge-queue builds, and it has no" >&2
+  echo "  sample. That is not 'no data yet' — it means the EVENT SOURCE IS DEAD. \`merge_group\`" >&2
+  echo "  fires only under GitHub's native merge queue, which .mergify.yml replaced on 2026-07-21." >&2
+  echo "" >&2
+  echo "  Nothing can ever be promoted from here until this reads an event that actually fires." >&2
+  echo "  See #4173." >&2
+  exit 1
 fi
 
 # Pull every job (name, conclusion) from every sampled run in one pass, so each signal is tallied
