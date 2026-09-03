@@ -235,7 +235,10 @@ describe("resolveCliProvider — organization scoping", () => {
 		expect(mockedEnsure).not.toHaveBeenCalled();
 	});
 
-	it("pins a service token to its own organization, with no membership check here", async () => {
+	// These two used to assert `expect(mockedEnsure).not.toHaveBeenCalled()` and were NAMED
+	// "with no membership check here". They pinned the defect: a token kept working after the
+	// profile that minted it was removed from the org (#4041).
+	it("pins a service token to its own organization, AFTER re-checking the minter's membership", async () => {
 		mockedVerify.mockResolvedValue({
 			payload: { sub: "user-123", service_token_org_id: "org-svc" },
 			error: null,
@@ -247,7 +250,14 @@ describe("resolveCliProvider — organization scoping", () => {
 		);
 
 		expect(result.scope?.orgId).toBe("org-svc");
-		expect(mockedEnsure).not.toHaveBeenCalled();
+		// The DEFAULT scope is what goes in, never one resolved from the pin — see the comment
+		// in providers.ts. `ensureCliOrgAccess` short-circuits on `actor.orgId === orgId`, so
+		// passing the pinned scope would compare the pin to itself and skip the query entirely.
+		expect(mockedEnsure).toHaveBeenCalledWith(
+			expect.objectContaining({ orgId: "user-123" }),
+			"user-123",
+			"org-svc",
+		);
 	});
 
 	it("lets the service token's pin win over a header, never the other way round", async () => {
@@ -262,7 +272,48 @@ describe("resolveCliProvider — organization scoping", () => {
 		);
 
 		expect(result.scope?.orgId).toBe("org-svc");
-		expect(mockedEnsure).not.toHaveBeenCalled();
+		// Checked against the PIN, not the header — the header is not consulted on this branch.
+		expect(mockedEnsure).toHaveBeenCalledWith(
+			expect.anything(),
+			"user-123",
+			"org-svc",
+		);
+	});
+
+	// THE DELIVERABLE OF #4041, and it is written to fail for the right reason.
+	//
+	// A missing grant, a bad token and a revoked membership all answer 403, and only one of
+	// them is this. So the assertions are: the membership check RAN with the pinned org, the
+	// refusal it produced is the one returned, no scope escapes alongside it, and the pinned
+	// scope was never resolved — a 403 handed back beside a usable scope is the substitution
+	// this exists to prevent, not a refusal.
+	it("refuses a service token whose minter is no longer a member of the pinned org", async () => {
+		mockedVerify.mockResolvedValue({
+			payload: { sub: "user-123", service_token_org_id: "org-svc" },
+			error: null,
+		});
+		mockedEnsure.mockResolvedValue(
+			new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }),
+		);
+
+		const result = await resolveCliProvider(
+			req(),
+			Promise.resolve({ provider: "aws" }),
+		);
+
+		expect(mockedEnsure).toHaveBeenCalledWith(
+			expect.objectContaining({ orgId: "user-123" }),
+			"user-123",
+			"org-svc",
+		);
+		expect(result.errorResponse?.status).toBe(403);
+		expect(result.scope).toBeNull();
+		expect(result.userId).toBeNull();
+		expect(result.provider).toBeNull();
+		// The pin was never resolved into a scope: only the default resolution happened.
+		expect(mockedScope).not.toHaveBeenCalledWith("user-123", "org-svc");
+		// And nothing reached the PDP — a permission denial would be a different failure.
+		expect(pdp.enforce).not.toHaveBeenCalled();
 	});
 
 	it("propagates the 403 verifyCliToken raises for a CONFLICTING service-token header", async () => {
