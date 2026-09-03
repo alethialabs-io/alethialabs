@@ -996,6 +996,24 @@ run_self_test() {
 	_a "differ" "$([ "$t_floor" != "$t_full" ] && echo differ || echo COLLIDE)" \
 		"the two dimensions cannot dedup onto one issue"
 
+	# …and the same separation for `cli-demo`, which is where #1755's fix silently stopped holding.
+	# `cli-demo` reached DIMENSIONS, FULL_EXCLUDES and its own fidelity arm but never dimension_label's
+	# enumerated case, so it fell through to `floor` — and since the title IS the dedup key, a cli-demo
+	# red and a genuine floor red on one cloud landed on ONE issue. #4086 was filed as
+	# "hetzner RED (floor)" for a cli-demo console build failure that never touched a cloud, sending
+	# every reader to the provisioning spine. A fixture per dimension is what makes that visible.
+	local t_cli
+	c="$tmp/dim-cli-demo"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure
+	write_jobs "$c/jobs.json" aws
+	CASE_DIMENSION=cli-demo _derive "$c" >/dev/null
+	t_cli="$(cat "$c/out/issue-red-aws.title")"
+	_a "e2e nightly: aws RED (cli-demo)" "$t_cli" "a cli-demo red is titled (cli-demo), not (floor) (#4086)"
+	_a "differ" "$([ "$t_cli" != "$t_floor" ] && echo differ || echo COLLIDE)" \
+		"a cli-demo red cannot dedup onto the floor's issue"
+	# Back to the full-bar case — the state.env assertions below read `$c`.
+	c="$tmp/dim-full"
+
 	# The dimension reaches state.env so the ledger step reuses it instead of re-deriving (#1755).
 	# shellcheck disable=SC1091
 	. "$c/out/state.env"
