@@ -76,18 +76,20 @@ func wireTime(t time.Time) string {
 func projectRows(configs []types.ConfigurationSummary, outFmt string) [][]string {
 	rows := make([][]string, len(configs))
 	for i, v := range configs {
-		provider := strings.ToUpper(string(v.CloudProvider))
-		if provider == "" {
-			provider = ui.SymbolDash
+		// The wire value is what a script matches on, so the machine arm keeps the provider's
+		// CASE. `strings.ToUpper` is a display decision — a script grepping for `aws`, the value
+		// every other surface uses, would otherwise have to know this one column shouts.
+		provider := ui.Cell(outFmt, string(v.CloudProvider), ui.OrDash(strings.ToUpper(string(v.CloudProvider))))
+		region := ui.Cell(outFmt, v.Region, ui.OrDash(v.Region))
+		// DRAFT is an inference for a READER: the wire sent no status, and a blank cell in a
+		// status column reads as a rendering bug rather than as a project nobody has applied yet.
+		// A script is told what arrived — empty — because handing it a status the server never
+		// sent is the one thing a machine format must not do.
+		humanStatus := string(v.Status)
+		if humanStatus == "" {
+			humanStatus = "DRAFT"
 		}
-		region := v.Region
-		if region == "" {
-			region = ui.SymbolDash
-		}
-		status := string(v.Status)
-		if status == "" {
-			status = "DRAFT"
-		}
+		status := ui.Cell(outFmt, string(v.Status), ui.StatusCell(humanStatus))
 		// A machine gets the bare number and an empty field for "unpriced"; a reader gets the
 		// rendered rate and the dash. Same split, and the same reason, as cost.go's Monthly cell.
 		cost := ui.Cell(outFmt, "", ui.SymbolDash)
@@ -107,7 +109,7 @@ func projectRows(configs []types.ConfigurationSummary, outFmt string) [][]string
 		rows[i] = []string{
 			v.ProjectName,
 			string(v.EnvironmentStage),
-			ui.StatusCell(status),
+			status,
 			provider,
 			region,
 			cost,

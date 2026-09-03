@@ -355,3 +355,82 @@ func TestWireIsEmptyWhereStrOrDashIsTheDash(t *testing.T) {
 		t.Errorf("Wire(pointer to empty) = %q, want empty", got)
 	}
 }
+
+// The three machine counterparts #4033 adds, each asserted AGAINST its human twin.
+//
+// Asserting the machine arm alone would pass for a pair that had converged on one rendering, which
+// is the whole failure the human/machine split exists to prevent — so every case below also pins
+// what the reader gets, and the point of each test is that the two DIFFER.
+
+// WireBool is the machine counterpart of all three glyph renderings of a boolean.
+func TestWireBoolIsABooleanWhereTheGlyphsAreThree(t *testing.T) {
+	if got := WireBool(true); got != "true" {
+		t.Errorf("WireBool(true) = %q, want %q", got, "true")
+	}
+	if got := WireBool(false); got != "false" {
+		t.Errorf("WireBool(false) = %q, want %q", got, "false")
+	}
+	// GateGlyph, YesNo and DefaultCell are three READER vocabularies for one machine fact. Each
+	// must differ from the machine form, or the pair buys nothing.
+	for name, human := range map[string]string{
+		"GateGlyph(true)":    GateGlyph(true),
+		"GateGlyph(false)":   GateGlyph(false),
+		"YesNo(true)":        YesNo(true),
+		"YesNo(false)":       YesNo(false),
+		"DefaultCell(true)":  DefaultCell(true),
+		"DefaultCell(false)": DefaultCell(false),
+	} {
+		if human == "true" || human == "false" {
+			t.Errorf("%s = %q — the human arm has collapsed onto the machine form, so Cell picks "+
+				"between two identical values and the split is decorative", name, human)
+		}
+	}
+}
+
+// WireInt is IntOrDash's machine counterpart: empty where a reader gets the dash.
+func TestWireIntIsEmptyWhereIntOrDashIsTheDash(t *testing.T) {
+	if got := WireInt(nil); got != "" {
+		t.Errorf("WireInt(nil) = %q, want empty", got)
+	}
+	if got := IntOrDash(nil); got != SymbolDash {
+		t.Errorf("IntOrDash(nil) = %q, want the dash", got)
+	}
+	v := 30
+	if got := WireInt(&v); got != "30" {
+		t.Errorf("WireInt(30) = %q, want %q", got, "30")
+	}
+	// Zero is a value, not an absence — a soak of 0 minutes is a decision someone recorded.
+	zero := 0
+	if got := WireInt(&zero); got != "0" {
+		t.Errorf("WireInt(0) = %q, want %q — zero is a value the wire sent", got, "0")
+	}
+}
+
+// WireFloat is FloatOrDash's machine counterpart: a bare fixed-point number, no currency glyph.
+func TestWireFloatDropsTheCurrencyFloatOrDashAssumes(t *testing.T) {
+	if got := WireFloat(nil); got != "" {
+		t.Errorf("WireFloat(nil) = %q, want empty", got)
+	}
+	if got := FloatOrDash(nil); got != SymbolDash {
+		t.Errorf("FloatOrDash(nil) = %q, want the dash", got)
+	}
+	v := 100.0
+	if got := WireFloat(&v); got != "100.00" {
+		t.Errorf("WireFloat(100) = %q, want %q", got, "100.00")
+	}
+	// The human arm assumes USD because the wire carries no currency (see FloatOrDash). The machine
+	// arm must not: a symbol a script has to strip is worse than a number.
+	if human := FloatOrDash(&v); !strings.ContainsAny(human, "$€£¥") {
+		t.Errorf("FloatOrDash(100) = %q, want a rendered amount — if it has stopped carrying a "+
+			"symbol then WireFloat is no longer buying anything", human)
+	}
+	if machine := WireFloat(&v); strings.ContainsAny(machine, "$€£¥") {
+		t.Errorf("WireFloat(100) = %q, want no currency symbol", machine)
+	}
+	// A thousands separator is what stops a cell parsing as a float, so the large case is the one
+	// worth pinning: `$1,234.56` is valid RFC-4180 and shifts every `cut -d,` reader.
+	big := 1234.5
+	if got := WireFloat(&big); got != "1234.50" {
+		t.Errorf("WireFloat(1234.5) = %q, want %q — no separator, no exponent", got, "1234.50")
+	}
+}

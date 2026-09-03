@@ -462,6 +462,11 @@ AZURE      Azure (3f9a1c2b-...)                 5 days ago
 ```
 
 The table is interactive — sort and navigate with the keyboard (see [TUI Components](/cli/tui)).
+
+**PROVIDER** is upper-cased and **CONNECTED** is an age for a person reading the column. Under
+`-o csv` a script gets the values instead: the provider is the lower-case wire value — the same
+string `alethia connector aws` takes and `-o json` marshals — and **CONNECTED** is the RFC3339
+stamp, which sorts and parses.
 Add `-o json` for the full records, including each connection's `id`.
 
 | Flag | Required | Description |

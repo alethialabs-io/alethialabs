@@ -46,7 +46,7 @@ var connectorListCmd = &cobra.Command{
 				{Title: "Account", Width: 42},
 				{Title: "Connected", Width: 18},
 			}
-			plain := cloudIdentityRows(identities)
+			plain := cloudIdentityRows(identities, ui.FormatTable)
 			rows := make([]table.Row, len(plain))
 			for i, r := range plain {
 				rows[i] = table.Row(r)
@@ -75,28 +75,34 @@ func connectorEmptyStateHint() string {
 		strings.Join(connectorProviderNames(), "|") + "`."
 }
 
-// cloudIdentityRows projects each cloud identity into a plain table row.
-func cloudIdentityRows(identities []api.CloudIdentity) [][]string {
+// cloudIdentityRows projects each cloud identity into a plain table row for the given output format.
+//
+// Two of the three cells were display decisions reaching a script through Render's verbatim CSV
+// branch. The Provider cell is the one worth naming: `strings.ToUpper` makes this the ONLY surface
+// in the product that spells a provider `AWS`. It is the same string `alethia connector aws` takes,
+// the same string `-o json` marshals, and the same string every other table prints in lower case —
+// so a script matching on it had to know that this one column shouts.
+func cloudIdentityRows(identities []api.CloudIdentity, outFmt string) [][]string {
 	rows := make([][]string, len(identities))
 	for i, id := range identities {
 		rows[i] = []string{
-			strings.ToUpper(id.Provider),
+			ui.Cell(outFmt, id.Provider, strings.ToUpper(id.Provider)),
 			id.Label,
-			ui.RelativeTime(id.CreatedAt),
+			ui.Cell(outFmt, id.CreatedAt, ui.RelativeTime(id.CreatedAt)),
 		}
 	}
 	return rows
 }
 
 // renderCloudIdentities writes connected cloud accounts to out in the requested format.
-func renderCloudIdentities(out io.Writer, format string, identities []api.CloudIdentity) error {
-	if len(identities) == 0 && format == ui.FormatTable {
+func renderCloudIdentities(out io.Writer, outFmt string, identities []api.CloudIdentity) error {
+	if len(identities) == 0 && outFmt == ui.FormatTable {
 		fmt.Fprintln(out, ui.MutedStyle.Render(connectorEmptyStateHint()))
 		return nil
 	}
-	return ui.Render(out, format, ui.TableSpec{
+	return ui.Render(out, outFmt, ui.TableSpec{
 		Columns: connectorListColumns,
-		Rows:    cloudIdentityRows(identities),
+		Rows:    cloudIdentityRows(identities, outFmt),
 	}, identities)
 }
 

@@ -46,6 +46,11 @@ production   ✓            ✓       ✓         2          30          $100.00
 staging      —            ✓       —         —          —           —
 ```
 
+Every one of those renderings is for a person reading a column. Under `-o csv` a script gets the
+values instead: a gate is `true` or `false` rather than `✓`/`—`, an unset **Approvers** or **Soak**
+is an empty cell, and **Cost Δ** is a bare `100.00` — no currency symbol, no thousands separator, and
+nothing to strip before it parses as a float. This is the same split `alethia config get` makes.
+
 Add `-o json` for the raw rule objects; `-o csv` for the rows. Backing call:
 `GET /cli/projects/<project>/protection`.
 
