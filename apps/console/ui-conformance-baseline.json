@@ -21,13 +21,13 @@
 		"scoredHere": 16,
 		"live": 10,
 		"notInstrumented": 8,
-		"findings": 89,
-		"findingFiles": 32,
+		"findings": 79,
+		"findingFiles": 31,
 		"liveNotMeasured": 13
 	},
 	"ledgers": {
 		"baseline": 16,
-		"debt": 25
+		"debt": 24
 	},
 	"live": {
 		"source": {
@@ -110,15 +110,15 @@
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 32,
-			"fail": 4,
+			"pass": 31,
+			"fail": 5,
 			"na": 4,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
-			"score": 0.8889
+			"score": 0.8611
 		},
 		"S3": {
 			"family": "S",
@@ -276,13 +276,13 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 21,
-			"fail": 19,
+			"pass": 22,
+			"fail": 18,
 			"na": 0,
 			"notMeasured": 0,
 			"naReasons": {},
 			"notMeasuredReasons": {},
-			"score": 0.525
+			"score": 0.55
 		},
 		"H3": {
 			"family": "H",
@@ -1495,16 +1495,16 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"redirectOnly": false,
-			"surfaceFiles": 218,
+			"surfaceFiles": 220,
 			"families": {
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 4,
-					"fail": 0,
+					"pass": 3,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.75
 				},
 				"T": {
 					"instrumented": 7,
@@ -1518,11 +1518,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 0,
@@ -5174,8 +5174,7 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "10 occurrence(s) in 1 file(s), worst apps/console/app/(private)/[org]/~/jobs/[id]/page.tsx (10)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -5225,7 +5224,8 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "S2",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "two widths: AppShell max-w-[1200px] and the page's max-w-4xl"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -8310,11 +8310,11 @@
 				"owner": null
 			},
 			"type_scale": {
-				"total": 61,
+				"total": 51,
 				"decision": 1,
-				"debt": 60,
+				"debt": 50,
 				"unlisted": 0,
-				"inPageClosure": 28,
+				"inPageClosure": 18,
 				"chromeOnly": 29,
 				"offTree": 4,
 				"predicate": "H8",
