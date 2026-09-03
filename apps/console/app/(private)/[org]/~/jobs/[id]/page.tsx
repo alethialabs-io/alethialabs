@@ -61,12 +61,18 @@ import { JOB_DETAIL_COLUMN, JOB_VIEWPORT_HEIGHT } from "./detail-column";
 function DetailSection({ title, children }: { title: string; children: ReactNode }) {
 	return (
 		<Collapsible className="border-b border-border/40 last:border-b-0">
-			{/* `[&>div]:w-full` reaches the heading's own column, which is a flex ITEM and therefore
-			    sized to its content. Without it the button below is as wide as its label and the
-			    other four fifths of the row are dead, which is a smaller target than the full-width
-			    `<button>` this replaced — every other Collapsible in the console keeps `w-full`. */}
+			{/* TWO hops, and both are needed — `[&>div]:w-full` alone leaves the target as small as
+			    the label. `SectionHeading` nests `div > div.flex-col > div.flex-row > h2 > {title}`.
+			    The first selector widens the direct child column, and the row inside it stretches on
+			    its own (a `flex-col` parent's cross axis). But the `<h2>` is a flex ITEM of that row,
+			    so it is `flex-grow: 0` and sized to its content — and the trigger's own `w-full`
+			    resolves against exactly that box. `[&_h2]:flex-1` is what makes the heading claim the
+			    row; `min-w-0` is what lets its `truncate` still shorten instead of overflowing. Without
+			    the pair, four fifths of the row is dead — a smaller target than the full-width
+			    `<button>` this replaced, and every other Collapsible in the console keeps `w-full`.
+			    (`CountPill` renders null at this call site, so nothing else competes for the row.) */}
 			<SectionHeading
-				className="py-2.5 [&>div]:w-full"
+				className="py-2.5 [&>div]:w-full [&_h2]:min-w-0 [&_h2]:flex-1"
 				level={2}
 				title={
 					// `ring-inset`, and it is load-bearing: `SectionHeading` renders its heading with
@@ -186,7 +192,7 @@ export default function JobDetailPage() {
 
 	if (isLoading) {
 		return (
-			<div className="flex h-full min-h-[50vh] items-center justify-center">
+			<div className="flex h-full min-h-[50dvh] items-center justify-center">
 				<Loader2 className="size-6 animate-spin text-muted-foreground" />
 			</div>
 		);
@@ -202,7 +208,7 @@ export default function JobDetailPage() {
 		// lands green and reds the QA run instead.
 		return (
 			<EmptyState
-				className="min-h-[50vh]"
+				className="min-h-[50dvh]"
 				icon={<SearchX />}
 				level={2}
 				title="Job not found."
@@ -340,14 +346,14 @@ export default function JobDetailPage() {
 				<ScrollArea className="h-full w-full p-6">
 					{logs.length === 0 && isActive ? (
 						<EmptyState
-							className="min-h-[40vh] font-sans"
+							className="min-h-[40dvh] font-sans"
 							icon={<Loader2 className="animate-spin" />}
 							title="Waiting for runner to claim job"
 							description="The runner polls every 10 seconds. Logs will appear here automatically."
 						/>
 					) : logs.length === 0 ? (
 						<EmptyState
-							className="min-h-[40vh] font-sans"
+							className="min-h-[40dvh] font-sans"
 							icon={<Terminal />}
 							title="No logs recorded for this job."
 						/>
@@ -390,7 +396,7 @@ export default function JobDetailPage() {
 			</div>
 
 			{/* The job's facts and its frozen payloads — back inside the detail column. */}
-			<div className="max-h-[40vh] shrink-0 overflow-y-auto border-t border-border/40 px-6">
+			<div className="max-h-[40dvh] shrink-0 overflow-y-auto border-t border-border/40 px-6">
 				<div className={JOB_DETAIL_COLUMN}>
 					<DetailSection title="Job details">
 						{/* A `<dl>`, not the `grid grid-cols-2 md:grid-cols-3` of unlabelled `<p>` pairs
