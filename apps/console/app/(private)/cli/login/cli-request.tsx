@@ -5,7 +5,7 @@
    and this is the half of it that reads the server's description of the request. */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import { formatDuration } from "@repo/format";
 import { Skeleton } from "@repo/ui/skeleton";
@@ -520,19 +520,47 @@ export function CliRequestDetailsSkeleton() {
  */
 const CLOSED_REQUEST_COPY: Record<
 	Exclude<CliDeviceRequestLifecycle, "pending">,
-	{ heading: string; body: string }
+	{ heading: string; body: ReactNode }
 > = {
 	approved: {
 		heading: "This request has already been approved",
-		body: "The terminal that started it already has its tokens. If that was not you, refuse it below — the refusal revokes the binding — and change your password.",
+		// THE TOKENS HAVE NOT BEEN HANDED OVER YET, and that is what makes this panel worth
+		// reading rather than worth apologising for. `/api/auth/cli/exchange` claims a row by
+		// DELETING it (`isNotNull(profile_id)` in its predicate), so a request the read can still
+		// describe as `approved` is one the terminal has not collected — and `/api/auth/cli/deny`
+		// clears `profile_id`, after which the claiming DELETE matches nothing. Refusing here
+		// genuinely stops the handover.
+		//
+		// It used to end "and change your password", which named an action the product does not
+		// have: `lib/auth/index.ts` sets `emailAndPassword: { enabled: false }` and sign-in is
+		// OTP/OAuth only. A remediation nobody can perform is worse than none — it sends somebody
+		// hunting for a setting that does not exist while the one thing that would help is a
+		// button already on screen.
+		body: (
+			<>
+				The terminal that started it has not collected its tokens yet. If that approval was
+				not yours, refuse it below — the refusal clears the binding, so there is nothing left
+				for the device to collect.
+			</>
+		),
 	},
 	denied: {
 		heading: "This request was already refused",
-		body: "Nothing was shared, and it cannot be approved later. You can close this window.",
+		body: (
+			<>Nothing was shared, and it cannot be approved later. You can close this window.</>
+		),
 	},
 	expired: {
 		heading: "This request has expired",
-		body: "Its decision window has closed, so approving it would do nothing. Run `alethia login` again to start a new one.",
+		// `<code>`, not backticks. This panel renders its body as text, so the grave accents were
+		// on screen — on the one line that tells somebody exactly what to type, and in the one
+		// place on this page where the same command is not already marked up the same way.
+		body: (
+			<>
+				Its decision window has closed, so approving it would do nothing. Run{" "}
+				<code>alethia login</code> again to start a new one.
+			</>
+		),
 	},
 };
 
@@ -548,7 +576,7 @@ export function CliRequestClosed({
 	body,
 }: {
 	heading: string;
-	body: string;
+	body: ReactNode;
 }) {
 	return (
 		<div

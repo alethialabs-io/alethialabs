@@ -246,6 +246,12 @@ const BIDI_ISOLATE_OPEN = "\u2066";
 const BIDI_ISOLATE_CLOSE = "\u2069";
 const LTR_MARK = "\u200E";
 const RTL_MARK = "\u200F";
+const ARABIC_LETTER_MARK = "\u061C";
+const SOFT_HYPHEN = "\u00AD";
+const MONGOLIAN_VOWEL_SEPARATOR = "\u180E";
+const WORD_JOINER = "\u2060";
+const INVISIBLE_TIMES = "\u2062";
+const TAG_LATIN_SMALL_A = "\u{E0061}";
 const ZERO_WIDTH_SPACE = "\u200B";
 const ZERO_WIDTH_NON_JOINER = "\u200C";
 const ZERO_WIDTH_JOINER = "\u200D";
@@ -278,6 +284,10 @@ describe("clientMetadataField, as a display guard", () => {
 			BIDI_ISOLATE_CLOSE,
 			LTR_MARK,
 			RTL_MARK,
+			// The third implicit mark. It is in the same Bidi_Control set as LRM and RLM, and a
+			// class defined by a Unicode property that covers two of its three members is a class
+			// with a hole in it.
+			ARABIC_LETTER_MARK,
 		]) {
 			expect(clientMetadataField(`cli${ch}evil`)).toBe("cli evil");
 		}
@@ -291,6 +301,17 @@ describe("clientMetadataField, as a display guard", () => {
 			ZERO_WIDTH_NON_JOINER,
 			ZERO_WIDTH_JOINER,
 			BYTE_ORDER_MARK,
+			// U+FEFF is the DEPRECATED spelling of this function; U+2060 is what anyone reaching
+			// for a word joiner today actually reaches for, so stripping only the first covers
+			// the character nobody uses and misses the one they do.
+			WORD_JOINER,
+			INVISIBLE_TIMES,
+			SOFT_HYPHEN,
+			MONGOLIAN_VOWEL_SEPARATOR,
+			// Above the BMP, which is why the pattern carries the `u` flag: without it this range
+			// would have to be spelt as surrogate pairs, and it is the usual carrier for hidden
+			// text precisely because it gets left out.
+			TAG_LATIN_SMALL_A,
 		]) {
 			expect(clientMetadataField(`alethia${ch}-cli`)).toBe("alethia -cli");
 		}
@@ -507,9 +528,33 @@ describe("deviceRequestReadOutcome", () => {
 	});
 
 	// KNOWN broken. `/api/auth/cli/generate` applies the identical gates, so the only thing an
-	// Approve button adds here is a wasted press and a worse error.
-	it.each([400, 401, 403, 409])("refuses outright on %i", (status) => {
-		expect(deviceRequestReadOutcome(status).kind).toBe("refused");
+	// Approve button adds here is a wasted press and a worse error. Note the SECOND argument:
+	// a refusal has to look like one of ours, and the body is the only evidence of that.
+	it.each([400, 401, 409])("refuses outright on %i from this route", (status) => {
+		expect(deviceRequestReadOutcome(status, "Unauthorized").kind).toBe("refused");
+	});
+
+	// A STATUS ALONE DOES NOT ESTABLISH WHO SPOKE, and this is the outage the `unverified` arm
+	// exists to prevent, reached through the other arm. An edge WAF, a bot rule or a corporate
+	// proxy can 403 or 400 this fetch — the query string carries a UUID and a dashed code, a
+	// shape WAFs do flag. Read as a refusal, that removes Approve under "Alethia will not
+	// approve this request" for every user at once and kills CLI login, with the console
+	// asserting a refusal the server never made.
+	it.each([400, 401, 409])(
+		"does NOT read a %i as a refusal when the body is not the documented shape",
+		(status) => {
+			expect(deviceRequestReadOutcome(status, null).kind).toBe("unverified");
+			expect(deviceRequestReadOutcome(status, "").kind).toBe("unverified");
+			// What a proxy's HTML error page leaves after `serverErrorMessage` finds no `error`.
+			expect(deviceRequestReadOutcome(status, "   ").kind).toBe("unverified");
+		},
+	);
+
+	// 403 is not on the list at all, on evidence rather than on taste: `request/route.ts` emits
+	// 400, 401, 404, 409 and 429 and no 403, so a 403 on this fetch was written by something
+	// that is not this route — even when it arrives carrying a plausible-looking body.
+	it("never reads a 403 as a refusal, because this route cannot emit one", () => {
+		expect(deviceRequestReadOutcome(403, "Forbidden").kind).toBe("unverified");
 	});
 
 	it("says what the server said when it refuses", () => {
@@ -532,8 +577,13 @@ describe("deviceRequestReadOutcome", () => {
 		).not.toContain("\n");
 	});
 
-	it("still refuses with its own words when the server names no reason", () => {
-		expect(reasonOf(deviceRequestReadOutcome(409, null), "refused")).not.toBe("");
+	// The inverse of the arm above, stated as its own case because it used to be the opposite:
+	// a 409 with no readable body fell through to a refusal wearing a default sentence. A
+	// sentence Alethia wrote is not evidence that Alethia refused.
+	it("warns rather than refusing when the server names no reason", () => {
+		const outcome = deviceRequestReadOutcome(409, null);
+		expect(outcome.kind).toBe("unverified");
+		expect(reasonOf(outcome, "unverified")).toMatch(/could not load/i);
 	});
 
 	// UNKNOWN, not known-broken — and this arm is the difference between a security fix and an
@@ -560,7 +610,7 @@ describe("deviceRequestReadOutcome", () => {
 	// heading and nothing under it, which is the same defect as a blank field.
 	it("never answers with an empty reason", () => {
 		for (const status of [400, 401, 403, 404, 409, 429, 500, null]) {
-			const outcome = deviceRequestReadOutcome(status);
+			const outcome = deviceRequestReadOutcome(status, "Unauthorized");
 			if (outcome.kind === "ok") continue;
 			expect(outcome.reason.trim()).not.toBe("");
 		}

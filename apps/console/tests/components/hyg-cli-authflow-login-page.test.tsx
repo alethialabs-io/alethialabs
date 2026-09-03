@@ -362,6 +362,39 @@ describe("/cli/login — what the screen says it is approving (#3889)", () => {
 		expect(hygCliAuthflowPostCalls()).toHaveLength(0);
 	});
 
+	// THE OUTAGE THE OTHER ARM WOULD CAUSE, asserted at the screen. An edge WAF or corporate
+	// proxy can put a 403 — or a 400 — on this fetch; the query string carries a UUID and a
+	// dashed code, a shape WAFs do flag. Read as Alethia's refusal, that removes Approve for
+	// EVERY user at once under a heading asserting a refusal the server never made, and CLI
+	// login is dead product-wide. The body is the evidence of who spoke, and a proxy's error
+	// page carries no `error` field.
+	it.each([
+		["a 403, which this route cannot even emit", 403, { error: "Forbidden" }],
+		["a 400 whose body is a proxy error page", 400, "<html>400 Bad Request</html>"],
+		["a 409 with no readable body at all", 409, null],
+	])("keeps Approve when the refusal did not come from Alethia — %s", async (_label, status, body) => {
+		hygCliAuthflowRequest = { status, body };
+		renderCliLogin();
+
+		expect(await screen.findByText(/cannot describe this request/i)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /approve/i })).toBeInTheDocument();
+		expect(screen.queryByText(/will not approve this request/i)).toBeNull();
+	});
+
+	// The control for the three above: a refusal that DOES carry the route's documented body
+	// still withdraws the button. Without this, the assertions above would pass against a
+	// function that had simply stopped refusing anything.
+	it("still withdraws Approve for a refusal that carries the route's own error", async () => {
+		hygCliAuthflowRequest = {
+			status: 409,
+			body: { error: "This login request does not match that code" },
+		};
+		renderCliLogin();
+
+		expect(await screen.findByText(/does not match that code/i)).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /approve/i })).toBeNull();
+	});
+
 	// A described request is not necessarily an approvable one.
 	it.each([
 		["approved", /already been approved/i],

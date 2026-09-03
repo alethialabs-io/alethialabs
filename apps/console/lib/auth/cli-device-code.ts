@@ -253,13 +253,20 @@ export const CLIENT_METADATA_MAX_LENGTH = 200;
  *  - **C0/C1 controls** (U+0000-U+001F, U+007F-U+009F). A newline in `client_name` turns one
  *    labelled line into two, and the second one is written by whoever registered the request.
  *    That is the whole impersonation move on a screen whose other lines are the server's.
- *  - **Bidi embeddings, overrides and isolates** (U+200E, U+200F, U+202A-U+202E,
- *    U+2066-U+2069). An RTL override reverses the RENDERED order of everything after it while
- *    leaving the string equal to itself, so a value can read on screen as something it is not
- *    - and the reader is being asked to compare what they see against a terminal.
- *  - **Zero-width joiners and the BOM** (U+200B-U+200D, U+FEFF). Invisible, so they split a
- *    word the eye reads as one: two `client_name`s that render identically are two different
- *    strings, and only one of them is the client anybody has heard of.
+ *  - **Bidi controls** - the marks (U+061C, U+200E, U+200F), the embeddings and overrides
+ *    (U+202A-U+202E) and the isolates (U+2066-U+2069). An RTL override reverses the RENDERED
+ *    order of everything after it while leaving the string equal to itself, so a value can read
+ *    on screen as something it is not - and the reader is being asked to compare what they see
+ *    against a terminal. All three of Unicode's implicit marks are here, U+061C included: it is
+ *    in the same Bidi_Control set as LRM and RLM, and a class defined by a Unicode property that
+ *    covers two of its three members is a class with a hole in it.
+ *  - **Default-ignorable invisibles** - U+00AD SOFT HYPHEN, U+180E, the zero-width set
+ *    (U+200B-U+200D), the word joiner and the invisible operators (U+2060-U+2064), U+FEFF, and
+ *    the tag block (U+E0000-U+E007F). Invisible, so they split a word the eye reads as one: two
+ *    `client_name`s that render identically are two different strings, and only one of them is
+ *    the client anybody has heard of. U+2060 matters as much as U+FEFF and is easy to miss -
+ *    U+FEFF is the DEPRECATED spelling of that function and U+2060 is what anyone reaching for a
+ *    word joiner today actually reaches for. The tag block is the usual carrier for hidden text.
  *
  * React escapes markup already, so this is not about XSS. It is about a string that renders
  * as a different string than it is.
@@ -267,9 +274,12 @@ export const CLIENT_METADATA_MAX_LENGTH = 200;
  * Written as `\u` escapes rather than as the characters themselves. A literal C0 byte in a
  * source file is invisible in every diff and every review - which is the same property that
  * makes it worth stripping in the first place.
+ *
+ * The `u` flag is load-bearing: the tag block is above the BMP, and without it that range would
+ * have to be spelt as surrogate pairs, which is how a range like it gets left out.
  */
 const UNSAFE_DISPLAY_CHARS =
-	/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+	/[\u0000-\u001F\u007F-\u009F\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u{E0000}-\u{E007F}]/gu;
 
 /**
  * Normalises one client-supplied descriptive field: a non-string, an empty string or a
@@ -672,11 +682,11 @@ const UNREGISTERED_REQUEST_REASON =
  * THE WHOLE POINT IS THAT THE TWO FAILURE KINDS ARE DIFFERENT, and getting them the same way
  * round is the difference between a security fix and an outage:
  *
- *  - **refused** — the server has told us this request is not approvable BY THIS SESSION:
- *    400 (the codes are malformed), 401/403 (no session, or not yours), 409 (bound to another
- *    account, or the `user_code` disagrees with the registered one). `/api/auth/cli/generate`
- *    applies the identical gates, so pressing Approve would fail anyway — the only thing the
- *    button adds is a wasted press and a worse error. It is not offered.
+ *  - **refused** — the SERVER has told us this request is not approvable by this session: 400
+ *    (the codes are malformed), 401 (no session) or 409 (bound to another account, or the
+ *    `user_code` disagrees with the registered one). `/api/auth/cli/generate` applies the
+ *    identical gates, so pressing Approve would fail anyway — the only thing the button adds is
+ *    a wasted press and a worse error. It is not offered.
  *
  *  - **unverified** — the DETAIL could not be read, and nothing was said about the request
  *    itself: 404 (never registered), 429, any 5xx, or a transport failure with no status at
@@ -688,8 +698,24 @@ const UNREGISTERED_REQUEST_REASON =
  *
  * Refuse only what is known broken; warn on the unknown.
  *
+ * A STATUS ALONE DOES NOT ESTABLISH WHO SPOKE, and that is why `serverError` is not merely the
+ * wording. An edge WAF, a bot rule or a corporate proxy can put a 403 — or a 400 — on this
+ * fetch; the query string carries a UUID and a dashed code, which is a shape WAFs do flag. Read
+ * as a refusal, that removes the Approve button under the heading "Alethia will not approve this
+ * request" for EVERY user at once and kills CLI login outright, with the console asserting a
+ * refusal the server never made. That is precisely the outage the `unverified` arm exists to
+ * prevent, reached through the other arm.
+ *
+ * So a refusal has to look like one of OURS: the status must be a refusal this route can
+ * actually emit, AND the body must have parsed as the documented `{ error: <non-empty string> }`
+ * shape (which is what a non-null `serverError` means here — see `serverErrorMessage`). A proxy's
+ * HTML error page carries no such field and falls through to the warn side, where a thing nobody
+ * can attribute belongs. 403 is absent from the list on the same evidence: `request/route.ts`
+ * emits 400, 401, 404, 409 and 429 and no 403 at all, so a 403 on this fetch was written by
+ * something that is not this route.
+ *
  * @param status the HTTP status, or null when the request never got one (network, abort).
- * @param serverError the `error` string from the body, when the body carried one.
+ * @param serverError the `error` string from the body, when the body carried the documented one.
  */
 export function deviceRequestReadOutcome(
 	status: number | null,
@@ -698,11 +724,8 @@ export function deviceRequestReadOutcome(
 	if (status === 200) return { kind: "ok" };
 
 	const stated = clientMetadataField(serverError);
-	if (status === 400 || status === 401 || status === 403 || status === 409) {
-		return {
-			kind: "refused",
-			reason: stated ?? "Alethia will not approve this login request.",
-		};
+	if (stated && (status === 400 || status === 401 || status === 409)) {
+		return { kind: "refused", reason: stated };
 	}
 	if (status === 404) {
 		return { kind: "unverified", reason: UNREGISTERED_REQUEST_REASON };
