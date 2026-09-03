@@ -227,13 +227,31 @@ func StatusCell(status string) string {
 // rather than naming the glyph constants, so a change to what `active` or `disabled` looks like
 // reaches this cell too.
 //
-// `◆` is not lost: it is still SymbolDefault, the "this is the default one" badge in
-// `runner list` and `project env`, which is a different statement and now the only one it makes.
+// IT IS NOT THE "WHICH ONE IS THE DEFAULT?" COLUMN, and the first cut of this change made it one.
+// `project env list` drew its Default column through YesNo while `runner list` and `org list` drew
+// the same fact as `◆`, so one product marked the default environment `●` and the default runner
+// `◆` — the two-glyph split this unit exists to end, introduced by the unit itself. That column is
+// DefaultCell below; YesNo keeps the genuine per-row booleans (Enabled, Verified, Builtin).
 func YesNo(b bool) string {
 	if b {
 		return PlainGlyph("active")
 	}
 	return PlainGlyph("disabled")
+}
+
+// DefaultCell marks the ONE row a "which one is the default?" column is about, and blanks every
+// other. `◆` is SymbolDefault, the same mark DefaultBadge puts on a picker option.
+//
+// It is YesNo's opposite number and separate from it on purpose, because the two columns ask
+// different questions. `Enabled` is a fact about each row and every row deserves an answer; the
+// `Default` column asks WHICH ONE, and a per-row `● / ·` puts a glyph on every line and leaves the
+// eye to find the odd one out. One fact, one glyph, four call sites: `runner list`, `org list`,
+// `project env list` and — through DefaultBadge — the pickers.
+func DefaultCell(isDefault bool) string {
+	if isDefault {
+		return SymbolDefault
+	}
+	return ""
 }
 
 // GateGlyph renders an enabled/disabled gate as a tick or the dash.

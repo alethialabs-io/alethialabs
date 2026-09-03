@@ -36,6 +36,29 @@ func TestYesNoIsNotTheAbsenceSentinel(t *testing.T) {
 	}
 }
 
+// TestDefaultCellIsTheOneMarkForTheOneRow pins the OTHER half of that separation, which the first
+// cut of #3660 got wrong: `project env list` drew its Default column through YesNo while
+// `runner list` and `org list` drew the same fact as `◆`, so one product marked the default
+// environment `●` and the default runner `◆`.
+//
+// The wants are the runes and the empty string, written out rather than read back from
+// SymbolDefault — a test that asked the implementation what it does would pass for the split.
+func TestDefaultCellIsTheOneMarkForTheOneRow(t *testing.T) {
+	if got := DefaultCell(true); got != "◆" {
+		t.Errorf("DefaultCell(true) = %q, want the brand's default mark ◆", got)
+	}
+	if got := DefaultCell(false); got != "" {
+		t.Errorf("DefaultCell(false) = %q, want an empty cell — the column asks WHICH ONE, so every other row is blank", got)
+	}
+	// It is NOT the boolean renderer, and the two must not converge back onto one glyph.
+	if DefaultCell(true) == YesNo(true) {
+		t.Error("DefaultCell(true) and YesNo(true) are the same glyph — 'this is the default one' and 'this row is switched on' are two statements")
+	}
+	if DefaultCell(false) == SymbolDash {
+		t.Error("DefaultCell(false) is the empty-value sentinel; a non-default row is a fact, not a cell nobody could fill")
+	}
+}
+
 func TestOrDashFamily(t *testing.T) {
 	s := "value"
 	empty := ""
@@ -59,7 +82,7 @@ func TestOrDashFamily(t *testing.T) {
 		// PlainGlyph("active") — a test that asked the implementation what it does would pass for
 		// the `◆ / —` pair this replaced.
 		"YesNo true":                         {YesNo(true), "●"},
-		"YesNo false":                        {YesNo(false), "·"},
+		"YesNo false":                        {YesNo(false), "◌"},
 		"GateGlyph on":                       {GateGlyph(true), SymbolSuccess},
 		"GateGlyph off":                      {GateGlyph(false), SymbolDash},
 		"TruncID leaves a short id alone":    {TruncID("abc"), "abc"},
@@ -257,7 +280,7 @@ func TestStatusCell(t *testing.T) {
 		"CREATING":     SymbolPending + " creating",
 		"UPDATING":     SymbolPending + " updating",
 		"FAILED":       SymbolError + " failed",
-		"DESTROYED":    "· destroyed",
+		"DESTROYED":    "◌ destroyed",
 		"OFFLINE":      SymbolOffline + " offline",
 		"":             SymbolOffline + " ",
 		// The wire shouts for six pgEnums and whispers for the rest; the cell folds either way.

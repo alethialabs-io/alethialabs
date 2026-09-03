@@ -28,7 +28,7 @@ func waitForJob(apiClient *api.Client, jobID string) error {
 
 		if job.Status != lastStatus {
 			lastStatus = job.Status
-			fmt.Printf("  Status: %s\n", ui.Status(job.Status))
+			fmt.Printf("  Status: %s\n", ui.StatusVerbatim(job.Status))
 		}
 
 		switch job.Status {

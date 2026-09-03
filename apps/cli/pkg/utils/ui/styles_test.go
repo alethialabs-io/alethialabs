@@ -65,6 +65,15 @@ func TestStatus(t *testing.T) {
 		// case 7 — a promotion status is an ordinary word and needed a renderer, not a special case.
 		{"DEPLOYING", SymbolPending, "case 7: promotion.go printed the raw enum"},
 		{"SUCCEEDED", SymbolOnline, "case 7: same"},
+		// The promotion vocabulary — six enum values that had no word at all and drew the idle
+		// hollow dot on both surfaces, which is a WRONG signal rather than a missing one on the
+		// table an operator reads to find what is holding a promotion up. #4117.
+		{"APPROVED", SymbolOnline, "promotion: a decision was made and it was yes; drew ○"},
+		{"approved", SymbolOnline, "the approval slot's own lower-case spelling of the same word"},
+		{"BLOCKED", SymbolError, "promotion: a hard gate failed — terminal and negative; drew ○"},
+		{"rejected", SymbolError, "the approval slot's terminal negative; drew ○, same as approved"},
+		{"PENDING_APPROVAL", SymbolPending, "waiting on a human, which is not its final answer; drew ○"},
+		{"PENDING_PLAN", SymbolPending, "a PLAN job is queued — genuinely in flight; drew ○"},
 		// The fallback, which is silent by design on both surfaces.
 		{"SOMETHING_ELSE", SymbolOffline, "unknown words resolve to idle, as they do in the console"},
 	}
@@ -154,5 +163,71 @@ func TestSymbolConstants(t *testing.T) {
 	}
 	if SymbolOffline != "○" {
 		t.Errorf("SymbolOffline should be ○, got %s", SymbolOffline)
+	}
+}
+
+// TestStatusGlyphsAreDisjointFromSymbols is the half of the collision question the generator
+// cannot ask. `gen-go-vocab.ts` refuses an undeclared collision BETWEEN TWO TIERS, because both
+// sides of that one are in the table it owns; the CLI's other symbols are not, and one of them
+// collided anyway.
+//
+// The measured case: `StatusGlyphDisabled` was `·`, `SymbolBullet` is `·`, and `opsPickProjectID`
+// builds a label as `PlainGlyph(status) + name + SymbolBullet + …` — so a DESTROYED project read
+// as `· my-project · prod · a1b2c3d4`, its leading glyph indistinguishable from a separator and
+// the label appearing to open on an empty field. Same shape in opsPickEnvironmentID and
+// pickCluster, and in any row that puts a disabled status cell beside a bulleted one.
+//
+// The four status-named symbols are deliberately EXCLUDED: SymbolOnline, SymbolOffline,
+// SymbolPending and SymbolError are aliases OF these glyphs, so including them would fail by
+// construction and the test would have to be deleted rather than obeyed.
+func TestStatusGlyphsAreDisjointFromSymbols(t *testing.T) {
+	if len(types.StatusGlyphs) == 0 {
+		t.Fatal("types.StatusGlyphs is empty — this test would pass by measuring nothing")
+	}
+	nonStatus := map[string]string{
+		"SymbolSuccess": SymbolSuccess,
+		"SymbolDefault": SymbolDefault,
+		"SymbolDash":    SymbolDash,
+		"SymbolBullet":  SymbolBullet,
+		"SymbolArrow":   SymbolArrow,
+		"SymbolPoint":   SymbolPoint,
+	}
+	for tier, glyph := range types.StatusGlyphs {
+		for name, symbol := range nonStatus {
+			if glyph == symbol {
+				t.Errorf("the %q tier draws %q, which is also %s. A status and a %s are two meanings in one rune, "+
+					"and they meet inside a picker label (ops_prompt.go) where the reader cannot tell them apart. "+
+					"Move the TIER (apps/console/scripts/lib/status-vocab.ts) rather than the symbol — the symbols "+
+					"are the older and wider convention — then regenerate.",
+					tier, glyph, name, strings.TrimPrefix(name, "Symbol"))
+			}
+		}
+	}
+}
+
+// TestStatusVerbatimKeepsTheWireCasing pins the plain-text contract that `Status` broke.
+//
+// `jobs logs --follow` closes with `--- Job <status> ---` and `job wait` prints `  Status: …`;
+// NEITHER command has a machine format, so those lines ARE the machine contract and `grep -q
+// SUCCESS` in somebody's CI script is the consumer. Routing them through the table cell
+// lower-cased the word. The glyph is gained, the word is untouched.
+func TestStatusVerbatimKeepsTheWireCasing(t *testing.T) {
+	for _, status := range []string{"SUCCESS", "FAILED", "CANCELLED", "PROCESSING", "active"} {
+		got := StatusVerbatim(status)
+		if !strings.Contains(got, status) {
+			t.Errorf("StatusVerbatim(%q) = %q, which does not carry the status as the wire spelled it — "+
+				"`grep -q %s` in a CI script stops matching", status, got, status)
+		}
+		if !strings.Contains(got, PlainGlyph(status)) {
+			t.Errorf("StatusVerbatim(%q) = %q, want it to lead with the glyph %q", status, got, PlainGlyph(status))
+		}
+	}
+	// The distinction from Status, stated both ways: same glyph, different spelling. A shouting
+	// status is the case that separates them, so it is the one asserted.
+	if StatusVerbatim("SUCCESS") == Status("SUCCESS") {
+		t.Error("StatusVerbatim and Status render a shouting status identically — one of them has stopped doing its job")
+	}
+	if !strings.Contains(Status("SUCCESS"), "success") {
+		t.Error("Status no longer lower-cases; the table cell and the plain-text line have converged the wrong way")
 	}
 }

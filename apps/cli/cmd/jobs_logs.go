@@ -73,7 +73,7 @@ without copying its id out of the previous command; on a terminal, running it ba
 				// the final chunks may already be written and would otherwise be lost.
 				final, _ := apiClient.GetJobLogs(ref.ID, lastID)
 				writeJobLogs(os.Stdout, final, lastID)
-				fmt.Printf("\n--- Job %s ---\n", ui.Status(job.Status))
+				fmt.Printf("\n--- Job %s ---\n", ui.StatusVerbatim(job.Status))
 				return
 			}
 

@@ -1193,7 +1193,7 @@ jobs:
         run: |
           pnpm -C apps/console run gen:go-vocab
           git diff --exit-code -- packages/core/types/vocab_gen.go \
-            || { echo "::error::The Go status vocabulary is stale — run 'pnpm -C apps/console run gen:go-vocab' and commit (source of truth: packages/ui/src/status-badge.tsx for the words and tiers, apps/console/lib/db/schema/enums.ts for their provenance, apps/console/scripts/lib/status-vocab.ts for the terminal projection)."; exit 1; }
+            || { echo "::error::The Go status vocabulary is stale — run 'pnpm -C apps/console run gen:go-vocab' and commit (source of truth: packages/ui/src/status-badge.tsx for the words and tiers, apps/console/lib/db/schema for their provenance, apps/console/scripts/lib/status-vocab.ts for the terminal projection)."; exit 1; }
       # The formatter contract both surfaces are held to. @repo/format decides what `47 min`,
       # `2h 15m` and `$12.50/mo` look like for the console; packages/core/format will be held to
       # the same table for the CLI, which today renders $12.50 as `$12/mo` (Go's %.0f rounds half

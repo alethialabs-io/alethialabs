@@ -33,6 +33,13 @@ export type StatusTier = (typeof STATUS_TIERS)[number];
  * generated from this object, so a word added here reaches the terminal and a word that is only
  * in the terminal has nowhere to come from. Key order is meaningful — it is the order the
  * generated Go vocabulary is emitted in, so a reordering is a diff somebody has to look at.
+ *
+ * The promotion words (`approved`, `rejected`, `blocked`, `pending_approval`, `pending_plan`) are
+ * the five this map was missing entirely: six values of `promotion_status` and `approval_status`
+ * fell to the `idle` fallback, so an approved promotion and a blocked one drew the same hollow
+ * dot as a runner sitting there doing nothing. `apps/console/scripts/lib/status-vocab.ts` records
+ * why each takes the tier it does; `StatusVocabularyGaps` in the generated Go file counts what is
+ * STILL unmapped, so the next hole of this shape is a number rather than a silence.
  */
 export const STATUS_TIER: Record<string, StatusTier> = {
 	// active — running / healthy / done well
@@ -40,12 +47,15 @@ export const STATUS_TIER: Record<string, StatusTier> = {
 	online: "active",
 	success: "active",
 	succeeded: "active",
+	approved: "active",
 	ready: "active",
 	connected: "active",
 	running: "active",
 	// pending — in flight / waiting
 	queued: "pending",
 	pending: "pending",
+	pending_plan: "pending",
+	pending_approval: "pending",
 	processing: "pending",
 	claimed: "pending",
 	provisioning: "pending",
@@ -64,6 +74,8 @@ export const STATUS_TIER: Record<string, StatusTier> = {
 	failed: "failed",
 	error: "failed",
 	errored: "failed",
+	rejected: "failed",
+	blocked: "failed",
 	// disabled — gone / inert / skipped
 	disabled: "disabled",
 	destroyed: "disabled",

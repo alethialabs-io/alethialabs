@@ -105,9 +105,17 @@ const (
 	// without coordinating with anyone.
 	SymbolDash = format.Dash
 	// SymbolBullet is the SEPARATOR between the segments of a picker label ("● web · prod · abc123").
-	// It is the same rune as types.StatusGlyphDisabled and is deliberately not an alias of it: a
-	// separator and a status are two meanings that happen to have picked one glyph, and tying them
-	// together would make a change to either move the other.
+	// It is not an alias of any status glyph: a separator and a status are two meanings, and tying
+	// them together would make a change to either move the other.
+	//
+	// IT USED TO BE THE SAME RUNE AS THE DISABLED TIER, and that was not a harmless coincidence.
+	// opsPickProjectID builds its label as `PlainGlyph(status) + name + SymbolBullet + …`, so a
+	// DESTROYED project rendered as `· my-project · prod · a1b2c3d4` — the leading glyph
+	// indistinguishable from a separator, the label reading as though it opened on an empty field.
+	// The disabled tier is `◌` for that reason (the separator is the older and wider convention;
+	// the tier is what moved), and TestStatusGlyphsAreDisjointFromSymbols holds the two
+	// vocabularies apart. The generator can only see collisions BETWEEN TIERS — this half of the
+	// question lives here, where the non-status runes are.
 	SymbolBullet = "·"
 	SymbolArrow  = "→"
 	SymbolPoint  = "▸"
@@ -223,6 +231,24 @@ func PlainGlyph(status string) string {
 // distinguished by nothing at all. Shape carries it now.
 func Status(status string) string {
 	return statusInk[types.StatusTierOf(status)].Render(StatusCell(status))
+}
+
+// StatusVerbatim renders a status for a PLAIN-TEXT LINE rather than a table cell: the glyph, a
+// space, and the status EXACTLY AS THE WIRE SPELLED IT, in its tier's ink.
+//
+// A STATED DECISION, not a variant somebody liked better. `Status` is StatusCell in ink and
+// StatusCell lower-cases, for a reason that holds in a table and does not hold here — a column of
+// capitals reads as a column of alarms, one closing line does not. The two callers are
+// `jobs logs --follow` and `job wait`, and NEITHER has a machine format: `--follow` has no `-o`
+// at all, so its last line IS the machine contract. Routing them through the table cell silently
+// changed `--- Job SUCCESS ---` to `--- Job ● success ---` and broke every `grep -q SUCCESS` in
+// somebody's CI script. Keeping the wire's own casing keeps that grep and gains the glyph, which
+// is why this exists rather than the two commands simply reverting to a bare status echo.
+//
+// It is built from PlainGlyph and statusInk, the same two pieces Status is built from, so it
+// cannot come to a different answer about what a word means — only about how it is spelled.
+func StatusVerbatim(status string) string {
+	return statusInk[types.StatusTierOf(status)].Render(PlainGlyph(status) + " " + status)
 }
 
 func DefaultBadge() string {

@@ -18,7 +18,7 @@
  *     matcher that has stopped matching anything reports the same green as a clean tree.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -37,11 +37,12 @@ import {
 	type PgEnum,
 } from "../../scripts/gen-go-vocab";
 import { TIER_GLYPHS, WIRE_ORIGINS, type TierProjection } from "../../scripts/lib/status-vocab";
-import * as schema from "@/lib/db/schema/enums";
+import * as schema from "@/lib/db/schema";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "../../../..");
 const FORMAT_GO = readFileSync(resolve(ROOT, "packages/core/format/format.go"), "utf8");
+const SCHEMA_DIR = resolve(ROOT, "apps/console/lib/db/schema");
 
 /** A small, hand-written enum set. Nothing here is read from the schema. */
 const FAKE_ENUMS: PgEnum[] = [
@@ -317,12 +318,17 @@ describe("the whole pipeline, against the real vocabulary", () => {
 		}
 		const noted = words.filter((w) => w.note !== "").map((w) => w.word).sort();
 		expect(noted).toEqual([
+			"approved",
+			"blocked",
 			"claimed",
 			"destroyed",
 			"destroying",
 			"draining",
 			"pending",
+			"pending_approval",
+			"pending_plan",
 			"processing",
+			"rejected",
 			"success",
 		]);
 	});
@@ -331,8 +337,49 @@ describe("the whole pipeline, against the real vocabulary", () => {
 		// Case 2: the em dash was the absence sentinel AND the destroyed glyph. The reason has to
 		// travel with the value or the next reader "fixes" it back.
 		const { go } = generate(FORMAT_GO);
-		expect(go).toContain("StatusGlyphDisabled = \"·\"");
+		expect(go).toContain("StatusGlyphDisabled = \"◌\"");
 		expect(go).not.toContain("StatusGlyphDisabled = \"—\"");
+		// Nor the middot it was briefly: that is ui.SymbolBullet, the separator inside a picker
+		// label whose FIRST segment is the status glyph, so a destroyed project read as
+		// `· my-project · prod · a1b2c3d4`. One ambiguity had been traded for another.
+		expect(go).not.toContain("StatusGlyphDisabled = \"·\"");
+	});
+
+	it("gives the promotion vocabulary a tier, so nothing decision-bearing is left on the fallback", () => {
+		// The six values that used to fall to `idle` — "present, reachable, and not doing anything"
+		// — on both surfaces. Written out rather than read from STATUS_TIER: a test that asked the
+		// map what it says would pass for the hollow dot this closes.
+		const { words, holes } = generate(FORMAT_GO);
+		const tierOf = new Map(words.map((w) => [w.word, w.tier]));
+		expect(tierOf.get("approved")).toBe("active");
+		expect(tierOf.get("rejected")).toBe("failed");
+		expect(tierOf.get("blocked")).toBe("failed");
+		expect(tierOf.get("pending_approval")).toBe("pending");
+		expect(tierOf.get("pending_plan")).toBe("pending");
+
+		// And the census is the other direction of the same claim: neither enum has a value left
+		// with no word. Asserted on the ENUM rather than on the count, because a count moves for
+		// reasons that have nothing to do with promotions.
+		const stillOpen = holes.filter((h) => h.enumName === "promotion_status" || h.enumName === "approval_status");
+		expect(stillOpen).toEqual([]);
+	});
+
+	it("counts the four enums that live outside lib/db/schema/enums.ts", () => {
+		// The regression this file exists to hold shut. `stripe_webhook_event_status` is the one
+		// with teeth — it spells `error`, which WIRE_ORIGINS declared unreachable — but all four
+		// were invisible for the same reason, and `done` is now a counted gap rather than a silent
+		// idle badge.
+		const { enums, holes } = generate(FORMAT_GO);
+		const names = enums.map((e) => e.name);
+		for (const name of [
+			"stripe_webhook_event_status",
+			"capability_service_kind",
+			"capability_quota_kind",
+			"email_suppression_reason",
+		]) {
+			expect(names, `${name} is declared outside enums.ts and must still be censused`).toContain(name);
+		}
+		expect(holes).toContainEqual({ enumName: "stripe_webhook_event_status", value: "done" });
 	});
 
 	it("refuses the WHOLE file when one word loses its provenance", () => {
@@ -354,13 +401,17 @@ describe("the whole pipeline, against the real vocabulary", () => {
 	});
 
 	it("every word WIRE_ORIGINS accounts for is genuinely in no pgEnum", () => {
-		// The list is small enough to state, and stating it is the point: these seven are the words
-		// the schema does not constrain, and two of their origins say outright that nothing emits
-		// them. If one of them acquires a column, this test goes red and the entry must go.
+		// The list is small enough to state, and stating it is the point: these six are the words
+		// the schema does not constrain. If one of them acquires a column, this test goes red and
+		// the entry must go.
+		//
+		// It went red exactly once, and only after the import below was widened: `error` sat here
+		// claiming NOTHING EMITS THIS while `stripe_webhook_event_status.error` spelled it, and
+		// this loop could not see the enum because `schema` was one MODULE of the schema. The
+		// subject of a both-directions check is only as wide as what it is pointed at.
 		const enums = pgEnums({ ...schema });
 		expect(Object.keys(WIRE_ORIGINS).sort()).toEqual([
 			"disabled",
-			"error",
 			"errored",
 			"idle",
 			"ready",
@@ -377,5 +428,152 @@ describe("the whole pipeline, against the real vocabulary", () => {
 			expect(projection.glyph, `${tier} draws the absence sentinel`).not.toBe("—");
 			expect(projection.glyph.length, `${tier} has no glyph`).toBeGreaterThan(0);
 		}
+	});
+});
+
+/**
+ * The census ROOT, which the SHAPE walk cannot derive for itself.
+ *
+ * `pgEnums()` finds every enum in whatever module namespace it is handed, by shape, and its
+ * docstring says a hand-typed list is what it exists to avoid. That was true of everything AFTER
+ * the root and false of the root itself: the generator imported `@/lib/db/schema/enums`, which is
+ * one module of the schema, and four pgEnums lived in siblings that module does not re-export.
+ * The set looked derived and its first step was a name somebody chose.
+ *
+ * So the check has to come from outside the module graph entirely: sweep the FILES for `pgEnum(`
+ * and compare the names. Both directions matter — an enum on disk that the barrel cannot reach is
+ * the defect that was here, and an enum reachable but not swept means this test has gone blind.
+ */
+function resolveRepoPackages(): Map<string, string> {
+	const dir = resolve(ROOT, "packages");
+	const byName = new Map<string, string>();
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		if (!entry.isDirectory()) continue;
+		const manifest = resolve(dir, entry.name, "package.json");
+		let raw: string;
+		try {
+			raw = readFileSync(manifest, "utf8");
+		} catch {
+			continue;
+		}
+		const parsed: unknown = JSON.parse(raw);
+		if (typeof parsed !== "object" || parsed === null || !("name" in parsed)) continue;
+		const { name } = parsed;
+		if (typeof name !== "string") continue;
+		byName.set(name, resolve(dir, entry.name));
+	}
+	return byName;
+}
+
+/** `./enums` → `<dir>/enums.ts`, or its directory's index. */
+function resolveRelativeSpecifier(spec: string, fromFile: string): string | null {
+	const base = resolve(dirname(fromFile), spec);
+	for (const candidate of [`${base}.ts`, `${base}.tsx`, resolve(base, "index.ts")]) {
+		if (existsSync(candidate)) return candidate;
+	}
+	return null;
+}
+
+/** `@repo/support/enums` → `packages/support/src/enums.ts`, through the package's own exports map. */
+function resolveWorkspaceSpecifier(spec: string, packages: Map<string, string>): string | null {
+	// The longest package name that prefixes the specifier, so `@repo/a/b` cannot be mistaken for a
+	// package called `@repo/a/b` when both `@repo/a` and `@repo/a/b` exist.
+	let best: string | null = null;
+	for (const name of packages.keys()) {
+		if ((spec === name || spec.startsWith(`${name}/`)) && (best === null || name.length > best.length)) best = name;
+	}
+	if (best === null) return null;
+	const dir = packages.get(best);
+	if (dir === undefined) return null;
+	const subpath = spec === best ? "." : `./${spec.slice(best.length + 1)}`;
+	const parsed: unknown = JSON.parse(readFileSync(resolve(dir, "package.json"), "utf8"));
+	if (typeof parsed !== "object" || parsed === null || !("exports" in parsed)) return null;
+	const { exports: exportsField } = parsed;
+	if (typeof exportsField !== "object" || exportsField === null) return null;
+	const target: unknown = Object.entries(exportsField).find(([key]) => key === subpath)?.[1];
+	return typeof target === "string" ? resolve(dir, target) : null;
+}
+
+/** Every `pgEnum("name", …)` reachable on disk from the schema directory, name only. */
+function sweepEnumNames(): Set<string> {
+	const packages = resolveRepoPackages();
+	const found = new Set<string>();
+	const seen = new Set<string>();
+	const queue = readdirSync(SCHEMA_DIR)
+		.filter((f) => f.endsWith(".ts"))
+		.map((f) => resolve(SCHEMA_DIR, f));
+
+	while (queue.length > 0) {
+		const file = queue.pop();
+		if (file === undefined || seen.has(file)) continue;
+		seen.add(file);
+		let src: string;
+		try {
+			src = readFileSync(file, "utf8");
+		} catch {
+			continue;
+		}
+		for (const m of src.matchAll(/\bpgEnum\(\s*"([^"]+)"/g)) found.add(m[1]);
+		// A re-export is part of the schema's surface, so its enums are the schema's too, and the
+		// sweep follows every FORM of one rather than the form that was in front of it when this was
+		// written. `export * from "@repo/support/enums"` brings six; `export { platformCollectionMethod }
+		// from "./enums"` brings one, from a RELATIVE path and a NAMED clause — and a sweep that
+		// matched only `export *` from a workspace package missed exactly that one, which is what the
+		// both-directions assertion below caught. Followed transitively.
+		for (const m of src.matchAll(/\bexport\s+(?:\*(?:\s+as\s+\w+)?|type\s*\{[^}]*\}|\{[^}]*\})\s+from\s+"([^"]+)"/g)) {
+			const spec = m[1];
+			const target = spec.startsWith(".")
+				? resolveRelativeSpecifier(spec, file)
+				: resolveWorkspaceSpecifier(spec, packages);
+			if (target !== null) queue.push(target);
+		}
+	}
+	return found;
+}
+
+describe("the census root is derived, not chosen", () => {
+	it("sweeps enough of the tree to be able to disagree", () => {
+		// A matcher that has stopped matching reports the same green as a schema with no enums, and
+		// the comparison below would then pass by measuring nothing on one side.
+		const swept = sweepEnumNames();
+		expect(swept.size).toBeGreaterThan(60);
+		expect(swept).toContain("promotion_status");
+		// The one that was invisible, and the package re-export that is easy to lose.
+		expect(swept).toContain("stripe_webhook_event_status");
+		expect(swept).toContain("support_case_status");
+		// Reached only through a NAMED relative re-export two packages deep. If the sweep is ever
+		// narrowed back to `export *`, this is the line that says so.
+		expect(swept).toContain("platform_collection_method");
+	});
+
+	it("every pgEnum on disk is reachable from the schema barrel, and vice versa", () => {
+		const swept = [...sweepEnumNames()].sort();
+		const imported = pgEnums({ ...schema })
+			.map((e) => e.name)
+			.sort();
+
+		// The explanation is folded into the ASSERTED VALUE rather than passed as expect()'s second
+		// argument, which `vitest/valid-expect` forbids: a bare `expected [ 'x' ] to equal []` names
+		// the enum and says nothing about what to do with it, and the next reader of a red CI log is
+		// the person this whole guard is for.
+		const unreachable = swept.filter((n) => !imported.includes(n));
+		expect(
+			unreachable.length === 0
+				? ""
+				: `${unreachable.join(", ")} — declared in apps/console/lib/db/schema but NOT reachable ` +
+					"from `@/lib/db/schema`. The generator's provenance census cannot see these, so a " +
+					"status word they spell is reported as having no origin at all, and a WIRE_ORIGINS " +
+					"entry claiming nothing emits it passes. Re-export the module from index.ts.",
+		).toBe("");
+
+		const unswept = imported.filter((n) => !swept.includes(n));
+		expect(
+			unswept.length === 0
+				? ""
+				: `${unswept.join(", ")} — reachable from \`@/lib/db/schema\` but NOT found by the ` +
+					"filesystem sweep. This test has gone partly blind, which is worse than the defect " +
+					"it guards, because a blind guard reports the same green as a clean tree. Widen " +
+					"sweepEnumNames().",
+		).toBe("");
 	});
 });

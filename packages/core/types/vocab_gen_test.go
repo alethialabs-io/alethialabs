@@ -143,8 +143,11 @@ func TestStatusTierOfFoldsCase(t *testing.T) {
 func TestStatusVocabularyGapsAreActuallyGaps(t *testing.T) {
 	if len(StatusVocabularyGaps) == 0 {
 		t.Fatal("StatusVocabularyGaps is empty. That is not 'the vocabulary is complete' — several " +
-			"status enums provably have values with no word (promotion_status.APPROVED among them), " +
-			"so an empty census means the generator's derivation found nothing and said so quietly.")
+			"status enums provably have values with no word (stripe_webhook_event_status.done among " +
+			"them), so an empty census means the generator's derivation found nothing and said so " +
+			"quietly. promotion_status.APPROVED used to be the example named here and stopped being " +
+			"one in #4117, which is what closing a gap looks like: the census shrinks and this " +
+			"sentence has to name a different value.")
 	}
 	for _, g := range StatusVocabularyGaps {
 		if g.Enum == "" || g.Value == "" {

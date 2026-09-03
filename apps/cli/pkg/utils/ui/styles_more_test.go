@@ -29,6 +29,9 @@ func TestRenderMark(t *testing.T) {
 // and each is a defect it closed: DRAINING (the contested case, decided the console's way),
 // DESTROYED (was the em dash it shared with "we could not fill this cell"), and the two
 // lower-case rows, which used to miss every arm of an unfolded switch.
+//
+// DESTROYED is `◌` and not `·`: the middot is ui.SymbolBullet, the separator inside a picker
+// label, and the label starts with this glyph. See TestStatusGlyphsAreDisjointFromSymbols.
 func TestPlainGlyph(t *testing.T) {
 	cases := map[string]string{
 		"ONLINE":       SymbolOnline,
@@ -37,7 +40,7 @@ func TestPlainGlyph(t *testing.T) {
 		"PROVISIONING": SymbolPending,
 		"QUEUED":       SymbolPending,
 		"FAILED":       SymbolError,
-		"DESTROYED":    "·",
+		"DESTROYED":    "◌",
 		"WHATEVER":     SymbolOffline,
 		"active":       SymbolOnline,
 		"AcTiVe":       SymbolOnline,

@@ -688,8 +688,8 @@ func TestYesNo(t *testing.T) {
 	if ui.YesNo(true) != "●" {
 		t.Errorf("ui.YesNo(true) = %q, want the active dot", ui.YesNo(true))
 	}
-	if ui.YesNo(false) != "·" {
-		t.Errorf("ui.YesNo(false) = %q, want the disabled point", ui.YesNo(false))
+	if ui.YesNo(false) != "◌" {
+		t.Errorf("ui.YesNo(false) = %q, want the disabled tier's dotted outline", ui.YesNo(false))
 	}
 	if ui.YesNo(false) == ui.SymbolDash {
 		t.Error("ui.YesNo(false) is the empty-value sentinel — 'no' and 'we could not read this' must not be one cell")

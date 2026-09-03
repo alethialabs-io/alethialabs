@@ -22,8 +22,9 @@
  *     wire statuses and a few words that belong to no schema at all, and its own docstring
  *     records that the support-case vocabulary is missing entirely. Generating it verbatim would
  *     promote a known-partially-wrong classification into Go with nothing marking which parts are
- *     known. So every key has to say where it comes from, and two of them say "nothing emits
- *     this", which is a real answer.
+ *     known. So every key has to say where it comes from, and "nothing emits this" is a real
+ *     answer — provided it is TRUE, which is a claim about the whole schema and not about one
+ *     module of it. See pgEnums() below.
  *   - a decision about a key that is GONE — WIRE_ORIGINS or RULINGS naming a word the vocabulary
  *     no longer has. A table that describes things that do not exist reads as more complete than
  *     it is.
@@ -33,7 +34,7 @@
  *     glyphs. The em dash is `packages/core/format.Dash` — read out of that file here rather than
  *     trusted from a constant, so a rename is loud instead of quietly stopping to match.
  *
- * WHAT IT DOES NOT DO. It does not fix the vocabulary. 7 of the 28 keys correspond to no pgEnum
+ * WHAT IT DOES NOT DO. It does not fix the vocabulary. A handful of keys correspond to no pgEnum
  * at all and a large number of pgEnum values correspond to no key and therefore fall to `idle` on
  * both surfaces. Both facts survive this generator; what changes is that they are now COUNTED —
  * `StatusVocabularyGaps` in the emitted file lists every one, derived, so the gap cannot shrink or
@@ -56,7 +57,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { STATUS_TIER, STATUS_TIERS, type StatusTier } from "@repo/ui/status-badge";
 
-import * as schema from "@/lib/db/schema/enums";
+import * as schema from "@/lib/db/schema";
 import {
 	ABSENCE_SENTINEL,
 	RULINGS,
@@ -72,7 +73,7 @@ const FORMAT_GO = resolve(ROOT, "packages/core/format/format.go");
 
 const OUT_REL = "packages/core/types/vocab_gen.go";
 const VOCAB_REL = "packages/ui/src/status-badge.tsx";
-const ENUMS_REL = "apps/console/lib/db/schema/enums.ts";
+const SCHEMA_REL = "apps/console/lib/db/schema";
 const TABLE_REL = "apps/console/scripts/lib/status-vocab.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -86,12 +87,27 @@ export interface PgEnum {
 }
 
 /**
- * Every pgEnum declared in the schema module, by SHAPE rather than by a list.
+ * Every pgEnum reachable from the schema barrel, by SHAPE rather than by a list.
  *
  * `gen-go-enums.ts` names its eighteen by hand because the Go constants it emits are a curated
  * subset. This generator must not: the question here is "does any enum in the schema contain this
- * word", and a hand-typed list answers it for the enums somebody remembered. The schema declares
- * sixty; a status enum added tomorrow is found by this and would be invisible to a list.
+ * word", and a hand-typed list answers it for the enums somebody remembered. A status enum added
+ * tomorrow is found by this and would be invisible to a list.
+ *
+ * WHAT THE SHAPE WALK DOES NOT GIVE YOU FOR FREE: a walk is only as wide as the module you point
+ * it at, and the ROOT is hand-picked even when everything after it is derived. This read
+ * `@/lib/db/schema/enums` until #4117, which is not the schema — it is one module of it, and four
+ * pgEnums live in siblings it does not re-export (`stripe_webhook_event_status`,
+ * `capability_service_kind`, `capability_quota_kind`, `email_suppression_reason`). The cost was
+ * not cosmetic: `error` is `stripe_webhook_event_status.error`, so the vocabulary shipped a
+ * WIRE_ORIGINS sentence saying nothing emitted it, and the third refusal below — "a WIRE_ORIGINS
+ * entry for a key that DOES have an enum" — passed because it could not see the enum. A guard
+ * reporting green for the reason it exists to catch.
+ *
+ * It now reads `@/lib/db/schema`, the barrel every table module is re-exported through, and
+ * `gen-go-vocab.test.ts` sweeps `pgEnum(` off the filesystem — including the packages the schema
+ * re-exports, resolved through their own `exports` maps — and compares the SET of names. The
+ * derivation of the root is the half a SHAPE walk cannot do for itself.
  *
  * Sorted by name so the emitted provenance is stable — an ES module namespace object's key order
  * is specified, but it is alphabetical by export name, which is not the same thing as the enum's
@@ -328,7 +344,7 @@ export function auditVocabulary(
 		if (origin !== undefined) usedOrigins.add(word);
 		if (origin === undefined || origin.trim() === "") {
 			problems.push(
-				`${word} is a status in ${VOCAB_REL} and is in none of the ${enums.length} pgEnums in ${ENUMS_REL}, so nothing says where it comes from. Add an entry to WIRE_ORIGINS in ${TABLE_REL} naming what emits it — "nothing emits this" is an answer, and a useful one.`,
+				`${word} is a status in ${VOCAB_REL} and is in none of the ${enums.length} pgEnums reachable from ${SCHEMA_REL}, so nothing says where it comes from. Add an entry to WIRE_ORIGINS in ${TABLE_REL} naming what emits it — "nothing emits this" is an answer, and a useful one.`,
 			);
 			continue;
 		}
@@ -450,7 +466,7 @@ export function renderGo(
 // Code generated by apps/console/scripts/gen-go-vocab.ts; DO NOT EDIT.
 // Regenerate with: pnpm -C apps/console run gen:go-vocab
 //
-// Source of truth: ${VOCAB_REL} (the words and their tiers), ${ENUMS_REL}
+// Source of truth: ${VOCAB_REL} (the words and their tiers), ${SCHEMA_REL}
 // (their provenance) and ${TABLE_REL} (the terminal projection).
 //
 // This is the ONE status vocabulary. Before it, apps/cli/pkg/utils/ui/styles.go decided a status
@@ -514,8 +530,8 @@ type StatusProvenance string
 const (
 	// StatusFromEnum — a drizzle pgEnum spells this word; Sources names every enum and value.
 	StatusFromEnum StatusProvenance = "enum"
-	// StatusFromWire — no pgEnum has it. Sources holds the single declared origin, which for two
-	// of these words is the sentence "nothing emits this".
+	// StatusFromWire — no pgEnum has it. Sources holds the single declared origin, which may itself
+	// be the statement that nothing emits the word at all.
 	StatusFromWire StatusProvenance = "wire"
 )
 
@@ -608,7 +624,7 @@ export function generate(
 		// An empty enum set would make every word provenance-less, which the audit would report as
 		// 28 separate problems and nobody would read as "the import broke".
 		problems.push(
-			`no pgEnums were found in ${ENUMS_REL}. That is a broken import, not a schema with no enums — every word's provenance is derived from them.`,
+			`no pgEnums were found in ${SCHEMA_REL}. That is a broken import, not a schema with no enums — every word's provenance is derived from them.`,
 		);
 		return { go: null, words: [], holes: [], enums, problems };
 	}
