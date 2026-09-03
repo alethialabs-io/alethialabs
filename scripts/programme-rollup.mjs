@@ -461,9 +461,16 @@ export function canonicalDimension(token) {
  * The ONE dimension label that names a composite run rather than a grid column.
  *
  * `scripts/e2e/resolve-dimension.sh`'s `dimension_label()` is the emitter, and its vocabulary is
- * closed: `full` → `full-bar`; `maxconfig|addons|byo|gitops|byo-iac|day2` → itself; anything else →
- * `floor`. Every one of those is a grid column (`byo` through DIMENSION_ALIASES) EXCEPT `full-bar`,
- * which names a bar that exercises the whole row. `--self-test` pins the two vocabularies together.
+ * closed: `full` → `full-bar`; `maxconfig|addons|byo|gitops|byo-iac|day2|cli-demo` → itself; `floor`
+ * and the UNSET token → `floor`; anything else is REFUSED rather than labelled. Every one of those
+ * is a grid column (`byo` through DIMENSION_ALIASES) EXCEPT `full-bar`, which names a bar that
+ * exercises the whole row. `--self-test` pins the two vocabularies together.
+ *
+ * The refusal arm is the fix for #4086. `cli-demo` was missing from the enumerated arm and fell
+ * through the old permissive `*) echo "floor"`, so a cli-demo red and a genuine floor red on one
+ * cloud produced the SAME title — and `parseNightlyRed` below reads that title as the dedup key, so
+ * the two collapsed onto one issue. #4086 itself was filed as "hetzner RED (floor)" for a cli-demo
+ * console build failure that never touched a cloud.
  */
 export const COMPOSITE_RED_DIMENSION = "full-bar";
 
