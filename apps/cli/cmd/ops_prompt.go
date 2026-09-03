@@ -268,8 +268,12 @@ func opsPickRunnerID(client opsRunnerLister, verb string) (string, error) {
 	}
 	labels := make([]string, len(runners))
 	for i, r := range runners {
+		// ui.PlainGlyph and not the styled ui.Status: this is a huh Select option, and an option
+		// label carrying ANSI fights the widget's own cursor styling and its width arithmetic —
+		// which is the whole reason the CLI has had an unstyled glyph since before #3660. The
+		// styled ui.StatusDot this replaced was the odd one out, not the rule.
 		label := fmt.Sprintf("%s %s %s %s %s %s",
-			ui.StatusDot(r.Status), r.Name,
+			ui.PlainGlyph(r.Status), r.Name,
 			ui.SymbolBullet, r.Status,
 			ui.SymbolBullet, runnerOperatorLabel(r))
 		if r.IsDefault {
@@ -300,7 +304,7 @@ func opsPickProjectID(client opsProjectLister, description string) (string, erro
 	labels := make([]string, len(configs))
 	for i, c := range configs {
 		labels[i] = fmt.Sprintf("%s %s %s %s %s %s",
-			ui.StatusDot(string(c.Status)), c.ProjectName,
+			ui.PlainGlyph(string(c.Status)), c.ProjectName,
 			ui.SymbolBullet, c.EnvironmentStage,
 			ui.SymbolBullet, ui.TruncID(c.ID))
 	}
@@ -335,7 +339,7 @@ func opsPickEnvironmentID(projects opsProjectLister, envs opsEnvLister) (id, sta
 	labels := make([]string, len(list))
 	for i, e := range list {
 		labels[i] = fmt.Sprintf("%s %s %s %s %s %s",
-			ui.StatusDot(e.Status), e.Name,
+			ui.PlainGlyph(e.Status), e.Name,
 			ui.SymbolBullet, ui.OrDash(e.Status),
 			ui.SymbolBullet, ui.TruncID(e.ID))
 	}

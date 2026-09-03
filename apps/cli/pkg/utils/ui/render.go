@@ -206,16 +206,52 @@ func StampOrNever(v *string) string {
 // It does NOT take the status message. clusters_list appends one and clusters_get puts it on its
 // own row; folding that in would make the two disagree about a cell this function exists to make
 // them agree about.
+//
+// The glyph now comes from the generated vocabulary through PlainGlyph, so this cell folds case:
+// `ui.StatusCell("active")` and `ui.StatusCell("ACTIVE")` are the same cell. They were not, and
+// `clusters_list.go:85` derived the glyph and the label from differently-cased inputs in one
+// expression, which is the shape a defect takes when two switches disagree about one word.
 func StatusCell(status string) string {
-	return PlainStatusDot(status) + " " + strings.ToLower(status)
+	return PlainGlyph(status) + " " + strings.ToLower(status)
 }
 
-// YesNo renders a boolean as a filled glyph or the dash.
+// YesNo renders a boolean as the vocabulary's filled dot or its spent point.
+//
+// IT NO LONGER RETURNS THE DASH, and that is the user-visible half of this change. `◆ / —` was
+// its own two-glyph vocabulary, decided here, and the "no" arm was the EMPTY-VALUE SENTINEL: an
+// alert rule that is switched off and one whose `enabled` field never arrived rendered the same
+// cell. `Enabled  —` is a sentence about our ignorance; a disabled rule is a fact.
+//
+// So a boolean is read as the two-word vocabulary it is — present and active, or present and
+// inert — and it borrows the tiers that already mean exactly that. It goes through PlainGlyph
+// rather than naming the glyph constants, so a change to what `active` or `disabled` looks like
+// reaches this cell too.
+//
+// IT IS NOT THE "WHICH ONE IS THE DEFAULT?" COLUMN, and the first cut of this change made it one.
+// `project env list` drew its Default column through YesNo while `runner list` and `org list` drew
+// the same fact as `◆`, so one product marked the default environment `●` and the default runner
+// `◆` — the two-glyph split this unit exists to end, introduced by the unit itself. That column is
+// DefaultCell below; YesNo keeps the genuine per-row booleans (Enabled, Verified, Builtin).
 func YesNo(b bool) string {
 	if b {
+		return PlainGlyph("active")
+	}
+	return PlainGlyph("disabled")
+}
+
+// DefaultCell marks the ONE row a "which one is the default?" column is about, and blanks every
+// other. `◆` is SymbolDefault, the same mark DefaultBadge puts on a picker option.
+//
+// It is YesNo's opposite number and separate from it on purpose, because the two columns ask
+// different questions. `Enabled` is a fact about each row and every row deserves an answer; the
+// `Default` column asks WHICH ONE, and a per-row `● / ·` puts a glyph on every line and leaves the
+// eye to find the odd one out. One fact, one glyph, four call sites: `runner list`, `org list`,
+// `project env list` and — through DefaultBadge — the pickers.
+func DefaultCell(isDefault bool) string {
+	if isDefault {
 		return SymbolDefault
 	}
-	return SymbolDash
+	return ""
 }
 
 // GateGlyph renders an enabled/disabled gate as a tick or the dash.
