@@ -898,8 +898,10 @@
    four rungs and this one still has seven. The OTP input took neither: it is
    legibility of a code being typed rather than reading type, and it is a recorded
    `reason:` decision in the allowlist rather than a size waiting for a rung. That
-   leaves five of the eleven, all #3742's: the two still-open members of the first
-   group (cli/login, error-state), the two sheet headings and the one <h2>.
+   leaves four of the eleven, all #3742's: the one still-open member of the first
+   group (error-state), the two sheet headings and the one <h2>. cli/login was the
+   fifth and is settled — it consumes --text-display-xs, the same answer #3806 gave
+   the other display-voice sites, so it left this list rather than waiting on a rung.
 
    THE NAMES CARRY A `ui-` PREFIX BECAUSE THIS LADDER IS NOT TAILWIND'S. Tailwind's
    `text-sm` is 14px and its `text-xs` is 12px; the console's body rung is 13px and
