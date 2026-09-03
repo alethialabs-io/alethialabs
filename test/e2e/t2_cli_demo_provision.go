@@ -430,6 +430,38 @@ func cliDemoConnectorArgs(r *CLIDemoRun) []string {
 	return append(argv, "--no-input")
 }
 
+// cliDemoConnectorEmptyFlags names the flags whose VALUE came out empty in the argv this run would
+// submit, or nil when every one is populated.
+//
+// WHY THIS EXISTS, AND WHY IT IS NOT A LIST OF VARIABLES. Every builder above reaches for
+// `t2Env(NAME, "")`, whose default is the empty string — so an unset repo variable does not fail,
+// it produces `connector aws --role-arn ""`. That is not a parse error: `connector aws` branches on
+// `TrimSpace(roleARN) != ""` and an empty value falls THROUGH to awsLocalFlow, which finds the
+// runner's preinstalled `aws` CLI and deploys a real CloudFormation stack — an IAM OIDC provider
+// and AlethiaProvisionerRole that aws-cleanup.sh does not sweep. gcp and azure have the same shape
+// (an empty --wif-config reaches gcpCloudShellFlow; empty ids reach the local `az` setup). A run
+// that meant to do nothing creates cloud identity, and every guard upstream reads green because the
+// flags ARE registered and the invocation DOES parse.
+//
+// It reads the built argv instead of a per-cloud list of variable names on purpose: such a list is
+// a second source of truth for the builders above and stops covering the first time one of them
+// gains a flag. The argv is what the process would actually receive, so it cannot drift from it.
+func cliDemoConnectorEmptyFlags(r *CLIDemoRun) []string {
+	argv := cliDemoConnectorArgs(r)
+	var empty []string
+	for i, a := range argv {
+		if a != "" || i == 0 {
+			continue
+		}
+		flag := argv[i-1]
+		if !strings.HasPrefix(flag, "--") {
+			flag = fmt.Sprintf("argv[%d]", i)
+		}
+		empty = append(empty, flag)
+	}
+	return empty
+}
+
 // cliDemoConnectorStdin returns the credential material `connector <cloud>` reads from stdin.
 //
 // Hetzner only, and that is now a statement about the PRODUCT rather than about this harness: it is
@@ -484,7 +516,12 @@ var cliDemoConnectorIssuerTrust = map[string]string{
 		"(infra/aws-oidc/e2e-nightly.tf), so the console's assertion is refused and the beat exits 1.",
 	"gcp": "`connector gcp` submits a WIF credential config and the console then exchanges its own " +
 		"minted subject token at Google STS. The e2e pool's provider trusts GitHub's issuer, not this " +
-		"console's, so the exchange is refused and the beat exits 1.",
+		"console's, so the exchange is refused and the beat exits 1. SECOND, INDEPENDENT BLOCKER: the " +
+		"config this beat uploads is the one google-github-actions/auth wrote, and with no token_format " +
+		"that is an external_account whose credential_source.file is a RUNNER-LOCAL path holding a " +
+		"short-lived GitHub OIDC token. The console stores it verbatim and can never resolve that path, " +
+		"so lifting the issuer decision alone does not make this cell drivable — it needs a credential " +
+		"whose source the console can read.",
 	"azure": "`connector azure` submits tenant/client/subscription and the console then presents a " +
 		"client assertion it signed itself. The managed identity's federated credential names GitHub's " +
 		"issuer, so Entra answers AADSTS70021 and the beat exits 1.",
