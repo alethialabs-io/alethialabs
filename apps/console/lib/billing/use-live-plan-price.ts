@@ -8,13 +8,12 @@
 // value as the synchronous fallback while loading / when Stripe isn't configured.
 
 import { useEffect, useState } from "react";
+import { formatMoney, stripeChargeDivisor } from "@repo/format";
 import {
 	type AiPlanId,
 	aiPlanMeta,
 	type PlanId,
 	type SupportedCurrency,
-	formatMoney,
-	formatSeatPrice,
 	planMeta,
 	shortInterval,
 } from "@repo/plan-catalog";
@@ -25,6 +24,35 @@ import type {
 	LivePlanPrice,
 	LivePlanPriceMap,
 } from "@/lib/billing/pricing";
+
+/**
+ * A major-unit amount as the price label a plan card shows — `$20.00 / seat / mo`.
+ *
+ * THE MULTIPLICATION AND THE DIVISION MUST USE THE SAME TABLE (#4096). `unitAmount` arrives here in
+ * MAJOR units — `lib/billing/pricing.ts` already divided the Stripe amount — and `formatMoney`
+ * takes MINOR ones, so this scales back up before handing it over. Both ends read
+ * `stripeChargeDivisor`, so the round trip is lossless by construction. It used to be a hardcoded
+ * `* 100` here against a hardcoded `/ 100` in the formatter: correct for USD and EUR, and silently
+ * self-cancelling for any currency where it was not, which is the more dangerous shape — a wrong
+ * divisor would have been invisible in the label while the NUMBER beside it was already wrong.
+ *
+ * @param unitAmount the per-seat or flat monthly amount in major units.
+ * @param currency the currency the caller selected. `SupportedCurrency`, so the divisor is 100.
+ * @param perSeat whether to say "/ seat". Optional because `PlanMeta.perSeat` is, and because
+ *                the standalone AI tiers are flat and simply omit it.
+ */
+function priceLabel(
+	unitAmount: number,
+	currency: SupportedCurrency,
+	interval: string,
+	perSeat?: boolean,
+): string {
+	// ISO 4217 for `@repo/format`; `SupportedCurrency` is the lower-case Stripe spelling.
+	const code = currency.toUpperCase();
+	const amount = formatMoney(Math.round(unitAmount * stripeChargeDivisor(code)), code);
+	const per = shortInterval(interval);
+	return perSeat ? `${amount} / seat / ${per}` : `${amount} / ${per}`;
+}
 
 let pending: Promise<LivePlanPriceMap> | null = null;
 
@@ -45,7 +73,7 @@ export interface LivePlanPriceView {
 	unitAmount: number | null;
 	/** The currency this view is priced in. */
 	currency: SupportedCurrency;
-	/** Formatted label for the selected currency, e.g. "€18 / seat / mo". */
+	/** Formatted label for the selected currency, e.g. "€18.00 / seat / mo". */
 	label: string;
 	loading: boolean;
 }
@@ -81,11 +109,7 @@ export function useLivePlanPrice(
 			: (data?.unitAmountUsd ?? meta.priceMonthlyUsd ?? null);
 	const interval = data?.interval ?? "month";
 	const label =
-		unitAmount == null
-			? meta.priceLabel
-			: meta.perSeat
-				? formatSeatPrice(Math.round(unitAmount * 100), currency, interval)
-				: `${formatMoney(Math.round(unitAmount * 100), currency)} / ${shortInterval(interval)}`;
+		unitAmount == null ? meta.priceLabel : priceLabel(unitAmount, currency, interval, meta.perSeat);
 
 	return { unitAmount, currency, label, loading: data === null };
 }
@@ -135,11 +159,11 @@ export function useLiveAiPrice(
 			? (data?.unitAmountEur ?? meta.priceMonthlyEur ?? null)
 			: (data?.unitAmountUsd ?? meta.priceMonthlyUsd ?? null);
 	const interval = data?.interval ?? "month";
-	// The free tier (unitAmount 0) shows its catalog label ("Free"), not "$0 / mo".
+	// The free tier (unitAmount 0) shows its catalog label ("Free"), not "$0.00 / mo".
 	const label =
 		unitAmount == null || unitAmount === 0
 			? meta.priceLabel
-			: `${formatMoney(Math.round(unitAmount * 100), currency)} / ${shortInterval(interval)}`;
+			: priceLabel(unitAmount, currency, interval);
 
 	return { unitAmount, currency, label, loading: data === null };
 }
