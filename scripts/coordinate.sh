@@ -239,7 +239,10 @@ run_scope_wiring_self_test() {
   # back into this function — a bash variable assignment prefixed to a FUNCTION persists, unlike
   # one prefixed to an external command, and a leaked override would silently disarm every check
   # that ran after it.
-  stub="$(mktemp -t alethia-scope-stub)"
+  # `-t` template needs X's: GNU mktemp REFUSES a template with fewer than three ("too few X's
+  # in template"), while BSD/macOS accepts it — so the bare name passed locally and failed only
+  # in CI, at the last two checks of this very suite.
+  stub="$(mktemp -t alethia-scope-stub.XXXXXX)"
   checks=$((checks + 1))
   out="$(printf '[]' | SCOPE_MATCHER="$stub-does-not-exist.mjs" scope_collision_report)" || true
   if printf '%s\n' "$out" | grep -qF "NOT CHECKED"; then
