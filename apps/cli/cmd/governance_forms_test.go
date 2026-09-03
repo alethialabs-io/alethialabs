@@ -147,7 +147,7 @@ func TestErrChannelTypeRequiredNamesEveryType(t *testing.T) {
 
 // ── alerts create ─────────────────────────────────────────────────────────────────────────────
 
-// TestValidAlertSeverity pins the closed set, both directions.
+// TestCanonicalAlertSeverity pins the closed set, both directions.
 //
 // The accepted cases come from the generated slice rather than from literals, so a severity added
 // to the schema is accepted here without anyone editing this test; the rejected cases are the
@@ -172,7 +172,16 @@ func TestCanonicalAlertSeverity(t *testing.T) {
 			t.Errorf("canonicalOneOf(%q) = %q, want it unchanged", name, got)
 		}
 		// THE REGRESSION. `--severity CRITICAL` must come back as `critical`, the wire spelling.
+		//
+		// Guarded per name, the way TestGovAnswered_AlertSeverityReachesTheDraftCanonical guards
+		// its own: if `alert_severity` ever gains a value with no cased letters, `upper` is `name`,
+		// the call below becomes textually identical to the one above, and BOTH assertions pass
+		// while proving nothing about folding — which is exactly the structural blindness this
+		// test was rewritten to remove.
 		upper := strings.ToUpper(name)
+		if upper == name {
+			t.Fatalf("severity %q is already upper case — the fold half of this test is a no-op", name)
+		}
 		got, err = canonicalOneOf("severity", upper, names)
 		if err != nil {
 			t.Errorf("canonicalOneOf(%q) = %v — --severity is typed by a person", upper, err)

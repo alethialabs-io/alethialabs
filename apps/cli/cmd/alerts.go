@@ -175,8 +175,14 @@ func resolveAlertDraft(c apiClient, cmd *cobra.Command, args []string) (alertDra
 	//
 	// `canonicalOneOf` rather than a local `validAlertSeverity`: it is the same helper the
 	// `grants` and `channels` groups moved onto in #3910, and this was the last of the three
-	// spellings of "fold case then post the caller's". One helper means the next closed vocabulary
-	// cannot reintroduce the fourth.
+	// spellings of "fold case then post the caller's" that #3825 measured.
+	//
+	// THAT IS NOT THE SAME AS "the package now has one helper". `canonicalAddonMode`
+	// (`addon_select.go:196`) is a fourth, hand-rolled, with its own `EqualFold` loop and its own
+	// message. It is not a defect — it returns the canonical value, which is the property that
+	// matters, and it carries an empty-string arm `canonicalOneOf` does not have — but it is a
+	// second implementation of one rule, and a claim that this call site closed the class would be
+	// false while it stands. Converging it is a separate change with its own call sites to check.
 	//
 	// Client-side validation is SOUND here rather than merely helpful — severity is a Postgres
 	// enum, so a value outside the set is certainly refused by the server. That is the bound the
