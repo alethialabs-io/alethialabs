@@ -113,7 +113,10 @@ func TestEnvRows(t *testing.T) {
 	if rows[0][2] != "dedicated" || rows[0][3] != ui.SymbolDash || rows[0][4] != "prod" {
 		t.Errorf("unexpected dedicated row placement cells: %+v", rows[0])
 	}
-	if rows[0][6] != ui.SymbolDefault || rows[0][7] != ui.SymbolDash {
+	// Default(6) is ui.YesNo, which since #3660 answers with the vocabulary's active dot and its
+	// disabled point rather than "◆ / —". Region(7) is still a genuine ABSENCE and still the dash,
+	// which is the distinction that change was for.
+	if rows[0][6] != "●" || rows[0][7] != ui.SymbolDash {
 		t.Errorf("unexpected default row: %+v", rows[0])
 	}
 
@@ -121,7 +124,7 @@ func TestEnvRows(t *testing.T) {
 	if rows[1][2] != "vcluster" || rows[1][3] != "boutique-staging" || rows[1][4] != "prod" {
 		t.Errorf("unexpected vcluster row placement cells: %+v", rows[1])
 	}
-	if rows[1][6] != ui.SymbolDash || rows[1][7] != "us-east-1" {
+	if rows[1][6] != "·" || rows[1][7] != "us-east-1" {
 		t.Errorf("unexpected named row: %+v", rows[1])
 	}
 

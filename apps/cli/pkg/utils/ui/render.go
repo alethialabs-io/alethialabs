@@ -206,16 +206,34 @@ func StampOrNever(v *string) string {
 // It does NOT take the status message. clusters_list appends one and clusters_get puts it on its
 // own row; folding that in would make the two disagree about a cell this function exists to make
 // them agree about.
+//
+// The glyph now comes from the generated vocabulary through PlainGlyph, so this cell folds case:
+// `ui.StatusCell("active")` and `ui.StatusCell("ACTIVE")` are the same cell. They were not, and
+// `clusters_list.go:85` derived the glyph and the label from differently-cased inputs in one
+// expression, which is the shape a defect takes when two switches disagree about one word.
 func StatusCell(status string) string {
-	return PlainStatusDot(status) + " " + strings.ToLower(status)
+	return PlainGlyph(status) + " " + strings.ToLower(status)
 }
 
-// YesNo renders a boolean as a filled glyph or the dash.
+// YesNo renders a boolean as the vocabulary's filled dot or its spent point.
+//
+// IT NO LONGER RETURNS THE DASH, and that is the user-visible half of this change. `◆ / —` was
+// its own two-glyph vocabulary, decided here, and the "no" arm was the EMPTY-VALUE SENTINEL: an
+// alert rule that is switched off and one whose `enabled` field never arrived rendered the same
+// cell. `Enabled  —` is a sentence about our ignorance; a disabled rule is a fact.
+//
+// So a boolean is read as the two-word vocabulary it is — present and active, or present and
+// inert — and it borrows the tiers that already mean exactly that. It goes through PlainGlyph
+// rather than naming the glyph constants, so a change to what `active` or `disabled` looks like
+// reaches this cell too.
+//
+// `◆` is not lost: it is still SymbolDefault, the "this is the default one" badge in
+// `runner list` and `project env`, which is a different statement and now the only one it makes.
 func YesNo(b bool) string {
 	if b {
-		return SymbolDefault
+		return PlainGlyph("active")
 	}
-	return SymbolDash
+	return PlainGlyph("disabled")
 }
 
 // GateGlyph renders an enabled/disabled gate as a tick or the dash.

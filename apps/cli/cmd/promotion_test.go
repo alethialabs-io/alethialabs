@@ -22,10 +22,23 @@ func TestRunPromotionList(t *testing.T) {
 		t.Fatalf("runPromotionList: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"p1", "staging", "production", "PENDING_APPROVAL", "DEPLOYED"} {
+	// The Status cell echoed the raw enum until #3660 — shouting, glyphless, and the only status
+	// column in the CLI that did. It reads through the one vocabulary now, so the words arrive
+	// lower-cased behind a glyph.
+	for _, want := range []string{"p1", "staging", "production", "pending_approval", "deployed"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("table output missing %q:\n%s", want, out)
 		}
+	}
+	// Neither of these is in the vocabulary — PENDING_APPROVAL is a promotion_status the console
+	// has no word for either, and DEPLOYED is not a promotion_status at all — so both resolve to
+	// the silent idle fallback and draw ○. That is recorded rather than asserted away: the two
+	// surfaces are now wrong in the SAME way, and StatusVocabularyGaps counts it.
+	if !strings.Contains(out, "○ pending_approval") {
+		t.Errorf("expected the idle fallback glyph on an unmapped promotion status:\n%s", out)
+	}
+	if strings.Contains(out, "PENDING_APPROVAL") {
+		t.Errorf("the raw enum is still being printed somewhere in the table:\n%s", out)
 	}
 }
 
