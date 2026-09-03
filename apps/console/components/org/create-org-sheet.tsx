@@ -276,7 +276,10 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			const org = await createOrg(data);
 			if (!org) return;
 			try {
-				await startProTrial();
+				// The org just created, NOT the ambient one — this sheet is open on a page inside the
+				// CURRENT org, so ambient would burn the account's one trial on the wrong org and then
+				// delete the new org in the catch below.
+				await startProTrial({ orgId: org.id });
 				track("trial_started", { plan: "team", context: "create_org" });
 			} catch (trialErr) {
 				// Roll back the just-created org — a failed trial must not orphan it.
@@ -342,7 +345,9 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			await fetchWorkspace();
 			if (billing.useAsPrimary) {
 				try {
-					await updateOrgPrimaryAddress(billingAddressFrom(billing));
+					// The org just created — ambient here is the page's org, and this `catch` is why
+					// overwriting it was silent.
+					await updateOrgPrimaryAddress(billingAddressFrom(billing), orgId);
 				} catch {
 					// Non-fatal — billing address is still set on the customer.
 				}
