@@ -405,16 +405,21 @@ export function CliRequestUnverified({
 	scopes: DeviceApprovalScope[];
 	account: string | null;
 }) {
+	// DASHED, and that is the whole visual difference from the block next door. The design
+	// system is grayscale — `packages/brand/src/tokens.css` has no warning hue, and
+	// `--signal-critical` is the same gray as everything else — so a caveat cannot be
+	// coloured into legibility. A broken border is the one thing on this card that reads
+	// as "provisional" without borrowing a meaning the palette does not carry.
+	//
+	// `role="status"` rather than `role="alert"`: this is the state the panel is in when
+	// it first paints, and an assertive live region announcing it would interrupt a
+	// screen-reader user mid-heading.
+	//
+	// The comment lives HERE, not inside the parentheses. `{/* … */}` is JSX syntax and is only
+	// legal INSIDE an element; as the first thing after `return (` it makes TypeScript read the
+	// parenthesised expression as an object literal, which is what `TS1005: ')' expected` and
+	// `TS2657: JSX expressions must have one parent element` were reporting.
 	return (
-		{/* DASHED, and that is the whole visual difference from the block next door. The design
-		    system is grayscale — `packages/brand/src/tokens.css` has no warning hue, and
-		    `--signal-critical` is the same gray as everything else — so a caveat cannot be
-		    coloured into legibility. A broken border is the one thing on this card that reads
-		    as "provisional" without borrowing a meaning the palette does not carry.
-
-		    `role="status"` rather than `role="alert"`: this is the state the panel is in when
-		    it first paints, and an assertive live region announcing it would interrupt a
-		    screen-reader user mid-heading. */}
 		<div
 			role="status"
 			className="space-y-3 border border-dashed border-border bg-surface-sunken/40 px-4 py-3"
