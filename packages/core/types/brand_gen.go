@@ -7,7 +7,7 @@
 // Source of truth: packages/brand/src/tokens.css (the values) and apps/console/scripts/lib/brand-projection.ts (the decisions).
 //
 // Every custom property declared in the stylesheet appears in BrandProjections below with
-// exactly one of exact / lossy / none. 63 exact, 19 lossy, 86 none — 168 tokens, no gaps.
+// exactly one of exact / lossy / none. 65 exact, 19 lossy, 86 none — 170 tokens, no gaps.
 // The generator refuses to emit if a declared token has no decision, so a token added to the
 // console fails CI until somebody says what the CLI does with it. A "none" entry is a real
 // answer, not an omission: a spinner has no easing curve and a CLI cannot set a font.
@@ -109,7 +109,9 @@ var BrandProjections = []BrandProjection{
 	{Token: "--gray-300", Kind: BrandExact, Target: "ColorGray300", Note: "ink ramp step"},
 	{Token: "--gray-400", Kind: BrandExact, Target: "ColorGray400", Note: "ink ramp step"},
 	{Token: "--gray-500", Kind: BrandExact, Target: "ColorGray500", Note: "ink ramp step"},
+	{Token: "--gray-550", Kind: BrandExact, Target: "ColorGray550", Note: "ink ramp step"},
 	{Token: "--gray-600", Kind: BrandExact, Target: "ColorGray600", Note: "ink ramp step"},
+	{Token: "--gray-625", Kind: BrandExact, Target: "ColorGray625", Note: "ink ramp step"},
 	{Token: "--gray-700", Kind: BrandExact, Target: "ColorGray700", Note: "ink ramp step"},
 	{Token: "--gray-800", Kind: BrandExact, Target: "ColorGray800", Note: "ink ramp step"},
 	{Token: "--gray-900", Kind: BrandExact, Target: "ColorGray900", Note: "ink ramp step"},
@@ -246,8 +248,14 @@ var (
 	// ColorGray500 is --gray-500 · exact — ink ramp step
 	ColorGray500 = BrandColor{Light: "#939393", Dark: "#939393"}
 
+	// ColorGray550 is --gray-550 · exact — ink ramp step
+	ColorGray550 = BrandColor{Light: "#838383", Dark: "#838383"}
+
 	// ColorGray600 is --gray-600 · exact — ink ramp step
 	ColorGray600 = BrandColor{Light: "#737373", Dark: "#737373"}
+
+	// ColorGray625 is --gray-625 · exact — ink ramp step
+	ColorGray625 = BrandColor{Light: "#6b6b6b", Dark: "#6b6b6b"}
 
 	// ColorGray700 is --gray-700 · exact — ink ramp step
 	ColorGray700 = BrandColor{Light: "#525252", Dark: "#525252"}
@@ -294,7 +302,7 @@ var (
 	ColorTextSecondary = BrandColor{Light: "#525252", Dark: "#939393"}
 
 	// ColorTextTertiary is --text-tertiary · exact — labels and rules — the CLI's InkMuted
-	ColorTextTertiary = BrandColor{Light: "#737373", Dark: "#737373"}
+	ColorTextTertiary = BrandColor{Light: "#6b6b6b", Dark: "#838383"}
 
 	// ColorTextDisabled is --text-disabled · exact — the dimmest readable ink — the CLI's InkFaint
 	ColorTextDisabled = BrandColor{Light: "#bababa", Dark: "#525252"}
@@ -327,7 +335,7 @@ var (
 	ColorSignalStrong = BrandColor{Light: "#0e0e0e", Dark: "#fafafa"}
 
 	// ColorSignalMute is --signal-mute · exact — a pending subject
-	ColorSignalMute = BrandColor{Light: "#737373", Dark: "#737373"}
+	ColorSignalMute = BrandColor{Light: "#6b6b6b", Dark: "#838383"}
 
 	// ColorSignalFaint is --signal-faint · exact — a disabled subject
 	ColorSignalFaint = BrandColor{Light: "#bababa", Dark: "#525252"}
@@ -410,7 +418,9 @@ var BrandColors = map[string]BrandColor{
 	"--gray-300":                ColorGray300,
 	"--gray-400":                ColorGray400,
 	"--gray-500":                ColorGray500,
+	"--gray-550":                ColorGray550,
 	"--gray-600":                ColorGray600,
+	"--gray-625":                ColorGray625,
 	"--gray-700":                ColorGray700,
 	"--gray-800":                ColorGray800,
 	"--gray-900":                ColorGray900,
