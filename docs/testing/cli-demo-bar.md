@@ -104,6 +104,24 @@ command, not "open the console".
 | GCP billing-budgets publisher binding — an out-of-band Cloud Console grant | gcp | [#1871] |
 | Alibaba prepaid CR EE release — `payment_type = "Subscription"`, not released by `tofu destroy`, and teardown reports clean anyway | alibaba | [#2333] |
 
+**All four of those trackers are CLOSED, and that is correct.** The maintainer's ruling on #3591 is
+that the `Issue` field means two different things depending on the verdict:
+
+| Verdict | Contract | Why |
+|---|---|---|
+| `CLIGap` | the tracker must still be **OPEN** | it is *our* debt, and debt must be able to close. A tracker that closes while the gap still stands is how debt becomes permanent by being forgotten — the same failure the must-be-OPEN rule on `test/e2e/addon_exclusions.go` exists to prevent |
+| `CloudManual` | the tracker need only be **FILED** | it is a fact about a cloud. Hetzner still ships no key-minting API and a prepaid CR EE instance is still released by hand; the ceiling does not lift because somebody closed the issue, and reopening one to satisfy a guard would be the guard editing reality to match itself |
+
+`scripts/check-exclusion-issues.mjs` enforces exactly that split — it is the only guard in the tree
+with three modes, and the third is this one. The state question cannot live in
+`t2_cli_demo_pure_test.go` because it needs the network and that file runs credential-free on every
+PR; the pure test checks the *shape*, the script checks the *state*.
+
+The table has **zero `CLIGap` rows** today (#2331 cleared the CLI debt), so the enforced arm covers
+nothing on a live run. It says so in those words rather than printing a tick, and its power to
+discriminate is proven by `node scripts/check-exclusion-issues.mjs --self-test`, which flips a real
+`CloudManual` row in the shipped source to `CLIGap` and asserts the arm reds.
+
 ### The one deliberate console step
 
 **Promotion approval.** `alethia promotion` is list/get only, and the approve verb is deliberately
