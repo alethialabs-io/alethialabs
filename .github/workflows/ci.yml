@@ -1229,7 +1229,7 @@ jobs:
         run: |
           pnpm -C apps/console run gen:format-conformance
           git diff --exit-code -- packages/format/conformance/format-cases.json \
-            || { echo "::error::The formatter conformance table is stale — run 'pnpm -C apps/console run gen:format-conformance' and commit. NOTE this rewrites an EXPECTATION, not a formatting detail: read the changed-case list the generator prints (~ = an expectation moved, i = only the inputs did), because packages/core/format is held to this table."; exit 1; }
+            || { echo "::error::The formatter conformance table is stale — run 'pnpm -C apps/console run gen:format-conformance' and commit. NOTE this rewrites an EXPECTATION, not a formatting detail: read BOTH lists the generator prints — the changed CASES (~ = an expectation moved, i = only the inputs did) and the changed ARTIFACT KEYS outside \`cases\`, which is where a change to the whole zeroDecimalCharge SET shows up (#4174; before that it printed nothing at all). packages/core/format is held to all of it."; exit 1; }
       # zod -> JSON Schema -> Go (#3670). The generator REFUSES to emit when a registered schema
       # grows a `.refine()` / `.transform()` nobody disposed of, because z.toJSONSchema drops those
       # silently — so a CLI built on its output would enforce a fraction of the console's rules
