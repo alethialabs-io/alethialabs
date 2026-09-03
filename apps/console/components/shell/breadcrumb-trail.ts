@@ -18,6 +18,17 @@
 // instead of silently costing a prefetch storm. See
 // `tests/components/breadcrumb-trail-hrefs.test.ts`.
 //
+// THE LEGACY `/dashboard/*` BRANCH AT THE BOTTOM IS OUTSIDE THAT SWEEP, DELIBERATELY, and saying
+// so here is the point — otherwise "0 dead of N minted" reads as covering it. It is unreachable:
+// `app/(private)/dashboard/[[...rest]]/page.tsx` is a server `redirect()` that canonicalizes to
+// `/{org}/~/…`, so the topbar never renders on a `/dashboard/*` pathname. It is ALSO unmeasurable,
+// in two independent ways: the sweep drops an optional catch-all, so the only dashboard pathname it
+// visits is `/dashboard`, and `buildCrumbs("/dashboard")` returns `[]`; and even if it were
+// visited, `/dashboard/[[...rest]]` compiles to a matcher that matches EVERY `/dashboard/*` URL, so
+// no href minted there is expressible as dead. The branch does not consult `ANCESTOR_REDIRECTS`
+// either, so it would re-acquire this very defect if it were reachable — which is a reason to
+// delete it when the redirect page goes, not a reason to change behaviour a guard cannot see.
+//
 // Deliberately free of React and of every `@/` import: `jobLabel` is injected rather than reaching
 // for `JOB_TYPES` and `useJobsQuery`, so the module a guard imports is the module the console
 // renders, with nothing mocked in between.
@@ -73,14 +84,32 @@ const SEGMENT_LABELS: Record<string, string> = {
  * trail exists under both roots AND wants a different destination; nothing does today, and the
  * sweep in `tests/components/breadcrumb-trail-hrefs.test.ts` is what would say so.
  *
- * The LABEL moves with the href on purpose. A crumb reading "Cases" that navigates to a page whose
- * own crumb reads "My cases" is a second, quieter defect — and `cases/[id]/not-found.tsx` already
- * decided, in this tree, that the way back from a case is "My cases".
+ * THE TARGET IS A `trail`, NOT AN `href`, AND THE NAME IS LOAD-BEARING. It is relative to whichever
+ * branch root the crumb hangs off — `ancestorCrumb` concatenates it as `` `${base}${trail}` `` —
+ * so `"support/my-cases"` is the whole value and a LEADING SLASH would be wrong. This used to be
+ * typed `Crumb & { href: string }`, reusing the field whose documented meaning four lines up is the
+ * absolute path handed to `<Link href>`; the two readings agreed only because today's single entry
+ * happens to be rootless. Written the way that type reads, the next entry would silently mint
+ * `/acme/web//acme/~/settings` and link it — and no test would name the cause, because the sweep
+ * would report a dead URL nobody would connect to a type mismatch.
+ *
+ * IT IS ALSO WHY THE "APPLIED TO BOTH KEY SPACES" NOTE ABOVE IS NARROWER THAN IT READS: because the
+ * target resolves against the CALLER's base, a directory-only segment in the project tree whose
+ * real list lives at an org-global URL cannot be expressed by this map at all. That is a real
+ * limit, not an oversight — the day something needs it, the value has to grow a root, and this
+ * comment is the warning that it cannot simply be written with a slash in front.
+ *
+ * The LABEL moves with the target on purpose. A crumb reading "Cases" that navigates to a page
+ * whose own crumb reads "My cases" is a second, quieter defect — and `cases/[id]/not-found.tsx`
+ * already decided, in this tree, that the way back from a case is "My cases".
  */
-export const ANCESTOR_REDIRECTS: Record<string, Crumb & { href: string }> = {
+export const ANCESTOR_REDIRECTS: Record<
+	string,
+	{ label: string; trail: string }
+> = {
 	// `app/(private)/[org]/~/support/cases/` holds `[id]/` and nothing else — there is no
 	// `page.tsx`, so `/{org}/~/support/cases` is a 404 and the case list lives at `my-cases`.
-	"support/cases": { href: "support/my-cases", label: "My cases" },
+	"support/cases": { trail: "support/my-cases", label: "My cases" },
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -105,7 +134,7 @@ function segmentLabel(seg: string): string {
 function ancestorCrumb(base: string, rest: string[], j: number): Crumb {
 	const trail = rest.slice(0, j + 1).join("/");
 	const redirect = ANCESTOR_REDIRECTS[trail];
-	if (redirect) return { label: redirect.label, href: `${base}${redirect.href}` };
+	if (redirect) return { label: redirect.label, href: `${base}${redirect.trail}` };
 	return { label: segmentLabel(rest[j]), href: `${base}${trail}` };
 }
 
