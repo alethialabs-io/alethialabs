@@ -9,7 +9,7 @@ import type { z } from "zod";
 import {
 	cliCloudIdentitiesResponse,
 	cliClusterDetailResponse,
-	cliClustersResponse,
+	cliClustersPageResponse,
 	cliJobLogsResponse,
 	cliJobResponse,
 	cliJobsPageResponse,
@@ -52,7 +52,7 @@ const cases: ReadonlyArray<[string, z.ZodType]> = [
 	["byo_scan.json", cliByoScanResponse],
 	["runner_registration.json", cliRunnerRegistrationResponse],
 	["design_apply.json", cliDesignApplyResponse],
-	["clusters.json", cliClustersResponse],
+	["clusters_page.json", cliClustersPageResponse],
 	["cluster_detail.json", cliClusterDetailResponse],
 	["cloud_identities.json", cliCloudIdentitiesResponse],
 	["jobs_page.json", cliJobsPageResponse],
