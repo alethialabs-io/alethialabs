@@ -90,6 +90,15 @@ conflict-free dev PR **with no unresolved review threads**, and squash-merges it
 `dev` that moved under you. Keep WIP as a draft. On a conflict, rebase onto `origin/dev` and push;
 it re-queues itself.
 
+**The one exception: a `class:ui` implementation PR opens as a DRAFT and stays one.** The
+maintainer marks it ready after accepting the design decision; you never run `gh pr ready`.
+`.claude/COORDINATION.md` is where that rule and its reason live — this line exists because the
+paragraph above is otherwise unconditional, and draft state is the *entire* mechanism. Mergify
+reads no class label (`.mergify.yml` conditions on `-draft` alone), so a `class:ui` PR opened
+non-draft queues and lands with the design decision still open — with no warning and no red check.
+`pnpm check:docs-contract` cannot catch this: it verifies that referenced paths and scripts exist,
+not that two documents agree.
+
 **An unresolved review finding keeps a PR out of the queue, and RESOLVING IS A SEPARATE STEP FROM
 FIXING.** A review is not a required check, so before #3498 the review and the merge raced by
 construction and the review kept losing — five PRs squash-merged with their findings unaddressed,

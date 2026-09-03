@@ -2087,10 +2087,20 @@ export function parseCliArgs(argv) {
 	return { mode: distinct[0], error: null };
 }
 
-// Importing this module must not RUN it. `scripts/lib/console-routes.mjs` carries a copy of
-// `stripComments` rather than importing this one, and says why: "check-shared-surface.mjs runs its
-// entire check at import time — it has no entrypoint guard, so importing from it would execute the
-// guard and can `process.exit(1)`." This is that guard.
+// Importing this module must not RUN it. Everything above runs at import time and can
+// `process.exit(1)`, so without this line an `import` of this file is an INVOCATION of the guard.
+//
+// The premise this used to cite is gone and the follow-up it implied is a cycle. It read
+// "`console-routes.mjs` carries a copy of `stripComments` rather than importing this one" — #3787
+// (`59a67c08`, closing #3689) deleted that copy and inverted the direction: the import now goes
+// checker → seams module, as the `stripCommentLines` import at the top of this file shows. A
+// reader following the old wording would have moved the definition back here and had
+// `console-routes.mjs` import it, which is the second import path #3689 existed to remove.
+//
+// The guard stays, and its reason does not depend on that history: this file is a PROGRAM and
+// `console-routes.mjs` is a LIBRARY — importing a library runs no check and prints nothing;
+// importing a program is running it. That asymmetry is stated in full beside `stripCommentLines`,
+// which is where the definition lives for the same reason.
 const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 const parsed = invokedDirectly ? parseCliArgs(process.argv.slice(2)) : { mode: null, error: null };

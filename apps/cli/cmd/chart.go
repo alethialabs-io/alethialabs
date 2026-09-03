@@ -52,7 +52,7 @@ var chartListCmd = &cobra.Command{
 				ui.Muted("No BYO charts attached.")
 				return
 			}
-			_ = ui.ShowTable(chartColumns, chartRows(view.Charts), "charts")
+			_ = ui.ShowTable(chartColumns, chartRows(view.Charts, ui.FormatTable), "charts")
 			return
 		}
 		if err := runChartList(client, os.Stdout, outFmt, project, env); err != nil {
@@ -64,13 +64,23 @@ var chartListCmd = &cobra.Command{
 var chartColumns = []string{"Chart", "Repo", "Path", "Ref", "Status", "Scan"}
 
 // chartRows projects BYO charts into plain table cells.
-func chartRows(charts []api.ByoChart) [][]string {
+//
+// OrDash on the two OPTIONAL cells, for a person. An OCI chart carries no path and a chart
+// tracking its repository's default branch carries no ref, and both rendered as an empty cell —
+// which reads as missing data rather than as "this chart does not have one".
+//
+// outFmt is taken for the reason ui.Render's doc states: its CSV branch writes these rows
+// VERBATIM, so the dash would reach a script as `—` (U+2014). That is exactly the ambiguity the
+// glyph resolves for a person and exactly the one it CREATES for a parser, which already reads an
+// empty cell as absent and would now have to know one product's sentinel.
+func chartRows(charts []api.ByoChart, outFmt string) [][]string {
 	rows := make([][]string, len(charts))
 	for i, c := range charts {
-		// OrDash on the two OPTIONAL cells. An OCI chart carries no path and a chart tracking its
-		// repository's default branch carries no ref, and both rendered as an empty cell — which
-		// reads as missing data rather than as "this chart does not have one".
-		rows[i] = []string{c.ID, c.RepoURL, ui.OrDash(c.ChartPath), ui.OrDash(c.Ref), c.Status, c.ScanStatus}
+		path, ref := c.ChartPath, c.Ref
+		if ui.HumanReadable(outFmt) {
+			path, ref = ui.OrDash(path), ui.OrDash(ref)
+		}
+		rows[i] = []string{c.ID, c.RepoURL, path, ref, c.Status, c.ScanStatus}
 	}
 	return rows
 }
@@ -95,7 +105,7 @@ func runChartList(c apiClient, out io.Writer, format, project, env string) error
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: chartColumns,
-		Rows:    chartRows(charts),
+		Rows:    chartRows(charts, format),
 	}, charts)
 }
 
