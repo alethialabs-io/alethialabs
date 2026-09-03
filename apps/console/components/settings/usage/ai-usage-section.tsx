@@ -19,6 +19,7 @@ import {
 import { CreditPackDialog } from "@/components/billing/credit-pack-dialog";
 import { UpgradeAiSheet } from "@/components/billing/upgrade-ai-sheet";
 import { AiSpendLimits } from "@/components/settings/usage/ai-spend-limits";
+import { count } from "@/components/settings/usage/usage-primitives";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import {
 	isNearAiLimit,
@@ -179,7 +180,7 @@ export function AiUsageSection() {
 					<div className="flex items-center justify-between border-t border-border bg-surface-sunken px-6 py-3 text-ui-sm text-text-tertiary">
 						<span>Top-up credits never expire and stack on your plan.</span>
 						<span className="font-mono text-text-secondary">
-							{ai.purchasedBalance.toLocaleString()} credits
+							{count(ai.purchasedBalance)} credits
 						</span>
 					</div>
 				)}
