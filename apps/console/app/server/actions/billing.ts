@@ -75,7 +75,7 @@ import {
 	queryRunningJobs,
 	type ResourceCounts,
 } from "@/lib/queries/usage-counts";
-import { authorize, authorizeQuiet, currentActor } from "@/lib/authz/guard";
+import { authorize, authorizeInOrg, authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import type {
 	BillingPlan,
@@ -858,8 +858,26 @@ export async function createAiSubscriptionIntent(
  */
 export async function startProTrial(opts?: {
 	currency?: SupportedCurrency;
+	/**
+	 * The org to start the trial ON, when it is not the ambient one.
+	 *
+	 * NAMED, not ambient, for the same reason `linkSubscriptionToNewOrg` takes one (#4133). The
+	 * create-org sheet runs from a page inside the CURRENT org, creates a new org, and then starts
+	 * the trial on it — so under URL-wins the ambient org is the page the sheet is open on, i.e.
+	 * the OLD one. Left ambient, the Stripe trial and the `organization_billing` row landed on the
+	 * old org, the account's ONE trial was burned, and the new org stayed on `community`. Worse, if
+	 * the old org already had a live subscription this threw, and the sheet's rollback then DELETED
+	 * the org it had just created.
+	 *
+	 * Optional because the other caller is `onboarding-form`, which runs on a `(public)` route with
+	 * no `[org]` segment — nothing for the URL to name, so the session is the only answer and the
+	 * ambient path is correct there.
+	 */
+	orgId?: string;
 }): Promise<void> {
-	const actor = await authorize("manage_billing", { type: "billing" });
+	const actor = opts?.orgId
+		? await authorizeInOrg("manage_billing", { type: "billing" }, opts.orgId)
+		: await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
 	if (actor.orgId === actor.userId) {
 		throw new Error("Create an organization before starting a trial.");
@@ -1124,11 +1142,13 @@ export async function linkSubscriptionToNewOrg(input: {
 	 */
 	payer?: { capacity: PayerCapacity | null; billingCountry: string | null };
 }): Promise<void> {
-	const actor = await authorize("manage_billing", { type: "billing" });
+	// NAMED, not ambient (#4133). This runs from a sheet on the CURRENT org's page, against the org
+	// just created — so the address and the target genuinely differ, and always did. It used to work
+	// by asking for the verb in the ambient scope and then asserting that scope WAS the new org,
+	// which held only because `setActiveOrganization` had already landed. Asking in the named org
+	// says the same thing without depending on that write, or on the order it happened in.
+	const actor = await authorizeInOrg("manage_billing", { type: "billing" }, input.orgId);
 	requireHostedBilling();
-	if (actor.orgId !== input.orgId) {
-		throw new Error("The new organization must be the active organization.");
-	}
 
 	const sub = await getStripe().subscriptions.retrieve(input.subscriptionId);
 	const subCustomerId =
