@@ -1177,6 +1177,23 @@ jobs:
           pnpm -C apps/console run gen:go-brand
           git diff --exit-code -- packages/core/types/brand_gen.go \
             || { echo "::error::The Go brand projection is stale — run 'pnpm -C apps/console run gen:go-brand' and commit (source of truth: packages/brand/src/tokens.css for the values, apps/console/scripts/lib/brand-projection.ts for the exact/lossy/none decisions)."; exit 1; }
+      # The status vocabulary, on the same shape and for the same reason. The CLI decided a status
+      # glyph from nine uppercase words with no case folding while the console decided it from 28
+      # lower-cased keys; they disagreed on seven measured cases, and six pgEnums that shout on the
+      # wire missed every arm of the Go switch. There is one table now and TypeScript owns it.
+      #
+      # As with the brand, TWO failures ride on one command and the generator distinguishes them
+      # itself: a status word that NO pgEnum spells and that apps/console/scripts/lib/status-vocab.ts
+      # does not account for makes it exit 1 without writing (its own ::error:: names the word),
+      # and a stale committed file makes the diff below fire. The first is the one this step is for
+      # — STATUS_TIER has no single owner, so a word added to it is a word the CLI renders with no
+      # idea where it came from, and the two surfaces drift by OMISSION rather than by disagreement.
+      - name: Every status word has a provenance (status-badge.tsx → vocab_gen.go)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          pnpm -C apps/console run gen:go-vocab
+          git diff --exit-code -- packages/core/types/vocab_gen.go \
+            || { echo "::error::The Go status vocabulary is stale — run 'pnpm -C apps/console run gen:go-vocab' and commit (source of truth: packages/ui/src/status-badge.tsx for the words and tiers, apps/console/lib/db/schema for their provenance, apps/console/scripts/lib/status-vocab.ts for the terminal projection)."; exit 1; }
       # The formatter contract both surfaces are held to. @repo/format decides what `47 min`,
       # `2h 15m` and `$12.50/mo` look like for the console; packages/core/format will be held to
       # the same table for the CLI, which today renders $12.50 as `$12/mo` (Go's %.0f rounds half

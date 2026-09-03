@@ -69,10 +69,7 @@ var runnerListCmd = &cobra.Command{
 func runnerRows(runners []api.Runner) [][]string {
 	rows := make([][]string, len(runners))
 	for i, w := range runners {
-		defaultLabel := ""
-		if w.IsDefault {
-			defaultLabel = ui.SymbolDefault
-		}
+		defaultLabel := ui.DefaultCell(w.IsDefault)
 		heartbeat := ui.RelativeTime(w.LastHeartbeat)
 		version := w.Version
 		if version == "" {
