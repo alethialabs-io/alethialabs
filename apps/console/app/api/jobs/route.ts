@@ -14,7 +14,7 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli, ensureCliOrgAccess } from "@/lib/authz/guard";
-import { assertRunnerInOrg } from "@/lib/authz/runner-org";
+import { assertRunnerInOrg, resolveUnassignedRunnerJobOrg } from "@/lib/authz/runner-org";
 import { ForbiddenError } from "@/lib/authz/types";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { verifyCliToken } from "@/lib/cli/auth";
@@ -64,7 +64,9 @@ function parseJobType(v: unknown): CreatableJobType | null {
  * member of a Teams org filed runner jobs into a personal tenancy nobody looks at. The
  * stamp is taken from the ASSIGNED RUNNER, not from the actor, because `claim_next_job`
  * demands `j.org_id = v_runner_org_id` exactly and #3874 ships no backfill; see the branch
- * comment for why the obvious `actor.orgId` stamp would be worse than the defect.
+ * comment for why the obvious `actor.orgId` stamp would be worse than the defect. With no
+ * runner named there is none to read, and the same equality still applies (Phase B's self
+ * arm), so the stamp comes from the fleet that would have to claim it (#4022).
  * PLAN/DEPLOY/DESTROY are unaffected: they insert through the server actions under
  * `withActorScope`, where the GUC is set and the job derives its org from its project.
  */
@@ -163,9 +165,19 @@ export async function POST(req: Request) {
 			// `actor.orgId` regardless would therefore give a team-org job to a personal-org
 			// runner: the equality fails, nothing ever claims it, and the job sits QUEUED forever
 			// — strictly worse than the personal-org stamp being fixed. So the stamp is READ BACK
-			// from the runner the guard just validated, and only falls back to the actor's org
-			// where no runner is named (Phase B) or where the runner is managed (`org_id IS NULL`,
-			// nobody's tenant — it assumes-role into the job's own org at run time).
+			// from the runner the guard just validated.
+			//
+			// THAT LEAVES TWO CASES WHERE THERE IS NO RUNNER ORG TO READ, AND THEY ARE NOT THE
+			// SAME CASE (#4022). A named MANAGED runner has `org_id IS NULL` — nobody's tenant,
+			// it assumes-role into the job's own org at run time and its claim arm ignores org
+			// entirely — so the actor's org is right. NO runner named is different: the job is
+			// unassigned, `claim_next_job` Phase B decides it, and only Phase B's MANAGED arm is
+			// org-agnostic. The `ELSE` arm a self runner takes repeats Phase A's equality
+			// verbatim, so `actor.orgId` here recreated the very QUEUED-forever failure the
+			// paragraph above describes, for a caller whose runners are all pre-#3874. The org
+			// is resolved from the fleet that would have to claim it instead; see
+			// `resolveUnassignedRunnerJobOrg` for why that is a strict improvement and why
+			// `claim_next_job` does not move.
 			let runnerOrgId: string | null = null;
 			if (assigned_runner_id) {
 				try {
@@ -182,7 +194,15 @@ export async function POST(req: Request) {
 					throw e;
 				}
 			}
-			const jobOrgId = runnerOrgId ?? actor.orgId;
+			let jobOrgId: string;
+			if (runnerOrgId !== null) {
+				jobOrgId = runnerOrgId;
+			} else if (assigned_runner_id) {
+				// A named MANAGED runner: `v_operator = 'managed'` admits any org, in both phases.
+				jobOrgId = actor.orgId;
+			} else {
+				jobOrgId = await resolveUnassignedRunnerJobOrg(db, actor.orgId, userId);
+			}
 
 			// Counted against the org the row is about to be STAMPED with, not the caller's
 			// personal org: the quota query filters `jobs.org_id`, so checking one org and

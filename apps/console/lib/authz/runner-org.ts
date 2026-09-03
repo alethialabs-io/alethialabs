@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { ForbiddenError } from "@/lib/authz/types";
 import type { Db, Tx } from "@/lib/db";
 import { runners } from "@/lib/db/schema";
@@ -102,4 +102,81 @@ export async function assertRunnerInOrg(
 		);
 	}
 	return row.org_id;
+}
+
+/**
+ * Chooses the org to stamp an UNASSIGNED runner-lifecycle job with (#4022).
+ *
+ * `assertRunnerInOrg` answers this whenever an executor is named: the job takes the org of
+ * the runner that will run it, so `claim_next_job` Phase A's `j.org_id = v_runner_org_id`
+ * holds. With NO executor named there is no runner to read the org back from, and the
+ * obvious answer — the actor's org — is only right for HALF the fleet.
+ *
+ * Nothing about the unassigned path is org-agnostic. `claim_next_job` Phase B has two arms
+ * and only the `v_operator = 'managed'` one ignores org; the `ELSE` arm a self runner takes
+ * carries the SAME hard equality as Phase A (programmables.sql, `j.org_id =
+ * v_runner_org_id`). #3874 stamps runners forward only — the maintainer's ruling refuses a
+ * backfill — so a runner deployed by the CLI before it still carries `org_id = user_id`,
+ * the deployer's personal org. A Teams member whose runners are ALL of that vintage got a
+ * team-org job that no runner of theirs could ever claim: QUEUED forever, no error, nothing
+ * that surfaces it. That is the regression #3942's own comment says it exists to avoid — it
+ * closed the case where a runner IS named and left the case where one is not.
+ *
+ * So the org is resolved from the fleet that would have to claim it, and the resolution
+ * MIRRORS the claim predicate rather than paraphrasing it: only `self` runners take the
+ * `ELSE` arm, and it admits exactly one org value, so the candidates are exactly the self
+ * runners whose `org_id` is one of the two orgs this caller is admitted in — their active
+ * org and their personal one (the same pair `assertRunnerInOrg`'s transitional admission
+ * accepts, and for the same no-backfill reason).
+ *
+ * The preference is deliberate and makes this a STRICT improvement rather than a trade:
+ *
+ *   - a self runner in the ACTIVE org exists → the active org, which is what the route
+ *     already stamped and is the forward-correct tenancy. A mixed-vintage fleet lands here,
+ *     and the modern runner claims it;
+ *   - otherwise a self runner in the PERSONAL org exists → the personal org. This is the
+ *     only value that changes, and it changes only where the previous one was provably
+ *     unclaimable by any self runner the caller has;
+ *   - otherwise → the active org. Nothing to prefer it over: a MANAGED runner claims either
+ *     stamp (its Phase B arm ignores org entirely), and a fleet with no runner at all has
+ *     nothing to satisfy, so the job keeps the more correct tenancy.
+ *
+ * Note the runner being torn down is itself a candidate here, and that is not an oversight:
+ * `claim_next_job` Phase B does not exclude it either, and a resolution that disagreed with
+ * the claimer about who can claim would be this same defect in a new place. The CLI's
+ * refusal to OFFER it as an executor is a separate, deliberate choice about pinning.
+ *
+ * Nothing in `claim_next_job` moves. Widening that predicate would fix both vintages at
+ * once and is the wrong lever: its `ELSE` arm is the cross-tenant guard that stops a self
+ * runner registered with no `cloud_identity_id` and no `supported_providers` from claiming
+ * ANY org's queued job and being handed that job's decrypted cloud credential.
+ *
+ * @param db A service (RLS-bypassing) db handle or an open transaction.
+ * @param orgId The caller's active org.
+ * @param personalOrgId The caller's personal org (their user id).
+ * @returns The org to stamp the job with — always one of the two arguments.
+ */
+export async function resolveUnassignedRunnerJobOrg(
+	db: Db | Tx,
+	orgId: string,
+	personalOrgId: string,
+): Promise<string> {
+	// A community/personal caller: the two orgs are the same value, so there is nothing to
+	// resolve and no reason to read the fleet.
+	if (orgId === personalOrgId) return orgId;
+
+	const rows = await db
+		.selectDistinct({ org_id: runners.org_id })
+		.from(runners)
+		// `operator = 'self'` is the branch selector, not a filter for its own sake: a managed
+		// runner takes the org-agnostic arm and its `org_id` is NULL, so it could not appear
+		// here anyway. Stating it keeps this query readable as the ELSE arm's admission.
+		.where(
+			and(eq(runners.operator, "self"), inArray(runners.org_id, [orgId, personalOrgId])),
+		);
+
+	const orgs = new Set(rows.map((r) => r.org_id));
+	if (orgs.has(orgId)) return orgId;
+	if (orgs.has(personalOrgId)) return personalOrgId;
+	return orgId;
 }
