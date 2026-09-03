@@ -206,4 +206,13 @@ alethia activity -o json
 
 Columns: **Time**, **Actor**, **Action**, **Resource**, **Decision** (`allow` / `deny`), and
 **Reason** — which is the point of a deny row, so it is always shown, and renders as `—` when the
-entry carries none.
+entry carries none. **Time** reads as an age (`3 minutes ago`) inside a week and as a date beyond
+it, and **Resource** pairs the kind with a shortened id: `project 4f3c1a92…`.
+
+Those are renderings for a person, and `-o csv` gives a script the values instead: **Time** is the
+RFC3339 stamp the API returned, and an absent **Reason** is an empty cell rather than `—`.
+
+**The machine table is one column wider**, and says so in its own header row. The shortened
+**Resource** cell holds two fields with the id cut to eight characters — the one cell in the CLI
+that destroys data rather than merely inconveniencing a parser — so under `-o csv` it becomes
+**Resource** (the bare kind) and **Resource ID** (the whole id, untruncated).

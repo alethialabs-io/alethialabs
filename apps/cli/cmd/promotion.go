@@ -165,7 +165,8 @@ func approvalRows(approvals []api.PromotionApproval, outFmt string) [][]string {
 		// pending_approval/pending_plan → pending; see RULINGS in status-vocab.ts for why each),
 		// so both surfaces resolve them the same way and neither has to special-case a promotion.
 		rows[i] = []string{ui.Cell(outFmt, a.Status, ui.StatusCell(a.Status)),
-			ui.StrOrDash(a.Name), ui.StrOrDash(a.RequiredRole),
+			ui.Cell(outFmt, ui.Wire(a.Name), ui.StrOrDash(a.Name)),
+			ui.Cell(outFmt, ui.Wire(a.RequiredRole), ui.StrOrDash(a.RequiredRole)),
 			ui.Cell(outFmt, ui.Wire(a.DecidedAt), ui.StampOrDash(a.DecidedAt))}
 	}
 	return rows
@@ -181,14 +182,25 @@ func runPromotionGet(c apiClient, out io.Writer, format, project, promotionID st
 	if format == ui.FormatJSON {
 		return ui.Render(out, format, ui.TableSpec{}, p)
 	}
-	rows := [][]string{
-		{"id", p.ID},
-		{"promotion", fmt.Sprintf("%s %s %s", p.Source, ui.SymbolArrow, p.Target)},
-		{"status", ui.Cell(format, p.Status, ui.StatusCell(p.Status))},
-		{"approvals", fmt.Sprintf("%d/%d", p.Approved, p.Required)},
-		{"initiator", ui.StrOrDash(p.Initiator)},
-		{"created", ui.Cell(format, p.CreatedAt, ui.Stamp(p.CreatedAt))},
+	rows := [][]string{{"id", p.ID}}
+	// `prod → staging` welds two fields into one cell with a GLYPH between them, and RenderCard
+	// hands these rows straight to Render's CSV branch. A script cannot split on U+2192 without
+	// knowing to look for it, so the machine form is the two fields it was always made of.
+	//
+	// The `approvals` row below is deliberately NOT split the same way: `2/3` carries no glyph and
+	// no humanisation, so it is a composite rather than a rendering, and changing it belongs to
+	// whoever decides that a card may not hold one — not here.
+	if format == ui.FormatCSV {
+		rows = append(rows, []string{"source", p.Source}, []string{"target", p.Target})
+	} else {
+		rows = append(rows, []string{"promotion", fmt.Sprintf("%s %s %s", p.Source, ui.SymbolArrow, p.Target)})
 	}
+	rows = append(rows,
+		[]string{"status", ui.Cell(format, p.Status, ui.StatusCell(p.Status))},
+		[]string{"approvals", fmt.Sprintf("%d/%d", p.Approved, p.Required)},
+		[]string{"initiator", ui.Cell(format, ui.Wire(p.Initiator), ui.StrOrDash(p.Initiator))},
+		[]string{"created", ui.Cell(format, p.CreatedAt, ui.Stamp(p.CreatedAt))},
+	)
 	if p.ErrorMessage != nil && *p.ErrorMessage != "" {
 		rows = append(rows, []string{"error", *p.ErrorMessage})
 	}

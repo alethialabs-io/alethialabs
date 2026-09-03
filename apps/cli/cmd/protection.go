@@ -49,7 +49,7 @@ project with --project; omit it on a terminal and you are asked which.`,
 				ui.Muted("No protection rules configured.")
 				return
 			}
-			_ = ui.ShowTable(protectionColumns, protectionRows(rules), "protection rules")
+			_ = ui.ShowTable(protectionColumns, protectionRows(rules, ui.FormatTable), "protection rules")
 			return
 		}
 		if err := runProtectionList(client, os.Stdout, outputFormat(cmd), project); err != nil {
@@ -60,37 +60,45 @@ project with --project; omit it on a terminal and you are asked which.`,
 
 var protectionColumns = []string{"Environment", "Predecessor", "Verify", "Approval", "Approvers", "Soak (min)", "Cost Δ"}
 
-// protectionRows projects protection rules into plain table cells; a "gate" bool renders as a
-// check or the dash glyph, and unset numeric limits render as the dash glyph.
-func protectionRows(rules []api.ProtectionRule) [][]string {
+// protectionRows projects protection rules into plain table cells for the given output format.
+//
+// Every cell but the environment name was humanised unconditionally, and Render's CSV branch writes
+// these rows verbatim — so this is the table where `-o csv` was least usable: three gates as `✓`/`—`
+// (a boolean rendered as two glyphs, neither of which is a boolean), two limits as `—`, and a
+// threshold as `$100.00` (a currency symbol on a number the operator typed as `50`).
+//
+// A reader gets all of that back; a script gets `true`/`false`, an empty field for an unset limit,
+// and a bare fixed-point number. See ui.WireBool and ui.WireFloat for why each machine form is what
+// it is.
+func protectionRows(rules []api.ProtectionRule, outFmt string) [][]string {
 	rows := make([][]string, len(rules))
 	for i, r := range rules {
 		rows[i] = []string{
 			r.Environment,
-			ui.GateGlyph(r.RequirePredecessor),
-			ui.GateGlyph(r.RequireVerifyPass),
-			ui.GateGlyph(r.RequireApproval),
-			ui.IntOrDash(r.MinCount),
-			ui.IntOrDash(r.SoakMinutes),
-			ui.FloatOrDash(r.CostDeltaThreshold),
+			ui.Cell(outFmt, ui.WireBool(r.RequirePredecessor), ui.GateGlyph(r.RequirePredecessor)),
+			ui.Cell(outFmt, ui.WireBool(r.RequireVerifyPass), ui.GateGlyph(r.RequireVerifyPass)),
+			ui.Cell(outFmt, ui.WireBool(r.RequireApproval), ui.GateGlyph(r.RequireApproval)),
+			ui.Cell(outFmt, ui.WireInt(r.MinCount), ui.IntOrDash(r.MinCount)),
+			ui.Cell(outFmt, ui.WireInt(r.SoakMinutes), ui.IntOrDash(r.SoakMinutes)),
+			ui.Cell(outFmt, ui.WireFloat(r.CostDeltaThreshold), ui.FloatOrDash(r.CostDeltaThreshold)),
 		}
 	}
 	return rows
 }
 
 // runProtectionList fetches and renders a project's protection rules (non-interactive path).
-func runProtectionList(c apiClient, out io.Writer, format, project string) error {
+func runProtectionList(c apiClient, out io.Writer, outFmt, project string) error {
 	rules, err := c.GetProjectProtection(project)
 	if err != nil {
 		return err
 	}
-	if len(rules) == 0 && format == ui.FormatTable {
+	if len(rules) == 0 && outFmt == ui.FormatTable {
 		fmt.Fprintln(out, ui.MutedStyle.Render("No protection rules configured."))
 		return nil
 	}
-	return ui.Render(out, format, ui.TableSpec{
+	return ui.Render(out, outFmt, ui.TableSpec{
 		Columns: protectionColumns,
-		Rows:    protectionRows(rules),
+		Rows:    protectionRows(rules, outFmt),
 	}, rules)
 }
 
