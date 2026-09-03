@@ -634,11 +634,15 @@ export async function getProject(
 		// header, an "Env" column and a deploy target that each looked authoritative and could each
 		// name a different environment. A project with NO environments still yields null, which every
 		// consumer below already handles.
-		const defaultEnv = pickDefaultEnvironment(projectId, environments);
-		const activeEnv =
-			(environmentId
-				? environments.find((e) => e.id === environmentId)
-				: undefined) ?? defaultEnv;
+		// LAZY, and that is the whole point of the ordering. `pickDefaultEnvironment` THROWS on a
+		// project whose environments carry no default, so calling it unconditionally made a broken
+		// project 500 even when the caller had named a perfectly good `environment_id` — i.e. on the
+		// one page an operator would open to look at the damage. An explicit id is answered from the
+		// list without consulting the default at all.
+		const named = environmentId
+			? environments.find((e) => e.id === environmentId)
+			: undefined;
+		const activeEnv = named ?? pickDefaultEnvironment(projectId, environments);
 
 		/** Reads one environment's component rows (env-scoped). */
 		async function readComponents(envId: string) {
@@ -2608,7 +2612,22 @@ export async function addEnvironment(
 				name,
 				stage: input.stage,
 				status: "DRAFT",
-				is_default: false,
+				// TRUE WHEN THE PROJECT HAS NONE, not a flat `false`. The constraint trigger makes
+				// "some environments, none of them default" illegal at COMMIT, and a project CAN
+				// legitimately reach zero environments — the SCOPE note in programmables.sql keeps
+				// that a reported state (`CliEnvTarget.no-environments`) rather than an error. A
+				// hard-coded `false` therefore made such a project UNREPAIRABLE: the one insert that
+				// would fix it is refused, from the console and the CLI alike, with a raw
+				// `has 1 environment(s) but 0 default` 500.
+				//
+				// Same expression as the integration fixtures' `defaultIfFirst`, and correct for the
+				// same reason: this is a ONE-ROW insert, so the subquery is evaluated once against
+				// the pre-statement snapshot. A multi-row VALUES would see that snapshot for every
+				// row and set them all true.
+				is_default: sql<boolean>`NOT EXISTS (
+					SELECT 1 FROM public.project_environments e
+					 WHERE e.project_id = ${projectId}::uuid AND e.is_default
+				)`,
 				region: input.region ?? null,
 			})
 			.returning();
@@ -2662,7 +2681,22 @@ export async function duplicateEnvironment(
 				name: slug,
 				stage: base.stage,
 				status: "DRAFT",
-				is_default: false,
+				// TRUE WHEN THE PROJECT HAS NONE, not a flat `false`. The constraint trigger makes
+				// "some environments, none of them default" illegal at COMMIT, and a project CAN
+				// legitimately reach zero environments — the SCOPE note in programmables.sql keeps
+				// that a reported state (`CliEnvTarget.no-environments`) rather than an error. A
+				// hard-coded `false` therefore made such a project UNREPAIRABLE: the one insert that
+				// would fix it is refused, from the console and the CLI alike, with a raw
+				// `has 1 environment(s) but 0 default` 500.
+				//
+				// Same expression as the integration fixtures' `defaultIfFirst`, and correct for the
+				// same reason: this is a ONE-ROW insert, so the subquery is evaluated once against
+				// the pre-statement snapshot. A multi-row VALUES would see that snapshot for every
+				// row and set them all true.
+				is_default: sql<boolean>`NOT EXISTS (
+					SELECT 1 FROM public.project_environments e
+					 WHERE e.project_id = ${projectId}::uuid AND e.is_default
+				)`,
 				region: base.region,
 			})
 			.returning();

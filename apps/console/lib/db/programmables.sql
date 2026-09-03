@@ -1078,12 +1078,27 @@ END $$;
 -- (`CliEnvTarget.no-environments`), never as a guess. Enforcing it belongs to its own unit, with a
 -- trigger on `projects` and the fixtures to match.
 
+-- Trigger first, then the function: DROP FUNCTION refuses while a trigger depends on it, and this
+-- file's convention (see the 42P13 note in .claude/skills/db-pipeline/SKILL.md) is an explicit drop
+-- rather than CREATE OR REPLACE, so a changed signature does not fail the whole migrate.
+--
+-- AND BOTH DROPS PRECEDE THE REPAIR BELOW, which is not cosmetic ordering. The trigger is
+-- DEFERRABLE INITIALLY DEFERRED and `migrate.mjs:114` applies this whole file through one
+-- `sql.unsafe()` — a single implicit transaction. On a RE-APPLY over a database that already holds
+-- the trigger AND a violating project, a repair written after this point queues deferred
+-- after-trigger events, the DROP then removes the trigger those queued events name, and Postgres
+-- raises at COMMIT — failing the programmables phase and the deploy. That is exactly the recovery
+-- case the repair exists to serve, so the repair must run with no trigger present at all.
+DROP TRIGGER IF EXISTS project_environments_one_default_check ON public.project_environments;
+DROP FUNCTION IF EXISTS public.project_environments_require_one_default();
+
 -- The repair, re-asserted. This is the SAME expression migration 0150 ran (Step 3), kept here for
 -- the same reason 0150 duplicated the org_id backfill from this file: a constraint trigger does NOT
 -- validate existing rows, so creating it over a database holding a violation enforces nothing until
 -- something next touches that project — and then it raises on an unrelated write. Idempotent: after
--- 0150 (and after the trigger below exists) it matches nothing. It runs BEFORE the trigger is
--- created so the repair itself is never judged mid-flight.
+-- 0150 (and after the trigger below exists) it matches nothing. It runs AFTER both DROPs and BEFORE
+-- the CREATE, so no trigger exists while it runs — see the note above the drops for why "before the
+-- CREATE" alone was not enough.
 WITH needing AS (
   SELECT project_id
     FROM public.project_environments
@@ -1099,12 +1114,6 @@ UPDATE public.project_environments
    SET is_default = true,
        updated_at = now()
  WHERE id IN (SELECT id FROM pick);
-
--- Trigger first, then the function: DROP FUNCTION refuses while a trigger depends on it, and this
--- file's convention (see the 42P13 note in .claude/skills/db-pipeline/SKILL.md) is an explicit drop
--- rather than CREATE OR REPLACE, so a changed signature does not fail the whole migrate.
-DROP TRIGGER IF EXISTS project_environments_one_default_check ON public.project_environments;
-DROP FUNCTION IF EXISTS public.project_environments_require_one_default();
 
 CREATE FUNCTION public.project_environments_require_one_default()
 RETURNS TRIGGER
