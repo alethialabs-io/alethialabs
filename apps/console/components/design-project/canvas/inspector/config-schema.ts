@@ -1896,7 +1896,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						// environments, which is the same defect class (#1767) as a field nothing
 						// could set: a knob whose label does not describe what it does.
 						description:
-							"Subdirectory this environment syncs, e.g. overlays/dev. Leave empty to sync the repository root. Applies to namespace and vcluster placements; a dedicated-cluster environment finds its overlays through the apps-overlays ApplicationSet and ignores this.",
+							"Subdirectory this environment syncs, e.g. overlays/dev. Leave empty to sync the repository root — Alethia then discovers overlays/* for you. Naming a path turns that discovery off and syncs exactly this path.",
 					},
 				],
 			},
