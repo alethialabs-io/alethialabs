@@ -198,8 +198,10 @@ function causeChain(err: unknown): unknown[] {
 	let cur = err;
 	for (let i = 0; i < 8 && cur !== null && cur !== undefined; i++) {
 		chain.push(cur);
-		if (typeof cur !== "object" || !("cause" in cur)) break;
-		const next = (cur as { cause: unknown }).cause;
+		if (typeof cur !== "object" || cur === null || !("cause" in cur)) break;
+		// `in` narrows; no cast — CLAUDE.md §6 forbids `as`, and the narrowing is what makes the
+		// read safe rather than asserted.
+		const next: unknown = cur.cause;
 		if (next === cur) break;
 		cur = next;
 	}
@@ -211,7 +213,7 @@ function causeChain(err: unknown): unknown[] {
 function pgErrorCode(err: unknown): string | undefined {
 	for (const link of causeChain(err)) {
 		if (typeof link === "object" && link !== null && "code" in link) {
-			const code = (link as { code: unknown }).code;
+			const code: unknown = link.code;
 			if (typeof code === "string") return code;
 		}
 	}
@@ -230,10 +232,7 @@ function violates(err: unknown, constraint: string): boolean {
 	if (pgErrorCode(err) !== "23505") return false;
 	for (const link of causeChain(err)) {
 		if (typeof link !== "object" || link === null) continue;
-		if (
-			"constraint_name" in link &&
-			(link as { constraint_name: unknown }).constraint_name === constraint
-		) {
+		if ("constraint_name" in link && link.constraint_name === constraint) {
 			return true;
 		}
 		// A wrapper that dropped the field can still name the constraint in its text. Checked

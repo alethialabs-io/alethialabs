@@ -34,7 +34,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb } from "@/lib/db";
 import { projectEnvironments, projects } from "@/lib/db/schema";
 import { getCliConfig } from "@/lib/queries/cli-config";
-import { isProjectNameTaken } from "@/lib/queries/projects";
+import { isProjectNameTaken, ProjectNameTakenError } from "@/lib/queries/projects";
 import { describeIfDb } from "./db";
 
 // Two orgs, one user — see the header. Same-org duplicates are refused by the database now, and
@@ -136,6 +136,20 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 		// the schema file. Without this the suite would silently become a test of two orgs only,
 		// and the constraint that made that necessary would be covered by nothing.
 		expect(await nameClash(SHARED_NAME, `${SHARED_NAME}-clash`)).toBe(true);
+	});
+
+	// The predicate is half the mapping; this is the other half. `isProjectNameTaken` says a
+	// violation happened, and `ProjectNameTakenError` is what both write paths raise in its
+	// place — the thing a caller actually catches, and the only reason the driver error is
+	// mapped at all. Asserting it here keeps the two ends of that mapping in one suite: a
+	// predicate that fires and an error nobody constructs is a fix that surfaces as a 500.
+	it("...and the error a caller sees names the project, not the query that failed", () => {
+		const err = new ProjectNameTakenError(SHARED_NAME);
+		expect(err).toBeInstanceOf(Error);
+		expect(err.name).toBe("ProjectNameTakenError");
+		expect(err.message).toContain(SHARED_NAME);
+		// The message drizzle would otherwise surface. It is the one this class exists to replace.
+		expect(err.message).not.toMatch(/Failed query|insert into/i);
 	});
 
 	it("REFUSES a same-org name that differs only in CASE", async () => {
