@@ -274,6 +274,59 @@ for (const root of navigationRoots) {
 	}
 }
 
+// ── Check 4: every top-level CONSOLE route is a reserved org slug ────────────────────
+//
+// The marketing half of this file has been guarded since it was written; the console's own routes
+// never were, and #4133 is the bill. `RESERVED_SLUGS` is what tells a first path segment naming an
+// ORG from one naming a ROUTE, and five `(public)` segments — accept-terms, login, onboarding,
+// signup, sso — had never been in it. An org could be minted shadowing `/login`, and anything
+// reading segment 0 as an org slug read `accept-terms` as one.
+//
+// The severity is not uniform across the five, which is why this is a guard and not a one-time
+// list edit: `(private)/layout.tsx` redirects EVERY private route to /accept-terms while a Terms
+// version is unaccepted. So the omission that matters most is the one nobody would have picked out
+// of the five by inspection, and the next route added is equally unpredictable.
+//
+// NOTE the asymmetry with check 1. Marketing routes must be in microfrontends.json, which FEEDS
+// RESERVED_SLUGS. Console routes have no such registry — they are reserved by hand — so this
+// compares the app tree against the static list directly.
+const CONSOLE_APP = "app";
+const routingSrc = readFileSync("lib/routing.ts", "utf8");
+// Read the STATIC list from source rather than importing it: this script is plain node with no
+// bundler, `lib/routing.ts` is TypeScript, and it transitively imports the marketing zone. The
+// marketing half is already checked above, so the static half is the part that needs reading.
+const staticBlock = /const STATIC_RESERVED_SLUGS = \[([\s\S]*?)\n\];/.exec(routingSrc);
+if (!staticBlock) {
+	failures.push(
+		"lib/routing.ts: could not find `const STATIC_RESERVED_SLUGS = [ … ];`. This check reads that\n" +
+			"    block as text; if it was renamed or reshaped, update this guard rather than deleting it —\n" +
+			"    a route-shadow check that silently stops finding its input is worse than none.",
+	);
+} else {
+	const staticSlugs = new Set(
+		[...staticBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]),
+	);
+	// PERSONAL_ORG_SLUG is referenced by name, not as a literal, so it is not in the matches above.
+	staticSlugs.add("~");
+	const consoleSegments = existsSync(CONSOLE_APP) ? collectSegments(CONSOLE_APP) : null;
+	if (consoleSegments === null) {
+		failures.push(`Console app dir not found at ${CONSOLE_APP}.`);
+	} else {
+		for (const seg of consoleSegments) {
+			// "" is `app/page.tsx`, the root. `[org]` IS the org segment, not a shadow of one.
+			if (seg === "" || /^\[.*\]$/.test(seg)) continue;
+			if (staticSlugs.has(seg) || mfSegments.has(seg)) continue;
+			failures.push(
+				`Console route "/${seg}" (apps/console/app/…/${seg}) is not a reserved org slug.\n` +
+					`    → add "${seg}" to STATIC_RESERVED_SLUGS in apps/console/lib/routing.ts.\n` +
+					"    Until it is, an organization can be minted with that slug and shadow the route, and\n" +
+					"    anything reading the first path segment as an org (lib/authz/org-scope.ts) reads this\n" +
+					"    route as an org slug and fails to resolve it. See #4133.",
+			);
+		}
+	}
+}
+
 // ── Report ───────────────────────────────────────────────────────────────────────────
 if (failures.length > 0) {
 	console.error(
