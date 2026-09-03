@@ -46,8 +46,13 @@ import { PERSONAL_ORG_SLUG, RESERVED_SLUGS } from "@/lib/routing";
  * Matched on the message because Next exports no error type for it; a message that stops matching
  * turns this into a rethrow, which is the safe direction: a loud failure rather than a silent
  * return to session-derived tenancy.
+ *
+ * Exported so `tests/unit/org-scope-outside-request.test.ts` can drive it with Next's OWN text,
+ * read out of the installed package. An earlier version of that test scraped this regex from the
+ * source as a string, which `check-test-imports.mjs` correctly refused: a test that reads a file
+ * rather than calling a function asserts what the source SAYS, not what it DOES.
  */
-function isOutsideRequestScope(err: unknown): boolean {
+export function isOutsideRequestScope(err: unknown): boolean {
 	const message = err instanceof Error ? err.message : String(err);
 	return /outside a request scope|was called outside a request|headers\(\) .*outside/i.test(message);
 }
