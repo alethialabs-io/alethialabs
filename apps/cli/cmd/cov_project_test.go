@@ -769,7 +769,9 @@ func TestProj_ClassificationShow(t *testing.T) {
 // TestProj_ClassificationAssignUnassign pins the two mutating classification commands and
 // their fatal server-error arms.
 func TestProj_ClassificationAssignUnassign(t *testing.T) {
-	s := &projServer{}
+	// `assign` resolves its dimension key and value slug against the org's taxonomy before it
+	// posts, so the fake control plane must hold the `tier`/`gold` pair the case names.
+	s := &projServer{dims: projSampleDims()}
 	h := projEnv(t, s)
 
 	if h.run("classification", "assign", "project_environment", "e1", "tier", "gold", "--output", "json") {
@@ -818,7 +820,9 @@ func TestProj_ChannelsList(t *testing.T) {
 // TestProj_ChannelsCreateVerify pins `channels create` (every config-carrying flag) and
 // `channels verify`, plus both fatal server-error arms.
 func TestProj_ChannelsCreateVerify(t *testing.T) {
-	s := &projServer{}
+	// `verify` resolves its argument against the org's channels before calling, so the server
+	// must actually hold ch1 — an id nothing lists is now refused before the request.
+	s := &projServer{channels: projSampleChannels()}
 	h := projEnv(t, s)
 
 	if h.run("channels", "create", "ops", "--type", "webhook", "--url", "https://x/y",
@@ -847,7 +851,9 @@ func TestProj_ChannelsCreateVerify(t *testing.T) {
 // TestProj_ChannelsDelete pins that a declined confirmation is a no-op, a confirmed one
 // deletes, and a server error is fatal.
 func TestProj_ChannelsDelete(t *testing.T) {
-	s := &projServer{}
+	// As in TestProj_ChannelsCreateVerify: `delete` resolves ch1 against the list first, so the
+	// confirmation can name the channel it is about to remove.
+	s := &projServer{channels: projSampleChannels()}
 	h := projEnv(t, s)
 
 	projConfirm(t, false)
