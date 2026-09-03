@@ -29,6 +29,20 @@ const STATIC_RESERVED_SLUGS = [
 	// PostHog reverse-proxy path (next.config.ts rewrites /ingest/* → eu.i.posthog.com). The rewrites
 	// only match a subpath, so reserve the bare segment too — no org can be slugged `ingest`.
 	"ingest",
+	// THE `(public)` ROUTES, which were missing (#4133). Five top-level console routes were absent
+	// from this list for as long as it has existed: an org could be minted shadowing `/login`, and
+	// — the reason they were found — anything reading the first path segment as an org slug read
+	// `accept-terms` as one. `(private)/layout.tsx` redirects EVERY private route to /accept-terms
+	// while a Terms version is unaccepted, so that particular omission is the difference between a
+	// legal version bump and a console with no way back into it.
+	//
+	// `check:marketing-routes` now fails when a top-level console route is not listed here, so the
+	// next route added cannot repeat this. `auth`, `invites` and `start` were already present.
+	"accept-terms",
+	"login",
+	"onboarding",
+	"signup",
+	"sso",
 ];
 
 /** Org-segment values that must never be a real org slug — the static console/sibling
