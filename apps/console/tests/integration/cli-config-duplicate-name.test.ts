@@ -35,7 +35,7 @@ import { getServiceDb } from "@/lib/db";
 import { projectEnvironments, projects } from "@/lib/db/schema";
 import { getCliConfig } from "@/lib/queries/cli-config";
 import { isProjectNameTaken, ProjectNameTakenError } from "@/lib/queries/projects";
-import { describeIfDb } from "./db";
+import { describeIfDb, refusalText } from "./db";
 
 // Two orgs, one user — see the header. Same-org duplicates are refused by the database now, and
 // that refusal is asserted in its own test rather than assumed.
@@ -221,40 +221,38 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 		expect(other).toBeNull();
 	});
 
-	it("falls back deterministically when no environment is flagged default", async () => {
+	// This test used to assert the OPPOSITE, and the inversion is the point of #4127.
+	//
+	// It cleared `is_default` on the resolved project's only environment, added an older one, and
+	// then asserted that `getCliConfig` fell back to the earliest row *deterministically* — the
+	// half-measure #2663 could offer while the schema still permitted zero defaults. A deterministic
+	// arbitrary pick is still an arbitrary pick: the CLI, the project header and the deploy target
+	// each ran their own version of it, and nothing said they had to agree.
+	//
+	// `project_environments_one_default_check` (lib/db/programmables.sql) now refuses to COMMIT that
+	// state, so the fallback has no reachable input and was deleted. What is asserted instead is
+	// that the state cannot be created — which is the guarantee the deleted fallback was standing in
+	// for. It runs through the SERVICE connection (BYPASSRLS): the check is a trigger, and triggers
+	// are not bypassed by BYPASSRLS, so this also pins that the invariant binds the most privileged
+	// caller the app has.
+	it("the database refuses to leave a project's environments without a default", async () => {
 		const db = getServiceDb();
-		// The `envs[0]` fallback path: clear is_default on the resolved project's only env and add
-		// a second, older one. Without an ORDER BY this pick was arbitrary too.
-		const EXTRA = randomUUID();
-		await db.insert(projectEnvironments).values({
-			id: EXTRA,
-			project_id: OLDER,
-			user_id: USER,
-			name: "oldest-non-default",
-			stage: "staging",
-			is_default: false,
-			created_at: new Date("2025-01-01T00:00:00.000Z"),
+		// `rejects.toThrow` would read drizzle's WRAPPER message ("Failed query: update …") and match
+		// any failure of this statement at all; refusalText walks the cause chain to the Postgres text.
+		expect(
+			await refusalText(() =>
+				db
+					.update(projectEnvironments)
+					.set({ is_default: false })
+					.where(eq(projectEnvironments.id, ENV_OLDER)),
+			),
+		).toMatch(/exactly one must have is_default/);
+
+		// And the row is untouched — the failed statement rolled back, so the resolver still answers.
+		const cfg = await getCliConfig(getServiceDb(), {
+			userId: USER,
+			projectName: SHARED_NAME,
 		});
-		await db
-			.update(projectEnvironments)
-			.set({ is_default: false })
-			.where(eq(projectEnvironments.id, ENV_OLDER));
-		try {
-			const seen = new Set<string>();
-			for (let i = 0; i < 5; i += 1) {
-				const cfg = await getCliConfig(getServiceDb(), {
-					userId: USER,
-					projectName: SHARED_NAME,
-				});
-				if (cfg) seen.add(cfg.environment_stage);
-			}
-			expect([...seen]).toEqual(["oldest-non-default"]);
-		} finally {
-			await db
-				.update(projectEnvironments)
-				.set({ is_default: true })
-				.where(eq(projectEnvironments.id, ENV_OLDER));
-			await db.delete(projectEnvironments).where(eq(projectEnvironments.id, EXTRA));
-		}
+		expect(cfg?.environment_stage).toBe("older-default");
 	});
 });

@@ -50,25 +50,36 @@ describeIfDb("CLI project component add — environment scoping (#662)", () => {
 			org_id: ORG,
 			name: "shared",
 		});
-		// Two envs; the non-default is created first, so a naive "earliest" pick would get it wrong —
+		// Two envs; the non-default is the OLDER one, so a naive "earliest" pick would get it wrong —
 		// the resolver must prefer is_default.
-		await db.insert(projectEnvironments).values({
-			id: ENV_OTHER,
-			project_id: PROJ,
-			user_id: USER,
-			name: "staging",
-			is_default: false,
-			fabric_id: FABRIC,
-			placement_mode: "namespace",
-		});
-		await db.insert(projectEnvironments).values({
-			id: ENV_DEFAULT,
-			project_id: PROJ,
-			user_id: USER,
-			name: "production",
-			is_default: true,
-			fabric_id: FABRIC,
-			placement_mode: "dedicated",
+		//
+		// ONE TRANSACTION, and `created_at` written by hand. Between the two inserts this project has
+		// an environment and no default, which `project_environments_one_default_check`
+		// (lib/db/programmables.sql) refuses — but it is a DEFERRED constraint trigger, so it judges
+		// the state at COMMIT and the intermediate one is legal. Inside a transaction `defaultNow()`
+		// is the transaction timestamp for both rows, which would erase the age gap this fixture
+		// exists to create; the explicit timestamps keep it.
+		await db.transaction(async (tx) => {
+			await tx.insert(projectEnvironments).values({
+				id: ENV_OTHER,
+				project_id: PROJ,
+				user_id: USER,
+				name: "staging",
+				is_default: false,
+				fabric_id: FABRIC,
+				placement_mode: "namespace",
+				created_at: new Date("2025-01-01T00:00:00.000Z"),
+			});
+			await tx.insert(projectEnvironments).values({
+				id: ENV_DEFAULT,
+				project_id: PROJ,
+				user_id: USER,
+				name: "production",
+				is_default: true,
+				fabric_id: FABRIC,
+				placement_mode: "dedicated",
+				created_at: new Date("2025-06-01T00:00:00.000Z"),
+			});
 		});
 	});
 

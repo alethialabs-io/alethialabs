@@ -15,6 +15,7 @@ import {
 	projectEnvironments,
 	projects,
 } from "@/lib/db/schema";
+import { pickDefaultEnvironment } from "@/lib/queries/default-environment";
 import { readEnvComponents } from "@/lib/queries/project-components-read";
 import type {
 	ClusterAdmin,
@@ -217,17 +218,16 @@ export async function getCliConfig(
 		.limit(1);
 	if (!project) return null;
 
-	// The same defect, in the same function, and only PARTLY closed. `envs[0]` is the fallback
-	// when no environment is flagged default; it was taken from an unordered select and is now
-	// ordered, for the same reason — an arbitrary pick can pick differently next time.
+	// The `?? envs[0]` fallback that used to stand here is gone (#4127). It existed because the
+	// schema guaranteed only AT MOST one default (the partial unique index is `(project_id) WHERE
+	// is_default`), so zero defaults was legal and an arbitrary row had to stand in. The rows were
+	// repaired by migration 0150 and `project_environments_one_default_check` in programmables.sql
+	// now refuses the state at COMMIT, so a project with environments always has a default —
+	// `pickDefaultEnvironment` reports the violation instead of laundering it into an answer that
+	// looks like every other answer this function returns.
 	//
-	// The rows that could reach it were repaired by 0150 (any project with no default got its
-	// oldest environment flagged), and every application create path already enforces
-	// exactly-one. What is still missing is the SCHEMA guarantee: the partial unique index on
-	// project_environments is `(project_id) WHERE is_default`, which is AT MOST one, never
-	// exactly one — so zero defaults remains legal and this fallback stays as a defensive path
-	// rather than a design. Making it a real invariant needs a constraint trigger that stays
-	// correct across the projects -> project_environments cascade delete, which is its own unit.
+	// The ORDER BY stays: it is what `envId`-less callers and migration 0150 agree on as "the
+	// oldest environment", and the CLI's own duplicate-name resolution reads the same way.
 	const envs = await db
 		.select()
 		.from(projectEnvironments)
@@ -235,7 +235,7 @@ export async function getCliConfig(
 		.orderBy(asc(projectEnvironments.created_at), asc(projectEnvironments.id));
 	const env = opts.envId
 		? envs.find((e) => e.id === opts.envId)
-		: (envs.find((e) => e.is_default) ?? envs[0]);
+		: pickDefaultEnvironment(project.id, envs);
 	if (!env) return null;
 
 	const identity = project.cloud_identity_id
