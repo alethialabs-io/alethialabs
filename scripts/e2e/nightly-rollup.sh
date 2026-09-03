@@ -497,7 +497,11 @@ derive() {
 	# makes this a tracker rather than a firehose.
 	local dim dim_label
 	dim="${E2E_DIMENSION:-floor}"
-	dim_label="$(dimension_label "$dim")"
+	# `|| return $?` because this script runs under `set -uo pipefail` and NOT `-e`: without it, a
+	# refusal from dimension_label leaves `dim_label` empty and the filer renders
+	# `e2e nightly: aws RED ()` — a title that dedups every unknown dimension onto ONE issue, which
+	# is the collision the refusal exists to prevent, wearing a different name (#4084).
+	dim_label="$(dimension_label "$dim")" || return $?
 
 	# The coverage issue deliberately gets NO dimension suffix. It reports which clouds are unwired,
 	# which is a property of the repo's gate variables and identical on both crons; suffixing it would
@@ -1011,6 +1015,24 @@ run_self_test() {
 	_a "e2e nightly: aws RED (cli-demo)" "$t_cli" "a cli-demo red is titled (cli-demo), not (floor) (#4086)"
 	_a "differ" "$([ "$t_cli" != "$t_floor" ] && echo differ || echo COLLIDE)" \
 		"a cli-demo red cannot dedup onto the floor's issue"
+
+	# …and a dimension nobody has heard of must STOP the filer, not render `RED ()`. That title is a
+	# dedup key too, so every unknown dimension would collide onto one issue — the same failure in a
+	# different costume. This script is `set -uo pipefail` without `-e`, so the refusal only
+	# propagates because the caller asks for it.
+	c="$tmp/dim-unknown"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure
+	write_jobs "$c/jobs.json" aws
+	# `derive` is driven DIRECTLY here, not through `_derive`: that harness discards the exit code
+	# (it runs derive in a subshell and then unconditionally sources state.env), so asserting through
+	# it would measure the harness and pass for the wrong reason.
+	_a "no" "$( (PROOFS_DIR="$c/proofs" OUT_DIR="$c/out" JOBS_JSON="$c/jobs.json" RUN_ID=777 \
+		MATRIX_RESULT=failure RUN_URL="http://x" E2E_DIMENSION=no-such-dimension \
+		derive >/dev/null 2>&1) && echo yes || echo no)" \
+		"an unknown dimension stops the filer instead of titling a red '()'"
+	_a "absent" "$([ -f "$c/out/issue-red-aws.title" ] && echo PRESENT || echo absent)" \
+		"...and no red title is written at all"
+
 	# Back to the full-bar case — the state.env assertions below read `$c`.
 	c="$tmp/dim-full"
 
