@@ -9,11 +9,14 @@ import {
 	AI_PLAN_CATALOG,
 	aiPlanMeta,
 	aiPlanUnitAmountCents,
+	asSupportedCurrency,
+	formatSeatPrice,
 	PAID_AI_PLANS,
 	PAID_PLANS,
 	PLAN_CATALOG,
 	planMeta,
 	planUnitAmountCents,
+	shortInterval,
 } from "../src/index";
 
 describe("planMeta", () => {
@@ -127,5 +130,70 @@ describe("aiPlanUnitAmountCents (Stripe-provisioning SSOT)", () => {
 
 	it("is free (0 cents) for AI Free rather than throwing", () => {
 		expect(aiPlanUnitAmountCents("ai_free")).toBe(0);
+	});
+});
+
+// ── #4096: the live-price formatters ────────────────────────────────────────────
+// `formatSeatPrice` divides a Stripe amount by 100. That was a latent defect while its
+// `currency` was a bare `string` taken off a live `Price` — a zero-decimal currency would
+// have rendered at 1/100 of its value. It is now correct BY CONSTRUCTION rather than by
+// luck: the parameter is `SupportedCurrency`, and Stripe's charge table
+// (`packages/format/src/minor-units.ts`) answers 100 for both of its members. These tests
+// pin the compact register — the reason this formatter survives beside `@repo/format`'s —
+// and the type that makes the divisor total.
+
+describe("asSupportedCurrency", () => {
+	it("narrows the currencies we sell in, in either spelling", () => {
+		expect(asSupportedCurrency("usd")).toBe("usd");
+		expect(asSupportedCurrency("EUR")).toBe("eur");
+		expect(asSupportedCurrency(" Usd ")).toBe("usd");
+	});
+
+	it("refuses everything else rather than defaulting to USD", () => {
+		// A zero-decimal Stripe currency is exactly what #4096 is about, and it must not narrow.
+		expect(asSupportedCurrency("jpy")).toBeNull();
+		expect(asSupportedCurrency("ugx")).toBeNull();
+		// GBP has the right number of decimals and is still not a currency we sell in — the
+		// symbol table used to carry a `gbp` row that nothing could ever reach.
+		expect(asSupportedCurrency("gbp")).toBeNull();
+		expect(asSupportedCurrency("")).toBeNull();
+		expect(asSupportedCurrency(null)).toBeNull();
+		expect(asSupportedCurrency(undefined)).toBeNull();
+	});
+});
+
+describe("formatSeatPrice", () => {
+	it("renders the compact register — a whole amount drops its minor units", () => {
+		expect(formatSeatPrice(2000, "usd", "month")).toBe("$20 / seat / mo");
+		expect(formatSeatPrice(1800, "eur", "year")).toBe("€18 / seat / yr");
+	});
+
+	it("keeps two decimals when the amount has them", () => {
+		expect(formatSeatPrice(2050, "usd", "month")).toBe("$20.50 / seat / mo");
+		expect(formatSeatPrice(1, "eur", "month")).toBe("€0.01 / seat / mo");
+	});
+
+	it("treats a missing interval as monthly and passes an unknown one through", () => {
+		expect(formatSeatPrice(2000, "usd", null)).toBe("$20 / seat / mo");
+		expect(formatSeatPrice(2000, "usd", undefined)).toBe("$20 / seat / mo");
+		expect(formatSeatPrice(2000, "usd", "week")).toBe("$20 / seat / week");
+	});
+
+	// NO RUNTIME TEST FOR THE ZERO-DECIMAL CASE, and the omission is deliberate rather than a
+	// gap: `currency` is `SupportedCurrency`, so "jpy" is not an input this function HAS. The
+	// assertion that the union has not silently widened back to `string` is a COMPILE-time one
+	// and it cannot live in this file — `packages/plan-catalog/tsconfig.json` includes only
+	// `src`, so this suite is transpiled and never type-checked, and a `@ts-expect-error` here
+	// would sit green whatever the signature said. It lives in
+	// `apps/marketing/tests/pricing-display.test.ts`, whose tsconfig does include its tests.
+});
+
+describe("shortInterval", () => {
+	it("abbreviates the two Stripe intervals, defaults to monthly, passes the rest through", () => {
+		expect(shortInterval("month")).toBe("mo");
+		expect(shortInterval("year")).toBe("yr");
+		expect(shortInterval("week")).toBe("week");
+		expect(shortInterval(null)).toBe("mo");
+		expect(shortInterval(undefined)).toBe("mo");
 	});
 });
