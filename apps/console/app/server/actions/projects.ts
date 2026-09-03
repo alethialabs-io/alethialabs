@@ -63,6 +63,7 @@ import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
 import { resolveClassificationSnapshot } from "@/lib/classification/snapshot";
 import { resolveServingCluster } from "@/lib/queries/cluster-for-env";
+import { pickDefaultEnvironment } from "@/lib/queries/default-environment";
 import {
 	envScope,
 	readEnvComponents,
@@ -627,8 +628,13 @@ export async function getProject(
 				desc(projectEnvironments.is_default),
 				projectEnvironments.created_at,
 			);
-		const defaultEnv =
-			environments.find((e) => e.is_default) ?? environments[0] ?? null;
+		// `?? environments[0]` is gone (#4127): the database now refuses to commit a project whose
+		// environments carry no default (`project_environments_one_default_check`,
+		// lib/db/programmables.sql), so the fallback could only ever hide a broken invariant behind a
+		// header, an "Env" column and a deploy target that each looked authoritative and could each
+		// name a different environment. A project with NO environments still yields null, which every
+		// consumer below already handles.
+		const defaultEnv = pickDefaultEnvironment(projectId, environments);
 		const activeEnv =
 			(environmentId
 				? environments.find((e) => e.id === environmentId)
