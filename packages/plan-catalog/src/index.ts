@@ -255,6 +255,23 @@ export function resolveCurrency(country?: string | null): SupportedCurrency {
 	return cc && EU_COUNTRIES.has(cc) ? "eur" : "usd";
 }
 
+/**
+ * `code` as a currency we present and charge in, or `null`.
+ *
+ * The narrowing a caller holding a live Stripe `Price.currency` — a bare `string` — has to perform
+ * before it can reach {@link formatSeatPrice}. It returns `null` rather than defaulting to `"usd"`
+ * on purpose: a price quoted in a currency this product does not sell in is not a USD price, and
+ * rendering it as one is the whole of #4096. The caller decides what to do instead, and the answer
+ * is visible at the call site rather than buried in a formatter.
+ *
+ * Case- and whitespace-insensitive because Stripe spells a currency in lower case and ISO 4217 in
+ * upper, and both reach this function.
+ */
+export function asSupportedCurrency(code: string | null | undefined): SupportedCurrency | null {
+	const c = code?.trim().toLowerCase();
+	return c === "usd" || c === "eur" ? c : null;
+}
+
 // ── Standalone AI product catalog ──────────────────────────────────────────────────
 // AI is a SEPARATE metered product from the org plan (Hobby/Pro/Enterprise): everyone
 // gets a usable free allowance (AI Free), and AI Plus / AI Max are their own subscription
@@ -374,16 +391,28 @@ export function aiPlanUnitAmountCents(
 }
 
 // ── Live-price formatting ────────────────────────────────────────────────────────
-// The authoritative price amount lives in Stripe; both the console and the marketing
-// site read it live and render it with these shared helpers (so a "$29 / seat / mo"
-// label is formatted identically everywhere). The catalog's priceLabel/priceMonthlyUsd
-// are the FALLBACK used only when Stripe isn't configured / the lookup fails.
+// The authoritative price amount lives in Stripe; the MARKETING site reads it live and
+// renders it with the helpers below. The catalog's priceLabel/priceMonthlyUsd are the
+// FALLBACK used only when Stripe isn't configured / the lookup fails.
+//
+// THE CONSOLE NO LONGER FORMATS MONEY HERE (#4096). It renders every amount through
+// `@repo/format`, which owns Stripe's charge-divisor table — a dependency the console
+// already had and marketing cannot take. The console's own billing surfaces disagreed
+// about this while both registers were live: its checkout form has rendered `$29.00`
+// since it dropped its private `money()` for the same reason, while its plan cards said
+// `$29`. They agree now.
 
-/** Minimal currency-symbol map; falls back to the uppercase ISO code + space. */
-const CURRENCY_SYMBOL: Record<string, string> = {
+/**
+ * The symbol for each currency we sell in.
+ *
+ * TOTAL over `SupportedCurrency`, so indexing it needs no `??` fallback. It used to carry a `gbp`
+ * row and fall back to `"<CODE> "` for anything else, which is what let an arbitrary Stripe
+ * currency string reach the divisor below (#4096). The type is the guard now; a code that does not
+ * narrow never gets here.
+ */
+const CURRENCY_SYMBOL: Record<SupportedCurrency, string> = {
 	usd: "$",
 	eur: "€",
-	gbp: "£",
 };
 
 /** "month" → "mo", "year" → "yr"; anything else passes through (default "mo"). */
@@ -396,39 +425,48 @@ export function shortInterval(interval: string | undefined | null): string {
 /**
  * "$29" — whole amounts drop the cents, fractional amounts keep two decimals.
  *
- * NOT `@repo/format`'s `formatMoney`, and not a duplicate of it either: this is a compact price
- * LABEL that deliberately drops `.00`, where that one is a billing-table amount that deliberately
- * never does. Two registers, same name, and the name is the confusing part.
+ * PRIVATE, and the un-exporting is half of #4096's fix. This used to be exported as `formatMoney`,
+ * which put a SECOND function of that name in the workspace beside `@repo/format`'s. There is one
+ * exported `formatMoney` in this repo again.
  *
- * IT CARRIES #3581's DIVISOR DEFECT, UNFIXED. The `/ 100` below is unconditional, and `currency` is
- * a `string` fed straight from a live Stripe `Price` — `apps/console/lib/billing/pricing.ts:69`,
- * `apps/marketing/lib/billing/pricing-display.ts:57` and `use-live-plan-price.ts` all pass
- * `price.currency` through — so a zero-decimal price would render at 1/100 of its value here, the
- * same way a zero-decimal invoice did in `@repo/format` before #3581. `unitAmountUsd` in that same
- * `pricing.ts` divides by 100 a second time, on the numeric path. Tracked as #4096.
+ * WHAT WAS WRONG: the `/ 100` was unconditional and `currency` was a bare `string` taken straight
+ * off a live Stripe `Price`, so a zero-decimal price would have rendered at 1/100 of its value —
+ * the defect #3581 fixed in `@repo/format` by giving it Stripe's charge table.
  *
- * It is unreachable for the same reason and by a shorter path: `apps/console/scripts/stripe-setup.ts`
- * creates USD and EUR prices only, and `SupportedCurrency` above is `"usd" | "eur"`.
+ * WHY THE `/ 100` IS STILL HERE AND IS NOW CORRECT: `currency` is `SupportedCurrency`, and
+ * `stripeChargeDivisor` in `packages/format/src/minor-units.ts` answers 100 for both `usd` and
+ * `eur`. The division is total on its declared domain rather than merely unreached, and a third
+ * currency cannot join that union without this line coming back into review. The TYPE holds the
+ * invariant; a comment would not.
  *
- * IT IS NOT FIXED HERE because the fix is `stripeChargeDivisor` from `@repo/format`, and sharing it
- * needs `@repo/plan-catalog` to gain a dependency this package has never had — it has no runtime
- * deps at all — which rewrites `pnpm-lock.yaml` and adds a workspace edge into `apps/marketing`,
- * which does not carry `@repo/format` today. Transcribing Stripe's table a second time HERE is the
- * failure mode `packages/format/src/minor-units.ts` exists to prevent, so the choice is a dependency
- * change or nothing, and a dependency change does not belong in a formatter bug fix.
+ * WHY THIS FUNCTION SURVIVES AT ALL: it is a different REGISTER, not a duplicate. A compact price
+ * label that deliberately drops `.00` (`$29 / seat / mo`), where `@repo/format`'s is a billing-table
+ * amount that deliberately never does (`$29.00`). Its only remaining reader is `apps/marketing`,
+ * which cannot import `@repo/format`: that package exports raw TypeScript and is absent from
+ * marketing's `transpilePackages` (`apps/marketing/next.config.ts`), and it carries `date-fns`, so
+ * the edge would also destroy this package's stated zero-runtime-dependency property. Every console
+ * caller was converted to `@repo/format` instead, which needed no new dependency at all.
  */
-export function formatMoney(unitAmountCents: number, currency: string): string {
-	const symbol = CURRENCY_SYMBOL[currency] ?? `${currency.toUpperCase()} `;
-	const amount = unitAmountCents / 100;
+function compactAmount(unitAmountMinor: number, currency: SupportedCurrency): string {
+	const amount = unitAmountMinor / 100;
 	const value = Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
-	return `${symbol}${value}`;
+	return `${CURRENCY_SYMBOL[currency]}${value}`;
 }
 
-/** Format a Stripe price into a per-seat label like "$29 / seat / mo". */
+/**
+ * A Stripe per-seat price as a compact label — `$29 / seat / mo`.
+ *
+ * `currency` is `SupportedCurrency` rather than `string`, which is the other half of #4096's fix: a
+ * caller holding a live Stripe `Price.currency` must narrow it with {@link asSupportedCurrency} and
+ * say what happens when it does not narrow, instead of handing an unknown currency to a divisor
+ * that assumes two decimal places.
+ *
+ * @param unitAmountMinor the amount in the currency's minor units, as Stripe quotes a charge.
+ */
 export function formatSeatPrice(
-	unitAmountCents: number,
-	currency: string,
+	unitAmountMinor: number,
+	currency: SupportedCurrency,
 	interval: string | undefined | null,
 ): string {
-	return `${formatMoney(unitAmountCents, currency)} / seat / ${shortInterval(interval)}`;
+	return `${compactAmount(unitAmountMinor, currency)} / seat / ${shortInterval(interval)}`;
 }

@@ -31,12 +31,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-	aiPlanMeta,
-	aiPlanUnitAmountCents,
-	formatMoney,
-	planUnitAmountCents,
-} from "@repo/plan-catalog";
+import { formatMoney } from "@repo/format";
+import { aiPlanMeta, aiPlanUnitAmountCents, planUnitAmountCents } from "@repo/plan-catalog";
 import Stripe from "stripe";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -52,7 +48,12 @@ const RUNNER_OVERAGE_CENTS_EUR = "1.1"; // €0.011 / minute (FX-adjusted from $
 const METER_EVENT = "alethia_runner_minutes"; // RUNNER_MINUTES_METER_EVENT
 const LK_PRO = "alethia_pro_monthly";
 const LK_METER_PRO = "alethia_runner_minutes_pro";
-const PRO_SEAT_LABEL = `${formatMoney(PRO_UNIT_AMOUNT, "usd")} / seat / mo`;
+// Reads `@repo/format` since #4096 retired `@repo/plan-catalog`'s second `formatMoney`. Every
+// currency here is a literal, so no divisor changes; what does change is the REGISTER — `$20.00`
+// where this printed `$20`. That reaches Stripe: this string becomes the price's `nickname`
+// below. Prices are reconciled on `unit_amount`, not on the nickname, so nothing is re-created
+// and nothing is re-charged; a price created before this change keeps the older wording.
+const PRO_SEAT_LABEL = `${formatMoney(PRO_UNIT_AMOUNT, "USD")} / seat / mo`;
 
 // ── Standalone AI subscription tiers — flat monthly `licensed` prices. Amounts come from
 // the catalog SSOT (@repo/plan-catalog `aiPlanUnitAmountCents`) — the final maintainer-
@@ -213,7 +214,7 @@ async function ensureFlatLicensedPrice(
 		await stripe.prices.update(existing.id, { active: false });
 		console.log(
 			`  ↻ reconciled ${lookupKey} to the catalog: archived ${existing.id} → ${created.id} ` +
-				`(${formatMoney(unitAmount, "usd")} / ${formatMoney(eurAmount, "eur")})`,
+				`(${formatMoney(unitAmount, "USD")} / ${formatMoney(eurAmount, "EUR")})`,
 		);
 	}
 	return created;
@@ -260,7 +261,7 @@ async function main(): Promise<void> {
 	);
 	console.log(`✓ Pro product ${proProduct.id}`);
 	console.log(
-		`✓ Pro price   ${proPrice.id}  (${LK_PRO}, ${formatMoney(PRO_UNIT_AMOUNT, "usd")} / ${formatMoney(PRO_UNIT_AMOUNT_EUR, "eur")})`,
+		`✓ Pro price   ${proPrice.id}  (${LK_PRO}, ${formatMoney(PRO_UNIT_AMOUNT, "USD")} / ${formatMoney(PRO_UNIT_AMOUNT_EUR, "EUR")})`,
 	);
 
 	// 2) Runner-minutes meter.
@@ -284,7 +285,7 @@ async function main(): Promise<void> {
 		`Alethia AI Plus — ${aiPlanMeta("ai_plus").priceLabel}`,
 	);
 	console.log(
-		`✓ AI Plus     ${aiPlusPrice.id}  (${LK_AI_PLUS}, ${formatMoney(AI_PLUS_UNIT_AMOUNT, "usd")} / ${formatMoney(AI_PLUS_UNIT_AMOUNT_EUR, "eur")})`,
+		`✓ AI Plus     ${aiPlusPrice.id}  (${LK_AI_PLUS}, ${formatMoney(AI_PLUS_UNIT_AMOUNT, "USD")} / ${formatMoney(AI_PLUS_UNIT_AMOUNT_EUR, "EUR")})`,
 	);
 
 	const aiMaxProduct = await ensureProduct(stripe, "ai_max", "Alethia AI Max");
@@ -297,7 +298,7 @@ async function main(): Promise<void> {
 		`Alethia AI Max — ${aiPlanMeta("ai_max").priceLabel}`,
 	);
 	console.log(
-		`✓ AI Max      ${aiMaxPrice.id}  (${LK_AI_MAX}, ${formatMoney(AI_MAX_UNIT_AMOUNT, "usd")} / ${formatMoney(AI_MAX_UNIT_AMOUNT_EUR, "eur")})`,
+		`✓ AI Max      ${aiMaxPrice.id}  (${LK_AI_MAX}, ${formatMoney(AI_MAX_UNIT_AMOUNT, "USD")} / ${formatMoney(AI_MAX_UNIT_AMOUNT_EUR, "EUR")})`,
 	);
 
 	// 5) Optional webhook endpoint (for the live runbook).

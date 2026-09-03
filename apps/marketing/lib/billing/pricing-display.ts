@@ -10,7 +10,12 @@
 
 import { unstable_cache } from "next/cache";
 import Stripe from "stripe";
-import { type SupportedCurrency, formatSeatPrice, planMeta } from "@repo/plan-catalog";
+import {
+	type SupportedCurrency,
+	asSupportedCurrency,
+	formatSeatPrice,
+	planMeta,
+} from "@repo/plan-catalog";
 
 let client: Stripe | null = null;
 
@@ -53,8 +58,18 @@ export const getTeamPrice = unstable_cache(
 			if (typeof price.unit_amount !== "number") return fallback;
 			const interval = price.recurring?.interval;
 			const eurUnit = price.currency_options?.eur?.unit_amount;
+			// THE ONLY PLACE IN THE REPO THAT STILL HANDS A LIVE STRIPE CURRENCY TO A FORMATTER
+			// (#4096), and it now has to narrow it first. `formatSeatPrice` divides by 100, which is
+			// right for every currency this product sells in and wrong for a zero-decimal one; before
+			// the narrowing, a Team price re-quoted in JPY would have rendered at 1/100 of its value
+			// on the public pricing page with nothing to notice it.
+			//
+			// A code that does not narrow falls back to the static catalog label rather than being
+			// rendered anyway. That is the honest answer and not merely the safe one: this slot is
+			// LABELLED `usd`, so a price quoted in something else does not belong in it at any scale.
+			const code = asSupportedCurrency(price.currency);
 			return {
-				usd: formatSeatPrice(price.unit_amount, price.currency, interval),
+				usd: code ? formatSeatPrice(price.unit_amount, code, interval) : fallback.usd,
 				eur:
 					typeof eurUnit === "number"
 						? formatSeatPrice(eurUnit, "eur", interval)

@@ -4,16 +4,28 @@
 // Live plan pricing — the authoritative price AMOUNT lives in Stripe, read here at
 // runtime so the UI can never drift from what's actually charged. The plan catalog
 // (`@repo/plan-catalog` priceMonthlyUsd/priceLabel) is the FALLBACK only, used when
-// Stripe isn't configured (self-managed / community) or a price lookup fails. Mirrors
-// the marketing site's pricing-display.ts so both surfaces format prices identically.
+// Stripe isn't configured (self-managed / community) or a price lookup fails.
 // Server-only — never import from a client component.
+//
+// EVERY DIVISION IN THIS FILE ASKS `stripeChargeDivisor` (#4096). Each `LivePlanPrice`
+// carries a Stripe amount twice — once as the `label` string, once as a `unitAmount*`
+// number — and BOTH used to read `price.unit_amount` through an unconditional `/ 100`.
+// They were two INDEPENDENT divisions of the same undivided input, not a compound one:
+// nothing here was ever divided by 10,000, and "fixing" it by deleting one of them would
+// have broken the other path outright. Both now take the divisor from Stripe's own charge
+// table in `packages/format/src/minor-units.ts`, which is the only place in the repo that
+// answers the question.
+//
+// The label goes through `@repo/format`'s `formatMoney`, not `@repo/plan-catalog`'s
+// compact one: the console already depends on `@repo/format`, `@repo/format` owns the
+// divisor, and this is the register the console's other billing surfaces already print
+// (`$20.00 / seat / mo`, not `$20 / seat / mo`).
 
 import { cache } from "react";
+import { formatMoney, stripeChargeDivisor } from "@repo/format";
 import {
 	type AiPlanId,
 	aiPlanMeta,
-	formatMoney,
-	formatSeatPrice,
 	type PlanId,
 	planMeta,
 	shortInterval,
@@ -35,7 +47,7 @@ export interface LivePlanPrice {
 	unitAmountEur: number | null;
 	currency: string;
 	interval: string;
-	/** Formatted USD label, e.g. "$20 / seat / mo" (or the catalog fallback label). */
+	/** Formatted USD label, e.g. "$20.00 / seat / mo" (or the catalog fallback label). */
 	label: string;
 }
 
@@ -64,13 +76,20 @@ export const getPlanPrice = cache(async (plan: PlanId): Promise<LivePlanPrice> =
 		});
 		if (typeof price.unit_amount !== "number") return fallbackPrice(plan);
 		const meta = planMeta(plan);
-		const label = meta.perSeat
-			? formatSeatPrice(price.unit_amount, price.currency, price.recurring?.interval)
-			: `${formatMoney(price.unit_amount, price.currency)} / ${shortInterval(price.recurring?.interval)}`;
+		// ISO 4217 for `@repo/format`; Stripe spells a currency in lower case.
+		const code = price.currency.toUpperCase();
+		const amount = formatMoney(price.unit_amount, code);
+		const per = shortInterval(price.recurring?.interval);
+		const label = meta.perSeat ? `${amount} / seat / ${per}` : `${amount} / ${per}`;
 		const eurAmount = price.currency_options?.eur?.unit_amount;
 		return {
-			unitAmountUsd: price.unit_amount / 100,
-			unitAmountEur: typeof eurAmount === "number" ? eurAmount / 100 : (meta.priceMonthlyEur ?? null),
+			unitAmountUsd: price.unit_amount / stripeChargeDivisor(code),
+			// A `currency_options.eur` amount is quoted in EUR whatever the price's own currency is,
+			// so its divisor is EUR's — named rather than assumed, even though EUR resolves to 100.
+			unitAmountEur:
+				typeof eurAmount === "number"
+					? eurAmount / stripeChargeDivisor("EUR")
+					: (meta.priceMonthlyEur ?? null),
 			currency: price.currency,
 			interval: price.recurring?.interval ?? "month",
 			label,
@@ -107,7 +126,7 @@ export interface LiveAiPrice {
 	unitAmountEur: number | null;
 	currency: string;
 	interval: string;
-	/** Formatted label, e.g. "$20 / mo" (or the catalog fallback label / "Free"). */
+	/** Formatted label, e.g. "$20.00 / mo" (or the catalog fallback label / "Free"). */
 	label: string;
 }
 
@@ -141,14 +160,17 @@ export const getAiPlanPrice = cache(async (tier: AiPlanId): Promise<LiveAiPrice>
 		});
 		if (typeof price.unit_amount !== "number") return aiFallbackPrice(tier);
 		const meta = aiPlanMeta(tier);
+		const code = price.currency.toUpperCase();
 		const eurAmount = price.currency_options?.eur?.unit_amount;
 		return {
-			unitAmountUsd: price.unit_amount / 100,
+			unitAmountUsd: price.unit_amount / stripeChargeDivisor(code),
 			unitAmountEur:
-				typeof eurAmount === "number" ? eurAmount / 100 : (meta.priceMonthlyEur ?? null),
+				typeof eurAmount === "number"
+					? eurAmount / stripeChargeDivisor("EUR")
+					: (meta.priceMonthlyEur ?? null),
 			currency: price.currency,
 			interval: price.recurring?.interval ?? "month",
-			label: `${formatMoney(price.unit_amount, price.currency)} / ${shortInterval(price.recurring?.interval)}`,
+			label: `${formatMoney(price.unit_amount, code)} / ${shortInterval(price.recurring?.interval)}`,
 		};
 	} catch {
 		return aiFallbackPrice(tier);
