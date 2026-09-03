@@ -87,6 +87,10 @@ export function UsagePanel() {
 	const [usage, setUsage] = useState<UsageReport | null>(null);
 	const [counts, setCounts] = useState<ResourceCountsReport | null>(null);
 	const [overTime, setOverTime] = useState<UsageOverTime | null>(null);
+	// Distinct from `overTime === null`, which this panel also uses for "not asked yet".
+	// Without the second flag a failed window is indistinguishable from a pending one and
+	// `OverTimeCard` renders its skeleton forever. See the `error` prop's doc.
+	const [overTimeFailed, setOverTimeFailed] = useState(false);
 
 	const [range, setRange] = useState<DateRange>(() => presetRange(DEFAULT_PRESET));
 	const [rangeLabel, setRangeLabel] = useState(
@@ -119,13 +123,20 @@ export function UsagePanel() {
 	}, [refresh]);
 
 	// Range-driven data (the over-time chart) re-queries whenever the window changes.
+	//
+	// BOTH pieces of state are reset before the request, and the clear is the half that used to be
+	// missing. `rangeLabel` updates synchronously with the picker, so leaving the previous window's
+	// series in place captioned the OLD bars with the NEW window — seven days of data labelled
+	// "last 30 days" for the length of the refetch. It also made the card's "has not answered yet"
+	// branch unreachable on this panel while the PROJECT panel hit it on every picker change, which
+	// is precisely the divergence the shared component exists to prevent.
 	useEffect(() => {
 		let active = true;
+		setOverTime(null);
+		setOverTimeFailed(false);
 		getUsageOverTime({ from: range.from.toISOString(), to: range.to.toISOString() })
 			.then((d) => active && setOverTime(d))
-			.catch(() => {
-				/* best-effort */
-			});
+			.catch(() => active && setOverTimeFailed(true));
 		return () => {
 			active = false;
 		};
@@ -174,10 +185,15 @@ export function UsagePanel() {
 	}
 
 	const isCommunity = summary.plan === "community" || summary.status === "none";
+	// An ABSENT seat cap fills 0, not 100 — the same answer the concurrency meter below already
+	// gives for the identical "the plan sets no limit" case. Filling the gauge instead made a Hobby
+	// org render `3 / ∞` above a bar drawn solid to its end: "no cap" and "at the cap" stated in one
+	// cell. A gauge with no denominator has no fraction to draw, and 0 is the only reading of it
+	// that does not assert one.
 	const seatFill =
 		summary.seats != null && summary.seats > 0
 			? (summary.memberCount / summary.seats) * 100
-			: 100;
+			: 0;
 	const concurrencyMax = usage?.maxConcurrentJobs ?? null;
 	// ONE percentage, read twice. The two `sub` branches below each used to compute
 	// `Math.round(usage.pct * 100)` for themselves — two expressions, two lines apart, that a
@@ -339,6 +355,7 @@ export function UsagePanel() {
 					onMetricChange={setMetric}
 					series={overTime?.series}
 					totals={overTime?.totals}
+					error={overTimeFailed}
 					rangeLabel={rangeLabel}
 				/>
 			</SettingsSection>

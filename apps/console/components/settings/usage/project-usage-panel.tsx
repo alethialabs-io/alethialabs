@@ -226,6 +226,10 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 					onMetricChange={setMetric}
 					series={overTime.data?.series}
 					totals={overTime.data?.totals}
+					// `&& !overTime.data` so a refetch that fails keeps showing the window it already
+					// has rather than replacing real bars with an error; react-query leaves the last
+					// good `data` in place across a failed refetch, and stale-but-labelled beats blank.
+					error={overTime.isError && !overTime.data}
 					rangeLabel={rangeLabel}
 				/>
 			</SettingsSection>

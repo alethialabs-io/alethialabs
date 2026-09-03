@@ -12,6 +12,7 @@
 // anything a picker cannot move belongs to the fact list.
 
 import type { ReactNode } from "react";
+import { formatMinutes } from "@repo/format";
 import { EmptyState } from "@repo/ui/empty";
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
@@ -195,12 +196,32 @@ function Bars<T extends { date: string }>({
 /** The three over-time metrics. One list, so the org and project tabs cannot drift apart. */
 export type Metric = "runnerMinutes" | "jobs" | "aiCredits";
 
-/** Tab order and labels for {@link OverTimeCard}. Module-private: the panels pass a `metric`,
- * they do not render the tabs themselves, so exporting this would be an export nothing imports. */
-const METRICS: { id: Metric; label: string }[] = [
-	{ id: "runnerMinutes", label: "Runner minutes" },
-	{ id: "jobs", label: "Jobs" },
-	{ id: "aiCredits", label: "AI credits" },
+/** Tab order, labels and TOTAL RENDERING for {@link OverTimeCard}. Module-private: the panels pass
+ * a `metric`, they do not render the tabs themselves, so exporting this would be an export nothing
+ * imports.
+ *
+ * `format` is here rather than at the call site because this card is the one place that renders a
+ * window total, and the three metrics are not the same kind of quantity. Runner minutes are a
+ * DURATION — CLAUDE.md §6's "minutes are read by a person" — so they go through `@repo/format`'s
+ * `formatMinutes` and read `21h 24m`, the same answer the meters one section above give for the
+ * same underlying number. Jobs and AI credits are counts and stay counts.
+ *
+ * `noun` is not the label lowercased, and that is the point: a formatted duration already carries
+ * its unit, so pairing `21h 24m` with "runner minutes" says minutes twice. */
+const METRICS: {
+	id: Metric;
+	label: string;
+	format: (n: number) => string;
+	noun: string;
+}[] = [
+	{
+		id: "runnerMinutes",
+		label: "Runner minutes",
+		format: formatMinutes,
+		noun: "runner time",
+	},
+	{ id: "jobs", label: "Jobs", format: count, noun: "jobs" },
+	{ id: "aiCredits", label: "AI credits", format: count, noun: "AI credits" },
 ];
 
 /**
@@ -225,6 +246,7 @@ export function OverTimeCard<T extends { date: string } & Record<Metric, number>
 	series,
 	totals,
 	rangeLabel,
+	error,
 }: {
 	metric: Metric;
 	onMetricChange: (m: Metric) => void;
@@ -234,8 +256,19 @@ export function OverTimeCard<T extends { date: string } & Record<Metric, number>
 	totals: Record<Metric, number> | undefined;
 	/** The picked window, as the picker names it ("Last 7 days"). */
 	rangeLabel: string;
+	/**
+	 * The window's query FAILED — as distinct from not having answered yet.
+	 *
+	 * Without this the card cannot tell those apart, because both arrive as `series === undefined`,
+	 * and it resolves the ambiguity the wrong way: a 500 renders the loading skeleton forever, with
+	 * no error, no retry and nothing on screen that says anything is wrong. A caller that cannot
+	 * fail may omit it; both of this card's callers can.
+	 */
+	error?: boolean;
 }) {
-	const label = METRICS.find((m) => m.id === metric)?.label.toLowerCase() ?? "";
+	const active = METRICS.find((m) => m.id === metric);
+	const format = active?.format ?? count;
+	const noun = active?.noun ?? "";
 	return (
 		<div className="overflow-hidden rounded-lg border border-border bg-surface p-5 shadow-sm">
 			<div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -267,19 +300,28 @@ export function OverTimeCard<T extends { date: string } & Record<Metric, number>
 					{/* An em-dash, not `count(0)`: the same distinction the chart branch below
 					    draws. A window that has not answered yet has no total, and rendering `0`
 					    states one. */}
-					{totals ? count(totals[metric]) : "—"}{" "}
+					{totals && !error ? format(totals[metric]) : "—"}{" "}
 					<span className="text-text-tertiary">
-						{label} · {rangeLabel.toLowerCase()}
+						{noun} · {rangeLabel.toLowerCase()}
 					</span>
 				</div>
 			</div>
-			{/* THREE branches, not two. `series === undefined` is "the window has not answered
-			    yet" and `[]` is "the window is genuinely empty" — the prop's own doc says so, and
-			    collapsing them renders the sentence "Nothing was recorded" as a claim about a
-			    fetch still in flight. It is not a hypothetical: the PROJECT panel keys its
-			    over-time query on the range bounds, so `data` returns to `undefined` on EVERY
-			    picker change and the empty state would flash on each one. */}
-			{series === undefined ? (
+			{/* FOUR branches, and each one is a different answer to "what is in this window".
+			    `error` is "we asked and it failed", `series === undefined` is "it has not answered
+			    yet", `[]` is "it is genuinely empty" — the props' own docs say so, and collapsing
+			    any pair of them states something untrue. Collapsing empty into loading renders
+			    "Nothing was recorded" about a fetch still in flight; collapsing FAILED into loading
+			    is worse, because a skeleton has no terminal state — a 500 spun it forever with
+			    nothing on screen saying so.
+			    None of this is hypothetical: the PROJECT panel keys its over-time query on the range
+			    bounds, so `data` returns to `undefined` on EVERY picker change. */}
+			{error ? (
+				<EmptyState
+					className="h-28 border-0 p-0 md:p-0"
+					title="Usage over time is unavailable"
+					description="We couldn't load this window. Pick the range again to retry."
+				/>
+			) : series === undefined ? (
 				<Skeleton className="h-28 w-full" />
 			) : series.length > 0 ? (
 				<Bars points={series} pick={(p) => p[metric]} />
