@@ -112,7 +112,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 16
-debt: 23
+debt: 22
 
 scanned:
   - scope: console_code
@@ -223,9 +223,6 @@ type_scale:
   - path: apps/console/app/(private)/[org]/~/settings/billing/invoices/page.tsx
     hits: 1
     lifts: "#4141 — the 48 type sizes #3742 did not reach: 1 hardcoded pixel type size here."
-  - path: apps/console/app/(private)/cli/login/page.tsx
-    hits: 1
-    lifts: "#3631 — the CLI device-approval page is rebuilt: 1 hardcoded pixel type size here."
   - path: apps/console/app/(public)/onboarding/page.tsx
     hits: 1
     lifts: "#4141 — the 48 type sizes #3742 did not reach: 1 hardcoded pixel type size here."

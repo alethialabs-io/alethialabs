@@ -24,11 +24,21 @@ import { legalUrl, statusUrl } from "@/lib/legal";
  *  hands width control to the child (the wizard animates it per step). */
 type CardWidth = "default" | "wide" | "plans" | "fluid";
 
+/* `mx-auto` alongside each width, the way SettingsShell writes its own
+   (`mx-auto w-full min-w-0 max-w-[1200px]`). It centres nothing that `<main>`'s
+   `justify-center` was not already centring, so it changes no pixel — what it changes
+   is that the class list now SAYS "this is the page's content width" in the one shape
+   the console states that in. RUBRIC.md's S2 asks whether the single max-width
+   governing a route comes from its shell, and `scripts/check-route-states.mjs`
+   answers it by looking for a centred block; a shell that centres with flexbox
+   instead declared a width nothing could attribute to it, so `/cli/login` — the one
+   private route wearing this shell — scored "no max-width anywhere" while visibly
+   sitting in a 392px card. */
 const CARD_MAX: Record<CardWidth, string> = {
-  default: "max-w-[392px]",
-  wide: "max-w-[496px]",
-  plans: "max-w-[980px]",
-  fluid: "max-w-none",
+  default: "mx-auto max-w-[392px]",
+  wide: "mx-auto max-w-[496px]",
+  plans: "mx-auto max-w-[980px]",
+  fluid: "mx-auto max-w-none",
 };
 
 interface AuthShellProps {
