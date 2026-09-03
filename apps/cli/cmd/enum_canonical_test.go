@@ -80,3 +80,38 @@ func TestEnumCanonical_GrantsAddSendsTheCanonicalPrincipalTypeAndEffect(t *testi
 		t.Error("the grant posted the caller's spelling of --effect, which the server's z.enum refuses")
 	}
 }
+
+// TestEnumCanonical_AlertsCreateSendsTheCanonicalSeverity is the third instance of the same
+// defect, and the one #3825 left. `alert_severity` is a case-sensitive `z.enum` on
+// `POST /api/cli/alerts`.
+//
+// THE EXIT CODE IS DELIBERATELY IGNORED. The fake control plane answers this route with the
+// default `{"ok": true}`, which carries no rule record, so the command takes its recordless-success
+// arm and exits 1 (see TestGovCmd_AlertsCreateRecordlessSuccessIsReportedNotDereferenced). An
+// `code != 0` guard copied from the two tests above would fail here for a reason that has nothing
+// to do with the enum — and, worse, a `code == 0` one would pass for the wrong reason. What this
+// suite is about is the bytes, so `s.saw` establishes the request happened and the body assertions
+// do the rest.
+//
+// Without this, `alerts.go`'s `runAlertsCreate(..., draft.Severity)` can go back to the package
+// global `alertSeverity` — which still holds the operator's spelling, because nothing normalises
+// it in place — and every other test in this package stays green: the helper test covers
+// `canonicalOneOf` only, the call-site test covers the DRAFT only, and
+// `TestGovCmd_AlertsCreateNamesItsChannel` already types `--severity critical`, so folding is a
+// no-op there.
+func TestEnumCanonical_AlertsCreateSendsTheCanonicalSeverity(t *testing.T) {
+	s, run := hygCliConfirmEnv(t)
+
+	_ = run("alerts", "create", "Job failures",
+		"--event", "system.job.failed", "--channel", "ops", "--severity", "CrItIcAl")
+
+	if !s.saw(http.MethodPost, "/api/cli/alerts") {
+		t.Fatalf("the create never reached the control plane; mutations = %v", s.mutations())
+	}
+	if !s.sentBody(`"severity":"critical"`) {
+		t.Error("the create did not send the enum's own spelling of --severity")
+	}
+	if s.sentBody(`"severity":"CrItIcAl"`) {
+		t.Error("the create posted the caller's spelling of --severity, which the server's z.enum refuses")
+	}
+}
