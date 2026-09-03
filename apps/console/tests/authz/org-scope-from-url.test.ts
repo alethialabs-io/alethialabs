@@ -154,6 +154,18 @@ describe("what is a refusal, and is not a fallback", () => {
 	// session cannot lock anyone out of the console. Following that substitution for an address is
 	// how a request for B gets served from some third org C. `resolveNamedOrgScope` is the existing
 	// guard for exactly this, and the URL segment now goes through it.
+	// The whole defect in one assertion. Answering a request addressed to someone else's org with
+	// the caller's own tenant is a wrong answer wearing a 200, and it is what falling back here
+	// would produce. The message is ANCHORED: `ForbiddenError` renders as `Forbidden: view on org
+	// (…)`, and pinning the start is what stops this ever reading as an authentication failure —
+	// `[org]/layout.tsx` bounces the bare word "Unauthorized" to sign-in.
+	it("an address naming an org the caller is not in THROWS, and never yields the session's org", async () => {
+		requestPath = "/not-my-org/evidence";
+		orgRow = [];
+		await expect(currentActor()).rejects.toThrow(/^Forbidden: .*not a member of/);
+		expect(getActiveScope).not.toHaveBeenCalled();
+	});
+
 	it("a scope resolver that SUBSTITUTES another org is refused, not followed", async () => {
 		requestPath = "/acme/hero-app/environments";
 		orgRow = [{ id: ORG_B }];
@@ -197,16 +209,5 @@ describe("the single-tenant edition is not a substitution", () => {
 		requestPath = "/not-my-org/evidence";
 		orgRow = [];
 		await expect(currentActor()).rejects.toBeInstanceOf(ForbiddenError);
-	});
-
-
-	// The whole defect in one assertion. Answering a request addressed to someone else's org with
-	// the caller's own tenant is a wrong answer wearing a 200, and it is what falling back here
-	// would produce.
-	it("an address naming an org the caller is not in THROWS, and never yields the session's org", async () => {
-		requestPath = "/not-my-org/evidence";
-		orgRow = [];
-		await expect(currentActor()).rejects.toThrow(/not a member of/);
-		expect(getActiveScope).not.toHaveBeenCalled();
 	});
 });
