@@ -1426,25 +1426,34 @@ jobs:
       # its SHAPE (`^#\d+$`) was enforced, by a pure test that cannot ask GitHub, and the contract
       # was already broken on dev: the sole entry cited #2717, closed 2026-08-29 (#3524).
       #
-      # TWO steps, because they answer different questions and only one needs the network. The
+      # The guard now has THREE modes, not two, after the maintainer's ruling on #3591:
+      # test/e2e/addon_exclusions.go must be OPEN; a CLIGap row in test/e2e/t2_cli_demo.go must be
+      # OPEN too (our own debt has to be able to close); a CloudManual row there need only be FILED
+      # (a cloud ceiling does not lift because its issue did — all four are legitimately closed).
+      #
+      # THREE steps, because they answer different questions and only one needs the network. The
       # self-test pins the scan and the verdict — including that an UNREADABLE state is an error and
-      # never "assume open" — and runs even where the live check cannot.
-      - name: Exclusion tracking-issue guard self-test (scan + verdict, no network)
+      # never "assume open" — and runs even where the live check cannot. It also carries the ONLY
+      # proof that the CLIGap arm discriminates: the live table has zero CLIGap rows, so it mutates
+      # the shipped source into one citing a closed issue and asserts the arm reds.
+      - name: Exclusion tracking-issue guard self-test (scan + verdict + the CLIGap arm, no network)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-exclusion-issues.mjs --self-test
-      # …and the same scan against the REAL file, which is also pure. It BLOCKS, because the
-      # tripwires it carries — "found NO Issue fields", and a field in a shape the scan cannot read
-      # — are the ones whose own message says "a guard that silently checks nothing is worse than no
-      # guard". Reachable only from the network step below, they could never red the build: a regex
-      # that stopped matching produced an annotation on a green job and nothing else.
-      - name: Every add-on exclusion's tracking issue is READABLE (no network)
+      # …and the same scans against the REAL files, which are also pure. It BLOCKS, because the
+      # tripwires it carries — "found NO Issue fields", a field in a shape the scan cannot read, a
+      # row whose Issue cannot be attributed to a verdict, and a verdict name this guard holds a
+      # contract over that the file no longer declares — are the ones whose own message says "a
+      # guard that silently checks nothing is worse than no guard". Reachable only from the network
+      # step below, they could never red the build: a regex that stopped matching produced an
+      # annotation on a green job and nothing else.
+      - name: Every exclusion and demo-table tracking issue is READABLE (no network)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-exclusion-issues.mjs --scan-only
       # …and the live question. `continue-on-error` DELIBERATELY: an issue closing is a state change
       # in GitHub, not in the diff, so this can go red on a PR that touched nothing — and a guard
       # that blocks unrelated work is a guard people route around. It annotates; the self-test above
       # is the blocking half. Revisit if it turns out to be ignored rather than acted on.
-      - name: Every add-on exclusion still names an OPEN issue
+      - name: Every exclusion, and every CLIGap, still names an OPEN issue
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         continue-on-error: true
         env:
