@@ -373,6 +373,42 @@
         "cents": 1250,
         "currency": "GBP",
         "want": "£12.50"
+      },
+      {
+        "id": "money/THREE-DECIMAL-CENTS-ROUND-AWAY-FROM-ZERO",
+        "cents": 816.5,
+        "currency": "USD",
+        "want": "$8.16"
+      },
+      {
+        "id": "money/three-decimal-cents-at-one-unit",
+        "cents": 100.5,
+        "currency": "USD",
+        "want": "$1.00"
+      },
+      {
+        "id": "money/three-decimal-cents-EUR",
+        "cents": 816.5,
+        "currency": "EUR",
+        "want": "€8.16"
+      },
+      {
+        "id": "money/NEGATIVE-HALF-CENT-ROUNDS-AWAY-FROM-ZERO-NOT-TOWARD-POSITIVE",
+        "cents": -812.5,
+        "currency": "USD",
+        "want": "-$8.13"
+      },
+      {
+        "id": "money/negative-three-decimal-cents",
+        "cents": -816.5,
+        "currency": "USD",
+        "want": "-$8.16"
+      },
+      {
+        "id": "money/three-decimal-cents-that-agreed-all-along",
+        "cents": 267.5,
+        "currency": "USD",
+        "want": "$2.68"
       }
     ],
     "monthlyRate": [
@@ -501,6 +537,48 @@
         "style": "estimate",
         "currency": "EUR",
         "want": "€12.50/mo"
+      },
+      {
+        "id": "monthlyRate/exact/THREE-DECIMAL-ROUNDS-AWAY-FROM-ZERO",
+        "amount": 8.165,
+        "style": "exact",
+        "currency": "USD",
+        "want": "$8.16/mo"
+      },
+      {
+        "id": "monthlyRate/estimate/three-decimal-rounds-away-from-zero",
+        "amount": 8.165,
+        "style": "estimate",
+        "currency": "USD",
+        "want": "$8.16/mo"
+      },
+      {
+        "id": "monthlyRate/exact/three-decimal-at-one-unit",
+        "amount": 1.005,
+        "style": "exact",
+        "currency": "USD",
+        "want": "$1.00/mo"
+      },
+      {
+        "id": "monthlyRate/estimate/JPY-ROUNDS-ONCE-AT-ZERO-PLACES",
+        "amount": 12.496,
+        "style": "estimate",
+        "currency": "JPY",
+        "want": "¥12/mo"
+      },
+      {
+        "id": "monthlyRate/exact/JPY-ROUNDS-ONCE-AT-ZERO-PLACES",
+        "amount": 12.496,
+        "style": "exact",
+        "currency": "JPY",
+        "want": "¥12/mo"
+      },
+      {
+        "id": "monthlyRate/estimate/JPY-SUB-UNIT-THAT-ROUNDS-UP-IS-NOT-LESS-THAN-ONE",
+        "amount": 0.6,
+        "style": "estimate",
+        "currency": "JPY",
+        "want": "¥1/mo"
       }
     ],
     "monthlyDelta": [
