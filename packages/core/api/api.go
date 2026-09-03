@@ -211,6 +211,15 @@ type Runner struct {
 	CreatedAt          time.Time `json:"created_at"`
 }
 
+// ClustersPage is one page of GET /api/cli/clusters. Mirrors cliClustersPageResponse.
+//
+// There are no Total/Limit/Offset twins beside Page, unlike JobsPage: that endpoint carries them
+// because a shipped CLI walks it by offset, and this one never had them to keep.
+type ClustersPage struct {
+	Clusters []ClusterSummary `json:"clusters"`
+	Page     PageInfo         `json:"page"`
+}
+
 type ClusterSummary struct {
 	ID                   string   `json:"id"`
 	ClusterName          string   `json:"cluster_name"`
@@ -746,15 +755,59 @@ func (c *Client) DeployRunner(name, cloudIdentityID, region, assignedRunnerID st
 
 // --- Clusters (Project Clusters) ---
 
-func (c *Client) GetClusters() ([]ClusterSummary, error) {
+// GetClustersPage fetches ONE page of the org's clusters.
+//
+// Prefer GetClusters unless you are rendering a pager: a page is a window, and a caller that
+// reads Clusters and stops has silently truncated the collection at the server's default page
+// size. That is the failure this method's existence makes explicit rather than accidental.
+func (c *Client) GetClustersPage(opts PageOpts) (*ClustersPage, error) {
 	endpoint := fmt.Sprintf("%s/cli/clusters", c.baseURL)
-	var successResp struct {
-		Clusters []ClusterSummary `json:"clusters"`
+	params := url.Values{}
+	opts.Apply(params)
+	if len(params) > 0 {
+		endpoint = fmt.Sprintf("%s?%s", endpoint, params.Encode())
 	}
-	if err := c.doGet(endpoint, &successResp); err != nil {
+	var page ClustersPage
+	if err := c.doGet(endpoint, &page); err != nil {
 		return nil, fmt.Errorf("failed to get clusters: %w", err)
 	}
-	return successResp.Clusters, nil
+	// A server older than #3672 answers with no `page` object at all, which decodes to the ZERO
+	// PageInfo — Mode "", Limit 0, Total 0. That is a third mode the vocabulary does not define,
+	// and it is not merely undefined but WRONG for a caller rendering a pager: Total 0 beside a
+	// non-empty Clusters slice, and IsCapped() false for a reason it never established. The old
+	// response is a complete, exact, single page of everything, so it is described as one.
+	// GetClusters is unaffected either way — NextCursor stays empty, so the walk still terminates
+	// in one request.
+	if page.Page.Mode == "" {
+		page.Page = PageInfo{
+			Mode:  PageModeExact,
+			Limit: len(page.Clusters),
+			Total: len(page.Clusters),
+		}
+	}
+	return &page, nil
+}
+
+// GetClusters returns EVERY cluster the org has, walking the cursor to exhaustion.
+//
+// The endpoint used to return the whole collection in one response and now returns a page
+// (#3672). Every caller here — `cluster list`, and `cluster get`'s selector match — means "all of
+// them", so the walk lives at this seam rather than in each command: a command that walked for
+// itself would be a second implementation of the three termination bugs AllPages documents, and a
+// command that did not walk would print a plausible, short list with no error.
+//
+// A page whose response carries no `page` object at all has an empty NextCursor either way — so
+// this also does the right thing against a server older than the conversion, in one request.
+// GetClustersPage additionally rewrites that absent page into an exact single page, so the pager
+// case is not left holding a mode the vocabulary does not define.
+func (c *Client) GetClusters() ([]ClusterSummary, error) {
+	return AllPages(func(cursor string) ([]ClusterSummary, PageInfo, error) {
+		page, err := c.GetClustersPage(PageOpts{Cursor: cursor})
+		if err != nil {
+			return nil, PageInfo{}, err
+		}
+		return page.Clusters, page.Page, nil
+	})
 }
 
 // GetCluster fetches a single cluster by its id, plus its compact ArgoCD/GitOps posture.
