@@ -9,7 +9,6 @@ import {
 	type WorkspaceOrg,
 } from "@/app/server/actions/workspace";
 import type { Entitlements } from "@/lib/authz/types";
-import { PERSONAL_ORG_SLUG } from "@/lib/routing";
 
 interface WorkspaceStore {
 	/** The org the session is scoped to (drives the PDP + RLS); null until loaded. */
@@ -90,20 +89,50 @@ export function useIsHosted(): boolean {
  * the user is already in, which is what a real navigation to that page would write
  * anyway. Idempotent, therefore harmless.
  *
- * The store remains the fallback for routes with no `[org]` segment (`/onboarding`,
- * `/dashboard`, the CLI hand-off), where `useParams()` has no `org` to give and the
- * session's selection is the only answer available.
+ * ## There is deliberately NO session fallback
+ *
+ * An earlier version of this fix kept the old store read as a fallback for routes with
+ * no `[org]` segment. That was a **positional** fix, not a causal one: the fallback
+ * still answered `~` while `activeOrgId` was null, so the defect was intact inside it
+ * and merely sat somewhere it did not currently fire. Worse, its doc invited the next
+ * reader to add a store-derived `<Link>` on a non-`[org]` route — which is #4089
+ * verbatim, since Next would prefetch the `/~/…` it painted during hydration.
+ *
+ * It was also dead code. `AppShell` is imported by exactly one module,
+ * `app/(private)/[org]/layout.tsx`, and every consumer of this hook renders inside it.
+ * The routes that fallback named render no consumer: `/onboarding` is under `(public)`,
+ * `/dashboard` is a server-only `redirect()` with no client tree, and the CLI hand-off
+ * imports none of this. So the branch could not execute, and tests pinning it pinned a
+ * path that cannot occur. (`tests/hooks/use-active-org-slug.test.tsx` now asserts that
+ * one-importer fact, because it is the premise this contract rests on.)
+ *
+ * So the fallback is gone and the absence of the segment is an error. Calling this
+ * where there is no `{org}` in the URL has no correct answer — every value it could
+ * return is a claim about which tenant the user is in, and `~` is a REAL tenant, not a
+ * null. Refusing is the only honest branch, and it is what makes the fix causal: the
+ * ambiguous value no longer exists anywhere to be rendered into an href.
+ *
+ * This also removes the last `?? PERSONAL_ORG_SLUG` alias in this file. `WorkspaceOrg.slug`
+ * is nullable (`organizations.slug` is `text().unique()` with no notNull), so that
+ * coalesce absorbed a real org with no slug onto the personal segment as well as a
+ * find-miss — the same aliasing the switcher was fixed for.
+ *
+ * Note it no longer reads the store at all; it stays in this module because it is still
+ * the workspace's org accessor and moving it would touch 19 imports for no behaviour.
  */
 export function useActiveOrgSlug(): string {
 	// `useParams()` returns null outside a router context (an isolated component test)
 	// and `string[]` for a catch-all segment, so narrow the value rather than trusting
 	// the type argument — it annotates the shape, it does not verify it.
 	const params = useParams<{ org?: string }>();
-	const urlOrg = typeof params?.org === "string" ? params.org : null;
-	const fromSession = useWorkspaceStore(
-		(s) =>
-			s.organizations.find((o) => o.id === s.activeOrgId)?.slug ??
-			PERSONAL_ORG_SLUG,
-	);
-	return urlOrg ?? fromSession;
+	const org = params?.org;
+	if (typeof org !== "string" || org.length === 0) {
+		throw new Error(
+			"useActiveOrgSlug() was called outside the /[org] route tree, so there is no org " +
+				"segment to read. Do NOT reintroduce a session fallback here: it can only answer " +
+				"`~`, which is a real tenant, and a prefetch of the href built from it moves the " +
+				"user's active organization (#4089). Take the org from the route instead.",
+		);
+	}
+	return org;
 }
