@@ -397,9 +397,18 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		cliDemo.Project, cliDemo.EnvName = project, env
 		// The SAME shape the seeded path merges — read from ALETHIA_E2E_CLUSTER_JSON, not restated.
 		cliDemo.ClusterSets = CLIDemoClusterSets(t)
-		// Before anything is bought: refuse a beat that names a command GROUP. `drift`, `cost` and
-		// `verify` are groups whose help exits 0, so such a beat performs nothing and PASSES.
+		// ── Three refusals before anything is bought, cheapest first. ──
+		//
+		// 1. A cloud whose `connector` beat cannot COMPLETE against this dimension's console. Costs
+		//    nothing, and it is the one that would otherwise be discovered twelve minutes in.
+		// 2. A beat that names a command GROUP. `drift`, `cost` and `verify` are groups whose help
+		//    exits 0, so such a beat performs nothing and PASSES.
+		// 3. A beat that names a FLAG the command does not register — the same class as (2) one
+		//    token to the right, and the one #4083 died on. Asked for every cloud, so the cheapest
+		//    dispatch proves all of them.
+		AssertCLIDemoConnectorIsDrivable(t, cliDemo)
 		AssertCLIDemoBeatsAreLeafCommands(ctx, t, cliDemo)
+		AssertCLIDemoBeatFlagsAreRegistered(ctx, t, cliDemo)
 		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoAuthoring)
 		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoEnqueue)
 		jobID = cliDemo.ApplyJobID
