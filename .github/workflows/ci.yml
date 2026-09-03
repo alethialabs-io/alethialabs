@@ -1435,6 +1435,21 @@ jobs:
       - name: Board decomposition validator (disjoint scopes, acyclic DAG)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/decompose-validate.mjs --self-test
+      # The scope-glob matcher those three surfaces now SHARE (scripts/lib/scope-overlap.mjs): the
+      # step above validates a proposal at seed time, coordinate.sh's report asks the same question
+      # continuously, and board-dashboard.mjs renders it. Until #4115 they were three answers — a
+      # real matcher, a separator-less `startsWith` copy, and, in the report, nothing at all while
+      # COORDINATION.md said otherwise. Two properties are pinned, because each is a way the check
+      # could go quietly wrong:
+      #   · the predicate. Expected values are hand-authored data in board-body-fixtures.json, and
+      #     the suite additionally runs them against two DELIBERATELY BROKEN matchers and fails if
+      #     either passes — a fixture set a broken matcher satisfies discriminates nothing.
+      #   · the three outcomes. A board whose scopes could not be READ must never render as a clean
+      #     one; the suite asserts the ✓ marker appears only for a verdict that earned it.
+      # Hermetic, like the steps above: no gh, no network, no board state.
+      - name: Board scope-overlap matcher (one predicate · three outcomes · mutation controls)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/lib/scope-overlap.mjs --self-test
       # The CLA gate runs from `pull_request_target` — a privileged token, and comment text written
       # by whoever opened the pull request. It is also DORMANT until `pnpm legal:activate-ip` writes
       # cla/ACTIVE, so nothing exercises it until the day it starts gating every external
