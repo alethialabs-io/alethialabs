@@ -18,8 +18,8 @@
 // truth, which is the shape CLAUDE.md's "one deriver, every consumer" rule exists to prevent.
 //
 // So the two derivations are siblings, not a chain, and that is worth more than the chain would
-// have been: `gen-go-brand`'s unit test asserts its seventeen computed bytes against the
-// seventeen written here, so a slip in either arithmetic shows up as a disagreement between two
+// have been: `gen-go-brand`'s unit test asserts its nineteen computed bytes against the
+// nineteen written here, so a slip in either arithmetic shows up as a disagreement between two
 // separately written implementations of the transfer function rather than as a plausible hex.
 //
 // The check is arithmetic, not a comparison against a checked-in table, because a table would
@@ -54,7 +54,7 @@ const TRANSCRIPTION = "packages/brand/src/ramp-srgb.ts";
 // A census floor, in the idiom `check-shared-surface.mjs` already uses. Without it, a regex
 // that stops matching — a reformat, a rename, a file moved — reports "0 entries, 0 problems"
 // and passes. "Nothing found" and "nothing wrong" must not share an exit code.
-const MIN_STEPS = 17;
+const MIN_STEPS = 19;
 
 /** The section comment that opens the ramp block in tokens.css, and the shape that closes it. */
 const RAMP_BLOCK_START = /^\s*\/\*\s*-+\s*Alethia neutral ink ramp/;
