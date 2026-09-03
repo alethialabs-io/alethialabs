@@ -973,6 +973,29 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-route-states.mjs --self-test
+      # RUBRIC.md's family F — the console filter standard — scored over the console's fifteen
+      # filter SURFACES (a `createFilterStore` call site, not a store module: one file holds
+      # seven). Before #3796 nothing in the tree measured any of F1-F7 and the scoreboard rendered
+      # the whole column `—`, which is the failure this wave exists to close: a report whose
+      # "nothing found" branch is indistinguishable from "nothing measured".
+      #
+      # WHAT THIS STEP FAILS ON is narrower than it looks, deliberately. The per-surface F1-F6
+      # verdicts are SCORED, not gated, here — they reach `apps/console/ui-conformance-baseline.json`
+      # through the audit-report step below, which CI diffs against the tree, so a conformance
+      # regression reds there naming the route that moved. What this one fails on is a BROKEN
+      # SUBJECT SET: no surfaces, a store nobody reads, an unreadable console root, or a
+      # facet-bearing server builder that `apps/console/tests/lib/queries/filter-standard-facets.test.ts`
+      # neither drives nor declares. F7 is a behaviour (RUBRIC.md's "Family F" says so, with the reason),
+      # so the only thing a static file can honestly say about it is whether the instrument still
+      # covers its subject — and that is checked in BOTH directions, here and from the test.
+      #
+      # Do NOT pipe it into `tail`/`head`: a pipe reports the exit code of the LAST command in it.
+      - name: The console filter standard (RUBRIC.md F1-F7) still has an instrument over its whole subject
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:filter-standard
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-filter-standard.mjs --self-test
       # The console's published conformance score. #3618 landed apps/console/scripts/audit-report.mjs
       # and the two artifacts it owns — apps/console/docs/ui-conformance/scoreboard.md and
       # apps/console/ui-conformance-baseline.json — with the two-mode contract PROGRAMME.md uses:

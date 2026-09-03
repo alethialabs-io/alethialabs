@@ -38,6 +38,7 @@
     "gen:shared-surface": "node scripts/check-shared-surface.mjs --write",
     "check:console-routes": "node scripts/lib/console-routes.mjs --summary",
     "check:route-states": "node scripts/check-route-states.mjs",
+    "check:filter-standard": "node scripts/check-filter-standard.mjs",
     "check:ramp-transcription": "node scripts/check-ramp-transcription.mjs",
     "check:one-board": "node scripts/check-one-board.mjs",
     "check:theme-inline": "node scripts/check-theme-inline-overrides.mjs",
