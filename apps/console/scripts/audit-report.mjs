@@ -234,6 +234,8 @@ const LIVE_REPORT_TS = "apps/console/e2e/audit/report.ts";
 const ALLOWLIST = "apps/console/shared-surface-allowlist.yaml";
 const ROUTE_STATES_BASELINE = "apps/console/route-states-baseline.yaml";
 const SHARED_SURFACE = "scripts/check-shared-surface.mjs";
+/** Read ONLY by `--self-test`, to catch `CL_GAP_PX` drifting away from the token it names. */
+const BRAND_TOKENS = "packages/brand/src/tokens.css";
 
 const BEGIN = "<!-- BEGIN GENERATED: audit-report · tree-derived · DO NOT EDIT BELOW -->";
 const END = "<!-- END GENERATED: audit-report -->";
@@ -463,6 +465,31 @@ export function livePredicateSections(notScored = NOT_SCORED_STATICALLY, section
 const RUN_DEPENDENT = /\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}|https?:\/\//;
 
 /**
+ * `--cl-gap` — the distance `.vx-clamp` draws its four corner marks OUTSIDE its own box
+ * (`packages/brand/src/tokens.css`: `--cl-gap: 4px`, `2px` under `.vx-clamp--tight`, painted at
+ * `inset: calc(-1 * var(--cl-gap))`). A scroll container measures that decoration as content, so a
+ * clamped child flush against the container's block end contributes `--cl-gap` of phantom vertical
+ * scroll — a scrollable region with nothing in it, which R3 then reports as a foreign scroll
+ * container for a reason that has nothing to do with the page's own layout (#3934).
+ *
+ * **HARDCODED, NOT READ FROM `tokens.css`, and the drift is guarded elsewhere.**
+ * `summariseLiveEvidence` is a pure function of one record's evidence — it is called inside
+ * `--import-live`, and its self-tests are hand-built shapes. Giving it a filesystem read of a
+ * package it does not otherwise know would put repo layout on the import path and couple it to
+ * whichever branch happens to own `tokens.css` at the time. The cost of a hardcode is silent
+ * drift, so `--self-test` reads the real file and fails if either number moves: loud, and off the
+ * import path entirely.
+ *
+ * **The ±1 is the recorder's own tolerance, not a threshold picked to fit.**
+ * `e2e/audit/predicates.ts` counts an element as scrolling only at `scrollHeight > clientHeight + 1`,
+ * and the two instances #3885 measured came in at 4px for a 4px gap and 3px for a 2px one. A
+ * distance inside this band is therefore the clamp's SIGNATURE and is reported as such — not as a
+ * proof, and never as a licence to ignore the overflow. #3930 rejected a pixel threshold that
+ * excuses small overflows, and this is the opposite move: name the cause, keep the FAIL.
+ */
+const CL_GAP_PX = /** @type {const} */ ({ base: 4, tight: 2, tolerance: 1 });
+
+/**
  * One line of diagnosis for a FAILing live verdict, out of the parts of its evidence that are
  * properties of the PAGE rather than of the run.
  *
@@ -523,9 +550,14 @@ export function summariseLiveEvidence(predicate, evidence) {
 				...bad.map((m) => m.containers.filter((c) => c.isShellScroller !== true).length),
 			);
 			const widths = at(bad.map((m) => m.width));
-			return most > 1
-				? `${plural(most, "scroll container")} where only the shell's is allowed${widths}`
-				: `${plural(foreign, "scroll container")} that ${isAre(foreign)} not the shell's${widths}`;
+			const verdict =
+				most > 1
+					? `${plural(most, "scroll container")} where only the shell's is allowed${widths}`
+					: `${plural(foreign, "scroll container")} that ${isAre(foreign)} not the shell's${widths}`;
+			// …and then HOW FAR they scroll, because that distance is what tells a layout defect
+			// apart from `--cl-gap`. Without it a 3px phantom scroll reads as a padding bug, which
+			// is the wrong fix twice over (#3934).
+			return `${verdict}${clampGapClause(bad)}`;
 		}
 		if (predicate === "R4") {
 			const rows = asArray(evidence, predicate);
@@ -608,6 +640,67 @@ export function summariseLiveEvidence(predicate, evidence) {
 		);
 	}
 	return detail;
+}
+
+/**
+ * The `--cl-gap` clause of an R3 summary: how far the offending containers actually scroll, and
+ * whether that distance is the clamp's decoration rather than the page's content.
+ *
+ * Everything here is derived from `ScrollContainer` as `e2e/audit/predicates.ts` already publishes
+ * it — `scrollHeight`, `clientHeight` and `overflowY` are recorded per container, so no new
+ * measurement plumbing is involved and no re-import is needed to start reading it.
+ *
+ * **FOUR OUTCOMES, AND THEY MUST READ DIFFERENTLY.** The dominant defect class in this repo is a
+ * "nothing found" branch that is indistinguishable from "nothing wrong", and a diagnosis clause has
+ * exactly that shape if it is allowed to fall silent:
+ *
+ *   · the distance is constant across widths AND inside the clamp's band → name `--cl-gap`. A
+ *     fixed-px decoration cannot be responsive, so a distance that does NOT vary with the viewport
+ *     is half the signature and the band is the other half;
+ *   · the distance is measurable but is not the clamp's → say the number and say it is NOT
+ *     `--cl-gap`, so the next reader stops looking there;
+ *   · the fields are missing → say the overflow is UNMEASURED. Treating a missing field as 0 would
+ *     silently rule the clamp out, which is the confident-wrong-number failure;
+ *   · every container in the record IS a shell scroller (`<main>` and the document can both scroll,
+ *     which is two containers and so still a FAIL) → say there was no foreign container to weigh.
+ *
+ * @param {{width: number, containers: {isShellScroller?: boolean, scrollHeight?: unknown, clientHeight?: unknown}[]}[]} bad
+ *   the rows the R3 verdict was built from — those with a foreign container, or with more than one.
+ * @returns {string} a clause to append to the verdict, opening with an em dash.
+ */
+function clampGapClause(bad) {
+	const foreign = bad.flatMap((m) => m.containers.filter((c) => c.isShellScroller !== true));
+	if (foreign.length === 0) {
+		return (
+			" — every container in the record IS a shell scroller (`<main>` and the document can both " +
+			"scroll), so there is no foreign overflow to weigh against `--cl-gap`"
+		);
+	}
+	const overflows = foreign.map((c) =>
+		Number.isFinite(c.scrollHeight) && Number.isFinite(c.clientHeight) ? Number(c.scrollHeight) - Number(c.clientHeight) : null,
+	);
+	if (overflows.some((v) => v === null)) {
+		return (
+			" — how far they scroll is UNMEASURED, not zero: at least one container carries no numeric " +
+			"`scrollHeight`/`clientHeight`, so `--cl-gap` can be neither named nor ruled out"
+		);
+	}
+	const distinct = [...new Set(overflows)].sort((a, b) => a - b);
+	const constant = distinct.length === 1;
+	const span = constant ? `${distinct[0]}px` : `${distinct[0]}–${distinct[distinct.length - 1]}px`;
+	if (!constant) {
+		return ` — scrolling by ${span}, a distance that VARIES with width and so is not \`--cl-gap\`, which is fixed px`;
+	}
+	const isGap = (v) =>
+		Math.abs(v - CL_GAP_PX.base) <= CL_GAP_PX.tolerance || Math.abs(v - CL_GAP_PX.tight) <= CL_GAP_PX.tolerance;
+	if (!isGap(distinct[0])) {
+		return ` — scrolling by ${span} at every width, which is not \`--cl-gap\`'s ${CL_GAP_PX.tight}–${CL_GAP_PX.base}px`;
+	}
+	return (
+		` — scrolling by exactly ${span} at every width, which is \`--cl-gap\`: a \`.vx-clamp\` child ` +
+		`flush against the container draws its corner marks OUTSIDE its box (${CL_GAP_PX.base}px, ` +
+		`${CL_GAP_PX.tight}px under \`--tight\`) and the container measures the decoration as content. #3934`
+	);
 }
 
 /** @param {unknown} e @param {string} predicate */
@@ -2445,18 +2538,95 @@ function selfTest() {
 		() => summariseLiveEvidence("R1", [{ width: 768, scrollWidth: 769, clientWidth: 768, offenders: [] }]),
 		"finds no overflowing width in its evidence",
 	);
+	// The container fixtures below are `e2e/audit/predicates.ts`'s own `ScrollContainer` — every
+	// field the recorder publishes, `scrollHeight`/`clientHeight`/`overflowY` included. A fixture
+	// carrying only `isShellScroller` is not the wire shape and could not exercise the `--cl-gap`
+	// clause at all, which is the whole subject of #3934.
+	//
+	// The first numbers are `[project]/environments`'s real ones from the committed run: a
+	// `@repo/ui/table` scroll wrapper at 86/83, three pixels of phantom scroll that #3885 measured
+	// by hand and wrote into `LIVE_DEBT` because nothing in the record said it.
+	const CL_GAP_DIAGNOSIS =
+		" — scrolling by exactly 3px at every width, which is `--cl-gap`: a `.vx-clamp` child flush " +
+		"against the container draws its corner marks OUTSIDE its box (4px, 2px under `--tight`) and " +
+		"the container measures the decoration as content. #3934";
 	ok(
 		"R3 counts the containers that are not the shell's, and agrees with itself about number",
 		summariseLiveEvidence("R3", [
-			{ width: 768, containers: [{ isShellScroller: false }] },
-			{ width: 1280, containers: [{ isShellScroller: true }] },
-		]) === "1 scroll container that is not the shell's at 768w",
+			{ width: 768, containers: [{ description: "div[data-slot=table-scroll]", isShellScroller: false, scrollHeight: 86, clientHeight: 83, overflowY: "auto" }] },
+			{ width: 1280, containers: [{ description: "main", isShellScroller: true, scrollHeight: 1402, clientHeight: 900, overflowY: "auto" }] },
+		]) === `1 scroll container that is not the shell's at 768w${CL_GAP_DIAGNOSIS}`,
+	);
+	ok(
+		"...and names the overflow as `--cl-gap` for the OTHER measured instance too — 4px, the base clamp",
+		summariseLiveEvidence("R3", [
+			{ width: 1920, containers: [{ description: "div[data-slot=scroll-area-viewport]", isShellScroller: false, scrollHeight: 36, clientHeight: 32, overflowY: "scroll" }] },
+		]) ===
+			"1 scroll container that is not the shell's at 1920w — scrolling by exactly 4px at every " +
+			"width, which is `--cl-gap`: a `.vx-clamp` child flush against the container draws its " +
+			"corner marks OUTSIDE its box (4px, 2px under `--tight`) and the container measures the " +
+			"decoration as content. #3934",
 	);
 	ok(
 		"...and two containers is the defect even when one of them IS the shell's — counted as a TOTAL, not as 'not the shell's'",
-		summariseLiveEvidence("R3", [{ width: 1920, containers: [{ isShellScroller: true }, { isShellScroller: false }] }]) ===
-			"2 scroll containers where only the shell's is allowed at 1920w",
+		summariseLiveEvidence("R3", [
+			{
+				width: 1920,
+				containers: [
+					{ description: "main", isShellScroller: true, scrollHeight: 1400, clientHeight: 900, overflowY: "auto" },
+					{ description: "div.overflow-y-auto", isShellScroller: false, scrollHeight: 1400, clientHeight: 900, overflowY: "auto" },
+				],
+			},
+		]) === "2 scroll containers where only the shell's is allowed at 1920w — scrolling by 500px at every width, which is not `--cl-gap`'s 2–4px",
 	);
+	// The three branches that must not read like the one above. A clause that fell silent, or that
+	// printed a confident number it did not measure, would turn "we could not tell" into "not the
+	// clamp" — which is the failure this file names most often, wearing a new coat.
+	ok(
+		"...a distance that VARIES with width is ruled OUT as `--cl-gap`, because a fixed-px decoration cannot be responsive",
+		summariseLiveEvidence("R3", [
+			{ width: 768, containers: [{ description: "div", isShellScroller: false, scrollHeight: 40, clientHeight: 36, overflowY: "auto" }] },
+			{ width: 1920, containers: [{ description: "div", isShellScroller: false, scrollHeight: 300, clientHeight: 36, overflowY: "auto" }] },
+		]) ===
+			"1 scroll container that is not the shell's at 768w, 1920w — scrolling by 4–264px, a " +
+			"distance that VARIES with width and so is not `--cl-gap`, which is fixed px",
+	);
+	ok(
+		"...a container with no numeric geometry reports the overflow UNMEASURED rather than ruling `--cl-gap` out",
+		summariseLiveEvidence("R3", [
+			{ width: 768, containers: [{ description: "div", isShellScroller: false, overflowY: "auto" }] },
+		]) ===
+			"1 scroll container that is not the shell's at 768w — how far they scroll is UNMEASURED, " +
+			"not zero: at least one container carries no numeric `scrollHeight`/`clientHeight`, so " +
+			"`--cl-gap` can be neither named nor ruled out",
+	);
+	ok(
+		"...and two shell scrollers is still a FAIL, with nothing foreign to weigh — `<main>` and the document can both scroll",
+		summariseLiveEvidence("R3", [
+			{
+				width: 1280,
+				containers: [
+					{ description: "html", isShellScroller: true, scrollHeight: 1400, clientHeight: 900, overflowY: "visible" },
+					{ description: "main", isShellScroller: true, scrollHeight: 1200, clientHeight: 860, overflowY: "auto" },
+				],
+			},
+		]) ===
+			"2 scroll containers where only the shell's is allowed at 1280w — every container in the " +
+			"record IS a shell scroller (`<main>` and the document can both scroll), so there is no " +
+			"foreign overflow to weigh against `--cl-gap`",
+	);
+	// The drift guard for the one thing above that is a hardcode. `CL_GAP_PX` is not read from
+	// `tokens.css` on the import path, deliberately — so it is checked against the real file HERE,
+	// where a change to the token fails a self-test instead of quietly making every future R3
+	// diagnosis wrong. Both declarations are asserted: the base rule's and `--tight`'s.
+	{
+		const tokens = readFileSync(path.join(REPO_ROOT, BRAND_TOKENS), "utf8");
+		const declared = [...tokens.matchAll(/--cl-gap:\s*(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
+		ok(
+			`${BRAND_TOKENS} still declares both \`--cl-gap\` values, and CL_GAP_PX still names them`,
+			declared.length === 2 && declared.includes(CL_GAP_PX.base) && declared.includes(CL_GAP_PX.tight),
+		);
+	}
 	ok(
 		"R4 counts pairs and names the widths, and carries NO element description",
 		summariseLiveEvidence("R4", [
