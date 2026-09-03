@@ -996,8 +996,6 @@ jobs:
             emit RESEND_API_KEY
             # Support: staff Slack ping on a new case/reply (lib/support/slack-notify.ts). Unset → no-op.
             emit SUPPORT_SLACK_WEBHOOK_URL
-            # Community card link on the support page (app/(private)/[org]/~/support). Unset → "coming soon".
-            emit NEXT_PUBLIC_COMMUNITY_URL
             # Admin staff dashboard @ admin.alethialabs.io (apps/admin): the Cloudflare-Access allowlist
             # (apps/admin/lib/auth/staff.ts) + the console URL its case deep-links target. COMPOSE_PROFILES
             # activates the profiled `admin` service on the box (docker compose reads it from this .env).
