@@ -410,8 +410,23 @@ func TestGovAnswered_AlertCreateInvalidSeverityIsRefusedBeforeTheFetch(t *testin
 
 	c := &fakeClient{channels: govAnsweredChannels()}
 	_, err := resolveAlertDraft(c, alertsCreateCmd, []string{"r"})
-	if err == nil || !strings.Contains(err.Error(), "not an alert severity") {
-		t.Fatalf("got %v, want the severity refusal", err)
+	if err == nil {
+		t.Fatal("a --severity outside the alert_severity enum was accepted")
+	}
+	// ASSERTED ON THE PROPERTY, NOT THE PHRASING. This pinned the substring
+	// "not an alert severity", which was the wording of the local `validAlertSeverity` #3825
+	// deleted in favour of the shared `canonicalOneOf` — so a behaviour-preserving change to the
+	// helper reds it, while the thing worth keeping is what the refusal has to TELL the operator:
+	// which flag was wrong, what they typed, and what they could have typed instead. That last
+	// part is the whole reason validating client-side beats surfacing the server's 400.
+	msg := err.Error()
+	if !strings.Contains(msg, "--severity") || !strings.Contains(msg, "urgent") {
+		t.Errorf("the refusal names neither the flag nor the value: %v", err)
+	}
+	for _, name := range alertSeverityNames() {
+		if !strings.Contains(msg, name) {
+			t.Errorf("the refusal does not name the legal value %q: %v", name, err)
+		}
 	}
 }
 
