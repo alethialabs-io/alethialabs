@@ -248,7 +248,7 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/[org]/~/support/abuse` | 134 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/support/submit` | 144 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/usage` | 183 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
-| `/cli/login` | 4 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 6/6 · 1.00 | **1.00** |
+| `/cli/login` | 5 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 6/6 · 1.00 | **1.00** |
 
 `·` marks a redirect-only route: no JSX, a `redirect()` call. It is N/A for six of the eight
 route-state predicates and passes the H rows on a closure of one file that renders nothing. It is

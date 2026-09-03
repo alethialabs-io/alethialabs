@@ -8,6 +8,7 @@ import {
 	CLI_DEVICE_RATE_LIMIT,
 	checkDeviceCodeBinding,
 	checkUserCodeBinding,
+	clientMetadataField,
 	deviceApprovalScopes,
 	deviceCodeFail,
 	deviceRequestStatus,
@@ -15,31 +16,14 @@ import {
 	isPendingRequestExpired,
 	isValidDeviceCode,
 	isValidUserCode,
+	type CliDeviceRequestView,
 	type CliGitProvider,
-	type DeviceApprovalScope,
 } from "@/lib/auth/cli-device-code";
 import { cliDeviceRateLimitKey } from "@/lib/auth/trusted-ip";
 import { getServiceDb } from "@/lib/db";
 import { cliLogins } from "@/lib/db/schema";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { NextResponse } from "next/server";
-import type { CliDeviceClientMetadata } from "@/types/jsonb.types";
-
-/** What `/cli/login` renders its consent screen from. */
-export interface CliDeviceRequestView {
-	/** Where the request is in its life — `expired` once the decision window has closed. */
-	status: "pending" | "approved" | "denied" | "expired";
-	/** The code the CLI registered. Server-verified, unlike the one in the URL. */
-	user_code: string;
-	/** WHICH account approval would bind — the user may be signed into more than one. */
-	account: { email: string | null; name: string | null };
-	/** What the requesting client said about itself, plus the IP we saw it from. */
-	requester: CliDeviceClientMetadata & { request_ip: string | null };
-	/** What approval actually hands over. */
-	scopes: DeviceApprovalScope[];
-	/** ISO-8601 deadline for the DECISION, or null on a row too old to carry one. */
-	expires_at: string | null;
-}
 
 /**
  * Reads one pending CLI device request so `/cli/login` can name what is being consented to.
@@ -153,11 +137,19 @@ export async function GET(req: Request) {
 			email: session.user.email ?? null,
 			name: session.user.name ?? null,
 		},
+		// Re-normalised on the way OUT, not just on the way in. `/api/auth/cli/start` runs
+		// `clientMetadataField` over these before storing them, so for anything registered
+		// since #4035 this is a no-op — but the column is JSONB written by an unauthenticated
+		// route, rows predating that normalisation are still in the table, and this response
+		// is the consent screen's whole description of who is asking. A newline or a bidi
+		// override reaching it would let the requester write a line the reader reads as the
+		// server's. `request_ip` goes through it too: it is server-DERIVED, but it is derived
+		// from a header, and the same bound costs nothing.
 		requester: {
-			client_name: row.client_metadata?.client_name ?? null,
-			client_version: row.client_metadata?.client_version ?? null,
-			user_agent: row.client_metadata?.user_agent ?? null,
-			request_ip: row.request_ip,
+			client_name: clientMetadataField(row.client_metadata?.client_name),
+			client_version: clientMetadataField(row.client_metadata?.client_version),
+			user_agent: clientMetadataField(row.client_metadata?.user_agent),
+			request_ip: clientMetadataField(row.request_ip),
 		},
 		scopes: deviceApprovalScopes(gitProvider),
 		expires_at: row.pending_expires_at?.toISOString() ?? null,
