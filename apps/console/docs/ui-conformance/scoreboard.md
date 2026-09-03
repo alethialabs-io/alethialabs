@@ -209,24 +209,24 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 
 | route | surface | S | T | H | F | R | overall |
 |---|---:|---|---|---|---|---|---|
-| `/[org]/[project]/environments` | 236 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 8/8 · 1.00 | — | 4/7 · 0.57 | **0.83** |
+| `/[org]/[project]/environments` | 237 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 8/8 · 1.00 | — | 4/7 · 0.57 | **0.83** |
 | `/[org]/[project]/settings` · | 1 | all N/A | 1/2 · 0.50 · 1 withheld | 8/8 · 1.00 | — | 3/4 · 0.75 | **0.86** |
 | `/[org]/~/settings` · | 1 | all N/A | 1/2 · 0.50 | 8/8 · 1.00 | — | 3/4 · 0.75 | **0.86** |
 | `/[org]/[project]/settings/preview` | 143 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 7/8 · 0.88 | — | 5/7 · 0.71 | **0.88** |
 | `/[org]/~/runners` | 272 | 4/4 · 1.00 | 5/5 · 1.00 | 5/8 · 0.63 | — | 7/7 · 1.00 | **0.88** |
 | `/[org]/~/connectors` | 210 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 5/7 · 0.71 | **0.91** |
-| `/[org]/~/new` | 358 | 3/4 · 0.75 | 4/4 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.91** |
-| `/[org]/~/settings/activity` | 277 | 4/4 · 1.00 | 4/4 · 1.00 | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.91** |
+| `/[org]/~/new` | 359 | 3/4 · 0.75 | 4/4 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.91** |
+| `/[org]/~/settings/activity` | 278 | 4/4 · 1.00 | 4/4 · 1.00 | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.91** |
 | `/[org]/~/settings/roles` | 224 | 4/4 · 1.00 | 4/4 · 1.00 | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.91** |
-| `/[org]/[project]/architecture` | 383 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.92** |
-| `/[org]/[project]/settings/general` | 215 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 8/8 · 1.00 | — | 5/7 · 0.71 | **0.92** |
+| `/[org]/[project]/architecture` | 384 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.92** |
+| `/[org]/[project]/settings/general` | 216 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 8/8 · 1.00 | — | 5/7 · 0.71 | **0.92** |
 | `/[org]/[project]/usage` | 148 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.92** |
-| `/[org]/~/alerts` | 290 | 2/4 · 0.50 | 5/5 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **0.92** |
+| `/[org]/~/alerts` | 291 | 2/4 · 0.50 | 5/5 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **0.92** |
 | `/[org]/~/support/cases/[id]` | 157 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 8/8 · 1.00 | — | 5/7 · 0.71 | **0.92** |
-| `/[org]/[project]/settings/activity` | 278 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.92** |
+| `/[org]/[project]/settings/activity` | 279 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 7/8 · 0.88 | — | 6/7 · 0.86 | **0.92** |
 | `/[org]/[project]` · | 1 | all N/A | 1/2 · 0.50 · 1 withheld | 8/8 · 1.00 | — | 4/4 · 1.00 | **0.93** |
 | `/dashboard/[[...rest]]` · | 127 | all N/A | 2/3 · 0.67 | 8/8 · 1.00 | — | 4/4 · 1.00 | **0.93** |
-| `/[org]/~/jobs/[id]` | 222 | 3/4 · 0.75 | 4/4 · 1.00 · 1 withheld | 8/8 · 1.00 | — | 7/7 · 1.00 | **0.96** |
+| `/[org]/~/jobs/[id]` | 223 | 3/4 · 0.75 | 4/4 · 1.00 · 1 withheld | 8/8 · 1.00 | — | 7/7 · 1.00 | **0.96** |
 | `/[org]/~/settings/billing/invoices` | 194 | 4/4 · 1.00 | 4/4 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.96** |
 | `/[org]/~/settings/classification` | 147 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 6/7 · 0.86 | **0.96** |
 | `/[org]/~/settings/general` | 135 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 6/7 · 0.86 | **0.96** |
@@ -240,7 +240,7 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/[org]/~/support/my-cases` | 149 | 4/4 · 1.00 | 5/5 · 1.00 | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.96** |
 | `/[org]/[project]/clusters` | 165 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 7/8 · 0.88 | — | 7/7 · 1.00 | **0.96** |
 | `/[org]/[project]/settings/access` | 214 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 8/8 · 1.00 | — | 6/7 · 0.86 | **0.96** |
-| `/[org]` | 283 | 4/4 · 1.00 | 5/5 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
+| `/[org]` | 284 | 4/4 · 1.00 | 5/5 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/settings/access` | 213 | 4/4 · 1.00 | 5/5 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/settings/billing` | 194 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/settings/teams` | 214 | 4/4 · 1.00 | 5/5 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
@@ -248,7 +248,7 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/[org]/~/support/abuse` | 136 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/support/submit` | 146 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/usage` | 185 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 7/7 · 1.00 | **1.00** |
-| `/cli/login` | 4 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 6/6 · 1.00 | **1.00** |
+| `/cli/login` | 5 | 4/4 · 1.00 | 4/4 · 1.00 | 8/8 · 1.00 | — | 6/6 · 1.00 | **1.00** |
 
 `·` marks a redirect-only route: no JSX, a `redirect()` call. It is N/A for six of the eight
 route-state predicates and passes the H rows on a closure of one file that renders nothing. It is
