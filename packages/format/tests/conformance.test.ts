@@ -336,6 +336,30 @@ describe("format conformance table", () => {
 			expect(table.zeroDecimalCharge).toEqual([...table.zeroDecimalCharge].sort());
 		});
 
+		// ── #4174. Upper case, and this is the assertion that is NOT redundant with the others.
+		//
+		// `stripeChargeDivisor` uppercases the QUERY and never the entries, so a lowercase entry is
+		// INERT here: it is in the array, it is published, and `stripeChargeDivisor("ugx")` still
+		// answers 100. It is not a code TypeScript treats as zero-decimal, and nothing above can see
+		// that. The sort check passes because "ugx" (U+0075) sorts after "XPF" (U+0058); the four
+		// `not.toContain` assertions are `===`-based and never match a lowercase spelling; and the
+		// equality assertion compares the artifact against the very export it was generated from,
+		// so it agrees with itself in whatever case that export was written in.
+		//
+		// It lands HERE as well as in the generator because this is the package that owns the
+		// literal. The generator's refusal only fires when somebody regenerates; this fires on
+		// `pnpm -F @repo/format test`, in the language whose file is wrong.
+		it("is upper case, because a lowercase entry is inert in the set this package consults", () => {
+			const notUpper = table.zeroDecimalCharge.filter((code) => code !== code.toUpperCase());
+			expect(notUpper, "a lowercase code is published but never consulted — see minor-units.ts").toEqual([]);
+			// The inertness itself, not only its spelling: every published code must actually reach
+			// the divisor it was published to declare. This is the assertion a reader can check
+			// against the defect, because it fails for a lowercase entry without naming case at all.
+			for (const code of table.zeroDecimalCharge) {
+				expect(fmt.stripeChargeDivisor(code), `${code} is published as zero-decimal but divides by 100`).toBe(1);
+			}
+		});
+
 		// The key is a shape change and the generator bumped VERSION for it. Go refuses a table
 		// below 2 rather than reading the absent key as an empty set; assert the producer's half of
 		// that here, so a VERSION reverted to 1 is red where it is written rather than only in Go.
