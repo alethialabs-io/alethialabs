@@ -16,8 +16,9 @@
 // `expected-request-error.test.ts` pins its own.
 
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
+import { describe, expect, it } from "vitest";
+import { isOutsideRequestScope } from "@/lib/authz/org-scope";
 
 const require_ = createRequire(import.meta.url);
 
@@ -45,28 +46,26 @@ describe("the headers() fallback is decided by Next's real message", () => {
 		expect(nextOutsideRequestMessage()).toContain("was called outside a request scope");
 	});
 
-	// The predicate, driven with Next's own words rather than with words this repo chose.
-	it("...and org-scope.ts's matcher recognises it", () => {
-		const source = readFileSync("lib/authz/org-scope.ts", "utf8");
-		const declared = /return \/(.+?)\/i\.test\(message\);/.exec(source);
-		expect(declared, "isOutsideRequestScope's regex literal moved — update this test").not.toBeNull();
-		const matcher = new RegExp(declared?.[1] ?? "", "i");
-		const real = `\`headers\` ${nextOutsideRequestMessage()}`;
-		expect(matcher.test(real)).toBe(true);
+	// The real predicate, called with Next's own words rather than with words this repo chose.
+	it("...and the real `isOutsideRequestScope` recognises it", () => {
+		expect(isOutsideRequestScope(new Error(`\`headers\` ${nextOutsideRequestMessage()}`))).toBe(true);
 	});
 
 	// The direction that matters more. A matcher wide enough to swallow a REAL failure puts every
 	// reader back on session-derived tenancy without a word.
-	it("...and does NOT match an unrelated failure", () => {
-		const source = readFileSync("lib/authz/org-scope.ts", "utf8");
-		const declared = /return \/(.+?)\/i\.test\(message\);/.exec(source);
-		const matcher = new RegExp(declared?.[1] ?? "", "i");
+	it("...and does NOT swallow an unrelated failure", () => {
 		for (const other of [
 			"connect ECONNREFUSED 127.0.0.1:5432",
 			"Invariant: static generation store missing",
 			"Route used `headers` inside a cached function",
 		]) {
-			expect(matcher.test(other), `swallowed: ${other}`).toBe(false);
+			expect(isOutsideRequestScope(new Error(other)), `swallowed: ${other}`).toBe(false);
 		}
+	});
+
+	// It is handed whatever was thrown, which is not always an Error.
+	it("...and survives a non-Error throw", () => {
+		expect(isOutsideRequestScope("some string")).toBe(false);
+		expect(isOutsideRequestScope(undefined)).toBe(false);
 	});
 });
