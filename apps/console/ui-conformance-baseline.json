@@ -491,7 +491,7 @@
 		{
 			"route": "/[org]",
 			"redirectOnly": false,
-			"surfaceFiles": 281,
+			"surfaceFiles": 282,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -609,7 +609,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"redirectOnly": false,
-			"surfaceFiles": 381,
+			"surfaceFiles": 382,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -727,7 +727,7 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"redirectOnly": false,
-			"surfaceFiles": 234,
+			"surfaceFiles": 235,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -963,7 +963,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 276,
+			"surfaceFiles": 277,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1022,7 +1022,7 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"redirectOnly": false,
-			"surfaceFiles": 213,
+			"surfaceFiles": 214,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1199,7 +1199,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"redirectOnly": false,
-			"surfaceFiles": 288,
+			"surfaceFiles": 289,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1494,7 +1494,7 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"redirectOnly": false,
-			"surfaceFiles": 220,
+			"surfaceFiles": 221,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1553,7 +1553,7 @@
 		{
 			"route": "/[org]/~/new",
 			"redirectOnly": false,
-			"surfaceFiles": 356,
+			"surfaceFiles": 357,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1789,7 +1789,7 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 275,
+			"surfaceFiles": 276,
 			"families": {
 				"S": {
 					"instrumented": 4,

@@ -5,6 +5,7 @@ import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { projectEnvironments, projects } from "@/lib/db/schema";
 import { environmentStage } from "@/lib/db/schema/enums";
+import { MissingDefaultEnvironmentError } from "@/lib/queries/default-environment";
 
 /** A v4-ish UUID, to decide whether to match an `[id]` segment against the id column
  * (comparing a non-uuid string to a uuid column would error at the DB). */
@@ -69,22 +70,35 @@ export async function resolveCliProject(orgId: string, idOrName: string) {
 }
 
 /**
- * The environment a single-value CLI command targets: the project's `is_default` environment, else
- * its earliest one. Component tables are UNIQUE on `(project_id, environment_id)`, so authoring a
- * component without this leaves it in a NULL env — invisible to the env-scoped deploy. Mirrors the
- * console's default-env pick (`server/actions/projects.ts`). Returns null only if the project somehow
- * has no environment (createProject always seeds one).
+ * The environment a single-value CLI command targets: the project's `is_default` environment.
+ * Component tables are UNIQUE on `(project_id, environment_id)`, so authoring a component without
+ * this leaves it in a NULL env — invisible to the env-scoped deploy. Mirrors the console's
+ * default-env pick (`server/actions/projects.ts`). Returns null only if the project has no
+ * environment at all (createProject always seeds one); throws
+ * {@link MissingDefaultEnvironmentError} if it has some and none is the default.
  */
 export async function resolveDefaultEnvironmentId(
 	projectId: string,
 ): Promise<string | null> {
+	// `desc(is_default)` was a SORT, not a filter: it put a default first when there was one and
+	// otherwise handed back the earliest environment as if it were the answer (#4127). The database
+	// now guarantees a default exists whenever any environment does
+	// (`project_environments_one_default_check`, lib/db/programmables.sql), so the top row's
+	// `is_default` is read back and a false answer is REPORTED rather than returned. Selecting
+	// `WHERE is_default` instead would have collapsed the violation back into `null` — which this
+	// function's callers read as "the project has no environments", the wrong story entirely.
 	const [env] = await getServiceDb()
-		.select({ id: projectEnvironments.id })
+		.select({
+			id: projectEnvironments.id,
+			is_default: projectEnvironments.is_default,
+		})
 		.from(projectEnvironments)
 		.where(eq(projectEnvironments.project_id, projectId))
 		.orderBy(desc(projectEnvironments.is_default), asc(projectEnvironments.created_at))
 		.limit(1);
-	return env?.id ?? null;
+	if (!env) return null;
+	if (!env.is_default) throw new MissingDefaultEnvironmentError(projectId);
+	return env.id;
 }
 
 /** The outcome of picking a CLI write's target environment. The two failure modes are kept

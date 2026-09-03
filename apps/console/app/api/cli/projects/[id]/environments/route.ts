@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { authorizeCli } from "@/lib/authz/guard";
 import { resolveCliProject } from "@/lib/cli/resolve-project";
@@ -222,7 +222,14 @@ export async function POST(
 				name,
 				stage: parsed.data.stage,
 				status: "DRAFT",
-				is_default: false,
+				// TRUE WHEN THE PROJECT HAS NONE — see the same expression in
+				// app/server/actions/projects.ts. A flat `false` made a project that had reached
+				// zero environments unrepairable: the constraint trigger refuses the very insert
+				// that would fix it, and the CLI surfaced that as a raw 500.
+				is_default: sql<boolean>`NOT EXISTS (
+					SELECT 1 FROM public.project_environments e
+					 WHERE e.project_id = ${project.id}::uuid AND e.is_default
+				)`,
 				region: parsed.data.region ?? null,
 				fabric_id: fabricId,
 				placement_mode: mode,
