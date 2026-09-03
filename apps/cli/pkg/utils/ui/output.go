@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -20,14 +21,18 @@ const (
 	FormatCSV   = "csv"
 )
 
+// validFormats is the accepted --output set as DATA rather than as switch arms, so that
+// ValidFormat and the test that pins HumanReadable range over the same one thing.
+//
+// A switch cannot be enumerated. While this was a switch, a test asking "every format this file
+// accepts" had to re-type the list and could then only filter its own guesses through
+// ValidFormat — so a fourth format whose spelling was not already guessed left the test green,
+// which is precisely the decay the test was written to prevent.
+var validFormats = []string{FormatTable, FormatJSON, FormatCSV}
+
 // ValidFormat reports whether s is a supported --output value.
 func ValidFormat(s string) bool {
-	switch s {
-	case FormatTable, FormatJSON, FormatCSV:
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(validFormats, s)
 }
 
 // HumanReadable reports whether outFmt is a format a PERSON reads, so a row builder knows whether
@@ -82,9 +87,16 @@ var tableHeaderTextStyle = lipgloss.NewStyle().Foreground(InkMuted).Bold(true)
 // three times on whichever PR a reviewer happened to open — #3736 shipped a
 // humanised cell into a shared row builder and was corrected for exactly this —
 // and a rule re-derived per review is a rule that holds wherever review looked.
-// Not every builder is converted: RelativeTime in activity.go and connector_list.go,
-// SmartTime in project_list.go and StampOrDash in token.go still humanise
-// unconditionally, and are named here rather than left to be rediscovered.
+// Not every builder is converted, and the list below is the set that was MEASURED, not a closed
+// one — naming a remainder as though it were exhaustive is the same failure mode as the
+// per-review enforcement this paragraph replaces, so check the builder you are editing.
+//
+// Time formatters still humanising unconditionally: RelativeTime in activity.go,
+// connector_list.go and runner_list.go, SmartTime in project_list.go, StampOrDash in token.go.
+// Separately and more widely, the OrDash/StrOrDash/SymbolDash family substitutes U+2014 into
+// rows that reach the CSV branch unconditionally in a dozen more files — addon.go,
+// project_env.go, cloud.go, jobs_list.go, grants.go, clusters_list.go, probes.go, repo.go,
+// fleet.go, promotion.go, project_component.go and classification.go among them.
 func Render(out io.Writer, format string, spec TableSpec, records any) error {
 	switch format {
 	case "", FormatTable:

@@ -6,6 +6,7 @@ package ui
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -175,28 +176,47 @@ func TestPadCell(t *testing.T) {
 // TestHumanReadableIsTrueForEveryFormatARenderedRowReaches pins the question row builders ask
 // before humanising a cell.
 //
-// The list is derived from ValidFormat rather than typed beside it, so a fourth --output value
-// added to this file fails here until someone decides which side of the split it is on — a
-// hand-written list would have gone on answering for the three it knew about.
+// The set is ranged over from `validFormats` — the same slice ValidFormat itself uses — rather
+// than re-typed here, so a fourth --output value fails this test BY NAME until someone decides
+// which side of the split it is on.
+//
+// The previous construction only looked derived: it filtered its own hand-typed candidate list
+// {table,json,csv,"",yaml,xml,Table} through ValidFormat and asserted the survivors numbered
+// four. A format whose spelling was not already among those guesses — `ndjson`, say — never
+// entered the list, the count stayed at four, and the test passed while HumanReadable("ndjson")
+// silently answered true by falling out of `outFmt != FormatCSV`.
 func TestHumanReadableIsTrueForEveryFormatARenderedRowReaches(t *testing.T) {
-	valid := []string{}
-	for _, f := range []string{FormatTable, FormatJSON, FormatCSV, "", "yaml", "xml", "Table"} {
-		if ValidFormat(f) || f == "" {
-			valid = append(valid, f)
+	// The answer this file has DECIDED for each format. A map keyed by format, so that a format
+	// added to validFormats without an entry here fails below naming the format, not a count.
+	decided := map[string]bool{
+		FormatTable: true,
+		// csv is the ONE machine reading of spec.Rows: a humanised cell here reaches a script.
+		FormatCSV: false,
+		// json never reaches row builders — Render marshals the typed records — so its answer is
+		// unobservable and true is the harmless one.
+		FormatJSON: true,
+		// Render accepts the empty format and defaults it to table.
+		"": true,
+	}
+	// "" is deliberately not in validFormats: it is not a value a user passes, but Render reaches
+	// row builders with it, so it needs a decided answer like any other.
+	reaches := append(slices.Clone(validFormats), "")
+
+	for _, f := range reaches {
+		want, ok := decided[f]
+		if !ok {
+			t.Fatalf("ValidFormat now accepts %q and nothing here says whether it renders for a "+
+				"person or for a machine — decide, and add it to `decided`", f)
+		}
+		if got := HumanReadable(f); got != want {
+			t.Errorf("HumanReadable(%q) = %v, want %v", f, got, want)
 		}
 	}
-	if len(valid) != 4 {
-		t.Fatalf("this file knows %d --output values (%v); ValidFormat now accepts a different "+
-			"set, so decide whether the new one renders for a person or for a machine", len(valid), valid)
-	}
-	// csv is the ONE machine reading of spec.Rows. json never reaches them — Render marshals the
-	// typed records — so its answer here is unobservable and true is the harmless one.
-	if HumanReadable(FormatCSV) {
-		t.Error("csv is the machine reading of spec.Rows; a humanised cell reaches a script")
-	}
-	for _, f := range []string{FormatTable, FormatJSON, ""} {
-		if !HumanReadable(f) {
-			t.Errorf("%q renders for a person", f)
+	// The other direction: a decided answer for a format the file no longer accepts is a stale
+	// entry, and would otherwise sit here answering for nothing.
+	for f := range decided {
+		if !slices.Contains(reaches, f) {
+			t.Errorf("`decided` answers for %q, which no longer reaches a row builder", f)
 		}
 	}
 }
