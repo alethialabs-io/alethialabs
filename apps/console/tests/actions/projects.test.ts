@@ -318,7 +318,13 @@ describe("createProject", () => {
 
 	it("derives a collision-free slug, seeds the default env + hierarchy edge, persists components, and audits", async () => {
 		const { valuesSpy, insertSpy } = setupDb({
-			select: new Map([[projects, [{ slug: "my-app" }]]]), // an existing project already owns "my-app"
+			// An existing project already owns the SLUG "my-app" — but is named something else, so
+			// the create is a slug collision (de-duplicated to `my-app-2`) and NOT a name
+			// collision (which #3145 now refuses outright). The row carries `project_name`
+			// because insertProjectWithDefaultFabric selects it: a fixture missing a column the
+			// query asks for is not a smaller version of the wire shape, it is a different one,
+			// and the production code reading it crashed rather than being "leniently" typed.
+			select: new Map([[projects, [{ slug: "my-app", project_name: "Some Other Project" }]]]),
 			insert: new Map<unknown, RowsResolver>([
 				[
 					projects,
@@ -2295,7 +2301,10 @@ describe("duplicateProjectForProvider", () => {
 					project_name: "My App",
 				},
 			],
-			[{ slug: "my-app" }], // createProject's existing-slug list
+			// createProject's existing-project list: slug + project_name, the two columns
+			// insertProjectWithDefaultFabric selects (#3145). Named differently from the project
+			// under test, so this is a slug collision and not a name collision.
+			[{ slug: "my-app", project_name: "Some Other Project" }],
 		];
 
 		const { valuesSpy } = setupDb({

@@ -5,7 +5,10 @@
 import { notFound } from "next/navigation";
 import { evaluate } from "@/lib/compat";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
-import { helmRegistryProviderConfigSchema } from "@/lib/validations/project-form.schema";
+import {
+	helmRegistryProviderConfigSchema,
+	PROJECT_NAME_MAX_LENGTH,
+} from "@/lib/validations/project-form.schema";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
@@ -67,6 +70,8 @@ import { listAssignmentsFor } from "@/lib/queries/classification";
 import {
 	type EnvironmentSpec,
 	insertProjectWithDefaultFabric,
+	isProjectNameTaken,
+	ProjectNameTakenError,
 } from "@/lib/queries/projects";
 import {
 	HETZNER_DB_ENGINES,
@@ -104,7 +109,7 @@ import {
 } from "@/lib/validations/names";
 import { slugify } from "@/lib/utils/slugify";
 import { repoLabel } from "@/lib/repos/repo-label";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 
 /**
  * Mirrors the Go provisioner gate (packages/core/provisioner/placement.go):
@@ -2803,6 +2808,12 @@ export async function getProjectGeneral(
 /**
  * Renames a project. The slug is intentionally left stable so existing URLs / bookmarks keep
  * resolving — only the display name changes.
+ *
+ * This was the SECOND path that minted duplicate names (#3145): it wrote the new name with no
+ * uniqueness check at all, so one project could be renamed onto another's name deliberately — the
+ * stable slug is what made that survivable, and what made it invisible. It is now refused, with the
+ * same error and the same wording the create path uses, because "that name is taken" should not
+ * depend on which screen you are standing on.
  */
 export async function updateProjectName(
 	projectId: string,
@@ -2811,16 +2822,63 @@ export async function updateProjectName(
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const project_name = name.trim();
 	if (!project_name) throw new Error("A project name is required");
-	if (project_name.length > 100)
-		throw new Error("Project name must be 100 characters or fewer");
+	if (project_name.length > PROJECT_NAME_MAX_LENGTH)
+		throw new Error(
+			`Project name must be ${PROJECT_NAME_MAX_LENGTH} characters or fewer`,
+		);
 	return withActorScope(actor, async (tx) => {
-		const [row] = await tx
-			.update(projects)
-			.set({ project_name, updated_at: new Date() })
+		// Scoped on the project's OWN org rather than trusting the RLS session alone — the same
+		// reasoning insertProjectWithDefaultFabric records, and it keeps the predicate identical
+		// to the index whether or not a future caller arrives service-role.
+		const [current] = await tx
+			.select({ org_id: projects.org_id })
+			.from(projects)
 			.where(eq(projects.id, projectId))
-			.returning({ project_name: projects.project_name });
-		if (!row) notFound(); // stale/deleted id → 404, not a captured error
-		return row;
+			.limit(1);
+		if (!current) notFound();
+
+		// Case-insensitive and excluding the project itself, matching
+		// `projects_org_id_project_name_key` (UNIQUE on (org_id, lower(project_name))). Excluding
+		// self matters: re-saving a name unchanged, or changing only its case, must not be refused
+		// as a collision with itself.
+		//
+		// The null-org branch mirrors the INDEX rather than being tidier than it. `org_id` is
+		// nullable in the column list, and a btree unique treats NULLs as DISTINCT — so a row with
+		// no org is not constrained by that index at all, and pre-checking it with
+		// `IS NOT DISTINCT FROM` would refuse a rename Postgres would happily accept. In practice
+		// the state is unreachable (the projects_set_org_id trigger coalesces to user_id, which is
+		// NOT NULL, and programmables.sql sweeps any historical NULL), which is exactly why the
+		// friendly check is skipped rather than guessed: the constraint below remains the
+		// authority either way.
+		if (current.org_id !== null) {
+			const clash = await tx
+				.select({ id: projects.id })
+				.from(projects)
+				.where(
+					and(
+						eq(projects.org_id, current.org_id),
+						sql`lower(${projects.project_name}) = lower(${project_name})`,
+						ne(projects.id, projectId),
+					),
+				)
+				.limit(1);
+			if (clash.length > 0) throw new ProjectNameTakenError(project_name);
+		}
+
+		try {
+			const [row] = await tx
+				.update(projects)
+				.set({ project_name, updated_at: new Date() })
+				.where(eq(projects.id, projectId))
+				.returning({ project_name: projects.project_name });
+			if (!row) notFound(); // stale/deleted id → 404, not a captured error
+			return row;
+		} catch (err) {
+			// The read above is optimistic at READ COMMITTED; the index is what enforces it. Map
+			// the loser of a concurrent rename onto the same error rather than a raw 23505.
+			if (isProjectNameTaken(err)) throw new ProjectNameTakenError(project_name);
+			throw err;
+		}
 	});
 }
 

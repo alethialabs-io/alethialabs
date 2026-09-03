@@ -175,33 +175,155 @@ export interface CreateProjectCoreResult {
  * The org-scoped slug select filters `org_id` EXPLICITLY so it is correct under a service-role
  * (BYPASSRLS) transaction as well as an RLS-scoped one — never rely on RLS alone for uniqueness here.
  */
+export class ProjectNameTakenError extends Error {
+	constructor(readonly project_name: string) {
+		super(
+			`A project named "${project_name}" already exists in this organization. ` +
+				"Project names are unique per organization and are compared without regard to case.",
+		);
+		this.name = "ProjectNameTakenError";
+	}
+}
+
+/** Every error in a `cause` chain, outermost first.
+ *
+ * Drizzle WRAPS the driver error: what a failing `.insert()` throws is a DrizzleQueryError whose
+ * message is "Failed query: insert into ..." and whose `cause` is the postgres.js error carrying
+ * `code` and `constraint_name`. Inspecting only the thrown object finds neither, so a check written
+ * against the driver's shape silently never fires and every unique violation falls through as an
+ * unmapped 500. That is not hypothetical — it is what the integration suite caught here. The depth
+ * bound is paranoia about a self-referential cause, not a real chain length. */
+function causeChain(err: unknown): unknown[] {
+	const chain: unknown[] = [];
+	let cur = err;
+	for (let i = 0; i < 8 && cur !== null && cur !== undefined; i++) {
+		chain.push(cur);
+		if (typeof cur !== "object" || !("cause" in cur)) break;
+		const next = (cur as { cause: unknown }).cause;
+		if (next === cur) break;
+		cur = next;
+	}
+	return chain;
+}
+
+/** The Postgres error code, if this error or anything it wraps carries one (23505 = unique
+ * violation). */
+function pgErrorCode(err: unknown): string | undefined {
+	for (const link of causeChain(err)) {
+		if (typeof link === "object" && link !== null && "code" in link) {
+			const code = (link as { code: unknown }).code;
+			if (typeof code === "string") return code;
+		}
+	}
+	return undefined;
+}
+
+/** Whether this error is the project-name unique violation — exported so `updateProjectName`,
+ * the other path that can mint a duplicate, maps the race onto the same error as create. */
+export function isProjectNameTaken(err: unknown): boolean {
+	return violates(err, "projects_org_id_project_name_key");
+}
+
+/** Whether a driver error names a particular constraint. `constraint_name` is what postgres-js
+ * surfaces; the message is checked too because a wrapped error can lose the field. */
+function violates(err: unknown, constraint: string): boolean {
+	if (pgErrorCode(err) !== "23505") return false;
+	for (const link of causeChain(err)) {
+		if (typeof link !== "object" || link === null) continue;
+		if (
+			"constraint_name" in link &&
+			(link as { constraint_name: unknown }).constraint_name === constraint
+		) {
+			return true;
+		}
+		// A wrapper that dropped the field can still name the constraint in its text. Checked
+		// second, so the structured answer always wins.
+		if (link instanceof Error && link.message.includes(constraint)) return true;
+	}
+	return false;
+}
+
 export async function insertProjectWithDefaultFabric(
 	tx: Tx,
 	input: CreateProjectCoreInput,
 ): Promise<CreateProjectCoreResult> {
-	// Unique-per-org URL slug, skipping reserved project-child segments (e.g. "settings") so a
-	// project slug can never shadow a project-scoped route.
+	// One org-scoped read serves both uniqueness questions, and they are answered DIFFERENTLY on
+	// purpose (#3145). The slug is DERIVED, so a collision is de-duplicated silently — that is what
+	// `api-2` is for, and no user ever typed it. The NAME is the user's, and is the token
+	// `alethia project get <name>` addresses, so a collision is REFUSED rather than quietly
+	// rewritten: silently creating "api" when "api" exists gives them two projects they cannot tell
+	// apart from the terminal.
 	const existing = await tx
-		.select({ slug: projects.slug })
+		.select({ slug: projects.slug, project_name: projects.project_name })
 		.from(projects)
 		.where(eq(projects.org_id, input.orgId));
-	const slug = pickFreeSlug(slugify(input.project_name, "project"), [
+
+	// Case-insensitive, matching `projects_org_id_project_name_key` (UNIQUE on
+	// (org_id, lower(project_name))). Checking with a different predicate than the index enforces
+	// is how a friendly message gets skipped and a raw 23505 reaches the user instead.
+	const wanted = input.project_name.toLowerCase();
+	if (existing.some((r) => r.project_name.toLowerCase() === wanted)) {
+		throw new ProjectNameTakenError(input.project_name);
+	}
+
+	// Unique-per-org URL slug, skipping reserved project-child segments (e.g. "settings") so a
+	// project slug can never shadow a project-scoped route.
+	const takenSlugs = [
 		...existing.map((r) => r.slug).filter((s): s is string => Boolean(s)),
 		...RESERVED_PROJECT_CHILD_SLUGS,
-	]);
+	];
+	const slug = pickFreeSlug(slugify(input.project_name, "project"), takenSlugs);
 
-	const [project] = await tx
-		.insert(projects)
-		.values({
-			project_name: input.project_name,
-			region: input.region,
-			iac_version: input.iac_version,
-			cloud_identity_id: input.cloud_identity_id ?? null,
-			slug,
-			user_id: input.owner,
-			org_id: input.orgId,
-		})
-		.returning();
+	// Both checks above are read-then-write inside the caller's transaction, which at READ
+	// COMMITTED is optimistic: two concurrent creates of "api" both read the same rows and both
+	// compute the same answer. The constraints are what actually enforce uniqueness, so the loser
+	// used to surface a raw Postgres error — a bare 500 through `POST /api/cli/projects`. Mapping
+	// it here means the race and the ordinary case give the SAME message.
+	//
+	// A name violation cannot be another tenant's: the index is keyed on (org_id, ...), so a
+	// conflict is necessarily inside the caller's own org and the message leaks nothing.
+	const insertProject = (withSlug: string) =>
+		tx
+			.insert(projects)
+			.values({
+				project_name: input.project_name,
+				region: input.region,
+				iac_version: input.iac_version,
+				cloud_identity_id: input.cloud_identity_id ?? null,
+				slug: withSlug,
+				user_id: input.owner,
+				org_id: input.orgId,
+			})
+			.returning();
+
+	let inserted: Awaited<ReturnType<typeof insertProject>>;
+	try {
+		inserted = await insertProject(slug);
+	} catch (err) {
+		if (violates(err, "projects_org_id_project_name_key")) {
+			throw new ProjectNameTakenError(input.project_name);
+		}
+		// A slug collision is the derived value losing the race, and the remedy is the same one
+		// pickFreeSlug already implements — take the next free suffix. Re-read rather than
+		// incrementing blindly, so the retry sees whatever the winner actually took. ONE retry: a
+		// second failure is no longer a race, and a loop here would hide a real defect.
+		if (violates(err, "projects_org_id_slug_key")) {
+			const now = await tx
+				.select({ slug: projects.slug })
+				.from(projects)
+				.where(eq(projects.org_id, input.orgId));
+			inserted = await insertProject(
+				pickFreeSlug(slugify(input.project_name, "project"), [
+					...now.map((r) => r.slug).filter((s): s is string => Boolean(s)),
+					...RESERVED_PROJECT_CHILD_SLUGS,
+				]),
+			);
+		} else {
+			throw err;
+		}
+	}
+
+	const [project] = inserted;
 	if (!project) throw new Error("Failed to create project");
 
 	// The Fabric(s) are the front door's infra units. Project-level region/cloud stay populated for

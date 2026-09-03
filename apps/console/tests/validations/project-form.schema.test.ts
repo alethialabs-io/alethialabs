@@ -3,9 +3,10 @@
 
 import { describe, it, expect } from "vitest";
 import {
-	projectFormSchema,
-	helmRegistryProviderConfigSchema,
+	PROJECT_NAME_MAX_LENGTH,
 	environmentMatrixSchema,
+	helmRegistryProviderConfigSchema,
+	projectFormSchema,
 } from "@/lib/validations/project-form.schema";
 import { getProvidersForCategory } from "@/lib/connectors/registry.generated";
 import {
@@ -62,10 +63,23 @@ describe("projectFormSchema", () => {
 			expect(result.success).toBe(false);
 		});
 
-		it("rejects project_name > 50 chars", () => {
-			const data = { ...validProject, project: { ...validProject.project, project_name: "a".repeat(51) } };
-			const result = projectFormSchema.safeParse(data);
-			expect(result.success).toBe(false);
+		// The bound moved from 50 to PROJECT_NAME_MAX_LENGTH (100) in #3145. Create and rename
+		// disagreed — this schema refused anything over 50 while updateProjectName refused only
+		// over 100 — so a name between 51 and 100 characters was reachable by renaming and
+		// un-creatable by the form. Unified on the permissive bound, because narrowing would have
+		// refused existing names on their next edit.
+		//
+		// Asserted against the CONSTANT and at both sides of the boundary, not at a literal 101:
+		// a test written against a hard-coded number silently stops testing the rule the day the
+		// rule moves, which is exactly how these two drifted apart in the first place.
+		it(`accepts project_name of exactly ${PROJECT_NAME_MAX_LENGTH} chars`, () => {
+			const data = { ...validProject, project: { ...validProject.project, project_name: "a".repeat(PROJECT_NAME_MAX_LENGTH) } };
+			expect(projectFormSchema.safeParse(data).success).toBe(true);
+		});
+
+		it(`rejects project_name > ${PROJECT_NAME_MAX_LENGTH} chars`, () => {
+			const data = { ...validProject, project: { ...validProject.project, project_name: "a".repeat(PROJECT_NAME_MAX_LENGTH + 1) } };
+			expect(projectFormSchema.safeParse(data).success).toBe(false);
 		});
 	});
 
