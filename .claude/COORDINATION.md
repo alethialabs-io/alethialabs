@@ -41,6 +41,9 @@ like #530). You already built and debugged this for provisioning — this reuses
   - `blocked-by: #12 #14` — units that must close first.
   - `scope: apps/console/lib/db/schema/** packages/core/types/**` — the files this unit owns (globs). No two
     open+claimable issues in a wave may share a scope glob — that is how the mega-commit tangle is prevented.
+    Like `blocked-by:`, this is a MACHINE-READ line: it must start at column 0 and must not be wrapped in
+    backticks, or every parser reads the unit as unscoped and the invariant goes unenforced for it.
+    `scripts/coordinate.sh` names such units under "NOT CHECKED" rather than counting them as disjoint.
   - `check: pnpm check:shared-surface` — **required on a `lane:console` or `lane:canvas` unit that
     is `class:backend`**, and enforced by `decompose-validate.mjs`. Those are the lanes that own
     rendered UI, so routing one to `class:backend` is the decision that skips the human design gate
@@ -175,8 +178,18 @@ in `/loop` for an always-on backend engine):
 - **Reclaim** stale leases (dead instances).
 - **Unblock**: recompute the `blocked` label from each issue's `blocked-by` (remove it once all blockers close).
 - **Report** the board: per-wave open/claimed/blocked/done counts, who holds what and for how long, the ready
-  (claimable) set, and any **collisions** to eyeball (two claimed issues sharing `mutex:migration` or an
-  overlapping `scope:`).
+  (claimable) set, and any **collisions** to eyeball — two claimed issues sharing `mutex:migration`, and two
+  simultaneously-workable issues (claimed or ready) whose `scope:` globs overlap.
+  **Both halves print a verdict either way, and there are three of them, not two:** overlap found · compared
+  and clean · *could not compare*. That last one is a unit with no `scope:` line, one whose declaration is
+  wrapped in backticks (invisible to the parser, though it reads as scoped to a human), or a glob that is not
+  a path. An unread scope is not a disjoint one, so those units are named rather than dropped out of the
+  comparison — the report says "compared 17 of 22", never a bare silence.
+  *This sentence described behaviour that did not exist until #4115: the scope half had never been written,
+  and the absence of a warning line — which meant only "at most one claimed migration unit" — read as "no two
+  claimed units share a scope".* The predicate itself is `scripts/lib/scope-overlap.mjs`, the same one
+  `decompose-validate.mjs` applies at seed time, so the continuous check and the seed-time check cannot
+  disagree.
 - **Surface UI**: list `needs:design` units for the human.
 
 Backend flows without you. UI surfaces to you. The coordinate pass is not an always-on single point of
@@ -200,6 +213,7 @@ Everything below already exists; none of it was reachable from this file.
 | `.claude/skills/foundry/SKILL.md` | What an agent invokes to *drive* `engine.sh` in a loop. This, not `/loop`, is the always-on backend engine. |
 | `.claude/skills/decompose/SKILL.md` | Turns a wave spec into a well-formed board as a dry-run proposal you approve. This is the "Bootstrapping a wave" workflow below, automated. |
 | `scripts/decompose-validate.mjs` | Validates a proposed board: disjoint scopes (with prefix-subsumption detection), `blocked-by` presence, known labels, acyclic DAG. Has `--self-test`. |
+| `scripts/lib/scope-overlap.mjs` | The ONE scope-glob matcher (normalize · `**` as zero-or-more · prefix subsumption · wildcard segments) plus the live-board audit behind coordinate.sh's report. Shared by all three surfaces after each answered the question differently. `--report` reads a board on stdin; `--json`; `--self-test` (fixtures + mutation controls). |
 | `scripts/board-dashboard.mjs` | Read-only HTML dashboard: per-wave READY/CLAIMED/BLOCKED/DONE, in-flight dev PRs with check rollups, scope collisions, and a "NEEDS YOU" panel. `--out`, `--open`, `--json`. |
 | `scripts/lib/board-pr.sh` | Shared, fail-closed board↔PR predicates. Extracted after two copies drifted and silently stopped matching `Fixes #n`. |
 | `scripts/merge-signal-health.sh` | Tracks whether the observe-only heavy E2Es are reliable enough to promote to required. |
