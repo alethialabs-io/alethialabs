@@ -642,7 +642,16 @@ export async function getProject(
 		const named = environmentId
 			? environments.find((e) => e.id === environmentId)
 			: undefined;
-		const activeEnv = named ?? pickDefaultEnvironment(projectId, environments);
+		// `defaultEnv` is still needed on its own — `default_environment_id` in the return is the
+		// project's DEFAULT, not the env being viewed — so it cannot simply collapse into `activeEnv`.
+		// It follows the same lazy rule: when the caller named an environment, a broken project
+		// degrades this field to `null` (already its value for a project with no environments) rather
+		// than throwing, so the inspection page renders. When no id was named the default IS the
+		// answer, and a violation is reported instead of guessed.
+		const defaultEnv = named
+			? (environments.find((e) => e.is_default) ?? null)
+			: pickDefaultEnvironment(projectId, environments);
+		const activeEnv = named ?? defaultEnv;
 
 		/** Reads one environment's component rows (env-scoped). */
 		async function readComponents(envId: string) {
