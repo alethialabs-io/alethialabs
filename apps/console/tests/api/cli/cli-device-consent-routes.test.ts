@@ -655,3 +655,94 @@ describe("GET /api/auth/cli/request", () => {
 		expect((await res.json()).status).toBe("denied");
 	});
 });
+
+// #3889's display half, at the transport. `clientMetadataField` is unit-tested next door in
+// tests/lib/auth/cli-device-consent.test.ts; what is pinned here is that the two routes which
+// touch these strings ACTUALLY CALL IT — on the way in, and on the way back out.
+//
+// Both halves are needed and neither implies the other. `/start` normalises what it stores,
+// so nothing unsafe is written from today on; `/request` normalises what it returns, because
+// rows written before #4035 are still in the table and the route reads them straight out of a
+// JSONB column. A guard that only ran on the write path would be a guard against future rows.
+describe("the requester's strings never reach the consent screen unscrubbed", () => {
+	// U+202E RIGHT-TO-LEFT OVERRIDE, by name, as an escape. A literal one is invisible in a
+	// diff — the same property that makes it worth stripping.
+	const RTL_OVERRIDE = "\u202E";
+
+	it("scrubs what /start stores", async () => {
+		fake.queue.push([], [], [{ user_code: USER_CODE }]);
+		await START(
+			post(
+				"/api/auth/cli/start",
+				{
+					device_code: DEVICE_CODE,
+					user_code: USER_CODE,
+					client_name: `alethia-cli${RTL_OVERRIDE}forged`,
+					client_version: "0.42.1\nVerified by Alethia",
+				},
+				{ "user-agent": `alethia-cli${"\u200B"}0.42.1` },
+			),
+		);
+
+		const insert = fake.ops.find((o) => o.kind === "insert");
+		const stored = insert?.values?.client_metadata;
+		expect(JSON.stringify(stored)).not.toContain(RTL_OVERRIDE);
+		expect(JSON.stringify(stored)).not.toContain("\\n");
+		expect(JSON.stringify(stored)).not.toContain("\u200B");
+	});
+
+	// The half a write-time guard cannot cover: a row already in the table.
+	it("scrubs what /request returns for a row written before the guard existed", async () => {
+		fake.queue.push([
+			{
+				profile_id: null,
+				user_code: USER_CODE,
+				client_metadata: {
+					client_name: `alethia-cli${RTL_OVERRIDE}forged`,
+					client_version: "0.42.1",
+					user_agent: "alethia-cli\nAlethia says: this device is trusted",
+				},
+				request_ip: "203.0.113.7",
+				pending_expires_at: new Date(Date.now() + 60_000),
+				denied_at: null,
+			},
+		]);
+
+		const res = await REQUEST(get(`device_code=${DEVICE_CODE}&user_code=${USER_CODE}`));
+		expect(res.status).toBe(200);
+		const body = await res.json();
+
+		expect(body.requester.client_name).not.toContain(RTL_OVERRIDE);
+		expect(body.requester.user_agent).not.toContain("\n");
+		// Scrubbed, not blanked. The value is still the value a person has to judge.
+		expect(body.requester.client_name).toContain("alethia-cli");
+		expect(body.requester.request_ip).toBe("203.0.113.7");
+	});
+
+	// The control. Both assertions above would pass against a route that returned nulls for
+	// everything, which would be a worse defect than the one they are guarding.
+	it("leaves an honest requester alone", async () => {
+		fake.queue.push([
+			{
+				profile_id: null,
+				user_code: USER_CODE,
+				client_metadata: {
+					client_name: "alethia-cli",
+					client_version: "0.42.1",
+					user_agent: "alethia-cli/0.42.1 (darwin; arm64)",
+				},
+				request_ip: "203.0.113.7",
+				pending_expires_at: new Date(Date.now() + 60_000),
+				denied_at: null,
+			},
+		]);
+
+		const res = await REQUEST(get(`device_code=${DEVICE_CODE}&user_code=${USER_CODE}`));
+		expect((await res.json()).requester).toEqual({
+			client_name: "alethia-cli",
+			client_version: "0.42.1",
+			user_agent: "alethia-cli/0.42.1 (darwin; arm64)",
+			request_ip: "203.0.113.7",
+		});
+	});
+});
