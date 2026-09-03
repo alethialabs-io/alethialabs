@@ -102,6 +102,12 @@ Then start the runner with those two variables set and confirm it appears in
 
 List all runners (status, operator, version, last heartbeat). The **Operator** column shows `managed` or, for self runners, `self · deployed` / `self · registered`. This is where the runner names the other commands take come from.
 
+Those cells are for a person reading a column, and `-o csv` gives a script the values instead:
+**Operator** is the bare `managed` / `self` (the provisioning half is its own field under
+`-o json`), **Status** is the wire status without its glyph, **Default** is `true` / `false` rather
+than `◆` on one row and blank on the others, **Version** is an empty cell when unset, and **Last
+Heartbeat** is the RFC3339 stamp.
+
 ```bash
 alethia runner list
 ```

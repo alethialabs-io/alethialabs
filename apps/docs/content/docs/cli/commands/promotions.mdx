@@ -62,6 +62,11 @@ argument, an unambiguous **id prefix** is enough: `8f3c1a2b` resolves as readily
 Renders a summary card (source → target, status, **approvals** `N/M`, initiator, created, any
 error) followed by the approval slots (status, approver, required role, decided-at). The per-gate
 evaluation detail and full config diff stay in the console. Add `-o json` for the full object.
+
+The card is written for a person, and `-o csv` gives a script the values: the status loses its
+glyph, an absent initiator, approver or required role is an empty cell rather than `—`, and the
+`source → target` row — two fields joined by an arrow that nothing can split on reliably — becomes
+two rows, `source` and `target`.
 Backing call: `GET /cli/projects/<project>/promotions/<promotion-id>`.
 
 <Callout type="info">

@@ -88,7 +88,7 @@ func TestActivityRowsReason(t *testing.T) {
 		ResourceType: "project_environment", ResourceID: "abcdefgh1234", Decision: false,
 		Reason: "gate not satisfied",
 	}}
-	row := activityRows(entries)[0]
+	row := activityRows(entries, ui.FormatTable)[0]
 	resource, reason := row[3], row[5]
 	if !strings.HasPrefix(resource, "project_environment ") {
 		t.Errorf("resource should include the id, got %q", resource)
@@ -97,7 +97,7 @@ func TestActivityRowsReason(t *testing.T) {
 		t.Errorf("reason = %q", reason)
 	}
 
-	noReason := activityRows([]api.ActivityEntry{{Ts: "", ActorID: "u1", Action: "x", Decision: true}})[0]
+	noReason := activityRows([]api.ActivityEntry{{Ts: "", ActorID: "u1", Action: "x", Decision: true}}, ui.FormatTable)[0]
 	if noReason[5] != ui.SymbolDash {
 		t.Errorf("empty reason should be dash, got %q", noReason[5])
 	}
@@ -129,11 +129,11 @@ func TestDimensionRowsSlugs(t *testing.T) {
 
 // TestRunnerRowsHeartbeat covers heartbeat humanization + the empty fallback.
 func TestRunnerRowsHeartbeat(t *testing.T) {
-	live := runnerRows([]api.Runner{{Name: "r1", Status: "ONLINE", LastHeartbeat: "2026-01-01T00:00:00Z"}})[0]
+	live := runnerRows([]api.Runner{{Name: "r1", Status: "ONLINE", LastHeartbeat: "2026-01-01T00:00:00Z"}}, ui.FormatTable)[0]
 	if live[5] == "2026-01-01T00:00:00Z" || live[5] == ui.SymbolDash {
 		t.Errorf("heartbeat should be humanized, got %q", live[5])
 	}
-	dead := runnerRows([]api.Runner{{Name: "r2", Status: "OFFLINE", LastHeartbeat: ""}})[0]
+	dead := runnerRows([]api.Runner{{Name: "r2", Status: "OFFLINE", LastHeartbeat: ""}}, ui.FormatTable)[0]
 	if dead[5] != ui.SymbolDash {
 		t.Errorf("missing heartbeat should be dash, got %q", dead[5])
 	}
