@@ -142,8 +142,18 @@ describe("the change summary outside `cases`", () => {
 
 	// A malformed or absent previous file indexes as empty, so every key reads as new rather than
 	// as unchanged — the honest answer when there is nothing to compare against.
+	//
+	// ASSERTED BY VALUE, not with `.every()`. `[].every(...)` is TRUE, so the previous version of
+	// this test passed on the exact regression it guards: `changedKeys` returning nothing at all,
+	// which is #4174's whole subject. A predicate over a list is not a test that the list exists.
 	it("treats an unreadable previous document as having no keys", () => {
-		expect(changedKeys(null, doc(OK)).every((l) => l.startsWith("+ "))).toBe(true);
+		const lines = changedKeys(null, doc(OK));
+		expect(lines.map((l) => l.split(":")[0])).toEqual([
+			"+ _doc",
+			"+ excluded",
+			"+ version",
+			"+ zeroDecimalCharge",
+		]);
 	});
 });
 
@@ -154,10 +164,28 @@ describe("the value describers", () => {
 		expect(stringMembers("A")).toBeNull();
 	});
 
+	// ASSERTED EXACTLY. The three `toContain`/`not.toContain` checks this replaces were all
+	// satisfied by the implementation they were written to reject: a dump reading
+	// `~ excluded: {"a":"1","b":"2"} -> {"a":"1","b":"3"}` contains "excluded", contains "b", and
+	// does NOT contain "a," — it contains `"a":`. A near-miss substring is not a contract.
 	it("names the entries that moved inside an object rather than dumping it", () => {
-		const line = describeKeyChange("excluded", { a: "1", b: "2" }, { a: "1", b: "3" });
-		expect(line).toContain("excluded");
-		expect(line).toContain("b");
-		expect(line).not.toContain("a,");
+		expect(describeKeyChange("excluded", { a: "1", b: "2" }, { a: "1", b: "3" })).toBe(
+			"~ excluded: 1 entry moved — b",
+		);
+	});
+
+	// The object branch had no ORDER case: `moved` came out empty and it printed
+	// "0 entries moved — " with nothing after the dash, contradicting the count above it.
+	it("names a KEY REORDER inside an object, which used to print a line naming nothing", () => {
+		const line = describeKeyChange("excluded", { a: "1", b: "2" }, { b: "2", a: "1" });
+		expect(line).toContain("KEY ORDER moved");
+		expect(line).not.toContain("0 entr");
+	});
+
+	// `includes` cannot see a duplicate, so this reported "same members, ORDER moved" — false in
+	// both halves, and every other layer (sortedness, case, TS equality, Go's map) is blind to it.
+	it("names a DUPLICATED member rather than calling it a reorder", () => {
+		const line = describeKeyChange("zeroDecimalCharge", ["JPY"], ["JPY", "JPY"]);
+		expect(line).toBe("~ zeroDecimalCharge: ~JPY ×1→×2");
 	});
 });

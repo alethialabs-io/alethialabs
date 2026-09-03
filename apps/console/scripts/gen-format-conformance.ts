@@ -311,10 +311,32 @@ export function describeKeyChange(key: string, was: unknown, now: unknown): stri
 	const before = stringMembers(was);
 	const after = stringMembers(now);
 	if (before !== null && after !== null) {
-		const added = after.filter((c) => !before.includes(c)).map((c) => `+${c}`);
-		const removed = before.filter((c) => !after.includes(c)).map((c) => `-${c}`);
+		// COUNTED, not `includes`. Membership alone cannot see a DUPLICATE: `["JPY"]` becoming
+		// `["JPY","JPY"]` adds and removes nothing by `includes`, so it fell through to "same
+		// members, ORDER moved" — false in both halves, and the only place a duplicate is visible
+		// at all. Sortedness passes (a duplicate is still sorted), the case refusal passes, the TS
+		// equality assertion compares the same literal to itself, and Go's map de-duplicates on
+		// decode. This line is the last layer that can say it.
+		const tally = (xs: readonly string[]) =>
+			xs.reduce<Record<string, number>>((m, c) => ({ ...m, [c]: (m[c] ?? 0) + 1 }), {});
+		const wasN = tally(before);
+		const nowN = tally(after);
+		const added: string[] = [];
+		const removed: string[] = [];
+		for (const c of [...new Set([...before, ...after])].sort()) {
+			const had = wasN[c] ?? 0;
+			const has = nowN[c] ?? 0;
+			if (had === has) continue;
+			// A member that was ALREADY there and changed count was duplicated (or de-duplicated),
+			// not added — `+JPY` for `["JPY"] -> ["JPY","JPY"]` would read as an addition and send
+			// the reader looking for a code that was there all along. Say which it is.
+			if (had > 0 && has > 0) added.push(`~${c} ×${had}→×${has}`);
+			else if (has > had) added.push(`+${c}`);
+			else removed.push(`-${c}`);
+		}
 		// Same members in a different order is a real change to a file whose whole point is a
 		// reviewable diff, and reporting it as "0 changed" is the defect this function exists for.
+		// Reachable only when the multisets match, which now genuinely means a reorder.
 		if (added.length === 0 && removed.length === 0) return `~ ${key}: same members, ORDER moved`;
 		return `~ ${key}: ${[...added, ...removed].join(" ")}`;
 	}
@@ -326,6 +348,18 @@ export function describeKeyChange(key: string, was: unknown, now: unknown): stri
 	const moved = [...new Set([...Object.keys(wasObj), ...Object.keys(nowObj)])]
 		.sort()
 		.filter((k) => JSON.stringify(wasObj[k]) !== JSON.stringify(nowObj[k]));
+	// AN OBJECT REORDERS TOO, and this branch had no case for it. The caller only reaches here
+	// because the key's JSON changed, so `moved` being empty means every entry compares equal and
+	// the difference is in the KEY ORDER — which rewrites the artifact and is exactly the kind of
+	// diff this summary exists to name. It used to print "0 entries moved — " with nothing after
+	// the dash: a line that names nothing and contradicts the "1 artifact key(s) changed" above it.
+	if (moved.length === 0) {
+		const wasKeys = Object.keys(wasObj);
+		const nowKeys = Object.keys(nowObj);
+		return wasKeys.join(",") === nowKeys.join(",")
+			? `~ ${key}: changed, but no entry differs — whitespace or formatting only`
+			: `~ ${key}: same entries, KEY ORDER moved (${wasKeys.join(", ")} -> ${nowKeys.join(", ")})`;
+	}
 	return `~ ${key}: ${moved.length} entr${moved.length === 1 ? "y" : "ies"} moved — ${moved.join(", ")}`;
 }
 
