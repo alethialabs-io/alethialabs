@@ -6,38 +6,25 @@ import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { CheckCircle, Loader2, XCircle } from "lucide-react";
 import { Button } from "@repo/ui/button";
-import { isValidDeviceCode, isValidUserCode } from "@/lib/auth/cli-device-code";
+import {
+	deviceApprovalScopes,
+	isValidDeviceCode,
+	isValidUserCode,
+	serverErrorMessage,
+} from "@/lib/auth/cli-device-code";
 import { useCliAccount } from "./cli-session";
+import {
+	CliRequestClosed,
+	CliRequestDetails,
+	CliRequestDetailsSkeleton,
+	CliRequestUnverified,
+	closedRequestCopy,
+	useCliDeviceRequest,
+	useRemainingMs,
+} from "./cli-request";
 import { CliLoginBodySkeleton } from "./loading";
 
 type Stage = "confirm" | "approving" | "declining" | "approved" | "declined" | "error";
-
-/**
- * Pulls the `error` string out of what the approve or deny route answered, falling back to the
- * CALLER'S sentence when the body is not the shape that route documents.
- *
- * The fallback is a parameter and not a constant because the two callers are not interchangeable.
- * A failed approval and a failed refusal need different words — and the refusal's words carry an
- * instruction ("close your terminal") that a person who pressed "This isn't me" must not lose to
- * a proxy error page.
- *
- * `response.json()` is typed `any`, and CLAUDE.md §6 forbids one — so the body is taken as
- * `unknown` and narrowed. It is not merely a style rule here: this string is rendered to the
- * user as the reason their sign-in failed, and reaching through `any` would let `undefined`,
- * a number or an object land in that sentence.
- */
-function serverErrorMessage(body: unknown, fallback: string): string {
-	if (
-		typeof body === "object" &&
-		body !== null &&
-		"error" in body &&
-		typeof body.error === "string" &&
-		body.error !== ""
-	) {
-		return body.error;
-	}
-	return fallback;
-}
 
 /**
  * The browser half of the CLI device flow (RFC 8628). It approves NOTHING on mount:
@@ -54,6 +41,17 @@ function serverErrorMessage(body: unknown, fallback: string): string {
  * caller — the Approve button's `onClick` below. No `useEffect` may call it, and neither
  * may anything that runs as a consequence of rendering. #2213 was not a bug in the fetch;
  * it was a bug in WHO started it.
+ *
+ * There IS now a fetch on mount, and it does not touch that invariant: `useCliDeviceRequest`
+ * issues a session-gated GET that decides nothing and writes nothing, so it can be read as the
+ * screen finding out what it is about to ask for. The rule the invariant states is about
+ * `approveDevice`, and it is the rule a reader should check — not "does this file contain a
+ * useEffect", which was never the property that mattered.
+ *
+ * #3889 is the other half of the same argument. A gesture is only worth what the person knew
+ * when they made it, so the Approve button is offered only where this screen has SAID what
+ * approving does — see `approvable` below, and `deviceRequestReadOutcome` for the one failure
+ * mode where it is offered with the gap named instead.
  */
 function CliLoginContent() {
 	const account = useCliAccount();
@@ -71,6 +69,52 @@ function CliLoginContent() {
 			? ""
 			: "This link is not a valid CLI login request. Run `alethia login` and open the link it prints.",
 	);
+
+	// #3889. The server's description of what is being approved — which account, what is handed
+	// over, who is asking, how long is left. Read on mount, and only ever READ: see the note on
+	// `useCliDeviceRequest` for why a GET here does not reopen #2213, which was about a POST.
+	//
+	// Passed nulls for a malformed link, so nothing is asked about a request that does not
+	// parse. The page is already in its error stage in that case.
+	const request = useCliDeviceRequest(
+		linkIsWellFormed ? deviceCode : null,
+		linkIsWellFormed ? userCode : null,
+	);
+	const remainingMs = useRemainingMs(
+		request.phase === "verified" ? request.view.expires_at : null,
+	);
+
+	// The countdown reaching zero is a STATE CHANGE, not a number hitting a bound: the decision
+	// window has closed, `/api/auth/cli/generate` will refuse, and the button has to go. Reading
+	// it here rather than re-fetching means the screen closes at the same instant the server
+	// does, without a poll.
+	const windowClosed = remainingMs !== null && remainingMs <= 0;
+	const lifecycle =
+		request.phase === "verified"
+			? windowClosed && request.view.status === "pending"
+				? "expired"
+				: request.view.status
+			: null;
+
+	// THE GATE THIS ISSUE IS ABOUT. Approve is offered only where the screen has said what
+	// approving does:
+	//   · `verified` + `pending` — the request is described and live.
+	//   · `unverified`           — the detail could not be READ, which is not the same as the
+	//                              request being bad. Withdrawing the button here would sign out
+	//                              every already-shipped `alethia login`, which never registers
+	//                              and so leaves nothing to read. The screen states the gap in
+	//                              place of the detail rather than rendering blanks as answers.
+	// Everything else — still loading, refused by the server, or already approved/denied/expired
+	// — offers no Approve at all.
+	const approvable =
+		request.phase === "unverified" ||
+		(request.phase === "verified" && lifecycle === "pending");
+
+	// The lifecycle with `pending` taken out, so `closedRequestCopy` is reached with a value
+	// its map is total over. Deriving it here rather than asserting at the call site is what
+	// makes a fifth lifecycle a compile error instead of an undefined heading.
+	const closedLifecycle =
+		lifecycle === null || lifecycle === "pending" ? null : lifecycle;
 
 	/** Binds this device code to the signed-in account — only ever from the button. */
 	async function approveDevice() {
@@ -144,6 +188,7 @@ function CliLoginContent() {
 	}
 
 	if (stage === "confirm" || stage === "approving" || stage === "declining") {
+		const busy = stage === "approving" || stage === "declining";
 		return (
 			<div className="flex flex-col gap-6">
 				<div className="space-y-2 text-center">
@@ -161,69 +206,80 @@ function CliLoginContent() {
 				    against a terminal, one glyph at a time, and legibility of a code being typed
 				    is not reading type. It is the same call the maintainer made for the sign-in
 				    OTP input on 2026-09-02. `text-2xl` and not a hardcoded `text-[24px]`, so it
-				    stays on a scale rather than becoming a number this file invented. */}
+				    stays on a scale rather than becoming a number this file invented.
+
+				    The REGISTERED code once one is known, and the link's only until then. They
+				    are equal by construction whenever both exist — `/api/auth/cli/request` 409s
+				    on a disagreement — and preferring the server's is what makes this plate mean
+				    "what the terminal printed" rather than "what the link said", which is the
+				    only reading under which comparing it by eye is worth anything. */}
 				<div
 					className="border border-border bg-surface-sunken py-4 text-center font-mono text-2xl tracking-[0.3em] text-text-primary"
 					aria-label="Device confirmation code"
 				>
-					{userCode}
+					{request.phase === "verified" ? request.view.user_code : userCode}
 				</div>
 
-				{/* WHAT APPROVAL ACTUALLY HANDS OVER. The screen used to say only "a device is
-				    asking to sign in to your account", and a consent screen that does not name
-				    what it is consenting to is a button, not a decision. Every line below is read
-				    off `app/api/auth/cli/generate/route.ts` and `exchange/route.ts` — the access
-				    token, the 90-day refresh token, and the raw OAuth token of the first linked
-				    git provider, which is materially more than "sign in".
+				{/* WHAT IS BEING APPROVED. This block used to be three `<li>`s written by hand in
+				    this file, plus a comment saying the requester and the deadline were "#3889's
+				    server half" and could not be shown. That half landed (#4035):
+				    `/api/auth/cli/request` answers with the scopes `deviceApprovalScopes` emits —
+				    the same function `/api/auth/cli/generate` reads when it decides which
+				    git-provider token to stash — along with the account, the requester and the
+				    pending deadline. The screen reads them rather than restating them, so a
+				    provider added to the stash cannot become a token this list never named.
 
-				    The git-provider line is conditional in the prose because it is conditional in
-				    the code: `generate` takes the FIRST linked provider and swallows a failure to
-				    read its token, so "if one is linked" is the honest tense.
-
-				    NOT here, because the data does not exist and inventing it would be worse than
-				    omitting it: who is asking (no client identity, IP or user-agent is stored) and
-				    how long the request has left (the link carries no `expires_in`, and
-				    `DEVICE_CODE_TTL_MS` is the POST-approval redemption window, not this one).
-				    Both are #3889's server half. */}
-				<div className="space-y-1.5 border border-border/60 bg-surface-sunken/40 px-4 py-3">
-					<p className="text-xs font-medium text-text-primary">
-						Approving gives that terminal
-					</p>
-					<ul className="list-disc space-y-1 pl-4 text-xs text-text-secondary">
-						<li>a sign-in token for this account</li>
-						<li>a refresh token that stays valid for 90 days</li>
-						<li>
-							the access token of your linked git provider, if you have one linked
-						</li>
-					</ul>
-					{account ? (
-						<p className="pt-1 text-xs text-text-secondary">
-							Signed in as{" "}
-							<span className="font-medium text-text-primary">{account}</span>. Approval
-							binds the terminal to this account.
-						</p>
-					) : null}
-				</div>
+				    Every arm renders SOMETHING. There is no branch in which the panel is absent,
+				    because "no panel" and "a panel with nothing in it" are how a reader ends up
+				    consenting to a description that was never given. */}
+				{request.phase === "verified" && closedLifecycle === null ? (
+					<CliRequestDetails
+						view={request.view}
+						account={account}
+						remainingMs={remainingMs}
+					/>
+				) : closedLifecycle !== null ? (
+					<CliRequestClosed {...closedRequestCopy(closedLifecycle)} />
+				) : request.phase === "unverified" ? (
+					<CliRequestUnverified
+						reason={request.reason}
+						// `deviceApprovalScopes(null)` — the server's own words for the two tokens
+						// EVERY approval hands over, from the same function the route calls. What
+						// it cannot know without the server is whether a git-provider token joins
+						// them, and `CliRequestUnverified` says exactly that instead of guessing.
+						scopes={deviceApprovalScopes(null)}
+						account={account}
+					/>
+				) : request.phase === "refused" ? (
+					<CliRequestClosed
+						heading="Alethia will not approve this request"
+						body={request.reason}
+					/>
+				) : (
+					<CliRequestDetailsSkeleton />
+				)}
 
 				<div className="flex flex-col gap-2">
-					<Button
-						onClick={approveDevice}
-						disabled={stage === "approving" || stage === "declining"}
-					>
-						{stage === "approving" ? (
-							<>
-								<Loader2 className="h-4 w-4 animate-spin" />
-								Approving…
-							</>
-						) : (
-							"Approve"
-						)}
-					</Button>
-					<Button
-						variant="ghost"
-						onClick={declineDevice}
-						disabled={stage === "approving" || stage === "declining"}
-					>
+					{/* ABSENT rather than disabled where approval is not on offer. A greyed-out
+					    Approve invites the reader to look for the thing that would enable it,
+					    which on a refused or expired request is nothing — and on a still-loading
+					    one is a wait they should not be made to watch for. The refuse button
+					    stays in every case: refusing is the safe direction, `/api/auth/cli/deny`
+					    revokes an approval as well as pre-empting one, and its own failure is
+					    surfaced honestly by `declineDevice`. */}
+					{approvable ? (
+						<Button onClick={approveDevice} disabled={busy}>
+							{stage === "approving" ? (
+								<>
+									<Loader2 className="h-4 w-4 animate-spin" />
+									Approving…
+								</>
+							) : (
+								"Approve"
+							)}
+						</Button>
+					) : null}
+					<Button variant="ghost" onClick={declineDevice} disabled={busy}>
 						{stage === "declining" ? (
 							<>
 								<Loader2 className="h-4 w-4 animate-spin" />
