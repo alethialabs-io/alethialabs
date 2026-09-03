@@ -47,6 +47,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { globsOverlap, scopeGlobs } from "./lib/scope-overlap.mjs";
 
 // ── the known board label set ─────────────────────────────────────────────────
 // DERIVED from scripts/lib/board-labels.json, which `coordinate.sh --init-labels` also reads. This
@@ -89,74 +90,13 @@ const KNOWN_LABELS = new Set([
 	...AUTHORABLE_EXTRA,
 ]);
 
-/** Normalize a scope glob: trim, drop a leading `./`, collapse `//`, drop a trailing `/`. */
-function normalizeGlob(glob) {
-	return String(glob)
-		.trim()
-		.replace(/^\.\//, "")
-		.replace(/\/{2,}/g, "/")
-		.replace(/\/+$/, "");
-}
-
-/** Parse a machine-readable scope declaration from a board issue body. */
-function scopeGlobs(body) {
-	const match = String(body ?? "").match(/^[ \t]*scope:[ \t]*(.+)$/im);
-	return match ? match[1].trim().split(/\s+/).filter(Boolean) : [];
-}
-
-/** Compile one path SEGMENT (no `/`) into an anchored regex; `*` → any run of non-slash chars. */
-function segToRegex(seg) {
-	const body = seg
-		.split("*")
-		.map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-		.join("[^/]*");
-	return new RegExp(`^${body}$`);
-}
-
-/**
- * Do two path segments overlap — i.e. is there a filename matching both? `**` is handled by the
- * caller (multi-segment), so here a segment is a literal or a single-segment `*`-glob. Conservative
- * on purpose: when both carry intra-segment wildcards we test a few witness strings and treat them
- * as overlapping if any is matched by both, because a MISSED overlap is what causes the tangle.
- */
-function segMatch(a, b) {
-	if (a === b) return true;
-	if (a === "*" || b === "*") return true;
-	const hasWildA = a.includes("*");
-	const hasWildB = b.includes("*");
-	if (!hasWildA && !hasWildB) return false; // two distinct literals — disjoint
-	const rxA = segToRegex(a);
-	const rxB = segToRegex(b);
-	// Witnesses: each pattern with `*` collapsed to "" and to a filler run.
-	const witnesses = [
-		a.replace(/\*/g, ""),
-		a.replace(/\*/g, "x9z"),
-		b.replace(/\*/g, ""),
-		b.replace(/\*/g, "x9z"),
-	];
-	return witnesses.some((w) => rxA.test(w) && rxB.test(w));
-}
-
-/**
- * Do two normalized globs overlap? Segment-by-segment match where `**` matches zero-or-more
- * segments; catches exact equality, prefix subsumption (`a/lib/**` ⊇ `a/lib/db/**`), and
- * wildcard siblings, while keeping disjoint dirs (`a/x/**` vs `a/y/**`) disjoint.
- */
-function globsOverlap(g1, g2) {
-	const a = normalizeGlob(g1).split("/");
-	const b = normalizeGlob(g2).split("/");
-	/** Recursive segment matcher over the remaining segments of each glob. */
-	const walk = (i, j) => {
-		if (i >= a.length && j >= b.length) return true;
-		if (i >= a.length) return b.slice(j).every((s) => s === "**");
-		if (j >= b.length) return a.slice(i).every((s) => s === "**");
-		if (a[i] === "**") return walk(i + 1, j) || walk(i, j + 1);
-		if (b[j] === "**") return walk(i, j + 1) || walk(i + 1, j);
-		if (segMatch(a[i], b[j])) return walk(i + 1, j + 1);
-		return false;
-	};
-	return walk(0, 0);
-}
+// The scope-glob matcher lives in scripts/lib/scope-overlap.mjs, not here.
+//
+// `normalizeGlob`, `scopeGlobs`, `segToRegex`, `segMatch` and `globsOverlap` were module-private
+// in this file, so the two other places that must answer the same question could not call them:
+// board-dashboard.mjs grew a weaker copy (a separator-less `startsWith`), and coordinate.sh grew
+// none at all — its report claimed a scope check that had never been written (#4115). One
+// predicate, three callers, exactly the shape scripts/lib/board-pr.sh exists to enforce.
 
 /**
  * A unit is the interface-first "seams" issue when its title says so and nothing IN THE PROPOSAL
