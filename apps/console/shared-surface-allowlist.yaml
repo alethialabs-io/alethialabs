@@ -112,7 +112,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 16
-debt: 25
+debt: 24
 
 scanned:
   - scope: console_code
@@ -194,9 +194,6 @@ type_scale:
   # measured 2026-09-01 on an unmodified dev by this rule's own matcher. Not one of
   # them is a decision: packages/brand/src/tokens.css carried NO UI type scale until the commit
   # that added this rule, so there was nothing for any of these files to have reached for.
-  - path: apps/console/app/(private)/[org]/~/jobs/[id]/page.tsx
-    hits: 10
-    lifts: "#3742 — the console adopts the --text-ui-* type scale: 10 hardcoded pixel type sizes here."
   - path: apps/console/app/(private)/[org]/~/runners/runners-client.tsx
     hits: 4
     lifts: "#3742 — the console adopts the --text-ui-* type scale: 4 hardcoded pixel type sizes here."
