@@ -1363,6 +1363,19 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				stdout,
 				stderr,
 			)
+			// Make each in-cluster RabbitMQ's BROKER accept the password its Secret holds (#3590).
+			//
+			// HERE, and both bounds are load-bearing. AFTER WaitAddOnsHealthy, because there is
+			// nothing to exec into until the broker is Ready — before the wait this would skip on
+			// every deploy and defer the repair forever. BEFORE ReadDataEndpoints, because that read
+			// is what PUBLISHES the Secret to the console as the queue's credential: converging
+			// first is the difference between publishing a password that works and publishing the
+			// one this issue is about.
+			//
+			// It is a no-op on a queue whose broker already accepts it, which is every queue created
+			// after #3304 — this exists for the ones created before it.
+			convergeInClusterQueuePasswords(vc, stdout, stderr)
+
 			// In-cluster data services (Hetzner database/cache/queue) are ArgoCD Applications, so
 			// they have no tofu output carrying a connection string — the console showed NO endpoint
 			// at all ("endpoint discovery is chart-specific and deferred"). Now that they've
@@ -1864,6 +1877,28 @@ func credentialInClusterRegistries(ctx context.Context, vc *types.ProjectConfig,
 	for _, reg := range argocd.HetznerRegistries(vc) {
 		if err := argocd.EnsureHarborPullCredentials(ctx, reg, selfimage.Ref(), stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: in-cluster registry %s credentials skipped: %v\n", reg.Name, err)
+		}
+	}
+}
+
+// convergeInClusterQueuePasswords makes each in-cluster RabbitMQ's running broker accept the
+// password its credential Secret holds (#3590).
+//
+// The reconciliation runs the OTHER WAY ROUND from credentialInClusterQueues above, and that is the
+// whole point. On a queue deployed before #3304 the broker still accepts the password from its very
+// first boot — `definitions.enabled` is false, so `RABBITMQ_DEFAULT_PASS` is the only thing that
+// ever set it, and RabbitMQ honours that only while the Mnesia database is empty — while ArgoCD's
+// selfHeal rewrote the Secret on every reconcile. The value the broker accepts was overwritten long
+// ago and cannot be recovered, so the Secret cannot be made to match the broker. The broker is made
+// to match the Secret.
+//
+// Non-fatal per queue, like the registry and add-on paths: a queue whose broker is not reachable yet
+// must not fail an otherwise-healthy cluster. The next deploy re-runs this, and it is a no-op for
+// every queue whose broker already accepts its Secret.
+func convergeInClusterQueuePasswords(vc *types.ProjectConfig, stdout, stderr io.Writer) {
+	for _, q := range argocd.HetznerQueues(vc, stderr) {
+		if err := argocd.ConvergeQueuePassword(q, stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "Warning: in-cluster queue %s broker password not reconciled: %v\n", q.Name, err)
 		}
 	}
 }
