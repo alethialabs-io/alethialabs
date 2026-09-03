@@ -3,7 +3,7 @@
 
 # The console UI conformance rubric
 
-**33 predicates** over every **private** console route — S1–S4 (4), T1–T7 (7), H1–H8 (8), F1–F7
+**34 predicates** over every **private** console route — S1–S4 (4), T1–T7 (7), H1–H9 (9), F1–F7
 (7), R1–R7 (7). This file is the contract: the static checks, the live Playwright `audit` project
 and the scoreboard generator all implement predicates defined *here*, and none of them may invent
 one.
@@ -189,7 +189,8 @@ custom role to reach it would be fabricating the subject rather than finding it.
 ## Family H — the shared surface  ·  static
 
 Each row is a row of CLAUDE.md §6's table. H1 was guarded before this family existed; H2–H7 are what
-unit #3615 added; H8 is what #3733 added with the type scale itself.
+unit #3615 added; H8 is what #3733 added with the type scale itself; H9 is what #3798 added when
+building the scoreboard found that CLAUDE.md §6's `EmptyState` row was scored by nothing.
 
 | id | predicate | PASS when | N/A when |
 |---|---|---|---|
@@ -201,6 +202,7 @@ unit #3615 added; H8 is what #3733 added with the type scale itself.
 | **H5** | every number, date, size and amount goes through `@repo/format` | no `toFixed`, `toLocale{Date,Time}String`, `/1024`, hand-written currency symbol, or local `format*` duplicating a `@repo/format` export | `renders-no-formatted-value` |
 | **H6** | no stat-card strip | no row of bordered label-over-number cells | `redirect-only` |
 | **H7** | no bare numeric z-index | every `z-*` is a `--z-*` token from `packages/brand/src/tokens.css` | `declares-no-z-index` |
+| **H9** | the empty state renders through `EmptyState` | the page's own module closure hand-rolls no centred empty region (`text-center` with `py-6` or more) outside the allowlist | `redirect-only` |
 
 **H1 IS INVERTED, and the inversion is the predicate.** It used to read "the page title comes from
 `PageHeader`". #3733: the page's name is said by the sidebar entry you clicked and by the breadcrumb
@@ -226,6 +228,17 @@ rung (`--text-ui-lg`, 15px), with `level` setting the tag and nothing else.
 debt in `apps/console/shared-surface-allowlist.yaml` against #3742, so a page scores FAIL on H8 today
 and the number can only shrink. A page with no arbitrary size left scores PASS. Nothing about H8 is
 N/A for a page that renders text.
+
+**H9 and T5 are two questions, not one instrument reported twice (#3798).** H9 is STATIC and asks
+"does this file hand-roll a centred empty region?"; T5 is LIVE and asks "driven against an empty org,
+what did the empty region actually resolve to?". Both are worth asking, and a page can fail either
+while passing the other: it can import `EmptyState` and still render a blank region when the list is
+empty, and it can hand-roll a centred div that the audit's empty org never reaches — 26 of the 40
+routes are `no-empty-state` for T5 today, so the static matcher is the only instrument that sees
+them at all. `check-shared-surface.mjs`'s `empty_state` rule had no row here until this one existed:
+its occurrences were counted in the scoreboard's reconciliation and scored nowhere, which is what
+#3798 was opened to end. Folding it into T5 was the alternative, and it was refused for the reason
+this rubric states everywhere else — one predicate per question. The count moved 33 → 34.
 
 **H5's hardest case is the one a grep cannot reach.** `billing/billing-checkout-form.tsx:118` builds
 `${symbol}${n.toLocaleString("en-US")}` where `symbol` is a **variable**, and
@@ -311,11 +324,27 @@ clean page — it must raise.
 
 ## The scoreboard and the ratchet
 
-**The static half is built** (#3618). `apps/console/scripts/audit-report.mjs` generates
-[`scoreboard.md`](./scoreboard.md) and `apps/console/ui-conformance-baseline.json`:
-`pnpm -F console audit:report --write` regenerates them, a bare `pnpm -F console audit:report`
-checks them against the tree and exits 2 naming the command — the contract `PROGRAMME.md`'s derived
-half uses. Never hand-edit either file. The live half is #3634.
+**Both halves are built** — the static one in #3618, the live one in #3634.
+`apps/console/scripts/audit-report.mjs` generates [`scoreboard.md`](./scoreboard.md) and
+`apps/console/ui-conformance-baseline.json`: `pnpm -F console audit:report --write` regenerates
+them, a bare `pnpm -F console audit:report` checks them against the tree and exits 2 naming the
+command — the contract `PROGRAMME.md`'s derived half uses. Never hand-edit either file.
+
+**The live half is measured in CI and committed, not inferred.** The Playwright `audit` project
+writes two files — `test-results/ui-audit.json` (T5, T6, R1–R7, as the run's own owner in a fresh
+empty org) and `test-results/ui-audit-permissions.json` (T7, as the `member` persona in a *second*
+organisation) — and
+`node apps/console/scripts/audit-report.mjs --import-live=<dir> --run=<url> --commit=<sha>` reduces
+them to `apps/console/ui-conformance-live.json`. **They are joined, never pooled**: each artifact
+declares the predicates it may carry, and a record in the wrong one refuses to parse.
+`e2e/audit/report.ts`'s header records what pooling them cost the first time.
+
+A (route, predicate) cell no artifact carries is **`NOT MEASURED`** — its own column, never folded
+into N/A and never a pass. `permissions.spec.ts` drives only the org-only routes, so T7 has no
+record for the 13 parameterised ones; an N/A there would be a claim about the page, and rule 2 above
+forbids one that is not derivable from the route record. `NOT MEASURED` is a claim about the
+instrument, which is what #3854 built it for. It leaves the denominator exactly as an N/A does, so a
+predicate withheld everywhere scores `null`, never `1`.
 
 - One row per route, one column per family, plus a per-predicate **N/A count**.
 - A route's score **may never fall**. A new route starts at the current floor, not at zero — landing
@@ -340,11 +369,12 @@ blind spots reads as a rubric that has none.
   `check-shared-surface.mjs` says why: the rule has no negative form to grep for.
 - **F1–F7 have no instrument at all** (#3796). Nothing in the tree measures the filter standard.
   The scoreboard renders the whole F column `—`, never as a pass.
-- **The empty-state matcher maps to no predicate** (#3798). `check-shared-surface.mjs`'s
-  `empty_state` rule guards CLAUDE.md §6's `@repo/ui/empty` row and found 18 occurrences on an
-  unmodified `dev` — and the H table above has no row for it, because this file assigns the empty
-  state to **T5**, which it declares live. The scoreboard counts those 18 in its reconciliation and
-  scores them nowhere.
+- **The empty-state matcher mapped to no predicate** (#3798) — **now H9**.
+  `check-shared-surface.mjs`'s `empty_state` rule guards CLAUDE.md §6's `@repo/ui/empty` row and
+  found 18 occurrences on an unmodified `dev`, and the H table above had no row for it because this
+  file assigns the *rendered* empty state to **T5**, which it declares live. The scoreboard counted
+  those 18 in its reconciliation and scored them nowhere. #3634 closed it by giving the static
+  question its own row rather than by folding two instruments into one verdict.
 
 Nothing runs the generator in CI yet (#3799) — the same hand-off #3616 left to #3759 for the
 route-state gate, and named for the same reason: a check nothing invokes reports green by never
