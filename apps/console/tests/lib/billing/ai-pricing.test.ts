@@ -90,7 +90,27 @@ describe("getAiPlanPrice — live Stripe amount (post-cutover)", () => {
 		// Live amount overrides the catalog placeholder.
 		expect(plus.unitAmountUsd).toBe(25);
 		expect(plus.unitAmountEur).toBe(23);
-		expect(plus.label).toBe("$25 / mo");
+		// `$25.00`, not `$25`: since #4096 the label goes through `@repo/format`, which is the
+		// register every other console billing surface already prints. The catalog FALLBACK labels
+		// above are static catalog strings and still read `$20 / mo` — that copy is marketing's.
+		expect(plus.label).toBe("$25.00 / mo");
+	});
+
+	it("does not divide a zero-decimal currency — the divisor is Stripe's, not 100 (#4096)", async () => {
+		// The defect this file's module carried: `price.unit_amount` reached an unconditional
+		// `/ 100` on TWO independent paths — the `label` string and the `unitAmountUsd` number.
+		// Both read the same undivided amount, so neither was compounded and neither was right.
+		// ¥124,000 is #3581's own example; it used to render `JPY 1240` beside a number of 1240.
+		retrieve.mockResolvedValue({
+			unit_amount: 124000,
+			currency: "jpy",
+			recurring: { interval: "month" },
+			currency_options: {},
+		});
+
+		const max = await getAiPlanPrice("ai_max");
+		expect(max.unitAmountUsd).toBe(124000);
+		expect(max.label).toBe("¥124,000 / mo");
 	});
 
 	it("falls back to the catalog when the Stripe lookup throws (never throws itself)", async () => {
