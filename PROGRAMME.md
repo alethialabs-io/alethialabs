@@ -243,7 +243,7 @@ Work is claimed from the board, never hand-picked: `scripts/coordinate.sh --repo
 
 ## Where the programme actually is
 
-**23 of 35 proof cells are proven.** 0 failing · 1 contested (the ledger and the board disagree) · 0 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
+**23 of 35 proof cells are proven.** 1 failing · 0 contested (the ledger and the board disagree) · 0 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -252,7 +252,7 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 | cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 | CLI-driven |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | **aws** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
-| **gcp** | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
+| **gcp** | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
 | **azure** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
 | **alibaba** | · | · | · | · | · | · | · |
 | **hetzner** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
@@ -267,7 +267,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `aws/gitops` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T142417Z`
 - `aws/byo-iac` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T155743Z`
 - `aws/day2` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T190408Z`
-- `gcp/floor` **contested** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T120037Z` — but #3855 is OPEN and was filed 2026-09-02, AFTER the 2026-08-28 run that proved it
+- `gcp/floor` **failing** — ledger 2026-09-02 (#3855)
 - `gcp/maxconfig` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T124233Z`
 - `gcp/addons` **proven** — ledger 2026-08-29, bundle `demos/proofs/gcp/20260829T093816Z` (⚠️ argocd counts unmeasured: pre-#3281 binary (A0.6's convergence loop wrote no summary); the assertion DID run and pass — run 33243600150 logs `all 20 asserted ArgoCD Applications are Healthy+Synced (1 withheld)`)
 - `gcp/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T200519Z`
@@ -290,13 +290,13 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 ### The mechanical next
 
-**`gcp/floor`** — contested. ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T120037Z` — but #3855 is OPEN and was filed 2026-09-02, AFTER the 2026-08-28 run that proved it
+**`gcp/floor`** — failing. ledger 2026-09-02
 
 Failing cells rank above never-run ones: a red cell already has a diagnosed cause and costs nothing new to re-drive, where a never-run cell needs its gate enabled first. This RANKS; it never claims — `scripts/claim-work.sh` claims.
 
 <details><summary>The next 10</summary>
 
-1. `gcp/floor` — contested
+1. `gcp/floor` — failing
 1. `alibaba/floor` — never_run
 1. `alibaba/maxconfig` — never_run
 1. `alibaba/addons` — never_run
@@ -364,20 +364,9 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 ⚠️ **This snapshot predates the truncation check**, so whether its issue list is complete is unknown — and it is not evidence that it is: the query that wrote it was capped at 500 and reported the same count whether or not it dropped the tail. The next refresh answers it.
 
-No cell is failing or blocked.
-### ⚠️ Contested — proven by the ledger, contradicted by a red
-
-A nightly that goes red files an **issue** and writes **no ledger row**. So from the ledger's point of view that failure never happened, and a cell proven earlier stays ✅ forever: PASS is durable, a later FAIL is invisible. That makes the grid a **high-water mark** presented as current state, in the one direction that overstates — which is the thing this whole file exists to prevent.
-
-| cell | proven by a run dated | red | filed | red's state |
-|---|:---:|---|:---:|---|
-| `gcp/floor` | 2026-08-28 | #3855 | 2026-09-02 | open |
-
-`contested` takes **no side**. Whether a later red is a flake or a regression needs someone to read the run, and guessing either way is worse than naming the contradiction. It claims only what is derivable — the two sources disagree, so the ✅ is not trustworthy right now.
-
-**Two human acts clear it, and either one is fine:** close the issue if that run was a flake, or append a `FAIL` row for it if it was not. The next derivation picks the answer up.
-
-A row marked **closed … inside this refresh window** is a red that was filed and closed between two snapshots, so it was never in anybody's `open_issues` and no derivation ever saw it. It is shown once, here, and clears on the next refresh — the closing act has already happened. That is the whole of it: a red is evidence whether or not its issue is still open, and `0 failing` is a claim about **today**.
+| cell | state | issue | issue state |
+|---|---|---|:---:|
+| `gcp/floor` | failing | #3855 | open |
 
 
 ### Orphan reaper — nothing standing
@@ -444,7 +433,7 @@ The timestamp is printed VERBATIM from the snapshot, never as an age. An age is 
 
 Gate inventory observed: **2026-08-27T19:15:55Z** — carried forward on every refresh whose token cannot list repo variables or secrets. Past 7 days behind the snapshot it stops being a measurement of today, and every declared gate degrades to `unknown`.
 
-Ledger rows read: **61** · surviving claims: **27** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
+Ledger rows read: **62** · surviving claims: **27** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
 
 _Generated by `scripts/programme-rollup.mjs`. Do not edit below the marker — run `pnpm gen:programme`._
 
