@@ -48,11 +48,7 @@ var orgListColumns = []string{"Name", "Slug", "Role", "Plan", "Active"}
 func orgRows(orgs []api.OrgSummary) [][]string {
 	rows := make([][]string, len(orgs))
 	for i, o := range orgs {
-		active := ""
-		if o.IsActive {
-			active = ui.SymbolDefault
-		}
-		rows[i] = []string{o.Name, o.Slug, o.Role, o.Plan, active}
+		rows[i] = []string{o.Name, o.Slug, o.Role, o.Plan, ui.DefaultCell(o.IsActive)}
 	}
 	return rows
 }

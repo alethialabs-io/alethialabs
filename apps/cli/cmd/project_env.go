@@ -78,7 +78,8 @@ var projectEnvListCmd = &cobra.Command{
 				ui.Muted("No environments found.")
 				return
 			}
-			_ = ui.ShowTable(envListColumns, envRows(envs), "environments")
+			// FormatTable: the interactive browser is a person looking at a screen, never a pipe.
+			_ = ui.ShowTable(envListColumns, envRows(envs, ui.FormatTable), "environments")
 			return
 		}
 		if err := runProjectEnvList(client, os.Stdout, outputFormat(cmd), project); err != nil {
@@ -97,7 +98,16 @@ var envListColumns = []string{
 }
 
 // envRows projects environments into plain table rows.
-func envRows(envs []api.Environment) [][]string {
+//
+// Status goes through ui.Cell: `runner list` and `clusters list` have drawn a glyph beside the
+// word since #3694 and this table printed the bare shouting enum, so one product said a status
+// two ways. The Cell split is what makes that safe — `-o csv` still carries the raw `ACTIVE` a
+// script parses, and only the human table gets `● active`.
+//
+// Default is DefaultCell, not ui.YesNo. The column asks WHICH ONE, and answering it per-row with
+// the status vocabulary's `● / ·` both put a glyph on every line and made this the only table in
+// the product to mark its default environment with something other than `◆`.
+func envRows(envs []api.Environment, outFmt string) [][]string {
 	rows := make([][]string, len(envs))
 	for i, e := range envs {
 		rows[i] = []string{
@@ -106,8 +116,8 @@ func envRows(envs []api.Environment) [][]string {
 			ui.OrDash(e.PlacementMode),
 			ui.StrOrDash(e.Namespace),
 			ui.StrOrDash(e.Fabric),
-			e.Status,
-			ui.YesNo(e.IsDefault),
+			ui.Cell(outFmt, e.Status, ui.StatusCell(e.Status)),
+			ui.DefaultCell(e.IsDefault),
 			ui.StrOrDash(e.Region),
 		}
 	}
@@ -126,7 +136,7 @@ func runProjectEnvList(c apiClient, out io.Writer, format, project string) error
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: envListColumns,
-		Rows:    envRows(envs),
+		Rows:    envRows(envs, format),
 	}, envs)
 }
 

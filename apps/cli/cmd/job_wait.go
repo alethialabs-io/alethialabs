@@ -28,7 +28,7 @@ func waitForJob(apiClient *api.Client, jobID string) error {
 
 		if job.Status != lastStatus {
 			lastStatus = job.Status
-			fmt.Printf("  Status: %s\n", formatJobStatus(job.Status))
+			fmt.Printf("  Status: %s\n", ui.StatusVerbatim(job.Status))
 		}
 
 		switch job.Status {
@@ -58,19 +58,9 @@ func waitForJob(apiClient *api.Client, jobID string) error {
 	}
 }
 
-func formatJobStatus(status string) string {
-	switch status {
-	case "QUEUED", "CLAIMED":
-		return ui.WarningStyle.Render(status)
-	case "PROCESSING":
-		return ui.CyanStyle.Render(status)
-	case "SUCCESS":
-		return ui.SuccessStyle.Render(status)
-	case "FAILED":
-		return ui.ErrorStyle.Render(status)
-	case "CANCELLED":
-		return ui.MutedStyle.Render(status)
-	default:
-		return status
-	}
-}
+// formatJobStatus is DELETED. It was the third status renderer — a switch over five job statuses
+// that returned the status TEXT in one of five lipgloss styles and drew no glyph at all. Three of
+// those styles (SuccessStyle, ErrorStyle, CyanStyle) are the same bold strong ink in a grayscale
+// palette, so `job wait` printed SUCCESS and FAILED identically and `jobs logs --follow` closed
+// with a line that said nothing a reader could act on. ui.Status renders the glyph and the word
+// in the tier's ink, over the generated vocabulary, and every command says it the same way.
