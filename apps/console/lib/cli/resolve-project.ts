@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, asc, desc, eq, or } from "drizzle-orm";
+import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { projectEnvironments, projects } from "@/lib/db/schema";
 import { environmentStage } from "@/lib/db/schema/enums";
@@ -27,7 +27,15 @@ function isEnvironmentStage(
  */
 export async function resolveCliProject(orgId: string, idOrName: string) {
 	const matchers = [
-		eq(projects.project_name, idOrName),
+		// Case-insensitive, because the uniqueness constraint is (#3145):
+		// `projects_org_id_project_name_key` is UNIQUE on (org_id, lower(project_name)), so at
+		// most one project in an org can match however the caller cased it. A lookup that stayed
+		// case-SENSITIVE would disagree with the index — `alethia project get Api` failing on a
+		// project the database considers identically named — which is the console/CLI split this
+		// programme exists to close, in miniature.
+		sql`lower(${projects.project_name}) = lower(${idOrName})`,
+		// Slugs are already lower-case by construction (`slugify` folds and lowercases), so an
+		// exact match here is the same predicate without the wasted function call.
 		eq(projects.slug, idOrName),
 	];
 	if (UUID_RE.test(idOrName)) matchers.unshift(eq(projects.id, idOrName));
@@ -36,6 +44,26 @@ export async function resolveCliProject(orgId: string, idOrName: string) {
 		.select()
 		.from(projects)
 		.where(and(eq(projects.org_id, orgId), or(...matchers)))
+		// PRECEDENCE, then a total order. The `or` above is a union across THREE columns, so
+		// even with names unique per org it can still match two DISTINCT rows — project A named
+		// `api` and project B slugged `api` are both legitimate and both match `api`. #2663 fixed
+		// the same defect in getCliConfig and never reached this function, which had `.limit(1)`
+		// with no `orderBy` at all: an unordered LIMIT over a non-unique filter has no defined
+		// result in Postgres, and this is the front door for every CLI authoring command.
+		//
+		// Precedence is stated rather than discovered: an id is unambiguous, a slug is what the
+		// URL bar carries, and a name is the most human and the most likely to be re-used. The
+		// (created_at, id) tail is the same tie-break getCliConfig and migration 0150 use, so all
+		// three agree on which row "first" means.
+		.orderBy(
+			sql`case
+				when ${projects.id}::text = ${idOrName} then 0
+				when ${projects.slug} = ${idOrName} then 1
+				else 2
+			end`,
+			asc(projects.created_at),
+			asc(projects.id),
+		)
 		.limit(1);
 	return row ?? null;
 }
