@@ -680,7 +680,12 @@ describe("the requester's strings never reach the consent screen unscrubbed", ()
 					client_name: `alethia-cli${RTL_OVERRIDE}forged`,
 					client_version: "0.42.1\nVerified by Alethia",
 				},
-				{ "user-agent": `alethia-cli${"\u200B"}0.42.1` },
+				// The user-agent's unsafe value is WHITESPACE PADDING, not a zero-width character.
+				// An HTTP header value is a ByteString: `new Request` throws on any code point
+				// above 255, so the bidi and zero-width cases can only be carried by the JSON
+				// body fields above. Padding is the header-legal member of the same family — it
+				// pushes the real value out of view — and it is what this field can test.
+				{ "user-agent": `alethia-cli${" ".repeat(120)}(official build)` },
 			),
 		);
 
@@ -688,7 +693,10 @@ describe("the requester's strings never reach the consent screen unscrubbed", ()
 		const stored = insert?.values?.client_metadata;
 		expect(JSON.stringify(stored)).not.toContain(RTL_OVERRIDE);
 		expect(JSON.stringify(stored)).not.toContain("\\n");
-		expect(JSON.stringify(stored)).not.toContain("\u200B");
+		// Collapsed, not merely trimmed: the padding is gone from the MIDDLE of the value.
+		expect(stored).toMatchObject({
+			user_agent: "alethia-cli (official build)",
+		});
 	});
 
 	// The half a write-time guard cannot cover: a row already in the table.

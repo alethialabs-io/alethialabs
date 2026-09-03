@@ -31,6 +31,7 @@ import {
 	parseDeviceRequestView,
 	pendingDeviceCodeExpiresAt,
 	serverErrorMessage,
+	type DeviceRequestRead,
 } from "@/lib/auth/cli-device-code";
 
 const CONSENT_USER_CODE = "BCDF-GHJK";
@@ -481,6 +482,26 @@ describe("parseDeviceRequestView", () => {
 });
 
 describe("deviceRequestReadOutcome", () => {
+	/**
+	 * Asserts the outcome is the failure `kind` and hands back its reason.
+	 *
+	 * `expect(outcome.kind).toBe("refused")` does not narrow — `expect` is a runtime assertion
+	 * and TypeScript reads the next line against the whole union, where `reason` does not
+	 * exist on the `ok` arm. The `throw` is what narrows, and it also makes the failure
+	 * legible: a test that reached for `.reason` on an `ok` outcome should say so, not read
+	 * `undefined` and compare it against a string.
+	 */
+	function reasonOf(
+		outcome: DeviceRequestRead,
+		kind: "refused" | "unverified",
+	): string {
+		if (outcome.kind === "ok") {
+			throw new Error(`expected a ${kind} outcome, got ok`);
+		}
+		expect(outcome.kind).toBe(kind);
+		return outcome.reason;
+	}
+
 	it("passes a described request through", () => {
 		expect(deviceRequestReadOutcome(200)).toEqual({ kind: "ok" });
 	});
@@ -492,12 +513,11 @@ describe("deviceRequestReadOutcome", () => {
 	});
 
 	it("says what the server said when it refuses", () => {
-		const outcome = deviceRequestReadOutcome(
-			409,
-			"This login request belongs to another account",
+		const reason = reasonOf(
+			deviceRequestReadOutcome(409, "This login request belongs to another account"),
+			"refused",
 		);
-		expect(outcome.kind).toBe("refused");
-		expect(outcome.reason).toBe("This login request belongs to another account");
+		expect(reason).toBe("This login request belongs to another account");
 	});
 
 	// …but never a page of it. A proxy, an edge rate-limiter or a Next error page can answer
@@ -505,15 +525,15 @@ describe("deviceRequestReadOutcome", () => {
 	// screen exactly the way an unbounded client_name would.
 	it("bounds and cleans what it repeats from the server", () => {
 		expect(
-			deviceRequestReadOutcome(409, "x".repeat(5_000)).reason.length,
+			reasonOf(deviceRequestReadOutcome(409, "x".repeat(5_000)), "refused").length,
 		).toBeLessThanOrEqual(CLIENT_METADATA_MAX_LENGTH);
-		expect(deviceRequestReadOutcome(409, "bad\nline").reason).not.toContain("\n");
+		expect(
+			reasonOf(deviceRequestReadOutcome(409, "bad\nline"), "refused"),
+		).not.toContain("\n");
 	});
 
 	it("still refuses with its own words when the server names no reason", () => {
-		const outcome = deviceRequestReadOutcome(409, null);
-		expect(outcome.kind).toBe("refused");
-		expect(outcome.reason).not.toBe("");
+		expect(reasonOf(deviceRequestReadOutcome(409, null), "refused")).not.toBe("");
 	});
 
 	// UNKNOWN, not known-broken — and this arm is the difference between a security fix and an
@@ -522,9 +542,9 @@ describe("deviceRequestReadOutcome", () => {
 	// this deploys. Same permissiveness, for the same reason, as `checkUserCodeBinding` on a
 	// NULL user_code and `isPendingRequestExpired` on a NULL deadline.
 	it("does NOT refuse a request that was simply never registered", () => {
-		const outcome = deviceRequestReadOutcome(404);
-		expect(outcome.kind).toBe("unverified");
-		expect(outcome.reason).toMatch(/did not register/i);
+		expect(reasonOf(deviceRequestReadOutcome(404), "unverified")).toMatch(
+			/did not register/i,
+		);
 	});
 
 	it.each([429, 500, 502, 503])("treats %i as unverified rather than refused", (status) => {

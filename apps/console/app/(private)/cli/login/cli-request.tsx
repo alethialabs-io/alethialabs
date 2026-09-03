@@ -85,22 +85,32 @@ export function useCliDeviceRequest(
 	deviceCode: string | null,
 	userCode: string | null,
 ): CliDeviceRequestState {
-	const [state, setState] = useState<CliDeviceRequestState>(
-		deviceCode && userCode ? { phase: "loading" } : { phase: "idle" },
-	);
+	// ONLY THE ANSWER IS STATE. `idle` and `loading` are derived below from the arguments and
+	// from whether an answer has arrived, so nothing in the effect BODY writes state — the only
+	// `setAnswered` calls are inside the async callback, which is the subscribe-to-an-external-
+	// source shape `react-hooks/set-state-in-effect` describes as the correct one. The obvious
+	// version, seeding `loading` and re-seeding it from the effect, writes state twice on every
+	// mount to express something both reads already know.
+	//
+	// The answer is KEYED on the codes it was fetched for. The abort below already stops a
+	// resolved fetch touching a component that has moved on, but an abort is a race the key is
+	// not: an answer about a device_code the page is no longer showing can never be rendered as
+	// though it were about the current one.
+	const requestKey = deviceCode && userCode ? `${deviceCode} ${userCode}` : null;
+	const [answered, setAnswered] = useState<{
+		key: string;
+		state: CliDeviceRequestState;
+	} | null>(null);
 
 	useEffect(() => {
-		if (!deviceCode || !userCode) {
-			setState({ phase: "idle" });
-			return;
-		}
+		if (!deviceCode || !userCode) return;
+		const key = `${deviceCode} ${userCode}`;
+		const setState = (state: CliDeviceRequestState) => setAnswered({ key, state });
 
 		// Aborted on unmount, and the abort is checked before every `setState`. Without it a
 		// StrictMode double-mount (and every fast navigation away) resolves into a component
-		// that is gone, which React reports as an update-on-unmounted warning and which — more
-		// to the point here — would let the FIRST mount's answer overwrite the second's.
+		// that is gone, which React reports as an update-on-unmounted warning.
 		const controller = new AbortController();
-		setState({ phase: "loading" });
 
 		const query = new URLSearchParams({
 			device_code: deviceCode,
@@ -158,7 +168,8 @@ export function useCliDeviceRequest(
 		return () => controller.abort();
 	}, [deviceCode, userCode]);
 
-	return state;
+	if (requestKey === null) return { phase: "idle" };
+	return answered?.key === requestKey ? answered.state : { phase: "loading" };
 }
 
 /** How often the decision countdown re-reads the clock. */
@@ -180,22 +191,28 @@ export function useRemainingMs(expiresAt: string | null): number | null {
 	const deadline = expiresAt === null ? null : Date.parse(expiresAt);
 	const usable = deadline !== null && Number.isFinite(deadline) ? deadline : null;
 
-	const [remaining, setRemaining] = useState<number | null>(
-		usable === null ? null : Math.max(0, usable - Date.now()),
-	);
+	// THE CLOCK IS THE STATE; the remaining time is derived from it. The obvious shape — hold
+	// `remaining` in state and `setRemaining` from the effect — reads the clock in a render
+	// expression and writes state synchronously in an effect body, which is what
+	// `react-hooks/purity` and `react-hooks/set-state-in-effect` are both pointing at. Here the
+	// only writer is the interval CALLBACK, which is the subscribe-to-an-external-source shape
+	// those rules describe as correct, and the one clock read is a LAZY initialiser that runs
+	// once.
+	//
+	// The consequence worth knowing: between mount and the first tick, `now` is as old as the
+	// read that produced `expiresAt` — a few hundred milliseconds on a live request. It costs a
+	// countdown that starts fractionally high and is corrected within a second, and it buys a
+	// deadline already in the past being reported as closed on the FIRST render rather than one
+	// tick later, which is the case that actually matters.
+	const [now, setNow] = useState(() => Date.now());
 
 	useEffect(() => {
-		if (usable === null) {
-			setRemaining(null);
-			return;
-		}
-		const tick = () => setRemaining(Math.max(0, usable - Date.now()));
-		tick();
-		const timer = setInterval(tick, COUNTDOWN_TICK_MS);
+		if (usable === null) return;
+		const timer = setInterval(() => setNow(Date.now()), COUNTDOWN_TICK_MS);
 		return () => clearInterval(timer);
 	}, [usable]);
 
-	return remaining;
+	return usable === null ? null : Math.max(0, usable - now);
 }
 
 /**
@@ -260,7 +277,11 @@ function RequesterBlock({ requester }: { requester: CliDeviceRequester }) {
 	return (
 		<div className="space-y-2">
 			{claimed.length > 0 ? (
-				<div className="space-y-1">
+				<div
+					role="group"
+					aria-label="Details the device reported about itself"
+					className="space-y-1"
+				>
 					<p className="text-xs text-text-secondary">
 						The device says it is{" "}
 						<span className="text-text-tertiary">(it could say anything)</span>:

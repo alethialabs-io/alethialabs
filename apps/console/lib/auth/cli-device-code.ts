@@ -525,6 +525,18 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Narrows a value that the wire allows to be a string, `null`, or simply absent.
+ *
+ * A PREDICATE rather than the inline `x !== null && x !== undefined && typeof x !== "string"`
+ * it replaces. That form reads as the same three questions and type-checks as none of them:
+ * negating a conjunction leaves a disjunction, and a disjunction narrows `unknown` to nothing
+ * — so the fields came out of the check still `unknown` and went into the view that way.
+ */
+function isNullableString(value: unknown): value is string | null | undefined {
+	return value === null || value === undefined || typeof value === "string";
+}
+
+/**
  * Narrows one element of the wire `scopes` array.
  *
  * Returns null rather than a partial line. A scope the page cannot read is a scope it would
@@ -588,8 +600,8 @@ export function parseDeviceRequestView(body: unknown): CliDeviceRequestView | nu
 	if (!isJsonObject(account)) return null;
 	const email = account.email;
 	const name = account.name;
-	if (email !== null && email !== undefined && typeof email !== "string") return null;
-	if (name !== null && name !== undefined && typeof name !== "string") return null;
+	if (!isNullableString(email)) return null;
+	if (!isNullableString(name)) return null;
 
 	const rawRequester = body.requester;
 	if (!isJsonObject(rawRequester)) return null;

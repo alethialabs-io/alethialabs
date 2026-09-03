@@ -30,8 +30,24 @@ vi.mock("next/navigation", () => ({
 	useSearchParams: () => new URLSearchParams(hygCliAuthflowSearch),
 }));
 
+// The signed-in account, as `cli-session.tsx` hands it down. MOCKED AT THE HOOK, and the reason
+// is measured rather than assumed: `CliAccountProvider` passes a PROMISE and `useCliAccount`
+// resolves it with React 19's `use()`, which is the supported shape only because the promise
+// crosses the RSC boundary — `layout.tsx` is a Server Component and Next streams it. There is no
+// RSC boundary in jsdom, so a promise handed to that provider from a test never resolves and the
+// page sits in its Suspense fallback forever. A 20-line probe rendering nothing but the provider
+// and a `useCliAccount` caller reproduced it with no page involved, so this is a property of
+// client-side `use()` under the unit tier and not of the screen under test.
+//
+// What is lost is the wiring, which is #4058's and already landed. What is kept is the question
+// this suite is for: GIVEN the context resolves to an account, does the screen name it — and does
+// it omit the line rather than print a blank when it resolves to null.
+let hygCliAuthflowAccount: string | null = null;
+vi.mock("@/app/(private)/cli/login/cli-session", () => ({
+	useCliAccount: () => hygCliAuthflowAccount,
+}));
+
 import CliLoginPage from "@/app/(private)/cli/login/page";
-import { CliAccountProvider } from "@/app/(private)/cli/login/cli-session";
 import { deviceApprovalScopes } from "@/lib/auth/cli-device-code";
 
 const HYG_CLI_AUTHFLOW_DEVICE_CODE = "2f1c8c1e-7a4b-4d2e-9a3f-0b5c6d7e8f90";
@@ -73,13 +89,10 @@ function hygCliAuthflowView(over: Record<string, unknown> = {}) {
 	};
 }
 
-/** Renders the page under the account provider the route's layout supplies. */
+/** Renders the page with the account context resolved to `account`. */
 function renderCliLogin(account: string | null = HYG_CLI_AUTHFLOW_ACCOUNT) {
-	return render(
-		<CliAccountProvider email={Promise.resolve(account)}>
-			<CliLoginPage />
-		</CliAccountProvider>,
-	);
+	hygCliAuthflowAccount = account;
+	return render(<CliLoginPage />);
 }
 
 /** Every call the page made that was NOT the mount-time read. */
@@ -260,6 +273,20 @@ describe("/cli/login — what the screen says it is approving (#3889)", () => {
 		expect(screen.getByRole("button", { name: /approve/i })).toBeInTheDocument();
 	});
 
+	// `null` is a first-class value for the account, not a bug: `layout.tsx`'s session read is
+	// best-effort and a stale token makes it throw. The line is then OMITTED. It must never
+	// render as "unknown account" or as an empty string beside "Signed in as", which is the
+	// blank-that-reads-as-an-answer failure in its smallest form.
+	it("omits the account line rather than printing a blank when it cannot be resolved", async () => {
+		renderCliLogin(null);
+
+		expect(await screen.findByRole("button", { name: /approve/i })).toBeInTheDocument();
+		expect(screen.queryByText(/signed in as/i)).toBeNull();
+		// The rest of the description is unaffected — this is one missing fact, not four.
+		expect(screen.getByText("alethia-cli")).toBeInTheDocument();
+		expect(screen.getByText(/this request expires in/i)).toBeInTheDocument();
+	});
+
 	// A press against a skeleton is consent given to a screen that has not finished saying
 	// what it is for.
 	it("does not offer Approve while the request is still being described", async () => {
@@ -404,13 +431,15 @@ describe("/cli/login — the requester is untrusted display data", () => {
 			screen.getByText(/alethia saw the request come from/i),
 		).toBeInTheDocument();
 
-		// The claimed values sit under the client's introduction, not under Alethia's.
-		const claimed = claims.parentElement;
-		expect(claimed).not.toBeNull();
-		if (claimed) {
-			expect(within(claimed).getByText("alethia-cli")).toBeInTheDocument();
-			expect(within(claimed).queryByText("203.0.113.7")).toBeNull();
-		}
+		// The claimed values sit inside the region labelled as the DEVICE's account of itself,
+		// and the server-observed IP sits outside it. Scoped by that label rather than by
+		// `claims.parentElement`, which could only be used behind an `if` — and an `expect`
+		// inside an `if` is one that can silently not run.
+		const claimed = within(
+			screen.getByRole("group", { name: /details the device reported/i }),
+		);
+		expect(claimed.getByText("alethia-cli")).toBeInTheDocument();
+		expect(claimed.queryByText("203.0.113.7")).toBeNull();
 	});
 
 	// Rendered as ONE line of text. React escapes the markup; `clientMetadataField` — applied
@@ -430,15 +459,13 @@ describe("/cli/login — the requester is untrusted display data", () => {
 		};
 		renderCliLogin();
 
-		const claims = await screen.findByText(/the device says it is/i);
-		const claimed = claims.parentElement;
-		expect(claimed).not.toBeNull();
-		if (claimed) {
-			expect(claimed.textContent).not.toContain(HYG_CLI_AUTHFLOW_RTL_OVERRIDE);
-			expect(claimed.textContent).not.toContain("\n");
-			// Scrubbed, not blanked — the value is still the one the reader has to judge.
-			expect(claimed.textContent).toContain("alethia-cli");
-		}
+		const claimed = await screen.findByRole("group", {
+			name: /details the device reported/i,
+		});
+		expect(claimed.textContent).not.toContain(HYG_CLI_AUTHFLOW_RTL_OVERRIDE);
+		expect(claimed.textContent).not.toContain("\n");
+		// Scrubbed, not blanked — the value is still the one the reader has to judge.
+		expect(claimed.textContent).toContain("alethia-cli");
 	});
 
 	// Nothing at all is a real answer, and it gets its own sentence. A block that simply
