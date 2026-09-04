@@ -68,7 +68,9 @@
 /** Where a run came from. The buckets are the levers — each one is fixed differently. */
 export function origin(run) {
 	const head = run.head_branch ?? "";
-	if (head.startsWith("mergify/merge-queue/")) return "speculative";
+	if (run.event === "merge_group") return "speculative";
+	if (run.event === "pull_request" || run.event === "pull_request_target") return "feature";
+	if (run.event === "push" && head.startsWith("mergify/merge-queue/")) return "speculative";
 	// A promotion PR's head IS an integration branch, so every merge into it re-fires the PR's
 	// whole workflow set against a diff that matches nearly every path filter. That is how one
 	// open PR became 22% of all CI.
@@ -196,7 +198,7 @@ function selfTest() {
 	const run = (head, jobs, extra = {}) => ({ head_branch: head, jobs, ...extra });
 	const job = (created, started) => ({ created_at: created, started_at: started });
 
-	ok("a mergify branch is speculative", origin(run("mergify/merge-queue/abc", [])) === "speculative");
+	ok("a merge-group run is speculative", origin(run("mergify/merge-queue/abc", [], { event: "merge_group" })) === "speculative");
 	ok("...a promotion PR's head is an integration branch", origin(run("dev", [])) === "promotion-pr" && origin(run("staging", [])) === "promotion-pr");
 	ok("...and anything else is feature work", origin(run("feat/x", [])) === "feature");
 
@@ -239,7 +241,7 @@ function selfTest() {
 	const sample = [
 		run("feat/a", [job("2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z")]),
 		run("dev", [job("2026-01-01T00:00:00Z", "2026-01-01T00:10:00Z")]),
-		run("mergify/merge-queue/z", [job("2026-01-01T00:00:00Z", "2026-01-01T00:30:00Z")]),
+		run("mergify/merge-queue/z", [job("2026-01-01T00:00:00Z", "2026-01-01T00:30:00Z")], { event: "merge_group" }),
 		run("feat/b", [], { conclusion: "cancelled" }),
 	];
 	const s = summarise(sample);

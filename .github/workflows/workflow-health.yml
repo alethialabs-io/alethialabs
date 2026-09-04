@@ -148,7 +148,6 @@ jobs:
       # `ci-demand.mjs` itself refuses an empty or untimed sample, so a collection failure here is
       # loud rather than a reassuring zero.
       - name: CI demand — how much CI we ask for, and how long we wait for it
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
