@@ -617,6 +617,7 @@ export const cliProjectResponse = z.object({ project: projectWire });
 /** GET /api/cli/projects/:id/environments result. */
 export const cliEnvironmentsResponse = z.object({
 	environments: z.array(environmentWire),
+	page: pageInfoSchema,
 });
 /** POST /api/cli/projects/:id/environments result. */
 export const cliEnvironmentResponse = z.object({ environment: environmentWire });
@@ -712,6 +713,7 @@ export const addonWire = z.object({
 export const cliAddonsResponse = z.object({
 	environment: z.string(),
 	addons: z.array(addonWire),
+	page: pageInfoSchema,
 });
 
 /** One attached BYO Helm chart in an environment (scan_report omitted — status only). */
@@ -745,6 +747,7 @@ export const cliByoScanResponse = z.object({
 export const cliByoChartsResponse = z.object({
 	environment: z.string(),
 	charts: z.array(byoChartWire),
+	page: pageInfoSchema,
 });
 
 /** The BYO-IaC source attached to an environment (scan_report omitted — status only). */
@@ -781,6 +784,7 @@ export const promotionWire = z.object({
 /** GET /api/cli/projects/:id/promotions result. */
 export const cliPromotionsResponse = z.object({
 	promotions: z.array(promotionWire),
+	page: pageInfoSchema,
 });
 
 /** One approval slot on a promotion. */
@@ -824,6 +828,7 @@ export const stagedChangeWire = z.object({
 export const cliStagedChangesResponse = z.object({
 	environment: z.string(),
 	changes: z.array(stagedChangeWire),
+	page: pageInfoSchema,
 });
 
 /** One discovered network in a cloud identity's inventory. */

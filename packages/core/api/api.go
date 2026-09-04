@@ -1831,14 +1831,33 @@ func (c *Client) CreateProject(params CreateProjectParams) (*Project, error) {
 
 // ListEnvironments returns a project's environments (default first).
 func (c *Client) ListEnvironments(project string) ([]Environment, error) {
+	return AllPages(func(cursor string) ([]Environment, PageInfo, error) {
+		page, err := c.getProjectEnvironmentsPage(project, cursor)
+		if err != nil {
+			return nil, PageInfo{}, err
+		}
+		return page.Environments, page.Page, nil
+	})
+}
+
+func (c *Client) getProjectEnvironmentsPage(project, cursor string) (*struct {
+	Environments []Environment `json:"environments"`
+	Page         PageInfo      `json:"page"`
+}, error) {
 	endpoint := fmt.Sprintf("%s/cli/projects/%s/environments", c.baseURL, url.PathEscape(project))
-	var successResp struct {
-		Environments []Environment `json:"environments"`
+	params := url.Values{}
+	PageOpts{Cursor: cursor}.Apply(params)
+	if len(params) > 0 {
+		endpoint = fmt.Sprintf("%s?%s", endpoint, params.Encode())
 	}
-	if err := c.doGet(endpoint, &successResp); err != nil {
+	var page struct {
+		Environments []Environment `json:"environments"`
+		Page         PageInfo      `json:"page"`
+	}
+	if err := c.doGet(endpoint, &page); err != nil {
 		return nil, fmt.Errorf("failed to list environments: %w", err)
 	}
-	return successResp.Environments, nil
+	return &page, nil
 }
 
 // AddEnvironmentParams is the payload for AddEnvironment. A struct rather than positional arguments
@@ -2150,18 +2169,52 @@ type ProjectAddons struct {
 	Addons      []Addon `json:"addons"`
 }
 
+type ProjectAddonsPage struct {
+	Environment string   `json:"environment"`
+	Addons      []Addon  `json:"addons"`
+	Page        PageInfo `json:"page"`
+}
+
 // GetProjectAddons returns the catalog add-ons installed in a project environment (the default
 // environment when env is empty; otherwise the environment addressed by name, stage, or id).
 func (c *Client) GetProjectAddons(project, env string) (*ProjectAddons, error) {
-	endpoint := fmt.Sprintf("%s/cli/projects/%s/addons", c.baseURL, url.PathEscape(project))
-	if env != "" {
-		endpoint = fmt.Sprintf("%s?env=%s", endpoint, url.QueryEscape(env))
+	var out *ProjectAddons
+	_, err := AllPages(func(cursor string) ([]Addon, PageInfo, error) {
+		page, err := c.getProjectAddonsPage(project, env, cursor)
+		if err != nil {
+			return nil, PageInfo{}, err
+		}
+		if out == nil {
+			out = &ProjectAddons{Environment: page.Environment}
+		}
+		out.Addons = append(out.Addons, page.Addons...)
+		return page.Addons, page.Page, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	var resp ProjectAddons
-	if err := c.doGet(endpoint, &resp); err != nil {
+	return out, nil
+}
+
+func (c *Client) getProjectAddonsPage(project, env, cursor string) (*ProjectAddonsPage, error) {
+	endpoint := withEnvParam(
+		fmt.Sprintf("%s/cli/projects/%s/addons", c.baseURL, url.PathEscape(project)),
+		env,
+	)
+	params := url.Values{}
+	PageOpts{Cursor: cursor}.Apply(params)
+	if len(params) > 0 {
+		sep := "?"
+		if strings.Contains(endpoint, "?") {
+			sep = "&"
+		}
+		endpoint = fmt.Sprintf("%s%s%s", endpoint, sep, params.Encode())
+	}
+	var page ProjectAddonsPage
+	if err := c.doGet(endpoint, &page); err != nil {
 		return nil, fmt.Errorf("failed to get add-ons: %w", err)
 	}
-	return &resp, nil
+	return &page, nil
 }
 
 // EnableAddonParams is the payload for EnableAddon. Values is the add-on's own knob map, validated
@@ -2361,17 +2414,51 @@ type ProjectByoCharts struct {
 	Charts      []ByoChart `json:"charts"`
 }
 
+type ProjectByoChartsPage struct {
+	Environment string     `json:"environment"`
+	Charts      []ByoChart `json:"charts"`
+	Page        PageInfo   `json:"page"`
+}
+
 // GetProjectByoCharts returns the BYO Helm charts attached to a project environment.
 func (c *Client) GetProjectByoCharts(project, env string) (*ProjectByoCharts, error) {
-	endpoint := fmt.Sprintf("%s/cli/projects/%s/byo-charts", c.baseURL, url.PathEscape(project))
-	if env != "" {
-		endpoint = fmt.Sprintf("%s?env=%s", endpoint, url.QueryEscape(env))
+	var out *ProjectByoCharts
+	_, err := AllPages(func(cursor string) ([]ByoChart, PageInfo, error) {
+		page, err := c.getProjectByoChartsPage(project, env, cursor)
+		if err != nil {
+			return nil, PageInfo{}, err
+		}
+		if out == nil {
+			out = &ProjectByoCharts{Environment: page.Environment}
+		}
+		out.Charts = append(out.Charts, page.Charts...)
+		return page.Charts, page.Page, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	var resp ProjectByoCharts
-	if err := c.doGet(endpoint, &resp); err != nil {
+	return out, nil
+}
+
+func (c *Client) getProjectByoChartsPage(project, env, cursor string) (*ProjectByoChartsPage, error) {
+	endpoint := withEnvParam(
+		fmt.Sprintf("%s/cli/projects/%s/byo-charts", c.baseURL, url.PathEscape(project)),
+		env,
+	)
+	params := url.Values{}
+	PageOpts{Cursor: cursor}.Apply(params)
+	if len(params) > 0 {
+		sep := "?"
+		if strings.Contains(endpoint, "?") {
+			sep = "&"
+		}
+		endpoint = fmt.Sprintf("%s%s%s", endpoint, sep, params.Encode())
+	}
+	var page ProjectByoChartsPage
+	if err := c.doGet(endpoint, &page); err != nil {
 		return nil, fmt.Errorf("failed to get BYO charts: %w", err)
 	}
-	return &resp, nil
+	return &page, nil
 }
 
 // --- BYO IaC ---
@@ -2426,17 +2513,40 @@ type Promotion struct {
 // GetProjectPromotions returns a project's promotions, optionally scoped to one target
 // environment (by name, stage, or id).
 func (c *Client) GetProjectPromotions(project, env string) ([]Promotion, error) {
-	endpoint := fmt.Sprintf("%s/cli/projects/%s/promotions", c.baseURL, url.PathEscape(project))
-	if env != "" {
-		endpoint = fmt.Sprintf("%s?env=%s", endpoint, url.QueryEscape(env))
+	return AllPages(func(cursor string) ([]Promotion, PageInfo, error) {
+		page, err := c.getProjectPromotionsPage(project, env, cursor)
+		if err != nil {
+			return nil, PageInfo{}, err
+		}
+		return page.Promotions, page.Page, nil
+	})
+}
+
+func (c *Client) getProjectPromotionsPage(project, env, cursor string) (*struct {
+	Promotions []Promotion `json:"promotions"`
+	Page       PageInfo    `json:"page"`
+}, error) {
+	endpoint := withEnvParam(
+		fmt.Sprintf("%s/cli/projects/%s/promotions", c.baseURL, url.PathEscape(project)),
+		env,
+	)
+	params := url.Values{}
+	PageOpts{Cursor: cursor}.Apply(params)
+	if len(params) > 0 {
+		sep := "?"
+		if strings.Contains(endpoint, "?") {
+			sep = "&"
+		}
+		endpoint = fmt.Sprintf("%s%s%s", endpoint, sep, params.Encode())
 	}
-	var resp struct {
+	var page struct {
 		Promotions []Promotion `json:"promotions"`
+		Page       PageInfo    `json:"page"`
 	}
-	if err := c.doGet(endpoint, &resp); err != nil {
+	if err := c.doGet(endpoint, &page); err != nil {
 		return nil, fmt.Errorf("failed to get promotions: %w", err)
 	}
-	return resp.Promotions, nil
+	return &page, nil
 }
 
 // PromotionApproval is one approval slot on a promotion.
@@ -2496,18 +2606,52 @@ type StagedChanges struct {
 	Changes     []StagedChange `json:"changes"`
 }
 
+type StagedChangesPage struct {
+	Environment string         `json:"environment"`
+	Changes     []StagedChange `json:"changes"`
+	Page        PageInfo       `json:"page"`
+}
+
 // GetProjectStagedChanges returns an environment's staged changes (the default environment when
 // env is empty; otherwise the environment addressed by name, stage, or id).
 func (c *Client) GetProjectStagedChanges(project, env string) (*StagedChanges, error) {
-	endpoint := fmt.Sprintf("%s/cli/projects/%s/staged", c.baseURL, url.PathEscape(project))
-	if env != "" {
-		endpoint = fmt.Sprintf("%s?env=%s", endpoint, url.QueryEscape(env))
+	var out *StagedChanges
+	_, err := AllPages(func(cursor string) ([]StagedChange, PageInfo, error) {
+		page, err := c.getProjectStagedChangesPage(project, env, cursor)
+		if err != nil {
+			return nil, PageInfo{}, err
+		}
+		if out == nil {
+			out = &StagedChanges{Environment: page.Environment}
+		}
+		out.Changes = append(out.Changes, page.Changes...)
+		return page.Changes, page.Page, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	var resp StagedChanges
-	if err := c.doGet(endpoint, &resp); err != nil {
+	return out, nil
+}
+
+func (c *Client) getProjectStagedChangesPage(project, env, cursor string) (*StagedChangesPage, error) {
+	endpoint := withEnvParam(
+		fmt.Sprintf("%s/cli/projects/%s/staged", c.baseURL, url.PathEscape(project)),
+		env,
+	)
+	params := url.Values{}
+	PageOpts{Cursor: cursor}.Apply(params)
+	if len(params) > 0 {
+		sep := "?"
+		if strings.Contains(endpoint, "?") {
+			sep = "&"
+		}
+		endpoint = fmt.Sprintf("%s%s%s", endpoint, sep, params.Encode())
+	}
+	var page StagedChangesPage
+	if err := c.doGet(endpoint, &page); err != nil {
 		return nil, fmt.Errorf("failed to get staged changes: %w", err)
 	}
-	return &resp, nil
+	return &page, nil
 }
 
 // --- Cloud inventory ---

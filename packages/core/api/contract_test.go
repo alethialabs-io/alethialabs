@@ -354,6 +354,7 @@ func TestContract_Project(t *testing.T) {
 func TestContract_Environments(t *testing.T) {
 	var resp struct {
 		Environments []Environment `json:"environments"`
+		Page         PageInfo      `json:"page"`
 	}
 	strictDecode(t, "environments.json", &resp)
 	if len(resp.Environments) != 1 {
@@ -450,7 +451,7 @@ func TestContract_Probes(t *testing.T) {
 }
 
 func TestContract_Addons(t *testing.T) {
-	var resp ProjectAddons
+	var resp ProjectAddonsPage
 	strictDecode(t, "addons.json", &resp)
 	if len(resp.Addons) != 1 {
 		t.Fatalf("expected 1 add-on, got %d", len(resp.Addons))
@@ -459,7 +460,7 @@ func TestContract_Addons(t *testing.T) {
 }
 
 func TestContract_ByoCharts(t *testing.T) {
-	var resp ProjectByoCharts
+	var resp ProjectByoChartsPage
 	strictDecode(t, "byo_charts.json", &resp)
 	if len(resp.Charts) != 1 {
 		t.Fatalf("expected 1 chart, got %d", len(resp.Charts))
@@ -481,6 +482,7 @@ func TestContract_IacSource(t *testing.T) {
 func TestContract_Promotions(t *testing.T) {
 	var resp struct {
 		Promotions []Promotion `json:"promotions"`
+		Page       PageInfo    `json:"page"`
 	}
 	strictDecode(t, "promotions.json", &resp)
 	if len(resp.Promotions) != 1 {
@@ -501,7 +503,7 @@ func TestContract_Promotion(t *testing.T) {
 }
 
 func TestContract_StagedChanges(t *testing.T) {
-	var resp StagedChanges
+	var resp StagedChangesPage
 	strictDecode(t, "staged_changes.json", &resp)
 	if len(resp.Changes) != 1 {
 		t.Fatalf("expected 1 staged change, got %d", len(resp.Changes))
