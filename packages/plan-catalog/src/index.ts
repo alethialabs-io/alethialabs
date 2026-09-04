@@ -18,6 +18,11 @@ export type PlanId = "community" | "team" | "enterprise";
 /** Currencies we present + charge in. USD is the default; EU customers are billed in EUR. */
 export type SupportedCurrency = "usd" | "eur";
 
+/** Narrows an external currency code to the currencies the product currently sells. */
+export function asSupportedCurrency(code: string): SupportedCurrency | null {
+	return code === "usd" || code === "eur" ? code : null;
+}
+
 /** A titled group of features for the "What's included" slice. */
 export interface PlanFeatureGroup {
 	label: string;
@@ -417,7 +422,7 @@ export function shortInterval(interval: string | undefined | null): string {
  * failure mode `packages/format/src/minor-units.ts` exists to prevent, so the choice is a dependency
  * change or nothing, and a dependency change does not belong in a formatter bug fix.
  */
-export function formatMoney(unitAmountCents: number, currency: string): string {
+export function formatMoney(unitAmountCents: number, currency: SupportedCurrency): string {
 	const symbol = CURRENCY_SYMBOL[currency] ?? `${currency.toUpperCase()} `;
 	const amount = unitAmountCents / 100;
 	const value = Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
@@ -427,7 +432,7 @@ export function formatMoney(unitAmountCents: number, currency: string): string {
 /** Format a Stripe price into a per-seat label like "$29 / seat / mo". */
 export function formatSeatPrice(
 	unitAmountCents: number,
-	currency: string,
+	currency: SupportedCurrency,
 	interval: string | undefined | null,
 ): string {
 	return `${formatMoney(unitAmountCents, currency)} / seat / ${shortInterval(interval)}`;
