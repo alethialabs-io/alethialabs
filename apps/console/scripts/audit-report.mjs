@@ -39,22 +39,31 @@
 //
 // ── WHAT IS SCORED, AND WHAT IS EXPLICITLY NOT ───────────────────────────────────────────────
 //
-// The rubric defines 34 predicates in five families. This file now scores 26 of them:
+// The rubric defines 34 predicates in five families. This file now scores 33 of them:
 //
 //   S1–S4, T1–T4     STATIC, `scripts/check-route-states.mjs`.
 //   H1–H2, H4–H9     STATIC, `scripts/check-shared-surface.mjs`. Eight of the nine H rows.
+//   F1–F7            STATIC, `scripts/check-filter-standard.mjs` — #3796. Six matchers over the
+//                    console's filter SURFACES, plus F7, whose verdict is the join between a
+//                    route's closure and the builders
+//                    `apps/console/tests/lib/queries/filter-standard-facets.test.ts` drives.
 //   T5–T7, R1–R7     LIVE. The Playwright `audit` project measures them in CI; this file joins
 //                    its committed records to the same route set. Ten predicates — #3634.
 //
-// The remaining eight are rendered as `—` with the reason and the issue that owns them, NEVER
-// omitted and never rendered as a pass:
+// The remaining ONE is rendered as `—` with the reason and the issue that owns it, NEVER omitted
+// and never rendered as a pass:
 //
 //   H3             `StatusBadge`. There is no matcher and there cannot easily be one — a page
 //                  that should have shown a status pill and showed a `<Badge>` has no negative
 //                  form to grep for, which `check-shared-surface.mjs`'s own header records as
 //                  the reason it stays prose.
-//   F1–F7          the filter standard. Nothing in the tree implements this family at all, and
-//                  F7 is a unit test by design (RUBRIC.md's own note).
+//
+// What this file said about F1–F7 until #3796 was WRONG, and the correction is worth stating
+// because it is the finding that unit started from: "nothing in the tree implements this family
+// at all". The console has FIFTEEN filter surfaces on `createFilterStore`, a shared
+// `useFilterUrlSync`, a shared `@repo/ui` bar vocabulary and a documented server half. The
+// standard was implemented and UNMEASURED — which is a different thing, and reads identically
+// from a report whose un-instrumented cell and its empty cell are the same dash.
 //
 // A report whose "nothing found" branch is indistinguishable from "nothing measured" is the
 // dominant defect class in this repo, so the classification above is CHECKED rather than
@@ -214,6 +223,12 @@ import { readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import {
+	fsIo as filterStandardIo,
+	positiveControl as filterStandardControl,
+	scan as scanFilterStandard,
+	scoreRoutes as scoreFilterRoutes,
+} from "../../../scripts/check-filter-standard.mjs";
 import { collectConsoleRoutes, stripCommentLines } from "../../../scripts/lib/console-routes.mjs";
 import {
 	NA_REASONS as ROUTE_STATE_NA_REASONS,
@@ -234,6 +249,8 @@ const LIVE_REPORT_TS = "apps/console/e2e/audit/report.ts";
 const ALLOWLIST = "apps/console/shared-surface-allowlist.yaml";
 const ROUTE_STATES_BASELINE = "apps/console/route-states-baseline.yaml";
 const SHARED_SURFACE = "scripts/check-shared-surface.mjs";
+/** Named here only for the source table the scoreboard renders; the join itself is F7's own. */
+const F7_TEST_PATH = "apps/console/tests/lib/queries/filter-standard-facets.test.ts";
 /** Read ONLY by `--self-test`, to catch `CL_GAP_PX` drifting away from the token it names. */
 const BRAND_TOKENS = "packages/brand/src/tokens.css";
 
@@ -318,13 +335,6 @@ export const NOT_SCORED_STATICALLY = /** @type {const} */ ({
 			"StatusBadge. `check-shared-surface.mjs` records why this row stays prose: a page that " +
 			"should have shown a status pill and showed a `<Badge>` has no negative form to grep for.",
 	},
-	F1: { kind: "none", owner: "#3796", why: "the filter standard — a `createFilterStore` store exists for the page." },
-	F2: { kind: "none", owner: "#3796", why: "the filter standard — `useFilterUrlSync` is wired." },
-	F3: { kind: "none", owner: "#3796", why: "the filter standard — search is debounced and the normalized query is the TanStack key." },
-	F4: { kind: "none", owner: "#3796", why: "the filter standard — the bar is built from the shared filter components." },
-	F5: { kind: "none", owner: "#3796", why: "the filter standard — the result count is a `CountPill`." },
-	F6: { kind: "none", owner: "#3796", why: "the filter standard — `keepPreviousData` plus the placeholder dim." },
-	F7: { kind: "none", owner: "#3796", why: "the filter standard — the server builder's separate unfiltered facet pass. A unit test by design, per RUBRIC.md." },
 });
 
 // ── the live half: two artifacts, two personas, two organisations ────────────────────────────
@@ -1348,10 +1358,17 @@ export function scoreOf(pass, fail) {
  * @param {Map<string, Set<string>>} input.pageClosures  route → repo-relative files
  * @param {Set<string>} input.chromeClosure  every file reachable from a layout chain
  * @param {ReturnType<typeof parseLive>} input.live  the committed live records, both sections
+ * @param {{route: string, predicate: string, verdict: string, reason?: string, detail?: string}[]} input.filterVerdicts
+ *   family F, from `scripts/check-filter-standard.mjs`. Passed in rather than computed here for
+ *   the same reason every other input is: `--self-test` drives the whole pipeline over a fixture.
  * @param {typeof LIVE_DEBT} [input.liveDebt]  injectable so `--self-test` can drive both directions
  */
-export function buildView({ run, rubricPredicates, surface, pageClosures, chromeClosure, live, liveDebt = LIVE_DEBT }) {
-	const scoredIds = [...ROUTE_STATE_PREDICATES, ...Object.values(RULE_PREDICATE)];
+export function buildView({ run, rubricPredicates, surface, pageClosures, chromeClosure, live, filterVerdicts, liveDebt = LIVE_DEBT }) {
+	// The F ids come from the RUBRIC, not from a constant. `check-filter-standard.mjs` exports its
+	// own F1–F7 list and using it here would make this file agree with that one instead of with the
+	// rubric — and the rubric is the predicate universe every other family is partitioned against.
+	const filterIds = rubricPredicates.filter((p) => p.family === "F").map((p) => p.id);
+	const scoredIds = [...ROUTE_STATE_PREDICATES, ...Object.values(RULE_PREDICATE), ...filterIds];
 	partitionPredicates(rubricPredicates, scoredIds, NOT_SCORED_STATICALLY);
 	const liveIds = livePredicateSections();
 
@@ -1414,6 +1431,30 @@ export function buildView({ run, rubricPredicates, surface, pageClosures, chrome
 	}
 	verdicts.push(...joinLive(live, routeOrder));
 
+	// ── family F, joined on the same route set ────────────────────────────────────────────────
+	// Checked to be TOTAL over (route × F predicate) before a single one is counted. A missing cell
+	// would leave that predicate's denominator quietly short — the same page-shaped hole the live
+	// half fills with NOT MEASURED — and a duplicate would count one verdict twice. Both are loud.
+	/** @type {Set<string>} */
+	const filterCells = new Set();
+	for (const v of filterVerdicts) {
+		const key = `${v.route}${KEY}${v.predicate}`;
+		if (filterCells.has(key)) throw new Error(`the filter-standard verdicts carry ${v.predicate} on ${v.route} twice.`);
+		filterCells.add(key);
+		if (!filterIds.includes(v.predicate)) throw new Error(`the filter-standard verdicts carry ${v.predicate}, which RUBRIC.md's F family does not define.`);
+		if (!routeOrder.includes(v.route)) throw new Error(`the filter-standard verdicts carry route ${v.route}, which the manifest does not.`);
+	}
+	for (const route of routeOrder) {
+		for (const id of filterIds) {
+			if (filterCells.has(`${route}${KEY}${id}`)) continue;
+			throw new Error(
+				`the filter-standard verdicts have no cell for ${id} on ${route}. A predicate with a hole in it ` +
+					"scores a short denominator, which reads as a higher score rather than as a missing measurement.",
+			);
+		}
+	}
+	verdicts.push(...filterVerdicts);
+
 	for (const id of ROUTE_STATE_PREDICATES) {
 		const s = run.scored[id];
 		for (const route of s.pass) verdicts.push({ route, predicate: id, verdict: "PASS" });
@@ -1456,7 +1497,11 @@ export function buildView({ run, rubricPredicates, surface, pageClosures, chrome
 		predicates[p.id] = {
 			family: p.family,
 			instrument: notScored === undefined
-				? (ROUTE_STATE_PREDICATES.includes(p.id) ? "check-route-states" : "check-shared-surface")
+				? ROUTE_STATE_PREDICATES.includes(p.id)
+					? "check-route-states"
+					: p.family === "F"
+						? "check-filter-standard"
+						: "check-shared-surface"
 				: notScored.kind,
 			section: notScored?.section ?? null,
 			owner: notScored?.owner ?? null,
@@ -1688,7 +1733,7 @@ export function renderScoreboard(view) {
 	L.push("");
 	L.push(`RUBRIC.md defines **${t.predicates} predicates**. This report scores **${t.scoredHere + t.live}** of them —`);
 	L.push(`${t.scoredHere} from the tree and ${t.live} from the committed live audit records.`);
-	L.push(`${t.notInstrumented} have no instrument anywhere today.`);
+	L.push(`${t.notInstrumented} ${t.notInstrumented === 1 ? "has" : "have"} no instrument anywhere today.`);
 	L.push("");
 	L.push("| source | what it contributes |");
 	L.push("|---|---|");
@@ -1696,6 +1741,8 @@ export function renderScoreboard(view) {
 	L.push("| `scripts/check-route-states.mjs` | S1–S4, T1–T4, per route |");
 	L.push(`| \`${ROUTE_STATES_BASELINE}\` | the ratchet those eight predicates are held to |`);
 	L.push("| `scripts/check-shared-surface.mjs` | every H-family occurrence, per file |");
+	L.push("| `scripts/check-filter-standard.mjs` | F1–F6 per filter SURFACE, joined to the routes whose closure reaches it |");
+	L.push(`| \`${F7_TEST_PATH}\` | F7 — the behaviour RUBRIC.md says a matcher cannot answer |`);
 	L.push(`| \`${ALLOWLIST}\` | which occurrences are a recorded decision (\`baseline: ${view.ledgers.baseline}\`) and which are measured drift (\`debt: ${view.ledgers.debt}\`) |`);
 	L.push(`| \`${LIVE_JSON}\` | T5–T7 and R1–R7 as MEASURED, imported from a CI run of the Playwright \`audit\` project |`);
 	L.push(`| \`${RUBRIC}\` | the predicate set itself, read out of its own tables |`);
@@ -1717,7 +1764,7 @@ export function renderScoreboard(view) {
 			key,
 			label,
 			all: ids.length,
-			here: ids.filter(([, p]) => p.instrument === "check-route-states" || p.instrument === "check-shared-surface").length,
+			here: ids.filter(([, p]) => ["check-route-states", "check-shared-surface", "check-filter-standard"].includes(p.instrument)).length,
 			live: ids.filter(([, p]) => p.instrument === "live").length,
 			none: ids.filter(([, p]) => p.instrument === "none").length,
 		};
@@ -1725,7 +1772,15 @@ export function renderScoreboard(view) {
 	for (const r of famRows) L.push(`| **${r.key}** — ${r.label} | ${r.all} | ${r.here} | ${r.live} | ${r.none} |`);
 	L.push(`| **total** | ${t.predicates} | ${t.scoredHere} | ${t.live} | ${t.notInstrumented} |`);
 	L.push("");
-	L.push("The un-instrumented eight, each with the issue that owns it:");
+	// The count is DERIVED. It read "the un-instrumented eight" while seven of those eight were
+	// being instrumented in the very PR that changed the table above it — a sentence a reader
+	// quotes must not be able to rot, which is the same rule `parseRubric` applies to the rubric's
+	// own stated count.
+	L.push(
+		t.notInstrumented === 1
+			? "The un-instrumented one, with the issue that owns it:"
+			: `The un-instrumented ${t.notInstrumented}, each with the issue that owns it:`,
+	);
 	L.push("");
 	L.push("| id | owner | what is not being measured |");
 	L.push("|---|---|---|");
@@ -1806,6 +1861,7 @@ export function renderScoreboard(view) {
 		const instrument =
 			p.instrument === "check-route-states" ? "`check-route-states`"
 			: p.instrument === "check-shared-surface" ? "`check-shared-surface`"
+			: p.instrument === "check-filter-standard" ? "`check-filter-standard`"
 			: p.instrument === "live" ? `live — \`${p.section}\``
 			: `**none** — ${p.owner}`;
 		const scored = p.instrument !== "none";
@@ -2006,6 +2062,17 @@ export function runReport(repoRoot) {
 				`A predicate that no longer fires cannot tell a clean tree from a tree it stopped reading.`,
 		);
 	}
+	// The THIRD instrument's control, called for the same reason and at the same point. The
+	// shared-surface guard's own fixture suite is a precondition of this report because the child
+	// process arranges for it to run; `check-filter-standard.mjs` is a plain import, so its control
+	// has to be called here or it would not run at all.
+	const filterControl = filterStandardControl();
+	if (filterControl.length > 0) {
+		throw new Error(
+			`the filter-standard positive control is BROKEN — refusing to score the tree.\n  ${filterControl.join("\n  ")}\n` +
+				`Seven predicates that cannot fire would score fifteen surfaces as conforming.`,
+		);
+	}
 
 	const abs = (rel) => path.join(repoRoot, rel);
 	const consoleDir = path.join(repoRoot, "apps", "console");
@@ -2058,7 +2125,20 @@ export function runReport(repoRoot) {
 		for (const f of moduleClosure(r.layoutChain.map(abs), io)) chromeClosure.add(f);
 	}
 
-	return buildView({ run, rubricPredicates: rubric.predicates, surface, pageClosures, chromeClosure, live });
+	// Family F. Its scan RAISES on a broken derivation — no surfaces, a store nobody reads, a
+	// facet-bearing builder the F7 test neither drives nor declares — and those are reported here
+	// rather than scored, because every one of them means the F column would be a number nobody
+	// can defend.
+	const filterScan = scanFilterStandard(filterStandardIo(repoRoot));
+	if (filterScan.problems.length > 0) {
+		throw new Error(
+			`the filter-standard scan did not read the console:\n  - ${filterScan.problems.join("\n  - ")}\n` +
+				"Run `pnpm check:filter-standard` for the same list with its census.",
+		);
+	}
+	const filterVerdicts = scoreFilterRoutes(filterScan, pageClosures, run.manifest.routes.map((r) => r.route));
+
+	return buildView({ run, rubricPredicates: rubric.predicates, surface, pageClosures, chromeClosure, live, filterVerdicts });
 }
 
 // ── self-test ────────────────────────────────────────────────────────────────────────────────
@@ -2227,12 +2307,13 @@ function selfTest() {
 	ok("...including H9, the empty-state row #3798 asked for", realRubric.predicates.some((p) => p.id === "H9"));
 
 	// ── the partition: every predicate lands in exactly one bucket ───────────────────────────
-	const scoredIds = [...ROUTE_STATE_PREDICATES, ...Object.values(RULE_PREDICATE)];
+	const scoredIds = [...ROUTE_STATE_PREDICATES, ...Object.values(RULE_PREDICATE), ...realRubric.predicates.filter((p) => p.family === "F").map((p) => p.id)];
 	const part = partitionPredicates(realRubric.predicates, scoredIds, NOT_SCORED_STATICALLY);
-	ok("16 predicates are scored statically — S1-S4, T1-T4 and eight H rows", part.scored.length === 16);
+	ok("23 predicates are scored statically — S1-S4, T1-T4, eight H rows and all seven F rows", part.scored.length === 23);
+	ok("...and family F is one of them now (#3796), not a column of dashes", ["F1", "F2", "F3", "F4", "F5", "F6", "F7"].every((id) => part.scored.includes(id)));
 	ok("10 are live", part.live.length === 10 && part.live.sort().join(",") === "R1,R2,R3,R4,R5,R6,R7,T5,T6,T7");
-	ok("8 have no instrument anywhere — H3 and all seven F rows", part.none.sort().join(",") === "F1,F2,F3,F4,F5,F6,F7,H3");
-	ok("...and every one of those eight names an owning issue", part.none.every((id) => /^#\d+$/.test(NOT_SCORED_STATICALLY[id].owner)));
+	ok("1 has no instrument anywhere — H3, and only H3", part.none.sort().join(",") === "H3");
+	ok("...and it names an owning issue", part.none.every((id) => /^#\d+$/.test(NOT_SCORED_STATICALLY[id].owner)));
 	raises(
 		"a rubric predicate in NEITHER table RAISES rather than vanishing from the report",
 		() => partitionPredicates([...realRubric.predicates, { id: "S9", family: "S" }], scoredIds, NOT_SCORED_STATICALLY),
@@ -2439,6 +2520,26 @@ function selfTest() {
 			},
 		},
 	};
+	// ── family F's fixture ───────────────────────────────────────────────────────────────────
+	// Hand-written, and it separates every case the join has to get right: a list page that passes,
+	// one predicate FAILING on it, a second list page whose F7 is WITHHELD because the only builder
+	// it reaches is declared undriven, and a page with no filter store at all — N/A on all seven,
+	// with the ONE reason RUBRIC.md declares for this family.
+	const F_IDS = fixtureRubric.filter((p) => p.family === "F").map((p) => p.id);
+	const fixtureFilter = [
+		...F_IDS.map((id) =>
+			id === "F3"
+				? { route: "/a", predicate: id, verdict: "FAIL", detail: "useWidgetFilters: the normalized query object is not in the TanStack key" }
+				: { route: "/a", predicate: id, verdict: "PASS" },
+		),
+		...F_IDS.map((id) =>
+			id === "F7"
+				? { route: "/b", predicate: id, verdict: "NOT MEASURED", reason: "the only facet-bearing builder this page reaches is declared undriven" }
+				: { route: "/b", predicate: id, verdict: "PASS" },
+		),
+		...F_IDS.map((id) => ({ route: "/r", predicate: id, verdict: "N/A", reason: "not-a-list-page" })),
+	];
+
 	const fixtureDebt = {
 		R4: { owner: "#1", why: "one shell defect" },
 		R5: { owner: "#2", why: "the axe residue" },
@@ -2448,6 +2549,7 @@ function selfTest() {
 	const view = buildView({
 		run: fixtureRun,
 		rubricPredicates: fixtureRubric,
+		filterVerdicts: fixtureFilter,
 		surface: fixtureSurface,
 		live: fixtureLive,
 		liveDebt: fixtureDebt,
@@ -2474,13 +2576,55 @@ function selfTest() {
 	ok("score is null, not 0, when nothing was measured", scoreOf(0, 0) === null && view.predicates.H3.score === null);
 	ok(
 		"an un-instrumented predicate is scored nowhere and carries its owner",
-		view.predicates.F7.instrument === "none" && view.predicates.F7.owner === NOT_SCORED_STATICALLY.F7.owner && view.predicates.F7.pass === 0,
+		view.predicates.H3.instrument === "none" && view.predicates.H3.owner === NOT_SCORED_STATICALLY.H3.owner && view.predicates.H3.pass === 0,
+	);
+	// #3796. Before it, all seven of these were `kind: "none"` and every cell rendered `—`.
+	ok(
+		"family F is SCORED, by `check-filter-standard`",
+		["F1", "F2", "F3", "F4", "F5", "F6", "F7"].every((id) => view.predicates[id].instrument === "check-filter-standard"),
+	);
+	ok("...F3 carries the fixture's one FAIL", view.predicates.F3.fail === 1 && view.predicates.F3.pass === 1);
+	ok("...F7's withheld cell is NOT MEASURED, never N/A and never a pass", view.predicates.F7.notMeasured === 1 && view.predicates.F7.na === 1 && view.predicates.F7.pass === 1);
+	ok(
+		"...and every F N/A carries the ONE reason RUBRIC.md declares for this family",
+		["F1", "F2", "F3", "F4", "F5", "F6", "F7"].every((id) => Object.keys(view.predicates[id].naReasons).every((r) => r === "not-a-list-page")),
+	);
+	raises(
+		"an F cell with NO verdict RAISES rather than scoring a short denominator",
+		() =>
+			buildView({
+				run: fixtureRun,
+				rubricPredicates: fixtureRubric,
+				filterVerdicts: fixtureFilter.filter((v) => !(v.route === "/a" && v.predicate === "F5")),
+				surface: fixtureSurface,
+				live: fixtureLive,
+				liveDebt: fixtureDebt,
+				pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]),
+				chromeClosure: new Set(),
+			}),
+		"no cell for F5 on /a",
+	);
+	raises(
+		"...and a DUPLICATE F cell raises rather than being counted twice",
+		() =>
+			buildView({
+				run: fixtureRun,
+				rubricPredicates: fixtureRubric,
+				filterVerdicts: [...fixtureFilter, { route: "/a", predicate: "F1", verdict: "PASS" }],
+				surface: fixtureSurface,
+				live: fixtureLive,
+				liveDebt: fixtureDebt,
+				pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]),
+				chromeClosure: new Set(),
+			}),
+		"F1 on /a twice",
 	);
 	ok("a live predicate IS scored — from the committed records, not from the tree", view.predicates.R2.instrument === "live" && view.predicates.R2.pass === 1 && view.predicates.R2.na === 2);
 	ok(
-		"the F column reports as not-instrumented, not as a pass",
-		view.routes.every((r) => r.families.F.instrumented === 0 && r.families.F.score === null) && cell(view.routes[0].families.F) === "—",
+		"the F column is instrumented on all seven rows, and carries a number",
+		view.routes.every((r) => r.families.F.instrumented === 7 && r.families.F.of === 7) && view.routes[0].families.F.score !== null,
 	);
+	ok("...and a page with no filter store still reads `all N/A`, not `—`", cell(view.routes.find((r) => r.route === "/r").families.F) === "all N/A");
 	ok("...and the T column is now 7 of 7 — 4 static plus 3 live", view.routes[0].families.T.instrumented === 7 && view.routes[0].families.T.of === 7);
 
 	// RECONCILIATION: every finding is accounted for on both axes, and the two axes agree.
@@ -2511,6 +2655,7 @@ function selfTest() {
 	const overflowed = buildView({
 		run: fixtureRun,
 		rubricPredicates: fixtureRubric,
+		filterVerdicts: fixtureFilter,
 		live: fixtureLive,
 		liveDebt: fixtureDebt,
 		surface: {
@@ -2530,6 +2675,7 @@ function selfTest() {
 			buildView({
 				run: fixtureRun,
 				rubricPredicates: fixtureRubric,
+		filterVerdicts: fixtureFilter,
 				live: fixtureLive,
 				liveDebt: fixtureDebt,
 				surface: { ...fixtureSurface, findings: [...fixtureSurface.findings, { rule: "brand_new_rule", file: "apps/console/components/a.tsx", line: 1, text: "x" }] },
@@ -2544,6 +2690,7 @@ function selfTest() {
 			buildView({
 				run: fixtureRun,
 				rubricPredicates: fixtureRubric,
+		filterVerdicts: fixtureFilter,
 				live: fixtureLive,
 				liveDebt: fixtureDebt,
 				surface: { ...fixtureSurface, entries: [...fixtureSurface.entries, { section: "ghost_rule", path: "x", hits: 1, kind: "debt" }] },
@@ -2981,6 +3128,7 @@ function selfTest() {
 	const allWithheld = buildView({
 		run: fixtureRun,
 		rubricPredicates: fixtureRubric,
+		filterVerdicts: fixtureFilter,
 		surface: fixtureSurface,
 		liveDebt: fixtureDebt,
 		live: {
@@ -3017,22 +3165,22 @@ function selfTest() {
 	// ── the live debt ledger, both directions ─────────────────────────────────────────────────
 	raises(
 		"a live predicate that FAILS with no owning issue RAISES",
-		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, surface: fixtureSurface, live: fixtureLive, liveDebt: { R4: fixtureDebt.R4, R5: fixtureDebt.R5 }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
+		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { R4: fixtureDebt.R4, R5: fixtureDebt.R5 }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
 		"T7 FAILS on 1 route(s) and no LIVE_DEBT row owns it",
 	);
 	raises(
 		"...and a debt row for a predicate that no longer fails RAISES too — the direction that keeps it true",
-		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, surface: fixtureSurface, live: fixtureLive, liveDebt: { ...fixtureDebt, R1: { owner: "#9", why: "stale" } }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
+		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { ...fixtureDebt, R1: { owner: "#9", why: "stale" } }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
 		"R1 has a LIVE_DEBT row (#9) and now FAILS nowhere",
 	);
 	raises(
 		"a debt row naming something that is not a live predicate RAISES",
-		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, surface: fixtureSurface, live: fixtureLive, liveDebt: { ...fixtureDebt, H1: { owner: "#9", why: "x" } }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
+		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { ...fixtureDebt, H1: { owner: "#9", why: "x" } }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
 		"LIVE_DEBT names H1, which is not a live predicate",
 	);
 	raises(
 		"an EMPTY live artifact refuses to build a view at all",
-		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, surface: fixtureSurface, live: emptyLive, liveDebt: {}, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
+		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: emptyLive, liveDebt: {}, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
 		"the live audit records did not measure the console",
 	);
 
@@ -3117,16 +3265,20 @@ function selfTest() {
 
 	// ── rendering ────────────────────────────────────────────────────────────────────────────
 	const md = renderScoreboard(view);
-	ok("the rendered scoreboard names the F family as un-instrumented, with its issue", md.includes("| **F7** |") && md.includes(NOT_SCORED_STATICALLY.F7.owner));
-	ok("...and H3 too", md.includes("| **H3** |") && md.includes(NOT_SCORED_STATICALLY.H3.owner));
+	ok("the rendered scoreboard names H3 as un-instrumented, with its issue", md.includes("| **H3** |") && md.includes(NOT_SCORED_STATICALLY.H3.owner));
+	ok("...and the F rows are rendered with their instrument, not with a dash", md.includes("| **F7** | F | `check-filter-standard` |"));
 	// Not "does it say `—` somewhere" — every numeric column of every un-instrumented row must be
 	// a dash. A 0.00 there would read as "measured, and failed everywhere", which is the opposite
 	// of what is true and the exact confusion this column exists to prevent.
 	const noneRows = md.split("\n").filter((l) => /^\| \*\*(?:F\d|H3)\*\* \| [FH] \| \*\*none\*\*/.test(l));
 	ok(
 		"...and every un-instrumented row's PASS / FAIL / N/A / score columns are all dashes",
-		noneRows.length === 8 && noneRows.every((l) => l.endsWith("| — | — | — | — | — | — |")),
+		noneRows.length === 1 && noneRows.every((l) => l.endsWith("| — | — | — | — | — | — |")),
 	);
+	// The sentence that introduces that table is DERIVED, so it cannot go on saying "eight" while
+	// the table under it holds one — the failure this line exists to catch is a report that reads
+	// correctly to a machine and wrongly to the person quoting it.
+	ok("...and the count above them is derived, not typed", md.includes("The un-instrumented one, with the issue that owns it:"));
 	ok("rendering is deterministic", renderScoreboard(view) === md && renderJson(view) === renderJson(view));
 	ok(
 		"NO WALL CLOCK reaches the diff-gated region — a date there makes every PR stale on arrival",
@@ -3134,7 +3286,7 @@ function selfTest() {
 	);
 	ok("...and no absolute path either", !md.includes(REPO_ROOT) && !renderJson(view).includes(REPO_ROOT));
 	const parsedJson = JSON.parse(renderJson(view));
-	ok("the JSON carries one record per (route, predicate) it scored — 16 static + 10 live", parsedJson.verdicts.length === 3 * 26);
+	ok("the JSON carries one record per (route, predicate) it scored — 23 static + 10 live", parsedJson.verdicts.length === 3 * 33);
 	ok("...in the shape e2e/audit/report.ts writes", parsedJson.verdicts.every((v) => "route" in v && "predicate" in v && "verdict" in v));
 
 	// ── splice ───────────────────────────────────────────────────────────────────────────────
