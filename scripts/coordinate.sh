@@ -478,7 +478,7 @@ if [ "$MODE" = "full" ]; then
 fi
 
 # Refresh the board after mutations for an accurate report.
-[ "$MODE" = "full" ] && board="$(gh issue list --state open --limit 300 --json number,title,labels,assignees)"
+[ "$MODE" = "full" ] && board="$(gh issue list --state open --limit 300 --json number,title,labels,body,assignees)"
 
 # ── report ───────────────────────────────────────────────────────────────────
 echo
