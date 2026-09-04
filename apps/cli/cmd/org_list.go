@@ -32,7 +32,7 @@ var orgListCmd = &cobra.Command{
 				ui.Muted("No organizations found.")
 				return
 			}
-			_ = ui.ShowTable(orgListColumns, orgRows(orgs), "organizations")
+			_ = ui.ShowTable(orgListColumns, orgRows(orgs, ui.FormatTable), "organizations")
 			return
 		}
 		if err := runOrgList(client, os.Stdout, outputFormat(cmd)); err != nil {
@@ -45,10 +45,10 @@ var orgListColumns = []string{"Name", "Slug", "Role", "Plan", "Active"}
 
 // orgRows projects organizations into plain table rows; the active org is flagged
 // with the brand's default marker.
-func orgRows(orgs []api.OrgSummary) [][]string {
+func orgRows(orgs []api.OrgSummary, outFmt string) [][]string {
 	rows := make([][]string, len(orgs))
 	for i, o := range orgs {
-		rows[i] = []string{o.Name, o.Slug, o.Role, o.Plan, ui.DefaultCell(o.IsActive)}
+		rows[i] = []string{o.Name, o.Slug, o.Role, o.Plan, ui.Cell(outFmt, ui.WireBool(o.IsActive), ui.DefaultCell(o.IsActive))}
 	}
 	return rows
 }
@@ -66,7 +66,7 @@ func runOrgList(c apiClient, out io.Writer, format string) error {
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: orgListColumns,
-		Rows:    orgRows(orgs),
+		Rows:    orgRows(orgs, format),
 	}, orgs)
 }
 

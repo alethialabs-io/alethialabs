@@ -37,8 +37,7 @@ import (
 // funcs it flagged were genuine misses my hand-written list of ten had not seen — including one I
 // had deliberately excluded and then forgotten to record.
 var renderExemptions = map[string]string{
-	"fleetVersionCell": "takes an api.FleetPool and encodes fleet version-vs-channel semantics — a domain cell, not a renderer",
-	"reachableLabel":   "takes a probe's *bool and pairs the glyph with probe-specific wording (never probed / up / down)",
+	"reachableLabel": "takes a probe's *bool and pairs the glyph with probe-specific wording (never probed / up / down)",
 	// The reason here USED to be "replaced wholesale by packages/core/format.Duration in #3659, so
 	// hoisting it would move it twice". That has happened — the body is `format.Duration(...)`
 	// today — so the reason described a future that had already arrived, while the exemption itself

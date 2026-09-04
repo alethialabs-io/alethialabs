@@ -393,7 +393,7 @@ func TestProbeRowsRenderThroughTheSharedSurface(t *testing.T) {
 		{Environment: "staging", Reachable: &down, Message: &msg, ProbedAt: &ts},
 		{Environment: "dev"},
 		{Environment: "qa", Reachable: &up, Message: &empty},
-	})
+	}, ui.FormatTable)
 	if len(rows) != 4 {
 		t.Fatalf("got %d rows, want 4", len(rows))
 	}
@@ -459,7 +459,7 @@ func TestDimensionRowsRenderValuesThroughTheSharedSurface(t *testing.T) {
 		{Key: "tier", Label: "Tier", AppliesTo: []string{"project_environment"},
 			Values: []api.ClassificationValue{{Value: "gold"}, {Value: "silver"}}},
 		{Key: "owner", Label: "Owner", Multi: true},
-	})
+	}, ui.FormatTable)
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows, want 2", len(rows))
 	}

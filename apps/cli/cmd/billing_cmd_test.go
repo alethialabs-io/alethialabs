@@ -338,13 +338,13 @@ func TestBuildFleetUpdateNoChange(t *testing.T) {
 }
 
 func TestFleetVersionCell(t *testing.T) {
-	if got := fleetVersionCell(api.FleetPool{Version: "v1"}); got != "v1" {
+	if got := fleetVersionCell(api.FleetPool{Version: "v1"}, ui.FormatTable); got != "v1" {
 		t.Errorf("pinned version: got %q", got)
 	}
-	if got := fleetVersionCell(api.FleetPool{Channel: "stable"}); got != "stable (channel)" {
+	if got := fleetVersionCell(api.FleetPool{Channel: "stable"}, ui.FormatTable); got != "stable (channel)" {
 		t.Errorf("channel: got %q", got)
 	}
-	if got := fleetVersionCell(api.FleetPool{}); got == "" {
+	if got := fleetVersionCell(api.FleetPool{}, ui.FormatTable); got == "" {
 		t.Error("expected dash for no version/channel")
 	}
 }

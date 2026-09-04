@@ -48,7 +48,7 @@ var addonListCmd = &cobra.Command{
 				ui.Muted("No add-ons installed.")
 				return
 			}
-			_ = ui.ShowTable(addonColumns, addonRows(view.Addons), "add-ons")
+			_ = ui.ShowTable(addonColumns, addonRows(view.Addons, ui.FormatTable), "add-ons")
 			return
 		}
 		if err := runAddonList(client, os.Stdout, outputFormat(cmd), project, env); err != nil {
@@ -68,21 +68,21 @@ var addonListCmd = &cobra.Command{
 var addonColumns = []string{"Add-on", "Enabled", "Mode", "Version", "Status", "Sync", "Health", "Last synced"}
 
 // addonRows projects installed add-ons into plain table cells.
-func addonRows(addons []api.Addon) [][]string {
+func addonRows(addons []api.Addon, outFmt string) [][]string {
 	rows := make([][]string, len(addons))
 	for i, a := range addons {
 		rows[i] = []string{
 			a.AddonID,
-			ui.GateGlyph(a.Enabled),
-			ui.OrDash(a.Mode),
-			ui.StrOrDash(a.Version),
-			ui.OrDash(a.Status),
-			ui.StrOrDash(a.Sync),
-			ui.StrOrDash(a.Health),
+			ui.Cell(outFmt, ui.WireBool(a.Enabled), ui.GateGlyph(a.Enabled)),
+			ui.Cell(outFmt, a.Mode, ui.OrDash(a.Mode)),
+			ui.Cell(outFmt, ui.Wire(a.Version), ui.StrOrDash(a.Version)),
+			ui.Cell(outFmt, a.Status, ui.OrDash(a.Status)),
+			ui.Cell(outFmt, ui.Wire(a.Sync), ui.StrOrDash(a.Sync)),
+			ui.Cell(outFmt, ui.Wire(a.Health), ui.StrOrDash(a.Health)),
 			// "never" and not a dash: an add-on that has never synced is a DIFFERENT statement
 			// from one whose last sync we failed to read, and it is the one that explains an
 			// Application sitting Progressing since it was enabled.
-			ui.StampOrNever(a.LastSyncedAt),
+			ui.Cell(outFmt, ui.Wire(a.LastSyncedAt), ui.StampOrNever(a.LastSyncedAt)),
 		}
 	}
 	return rows
@@ -108,7 +108,7 @@ func runAddonList(c apiClient, out io.Writer, format, project, env string) error
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: addonColumns,
-		Rows:    addonRows(addons),
+		Rows:    addonRows(addons, format),
 	}, addons)
 }
 
