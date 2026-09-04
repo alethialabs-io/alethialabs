@@ -43,6 +43,13 @@ const STATIC_RESERVED_SLUGS = [
 	"onboarding",
 	"signup",
 	"sso",
+	// Next metadata convention routes are static top-level paths too. Keep these reserved so
+	// an organization cannot be minted with a slug that shadows the metadata asset.
+	"icon",
+	"apple-icon",
+	"opengraph-image",
+	"twitter-image",
+	"manifest",
 ];
 
 /** Org-segment values that must never be a real org slug — the static console/sibling

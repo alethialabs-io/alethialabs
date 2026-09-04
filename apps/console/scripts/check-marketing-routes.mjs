@@ -58,19 +58,28 @@ function hasRoute(dir) {
 }
 /** Top-level URL segments served by the marketing app (route groups `(x)` / slots `@x`
  * are transparent; `_private` and dotfiles are skipped; bare app/page.tsx → ""). */
-function collectSegments(dir) {
+function collectSegments(dir, includeMetadata = false) {
 	const segs = new Set();
+	const metadataRoute =
+		/^(icon|apple-icon|opengraph-image|twitter-image|manifest|sitemap|robots|favicon)\.(?:tsx?|jsx?|ico|png|jpe?g|svg|json|webmanifest|txt|xml)$/;
 	for (const e of readdirSync(dir)) {
 		const full = join(dir, e);
 		if (statSync(full).isDirectory()) {
 			if (/^[_.]/.test(e)) continue;
 			if (/^\(.*\)$/.test(e) || e.startsWith("@")) {
-				for (const s of collectSegments(full)) segs.add(s);
+				for (const s of collectSegments(full, includeMetadata)) segs.add(s);
 			} else if (hasRoute(full)) {
 				segs.add(e);
 			}
 		} else if (/^page\.(tsx?|jsx?)$/.test(e)) {
 			segs.add("");
+		} else if (includeMetadata && metadataRoute.test(e)) {
+			// Metadata convention files are URL-producing routes even without page/route handlers.
+			// They are checked here only when directly encountered in an app root (or route group),
+			// matching the top-level segment collection used by the shadowing guard.
+			segs.add(
+				e.replace(/\.(?:tsx?|jsx?|ico|png|jpe?g|svg|json|webmanifest|txt|xml)$/, ""),
+			);
 		}
 	}
 	return segs;
@@ -363,7 +372,7 @@ if (staticList === null) {
 				"    every console route as unreserved, or none of them.",
 		);
 	}
-	const consoleSegments = existsSync(CONSOLE_APP) ? collectSegments(CONSOLE_APP) : null;
+	const consoleSegments = existsSync(CONSOLE_APP) ? collectSegments(CONSOLE_APP, true) : null;
 	consoleSegmentCount = consoleSegments === null ? 0 : consoleSegments.size;
 	if (consoleSegments === null) {
 		failures.push(`Console app dir not found at ${CONSOLE_APP}.`);
