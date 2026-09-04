@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -767,10 +768,10 @@ func TestInstallArgoCDGKEIngress(t *testing.T) {
 			t.Errorf("rendered ingress values with no way to get TLS:\n%s", values)
 		}
 		// `-f` alone no longer means "an ingress was rendered": every install carries the
-		// unconditional probe values file (argocd.InstallProbeValues). So the assertion is on the
-		// CONTENT — exactly one values file, and it is that one.
-		if len(allValues) != 1 || allValues[0] != argocd.InstallProbeValues() {
-			t.Errorf("helm received %d values file(s) with no way to get TLS, want only the probe values:\n%#v", len(allValues), allValues)
+		// unconditional values files (argocd.InstallProbeValues, argocd.InstallResourceValues). So
+		// the assertion is on the CONTENT — exactly those files, and nothing else.
+		if want := argoUnconditionalValues(); !slices.Equal(allValues, want) {
+			t.Errorf("helm received %d values file(s) with no way to get TLS, want only the %d unconditional ones:\n%#v", len(allValues), len(want), allValues)
 		}
 		for _, c := range cmds {
 			if strings.Contains(c, "backendconfig.yaml") {
@@ -789,9 +790,9 @@ func TestInstallArgoCDGKEIngress(t *testing.T) {
 			t.Errorf("aws must not use a values file:\n%s", values)
 		}
 		// Same content-level assertion as the case above: the AWS path drives its ingress purely
-		// through `--set`, so the ONLY values file it may carry is the unconditional probe values.
-		if len(allValues) != 1 || allValues[0] != argocd.InstallProbeValues() {
-			t.Errorf("aws install received %d values file(s), want only the probe values:\n%#v", len(allValues), allValues)
+		// through `--set`, so the ONLY values files it may carry are the unconditional ones.
+		if want := argoUnconditionalValues(); !slices.Equal(allValues, want) {
+			t.Errorf("aws install received %d values file(s), want only the %d unconditional ones:\n%#v", len(allValues), len(want), allValues)
 		}
 		install := cmds[len(cmds)-1]
 		if !strings.Contains(install, "server.ingress.ingressClassName=alb") {
