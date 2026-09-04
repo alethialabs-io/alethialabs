@@ -1575,6 +1575,21 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 	}
 	installCmd += " -f " + utils.ShellQuote(probesPath)
 
+	// An explicit resource REQUEST for argocd-repo-server — unconditional for the same reason and in
+	// the same place. The chart ships `resources: {}`, which is a QoS class, not an absence of
+	// opinion: with no request the container runs at the cgroup CPU-share floor and sits first in the
+	// node's eviction ranking, so it loses every contention decision to the kube-system pods that do
+	// carry requests. See argocd.InstallResourceValues for the evidence (#3855) and for why the
+	// magnitude is deliberately the smallest that changes the class.
+	//
+	// A SECOND file rather than more keys in the first: both set `repoServer`, helm deep-merges
+	// values files, and one file per whole idea keeps each one's doc comment true.
+	resourcesPath := filepath.Join(valuesDir, "argocd-resources.yaml")
+	if wErr := os.WriteFile(resourcesPath, []byte(argocd.InstallResourceValues()), 0o600); wErr != nil {
+		return fmt.Errorf("failed to write the ArgoCD resource values: %w", wErr)
+	}
+	installCmd += " -f " + utils.ShellQuote(resourcesPath)
+
 	if vc.DNS.Enabled && vc.DNS.DomainName != "" {
 		// FAIL CLOSED on a domain that is not a domain. `vc.DNS.DomainName` is free-text project
 		// data (console `config-schema.ts` `domain_name`, type `text`, no pattern) and nothing

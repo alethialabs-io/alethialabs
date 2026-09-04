@@ -635,16 +635,66 @@ jobs:
           case "$PROVIDER" in
             hetzner) SHAPE="" ;;
             aws)     SHAPE='{"instance_types":["t3.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20,"provider_config":{"enable_karpenter":true}}'; NET='{"single_nat_gateway":true}' ;;
-            # CAPACITY-NEUTRAL ACROSS THE ZONAL SWITCH, and the numbers look wrong until you know why.
-            # A node pool's initial_node_count and autoscaling min/max are PER ZONE, and until this PR
-            # gcp ran REGIONAL (location = var.region, europe-west3 = 3 zones) — so 1/2/1 was really
-            # delivering 3/6/3 and every green gcp run was paid at three e2-smalls. Going zonal makes
-            # the numbers literal, which would have shrunk the floor 3x in the same change that moves
-            # the location. Then a red would not say which one broke it. Stating 3/6/3 reproduces
-            # exactly what regional delivered, at exactly the cost already proven, so this dispatch
-            # tests the location fix ALONE. Shrinking the floor is a separate change with its own
-            # evidence: ArgoCD's fit in ~800-900Mi of allocatable has never been measured.
-            gcp)     SHAPE='{"instance_types":["e2-small"],"node_min_size":3,"node_max_size":6,"node_desired_size":3,"node_disk_size_gb":20}' ;;
+            # RESHAPED FOR #3855 — FEWER, BIGGER NODES. The axis that matters is PER NODE, not total.
+            #
+            # History, because the numbers only read correctly with it: a node pool's
+            # initial_node_count and autoscaling min/max are PER ZONE, and gcp used to run REGIONAL
+            # (europe-west3 = 3 zones), so the declared 1/2/1 was really delivering 3/6/3. #3566 made
+            # the location zonal and restated 3/6/3 so the numbers became literal at exactly the cost
+            # already proven — the location fix, tested alone. Its comment then reserved this change:
+            # "Shrinking the floor is a separate change with its own evidence: ArgoCD's fit in
+            # ~800-900Mi of allocatable has never been measured." It still has not been measured, and
+            # this does NOT shrink the floor to fit that unmeasured number — it retires the question
+            # by making the largest schedulable slot BIGGER than any of the three it replaces.
+            #
+            # The evidence #3566 asked for is #3855: two nightlies on the SAME sha (33605830312 and
+            # 33731101952) both died at `argocd-ready` with `addon-byo-e2e` never completing ONE
+            # manifest render — a kube-dns timeout resolving `argo-cd-argocd-repo-server` the first
+            # night, repo-server's own gRPC DeadlineExceeded the second. In the same runs aws
+            # (t3.large, 8 GiB) and azure (Standard_D2s_v3, 8 GiB) passed the SAME assertion on the
+            # SAME BYO chart — each on ONE node. gcp is the only cloud whose floor node is under
+            # 4 GiB, and the only one whose floor is red.
+            #
+            # Per node, from GKE's published reservation formula (25% of the first 4 GiB of memory
+            # plus a 100 MiB eviction threshold; a flat 1060 mCPU on every E2 SHARED-CORE type):
+            #
+            #   was    3 x e2-small   2 GiB ea.  ~1436 MiB allocatable per node, ~800-900 Mi once
+            #                                    the GKE system DaemonSets are placed — three times
+            #   now    1 x e2-medium  4 GiB      ~2972 MiB allocatable, ~2.4 GiB after the same
+            #                                    DaemonSets, which are now placed ONCE
+            #
+            # Per-node CPU does not move at all: e2-small and e2-medium both have 2 shared cores and
+            # both pay the same flat 1060 mCPU reservation, so allocatable stays ~940m either way.
+            # The reshape is therefore ~2x the memory in the slot that matters, at no CPU cost to it.
+            #
+            # Total cluster memory FALLS, 6 GiB -> 4 GiB. Stated, not hidden — and it is the wrong
+            # axis: argocd-repo-server is one pod that must fit on one node, and a ~900 Mi slot is
+            # what it does not fit in. Node count 3 -> 1 also matches aws and azure, which is the
+            # count the floor is green at everywhere it IS green; max 2 stays as their safety valve.
+            # Nothing in the floor path needs a second node: the harness asserts >= 1 Ready node
+            # (HasReadyNode), heavyMinNodes=3 and fabricDemoMinNodes=2 are both gated off here, and
+            # no chart the floor installs (ArgoCD + external-secrets-operator + reloader) sets a
+            # required anti-affinity, a topology spread or a PDB.
+            #
+            # THE COUNTER-EVIDENCE, because it belongs next to the claim. versions.go:146 measured
+            # this pool and recorded that FIVE OF THE SEVEN ArgoCD pods already landed on ONE of the
+            # three e2-smalls — so the 3-node spread was not buying separation, which is the strongest
+            # argument for this reshape and also its warning: the pile-up moves from 5 of 7 to 7 of 7,
+            # onto ONE 20 GB pd-standard disk whose concurrent pull throughput was measured at
+            # ~43 KB/s (run 33156252646). The disk is DELIBERATELY not touched in the same change:
+            # it is the second lever the repo already names, and moving both at once means a green
+            # run cannot say which one did it. If this stays red, the disk is next.
+            #
+            # COST (europe-west3, on-demand list, compute only): e2-small $0.0216/h, e2-medium
+            # $0.0432/h — the E2 shared-core ladder is exactly proportional — so 3 x $0.0216 =
+            # $0.0648/h becomes $0.0432/h, 33% CHEAPER, plus two fewer 20 GB pd-standard disks.
+            # Matching the green clouds' 8 GiB instead means 1 x e2-standard-2 at $0.0863/h: +33%,
+            # a spend increase, and therefore the maintainer's call rather than this change.
+            #
+            # THIS IS NOT A CLAIM THAT #3855 IS FIXED. 4 GiB is still HALF of what aws and azure use,
+            # and no offline check can settle whether ArgoCD converges in it. One paid gcp floor run
+            # is the only honest test.
+            gcp)     SHAPE='{"instance_types":["e2-medium"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}' ;;
             # Standard_B2s (v1) is NOT offered by AKS on a modern subscription: a real apply fails with
             # "The VM size of Standard_B2s is not allowed in your subscription" — only the v2/v3+
             # generations are served. (`az vm list-skus` disagrees and reports B2s unrestricted; AKS is
