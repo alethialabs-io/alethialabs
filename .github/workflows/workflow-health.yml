@@ -159,7 +159,7 @@ jobs:
           jq -c '.[]' demand-runs.json | while read -r r; do
             id=$(printf '%s' "$r" | jq -r '.databaseId')
             jobs=$(gh api "repos/{owner}/{repo}/actions/runs/$id/jobs?per_page=100" \
-                     --jq '[.jobs[] | {created_at, started_at}]' 2>/dev/null || echo '[]')
+                     --jq '[.jobs[] | select(.startedAt != null and .startedAt != .createdAt) | {created_at:.createdAt, started_at:.startedAt}]' 2>/dev/null || echo '[]')
             printf '%s' "$r" | jq -c --argjson j "$jobs" \
               '{id:.databaseId, name, event, head_branch:.headBranch, conclusion, created_at:.createdAt, jobs:$j}'
           done | jq -s '.' > demand.json
