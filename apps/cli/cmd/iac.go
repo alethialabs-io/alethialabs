@@ -44,16 +44,16 @@ var iacShowCmd = &cobra.Command{
 }
 
 // iacRows projects a BYO IaC source into field/value cells.
-func iacRows(s *api.IacSource) [][]string {
+func iacRows(s *api.IacSource, outFmt string) [][]string {
 	return [][]string{
 		{"name", s.Name},
 		{"repo", s.RepoURL},
 		{"path", s.Path},
-		{"ref", ui.StrOrDash(s.Ref)},
+		{"ref", ui.Cell(outFmt, ui.Wire(s.Ref), ui.StrOrDash(s.Ref))},
 		{"enabled", fmt.Sprintf("%t", s.Enabled)},
 		{"scan", s.ScanStatus},
-		{"pinned commit", ui.StrOrDash(s.CommitSha)},
-		{"deployed commit", ui.StrOrDash(s.DeployedCommitSha)},
+		{"pinned commit", ui.Cell(outFmt, ui.Wire(s.CommitSha), ui.StrOrDash(s.CommitSha))},
+		{"deployed commit", ui.Cell(outFmt, ui.Wire(s.DeployedCommitSha), ui.StrOrDash(s.DeployedCommitSha))},
 		{"status", s.Status},
 	}
 }
@@ -72,7 +72,7 @@ func runIacShow(c apiClient, out io.Writer, format, project, env string) error {
 		fmt.Fprintln(out, ui.MutedStyle.Render("No BYO IaC source attached."))
 		return nil
 	}
-	return ui.RenderCard(out, format, "alethia · IaC source", iacRows(src), src)
+	return ui.RenderCard(out, format, "alethia · IaC source", iacRows(src, format), src)
 }
 
 func init() {

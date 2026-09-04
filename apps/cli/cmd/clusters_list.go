@@ -54,7 +54,7 @@ or with --no-input it prints the static one. Use ` + "`alethia cluster get`" + `
 			for i, title := range clusterListColumns {
 				columns[i] = table.Column{Title: title, Width: widths[i]}
 			}
-			plain := clusterRows(clusters)
+			plain := clusterRows(clusters, ui.FormatTable)
 			rows := make([]table.Row, len(plain))
 			for i, r := range plain {
 				rows[i] = table.Row(r)
@@ -73,29 +73,29 @@ or with --no-input it prints the static one. Use ` + "`alethia cluster get`" + `
 }
 
 // clusterRows projects each cluster summary into a plain table row.
-func clusterRows(clusters []api.ClusterSummary) [][]string {
+func clusterRows(clusters []api.ClusterSummary, outFmt string) [][]string {
 	rows := make([][]string, len(clusters))
 	for i, c := range clusters {
-		clusterName := ui.OrDash(c.ClusterName)
-		version := ui.OrDash(c.ClusterVersion)
+		clusterName := ui.Cell(outFmt, c.ClusterName, ui.OrDash(c.ClusterName))
+		version := ui.Cell(outFmt, c.ClusterVersion, ui.OrDash(c.ClusterVersion))
 		nodes := fmt.Sprintf("%d/%d/%d", c.NodeMinSize, c.NodeDesiredSize, c.NodeMaxSize)
 		// Surface the status message inline — it's the actionable detail when a
 		// cluster is FAILED/degraded (the raw field is also in -o json).
-		status := ui.StatusCell(c.Status)
+		status := ui.Cell(outFmt, c.Status, ui.StatusCell(c.Status))
 		if c.StatusMessage != "" {
-			status += " — " + c.StatusMessage
+			status = ui.Cell(outFmt, c.Status, ui.StatusCell(c.Status)+" — "+c.StatusMessage)
 		}
 		// The dash is rendered inline rather than through a helper on purpose: a `clusterCostCell`
 		// returning ui.SymbolDash would be a second DEFINITION of the empty-value sentinel living
 		// in a command file, which is what hoisting the render helpers (#3694) ended. The costed
 		// arm goes through the one money rule — see clusterCost.
-		cost := ui.SymbolDash
+		cost := ui.Cell(outFmt, "", ui.SymbolDash)
 		if c.EstimatedMonthlyCost != nil {
-			cost = clusterCost(*c.EstimatedMonthlyCost)
+			cost = ui.Cell(outFmt, fmt.Sprintf("%.2f", *c.EstimatedMonthlyCost), clusterCost(*c.EstimatedMonthlyCost))
 		}
 		// ArgoCD (cluster-side GitOps CD) is installed on every provisioned cluster;
 		// "exposed" = a managed-ingress URL exists (see `cluster get`), else port-forward.
-		argocd := ui.SymbolDash
+		argocd := ui.Cell(outFmt, "", ui.SymbolDash)
 		if c.ClusterName != "" {
 			if c.ArgocdURL != "" {
 				argocd = "exposed"
@@ -125,7 +125,7 @@ func renderClusters(out io.Writer, outFormat string, clusters []api.ClusterSumma
 	}
 	return ui.Render(out, outFormat, ui.TableSpec{
 		Columns: clusterListColumns,
-		Rows:    clusterRows(clusters),
+		Rows:    clusterRows(clusters, outFormat),
 	}, clusters)
 }
 

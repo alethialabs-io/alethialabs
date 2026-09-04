@@ -40,7 +40,7 @@ var ssoListCmd = &cobra.Command{
 				ui.Muted("No SSO providers configured.")
 				return
 			}
-			_ = ui.ShowTable(ssoListColumns, ssoRows(providers), "SSO providers")
+			_ = ui.ShowTable(ssoListColumns, ssoRows(providers, ui.FormatTable), "SSO providers")
 			return
 		}
 		if err := runSsoList(client, os.Stdout, outputFormat(cmd)); err != nil {
@@ -52,10 +52,10 @@ var ssoListCmd = &cobra.Command{
 var ssoListColumns = []string{"Provider", "Domain", "Issuer", "Enabled", "ID"}
 
 // ssoRows projects SSO providers into plain table rows.
-func ssoRows(providers []api.SsoProvider) [][]string {
+func ssoRows(providers []api.SsoProvider, outFmt string) [][]string {
 	rows := make([][]string, len(providers))
 	for i, p := range providers {
-		rows[i] = []string{p.ProviderType, p.Domain, p.Issuer, ui.YesNo(p.Enabled), p.ID}
+		rows[i] = []string{p.ProviderType, p.Domain, p.Issuer, ui.Cell(outFmt, ui.WireBool(p.Enabled), ui.YesNo(p.Enabled)), p.ID}
 	}
 	return rows
 }
@@ -72,7 +72,7 @@ func runSsoList(c apiClient, out io.Writer, format string) error {
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: ssoListColumns,
-		Rows:    ssoRows(providers),
+		Rows:    ssoRows(providers, format),
 	}, providers)
 }
 
@@ -114,17 +114,17 @@ it serves; with neither, pick from the org's providers.`,
 // renderSsoProvider writes a single SSO provider as a KV card (table), the typed
 // object (json), or Field/Value rows (csv).
 func renderSsoProvider(out io.Writer, format string, p *api.SsoProvider) error {
-	return ui.RenderCard(out, format, "SSO provider "+p.ID, ssoFieldRows(p), p)
+	return ui.RenderCard(out, format, "SSO provider "+p.ID, ssoFieldRows(p, format), p)
 }
 
 // ssoFieldRows returns the key/value fields of an SSO provider.
-func ssoFieldRows(p *api.SsoProvider) [][]string {
+func ssoFieldRows(p *api.SsoProvider, outFmt string) [][]string {
 	return [][]string{
 		{"ID", p.ID},
 		{"Provider", p.ProviderType},
 		{"Domain", p.Domain},
 		{"Issuer", p.Issuer},
-		{"Enabled", ui.YesNo(p.Enabled)},
+		{"Enabled", ui.Cell(outFmt, ui.WireBool(p.Enabled), ui.YesNo(p.Enabled))},
 	}
 }
 

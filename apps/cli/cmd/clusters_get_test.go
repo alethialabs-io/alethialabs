@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
 )
@@ -338,7 +339,7 @@ func TestClusterFieldRows(t *testing.T) {
 		Region: "eu-central-1", NodeMinSize: 1, NodeDesiredSize: 3, NodeMaxSize: 5,
 		EstimatedMonthlyCost: &cost, ArgocdURL: "https://argo.example",
 	}
-	rows := clusterFieldRows(full, nil)
+	rows := clusterFieldRows(full, nil, ui.FormatTable)
 	got := map[string]string{}
 	for _, r := range rows {
 		got[r[0]] = r[1]
@@ -357,7 +358,7 @@ func TestClusterFieldRows(t *testing.T) {
 	}
 
 	// Un-provisioned (no cluster name): no ArgoCD block, no optional fields.
-	bare := clusterFieldRows(&api.ClusterSummary{ProjectName: "x", Status: "QUEUED"}, nil)
+	bare := clusterFieldRows(&api.ClusterSummary{ProjectName: "x", Status: "QUEUED"}, nil, ui.FormatTable)
 	for _, r := range bare {
 		if r[0] == "ArgoCD" || r[0] == "ArgoCD admin" || r[0] == "Message" || r[0] == "Cluster" {
 			t.Errorf("un-provisioned cluster should not emit %q", r[0])
@@ -365,7 +366,7 @@ func TestClusterFieldRows(t *testing.T) {
 	}
 
 	// Provisioned but no managed ingress ⇒ port-forward note.
-	pf := clusterFieldRows(&api.ClusterSummary{ProjectName: "y", ClusterName: "y-eks", Status: "ACTIVE"}, nil)
+	pf := clusterFieldRows(&api.ClusterSummary{ProjectName: "y", ClusterName: "y-eks", Status: "ACTIVE"}, nil, ui.FormatTable)
 	var argocd string
 	for _, r := range pf {
 		if r[0] == "ArgoCD" {

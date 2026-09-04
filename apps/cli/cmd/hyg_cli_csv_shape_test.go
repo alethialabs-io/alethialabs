@@ -84,32 +84,7 @@ var csvHumanisingSymbols = map[string]string{
 // The count is the point. #4033's body said "eight tables"; Render's own doc said its list was
 // "MEASURED, not a closed one" and named about twelve files. The real number was nineteen builders
 // across seventeen files, and nothing counted it until this guard ran.
-var csvShapeExemptions = map[string]string{
-	// Card builders — these feed ui.RenderCard, a separate call path from ui.Render with the
-	// identical defect (card.go:19 hands its rows straight to the CSV branch).
-	"clusters_get.go:clusterFieldRows": "#4192 · clusters lane · RenderCard path",
-	"iac.go:iacRows":                   "#4192 · BYO-IaC lane · RenderCard path",
-	"provider.go:providerStatusRows":   "#4192 · connectors lane · RenderCard path",
-	"sso.go:ssoFieldRows":              "#4192 · org & identity lane · RenderCard path",
-
-	// List builders.
-	"addon.go:addonRows": "#4192 · addons lane · four humanisers, incl. StampOrNever whose " +
-		"machine arm is the absence and not the word `never`",
-	"alerts.go:alertRows":                "#4192 · governance lane",
-	"channels.go:channelRows":            "#4192 · governance lane",
-	"classification.go:dimensionRows":    "#4192 · governance lane",
-	"cloud.go:networkRows":               "#4192 · connectors lane",
-	"cloud.go:subnetRows":                "#4192 · connectors lane",
-	"clusters_list.go:clusterRows":       "#4192 · clusters lane",
-	"fleet.go:fleetRows":                 "#4192 · runners lane",
-	"grants.go:grantRows":                "#4192 · org & identity lane",
-	"org_list.go:orgRows":                "#4192 · org & identity lane",
-	"probes.go:probeRows":                "#4192 · ops lane",
-	"project_component.go:componentRows": "#4192 · projects lane",
-	"repo.go:repoRows":                   "#4192 · BYO-IaC lane",
-	"roles.go:roleRows":                  "#4192 · org & identity lane",
-	"sso.go:ssoRows":                     "#4192 · org & identity lane",
-}
+var csvShapeExemptions = map[string]string{}
 
 // csvShapeScanDirs are the directories walked, relative to apps/cli/cmd.
 var csvShapeScanDirs = []string{".", "../pkg/utils/ui"}

@@ -38,7 +38,7 @@ func TestClusterRowsCells(t *testing.T) {
 		ClusterVersion: "1.30", Status: "FAILED", StatusMessage: "node pool exhausted",
 		EstimatedMonthlyCost: &cost, Region: "eu-central-1",
 	}}
-	row := clusterRows(withExtras)[0]
+	row := clusterRows(withExtras, ui.FormatTable)[0]
 
 	if got := clusterCell(t, row, "Project"); got != "web (prod)" {
 		t.Errorf("project cell = %q — it must be the same label the card and the picker use", got)
@@ -59,7 +59,7 @@ func TestClusterRowsCells(t *testing.T) {
 		t.Errorf("nodes cell = %q", got)
 	}
 
-	bare := clusterRows([]api.ClusterSummary{{ProjectName: "x", Status: "ACTIVE"}})[0]
+	bare := clusterRows([]api.ClusterSummary{{ProjectName: "x", Status: "ACTIVE"}}, ui.FormatTable)[0]
 	for _, column := range []string{"Cost", "ArgoCD", "Cluster", "Version"} {
 		if got := clusterCell(t, bare, column); got != ui.SymbolDash {
 			// One sentinel, one glyph: an unset cell must be the hoisted SymbolDash and never a
@@ -86,7 +86,7 @@ func TestClusterRowsCostRoundsLikeTheConsole(t *testing.T) {
 		{0, "$0/mo"},
 	} {
 		amount := c.amount
-		row := clusterRows([]api.ClusterSummary{{ProjectName: "p", EstimatedMonthlyCost: &amount}})[0]
+		row := clusterRows([]api.ClusterSummary{{ProjectName: "p", EstimatedMonthlyCost: &amount}}, ui.FormatTable)[0]
 		if got := clusterCell(t, row, "Cost"); got != c.want {
 			t.Errorf("cost cell for %v = %q, want %q", c.amount, got, c.want)
 		}
@@ -129,7 +129,7 @@ func TestRenderClustersColumnsAreTheHeaders(t *testing.T) {
 			t.Errorf("header %q missing from the rendered table:\n%s", column, buf.String())
 		}
 	}
-	if got := len(clusterRows(clusters)[0]); got != len(clusterListColumns) {
+	if got := len(clusterRows(clusters, ui.FormatTable)[0]); got != len(clusterListColumns) {
 		t.Errorf("a row has %d cells for %d columns", got, len(clusterListColumns))
 	}
 }

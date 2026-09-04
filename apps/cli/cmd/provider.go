@@ -91,14 +91,14 @@ func resolveProviderRef(lister cloudIdentityLister, args []string) (string, erro
 
 // providerStatusRows projects a ProviderStatus into field/value cells, showing
 // only the identity fields relevant to the connected provider.
-func providerStatusRows(s *api.ProviderStatus) [][]string {
+func providerStatusRows(s *api.ProviderStatus, outFmt string) [][]string {
 	connected := "disconnected"
 	if s.Connected {
 		connected = "connected"
 	}
 	rows := [][]string{
 		{"status", connected},
-		{"identity", ui.OrDash(s.IdentityID)},
+		{"identity", ui.Cell(outFmt, s.IdentityID, ui.OrDash(s.IdentityID))},
 	}
 	add := func(label, value string) {
 		if value != "" {
@@ -121,7 +121,7 @@ func runProviderStatus(c apiClient, out io.Writer, format, provider string) erro
 	if err != nil {
 		return err
 	}
-	return ui.RenderCard(out, format, "alethia · "+provider+" status", providerStatusRows(status), status)
+	return ui.RenderCard(out, format, "alethia · "+provider+" status", providerStatusRows(status, format), status)
 }
 
 var providerVerifyCmd = &cobra.Command{

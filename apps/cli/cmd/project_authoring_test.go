@@ -258,7 +258,7 @@ func sampleComponents() []api.Component {
 }
 
 func TestComponentRows(t *testing.T) {
-	rows := componentRows(sampleComponents())
+	rows := componentRows(sampleComponents(), ui.FormatTable)
 	if rows[0][3] != ui.SymbolDash {
 		t.Errorf("inherited identity should be dash: %+v", rows[0])
 	}

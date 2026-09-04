@@ -120,7 +120,7 @@ var projectComponentListCmd = &cobra.Command{
 				ui.Muted("No components found.")
 				return
 			}
-			_ = ui.ShowTable(componentListColumns, componentRows(comps), "components")
+			_ = ui.ShowTable(componentListColumns, componentRows(comps, ui.FormatTable), "components")
 			return
 		}
 		if err := runComponentList(client, os.Stdout, outputFormat(cmd), project, componentListKind, currentComponentEnv(cmd)); err != nil {
@@ -133,16 +133,16 @@ var componentListColumns = []string{"Kind", "Name", "Status", "Identity"}
 
 // componentRows projects components into plain table rows; an inherited (nil) identity
 // renders as the dash glyph.
-func componentRows(comps []api.Component) [][]string {
+func componentRows(comps []api.Component, outFmt string) [][]string {
 	rows := make([][]string, len(comps))
 	for i, c := range comps {
-		identity := ui.SymbolDash
+		identity := ui.Cell(outFmt, "", ui.SymbolDash)
 		if c.CloudIdentityID != nil && *c.CloudIdentityID != "" {
 			identity = *c.CloudIdentityID
 		}
 		status := c.Status
 		if status == "" {
-			status = ui.SymbolDash
+			status = ui.Cell(outFmt, "", ui.SymbolDash)
 		}
 		rows[i] = []string{c.Kind, c.Name, status, identity}
 	}
@@ -161,7 +161,7 @@ func runComponentList(c apiClient, out io.Writer, format, project, kind, env str
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: componentListColumns,
-		Rows:    componentRows(comps),
+		Rows:    componentRows(comps, format),
 	}, comps)
 }
 

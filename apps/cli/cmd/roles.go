@@ -43,7 +43,7 @@ var rolesListCmd = &cobra.Command{
 				ui.Muted("No roles found.")
 				return
 			}
-			_ = ui.ShowTable(roleListColumns, roleRows(roles), "roles")
+			_ = ui.ShowTable(roleListColumns, roleRows(roles, ui.FormatTable), "roles")
 			return
 		}
 		if err := runRolesList(client, os.Stdout, outputFormat(cmd)); err != nil {
@@ -56,10 +56,10 @@ var roleListColumns = []string{"Name", "Built-in", "Permissions", "ID"}
 
 // roleRows projects roles into plain table rows; built-ins are flagged with the
 // brand marker and permissions render as a count.
-func roleRows(roles []api.Role) [][]string {
+func roleRows(roles []api.Role, outFmt string) [][]string {
 	rows := make([][]string, len(roles))
 	for i, r := range roles {
-		rows[i] = []string{r.Name, ui.YesNo(r.IsBuiltin), strconv.Itoa(len(r.PermissionKeys)), r.ID}
+		rows[i] = []string{r.Name, ui.Cell(outFmt, ui.WireBool(r.IsBuiltin), ui.YesNo(r.IsBuiltin)), strconv.Itoa(len(r.PermissionKeys)), r.ID}
 	}
 	return rows
 }
@@ -76,7 +76,7 @@ func runRolesList(c apiClient, out io.Writer, format string) error {
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: roleListColumns,
-		Rows:    roleRows(roles),
+		Rows:    roleRows(roles, format),
 	}, roles)
 }
 

@@ -461,7 +461,7 @@ func TestAddonRows_EveryColumnHasACellAndSyncIsOneOfThem(t *testing.T) {
 		t.Fatalf("addonColumns %v has no Sync/Last synced column — the signal an operator reads "+
 			"first is not rendered", addonColumns)
 	}
-	rows := addonRows(addonTestView().Addons)
+	rows := addonRows(addonTestView().Addons, ui.FormatTable)
 	if len(rows) != 3 {
 		t.Fatalf("addonRows produced %d rows for 3 add-ons", len(rows))
 	}

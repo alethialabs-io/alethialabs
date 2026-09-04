@@ -110,7 +110,7 @@ func TestDimensionRowsSlugs(t *testing.T) {
 		AppliesTo: []string{"project_environment"},
 		Values:    []api.ClassificationValue{{Value: "public"}, {Value: "restricted"}},
 	}}
-	row := dimensionRows(dims)[0]
+	row := dimensionRows(dims, ui.FormatTable)[0]
 	if row[2] != "multi" {
 		t.Errorf("mode = %q, want multi", row[2])
 	}
@@ -118,7 +118,7 @@ func TestDimensionRowsSlugs(t *testing.T) {
 		t.Errorf("values cell should list slugs, got %q", row[4])
 	}
 
-	empty := dimensionRows([]api.ClassificationDimension{{Key: "k", Label: "K"}})[0]
+	empty := dimensionRows([]api.ClassificationDimension{{Key: "k", Label: "K"}}, ui.FormatTable)[0]
 	if empty[4] != ui.SymbolDash {
 		t.Errorf("valueless dimension should show dash, got %q", empty[4])
 	}
