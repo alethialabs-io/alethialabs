@@ -4,6 +4,13 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { authorizeCli } from "@/lib/authz/guard";
+import {
+	type CursorScope,
+	MAX_PAGE_SIZE,
+	cursorKey,
+	paginate,
+	parsePageOpts,
+} from "@/lib/cli/paging";
 import { resolveCliProject } from "@/lib/cli/resolve-project";
 import { getServiceDb } from "@/lib/db";
 import { projectEnvironments, projectFabrics } from "@/lib/db/schema";
@@ -22,6 +29,8 @@ import {
 	cliEnvironmentResponse,
 	cliEnvironmentsResponse,
 } from "@/lib/validations/cli-contract";
+
+const ENVIRONMENTS_LIST = "project-environments";
 
 /** Body of POST /api/cli/projects/:id/environments — add an environment.
  *
@@ -130,6 +139,18 @@ export async function GET(
 	if ("error" in auth) return auth.error;
 	const { actor } = auth;
 	const { id } = await params;
+	const { searchParams } = new URL(req.url);
+	const cursorScope: CursorScope = { orgId: actor.orgId, list: ENVIRONMENTS_LIST };
+	const parsed = parsePageOpts(searchParams, cursorScope);
+	if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
+	const asked = (key: string) => {
+		const raw = searchParams.get(key);
+		return raw !== null && raw !== "";
+	};
+	const opts =
+		!asked("limit") && !asked("cursor")
+			? { ...parsed.opts, limit: MAX_PAGE_SIZE }
+			: parsed.opts;
 
 	try {
 		const project = await resolveCliProject(actor.orgId, id);
@@ -140,18 +161,35 @@ export async function GET(
 		// LEFT join: a `dedicated` environment whose Fabric has not been created yet, and any
 		// environment placed on none, must still appear. An inner join would silently drop rows
 		// from a list whose job is to account for every tier.
-		const rows = await getServiceDb()
-			.select({
-				environment: projectEnvironments,
-				fabricName: projectFabrics.name,
-			})
-			.from(projectEnvironments)
-			.leftJoin(projectFabrics, eq(projectEnvironments.fabric_id, projectFabrics.id))
-			.where(eq(projectEnvironments.project_id, project.id))
-			.orderBy(desc(projectEnvironments.is_default), projectEnvironments.created_at);
+		const db = getServiceDb();
+		const { items, page } = await paginate({
+			db,
+			table: projectEnvironments,
+			createdAt: projectEnvironments.created_at,
+			id: projectEnvironments.id,
+			scope: [eq(projectEnvironments.project_id, project.id)],
+			cursor: cursorScope,
+			opts,
+			rows: (query) =>
+				db
+					.select({
+						environment: projectEnvironments,
+						fabricName: projectFabrics.name,
+						cursor_key: cursorKey(projectEnvironments.created_at),
+					})
+					.from(projectEnvironments)
+					.leftJoin(projectFabrics, eq(projectEnvironments.fabric_id, projectFabrics.id))
+					.where(query.where)
+					.orderBy(desc(projectEnvironments.is_default), ...query.orderBy)
+					.limit(query.limit),
+			positionOf: (row) => ({ createdAt: row.cursor_key, id: row.environment.id }),
+		});
 
 		return cliJson(cliEnvironmentsResponse, {
-			environments: rows.map((r) => toEnvironmentWire(r.environment, r.fabricName)),
+			environments: items.map(({ cursor_key: _cursor, ...r }) =>
+				toEnvironmentWire(r.environment, r.fabricName),
+			),
+			page,
 		});
 	} catch (err: unknown) {
 		const message = err instanceof Error ? err.message : "Internal Server Error";
