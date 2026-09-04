@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1218,6 +1219,86 @@ func TestGetProjectStagedChanges_Success(t *testing.T) {
 	}
 	if view.Environment != "production" || len(view.Changes) != 1 || view.Changes[0].Op != "create" {
 		t.Errorf("unexpected staged changes: %+v", view)
+	}
+}
+
+// TestProjectPagedRoutes_FollowCursor covers the shared cursor loop and each project list route's
+// query construction. The first response deliberately advertises another page so the client must
+// issue a second request with the returned cursor.
+func TestProjectPagedRoutes_FollowCursor(t *testing.T) {
+	seen := make(map[string]int)
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		seen[path]++
+		if seen[path] == 2 && r.URL.Query().Get("cursor") != "next" {
+			t.Errorf("expected cursor=next on second request for %s, got %q", path, r.URL.Query().Get("cursor"))
+		}
+		if seen[path] > 2 {
+			t.Fatalf("unexpected third request for %s", path)
+		}
+		last := seen[path] == 2
+		page := map[string]any{"page": map[string]any{"next_cursor": func() string {
+			if last {
+				return ""
+			}
+			return "next"
+		}()}}
+		switch path {
+		case "/api/cli/projects/p/environments":
+			page["environments"] = []map[string]any{{"id": "env" + fmt.Sprint(seen[path])}}
+		case "/api/cli/projects/p/addons":
+			page["environment"] = "production"
+			page["addons"] = []map[string]any{{"addon_id": "a" + fmt.Sprint(seen[path])}}
+		case "/api/cli/projects/p/byo-charts":
+			page["environment"] = "production"
+			page["charts"] = []map[string]any{{"id": "c" + fmt.Sprint(seen[path])}}
+		case "/api/cli/projects/p/promotions":
+			page["promotions"] = []map[string]any{{"id": "pr" + fmt.Sprint(seen[path])}}
+		case "/api/cli/projects/p/staged":
+			page["environment"] = "production"
+			page["changes"] = []map[string]any{{"op": "create"}}
+		default:
+			t.Fatalf("unexpected path: %s", path)
+		}
+		_ = json.NewEncoder(w).Encode(page)
+	}))
+
+	if got, err := client.ListEnvironments("p"); err != nil || len(got) != 2 {
+		t.Fatalf("environments: got %d rows, err %v", len(got), err)
+	}
+	if got, err := client.GetProjectAddons("p", "prod"); err != nil || len(got.Addons) != 2 {
+		t.Fatalf("addons: got %+v, err %v", got, err)
+	}
+	if got, err := client.GetProjectByoCharts("p", "prod"); err != nil || len(got.Charts) != 2 {
+		t.Fatalf("charts: got %+v, err %v", got, err)
+	}
+	if got, err := client.GetProjectPromotions("p", "prod"); err != nil || len(got) != 2 {
+		t.Fatalf("promotions: got %d rows, err %v", len(got), err)
+	}
+	if got, err := client.GetProjectStagedChanges("p", "prod"); err != nil || len(got.Changes) != 2 {
+		t.Fatalf("staged: got %+v, err %v", got, err)
+	}
+}
+
+// TestProjectPagedRoutes_Empty covers the valid empty-universe result for aggregating routes.
+func TestProjectPagedRoutes_Empty(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"environment": "production",
+			"addons":      []any{},
+			"charts":      []any{},
+			"changes":     []any{},
+			"page":        map[string]any{},
+		})
+	}))
+	if got, err := client.GetProjectAddons("p", ""); err != nil || got == nil {
+		t.Fatalf("empty addons: got %+v, err %v", got, err)
+	}
+	if got, err := client.GetProjectByoCharts("p", ""); err != nil || got == nil {
+		t.Fatalf("empty charts: got %+v, err %v", got, err)
+	}
+	if got, err := client.GetProjectStagedChanges("p", ""); err != nil || got == nil {
+		t.Fatalf("empty staged: got %+v, err %v", got, err)
 	}
 }
 
