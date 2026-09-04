@@ -58,19 +58,19 @@ var networkColumns = []string{"Network", "Name", "Region", "CIDR", "Default"}
 var subnetColumns = []string{"Subnet", "Name", "Region", "AZ", "CIDR", "Public"}
 
 // networkRows projects discovered networks into plain table cells.
-func networkRows(networks []api.CloudNetwork) [][]string {
+func networkRows(networks []api.CloudNetwork, outFmt string) [][]string {
 	rows := make([][]string, len(networks))
 	for i, n := range networks {
-		rows[i] = []string{n.NativeID, ui.StrOrDash(n.Name), ui.StrOrDash(n.Region), ui.StrOrDash(n.CidrBlock), ui.GateGlyph(n.IsDefault)}
+		rows[i] = []string{n.NativeID, ui.Cell(outFmt, ui.Wire(n.Name), ui.StrOrDash(n.Name)), ui.Cell(outFmt, ui.Wire(n.Region), ui.StrOrDash(n.Region)), ui.Cell(outFmt, ui.Wire(n.CidrBlock), ui.StrOrDash(n.CidrBlock)), ui.Cell(outFmt, ui.WireBool(n.IsDefault), ui.GateGlyph(n.IsDefault))}
 	}
 	return rows
 }
 
 // subnetRows projects discovered subnets into plain table cells.
-func subnetRows(subnets []api.CloudSubnet) [][]string {
+func subnetRows(subnets []api.CloudSubnet, outFmt string) [][]string {
 	rows := make([][]string, len(subnets))
 	for i, s := range subnets {
-		rows[i] = []string{s.NativeID, ui.StrOrDash(s.Name), ui.StrOrDash(s.Region), ui.StrOrDash(s.AvailabilityZone), ui.StrOrDash(s.CidrBlock), ui.GateGlyph(s.IsPublic)}
+		rows[i] = []string{s.NativeID, ui.Cell(outFmt, ui.Wire(s.Name), ui.StrOrDash(s.Name)), ui.Cell(outFmt, ui.Wire(s.Region), ui.StrOrDash(s.Region)), ui.Cell(outFmt, ui.Wire(s.AvailabilityZone), ui.StrOrDash(s.AvailabilityZone)), ui.Cell(outFmt, ui.Wire(s.CidrBlock), ui.StrOrDash(s.CidrBlock)), ui.Cell(outFmt, ui.WireBool(s.IsPublic), ui.GateGlyph(s.IsPublic))}
 	}
 	return rows
 }
@@ -91,14 +91,14 @@ func runCloudInventory(c apiClient, out io.Writer, format, cloudIdentityID strin
 		return nil
 	}
 	if format == ui.FormatCSV {
-		return ui.Render(out, format, ui.TableSpec{Columns: networkColumns, Rows: networkRows(inv.Networks)}, inv.Networks)
+		return ui.Render(out, format, ui.TableSpec{Columns: networkColumns, Rows: networkRows(inv.Networks, format)}, inv.Networks)
 	}
 	// Table: networks, then subnets, then a regions line.
 	fmt.Fprintln(out, ui.MutedStyle.Render("Networks"))
-	_ = ui.Render(out, format, ui.TableSpec{Columns: networkColumns, Rows: networkRows(inv.Networks)}, inv.Networks)
+	_ = ui.Render(out, format, ui.TableSpec{Columns: networkColumns, Rows: networkRows(inv.Networks, format)}, inv.Networks)
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, ui.MutedStyle.Render("Subnets"))
-	_ = ui.Render(out, format, ui.TableSpec{Columns: subnetColumns, Rows: subnetRows(inv.Subnets)}, inv.Subnets)
+	_ = ui.Render(out, format, ui.TableSpec{Columns: subnetColumns, Rows: subnetRows(inv.Subnets, format)}, inv.Subnets)
 	if len(inv.Regions) > 0 {
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, "Regions: "+strings.Join(inv.Regions, ", "))

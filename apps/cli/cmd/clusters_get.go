@@ -235,14 +235,14 @@ func renderCluster(out io.Writer, outFormat string, c *api.ClusterSummary, g *ap
 			Gitops *api.ClusterGitops `json:"gitops"`
 		}{c, g}
 	}
-	return ui.RenderCard(out, outFormat, clusterLabel(*c), clusterFieldRows(c, g), record)
+	return ui.RenderCard(out, outFormat, clusterLabel(*c), clusterFieldRows(c, g, outFormat), record)
 }
 
 // clusterFieldRows returns the present-only key/value fields of a cluster, ending with
 // the ArgoCD access block + GitOps posture when the cluster is provisioned.
-func clusterFieldRows(c *api.ClusterSummary, g *api.ClusterGitops) [][]string {
+func clusterFieldRows(c *api.ClusterSummary, g *api.ClusterGitops, outFmt string) [][]string {
 	rows := [][]string{
-		{"Status", ui.StatusCell(c.Status)},
+		{"Status", ui.Cell(outFmt, c.Status, ui.StatusCell(c.Status))},
 	}
 	if c.StatusMessage != "" {
 		rows = append(rows, []string{"Message", c.StatusMessage})
@@ -251,7 +251,7 @@ func clusterFieldRows(c *api.ClusterSummary, g *api.ClusterGitops) [][]string {
 		rows = append(rows, []string{"Cluster", c.ClusterName})
 	}
 	if c.ClusterVersion != "" {
-		rows = append(rows, []string{"Version", "K8s " + c.ClusterVersion})
+		rows = append(rows, []string{"Version", ui.Cell(outFmt, c.ClusterVersion, "K8s "+c.ClusterVersion)})
 	}
 	if c.Region != "" {
 		rows = append(rows, []string{"Region", c.Region})

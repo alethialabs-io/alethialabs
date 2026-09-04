@@ -47,7 +47,7 @@ var alertsListCmd = &cobra.Command{
 				ui.Muted("No alert rules found.")
 				return
 			}
-			_ = ui.ShowTable(alertListColumns, alertRows(rules), "alert rules")
+			_ = ui.ShowTable(alertListColumns, alertRows(rules, ui.FormatTable), "alert rules")
 			return
 		}
 		if err := runAlertsList(client, os.Stdout, outputFormat(cmd)); err != nil {
@@ -59,7 +59,7 @@ var alertsListCmd = &cobra.Command{
 var alertListColumns = []string{"Name", "Severity", "Events", "Channels", "Enabled", "ID"}
 
 // alertRows projects alert rules into plain table rows.
-func alertRows(rules []api.AlertRule) [][]string {
+func alertRows(rules []api.AlertRule, outFmt string) [][]string {
 	rows := make([][]string, len(rules))
 	for i, r := range rules {
 		rows[i] = []string{
@@ -67,7 +67,7 @@ func alertRows(rules []api.AlertRule) [][]string {
 			r.Severity,
 			strconv.Itoa(len(r.EventPatterns)),
 			strconv.Itoa(len(r.ChannelIDs)),
-			ui.YesNo(r.Enabled),
+			ui.Cell(outFmt, ui.WireBool(r.Enabled), ui.YesNo(r.Enabled)),
 			r.ID,
 		}
 	}
@@ -86,7 +86,7 @@ func runAlertsList(c apiClient, out io.Writer, format string) error {
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: alertListColumns,
-		Rows:    alertRows(rules),
+		Rows:    alertRows(rules, format),
 	}, rules)
 }
 

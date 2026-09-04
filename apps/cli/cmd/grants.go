@@ -42,7 +42,7 @@ var grantsListCmd = &cobra.Command{
 				ui.Muted("No access grants found.")
 				return
 			}
-			_ = ui.ShowTable(grantListColumns, grantRows(grants), "grants")
+			_ = ui.ShowTable(grantListColumns, grantRows(grants, ui.FormatTable), "grants")
 			return
 		}
 		if err := runGrantsList(client, os.Stdout, outputFormat(cmd)); err != nil {
@@ -63,14 +63,14 @@ func grantScope(g api.Grant) string {
 
 // grantRows projects grants into plain table rows. The principal is rendered as
 // "type id"; role and permission fall back to a dash (a grant carries exactly one).
-func grantRows(grants []api.Grant) [][]string {
+func grantRows(grants []api.Grant, outFmt string) [][]string {
 	rows := make([][]string, len(grants))
 	for i, g := range grants {
 		rows[i] = []string{
 			fmt.Sprintf("%s %s", g.PrincipalType, g.PrincipalID),
 			g.Effect,
-			ui.OrDash(g.Role),
-			ui.OrDash(g.PermissionKey),
+			ui.Cell(outFmt, g.Role, ui.OrDash(g.Role)),
+			ui.Cell(outFmt, g.PermissionKey, ui.OrDash(g.PermissionKey)),
 			grantScope(g),
 			g.ID,
 		}
@@ -90,7 +90,7 @@ func runGrantsList(c apiClient, out io.Writer, format string) error {
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: grantListColumns,
-		Rows:    grantRows(grants),
+		Rows:    grantRows(grants, format),
 	}, grants)
 }
 

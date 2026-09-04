@@ -44,7 +44,7 @@ var fleetListCmd = &cobra.Command{
 				ui.Muted("No fleet pools configured.")
 				return
 			}
-			_ = ui.ShowTable(fleetListColumns, fleetRows(pools), "fleet pools")
+			_ = ui.ShowTable(fleetListColumns, fleetRows(pools, ui.FormatTable), "fleet pools")
 			return
 		}
 		if err := runFleetList(client, os.Stdout, outputFormat(cmd)); err != nil {
@@ -57,17 +57,17 @@ var fleetListColumns = []string{"Provider", "Enabled", "Warm", "Max", "Slots", "
 
 // fleetRows projects pools into plain table rows. The version cell prefers a pinned
 // version, falls back to the channel, else a dash.
-func fleetRows(pools []api.FleetPool) [][]string {
+func fleetRows(pools []api.FleetPool, outFmt string) [][]string {
 	rows := make([][]string, len(pools))
 	for i, p := range pools {
 		rows[i] = []string{
 			p.Provider,
-			ui.YesNo(p.Enabled),
+			ui.Cell(outFmt, ui.WireBool(p.Enabled), ui.YesNo(p.Enabled)),
 			strconv.Itoa(p.WarmMin),
 			strconv.Itoa(p.Max),
 			strconv.Itoa(p.SlotsPerRunner),
-			ui.OrDash(strings.Join(p.Locations, ",")),
-			fleetVersionCell(p),
+			ui.Cell(outFmt, strings.Join(p.Locations, ","), ui.OrDash(strings.Join(p.Locations, ","))),
+			fleetVersionCell(p, outFmt),
 		}
 	}
 	return rows
@@ -75,14 +75,14 @@ func fleetRows(pools []api.FleetPool) [][]string {
 
 // fleetVersionCell renders a pool's version target: a pinned version, else the channel,
 // else a dash.
-func fleetVersionCell(p api.FleetPool) string {
+func fleetVersionCell(p api.FleetPool, outFmt string) string {
 	if p.Version != "" {
 		return p.Version
 	}
 	if p.Channel != "" {
-		return p.Channel + " (channel)"
+		return ui.Cell(outFmt, p.Channel, p.Channel+" (channel)")
 	}
-	return ui.SymbolDash
+	return ui.Cell(outFmt, "", ui.SymbolDash)
 }
 
 // runFleetList fetches and renders the fleet pools (non-interactive path).
@@ -97,7 +97,7 @@ func runFleetList(c apiClient, out io.Writer, format string) error {
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: fleetListColumns,
-		Rows:    fleetRows(pools),
+		Rows:    fleetRows(pools, format),
 	}, pools)
 }
 

@@ -49,7 +49,7 @@ project with --project; omit it on a terminal and you are asked which.`,
 				ui.Muted("No environments found.")
 				return
 			}
-			_ = ui.ShowTable(probeColumns, probeRows(probes), "probes")
+			_ = ui.ShowTable(probeColumns, probeRows(probes, ui.FormatTable), "probes")
 			return
 		}
 		if err := runProbesList(client, os.Stdout, outputFormat(cmd), project); err != nil {
@@ -71,20 +71,28 @@ func reachableLabel(reachable *bool) string {
 	return ui.SymbolOffline + " down"
 }
 
+// wireReachable returns the machine form of a nullable probe result.
+func wireReachable(reachable *bool) string {
+	if reachable == nil {
+		return ""
+	}
+	return ui.WireBool(*reachable)
+}
+
 // probeRows projects probe states into plain table cells.
 //
 // Both nullable cells go through the shared render surface rather than repeating its two branches
 // inline. The Probed cell changes what a reader sees: it used to print the wire's raw RFC3339
 // string, so a table of five environments carried five copies of `2026-09-01T14:03:22.114Z` where
 // every other timestamp in the CLI reads `2026-09-01 14:03`.
-func probeRows(probes []api.ProbeState) [][]string {
+func probeRows(probes []api.ProbeState, outFmt string) [][]string {
 	rows := make([][]string, len(probes))
 	for i, p := range probes {
 		rows[i] = []string{
 			p.Environment,
-			reachableLabel(p.Reachable),
-			ui.StrOrDash(p.Message),
-			ui.StampOrDash(p.ProbedAt),
+			ui.Cell(outFmt, wireReachable(p.Reachable), reachableLabel(p.Reachable)),
+			ui.Cell(outFmt, ui.Wire(p.Message), ui.StrOrDash(p.Message)),
+			ui.Cell(outFmt, ui.Wire(p.ProbedAt), ui.StampOrDash(p.ProbedAt)),
 		}
 	}
 	return rows
@@ -102,7 +110,7 @@ func runProbesList(c apiClient, out io.Writer, format, project string) error {
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: probeColumns,
-		Rows:    probeRows(probes),
+		Rows:    probeRows(probes, format),
 	}, probes)
 }
 

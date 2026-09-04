@@ -48,7 +48,7 @@ var classificationDimensionsCmd = &cobra.Command{
 				ui.Muted("No classification dimensions defined.")
 				return
 			}
-			_ = ui.ShowTable(dimensionColumns, dimensionRows(dims), "dimensions")
+			_ = ui.ShowTable(dimensionColumns, dimensionRows(dims, ui.FormatTable), "dimensions")
 			return
 		}
 		if err := runClassificationDimensions(client, os.Stdout, outputFormat(cmd)); err != nil {
@@ -59,7 +59,7 @@ var classificationDimensionsCmd = &cobra.Command{
 
 var dimensionColumns = []string{"Key", "Label", "Mode", "Applies to", "Values"}
 
-func dimensionRows(dims []api.ClassificationDimension) [][]string {
+func dimensionRows(dims []api.ClassificationDimension, outFmt string) [][]string {
 	rows := make([][]string, len(dims))
 	for i, d := range dims {
 		mode := "single"
@@ -72,7 +72,8 @@ func dimensionRows(dims []api.ClassificationDimension) [][]string {
 		}
 		// Show the value slugs, not just a count — `classification assign` takes a
 		// value-slug, so the slugs must be discoverable from this list.
-		rows[i] = []string{d.Key, d.Label, mode, applies, ui.OrDash(strings.Join(dimensionSlugs(d), ", "))}
+		values := strings.Join(dimensionSlugs(d), ", ")
+		rows[i] = []string{d.Key, d.Label, mode, applies, ui.Cell(outFmt, values, ui.OrDash(values))}
 	}
 	return rows
 }
@@ -88,7 +89,7 @@ func runClassificationDimensions(c apiClient, out io.Writer, format string) erro
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: dimensionColumns,
-		Rows:    dimensionRows(dims),
+		Rows:    dimensionRows(dims, format),
 	}, dims)
 }
 

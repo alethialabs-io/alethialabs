@@ -46,7 +46,7 @@ var channelsListCmd = &cobra.Command{
 				ui.Muted("No notification channels found.")
 				return
 			}
-			_ = ui.ShowTable(channelListColumns, channelRows(channels), "channels")
+			_ = ui.ShowTable(channelListColumns, channelRows(channels, ui.FormatTable), "channels")
 			return
 		}
 		if err := runChannelsList(client, os.Stdout, outputFormat(cmd)); err != nil {
@@ -58,10 +58,10 @@ var channelsListCmd = &cobra.Command{
 var channelListColumns = []string{"Name", "Type", "Verified", "Enabled", "ID"}
 
 // channelRows projects channels into plain table rows.
-func channelRows(channels []api.Channel) [][]string {
+func channelRows(channels []api.Channel, outFmt string) [][]string {
 	rows := make([][]string, len(channels))
 	for i, c := range channels {
-		rows[i] = []string{c.Name, c.Type, ui.YesNo(c.IsVerified), ui.YesNo(c.Enabled), c.ID}
+		rows[i] = []string{c.Name, c.Type, ui.Cell(outFmt, ui.WireBool(c.IsVerified), ui.YesNo(c.IsVerified)), ui.Cell(outFmt, ui.WireBool(c.Enabled), ui.YesNo(c.Enabled)), c.ID}
 	}
 	return rows
 }
@@ -78,7 +78,7 @@ func runChannelsList(c apiClient, out io.Writer, format string) error {
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: channelListColumns,
-		Rows:    channelRows(channels),
+		Rows:    channelRows(channels, format),
 	}, channels)
 }
 
