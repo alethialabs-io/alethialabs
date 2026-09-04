@@ -55,15 +55,15 @@ export function SwitcherTrigger({
 }: SwitcherTriggerProps) {
   const labelBlock = caption ? (
     <span className="flex min-w-0 flex-col items-start leading-tight">
-      <span className="font-mono text-[8px] uppercase tracking-wider text-muted-foreground/70">
+      <span className="font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground/70">
         {caption}
       </span>
-      <span className="max-w-[10rem] truncate text-[13px] font-medium text-foreground">
+      <span className="max-w-[10rem] truncate text-ui-md font-medium text-foreground">
         {label}
       </span>
     </span>
   ) : (
-    <span className="min-w-0 flex-1 truncate text-left text-[13.5px] font-medium">
+    <span className="min-w-0 flex-1 truncate text-left text-ui-md font-medium">
       {label}
     </span>
   );
