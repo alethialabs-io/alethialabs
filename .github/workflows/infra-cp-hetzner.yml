@@ -24,7 +24,8 @@ on:
 # number. `github.ref` is distinct for both events here.
 concurrency:
   group: infra-cp-hetzner-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a live infrastructure apply; it can leave the control plane half-applied.
+  cancel-in-progress: false
 
 permissions:
   contents: read

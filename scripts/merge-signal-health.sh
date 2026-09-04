@@ -131,7 +131,8 @@ for sig in "${SIGNALS[@]}"; do
   report+="$line"$'\n'
 done
 
-summary="Merge-signal health — last $RUNS merge_group runs (promote at ≥${PROMOTE_RATE}% over ≥${MIN_RUNS} graded)
+sample_count=$(printf '%s' "$runs_json" | jq 'length')
+summary="Merge-signal health — last $sample_count merge_group runs (requested $RUNS; promote at ≥${PROMOTE_RATE}% over ≥${MIN_RUNS} graded)
 
 $report"
 if [ -n "$promote_lines" ]; then

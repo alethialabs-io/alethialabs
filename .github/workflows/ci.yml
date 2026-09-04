@@ -2221,10 +2221,8 @@ jobs:
     # and the last twelve all FAILED. So the T1 provisioning keystone has had no live trigger at
     # all, while its own comment asserted a schedule it no longer had.
     #
-    # `workflow_dispatch` is added so it is at least RUNNABLE while its home is decided (#4173).
-    # It is deliberately NOT put on a schedule: it failed 12/12 on missing auth env, so arming it
-    # nightly would buy a nightly red rather than a signal, and giving it that env is a maintainer
-    # decision, not a workflow edit.
+    # It is deliberately merge-queue-only: manual dispatch lacks the real runner/control-plane
+    # prerequisites and would produce a predictable red rather than a useful signal.
     #
     # What it does, when it runs: a real runner PROCESS claims a QUEUED job from a real
     # Postgres-backed control plane and drives the full RunDeployV2 spine against a genuine `kind`
@@ -2232,7 +2230,7 @@ jobs:
     # `e2e_t1` build tag keeps it out of the fast per-PR Go suite; ALETHIA_E2E_T1_REQUIRE=1 turns a
     # missing prerequisite (docker/kind/tofu) into a HARD FAIL, never a green skip, so the signal
     # cannot hollow out. Extends the in-process T0 (which stays in the `go` job as a compile check).
-    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     services:
       # Mirrors the `integration` job: a throwaway Postgres that db:migrate turns into
