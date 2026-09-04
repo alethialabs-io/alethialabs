@@ -261,6 +261,13 @@ absence of a `lib/stores/use-*-filters.ts` store, not from how the page looks.
 | **F6** | `keepPreviousData` plus the `opacity-60` dim on `isPlaceholderData` |
 | **F7** | the server builder issues a rows pass **and a separate unfiltered facet pass** |
 
+The subject is a **surface**, not a page: one `createFilterStore` call site.
+`lib/stores/use-settings-filters.ts` holds seven of them and `use-alerts-filters.ts` three, so a
+per-module verdict would pool ten surfaces into two. A route owns a surface when its page closure
+reaches both the store module and a module that names the store's symbol, and F1–F6 are the
+conjunction over the surfaces a route owns — a bar that is not linkable is not excused by a sibling
+on the same page that is.
+
 **F7 is a unit test, not a matcher.** A facet's counts must come from the unfiltered universe: filter
 in memory and the option you just picked disappears from the list, which makes the filter bar
 un-un-selectable. "A facet pass sees only the scope predicates" is a behaviour, and the only honest
@@ -367,8 +374,12 @@ blind spots reads as a rubric that has none.
 
 - **H3 has no instrument** (#3797). `StatusBadge` is the one H row with no matcher, and
   `check-shared-surface.mjs` says why: the rule has no negative form to grep for.
-- **F1–F7 have no instrument at all** (#3796). Nothing in the tree measures the filter standard.
-  The scoreboard renders the whole F column `—`, never as a pass.
+- **F1–F7 had no instrument at all** (#3796) — **closed**. `scripts/check-filter-standard.mjs`
+  now scores F1–F6 over the console's fifteen filter SURFACES, and
+  `apps/console/tests/lib/queries/filter-standard-facets.test.ts` measures F7 by running every
+  facet-bearing server builder. What that unit found first was that this sentence had the shape of
+  the defect wrong: the standard was implemented across fifteen surfaces and UNMEASURED, not
+  absent — and an un-instrumented cell and an empty one render the same dash.
 - **The empty-state matcher mapped to no predicate** (#3798) — **now H9**.
   `check-shared-surface.mjs`'s `empty_state` rule guards CLAUDE.md §6's `@repo/ui/empty` row and
   found 18 occurrences on an unmodified `dev`, and the H table above had no row for it because this
