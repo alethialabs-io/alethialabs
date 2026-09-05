@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { SwitcherTrigger } from "@/components/shell/switcher-trigger";
 import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import {
 	Command,
@@ -100,9 +101,7 @@ export function ProjectSwitcher() {
 							</CommandList>
 						</>
 					) : (
-						<p className="px-3 py-6 text-center text-[13px] text-muted-foreground">
-							No projects yet.
-						</p>
+						<EmptyState title="No projects yet." className="px-3 py-6" />
 					)}
 					<Separator />
 					{/* Pinned footer — outside CommandList so search never hides it. */}
