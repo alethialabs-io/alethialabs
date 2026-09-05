@@ -124,6 +124,7 @@
     "@repo/privacy": "workspace:*",
     "@repo/support": "workspace:*",
     "@repo/ui": "workspace:*",
+    "@repo/workload-identity": "workspace:*",
     "@sentry/nextjs": "^10.71.0",
     "@shadcn/react": "^0.3.0",
     "@streamdown/cjk": "^1.0.3",
