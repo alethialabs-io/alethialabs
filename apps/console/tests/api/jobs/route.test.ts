@@ -440,8 +440,8 @@ describe("POST /api/jobs (CLI queue)", () => {
 	// RUNNER rather than from the actor, because `claim_next_job` compares
 	// `j.org_id = v_runner_org_id` as a hard equality and #3874 ships no backfill. The real
 	// stamp is proven against Postgres in tests/integration/cli-enqueue-org.test.ts; these two
-	// pin the value the ROUTE passes, in the suite that runs on every PR.
-	it("DESTROY_RUNNER stamps the ASSIGNED RUNNER's org — a pre-#3874 personal-org runner stays claimable", async () => {
+	// pin the active-tenant value the route passes, in the suite that runs on every PR.
+	it("keeps an assigned legacy DESTROY_RUNNER job in the active org", async () => {
 		setupTx({});
 		const { insertValuesSpy } = mockServiceDb({
 			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
@@ -458,15 +458,11 @@ describe("POST /api/jobs (CLI queue)", () => {
 
 		expect(res.status).toBe(201);
 		expect(insertValuesSpy).toHaveBeenCalledWith(
-			expect.objectContaining({ org_id: "user-1" }),
-		);
-		// The WRONG answer, named: `actor.orgId` here is what makes the job unclaimable.
-		expect(insertValuesSpy).not.toHaveBeenCalledWith(
 			expect.objectContaining({ org_id: "org-1" }),
 		);
 		// The quota is counted against the org the row is stamped with, not the caller's
 		// personal org — checking one tenant and inserting into another measures nothing.
-		expect(assertJobQuotaAllowed).toHaveBeenCalledWith("user-1");
+		expect(assertJobQuotaAllowed).toHaveBeenCalledWith("org-1");
 	});
 
 	it("DESTROY_RUNNER for a runner in the ACTOR's org gets the actor's org, resolved from the header", async () => {

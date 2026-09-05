@@ -118,10 +118,8 @@ describe("POST /api/cli/runners/deploy", () => {
 		expect(runnerValues.org_id).not.toBe("user-1");
 	});
 
-	// The transitional personal-org admission #3874 added to assertRunnerInOrg is deliberately
-	// NOT taken here: this job is stamped `actor.orgId`, so admitting a personal-org runner as
-	// its executor would queue a job whose org can never equal its runner's — QUEUED forever.
-	it("validates an assigned runner STRICTLY (no personal-org admission)", async () => {
+	// The caller-owned legacy admission pairs with claim_next_job's lifecycle-only compatibility.
+	it("admits the caller's pre-#3874 assigned runner", async () => {
 		mock.queue.push(
 			[{ id: "ci-1", provider: "aws", org_id: "org-1" }],
 			[{ version: "1.4.0" }],
@@ -132,11 +130,11 @@ describe("POST /api/cli/runners/deploy", () => {
 			(await POST(req({ ...DEPLOY, assigned_runner_id: "runner-x" }))).status,
 		).toBe(201);
 
-		// Three arguments, not four: the fourth is the personal-org allowance.
 		expect(assertRunnerInOrg).toHaveBeenCalledWith(
 			expect.anything(),
 			"runner-x",
 			"org-1",
+			"user-1",
 		);
 	});
 

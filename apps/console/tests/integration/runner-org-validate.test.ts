@@ -116,16 +116,13 @@ describeIfDb("assertRunnerInOrg (defense-in-depth enqueue guard)", () => {
 		await db.delete(runners).where(eq(runners.id, runnerTeam));
 	});
 
-	it("ACCEPTS a runner that belongs to the caller's org, and RETURNS its org", async () => {
-		// The return value is not decoration: the DESTROY_RUNNER enqueue stamps `jobs.org_id`
-		// with it (#3874), so a guard that validated and then discarded the org would leave the
-		// caller to guess — and guessing `actor.orgId` is the QUEUED-forever defect.
+	it("ACCEPTS a runner that belongs to the caller's org", async () => {
 		await expect(
 			assertRunnerInOrg(getServiceDb(), runnerA, ORG_A),
-		).resolves.toBe(ORG_A);
+		).resolves.toBeUndefined();
 		await expect(
 			assertRunnerInOrg(getServiceDb(), runnerB, ORG_B),
-		).resolves.toBe(ORG_B);
+		).resolves.toBeUndefined();
 	});
 
 	it("REJECTS a runner owned by another org (cross-tenant assignment)", async () => {
@@ -147,16 +144,12 @@ describeIfDb("assertRunnerInOrg (defense-in-depth enqueue guard)", () => {
 		// A managed platform-fleet runner belongs to no tenant and assumes-role into the
 		// job's own org at run time, so pinning to it is legitimate for any caller — the
 		// enqueue guard must not be stricter than the claim guard that would accept it.
-		// It returns NULL rather than the caller's org: null is what `runners.org_id` holds, and
-		// the enqueue site falls back to the actor's org on it (a managed runner assumes-role
-		// into the job's own org, so any org's job is claimable — claim_next_job Phase A's
-		// `v_operator = 'managed'` arm).
 		await expect(
 			assertRunnerInOrg(getServiceDb(), managedRunner, ORG_A),
-		).resolves.toBeNull();
+		).resolves.toBeUndefined();
 		await expect(
 			assertRunnerInOrg(getServiceDb(), managedRunner, ORG_B),
-		).resolves.toBeNull();
+		).resolves.toBeUndefined();
 	});
 
 	// ── The transitional personal-org admission (#3874) ──────────────────────────────────
@@ -176,7 +169,7 @@ describeIfDb("assertRunnerInOrg (defense-in-depth enqueue guard)", () => {
 		// USER_MULTI's personal org is their own id; TEAM_ORG is the org they act in today.
 		await expect(
 			assertRunnerInOrg(getServiceDb(), runnerPersonal, TEAM_ORG, USER_MULTI),
-		).resolves.toBe(USER_MULTI);
+		).resolves.toBeUndefined();
 	});
 
 	it("REFUSES that same runner when personalOrgId is NOT passed (call sites opt in)", async () => {
@@ -189,10 +182,10 @@ describeIfDb("assertRunnerInOrg (defense-in-depth enqueue guard)", () => {
 
 	it("ACCEPTS the ACTIVE org's runner under the same call shape", async () => {
 		// The allowance must not have replaced the ordinary arm: a runner stamped with the team
-		// org — what #3874 writes from now on — is still admitted, and returns the team org.
+		// org — what #3874 writes from now on — is still admitted.
 		await expect(
 			assertRunnerInOrg(getServiceDb(), runnerTeam, TEAM_ORG, USER_MULTI),
-		).resolves.toBe(TEAM_ORG);
+		).resolves.toBeUndefined();
 	});
 
 	it("STILL REFUSES a THIRD org's runner with the allowance in play — it is an admission, not `accept anything`", async () => {
