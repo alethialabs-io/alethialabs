@@ -194,9 +194,10 @@ DECLARE
     v_providers public.cloud_provider[];
     v_status public.runner_status;
     v_runner_org_id UUID;
+    v_runner_user_id UUID;
 BEGIN
-    SELECT operator, supported_providers, status, org_id
-      INTO v_operator, v_providers, v_status, v_runner_org_id
+    SELECT operator, supported_providers, status, org_id, user_id
+      INTO v_operator, v_providers, v_status, v_runner_org_id, v_runner_user_id
       FROM public.runners
       WHERE id = p_runner_id AND token_hash = p_runner_token_hash;
     IF v_operator IS NULL THEN
@@ -223,7 +224,20 @@ BEGIN
     WHERE id = (
         SELECT j.id FROM public.jobs j
         WHERE j.status = 'QUEUED' AND j.assigned_runner_id = p_runner_id
-          AND (v_operator = 'managed' OR j.org_id = v_runner_org_id)
+          AND (
+            v_operator = 'managed'
+            OR j.org_id = v_runner_org_id
+            -- Pre-#3874 CLI runners were stamped into their owner's personal org.
+            -- Admit only that exact legacy shape, only for lifecycle work created by
+            -- the owner. The job remains in its active tenant for quota, visibility,
+            -- evidence and serialization; arbitrary cross-tenant work stays closed.
+            OR (
+              v_operator = 'self'
+              AND v_runner_org_id = v_runner_user_id
+              AND j.user_id = v_runner_user_id
+              AND j.job_type IN ('DEPLOY_RUNNER', 'UPDATE_RUNNER', 'DESTROY_RUNNER')
+            )
+          )
           -- Never open a state file another job is actively writing (see state_object_busy).
           AND NOT public.state_object_busy(j.project_id, j.environment_id, j.id)
         ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -308,7 +322,14 @@ BEGIN
             WHERE id = (
                 SELECT j.id FROM public.jobs j
                 WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
-                  AND j.org_id = v_runner_org_id
+                  AND (
+                    j.org_id = v_runner_org_id
+                    OR (
+                      v_runner_org_id = v_runner_user_id
+                      AND j.user_id = v_runner_user_id
+                      AND j.job_type IN ('DEPLOY_RUNNER', 'UPDATE_RUNNER', 'DESTROY_RUNNER')
+                    )
+                  )
                   AND (p_cloud_identity_id IS NULL OR j.cloud_identity_id = p_cloud_identity_id)
                   AND (v_providers IS NULL OR j.provider IS NULL OR j.provider = ANY(v_providers))
                   -- Never open a state file another job is actively writing (see state_object_busy).

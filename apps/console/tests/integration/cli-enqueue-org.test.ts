@@ -181,34 +181,26 @@ describeIfDb("CLI enqueue org stamp (#3874)", () => {
 	});
 
 	// ── 1. THE REGRESSION THE NO-BACKFILL DESIGN EXISTS TO AVOID ────────────────────────────
-	it("DESTROY_RUNNER for a PERSONAL-org runner takes the RUNNER's org, not the actor's — the runner stays claimable", async () => {
+	it("keeps a legacy runner's DESTROY_RUNNER in the active org and still claims it", async () => {
 		const jobId = await createdJobId(await destroyRunnerJob(legacyRunner));
 
 		const [runnerRow] = await getServiceDb()
-			.select({ org_id: runners.org_id })
+			.select({ org_id: runners.org_id, token_hash: runners.token_hash })
 			.from(runners)
 			.where(eq(runners.id, legacyRunner))
 			.limit(1);
 
-		// Stated three ways on purpose. The first is the claim; the second is the WRONG answer
-		// named explicitly, so a stamp that happened to equal both cannot pass; the third is
-		// the predicate claim_next_job actually evaluates.
-		expect(await jobOrg(jobId)).toBe(USER);
-		expect(await jobOrg(jobId)).not.toBe(TEAM_ORG);
-		expect(await jobOrg(jobId)).toBe(runnerRow.org_id);
+		expect(runnerRow.org_id).toBe(USER);
+		expect(await jobOrg(jobId)).toBe(TEAM_ORG);
 
-		// And the equality itself, evaluated BY POSTGRES rather than by JavaScript — the exact
-		// join `claim_next_job` Phase A performs (`j.assigned_runner_id = p_runner_id AND
-		// j.org_id = v_runner_org_id`). A row here means a self runner would claim this job; no
-		// row means it sits QUEUED forever, which is the failure mode this issue is about.
-		const claimable = await getServiceDb().execute(sql`
-			select j.id from jobs j
-			  join runners r on r.id = j.assigned_runner_id
-			 where j.id = ${jobId}::uuid
-			   and j.status = 'QUEUED'
-			   and j.org_id = r.org_id
+		const claimed = await getServiceDb().execute(sql`
+			select id from claim_next_job(
+				${legacyRunner}::uuid,
+				${runnerRow.token_hash},
+				${null}::uuid
+			)
 		`);
-		expect(Array.from(claimable)).toHaveLength(1);
+		expect(Array.from(claimed).map((row) => row.id)).toContain(jobId);
 	});
 
 	// ── 2. The forward case: a runner already in the actor's org ────────────────────────────
@@ -232,6 +224,65 @@ describeIfDb("CLI enqueue org stamp (#3874)", () => {
 		// This is the branch the trigger used to decide, and it decided `user_id`. The stamp is
 		// now explicit, so the GUC-less service connection no longer chooses the tenancy.
 		expect(await jobOrg(jobId)).toBe(TEAM_ORG);
+	});
+
+	it("lets a legacy owner claim only their unassigned lifecycle work", async () => {
+		const owner = randomUUID();
+		const activeOrg = randomUUID();
+		const tokenHash = `hash-compat-${owner}`;
+		const [runner] = await getServiceDb()
+			.insert(runners)
+			.values({
+				user_id: owner,
+				name: `it-compat-${owner.slice(0, 8)}`,
+				operator: "self",
+				provisioning: "registered",
+				token_hash: tokenHash,
+				status: "OFFLINE",
+			})
+			.returning({ id: runners.id, org_id: runners.org_id });
+		expect(runner.org_id).toBe(owner);
+
+		const inserted = await getServiceDb()
+			.insert(jobs)
+			.values([
+				{
+					user_id: randomUUID(),
+					org_id: activeOrg,
+					job_type: "DESTROY_RUNNER",
+					status: "QUEUED",
+					config_snapshot: {},
+					priority: 200,
+				},
+				{
+					user_id: owner,
+					org_id: activeOrg,
+					job_type: "PLAN",
+					status: "QUEUED",
+					config_snapshot: {},
+					priority: 100,
+				},
+				{
+					user_id: owner,
+					org_id: activeOrg,
+					job_type: "UPDATE_RUNNER",
+					status: "QUEUED",
+					config_snapshot: {},
+				},
+			])
+			.returning({ id: jobs.id, job_type: jobs.job_type });
+		const lifecycleJob = inserted.find((row) => row.job_type === "UPDATE_RUNNER");
+		expect(lifecycleJob).toBeDefined();
+
+		const claimed = await getServiceDb().execute(sql`
+			select id from claim_next_job(${runner.id}::uuid, ${tokenHash}, ${null}::uuid)
+		`);
+		expect(Array.from(claimed).map((row) => row.id)).toStrictEqual([
+			lifecycleJob?.id,
+		]);
+
+		await getServiceDb().delete(jobs).where(eq(jobs.org_id, activeOrg));
+		await getServiceDb().delete(runners).where(eq(runners.id, runner.id));
 	});
 
 	// ── 3. DEPLOY_RUNNER stamps the pair identically, by construction ───────────────────────
