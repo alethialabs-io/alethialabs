@@ -131,7 +131,7 @@ export function OrgSwitcher() {
 					}
 					label={active?.name ?? "Personal"}
 					badge={
-						<span className="shrink-0 rounded-full border px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-muted-foreground">
+						<span className="shrink-0 rounded-full border px-1.5 py-px font-mono text-ui-3xs uppercase tracking-wide text-muted-foreground">
 							{meta.name}
 						</span>
 					}
@@ -164,13 +164,13 @@ export function OrgSwitcher() {
 											/>
 											<span className="flex-1 truncate">{o.name}</span>
 											{o.status === "trialing" && (
-												<Badge className="bg-ink px-1.5 text-[9.5px] font-medium uppercase tracking-wide text-ink-foreground">
+								<Badge className="bg-ink px-1.5 text-ui-3xs font-medium uppercase tracking-wide text-ink-foreground">
 													Trial
 												</Badge>
 											)}
 											<Badge
 												variant="outline"
-												className="text-[10px] font-normal text-muted-foreground"
+									className="text-ui-2xs font-normal text-muted-foreground"
 											>
 												{meta.name}
 											</Badge>

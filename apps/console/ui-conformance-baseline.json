@@ -21,13 +21,13 @@
 		"scoredHere": 23,
 		"live": 10,
 		"notInstrumented": 1,
-		"findings": 77,
-		"findingFiles": 31,
+		"findings": 24,
+		"findingFiles": 15,
 		"liveNotMeasured": 14
 	},
 	"ledgers": {
 		"baseline": 16,
-		"debt": 22
+		"debt": 0
 	},
 	"live": {
 		"source": {
@@ -263,25 +263,25 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 39,
-			"fail": 1,
+			"pass": 40,
+			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
 			"naReasons": {},
 			"notMeasuredReasons": {},
-			"score": 0.975
+			"score": 1
 		},
 		"H8": {
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 24,
-			"fail": 16,
+			"pass": 40,
+			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
 			"naReasons": {},
 			"notMeasuredReasons": {},
-			"score": 0.6
+			"score": 1
 		},
 		"H3": {
 			"family": "H",
@@ -340,13 +340,13 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 39,
-			"fail": 1,
+			"pass": 40,
+			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
 			"naReasons": {},
 			"notMeasuredReasons": {},
-			"score": 0.975
+			"score": 1
 		},
 		"F1": {
 			"family": "F",
@@ -697,11 +697,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -723,11 +723,11 @@
 				}
 			},
 			"overall": {
-				"pass": 22,
-				"fail": 2,
+				"pass": 23,
+				"fail": 1,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.9167
+				"score": 0.9583
 			}
 		},
 		{
@@ -756,11 +756,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -782,11 +782,11 @@
 				}
 			},
 			"overall": {
-				"pass": 24,
-				"fail": 1,
+				"pass": 25,
+				"fail": 0,
 				"na": 7,
 				"notMeasured": 1,
-				"score": 0.96
+				"score": 1
 			}
 		},
 		{
@@ -874,11 +874,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -900,11 +900,11 @@
 				}
 			},
 			"overall": {
-				"pass": 29,
-				"fail": 2,
+				"pass": 30,
+				"fail": 1,
 				"na": 1,
 				"notMeasured": 1,
-				"score": 0.9355
+				"score": 0.9677
 			}
 		},
 		{
@@ -1051,11 +1051,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -1077,11 +1077,11 @@
 				}
 			},
 			"overall": {
-				"pass": 29,
-				"fail": 3,
+				"pass": 30,
+				"fail": 2,
 				"na": 0,
 				"notMeasured": 1,
-				"score": 0.9063
+				"score": 0.9375
 			}
 		},
 		{
@@ -1169,11 +1169,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -1195,11 +1195,11 @@
 				}
 			},
 			"overall": {
-				"pass": 21,
-				"fail": 3,
+				"pass": 22,
+				"fail": 2,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.875
+				"score": 0.9167
 			}
 		},
 		{
@@ -1228,11 +1228,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -1254,11 +1254,11 @@
 				}
 			},
 			"overall": {
-				"pass": 22,
-				"fail": 2,
+				"pass": 23,
+				"fail": 1,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.9167
+				"score": 0.9583
 			}
 		},
 		{
@@ -1346,11 +1346,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -1372,11 +1372,11 @@
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 1,
+				"pass": 24,
+				"fail": 0,
 				"na": 9,
 				"notMeasured": 0,
-				"score": 0.9583
+				"score": 1
 			}
 		},
 		{
@@ -1464,11 +1464,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -1490,11 +1490,11 @@
 				}
 			},
 			"overall": {
-				"pass": 29,
-				"fail": 2,
+				"pass": 30,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9355
+				"score": 0.9677
 			}
 		},
 		{
@@ -1523,11 +1523,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -1549,11 +1549,11 @@
 				}
 			},
 			"overall": {
-				"pass": 29,
-				"fail": 2,
+				"pass": 30,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9355
+				"score": 0.9677
 			}
 		},
 		{
@@ -1641,11 +1641,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -1667,11 +1667,11 @@
 				}
 			},
 			"overall": {
-				"pass": 21,
-				"fail": 2,
+				"pass": 22,
+				"fail": 1,
 				"na": 10,
 				"notMeasured": 0,
-				"score": 0.913
+				"score": 0.9565
 			}
 		},
 		{
@@ -1700,11 +1700,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 5,
-					"fail": 3,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.625
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -1726,11 +1726,11 @@
 				}
 			},
 			"overall": {
-				"pass": 24,
-				"fail": 6,
+				"pass": 27,
+				"fail": 3,
 				"na": 2,
 				"notMeasured": 1,
-				"score": 0.8
+				"score": 0.9
 			}
 		},
 		{
@@ -1877,11 +1877,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -1903,11 +1903,11 @@
 				}
 			},
 			"overall": {
-				"pass": 27,
-				"fail": 3,
+				"pass": 28,
+				"fail": 2,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 0.9
+				"score": 0.9333
 			}
 		},
 		{
@@ -1995,11 +1995,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -2021,11 +2021,11 @@
 				}
 			},
 			"overall": {
-				"pass": 28,
-				"fail": 2,
+				"pass": 29,
+				"fail": 1,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 0.9333
+				"score": 0.9667
 			}
 		},
 		{
@@ -2231,11 +2231,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -2257,11 +2257,11 @@
 				}
 			},
 			"overall": {
-				"pass": 27,
-				"fail": 3,
+				"pass": 28,
+				"fail": 2,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 0.9
+				"score": 0.9333
 			}
 		},
 		{
@@ -2290,11 +2290,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -2316,11 +2316,11 @@
 				}
 			},
 			"overall": {
-				"pass": 29,
-				"fail": 2,
+				"pass": 30,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9355
+				"score": 0.9677
 			}
 		},
 		{
@@ -2644,11 +2644,11 @@
 				"H": {
 					"instrumented": 8,
 					"of": 9,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -2670,11 +2670,11 @@
 				}
 			},
 			"overall": {
-				"pass": 28,
-				"fail": 3,
+				"pass": 29,
+				"fail": 2,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9032
+				"score": 0.9355
 			}
 		},
 		{
@@ -3349,8 +3349,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/repository-selector.tsx (4)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -3525,8 +3524,7 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -3872,8 +3870,7 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -4397,8 +4394,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -4748,8 +4744,7 @@
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/repository-selector.tsx (4)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
@@ -4925,8 +4920,7 @@
 		{
 			"route": "/[org]/[project]/usage",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/usage",
@@ -5274,8 +5268,7 @@
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -5614,8 +5607,7 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -5784,8 +5776,7 @@
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -6135,8 +6126,7 @@
 		{
 			"route": "/[org]/~/new",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/repository-selector.tsx (4)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -6284,8 +6274,7 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "H2",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/app/(private)/[org]/~/runners/runners-client.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -6310,14 +6299,12 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "8 occurrence(s) in 2 file(s), worst apps/console/app/(private)/[org]/~/runners/runners-client.tsx (4)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "H9",
-			"verdict": "FAIL",
-			"detail": "2 occurrence(s) in 1 file(s), worst apps/console/app/(private)/[org]/~/runners/runners-client.tsx (2)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -6836,8 +6823,7 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -7183,8 +7169,7 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "5 occurrence(s) in 2 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -7878,8 +7863,7 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "3 occurrence(s) in 1 file(s), worst apps/console/components/forms/accordion-form.tsx (3)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -8050,8 +8034,7 @@
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "3 occurrence(s) in 1 file(s), worst apps/console/components/forms/accordion-form.tsx (3)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -9092,8 +9075,7 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "H8",
-			"verdict": "FAIL",
-			"detail": "4 occurrence(s) in 1 file(s), worst apps/console/components/errors/error-state.tsx (4)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
@@ -9917,12 +9899,12 @@
 				"owner": null
 			},
 			"section_header": {
-				"total": 2,
+				"total": 0,
 				"decision": 0,
-				"debt": 2,
+				"debt": 0,
 				"unlisted": 0,
-				"inPageClosure": 1,
-				"chromeOnly": 1,
+				"inPageClosure": 0,
+				"chromeOnly": 0,
 				"offTree": 0,
 				"predicate": "H2",
 				"owner": null
@@ -9972,23 +9954,23 @@
 				"owner": null
 			},
 			"type_scale": {
-				"total": 49,
+				"total": 1,
 				"decision": 1,
-				"debt": 48,
+				"debt": 0,
 				"unlisted": 0,
-				"inPageClosure": 16,
-				"chromeOnly": 29,
-				"offTree": 4,
+				"inPageClosure": 0,
+				"chromeOnly": 0,
+				"offTree": 1,
 				"predicate": "H8",
 				"owner": null
 			},
 			"empty_state": {
-				"total": 3,
+				"total": 0,
 				"decision": 0,
-				"debt": 3,
+				"debt": 0,
 				"unlisted": 0,
-				"inPageClosure": 2,
-				"chromeOnly": 1,
+				"inPageClosure": 0,
+				"chromeOnly": 0,
 				"offTree": 0,
 				"predicate": "H9",
 				"owner": null
@@ -9996,39 +9978,7 @@
 		},
 		"chromeOnlyFiles": [
 			{
-				"file": "apps/console/components/shell/account-settings-dialog.tsx",
-				"hits": 7
-			},
-			{
-				"file": "apps/console/components/shell/notifications-popover.tsx",
-				"hits": 5
-			},
-			{
-				"file": "apps/console/components/shell/sidebar-profile.tsx",
-				"hits": 4
-			},
-			{
-				"file": "apps/console/components/org-switcher.tsx",
-				"hits": 3
-			},
-			{
-				"file": "apps/console/components/shell/switcher-trigger.tsx",
-				"hits": 3
-			},
-			{
 				"file": "apps/console/components/agent/widgets/bodies/blocks.tsx",
-				"hits": 2
-			},
-			{
-				"file": "apps/console/components/project-switcher.tsx",
-				"hits": 2
-			},
-			{
-				"file": "apps/console/components/shell/nav-row.tsx",
-				"hits": 2
-			},
-			{
-				"file": "apps/console/components/shell/sidebar-nav.tsx",
 				"hits": 2
 			},
 			{
@@ -10038,18 +9988,6 @@
 			{
 				"file": "apps/console/components/agent/elench/elench-empty-landing.tsx",
 				"hits": 1
-			},
-			{
-				"file": "apps/console/components/download-cli-button.tsx",
-				"hits": 1
-			},
-			{
-				"file": "apps/console/components/shell/sidebar-drill.tsx",
-				"hits": 1
-			},
-			{
-				"file": "apps/console/components/shell/sidebar-rail.tsx",
-				"hits": 1
 			}
 		],
 		"offTreeFiles": [
@@ -10058,16 +9996,12 @@
 				"hits": 5
 			},
 			{
-				"file": "apps/console/components/forms/oauth-consent-form.tsx",
-				"hits": 4
-			},
-			{
 				"file": "apps/console/components/auth/onboarding-form.tsx",
 				"hits": 2
 			},
 			{
-				"file": "apps/console/app/(public)/onboarding/page.tsx",
-				"hits": 1
+				"file": "apps/console/components/forms/oauth-consent-form.tsx",
+				"hits": 2
 			},
 			{
 				"file": "apps/console/components/legal/accept-terms-form.tsx",

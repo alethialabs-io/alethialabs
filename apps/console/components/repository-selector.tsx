@@ -324,7 +324,7 @@ export function RepositorySelector({
             variant="ghost"
             size="sm"
             onClick={() => setIsManual(false)}
-            className="text-[11px] text-muted-foreground h-auto py-0.5 px-1.5"
+            className="text-ui-xs text-muted-foreground h-auto py-0.5 px-1.5"
           >
             Use provider select
           </Button>
@@ -483,7 +483,7 @@ export function RepositorySelector({
                             ?.full_name || value}
                         </span>
                         {repositories.find((r) => r.url === value)?.private && (
-                          <span className="text-[10px] bg-muted text-muted-foreground px-1 py-0 rounded shrink-0">
+                          <span className="text-ui-2xs bg-muted text-muted-foreground px-1 py-0 rounded shrink-0">
                             Private
                           </span>
                         )}
@@ -519,7 +519,7 @@ export function RepositorySelector({
                               {repo.full_name}
                             </span>
                             {repo.private && (
-                              <span className="text-[10px] bg-muted text-muted-foreground px-1 py-0 rounded shrink-0 ml-2">
+                              <span className="text-ui-2xs bg-muted text-muted-foreground px-1 py-0 rounded shrink-0 ml-2">
                                 Private
                               </span>
                             )}
@@ -572,7 +572,7 @@ export function RepositorySelector({
 
       {showLinkOptions && (
         <div className="flex flex-wrap gap-2 p-2 border rounded-md bg-muted/20 animate-in fade-in slide-in-from-top-1">
-          <p className="text-[10px] uppercase font-bold text-muted-foreground w-full mb-1">
+          <p className="text-ui-2xs uppercase font-bold text-muted-foreground w-full mb-1">
             Link Platform
           </p>
           {!linkedProviders.includes("github") && (
