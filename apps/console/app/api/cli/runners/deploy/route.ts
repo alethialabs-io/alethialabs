@@ -3,10 +3,7 @@
 
 import { authorizeCli } from "@/lib/authz/guard";
 import { signedJob } from "@/lib/db/signed-job";
-import {
-	assertRunnerInOrg,
-	resolveUnassignedRunnerJobOrg,
-} from "@/lib/authz/runner-org";
+import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { ForbiddenError } from "@/lib/authz/types";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getServiceDb } from "@/lib/db";
@@ -31,31 +28,9 @@ import { deployRunnerWire } from "@/lib/validations/cli-contract";
  * org got a runner and a job in their PERSONAL org. They matched each other, which is why
  * the pair worked; they were both wrong in the same direction. Both are now stamped
  * EXPLICITLY rather than by a trigger fallback — the runners row with `actor.orgId`, the org
- * already used for the identity check and the quota, and the job with the org resolved just
- * below — so `claim_next_job`'s `j.org_id = v_runner_org_id` equality holds against the runner
- * that will actually claim it, rather than by coincidence.
- *
- * `assigned_runner_id` (the EXISTING runner that executes the deploy) is deliberately
- * validated WITHOUT the transitional personal-org admission #3874 added to
- * `assertRunnerInOrg`: on that path this job is stamped `actor.orgId`, so admitting a
- * personal-org runner here would queue a job whose org can never equal its executor's —
- * QUEUED forever. The strict guard refuses it up front instead, which is also the pre-#3874
- * behaviour.
- *
- * WITH NO EXECUTOR NAMED THE JOB'S ORG IS RESOLVED FROM THE FLEET (#4022). `actor.orgId` is
- * right only while a self runner of that org exists to claim it: `claim_next_job` Phase B's
- * `ELSE` arm repeats Phase A's `j.org_id = v_runner_org_id` verbatim, and only its MANAGED arm
- * ignores org. A Teams member whose runners are all pre-#3874 therefore got a DEPLOY_RUNNER
- * nothing could claim — the same QUEUED-forever failure #4022 reported against DESTROY_RUNNER,
- * on the path `assertRunnerInOrg`'s own JSDoc pairs with it. See
- * {@link resolveUnassignedRunnerJobOrg}; the resolution runs BEFORE the runners insert below,
- * because the row this request is about to create must not vote in its own fleet scan.
- *
- * THE TWO STAMPS THEN DIVERGE IN EXACTLY ONE CASE, AND THAT IS SOUND. The runners row keeps
- * `actor.orgId` — the forward-correct tenancy for a runner being created now — while the job
- * may take the personal org. Nothing requires them to match: `claim_next_job` compares the job
- * against the org of the runner that CLAIMS it, and the row being created here cannot claim its
- * own deploy job. It does not exist yet.
+ * already used for identity checks, quota, reporting, and lifecycle serialization.
+ * Pre-#3874 caller-owned runners retain a narrow claim-time compatibility path for
+ * lifecycle jobs; the job itself never leaves the active tenant.
  */
 export async function POST(req: Request) {
 	const auth = await authorizeCli(req, "deploy", { type: "runner" });
@@ -81,7 +56,7 @@ export async function POST(req: Request) {
 		// missing runner — so we never disclose a runner in another org.
 		if (assigned_runner_id) {
 			try {
-				await assertRunnerInOrg(db, assigned_runner_id, actor.orgId);
+				await assertRunnerInOrg(db, assigned_runner_id, actor.orgId, actor.userId);
 			} catch (e: unknown) {
 				if (e instanceof ForbiddenError) {
 					return NextResponse.json(
@@ -133,17 +108,7 @@ export async function POST(req: Request) {
 		// token_hash — with no job to build it. deployRunner() (app/server/actions/runners.ts)
 		// has always ordered it this way; this route is the copy that had drifted.
 		//
-		// The org this job will be STAMPED with, resolved before anything is written (#4022).
-		// An executor was named ⇒ it was validated strictly against `actor.orgId` above, so that
-		// is the org whose equality must hold. None named ⇒ ask the fleet that would have to
-		// claim it. Ordering matters twice: the scan must not see the runners row this request
-		// is about to insert, and the quota must be counted against the org the row lands in —
-		// checking one org and inserting into another measures a tenant this enqueue never joins.
-		const jobOrgId = assigned_runner_id
-			? actor.orgId
-			: await resolveUnassignedRunnerJobOrg(db, actor.orgId, actor.userId);
-
-		await assertJobQuotaAllowed(jobOrgId);
+		await assertJobQuotaAllowed(actor.orgId);
 
 		const [latestRelease] = await db
 			.select({ version: runnerReleases.version })
@@ -186,12 +151,8 @@ export async function POST(req: Request) {
 			.insert(jobs)
 			.values(signedJob({
 				user_id: actor.userId,
-				// #3874 stamps this explicitly rather than letting the trigger's `NEW.user_id`
-				// fallback choose the tenancy. #4022 decides WHICH org: the runners row above is
-				// the runner being created and keeps `actor.orgId`; this row is the job some
-				// EXISTING runner has to claim, so on the unassigned path it takes the org that
-				// fleet can actually match. The two agree in every case but that one.
-				org_id: jobOrgId,
+				// Explicitly retain the active tenant; claim-time compatibility handles legacy runners.
+				org_id: actor.orgId,
 				cloud_identity_id,
 				job_type: "DEPLOY_RUNNER",
 				initiated_by: "user",

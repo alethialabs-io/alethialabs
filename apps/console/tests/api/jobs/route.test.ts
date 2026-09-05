@@ -153,31 +153,11 @@ function mockServiceDb(rows: {
 	insertRows?: Rows;
 	runnerOrgId?: string | null;
 	runnerMissing?: boolean;
-	fleetOrgs?: (string | null)[];
-	managedPool?: boolean;
 }) {
 	const insertValuesSpy = vi.fn();
 	const updateSetSpy = vi.fn();
 	const runnerOrgId = rows.runnerOrgId === undefined ? "org-1" : rows.runnerOrgId;
-	// The UNASSIGNED-enqueue fleet scan (#4022): ONE read covering both `claim_next_job` Phase B
-	// arms — the distinct orgs of the caller's SELF runners, plus whether the MANAGED pool exists
-	// at all. It reaches the same table as the pinned-runner lookup above and is stubbed
-	// separately on purpose: `selectDistinct` is a different builder, so the two cannot be
-	// confused for each other the way two `select().from(runners)` chains would be.
-	//
-	// The defaults are the ordinary fleet — a self runner already in the caller's active org —
-	// and NO managed pool, so a test that says nothing about the pool is asking about the self
-	// arm alone. `managedPool` is what the resolver consults before it moves a stamp, and a
-	// managed row's `org_id` IS NULL, which is why it cannot be expressed through `fleetOrgs`.
-	const fleetOrgs = rows.fleetOrgs === undefined ? ["org-1"] : rows.fleetOrgs;
-	const fleetRows = [
-		...fleetOrgs.map((o) => ({ operator: "self", org_id: o })),
-		...(rows.managedPool ? [{ operator: "managed", org_id: null }] : []),
-	];
 	const db = {
-		selectDistinct: () => ({
-			from: () => ({ where: () => Promise.resolve(fleetRows) }),
-		}),
 		select: () => ({
 			from: (t: unknown) => ({
 				where: () => ({
@@ -460,8 +440,8 @@ describe("POST /api/jobs (CLI queue)", () => {
 	// RUNNER rather than from the actor, because `claim_next_job` compares
 	// `j.org_id = v_runner_org_id` as a hard equality and #3874 ships no backfill. The real
 	// stamp is proven against Postgres in tests/integration/cli-enqueue-org.test.ts; these two
-	// pin the value the ROUTE passes, in the suite that runs on every PR.
-	it("DESTROY_RUNNER stamps the ASSIGNED RUNNER's org — a pre-#3874 personal-org runner stays claimable", async () => {
+	// pin the active-tenant value the route passes, in the suite that runs on every PR.
+	it("keeps an assigned legacy DESTROY_RUNNER job in the active org", async () => {
 		setupTx({});
 		const { insertValuesSpy } = mockServiceDb({
 			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
@@ -478,15 +458,11 @@ describe("POST /api/jobs (CLI queue)", () => {
 
 		expect(res.status).toBe(201);
 		expect(insertValuesSpy).toHaveBeenCalledWith(
-			expect.objectContaining({ org_id: "user-1" }),
-		);
-		// The WRONG answer, named: `actor.orgId` here is what makes the job unclaimable.
-		expect(insertValuesSpy).not.toHaveBeenCalledWith(
 			expect.objectContaining({ org_id: "org-1" }),
 		);
 		// The quota is counted against the org the row is stamped with, not the caller's
 		// personal org — checking one tenant and inserting into another measures nothing.
-		expect(assertJobQuotaAllowed).toHaveBeenCalledWith("user-1");
+		expect(assertJobQuotaAllowed).toHaveBeenCalledWith("org-1");
 	});
 
 	it("DESTROY_RUNNER for a runner in the ACTOR's org gets the actor's org, resolved from the header", async () => {
@@ -520,95 +496,10 @@ describe("POST /api/jobs (CLI queue)", () => {
 		expect(assertJobQuotaAllowed).not.toHaveBeenCalledWith("user-1");
 	});
 
-	// ── #4022: with NO runner named, the stamp is resolved from the FLEET ───────────────────
-	//
-	// The three tests below were one, asserting the actor's org unconditionally. That reading
-	// took `claim_next_job` Phase B to be the org-agnostic phase; only its MANAGED arm is, and
-	// the `ELSE` arm a self runner takes carries Phase A's equality verbatim — so the actor's
-	// org is right exactly when a SELF runner of that org exists to claim it. The integration
-	// suite drives the equality itself against Postgres; these pin which value the route picks.
-	it("DESTROY_RUNNER with no assigned runner takes the ACTOR's org when a self runner of that org exists", async () => {
+	it("DESTROY_RUNNER with no assigned runner falls back to the ACTOR's org", async () => {
 		setupTx({});
 		const { insertValuesSpy } = mockServiceDb({
 			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-			fleetOrgs: ["org-1", "user-1"],
-		});
-
-		const res = await post({
-			job_type: "DESTROY_RUNNER",
-			config_snapshot: { runner_name: "r1" },
-		});
-
-		expect(res.status).toBe(201);
-		expect(insertValuesSpy).toHaveBeenCalledWith(
-			expect.objectContaining({ org_id: "org-1" }),
-		);
-	});
-
-	it("DESTROY_RUNNER with no assigned runner takes the PERSONAL org when the fleet is all pre-#3874", async () => {
-		setupTx({});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-			// Every runner this caller has carries the deployer's personal org. An "org-1" stamp
-			// is unclaimable by all of them, which is the QUEUED-forever failure of #4022.
-			fleetOrgs: ["user-1"],
-		});
-
-		const res = await post({
-			job_type: "DESTROY_RUNNER",
-			config_snapshot: { runner_name: "r1" },
-		});
-
-		expect(res.status).toBe(201);
-		expect(insertValuesSpy).toHaveBeenCalledWith(
-			expect.objectContaining({ org_id: "user-1" }),
-		);
-		// And the quota is counted against the org the row is STAMPED with, not the actor's —
-		// the stamp and the meter must not name two different tenants.
-		expect(assertJobQuotaAllowed).toHaveBeenCalledWith("user-1");
-	});
-
-	// ── The managed pool is the reason the personal-org arm is not simply "no self runner" ──
-	//
-	// The first cut of the resolver scanned `operator = 'self'` alone and called moving the stamp
-	// a STRICT improvement. It is not, wherever a managed pool exists: Phase B's managed arm has
-	// no org predicate, so the ACTIVE-org stamp was claimable all along, and moving it costs the
-	// job a plan band (`plan_priority('team') + 2 = 12` → `2`), a concurrency cap (8 → 2) and the
-	// paid plan's exemption from the 25/24h job quota — whose `UsageLimitError` this route's
-	// outer catch returns as a 500, not a 402. So the same legacy-only fleet as the case above
-	// resolves the OTHER way once the pool exists.
-	it("DESTROY_RUNNER keeps the ACTOR's org on a legacy-only fleet when a MANAGED runner exists", async () => {
-		setupTx({});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-			fleetOrgs: ["user-1"],
-			managedPool: true,
-		});
-
-		const res = await post({
-			job_type: "DESTROY_RUNNER",
-			config_snapshot: { runner_name: "r1" },
-		});
-
-		expect(res.status).toBe(201);
-		expect(insertValuesSpy).toHaveBeenCalledWith(
-			expect.objectContaining({ org_id: "org-1" }),
-		);
-		// Stated as the pair, because the fleet is byte-for-byte the one that resolves to
-		// "user-1" in the case above: the managed row is the ONLY difference between them.
-		expect(insertValuesSpy).not.toHaveBeenCalledWith(
-			expect.objectContaining({ org_id: "user-1" }),
-		);
-	});
-
-	it("DESTROY_RUNNER with no assigned runner keeps the ACTOR's org when the caller has no self runner", async () => {
-		setupTx({});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-			// Nothing to prefer the personal org over: a MANAGED runner claims either stamp (its
-			// Phase B arm ignores org), and an empty fleet has nothing to satisfy — so the job
-			// keeps the forward-correct tenancy rather than being filed in a personal org.
-			fleetOrgs: [],
 		});
 
 		const res = await post({

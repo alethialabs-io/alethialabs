@@ -14,7 +14,7 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli, ensureCliOrgAccess } from "@/lib/authz/guard";
-import { assertRunnerInOrg, resolveUnassignedRunnerJobOrg } from "@/lib/authz/runner-org";
+import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { ForbiddenError } from "@/lib/authz/types";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { verifyCliToken } from "@/lib/cli/auth";
@@ -62,11 +62,9 @@ function parseJobType(v: unknown): CreatableJobType | null {
  * `set_org_id_from_project` trigger fall through. On `getServiceDb()` — a role that
  * bypasses RLS and sets no `app.current_org` — that fallback stamps `NEW.user_id`, so a
  * member of a Teams org filed runner jobs into a personal tenancy nobody looks at. The
- * stamp is taken from the ASSIGNED RUNNER, not from the actor, because `claim_next_job`
- * demands `j.org_id = v_runner_org_id` exactly and #3874 ships no backfill; see the branch
- * comment for why the obvious `actor.orgId` stamp would be worse than the defect. With no
- * runner named there is none to read, and the same equality still applies (Phase B's self
- * arm), so the stamp comes from the fleet that would have to claim it (#4022).
+ * stamp is always the active org. `claim_next_job` carries the narrow compatibility for
+ * pre-#3874 caller-owned runners, so quota, visibility, evidence, and lifecycle serialization
+ * remain attached to the tenant where the action was authorized.
  * PLAN/DEPLOY/DESTROY are unaffected: they insert through the server actions under
  * `withActorScope`, where the GUC is set and the job derives its org from its project.
  */
@@ -157,33 +155,12 @@ export async function POST(req: Request) {
 			// runner descriptor as the snapshot. Fail closed (404) on a cross-org /
 			// non-existent runner so we never queue an unclaimable job.
 			//
-			// THE JOB'S ORG FOLLOWS THE RUNNER THAT WILL EXECUTE IT (#3874), which is not the
-			// obvious rule. `claim_next_job` compares `j.org_id = v_runner_org_id` as a hard
-			// EQUALITY for a self runner (programmables.sql:225 assigned, :306 unassigned), and
-			// #3874 stamps forward only — no backfill, so every runner deployed by the CLI before
-			// it keeps `org_id = user_id`, the deployer's personal org. Stamping this job with
-			// `actor.orgId` regardless would therefore give a team-org job to a personal-org
-			// runner: the equality fails, nothing ever claims it, and the job sits QUEUED forever
-			// — strictly worse than the personal-org stamp being fixed. So the stamp is READ BACK
-			// from the runner the guard just validated.
-			//
-			// THAT LEAVES TWO CASES WHERE THERE IS NO RUNNER ORG TO READ, AND THEY ARE NOT THE
-			// SAME CASE (#4022). A named MANAGED runner has `org_id IS NULL` — nobody's tenant,
-			// it assumes-role into the job's own org at run time and its claim arm ignores org
-			// entirely — so the actor's org is right. NO runner named is different: the job is
-			// unassigned, `claim_next_job` Phase B decides it, and only Phase B's MANAGED arm is
-			// org-agnostic. The `ELSE` arm a self runner takes repeats Phase A's equality
-			// verbatim, so `actor.orgId` here recreated the very QUEUED-forever failure the
-			// paragraph above describes, for a caller whose runners are all pre-#3874. The org
-			// is resolved from the fleet that would have to claim it instead; see
-			// `resolveUnassignedRunnerJobOrg` for why that is a strict improvement and why
-			// `claim_next_job` does not move.
-			let runnerOrgId: string | null = null;
+			// Keep the job in the active tenant. Pre-#3874 caller-owned runners are admitted
+			// only by claim_next_job's lifecycle-only compatibility predicate.
 			if (assigned_runner_id) {
 				try {
-					// `userId` is the caller's personal org: the transitional admission that keeps a
-					// runner deployed before #3874 destroyable. See assertRunnerInOrg's JSDoc.
-					runnerOrgId = await assertRunnerInOrg(db, assigned_runner_id, actor.orgId, userId);
+					// The caller's personal id admits only their own pre-#3874 runner row.
+					await assertRunnerInOrg(db, assigned_runner_id, actor.orgId, userId);
 				} catch (e: unknown) {
 					if (e instanceof ForbiddenError) {
 						return NextResponse.json(
@@ -194,20 +171,7 @@ export async function POST(req: Request) {
 					throw e;
 				}
 			}
-			let jobOrgId: string;
-			if (runnerOrgId !== null) {
-				jobOrgId = runnerOrgId;
-			} else if (assigned_runner_id) {
-				// A named MANAGED runner: `v_operator = 'managed'` admits any org, in both phases.
-				jobOrgId = actor.orgId;
-			} else {
-				jobOrgId = await resolveUnassignedRunnerJobOrg(db, actor.orgId, userId);
-			}
-
-			// Counted against the org the row is about to be STAMPED with, not the caller's
-			// personal org: the quota query filters `jobs.org_id`, so checking one org and
-			// inserting into another measures a tenant this enqueue never joins.
-			await assertJobQuotaAllowed(jobOrgId);
+			await assertJobQuotaAllowed(actor.orgId);
 
 			const [job] = await db
 				.insert(jobs)
@@ -216,7 +180,7 @@ export async function POST(req: Request) {
 					// Explicit, so the set_org_id_from_project trigger's `NEW.org_id IS NULL`
 					// fallback (→ `NEW.user_id`, since getServiceDb() sets no app.current_org GUC
 					// and this row has no project) never runs. That fallback IS the defect.
-					org_id: jobOrgId,
+					org_id: actor.orgId,
 					environment_id: null,
 					cloud_identity_id: cloud_identity_id || null,
 					job_type: jobType,

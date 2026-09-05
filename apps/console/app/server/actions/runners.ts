@@ -4,10 +4,7 @@
 
 import { authorize } from "@/lib/authz/guard";
 import { signedJob } from "@/lib/db/signed-job";
-import {
-	assertRunnerInOrg,
-	resolveUnassignedRunnerJobOrg,
-} from "@/lib/authz/runner-org";
+import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { deploymentMode } from "@/lib/billing/config";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getServiceDb, withActorScope, type Tx } from "@/lib/db";
@@ -234,26 +231,6 @@ export async function getAvailableRunners() {
 }
 
 /**
- * WHY EVERY RUNNER-LIFECYCLE ENQUEUE BELOW STAMPS `org_id` ITSELF (#4022).
- *
- * These three actions insert through `withActorScope`, where `set_org_id_from_project`'s GUC
- * branch stamps `app.current_org` — i.e. `actor.orgId`. That is the right value only while a
- * self runner of that org exists to claim the job: `claim_next_job` Phase B has two arms and
- * only the MANAGED one ignores org; the `ELSE` arm a self runner takes repeats Phase A's
- * `j.org_id = v_runner_org_id` verbatim. #3874 stamps runners forward only — no backfill — so a
- * Teams member whose runners are all pre-#3874 carries `org_id = user_id` on every one of them,
- * and an `actor.orgId` job is unclaimable by their whole fleet: QUEUED forever, no error.
- *
- * `resolveUnassignedRunnerJobOrg` answers it from the fleet that would have to claim it, and the
- * stamp is explicit so the trigger's fallback never decides. It is asked only where no executor
- * is named — a named one was validated against `actor.orgId`, so that is the equality that must
- * hold — and `updateRunner` takes no executor argument at all, so it always asks. The resolution
- * runs on `getServiceDb()` OUTSIDE the actor transaction on purpose: under RLS the caller cannot
- * necessarily see a teammate's legacy runner, and a fleet scan that cannot see the fleet would
- * answer "no runner" and quietly keep the stamp it was written to correct.
- */
-
-/**
  * Deploys a runner into the user's cloud account through an existing runner that
  * runs Terraform. The new runner is operator=self, provisioning=deployed.
  */
@@ -268,18 +245,11 @@ export async function deployRunner(params: {
 	// Defense-in-depth: the existing runner that will run this deploy must belong
 	// to the caller's org (claim_next_job blocks execution; this blocks enqueue).
 	if (params.assignedRunnerId)
-		await assertRunnerInOrg(getServiceDb(), params.assignedRunnerId, actor.orgId);
+		await assertRunnerInOrg(getServiceDb(), params.assignedRunnerId, actor.orgId, actor.userId);
 	const owner = actor.userId;
 	const { token: runnerToken, hash: tokenHash } = generateRunnerToken();
 
-	// The job's org, resolved before the transaction opens (#4022) — and before the runners row
-	// exists, so the row this call is about to create cannot vote in its own fleet scan. The
-	// quota is counted against the org the row will actually land in.
-	const jobOrgId = params.assignedRunnerId
-		? actor.orgId
-		: await resolveUnassignedRunnerJobOrg(getServiceDb(), actor.orgId, owner);
-
-	await assertJobQuotaAllowed(jobOrgId);
+	await assertJobQuotaAllowed(actor.orgId);
 
 	const result = await withActorScope(actor, async (tx) => {
 		// Resolve + gate the identity BEFORE anything is written: a deploy we cannot build must
@@ -299,6 +269,7 @@ export async function deployRunner(params: {
 			.insert(runners)
 			.values({
 				user_id: owner,
+				org_id: actor.orgId,
 				name: params.name,
 				operator: "self",
 				provisioning: "deployed",
@@ -322,9 +293,8 @@ export async function deployRunner(params: {
 			.insert(jobs)
 			.values(signedJob({
 				user_id: owner,
-				// Explicit (#4022). The runners row above is the runner being CREATED and keeps
-				// the caller's active org; this row is the job an EXISTING runner has to claim.
-				org_id: jobOrgId,
+				// Keep lifecycle state, quota, evidence, and visibility in the active tenant.
+				org_id: actor.orgId,
 				cloud_identity_id: params.cloudIdentityId,
 				job_type: "DEPLOY_RUNNER",
 				initiated_by: "user",
@@ -467,20 +437,14 @@ export async function destroyRunner(
 	// Defense-in-depth: the existing runner that will run this destroy must belong
 	// to the caller's org (claim_next_job blocks execution; this blocks enqueue).
 	if (assignedRunnerId)
-		await assertRunnerInOrg(getServiceDb(), assignedRunnerId, actor.orgId);
+		await assertRunnerInOrg(getServiceDb(), assignedRunnerId, actor.orgId, actor.userId);
 	const owner = actor.userId;
 	const { runner, deployConfig, identity } = await fetchDeployedRunner(
 		actor,
 		runnerId,
 	);
 
-	// #4022 — the console's Destroy button with the executor left unpicked reproduced the
-	// reported failure verbatim on this path. See the note above deployRunner.
-	const jobOrgId = assignedRunnerId
-		? actor.orgId
-		: await resolveUnassignedRunnerJobOrg(getServiceDb(), actor.orgId, owner);
-
-	await assertJobQuotaAllowed(jobOrgId);
+	await assertJobQuotaAllowed(actor.orgId);
 
 	const result = await withActorScope(actor, async (tx) => {
 		await assertNoActiveLifecycleJob(tx, runnerId);
@@ -497,9 +461,8 @@ export async function destroyRunner(
 			.insert(jobs)
 			.values(signedJob({
 				user_id: owner,
-				// Explicit (#4022) — the trigger's GUC branch would stamp `actor.orgId`, which a
-				// legacy-only fleet can never match.
-				org_id: jobOrgId,
+				// Keep lifecycle state, quota, evidence, and visibility in the active tenant.
+				org_id: actor.orgId,
 				cloud_identity_id: runner.cloud_identity_id!,
 				job_type: "DESTROY_RUNNER",
 				initiated_by: "user",
@@ -525,15 +488,7 @@ export async function updateRunner(runnerId: string) {
 		runnerId,
 	);
 
-	// UNCONDITIONAL, unlike its two siblings: this action takes no executor argument, so every
-	// UPDATE_RUNNER it queues is an unassigned job. See the note above deployRunner (#4022).
-	const jobOrgId = await resolveUnassignedRunnerJobOrg(
-		getServiceDb(),
-		actor.orgId,
-		owner,
-	);
-
-	await assertJobQuotaAllowed(jobOrgId);
+	await assertJobQuotaAllowed(actor.orgId);
 
 	// UPDATE re-deploys the runner container, so mint a FRESH token and store only its hash — the
 	// live plaintext is handed to this job once and never persisted at rest (#945). This also rotates
@@ -570,8 +525,8 @@ export async function updateRunner(runnerId: string) {
 			.insert(jobs)
 			.values(signedJob({
 				user_id: owner,
-				// Explicit (#4022) — see the note above deployRunner.
-				org_id: jobOrgId,
+				// Keep lifecycle state, quota, evidence, and visibility in the active tenant.
+				org_id: actor.orgId,
 				cloud_identity_id: runner.cloud_identity_id!,
 				job_type: "UPDATE_RUNNER",
 				initiated_by: "user",
