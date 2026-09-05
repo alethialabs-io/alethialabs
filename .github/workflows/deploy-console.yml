@@ -30,7 +30,8 @@ on:
 # other group added alongside this one cancels, because a superseded CI run is not evidence and
 # holding a runner is its only cost. THIS workflow ssh's into the box and restarts containers:
 # cancelling it mid-flight leaves the deploy half-applied, which is strictly worse than the race it
-# was meant to fix. Queueing gets the serialization without ever killing a live deploy.
+# was meant to fix. The running deploy survives; GitHub keeps only the newest pending run, so an
+# intermediate push or manual redeploy can still be cancelled before it starts.
 concurrency:
   group: deploy-console
   cancel-in-progress: false

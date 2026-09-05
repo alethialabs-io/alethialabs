@@ -43,6 +43,20 @@ MAX_AGE_DAYS="${MAX_AGE_DAYS:-14}"
 ISSUE=""
 [ "${1:-}" = "--issue" ] && ISSUE="${2:-}"
 
+# Prints a report for the workflow summary and, when configured, records the same verdict on the
+# tracking issue so a failing run cannot leave an older green recommendation as the latest evidence.
+publish_report() {
+  local summary="$1"
+  printf '%s\n' "$summary"
+  if [ -n "$ISSUE" ]; then
+    gh issue comment "$ISSUE" --body "<!-- merge-signal-health -->
+\`\`\`
+$summary
+\`\`\`" >&2
+    echo "→ posted to issue #$ISSUE" >&2
+  fi
+}
+
 # The observe-only heavy signals we're deciding whether to promote. These are the exact GitHub check
 # names (job `name:` in ci.yml) — they must match `var.required_status_checks` entries verbatim to gate.
 SIGNALS=(
@@ -60,15 +74,16 @@ newest=$(printf '%s' "$runs_json" | jq -r '[.[].createdAt] | max // ""')
 run_ids=$(printf '%s' "$runs_json" | jq -r --arg c "$cutoff" '.[] | select(.createdAt >= $c) | .databaseId')
 
 if [ -n "$newest" ] && [ -z "$run_ids" ]; then
-  echo "✗ Every merge_group CI run is older than ${MAX_AGE_DAYS} days (newest: $newest)." >&2
-  echo "" >&2
-  echo "  The runs exist, so this is NOT 'no data yet' — the EVENT SOURCE HAS STOPPED." >&2
-  echo "  \`merge_group\` fires only under GitHub's native merge queue, which .mergify.yml" >&2
-  echo "  replaced on 2026-07-21. Grading those runs would report a pass-rate from a mechanism" >&2
-  echo "  that no longer exists, and PROMOTE on it — which adds a check to" >&2
-  echo "  var.required_status_checks and would wedge every PR if that check now fails." >&2
-  echo "" >&2
-  echo "  Point SOURCE at an event that actually fires, or retire the promotion path. See #4173." >&2
+  summary="✗ Every merge_group CI run is older than ${MAX_AGE_DAYS} days (newest: $newest).
+
+  The runs exist, so this is NOT 'no data yet' — the EVENT SOURCE HAS STOPPED.
+  \`merge_group\` fires only under GitHub's native merge queue, which .mergify.yml
+  replaced on 2026-07-21. Grading those runs would report a pass-rate from a mechanism
+  that no longer exists, and PROMOTE on it — which adds a check to
+  var.required_status_checks and would wedge every PR if that check now fails.
+
+  Point SOURCE at an event that actually fires, or retire the promotion path. See #4173."
+  publish_report "$summary"
   exit 1
 fi
 
@@ -87,14 +102,15 @@ if [ -z "$run_ids" ]; then
   #
   # Fails loudly instead. If the event source is deliberately gone, the fix is to change SOURCE
   # below — not to make this quiet again.
-  echo "✗ No CI runs found for event=merge_group." >&2
-  echo "" >&2
-  echo "  This script grades the observe-only heavy signals over merge-queue builds, and it has no" >&2
-  echo "  sample. That is not 'no data yet' — it means the EVENT SOURCE IS DEAD. \`merge_group\`" >&2
-  echo "  fires only under GitHub's native merge queue, which .mergify.yml replaced on 2026-07-21." >&2
-  echo "" >&2
-  echo "  Nothing can ever be promoted from here until this reads an event that actually fires." >&2
-  echo "  See #4173." >&2
+  summary="✗ No CI runs found for event=merge_group.
+
+  This script grades the observe-only heavy signals over merge-queue builds, and it has no
+  sample. That is not 'no data yet' — it means the EVENT SOURCE IS DEAD. \`merge_group\`
+  fires only under GitHub's native merge queue, which .mergify.yml replaced on 2026-07-21.
+
+  Nothing can ever be promoted from here until this reads an event that actually fires.
+  See #4173."
+  publish_report "$summary"
   exit 1
 fi
 
@@ -143,13 +159,4 @@ else
 No signal has met the bar yet — keep observing."
 fi
 
-echo "$summary"
-
-# Optional: upsert the report as a marked comment on a pinned tracking issue (idempotent-ish: a fresh
-# comment each run keeps the history; the marker lets a human/scout find the series).
-if [ -n "$ISSUE" ]; then
-  gh issue comment "$ISSUE" --body "<!-- merge-signal-health -->
-\`\`\`
-$summary
-\`\`\`" >&2 && echo "→ posted to issue #$ISSUE" >&2
-fi
+publish_report "$summary"

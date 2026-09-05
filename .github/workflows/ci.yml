@@ -11,10 +11,9 @@ on:
   pull_request:
   push:
     branches: [main]
-  # Merge queue: the heavy real-runner provisioning keystone (job `provision-e2e`)
-  # runs ONLY on merge_group events (see its `if:`), so a kind boot + provider/image
-  # pulls don't tax every PR. Adding this trigger also lets the required per-PR checks
-  # re-validate the queued merge result — standard merge-queue behavior.
+  # Historical native-queue trigger. `provision-e2e` still selects it, but Mergify does not emit
+  # `merge_group`, so the T1 job currently has no live trigger (#4173). Keep the dead source visible
+  # until T1's replacement home is decided; the weekly health report now fails loudly on its age.
   merge_group:
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC — mutation testing (slow, non-blocking)

@@ -135,37 +135,6 @@ jobs:
           printf '%s' "$report" | sed '/^ACTIONABLE_COUNT=/d' > report.md
           { echo '## Workflow health'; echo; cat report.md; } >> "$GITHUB_STEP_SUMMARY"
 
-      # ── CI demand (#4173) ────────────────────────────────────────────────────────────────────
-      #
-      # Measured 2026-09-03: jobs spent 5,376 minutes WAITING for a runner against 1,802 executing,
-      # and a run had all its ready jobs running only after 35.6 minutes (median). None of that was
-      # visible anywhere, so a two-month throughput ceiling had no number attached to it and every
-      # proposed fix was an opinion.
-      #
-      # Reported daily beside workflow health because it is the same kind of question — ask GitHub
-      # something nobody is asking, and put the answer where a human reads it. It does NOT gate:
-      # a demand number is a trend, and failing the build on it would be a guess at the threshold.
-      # `ci-demand.mjs` itself refuses an empty or untimed sample, so a collection failure here is
-      # loud rather than a reassuring zero.
-      - name: CI demand — how much CI we ask for, and how long we wait for it
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # 60 runs is what fits the 10-minute budget: one API call per run for its jobs, and the
-          # job timings are the whole point — the composition alone would not answer the question.
-          gh run list --limit 60 --json databaseId,name,event,headBranch,conclusion,createdAt \
-            > demand-runs.json
-          jq -c '.[]' demand-runs.json | while read -r r; do
-            id=$(printf '%s' "$r" | jq -r '.databaseId')
-            jobs=$(gh api "repos/{owner}/{repo}/actions/runs/$id/jobs?per_page=100" \
-                     --jq '[.jobs[] | select(.startedAt != null and .startedAt != .createdAt) | {created_at:.createdAt, started_at:.startedAt}]' 2>/dev/null || echo '[]')
-            printf '%s' "$r" | jq -c --argjson j "$jobs" \
-              '{id:.databaseId, name, event, head_branch:.headBranch, conclusion, created_at:.createdAt, jobs:$j}'
-          done | jq -s '.' > demand.json
-          { echo '## CI demand'; echo; node scripts/ci/ci-demand.mjs --input demand.json; } \
-            >> "$GITHUB_STEP_SUMMARY"
-
       # Title-deduped, like the nightly rollup's. One long-lived issue that gets updated, never a
       # new one per day — a daily issue is indistinguishable from spam and gets muted, which would
       # recreate the exact blindness this exists to remove.
@@ -219,6 +188,37 @@ jobs:
             gh issue close "$existing" --comment "No workflow has failed its last 3 runs as of $(date -u +%Y-%m-%d). Closing; this reopens itself if that changes."
             echo "closed #$existing"
           fi
+
+      # ── CI demand (#4173) ────────────────────────────────────────────────────────────────────
+      #
+      # Measured 2026-09-03: jobs spent 5,376 minutes WAITING for a runner against 1,802 executing,
+      # and a run had all its ready jobs running only after 35.6 minutes (median). None of that was
+      # visible anywhere, so a two-month throughput ceiling had no number attached to it and every
+      # proposed fix was an opinion.
+      #
+      # This optional measurement runs AFTER both branches of the established issue upsert. The job
+      # already spends most of its 10-minute budget on sequential GitHub API calls; if demand sampling
+      # consumes the remainder, it must cut only itself, never the report this workflow exists to file.
+      # It does NOT gate on the value: a demand number is a trend, and failing the build on it would be
+      # a guess at the threshold. The collector still fails loudly on an empty or untimed sample.
+      - name: CI demand — how much CI we ask for, and how long we wait for it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 60 runs is what fits the remaining budget: one API call per run for its jobs, and the
+          # job timings are the whole point — the composition alone would not answer the question.
+          gh run list --limit 60 --json databaseId,name,event,headBranch,conclusion,createdAt \
+            > demand-runs.json
+          jq -c '.[]' demand-runs.json | while read -r r; do
+            id=$(printf '%s' "$r" | jq -r '.databaseId')
+            jobs=$(gh api "repos/{owner}/{repo}/actions/runs/$id/jobs?per_page=100" \
+                     --jq '[.jobs[] | select(.startedAt != null and .startedAt != .createdAt) | {created_at:.createdAt, started_at:.startedAt}]' 2>/dev/null || echo '[]')
+            printf '%s' "$r" | jq -c --argjson j "$jobs" \
+              '{id:.databaseId, name, event, head_branch:.headBranch, conclusion, created_at:.createdAt, jobs:$j}'
+          done | jq -s '.' > demand.json
+          { echo '## CI demand'; echo; node scripts/ci/ci-demand.mjs --input demand.json; } \
+            >> "$GITHUB_STEP_SUMMARY"
 
   # ── THE OTHER QUESTION NOBODY WAS ASKING: does the HCL match the live rulesets? ────────────────
   #
