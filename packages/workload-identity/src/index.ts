@@ -20,6 +20,8 @@ export {
   brokerRunSchema,
   MAX_ASSERTION_TTL_SECONDS,
   MIN_ASSERTION_TTL_SECONDS,
+  providerAudience,
+  WORKLOAD_PROVIDER_AUDIENCES,
   WORKLOAD_SUBJECT,
   workloadProviderSchema,
 } from "./broker";

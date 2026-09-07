@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { providerAudience } from "@repo/workload-identity";
 import { IdentityPoolClient } from "google-auth-library";
 import { assertionSourceForProvider } from "@/lib/oidc/assertion-source";
 import type { WifCredentialConfig } from "@/types/jsonb.types";
@@ -10,7 +11,7 @@ import type { WifCredentialConfig } from "@/types/jsonb.types";
  * assertion is scoped to GCP (mirrors AZURE_TOKEN_AUDIENCE / ALIBABA_TOKEN_AUDIENCE). MUST equal
  * ALETHIA_GCP_AUDIENCE in the connector setup script (gcp-setup.sh) or the token exchange is rejected.
  */
-export const GCP_TOKEN_AUDIENCE = "alethia-gcp-wif";
+export const GCP_TOKEN_AUDIENCE = providerAudience("gcp");
 
 /**
  * The `subject_token_type` of a direct-OIDC WIF config — a short-lived JWT minted by the Alethia issuer.

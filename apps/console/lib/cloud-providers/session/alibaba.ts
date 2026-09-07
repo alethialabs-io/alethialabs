@@ -8,6 +8,7 @@
 // stored). `AssumeRoleWithOIDC` is an anonymous STS action — authenticated by the OIDC token itself,
 // so there is no AccessKey and no request signature. A successful assume is the proof of access.
 
+import { providerAudience } from "@repo/workload-identity";
 import {
 	assertionSourceForProvider,
 	workloadAssertionSourceConfigured,
@@ -23,7 +24,7 @@ const TIMEOUT_MS = 12_000;
  * The audience the minted assertion carries. It must match a client-id (`aud`) configured on the
  * customer's RAM OIDC provider — the customer setup (Phase 3 Bit E) pins the provider to this value.
  */
-export const ALIBABA_TOKEN_AUDIENCE = "sts.aliyuncs.com";
+export const ALIBABA_TOKEN_AUDIENCE = providerAudience("alibaba");
 
 /**
  * The fixed name of the RAM OIDC provider the customer setup (`infra/connector/alibaba`) creates.
