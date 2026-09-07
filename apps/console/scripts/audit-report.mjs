@@ -39,10 +39,18 @@
 //
 // ── WHAT IS SCORED, AND WHAT IS EXPLICITLY NOT ───────────────────────────────────────────────
 //
-// The rubric defines 34 predicates in five families. This file now scores 33 of them:
+// The rubric defines 34 predicates in five families. This file now scores all 34 of them:
 //
 //   S1–S4, T1–T4     STATIC, `scripts/check-route-states.mjs`.
-//   H1–H2, H4–H9     STATIC, `scripts/check-shared-surface.mjs`. Eight of the nine H rows.
+//   H1–H9            STATIC, `scripts/check-shared-surface.mjs`. All nine H rows. H3 was the
+//                    last to get an instrument (#3797): this header used to say "there is no
+//                    matcher and there cannot easily be one — a page that should have shown a
+//                    status pill and showed a `<Badge>` has no negative form to grep for". Half
+//                    of that stands — the ABSENCE is still not a grep, and the guard's header
+//                    says so — but the drift has two shapes that ARE token shapes: the
+//                    `.vx-status` class rebuilt by hand, and a second definition of the status
+//                    vocabulary, an object keyed on the words `@repo/ui/status-badge` already
+//                    maps. The `status_badge` rule reads both, and H3 is scored from it.
 //   F1–F7            STATIC, `scripts/check-filter-standard.mjs` — #3796. Six matchers over the
 //                    console's filter SURFACES, plus F7, whose verdict is the join between a
 //                    route's closure and the builders
@@ -50,13 +58,10 @@
 //   T5–T7, R1–R7     LIVE. The Playwright `audit` project measures them in CI; this file joins
 //                    its committed records to the same route set. Ten predicates — #3634.
 //
-// The remaining ONE is rendered as `—` with the reason and the issue that owns it, NEVER omitted
-// and never rendered as a pass:
-//
-//   H3             `StatusBadge`. There is no matcher and there cannot easily be one — a page
-//                  that should have shown a status pill and showed a `<Badge>` has no negative
-//                  form to grep for, which `check-shared-surface.mjs`'s own header records as
-//                  the reason it stays prose.
+// NOTHING is left un-instrumented. The `kind: "none"` bucket, the table it renders and the
+// partition check that refuses a predicate in no bucket all STAY: the next rubric row lands in
+// that bucket with its owner, rendered `—` and never as a pass, until somebody builds its
+// instrument — which is how H3 and F1–F7 were carried.
 //
 // What this file said about F1–F7 until #3796 was WRONG, and the correction is worth stating
 // because it is the finding that unit started from: "nothing in the tree implements this family
@@ -287,6 +292,7 @@ export const FAMILIES = /** @type {const} */ ({
 export const RULE_PREDICATE = /** @type {const} */ ({
 	page_title: "H1",
 	section_header: "H2",
+	status_badge: "H3",
 	data_table: "H4",
 	format: "H5",
 	stat_strip: "H6",
@@ -315,7 +321,9 @@ export const RULES_WITHOUT_A_PREDICATE = /** @type {const} */ ({});
  *                  `apps/console/ui-conformance-live.json`. `section` names which of the two
  *                  artifacts carries it; see `LIVE_SECTIONS`.
  * `kind: "none"` — nothing measures this predicate anywhere, today. `owner` is the issue that
- *                  will build the instrument.
+ *                  will build the instrument. EMPTY since #3797 gave H3 the `status_badge` rule,
+ *                  and kept: it is the bucket a new rubric row lands in, rendered `—` with its
+ *                  owner rather than falling out of the report or reading as a pass.
  */
 export const NOT_SCORED_STATICALLY = /** @type {const} */ ({
 	T5: { kind: "live", section: "routes", why: "the empty state as RENDERED, against a seeded empty org." },
@@ -328,13 +336,6 @@ export const NOT_SCORED_STATICALLY = /** @type {const} */ ({
 	R5: { kind: "live", section: "routes", why: "axe, at wcag2a/wcag2aa." },
 	R6: { kind: "live", section: "routes", why: "console errors and failed requests." },
 	R7: { kind: "live", section: "routes", why: "interactive within the route's budget." },
-	H3: {
-		kind: "none",
-		owner: "#3797",
-		why:
-			"StatusBadge. `check-shared-surface.mjs` records why this row stays prose: a page that " +
-			"should have shown a status pill and showed a `<Badge>` has no negative form to grep for.",
-	},
 });
 
 // ── the live half: two artifacts, two personas, two organisations ────────────────────────────
@@ -1776,19 +1777,27 @@ export function renderScoreboard(view) {
 	// being instrumented in the very PR that changed the table above it — a sentence a reader
 	// quotes must not be able to rot, which is the same rule `parseRubric` applies to the rubric's
 	// own stated count.
-	L.push(
-		t.notInstrumented === 1
-			? "The un-instrumented one, with the issue that owns it:"
-			: `The un-instrumented ${t.notInstrumented}, each with the issue that owns it:`,
-	);
-	L.push("");
-	L.push("| id | owner | what is not being measured |");
-	L.push("|---|---|---|");
-	for (const [id, meta] of Object.entries(NOT_SCORED_STATICALLY)) {
-		if (meta.kind !== "none") continue;
-		L.push(`| **${id}** | ${meta.owner} | ${meta.why} |`);
+	// ZERO has its own sentence and NO table: "The un-instrumented 0, each with the issue that owns
+	// it:" over an empty table reads as a rendering defect, and a reader who meets one stops
+	// trusting the sentences around it. The table comes back the moment a row lands in the bucket.
+	if (t.notInstrumented === 0) {
+		L.push("Every predicate has an instrument; nothing below is rendered `—` for want of one. H3 was the last without, until #3797.");
+		L.push("");
+	} else {
+		L.push(
+			t.notInstrumented === 1
+				? "The un-instrumented one, with the issue that owns it:"
+				: `The un-instrumented ${t.notInstrumented}, each with the issue that owns it:`,
+		);
+		L.push("");
+		L.push("| id | owner | what is not being measured |");
+		L.push("|---|---|---|");
+		for (const [id, meta] of Object.entries(NOT_SCORED_STATICALLY)) {
+			if (meta.kind !== "none") continue;
+			L.push(`| **${id}** | ${meta.owner} | ${meta.why} |`);
+		}
+		L.push("");
 	}
-	L.push("");
 
 	// ── the live half ─────────────────────────────────────────────────────────────────────────
 	L.push("## The live half — two artifacts, two personas, two organisations");
@@ -2309,11 +2318,17 @@ function selfTest() {
 	// ── the partition: every predicate lands in exactly one bucket ───────────────────────────
 	const scoredIds = [...ROUTE_STATE_PREDICATES, ...Object.values(RULE_PREDICATE), ...realRubric.predicates.filter((p) => p.family === "F").map((p) => p.id)];
 	const part = partitionPredicates(realRubric.predicates, scoredIds, NOT_SCORED_STATICALLY);
-	ok("23 predicates are scored statically — S1-S4, T1-T4, eight H rows and all seven F rows", part.scored.length === 23);
+	ok("24 predicates are scored statically — S1-S4, T1-T4, all nine H rows and all seven F rows", part.scored.length === 24);
 	ok("...and family F is one of them now (#3796), not a column of dashes", ["F1", "F2", "F3", "F4", "F5", "F6", "F7"].every((id) => part.scored.includes(id)));
+	ok("...and so is H3 (#3797), which was the last predicate with no instrument", part.scored.includes("H3"));
 	ok("10 are live", part.live.length === 10 && part.live.sort().join(",") === "R1,R2,R3,R4,R5,R6,R7,T5,T6,T7");
-	ok("1 has no instrument anywhere — H3, and only H3", part.none.sort().join(",") === "H3");
-	ok("...and it names an owning issue", part.none.every((id) => /^#\d+$/.test(NOT_SCORED_STATICALLY[id].owner)));
+	ok("0 have no instrument anywhere — the bucket is empty, and it is still a bucket", part.none.length === 0 && Array.isArray(part.none));
+	// The bucket's contract outlives its last occupant: a row that lands in it must name an owner.
+	// Proved on a fixture rather than on the live table, which is empty.
+	ok(
+		"...and a row landing in it would carry an owning issue",
+		partitionPredicates([...realRubric.predicates, { id: "S9", family: "S" }], scoredIds, { ...NOT_SCORED_STATICALLY, S9: { kind: "none", owner: "#1", why: "x" } }).none.every((id) => /^#\d+$/.test({ ...NOT_SCORED_STATICALLY, S9: { kind: "none", owner: "#1", why: "x" } }[id].owner)),
+	);
 	raises(
 		"a rubric predicate in NEITHER table RAISES rather than vanishing from the report",
 		() => partitionPredicates([...realRubric.predicates, { id: "S9", family: "S" }], scoredIds, NOT_SCORED_STATICALLY),
@@ -2326,8 +2341,8 @@ function selfTest() {
 	);
 	raises(
 		"a predicate that is both scored and declared not-scored RAISES",
-		() => partitionPredicates(realRubric.predicates, [...scoredIds, "H3"], NOT_SCORED_STATICALLY),
-		"H3 is both scored here and declared not-scored",
+		() => partitionPredicates(realRubric.predicates, [...scoredIds, "T5"], NOT_SCORED_STATICALLY),
+		"T5 is both scored here and declared not-scored",
 	);
 
 	// ── the rule-id → H-family mapping, pinned pair by pair ──────────────────────────────────
@@ -2338,15 +2353,15 @@ function selfTest() {
 	ok("stat_strip → H6", RULE_PREDICATE.stat_strip === "H6");
 	ok("layer_token → H7", RULE_PREDICATE.layer_token === "H7");
 	ok("type_scale → H8", RULE_PREDICATE.type_scale === "H8");
-	ok("H3 is mapped by NO rule — StatusBadge has no matcher", !Object.values(RULE_PREDICATE).includes("H3"));
+	ok("status_badge → H3 — #3797, the last H row to get a matcher", RULE_PREDICATE.status_badge === "H3");
 	ok("empty_state → H9 — #3798's decision, not a fold into the live T5", RULE_PREDICATE.empty_state === "H9");
 	ok(
-		"...and RULES_WITHOUT_A_PREDICATE is now empty, and still exists for the ninth matcher",
+		"...and RULES_WITHOUT_A_PREDICATE is still empty, and still exists for the next matcher",
 		Object.keys(RULES_WITHOUT_A_PREDICATE).length === 0 && typeof RULES_WITHOUT_A_PREDICATE === "object",
 	);
 	ok(
-		"the eight mapped rules are exactly the eight instrumented H rows",
-		[...new Set(Object.values(RULE_PREDICATE))].sort().join(",") === "H1,H2,H4,H5,H6,H7,H8,H9",
+		"the nine mapped rules are exactly the nine H rows — every one instrumented",
+		[...new Set(Object.values(RULE_PREDICATE))].sort().join(",") === "H1,H2,H3,H4,H5,H6,H7,H8,H9",
 	);
 	ok("H9 and T5 are separate predicates — one static, one live", RULE_PREDICATE.empty_state === "H9" && NOT_SCORED_STATICALLY.T5.kind === "live");
 
@@ -2450,11 +2465,14 @@ function selfTest() {
 	};
 	const fixtureSurface = {
 		baseline: 2,
-		debt: 1,
+		debt: 2,
 		findings: [
 			// /a's own component: two type_scale hits, both recorded DEBT — still a FAIL.
 			{ rule: "type_scale", file: "apps/console/components/a.tsx", line: 1, text: "text-[13px]" },
 			{ rule: "type_scale", file: "apps/console/components/a.tsx", line: 2, text: "text-[13px]" },
+			// /a again: a second definition of the status vocabulary — H3's instrument since #3797,
+			// recorded DEBT, so still a FAIL.
+			{ rule: "status_badge", file: "apps/console/components/a.tsx", line: 12, text: 'active: "bg-green",\n\tfailed:' },
 			// /b's own component: one page_title, a recorded DECISION — excused, so PASS.
 			{ rule: "page_title", file: "apps/console/components/b.tsx", line: 1, text: "<h1" },
 			// a shared chrome file: in no page closure.
@@ -2468,6 +2486,7 @@ function selfTest() {
 			{ section: "page_title", path: "apps/console/components/b.tsx", hits: 1, kind: "decision" },
 			{ section: "type_scale", path: "apps/console/components/a.tsx", hits: 2, kind: "debt" },
 			{ section: "empty_state", path: "apps/console/components/a.tsx", hits: 1, kind: "debt" },
+			{ section: "status_badge", path: "apps/console/components/a.tsx", hits: 1, kind: "debt" },
 		],
 	};
 	// ── the live half's fixture ──────────────────────────────────────────────────────────────
@@ -2573,10 +2592,15 @@ function selfTest() {
 	);
 	ok("a route-state N/A flows through with its reason", verdict("/r", "S2").verdict === "N/A" && verdict("/r", "S2").reason === "redirect-only");
 	ok("...and N/A leaves the denominator: S2 is 1 PASS / 1 FAIL / 1 N/A = 0.50", view.predicates.S2.score === 0.5);
-	ok("score is null, not 0, when nothing was measured", scoreOf(0, 0) === null && view.predicates.H3.score === null);
+	ok("score is null, not 0, when nothing was measured", scoreOf(0, 0) === null);
+	// #3797. H3 was the last predicate with no instrument; the `none` branch stays for the next one.
 	ok(
-		"an un-instrumented predicate is scored nowhere and carries its owner",
-		view.predicates.H3.instrument === "none" && view.predicates.H3.owner === NOT_SCORED_STATICALLY.H3.owner && view.predicates.H3.pass === 0,
+		"no predicate is un-instrumented any more, and the total says so",
+		Object.values(view.predicates).every((p) => p.instrument !== "none") && view.totals.notInstrumented === 0,
+	);
+	ok(
+		"H3 is scored by `check-shared-surface`, and a second status map FAILS the page that imports it",
+		view.predicates.H3.instrument === "check-shared-surface" && verdict("/a", "H3").verdict === "FAIL" && verdict("/b", "H3").verdict === "PASS" && view.predicates.H3.fail === 1,
 	);
 	// #3796. Before it, all seven of these were `kind: "none"` and every cell rendered `—`.
 	ok(
@@ -2637,12 +2661,13 @@ function selfTest() {
 	ok("a chrome-only file is named", view.reconciliation.chromeOnlyFiles.some((f) => f.file.endsWith("shell/side.tsx")));
 	ok("an off-tree file is named", view.reconciliation.offTreeFiles.some((f) => f.file.endsWith("auth/form.tsx")));
 	ok("empty_state is counted AND scored, as H9 (#3798)", rec.empty_state.total === 1 && rec.empty_state.predicate === "H9" && rec.empty_state.owner === null);
-	// "Found nothing" and "was not run" must not render the same. The fixture trips six of the
-	// eight rules; the other two must still have a row, reading 0.
+	// "Found nothing" and "was not run" must not render the same. The fixture trips seven of the
+	// nine rules; the other two must still have a row, reading 0.
 	ok(
 		"a rule that found NOTHING still gets a row reading 0, rather than no row at all",
-		Object.keys(rec).length === 8 && rec.data_table.total === 0 && rec.stat_strip.total === 0,
+		Object.keys(rec).length === 9 && rec.data_table.total === 0 && rec.stat_strip.total === 0,
 	);
+	ok("status_badge is counted AND scored, as H3 (#3797)", rec.status_badge.total === 1 && rec.status_badge.predicate === "H3" && rec.status_badge.owner === null);
 	ok("...and it is rendered", renderScoreboard(view).includes("| `stat_strip` | H6 | 0 |"));
 	ok(
 		"a family whose every predicate is N/A for a route reads `all N/A`, not `0/0`",
@@ -3265,20 +3290,28 @@ function selfTest() {
 
 	// ── rendering ────────────────────────────────────────────────────────────────────────────
 	const md = renderScoreboard(view);
-	ok("the rendered scoreboard names H3 as un-instrumented, with its issue", md.includes("| **H3** |") && md.includes(NOT_SCORED_STATICALLY.H3.owner));
+	ok("the rendered scoreboard names H3 with its instrument, not as un-instrumented", md.includes("| **H3** | H | `check-shared-surface` |") && !md.includes("**none** — #3797"));
 	ok("...and the F rows are rendered with their instrument, not with a dash", md.includes("| **F7** | F | `check-filter-standard` |"));
 	// Not "does it say `—` somewhere" — every numeric column of every un-instrumented row must be
 	// a dash. A 0.00 there would read as "measured, and failed everywhere", which is the opposite
-	// of what is true and the exact confusion this column exists to prevent.
-	const noneRows = md.split("\n").filter((l) => /^\| \*\*(?:F\d|H3)\*\* \| [FH] \| \*\*none\*\*/.test(l));
-	ok(
-		"...and every un-instrumented row's PASS / FAIL / N/A / score columns are all dashes",
-		noneRows.length === 1 && noneRows.every((l) => l.endsWith("| — | — | — | — | — | — |")),
-	);
+	// of what is true and the exact confusion this column exists to prevent. Since #3797 there is
+	// no such row, and that is asserted as ZERO rather than left to a `.every` over an empty list,
+	// which is true of anything.
+	const noneRows = md.split("\n").filter((l) => /^\| \*\*[A-Z]\d\*\* \| [A-Z] \| \*\*none\*\*/.test(l));
+	ok("...and no row is rendered as un-instrumented at all", noneRows.length === 0, noneRows.join("\n"));
+	ok("...so the un-instrumented table is not rendered, and its sentence says why", !md.includes("| id | owner | what is not being measured |") && md.includes("Every predicate has an instrument"));
 	// The sentence that introduces that table is DERIVED, so it cannot go on saying "eight" while
 	// the table under it holds one — the failure this line exists to catch is a report that reads
 	// correctly to a machine and wrongly to the person quoting it.
-	ok("...and the count above them is derived, not typed", md.includes("The un-instrumented one, with the issue that owns it:"));
+	// The sentence is DERIVED from the count, in all three of its forms — one, many, none — and the
+	// two forms the live table no longer exercises are proved on a view with the bucket refilled.
+	ok("...and the count above them is derived, not typed: ZERO says every predicate has one", md.includes("Every predicate has an instrument"));
+	{
+		const one = { ...view, totals: { ...view.totals, notInstrumented: 1 } };
+		const many = { ...view, totals: { ...view.totals, notInstrumented: 3 } };
+		ok("...ONE says one, with a table under it", renderScoreboard(one).includes("The un-instrumented one, with the issue that owns it:") && renderScoreboard(one).includes("| id | owner | what is not being measured |"));
+		ok("...and MANY says the number", renderScoreboard(many).includes("The un-instrumented 3, each with the issue that owns it:"));
+	}
 	ok("rendering is deterministic", renderScoreboard(view) === md && renderJson(view) === renderJson(view));
 	ok(
 		"NO WALL CLOCK reaches the diff-gated region — a date there makes every PR stale on arrival",
@@ -3286,7 +3319,7 @@ function selfTest() {
 	);
 	ok("...and no absolute path either", !md.includes(REPO_ROOT) && !renderJson(view).includes(REPO_ROOT));
 	const parsedJson = JSON.parse(renderJson(view));
-	ok("the JSON carries one record per (route, predicate) it scored — 23 static + 10 live", parsedJson.verdicts.length === 3 * 33);
+	ok("the JSON carries one record per (route, predicate) it scored — 24 static + 10 live, every predicate", parsedJson.verdicts.length === 3 * 34);
 	ok("...in the shape e2e/audit/report.ts writes", parsedJson.verdicts.every((v) => "route" in v && "predicate" in v && "verdict" in v));
 
 	// ── splice ───────────────────────────────────────────────────────────────────────────────
