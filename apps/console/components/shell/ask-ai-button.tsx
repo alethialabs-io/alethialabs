@@ -24,7 +24,7 @@ export function AskAiButton() {
 		if (scope) {
 			try {
 				const projectId = await resolveProjectId(scope.projectSlug);
-				togglePanel({ kind: "project", projectId });
+				togglePanel({ kind: "project", projectId, environmentId: null });
 				return;
 			} catch {
 				// Fall back to org context if the project can't be resolved.

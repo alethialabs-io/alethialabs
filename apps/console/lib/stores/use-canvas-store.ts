@@ -29,12 +29,14 @@ import type {
 	NodeConfigMap,
 	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
-import type { CollectionPositions } from "@/lib/canvas/collections";
+import { kindFromCollectionId, type CollectionPositions } from "@/lib/canvas/collections";
 import type { ContainerBox, ContainerGeometry } from "@/lib/canvas/zones";
 import { applyLayout, layoutZoned } from "@/lib/canvas/layout";
 
 const PROJECT_NODE_ID = "project-root";
 const HISTORY_CAP = 50;
+/** Prefix of every persisted-draft key; `draftStorageKey(scope)` appends the scope. */
+const DRAFT_STORAGE_PREFIX = "design-project-canvas-draft";
 
 /** A browser-only stable id for new nodes (canvas is client-side). */
 function newId(kind: NodeKind): string {
@@ -356,6 +358,24 @@ export function diffNodes(baseline: CanvasNode[], nodes: CanvasNode[]): PendingC
 	return changes;
 }
 
+/**
+ * The card to keep after the node set changed. A non-inspector card is untouched (undoing a drag
+ * must not close the activity log); an inspector survives only while its node — or, for a
+ * collection card, any member of its kind — is still on the board.
+ */
+function keepCard(card: WorkspaceCard | null, nodes: CanvasNode[]): WorkspaceCard | null {
+	if (!card || card.kind !== "inspector") return card;
+	if (nodes.some((n) => n.id === card.nodeId)) return card;
+	const collection = kindFromCollectionId(card.nodeId);
+	if (collection && nodes.some((n) => n.data.kind === collection)) return card;
+	return null;
+}
+
+/** The inspector's node id, or null when the rail shows something else (or nothing). */
+export function selectInspectorNodeId(s: { card: WorkspaceCard | null }): string | null {
+	return s.card?.kind === "inspector" ? s.card.nodeId : null;
+}
+
 /** A name unique among existing names of the same kind. */
 function uniqueName(base: string, taken: Set<string>): string {
 	if (!taken.has(base)) return base;
@@ -364,15 +384,48 @@ function uniqueName(base: string, taken: Set<string>): string {
 	return `${base}-${i}`;
 }
 
+/**
+ * What the workspace's right-hand rail is showing. ONE field, ONE surface: every "open on the
+ * right" on the Architecture page — the node inspector, environment settings, the activity log, an
+ * add-on's install config, a BYO chart/IaC scan verdict — is a non-blocking docked card, and this
+ * union is the only thing that says which. It replaced `inspectorNodeId` + `envSettingsOpen` + four
+ * component-local `useState`s, which between them let a modal Sheet open over a docked card and
+ * had no answer to "what is on the rail right now".
+ *
+ * Not persisted: a card is a view, not a draft.
+ */
+export type WorkspaceCard =
+	| { kind: "inspector"; nodeId: string }
+	| { kind: "env-settings" }
+	| { kind: "activity" }
+	| { kind: "addon"; itemId: string }
+	| { kind: "chart-scan"; chartId: string }
+	| { kind: "iac-scan" };
+
+/**
+ * Where the persisted draft came from. `scope` is the project:environment (or "new" for the
+ * create flow) the draft belongs to; `revision` is the server design's content hash at the time
+ * it was seeded. `reseed` compares both so a server re-render that changed nothing is a no-op
+ * instead of a graph reset that closes the open card and drops in-flight edits.
+ */
+export interface DraftSeed {
+	scope: string;
+	revision: string;
+}
+
+/** The sessionStorage key a draft scope persists under — one slot per project:environment. */
+export function draftStorageKey(scope: string): string {
+	return `${DRAFT_STORAGE_PREFIX}:${scope}`;
+}
+
 interface CanvasStore {
 	nodes: CanvasNode[];
 	edges: CanvasEdge[];
 	selectedIds: string[];
-	inspectorNodeId: string | null;
-	/** Whether the environment-settings sheet is open. Lifted out of the sheet so other surfaces can
-	 * send you there — the Secrets panel shows which store the environment reads through, and the
-	 * choice itself is made in the sheet. */
-	envSettingsOpen: boolean;
+	/** The card on the workspace rail, or null when the rail is closed. */
+	card: WorkspaceCard | null;
+	/** Which scope + server revision the persisted draft was seeded from (null = never seeded). */
+	seed: DraftSeed | null;
 	dirty: boolean;
 	/** Undo/redo snapshot stacks (node sets; edges re-derived on restore). */
 	past: CanvasNode[][];
@@ -390,6 +443,18 @@ interface CanvasStore {
 
 	onNodesChange: (changes: NodeChange<CanvasNode>[]) => void;
 	setGraph: (graph: { nodes: CanvasNode[] }) => void;
+	/**
+	 * Seed the draft from the server design WITHOUT discarding what the user is doing:
+	 *   - same scope and revision → nothing changes (the common re-render case);
+	 *   - same scope, new revision, clean draft → the graph and baseline are replaced, and the
+	 *     open inspector survives when its node still exists (form-derived ids are deterministic);
+	 *   - same scope, new revision, dirty draft → only the BASELINE moves, so the pending-changes bar
+	 *     diffs the user's draft against the new server truth instead of losing it;
+	 *   - different scope → a full load, exactly like `setGraph`.
+	 */
+	reseed: (graph: { nodes: CanvasNode[] }, seed: DraftSeed) => void;
+	/** Record the revision the draft now matches (after a save/deploy wrote the design). */
+	setSeedRevision: (revision: string) => void;
 	/** Replace all BYO chart nodes from getProjectByoCharts (out-of-band; not a staged change). */
 	setChartNodes: (charts: ByoChartState[]) => void;
 	/** Replace all described chart-workload nodes from getProjectChartWorkloads (W5 Path A;
@@ -432,10 +497,17 @@ interface CanvasStore {
 		cloudIdentityId: string | null,
 		provider: CloudProviderSlug | null,
 	) => void;
+	/** Remove nodes. The project root and any `deletable: false` node (out-of-band kinds) are kept;
+	 * commits an undo step. Every delete path — keyboard, danger zone, context menu, AI proposal —
+	 * goes through here, so every delete is undoable. */
 	removeNodes: (ids: string[]) => void;
 	duplicateNodes: (ids: string[]) => void;
+	/** Show a card on the workspace rail (replacing whatever is there). */
+	openCard: (card: WorkspaceCard) => void;
+	/** Close the rail. */
+	closeCard: () => void;
+	/** Compat: `openInspector(id)` = `openCard({kind:"inspector", nodeId})`; null closes the rail. */
 	openInspector: (id: string | null) => void;
-	setEnvSettingsOpen: (open: boolean) => void;
 	commit: () => void;
 	undo: () => void;
 	redo: () => void;
@@ -500,8 +572,8 @@ export const useCanvasStore = create<CanvasStore>()(
 			edges: [],
 			iacOutputs: [],
 			selectedIds: [],
-			inspectorNodeId: null,
-			envSettingsOpen: false,
+			card: null,
+			seed: null,
 			dirty: false,
 			past: [],
 			future: [],
@@ -564,7 +636,7 @@ export const useCanvasStore = create<CanvasStore>()(
 					nodes: normalized,
 					edges: deriveEdges(normalized),
 					selectedIds: [],
-					inspectorNodeId: null,
+					card: null,
 					dirty: normalized !== withRoot,
 					past: [],
 					future: [],
@@ -576,6 +648,58 @@ export const useCanvasStore = create<CanvasStore>()(
 					containerGeometry: {},
 				});
 			},
+
+			reseed: (graph, seed) => {
+				const cur = get();
+				const sameScope = cur.seed?.scope === seed.scope;
+				// The common case — a server re-render (revalidate, a sibling mutation, an env poll)
+				// handed us the design we were already seeded from. Before this existed the effect
+				// re-ran `setGraph` on every prop identity change, which closed the open card and
+				// discarded every unsaved edit; the maintainer's words were "they don't hold their
+				// state". Nothing changed on the server, so nothing changes here.
+				if (sameScope && cur.seed?.revision === seed.revision) return;
+				if (!sameScope) {
+					get().setGraph(graph);
+					set({ seed });
+					return;
+				}
+				// Same scope, the server design moved. Lay the incoming graph out exactly as setGraph
+				// would (the seeded positions are a flat grid) so the baseline and a clean reload agree.
+				const charts = cur.nodes.filter((n) => OUT_OF_BAND.has(n.data.kind));
+				const base = graph.nodes.some((n) => n.id === PROJECT_NODE_ID)
+					? graph.nodes
+					: [makeProjectNode(), ...graph.nodes];
+				const seeded = [...base, ...charts];
+				const provider = (id: string) =>
+					seeded.find((n) => n.id === id)?.data.provider ??
+					seeded.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ??
+					null;
+				const withRoot = applyLayout(seeded, layoutZoned(seeded, provider));
+				if (cur.dirty) {
+					// The user has a draft in flight. The server truth is what the pending-changes bar
+					// must diff AGAINST, so only the baseline moves; the draft, the card, the undo history
+					// all stay. No three-way merge — the bar shows the honest diff and the user decides.
+					set({ baseline: structuredClone(withRoot), seed });
+					return;
+				}
+				const normalized = normalizeWafAcrossNodes(withRoot);
+				set({
+					nodes: normalized,
+					edges: deriveEdges(normalized),
+					baseline: structuredClone(withRoot),
+					dirty: normalized !== withRoot,
+					// Form-derived ids are deterministic (`${kind}-${name}`), so the card the user had open
+					// almost always still names a node in the new graph — keep it, and the selection.
+					card: keepCard(cur.card, normalized),
+					selectedIds: cur.selectedIds.filter((id) => normalized.some((n) => n.id === id)),
+					past: [],
+					future: [],
+					seed,
+				});
+			},
+
+			setSeedRevision: (revision) =>
+				set((s) => ({ seed: s.seed ? { ...s.seed, revision } : null })),
 
 			setChartNodes: (charts) => {
 				const nonChart = get().nodes.filter((n) => n.data.kind !== "chart");
@@ -730,7 +854,7 @@ export const useCanvasStore = create<CanvasStore>()(
 				if (SINGLETON_KINDS.includes(kind)) {
 					const existing = nodes.find((n) => n.data.kind === kind);
 					if (existing) {
-						set({ inspectorNodeId: existing.id, selectedIds: [existing.id] });
+						set({ card: { kind: "inspector", nodeId: existing.id }, selectedIds: [existing.id] });
 						return existing.id;
 					}
 				}
@@ -753,7 +877,7 @@ export const useCanvasStore = create<CanvasStore>()(
 				set({
 					nodes: next,
 					edges: deriveEdges(next),
-					inspectorNodeId: node.id,
+					card: { kind: "inspector", nodeId: node.id },
 					selectedIds: [node.id],
 					dirty: true,
 				});
@@ -765,7 +889,7 @@ export const useCanvasStore = create<CanvasStore>()(
 				if (SINGLETON_KINDS.includes(kind)) {
 					const existing = nodes.find((n) => n.data.kind === kind);
 					if (existing) {
-						set({ inspectorNodeId: existing.id, selectedIds: [existing.id] });
+						set({ card: { kind: "inspector", nodeId: existing.id }, selectedIds: [existing.id] });
 						return existing.id;
 					}
 				}
@@ -802,7 +926,7 @@ export const useCanvasStore = create<CanvasStore>()(
 				set({
 					nodes: next,
 					edges: deriveEdges(next),
-					inspectorNodeId: node.id,
+					card: { kind: "inspector", nodeId: node.id },
 					selectedIds: [node.id],
 					dirty: true,
 				});
@@ -835,19 +959,24 @@ export const useCanvasStore = create<CanvasStore>()(
 			},
 
 			removeNodes: (ids) => {
-				const removable = ids.filter((id) => id !== PROJECT_NODE_ID);
+				const { nodes } = get();
+				// The project root and every `deletable: false` node (charts, described workloads,
+				// add-ons, BYO-IaC cards — all removed out-of-band by their own action) are kept. This
+				// used to be React Flow's job via `deleteKeyCode`, which bypassed this action and so
+				// never committed an undo step; now every delete path lands here.
+				const removable = ids.filter((id) => {
+					if (id === PROJECT_NODE_ID) return false;
+					const node = nodes.find((n) => n.id === id);
+					return !!node && node.deletable !== false;
+				});
 				if (removable.length === 0) return;
 				get().commit();
-				const next = get().nodes.filter((n) => !removable.includes(n.id));
-				const inspectorNodeId = get().inspectorNodeId;
+				const next = nodes.filter((n) => !removable.includes(n.id));
 				set({
 					nodes: next,
 					edges: deriveEdges(next),
 					selectedIds: [],
-					inspectorNodeId:
-						inspectorNodeId && removable.includes(inspectorNodeId)
-							? null
-							: inspectorNodeId,
+					card: keepCard(get().card, next),
 					dirty: true,
 				});
 			},
@@ -881,11 +1010,13 @@ export const useCanvasStore = create<CanvasStore>()(
 				set({ nodes: next, edges: deriveEdges(next), dirty: true });
 			},
 
-			openInspector: (id) => set({ inspectorNodeId: id }),
-			setEnvSettingsOpen: (open) => set({ envSettingsOpen: open }),
+			openCard: (card) => set({ card }),
+			closeCard: () => set({ card: null }),
+			openInspector: (id) =>
+				set({ card: id ? { kind: "inspector", nodeId: id } : null }),
 
 			undo: () => {
-				const { past, nodes, future } = get();
+				const { past, nodes, future, card } = get();
 				if (past.length === 0) return;
 				const prev = past[past.length - 1];
 				set({
@@ -894,13 +1025,15 @@ export const useCanvasStore = create<CanvasStore>()(
 					past: past.slice(0, -1),
 					future: [structuredClone(nodes), ...future].slice(0, HISTORY_CAP),
 					selectedIds: [],
-					inspectorNodeId: null,
+					// Undoing a drag must not close the activity log; only an inspector whose node the
+					// undo removed goes away.
+					card: keepCard(card, prev),
 					dirty: true,
 				});
 			},
 
 			redo: () => {
-				const { future, nodes, past } = get();
+				const { future, nodes, past, card } = get();
 				if (future.length === 0) return;
 				const nextNodes = future[0];
 				set({
@@ -909,7 +1042,7 @@ export const useCanvasStore = create<CanvasStore>()(
 					future: future.slice(1),
 					past: [...past, structuredClone(nodes)].slice(-HISTORY_CAP),
 					selectedIds: [],
-					inspectorNodeId: null,
+					card: keepCard(card, nextNodes),
 					dirty: true,
 				});
 			},
@@ -919,7 +1052,8 @@ export const useCanvasStore = create<CanvasStore>()(
 					nodes: [makeProjectNode()],
 					edges: [],
 					selectedIds: [],
-					inspectorNodeId: null,
+					card: null,
+					seed: null,
 					dirty: false,
 					past: [],
 					future: [],
@@ -934,7 +1068,7 @@ export const useCanvasStore = create<CanvasStore>()(
 					nodes: baseline,
 					edges: deriveEdges(baseline),
 					selectedIds: [],
-					inspectorNodeId: null,
+					card: keepCard(get().card, baseline),
 					dirty: false,
 					past: [],
 					future: [],
@@ -1047,21 +1181,53 @@ export const useCanvasStore = create<CanvasStore>()(
 			},
 		}),
 		{
-			name: "design-project-canvas-draft",
+			// The un-scoped slot. `switchDraftScope` re-points persistence at a per-project:environment
+			// key before the workbench seeds, so one tab designing two environments keeps two drafts
+			// instead of showing staging's edits on production. Until the workbench calls it this is
+			// the legacy single slot, unchanged.
+			name: DRAFT_STORAGE_PREFIX,
 			storage: createJSONStorage(() => sessionStorage),
 			version: 1,
 			// Persist the graph + baseline (so the pending-changes diff survives reload), where the
-			// collection cards were dragged to, and any container geometry the user set; identities are
-			// server data and history is ephemeral.
+			// collection cards were dragged to, any container geometry the user set, and which server
+			// revision all of it was seeded from; identities are server data and history is ephemeral.
 			partialize: (state) => ({
 				nodes: state.nodes,
 				edges: state.edges,
 				baseline: state.baseline,
 				collectionPositions: state.collectionPositions,
 				containerGeometry: state.containerGeometry,
+				seed: state.seed,
 			}),
 		},
 	),
 );
+
+/**
+ * Point the persisted draft at `scope`'s own sessionStorage slot and load it. Returns true when a
+ * draft seeded for exactly that scope was restored; false when the slot was empty or held another
+ * scope's draft (a stale slot is discarded rather than shown as this environment's design), in
+ * which case the store is reset and the caller seeds it from the server.
+ */
+export async function switchDraftScope(scope: string): Promise<boolean> {
+	const key = draftStorageKey(scope);
+	useCanvasStore.persist.setOptions({ name: key });
+	let raw: string | null = null;
+	try {
+		raw = sessionStorage.getItem(key);
+	} catch {
+		raw = null;
+	}
+	if (!raw) {
+		useCanvasStore.getState().reset();
+		return false;
+	}
+	await useCanvasStore.persist.rehydrate();
+	if (useCanvasStore.getState().seed?.scope !== scope) {
+		useCanvasStore.getState().reset();
+		return false;
+	}
+	return true;
+}
 
 export { PROJECT_NODE_ID };

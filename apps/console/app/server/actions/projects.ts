@@ -1508,6 +1508,7 @@ async function buildConfigSnapshot(
 				num_cache_nodes: c.num_cache_nodes,
 				multi_az: c.multi_az,
 				allowed_cidr_blocks: c.allowed_cidr_blocks,
+				provider_config: c.provider_config,
 				...resolvePlacement(c),
 			})),
 			queues: queues.map((q) => ({
@@ -1520,6 +1521,7 @@ async function buildConfigSnapshot(
 			})),
 			topics: topics.map((t) => ({
 				name: t.name,
+				provider_config: t.provider_config,
 				...resolvePlacement(t),
 				subscriptions: topicSubs.get(t.id) ?? [],
 			})),
@@ -2393,6 +2395,7 @@ export async function getProjectAsFormData(
 			node_type: c.node_type ?? undefined,
 			num_cache_nodes: c.num_cache_nodes ?? undefined,
 			multi_az: c.multi_az ?? undefined,
+			provider_config: c.provider_config ?? undefined,
 		})),
 		queues: source.components.queues.map((q) => ({
 			name: q.name,
@@ -2403,6 +2406,7 @@ export async function getProjectAsFormData(
 		topics: source.components.topics.map((t) => ({
 			name: t.name,
 			subscriptions: t.subscriptions ?? [],
+			provider_config: t.provider_config ?? undefined,
 		})),
 		nosql_tables: source.components.nosql_tables.map((t) => ({
 			name: t.name,

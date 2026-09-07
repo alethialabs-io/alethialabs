@@ -19,3 +19,18 @@
  * its own min-content width and the frame stops constraining anything.
  */
 export const CONTENT_FRAME = "mx-auto w-full min-w-0 max-w-[1200px]";
+
+/**
+ * The shell's ONE header height, as a class — the topbar, both sidebar heads and the Elench panel
+ * header all read it, so their bottom borders draw one continuous line.
+ *
+ * The number lives in `app/globals.css` as `--shell-header-h` (53px). Before this existed it was
+ * typed as `h-[53px]` in four files and as `3.5rem` (56px) in three others, and the Elench panel
+ * header did not set a height at all — its content came out at ≈54.5px, so its seam sat 1.5px
+ * below the topbar's. A constant read from one variable is what makes "aligned" a property of the
+ * shell rather than of each file's arithmetic.
+ */
+export const SHELL_HEADER = "h-(--shell-header-h)";
+
+/** One viewport less the shell header — for a surface that fills the main column exactly. */
+export const SHELL_VIEWPORT = "h-[calc(100dvh-var(--shell-header-h))]";

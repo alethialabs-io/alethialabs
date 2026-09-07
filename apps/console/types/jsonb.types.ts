@@ -442,12 +442,16 @@ export interface ClusterAdmin {
 }
 
 export interface ClusterProviderConfig {
+	// Any other key is a declared template variable, passed through to OpenTofu by name.
+	[knob: string]: unknown;
 	enable_karpenter?: boolean;
 	enable_autopilot?: boolean;
 	enable_cluster_autoscaler?: boolean;
 }
 
 export interface DnsProviderConfig {
+	// Any other key is a declared template variable, passed through to OpenTofu by name.
+	[knob: string]: unknown;
 	acm_certificate?: boolean;
 	managed_certificate?: boolean;
 	cloudfront_waf?: boolean;
@@ -460,6 +464,8 @@ export interface DnsProviderConfig {
 }
 
 export interface NosqlProviderConfig {
+	// Any other key is a declared template variable, passed through to OpenTofu by name.
+	[knob: string]: unknown;
 	partition_key_path?: string;
 }
 
@@ -641,13 +647,28 @@ export interface ConnectorCredentials {
 	secret?: EncryptedSecret | null;
 }
 
+// Per-cloud cache knobs (redis_*/valkey_*, memorystore_*, azure_cache_*, kvstore_*). No typed key
+// yet: every entry is a declared template variable reached by name through the passthrough.
+export interface CacheProviderConfig {
+	[knob: string]: unknown;
+}
+
+// Per-cloud topic knobs (SNS / Pub/Sub / Service Bus / MNS), reached by name like the cache's.
+export interface TopicProviderConfig {
+	[knob: string]: unknown;
+}
+
 export interface StorageProviderConfig {
+	// Any other key is a declared template variable, passed through to OpenTofu by name.
+	[knob: string]: unknown;
 	// AES256 / aws:kms (S3), google-managed / CMEK (GCS), etc.
 	encryption_algorithm?: string;
 	kms_key?: string;
 }
 
 export interface QueueProviderConfig {
+	// Any other key is a declared template variable, passed through to OpenTofu by name.
+	[knob: string]: unknown;
 	// SQS-only delivery delay (Azure Service Bus / Pub/Sub have no direct equivalent).
 	delay_seconds?: number;
 }
@@ -664,6 +685,8 @@ export type DatabaseLogExport =
 	| "postgresql";
 
 export interface DatabaseProviderConfig {
+	// Any other key is a declared template variable, passed through to OpenTofu by name.
+	[knob: string]: unknown;
 	// AWS only — `rds_logs_exports` is the sole DB log-export variable any template
 	// declares (gcp/azure/alibaba have none). Unset → {audit, error, slowquery} on MySQL,
 	// {postgresql} on Postgres.

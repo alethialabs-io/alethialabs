@@ -280,8 +280,12 @@ function CanvasInner({
 
 	/** Open the Elench assistant as a docked panel for this project (or org pre-creation). */
 	const openAssistantExclusive = useCallback(() => {
-		openPanel(projectId ? { kind: "project", projectId } : { kind: "org" });
-	}, [openPanel, projectId]);
+		openPanel(
+			projectId
+				? { kind: "project", projectId, environmentId: environmentId ?? null }
+				: { kind: "org" },
+		);
+	}, [openPanel, projectId, environmentId]);
 
 	/** Open a node's inspector (the assistant is a separate overlay now). */
 	const openInspectorExclusive = useCallback(

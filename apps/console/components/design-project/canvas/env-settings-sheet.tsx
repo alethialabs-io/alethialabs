@@ -45,8 +45,11 @@ import { CompatAlert } from "./inspector/compat-alert";
 export function EnvSettingsSheet() {
 	// Open state lives in the store, not here, so the Secrets panel's "Store · …" readout can send
 	// you straight to the control that changes it.
-	const open = useCanvasStore((s) => s.envSettingsOpen);
-	const setOpen = useCanvasStore((s) => s.setEnvSettingsOpen);
+	const open = useCanvasStore((s) => s.card?.kind === "env-settings");
+	const openCard = useCanvasStore((s) => s.openCard);
+	const closeCard = useCanvasStore((s) => s.closeCard);
+	const setOpen = (next: boolean) =>
+		next ? openCard({ kind: "env-settings" }) : closeCard();
 	const nodes = useCanvasStore((s) => s.nodes);
 	const updateNodeConfig = useCanvasStore((s) => s.updateNodeConfig);
 	const provider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
