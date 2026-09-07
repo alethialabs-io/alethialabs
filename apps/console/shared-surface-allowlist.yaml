@@ -6,9 +6,9 @@
 # §6: "if two pages disagree about how something looks or reads, the user is being told the product
 # is two products." `check:shared-surface` (scripts/check-shared-surface.mjs) fails on any console
 # site that hand-rolls a number, a date, a section heading, a font size, an empty state, a stat
-# strip, a stacking level or a table instead of reaching for `@repo/format`,
-# `@repo/ui/section-heading`, a `--text-ui-*` rung, `@repo/ui/empty`, `@repo/ui/status-badge`, a
-# `--z-*` token or `DataTable` — and on any console page that gives itself a TITLE, which is the one
+# strip, a stacking level, a table or a status instead of reaching for `@repo/format`,
+# `@repo/ui/section-heading`, a `--text-ui-*` rung, `@repo/ui/empty`, a `--z-*` token, `DataTable`
+# or `@repo/ui/status-badge` — and on any console page that gives itself a TITLE, which is the one
 # rule whose fix is deletion. Unless it is listed here.
 #
 # TWO KINDS OF ENTRY, and the file says which. They are counted separately, and neither can be
@@ -101,6 +101,14 @@
 #                      packages/brand/src/tokens.css leaves empty between its in-flow lifts and
 #                      the page chrome.
 #   data_table:      — DataTable, or @repo/ui/table. A grid used as a table, and a raw `<table>`.
+#   status_badge:    — @repo/ui/status-badge, in two halves (#3797). The `vx-status` class token
+#                      anywhere in components/**, app/**, lib/** or hooks/** — the badge's markup
+#                      rebuilt by hand — and a SECOND DEFINITION of the status vocabulary: two
+#                      consecutive entries of one object literal both keyed on a word the badge
+#                      already maps (the set is derived from `packages/ui/src/status-badge.tsx` on
+#                      every run, never typed). A value that IS a tier — `Record<YourStatus,
+#                      StatusTier>` for `<StatusBadge tier>` — is the fix and is not a finding.
+#                      `hits` counts adjacent PAIRS, so a map of n statuses records n−1.
 #   scanned:         — NOT entries. One census floor per scope the guard declares: the fewest
 #                      files that scope may examine before the run is refused. It is the ONLY
 #                      control that notices a root being DELETED from the guard's own scope
@@ -112,7 +120,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 16
-debt: 0
+debt: 3
 
 scanned:
   - scope: console_code
@@ -233,3 +241,21 @@ layer_token:
 
 data_table:
   # --- debt only: three grid-as-table sites in two files, plus the console's one raw <table>.
+
+status_badge:
+  # --- debt only: 7 occurrences in 3 files, measured 2026-09-07 on an unmodified dev by this
+  #     rule's own two matchers — one raw `.vx-status` (three tokens) and two second definitions
+  #     of the vocabulary. The instrument landed apart from its fix on purpose (#3797), so the guard
+  #     is not tautological; #4295 is the lane that removes every row here. The six OTHER files the
+  #     rule's first draft flagged are not rows: they are `Record<Domain, StatusTier>` maps feeding
+  #     `<StatusBadge tier>`, which is the fix, and the rule exempts that shape rather than naming
+  #     the files.
+  - path: apps/console/components/agent/render-tool-parts/project-tool-parts.tsx
+    hits: 3
+    lifts: "#4295 — the one raw `.vx-status` markup left in the console after #3627: the block, its `--active` modifier and its `__dot`, on a project tool card. `<StatusBadge>` writes exactly this."
+  - path: apps/console/components/design-project/canvas/node-inspector.tsx
+    hits: 3
+    lifts: "#4295 — `STATUS_HINT` enumerates the node-state set a second time, apart from `NODE_STATUS_META`, which already resolves every state to a tier and a label; fold the hint in beside them so the set is defined once."
+  - path: apps/console/components/connectors/connection-ui.tsx
+    hits: 1
+    lifts: "#4295 — `VARIANT_ICON` draws `success`/`pending`/`error` as a check, a spinner and a cross: a second rendering of three states the badge already maps, so a pending test is a spinner here and a hollow dot in every table."
