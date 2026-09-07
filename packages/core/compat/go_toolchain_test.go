@@ -71,7 +71,8 @@ func TestRunnerBuilderGoMinorMatchesGoWork(t *testing.T) {
 	}
 }
 
-// The four modules `go.work` uses must carry the same Go MINOR as `go.work` itself.
+// The four modules `go.work` uses must carry the same Go version as `go.work` itself — the FULL
+// version, patch included, unlike the builder-image test above.
 //
 // The test above catches the builder image drifting from go.work; this one catches the OTHER
 // half-done bump, which is just as silent. Go permits go.work AHEAD of a module's `go`
@@ -81,6 +82,13 @@ func TestRunnerBuilderGoMinorMatchesGoWork(t *testing.T) {
 // single atomic change precisely because the repo's compatibility contract said so, but until
 // this test the contract was prose. The module list is read from go.work's `use (...)` block so
 // a fifth module is covered the day it is added, not the day someone remembers.
+//
+// Patch-level equality is deliberate. Dependabot's go-minor-patch group runs `go mod tidy`, and
+// a dep that requires a newer patch moves the `go` directive of the modules it touches and no
+// others: #2404 left go.work and apps/runner at 1.26.6 with cli, core and e2e at 1.26.5, and
+// nothing red-ed. Every actions/setup-go resolves the exact patch from go.work, so a module
+// behind it is validated by a compiler its own directive does not name. The cost is that such
+// a dependabot PR reds until all five directives follow — which is the forcing intended.
 func TestWorkspaceModulesGoMinorMatchGoWork(t *testing.T) {
 	root := repoRoot(t)
 	if root == "" {
@@ -88,7 +96,8 @@ func TestWorkspaceModulesGoMinorMatchGoWork(t *testing.T) {
 	}
 	work := readRepoFile(t, root, "go.work")
 
-	workRe := regexp.MustCompile(`(?m)^go[ \t]+(\d+\.\d+)(?:\.\d+)?\b`)
+	// `go 1.NN.P` — the whole version this time.
+	workRe := regexp.MustCompile(`(?m)^go[ \t]+(\d+\.\d+(?:\.\d+)?)\b`)
 	wm := workRe.FindStringSubmatch(work)
 	if wm == nil {
 		t.Fatal("go.work has no `go <version>` directive — this test measured nothing")
@@ -113,7 +122,9 @@ func TestWorkspaceModulesGoMinorMatchGoWork(t *testing.T) {
 		if mm[1] != want {
 			t.Errorf("%s says go %s but go.work says go %s.\n"+
 				"go.work AHEAD of a module is silent: that module compiles at the older language "+
-				"version with the older GODEBUG defaults while every CI job reports %s. A Go minor "+
+				"version with the older GODEBUG defaults while every CI job reports %s. All five "+
+				"directives must be EQUAL, patch included (a tidy side-effect moves only the modules "+
+				"it touches). A Go minor "+
 				"is a FIVE-part change — go.work, the four go.mod files, apps/runner/Dockerfile.base "+
 				"and the golangci-lint pin in ci.yml — then re-record the Go coverage floors, "+
 				"which a new compiler moves. Bump them together.", rel, mm[1], want, want)
