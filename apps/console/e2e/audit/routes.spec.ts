@@ -43,12 +43,13 @@ import { describeOverlayMisses, probeOverlays } from "./overlays";
 import { createReport, type PredicateId } from "./report";
 import {
 	attachSignals,
+	AUDIT_THEMES,
 	navigationsFor,
 	p95,
 	r6Failures,
 	R7_BUDGET_MS,
 	requireAxe,
-	scanRoute,
+	scanRouteThemes,
 } from "./signals";
 import { closeDb } from "../helpers/db";
 import { STORAGE_STATE } from "../fixtures/auth";
@@ -224,8 +225,11 @@ async function auditRoute(page: Page, route: RouteRecord): Promise<void> {
 	}
 
 	// ── R5 ────────────────────────────────────────────────────────────────────────────────────
+	// BOTH themes (#4195). One record per route — the reducer keys on (route, predicate) — with
+	// every violation naming the theme it was seen in, so a dark FAIL and a light FAIL are two
+	// different facts in the artifact. A theme that fails to apply is itself a critical violation.
 	await page.setViewportSize({ width: 1280, height: AUDIT_VIEWPORT_HEIGHT });
-	const violations = await scanRoute(page);
+	const { violations, themes } = await scanRouteThemes(page);
 	record({
 		route: route.route,
 		url,
@@ -233,6 +237,9 @@ async function auditRoute(page: Page, route: RouteRecord): Promise<void> {
 		verdict: violations.length === 0 ? "PASS" : "FAIL",
 		evidence: violations,
 	});
+	// The paints that were measured, beside the verdict rather than inside it: the evidence array
+	// stays the array of violations the scoreboard's R5 summariser reads.
+	test.info().annotations.push({ type: "r5-themes", description: JSON.stringify(themes) });
 
 	// ── R6 ────────────────────────────────────────────────────────────────────────────────────
 	const r6 = r6Failures(signals);
@@ -332,7 +339,12 @@ async function auditRoute(page: Page, route: RouteRecord): Promise<void> {
 	if (scored("R4")) {
 		expect.soft(overlaps, `R4 ${route.route}: interactive elements overlap`).toEqual([]);
 	}
-	expect.soft(violations, `R5 ${route.route}: serious/critical axe violations`).toEqual([]);
+	expect.soft(
+		violations,
+		`R5 ${route.route}: serious/critical axe violations — ` +
+			AUDIT_THEMES.map((t) => `${t}: ${violations.filter((v) => v.theme === t).length}`).join(", ") +
+			` (themes measured: ${themes.map((t) => `${t.theme}${t.applied ? "" : " DID NOT APPLY"}`).join(", ")})`,
+	).toEqual([]);
 	expect.soft(r6, `R6 ${route.route}: console errors / failed requests`).toEqual([]);
 	expect.soft(
 		measuredP95,

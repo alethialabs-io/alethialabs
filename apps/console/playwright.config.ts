@@ -323,7 +323,12 @@ const projects = [
 		// the best part of an hour, and would say nothing new.
 		retries: 0,
 		dependencies: ["setup"],
-		use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
+		// `colorScheme` is STATED, not inherited. Playwright's default is `light`, and with
+		// `app/layout.tsx` on `defaultTheme="system"` that default was the only theme the audit had
+		// ever painted — every R5 verdict was a light-mode verdict published as the verdict (#4195).
+		// This is the theme each route STARTS in; `e2e/audit/signals.ts` → `scanRouteThemes` then
+		// emulates dark for the second half of R5 and hands the page back in light.
+		use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE, colorScheme: "light" },
 	},
 
 	// The QA suite (e2e/flows). Needs ALETHIA_QA_E2E=1 so global-setup builds its personas.

@@ -27,6 +27,7 @@ import {
 	type MeasuredPredicate,
 } from "./predicates";
 import { createReport, NA_REASONS } from "./report";
+import { AUDIT_THEMES, scanRouteThemes } from "./signals";
 
 /**
  * Hit-test the overlay carrying `slot`, handed over as the ELEMENT the way `probeOverlays` does.
@@ -276,6 +277,75 @@ test.describe("the live predicates fail when the page is wrong", () => {
 			await rendersSharedErrorState(page),
 			"a hand-rolled error panel with the same COPY is not the shared component",
 		).toBe(false);
+	});
+
+	// ── R5 in BOTH themes (#4195) ─────────────────────────────────────────────────────────────
+	// A fixture that behaves like the console: next-themes with `attribute="class"` and
+	// `enableSystem` toggles `dark` on <html> from `prefers-color-scheme`, which is what
+	// `emulateMedia` flips. The dark ink is the only thing that varies between fixtures.
+	const themed = (darkInk: string, opts: { follow?: boolean; repaint?: boolean } = {}) =>
+		controlFixture(`
+		  <style>
+		    body { background: #ffffff; color: #000000; font-size: 16px; }
+		    ${opts.repaint === false ? "" : `html.dark body { background: #171717; color: ${darkInk}; }`}
+		  </style>
+		  ${
+				opts.follow === false
+					? ""
+					: `<script>
+		    (function () {
+		      var mq = window.matchMedia("(prefers-color-scheme: dark)");
+		      function sync() { document.documentElement.classList.toggle("dark", mq.matches); }
+		      sync(); mq.addEventListener("change", sync);
+		    })();
+		  </script>`
+			}
+		  <p>The quick brown fox jumps over the lazy dog.</p>`);
+
+	test("R5 — the dark theme is scanned too, and a violation says which theme it came from", async ({ page }) => {
+		// #4a4a4a on #171717 is about 2.5:1 — a serious `color-contrast` in dark; black on white in light.
+		await page.setContent(themed("#4a4a4a"));
+		const { violations, themes } = await scanRouteThemes(page);
+		expect(themes.map((t) => t.theme), "every theme in AUDIT_THEMES was asked for").toEqual([...AUDIT_THEMES]);
+		expect(themes.every((t) => t.applied), "and every theme applied").toBe(true);
+		expect(themes[0].background, "the two themes are two paints").not.toBe(themes[1].background);
+		expect(violations.filter((v) => v.theme === "light"), "light is clean").toEqual([]);
+		expect(
+			violations.filter((v) => v.theme === "dark").map((v) => v.id),
+			"dark fails, and the violation names dark",
+		).toContain("color-contrast");
+		expect(
+			await page.evaluate(() => document.documentElement.classList.contains("dark")),
+			"the page is handed back in light for the predicates measured after R5",
+		).toBe(false);
+	});
+
+	test("R5 — a page clean in both themes reports nothing", async ({ page }) => {
+		await page.setContent(themed("#ffffff"));
+		const { violations, themes } = await scanRouteThemes(page);
+		expect(themes).toHaveLength(AUDIT_THEMES.length);
+		expect(violations).toEqual([]);
+	});
+
+	test("R5 — a theme that does not apply is a FAIL, not the other theme measured twice", async ({ page }) => {
+		await page.setContent(themed("#4a4a4a", { follow: false }));
+		const { violations, themes } = await scanRouteThemes(page);
+		const dark = themes.find((t) => t.theme === "dark");
+		expect(dark?.applied, "nothing toggled `dark` on <html>").toBe(false);
+		const synthetic = violations.find((v) => v.id === "theme-did-not-apply");
+		expect(synthetic?.theme).toBe("dark");
+		expect(synthetic?.impact).toBe("critical");
+		// Shaped like a real violation, because the scoreboard's R5 summariser refuses one that is not.
+		expect(Array.isArray(synthetic?.groups)).toBe(true);
+		expect(synthetic?.omittedNodes).toBe(0);
+	});
+
+	test("R5 — a theme that applies but repaints nothing is a FAIL", async ({ page }) => {
+		await page.setContent(themed("#4a4a4a", { repaint: false }));
+		const { violations, themes } = await scanRouteThemes(page);
+		expect(themes.every((t) => t.applied), "the class toggled").toBe(true);
+		expect(themes[0].background, "but the paint did not move").toBe(themes[1].background);
+		expect(violations.map((v) => v.id)).toContain("theme-paint-unchanged");
 	});
 
 	test("the report refuses the three ways an N/A goes wrong", () => {

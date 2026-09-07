@@ -10,7 +10,7 @@
 // closes the gap here, because those helpers are shared with suites that are not gates.
 
 import type { Page } from "@playwright/test";
-import { scanA11y, type A11yViolation } from "../helpers/a11y";
+import { scanA11y, type A11yTheme, type A11yViolation } from "../helpers/a11y";
 import { attachConsoleGuard, type CapturedError, type ConsoleGuard } from "../helpers/console-errors";
 import { attachPerf, type PerfCollector, type PerfRecord } from "../helpers/perf";
 
@@ -42,9 +42,138 @@ export async function requireAxe(): Promise<void> {
 	}
 }
 
-/** R5 — serious/critical axe violations at wcag2a/wcag2aa, via the shared helper. */
-export async function scanRoute(page: Page): Promise<A11yViolation[]> {
-	return scanA11y(page);
+/**
+ * The two paints R5 scores. BOTH, every route, every run (#4195).
+ *
+ * `app/layout.tsx` sets `defaultTheme="system" enableSystem`, and Playwright's default
+ * `colorScheme` is `light` — so until this existed every R5 verdict the audit had ever emitted was a
+ * light-mode verdict published as THE verdict. R5 is declared never-N/A, which made the dark half a
+ * WITHHELD MEASUREMENT: a number that covered one theme with nothing to say so. The arithmetic
+ * behind #4195 said dark fails harder (`gray600` on `#171717` at 3.78:1) than the light failure
+ * being fixed; this is what turns that arithmetic into a measurement.
+ */
+export const AUDIT_THEMES: readonly A11yTheme[] = ["light", "dark"];
+
+/** What the page looked like after a theme was asked for — the evidence that it applied. */
+export interface ThemeApplied {
+	theme: A11yTheme;
+	/** The `<html>` class list agreed with the theme asked for, within the wait. */
+	applied: boolean;
+	htmlClass: string;
+	/** `getComputedStyle(body).backgroundColor` — the paint, not the class name. */
+	background: string;
+	/** next-themes' stored preference; anything but `system`/absent explains a theme that will not follow the OS. */
+	storedPreference: string | null;
+}
+
+async function readPaint(page: Page): Promise<Pick<ThemeApplied, "htmlClass" | "background">> {
+	return page.evaluate(() => ({
+		htmlClass: document.documentElement.className,
+		background: getComputedStyle(document.body).backgroundColor,
+	}));
+}
+
+/**
+ * Ask the page for `theme` the way the operating system would, and wait until it has answered.
+ *
+ * `emulateMedia({ colorScheme })` flips `prefers-color-scheme`; next-themes (`attribute="class"`,
+ * `enableSystem`) listens to that media query and toggles `dark` on `<html>`. Nothing is written
+ * to storage and no toggle is clicked — this is the exact path a person on a dark-mode OS takes.
+ *
+ * It RETURNS whether the theme applied rather than assuming it. A broken listener, a persona whose
+ * stored preference pins one theme, or a provider that stopped honouring `system` would otherwise
+ * produce a dark column that is really the light one measured twice — the failure #4195 names.
+ */
+export async function applyTheme(page: Page, theme: A11yTheme, timeoutMs = 3_000): Promise<ThemeApplied> {
+	await page.emulateMedia({ colorScheme: theme });
+	const wantDark = theme === "dark";
+	const isDark = (htmlClass: string) => /(^|\s)dark(\s|$)/.test(htmlClass);
+	const deadline = Date.now() + timeoutMs;
+	let paint = await readPaint(page);
+	while (isDark(paint.htmlClass) !== wantDark && Date.now() < deadline) {
+		await page.waitForTimeout(100);
+		paint = await readPaint(page);
+	}
+	const storedPreference = await page.evaluate(() => {
+		try {
+			return localStorage.getItem("theme");
+		} catch {
+			return null;
+		}
+	});
+	return { theme, applied: isDark(paint.htmlClass) === wantDark, ...paint, storedPreference };
+}
+
+/**
+ * A FAIL that is about the instrument's precondition, shaped as a violation so it lands in the
+ * same R5 evidence array and the same scoreboard diagnosis as a real one. `groups` and
+ * `omittedNodes` are present because `audit-report.mjs`'s R5 summariser REFUSES a violation
+ * without them — a refusal that is right for axe output and would otherwise turn this into a crash
+ * at import time instead of a red cell.
+ */
+function themeViolation(id: "theme-did-not-apply" | "theme-paint-unchanged", applied: ThemeApplied): A11yViolation {
+	const help =
+		id === "theme-did-not-apply"
+			? `the ${applied.theme} theme did not apply within the wait — the page would have been scored as its other theme, twice`
+			: "both themes painted the same background — the dark scan measured the light paint again";
+	return {
+		id,
+		impact: "critical",
+		help,
+		nodes: 1,
+		target: "html",
+		groups: [
+			{
+				target: "html",
+				count: 1,
+				checks: [
+					{
+						id,
+						data: {
+							theme: applied.theme,
+							htmlClass: applied.htmlClass,
+							background: applied.background,
+							storedPreference: applied.storedPreference,
+						},
+					},
+				],
+			},
+		],
+		omittedNodes: 0,
+		theme: applied.theme,
+	};
+}
+
+/**
+ * R5 — serious/critical axe violations at wcag2a/wcag2aa, in EVERY theme, each violation naming
+ * the theme it was seen in. The page is handed back in the light theme, so the predicates measured
+ * after R5 see the paint they always did.
+ *
+ * A theme that fails to apply is a critical violation, not a skipped scan and not a repeat of the
+ * other theme; so is a pair of themes that paint the same background.
+ */
+export async function scanRouteThemes(page: Page): Promise<{ violations: A11yViolation[]; themes: ThemeApplied[] }> {
+	const violations: A11yViolation[] = [];
+	const themes: ThemeApplied[] = [];
+	try {
+		for (const theme of AUDIT_THEMES) {
+			const applied = await applyTheme(page, theme);
+			themes.push(applied);
+			if (!applied.applied) {
+				violations.push(themeViolation("theme-did-not-apply", applied));
+				continue;
+			}
+			violations.push(...(await scanA11y(page, { theme })));
+		}
+		const light = themes.find((t) => t.theme === "light");
+		const dark = themes.find((t) => t.theme === "dark");
+		if (light?.applied && dark?.applied && light.background === dark.background) {
+			violations.push(themeViolation("theme-paint-unchanged", dark));
+		}
+	} finally {
+		await applyTheme(page, "light");
+	}
+	return { violations, themes };
 }
 
 export interface RouteSignals {
