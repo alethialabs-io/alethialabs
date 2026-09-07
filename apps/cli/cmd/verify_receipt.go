@@ -128,26 +128,26 @@ func verifyReceipt(sr *verify.SignedReceipt, fetchKeys func() ([]api.SigningKey,
 	// it was altered after signing, and no flag forgives that.
 	if err := sr.VerifySelf(); err != nil {
 		return signatureVerdict{
-				Algorithm: sr.Algorithm,
-				KeyID:     sr.KeyID,
-				Verified:  false,
-				Trust:     string(trustNone),
-				Reason:    err.Error(),
-			}, fmt.Errorf("receipt FAILED verification: %w\n"+
-				"The receipt does not match its own signature — it was altered after it was signed", err)
+			Algorithm: sr.Algorithm,
+			KeyID:     sr.KeyID,
+			Verified:  false,
+			Trust:     string(trustNone),
+			Reason:    err.Error(),
+		}, fmt.Errorf("receipt FAILED verification: %w\n"+
+			"The receipt does not match its own signature — it was altered after it was signed", err)
 	}
 
 	// An operator-supplied key beats anything the control plane says about itself.
 	if opts.pinned != nil {
 		if err := sr.Verify(opts.pinned); err != nil {
 			return signatureVerdict{
-					Algorithm: sr.Algorithm,
-					KeyID:     sr.KeyID,
-					Verified:  false,
-					Trust:     string(trustNone),
-					Reason:    err.Error(),
-				}, fmt.Errorf("receipt FAILED verification against the key you supplied: %w\n"+
-					"The receipt is internally consistent, so it was signed — but by key %s, not by yours", err, sr.KeyID)
+				Algorithm: sr.Algorithm,
+				KeyID:     sr.KeyID,
+				Verified:  false,
+				Trust:     string(trustNone),
+				Reason:    err.Error(),
+			}, fmt.Errorf("receipt FAILED verification against the key you supplied: %w\n"+
+				"The receipt is internally consistent, so it was signed — but by key %s, not by yours", err, sr.KeyID)
 		}
 		return signatureVerdict{
 			Algorithm: sr.Algorithm,
@@ -209,13 +209,13 @@ func verifyReceipt(sr *verify.SignedReceipt, fetchKeys func() ([]api.SigningKey,
 		// decided earlier and never reach here. Rather than invent a reason for a state that
 		// should not exist, fail closed.
 		return signatureVerdict{
-				Algorithm: sr.Algorithm,
-				KeyID:     sr.KeyID,
-				Verified:  true,
-				Trust:     string(trustSelf),
-				Reason:    "signature is self-consistent, but the trusted-key set answered inconsistently about who owns this key",
-			}, fmt.Errorf("could not establish who signed this receipt: key %s verified against the trusted set "+
-				"but that set does not say who vouches for it", sr.KeyID)
+			Algorithm: sr.Algorithm,
+			KeyID:     sr.KeyID,
+			Verified:  true,
+			Trust:     string(trustSelf),
+			Reason:    "signature is self-consistent, but the trusted-key set answered inconsistently about who owns this key",
+		}, fmt.Errorf("could not establish who signed this receipt: key %s verified against the trusted set "+
+			"but that set does not say who vouches for it", sr.KeyID)
 	default:
 		// The control plane vouched for the key under a custody model this CLI does not know.
 		// Report what it said rather than implying a familiar one.
