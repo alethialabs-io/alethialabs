@@ -8,6 +8,7 @@
 // client id is stored per-connection (credentials.client_id), so a self-hosted console needs only the
 // issuer configured (parity with AWS/GCP), not an `ALETHIA_AZURE_CLIENT_ID`.
 
+import { providerAudience } from "@repo/workload-identity";
 import { ClientAssertionCredential } from "@azure/identity";
 import {
 	assertionSourceForProvider,
@@ -15,7 +16,7 @@ import {
 } from "@/lib/oidc/assertion-source";
 
 /** The audience Azure AD expects for a federated-credential token exchange. */
-export const AZURE_TOKEN_AUDIENCE = "api://AzureADTokenExchange";
+export const AZURE_TOKEN_AUDIENCE = providerAudience("azure");
 
 /**
  * Builds a keyless credential for the customer tenant: the customer identity's client id + a minted
