@@ -45,6 +45,7 @@
     "check:ui-client-boundary": "node scripts/check-ui-client-boundary.mjs",
     "check:workflow-shape": "node scripts/ci/check-workflow-shape.mjs",
     "check:required-checks": "node scripts/ci/check-required-checks.mjs",
+    "check:e2e-ratchet": "node scripts/e2e-ratchet.mjs --self-test",
     "check:pnpm-script-refs": "node scripts/ci/check-pnpm-script-refs.mjs",
     "check:coverage-exclusions": "node scripts/check-coverage-exclusions.mjs",
     "check:floors-reproducible": "node scripts/check-floors-reproducible.mjs",

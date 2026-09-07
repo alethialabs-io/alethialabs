@@ -1,0 +1,249 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+name: Release gate
+# THE BROWSER GATE IN FRONT OF EVERY PRODUCTION DEPLOY.
+#
+# Production deploys on a push to `main` (deploy-console.yml), and `main` only ever takes a PR from
+# `staging` (branch-flow-guard.yml). So a required check on PRs into `main` IS "before every
+# production deployment". Each leg below boots its own ephemeral console — postgres service, the real
+# migrations, the enterprise scope, `next start` — and drives one Playwright project against it, in
+# the exact shape ci.yml's `e2e-browser` job proved. The repo is public, so the runner minutes are
+# free; nothing here needs a sandbox environment, a staging server, or a cloud credential.
+#
+# GREEN-BY-RATCHET. The suites were 39% green when this landed (apps/console/docs/qa/findings.md).
+# Every leg therefore fails on REGRESSION against apps/console/e2e/gate-baseline.json rather than
+# on absolute red — scripts/e2e-ratchet.mjs holds the rules — so the gate can be required from the
+# day the baseline is captured while the suites are repaired lane by lane.
+#
+# WHEN IT RUNS, and why each clause is there:
+#   · a non-draft PR into main or staging — the promotion path. `draft == false` is load-bearing:
+#     the standing dev→staging promotion PR lives as a DRAFT between promotions and was 22% of all
+#     CI runs (CONTRIBUTING.md); a one-hour gate re-fired on every dev merge would be the single most
+#     expensive mistake this file could make.
+#   · a PR into dev carrying the `release-gate:run` label — for a lane that wants per-PR gate
+#     feedback, and for capturing the baseline. `labeled` fires for ANY label, so the job also
+#     requires that the label just added is that one, or a random label would restart an hour.
+#   · workflow_dispatch, with an optional comma-separated `legs` input.
+# Never `merge_group` (Mergify replaced it), never `paths:` (a filtered-out required workflow reports
+# nothing and wedges every PR — validate-console.yml's header has the incident).
+#
+# Every `pnpm` invocation is `-C <dir> run` or `exec` (scripts/ci/check-pnpm-script-refs.mjs); every
+# step past the checkout that runs on failure carries the #4084 conjunct
+# (scripts/ci/check-workflow-shape.mjs). The `WORKFLOW_HEALTH_SUBSTANTIVE_JOB` line lets
+# scripts/ci/workflow-health.mjs ask whether the leg that matters actually ran.
+on:
+  pull_request:
+    branches: [main, staging, dev]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: "Comma-separated legs to run (hero, elench-ai, console, canvas, qa, audit). Empty runs every leg."
+        required: false
+        default: ""
+
+concurrency:
+  group: release-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  WORKFLOW_HEALTH_SUBSTANTIVE_JOB: "Release gate (qa)"
+
+jobs:
+  legs:
+    name: Which legs run
+    runs-on: ubuntu-latest
+    # The trigger logic lives HERE, once, because `matrix` is not available in a job-level `if:`
+    # and six copies of this clause would drift six ways. The gate job `needs` this one, so when
+    # this is skipped nothing below runs — and a skipped required context on a DRAFT is harmless:
+    # a draft cannot merge, and `ready_for_review` fires the run the moment it is not one.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.pull_request.draft == false
+          && (github.event.action != 'labeled' || github.event.label.name == 'release-gate:run')
+          && (contains(fromJSON('["main","staging"]'), github.base_ref)
+              || contains(github.event.pull_request.labels.*.name, 'release-gate:run')))
+    outputs:
+      include: ${{ steps.pick.outputs.include }}
+    steps:
+      - id: pick
+        name: Pick the legs (all, or the dispatch input)
+        env:
+          LEGS: ${{ inputs.legs }}
+        run: |
+          node - "$LEGS" <<'EOF'
+          // THE LEG TABLE. One row per Playwright project the gate drives; `capabilities` is the
+          // promise the leg makes (apps/console/e2e/helpers/capabilities.ts) and `floor` is the
+          // fewest tests `--list` may report before the leg is called testMatch drift, not a suite.
+          // `args` is the LITERAL `--project=<name>` flag, spelled out per row on purpose:
+          // playwright.config.ts's dead-zone guard (#2875) reads every workflow for exactly that
+          // string to prove a project runs somewhere, and `--project=${{ matrix.project }}` is a
+          // template it cannot see through. The emitter stays literal so the guard stays honest.
+          const legs = [
+            { project: "hero",      args: "--project=hero",      workers: 1, retries: 1, capabilities: "",        manifest: false, floor: 1 },
+            { project: "elench-ai", args: "--project=elench-ai", workers: 1, retries: 1, capabilities: "ai-mock", manifest: false, floor: 1 },
+            { project: "console",   args: "--project=console",   workers: 2, retries: 1, capabilities: "stripe",  manifest: false, floor: 1 },
+            { project: "canvas",    args: "--project=canvas",    workers: 1, retries: 1, capabilities: "",        manifest: false, floor: 1 },
+            { project: "qa",        args: "--project=qa",        workers: 3, retries: 1, capabilities: "stripe",  manifest: false, floor: 300 },
+            { project: "audit",     args: "--project=audit",     workers: 1, retries: 0, capabilities: "",        manifest: true,  floor: 1 },
+          ];
+          const want = (process.argv[2] || "").split(",").map((s) => s.trim()).filter(Boolean);
+          for (const w of want) {
+            if (!legs.some((l) => l.project === w)) {
+              console.error(`::error::unknown leg "${w}" (known: ${legs.map((l) => l.project).join(", ")})`);
+              process.exit(1);
+            }
+          }
+          const chosen = want.length ? legs.filter((l) => want.includes(l.project)) : legs;
+          if (chosen.length === 0) { console.error("::error::no legs selected"); process.exit(1); }
+          require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, `include=${JSON.stringify(chosen)}\n`);
+          console.log(`legs: ${chosen.map((l) => l.project).join(", ")}`);
+          EOF
+
+  gate:
+    name: Release gate (${{ matrix.project }})
+    needs: [legs]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.legs.outputs.include) }}
+    # Same hermetic recipe as ci.yml's e2e-browser job: a real Postgres, a production console booted
+    # by the Playwright `webServer`, email-OTP with the code scraped from the teed log. OpenFGA is
+    # left unset so the community PostgresRbacPDP is the authz engine.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: alethia
+          POSTGRES_PASSWORD: alethia-dev-secret
+          POSTGRES_DB: alethia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alethia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+      BETTER_AUTH_SECRET: release-gate-placeholder-secret
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      # `next start` is production mode with no trusted ingress proxy in front of it, so every
+      # request lands in ONE shared rate-limit bucket. apps/console/lib/config/auth.ts documents
+      # this escape hatch; it is also what let the `console` and `qa` projects into CI at all — the
+      # 5-OTP/60s cap was the recorded reason they could not be gating.
+      ALETHIA_AUTH_RATE_LIMIT: "0"
+      ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
+      ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
+      ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
+      DEV_CONSOLE_LOG: /tmp/alethia-release-gate-${{ matrix.project }}.log
+      PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/results.json
+      # THE PROMISE. A spec tagged `@needs:<capability>` on a leg that does not promise it is red,
+      # never a skip; a promise whose variables are absent fails the pre-check step in seconds.
+      ALETHIA_E2E_CAPABILITIES: ${{ matrix.capabilities }}
+      ALETHIA_AI_MOCK: ${{ matrix.capabilities == 'ai-mock' && '1' || '' }}
+      ALETHIA_QA_E2E: ${{ matrix.project == 'qa' && '1' || '' }}
+      # Stripe TEST mode, only where promised. `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` is inlined at
+      # BUILD time (apps/console/lib/billing/config.ts), which is why it is job-level env and not a
+      # run-step env. The webhook secret is any test-mode `whsec_`: nothing reaches CI, and the
+      # card-less trial syncs deterministically without one. NEVER `ALETHIA_DEPLOYMENT_MODE=hosted`
+      # here — packages/email then refuses the OTP log fallback and nothing can sign in.
+      STRIPE_SECRET_KEY: ${{ matrix.capabilities == 'stripe' && secrets.STRIPE_TEST_SECRET_KEY || '' }}
+      STRIPE_WEBHOOK_SECRET: ${{ matrix.capabilities == 'stripe' && secrets.STRIPE_TEST_WEBHOOK_SECRET || '' }}
+      STRIPE_PRICE_TEAM: ${{ matrix.capabilities == 'stripe' && vars.STRIPE_TEST_PRICE_TEAM || '' }}
+      STRIPE_PRICE_AI_PLUS: ${{ matrix.capabilities == 'stripe' && vars.STRIPE_TEST_PRICE_AI_PLUS || '' }}
+      STRIPE_PRICE_AI_MAX: ${{ matrix.capabilities == 'stripe' && vars.STRIPE_TEST_PRICE_AI_MAX || '' }}
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ matrix.capabilities == 'stripe' && vars.STRIPE_TEST_PUBLISHABLE_KEY || '' }}
+    steps:
+      # `id:` so the two `!cancelled()` steps at the bottom can ask whether there is a WORKSPACE:
+      # the `services:` block starts before this checkout, and a failed image pull skips everything
+      # here while `cancelled()` stays false (#4084).
+      - id: checkout
+        uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      # Next's OWN incremental compiler cache, not turbo's. `pnpm -C apps/console run build` calls
+      # the package script directly — turbo's `build.dependsOn` never fires — so a turbo cache step
+      # here would restore nothing the build reads (ci.yml carries that inert step; this file does
+      # not repeat it).
+      - name: Cache Next's incremental compiler output
+        uses: actions/cache@v6
+        with:
+          path: apps/console/.next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+      - run: pnpm install --frozen-lockfile
+      # BEFORE the build: an unset repository secret is a named failure at the top of the job,
+      # not a downgraded run at the bottom.
+      - name: Guard — every promised capability has its variables (seconds, before a single build)
+        run: pnpm -C apps/console exec tsx e2e/helpers/capabilities.ts --assert-env
+      - name: Migrate the test database (schema + programmables/RLS + app role)
+        run: pnpm -C apps/console run db:migrate
+      # Build @alethia/ee FIRST, and prove its dist exists. Without it lib/auth/scope.ts falls back
+      # to `{ userId, orgId: userId }` and every org-scoped assertion goes vacuous — the failure
+      # ci.yml's e2e-browser job records. The community `pnpm -F @alethia/ee` selector is the one
+      # deliberate `-F <pkg> <script>`; the guard step is what makes it safe.
+      - name: Build @alethia/ee (the console resolves EE scope only when its dist exists)
+        run: pnpm -F @alethia/ee build
+      - name: Guard — ee/dist must exist, or the leg silently runs community scope
+        run: |
+          test -f ee/dist/index.js || {
+            echo "::error::ee/dist/index.js missing — the console would fall back to community"
+            echo "::error::scope (actor.orgId === userId), which makes org-scoped assertions vacuous."
+            exit 1
+          }
+      - name: Build the console (the production image the browser drives)
+        run: pnpm -C apps/console run build
+      - name: Install Playwright (Chromium + OS deps)
+        run: pnpm -F console exec playwright install --with-deps chromium
+      # The audit's denominator. The manifest RAISES on zero routes rather than returning [], and
+      # this proves it still does before the leg spends an hour on it.
+      - name: Guard — the route manifest still resolves (audit legs)
+        if: ${{ matrix.manifest }}
+        run: node scripts/lib/console-routes.mjs --summary
+      # A vacuous green is the failure this repo names most often. A testMatch that drifted to
+      # zero tests exits 0; a `qa` leg listing 40 tests is not a smaller suite, it is the wrong one.
+      - name: Guard — the leg lists at least its floor of tests
+        run: |
+          list=$(pnpm -F console exec playwright test ${{ matrix.args }} --list 2>&1) || { echo "$list"; exit 1; }
+          echo "$list"
+          total=$(echo "$list" | sed -nE 's/.*Total: ([0-9]+) test.*/\1/p' | tail -1)
+          if [ -z "$total" ] || [ "$total" -lt ${{ matrix.floor }} ]; then
+            echo "::error::--project=${{ matrix.project }} listed ${total:-0} test(s), below the floor of ${{ matrix.floor }} (testMatch drift?)"
+            exit 1
+          fi
+      - name: Run the leg (Playwright boots `next start` via webServer)
+        run: >-
+          pnpm -F console exec playwright test
+          ${{ matrix.args }}
+          --workers=${{ matrix.workers }}
+          --retries=${{ matrix.retries }}
+          --reporter=list,html,json,./e2e/reporters/qa-reporter.ts
+      # The verdict is the RATCHET, not the exit code above: a regression against the committed
+      # baseline, a new test that did not pass, a skip that is not a BUG fixme, or a recorded
+      # failure that now passes (move the ledger). Runs on failure too — that is when it matters.
+      - name: Ratchet — no regression against apps/console/e2e/gate-baseline.json
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: node scripts/e2e-ratchet.mjs --project=${{ matrix.project }} --results=apps/console/test-results/results.json --step-summary >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the report, traces and the JSON the ratchet read
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-gate-${{ matrix.project }}
+          path: |
+            apps/console/playwright-report/
+            apps/console/test-results/
+          retention-days: 14

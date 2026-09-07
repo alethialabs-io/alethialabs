@@ -17,8 +17,9 @@
 
 import { chromium, type FullConfig } from "@playwright/test";
 import fs from "node:fs";
+import { promised } from "./helpers/capabilities";
 import { loadRootEnv } from "./helpers/env";
-import { closeDb, orgIdBySlug, userIdByEmail } from "./helpers/db";
+import { closeDb, db, orgIdBySlug, userIdByEmail } from "./helpers/db";
 import {
 	AUTH_DIR,
 	buildMemberPersona,
@@ -164,12 +165,40 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
 		});
 	}
 
+	// THE PROMISE IS VERIFIED AGAINST THE PRODUCT, NOT THE ENV. A leg that promises `stripe`
+	// (helpers/capabilities.ts) must produce a team persona whose org came through the REAL Pro
+	// trial with a Stripe customer behind it — `signUpTeamTrial`'s Hobby fallback is a broken
+	// promise, not a degraded run, and the direct billing-row grant below stays only for the
+	// unpromised case. Before this, the fallback was silent and 35 billing specs were "measured"
+	// against a self-managed short-circuit.
+	const stripePromised = promised().has("stripe");
 	try {
-		// ownerHobby is required; ownerTeam is best-effort (Stripe may be unconfigured on this box).
+		// ownerHobby is required; ownerTeam is best-effort ONLY when Stripe was not promised.
 		await create("ownerHobby", (page, email) => signUpHobby(page, email));
 		try {
-			await create("ownerTeam", (page, email) => signUpTeamTrial(page, email));
+			await create("ownerTeam", async (page, email) => {
+				const r = await signUpTeamTrial(page, email);
+				if (stripePromised && r.plan !== "team") {
+					throw new Error(
+						"stripe is PROMISED on this leg (ALETHIA_E2E_CAPABILITIES) but the Pro tile was " +
+							"unavailable and the signup fell back to Hobby — the promise was kept in the " +
+							"environment and broken in the product (is STRIPE_SECRET_KEY reaching the console?).",
+					);
+				}
+				return r;
+			});
+			if (stripePromised && records.ownerTeam?.orgId) {
+				const rows = await db()<{ stripe_customer_id: string | null }[]>`
+					select stripe_customer_id from organization_billing where organization_id = ${records.ownerTeam.orgId}`;
+				if (!rows[0]?.stripe_customer_id) {
+					throw new Error(
+						`stripe is PROMISED but organization_billing for ${records.ownerTeam.orgSlug} carries no ` +
+							"stripe_customer_id after the trial — the subscription was not created on Stripe.",
+					);
+				}
+			}
 		} catch (err) {
+			if (stripePromised) throw err;
 			console.warn(`[global-setup] ownerTeam persona unavailable: ${(err as Error).message}`);
 		}
 		// `member` lives inside ownerTeam's org, so it can only exist if ownerTeam did.

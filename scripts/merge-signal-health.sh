@@ -159,4 +159,46 @@ else
 No signal has met the bar yet — keep observing."
 fi
 
+# ── THE RELEASE GATE — a second signal source, graded the same way ─────────────────────────────
+# release-gate.yml runs on every non-draft PR into main or staging (and on a labelled dev PR). Its
+# legs are REQUIRED on main by infra/github, and observed on staging. This grades the same
+# `Release gate (<leg>)` contexts over the last $RUNS of those runs so the staging→main promotion
+# decision (delete the staging exclusions in infra/github/main.tf) is a data verdict, not a feeling.
+#
+# "No runs yet" is printed as exactly that. Unlike the merge_group source above, this workflow is
+# NEW and a zero sample is not a dead event source — but it is also NOT evidence, and no PROMOTE
+# line is ever produced from it.
+gate_runs_json=$(gh run list --workflow release-gate.yml --event pull_request -L "$RUNS" --json databaseId,createdAt 2>/dev/null || echo '[]')
+gate_ids=$(printf '%s' "$gate_runs_json" | jq -r --arg c "$cutoff" '.[] | select(.createdAt >= $c) | .databaseId')
+if [ -z "$gate_ids" ]; then
+  summary+="
+
+Release gate (release-gate.yml, pull_request into main/staging): no runs in the last ${MAX_AGE_DAYS} days — no sample, so no verdict. Not evidence either way."
+else
+  gate_jobs="$(for id in $gate_ids; do
+    gh api "repos/{owner}/{repo}/actions/runs/$id/jobs" --jq '.jobs[] | {name, conclusion}'
+  done)"
+  gate_report=""
+  for leg in hero elench-ai console canvas qa audit; do
+    sig="Release gate ($leg)"
+    total=$(printf '%s\n' "$gate_jobs" | jq -rs --arg n "$sig" '[.[] | select(.name==$n and (.conclusion=="success" or .conclusion=="failure"))] | length')
+    passed=$(printf '%s\n' "$gate_jobs" | jq -rs --arg n "$sig" '[.[] | select(.name==$n and .conclusion=="success")] | length')
+    total=${total:-0}; passed=${passed:-0}
+    if [ "$total" -eq 0 ]; then
+      gate_report+=$(printf "  %-52s  no graded runs yet" "$sig")$'\n'
+    else
+      rate=$(( passed * 100 / total ))
+      gate_report+=$(printf "  %-52s  %3d%%  (%d/%d graded)" "$sig" "$rate" "$passed" "$total")$'\n'
+    fi
+  done
+  gate_count=$(printf '%s' "$gate_ids" | grep -c . || true)
+  summary+="
+
+Release gate (release-gate.yml) — last $gate_count pull_request runs into main/staging:
+
+$gate_report
+The gate is REQUIRED on main and observed on staging. Requiring it on staging too is deleting the
+staging exclusions in infra/github/main.tf, once every leg is green at the bar above."
+fi
+
 publish_report "$summary"
