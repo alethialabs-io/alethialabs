@@ -53,6 +53,38 @@ describe("FilterChip", () => {
 		await user.click(chip);
 		expect(onClick).toHaveBeenCalledTimes(1);
 	});
+
+	// #4197: the count is a named ink tier at full strength, never an alpha over the chip's
+	// ink — at α=0.6 over the page background no foreground reaches 4.5:1. A filled chip is
+	// inverted end to end, so there the count inherits the chip's `text-background`.
+	it("renders the count as tertiary ink when resting and inherited ink when filled", () => {
+		const { rerender } = render(
+			<FilterChip on={false} onClick={() => {}} count={3}>
+				Healthy
+			</FilterChip>,
+		);
+		const count = screen.getByText("3");
+		expect(count.className).toContain("text-text-tertiary");
+		expect(count.className).toContain("font-mono");
+		expect(count.className).not.toMatch(/opacity-|\/\d+/);
+		expect(screen.getByRole("button", { name: "Healthy 3" })).toBeInTheDocument();
+
+		rerender(
+			<FilterChip on onClick={() => {}} count={3}>
+				Healthy
+			</FilterChip>,
+		);
+		expect(screen.getByText("3").className).not.toContain("text-text-tertiary");
+	});
+
+	it("renders no count node when none is given", () => {
+		render(
+			<FilterChip on={false} onClick={() => {}}>
+				Healthy
+			</FilterChip>,
+		);
+		expect(screen.getByRole("button", { name: "Healthy" }).childNodes).toHaveLength(1);
+	});
 });
 
 describe("FilterChipGroup", () => {
@@ -111,6 +143,25 @@ describe("FilterChipGroup", () => {
 		);
 		expect(screen.getByRole("button", { name: "Production ✓" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Staging" })).toBeInTheDocument();
+	});
+
+	it("passes an option's count through to its chip", () => {
+		render(
+			<FilterChipGroup
+				options={[
+					{ value: "healthy", label: "Healthy", count: 12 },
+					{ value: "failed", label: "Failed", count: 0 },
+					{ value: "unknown", label: "Unknown" },
+				]}
+				selected={[]}
+				onToggle={() => {}}
+				inline
+			/>,
+		);
+		expect(screen.getByRole("button", { name: "Healthy 12" })).toBeInTheDocument();
+		// A zero is a count, not an absence — it renders.
+		expect(screen.getByRole("button", { name: "Failed 0" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Unknown" })).toBeInTheDocument();
 	});
 
 	it("renders nothing when there are no options", () => {

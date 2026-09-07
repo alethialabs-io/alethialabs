@@ -15,11 +15,26 @@ interface FilterChipProps {
 	children: React.ReactNode;
 	/** Render the label in the mono voice (versions, regions, other technical values). */
 	mono?: boolean;
+	/**
+	 * A facet count, rendered as the chip's trailing mono figure. It lives here, not at the
+	 * call site, because every filter bar that re-derived it did so as `opacity-60` over the
+	 * chip's ink — and an alpha over `--muted-foreground` composites to a grey no token can
+	 * rescue (#4197: at α=0.6 over the page background the darkest reachable ink is 2.9:1).
+	 * The count is a real tier, `--text-tertiary`, at full strength.
+	 */
+	count?: number;
 	className?: string;
 }
 
 /** A single toggleable filter chip; filled when selected, `aria-pressed` for state. */
-export function FilterChip({ on, onClick, children, mono, className }: FilterChipProps) {
+export function FilterChip({
+	on,
+	onClick,
+	children,
+	mono,
+	count,
+	className,
+}: FilterChipProps) {
 	return (
 		<button
 			type="button"
@@ -35,6 +50,18 @@ export function FilterChip({ on, onClick, children, mono, className }: FilterChi
 			)}
 		>
 			{children}
+			{count !== undefined && (
+				// A filled chip is inverted ink end to end, so the count inherits `text-background`
+				// there; only the resting chip has a tertiary tier to step down to. The space is
+				// for the accessible name ("Healthy 3", not "Healthy3") — a whitespace-only run
+				// between flex items is not laid out, so `gap-1.5` alone sets the visual gap.
+				<>
+					{" "}
+					<span className={cn("font-mono text-ui-2xs", !on && "text-text-tertiary")}>
+						{count}
+					</span>
+				</>
+			)}
 		</button>
 	);
 }
@@ -43,6 +70,8 @@ export function FilterChip({ on, onClick, children, mono, className }: FilterChi
 export interface FilterChipOption {
 	value: string;
 	label: string;
+	/** A facet count over the unfiltered universe; rendered by the chip when present. */
+	count?: number;
 }
 
 interface FilterChipGroupProps<T extends FilterChipOption> {
@@ -87,7 +116,13 @@ export function FilterChipGroup<T extends FilterChipOption>({
 				{options.map((opt) => {
 					const on = selected.includes(opt.value);
 					return (
-						<FilterChip key={opt.value} on={on} onClick={() => onToggle(opt.value)} mono={mono}>
+						<FilterChip
+							key={opt.value}
+							on={on}
+							onClick={() => onToggle(opt.value)}
+							mono={mono}
+							count={opt.count}
+						>
 							{render ? render(opt, on) : opt.label}
 						</FilterChip>
 					);

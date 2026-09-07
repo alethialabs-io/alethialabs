@@ -48,15 +48,9 @@ function toggled(selection: string[], value: string): string[] {
 		: [...selection, value];
 }
 
-/** A facet count rendered as the chip's trailing mono figure. */
-function ChipLabel({ option }: { option: FacetCount }) {
-	return (
-		<>
-			{option.label}
-			<span className="font-mono text-ui-2xs opacity-60">{option.count}</span>
-		</>
-	);
-}
+// The chip groups below pass their `FacetCount` options straight through: FilterChip renders
+// an option's `count` as its trailing mono figure in its own ink, so no `render` callback
+// (and no call-site alpha over the chip's ink — #4197) is needed here.
 
 /** Facet counts as the muted trailing `hint` FacetFilter / MultiCombobox rows reserve. */
 function withCountHint(options: FacetCount[]) {
@@ -101,7 +95,6 @@ export function ChannelsFilterBar({
 				options={facets.status}
 				selected={filters.status}
 				onToggle={(value) => set("status", toggled(filters.status, value))}
-				render={(option) => <ChipLabel option={option} />}
 				inline
 			/>
 			<FilterBarReset
@@ -140,14 +133,12 @@ export function PoliciesFilterBar({
 				options={facets.status}
 				selected={filters.status}
 				onToggle={(value) => set("status", toggled(filters.status, value))}
-				render={(option) => <ChipLabel option={option} />}
 				inline
 			/>
 			<FilterChipGroup<FacetCount>
 				options={facets.kinds}
 				selected={filters.kinds}
 				onToggle={(value) => set("kinds", toggled(filters.kinds, value))}
-				render={(option) => <ChipLabel option={option} />}
 				inline
 			/>
 			<MultiCombobox
@@ -184,7 +175,6 @@ export function ActivityFilterBar({ facets }: { facets: ActivityView["facets"] }
 				options={facets.status}
 				selected={filters.status}
 				onToggle={(value) => set("status", toggled(filters.status, value))}
-				render={(option) => <ChipLabel option={option} />}
 				inline
 			/>
 			<FilterBarReset
