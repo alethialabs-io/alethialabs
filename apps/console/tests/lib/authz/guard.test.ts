@@ -193,7 +193,7 @@ describe("authorizeCli", () => {
 			type: "connector",
 			id: "c-9",
 		});
-		expect(result).toEqual({ actor: CLI_ACTOR });
+		expect(result).toEqual({ actor: CLI_ACTOR, credential: "session" });
 	});
 
 	it("maps a ForbiddenError to a 403 Response", async () => {
@@ -285,7 +285,7 @@ describe("authorizeCli with an X-Alethia-Org header", () => {
 			type: "connector",
 		});
 
-		expect(result).toEqual({ actor: { userId: "u-cli", orgId: "u-cli" } });
+		expect(result).toEqual({ actor: { userId: "u-cli", orgId: "u-cli" }, credential: "session" });
 		// The literal, not `actor.userId`: the team org the old fallback served was "org-team".
 		expect((result as { actor: Actor }).actor.orgId).toBe("u-cli");
 		expect(enforce).toHaveBeenCalledWith({ userId: "u-cli", orgId: "u-cli" }, "manage_connectors", {
@@ -302,7 +302,7 @@ describe("authorizeCli with an X-Alethia-Org header", () => {
 			type: "connector",
 		});
 
-		expect(result).toEqual({ actor: { userId: "u-cli", orgId: "org-team" } });
+		expect(result).toEqual({ actor: { userId: "u-cli", orgId: "org-team" }, credential: "session" });
 		expect(getActiveScope).toHaveBeenCalledWith("u-cli", "org-team");
 	});
 
@@ -352,7 +352,7 @@ describe("authorizeCli with an X-Alethia-Org header", () => {
 			{ type: "connector" },
 		);
 
-		expect(result).toEqual({ actor: CLI_ACTOR });
+		expect(result).toEqual({ actor: CLI_ACTOR, credential: "session" });
 		expect(getActiveScope).toHaveBeenCalledWith("u-cli");
 	});
 });
@@ -394,14 +394,14 @@ describe("authorizeCli with a service-account token", () => {
 		// The PINNED org, not `getActiveScope(userId)` — which would resolve whichever org that
 		// PERSON last had active, i.e. somebody's session state standing in for a machine's scope.
 		expect(getActiveScope).toHaveBeenCalledWith("u-minter", "org-A");
-		expect(result).toEqual({ actor: SERVICE_ACTOR });
+		expect(result).toEqual({ actor: SERVICE_ACTOR, credential: "service_token" });
 	});
 
 	it("accepts a header that AGREES with the token's org", async () => {
 		const result = await authorizeCli(serviceReq("org-A"), "manage_tokens", { type: "org" });
 
 		expect(getActiveScope).toHaveBeenCalledWith("u-minter", "org-A");
-		expect(result).toEqual({ actor: SERVICE_ACTOR });
+		expect(result).toEqual({ actor: SERVICE_ACTOR, credential: "service_token" });
 	});
 
 	// THE ONE THAT MATTERS. Refused, never ignored: ignoring it would let a pipeline believe it is
