@@ -11,6 +11,7 @@ import { PanelLeftOpen } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
+import { SHELL_HEADER } from "@/components/shell/content-frame";
 import { authClient } from "@/lib/auth/client";
 import { orgHref } from "@/lib/routing";
 import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
@@ -137,7 +138,7 @@ export function SidebarRail({
     <TooltipProvider delayDuration={0}>
       <div className="flex h-full w-full flex-col items-center bg-background">
         {/* Brand mark → org home */}
-        <div className="flex h-[53px] w-full shrink-0 items-center justify-center border-b">
+        <div className={cn("flex w-full shrink-0 items-center justify-center border-b", SHELL_HEADER)}>
           <Link
             href={orgHref(orgSlug)}
             aria-label="Home"

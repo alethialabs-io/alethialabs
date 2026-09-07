@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { SupportAskChat } from "@/components/support/ask/support-ask-chat";
+import { SHELL_VIEWPORT } from "@/components/shell/content-frame";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
 export const metadata = pageMetadata({
@@ -22,7 +23,7 @@ export default async function SupportAskPage({
 }) {
 	const { org } = await params;
 	return (
-		<div className="flex h-[calc(100vh-3.5rem)] -m-4 flex-col sm:-m-6 lg:-m-8 xl:-m-10">
+		<div className={`flex ${SHELL_VIEWPORT} -m-4 flex-col sm:-m-6 lg:-m-8 xl:-m-10`}>
 			<SupportAskChat orgSlug={org} />
 		</div>
 	);
