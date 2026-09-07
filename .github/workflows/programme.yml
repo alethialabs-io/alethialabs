@@ -86,7 +86,7 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
-          go-version-file: test/e2e/go.mod
+          go-version-file: go.work
           cache: false
 
       # The Go spine mirror (the ceiling/debt verdicts the rollup reads) is normally refreshed on the
