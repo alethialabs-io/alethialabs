@@ -3,9 +3,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 // CLAUDE.md §6's shared-surface table, made mechanical for every row where a token shape can carry
-// the rule and the drift was measured — five of its seven, plus the section's closing "No stat-card
-// strips". StatusBadge and the filter standard are the two that stay prose, and the list below says
-// why each of them does.
+// the rule and the drift was measured — six of its seven, plus the section's closing "No stat-card
+// strips". The filter standard is the one that stays prose, and the list below says why.
+// StatusBadge was the other one until #3797; it is now guarded in two halves, and the same list
+// says which half of it is STILL prose, because "the row is enforced" is the sentence a reader
+// turns into "nothing else can drift".
 //
 // WHY THIS EXISTS. That table states its own reason — "if two pages disagree about how something
 // looks or reads, the user is being told the product is two products" — and no row of it was
@@ -199,13 +201,60 @@
 //                  defect arriving from the other direction (a real table element that is not
 //                  `@repo/ui/table`, so it agrees with nothing).
 //
+//   @repo/ui/status-badge   TWO SHAPES, both in apps/console/{components,app,lib,hooks}, as the
+//                  `status_badge` rule (#3797). This header said for a year that the row had no
+//                  negative form: the defect is "a `<Badge>` plus a LOCAL colour map", and a
+//                  colour map is an object literal a token scan cannot tell from any other. Half
+//                  of that is still true — see the omissions below. What it missed is that the
+//                  drift has two shapes that ARE token shapes.
+//
+//                  (1) THE CSS HALF: the `vx-status` class token — `vx-status`, `vx-status--<tier>`,
+//                  `vx-status__dot` — which `packages/brand/src/tokens.css` defines and
+//                  `packages/ui/src/status-badge.tsx` is the only file meant to write. In console
+//                  code it means the badge's markup was rebuilt by hand. Measured on an unmodified
+//                  `dev`: one file, three tokens — the site #3627's adoption of the canvas left
+//                  behind, which is the issue's own positive control on real code. The token's
+//                  four other console mentions are all inside comments, which the stripper blanks.
+//
+//                  (2) THE POSITIVE FORM: a SECOND DEFINITION of the status vocabulary. The finite
+//                  set is DERIVED from the component on every run — `STATUS_TIERS` plus the keys of
+//                  `STATUS_TIER` — and the derivation REFUSES to run if either half reads as empty
+//                  or if a mapped value is not a tier, because a broken read must not pass as a
+//                  clean console. The shape is two CONSECUTIVE entries of one object literal both
+//                  keyed on a word from that set: an object keyed on the vocabulary, whatever it
+//                  maps to. EXCEPT where the value IS a tier — a quoted tier word, or a one-level
+//                  object holding nothing but `tier:`/`vx:` (a tier word) and `label:`/`word:`.
+//                  That exemption is the whole matcher, and it is not an allowance: a
+//                  `Record<Domain, StatusTier>` handed to `<StatusBadge tier>` is what
+//                  `statusTier()`'s own doc REQUIRES for a vocabulary the map does not know, and
+//                  it is what the console's own conversions turned into (`members-table.tsx`,
+//                  `transactions-table.tsx`, `VERDICT_TIER` in `artifact-panel.tsx`). Measured on
+//                  the first draft, which lacked it: seven files flagged, six of them that fix — a
+//                  matcher reporting its own answer, which is the one thing the type-scale rule's
+//                  comment says makes a rule unfixable. With it: two files. An object carrying a
+//                  `className` BESIDE its `tier:` is still a finding, and so is a tier read from a
+//                  constant (`active: TIER.ok`) — loudly, which is the recordable direction.
+//                  `hits` counts adjacent PAIRS, so a map of n statuses records n−1, and removing
+//                  entries from a map is recorded progress rather than an unchanged 1.
+//
 // NOT guarded, and the omission is stated here rather than left for a reader to infer that the
 // whole table is enforced:
 //
-//   StatusBadge      — 33 files, the best-adopted row, and the one with no negative form to match:
-//                      the defect is "a `<Badge>` plus a LOCAL colour map", and a local colour map
-//                      is an object literal, which is exactly the thing a token-shape scan cannot
-//                      tell from any other object literal. #3622 and #3623 name the live ones.
+//   StatusBadge's RENDERED half — "a page that should have shown a status pill and showed a
+//                      `<Badge>`" is an ABSENCE, and it is still not a grep: the two matchers above
+//                      find the class and the map somebody wrote, never the badge nobody reached
+//                      for. Three spellings of a status map are also not read, each stated so the
+//                      next reader does not conclude the row is closed: entries separated by a
+//                      comment or a blank line (the window is two lines and the stripper blanks a
+//                      comment line in place, so the pair on either side of it is read and the pair
+//                      across it is not); a value that spans lines (`pending: (\n<Icon />\n)`),
+//                      which hides the pair it opens and none other; and an array value, whose own
+//                      commas end the entry early. A `switch`/ternary chain over the vocabulary is
+//                      not read either — there is no `,` between its arms — and three console
+//                      files hold one (`lib/jobs/toast-copy.ts`, `hooks/use-job-toasts.ts`,
+//                      `lib/billing/sync.ts`): toast copy and a billing state machine, none of
+//                      which renders a status, so a matcher there would buy three entries that are
+//                      not decisions.
 //   EmptyState's negative form — "a page that should have shown an empty state and showed nothing"
 //                      is not a grep either, and the matcher above cannot see it: it finds the
 //                      empty states somebody wrote by hand, never the ones nobody wrote at all.
@@ -372,6 +421,95 @@ const SCOPES = {
 		exclude: ["apps/console/app/(public)"],
 	},
 };
+
+// ── the status vocabulary, derived ────────────────────────────────────────────────────────────
+
+/** The component that owns the status vocabulary, and the only file meant to write `.vx-status`. */
+const STATUS_BADGE = "packages/ui/src/status-badge.tsx";
+
+/**
+ * The status vocabulary, READ OUT OF THE COMPONENT and never typed here: `STATUS_TIERS` (the six
+ * visual tiers) and the keys of `STATUS_TIER` (every product status the badge resolves on its own).
+ * The `status_badge` rule's second matcher is built from the union, so a word added to the map
+ * reaches the guard without an edit to this file — and a word REMOVED from it stops being one the
+ * guard defends, which is the right direction for a rule about a second definition.
+ *
+ * It RAISES rather than returning an empty set, in three cases, because the failure mode of a
+ * derivation is a matcher built over nothing that then matches nothing and reads as a clean tree:
+ * the tiers block reads as empty, the map block reads as empty, or a mapped value is not one of the
+ * tiers — that last one is the cheap proof that the block it read IS the status map and not some
+ * other object the file grew.
+ *
+ * @param {string} text the component's source
+ * @returns {{tiers: string[], statuses: string[]}}
+ */
+export function statusVocabulary(text) {
+	const tiersBlock = text.match(/\bSTATUS_TIERS\s*=\s*\[([^\]]*)\]\s*as const/);
+	const tiers = [...(tiersBlock?.[1] ?? "").matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+	const mapBlock = text.match(/\bSTATUS_TIER\s*:\s*Record<string,\s*StatusTier>\s*=\s*\{([\s\S]*?)\n\};/);
+	const entries = [...(mapBlock?.[1] ?? "").matchAll(/^\s*([a-z_]+)\s*:\s*"([a-z_]+)"\s*,/gm)];
+	const statuses = entries.map((m) => m[1]);
+	const why = (what) =>
+		new Error(
+			`${STATUS_BADGE}: ${what}. The \`status_badge\` rule derives its vocabulary from this file, and a ` +
+				"derivation that reads nothing would build a matcher that matches nothing — which is not a " +
+				"clean console, it is a guard that never looked. Fix the read (or the component) rather than " +
+				"trusting the green.",
+		);
+	if (tiers.length === 0) throw why("read ZERO tiers out of `STATUS_TIERS`");
+	if (statuses.length === 0) throw why("read ZERO statuses out of `STATUS_TIER`");
+	const tierSet = new Set(tiers);
+	const stray = entries.find((m) => !tierSet.has(m[2]));
+	if (stray !== undefined) throw why(`read \`${stray[1]}: "${stray[2]}"\` out of \`STATUS_TIER\`, and "${stray[2]}" is not a tier — the block it read is not the status map`);
+	return { tiers, statuses };
+}
+
+/**
+ * The positive-form matcher, built from a vocabulary. A pure function of its argument so the
+ * self-test can prove the derivation FLOWS INTO the matcher — a fixture vocabulary's words are
+ * matched by the regex built from it and not by the live one — rather than only that the live
+ * regex matches a probe.
+ *
+ * Two CONSECUTIVE entries of one object literal, both keyed on a vocabulary word, with the first
+ * entry's value NOT a tier (see the header for why the tier is exempt and what it must look like to
+ * be one). The first value may be a quoted string (commas inside it are fine), a template literal,
+ * a one-level `{…}` object, a JSX element, or any comma-free run; the second entry only has to
+ * open. `\s*\n?\s*` between them is what admits the one-per-line form the formatter writes, inside
+ * the two-line window `scan()` runs over.
+ *
+ * @param {{tiers: string[], statuses: string[]}} vocab
+ * @returns {RegExp}
+ */
+export function statusMapMatcher({ tiers, statuses }) {
+	// Longest first, so `pending_approval` cannot be read as `pending` + `_approval` — the `:` that
+	// must follow would refuse it anyway, but an alternation should not depend on that.
+	const words = [...new Set([...tiers, ...statuses])].sort((a, b) => b.length - a.length || a.localeCompare(b));
+	const KEY = `["']?(?:${words.join("|")})["']?`;
+	const TIER = `["'](?:${tiers.join("|")})["']`;
+	const STR = `"[^"\\n]*"|'[^'\\n]*'`;
+	// A one-level object whose entries are ONLY a tier (under `tier:` or the canvas's `vx:`) and a
+	// label (`label:` or `word:`). The lookahead insists the tier is present; the bounded repeat
+	// insists nothing else is, so `{ tier: "active", className: "bg-green" }` is not this.
+	const TIER_OBJ = `\\{(?=[^{}\\n]*\\b(?:tier|vx)\\s*:\\s*${TIER})\\s*(?:(?:(?:tier|vx)\\s*:\\s*${TIER}|(?:label|word)\\s*:\\s*(?:${STR}))\\s*,?\\s*){1,3}\\}`;
+	const VALUE = `(?:${STR}|\`[^\`\\n]*\`|\\{[^{}\\n]*\\}|[^,\\n{}"'\`])*`;
+	// The tier exemption is a lookahead ANCHORED ON THE COLON, and the anchoring is load-bearing:
+	// written after a `\s*`, the engine gave back the space and evaluated the lookahead at
+	// ` "active",` — where a leading space is "not a tier", so the negative lookahead passed and
+	// the matcher fired on its own anti-probe. On the colon there is nothing to give back.
+	return new RegExp(
+		`(?<![\\w-])${KEY}\\s*:(?!\\s*(?:${TIER}|${TIER_OBJ})(?:\\s+(?:as|satisfies)\\s+\\w+)?\\s*,)\\s*${VALUE},\\s*\\n?\\s*${KEY}\\s*:`,
+		"g",
+	);
+}
+
+/**
+ * Derived at load, from the real file, with the real `fs`: the vocabulary is a property of the
+ * component, not of the tree being scanned, so it does not go through the injectable `readFile`
+ * the self-test hands `check()`. A missing or unreadable component refuses the whole guard here,
+ * before any mode runs — including the self-test — which is the loud direction.
+ */
+const VOCAB = statusVocabulary(fs.readFileSync(path.join(ROOT, STATUS_BADGE), "utf8"));
+const STATUS_MAP_RE = statusMapMatcher(VOCAB);
 
 /**
  * The guarded rows. `id` is also the allowlist's section name, so a section this file does not
@@ -733,6 +871,41 @@ const RULES = [
 				say: "hand-writes a table element. Use `DataTable`, or `@repo/ui/table` — a raw `<table>` agrees with no other table in the console about its header type, its row rule or what it shows when there is nothing in it.",
 				probe: 'const a = <table className="w-full">{rows}</table>;',
 				antiProbe: "const a = <Table>{rows}</Table>;",
+			},
+		],
+	},
+	{
+		// RUBRIC.md's H3, in two halves (#3797). The header states both shapes, the exemption the
+		// second one carries and why, and the spellings neither reads. Both matchers reach `lib/`
+		// and `hooks/` because the vocabulary's console-side maps live in `lib/` today
+		// (`lib/canvas/node-status.ts`), and a status map does not stop being one for living
+		// outside a component.
+		id: "status_badge",
+		surface: "@repo/ui/status-badge",
+		matchers: [
+			{
+				// THE CSS HALF. The three tokens `status-badge.tsx` writes — the block, its tier
+				// modifier and its dot — and nothing else: both sides are bounded by `[\w-]`, so
+				// `vx-statusline` and `my-vx-status` are other tokens, and `vx-clamp`, which the badge
+				// also wears and the console may wear on its own, is not this one.
+				scope: "console_code",
+				re: /(?<![\w-])vx-status(?:__\w+|--[\w-]+)?(?![\w-])/g,
+				say: "rebuilds the status badge's markup by hand — `.vx-status` is the design system's class, and `StatusBadge` is the one thing that writes it. Use `StatusBadge` from `@repo/ui/status-badge`; for a vocabulary `statusTier()` does not know, pass `tier` explicitly.",
+				probe: 'const a = <span className="vx-status vx-status--active"><span className="vx-status__dot" /></span>;',
+				// The FIX, wearing the badge's own sibling class and a token that merely starts with
+				// this one — the two things a widening to `vx-status` without its boundaries would take.
+				antiProbe: 'const a = <StatusBadge status={row.status} className="vx-clamp vx-statusline" />;',
+			},
+			{
+				// THE POSITIVE FORM. Built from `VOCAB` above, never written here. The probe is a colour
+				// map over two vocabulary words; the anti-probe is the FIX — a domain vocabulary
+				// resolved to tiers for `<StatusBadge tier>` — which is the one axis a widening has to
+				// be caught on, because it is what six of the seven files the first draft flagged were.
+				scope: "console_code",
+				re: STATUS_MAP_RE,
+				say: "defines the status vocabulary a second time — an object keyed on words `@repo/ui/status-badge` already maps, so two surfaces can now disagree about what a status looks like. Render the status through `StatusBadge`; a vocabulary of its own resolves to a `StatusTier` (`Record<YourStatus, StatusTier>`) and hands it to `tier`, which this rule does not read as a finding.",
+				probe: 'const TONE = { active: "text-green-600", failed: "text-red-600" };',
+				antiProbe: 'const MEMBER_STATUS_TIER: Record<MemberStatus, StatusTier> = { active: "active", pending: "pending", suspended: "idle" };',
 			},
 		],
 	},
@@ -1673,6 +1846,67 @@ function selfTest() {
 	ok("...and an N-up card grid is not a table", !flags('const a = <div className="grid grid-cols-3 gap-4 hover:bg-muted/30" />;'));
 	ok("a raw <table> is flagged", flags('const a = <table className="w-full">{rows}</table>;'));
 	ok("...but @repo/ui/table's <Table> is the fix", !flags("const a = <Table>{rows}</Table>;"));
+
+	// ── StatusBadge (#3797): the CSS half ────────────────────────────────────────────────────
+	ok("a raw vx-status class is flagged", flags('const a = <span className="vx-status vx-status--active" />;'));
+	ok("...and the dot on its own", flags('const a = <span className="vx-status__dot" />;'));
+	ok("...and as a selector in a string", flags('const css = ".vx-status { gap: 4px }";'));
+	ok("...but StatusBadge itself, wearing the clamp class the badge also wears, is the fix", !flags('const a = <StatusBadge status="active" className="vx-clamp vx-clamp--tight" />;'));
+	ok("...and a token that merely starts or ends with it is another token", !flags('const a = <div className="vx-statusline my-vx-status" />;'));
+	// The four live mentions that are NOT findings are all comments, and one of them is the JSX
+	// shape that continues onto the next line — the stripper's `{/*` latch is what keeps it out.
+	ok("...nor the token inside a JSX comment that runs on", !flags("const a = (\n\t<p>\n\t\t{/* 3px centres the rail on the shared `.vx-status__dot` — see\n\t\t    env-ui.tsx */}\n\t\tx\n\t</p>\n);"));
+	ok("...and it reaches lib/, which is where the console's status maps live", run({ ...ballast(), "apps/console/lib/x/a.ts": 'export const C = "vx-status--idle";' }).problems.length > 0);
+
+	// ── StatusBadge (#3797): the positive form — a second definition of the vocabulary ───────
+	ok("a local status → class map is flagged", flags('const TONE = { active: "text-green-600", failed: "text-red-600" };'));
+	ok("...one entry per line, as the formatter writes it", flags('const TONE = {\n\tactive: "bg-green",\n\tfailed: "bg-red",\n};'));
+	ok("...with quoted keys, and a value holding a comma", flags('const HINT = { "pending_approval": "Waiting, still.", "pending": "grey" };'));
+	ok("...mapping to icons, which is a second rendering of the same set", flags('const ICON = { success: <Check className="size-4" />, pending: <Loader2 className={cn("size-4")} /> };'));
+	ok("...or to Badge variants", flags('const V = { active: "default", failed: "destructive" };'));
+	ok("...or to an object that smuggles a class in BESIDE its tier", flags('const M = { active: { tier: "active", className: "bg-green" }, failed: { tier: "failed", className: "bg-red" } };'));
+	ok("...or to a tier read from a constant rather than written — loudly, which is the recordable direction", flags("const M = { active: TIER.ok, failed: TIER.bad };"));
+	// THE FIX IS NOT A FINDING. Six of the seven files the first draft flagged were this shape,
+	// and a rule that reports its own answer is unfixable.
+	ok("a domain vocabulary resolved to a tier for <StatusBadge tier> is the fix and is not flagged", !flags('const MEMBER_STATUS_TIER: Record<MemberStatus, StatusTier> = {\n\tactive: "active",\n\tpending: "pending",\n\tsuspended: "idle",\n};'));
+	ok("...nor a tier beside its label", !flags('const STATUS = { pending: { tier: "pending", label: "Pending" }, failed: { tier: "failed", label: "Failed" } };'));
+	ok("...nor `vx` beside its label, the canvas's spelling of the same pair", !flags('const META = { live: { vx: "active", label: "Live" }, destroying: { vx: "pending", label: "Destroying" } };'));
+	ok("...nor a tier written `as const`", !flags('const T = { active: "active" as const, failed: "failed" as const };'));
+	ok("...nor a map keyed on a vocabulary of its own, whatever it maps to", !flags('const VERDICT_TIER = { pass: "active", fail: "failed", partial: "pending" };'));
+	ok("...nor one entry keyed on a status, which is a property and not a map", !flags('const s = { active: true, name: "x" };'));
+	ok("...nor two statuses that are not consecutive entries of one object", !flags("const a = { active: 1 };\nconst b = { failed: 2 };"));
+	ok("...nor a word that merely contains one", !flags("const c = { activeCount: 1, failedCount: 2 };"));
+	ok("...nor the badge's own STATUS_TIER, which lives under packages/ and is never scanned", !Object.values(SCOPES).flatMap((s) => filesFor(s, fakeTree({ [STATUS_BADGE]: "", "apps/console/components/a.tsx": "" }).listDir).files).includes(STATUS_BADGE));
+	// `hits` counts adjacent PAIRS. A three-entry map is two, so that removing entries from a map
+	// is recorded progress rather than an unchanged 1 — asserted through the allowlist, which is
+	// where the number is spent.
+	const threeMap = { ...ballast(), "apps/console/components/a.tsx": 'const TONE = {\n\tactive: "a",\n\tpending: "b",\n\tfailed: "c",\n};' };
+	const mapEntry = (hits) => `baseline: 0\ndebt: 1\n\nstatus_badge:\n  - path: apps/console/components/a.tsx\n    hits: ${hits}\n    lifts: "#3797 — a colour map"\n${EMPTY_LIST.slice(EMPTY_LIST.indexOf("scanned:"))}`;
+	ok("a map of three statuses records two hits — adjacent pairs", run(threeMap, mapEntry(2)).problems.length === 0 && says(run(threeMap, mapEntry(3)), /declares 3 hit\(s\) and there are 2/), JSON.stringify(run(threeMap, mapEntry(2)).problems));
+	// THE DERIVATION. A matcher built from a vocabulary that read as empty would match nothing and
+	// report a clean tree, so every way the read can come back empty RAISES instead.
+	const derives = (text) => {
+		try {
+			return statusVocabulary(text);
+		} catch (err) {
+			return String(err instanceof Error ? err.message : err);
+		}
+	};
+	const TIERS_SRC = 'export const STATUS_TIERS = [\n\t"active",\n\t"failed",\n] as const;\n';
+	const MAP_SRC = 'export const STATUS_TIER: Record<string, StatusTier> = {\n\tonline: "active",\n\terror: "failed",\n};\n';
+	ok("the vocabulary is read out of both blocks of the component", (() => {
+		const v = derives(TIERS_SRC + MAP_SRC);
+		return typeof v === "object" && v.tiers.join(",") === "active,failed" && v.statuses.join(",") === "online,error";
+	})());
+	ok("...and a component with no tiers RAISES rather than deriving an empty set", /ZERO tiers/.test(String(derives(MAP_SRC))));
+	ok("...and one with no map RAISES too", /ZERO statuses/.test(String(derives(TIERS_SRC))));
+	ok("...and a map whose value is not a tier RAISES — the block it read is not the status map", /is not a tier/.test(String(derives(TIERS_SRC + 'export const STATUS_TIER: Record<string, StatusTier> = {\n\tonline: "green",\n};\n'))));
+	ok("the live component yields both halves, and the words the header cites", VOCAB.tiers.includes("live") && VOCAB.statuses.includes("pending_approval") && VOCAB.tiers.length >= 5 && VOCAB.statuses.length >= 20, `${VOCAB.tiers.length} tiers, ${VOCAB.statuses.length} statuses`);
+	// The derivation FLOWS INTO the matcher: a word only a fixture vocabulary knows is matched by
+	// the regex built from that fixture and by nothing built from the live one.
+	const fixtureRe = statusMapMatcher({ tiers: ["ok"], statuses: ["frobnicated", "wibbled"] });
+	ok("...and the matcher is built FROM it, not written beside it", fixtureRe.test('{ frobnicated: "x", wibbled: "y" }') && !flags('const m = { frobnicated: "x", wibbled: "y" };'));
+	ok("...so a fixture vocabulary's own tier is exempt under the regex built from it", !statusMapMatcher({ tiers: ["ok"], statuses: ["frobnicated", "wibbled"] }).test('{ frobnicated: "ok", wibbled: "ok" }'));
 
 	// ── money that never writes its own `$` ──────────────────────────────────────────────────
 	ok("an interpolation glued directly onto a formatted number is flagged", flags('const s = `${symbol}${n.toLocaleString("en-US")}`;'));
