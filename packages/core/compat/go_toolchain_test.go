@@ -66,13 +66,13 @@ func TestRunnerBuilderGoMinorMatchesGoWork(t *testing.T) {
 			"not fail the build.\n"+
 			"Landing a new Go minor is a FIVE-part change: go.work, the four go.mod files, "+
 			"apps/runner/Dockerfile.base, and the golangci-lint pin in ci.yml (the linter must be "+
-			"built by the new Go, or every required Go job reds). Bump them together, and expect "+
-			"to re-record the Go coverage floors: a new compiler counts statements differently.", got, want, want, got)
+			"built by the new Go, or every required Go job reds). Bump them together. A new toolchain "+
+			"can also MOVE coverage with no code change (Go 1.27 moved test/e2e by 0.4 points on an "+
+			"identical tree): find out which statements before re-recording a floor.", got, want, want, got)
 	}
 }
 
-// The four modules `go.work` uses must carry the same Go version as `go.work` itself — the FULL
-// version, patch included, unlike the builder-image test above.
+// The four modules `go.work` uses must carry the same Go MINOR as `go.work` itself.
 //
 // The test above catches the builder image drifting from go.work; this one catches the OTHER
 // half-done bump, which is just as silent. Go permits go.work AHEAD of a module's `go`
@@ -83,12 +83,14 @@ func TestRunnerBuilderGoMinorMatchesGoWork(t *testing.T) {
 // this test the contract was prose. The module list is read from go.work's `use (...)` block so
 // a fifth module is covered the day it is added, not the day someone remembers.
 //
-// Patch-level equality is deliberate. Dependabot's go-minor-patch group runs `go mod tidy`, and
-// a dep that requires a newer patch moves the `go` directive of the modules it touches and no
-// others: #2404 left go.work and apps/runner at 1.26.6 with cli, core and e2e at 1.26.5, and
-// nothing red-ed. Every actions/setup-go resolves the exact patch from go.work, so a module
-// behind it is validated by a compiler its own directive does not name. The cost is that such
-// a dependabot PR reds until all five directives follow — which is the forcing intended.
+// MINOR, not patch, for the same reason the builder image is compared on the minor: dependabot's
+// go-minor-patch group runs `go mod tidy`, and a dep requiring a newer patch moves the `go` line
+// of the modules it touches and no others (#2404 left go.work and apps/runner at 1.26.6 with cli,
+// core and e2e at 1.26.5). That is harmless — a module's `go` line is a minimum language version,
+// and the language and GODEBUG surface is the minor — and requiring patch equality would turn
+// every Go patch release into a hand five-file commit before that dependabot PR could be green.
+// apps/cli is also published standalone (mirror-cli), where a patch-level minimum only forces a
+// consumer's toolchain download for no gain.
 func TestWorkspaceModulesGoMinorMatchGoWork(t *testing.T) {
 	root := repoRoot(t)
 	if root == "" {
@@ -96,8 +98,8 @@ func TestWorkspaceModulesGoMinorMatchGoWork(t *testing.T) {
 	}
 	work := readRepoFile(t, root, "go.work")
 
-	// `go 1.NN.P` — the whole version this time.
-	workRe := regexp.MustCompile(`(?m)^go[ \t]+(\d+\.\d+(?:\.\d+)?)\b`)
+	// `go 1.NN.P` — capture the minor only.
+	workRe := regexp.MustCompile(`(?m)^go[ \t]+(\d+\.\d+)(?:\.\d+)?\b`)
 	wm := workRe.FindStringSubmatch(work)
 	if wm == nil {
 		t.Fatal("go.work has no `go <version>` directive — this test measured nothing")
@@ -122,12 +124,10 @@ func TestWorkspaceModulesGoMinorMatchGoWork(t *testing.T) {
 		if mm[1] != want {
 			t.Errorf("%s says go %s but go.work says go %s.\n"+
 				"go.work AHEAD of a module is silent: that module compiles at the older language "+
-				"version with the older GODEBUG defaults while every CI job reports %s. All five "+
-				"directives must be EQUAL, patch included (a tidy side-effect moves only the modules "+
-				"it touches). A Go minor "+
+				"version with the older GODEBUG defaults while every CI job reports %s. A Go minor "+
 				"is a FIVE-part change — go.work, the four go.mod files, apps/runner/Dockerfile.base "+
-				"and the golangci-lint pin in ci.yml — then re-record the Go coverage floors, "+
-				"which a new compiler moves. Bump them together.", rel, mm[1], want, want)
+				"and the golangci-lint pin in ci.yml. Bump them together, and if coverage moves with "+
+				"no code change, find out which statements before re-recording a floor.", rel, mm[1], want, want)
 		}
 	}
 }
