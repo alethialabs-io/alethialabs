@@ -362,6 +362,11 @@ function badRequest(error: string): NextResponse {
  * listed, and it stays correct after those rows stop existing: the caller's personal org is a real
  * org they are the sole member of, so listing it is not a widening.
  *
+ * THAT SENTENCE IS TRUE OF A SESSION AND FALSE OF A SERVICE TOKEN (#4154), and the list is split
+ * on exactly that. For a token `actor.userId` is the MINTER, so "the caller's personal org" is a
+ * tenant the token was never pinned to; a token lists `org_id = <pin>` and nothing else, while a
+ * session keeps the two-element list. `authorizeCli` reports which it verified as `credential`.
+ *
  * `?mine=true` NARROWS THE ORG SCOPE, IT DOES NOT REPLACE IT. `user_id = <caller> AND org_id in
  * (...)` — "my jobs in this org", not "my jobs anywhere". Replacing the scope with `user_id`
  * alone is the same leak as the old default arm reached through the flag instead.
@@ -402,7 +407,7 @@ function badRequest(error: string): NextResponse {
 export async function GET(req: Request) {
 	const auth = await authorizeCli(req, "view", { type: "job" });
 	if ("error" in auth) return auth.error;
-	const { actor } = auth;
+	const { actor, credential } = auth;
 
 	const { searchParams } = new URL(req.url);
 
@@ -468,10 +473,28 @@ export async function GET(req: Request) {
 	// the caller's personal org, whose id IS their user id. That is the recovery this needs, and it
 	// is expressible on `org_id` alone, which keeps the tenancy boundary one column wide.
 	//
-	// It is also why the walk can still use `idx_jobs_org_cursor`: a disjunction across two columns
-	// plans a BitmapOr, which is unordered, so every page re-sorts. An `IN` on the leading index
+	// THE LIST IS SPLIT BY CREDENTIAL, BECAUSE ITS SECOND ELEMENT MEANS TWO DIFFERENT THINGS (#4154).
+	// For a session, `actor.userId` is the caller and their personal org is a tenant they are the
+	// sole member of — listing it widens nothing. For a service token, `actor.userId` is the person
+	// who MINTED the credential, so that same element names a tenant the token is NOT pinned to: an
+	// org-T CI token would list the minter's personal-org runner jobs. Moving the boundary onto
+	// `org_id` alone closed the owner arm, but the problem was never the shape of the predicate, it
+	// is which VALUES are in the list — and this value is only the caller's for a session. A token
+	// therefore gets `org_id = <pin>` and nothing else; the pin is the whole of what it was issued
+	// for. (A token minted for the minter's own personal org is the degenerate case — `orgId ===
+	// userId` — and the two predicates agree there.)
+	//
+	// The session arm is kept rather than narrowed too, and `?mine=true` composes onto it as
+	// before, because `alethia jobs list` is shipped and walks it: for a member of a Teams org the
+	// personal-org rows are the pre-#3942 runner-lifecycle jobs an `org_id = <team>` filter hid.
+	//
+	// Either way the walk still uses `idx_jobs_org_cursor`: a disjunction across two columns plans a
+	// BitmapOr, which is unordered, so every page re-sorts. An `IN` (or `=`) on the leading index
 	// column does not.
-	const orgScope: SQL = inArray(jobs.org_id, [actor.orgId, actor.userId]);
+	const orgScope: SQL =
+		credential === "service_token"
+			? eq(jobs.org_id, actor.orgId)
+			: inArray(jobs.org_id, [actor.orgId, actor.userId]);
 	const visible: SQL = mine.mine ? sql`(${eq(jobs.user_id, actor.userId)} and ${orgScope})` : orgScope;
 
 	const scope: [SQL, ...(SQL | undefined)[]] = [

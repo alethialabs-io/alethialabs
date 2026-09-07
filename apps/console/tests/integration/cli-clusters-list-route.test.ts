@@ -173,7 +173,7 @@ type Body = z.infer<typeof bodySchema>;
 
 /** Points the stubbed guard at `actor` for the next call. */
 function actingAs(userId: string, orgId: string): void {
-	vi.mocked(authorizeCli).mockResolvedValue({ actor: { userId, orgId } });
+	vi.mocked(authorizeCli).mockResolvedValue({ actor: { userId, orgId }, credential: "session" });
 }
 
 /** Drives the route and parses a 200 body. Fails loudly on any other status. */

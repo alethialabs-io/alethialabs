@@ -215,10 +215,30 @@ export async function ensureCliOrgAccess(
 }
 
 /**
+ * What kind of credential a CLI request carried — the one fact an `Actor` cannot express.
+ *
+ * `Actor` is `{ userId, orgId }` for both kinds, and for a service token `userId` is the human who
+ * MINTED it, not a caller. A route that treats `actor.userId` as "the person asking" — a `--mine`
+ * filter, a personal-org arm in a tenancy predicate — is therefore right for a session and wrong
+ * for a token, and nothing on the actor tells the two apart. This does. It is a closed union
+ * rather than a boolean so a third credential kind is a type error at every site that branches on
+ * it, not a silent fall-through into whichever arm the boolean's false case happened to be.
+ *
+ * - `session` — a signed-in human (device login). `userId` IS the caller.
+ * - `service_token` — a machine credential pinned to `orgId` at mint time (#4154). `userId` is
+ *   the minting profile, and nothing about the caller may be inferred from it beyond membership.
+ */
+export type CliCredential = "session" | "service_token";
+
+/**
  * CLI-route authorization: verify the CLI token, resolve the actor, and enforce.
- * Returns `{ actor }` on success or `{ error }` (the Response to return). CLI routes
+ * Returns `{ actor, credential }` on success or `{ error }` (the Response to return). CLI routes
  * query via getServiceDb() (no RLS), so the caller MUST also scope its query by
  * `actor.orgId` — enforce() is the permission gate, org_id is the tenancy boundary.
+ *
+ * `credential` says which kind of bearer this was (see {@link CliCredential}). It is REQUIRED on
+ * the success arm rather than optional-defaulting-to-session, because the wide reading is the
+ * unsafe one: a route that forgot to ask would otherwise be handed "a human" for a token.
  *
  * An optional `X-Alethia-Org` header selects which org the call is scoped to (the CLI
  * `--org` flag). It is honoured only after verifying the caller is a member of that org
@@ -234,7 +254,7 @@ export async function authorizeCli(
 	req: Request,
 	action: Action,
 	resource: { type: Resource; id?: string },
-): Promise<{ actor: Actor } | { error: Response }> {
+): Promise<{ actor: Actor; credential: CliCredential } | { error: Response }> {
 	const { payload, error } = await verifyCliToken(req);
 	if (error) return { error };
 	const userId = payload?.sub;
@@ -280,7 +300,7 @@ export async function authorizeCli(
 			if (e instanceof ForbiddenError) return { error: forbidden() };
 			throw e;
 		}
-		return { actor: serviceActor };
+		return { actor: serviceActor, credential: "service_token" };
 	}
 
 	if (headerOrg && !(await isOrgMember(userId, headerOrg))) {
@@ -299,7 +319,7 @@ export async function authorizeCli(
 		if (e instanceof ForbiddenError) return { error: forbidden() };
 		throw e;
 	}
-	return { actor };
+	return { actor, credential: "session" };
 }
 
 /**

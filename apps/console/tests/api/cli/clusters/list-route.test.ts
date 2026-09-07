@@ -244,6 +244,7 @@ describe("GET /api/cli/clusters — a joined scope restated on one column (#3672
 		countResult = 0;
 		vi.mocked(authorizeCli).mockResolvedValue({
 			actor: { userId: USER, orgId: ORG },
+			credential: "session",
 		});
 		vi.mocked(getServiceDb).mockReturnValue(fakeDb() as never);
 	});

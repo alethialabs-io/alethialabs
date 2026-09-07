@@ -209,6 +209,7 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		countResult = 0;
 		vi.mocked(authorizeCli).mockResolvedValue({
 			actor: { userId: USER, orgId: ORG },
+			credential: "session",
 		});
 		vi.mocked(getServiceDb).mockReturnValue(fakeDb() as never);
 	});
@@ -248,6 +249,39 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		// there is no second arm for a caller's identity to widen it through.
 		await drive("");
 		expect(normalized(render(captured.rowsWhere).sql)).toBe('"jobs"."org_id" in ($1, $2)');
+	});
+
+	it("scopes a SERVICE TOKEN to its pin alone — the minter's personal org is not in the list (#4154)", async () => {
+		// The second element of the session list above is `actor.userId` read as a personal org,
+		// and for a service token `actor.userId` is the human who MINTED it — so that element names
+		// a tenant the token was never pinned to. Same actor, different credential, and the WHOLE
+		// clause is asserted so an extra arm is as visible as the missing one.
+		vi.mocked(authorizeCli).mockResolvedValue({
+			actor: { userId: USER, orgId: ORG },
+			credential: "service_token",
+		});
+		await drive("");
+		const where = render(captured.rowsWhere);
+		expect(normalized(where.sql)).toBe('"jobs"."org_id" = $1');
+		// ONE parameter: the pin. `USER` must not reach the query at all in the default mode.
+		expect(where.params).toEqual([ORG]);
+		expect(where.sql).not.toContain('"user_id"');
+		// And the count reads the same tuple, so `total` cannot report a wider set than the rows.
+		expect(render(captured.countWhere).params).toEqual([ORG]);
+	});
+
+	it("composes ?mine=true onto the token's pin, not onto the session list", async () => {
+		// `?mine=true` is the arm that most obviously reads as "me", and for a token "me" is the
+		// minter. It narrows the pin; it must not become the way the personal org gets back in.
+		vi.mocked(authorizeCli).mockResolvedValue({
+			actor: { userId: USER, orgId: ORG },
+			credential: "service_token",
+		});
+		await drive("?mine=true");
+		const where = render(captured.rowsWhere);
+		expect(normalized(where.sql)).toBe('("jobs"."user_id" = $1 and "jobs"."org_id" = $2)');
+		expect(where.params).toEqual([USER, ORG]);
+		expect(render(captured.countWhere).params).toEqual([USER, ORG]);
 	});
 
 	it("NARROWS to the caller INSIDE the org scope under ?mine=true, rather than replacing it", async () => {
