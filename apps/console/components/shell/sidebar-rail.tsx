@@ -11,7 +11,7 @@ import { PanelLeftOpen } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import { SHELL_HEADER } from "@/components/shell/content-frame";
+import { SHELL_HEADER } from "@/components/shell/shell-metrics";
 import { authClient } from "@/lib/auth/client";
 import { orgHref } from "@/lib/routing";
 import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";

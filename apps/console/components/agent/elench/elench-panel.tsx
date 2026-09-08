@@ -5,7 +5,7 @@
 import { motion } from "motion/react";
 import { Maximize2, Plus, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
-import { SHELL_HEADER } from "@/components/shell/content-frame";
+import { SHELL_HEADER } from "@/components/shell/shell-metrics";
 import type { AgentThread } from "@/lib/db/schema";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { ElenchConversationSwitcher } from "./elench-conversation-switcher";

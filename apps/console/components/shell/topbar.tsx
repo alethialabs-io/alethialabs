@@ -8,7 +8,7 @@ import { EnvSwitcher } from "@/components/env-switcher";
 import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
 import { SetupGuideButton } from "@/components/onboarding/setup-guide";
 import { ProjectSwitcher } from "@/components/project-switcher";
-import { SHELL_HEADER } from "@/components/shell/content-frame";
+import { SHELL_HEADER } from "@/components/shell/shell-metrics";
 import { Button } from "@repo/ui/button";
 import { AskAiButton } from "./ask-ai-button";
 

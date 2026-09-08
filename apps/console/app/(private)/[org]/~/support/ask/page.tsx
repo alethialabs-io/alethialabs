@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { SupportAskChat } from "@/components/support/ask/support-ask-chat";
-import { SHELL_VIEWPORT } from "@/components/shell/content-frame";
+import { SHELL_VIEWPORT } from "@/components/shell/shell-metrics";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
 export const metadata = pageMetadata({

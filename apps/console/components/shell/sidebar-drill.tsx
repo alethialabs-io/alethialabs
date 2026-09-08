@@ -6,7 +6,7 @@ import { ChevronLeft } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { SettingsNav } from "@/components/settings/settings-nav";
-import { SHELL_HEADER } from "@/components/shell/content-frame";
+import { SHELL_HEADER } from "@/components/shell/shell-metrics";
 import { ALERTS_SECTIONS, useAlertsSection } from "@/lib/stores/use-alerts-section";
 import { isEnumMember } from "@/lib/coerce";
 import { orgHref, projectHref } from "@/lib/routing";

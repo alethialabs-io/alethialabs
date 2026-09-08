@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Skeleton } from "@repo/ui/skeleton";
-import { SHELL_VIEWPORT } from "@/components/shell/content-frame";
+import { SHELL_VIEWPORT } from "@/components/shell/shell-metrics";
 
 /** Instant skeleton for the Ask-AI page: a conversation column + docked composer. */
 export default function SupportAskLoading() {

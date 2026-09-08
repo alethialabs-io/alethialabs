@@ -14,7 +14,7 @@
 
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { SHELL_HEADER, SHELL_VIEWPORT } from "@/components/shell/content-frame";
+import { SHELL_HEADER, SHELL_VIEWPORT } from "@/components/shell/shell-metrics";
 
 const { pathname } = vi.hoisted(() => ({
 	pathname: { current: "/acme/~/settings/general" },

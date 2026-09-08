@@ -6,7 +6,7 @@ import { PanelLeftClose } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 import { OrgSwitcher } from "@/components/org-switcher";
-import { SHELL_HEADER } from "@/components/shell/content-frame";
+import { SHELL_HEADER } from "@/components/shell/shell-metrics";
 import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import {
