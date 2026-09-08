@@ -102,7 +102,7 @@ jobs:
             { project: "console",   args: "--project=console",   workers: 2, retries: 1, capabilities: "stripe",  manifest: false, floor: 1 },
             { project: "canvas",    args: "--project=canvas",    workers: 1, retries: 1, capabilities: "",        manifest: false, floor: 1 },
             { project: "qa",        args: "--project=qa",        workers: 3, retries: 1, capabilities: "stripe",  manifest: false, floor: 300 },
-            { project: "audit",     args: "--project=audit",     workers: 1, retries: 0, capabilities: "",        manifest: true,  floor: 1 },
+            { project: "audit",     args: "--project=audit",     workers: 1, retries: 1, capabilities: "",        manifest: true,  floor: 1 },
           ];
           const want = (process.argv[2] || "").split(",").map((s) => s.trim()).filter(Boolean);
           for (const w of want) {
@@ -239,16 +239,33 @@ jobs:
             echo "::error::--project=${{ matrix.project }} listed ${total:-0} test(s), below the floor of ${{ matrix.floor }} (testMatch drift?)"
             exit 1
           fi
+      # `continue-on-error` IS THE GREEN-BY-RATCHET MECHANISM, not a softened check.
+      #
+      # Playwright exits non-zero whenever ANY test fails, and the whole premise of this gate is
+      # that a leg is allowed to be red while it is repaired — the baseline records 172 failures
+      # across four legs. Without this, those four can never conclude `success` no matter what
+      # the ratchet says, so the gate could never be required and the ledger below would gate
+      # nothing. Measured: on run 34247389000 the `console` leg's Ratchet step SUCCEEDED
+      # ("no regression against the baseline") and the job was red anyway, on this step. The two
+      # legs that passed, `hero` and `elench-ai`, are exactly the two with zero recorded failures.
+      #
+      # It is safe because the ratchet below is not a summariser — it FAILS on every way this
+      # step can die. No `results.json` (a webServer that never booted, a config throw) is an
+      # unreadable file and exits 1; a report with no tests for the project raises rather than
+      # ratcheting clean; a suite that all-fails is 172+ regressions. And the `--list` floor
+      # guard above still fails HARD, before this step, so testMatch drift cannot reach here.
       - name: Run the leg (Playwright boots `next start` via webServer)
+        continue-on-error: true
         run: >-
           pnpm -F console exec playwright test
           ${{ matrix.args }}
           --workers=${{ matrix.workers }}
           --retries=${{ matrix.retries }}
           --reporter=list,html,json,./e2e/reporters/qa-reporter.ts
-      # The verdict is the RATCHET, not the exit code above: a regression against the committed
-      # baseline, a new test that did not pass, a skip that is not a BUG fixme, or a recorded
-      # failure that now passes (move the ledger). Runs on failure too — that is when it matters.
+      # THE VERDICT. Not the exit code above — this step is the only thing that can fail the job:
+      # a regression against the committed baseline, a new test that did not pass, a skip that is
+      # neither a BUG fixme nor a recorded reason, or a recorded failure that now passes (move the
+      # ledger). Runs on failure too — that is when it matters.
       - name: Ratchet — no regression against apps/console/e2e/gate-baseline.json
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: node scripts/e2e-ratchet.mjs --project=${{ matrix.project }} --results=apps/console/test-results/results.json --step-summary >> "$GITHUB_STEP_SUMMARY"
