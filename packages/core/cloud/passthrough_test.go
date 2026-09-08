@@ -1178,6 +1178,70 @@ func rootTfvarKeys(t *testing.T, path string) map[string]bool {
 		})
 	}
 
+	// REFUSE what the collector cannot enumerate, rather than returning what it happened to see.
+	//
+	// This collector is keyed on the identifier `tfvars`, and a name-keyed collector cannot tell
+	// "no root writes" from "no root writes I can see". Two lines of ordinary Go defeat it:
+	//
+	//	m := tfvars
+	//	m["cluster_name"] = ...   // root key, no union, suite green
+	//
+	// Measured, not argued — that alias passes every guard in this file. Following it would mean
+	// building escape analysis inside a test: more precise, much larger, and a new failure surface
+	// of its own. Refusing is the cheaper sound move, and it is the only branch that cannot be
+	// mistaken for a clean result.
+	//
+	// So `tfvars` may appear ONLY as an index target, as an argument to `mergeProviderConfig`, in
+	// its own declaration, and in the return. Anything else — assigned to a local, stored in a
+	// struct field, handed to another function — is a value the guard would have to follow, and it
+	// says so instead. A write through a non-literal key is refused for the same reason: the keys
+	// are not enumerable, which is exactly the shape `mergeProviderConfig`'s own body has, and that
+	// body is legitimately outside this walk.
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.AssignStmt:
+			for _, lhs := range node.Lhs {
+				if idx, ok := lhs.(*ast.IndexExpr); ok {
+					if id, ok := idx.X.(*ast.Ident); ok && id.Name == "tfvars" {
+						if b, ok := idx.Index.(*ast.BasicLit); !ok || b.Kind != token.STRING {
+							t.Errorf("%s: a root tfvars write with a non-literal key at line %d — "+
+								"the keys are not enumerable, so this reader cannot say what is "+
+								"reserved", path, fset.Position(idx.Pos()).Line)
+						}
+					}
+				}
+			}
+			// `m := tfvars` and `m = tfvars` both hand the map to a name this walk does not follow.
+			for _, rhs := range node.Rhs {
+				if id, ok := rhs.(*ast.Ident); ok && id.Name == "tfvars" {
+					t.Errorf("%s: the root map is aliased at line %d — a write through the alias is "+
+						"invisible to this reader, so inline it or reserve the keys explicitly",
+						path, fset.Position(id.Pos()).Line)
+				}
+			}
+		case *ast.CallExpr:
+			fn, isIdent := node.Fun.(*ast.Ident)
+			for _, arg := range node.Args {
+				id, ok := arg.(*ast.Ident)
+				if !ok || id.Name != "tfvars" {
+					continue
+				}
+				if isIdent && fn.Name == "mergeProviderConfig" {
+					continue // the one function that legitimately receives it
+				}
+				t.Errorf("%s: the root map is passed to another function at line %d — its writes "+
+					"are invisible to this reader", path, fset.Position(id.Pos()).Line)
+			}
+		case *ast.KeyValueExpr:
+			if id, ok := node.Value.(*ast.Ident); ok && id.Name == "tfvars" {
+				t.Errorf("%s: the root map is stored in a composite literal at line %d — a write "+
+					"through that field is invisible to this reader", path,
+					fset.Position(id.Pos()).Line)
+			}
+		}
+		return true
+	})
+
 	keys := map[string]bool{}
 	add := func(lit ast.Expr) {
 		if b, ok := lit.(*ast.BasicLit); ok && b.Kind == token.STRING {
