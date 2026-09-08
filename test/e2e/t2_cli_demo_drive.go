@@ -204,8 +204,36 @@ func captureIdentityID(r *CLIDemoRun, out string) error {
 	if err := json.Unmarshal([]byte(out[start:end+1]), &ids); err != nil {
 		return fmt.Errorf("parsing the connector list: %w\n%s", err, out)
 	}
+	// EVERY identity for this cloud, not the first. `buildLabel` is `provider.toUpperCase()`, so
+	// every hetzner connector is labelled `HETZNER` — and nothing in the demo removes a connector,
+	// while `connections.ts` documents that a verified account plus a new connect is how one
+	// provider comes to hold two. On the second run against one org the label is ambiguous and
+	// `project create --cloud-account HETZNER` dies on the CLI's own (correct) refusal, which reads
+	// as a product defect and is a harness assumption.
+	var forProvider []struct {
+		ID       string `json:"id"`
+		Label    string `json:"label"`
+		Provider string `json:"provider"`
+	}
 	for _, id := range ids {
 		if strings.EqualFold(id.Provider, r.Provider) && id.ID != "" {
+			forProvider = append(forProvider, id)
+		}
+	}
+	if len(forProvider) > 1 {
+		labels := make([]string, len(forProvider))
+		for i, id := range forProvider {
+			labels[i] = fmt.Sprintf("%s (%s)", id.Label, id.ID)
+		}
+		return fmt.Errorf("this org holds %d %s connectors — %s — so `--cloud-account <label>` is "+
+			"ambiguous and the demo cannot say which account it means. The labels are DERIVED "+
+			"(provider.toUpperCase()), so a second connect for one cloud always collides. Remove the "+
+			"spare with `alethia connector remove %s`, or run the demo in an org with one connector "+
+			"per cloud:\n%s",
+			len(forProvider), r.Provider, strings.Join(labels, ", "), r.Provider, out)
+	}
+	for _, id := range forProvider {
+		{
 			r.IdentityID = id.ID
 			r.IdentityLabel = id.Label
 			if id.Label == "" {

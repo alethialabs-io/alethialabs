@@ -201,13 +201,22 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 			Environments:    environments,
 		}
 		// `--stage` and `--placement-mode` describe the DEFAULT environment, and a matrix's first
-		// entry IS the default environment. When both are present the matrix is the more specific
-		// statement, so the two top-level fields are taken from it rather than sent alongside a
-		// contradicting default — a form-declared matrix and a file-declared one then put the
-		// same bytes on the wire, which TestProj_CreateAnsweredAndFlaggedSendTheSameRequest holds.
+		// entry IS the default environment, so when only one of them speaks the matrix is the more
+		// specific statement and the top-level fields are taken from it. That keeps a form-declared
+		// matrix and a file-declared one putting the same bytes on the wire.
+		//
+		// AN EXPLICIT FLAG STILL WINS, which the first cut got wrong: it took the matrix
+		// unconditionally, so `--file x.yaml --stage production` sent `development` because that is
+		// what `environments[0]` said — silently, and contradicting project.mdx's own "a flag
+		// overrides the file for one run". The resolver already records WHERE each value came from,
+		// which is what `Origin` is for, so the question is answerable rather than guessable.
 		if len(environments) > 0 {
-			params.Stage = environments[0].Stage
-			params.Placement = environments[0].PlacementMode
+			if values.Origin("stage") != spec.FromFlag {
+				params.Stage = environments[0].Stage
+			}
+			if values.Origin("placement") != spec.FromFlag {
+				params.Placement = environments[0].PlacementMode
+			}
 		}
 		if err := runProjectCreate(client, os.Stdout, outputFormat(cmd), params); err != nil {
 			failf("Failed to create project: %v", err)
@@ -228,6 +237,7 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 // apply are the ones the create route itself enforces.
 func manifestForCreate(b *spec.Binder) (*manifest.Manifest, error) {
 	path, _ := b.String("file")
+	explicit := path != ""
 	if path == "" {
 		found, ok := manifest.Find(".")
 		if !ok {
@@ -240,7 +250,19 @@ func manifestForCreate(b *spec.Binder) (*manifest.Manifest, error) {
 		return nil, err
 	}
 	m.Normalize()
-	if err := m.Validate(manifest.Rules{Stages: environmentStages(), Placements: placementModes()}); err != nil {
+	// RequireDedicated: `project create` is the front door that brings a project's first Fabric
+	// into being, which is exactly the case the server applies that rule to.
+	if err := m.Validate(manifest.Rules{
+		Stages:           environmentStages(),
+		Placements:       placementModes(),
+		RequireDedicated: true,
+	}); err != nil {
+		if !explicit {
+			// A file nobody asked for, refused. Saying so is the difference between "your command
+			// is wrong" and "the directory you ran in holds a broken file" — a scripted caller
+			// that never passed `--file` would otherwise read this as a defect in its invocation.
+			return nil, fmt.Errorf("%s in this directory was read because no --file was given, and it cannot be used: %w", path, err)
+		}
 		return nil, err
 	}
 	return m, nil

@@ -308,3 +308,32 @@ func TestCaptureIdentityIDTakesTheLabelAndRefusesWithoutOne(t *testing.T) {
 		}
 	})
 }
+
+// A second connector for one cloud makes the demo's `--cloud-account <label>` ambiguous, because
+// the label is DERIVED (`provider.toUpperCase()`) rather than chosen. Taking the first would
+// attach whichever the server listed first; the beat refuses and says how to fix the org.
+func TestCaptureIdentityIDRefusesTwoConnectorsForOneCloud(t *testing.T) {
+	run := &CLIDemoRun{Provider: "hetzner"}
+	out := `[{"id":"ci-a","label":"HETZNER","provider":"hetzner"},` +
+		`{"id":"ci-b","label":"HETZNER","provider":"hetzner"}]`
+	err := captureIdentityID(run, out)
+	if err == nil {
+		t.Fatal("two connectors for one cloud were accepted — the demo would attach whichever was listed first")
+	}
+	for _, want := range []string{"ci-a", "ci-b", "connector remove"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q, so it is not actionable: %v", want, err)
+		}
+	}
+	if run.IdentityID != "" {
+		t.Errorf("it captured %q anyway", run.IdentityID)
+	}
+	// One connector for this cloud, beside another cloud's two, is still unambiguous.
+	run = &CLIDemoRun{Provider: "gcp"}
+	if err := captureIdentityID(run, `[{"id":"ci-a","label":"HETZNER","provider":"hetzner"},{"id":"ci-b","label":"HETZNER","provider":"hetzner"},{"id":"ci-g","label":"GCP","provider":"gcp"}]`); err != nil {
+		t.Fatalf("another cloud's duplicate must not block this one: %v", err)
+	}
+	if run.IdentityID != "ci-g" {
+		t.Errorf("captured %q", run.IdentityID)
+	}
+}

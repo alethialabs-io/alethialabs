@@ -10,6 +10,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/names"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 // Rules are the vocabularies Validate checks against. They are PASSED IN rather than imported:
@@ -27,6 +28,11 @@ type Rules struct {
 	// the right answer when the schema could not be fetched, because "could not check" must not
 	// become "refused".
 	Schema *api.ComponentSchemaDocument
+	// RequireDedicated asks for the server's create-time rule: a matrix that brings a project's
+	// first Fabric into being must contain one `dedicated` environment. It is FALSE when the
+	// project already exists, because the server does not apply it then and this reader must not
+	// invent a refusal the front door would not make.
+	RequireDedicated bool
 }
 
 // Normalize fills the defaults a person may leave out and drops what cannot apply.
@@ -42,22 +48,39 @@ func (m *Manifest) Normalize() {
 	m.IaC.Version = strings.TrimSpace(m.IaC.Version)
 	for i := range m.Environments {
 		e := &m.Environments[i]
+		// NORMALIZED, not merely trimmed, and this is a correctness fix rather than tidying.
+		// `environmentNameSchema` on the server transforms every name through the same slugifier
+		// before storing it, so a file saying `Prod` produces a row called `prod` — and
+		// `resolveCliEnvironment` then matches on the stored name EXACTLY. Sending the raw name
+		// created the project and made every later address of that environment fail. Doing it here
+		// means the plan's comparisons, the create payload, `AddEnvironment` and the component
+		// `--env` all speak the one name the server will hold.
+		//
+		// A name that slugs away entirely keeps its RAW value so `Validate` can quote what the
+		// person actually wrote; `EnvironmentNameProblem` is what refuses it.
 		e.Name = strings.TrimSpace(e.Name)
+		if n := names.NormalizeEnvironmentName(e.Name); n != "" {
+			e.Name = n
+		}
 		e.Stage = strings.TrimSpace(e.Stage)
 		e.Placement = strings.TrimSpace(e.Placement)
 		e.Namespace = strings.TrimSpace(e.Namespace)
 		e.Lifecycle = strings.TrimSpace(e.Lifecycle)
 		if e.Placement == "" {
+			// The GENERATED constants, not literals. The previous comment claimed neither package
+			// could import the other's vocabulary; that was false — this package already imports
+			// `packages/core/api`, which imports `packages/core/types` — and the claim had turned
+			// one rule into two copies that a renamed rung would silently separate.
 			if i == 0 {
-				e.Placement = "dedicated"
+				e.Placement = string(types.PlacementModeDedicated)
 			} else {
-				e.Placement = "namespace"
+				e.Placement = string(types.PlacementModeNamespace)
 			}
 		}
 		// A dedicated environment owns a new Fabric and has no destination namespace on a
 		// shared one; carrying the value through would put a field in the request the server
 		// ignores, and a person reading the file back would believe it had an effect.
-		if e.Placement == "dedicated" {
+		if e.Placement == string(types.PlacementModeDedicated) {
 			e.Namespace = ""
 		}
 	}
@@ -124,7 +147,7 @@ func (m *Manifest) Validate(rules Rules) error {
 		if !oneOf(e.Placement, rules.Placements) {
 			p = append(p, fmt.Sprintf("%s: placement %q is not one of %s", at, e.Placement, oneOfText(rules.Placements)))
 		}
-		if e.Placement == "dedicated" {
+		if e.Placement == string(types.PlacementModeDedicated) {
 			dedicated = true
 		}
 		if e.Namespace != "" {
@@ -137,10 +160,13 @@ func (m *Manifest) Validate(rules Rules) error {
 		}
 		p = append(p, validateComponents(at, e.Components, rules.Schema)...)
 	}
-	if len(m.Environments) > 0 && !dedicated {
-		// The server refuses a matrix with no dedicated entry: nothing in it would ever bring a
-		// cluster into being, so every other environment would be placed onto a Fabric that
-		// does not exist.
+	if rules.RequireDedicated && len(m.Environments) > 0 && !dedicated {
+		// The server refuses a matrix with no dedicated entry, and refuses it CONDITIONALLY:
+		// `hasShared && dedicated.length === 0` fires only where a matrix creates a project's
+		// Fabric. A file that adds `dev-1: namespace` to an EXISTING project whose prod
+		// environment was made in the console is fine — `AddEnvironment` places it on the default
+		// Fabric — and refusing it here contradicted this reader's own promise that environments
+		// the file does not mention are left alone. The caller says which case it is in.
 		p = append(p, "no environment is `dedicated` — one must own the Fabric the project provisions, or nothing is ever built")
 	}
 	if len(p) == 0 {
@@ -205,6 +231,34 @@ func validateComponents(at string, comps Components, schema *api.ComponentSchema
 	return p
 }
 
+// DeclaresComponents reports whether any environment declares a component.
+//
+// It is the question "does this manifest need the published schema" — asked so the caller can skip
+// fetching a document with nothing to check against, rather than paying for it on every plan.
+func (m *Manifest) DeclaresComponents() bool {
+	for _, e := range m.Environments {
+		if len(e.Components) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// NeedsADedicatedEnvironment reports whether the matrix has an environment that owns a Fabric.
+//
+// Separate from Validate because the SERVER's rule is conditional — it fires only where a matrix
+// brings a project's first Fabric into being — and only the caller knows whether the project
+// already exists. Asking it here keeps the rule's one definition in this package while leaving the
+// condition where the answer lives.
+func (m *Manifest) NeedsADedicatedEnvironment() bool {
+	for _, e := range m.Environments {
+		if e.Placement == string(types.PlacementModeDedicated) {
+			return false
+		}
+	}
+	return len(m.Environments) > 0
+}
+
 // EnvironmentSpecs renders the environments as the wire shape `project create` sends.
 func (m *Manifest) EnvironmentSpecs() []api.EnvironmentSpec {
 	out := make([]api.EnvironmentSpec, 0, len(m.Environments))
@@ -237,6 +291,7 @@ func FromEnvironmentSpecs(specs []api.EnvironmentSpec) []Environment {
 	return out
 }
 
+// oneOf reports whether v is one of the allowed values.
 func oneOf(v string, allowed []string) bool {
 	for _, a := range allowed {
 		if a == v {
@@ -246,6 +301,8 @@ func oneOf(v string, allowed []string) bool {
 	return false
 }
 
+// oneOfText renders an allowed set for a refusal, SORTED — every validation message the docs pin
+// depends on that order, so it is the behaviour worth recording rather than the joining.
 func oneOfText(allowed []string) string {
 	sorted := append([]string(nil), allowed...)
 	sort.Strings(sorted)

@@ -802,3 +802,102 @@ func TestApply_LoggedOutIsFatalBeforeAnyRead(t *testing.T) {
 		t.Errorf("a logged-out run reached the control plane: %+v", s.posts)
 	}
 }
+
+// ── the review round's four behaviours ─────────────────────────────────────────────────────
+
+// The server transforms every environment name through the slugifier before storing it, then
+// matches the STORED name exactly. Sending the raw name created the project and made every later
+// address of that environment fail — after the writes, which is the worst place to find out.
+func TestApply_SendsTheNormalisedEnvironmentName(t *testing.T) {
+	s := &projServer{envs: []map[string]any{
+		{"id": "e1", "name": "prod", "stage": "production", "placement_mode": "dedicated", "status": "DRAFT", "is_default": true},
+	}}
+	h := applyEnv(t, s)
+	path := applyWriteManifest(t, "project: boutique\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: Prod\n    stage: production\n")
+	if h.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-wait", "--no-input") {
+		t.Error("apply exited fatally")
+	}
+	create := s.posts[0].Body
+	envs, _ := create["environments"].([]any)
+	first, _ := envs[0].(map[string]any)
+	if first["name"] != "prod" {
+		t.Errorf("sent %q — the server stores the slug, so anything else cannot be addressed afterwards", first["name"])
+	}
+	// And the deploy found it, which is the half that used to fail.
+	var deploys int
+	for _, p := range s.posts {
+		if p.Path == "/api/jobs" {
+			deploys++
+		}
+	}
+	if deploys != 1 {
+		t.Errorf("the deploy did not resolve the environment it had just created: %+v", s.posts)
+	}
+}
+
+// `--output json` must be parseable on the DEFAULT path, which waits. Every progress line the wait
+// loop wrote used to land in the document, once per environment.
+func TestApply_JSONIsParseableOnTheWaitingPath(t *testing.T) {
+	s := &projServer{envs: applyDemoEnvs()}
+	h := applyEnv(t, s)
+	path := applyWriteManifest(t, applyDemoManifest)
+	read := projCaptureStdout(t)
+	// No --no-wait: this is the arm the previous test avoided.
+	if h.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-input", "--output", "json") {
+		t.Error("apply exited fatally")
+	}
+	out := read()
+	var got ApplyResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("the waiting path's output is not parseable json: %v\n%s", err, out)
+	}
+	for _, prose := range []string{"Waiting for job", "Status:", "Job completed"} {
+		if strings.Contains(out, prose) {
+			t.Errorf("the wait loop wrote %q into the json stream:\n%s", prose, out)
+		}
+	}
+}
+
+// The "one environment must be dedicated" rule is the SERVER's, and the server applies it only
+// where a matrix brings a project's first Fabric into being.
+func TestApply_TheDedicatedRuleIsCreateTimeOnly(t *testing.T) {
+	shared := "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: dev-1\n    stage: development\n    placement: namespace\n"
+
+	// Against an EXISTING project it is allowed — this is what a manifest is for, and refusing it
+	// contradicted the reader's own promise that unmentioned environments are left alone.
+	existing := &projServer{envs: []map[string]any{
+		{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "status": "ACTIVE", "is_default": true},
+	}}
+	h := applyEnv(t, existing)
+	if h.run("plan", "--file", applyWriteManifest(t, shared), "--no-input") {
+		t.Error("a shared-only matrix against an existing project must be allowed")
+	}
+
+	// Against a NEW project it is refused: nothing in it would ever provision.
+	fresh := &projServer{configs: []map[string]any{}}
+	h = applyEnv(t, fresh)
+	if !h.run("plan", "--file", applyWriteManifest(t, shared), "--no-input") {
+		t.Error("a shared-only matrix that would CREATE a project must be refused")
+	}
+}
+
+// The three fetches the plan does not need. Counted, because "it still works" is not the claim —
+// the claim is that a components-free plan does not pay for a 1100-line document.
+func TestApply_DoesNotFetchWhatThePlanCannotUse(t *testing.T) {
+	s := &projServer{envs: []map[string]any{
+		{"id": "e1", "name": "prod", "stage": "production", "placement_mode": "dedicated", "status": "ACTIVE", "is_default": true},
+		{"id": "e2", "name": "dev", "stage": "development", "placement_mode": "namespace", "status": "ACTIVE"},
+	}}
+	h := applyEnv(t, s)
+	// A file with no components at all, over a project that exists.
+	path := applyWriteManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: prod\n    stage: production\n  - name: dev\n    stage: development\n")
+	if h.run("plan", "--file", path, "--no-input") {
+		t.Error("plan exited fatally")
+	}
+	if s.hits("/api/cli/schema/components") != 0 {
+		t.Errorf("the component schema was fetched for a manifest that declares none (%d time(s))", s.hits("/api/cli/schema/components"))
+	}
+	if n := s.hits("/components"); n != 0 {
+		t.Errorf("components were listed %d time(s) for environments the file declares none on", n)
+	}
+}
