@@ -21,6 +21,7 @@ import {
   SettingsColumns,
   SettingsDangerRow,
   SettingsField,
+  SettingsInput,
   SettingsPanel,
   SettingsSection,
   SettingsSelect,
@@ -159,7 +160,7 @@ export function OrgGeneral() {
                 label="Organization name"
                 hint="Shown across the console and in invitations."
               >
-                <input
+                <SettingsInput
                   className={cn(settingsControl, settingsControlSize)}
                   value={s.name}
                   onChange={(e) => set("name", e.target.value)}
@@ -174,7 +175,7 @@ export function OrgGeneral() {
                   <span className="whitespace-nowrap pl-3 pr-0.5 font-mono text-ui-sm text-text-tertiary">
                     {orgHost()}/
                   </span>
-                  <input
+                  <SettingsInput
                     className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-ui-sm text-text-primary outline-none"
                     value={s.slug}
                     onChange={(e) => set("slug", slugifyOrEmpty(e.target.value))}
@@ -254,7 +255,7 @@ export function OrgGeneral() {
                 label="Terraform version"
                 hint="Pinned across runners unless a Project overrides it."
               >
-                <input
+                <SettingsInput
                   className={cn(
                     settingsControl,
                     settingsControlSize,

@@ -22,6 +22,7 @@ import {
   SettingsCardFoot,
   SettingsDangerRow,
   SettingsField,
+  SettingsInput,
   SettingsPanel,
   SettingsSection,
   settingsControl,
@@ -108,7 +109,7 @@ export function ProjectGeneral({
                 label="Project name"
                 hint="Shown across the console and the CLI."
               >
-                <input
+                <SettingsInput
                   className={cn(settingsControl, settingsControlSize)}
                   autoComplete="off"
                   {...form.register("name")}
