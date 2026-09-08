@@ -127,13 +127,25 @@ earned rather than asserted under #2649:
   An include-allowlist is an exclusion with the sign flipped; it now has a comment on every one of
   the 48, and all 180 of their exports (#4104).
 
-**Every coverage-emitting project is now recorded**: `apps/console`, `packages/ui`,
-`apps/marketing` and `ee` each carry a **`coverage-exclusions.yaml`** with one entry per exclusion,
-and `pnpm check:coverage-exclusions` re-reads all four on every PR. The section
+**Every project that hides files is now recorded** — four of the six coverage-emitting projects.
+`apps/console`, `packages/ui`, `apps/marketing` and `ee` each carry a
+**`coverage-exclusions.yaml`** with one entry per exclusion, and `pnpm check:coverage-exclusions`
+re-reads all four on every PR. `packages/format` and `packages/plan-catalog` hide none — no
+`exclude:`, a pure-glob `include: ["src/**"]` — and owe no manifest; the guard fails the moment
+either gains an `exclude:` or a hand-listed `include:`. The run prints both numbers
+(`6 coverage-emitting config(s) · 4 manifest(s)`) so the gap is a readout rather than a thing to
+remember. The section
 is the decision — `infrastructural:` (not product code, and the path must match a declared class),
 `tier_separation:` (proven by a named test suite) or `baseline:` (real debt, with an owning issue
 and a verified `state:`, shrink-only). **Adding an exclusion without a manifest entry fails, and so
 does a manifest entry whose exclusion has gone.**
+
+One qualification on `tier_separation:`, because it is the only section with neither an owning issue
+nor a shrink-only rule. Where the exclusion comes from an include **allowlist** rather than from a
+considered `exclude:` line, the entry must also carry `issue:`. Such a file is measured by a suite
+in its own project and merely uncounted — an allowlist that fell behind its tests, not a tier
+decision — and without the field the section becomes the amnesty `baseline:`'s `issue:` was written
+to prevent. All 17 of `@repo/ui`'s point at #4349, which deletes them by widening the scope.
 
 What the guard checks about a `tier_separation:` claim is a **value import**: it resolves the named
 suite's imports the way vitest resolves them and requires one for the module and for each name in
@@ -159,8 +171,8 @@ Two false claims have been retired that way so far. The console config said
 imports it (#3262). And `@repo/ui`'s config described its 48 unlisted files as "presentational
 re-exports covered by e2e" — measured against the package's own suites, that is true of 31 of them
 and false of 17, seven of which have a **dedicated suite of their own** and are excluded anyway
-(#4104). Widening that allowlist is a separate unit: a scope change moves the published number, and
-shipping it with the recording would hide which one moved it.
+(#4104). Widening that allowlist is a separate unit — **#4349** — because a scope change moves the
+published number and shipping it with the recording would hide which one moved it.
 
 Until every one of those is recorded as a decision with checkable evidence, read the coverage
 badge as "the measured part of our logic is this well tested", not "our logic is this well

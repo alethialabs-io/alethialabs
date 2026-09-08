@@ -20,7 +20,9 @@
 //
 //   infrastructural:  not product code. The class is the argument; no evidence required.
 //   tier_separation:  proven by another tier. Carries `suite:` and `symbols:`, and BOTH are
-//                     re-read from the suite's own imports on every run.
+//                     re-read from the suite's own imports on every run. It also carries `issue:`
+//                     when the entry is hidden by an include ALLOWLIST rather than by a considered
+//                     `exclude:` line — see D5.
 //   baseline:         real debt. Carries `issue:` and `state:`, and is shrink-only.
 //
 // An entry is a DECISION, not a mute button. `baseline:` is what "we haven't got to it yet" is
@@ -54,6 +56,10 @@
 //   D4  a `symbols:` list must be COMPLETE. Every runtime export of an excluded file is
 //       accounted for in `symbols:` or in `baseline:`, and every name claimed is one the module
 //       really exports. A list of 2 of 7 exports reads exactly like a list of all 7.
+//   D5  a `tier_separation:` entry that D3 reports as allowlist-HIDDEN must carry `issue:`. Its
+//       evidence is a suite in the same project, so the module is measured and merely uncounted —
+//       an allowlist that fell behind its tests, which is the one shape `tier_separation:` cannot
+//       hold honestly, having neither an owning issue nor a shrink-only rule of its own.
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // WHY IT REUSES ts-coverage.mjs's PARSER RATHER THAN GROWING ITS OWN
@@ -214,11 +220,19 @@ const MARKER_KEYS = ["issue", "reason"];
  * That is the same rule `apps/console/shared-surface-allowlist.yaml`'s `debt:` follows.
  *
  * ZERO today. It was three — ee (#4105), packages/ui (#4104), apps/marketing (#4105) — and #4104
- * and #4105 enrolled all three in one PR, so the win is banked here in the same diff. Every
- * coverage-emitting project in the tree now carries a manifest, and the invariant this number
- * holds is stronger than the one it started with: a NEW marker cannot be added without raising
- * this line and saying why in the PR, and "every exclusion is manifested" is no longer a claim
- * about the projects that happen to carry one.
+ * and #4105 enrolled all three in one PR, so the win is banked here in the same diff.
+ *
+ * WHAT ZERO ACTUALLY ASSERTS, stated exactly, because this doc is what a future reader consults
+ * when deciding whether raising this number back above 0 is legitimate. It is NOT "all six
+ * coverage-emitting projects carry a manifest" — they do not, and they are not meant to. The run
+ * prints `6 coverage-emitting config(s) · 4 manifest(s)`: `packages/format` and
+ * `packages/plan-catalog` emit coverage, hide nothing (no `exclude:`, a pure-glob
+ * `include: ["src/**"]`), and correctly owe no manifest. The invariant is the pair:
+ * EVERY PROJECT THAT HIDES SOMETHING IS MANIFESTED, AND ZERO OF THEM ARE DEFERRED. The first half
+ * is held by D0's unenrolled direction and by D3, which fire the moment either of those two gains
+ * an `exclude:` or a hand-listed `include:`; the second half is this number. So a NEW marker
+ * cannot be added without raising this line and saying why in the PR, and "every exclusion is
+ * manifested" is no longer a claim about the projects that happen to carry one.
  */
 const PENDING_MARKER_CEILING = 0;
 
@@ -469,11 +483,17 @@ function unquote(v, key, at) {
  * @returns {string[]} problems, empty when the manifest is well-formed
  */
 export function validateManifest(sections, rel) {
-	/** @type {Record<string, {required: string[], lists: string[]}>} */
+	// `optional:` exists for exactly one field. A `tier_separation:` entry whose exclusion comes
+	// from an include ALLOWLIST rather than from a considered `exclude:` line may carry `issue:`,
+	// naming the unit that will widen the allowlist and delete the entry — and `checkProject`, which
+	// is the only caller that knows which paths those are, REQUIRES it there. See the requirement
+	// itself for why: a section with no owning issue and no shrink-only rule is an amnesty, and
+	// `packages/ui` put 43 exports across 17 files into one.
+	/** @type {Record<string, {required: string[], optional: string[], lists: string[]}>} */
 	const schema = {
-		infrastructural: { required: ["path", "reason"], lists: [] },
-		tier_separation: { required: ["path", "suite", "symbols", "reason"], lists: ["suite", "symbols"] },
-		baseline: { required: ["path", "symbols", "issue", "state", "reason"], lists: ["symbols"] },
+		infrastructural: { required: ["path", "reason"], optional: [], lists: [] },
+		tier_separation: { required: ["path", "suite", "symbols", "reason"], optional: ["issue"], lists: ["suite", "symbols"] },
+		baseline: { required: ["path", "symbols", "issue", "state", "reason"], optional: [], lists: ["symbols"] },
 	};
 	/** @type {string[]} */
 	const problems = [];
@@ -489,7 +509,9 @@ export function validateManifest(sections, rel) {
 				if (!(field in entry)) problems.push(`${where}: missing required field \`${field}\``);
 			}
 			for (const field of Object.keys(entry)) {
-				if (!spec.required.includes(field)) problems.push(`${where}: field \`${field}\` is not part of a \`${section}\` entry`);
+				if (!spec.required.includes(field) && !spec.optional.includes(field)) {
+					problems.push(`${where}: field \`${field}\` is not part of a \`${section}\` entry`);
+				}
 			}
 			for (const field of spec.lists) {
 				const value = entry[field];
@@ -526,6 +548,14 @@ export function validateManifest(sections, rel) {
 							"  with an owning issue. Reclassifying a measured gap into here is green either way, which is\n" +
 							"  the one thing this manifest is written to prevent.",
 					);
+				}
+			}
+			// Optional here, required by `checkProject` for the allowlist-hidden entries — but the
+			// SHAPE is checked wherever it appears, so `issue: soon` cannot satisfy the requirement
+			// below by being a string. Same rule the marker and `baseline:` already hold.
+			if (section === "tier_separation" && "issue" in entry) {
+				if (typeof entry.issue !== "string" || !/^#\d+$/.test(entry.issue)) {
+					problems.push(`${where}: \`issue\` must be "#NNNN" — an entry pointing at prose is the amnesty the field exists to prevent`);
 				}
 			}
 			if (section === "baseline") {
@@ -602,13 +632,19 @@ export function readAliases(rawSrc, projectDir) {
 				continue;
 			}
 			const value = text.slice(text.indexOf(":", key[0].length - 1) + 1).trim();
+			// The trailing `,?` is on BOTH spellings, and it is not cosmetic. `package.json`'s
+			// `format` script is `prettier --write` with no `.prettierrc`, so `trailingComma: "all"`
+			// is in force for every alias in the tree: the moment a target grows past the print
+			// width, prettier wraps the call and leaves a dangling comma before the closing paren.
+			// `packages/ui/vitest.config.ts` is already there — the formatter put one after its
+			// inner `new URL(...)`, and without the tolerance the target read as unparseable, which
+			// is REPORTED, so enrolling that project would have failed on its own config rather than
+			// on anything its manifest said. `apps/console/vitest.config.ts`'s
+			// `"server-only": path.resolve(__dirname, "tests/integration/server-only-stub.ts")` is
+			// one character of growth from the identical failure in the other spelling, which is why
+			// the tolerance is not left to whichever one happened to be hit first.
 			const resolved =
-				/^path\.resolve\(\s*__dirname\s*,\s*["']([^"']*)["']\s*\)$/.exec(value) ??
-				// The trailing `,?` is not cosmetic: `packages/ui/vitest.config.ts` writes this alias
-				// across three lines, and the formatter puts a dangling comma after the inner
-				// `new URL(...)`. Without it the target read as unparseable, which is REPORTED — so
-				// enrolling that project would have failed on its own config rather than on
-				// anything the manifest said.
+				/^path\.resolve\(\s*__dirname\s*,\s*["']([^"']*)["']\s*,?\s*\)$/.exec(value) ??
 				/^fileURLToPath\(\s*new URL\(\s*["']([^"']+)["']\s*,\s*import\.meta\.url\s*\)\s*,?\s*\)$/.exec(value) ??
 				/^["']([^"']+)["']$/.exec(value);
 			if (resolved === null) {
@@ -1308,6 +1344,31 @@ export function checkProject(root, projectRel, configRel, testFiles, hidden = []
 		const suites = entry.suite;
 		const symbols = entry.symbols;
 		if (typeof entryPath !== "string" || !Array.isArray(suites) || !Array.isArray(symbols)) continue;
+		// ── an allowlist-hidden tier entry must name the unit that will DELETE it ──
+		//
+		// `tier_separation:` carries no owning issue and no shrink-only rule, and it is right that
+		// it does not: a real tier separation is a decision, not debt, and the suite claim the guard
+		// re-reads every run is what keeps it honest. But an entry hidden by an include ALLOWLIST is
+		// a different animal. Its evidence is a suite in THIS project — the module is measured, it
+		// simply is not counted — so nothing about it is a tier decision at all, and the section's
+		// two safeguards are both absent: no issue, and no rule making the block shrink.
+		//
+		// Measured on `packages/ui`: 43 exports across 17 files, seven of them with a dedicated
+		// `*.test.tsx` in the same package, recorded under a heading its own manifest header argues
+		// they do not belong to. Nothing scheduled their return. The only record was header prose,
+		// and deleting prose fails no check — which is the amnesty `baseline:`'s `issue:` exists to
+		// prevent, reached through a different door. So the field is required exactly where the
+		// discriminator is machine-readable: membership of the D3 hidden set, which `checkProject`
+		// is the only place that knows.
+		if (hiddenSet.has(entryPath) && typeof entry.issue !== "string") {
+			problems.push(
+				`${manifestRel}: [tier_separation] \`${entryPath}\` is hidden by the include ALLOWLIST, not by a considered \`exclude:\` line, and carries no \`issue:\`.\n` +
+					"  Its evidence is a suite in this project, so the module is measured and merely uncounted — that is an\n" +
+					"  allowlist that fell behind the tests, not a tier decision, and this section has neither an owning issue\n" +
+					"  nor a shrink-only rule to bring it back. Add `issue: \"#NNNN\"` naming the unit that will widen\n" +
+					"  `coverage.include` and delete this entry, or move it to `baseline:` with a state.",
+			);
+		}
 		const target = entryTarget(projectDir, entryPath, "tier_separation", manifestRel, problems);
 		if (target === null) continue;
 		/** @type {Set<string>} */
@@ -1594,18 +1655,27 @@ function mergeEvidence(into, file, symbols) {
  * somebody picked.
  *
  * TWO THINGS MAKE IT AN ALLOWLIST: a literal file in `include`, and at least one PEER of that file
- * left unmeasured. The sweep is NON-RECURSIVE, and that is the classifier rather than an economy —
+ * left unmeasured. CLASSIFYING is NON-RECURSIVE, and that is the classifier rather than an economy —
  * measured: sweeping the include roots recursively instead finds 42 unmeasured files under
  * `apps/marketing/app/**` and reclassifies marketing as an allowlist, which is the one thing this
- * rule exists to avoid. The cost is that a file in a SUBDIRECTORY of an allowlisted directory is
- * invisible here; `packages/ui/src` is flat today (60 files, 0 nested), so nothing is missed, and
- * the day it nests, that file is unmeasured and unreported. `apps/marketing`
+ * rule exists to avoid. `apps/marketing`
  * also has a literal in its `include` (`proxy.ts`) and is NOT an allowlist: its scope is
  * `["proxy.ts", "lib/**"]`, a deliberate logic-surface choice whose own comment records why the
  * tempting tight scope was refused. What separates the two is the PEER SET — the files sitting in
  * the same directory as the literal, which is the set the author was choosing among. Marketing's
  * root peers are all `*.config.*` and already excluded; `packages/ui/src`'s peers are 48 real
  * components.
+ *
+ * ENUMERATING, once that verdict is in, IS RECURSIVE — and the split is the whole point. The two
+ * passes answer different questions, and the marketing false-positive lives entirely in the first.
+ * A project the non-recursive peer test has ALREADY declared an allowlist cannot be reclassified by
+ * looking deeper, so the reason to stop at one level is spent, while the cost of stopping is not:
+ * with a single pass, `packages/ui/src/chart/area-chart.tsx` added next month would sit outside
+ * `coverage.include`, be no peer of any literal, need no manifest entry, and let the guard print ✓
+ * over a floor armed at 98.83% across a scope that had silently shrunk in relative terms. That is
+ * the one hole the manifest's "every one of the 48 is recorded below" could not have covered.
+ * `packages/ui/src` is flat today — 60 files, 0 nested — so the second pass finds exactly the same
+ * 48 and this change moves no number; it is the day it nests that the two passes differ.
  *
  * @param {string} root
  * @param {string} projectRel
@@ -1633,21 +1703,42 @@ export function checkIncludeAllowlist(root, projectRel, configRel, projectFiles)
 
 	const includeRes = include.entries.map(globToRegExp);
 	const excludeRes = exclude.entries.map(globToRegExp);
-	/** @type {Set<string>} */
-	const unlisted = new Set();
-	for (const dir of new Set(literals.map((e) => path.dirname(e)))) {
-		for (const rel of projectFiles) {
-			if (path.dirname(rel) !== dir) continue; // peers only — see the header.
-			if (!SOURCE_EXTS.has(path.extname(rel))) continue;
-			if (excludeRes.some((re) => re.test(rel))) continue;
-			if (includeRes.some((re) => re.test(rel))) continue;
-			unlisted.add(rel);
+	const dirs = new Set(literals.map((e) => path.dirname(e)));
+
+	/**
+	 * Files under the literals' directories that no `include` glob measures and no `exclude` hides.
+	 *
+	 * @param {boolean} recursive false to look at the literals' own directories only (the
+	 *   classifier), true to look under them as well (the enumeration)
+	 * @returns {Set<string>}
+	 */
+	const sweep = (recursive) => {
+		/** @type {Set<string>} */
+		const found = new Set();
+		for (const dir of dirs) {
+			for (const rel of projectFiles) {
+				const owner = path.dirname(rel);
+				const within = recursive ? owner === dir || owner.startsWith(`${dir}/`) : owner === dir;
+				if (!within) continue;
+				if (!SOURCE_EXTS.has(path.extname(rel))) continue;
+				if (excludeRes.some((re) => re.test(rel))) continue;
+				if (includeRes.some((re) => re.test(rel))) continue;
+				found.add(rel);
+			}
 		}
-	}
-	// A literal include that leaves NO peer unmeasured is not an allowlist — it is a scope that
-	// happens to be spelled out. That is the whole marketing/ui distinction, expressed as the
-	// measurement rather than as a judgement about which project meant well.
-	return { problems: [], allowlist: unlisted.size > 0, unlisted: [...unlisted].sort() };
+		return found;
+	};
+
+	// PASS 1 · classify, non-recursively. A literal include that leaves NO peer unmeasured is not an
+	// allowlist — it is a scope that happens to be spelled out. That is the whole marketing/ui
+	// distinction, expressed as the measurement rather than as a judgement about which project meant
+	// well, and it is the pass that must not see deeper.
+	const peers = sweep(false);
+	if (peers.size === 0) return { problems: [], allowlist: false, unlisted: [] };
+
+	// PASS 2 · enumerate, recursively. The verdict is already in, so nothing here can change it —
+	// only the size of the set the manifest is then required to account for. See the header.
+	return { problems: [], allowlist: true, unlisted: [...sweep(true)].sort() };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -2238,10 +2329,35 @@ function runSelfTest() {
 			return res.problems.length === 0 || JSON.stringify(res.problems);
 		}),
 	);
-	check("the allowlist peer sweep is NON-recursive — a nested dir is not a peer", attempt(() => {
-		const res = runFixture({ ...allowlist, "q/src/deep/nested.ts": "export const d = 4;\n" });
-		return res.problems.some((p) => p.includes("hidden.ts") && !p.includes("nested.ts"));
-	}));
+	// ── the two passes, held apart ──
+	//
+	// CLASSIFYING must stay non-recursive or marketing becomes an allowlist (42 files under
+	// `app/**`, measured). ENUMERATING must be recursive or a nested file is hidden from a project
+	// already known to be an allowlist, and no manifest claim about completeness can cover it. The
+	// pair is asserted together because collapsing them back into one sweep breaks exactly one of
+	// the two, whichever way it collapses.
+	check(
+		"CLASSIFYING is non-recursive — a nested unmeasured file does NOT make the marketing shape an allowlist",
+		attempt(() => {
+			const res = runFixture({
+				...allowlist,
+				"q/vitest.config.ts": configFixture(['\t\t\tinclude: ["proxy.ts", "lib/**"],', '\t\t\texclude: ["**/*.config.*"],']),
+				"q/coverage-exclusions.yaml": 'infrastructural:\n  - path: "**/*.config.*"\n    reason: r\n',
+				"q/proxy.ts": "export const a = 1;\n",
+				"q/next.config.ts": "export default {};\n",
+				"q/lib/thing.ts": "export const b = 2;\n",
+				"q/app/deep/page.tsx": "export const d = 4;\n",
+			});
+			return res.problems.length === 0 || JSON.stringify(res.problems);
+		}),
+	);
+	check(
+		"ENUMERATING is recursive — once it IS an allowlist, a nested file is named too",
+		attempt(() => {
+			const res = runFixture({ ...allowlist, "q/src/deep/nested.ts": "export const d = 4;\n" });
+			return res.problems.some((p) => p.includes("hidden.ts") && p.includes("deep/nested.ts")) || JSON.stringify(res.problems);
+		}),
+	);
 
 	// ── D3 × D0 · ENROLLING an allowlist (#4104) ──
 	//
@@ -2304,6 +2420,73 @@ function runSelfTest() {
 		}),
 	);
 
+	// ── D5 · an allowlist-hidden `tier_separation:` entry must name the unit that deletes it ──
+	//
+	// `tier_separation:` has no owning issue and no shrink-only rule. That is correct for a real
+	// tier separation and wrong for an entry the include allowlist hides: its evidence is a suite in
+	// the SAME project, so the module runs and is merely uncounted, and the section's two safeguards
+	// are both absent. `packages/ui` put 43 exports across 17 files there, seven with a dedicated
+	// suite, and nothing scheduled their return — an amnesty reached through a door `baseline:`'s
+	// `issue:` had already closed. The third case is the control: the field is required by the
+	// HIDDEN-ness, not by the section, so an entry excluded by a real `exclude:` line must still
+	// pass without one, or D5 has quietly become "every tier entry needs an issue".
+	process.stdout.write("\n D5 — a tier entry the ALLOWLIST hides is not a tier decision, and must name its exit\n");
+	const hiddenTier = (extra) => ({
+		...allowlist,
+		"q/tests/hidden.test.ts": 'import { b } from "@/src/hidden";\nconsole.log(b);\n',
+		"q/coverage-exclusions.yaml": [
+			"infrastructural:",
+			'  - path: "src/**/*.d.ts"',
+			"    reason: r",
+			"tier_separation:",
+			"  - path: src/hidden.ts",
+			"    suite: [tests/hidden.test.ts]",
+			"    symbols: [b]",
+			...extra,
+			"    reason: r",
+			"baseline:",
+			"  - path: src/also-hidden.tsx",
+			"    symbols: [c]",
+			'    issue: "#4104"',
+			"    state: no-test",
+			"    reason: r",
+			"",
+		].join("\n"),
+	});
+	check(
+		"an allowlist-hidden tier entry with NO `issue:` FAILS",
+		attempt(() => {
+			const res = runFixture(hiddenTier([]));
+			return res.problems.some((p) => p.includes("src/hidden.ts") && p.includes("hidden by the include ALLOWLIST")) || JSON.stringify(res.problems);
+		}),
+	);
+	check(
+		"...and the same entry carrying `issue:` PASSES",
+		attempt(() => {
+			const res = runFixture(hiddenTier(['    issue: "#4349"']));
+			return res.problems.length === 0 || JSON.stringify(res.problems);
+		}),
+	);
+	check(
+		"...and `issue:` pointing at prose rather than #NNNN is still REFUSED",
+		attempt(() => {
+			const res = runFixture(hiddenTier(["    issue: soon"]));
+			return res.problems.some((p) => p.includes("src/hidden.ts") && p.includes('must be "#NNNN"')) || JSON.stringify(res.problems);
+		}),
+	);
+	check(
+		"a tier entry hidden by a real `exclude:` line needs NO issue — the field follows the hiding, not the section",
+		attempt(() => {
+			const res = runFixture({
+				"p/vitest.config.ts": configFixture(['\t\t\tinclude: ["lib/**"],', '\t\t\texclude: ["lib/mod.ts"],']),
+				"p/lib/mod.ts": "export const alpha = 1;\n",
+				"p/tests/suite.test.ts": 'import { alpha } from "@/lib/mod";\nconsole.log(alpha);\n',
+				"p/coverage-exclusions.yaml": "tier_separation:\n  - path: lib/mod.ts\n    suite: [tests/suite.test.ts]\n    symbols: [alpha]\n    reason: r\n",
+			});
+			return res.problems.length === 0 || JSON.stringify(res.problems);
+		}),
+	);
+
 	// ── the infrastructural class for CO-LOCATED tests (#4105) ──
 	//
 	// `ee/` excludes `**/*.test.ts` because its tests sit beside the code, and `tests/**` — the
@@ -2330,6 +2513,22 @@ function runSelfTest() {
 			const src = 'export default { test: { alias: {\n"x": fileURLToPath(\n\t\tnew URL("./tests/stubs/flags.tsx", import.meta.url),\n\t),\n} } };\n';
 			const { aliases, problems } = readAliases(src, "/tmp/p");
 			return (problems.length === 0 && aliases.get("x") === "/tmp/p/tests/stubs/flags.tsx") || JSON.stringify({ problems, got: aliases.get("x") });
+		}),
+	);
+	// The SAME formatter, the OTHER spelling. `apps/console/vitest.config.ts` writes its
+	// `server-only` stub as `path.resolve(__dirname, "…")` on one line today; the tolerance above
+	// covered only `fileURLToPath`, so that config was one character of growth from failing the
+	// console's enrolment on its formatter. The pair is asserted together so a future narrowing of
+	// either regex cannot pass by being wrapped in the other's test.
+	check(
+		"a multi-line `path.resolve(__dirname, …,)` alias with a trailing comma is read, not reported",
+		attempt(() => {
+			const src = 'export default { test: { alias: {\n"server-only": path.resolve(\n\t\t__dirname,\n\t\t"tests/integration/server-only-stub.ts",\n\t),\n} } };\n';
+			const { aliases, problems } = readAliases(src, "/tmp/p");
+			return (
+				(problems.length === 0 && aliases.get("server-only") === "/tmp/p/tests/integration/server-only-stub.ts") ||
+				JSON.stringify({ problems, got: aliases.get("server-only") })
+			);
 		}),
 	);
 
