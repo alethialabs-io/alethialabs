@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: LicenseRef-Alethia-Commercial
+#
+# Coverage exclusions for ee/ — the machine-readable half of every `exclude:` entry in
+# vitest.config.ts. See apps/console/coverage-exclusions.yaml for the full statement of what each
+# section asserts and what the guard re-reads; this header records only what is true HERE.
+#
+# Every entry is re-read on every run by `pnpm check:coverage-exclusions`
+# (scripts/check-coverage-exclusions.mjs), which fails in both directions — an exclusion with no
+# entry, and an entry whose exclusion has gone.
+#
+# WHY THIS FILE MATTERS MORE THAN ITS TWO LINES SUGGEST. ee/ is the licensed tier: the code
+# customers pay for. Until this manifest existed it was the least recorded surface in the
+# repository — its `exclude:` list was read by nothing, so an `exclude: ["src/license.ts"]` added
+# here would have passed the guard in silence and the ratchet would have taken its next floor over
+# the hole. Two entries that are checked are worth more than two that are merely short.
+#
+# WHAT THIS PROJECT EXCLUDES, MEASURED: two entries, both infrastructural, and that is the whole of
+# it. `include: ["src/**"]` is pure glob — no literal, so no hand-listed allowlist and no file
+# hidden by its absence. Every product module in ee/src is INSIDE the coverage scope:
+# fga-tuple-sync.ts, index.ts, license.ts, license-issue.ts, openfga-pdp.ts and scope.ts are all
+# measured, and the two with a test (license.ts, scope.ts) are measured beside the four without.
+#
+# That is the shape worth keeping. The four untested modules are carried by the ratchet's floor,
+# where they are visible as a low number, rather than by a `baseline:` entry here that would take
+# them out of the denominator. A manifest records what an exclusion HIDES; this one hides no
+# product code, and the honest way to say that is a manifest with no `baseline:` section rather
+# than one padded to look thorough.
+#
+# TO ADD AN EXCLUSION: add it to vitest.config.ts AND here, in the same PR.
+
+infrastructural:
+  # No statements to execute: `.d.ts` files are erased entirely by the compiler. ee/ ships none
+  # today; the glob is kept because it excludes nothing and misleads nobody if it stays empty
+  # (the reasoning at ts-coverage.mjs:855 that leaves globs out of the literal-path check).
+  - path: "**/*.d.ts"
+    reason: Type declarations — no runtime statements exist to be covered.
+
+  # ee/ CO-LOCATES its tests: src/license.test.ts sits beside src/license.ts, and src/scope.test.ts
+  # beside src/scope.ts, because `include: ["src/**"]` is the whole package. That is the same class
+  # as the console's and marketing's `tests/**` — the tests themselves — spelled for a layout that
+  # has no tests directory to name.
+  - path: "**/*.test.ts"
+    reason: The tests themselves, co-located beside the code they test — counting them inflates the number with the measurement.

@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Coverage exclusions for apps/marketing — the machine-readable half of every `exclude:` entry in
+# vitest.config.ts. See apps/console/coverage-exclusions.yaml for the full statement of what each
+# section asserts and what the guard re-reads; this header records only what is true HERE.
+#
+# Every entry is re-read on every run by `pnpm check:coverage-exclusions`
+# (scripts/check-coverage-exclusions.mjs), which fails in both directions — an exclusion with no
+# entry, and an entry whose exclusion has gone.
+#
+# WHAT THIS PROJECT EXCLUDES, MEASURED: three entries, all three infrastructural, and that is the
+# whole of it. Nothing here is a tier claim and nothing here is debt, because marketing's coverage
+# scope hides no product code:
+#
+#   include: ["proxy.ts", "lib/**"]
+#
+# `proxy.ts` is a LITERAL in that include, which is the shape the guard's D3 rule reads as an
+# allowlist — and it is not one here, because every peer of `proxy.ts` at the project root is a
+# `*.config.*` already excluded below. That is not a judgement about which project meant well; it
+# is the measurement D3 takes, and it comes out at zero unlisted peers.
+#
+# The scope's own comment in vitest.config.ts records why it is drawn at `lib/**` rather than
+# tightly around the one tested file: this suite has exactly ONE test file, so most of `lib/**` is
+# measured at zero, and a flattering number about a surface nobody chose is the mistake `@repo/ui`
+# made and TESTING.md had to write down as a caveat. That untested logic is INSIDE the scope, so it
+# is carried by the ratchet's floor rather than by a `baseline:` entry here — a manifest records
+# what an exclusion hides, and this one hides none of it.
+#
+# TO ADD AN EXCLUSION: add it to vitest.config.ts AND here, in the same PR.
+
+infrastructural:
+  # No statements to execute: `.d.ts` files are erased entirely by the compiler.
+  - path: "**/*.d.ts"
+    reason: Type declarations — no runtime statements exist to be covered.
+
+  # next.config.ts, postcss.config.mjs, eslint.config.mjs — and vitest.config.ts itself, which is
+  # the file this exclusion is written in. Configuration is exercised by running the tool that
+  # reads it; a test asserting its object literal asserts the literal.
+  - path: "**/*.config.*"
+    reason: Build and tooling configuration, exercised by running the tools rather than by tests.
+
+  - path: tests/**
+    reason: The tests themselves — counting them inflates the number with the measurement.
