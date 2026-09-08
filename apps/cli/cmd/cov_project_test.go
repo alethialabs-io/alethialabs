@@ -47,8 +47,16 @@ type projExit struct{ code int }
 type projServer struct {
 	mu     sync.Mutex
 	failOn []string
+	// failOnPost fails only MUTATING requests whose path contains an entry, so a test can reach
+	// "the create failed" on a path whose read succeeds — `/environments` is listed and added
+	// through one path, and failOn would refuse the list first.
+	failOnPost []string
 	// configs overrides the project list; nil means the single default project.
 	configs []map[string]any
+	// runners overrides the runner list; nil means the default trio (one online, one draining,
+	// one offline). `alethia apply` picks the ONLY online runner without a question, so reaching
+	// its picker needs a second online one.
+	runners []map[string]any
 	// designChanges overrides the plan a design apply reports. nil means the default plan,
 	// which includes a DELETE; an empty (non-nil) slice is an add-only plan. The distinction
 	// is the whole subject of the delete gate, so it has to be expressible.
@@ -102,6 +110,21 @@ func (s *projServer) shouldFail(path string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, f := range s.failOn {
+		if strings.Contains(path, f) {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldFailPost is shouldFail for the mutating verbs only.
+func (s *projServer) shouldFailPost(method, path string) bool {
+	if method == http.MethodGet {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, f := range s.failOnPost {
 		if strings.Contains(path, f) {
 			return true
 		}
@@ -173,7 +196,7 @@ func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 	s.recordPost(r)
 	enc := json.NewEncoder(w)
-	if s.shouldFail(p) {
+	if s.shouldFail(p) || s.shouldFailPost(r.Method, p) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = enc.Encode(map[string]string{"error": "boom: " + p})
 		return
@@ -203,11 +226,17 @@ func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/api/cli/configurations/by-project-name/"):
 		_ = enc.Encode(map[string]any{"configuration": config})
 	case p == "/api/cli/runners":
-		_ = enc.Encode(map[string]any{"runners": []map[string]any{
-			{"id": "r1", "name": "primary", "operator": "managed", "status": "ONLINE", "is_default": true},
-			{"id": "r2", "name": "edge", "operator": "self", "provisioning": "deployed", "status": "DRAINING"},
-			{"id": "r3", "name": "old", "operator": "self", "status": "OFFLINE"},
-		}})
+		s.mu.Lock()
+		list := s.runners
+		s.mu.Unlock()
+		if list == nil {
+			list = []map[string]any{
+				{"id": "r1", "name": "primary", "operator": "managed", "status": "ONLINE", "is_default": true},
+				{"id": "r2", "name": "edge", "operator": "self", "provisioning": "deployed", "status": "DRAINING"},
+				{"id": "r3", "name": "old", "operator": "self", "status": "OFFLINE"},
+			}
+		}
+		_ = enc.Encode(map[string]any{"runners": list})
 	case p == "/api/cli/schema/components":
 		// The published component registry, as `alethia apply` validates a manifest against it.
 		// Two singletons and one multi kind are enough to reach every branch of the reader.

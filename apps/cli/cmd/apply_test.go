@@ -15,6 +15,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/spec"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/pflag"
 )
 
@@ -458,5 +459,346 @@ func TestApply_RenderPlanUnmanagedAndNarrowed(t *testing.T) {
 	}
 	if !strings.Contains(out, ui.MutedStyle.Render("  0 projects to create · 1 environment · 0 components")) {
 		t.Errorf("totals:\n%s", out)
+	}
+}
+
+// ── the error arms, each reached through the real command ─────────────────────────────────
+
+func TestApply_ReconcilesAnExistingProjectByAddingWhatIsMissing(t *testing.T) {
+	// `web` exists with production; the file adds dev-1 and declares orders, which already exists.
+	s := &projServer{
+		envs: []map[string]any{
+			{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "status": "ACTIVE", "is_default": true},
+			{"id": "e2", "name": "dev-1", "stage": "development", "placement_mode": "namespace", "status": "DRAFT"},
+		},
+		comps: []map[string]any{
+			{"id": "c0", "kind": "cluster", "name": "cluster", "status": "ACTIVE", "config": map[string]any{}},
+			{"id": "c1", "kind": "databases", "name": "orders", "status": "ACTIVE", "config": map[string]any{}},
+		},
+	}
+	h := applyEnv(t, s)
+	path := applyWriteManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: production\n  - name: dev-1\n    stage: development\n    components:\n      databases:\n        - name: orders\n          engine: postgres\n        - name: carts\n          engine: postgres\n")
+	// The plan sees dev-1 as existing through the static fake, so the arm under test is the
+	// unchanged multi component; the add-environment arm is reached below with a narrower fake.
+	read := projCaptureStdout(t)
+	if h.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-wait", "--no-input", "--output", "json") {
+		t.Error("apply exited fatally")
+	}
+	var got ApplyResult
+	if err := json.Unmarshal([]byte(read()), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ProjectID != "p1" || len(got.Created) != 1 || !strings.Contains(got.Created[0], "databases/carts") {
+		t.Errorf("only carts is new: %+v", got)
+	}
+
+	// Now the environment is missing on the server, so apply must ADD it rather than re-create
+	// the project — and the created line is printed.
+	s2 := &projServer{envs: []map[string]any{
+		{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "status": "ACTIVE", "is_default": true},
+	}}
+	h2 := applyEnv(t, s2)
+	read2 := projCaptureStdout(t)
+	// The fake never lists dev-1 after the add, so the deploy step refuses — which is itself an
+	// arm worth pinning: a declared environment the server does not list is fatal, not skipped.
+	if !h2.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-wait", "--no-input") {
+		t.Error("an environment the server does not list after apply must be fatal")
+	}
+	out := read2()
+	if !strings.Contains(out, "created environment dev-1") {
+		t.Errorf("the add-environment arm did not run:\n%s", out)
+	}
+	var posts []string
+	for _, p := range s2.posts {
+		posts = append(posts, p.Method+" "+p.Path)
+	}
+	// production deploys first, in file order, and dev-1's refusal comes after it.
+	if strings.Join(posts, " ") != "POST /api/cli/projects/p1/environments POST /api/cli/projects/p1/components/databases POST /api/cli/projects/p1/components/databases POST /api/jobs" {
+		t.Errorf("requests: %v", posts)
+	}
+
+	// And the POST itself failing is reported by environment.
+	s3 := &projServer{envs: s2.envs, failOnPost: []string{"/environments"}}
+	h3 := applyEnv(t, s3)
+	if !h3.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-wait", "--no-input") {
+		t.Error("a refused environment add must be fatal")
+	}
+	s4 := &projServer{envs: applyDemoEnvs(), failOnPost: []string{"/components/"}}
+	h4 := applyEnv(t, s4)
+	if !h4.run("apply", "--file", applyWriteManifest(t, applyDemoManifest), "--yes", "--runner", "primary", "--no-wait", "--no-input") {
+		t.Error("a refused component add must be fatal")
+	}
+}
+
+func TestApply_EveryReadFailureIsFatalAndNamed(t *testing.T) {
+	path := applyWriteManifest(t, applyDemoManifest)
+	existing := applyWriteManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: production\n")
+	existingWithComponent := applyWriteManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: production\n    components:\n      cluster:\n        node_max_size: 3\n")
+	for name, tc := range map[string]struct {
+		fail []string
+		file string
+	}{
+		"cloud identities": {[]string{"/cloud-identities"}, path},
+		"projects":         {[]string{"/configurations"}, path},
+		"schema":           {[]string{"/schema/components"}, path},
+		"environments":     {[]string{"/environments"}, existing},
+		"components":       {[]string{"/p1/components"}, existingWithComponent},
+		"runners":          {[]string{"/runners"}, path},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &projServer{failOn: tc.fail, envs: []map[string]any{
+				{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "status": "ACTIVE", "is_default": true},
+			}}
+			h := applyEnv(t, s)
+			// plan never lists runners; every other read is on its path too.
+			if name != "runners" && !h.run("plan", "--file", tc.file, "--no-input") {
+				t.Errorf("a failed %s read must be fatal", name)
+			}
+			if !h.run("apply", "--file", tc.file, "--yes", "--no-input") {
+				t.Errorf("apply over a failed %s read must be fatal", name)
+			}
+		})
+	}
+	// The writes: a refused create, and a refused environment read AFTER the create.
+	for name, fail := range map[string][]string{"create": {"/cli/projects"}, "environments after create": {"/environments"}} {
+		t.Run(name, func(t *testing.T) {
+			s := &projServer{failOnPost: fail}
+			if name != "create" {
+				s = &projServer{failOn: fail}
+			}
+			h := applyEnv(t, s)
+			if !h.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-wait", "--no-input") {
+				t.Errorf("a refused %s must be fatal", name)
+			}
+		})
+	}
+	// A manifest that does not parse, through apply.
+	h := applyEnv(t, &projServer{})
+	if !h.run("apply", "--file", applyWriteManifest(t, "project: [\n"), "--yes", "--no-input") {
+		t.Error("a manifest that does not parse must be fatal")
+	}
+}
+
+func TestApply_UpdatesAnExistingSingleton(t *testing.T) {
+	s := &projServer{
+		envs: []map[string]any{
+			{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "status": "ACTIVE", "is_default": true},
+		},
+		comps: []map[string]any{
+			{"id": "c0", "kind": "cluster", "name": "cluster", "status": "ACTIVE", "config": map[string]any{}},
+		},
+	}
+	h := applyEnv(t, s)
+	path := applyWriteManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: production\n    components:\n      cluster:\n        node_max_size: 4\n")
+	read := projCaptureStdout(t)
+	if h.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-wait", "--no-input") {
+		t.Error("apply exited fatally")
+	}
+	out := read()
+	if !strings.Contains(out, "~ cluster") || !strings.Contains(out, "updated cluster in production") {
+		t.Errorf("a singleton that exists is UPDATED (the server upserts), not added:\n%s", out)
+	}
+}
+
+func TestProj_CreateReadsTheManifestInTheWorkingDirectory(t *testing.T) {
+	s := &projServer{}
+	h := projEnv(t, s)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, manifest.FileName), []byte("project: api\ncloud:\n  account: prod-account\n  region: eu-west-1\nenvironments:\n  - name: prod\n    stage: production\n  - name: dev\n    stage: development\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	if h.run("project", "create", "--no-input", "--output", "json") {
+		t.Error("create from the working directory's manifest exited fatally")
+	}
+	post, ok := s.lastPost()
+	if !ok {
+		t.Fatal("nothing was sent")
+	}
+	envs, _ := post.Body["environments"].([]any)
+	if post.Body["project_name"] != "api" || post.Body["region"] != "eu-west-1" || post.Body["cloud_identity_id"] != "ci1" || len(envs) != 2 {
+		t.Errorf("the file did not supply the create: %+v", post.Body)
+	}
+	// The picker's id is all the replay has when no label was given, and --cloud-account takes it.
+	m := manifestFromCreate(api.CreateProjectParams{ProjectName: "x", Region: "r", CloudIdentityID: "ci9"}, "")
+	if m.Cloud.Account != "ci9" {
+		t.Errorf("the replay dropped the only account reference: %+v", m.Cloud)
+	}
+}
+
+func TestApply_RefusalsThroughTheApplyCommand(t *testing.T) {
+	// A file that cannot be reconciled is refused by apply as well as by plan, before any write.
+	s := &projServer{envs: []map[string]any{
+		{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "status": "ACTIVE", "is_default": true},
+	}}
+	h := applyEnv(t, s)
+	mismatch := applyWriteManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: staging\n")
+	if !h.run("apply", "--file", mismatch, "--yes", "--no-input") {
+		t.Error("apply must refuse what plan refuses")
+	}
+	if len(s.posts) != 0 {
+		t.Errorf("a refused apply wrote: %+v", s.posts)
+	}
+	// A runner that does not exist, and two projects sharing the name.
+	h = applyEnv(t, &projServer{envs: applyDemoEnvs()})
+	if !h.run("apply", "--file", applyWriteManifest(t, applyDemoManifest), "--yes", "--runner", "nope", "--no-input") {
+		t.Error("an unknown runner must be fatal")
+	}
+	twins := &projServer{configs: []map[string]any{
+		{"id": "p1", "project_name": "boutique", "environment_stage": "production", "status": "ACTIVE"},
+		{"id": "p2", "project_name": "Boutique", "environment_stage": "production", "status": "ACTIVE"},
+	}}
+	h = applyEnv(t, twins)
+	if !h.run("plan", "--file", applyWriteManifest(t, applyDemoManifest), "--no-input") {
+		t.Error("two projects matching the file's name must be fatal rather than picked between")
+	}
+	// A missing manifest through apply, not only through plan.
+	h = applyEnv(t, &projServer{})
+	if !h.run("apply", "--file", filepath.Join(t.TempDir(), "none.yaml"), "--yes", "--no-input") {
+		t.Error("apply over a missing file must be fatal")
+	}
+}
+
+func TestApply_PlanJSONOfARefusalStillPrintsTheTypedPlan(t *testing.T) {
+	// `--output json` on plan renders the plan and returns: the problems are IN the document, and
+	// a script reads them from there rather than from an exit code with prose beside it.
+	s := &projServer{envs: []map[string]any{
+		{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "status": "ACTIVE", "is_default": true},
+	}}
+	h := applyEnv(t, s)
+	mismatch := applyWriteManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: staging\n")
+	read := projCaptureStdout(t)
+	if h.run("plan", "--file", mismatch, "--no-input", "--output", "json") {
+		t.Error("plan --output json is a document, not a refusal")
+	}
+	var got ApplyPlan
+	if err := json.Unmarshal([]byte(read()), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Environments) != 1 || len(got.Environments[0].Problems) == 0 {
+		t.Errorf("the problems are not in the document: %+v", got)
+	}
+}
+
+func TestApply_TheOnlyOnlineRunnerIsPickedWithoutAQuestion(t *testing.T) {
+	// The fake lists one ONLINE runner (and a draining and an offline one), so on a terminal
+	// with prompting allowed no picker opens and the deploy is assigned to it.
+	s := &projServer{envs: applyDemoEnvs()}
+	h := applyEnv(t, s)
+	projTTY(t)
+	opened := projFormCounter(t)
+	projConfirm(t, true)
+	path := applyWriteManifest(t, applyDemoManifest)
+	if h.run("apply", "--file", path, "--no-wait") {
+		t.Error("apply exited fatally")
+	}
+	if *opened != 0 {
+		t.Errorf("a picker opened for a list of one online runner (%d form(s))", *opened)
+	}
+	for _, p := range s.posts {
+		if p.Path == "/api/jobs" && p.Body["assigned_runner_id"] != "r1" {
+			t.Errorf("the deploy was not assigned to the only online runner: %+v", p.Body)
+		}
+	}
+}
+
+func TestMatchCloudIdentity(t *testing.T) {
+	ids := []api.CloudIdentity{
+		{ID: "ci1", Provider: "aws", Label: "prod"},
+		{ID: "ci2", Provider: "gcp", Label: "dup"},
+		{ID: "ci3", Provider: "azure", Label: "dup"},
+	}
+	if got, err := matchCloudIdentity(ids, "ci1"); err != nil || got.Provider != "aws" {
+		t.Errorf("by id: %+v %v", got, err)
+	}
+	if got, err := matchCloudIdentity(ids, "prod"); err != nil || got.ID != "ci1" {
+		t.Errorf("by label: %+v %v", got, err)
+	}
+	if _, err := matchCloudIdentity(ids, "dup"); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Errorf("an ambiguous label must be refused: %v", err)
+	}
+	if _, err := matchCloudIdentity(ids, "none"); err == nil || !strings.Contains(err.Error(), "prod") {
+		t.Errorf("an unknown label must name the known ones: %v", err)
+	}
+	if _, err := findEnv(&manifest.Manifest{}, "x"); err == nil {
+		t.Error("an environment absent from the file must be an error")
+	}
+	if err := (&ApplyPlan{}).restrictTo(nil); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestProj_CreateFileErrorsAreFatal(t *testing.T) {
+	s := &projServer{}
+	h := projEnv(t, s)
+	if !h.run("project", "create", "api", "--region", "eu-west-1", "--file", filepath.Join(t.TempDir(), "none.yaml"), "--no-input") {
+		t.Error("a --file that does not exist must be fatal")
+	}
+	broken := filepath.Join(t.TempDir(), manifest.FileName)
+	if err := os.WriteFile(broken, []byte("project: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !h.run("project", "create", "api", "--region", "eu-west-1", "--file", broken, "--no-input") {
+		t.Error("a --file that does not parse must be fatal")
+	}
+	if len(s.posts) != 0 {
+		t.Errorf("a refused create reached the control plane: %+v", s.posts)
+	}
+	// Declined matrix on a terminal: the server's default pair, no replay of a file.
+	projTTY(t)
+	projForm(t)
+	projScriptYesNo(t, false)
+	read := projCaptureStdout(t)
+	if h.run("project", "create", "api", "--region", "eu-west-1", "--cloud-account", "prod-account") {
+		t.Error("create with a declined matrix exited fatally")
+	}
+	if strings.Contains(read(), "save this as") {
+		t.Error("a declined matrix must not print a manifest replay")
+	}
+}
+
+func TestApply_RunnerPickerWithSeveralOnline(t *testing.T) {
+	two := []map[string]any{
+		{"id": "r1", "name": "primary", "operator": "managed", "status": "ONLINE", "is_default": true},
+		{"id": "r2", "name": "edge", "operator": "managed", "status": "ONLINE"},
+	}
+	s := &projServer{envs: applyDemoEnvs(), runners: two}
+	h := applyEnv(t, s)
+	projTTY(t)
+	projForm(t)
+	projConfirm(t, true)
+	path := applyWriteManifest(t, applyDemoManifest)
+	if h.run("apply", "--file", path, "--no-wait") {
+		t.Error("apply through the runner picker exited fatally")
+	}
+	// The picker pre-selects the org's default runner, so the deploy lands on it.
+	for _, p := range s.posts {
+		if p.Path == "/api/jobs" && p.Body["assigned_runner_id"] != "r1" {
+			t.Errorf("the picker's default was not used: %+v", p.Body)
+		}
+	}
+	runHuhForm = func(...*huh.Group) error { return errBoom }
+	if !h.run("apply", "--file", path, "--no-wait") {
+		t.Error("a picker that cannot run must be fatal, not a silent unassigned deploy")
+	}
+}
+
+// TestApply_LoggedOutIsFatalBeforeAnyRead pins the first thing both commands do: a run with no
+// credential fails naming the login, rather than reaching the control plane with no token and
+// reporting a 401 as if the manifest were wrong.
+func TestApply_LoggedOutIsFatalBeforeAnyRead(t *testing.T) {
+	s := &projServer{}
+	h := applyEnv(t, s)
+	isolatedHome(t) // no credentials written
+	t.Setenv(ServiceTokenEnv, "")
+	path := applyWriteManifest(t, applyDemoManifest)
+	if !h.run("apply", "--file", path, "--yes", "--no-input") {
+		t.Error("apply with no credential must be fatal")
+	}
+	if !h.run("plan", "--file", path, "--no-input") {
+		t.Error("plan with no credential must be fatal")
+	}
+	if len(s.posts) != 0 {
+		t.Errorf("a logged-out run reached the control plane: %+v", s.posts)
 	}
 }
