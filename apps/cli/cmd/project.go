@@ -209,14 +209,40 @@ func resolveCloudIdentityID(c cloudIdentityLister, ref string) (string, error) {
 	if ref == "" {
 		return "", nil
 	}
+	id, err := resolveCloudIdentity(c, ref)
+	if err != nil {
+		return "", err
+	}
+	return id.ID, nil
+}
+
+// resolveCloudIdentity is the fetch, and matchCloudIdentity below is the RULE. They are separate
+// because `alethia apply` needs the whole identity — it prints the provider in the plan's header —
+// and the first cut of that command answered the need by writing the rule a third time.
+//
+// Three copies had already disagreed: one ambiguity message listed the colliding ids so a person
+// could paste one, another named nothing; one said "cloud account" and another "cloud.account".
+// A rule that is a lookup key deserves one spelling, so the fork is a fetch and not a rule.
+func resolveCloudIdentity(c cloudIdentityLister, ref string) (api.CloudIdentity, error) {
 	identities, err := c.GetCloudIdentities()
 	if err != nil {
-		return "", fmt.Errorf("resolve --cloud-account %q: %w", ref, err)
+		return api.CloudIdentity{}, fmt.Errorf("resolve --cloud-account %q: %w", ref, err)
 	}
+	return matchCloudIdentity(identities, ref)
+}
+
+// matchCloudIdentity resolves a cloud account by its id or its LABEL, over identities already
+// fetched.
+//
+// The same discipline as resolveProjectID, and for the same reason: a label is a lookup key.
+// Labels are user-chosen and nothing stops two accounts sharing one, so an ambiguous label is
+// refused rather than resolved to whichever came back first — and the refusal lists the colliding
+// ids, because "pass the id instead" is only actionable if the ids are on screen.
+func matchCloudIdentity(identities []api.CloudIdentity, ref string) (api.CloudIdentity, error) {
 	var matches []api.CloudIdentity
 	for _, id := range identities {
 		if id.ID == ref {
-			return id.ID, nil
+			return id, nil
 		}
 		if id.Label == ref {
 			matches = append(matches, id)
@@ -224,16 +250,16 @@ func resolveCloudIdentityID(c cloudIdentityLister, ref string) (string, error) {
 	}
 	switch len(matches) {
 	case 1:
-		return matches[0].ID, nil
+		return matches[0], nil
 	case 0:
-		return "", fmt.Errorf("cloud account %q not found (have: %s)", ref, knownIdentityLabels(identities))
+		return api.CloudIdentity{}, fmt.Errorf("cloud account %q not found (have: %s)", ref, knownIdentityLabels(identities))
 	default:
 		ids := make([]string, len(matches))
 		for i, m := range matches {
 			ids[i] = m.ID
 		}
 		sort.Strings(ids)
-		return "", fmt.Errorf(
+		return api.CloudIdentity{}, fmt.Errorf(
 			"cloud account label %q is ambiguous — %d accounts share it (%s). Pass the id instead",
 			ref, len(matches), strings.Join(ids, ", "))
 	}

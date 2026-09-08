@@ -22,6 +22,8 @@ Every command also accepts the [global flags](/cli/identity#output-formats) `-o,
 ```
 alethia
 ├── init                             # first-run: pick control-plane URL, then log in
+├── apply [-f alethia.yaml] [--runner <name>] [--env <e>…] [-y/--yes] [--no-wait]   # the file → a running project
+├── plan  [-f alethia.yaml]          # what apply would create; writes nothing
 ├── login [-f/--force] [--web-origin <url>]
 ├── logout
 ├── whoami                            # current user, active org, role, plan, default runner
@@ -57,7 +59,7 @@ alethia
 ├── project
 │   ├── list
 │   ├── get [project_name] [--open]   # asks when omitted
-│   ├── create [name] [--region <r>] [--cloud-identity-id <id>] [--stage <s>] [--iac-version <v>]
+│   ├── create [name] [--region <r>] [--cloud-account <label>] [--stage <s>] [--iac-version <v>] [-f alethia.yaml]
 │   ├── env                           # manage a project's environments (--project <p>)
 │   │   ├── list
 │   │   └── add [name] [--stage <s>] [--region <r>]
