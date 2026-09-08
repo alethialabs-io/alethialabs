@@ -1195,6 +1195,14 @@ jobs:
       - name: Every asymmetric template variable is recorded (template parity)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -C apps/console run check:template-parity
+      # The fourth unit, and the one CUSTOMIZABILITY-PARITY.md said could not exist ("no guard can red
+      # any cell on this page"). Template parity above asks whether the five templates AGREE; this
+      # asks whether a variable one of them declares can be REACHED and is READ. `gke_spot` was
+      # declared, defaulted true, reachable and consumed by nothing — the template advertised Spot
+      # node pools it never provisioned, and every count in the repo credited it as a working knob.
+      - name: Every declared template knob is reachable and read (template knobs)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm -C apps/console run check:template-knobs
       - name: Template-parity board is in sync with the templates
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
@@ -1234,6 +1242,18 @@ jobs:
           pnpm -C apps/console run gen:offer-surface
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/offer-surface.json \
             || { echo "::error::Generated offer-surface.json is stale — run 'pnpm -C apps/console run gen:offer-surface' and commit (source of truth: apps/console/components/design-project/canvas/inspector/config-schema.ts)."; exit 1; }
+      # The template-knob manifest — which template variable a user can actually SET, per cloud, per
+      # component. Derived from the templates' `variables.tf` and the Go providers' passthrough call
+      # sites, and diff-gated for the same reason as the offer surface above: the console's card UI
+      # reads the manifest, so a stale one offers knobs the templates no longer declare. The paired
+      # guard (`check:template-knobs`, in the parity block above) fails on a knob that is
+      # declared, reachable and read by NOTHING — the `gke_spot` shape.
+      - name: Template-knob manifest is in sync with the templates (variables.tf + *_provider.go → template-knobs.json)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          pnpm -C apps/console run gen:template-knobs
+          git diff --exit-code -- apps/console/lib/cloud-providers/generated/template-knobs.json docs/testing/template-knobs.md \
+            || { echo "::error::Generated template-knobs.json / docs/testing/template-knobs.md are stale — run 'pnpm -C apps/console run gen:template-knobs' and commit (source of truth: each template's root variables and packages/core/cloud/*_provider.go)."; exit 1; }
       # Same shape, same reason (#1621). Which secret stores a cluster can actually read is decided by
       # which store hook each provider registers in Go; the canvas greys out the rest. That answer was
       # a hand-written TS list of two slugs, free to drift from the hooks — and in the direction that

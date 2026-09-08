@@ -1,0 +1,270 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The template-knob ledger — every recorded decision behind
+# `apps/console/scripts/gen-template-knobs.mjs` and `check-template-knobs.mjs`.
+#
+# Three sections, and the difference between them is load-bearing:
+#
+#   variables:  a ROOT variable this cloud declares that the generator's wiring cannot attribute to
+#               one component, with the component it actually belongs to (default `platform`). An
+#               unattributed variable FAILS the generator; recording it here is how a decision is
+#               made visible instead of being silently dropped. An entry here WINS over the derived
+#               attribution, because a recorded fact beats an inferred one — and a stale entry (one
+#               naming a variable the template no longer declares) fails the check, so the list can
+#               only shrink by the template changing, never by drifting.
+#
+#   cells:      a (cloud, component) pair the cloud declares knobs for and NO `provider_config`
+#               passthrough reaches. `cloud: "*"` means every cloud. This is the architectural half:
+#               hetzner substitutes in-cluster Helm releases for six managed services, so there is no
+#               OpenTofu surface for a passthrough to land on, and inventing one would emit a key
+#               tofu silently drops. The reasons are copied VERBATIM from the table that already
+#               asserts them — `TestProviderTfvars_LeafPassthrough` in
+#               packages/core/cloud/passthrough_test.go — which is what keeps the two from drifting
+#               into two different explanations of the same fact.
+#
+#   dead:       a knob that is declared AND reachable AND read by no resource or module argument —
+#               the `gke_spot` shape, where the template advertises a feature it never provisions.
+#               This section is a BACKLOG, not a decision: every entry is a defect with an issue, and
+#               the check fails on any dead knob NOT listed here. It can only shrink.
+
+variables:
+  # ── The classification/tag sweep. Stamped by the console on EVERY resource
+  #    (packages/core/cloud/tags.go) and read through each template's tag/label locals hub, which
+  #    every component's resources merge. It belongs to no one component by construction.
+  - cloud: aws
+    variable: classification_tags
+    component: platform
+    reason: "Classification + sweep-handle tags stamped on every resource, merged in the default-tags locals hub that all components read."
+  - cloud: gcp
+    variable: classification_tags
+    component: platform
+    reason: "Classification + sweep-handle labels stamped on every resource, merged in the default-labels locals hub that all components read."
+  - cloud: azure
+    variable: classification_tags
+    component: platform
+    reason: "Classification + sweep-handle tags stamped on every resource, merged in the default-tags locals hub that all components read."
+  - cloud: alibaba
+    variable: classification_tags
+    component: platform
+    reason: "Classification + sweep-handle tags stamped on every resource, merged in the default-tags locals hub that all components read."
+  - cloud: hetzner
+    variable: classification_tags
+    component: platform
+    reason: "Classification + sweep-handle labels stamped on every hcloud resource and the CSI driver's volume labels; the platform base labels win a key collision."
+  - cloud: aws
+    variable: resources_tags
+    component: platform
+    reason: "The caller's extra tags, merged into the same default-tags local as the classification set — cross-cutting by construction."
+
+  # ── Platform context. The runner injects these; they name the project, the account and the
+  #    environment, and every component's resources are built inside them.
+  - cloud: alibaba
+    variable: environment
+    component: platform
+    reason: "Platform context — the environment name every resource is named and labelled from."
+  - cloud: hetzner
+    variable: environment
+    component: platform
+    reason: "Platform context — the environment name every resource is named and labelled from."
+  - cloud: hetzner
+    variable: project_name
+    component: platform
+    reason: "Platform context — the project name every resource is named from."
+  - cloud: alibaba
+    variable: alibaba_account
+    component: platform
+    reason: "Platform context — the Alibaba Cloud account the whole environment is built in."
+  - cloud: azure
+    variable: subscription_id
+    component: platform
+    reason: "Platform context — the Azure subscription the whole environment is built in."
+
+  # ── Provider-alias configuration. A `provider` block's credentials are not a component's knob: no
+  #    resource reads these, the provider that reads a cross-account secret or pulls from a registry
+  #    mirror does. Kept OUT of the component surface on every cloud so the five agree.
+  - cloud: aws
+    variable: secrets_xacct_provider
+    component: platform
+    reason: "Configures the tofu provider alias used to read a secret from another account — a provider block's credentials, not a resource argument."
+  - cloud: gcp
+    variable: secrets_xacct_provider
+    component: platform
+    reason: "Configures the tofu provider alias used to read a secret from another account — a provider block's credentials, not a resource argument."
+  - cloud: azure
+    variable: secrets_xacct_provider
+    component: platform
+    reason: "Configures the tofu provider alias used to read a secret from another account — a provider block's credentials, not a resource argument."
+  - cloud: alibaba
+    variable: secrets_xacct_provider
+    component: platform
+    reason: "Configures the tofu provider alias used to read a secret from another account — a provider block's credentials, not a resource argument."
+  - cloud: alibaba
+    variable: registry_pull_provider
+    component: platform
+    reason: "Configures the tofu provider alias used to pull from a registry mirror — the same provider-alias family as secrets_xacct_provider, recorded so all five clouds agree."
+
+  # ── The BYO-IaC escape hatch's raw tfvars bag. Read by nothing in the BUILT-IN template on
+  #    purpose: it is forwarded to the CUSTOMER's own root module, where the `alethia_*` namespace is
+  #    reserved. Attributing it to a component would offer a per-component control for a
+  #    project-level escape hatch.
+  - cloud: aws
+    variable: custom_iac_vars
+    component: platform
+    reason: "The bring-your-own-IaC caller's raw tfvars bag, forwarded to the customer's own root module — not a knob of the built-in template."
+  - cloud: gcp
+    variable: custom_iac_vars
+    component: platform
+    reason: "The bring-your-own-IaC caller's raw tfvars bag, forwarded to the customer's own root module — not a knob of the built-in template."
+  - cloud: azure
+    variable: custom_iac_vars
+    component: platform
+    reason: "The bring-your-own-IaC caller's raw tfvars bag, forwarded to the customer's own root module — not a knob of the built-in template."
+
+  # ── Hetzner has no `modules/` directory at all, so every variable is attributed by the root file
+  #    that reads it — and these two are read only through main.tf's locals hub (the arch → Talos
+  #    snapshot-id choice), which is cross-cutting. They are node architecture, and they are the
+  #    cluster's.
+  - cloud: hetzner
+    variable: control_plane_arch
+    component: cluster
+    reason: "Control-plane node architecture; read only through main.tf's arch → snapshot-id locals hub, which no single root file speaks for."
+  - cloud: hetzner
+    variable: worker_arch
+    component: cluster
+    reason: "Worker node architecture; read only through main.tf's arch → snapshot-id locals hub, which no single root file speaks for."
+
+cells:
+  # ── `platform` is not a component. There is no `ProviderConfig` on a project's platform context and
+  #    there must not be: `region`, `project_name`, `environment` and the `alethia_*` namespace are
+  #    frozen by the runner and reserved (see CUSTOMIZABILITY-PARITY.md's BYO-IaC contract). A
+  #    passthrough here would let a saved component override the identity of the environment it is in.
+  - cloud: "*"
+    component: platform
+    reason: "Platform context is injected by the runner and the `alethia_*` namespace is reserved; a component's provider_config must not be able to rename the environment it is built in."
+
+  # ── `network` has no passthrough on any cloud because `ProjectNetworkConfig`
+  #    (packages/core/types/project_config.go) carries no `ProviderConfig` field at all — the same
+  #    shape the registry was in before #4259 wired it. This is a GAP, not a ceiling: the network's
+  #    knobs are declared and unreachable, and closing it is one Go field plus one merge call.
+  - cloud: "*"
+    component: network
+    reason: "GAP, not a ceiling: ProjectNetworkConfig carries no ProviderConfig field, so no network knob is reachable on any cloud. Closing it is one Go field plus one merge call."
+
+  # ── hetzner. Six of these are ceilings copied VERBATIM from the table that asserts them —
+  #    TestProviderTfvars_LeafPassthrough in packages/core/cloud/passthrough_test.go, whose rows
+  #    prove the probe reaches NOTHING. The seventh is not a ceiling and says so.
+  - cloud: hetzner
+    component: cache
+    reason: "Valkey runs in-cluster as a Helm release; its knobs are chart values, not OpenTofu variables"
+  - cloud: hetzner
+    component: queue
+    reason: "RabbitMQ runs in-cluster as a Helm release; its knobs are chart values, not OpenTofu variables"
+  - cloud: hetzner
+    component: topic
+    reason: "RabbitMQ runs in-cluster as a Helm release; a topic is an exchange declared by the application, not a resource tofu provisions"
+  - cloud: hetzner
+    component: nosql
+    reason: "ScyllaDB runs in-cluster as a Helm release (#3228); its knobs are chart values, not OpenTofu variables"
+  - cloud: hetzner
+    component: secret
+    reason: "Vault runs in-cluster as a Helm release; the template declares no `custom_secrets` variable"
+  - cloud: hetzner
+    component: registry
+    reason: "Harbor runs in-cluster as a Helm release; the template's only registry surface is `incluster_registry_hosts`, a list(string) of mirror hosts with no per-registry object to merge into"
+  - cloud: hetzner
+    component: dns
+    reason: "GAP, not a ceiling: hetzner/dns.tf builds a real `hcloud_zone` (#1816) and declares its knobs, but hetzner_provider.go merges only the cluster's and the bucket's provider_config — so every hcloud DNS knob is declared and unreachable."
+
+dead:
+  # Declared AND reachable AND read by no resource or module argument on its chain — the `gke_spot`
+  # shape. This is a BACKLOG: each line is a template defect, not a decision, and the check fails on
+  # any dead knob that is not listed. It can only shrink.
+  - cloud: alibaba
+    component: dns
+    knob: alidns_managed_certificate
+    reason: "Declared and read by no resource on any code path."
+  - cloud: aws
+    component: bucket
+    knob: logging_bucket_name
+    reason: "`bucket_configuration` declares an access-logging target the S3 module never wires."
+  - cloud: aws
+    component: bucket
+    knob: store_access_key_in_ssm
+    reason: "Emitted by the provider into every bucket entry and read by nothing in the S3 module."
+  - cloud: aws
+    component: cache
+    knob: redis_cloudwatch_logs_enabled
+    reason: "Declared and read by nothing; ElastiCache log delivery is never configured from it."
+  - cloud: aws
+    component: cache
+    knob: redis_cluster_mode_enabled
+    reason: "Declared and read by nothing; cluster mode is not wired into the ElastiCache module."
+  - cloud: aws
+    component: database
+    knob: rds_extra_credentials
+    reason: "Declared and read by nothing; no extra credential is provisioned from it."
+  - cloud: aws
+    component: dns
+    knob: waf_rate_limit_rules
+    reason: "Declared and read by nothing; the WAFv2 module builds no rule from it."
+  - cloud: aws
+    component: secret
+    knob: keepers
+    reason: "`custom_secrets` declares a rotation handle, but awssm-passgen reads the separate `secret_keepers` variable, so this attribute reaches nothing."
+  - cloud: azure
+    component: cache
+    knob: azure_cache_capacity
+    reason: "Declared and read by no resource or module argument on the Azure Cache chain."
+  - cloud: azure
+    component: cache
+    knob: azure_cache_family
+    reason: "Declared and read by no resource or module argument on the Azure Cache chain."
+  - cloud: azure
+    component: dns
+    knob: azure_dns_zone_name
+    reason: "Declared and read by nothing; the zone is named from `dns_main_domain`."
+  - cloud: azure
+    component: nosql
+    knob: billing_mode
+    reason: "`cosmos_db_collections` declares the attribute AWS's DynamoDB module reads; nothing on the Cosmos chain reads it."
+  - cloud: gcp
+    component: bucket
+    knob: lifecycle_rules
+    reason: "`cloud_storage_buckets` declares it; the Cloud Storage module wires no lifecycle rule."
+  - cloud: gcp
+    component: cache
+    knob: memorystore_auth_enabled
+    reason: "Declared and read by no resource or module argument on the Memorystore chain."
+  - cloud: gcp
+    component: cache
+    knob: memorystore_transit_encryption_mode
+    reason: "Declared and read by no resource or module argument on the Memorystore chain."
+  - cloud: gcp
+    component: cluster
+    knob: gke_enable_private_endpoint
+    reason: "Named by CUSTOMIZABILITY-PARITY.md as declared-and-dead — read by no resource on any code path."
+  - cloud: gcp
+    component: cluster
+    knob: gke_enable_private_nodes
+    reason: "Same family as `gke_enable_private_endpoint`: the private-cluster switches are declared and consumed by nothing."
+  - cloud: gcp
+    component: cluster
+    knob: gke_log_retention_days
+    reason: "Named by CUSTOMIZABILITY-PARITY.md as declared-and-dead — read by no resource on any code path."
+  - cloud: gcp
+    component: database
+    knob: cloud_sql_database_flags
+    reason: "Declared and read by nothing; no `database_flags` block is built from it."
+  - cloud: gcp
+    component: database
+    knob: cloud_sql_default_username
+    reason: "Declared and read by nothing."
+  - cloud: hetzner
+    component: bucket
+    knob: cors_origins
+    reason: "hetzner/buckets.tf says so in its own header: the S3-compat path skips CORS, so `var.buckets[*].cors_origins` is IGNORED on Hetzner."
+  - cloud: hetzner
+    component: bucket
+    knob: encryption_enabled
+    reason: "Declared on the bucket object and read by no resource in hetzner/buckets.tf."
