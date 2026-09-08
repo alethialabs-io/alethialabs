@@ -107,6 +107,49 @@ export function routeConsts(
 	return out;
 }
 
+/**
+ * Narrows the manifest's `routes` to the fields this generator reads, CHECKING rather than
+ * asserting.
+ *
+ * `collectConsoleRoutes` is JSDoc-typed in a `.mjs`, so its routes arrive as `object[]`: enough for
+ * the JS consumers, not enough to hand to a typed function. A cast would have been one line and is
+ * forbidden by CLAUDE.md §6 for the reason this function demonstrates — the manifest is produced by
+ * a file this one does not type-check with, so "trust me" is exactly the wrong instruction. It
+ * throws on a record it cannot read, which turns a manifest whose shape changed into a build
+ * failure naming the field rather than a table of `undefined` constants.
+ */
+export function asRouteRecords(routes: readonly unknown[]): RouteRecord[] {
+	return routes.map((r, i) => {
+		if (typeof r !== "object" || r === null) {
+			throw new Error(`route manifest entry ${i} is not an object: ${JSON.stringify(r)}`);
+		}
+		const rec: Record<string, unknown> = { ...r };
+		const route = rec.route;
+		const segments = rec.urlSegments;
+		const redirect = rec.isRedirectOnly;
+		if (typeof route !== "string" || !Array.isArray(segments) || typeof redirect !== "boolean") {
+			throw new Error(
+				`route manifest entry ${i} is not the shape this generator reads (route: string, urlSegments: string[], isRedirectOnly: boolean) — scripts/lib/console-routes.mjs has changed: ${JSON.stringify(r)}`,
+			);
+		}
+		const urlSegments: string[] = [];
+		for (const s of segments) {
+			if (typeof s !== "string") {
+				throw new Error(`route ${route}: urlSegments contains a non-string (${JSON.stringify(s)})`);
+			}
+			urlSegments.push(s);
+		}
+		return { route, urlSegments, isRedirectOnly: redirect };
+	});
+}
+
+/** One route, as much of it as this generator reads. */
+export interface RouteRecord {
+	route: string;
+	urlSegments: string[];
+	isRedirectOnly: boolean;
+}
+
 /** Renders the Go file, gofmt-clean as written. */
 export function renderGo(consts: readonly RouteConst[]): string {
 	const width = Math.max(...consts.map((c) => c.ident.length));
@@ -142,13 +185,8 @@ export function renderGo(consts: readonly RouteConst[]): string {
 
 function main(): void {
 	const checkOnly = process.argv.includes("--check");
-	// `collectConsoleRoutes` is JSDoc-typed in a `.mjs`, so `routes` arrives as `object[]` — enough
-	// for the JS consumers, not enough to hand to a typed function. Narrowed here, once, rather than
-	// widening `routeConsts`, which is the half worth type-checking.
-	const manifest = collectConsoleRoutes({ repoRoot: REPO }) as {
-		routes: { route: string; urlSegments: string[]; isRedirectOnly: boolean }[];
-	};
-	const consts = routeConsts(manifest.routes);
+	const manifest = collectConsoleRoutes({ repoRoot: REPO });
+	const consts = routeConsts(asRouteRecords(manifest.routes));
 	const go = renderGo(consts);
 
 	if (checkOnly) {
