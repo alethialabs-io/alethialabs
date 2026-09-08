@@ -9,7 +9,7 @@ import { type SQL, sql } from "drizzle-orm";
 import postgres from "postgres";
 import { describe } from "vitest";
 import { getServiceDb } from "@/lib/db";
-import { authzActivityLog, runners } from "@/lib/db/schema";
+import { authzActivityLog, jobs, runners } from "@/lib/db/schema";
 
 /** Probe the dev DB once; true when reachable. */
 async function ping(): Promise<boolean> {
@@ -145,7 +145,9 @@ export async function refusalText(
 	} catch (err) {
 		return errorText(err);
 	}
-	throw new Error("expected the database to refuse this statement, but it succeeded");
+	throw new Error(
+		"expected the database to refuse this statement, but it succeeded",
+	);
 }
 
 /**
@@ -182,5 +184,34 @@ export async function seedManagedRunner(name: string): Promise<string> {
 			status: "OFFLINE",
 		})
 		.returning({ id: runners.id });
+	return row.id;
+}
+
+/**
+ * Inserts one job and returns its id. The SEVENTH per-file copy of this was written before it was
+ * hoisted here; `seedManagedRunner` above is its FK-target sibling.
+ *
+ * `orgId === null` OMITS the column, so `set_org_id_from_project` runs its fallback chain —
+ * project → the `app.current_org` GUC → `NEW.user_id`. That last arm is how the pre-#3942
+ * runner-lifecycle rows were written, and it is the fixture the org-scope suites are about. A
+ * caller that depends on the stamp should read it back rather than trust this sentence.
+ */
+export async function seedJob(
+	userId: string,
+	orgId: string | null,
+	overrides: Partial<typeof jobs.$inferInsert> = {},
+): Promise<string> {
+	const [row] = await getServiceDb()
+		.insert(jobs)
+		.values({
+			user_id: userId,
+			...(orgId === null ? {} : { org_id: orgId }),
+			project_id: null,
+			job_type: "PLAN",
+			status: "QUEUED",
+			config_snapshot: {},
+			...overrides,
+		})
+		.returning({ id: jobs.id });
 	return row.id;
 }
