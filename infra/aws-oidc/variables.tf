@@ -39,6 +39,12 @@ variable "github_environment" {
   default     = "production"
 }
 
+variable "cli_release_environment" {
+  description = "GitHub Actions environment selected by the CLI release job so its TAG-triggered run can present a trustable OIDC sub. Adds an exact `repo:<repo>:environment:<this>` sub to alethia-deploy-reader ONLY (never to the state/ECR/ECS roles). The environment must be restricted to the `cli-v*` TAG pattern - see infra/github/environments.tf."
+  type        = string
+  default     = "cli-release"
+}
+
 variable "oidc_provider_arn" {
   description = "ARN of the existing GitHub OIDC provider. Empty = look it up by URL (it already exists from infra/email-ses/bootstrap)."
   type        = string
