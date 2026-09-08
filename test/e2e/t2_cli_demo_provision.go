@@ -396,16 +396,46 @@ func cliDemoManifestPath(r *CLIDemoRun) string {
 	return filepath.Join(dir, "alethia.yaml")
 }
 
-// assertManifestPlanIsClean is the manifest beats' claim: the file the product wrote describes the
-// project the commands built, so a plan over it has nothing to create.
-func assertManifestPlanIsClean(_ *CLIDemoRun, out string) error {
+// assertManifestPlanIsClean is the manifest beats' claim: the file the product wrote names the
+// project the commands built, and the reader agrees with the writer about the file's format.
+//
+// It reads the WHOLE summary line and the header, not a substring of either. `0 projects to create`
+// alone was too weak to fail: `counts()` also reports environments and components, and the summary
+// line BEGINS with the project clause — so the match passed whether the rest said `0 environments`
+// or `9`, and passed for a plan that would re-upsert every component the demo had added. An
+// assertion that cannot distinguish the state it claims from the state it warns about is a step the
+// bar performs and does not check.
+//
+// WHY ONE ENVIRONMENT IS THE CLEAN ANSWER, not zero. The `project-create` beat declares no matrix,
+// so the server made its default Production + Preview pair; `alethia init` writes one environment
+// named after `--stage`, which defaults to `development`. The file therefore declares one
+// environment the project does not have, and the plan says so. Asserting `0 environments` would be
+// asserting a falsehood and would red on the first real run. What matters is that the number is
+// EXACT — an off-by-one means the writer and the reader disagree about what the file declares.
+//
+// And `0 components`: the file declares none, so the component the `component-add` beat created is
+// left alone rather than re-upserted. That is the reader's promise — what the file does not mention
+// is not touched — asserted rather than assumed.
+func assertManifestPlanIsClean(r *CLIDemoRun, out string) error {
 	if strings.Contains(out, "cannot be applied as written") {
 		return fmt.Errorf("`alethia plan` REFUSED the manifest `alethia init` had just written — the "+
 			"writer and the reader disagree about the file's own format:\n%s", out)
 	}
-	if !strings.Contains(out, "0 projects to create") {
-		return fmt.Errorf("`alethia plan` over the run's own manifest would create a project that the "+
-			"beats already created — the file and the commands describe two different projects:\n%s", out)
+	// The header proves the file round-tripped the run's OWN identity: `init` was given the project
+	// name and the region on the command line, wrote them, and `plan` read them back. A file
+	// describing some other project would still plan cleanly against itself.
+	for _, want := range []string{r.Project, r.Region} {
+		if want != "" && !strings.Contains(out, want) {
+			return fmt.Errorf("`alethia plan` over the manifest `alethia init` wrote does not name %q — "+
+				"the file does not describe the project the beats built:\n%s", want, out)
+		}
+	}
+	const wantSummary = "0 projects to create · 1 environment · 0 components"
+	if !strings.Contains(out, wantSummary) {
+		return fmt.Errorf("`alethia plan` over the run's own manifest did not summarise as %q. A project "+
+			"count above zero means the file and the commands describe two different projects; a different "+
+			"environment or component count means the writer and the reader disagree about what the file "+
+			"declares:\n%s", wantSummary, out)
 	}
 	return nil
 }
