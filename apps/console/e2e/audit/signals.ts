@@ -10,7 +10,7 @@
 // closes the gap here, because those helpers are shared with suites that are not gates.
 
 import type { Page } from "@playwright/test";
-import { scanA11y, type A11yTheme, type A11yViolation } from "../helpers/a11y";
+import { scanA11y, type A11yTheme, type ThemedA11yViolation } from "../helpers/a11y";
 import { attachConsoleGuard, type CapturedError, type ConsoleGuard } from "../helpers/console-errors";
 import { attachPerf, type PerfCollector, type PerfRecord } from "../helpers/perf";
 
@@ -51,8 +51,16 @@ export async function requireAxe(): Promise<void> {
  * WITHHELD MEASUREMENT: a number that covered one theme with nothing to say so. The arithmetic
  * behind #4195 said dark fails harder (`gray600` on `#171717` at 3.78:1) than the light failure
  * being fixed; this is what turns that arithmetic into a measurement.
+ *
+ * DARK FIRST, LIGHT LAST, and the order is load-bearing. The predicates measured after R5 (R2's
+ * overlay probes especially) expect the paint the audit has always handed them, so the page must
+ * come back light. Doing that in a `finally` meant a throw inside the cleanup REPLACED the real
+ * error — an axe failure, or the 180 s timeout tearing the page down mid-`analyze()`, would surface
+ * as "Execution context was destroyed" from `emulateMedia`, and the `record()` after the loop never
+ * ran, so the route got no R5 row at all: neither PASS, FAIL nor NOT MEASURED. Ending on light
+ * makes the last scan's own state the hand-back and lets the `finally` go.
  */
-export const AUDIT_THEMES: readonly A11yTheme[] = ["light", "dark"];
+export const AUDIT_THEMES: readonly A11yTheme[] = ["dark", "light"];
 
 /** What the page looked like after a theme was asked for — the evidence that it applied. */
 export interface ThemeApplied {
@@ -66,11 +74,26 @@ export interface ThemeApplied {
 	storedPreference: string | null;
 }
 
-async function readPaint(page: Page): Promise<Pick<ThemeApplied, "htmlClass" | "background">> {
-	return page.evaluate(() => ({
-		htmlClass: document.documentElement.className,
-		background: getComputedStyle(document.body).backgroundColor,
-	}));
+/**
+ * Everything about the painted page R5 records, in ONE round trip.
+ *
+ * Read once, AFTER the wait has already settled the class — the class is the thing being awaited,
+ * and the paint and the stored preference only have to be true of the state the wait arrived at.
+ */
+async function readPaint(page: Page): Promise<Omit<ThemeApplied, "theme" | "applied">> {
+	return page.evaluate(() => {
+		let storedPreference: string | null = null;
+		try {
+			storedPreference = localStorage.getItem("theme");
+		} catch {
+			storedPreference = null;
+		}
+		return {
+			htmlClass: document.documentElement.className,
+			background: getComputedStyle(document.body).backgroundColor,
+			storedPreference,
+		};
+	});
 }
 
 /**
@@ -83,95 +106,153 @@ async function readPaint(page: Page): Promise<Pick<ThemeApplied, "htmlClass" | "
  * It RETURNS whether the theme applied rather than assuming it. A broken listener, a persona whose
  * stored preference pins one theme, or a provider that stopped honouring `system` would otherwise
  * produce a dark column that is really the light one measured twice — the failure #4195 names.
+ *
+ * The wait is `page.waitForFunction`, which this audit already uses for exactly this shape
+ * (`error-state.ts`): it polls IN-PAGE on rAF rather than costing a CDP round trip per tick. The
+ * hand-rolled 100 ms loop it replaces re-read `getComputedStyle(body)` on every tick though only
+ * the class was being awaited — up to 30 evaluates per apply, and a full 3 s ceiling twice on any
+ * page that does not follow the media query, for a class next-themes toggles synchronously in its
+ * `change` listener.
  */
 export async function applyTheme(page: Page, theme: A11yTheme, timeoutMs = 3_000): Promise<ThemeApplied> {
 	await page.emulateMedia({ colorScheme: theme });
 	const wantDark = theme === "dark";
-	const isDark = (htmlClass: string) => /(^|\s)dark(\s|$)/.test(htmlClass);
-	const deadline = Date.now() + timeoutMs;
-	let paint = await readPaint(page);
-	while (isDark(paint.htmlClass) !== wantDark && Date.now() < deadline) {
-		await page.waitForTimeout(100);
-		paint = await readPaint(page);
+	let applied = true;
+	try {
+		await page.waitForFunction(
+			(want) => document.documentElement.classList.contains("dark") === want,
+			wantDark,
+			{ timeout: timeoutMs },
+		);
+	} catch {
+		// The predicate never came true inside the wait. That is the measurement, not an error:
+		// `applied: false` is what the caller scores, and `htmlClass`/`storedPreference` below are
+		// what explain it.
+		applied = false;
 	}
-	const storedPreference = await page.evaluate(() => {
-		try {
-			return localStorage.getItem("theme");
-		} catch {
-			return null;
-		}
-	});
-	return { theme, applied: isDark(paint.htmlClass) === wantDark, ...paint, storedPreference };
+	return { theme, applied, ...(await readPaint(page)) };
 }
 
 /**
- * A FAIL that is about the instrument's precondition, shaped as a violation so it lands in the
- * same R5 evidence array and the same scoreboard diagnosis as a real one. `groups` and
- * `omittedNodes` are present because `audit-report.mjs`'s R5 summariser REFUSES a violation
- * without them — a refusal that is right for axe output and would otherwise turn this into a crash
- * at import time instead of a red cell.
+ * Turn every CSS transition and animation off for the rest of this page's life.
+ *
+ * axe's `color-contrast` reads `getComputedStyle` at check time, and `@repo/ui` carries ~29
+ * `transition-colors`/`transition-all` sites at the 150 ms default while the console does NOT set
+ * next-themes' `disableTransitionOnChange`. Scanning the instant the `dark` class lands therefore
+ * reads nodes mid-transition: a foreground/background pair that exists in NEITHER theme, a verdict
+ * that flips between runs, and a recorded colour that matches no token — the unreproducible red
+ * that #4099's evidence was built to end. This is what `disableTransitionOnChange` does, held for
+ * the whole scan instead of one frame.
+ *
+ * Returns a remover so the suppression does not outlive R5: R7's interactive timings and R2's
+ * overlay probes are measured on the page as it really animates.
  */
-function themeViolation(id: "theme-did-not-apply" | "theme-paint-unchanged", applied: ThemeApplied): A11yViolation {
-	const help =
-		id === "theme-did-not-apply"
-			? `the ${applied.theme} theme did not apply within the wait — the page would have been scored as its other theme, twice`
-			: "both themes painted the same background — the dark scan measured the light paint again";
-	return {
-		id,
-		impact: "critical",
-		help,
-		nodes: 1,
-		target: "html",
-		groups: [
-			{
-				target: "html",
-				count: 1,
-				checks: [
-					{
-						id,
-						data: {
-							theme: applied.theme,
-							htmlClass: applied.htmlClass,
-							background: applied.background,
-							storedPreference: applied.storedPreference,
-						},
-					},
-				],
-			},
-		],
-		omittedNodes: 0,
-		theme: applied.theme,
+async function suppressTransitions(page: Page): Promise<() => Promise<void>> {
+	const handle = await page.addStyleTag({
+		content: "*,*::before,*::after{transition:none!important;animation:none!important}",
+	});
+	return async () => {
+		// A route that client-side navigated mid-scan has already discarded the tag; that is the
+		// same end state, so a stale handle is not a failure.
+		//
+		// `addStyleTag` hands back an `ElementHandle<Node>`, and `remove()` is on `Element` — narrowed
+		// with `instanceof` rather than an `as`, which also makes a handle to something that is no
+		// longer an element a no-op instead of a throw.
+		await handle
+			.evaluate((el) => {
+				if (el instanceof Element) el.remove();
+			})
+			.catch(() => undefined);
 	};
+}
+
+/** What one R5 scan measured: the axe violations, and the paints they were measured in. */
+export interface RouteThemeScan {
+	violations: ThemedA11yViolation[];
+	/** One entry per {@link AUDIT_THEMES} entry, in the order they were asked for. */
+	themes: ThemeApplied[];
+}
+
+/**
+ * Whether the console answers the OS at all — the positive control behind every R5 verdict.
+ *
+ * Whether dark applies is a property of the PROVIDER and the storage state, not of each route, so
+ * it is measured once per run and not re-litigated 40 times. It is a control in the sense
+ * `measurementControl` is: it drives the instrument against a page whose answer is known, and
+ * names the predicate to withhold when the instrument stops answering.
+ *
+ * This exists because the alternative already shipped once and was worse. A theme that failed to
+ * apply used to be FABRICATED as an axe violation — `theme-did-not-apply`, `impact: "critical"`,
+ * with invented `groups`/`checks`/`omittedNodes` so the scoreboard's R5 summariser would not refuse
+ * it. A next-themes regression, or a persona whose storage pins `theme` (`capture.setup.ts` writes
+ * one), would then put ~40 routes in the R5 FAIL column with the cause buried in `checks[0].data`
+ * where the summariser never prints it; `--import-live` would bake them into the live baseline, the
+ * ratchet would block unrelated console PRs, and `LIVE_DEBT.R5` would attribute the whole red column
+ * to the token work. `report.ts` already has the first-class shape for a claim about the instrument
+ * rather than the page — `NOT MEASURED` via `withhold()` — and this is what feeds it.
+ *
+ * @returns the reasons R5 must be withheld for the run; empty means the control held.
+ */
+export async function darkThemeControl(page: Page): Promise<string[]> {
+	const broken: string[] = [];
+	const dark = await applyTheme(page, "dark");
+	const light = await applyTheme(page, "light");
+	if (!dark.applied) {
+		broken.push(
+			`asked for the dark theme and <html> never carried the \`dark\` class (class="${dark.htmlClass}", ` +
+				`stored theme preference ${dark.storedPreference === null ? "absent" : `"${dark.storedPreference}"`})`,
+		);
+	}
+	if (!light.applied) {
+		broken.push(
+			`asked for the light theme and <html> kept the \`dark\` class (class="${light.htmlClass}", ` +
+				`stored theme preference ${light.storedPreference === null ? "absent" : `"${light.storedPreference}"`})`,
+		);
+	}
+	// The CLASS moving is not the measurement — the PAINT is. A provider that toggles the class
+	// against a stylesheet that no longer varies would otherwise pass a control that exists to
+	// prove the dark scan is not the light one measured twice.
+	if (dark.applied && light.applied && dark.background === light.background) {
+		broken.push(
+			`both themes painted the same background (${dark.background}) — the dark scan would be the light paint again`,
+		);
+	}
+	return broken;
 }
 
 /**
  * R5 — serious/critical axe violations at wcag2a/wcag2aa, in EVERY theme, each violation naming
- * the theme it was seen in. The page is handed back in the light theme, so the predicates measured
- * after R5 see the paint they always did.
+ * the theme it was seen in.
  *
- * A theme that fails to apply is a critical violation, not a skipped scan and not a repeat of the
- * other theme; so is a pair of themes that paint the same background.
+ * Transitions are suppressed for the duration (see {@link suppressTransitions}) and restored after,
+ * and the loop ENDS on light (see {@link AUDIT_THEMES}), so the page is handed to the predicates
+ * measured after R5 in the paint they have always seen — without a `finally` that could swallow the
+ * real error.
+ *
+ * A theme that did not apply is reported as `applied: false` on its {@link ThemeApplied} entry and
+ * is NOT scanned; it is never a fabricated axe violation. The caller scores it, and
+ * {@link darkThemeControl} is what turns a systematic failure into a withheld predicate.
  */
-export async function scanRouteThemes(page: Page): Promise<{ violations: A11yViolation[]; themes: ThemeApplied[] }> {
-	const violations: A11yViolation[] = [];
+export async function scanRouteThemes(page: Page): Promise<RouteThemeScan> {
+	const violations: ThemedA11yViolation[] = [];
 	const themes: ThemeApplied[] = [];
+	const restoreTransitions = await suppressTransitions(page);
 	try {
 		for (const theme of AUDIT_THEMES) {
 			const applied = await applyTheme(page, theme);
 			themes.push(applied);
-			if (!applied.applied) {
-				violations.push(themeViolation("theme-did-not-apply", applied));
-				continue;
+			if (!applied.applied) continue;
+			// `theme` is stamped HERE rather than trusted from the helper's optional field, which is
+			// what makes it required on the way out: a per-theme count built from these cannot report
+			// 0 for a violation that never named one.
+			for (const violation of await scanA11y(page, { theme })) {
+				violations.push({ ...violation, theme });
 			}
-			violations.push(...(await scanA11y(page, { theme })));
-		}
-		const light = themes.find((t) => t.theme === "light");
-		const dark = themes.find((t) => t.theme === "dark");
-		if (light?.applied && dark?.applied && light.background === dark.background) {
-			violations.push(themeViolation("theme-paint-unchanged", dark));
 		}
 	} finally {
-		await applyTheme(page, "light");
+		// Safe in a `finally` where `applyTheme` was not: the remover swallows a stale handle, so it
+		// cannot throw and cannot replace the error the try block is carrying.
+		await restoreTransitions();
 	}
 	return { violations, themes };
 }

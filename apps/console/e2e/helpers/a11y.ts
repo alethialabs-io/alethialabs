@@ -98,6 +98,20 @@ export interface A11yViolation {
 	theme?: A11yTheme;
 }
 
+/**
+ * A violation from a scan that STATED which theme it measured.
+ *
+ * The optional `theme` above is right for the QA suite, which scans whatever the persona's browser
+ * happened to render and has nothing to say about it. It is wrong for the conformance audit, whose
+ * R5 message counts violations per theme: an optional field lets a theme-less violation through, it
+ * matches no theme in the count, and the route reads `dark: 0` — clean — for a violation that was
+ * measured (#4195). `scanRouteThemes` returns THIS instead, so the count cannot be built from
+ * anything that did not name its theme.
+ */
+export interface ThemedA11yViolation extends A11yViolation {
+	theme: A11yTheme;
+}
+
 /** The two paints the console ships. Named on every violation so a dark FAIL and a light FAIL are two facts. */
 export type A11yTheme = "light" | "dark";
 

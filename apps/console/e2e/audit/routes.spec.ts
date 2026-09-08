@@ -43,7 +43,7 @@ import { describeOverlayMisses, probeOverlays } from "./overlays";
 import { createReport, type PredicateId } from "./report";
 import {
 	attachSignals,
-	AUDIT_THEMES,
+	darkThemeControl,
 	navigationsFor,
 	p95,
 	r6Failures,
@@ -100,6 +100,23 @@ test.beforeAll(async ({ browser }, testInfo) => {
 		}
 		ctx.orgSlug = await resolveOrgSlug(page);
 		ctx.owner = await resolveOwner(ctx.orgSlug);
+		// R5's OWN positive control, and it has to be here rather than above: `measurementControl`
+		// replaces the document with its own fixtures, and whether the console follows
+		// `prefers-color-scheme` is a property of the next-themes provider — only a real console page
+		// has one. `resolveOrgSlug` has just navigated to one.
+		//
+		// Withholding R5 for the run is the whole point. Whether dark applies is a property of the
+		// provider and of this persona's storage, not of each route, so a systematic failure must
+		// publish NOT MEASURED once — not ~40 R5 FAILs that `--import-live` bakes into the live
+		// baseline and the ratchet then holds unrelated console PRs against.
+		const darkBroken = await darkThemeControl(page);
+		if (darkBroken.length > 0) {
+			report.withhold(["R5"], `dark-theme positive control failed: ${darkBroken.join("; ")}`);
+			console.error(
+				"ui-audit: THE DARK-THEME CONTROL IS BROKEN — refusing to score R5 on any route, because " +
+					`every verdict would be one paint measured twice.\n  ${darkBroken.join("\n  ")}`,
+			);
+		}
 		// A worker that started AFTER the seeding step picks the ids back up here; a worker that
 		// started before it finds nothing and carries on.
 		restoreContext(ctx);
@@ -224,24 +241,14 @@ async function auditRoute(page: Page, route: RouteRecord): Promise<void> {
 		});
 	}
 
-	// ── R5 ────────────────────────────────────────────────────────────────────────────────────
-	// BOTH themes (#4195). One record per route — the reducer keys on (route, predicate) — with
-	// every violation naming the theme it was seen in, so a dark FAIL and a light FAIL are two
-	// different facts in the artifact. A theme that fails to apply is itself a critical violation.
-	await page.setViewportSize({ width: 1280, height: AUDIT_VIEWPORT_HEIGHT });
-	const { violations, themes } = await scanRouteThemes(page);
-	record({
-		route: route.route,
-		url,
-		predicate: "R5",
-		verdict: violations.length === 0 ? "PASS" : "FAIL",
-		evidence: violations,
-	});
-	// The paints that were measured, beside the verdict rather than inside it: the evidence array
-	// stays the array of violations the scoreboard's R5 summariser reads.
-	test.info().annotations.push({ type: "r5-themes", description: JSON.stringify(themes) });
-
 	// ── R6 ────────────────────────────────────────────────────────────────────────────────────
+	// BEFORE R5, deliberately. R6 is a predicate about the LOAD — the console errors and failed
+	// requests the route produced when it rendered. R5's theme loop flips `prefers-color-scheme`,
+	// which re-renders every themed component and can pull dark-only assets; a dark-only 404, or an
+	// error thrown while re-rendering on the media-query change, would land in `signals` and fail
+	// R6 on a route whose load was clean, with evidence pointing at a page load that never emitted
+	// it. `CapturedError` carries no theme, so it could not even say which paint it came from.
+	// Reading R6 here scopes it back to the thing it is defined over.
 	const r6 = r6Failures(signals);
 	record({
 		route: route.route,
@@ -249,6 +256,32 @@ async function auditRoute(page: Page, route: RouteRecord): Promise<void> {
 		predicate: "R6",
 		verdict: r6.length === 0 ? "PASS" : "FAIL",
 		evidence: r6.slice(0, 10),
+	});
+
+	// ── R5 ────────────────────────────────────────────────────────────────────────────────────
+	// BOTH themes (#4195). One record per route — the reducer keys on (route, predicate) — with
+	// every violation naming the theme it was seen in, so a dark FAIL and a light FAIL are two
+	// different facts in the artifact.
+	//
+	// The themes go INSIDE the evidence, not into `test.info().annotations`, because nothing reads
+	// annotations: `report.ts` writes `ui-audit*.json` without them and `--import-live` never sees
+	// them, so an R5 PASS was byte-identical to the light-only PASS this whole change exists to
+	// retire — and an edit that dropped the dark scan would reproduce it silently. `{ themes,
+	// violations }` puts the paints where the scoreboard's summariser can render them, for PASS as
+	// well as FAIL.
+	await page.setViewportSize({ width: 1280, height: AUDIT_VIEWPORT_HEIGHT });
+	const { violations, themes } = await scanRouteThemes(page);
+	// A theme that did not apply is not a clean scan. It is not an axe violation either — the run's
+	// `darkThemeControl` withholds R5 outright when the provider stops answering — so it is scored
+	// here, from the paints themselves.
+	const themesApplied = themes.every((t) => t.applied);
+	const paintsMoved = new Set(themes.map((t) => t.background)).size === themes.length;
+	record({
+		route: route.route,
+		url,
+		predicate: "R5",
+		verdict: violations.length === 0 && themesApplied && paintsMoved ? "PASS" : "FAIL",
+		evidence: { themes, violations },
 	});
 
 	// ── R7 ────────────────────────────────────────────────────────────────────────────────────
@@ -339,12 +372,33 @@ async function auditRoute(page: Page, route: RouteRecord): Promise<void> {
 	if (scored("R4")) {
 		expect.soft(overlaps, `R4 ${route.route}: interactive elements overlap`).toEqual([]);
 	}
+	// The counts are built from the themes ACTUALLY MEASURED, not from `AUDIT_THEMES`. Iterating the
+	// intended list printed `dark: 0` for a theme `scanRouteThemes` skipped — a withheld measurement
+	// rendered as a clean one, which is the exact substitution #4195 is about.
 	expect.soft(
 		violations,
 		`R5 ${route.route}: serious/critical axe violations — ` +
-			AUDIT_THEMES.map((t) => `${t}: ${violations.filter((v) => v.theme === t).length}`).join(", ") +
-			` (themes measured: ${themes.map((t) => `${t.theme}${t.applied ? "" : " DID NOT APPLY"}`).join(", ")})`,
+			themes
+				.map(
+					(t) =>
+						`${t.theme}: ${violations.filter((v) => v.theme === t.theme).length}` +
+						`${t.applied ? "" : " DID NOT APPLY"}`,
+				)
+				.join(", "),
 	).toEqual([]);
+	// The two ways R5 fails without producing a violation. Asserted separately so the test agrees
+	// with the record above — a FAIL in the artifact that the suite reports as green is the failure
+	// mode this file exists to refuse.
+	expect.soft(
+		themes.filter((t) => !t.applied).map((t) => t.theme),
+		`R5 ${route.route}: a theme never applied, so its scan would be the other theme measured twice ` +
+			`(stored preference — ${themes.map((t) => `${t.theme}: ${t.storedPreference ?? "absent"}`).join(", ")})`,
+	).toEqual([]);
+	expect.soft(
+		paintsMoved,
+		`R5 ${route.route}: both themes painted ${themes[0]?.background ?? "(nothing)"} — the dark scan ` +
+			"measured the light paint again",
+	).toBe(true);
 	expect.soft(r6, `R6 ${route.route}: console errors / failed requests`).toEqual([]);
 	expect.soft(
 		measuredP95,

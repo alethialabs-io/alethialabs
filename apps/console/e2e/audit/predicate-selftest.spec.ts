@@ -27,7 +27,7 @@ import {
 	type MeasuredPredicate,
 } from "./predicates";
 import { createReport, NA_REASONS } from "./report";
-import { AUDIT_THEMES, scanRouteThemes } from "./signals";
+import { AUDIT_THEMES, darkThemeControl, scanRouteThemes } from "./signals";
 
 /**
  * Hit-test the overlay carrying `slot`, handed over as the ELEMENT the way `probeOverlays` does.
@@ -330,25 +330,54 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		expect(violations).toEqual([]);
 	});
 
-	test("R5 — a theme that does not apply is a FAIL, not the other theme measured twice", async ({ page }) => {
+	test("R5 — a theme that does not apply is recorded in `themes`, never fabricated as a violation", async ({
+		page,
+	}) => {
 		await page.setContent(themed("#4a4a4a", { follow: false }));
 		const { violations, themes } = await scanRouteThemes(page);
 		const dark = themes.find((t) => t.theme === "dark");
 		expect(dark?.applied, "nothing toggled `dark` on <html>").toBe(false);
-		const synthetic = violations.find((v) => v.id === "theme-did-not-apply");
-		expect(synthetic?.theme).toBe("dark");
-		expect(synthetic?.impact).toBe("critical");
-		// Shaped like a real violation, because the scoreboard's R5 summariser refuses one that is not.
-		expect(Array.isArray(synthetic?.groups)).toBe(true);
-		expect(synthetic?.omittedNodes).toBe(0);
+		// A claim about the INSTRUMENT does not go in the page's FAIL column dressed as an axe
+		// violation. It belongs to `themes` — which the caller scores and `darkThemeControl`
+		// withholds R5 over when it is systematic.
+		expect(violations.map((v) => v.id), "no synthetic axe violation").not.toContain("theme-did-not-apply");
+		expect(
+			violations.filter((v) => v.theme === "dark"),
+			"and a theme that never applied is not scanned, so it cannot contribute the other theme's violations",
+		).toEqual([]);
 	});
 
-	test("R5 — a theme that applies but repaints nothing is a FAIL", async ({ page }) => {
+	test("R5 — a theme that applies but repaints nothing shows up as one paint, not as a violation", async ({
+		page,
+	}) => {
 		await page.setContent(themed("#4a4a4a", { repaint: false }));
 		const { violations, themes } = await scanRouteThemes(page);
 		expect(themes.every((t) => t.applied), "the class toggled").toBe(true);
 		expect(themes[0].background, "but the paint did not move").toBe(themes[1].background);
-		expect(violations.map((v) => v.id)).toContain("theme-paint-unchanged");
+		expect(violations.map((v) => v.id)).not.toContain("theme-paint-unchanged");
+	});
+
+	// The control behind every R5 verdict, driven BOTH ways — a control that cannot fail is the
+	// thing it was built to refuse.
+	test("the dark-theme control passes on a page that follows the OS", async ({ page }) => {
+		await page.setContent(themed("#ffffff"));
+		expect(await darkThemeControl(page)).toEqual([]);
+	});
+
+	test("the dark-theme control names a page that ignores the OS, and one that never repaints", async ({ page }) => {
+		await page.setContent(themed("#4a4a4a", { follow: false }));
+		const ignoresOs = await darkThemeControl(page);
+		expect(ignoresOs.length, "the control fires").toBeGreaterThan(0);
+		expect(ignoresOs.join(" "), "and says which theme, and what the page carried instead").toMatch(
+			/dark theme.*never carried|never carried the `dark` class/,
+		);
+
+		await page.setContent(themed("#4a4a4a", { repaint: false }));
+		const neverRepaints = await darkThemeControl(page);
+		expect(
+			neverRepaints.join(" "),
+			"a class that toggles against a stylesheet that does not vary is still one paint measured twice",
+		).toMatch(/same background/);
 	});
 
 	test("the report refuses the three ways an N/A goes wrong", () => {

@@ -591,7 +591,41 @@ function r5Diagnosis(v) {
 	return ` [${pairs.join("; ")}${tail}]`;
 }
 
-export function summariseLiveEvidence(predicate, evidence) {
+/**
+ * The paints an R5 record was measured in, rendered so a reader can tell a two-theme verdict from a
+ * one-theme one.
+ *
+ * REFUSED rather than coerced when absent. An R5 record with no `themes` came from an instrument
+ * that did not report them, and rendering that as "the themes were fine" is the same substitution
+ * of silence for a measurement that `nonEmpty` and `r5Diagnosis` above already refuse.
+ *
+ * @param {unknown} themes one record's `evidence.themes`
+ * @param {string} predicate named in the error
+ * @returns {string} e.g. `themes dark, light` or `themes dark DID NOT APPLY, light`
+ */
+function renderR5Themes(themes, predicate) {
+	if (!Array.isArray(themes) || themes.length === 0) {
+		throw new Error(
+			`${predicate}: evidence carries no \`themes\` array, so which paints were scanned is unknown. ` +
+				"An R5 verdict that cannot name its themes is the light-only verdict #4195 retired, published " +
+				"as though it covered both.",
+		);
+	}
+	const names = themes.map((t) => `${String(t?.theme)}${t?.applied === false ? " DID NOT APPLY" : ""}`);
+	const backgrounds = new Set(themes.map((t) => String(t?.background)));
+	// Fewer distinct backgrounds than themes means one paint was measured twice.
+	const sameBackground = backgrounds.size < themes.length;
+	const unapplied = themes.some((t) => t?.applied === false);
+	return {
+		text: `themes ${names.join(", ")}${sameBackground ? ", both painted the same background" : ""}`,
+		// The two ways R5 fails WITHOUT producing an axe violation. Reported as structure rather than
+		// re-derived from the sentence above: a caller that greps its own rendering is a guard that
+		// matches a rendering instead of the thing.
+		anomalous: sameBackground || unapplied,
+	};
+}
+
+export function summariseLiveEvidence(predicate, evidence, verdict = "FAIL") {
 	const at = (widths) => ` at ${widths.map((w) => `${w}w`).join(", ")}`;
 	const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
 	const isAre = (n) => (n === 1 ? "is" : "are");
@@ -657,12 +691,37 @@ export function summariseLiveEvidence(predicate, evidence) {
 			return `${plural(missed.length, "overlay")} hit-tested below the chrome — ${kinds.join(", ")}`;
 		}
 		if (predicate === "R5") {
-			const violations = asArray(evidence, predicate);
-			nonEmpty(violations.length, "axe violation");
-			return violations
-				.map((v) => `${v.id} (${v.impact}) ×${v.nodes}${r5Diagnosis(v)}`)
+			// `{ themes, violations }` since #4195. The themes are part of the EVIDENCE, not a note
+			// beside it: without them a PASS here is byte-identical to the light-only PASS the
+			// two-theme scan replaced, and an edit that quietly stopped scanning dark would import as
+			// the same clean record. `renderR5Themes` is therefore rendered for PASS as well as FAIL.
+			const e = asObject(evidence, predicate);
+			const violations = asArray(e.violations, predicate);
+			const themes = renderR5Themes(e.themes, predicate);
+			if (violations.length === 0) {
+				// A FAIL has to be explained by SOMETHING. Before #4195 that was `nonEmpty(violations)`;
+				// now an R5 FAIL can legitimately carry no axe violation — a theme that never applied, or
+				// two themes that painted the same background, are failures of the scan rather than of
+				// the page. So the refusal moves rather than disappearing: a FAIL whose evidence holds
+				// neither a violation NOR a theme anomaly is a summary that contradicts its own verdict,
+				// which is worse than no summary.
+				if (verdict === "FAIL" && !themes.anomalous) {
+					throw new Error(
+						"R5: a FAIL whose evidence holds no axe violation and names no theme anomaly — every " +
+							"theme applied and each painted differently, so nothing in it explains the verdict. " +
+							"The recorder and this summary disagree about what R5 measures.",
+					);
+				}
+				return themes.text;
+			}
+			const rows = violations
+				// The THEME is rendered on every row. Two `color-contrast` violations for the same
+				// colour pair, one per theme, are two facts; without this they read as one record
+				// duplicated, which is how a dark-only regression hides behind a known light one.
+				.map((v) => `${v.theme ?? "theme?"}: ${v.id} (${v.impact}) ×${v.nodes}${r5Diagnosis(v)}`)
 				.sort()
 				.join(", ");
+			return `${rows} [${themes.text}]`;
 		}
 		if (predicate === "R6") {
 			const signals = asArray(evidence, predicate);
@@ -841,7 +900,15 @@ export function importLive(raw, provenance) {
 				/** @type {{route: string, predicate: string, verdict: string, reason?: string, detail?: string}} */
 				const out = { route: r.route, predicate: r.predicate, verdict: r.verdict };
 				if (r.verdict === "N/A" || r.verdict === "NOT MEASURED") out.reason = r.reason;
-				if (r.verdict === "FAIL") out.detail = summariseLiveEvidence(r.predicate, r.evidence);
+				if (r.verdict === "FAIL") out.detail = summariseLiveEvidence(r.predicate, r.evidence, "FAIL");
+				// R5 is the one predicate whose PASS also carries a detail. `--import-live` strips
+				// `evidence`, so without this the committed baseline holds an R5 PASS that cannot say
+				// whether it covered one theme or two — byte-identical to every light-only PASS before
+				// #4195, and identical again the day someone drops the dark scan. The themes are the
+				// verdict's SCOPE, and a verdict nobody can scope is not reviewable.
+				else if (r.verdict === "PASS" && r.predicate === "R5") {
+					out.detail = summariseLiveEvidence(r.predicate, r.evidence, "PASS");
+				}
 				return out;
 			})
 			.sort((a, b) => a.route.localeCompare(b.route) || a.predicate.localeCompare(b.predicate));
@@ -2883,53 +2950,99 @@ function selfTest() {
 			},
 		],
 	});
+	// Since #4195 an R5 record is `{ themes, violations }`, not a bare violations array. The themes
+	// are part of the evidence because a PASS that cannot name them is byte-identical to the
+	// light-only PASS the two-theme scan replaced.
+	const BOTH_THEMES = [
+		{ theme: "dark", applied: true, background: "rgb(23, 23, 23)", htmlClass: "dark", storedPreference: null },
+		{ theme: "light", applied: true, background: "rgb(255, 255, 255)", htmlClass: "", storedPreference: null },
+	];
+	const r5 = (violations, themes = BOTH_THEMES) => ({ themes, violations });
 	ok(
 		"R5 names the FAILING COLOUR PAIR and its ratio, not just a rule id and a count",
-		summariseLiveEvidence("R5", [
-			{ id: "label", impact: "critical", nodes: 4, groups: [{ target: "input", count: 4, checks: [] }], omittedNodes: 0 },
-			{ id: "color-contrast", impact: "serious", nodes: 9, groups: [contrastGroup("#8a8f98", "#0d0f12", 3.7148, 9)], omittedNodes: 0 },
-		]) === "color-contrast (serious) ×9 [#8a8f98 on #0d0f12 — 3.71:1, wants 4.5:1], label (critical) ×4",
+		summariseLiveEvidence("R5", r5([
+			{ id: "label", theme: "dark", impact: "critical", nodes: 4, groups: [{ target: "input", count: 4, checks: [] }], omittedNodes: 0 },
+			{ id: "color-contrast", theme: "dark", impact: "serious", nodes: 9, groups: [contrastGroup("#8a8f98", "#0d0f12", 3.7148, 9)], omittedNodes: 0 },
+		])) === "dark: color-contrast (serious) ×9 [#8a8f98 on #0d0f12 — 3.71:1, wants 4.5:1], dark: label (critical) ×4 [themes dark, light]",
 	);
 	ok(
 		"...every DISTINCT pair is named, because one token fix does not answer for another",
-		summariseLiveEvidence("R5", [
+		summariseLiveEvidence("R5", r5([
 			{
 				id: "color-contrast",
+				theme: "dark",
 				impact: "serious",
 				nodes: 39,
 				groups: [contrastGroup("#8a8f98", "#0d0f12", 3.7148, 30), contrastGroup("#6b7280", "#111318", 2.9, 9)],
 				omittedNodes: 0,
 			},
-		]) ===
-			"color-contrast (serious) ×39 [#8a8f98 on #0d0f12 — 3.71:1, wants 4.5:1; #6b7280 on #111318 — 2.90:1, wants 4.5:1]",
+		])) ===
+			"dark: color-contrast (serious) ×39 [#8a8f98 on #0d0f12 — 3.71:1, wants 4.5:1; #6b7280 on #111318 — 2.90:1, wants 4.5:1] [themes dark, light]",
+	);
+	// THE THEME MUST BE IN THE RENDERING. The same rule failing the same pair in both paints is TWO
+	// facts; rendered without the theme they read as one record duplicated, which is how a dark-only
+	// regression hides behind a light one somebody already knows about.
+	ok(
+		"...the SAME rule and pair in both themes renders as two rows, each naming its theme",
+		summariseLiveEvidence("R5", r5([
+			{ id: "color-contrast", theme: "light", impact: "serious", nodes: 2, groups: [contrastGroup("#8a8f98", "#ffffff", 3.1, 2)], omittedNodes: 0 },
+			{ id: "color-contrast", theme: "dark", impact: "serious", nodes: 2, groups: [contrastGroup("#8a8f98", "#ffffff", 3.1, 2)], omittedNodes: 0 },
+		])) ===
+			"dark: color-contrast (serious) ×2 [#8a8f98 on #ffffff — 3.10:1, wants 4.5:1], light: color-contrast (serious) ×2 [#8a8f98 on #ffffff — 3.10:1, wants 4.5:1] [themes dark, light]",
 	);
 	// THE CAP MUST BE IN THE RENDERING, NOT ONLY IN THE RECORD. "measured and clean" and "measured,
 	// then truncated" are different facts and this is where a reader meets them.
 	ok(
 		"...and a violation whose groups were capped SAYS SO, with the number withheld",
-		summariseLiveEvidence("R5", [
-			{ id: "color-contrast", impact: "serious", nodes: 41, groups: [contrastGroup("#8a8f98", "#0d0f12", 3.7148, 30)], omittedNodes: 11 },
-		]) === "color-contrast (serious) ×41 [#8a8f98 on #0d0f12 — 3.71:1, wants 4.5:1, +11 node(s) beyond the group cap]",
+		summariseLiveEvidence("R5", r5([
+			{ id: "color-contrast", theme: "dark", impact: "serious", nodes: 41, groups: [contrastGroup("#8a8f98", "#0d0f12", 3.7148, 30)], omittedNodes: 11 },
+		])) === "dark: color-contrast (serious) ×41 [#8a8f98 on #0d0f12 — 3.71:1, wants 4.5:1, +11 node(s) beyond the group cap] [themes dark, light]",
 	);
 	ok(
 		"...a non-contrast rule that was CAPPED still says so — the cap is not a contrast-only fact",
-		summariseLiveEvidence("R5", [
-			{ id: "label", impact: "critical", nodes: 20, groups: [{ target: "input", count: 12, checks: [] }], omittedNodes: 8 },
-		]) === "label (critical) ×20 [+8 node(s) beyond the group cap]",
+		summariseLiveEvidence("R5", r5([
+			{ id: "label", theme: "light", impact: "critical", nodes: 20, groups: [{ target: "input", count: 12, checks: [] }], omittedNodes: 8 },
+		])) === "light: label (critical) ×20 [+8 node(s) beyond the group cap] [themes dark, light]",
 	);
 	raises(
 		"...and a violation with no numeric omittedNodes RAISES — absent is not zero",
 		() =>
-			summariseLiveEvidence("R5", [
-				{ id: "label", impact: "critical", nodes: 2, groups: [{ target: "input", count: 2, checks: [] }] },
-			]),
+			summariseLiveEvidence("R5", r5([
+				{ id: "label", theme: "dark", impact: "critical", nodes: 2, groups: [{ target: "input", count: 2, checks: [] }] },
+			])),
 		"carries no numeric `omittedNodes`",
 	);
 	ok(
 		"...a non-contrast rule renders its count alone — it has no colour to name",
-		summariseLiveEvidence("R5", [
-			{ id: "label", impact: "critical", nodes: 2, groups: [{ target: "input", count: 2, checks: [] }], omittedNodes: 0 },
-		]) === "label (critical) ×2",
+		summariseLiveEvidence("R5", r5([
+			{ id: "label", theme: "dark", impact: "critical", nodes: 2, groups: [{ target: "input", count: 2, checks: [] }], omittedNodes: 0 },
+		])) === "dark: label (critical) ×2 [themes dark, light]",
+	);
+	// The three R5 FAILs that carry NO violation. Each is a fact about the paints, and each used to
+	// be FABRICATED as an axe violation so it would land in this column — which put a claim about
+	// the instrument in the page's FAIL column with its cause buried where nothing printed it.
+	ok(
+		"an R5 record with no violations still renders its themes — a PASS says which paints it covered",
+		summariseLiveEvidence("R5", r5([]), "PASS") === "themes dark, light",
+	);
+	ok(
+		"...a theme that DID NOT APPLY is named, so its scan is never read as clean",
+		summariseLiveEvidence("R5", r5([], [
+			{ theme: "dark", applied: false, background: "rgb(255, 255, 255)", htmlClass: "", storedPreference: "light" },
+			{ theme: "light", applied: true, background: "rgb(255, 255, 255)", htmlClass: "", storedPreference: "light" },
+		])) === "themes dark DID NOT APPLY, light, both painted the same background",
+	);
+	ok(
+		"...and two themes that painted the SAME background say so — one paint measured twice",
+		summariseLiveEvidence("R5", r5([], [
+			{ theme: "dark", applied: true, background: "rgb(255, 255, 255)", htmlClass: "dark", storedPreference: null },
+			{ theme: "light", applied: true, background: "rgb(255, 255, 255)", htmlClass: "", storedPreference: null },
+		])) === "themes dark, light, both painted the same background",
+	);
+	raises(
+		"...and an R5 record with NO themes RAISES — a verdict that cannot name its paints is the light-only verdict again",
+		() => summariseLiveEvidence("R5", { violations: [] }),
+		"carries no `themes` array",
 	);
 	ok(
 		"R6 counts ALL THREE kinds and the distinct statuses — no URL, no timestamp",
@@ -2985,28 +3098,44 @@ function selfTest() {
 	);
 	raises(
 		"an evidence shape the summariser does not know RAISES rather than summarising as nothing",
-		() => summariseLiveEvidence("R5", { violations: [] }),
-		"expected an array of evidence rows",
+		() => summariseLiveEvidence("R5", [{ id: "label" }]),
+		"expected an evidence object",
+	);
+	raises(
+		"...and the array R5 used to take is refused BY NAME, so a stale recorder cannot summarise as nothing",
+		() => summariseLiveEvidence("R5", []),
+		"expected an evidence object",
 	);
 	// THE TWO REFUSALS #4099 EXISTS FOR. Both describe a measurement that HAPPENED and was withheld
 	// — the state that renders identically to a clean page and is why R5 scored 0.75 while being
 	// unfixable. Neither can be satisfied by a recorder that merely runs.
 	raises(
 		"a violation carrying NO groups RAISES — the recorder has been re-narrowed",
-		() => summariseLiveEvidence("R5", [{ id: "color-contrast", impact: "serious", nodes: 9 }]),
+		() => summariseLiveEvidence("R5", r5([{ id: "color-contrast", theme: "dark", impact: "serious", nodes: 9 }])),
 		"carries no `groups` array",
 	);
 	raises(
 		"...and a color-contrast FAIL whose groups name no COLOUR PAIR RAISES",
 		() =>
-			summariseLiveEvidence("R5", [
-				{ id: "color-contrast", impact: "serious", nodes: 9, groups: [{ target: "div", count: 9, checks: [] }], omittedNodes: 0 },
-			]),
+			summariseLiveEvidence("R5", r5([
+				{ id: "color-contrast", theme: "dark", impact: "serious", nodes: 9, groups: [{ target: "div", count: 9, checks: [] }], omittedNodes: 0 },
+			])),
 		"names no colour pair",
 	);
 	// A summary that contradicts the verdict it is attached to is worse than no summary. Each of
 	// these is the recorder and this file disagreeing about what the predicate measures.
-	raises("a FAIL whose axe evidence holds NO violation RAISES", () => summariseLiveEvidence("R5", []), "finds no axe violation");
+	// R5's version of this refusal MOVED rather than went away: since #4195 a FAIL can carry no axe
+	// violation (a theme that never applied is a failure of the scan, not of the page), so what is
+	// refused is a FAIL that no violation AND no theme anomaly explains.
+	raises(
+		"a FAIL whose evidence holds no violation and no theme anomaly RAISES",
+		() => summariseLiveEvidence("R5", r5([]), "FAIL"),
+		"names no theme anomaly",
+	);
+	ok(
+		"...and the SAME evidence is fine for a PASS, which is what a clean two-theme scan looks like",
+		summariseLiveEvidence("R5", r5([]), "PASS") === "themes dark, light",
+	);
 	raises("...and a FAIL with no overlapping pair RAISES", () => summariseLiveEvidence("R4", []), "finds no overlapping pair");
 	raises("...and a FAIL with no signal RAISES", () => summariseLiveEvidence("R6", []), "finds no console error or failed request");
 	raises(
@@ -3028,9 +3157,9 @@ function selfTest() {
 	raises(
 		"a summary that carries a timestamp or a URL RAISES",
 		() =>
-			summariseLiveEvidence("R5", [
-				{ id: "x at 2026-09-02T11:31:07.746Z", impact: "serious", nodes: 1, groups: [{ target: "a", count: 1, checks: [] }], omittedNodes: 0 },
-			]),
+			summariseLiveEvidence("R5", r5([
+				{ id: "x at 2026-09-02T11:31:07.746Z", theme: "dark", impact: "serious", nodes: 1, groups: [{ target: "a", count: 1, checks: [] }], omittedNodes: 0 },
+			])),
 		"carries a timestamp or a URL",
 	);
 
@@ -3197,26 +3326,33 @@ function selfTest() {
 					url: "/e2e-org-1",
 					predicate: "R5",
 					verdict: "FAIL",
-					evidence: [
-						{
-							id: "color-contrast",
-							impact: "serious",
-							nodes: 9,
-							groups: [
-								{
-									target: "div.x",
-									count: 9,
-									checks: [
-										{
-											id: "color-contrast",
-											data: { fgColor: "#8a8f98", bgColor: "#0d0f12", contrastRatio: 3.7148, expectedContrastRatio: "4.5:1" },
-										},
-									],
-								},
-							],
-							omittedNodes: 0,
-						},
-					],
+					evidence: {
+						themes: [
+							{ theme: "dark", applied: true, background: "rgb(13, 15, 18)", htmlClass: "dark", storedPreference: null },
+							{ theme: "light", applied: true, background: "rgb(255, 255, 255)", htmlClass: "", storedPreference: null },
+						],
+						violations: [
+							{
+								id: "color-contrast",
+								theme: "dark",
+								impact: "serious",
+								nodes: 9,
+								groups: [
+									{
+										target: "div.x",
+										count: 9,
+										checks: [
+											{
+												id: "color-contrast",
+												data: { fgColor: "#8a8f98", bgColor: "#0d0f12", contrastRatio: 3.7148, expectedContrastRatio: "4.5:1" },
+											},
+										],
+									},
+								],
+								omittedNodes: 0,
+							},
+						],
+					},
 				},
 				{ route: "/a", url: "/e2e-org-1", predicate: "R1", verdict: "N/A", reason: "redirect-only", evidence: [] },
 			],
@@ -3233,7 +3369,8 @@ function selfTest() {
 	// colour, so every tokens.css change aimed at R5 was a guess. It still carries no run state.
 	ok(
 		"...and summarises a FAIL into a run-independent detail that NAMES THE COLOUR PAIR",
-		imported.runs.routes.records[1].detail === "color-contrast (serious) ×9 [#8a8f98 on #0d0f12 — 3.71:1, wants 4.5:1]",
+		imported.runs.routes.records[1].detail ===
+			"dark: color-contrast (serious) ×9 [#8a8f98 on #0d0f12 — 3.71:1, wants 4.5:1] [themes dark, light]",
 	);
 	ok("...and carries no wall clock anywhere", !/\d{4}-\d{2}-\d{2}/.test(JSON.stringify(imported)));
 	ok("...and re-parses through the same rules it will be read by", parseLive(importLive(rawArtifacts, { run: "r", commit: "c" })).sections.routes.records.length === 3);
