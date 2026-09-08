@@ -9,11 +9,19 @@ import {
 	streamText,
 } from "ai";
 import { saveThreadMessages } from "@/app/server/actions/agent";
+import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { AGENT_STEP_PART_TYPE, agentStepMarker } from "@/lib/ai/agent-steps";
 import type { CanvasContext } from "@/lib/ai/canvas-context";
 import { summarizeCanvas } from "@/lib/ai/canvas-context";
+import {
+	buildEnvironmentKnowledge,
+	type EnvironmentKnowledge,
+} from "@/lib/ai/environment-knowledge";
 import { formatMentionsForPrompt, mentionsSchema } from "@/lib/ai/mentions";
-import { parseProjectAssistantBody } from "@/lib/ai/project-assistant-body";
+import {
+	type AssistantView,
+	parseProjectAssistantBody,
+} from "@/lib/ai/project-assistant-body";
 import {
 	buildProjectKnowledge,
 	formatContextBlock,
@@ -40,8 +48,56 @@ import { getAdvisorModel, getExecutorModel, isAiConfigured } from "@/lib/config/
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
+/**
+ * What the conversation is scoped to: the resolved environment (null when the project has none
+ * the caller can see), its name for the model to use in prose, and where the user is looking.
+ */
+interface PromptScope {
+	environmentId: string | null;
+	environmentName: string | null;
+	view: AssistantView | undefined;
+}
+
+/**
+ * The Scope paragraph: which environment the conversation is about, and the rule that every
+ * proposal must name it. Before this existed the assistant never knew which environment the
+ * user was looking at, so its plan/deploy proposals — and the approval card that ran them —
+ * targeted the project's DEFAULT environment whatever the topbar switcher said.
+ */
+function scopeParagraph(scope: PromptScope): string[] {
+	const lines = ["SCOPE:"];
+	if (scope.environmentId) {
+		const name = scope.environmentName ? `"${scope.environmentName}"` : "(name not visible)";
+		lines.push(
+			`- This conversation is scoped to environment ${name} (id: ${scope.environmentId}) of this project.`,
+			`  Every \`propose_operation\` MUST carry \`environmentId: ${scope.environmentId}\` — an omitted id`,
+			"  targets the project's DEFAULT environment, which may not be the one the user is looking at.",
+		);
+	} else {
+		lines.push(
+			"- No environment could be resolved for this conversation, so any operation you propose runs",
+			"  against the project's DEFAULT environment — say so plainly when you propose one.",
+		);
+	}
+	if (scope.view) {
+		const card = scope.view.openCard
+			? ` with the ${scope.view.openCard.kind} card${scope.view.openCard.name ? ` "${scope.view.openCard.name}"` : ""} open`
+			: "";
+		lines.push(`- The user is on the ${scope.view.surface} surface (${scope.view.path})${card}.`);
+	}
+	lines.push(
+		"- The thread is project-scoped and the environment can change between turns: if earlier",
+		"  turns in this thread discussed a different environment, say so before acting.",
+	);
+	return lines;
+}
+
 /** Project-page assistant system prompt — drives the "A" loop for one project. */
-function systemPrompt(projectId: string, canvas: CanvasContext | undefined): string {
+function systemPrompt(
+	projectId: string,
+	canvas: CanvasContext | undefined,
+	scope: PromptScope,
+): string {
 	return [
 		`You are Alethia's project assistant for this project (id: ${projectId}).`,
 		"Alethia provisions a Kubernetes cluster + ArgoCD on the user's cloud and wires GitOps to deploy",
@@ -95,6 +151,8 @@ function systemPrompt(projectId: string, canvas: CanvasContext | undefined): str
 		"different cloud than the cluster. Use real values from tools; never invent ids, regions, instance types,",
 		"or credentials. Be terse, concrete, grayscale in tone. No emoji.",
 		"",
+		...scopeParagraph(scope),
+		"",
 		"Current canvas:",
 		summarizeCanvas(canvas),
 	].join("\n");
@@ -118,10 +176,19 @@ export async function POST(
 	// The body shape is shared with the client's `prepareBody` (lib/ai/project-assistant-body.ts),
 	// so the two cannot drift. It degrades rather than throws — a shape this route used to accept
 	// must not become a 500, and this runs BEFORE the AI budget hold, so a rejection here costs
-	// nothing. Only `messages` is genuinely required.
+	// nothing. Only `messages` is genuinely required. `environmentId` is the environment the user
+	// is looking at (a malformed one degrades to null) and `view` is where in the product they are.
 	const body = parseProjectAssistantBody(await req.json().catch(() => null));
 	if (!body.ok) return new Response(body.message, { status: 400 });
-	const { messages, canvas, threadId, mentions, deepReasoning } = body.value;
+	const {
+		messages,
+		canvas,
+		threadId,
+		mentions,
+		deepReasoning,
+		environmentId: requestedEnvironmentId,
+		view,
+	} = body.value;
 
 	// Metered turn: gate on headroom (the real cost-of-serve is settled after it runs). The
 	// deep-reasoning flag no longer affects the charge — Opus just settles its own real cost.
@@ -174,17 +241,37 @@ export async function POST(
 		// Pass the actor (not just owner): the agent-context reads are scope-flag-aware — off, they
 		// read under the user id (unchanged); on, org/project rows are org-shared. See
 		// lib/ai/org-agent-context-flag.ts.
-		const [orgCtx, projectCtx, derived] = await Promise.all([
+		// The environment this turn is about. `resolveActiveEnvironmentId` validates the requested
+		// id belongs to THIS project under the caller's org and falls back to the project's default
+		// — so a foreign or stale id from the client can never scope the prompt to another tenant's
+		// environment. A project with no visible default resolves to null and the prompt says so.
+		const environmentId = await resolveActiveEnvironmentId(
+			projectId,
+			requestedEnvironmentId ?? undefined,
+		).catch(() => null);
+		const noEnvironment: EnvironmentKnowledge = { name: null, block: "" };
+
+		const [orgCtx, projectCtx, derived, environment] = await Promise.all([
 			readAgentContext(actor, null).catch(() => null),
 			readAgentContext(actor, projectId).catch(() => null),
-			buildProjectKnowledge(actor, projectId).catch(() => ""),
+			buildProjectKnowledge(actor, projectId, environmentId).catch(() => ""),
+			environmentId
+				? buildEnvironmentKnowledge(actor, projectId, environmentId).catch(
+						() => noEnvironment,
+					)
+				: Promise.resolve(noEnvironment),
 		]);
 
 		const system = [
-			systemPrompt(projectId, canvas),
+			systemPrompt(projectId, canvas, {
+				environmentId,
+				environmentName: environment.name,
+				view,
+			}),
 			formatContextBlock("Organization", orgCtx),
 			formatContextBlock("Project", projectCtx),
 			derived,
+			environment.block,
 			mentionBlock,
 		]
 			.filter(Boolean)
@@ -207,7 +294,7 @@ export async function POST(
 					// Wire the request's abort signal so a client disconnect aborts generation (and fires
 					// onAbort) instead of streaming — and paying — into the void with the hold left open.
 					abortSignal: req.signal,
-					tools: buildProjectAgentTools(canvas),
+					tools: buildProjectAgentTools(canvas, { environmentId }),
 					stopWhen: stepCountIs(8),
 					// Step 0 runs on the advisor; the rest use the executor. The planning step gets
 					// extended thinking on EVERY tier so reasoning streams to the transcript.
