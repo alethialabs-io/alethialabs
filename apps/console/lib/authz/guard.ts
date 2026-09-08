@@ -8,7 +8,11 @@ import { getPdp } from "@/lib/authz";
 import { getInjectedActor } from "@/lib/authz/actor-context";
 import { urlScopedOrgId } from "@/lib/authz/org-scope";
 import type { Action, Resource } from "@/lib/authz/registry";
-import { type Actor, ForbiddenError, type ResourceRef } from "@/lib/authz/types";
+import {
+	type Actor,
+	ForbiddenError,
+	type ResourceRef,
+} from "@/lib/authz/types";
 import { verifyCliToken } from "@/lib/cli/auth";
 import { getServiceDb } from "@/lib/db";
 import { member } from "@/lib/db/schema";
@@ -162,7 +166,10 @@ async function isOrgMember(userId: string, orgId: string): Promise<boolean> {
  * between them, and reading tenancy from it is how a stale one served another org's rows under
  * this org's address.
  */
-async function resolveNamedOrgScope(userId: string, orgId: string): Promise<Actor | null> {
+async function resolveNamedOrgScope(
+	userId: string,
+	orgId: string,
+): Promise<Actor | null> {
 	const actor = await getActiveScope(userId, orgId);
 	return actor.orgId === orgId ? actor : null;
 }
@@ -193,9 +200,16 @@ export async function authorizeInOrg(
 	const { userId } = await getOwnerScope();
 	const actor = await resolveNamedOrgScope(userId, orgId);
 	if (!actor) {
-		throw new ForbiddenError(action, { type: resource.type, id: resource.id }, `not scoped to organization ${orgId}`);
+		throw new ForbiddenError(
+			action,
+			{ type: resource.type, id: resource.id },
+			`not scoped to organization ${orgId}`,
+		);
 	}
-	await getPdp().enforce(actor, action, { type: resource.type, id: resource.id });
+	await getPdp().enforce(actor, action, {
+		type: resource.type,
+		id: resource.id,
+	});
 	return actor;
 }
 
@@ -215,10 +229,69 @@ export async function ensureCliOrgAccess(
 }
 
 /**
+ * What kind of credential a CLI request carried — the one fact an `Actor` cannot express.
+ *
+ * `Actor` is `{ userId, orgId }` for both kinds, and for a service token `userId` is the human who
+ * MINTED it, not a caller. A route that treats `actor.userId` as "the person asking" — a `--mine`
+ * filter, a personal-org arm in a tenancy predicate — is therefore right for a session and wrong
+ * for a token, and nothing on the actor tells the two apart. This does. It is a closed union
+ * rather than a boolean so a third credential kind is a type error at every site that branches on
+ * it, not a silent fall-through into whichever arm the boolean's false case happened to be.
+ *
+ * - `session` — a signed-in human (device login). `userId` IS the caller.
+ * - `service_token` — a machine credential pinned to `orgId` at mint time (#4154). `userId` is
+ *   the minting profile, and nothing about the caller may be inferred from it beyond membership.
+ */
+export type CliCredential = "session" | "service_token";
+
+/**
+ * The org ids a request's credential may see rows of — the TENANCY BOUNDARY, computed once.
+ *
+ * It is a non-empty tuple so a route cannot hand `inArray` an empty list, which drizzle renders as
+ * `false`: a boundary that silently matches nothing is as wrong as one that matches too much, and
+ * only one of the two is visible in a test.
+ *
+ * Why the GUARD owns it rather than each route deriving it from `credential`: the derivation is
+ * "which values", and that is the whole of #4154. A route that branches on the kind writes a
+ * ternary whose else-arm is the wide one — exactly the fall-through the closed union above exists
+ * to prevent — and the next route copies it. There are already four sites that need this same list
+ * (`GET /api/jobs` and the three per-job routes), so the choice was one derivation here or four
+ * there.
+ *
+ * - a **service token** sees `[orgId]`. The pin is the whole of what it was issued for.
+ * - a **session** sees `[orgId, userId]`. The second is the human's own personal org, a real org
+ *   they are the sole member of, and it is where pre-#3942 runner-lifecycle jobs still live.
+ */
+export type OrgScope = readonly [string, ...string[]];
+
+/**
+ * The org ids one credential may see. Exported so a route can assert the rule rather than restate
+ * it, and so the mapping has one test rather than one per route.
+ */
+export function orgScopeFor(actor: Actor, credential: CliCredential): OrgScope {
+	switch (credential) {
+		case "service_token":
+			return [actor.orgId];
+		case "session":
+			// The degenerate case — a session whose active scope IS the personal org — would
+			// otherwise list the same id twice. Harmless to SQL, confusing in a test's `got`.
+			return actor.orgId === actor.userId
+				? [actor.orgId]
+				: [actor.orgId, actor.userId];
+	}
+}
+
+/**
  * CLI-route authorization: verify the CLI token, resolve the actor, and enforce.
- * Returns `{ actor }` on success or `{ error }` (the Response to return). CLI routes
+ * Returns `{ actor, credential }` on success or `{ error }` (the Response to return). CLI routes
  * query via getServiceDb() (no RLS), so the caller MUST also scope its query by
  * `actor.orgId` — enforce() is the permission gate, org_id is the tenancy boundary.
+ *
+ * `credential` says which kind of bearer this was (see {@link CliCredential}), and `orgScope` is
+ * the org ids it may see rows of (see {@link OrgScope}) — `inArray(table.org_id, auth.orgScope)`,
+ * with no per-route derivation. Both are REQUIRED on the success arm rather than
+ * optional-defaulting-to-session, because the wide reading is the unsafe one: a route that forgot
+ * to ask would otherwise be handed "a human" for a token.
  *
  * An optional `X-Alethia-Org` header selects which org the call is scoped to (the CLI
  * `--org` flag). It is honoured only after verifying the caller is a member of that org
@@ -234,7 +307,10 @@ export async function authorizeCli(
 	req: Request,
 	action: Action,
 	resource: { type: Resource; id?: string },
-): Promise<{ actor: Actor } | { error: Response }> {
+): Promise<
+	| { actor: Actor; credential: CliCredential; orgScope: OrgScope }
+	| { error: Response }
+> {
 	const { payload, error } = await verifyCliToken(req);
 	if (error) return { error };
 	const userId = payload?.sub;
@@ -275,12 +351,19 @@ export async function authorizeCli(
 		const serviceActor = await resolveNamedOrgScope(userId, serviceOrg);
 		if (!serviceActor) return { error: forbidden() };
 		try {
-			await getPdp().enforce(serviceActor, action, { type: resource.type, id: resource.id });
+			await getPdp().enforce(serviceActor, action, {
+				type: resource.type,
+				id: resource.id,
+			});
 		} catch (e) {
 			if (e instanceof ForbiddenError) return { error: forbidden() };
 			throw e;
 		}
-		return { actor: serviceActor };
+		return {
+			actor: serviceActor,
+			credential: "service_token",
+			orgScope: orgScopeFor(serviceActor, "service_token"),
+		};
 	}
 
 	if (headerOrg && !(await isOrgMember(userId, headerOrg))) {
@@ -294,12 +377,19 @@ export async function authorizeCli(
 		: await getActiveScope(userId);
 	if (!actor) return { error: forbidden() };
 	try {
-		await getPdp().enforce(actor, action, { type: resource.type, id: resource.id });
+		await getPdp().enforce(actor, action, {
+			type: resource.type,
+			id: resource.id,
+		});
 	} catch (e) {
 		if (e instanceof ForbiddenError) return { error: forbidden() };
 		throw e;
 	}
-	return { actor };
+	return {
+		actor,
+		credential: "session",
+		orgScope: orgScopeFor(actor, "session"),
+	};
 }
 
 /**
@@ -315,7 +405,10 @@ export async function authorizeUserId(
 ): Promise<Response | null> {
 	const actor = await getActiveScope(userId);
 	try {
-		await getPdp().enforce(actor, action, { type: resource.type, id: resource.id });
+		await getPdp().enforce(actor, action, {
+			type: resource.type,
+			id: resource.id,
+		});
 	} catch (e) {
 		if (e instanceof ForbiddenError) return forbidden();
 		throw e;
