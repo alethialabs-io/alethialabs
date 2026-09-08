@@ -168,6 +168,38 @@ func resolveProjectID(c projectLister, ref string) (string, error) {
 	}
 }
 
+// resolveProjectName maps a project reference — its NAME or its id — to the project's NAME, which
+// is what a console URL's `[project]` segment is built from.
+//
+// The same lookup as resolveProjectID with the other half of the row returned, and kept adjacent to
+// it so the two cannot drift on what a reference means.
+//
+// A name is returned WITHOUT a request: it is already the value the caller needs, and the residual
+// risk is the one projectLink already documents — two projects whose names slugify alike are
+// suffixed server-side (#3145), so such a link 404s rather than opening the wrong project. An id is
+// looked up, because slugifying it is silent: `8f3c…` is already `[a-z0-9-]`, so it survives
+// ProjectSlug unchanged and builds `{origin}/acme/8f3c…`, a URL that reads as a link and 404s —
+// the console resolves `[project]` by slug, never by id.
+func resolveProjectName(c projectLister, ref string) (string, error) {
+	if !looksLikeUUID(ref) {
+		return ref, nil
+	}
+	configs, err := c.GetConfigurations()
+	if err != nil {
+		return "", fmt.Errorf("resolve --project %q: %w", ref, err)
+	}
+	for _, cfg := range configs {
+		if cfg.ID != ref {
+			continue
+		}
+		if cfg.ProjectName == "" {
+			return "", fmt.Errorf("project %q has no name to build a console link from", ref)
+		}
+		return cfg.ProjectName, nil
+	}
+	return "", fmt.Errorf("project id %q not found (have: %s)", ref, knownProjectNames(configs))
+}
+
 // knownProjectNames renders the project names a resolution failure should offer, sorted and
 // de-duplicated so a name shared by two projects is offered once.
 func knownProjectNames(configs []types.ConfigurationSummary) string {
