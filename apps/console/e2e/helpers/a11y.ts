@@ -89,7 +89,31 @@ export interface A11yViolation {
 	 * it is recorded rather than remembered.
 	 */
 	omittedNodes: number;
+	/**
+	 * Which theme the page was painted in when this was measured. Absent when the caller did not
+	 * say — the QA suite scans whatever the persona's browser rendered — and REQUIRED by the
+	 * conformance audit, which scans both and would otherwise publish two indistinguishable
+	 * verdicts (#4195).
+	 */
+	theme?: A11yTheme;
 }
+
+/**
+ * A violation from a scan that STATED which theme it measured.
+ *
+ * The optional `theme` above is right for the QA suite, which scans whatever the persona's browser
+ * happened to render and has nothing to say about it. It is wrong for the conformance audit, whose
+ * R5 message counts violations per theme: an optional field lets a theme-less violation through, it
+ * matches no theme in the count, and the route reads `dark: 0` — clean — for a violation that was
+ * measured (#4195). `scanRouteThemes` returns THIS instead, so the count cannot be built from
+ * anything that did not name its theme.
+ */
+export interface ThemedA11yViolation extends A11yViolation {
+	theme: A11yTheme;
+}
+
+/** The two paints the console ships. Named on every violation so a dark FAIL and a light FAIL are two facts. */
+export type A11yTheme = "light" | "dark";
 
 /** Read one property off a value that may not be an object at all. No casts, no `any`. */
 function prop(value: unknown, name: string): unknown {
@@ -159,7 +183,10 @@ export function groupNodes(nodes: readonly unknown[]): { groups: A11yNodeGroup[]
  * resolves (`e2e/audit/signals.ts` → `requireAxe()`). Any NEW gate built on this helper owes itself
  * the same precondition; the empty array will not tell it.
  */
-export async function scanA11y(page: Page, opts?: { include?: string }): Promise<A11yViolation[]> {
+export async function scanA11y(
+	page: Page,
+	opts?: { include?: string; theme?: A11yTheme },
+): Promise<A11yViolation[]> {
 	let AxeBuilder: typeof import("@axe-core/playwright").default | undefined;
 	try {
 		AxeBuilder = (await import("@axe-core/playwright")).default;
@@ -181,6 +208,9 @@ export async function scanA11y(page: Page, opts?: { include?: string }): Promise
 				target: v.nodes[0]?.target?.join(" ") ?? "",
 				groups,
 				omittedNodes,
+				// Only when the caller named one: a spread of `undefined` would still add the key,
+				// and the QA reporter's JSON would then carry `"theme": undefined`-shaped noise.
+				...(opts?.theme ? { theme: opts.theme } : {}),
 			};
 		});
 }
