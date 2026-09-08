@@ -16,12 +16,15 @@ import { cn } from "@repo/ui/utils";
 export function ListField({
 	value,
 	onChange,
+	onBlur,
 	placeholder,
 	mono,
 	ariaLabel,
 }: {
 	value: string[];
 	onChange: (next: string[]) => void;
+	/** Commit the rows (the caller drops the blank ones here — see FieldBuffer.flush). */
+	onBlur?: () => void;
 	placeholder?: string;
 	mono?: boolean;
 	ariaLabel: string;
@@ -31,9 +34,11 @@ export function ListField({
 	const update = (index: number, next: string) =>
 		onChange(rows.map((row, i) => (i === index ? next : row)));
 
-	// An empty row is dropped rather than saved — a blank CIDR is not a value, and letting one
-	// through would fail validation at deploy with a confusing message.
-	const remove = (index: number) => onChange(rows.filter((_, i) => i !== index));
+	// Removing a row IS the whole edit, so it commits immediately; typing in one does not.
+	const remove = (index: number) => {
+		onChange(rows.filter((_, i) => i !== index));
+		onBlur?.();
+	};
 
 	return (
 		<div className="border border-border">
@@ -47,6 +52,7 @@ export function ListField({
 							<Input
 								value={row}
 								onChange={(e) => update(i, e.target.value)}
+								onBlur={onBlur}
 								placeholder={placeholder}
 								aria-label={`${ariaLabel} ${i + 1}`}
 								className={cn("h-8 border-0 shadow-none focus-visible:ring-0", mono && "font-mono text-xs")}

@@ -1069,6 +1069,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 			{
 				id: "capacity",
 				title: "Capacity",
+				tier: "sizing",
 				defaultOpen: true,
 				fields: [
 					{
@@ -1102,6 +1103,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 			{
 				id: "in-cluster-sizing",
 				title: "In-cluster sizing",
+				tier: "sizing",
 				defaultOpen: true,
 				fields: [
 					{
@@ -1252,6 +1254,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 			{
 				id: "sizing",
 				title: "Sizing",
+				tier: "sizing",
 				defaultOpen: true,
 				fields: [
 						// The cloud-INDIFFERENT size. The Go resolver maps it to the nearest cache SKU on any
@@ -1561,6 +1564,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 			{
 				id: "capacity",
 				title: "Capacity",
+				tier: "sizing",
 				defaultOpen: true,
 				fields: [
 					{
@@ -1696,6 +1700,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 			{
 				id: "access",
 				title: "Access",
+				tier: "security",
 				defaultOpen: true,
 				fields: [
 					{

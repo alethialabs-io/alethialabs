@@ -11,8 +11,9 @@
 
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigFields } from "@/components/design-project/canvas/inspector/config-fields";
+import { useInspectorPrefsStore } from "@/lib/stores/use-inspector-prefs-store";
 import {
 	CONFIG_SCHEMA,
 	getKindConfig,
@@ -37,6 +38,10 @@ function renderKind(
 	);
 	return { onChange };
 }
+
+beforeEach(() => {
+	useInspectorPrefsStore.setState({ openSections: {}, tab: {} });
+});
 
 describe("topic subscriptions — the column with no editor at all", () => {
 	it("is now definable", async () => {
@@ -99,7 +104,7 @@ describe("topic subscriptions — the column with no editor at all", () => {
 });
 
 describe("list fields — string[] columns that were absent or comma-mangled", () => {
-	it("adds a CIDR to a network's allow-list", async () => {
+	it("Add gives you a row you can type in — it used to vanish as it appeared", async () => {
 		const user = userEvent.setup();
 		const { onChange } = renderKind("network", {
 			provision_network: true,
@@ -108,7 +113,16 @@ describe("list fields — string[] columns that were absent or comma-mangled", (
 		});
 
 		await user.click(screen.getAllByRole("button", { name: "Add" })[0]);
-		expect(onChange).toHaveBeenCalledWith({ allowed_cidr_blocks: [] });
+
+		// The empty row lives in the card's buffer. It reaches the store — without the blank — when
+		// the value is committed, which is exactly why it can exist at all: the old write path
+		// stripped blanks, so Add appended a row the same write immediately dropped.
+		expect(screen.getByLabelText("Allowed CIDR blocks 1")).toBeInTheDocument();
+		expect(onChange).not.toHaveBeenCalled();
+
+		await user.type(screen.getByLabelText("Allowed CIDR blocks 1"), "10.9.0.0/16");
+		await user.tab();
+		expect(onChange).toHaveBeenCalledWith({ allowed_cidr_blocks: ["10.9.0.0/16"] });
 	});
 
 	it("renders existing entries and removes one", async () => {
@@ -134,6 +148,7 @@ describe("list fields — string[] columns that were absent or comma-mangled", (
 		});
 
 		await user.type(screen.getByLabelText("Allowed CIDR blocks 1"), "0");
+		await user.tab();
 
 		// The blank second row is filtered out rather than saved and later failing zod at deploy.
 		const last = onChange.mock.calls.at(-1)?.[0];
@@ -144,8 +159,12 @@ describe("list fields — string[] columns that were absent or comma-mangled", (
 describe("cluster admins — the self-admin mechanism, finally definable", () => {
 	// Security is a collapsed tier by design — the portable fields stay in front — so it has to be
 	// opened first. That IS the tiering working.
-	const openSecurity = async (user: ReturnType<typeof userEvent.setup>) =>
-		user.click(screen.getByText("Security"));
+	// Which sections are open is a PREFERENCE, persisted per kind, so it survives between tests in
+	// this file: a helper that blindly clicked the header would collapse a section the previous
+	// test left open. Reset, then open.
+	const openSecurity = async (user: ReturnType<typeof userEvent.setup>) => {
+		await user.click(screen.getByText("Security"));
+	};
 
 	it("reads the usernames out of the ClusterAdmin[] column", async () => {
 		const user = userEvent.setup();
@@ -171,6 +190,7 @@ describe("cluster admins — the self-admin mechanism, finally definable", () =>
 		await openSecurity(user);
 
 		await user.type(screen.getByLabelText("Cluster admins 1"), "!");
+		await user.tab();
 
 		const written = onChange.mock.calls.at(-1)?.[0];
 		expect(written.cluster_admins[0]).toHaveProperty("username");
@@ -294,6 +314,7 @@ describe("portable sizing is exposed for the first time", () => {
 		const { onChange } = renderKind("cluster", { cluster_version: "1.31" });
 
 		await user.type(screen.getByLabelText(/vCPU per node/), "4");
+		await user.tab();
 		const written = onChange.mock.calls.at(-1)?.[0];
 		expect(written.node_size).toEqual({ vcpu: 4, memory_gb: 8 });
 	});
