@@ -101,8 +101,16 @@ const maxPagesPerWalk = 10_000
 //
 // fetch is called once per page with the cursor to request ("" for the first) and returns that
 // page's items and its PageInfo.
+//  4. Returning nil for an empty collection. `out` is allocated EMPTY rather than declared nil,
+//     and that is a wire contract rather than a style choice. Before these endpoints were paged,
+//     each decoded `{"items": []}` straight into its slice and `encoding/json` allocates a
+//     non-nil empty slice for a JSON `[]` — so `alethia probes list -o json` on a project with no
+//     environments printed `[]`. A nil slice encodes as `null`, and `jq 'length'` answers "null
+//     has no length" where it used to answer 0. Every conversion to AllPages carried that
+//     regression; allocating here fixes all of them at once, and the error paths below still
+//     return a nil slice, so "all or an error" is untouched.
 func AllPages[T any](fetch func(cursor string) ([]T, PageInfo, error)) ([]T, error) {
-	var out []T
+	out := []T{}
 	// Every cursor the server has issued, not just the previous one: a cycle of length three
 	// is as endless as a cursor that repeats immediately, and comparing only against the last
 	// one would walk it forever. "" is never in here — it is not a server-issued position, and
