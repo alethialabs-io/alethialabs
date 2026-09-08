@@ -1048,68 +1048,41 @@ func TestProviderTfvars_AWSRegistryWithNoRepositoryCarriesNothing(t *testing.T) 
 func TestProviderTfvars_ReservedKeysAreClosedToEveryOtherComponent(t *testing.T) {
 	const sentinel = "carrier-should-never-win"
 
+	// The subject is the cloud's UNION, which is derived from what the provider emits. It used to be
+	// a hand-written map of the reserved slices, and review showed that made the test's subject and
+	// its oracle the same object: deleting `rds_iam_auth_enabled` from `awsDatabaseReserved` both
+	// reopened the hole AND removed the subtest that would have caught it. Green in both directions,
+	// and removing a reserved key is the single most likely way to reintroduce the defect this fixes.
+	//
+	// There is no owner to skip any more, and nothing is lost by not skipping. Offering a key through
+	// the component that owns it is a valid probe too: the typed mapping runs first and writes the
+	// real value, so the sentinel still must not appear. That is why the probe compares VALUES rather
+	// than presence — keys like `provision_acr` are written unconditionally, so an absence check
+	// would fail on the honest cases.
 	cases := []struct {
 		cloud string
-		// byOwner maps the component that owns a reserved list to that list. Owners that are not
-		// carriers (the cluster, the DNS zone) are listed so their keys are probed from every
-		// carrier — there is no self-pairing to skip.
-		byOwner map[string][]string
-		// carriers are the kinds whose provider_config reaches ROOT tfvars on this cloud.
+		keys  []string
+		// The kinds whose provider_config reaches ROOT tfvars on this cloud.
 		carriers []string
 	}{
-		{
-			cloud: "aws",
-			byOwner: map[string][]string{
-				"database": awsDatabaseReserved, "cache": awsCacheReserved,
-				"registry": awsRegistryReserved, "cluster": awsClusterReserved, "dns": awsDNSReserved,
-			},
-			carriers: []string{"database", "cache", "registry"},
-		},
-		{
-			cloud: "gcp",
-			byOwner: map[string][]string{
-				"database": gcpDatabaseReserved, "cache": gcpCacheReserved,
-				"nosql": gcpNosqlReserved, "cluster": gcpClusterReserved, "dns": gcpDNSReserved,
-			},
-			carriers: []string{"database", "cache", "nosql"},
-		},
-		{
-			cloud: "azure",
-			byOwner: map[string][]string{
-				"database": azureDatabaseReserved, "cache": azureCacheReserved,
-				"registry": azureRegistryReserved, "cluster": azureClusterReserved,
-				"dns": azureDNSReserved,
-			},
-			carriers: []string{"database", "cache", "registry"},
-		},
-		{
-			cloud: "alibaba",
-			byOwner: map[string][]string{
-				"database": alibabaDatabaseReserved, "cache": alibabaCacheReserved,
-				"dns": alibabaDNSReserved,
-			},
-			carriers: []string{"database", "cache"},
-		},
+		{"aws", awsRootReserved, []string{"database", "cache", "registry"}},
+		{"gcp", gcpRootReserved, []string{"database", "cache", "nosql"}},
+		{"azure", azureRootReserved, []string{"database", "cache", "registry"}},
+		{"alibaba", alibabaRootReserved, []string{"database", "cache"}},
 	}
 
 	for _, tc := range cases {
-		for owner, keys := range tc.byOwner {
-			for _, key := range keys {
-				for _, carrier := range tc.carriers {
-					if carrier == owner {
-						continue // the direction the reservation already covered
+		for _, key := range tc.keys {
+			for _, carrier := range tc.carriers {
+				t.Run(tc.cloud+"/"+key+"/from-"+carrier, func(t *testing.T) {
+					cfg := leafConfig(carrier, map[string]any{key: sentinel})
+					tfvars := leafProviders[tc.cloud].ProviderTfvars(cfg)
+					if v, present := tfvars[key]; present && v == sentinel {
+						t.Fatalf("%s: a %s's provider_config set %q — one component's knobs decided "+
+							"a variable the typed mapping owns, walking around both the offer gate "+
+							"(#1508) and the deploy refusal (#1510)", tc.cloud, carrier, key)
 					}
-					t.Run(tc.cloud+"/"+key+"/from-"+carrier, func(t *testing.T) {
-						cfg := leafConfig(carrier, map[string]any{key: sentinel})
-						tfvars := leafProviders[tc.cloud].ProviderTfvars(cfg)
-						if v, present := tfvars[key]; present && v == sentinel {
-							t.Fatalf("%s: a %s's provider_config set %q, which the %s owns — "+
-								"one component's knobs decided another's variable, walking around "+
-								"both the offer gate (#1508) and the deploy refusal (#1510)",
-								tc.cloud, carrier, key, owner)
-						}
-					})
-				}
+				})
 			}
 		}
 	}
