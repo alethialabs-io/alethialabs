@@ -7,18 +7,13 @@ import {
 	createUIMessageStreamResponse,
 	stepCountIs,
 	streamText,
-	type UIMessage,
 } from "ai";
-import { z } from "zod";
 import { saveThreadMessages } from "@/app/server/actions/agent";
 import { AGENT_STEP_PART_TYPE, agentStepMarker } from "@/lib/ai/agent-steps";
 import type { CanvasContext } from "@/lib/ai/canvas-context";
 import { summarizeCanvas } from "@/lib/ai/canvas-context";
-import {
-	formatMentionsForPrompt,
-	type Mention,
-	mentionsSchema,
-} from "@/lib/ai/mentions";
+import { formatMentionsForPrompt, mentionsSchema } from "@/lib/ai/mentions";
+import { projectAssistantBodySchema } from "@/lib/ai/project-assistant-body";
 import {
 	buildProjectKnowledge,
 	formatContextBlock,
@@ -44,24 +39,6 @@ import { getAdvisorModel, getExecutorModel, isAiConfigured } from "@/lib/config/
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
-
-interface ProjectAssistantBody {
-	messages: UIMessage[];
-	/** Live canvas snapshot when the canvas is active (undefined on the form view). */
-	canvas?: CanvasContext;
-	/** When set, the transcript is persisted to this (project-scoped) thread on finish. */
-	threadId?: string;
-	/** Resources the user @-referenced in the latest message. */
-	mentions?: Mention[];
-	/**
-	 * Per-message opt-in to the Opus advisor ("deep reasoning"). Only effective on `ai_max`
-	 * (the advisor selection guards it); ignored on every other tier.
-	 */
-	deepReasoning?: boolean;
-}
-
-/** Parse the optional `deepReasoning` flag from a request body — defaults to false. */
-const deepReasoningSchema = z.boolean().catch(false);
 
 /** Project-page assistant system prompt — drives the "A" loop for one project. */
 function systemPrompt(projectId: string, canvas: CanvasContext | undefined): string {
@@ -138,14 +115,11 @@ export async function POST(
 
 	const { projectId } = await params;
 	const actor = await currentActor();
-	const {
-		messages,
-		canvas,
-		threadId,
-		mentions,
-		deepReasoning: deepReasoningRaw,
-	}: ProjectAssistantBody = await req.json();
-	const deepReasoning = deepReasoningSchema.parse(deepReasoningRaw);
+	// The body shape is shared with the client's `prepareBody` (lib/ai/project-assistant-body.ts),
+	// so the two cannot drift. `environmentId` and `view` ride in it for the environment-scoped
+	// prompt; they are consumed where the prompt is assembled.
+	const { messages, canvas, threadId, mentions, deepReasoning } =
+		projectAssistantBodySchema.parse(await req.json());
 
 	// Metered turn: gate on headroom (the real cost-of-serve is settled after it runs). The
 	// deep-reasoning flag no longer affects the charge — Opus just settles its own real cost.

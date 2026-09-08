@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NodePalette } from "@/components/design-project/canvas/node-palette";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { selectInspectorNodeId, useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 /** Builds a minimal project-root node whose `provider` drives the palette's kind filter. */
 function projectRoot(provider: CloudProviderSlug | null): CanvasNode<"project"> {
@@ -204,7 +204,7 @@ describe("NodePalette — W5 inline config step", () => {
 		const id = addedBucketId();
 		await userEvent.click(screen.getByText("Full settings"));
 
-		expect(useCanvasStore.getState().inspectorNodeId).toBe(id);
+		expect(selectInspectorNodeId(useCanvasStore.getState())).toBe(id);
 		expect(onOpenChange).toHaveBeenCalledWith(false);
 	});
 

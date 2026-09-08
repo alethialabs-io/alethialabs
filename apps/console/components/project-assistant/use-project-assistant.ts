@@ -6,7 +6,7 @@ import { useMemo } from "react";
 import { useAgentChat } from "@/components/agent/use-agent-chat";
 import type { CanvasContext } from "@/lib/ai/canvas-context";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID, selectInspectorNodeId, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { graphToForm } from "@/components/design-project/canvas/graph/graph-to-form";
 import { configName } from "@/components/design-project/canvas/graph/node-config";
 
@@ -31,7 +31,7 @@ export function snapshotCanvas(): CanvasContext | undefined {
 		// assistant could see the whole design but had no idea which node you had selected, so a
 		// pronoun could only ever be guessed at.
 		selectedIds: store.selectedIds,
-		inspectorNodeId: store.inspectorNodeId,
+		inspectorNodeId: selectInspectorNodeId(store),
 	};
 }
 

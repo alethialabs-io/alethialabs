@@ -25,7 +25,7 @@ import type {
 	EnvironmentInfo,
 	EnvironmentJob,
 } from "@/lib/canvas/component-status";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { selectInspectorNodeId, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import {
 	collectionNodeId,
 	isCollectionKind,
@@ -62,7 +62,7 @@ interface InspectorPanelProps {
  * summary), just never edited on the board.
  */
 export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
-	const inspectorNodeId = useCanvasStore((s) => s.inspectorNodeId);
+	const inspectorNodeId = useCanvasStore(selectInspectorNodeId);
 	const node = useCanvasStore((s) =>
 		inspectorNodeId ? s.nodes.find((n) => n.id === inspectorNodeId) : undefined,
 	);
