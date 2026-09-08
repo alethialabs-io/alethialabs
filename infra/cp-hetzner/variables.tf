@@ -87,8 +87,18 @@ variable "data_volume_size" {
 }
 
 variable "ssh_allowed_cidrs" {
-  # GitHub-hosted runner egress IPs are dynamic, so SSH stays open by default
-  # (key-only auth). Restrict to a bastion/Tailscale range to harden later.
+  # Open by DECISION, recorded in infra/tfvars-safety-baseline.json (#3292 point 2) rather than
+  # deferred. SSH from a GitHub-hosted runner is a live, required path into this box, not a
+  # hypothetical one: deploy-console.yml SSHes to `root@$DEPLOY_HOST` (:1052, :1059, :1173) and
+  # DEPLOY_HOST is this server's IP, chained into Secrets Manager by infra-cp-hetzner.yml. Runner
+  # egress ranges are published but large and they move, so pinning them breaks the only path
+  # console code has to production on a day nobody changed anything.
+  #
+  # "Key-only auth" is the usual next sentence, so: nothing in this repo enforces it. No cloud-init
+  # here writes an sshd_config or sets PasswordAuthentication, and no test asserts it — it holds
+  # because the image ships with no root password. It is an inherited property and a mitigation,
+  # not the control this variable is named after. A bastion/Tailscale hop would be narrower AND
+  # enforced; that is the harden-later path.
   description = "CIDRs allowed to reach SSH (22)."
   type        = list(string)
   default     = ["0.0.0.0/0", "::/0"]

@@ -45,9 +45,33 @@ variable "image" {
 }
 
 variable "ssh_allowed_cidrs" {
-  description = "CIDRs allowed to reach SSH (22)."
+  description = <<-EOT
+    CIDRs allowed to reach SSH (22). Read straight into the `source_ips` of the port-22 rule on the
+    `alethia-status` firewall (main.tf:29) — this value IS the allowlist that gets applied.
+
+    REQUIRED, with no default (#3292). It defaulted to ["0.0.0.0/0", "::/0"] with nothing narrowing
+    it, and — unlike infra/cp-hetzner and infra/sandbox, which each record a reason for theirs —
+    with no reason recorded anywhere. Nobody chose the open value here; it is what an unfilled
+    declaration left behind, and it was therefore the box's live SSH allowlist.
+
+    WHY REQUIRED RATHER THAN NARROWED IN CODE. No correct narrow value could be established from
+    this repository without inventing one. Nothing in CI reaches this box over SSH: the only
+    workflow that SSHes anywhere is deploy-console.yml, and it dials DEPLOY_HOST, which is the
+    cp-hetzner control-plane box. This one is built entirely by cloud-init at first boot (clone the
+    repo, `docker compose up`) and is never touched again by automation. SSH here is a human path
+    from an address this repo does not record — and a guessed CIDR on a box nobody watches applying
+    is how the maintainer gets locked out of it.
+
+    WHAT REQUIRED ENFORCES: OpenTofu exits 1 with "No value for required variable" when nothing
+    supplies it, so the open allowlist can no longer be reached by leaving a line out. That is the
+    whole mechanism. ["0.0.0.0/0", "::/0"] is still a legal value — the `ssh_allowlist_is_narrow`
+    check in main.tf reports it on every plan, but a `check` block emits a WARNING and does not
+    fail an apply. Nothing here verifies that a narrow value is the RIGHT one either.
+
+    Supply it as a gitignored terraform.tfvars, `-var`, or TF_VAR_ssh_allowed_cidrs — the apply
+    workflow reads the STATUS_SSH_ALLOWED_CIDRS repository variable into that env var.
+  EOT
   type        = list(string)
-  default     = ["0.0.0.0/0", "::/0"]
 }
 
 variable "repo_url" {
