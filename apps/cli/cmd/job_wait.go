@@ -16,7 +16,13 @@ import (
 // same 3 seconds it always was.
 var jobPollInterval = 3 * time.Second
 
-func waitForJob(apiClient *api.Client, jobID string) error {
+// jobPoller is the one call waitForJob makes. An interface rather than *api.Client so `alethia
+// apply` can wait through the same loop under a fake control plane.
+type jobPoller interface {
+	GetJob(jobID string) (*api.ProvisionJob, error)
+}
+
+func waitForJob(apiClient jobPoller, jobID string) error {
 	fmt.Printf("\n%s Waiting for job %s...\n", ui.MutedStyle.Render(ui.SymbolPoint), jobID)
 
 	lastStatus := ""
