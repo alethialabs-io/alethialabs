@@ -106,8 +106,8 @@ var shellFields = []shellField{
 		Command: "alethia open",
 		Key:     shellKeyProject,
 		Flag:    "project",
-		Usage:   "Open a project's page instead of the organization's, by project name",
-		Docs:    "Open a project's page instead of the organization's, by project name. The URL is built from the console's own route tree, so a route rename fails the build rather than the link.",
+		Usage:   "Open a project's page instead of the organization's, by project name or id",
+		Docs:    "Open a project's page instead of the organization's, by project name or id. The URL is built from the console's own route tree, so a route rename fails the build rather than the link.",
 		Pages:   []string{docsCliIdentityPage},
 	},
 }

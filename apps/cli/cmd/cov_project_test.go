@@ -998,6 +998,32 @@ func TestProj_GetBrowserFailureIsNotFatal(t *testing.T) {
 	}
 }
 
+// TestProj_GetLinkFailureIsNotFatal pins that a project link the CLI cannot build is REPORTED
+// without changing what `project get` returns.
+//
+// The refusal to build a wrong URL is right; making it the exit status is not. The project has
+// already been printed by the time `--open` is honoured, so a script doing
+// `alethia project get web --open && …` would fail on the optional half of a command whose primary
+// work succeeded — and answering yes to the interactive prompt would do the same. Same shape as
+// TestProj_GetBrowserFailureIsNotFatal one case above.
+func TestProj_GetLinkFailureIsNotFatal(t *testing.T) {
+	s := &projServer{config: projSampleConfig()}
+	h := projEnv(t, s)
+	// No cached slug, and whoami cannot supply one — so the link cannot be built at all.
+	if err := types.SaveCliConfig(types.CliConfig{ActiveOrgID: "o1", ActiveOrgName: "Acme"}); err != nil {
+		t.Fatalf("SaveCliConfig: %v", err)
+	}
+	s.failOn = []string{"whoami"}
+	projTTY(t)
+	prev := openBrowser
+	openBrowser = func(string) error { return nil }
+	t.Cleanup(func() { openBrowser = prev })
+
+	if h.run("project", "get", "web", "--open", "--output", "table") {
+		t.Error("an unbuildable link should not fail a `project get` that already printed the project")
+	}
+}
+
 // TestProj_GetMissingAndError pins the "no project found" notice and the fatal fetch error.
 func TestProj_GetMissingAndError(t *testing.T) {
 	s := &projServer{}

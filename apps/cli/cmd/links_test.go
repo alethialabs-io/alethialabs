@@ -109,3 +109,93 @@ func TestProjectAndOrgLinks(t *testing.T) {
 		t.Error("orgLink swallowed an unresolvable org")
 	}
 }
+
+// The config's slug describes the org the CLI last SWITCHED to. When `--org` or a service token
+// scopes THIS invocation somewhere else, that slug names a different tenant than the command read
+// from — so the fast path must be skipped and whoami, which answers under the same headers every
+// other request carries, must be the source.
+func TestResolveOrgSlug_SkipsTheConfigWhenScopedElsewhere(t *testing.T) {
+	for name, scope := range map[string]func(t *testing.T){
+		"--org names another org": func(t *testing.T) {
+			api.SetOrgOverride("o2")
+			t.Cleanup(func() { api.SetOrgOverride("") })
+		},
+		"a service token is in use": func(t *testing.T) { t.Setenv(ServiceTokenEnv, "alethia_sat_x") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			isolatedHome(t)
+			if err := types.SaveCliConfig(types.CliConfig{ActiveOrgID: "o1", ActiveOrgSlug: "acme"}); err != nil {
+				t.Fatal(err)
+			}
+			scope(t)
+
+			f := &linkFake{who: whoWithSlug("boutique")}
+			got, err := resolveOrgSlug(f)
+			if err != nil {
+				t.Fatalf("resolveOrgSlug: %v", err)
+			}
+			if got == "acme" {
+				t.Fatal("the link named the CONFIG's org, not the one this invocation acted in — " +
+					"that URL opens another tenant's page, or 404s, and reads as if it worked")
+			}
+			if got != "boutique" {
+				t.Errorf("resolveOrgSlug = %q, want boutique (the scope whoami answered under)", got)
+			}
+			if f.called != 1 {
+				t.Errorf("whoami was called %d times; the config cannot answer when the scope is elsewhere", f.called)
+			}
+		})
+	}
+}
+
+// A scope that resolves to no organization is refused rather than quietly falling back to the
+// config — that fallback would build the link into the very tenant the override said not to use.
+func TestResolveOrgSlug_RefusesWhenAnOverriddenScopeHasNoOrg(t *testing.T) {
+	isolatedHome(t)
+	if err := types.SaveCliConfig(types.CliConfig{ActiveOrgID: "o1", ActiveOrgSlug: "acme"}); err != nil {
+		t.Fatal(err)
+	}
+	api.SetOrgOverride("o2")
+	t.Cleanup(func() { api.SetOrgOverride("") })
+
+	got, err := resolveOrgSlug(&linkFake{who: whoWithSlug("")})
+	if err == nil {
+		t.Fatalf("resolveOrgSlug returned %q for a scope with no organization", got)
+	}
+	if got == "acme" {
+		t.Fatal("the refusal leaked the config's slug — the tenant the override excluded")
+	}
+	if !strings.Contains(err.Error(), "--org") {
+		t.Errorf("the refusal does not name the scope to check: %v", err)
+	}
+}
+
+// `--project` takes a NAME or an ID, as every other --project in this CLI does. An id must be
+// resolved: it is already `[a-z0-9-]`, so it survives ProjectSlug untouched and builds a URL that
+// reads as a link and 404s, because the console resolves `[project]` by slug and never by id.
+func TestResolveProjectName_ResolvesAnIDAndPassesANameThrough(t *testing.T) {
+	const id = "8f3c1d2e-4b5a-6c7d-8e9f-0a1b2c3d4e5f"
+	lister := projFakeLister{configs: []types.ConfigurationSummary{
+		{ID: id, ProjectName: "My Shop"},
+		{ID: "p2", ProjectName: "web"},
+	}}
+
+	got, err := resolveProjectName(lister, id)
+	if err != nil || got != "My Shop" {
+		t.Errorf("resolveProjectName(id) = %q, %v; want the project's name", got, err)
+	}
+
+	// A name costs no request and is returned untouched — slugifying is projectLink's job.
+	noRequests := projFakeLister{err: errBoom}
+	if got, err := resolveProjectName(noRequests, "My Shop"); err != nil || got != "My Shop" {
+		t.Errorf("resolveProjectName(name) = %q, %v; a name must not be looked up", got, err)
+	}
+
+	// An id nobody has is a refusal, not a slugified guess.
+	unknown := "11111111-2222-3333-4444-555555555555"
+	if got, err := resolveProjectName(lister, unknown); err == nil {
+		t.Errorf("resolveProjectName(unknown id) = %q with no error — that URL 404s and reads as working", got)
+	} else if !strings.Contains(err.Error(), "web") {
+		t.Errorf("the refusal does not offer the projects that do exist: %v", err)
+	}
+}

@@ -41,12 +41,27 @@ var openCmd = &cobra.Command{
 			// open` with no organization at all still has somewhere to go, and that is the origin.
 			token, err := getAuthToken()
 			if err != nil {
+				// `--project` is the exception to the origin fallback, for the reason the docs
+				// arm below states in the same words: a flag that is silently dropped is a flag
+				// somebody will believe worked. Without a credential the project cannot be
+				// resolved at all, so opening the console home page would answer a request for
+				// one project with a page about none, and the only difference from success is a
+				// URL nobody reads.
+				if openProject != "" {
+					fail(fmt.Errorf("resolve --project %q: %w", openProject, err))
+				}
 				url = WebOrigin()
 				break
 			}
 			client := api.NewClient(token)
 			if openProject != "" {
-				if url, err = projectLink(client, openProject); err != nil {
+				// NAME or id, as every other --project in this CLI takes. An id has to be
+				// resolved rather than slugified — see resolveProjectName.
+				name, nameErr := resolveProjectName(client, openProject)
+				if nameErr != nil {
+					fail(nameErr)
+				}
+				if url, err = projectLink(client, name); err != nil {
 					fail(err)
 				}
 				break
@@ -70,7 +85,7 @@ var openCmd = &cobra.Command{
 	},
 }
 
-// openProject is the --project value: a project NAME, the same reference every other command
+// openProject is the --project value: a project NAME OR ID, the same reference every other command
 // takes. It is a flag rather than a second positional because `open [console|docs]` already spends
 // its one argument on the surface, and a command that took `open boutique` could not tell a project
 // named `docs` from the docs.
