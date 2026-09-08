@@ -4,7 +4,7 @@
 
 import { Button } from "@repo/ui/button";
 import { Sparkles } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { resolveProjectId } from "@/app/server/actions/resolve";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { projectScope } from "./nav-config";
@@ -12,11 +12,13 @@ import { projectScope } from "./nav-config";
 /**
  * The "Ask AI" launcher — a topbar action (beside the setup guide), available on every
  * authenticated view. Toggles the Elench assistant as a docked panel, scoped to the current
- * project when inside a project workspace (resolves the slug → id on click) and org-wide
- * otherwise. Replaces the old floating bottom-right pill.
+ * project AND the environment the topbar switcher is showing when inside a project workspace
+ * (resolves the slug → id on click) and org-wide otherwise. Replaces the old floating
+ * bottom-right pill.
  */
 export function AskAiButton() {
 	const pathname = usePathname();
+	const searchParams = useSearchParams();
 	const togglePanel = useElenchStore((s) => s.togglePanel);
 
 	const onClick = async () => {
@@ -24,7 +26,15 @@ export function AskAiButton() {
 		if (scope) {
 			try {
 				const projectId = await resolveProjectId(scope.projectSlug);
-				togglePanel({ kind: "project", projectId, environmentId: null });
+				// The environment the user is LOOKING AT. Null means "the project's default",
+				// which the route resolves server-side — the same contract the canvas uses. Read
+				// at click time so the panel opens on the switcher's current environment rather
+				// than silently planning against the default.
+				togglePanel({
+					kind: "project",
+					projectId,
+					environmentId: searchParams.get("environment_id"),
+				});
 				return;
 			} catch {
 				// Fall back to org context if the project can't be resolved.
