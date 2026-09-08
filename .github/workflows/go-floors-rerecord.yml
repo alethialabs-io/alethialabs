@@ -1,0 +1,307 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Re-record the four Go coverage floors in an environment that MATCHES the enforcing job, and open
+# a PR with the result.
+#
+# WHY THIS EXISTS (#4247). Every `*/coverage-floors.json` carries a fingerprint of the environment
+# that produced it — the OS, the Go minor, and the coverage-affecting binaries on PATH. When the
+# current environment differs, scripts/go-coverage.sh DEMOTES every regression to a warning,
+# because a number measured elsewhere is not evidence about the code. That is the right behaviour
+# and it has one consequence: the floors can only ever be re-recorded somewhere the fingerprint can
+# be reproduced. That is not a laptop. A Darwin-recorded fingerprint would demote the whole
+# module's failures to warnings on every PR in the repository — the gate disarmed by a helpful
+# commit, looking exactly like a gate that is holding.
+#
+# The sandbox box is not that environment either (it is not always up, and it is not the runner
+# image). The only environment that reproduces the enforcing job's fingerprint is the enforcing
+# job's own runner. So the re-record happens HERE.
+#
+# IT OPENS A PR; IT NEVER PUSHES. Same invariant as programme.yml, and the same reason: `dev` takes
+# PR merges, Mergify lands them, and a push would bypass the CODEOWNERS ruleset guarding
+# .github/workflows/**. The numbers also need a human to look at them — a floors diff is the review
+# signal for "coverage moved", and a bot silently rewriting it would delete that signal.
+#
+# ── THE TOOLCHAIN HERE MUST MIRROR ci.yml's `go` JOB, PER MODULE ──────────────────────────────────
+#
+# Not the `coverage-determinism` probe's — the probe installs no helm for packages/core and the
+# enforcing job pins v3.21.4. If this job installs anything different from what ENFORCES the floors,
+# it records numbers that job can never reproduce, and the gate demotes forever. The per-module
+# toolchain below is copied from ci.yml's `go` job, including the two deliberately different helm
+# pins (v3.16.3 for apps/runner, v3.21.4 for packages/core), which ci.yml documents as the honest
+# state rather than the desired one.
+#
+# test/e2e has no matrix leg of its own in ci.yml — it is enforced from inside the packages/core
+# leg — so its environment here is packages/core's, and its suite runs with GOWORK=off exactly as
+# ci.yml runs it.
+#
+# ── `update` DOES NOT LOWER, AND A GO BUMP LOWERS ────────────────────────────────────────────────
+#
+# `--update` never lowers a floor. That is what makes it safe to hand to a stranger, and it is also
+# why the default mode cannot fix a Go-minor bump on its own: go1.27 counts MORE statements than
+# go1.26 in unchanged code (test/e2e's root package went 3406/5082 -> 3686/5532), so the ratio
+# falls and `--update` keeps the old, now-unreachable floor while the fingerprint moves to the new
+# compiler. That combination is worse than either half: a matching fingerprint means F7 no longer
+# demotes, so the stale floor reds every PR and names coverage.
+#
+# So the mode is an INPUT. `update` is the default and the right answer for a re-record that only
+# needs to re-baseline an environment; `accept-regression` is the one to dispatch for a compiler
+# bump, where the drop is the compiler and not the code. Either way the job reports, in the PR body,
+# every package it refused to lower — a `NOT LOWERED` line is the signal that `update` was the wrong
+# mode, and it must not be something a reader has to open the job log to find.
+#
+# COST: zero. Four ubuntu-latest jobs running suites CI already runs on every PR.
+
+name: Go coverage floors (re-record)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "update = raise only (default). accept-regression = also LOWER, for a Go-minor bump where the drop is the compiler."
+        required: true
+        default: update
+        type: choice
+        options:
+          - update
+          - accept-regression
+
+# Never two re-records at once: the second would open a competing PR against the same branch and
+# the two would carry different fingerprints.
+concurrency:
+  group: go-floors-rerecord
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    name: Re-record ${{ matrix.module }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `slug` names the artifact (an artifact name may not contain `/`). `helm` and `tofu`
+          # mirror ci.yml's `go` job per module — an empty value means "this leg installs none",
+          # which for apps/cli is deliberate: its floors record `tofu: false`, and installing tofu
+          # here would silently move its numbers.
+          #
+          # apps/cli carries EXPLICIT empty strings rather than omitting the keys. A missing matrix
+          # key is `null`, and `null != ''` is answered by Actions' type coercion rather than by
+          # anything written here — the kind of implicit that is right until it isn't, on a step
+          # whose failure mode (a tool installed that the floors record as absent) silently moves
+          # the numbers.
+          - module: apps/cli
+            slug: apps-cli
+            gowork: auto
+            helm: ""
+            tofu: ""
+          - module: apps/runner
+            slug: apps-runner
+            gowork: auto
+            helm: v3.16.3
+            tofu: "1.9.0"
+          - module: packages/core
+            slug: packages-core
+            gowork: auto
+            helm: v3.21.4
+            tofu: "1.9.0"
+          - module: test/e2e
+            slug: test-e2e
+            gowork: "off"
+            helm: v3.21.4
+            tofu: "1.9.0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - uses: azure/setup-helm@v5
+        if: matrix.helm != ''
+        with:
+          version: ${{ matrix.helm }}
+      - uses: opentofu/setup-opentofu@v2
+        if: matrix.tofu != ''
+        with:
+          tofu_version: ${{ matrix.tofu }}
+
+      # The fingerprint this environment will stamp into the floors, printed BEFORE the record so a
+      # reader of the log can see what produced the numbers even if a later step fails.
+      - name: The fingerprint this run will record
+        run: |
+          echo "go        $(go env GOVERSION)"
+          for b in docker git helm kubectl tofu; do
+            printf '%-10s %s\n' "$b" "$(command -v "$b" || echo MISSING)"
+          done
+
+      # Written explicitly rather than left to the script's ensure_profile(), which re-runs the
+      # suite from the module directory with the ambient GOWORK — wrong for test/e2e, which is
+      # outside go.work and must run with GOWORK=off, exactly as ci.yml runs it.
+      - name: Measure (the same command ci.yml's `go` job runs)
+        working-directory: ${{ matrix.module }}
+        run: GOWORK=${{ matrix.gowork }} go test -coverprofile=cover.out ./...
+
+      - name: Re-record the floors (--${{ inputs.mode }})
+        run: |
+          mkdir -p out/${{ matrix.module }} logs
+          bash scripts/go-coverage.sh --module ${{ matrix.module }} --${{ inputs.mode }} \
+            | tee logs/${{ matrix.slug }}.txt
+          cp ${{ matrix.module }}/coverage-floors.json out/${{ matrix.module }}/coverage-floors.json
+          echo "── ${{ matrix.module }}/coverage-floors.json ──"
+          cat ${{ matrix.module }}/coverage-floors.json
+
+      # `out/` mirrors the repo layout, so the PR job restores all four with one `cp -R` and needs
+      # no slug -> module table of its own to drift out of step with the matrix above.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: go-floors-${{ matrix.slug }}
+          path: out
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: go-floors-log-${{ matrix.slug }}
+          path: logs/${{ matrix.slug }}.txt
+          if-no-files-found: error
+
+  open-pr:
+    name: Open the floors PR
+    needs: record
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # `create-pull-request` has to PUSH the branch before it can open the PR against it, so
+    # `contents: read` is not enough. Same shape and same reason as programme.yml — and it does not
+    # let this write to a protected branch: the rulesets match refs/heads/{dev,main,staging}, so
+    # `chore/go-floors-rerecord` is writable and the base branches are not.
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev
+
+      - name: Restore the re-recorded floors
+        uses: actions/download-artifact@v8
+        with:
+          pattern: go-floors-*
+          path: artifacts
+
+      # A guard whose "found nothing" branch is indistinguishable from "nothing wrong" is this
+      # repo's recurring defect. If a leg failed (fail-fast is off, deliberately — one red module
+      # should not cost the other three their measurement) its floors file is simply absent, and a
+      # PR opened from three of four modules would look exactly like a complete one. So: name the
+      # modules, require all four, and fail loudly.
+      - name: Put them back, and refuse a partial set
+        run: |
+          set -euo pipefail
+          for slug in apps-cli apps-runner packages-core test-e2e; do
+            [ -d "artifacts/go-floors-$slug" ] || { echo "::error::no artifact from the $slug leg — that leg failed. NOT opening a partial re-record PR."; exit 1; }
+            cp -R "artifacts/go-floors-$slug/." .
+          done
+          missing=0
+          for m in apps/cli apps/runner packages/core test/e2e; do
+            [ -s "$m/coverage-floors.json" ] || { echo "::error::$m/coverage-floors.json is missing or empty after restore"; missing=1; }
+          done
+          [ "$missing" -eq 0 ]
+
+      # THE BODY STATES THE FINGERPRINT IT RECORDED. Without it a reader cannot tell WHICH
+      # environment produced these numbers, and the fingerprint is the only thing that makes them
+      # comparable to anything — a floors diff with an unstated fingerprint is unreviewable.
+      - name: Compose the PR body
+        run: |
+          set -euo pipefail
+          {
+            echo "Auto-generated by \`.github/workflows/go-floors-rerecord.yml\`, dispatched with \`--${{ inputs.mode }}\`."
+            echo
+            echo "Re-records the four Go modules' \`coverage-floors.json\` **on the runner image that"
+            echo "enforces them**, which is the only environment whose fingerprint the ratchet can"
+            echo "reproduce. See \`scripts/go-coverage.sh\`'s header for why a laptop cannot do this."
+            echo
+            echo "### The fingerprint these numbers were recorded under"
+            echo
+            echo "| module | \`env\` as written into the floors |"
+            echo "| --- | --- |"
+            for m in apps/cli apps/runner packages/core test/e2e; do
+              printf '| `%s` | `%s` |\n' "$m" "$(jq -c '.env' "$m/coverage-floors.json")"
+            done
+            echo
+            echo "A row that does not match the environment of \`ci.yml\`'s \`go\` job is a defect in"
+            echo "this workflow, not in the numbers: the ratchet would demote every regression in that"
+            echo "module to a warning, forever and silently."
+            echo
+            echo "### What the re-record did"
+            echo
+            for slug in apps-cli apps-runner packages-core test-e2e; do
+              echo "<details><summary><code>$slug</code></summary>"
+              echo
+              echo '```'
+              cat "artifacts/go-floors-log-$slug/$slug.txt"
+              echo '```'
+              echo
+              echo "</details>"
+            done
+            echo
+            if grep -qs "NOT LOWERED" artifacts/go-floors-log-*/*.txt; then
+              echo "### :warning: Some floors were NOT lowered"
+              echo
+              echo "\`--update\` never lowers a floor, so the packages listed as \`NOT LOWERED\` above kept"
+              echo "their old numbers while the \`env\` block moved to this environment. **That combination"
+              echo "does not resolve a Go-minor bump** — a matching fingerprint stops F7 demoting, so the"
+              echo "stale floor will red every PR and blame coverage. If the drop is the compiler rather"
+              echo "than the code, close this PR and re-dispatch with \`mode: accept-regression\`."
+              echo
+            else
+              echo "No floor needed lowering: every package measured at or above its recorded floor."
+              echo
+            fi
+            echo "Dispatched from [run ${GITHUB_RUN_NUMBER}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
+          } > /tmp/floors-pr-body.md
+          cat /tmp/floors-pr-body.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Drop the artifacts before the PR is composed
+        run: rm -rf artifacts
+
+      # A PR authored by GITHUB_TOKEN sits with an EMPTY check rollup — never red, permanently
+      # BLOCKED — which reads like a CI problem and is not one (#3476, and programme.yml's note).
+      # Same custody as programme.yml / release-please.yml; nothing new is trusted here.
+      #
+      # Non-fatal with a fallback: an App-token outage must not cost the run its PR. A PR that needs
+      # an approval click is strictly better than four measured modules thrown away.
+      - name: Mint the floors-PR token (GitHub App)
+        id: floors_token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: alethialabs-io
+          repositories: alethialabs
+
+      - name: Open or update the floors PR
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ steps.floors_token.outputs.token || github.token }}
+          base: dev
+          branch: chore/go-floors-rerecord
+          title: "chore(coverage): re-record the Go floors on the enforcing runner"
+          commit-message: |
+            chore(coverage): re-record the Go floors on the enforcing runner
+
+            Auto-generated by .github/workflows/go-floors-rerecord.yml (--${{ inputs.mode }}).
+            Regenerates the four Go modules' coverage-floors.json, including the env
+            fingerprint, on the same runner image that enforces them.
+          body-path: /tmp/floors-pr-body.md
+          add-paths: |
+            apps/cli/coverage-floors.json
+            apps/runner/coverage-floors.json
+            packages/core/coverage-floors.json
+            test/e2e/coverage-floors.json
+          labels: |
+            wave:hygiene
+            lane:tests
+            class:backend
+          delete-branch: false
