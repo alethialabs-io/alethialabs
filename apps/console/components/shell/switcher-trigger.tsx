@@ -55,7 +55,9 @@ export function SwitcherTrigger({
 }: SwitcherTriggerProps) {
   const labelBlock = caption ? (
     <span className="flex min-w-0 flex-col items-start leading-tight">
-      <span className="font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground/70">
+      {/* The tertiary tier at full strength. An alpha here composites below 4.5:1 and the
+          switcher is in the shell, so it renders on every route (#4309). */}
+      <span className="font-mono text-ui-3xs uppercase tracking-wider text-text-tertiary">
         {caption}
       </span>
       <span className="max-w-[10rem] truncate text-ui-md font-medium text-foreground">
