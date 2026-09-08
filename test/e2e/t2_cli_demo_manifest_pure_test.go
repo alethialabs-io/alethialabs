@@ -28,9 +28,9 @@ func TestAssertManifestPlanIsClean_Verdicts(t *testing.T) {
 	// The header and the summary as a real run prints them. Cases vary one clause at a time.
 	header := "▸ Reading alethia.yaml · cli-demo-42 · hetzner/nbg1\n"
 	clean := header +
-		"  development  dedicated  + environment\n" +
-		"  production is on the server and not in the file — left alone\n" +
-		"  0 projects to create · 1 environment · 0 components\n"
+		"  development  dedicated  = environment\n" +
+		"  preview is on the server and not in the file — left alone\n" +
+		"  0 projects to create · 0 environments · 0 components\n"
 
 	cases := []struct {
 		name string
@@ -46,7 +46,7 @@ func TestAssertManifestPlanIsClean_Verdicts(t *testing.T) {
 		{
 			name:    "a plan that would create the project names the two-projects failure",
 			out:     header + "  1 project to create · 1 environment · 0 components",
-			wantErr: "0 projects to create · 1 environment · 0 components",
+			wantErr: "0 projects to create · 0 environments · 0 components",
 		},
 		{
 			name: "a clean plan passes",
@@ -69,26 +69,28 @@ func TestAssertManifestPlanIsClean_Verdicts(t *testing.T) {
 			// The file planned cleanly — against SOME OTHER project. Nothing in the counts can
 			// see this; only the header can.
 			name:    "a file naming another project is caught by the header",
-			out:     "▸ Reading alethia.yaml · someone-elses · hetzner/nbg1\n  0 projects to create · 1 environment · 0 components",
+			out:     "▸ Reading alethia.yaml · someone-elses · hetzner/nbg1\n  0 projects to create · 0 environments · 0 components",
 			wantErr: "cli-demo-42",
 		},
 		{
 			name:    "a file naming another region is caught by the header",
-			out:     "▸ Reading alethia.yaml · cli-demo-42 · hetzner/fsn1\n  0 projects to create · 1 environment · 0 components",
+			out:     "▸ Reading alethia.yaml · cli-demo-42 · hetzner/fsn1\n  0 projects to create · 0 environments · 0 components",
 			wantErr: "nbg1",
 		},
 		{
 			// The case the old substring form could not see: everything before the first
-			// separator is identical to a clean plan.
+			// separator is identical to a clean plan. One environment to create means the file
+			// declares an environment the project does not have — the writer and the reader
+			// disagree about what `--stage` named.
 			name:    "the project matches and the environment count does not",
-			out:     header + "  0 projects to create · 9 environments · 0 components",
-			wantErr: "0 projects to create · 1 environment · 0 components",
+			out:     header + "  0 projects to create · 1 environment · 0 components",
+			wantErr: "0 projects to create · 0 environments · 0 components",
 		},
 		{
 			// The other half of it: the run would re-upsert components the file never declared.
 			name:    "the components would be rewritten",
-			out:     header + "  0 projects to create · 1 environment · 3 components",
-			wantErr: "0 projects to create · 1 environment · 0 components",
+			out:     header + "  0 projects to create · 0 environments · 3 components",
+			wantErr: "0 projects to create · 0 environments · 0 components",
 		},
 	}
 	for _, tc := range cases {
