@@ -13,7 +13,7 @@ import { AGENT_STEP_PART_TYPE, agentStepMarker } from "@/lib/ai/agent-steps";
 import type { CanvasContext } from "@/lib/ai/canvas-context";
 import { summarizeCanvas } from "@/lib/ai/canvas-context";
 import { formatMentionsForPrompt, mentionsSchema } from "@/lib/ai/mentions";
-import { projectAssistantBodySchema } from "@/lib/ai/project-assistant-body";
+import { parseProjectAssistantBody } from "@/lib/ai/project-assistant-body";
 import {
 	buildProjectKnowledge,
 	formatContextBlock,
@@ -116,10 +116,12 @@ export async function POST(
 	const { projectId } = await params;
 	const actor = await currentActor();
 	// The body shape is shared with the client's `prepareBody` (lib/ai/project-assistant-body.ts),
-	// so the two cannot drift. `environmentId` and `view` ride in it for the environment-scoped
-	// prompt; they are consumed where the prompt is assembled.
-	const { messages, canvas, threadId, mentions, deepReasoning } =
-		projectAssistantBodySchema.parse(await req.json());
+	// so the two cannot drift. It degrades rather than throws — a shape this route used to accept
+	// must not become a 500, and this runs BEFORE the AI budget hold, so a rejection here costs
+	// nothing. Only `messages` is genuinely required.
+	const body = parseProjectAssistantBody(await req.json().catch(() => null));
+	if (!body.ok) return new Response(body.message, { status: 400 });
+	const { messages, canvas, threadId, mentions, deepReasoning } = body.value;
 
 	// Metered turn: gate on headroom (the real cost-of-serve is settled after it runs). The
 	// deep-reasoning flag no longer affects the charge — Opus just settles its own real cost.

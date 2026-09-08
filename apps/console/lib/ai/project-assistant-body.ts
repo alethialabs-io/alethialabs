@@ -43,8 +43,10 @@ export const projectAssistantBodySchema = z.object({
 	canvas: z.custom<CanvasContext>().optional(),
 	/** When set, the transcript is persisted to this (project-scoped) thread on finish. */
 	threadId: z.string().optional(),
-	/** Resources the user @-referenced in the latest message. */
-	mentions: mentionsSchema,
+	/** Resources the user @-referenced in the latest message. A malformed list is dropped rather
+	 * than rejected — the route degraded it that way before this schema existed, and losing the
+	 * @-mentions is a smaller failure than losing the turn. */
+	mentions: mentionsSchema.catch(undefined),
 	/**
 	 * Per-message opt-in to the Opus advisor ("deep reasoning"). Only effective on `ai_max`
 	 * (the advisor selection guards it); ignored on every other tier.
@@ -55,3 +57,25 @@ export const projectAssistantBodySchema = z.object({
 });
 
 export type ProjectAssistantBody = z.infer<typeof projectAssistantBodySchema>;
+
+/**
+ * Parse a request body, degrading rather than throwing wherever the route used to.
+ *
+ * The route destructured an untyped interface before this schema existed, so a body it could not
+ * make sense of still produced a turn. A bare `.parse()` here would be strictly stricter — an
+ * unexpected shape would throw out of the handler and 500 the whole turn, after the AI budget hold
+ * was already reserved. Only `messages` is genuinely required; everything else has a fallback.
+ */
+export function parseProjectAssistantBody(
+	body: unknown,
+): { ok: true; value: ProjectAssistantBody } | { ok: false; message: string } {
+	const parsed = projectAssistantBodySchema.safeParse(body);
+	if (parsed.success) return { ok: true, value: parsed.data };
+	const first = parsed.error.issues[0];
+	return {
+		ok: false,
+		message: first
+			? `${first.path.join(".") || "body"}: ${first.message}`
+			: "Malformed request body.",
+	};
+}

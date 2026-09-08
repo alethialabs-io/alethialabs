@@ -442,16 +442,12 @@ export interface ClusterAdmin {
 }
 
 export interface ClusterProviderConfig {
-	// Any other key is a declared template variable, passed through to OpenTofu by name.
-	[knob: string]: unknown;
 	enable_karpenter?: boolean;
 	enable_autopilot?: boolean;
 	enable_cluster_autoscaler?: boolean;
 }
 
 export interface DnsProviderConfig {
-	// Any other key is a declared template variable, passed through to OpenTofu by name.
-	[knob: string]: unknown;
 	acm_certificate?: boolean;
 	managed_certificate?: boolean;
 	cloudfront_waf?: boolean;
@@ -464,8 +460,6 @@ export interface DnsProviderConfig {
 }
 
 export interface NosqlProviderConfig {
-	// Any other key is a declared template variable, passed through to OpenTofu by name.
-	[knob: string]: unknown;
 	partition_key_path?: string;
 }
 
@@ -647,28 +641,37 @@ export interface ConnectorCredentials {
 	secret?: EncryptedSecret | null;
 }
 
+/**
+ * A component's per-cloud knobs that the typed interfaces do not model: each key is a DECLARED
+ * OpenTofu root variable (or a per-item object attribute), reached by name through the provider
+ * passthrough. Open by nature — the set is whatever the templates declare, and the generated
+ * manifest is what says which of them a given cloud × component can reach.
+ *
+ * This is the one shape CLAUDE.md's "no `Record<string, unknown>` for a JSONB field" rule does not
+ * reach, because there is no known shape to write down: an index signature on a TYPED interface
+ * (ClusterProviderConfig and friends) would swallow every typo in the keys that ARE documented,
+ * which is exactly what that rule exists to stop. A field that carries both keeps its interface and
+ * intersects this at the WRITE site instead.
+ */
+export type TemplateKnobs = Record<string, unknown>;
+
+/** A typed provider config plus the declared template knobs written alongside it. */
+export type WithTemplateKnobs<T> = T & TemplateKnobs;
+
 // Per-cloud cache knobs (redis_*/valkey_*, memorystore_*, azure_cache_*, kvstore_*). No typed key
 // yet: every entry is a declared template variable reached by name through the passthrough.
-export interface CacheProviderConfig {
-	[knob: string]: unknown;
-}
+export type CacheProviderConfig = TemplateKnobs;
 
 // Per-cloud topic knobs (SNS / Pub/Sub / Service Bus / MNS), reached by name like the cache's.
-export interface TopicProviderConfig {
-	[knob: string]: unknown;
-}
+export type TopicProviderConfig = TemplateKnobs;
 
 export interface StorageProviderConfig {
-	// Any other key is a declared template variable, passed through to OpenTofu by name.
-	[knob: string]: unknown;
 	// AES256 / aws:kms (S3), google-managed / CMEK (GCS), etc.
 	encryption_algorithm?: string;
 	kms_key?: string;
 }
 
 export interface QueueProviderConfig {
-	// Any other key is a declared template variable, passed through to OpenTofu by name.
-	[knob: string]: unknown;
 	// SQS-only delivery delay (Azure Service Bus / Pub/Sub have no direct equivalent).
 	delay_seconds?: number;
 }
@@ -685,8 +688,6 @@ export type DatabaseLogExport =
 	| "postgresql";
 
 export interface DatabaseProviderConfig {
-	// Any other key is a declared template variable, passed through to OpenTofu by name.
-	[knob: string]: unknown;
 	// AWS only — `rds_logs_exports` is the sole DB log-export variable any template
 	// declares (gcp/azure/alibaba have none). Unset → {audit, error, slowquery} on MySQL,
 	// {postgresql} on Postgres.

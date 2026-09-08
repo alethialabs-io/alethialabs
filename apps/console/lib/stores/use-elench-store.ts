@@ -34,6 +34,22 @@ export type ElenchView = "modal" | "panel";
 /** Which surface the modal's main region is showing (mutually exclusive). */
 export type ElenchMainView = "chat" | "artifacts" | "knowledge";
 
+/**
+ * The context to open with, given what the caller knows.
+ *
+ * A caller that cannot see the environment passes `null`, and that must not silently re-scope a
+ * conversation that IS scoped: the topbar's Ask AI button knows the project from the route but not
+ * always the environment, so toggling the panel closed and open again would have dropped the
+ * environment the user had switched to and sent the next turn against the project default.
+ * `null` means "I don't know"; only a real id re-scopes.
+ */
+function withKnownEnvironment(next: ElenchCtx, current: ElenchCtx): ElenchCtx {
+	if (next.kind !== "project" || current.kind !== "project") return next;
+	if (next.projectId !== current.projectId) return next;
+	if (next.environmentId !== null) return next;
+	return { ...next, environmentId: current.environmentId };
+}
+
 /** True when two contexts address the same conversation lineage. */
 function sameCtx(a: ElenchCtx, b: ElenchCtx): boolean {
 	if (a.kind !== b.kind) return false;
@@ -154,8 +170,9 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	railOpen: true,
 	mainView: "chat",
 
-	openPanel: (ctx) => {
+	openPanel: (raw) => {
 		const cur = get();
+		const ctx = withKnownEnvironment(raw, cur.ctx);
 		// Switching context starts a fresh conversation (org tools must not bleed
 		// into a project conversation and vice-versa).
 		const fresh = !sameCtx(cur.ctx, ctx);
@@ -169,8 +186,9 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 		});
 	},
 
-	openModal: (ctx) => {
+	openModal: (raw) => {
 		const cur = get();
+		const ctx = withKnownEnvironment(raw, cur.ctx);
 		const fresh = !sameCtx(cur.ctx, ctx);
 		track("elench_chat_opened", { context: ctx.kind, view: "modal" });
 		set({

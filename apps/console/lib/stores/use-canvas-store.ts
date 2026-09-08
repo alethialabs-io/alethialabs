@@ -502,8 +502,16 @@ interface CanvasStore {
 	 * goes through here, so every delete is undoable. */
 	removeNodes: (ids: string[]) => void;
 	duplicateNodes: (ids: string[]) => void;
-	/** Show a card on the workspace rail (replacing whatever is there). */
-	openCard: (card: WorkspaceCard) => void;
+	/**
+	 * Show a card on the workspace rail, replacing whatever is there. Pass `{ back: true }` when
+	 * the card is a DETOUR — a control that sends you to the setting that answers it — and the
+	 * card you left is remembered so it can offer a way back.
+	 */
+	openCard: (card: WorkspaceCard, opts?: { back?: boolean }) => void;
+	/** The card a detour came from, or null. Cleared by any non-detour open. */
+	cardBack: WorkspaceCard | null;
+	/** Return to the card a detour came from (no-op when there is none). */
+	goBackCard: () => void;
 	/** Close the rail. */
 	closeCard: () => void;
 	/** Compat: `openInspector(id)` = `openCard({kind:"inspector", nodeId})`; null closes the rail. */
@@ -573,6 +581,7 @@ export const useCanvasStore = create<CanvasStore>()(
 			iacOutputs: [],
 			selectedIds: [],
 			card: null,
+			cardBack: null,
 			seed: null,
 			dirty: false,
 			past: [],
@@ -961,9 +970,14 @@ export const useCanvasStore = create<CanvasStore>()(
 			removeNodes: (ids) => {
 				const { nodes } = get();
 				// The project root and every `deletable: false` node (charts, described workloads,
-				// add-ons, BYO-IaC cards — all removed out-of-band by their own action) are kept. This
-				// used to be React Flow's job via `deleteKeyCode`, which bypassed this action and so
-				// never committed an undo step; now every delete path lands here.
+				// add-ons, BYO-IaC cards — all removed out-of-band by their own action) are kept.
+				//
+				// The danger zone, the collection row's remove and an accepted AI proposal all land
+				// here. React Flow's own `deleteKeyCode` does NOT: it applies the removal straight to
+				// the node array through `onNodesChange`, so a keyboard delete neither respects
+				// `deletable: false` nor commits an undo step. The board turns that key handling off
+				// and routes Backspace/Delete here — in the canvas lane (#4251), not this one — which
+				// is why this comment names the paths rather than claiming all of them.
 				const removable = ids.filter((id) => {
 					if (id === PROJECT_NODE_ID) return false;
 					const node = nodes.find((n) => n.id === id);
@@ -1010,8 +1024,11 @@ export const useCanvasStore = create<CanvasStore>()(
 				set({ nodes: next, edges: deriveEdges(next), dirty: true });
 			},
 
-			openCard: (card) => set({ card }),
-			closeCard: () => set({ card: null }),
+			openCard: (card, opts) =>
+				set((s) => ({ card, cardBack: opts?.back ? s.card : null })),
+			closeCard: () => set({ card: null, cardBack: null }),
+			goBackCard: () =>
+				set((s) => (s.cardBack ? { card: s.cardBack, cardBack: null } : {})),
 			openInspector: (id) =>
 				set({ card: id ? { kind: "inspector", nodeId: id } : null }),
 
