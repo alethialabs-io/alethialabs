@@ -63,6 +63,14 @@ export function ConnectorCard({
 	// lack provisioning templates) yet still have a live account from before — that account must keep
 	// its Manage → disconnect path, so a connected one is treated as a normal connection everywhere.
 	const isComingSoon = state.health === "coming_soon";
+	// A coming-soon card steps its description down one ink tier and keeps its name at full
+	// strength; its state label already says "Coming soon" in words. It is NOT a blanket
+	// `opacity-50` on the card — that dimmed the `text-foreground` name to 3.6:1 and the
+	// `--muted-foreground` copy to 2.3:1, and at α=0.5 over the page background not even pure
+	// black reaches 4.5:1 (#4197). The same step-down as `connector-row.tsx`'s `secondaryInk`,
+	// because THIS is the view `/[org]/~/connectors` renders by default (`connectors-page.tsx`
+	// opens on `card`), so it is the one the audit scores.
+	const secondaryInk = isComingSoon ? "text-text-tertiary" : "text-muted-foreground";
 	const isGit = integration.category === "git";
 	const isCloud = integration.category === "cloud";
 	// A managed cloud missing platform creds, or a git provider with no registered OAuth app: a
@@ -90,7 +98,7 @@ export function ConnectorCard({
 			className={cn(
 				"flex flex-col gap-3 rounded-xl border bg-background p-4 shadow-sm transition-colors",
 				isComingSoon
-					? "opacity-50 border-border/50"
+					? "border-border/50"
 					: selected
 						? "border-foreground ring-1 ring-foreground"
 						: "border-border/60 hover:border-border",
@@ -131,7 +139,7 @@ export function ConnectorCard({
 							{integration.name}
 						</TooltipContent>
 					</Tooltip>
-					<p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground">
+					<p className={cn("mt-0.5 line-clamp-2 text-xs leading-snug", secondaryInk)}>
 						{integration.description}
 					</p>
 				</div>
