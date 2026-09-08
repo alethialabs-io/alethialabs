@@ -220,6 +220,14 @@ const CENSUS_EXCEPTIONS: Record<string, string> = {
 		"are not deriving a name from a display name.",
 	"apps/console/scripts/check-offer-parity.mjs":
 		"Tokenises an offer axis name for matching; produces no stored name.",
+	"scripts/check-cli-surface.mjs":
+		"docsTreeCommandCount reads the box-drawing command tree in cli/commands/index.mdx and asks " +
+		"whether a token on a ├──/└── line LOOKS like a command name, to corroborate the CLI census's " +
+		"command count against a hand-drawn second source. It derives no name from a display name, " +
+		"stores nothing, validates no user input and reaches no schema — the string it tests came " +
+		"out of a committed docs page, and a token that fails the test is skipped rather than " +
+		"rejected. Routing it through slugify would be asking a normalizer to answer a shape " +
+		"question. Not a #3665 conversion site.",
 	"apps/runner/internal/agent/exec_stage.go":
 		"sanitizeForPath makes a job id safe as a TEMP DIRECTORY component; it keeps uppercase and " +
 		"'_', which no k8s name may contain. A different grammar for a different target.",
