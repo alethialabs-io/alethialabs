@@ -1,0 +1,434 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Coverage exclusions for packages/ui — the machine-readable half of this project's coverage scope.
+# See apps/console/coverage-exclusions.yaml for the full statement of what each section asserts and
+# what the guard re-reads; this header records only what is true HERE.
+#
+# THE EXCLUSION IS AN `include:` ALLOWLIST, AND THAT IS WHY THIS FILE IS LONG. vitest.config.ts
+# hand-lists TWELVE files as the coverage scope while `src/` holds SIXTY. An `include` allowlist is
+# an exclusion with the sign flipped: the other 48 files are excluded exactly as surely as a named
+# `exclude:` entry, and the `exclude:` sweep — which walks `coverage.exclude` — sees none of them.
+# The ratchet is armed at 98.83% over the twelve somebody picked. Every one of the 48 is recorded
+# below, with all 180 of its runtime exports in `symbols:` or in `baseline:`.
+#
+# Every entry is re-read on every run by `pnpm check:coverage-exclusions`
+# (scripts/check-coverage-exclusions.mjs), which resolves each named suite's imports the way vitest
+# resolves them and requires a VALUE import of the module and of each listed symbol.
+#
+# WHAT THE MEASUREMENT SAID, and it is not what the config's comment says. That comment describes
+# the 48 as "vendored shadcn/Radix primitives … presentational re-exports covered by e2e". Read
+# against the package's own suites:
+#
+#   17 files (43 exports) are EXECUTED by a named suite in tests/ — the composed filters mount real
+#      primitives, so Button, Dialog, Command, Popover, Select and Sheet all run for real.
+#   SEVEN of those 17 have their OWN DEDICATED SUITE and are excluded anyway:
+#      filter-bar.tsx, filter-chip.tsx, filter-search.tsx, multi-combobox.tsx, popover.tsx,
+#      select.tsx and utils.ts. Four of them are not vendored primitives at all — they are this
+#      package's composed filter surface, tested here, and absent from the include list.
+#   31 files (115 exports) are named by NOTHING in tests/ — no import, not even a mock.
+#   22 further exports of the 17 are hidden behind a module a suite does execute.
+#
+# So the config's sentence is true of 31 of the 48 and false of 17, and the seven with dedicated
+# suites are the sharpest half of that: their exclusion is not a tier decision, it is an allowlist
+# that fell behind the tests. Recording it is this unit; WIDENING the allowlist is deliberately
+# NOT — a scope change moves the published number, and the two must not ship together or nobody
+# can tell which one moved it. That follow-up is filed against what `baseline:` below now says.
+#
+# ON `tier_separation:` IN THIS PACKAGE, stated plainly because the word is doing less work here
+# than it does in the console. There the other tier is a different RUNNER — real Postgres, its own
+# config, `pnpm test:integration`. Here it is the composed-component suites in this same package
+# (and, for the primitives, the console's browser tier, which this guard cannot read). What the
+# entries below claim is only the checkable half: a named `*.test.tsx` value-imports the module and
+# these exports, and jsdom mounts them. They are kept out of the unit badge's denominator by the
+# allowlist, not by a considered separation — which is the finding, and the reason the seven
+# dedicated-suite entries are called out by name above rather than left to look ordinary.
+#
+# `state:` in `baseline:` is one of `mock-only`, `no-test` and `untested-export`, verified PER
+# SYMBOL by the guard. Only two occur here — nothing in this package mocks a sibling module.
+#
+# TO ADD AN EXCLUSION: add it to vitest.config.ts (or drop a file from `include:`) AND here, in the
+# same PR. The guard fails in both directions — an exclusion with no entry, and an entry whose
+# exclusion has gone.
+#
+# NOT A PLACE TO RE-INCLUDE A FILE. Moving a file back into `include:` moves the published number
+# and its floor must be recorded from CI, never from a laptop.
+
+infrastructural:
+  # The only entry that is a literal `exclude:` line in vitest.config.ts. Everything else below is
+  # hidden by absence from `include:`.
+  - path: "src/**/*.d.ts"
+    reason: Type declarations — no runtime statements exist to be covered.
+
+tier_separation:
+  # ── this package's OWN composed filter surface, each with its own dedicated suite ─────────────
+  #
+  # Four components and one helper that are not vendored anything: they are the console filter
+  # standard's shared implementation, they have a `*.test.tsx` apiece, and they are outside the
+  # coverage scope. Their exclusion is the allowlist falling behind, not a tier.
+  - path: src/filter-bar.tsx
+    suite: [tests/filter-bar.test.tsx]
+    symbols: [FilterBar, FilterBarReset]
+    reason: The filter bar shell and its reset control, mounted and asserted by their own suite in this package.
+
+  - path: src/filter-chip.tsx
+    suite: [tests/filter-chip.test.tsx]
+    symbols: [FilterChip, FilterChipGroup]
+    reason: The applied-filter chips and their group, mounted and asserted by their own suite in this package.
+
+  - path: src/filter-search.tsx
+    suite: [tests/filter-search.test.tsx]
+    symbols: [FilterSearch]
+    reason: The debounced filter search input, mounted and asserted by its own suite in this package.
+
+  - path: src/multi-combobox.tsx
+    suite: [tests/multi-combobox.test.tsx]
+    symbols: [MultiCombobox]
+    reason: The multi-select combobox, mounted and asserted by its own suite in this package.
+
+  - path: src/utils.ts
+    suite: [tests/utils.test.ts]
+    symbols: [cn]
+    reason: The class-merge helper every component in this package calls — asserted by its own suite, including the tailwind-merge rung behaviour of #4066.
+
+  # ── vendored primitives with a dedicated suite of their own ───────────────────────────────────
+  - path: src/popover.tsx
+    suite: [tests/popover.test.tsx]
+    symbols: [Popover, PopoverContent, PopoverTrigger]
+    reason: The popover root, trigger and content, mounted in jsdom by their own suite as well as by every filter that opens one.
+
+  - path: src/select.tsx
+    suite: [tests/select.test.tsx]
+    symbols: [Select, SelectContent, SelectItem, SelectTrigger, SelectValue]
+    reason: The select root, trigger, value and item, mounted in jsdom by their own suite and by the date-range filter's granularity control.
+
+  # ── vendored primitives the composed-filter suites mount for real ─────────────────────────────
+  #
+  # No suite of their own. Each is executed because a component that IS tested renders it, which is
+  # a weaker claim than the block above and is stated as such: the suite named is the one that
+  # mounts it, not one that asserts it.
+  - path: src/button.tsx
+    suite: [tests/date-range-filter.test.tsx]
+    symbols: [Button, buttonVariants]
+    reason: Every filter control renders a real Button; the date-range suite mounts it and its variant table in jsdom.
+
+  - path: src/dialog.tsx
+    suite: [tests/country-select.test.tsx]
+    symbols: [Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle]
+    reason: The country-select and facet-filter suites open a real dialog, mounting the root, content, header, title and description.
+
+  - path: src/command.tsx
+    suite: [tests/country-select.test.tsx]
+    symbols: [Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList]
+    reason: The searchable command list inside country-select, facet-filter and phone-input — root, input, list, group, item and the empty branch.
+
+  - path: src/sheet.tsx
+    suite: [tests/grouped-filter-sheet.test.tsx]
+    symbols: [Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle]
+    reason: The grouped-filter sheet suite opens a real sheet, mounting the root, content, header, title and description.
+
+  - path: src/collapsible.tsx
+    suite: [tests/grouped-filter-sheet.test.tsx]
+    symbols: [Collapsible, CollapsibleContent, CollapsibleTrigger]
+    reason: Each group inside the grouped filter sheet is a real collapsible, expanded and collapsed by that suite.
+
+  - path: src/calendar.tsx
+    suite: [tests/date-range-filter.test.tsx]
+    symbols: [Calendar]
+    reason: The date-range filter mounts a real calendar and picks days through it.
+
+  - path: src/avatar.tsx
+    suite: [tests/multi-combobox.test.tsx]
+    symbols: [Avatar, AvatarFallback, AvatarImage]
+    reason: The multi-combobox option rows render a real avatar, exercising the image and its fallback.
+
+  - path: src/badge.tsx
+    suite: [tests/facet-filter.test.tsx]
+    symbols: [Badge]
+    reason: Facet counts and applied-filter markers render a real Badge in the facet, grouped-sheet and quick-range suites.
+
+  - path: src/input.tsx
+    suite: [tests/phone-input.test.tsx]
+    symbols: [Input]
+    reason: The phone-input and quick-range suites type into a real Input.
+
+  - path: src/label.tsx
+    suite: [tests/date-range-filter.test.tsx]
+    symbols: [Label]
+    reason: The date-range and quick-range filters label their controls with a real Label.
+
+baseline:
+  # ── exports hidden behind a module a suite DOES execute ───────────────────────────────────────
+  #
+  # `untested-export` is the state whose premise is that the module runs for real — the guard
+  # verifies that too — and that these particular exports are the part of it nothing reaches. They
+  # are the compound components a composed filter happens not to render: a dialog without a footer,
+  # a select without groups. Debt at the export, inside a module that is otherwise proven.
+  - path: src/badge.tsx
+    symbols: [badgeVariants]
+    issue: "#2649"
+    state: untested-export
+    reason: The badge variant table is imported by no suite; only the component around it is mounted.
+
+  - path: src/calendar.tsx
+    symbols: [CalendarDayButton]
+    issue: "#2649"
+    state: untested-export
+    reason: The day-button slot is reached by no suite; the date-range filter mounts the calendar above it.
+
+  - path: src/command.tsx
+    symbols: [CommandDialog, CommandSeparator, CommandShortcut]
+    issue: "#2649"
+    state: untested-export
+    reason: The dialog wrapper, separator and shortcut hint of the command list are rendered by no suite.
+
+  - path: src/dialog.tsx
+    symbols: [DialogClose, DialogFooter, DialogOverlay, DialogPortal, DialogTrigger]
+    issue: "#2649"
+    state: untested-export
+    reason: The dialog's trigger, portal, overlay, footer and close are rendered by no suite — the filters open their dialogs programmatically.
+
+  - path: src/popover.tsx
+    symbols: [PopoverAnchor, PopoverDescription, PopoverHeader, PopoverTitle]
+    issue: "#2649"
+    state: untested-export
+    reason: The popover's anchor and its titled-header trio are rendered by no suite.
+
+  - path: src/select.tsx
+    symbols: [SelectGroup, SelectLabel, SelectScrollDownButton, SelectScrollUpButton, SelectSeparator]
+    issue: "#2649"
+    state: untested-export
+    reason: Grouped and scrollable selects are rendered by no suite; the tested selects are flat and short.
+
+  - path: src/sheet.tsx
+    symbols: [SheetClose, SheetFooter, SheetTrigger]
+    issue: "#2649"
+    state: untested-export
+    reason: The sheet's trigger, footer and close are rendered by no suite — the grouped filter sheet is opened programmatically.
+
+  # ── modules nothing in tests/ names at all ────────────────────────────────────────────────────
+  #
+  # `no-test` is the strongest of the three states and the guard checks it in every direction: not
+  # imported, not transitively reached, not even mocked. Thirty-one files and 115 exports, which is
+  # the real size of the hole the allowlist was hiding. They are the console's shared surface —
+  # PageToolbar, SectionHeading, EmptyState, Table — as well as vendored primitives, so "covered by
+  # e2e" is a claim about the console's browser tier that nothing in THIS package can verify.
+  #
+  # Owned by the coverage epic rather than by the enrolment issue: #4104 closes when this file
+  # lands, and a record pointing at a closed issue is the amnesty `baseline:` is written not to be.
+  - path: src/accordion.tsx
+    symbols: [Accordion, AccordionContent, AccordionHeader, AccordionItem, AccordionTrigger]
+    issue: "#2649"
+    state: no-test
+    reason: The accordion primitive is named by no suite in this package.
+
+  - path: src/alert-dialog.tsx
+    symbols:
+      [
+        AlertDialog,
+        AlertDialogAction,
+        AlertDialogCancel,
+        AlertDialogContent,
+        AlertDialogDescription,
+        AlertDialogFooter,
+        AlertDialogHeader,
+        AlertDialogMedia,
+        AlertDialogOverlay,
+        AlertDialogPortal,
+        AlertDialogTitle,
+        AlertDialogTrigger,
+      ]
+    issue: "#2649"
+    state: no-test
+    reason: The confirm-dialog primitive every destructive console action routes through is named by no suite in this package.
+
+  - path: src/alert.tsx
+    symbols: [Alert, AlertDescription, AlertTitle]
+    issue: "#2649"
+    state: no-test
+    reason: The inline alert is named by no suite in this package.
+
+  - path: src/breadcrumb.tsx
+    symbols: [Breadcrumb, BreadcrumbEllipsis, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator]
+    issue: "#2649"
+    state: no-test
+    reason: The breadcrumb that carries every console page's name — the reason the console has no page titles — is named by no suite in this package.
+
+  - path: src/button-group.tsx
+    symbols: [ButtonGroup, ButtonGroupSeparator, ButtonGroupText, buttonGroupVariants]
+    issue: "#2649"
+    state: no-test
+    reason: The button group and its variant table are named by no suite in this package.
+
+  - path: src/card.tsx
+    symbols: [Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle]
+    issue: "#2649"
+    state: no-test
+    reason: The card and its seven slots are named by no suite in this package.
+
+  - path: src/checkbox.tsx
+    symbols: [Checkbox]
+    issue: "#2649"
+    state: no-test
+    reason: The checkbox primitive is named by no suite in this package.
+
+  - path: src/count-pill.tsx
+    symbols: [CountPill]
+    issue: "#2649"
+    state: no-test
+    reason: The count pill is named by no suite in this package.
+
+  - path: src/detail-sheet.tsx
+    symbols: [DetailSheet]
+    issue: "#2649"
+    state: no-test
+    reason: The composed detail sheet is named by no suite in this package, though the sheet primitive under it is mounted by the grouped-filter suite.
+
+  - path: src/dropdown-menu.tsx
+    symbols:
+      [
+        DropdownMenu,
+        DropdownMenuCheckboxItem,
+        DropdownMenuContent,
+        DropdownMenuGroup,
+        DropdownMenuItem,
+        DropdownMenuLabel,
+        DropdownMenuPortal,
+        DropdownMenuRadioGroup,
+        DropdownMenuRadioItem,
+        DropdownMenuSeparator,
+        DropdownMenuShortcut,
+        DropdownMenuSub,
+        DropdownMenuSubContent,
+        DropdownMenuSubTrigger,
+        DropdownMenuTrigger,
+      ]
+    issue: "#2649"
+    state: no-test
+    reason: The dropdown menu and all fifteen of its parts are named by no suite in this package — the largest single unmeasured module here.
+
+  - path: src/empty.tsx
+    symbols: [Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyState, EmptyTitle]
+    issue: "#2649"
+    state: no-test
+    reason: EmptyState — the shared-surface row every empty list, tab and panel in the console is required to use — is named by no suite in this package.
+
+  - path: src/field-help.tsx
+    symbols: [FieldHelp]
+    issue: "#2649"
+    state: no-test
+    reason: The form field help text is named by no suite in this package.
+
+  - path: src/form.tsx
+    symbols: [Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage, useFormField]
+    issue: "#2649"
+    state: no-test
+    reason: The react-hook-form bindings every console form is required to use, and the hook behind them, are named by no suite in this package.
+
+  - path: src/funnel-filter.tsx
+    symbols: [FunnelFilter]
+    issue: "#2649"
+    state: no-test
+    reason: The funnel filter is named by no suite in this package, unlike its four sibling filters.
+
+  - path: src/hover-card.tsx
+    symbols: [HoverCard, HoverCardContent, HoverCardTrigger]
+    issue: "#2649"
+    state: no-test
+    reason: The hover card is named by no suite in this package.
+
+  - path: src/input-group.tsx
+    symbols: [InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput, InputGroupText, InputGroupTextarea]
+    issue: "#2649"
+    state: no-test
+    reason: The input group and its addons are named by no suite in this package, though the bare Input beside it is mounted.
+
+  - path: src/input-otp.tsx
+    symbols: [InputOTP, InputOTPGroup, InputOTPSeparator, InputOTPSlot]
+    issue: "#2649"
+    state: no-test
+    reason: The one-time-code input the sign-in flow depends on is named by no suite in this package.
+
+  - path: src/page-toolbar.tsx
+    symbols: [PageToolbar]
+    issue: "#2649"
+    state: no-test
+    reason: PageToolbar — the shared-surface row that carries every console page's count, description and actions — is named by no suite in this package.
+
+  - path: src/scroll-area.tsx
+    symbols: [ScrollArea, ScrollBar]
+    issue: "#2649"
+    state: no-test
+    reason: The scroll area and its bar are named by no suite in this package.
+
+  - path: src/section-heading.tsx
+    symbols: [SectionHeading]
+    issue: "#2649"
+    state: no-test
+    reason: SectionHeading — the shared-surface row that replaced every hand-rolled h2 through h6 in the console — is named by no suite in this package.
+
+  - path: src/segmented-control.tsx
+    symbols: [SegmentedControl]
+    issue: "#2649"
+    state: no-test
+    reason: The segmented control is named by no suite in this package.
+
+  - path: src/separator.tsx
+    symbols: [Separator]
+    issue: "#2649"
+    state: no-test
+    reason: The separator is named by no suite in this package.
+
+  - path: src/skeleton.tsx
+    symbols: [Skeleton]
+    issue: "#2649"
+    state: no-test
+    reason: The loading skeleton is named by no suite in this package.
+
+  - path: src/sonner.tsx
+    symbols: [Toaster]
+    issue: "#2649"
+    state: no-test
+    reason: The toast host is named by no suite in this package.
+
+  - path: src/spinner.tsx
+    symbols: [Spinner]
+    issue: "#2649"
+    state: no-test
+    reason: The spinner is named by no suite in this package.
+
+  - path: src/switch.tsx
+    symbols: [Switch]
+    issue: "#2649"
+    state: no-test
+    reason: The switch is named by no suite in this package.
+
+  - path: src/table.tsx
+    symbols: [Table, TableBody, TableCaption, TableCell, TableFooter, TableHead, TableHeader, TableRow]
+    issue: "#2649"
+    state: no-test
+    reason: The table primitive the shared surface requires instead of a grid div — the one whose header row a screen reader depends on — is named by no suite in this package.
+
+  - path: src/tabs.tsx
+    symbols: [Tabs, TabsContent, TabsList, TabsTrigger, tabsListVariants]
+    issue: "#2649"
+    state: no-test
+    reason: The tabs primitive and its list variant table are named by no suite in this package.
+
+  - path: src/textarea.tsx
+    symbols: [Textarea]
+    issue: "#2649"
+    state: no-test
+    reason: The textarea is named by no suite in this package.
+
+  - path: src/theme-toggle.tsx
+    symbols: [ThemeToggle]
+    issue: "#2649"
+    state: no-test
+    reason: The theme toggle is named by no suite in this package.
+
+  - path: src/tooltip.tsx
+    symbols: [Tooltip, TooltipContent, TooltipProvider, TooltipTrigger]
+    issue: "#2649"
+    state: no-test
+    reason: The tooltip and its provider are named by no suite in this package.

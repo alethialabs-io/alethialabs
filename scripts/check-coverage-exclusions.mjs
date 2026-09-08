@@ -139,6 +139,14 @@ const INFRASTRUCTURAL_CLASSES = [
 	{ pattern: "**/*.d.ts", why: "type declarations — erased entirely, no runtime statement exists" },
 	{ pattern: "**/*.config.*", why: "build and tooling configuration, exercised by running the tools" },
 	{ pattern: "tests/**", why: "the tests themselves — counting them inflates the number with the measurement" },
+	// The same class as `tests/**`, for a project that CO-LOCATES its tests instead of gathering
+	// them in a directory. `ee/` does: `src/license.test.ts` sits beside `src/license.ts`, and its
+	// config excludes `**/*.test.ts` for exactly the reason the line above states. Without this,
+	// the one shape the class list could not express was the paid tier's, and the only sections
+	// left to it are two that a glob cannot enter (`entryTarget` refuses one) — so ee's exclusion
+	// was unclassifiable rather than merely unclassified. The pattern is deliberately the TEST
+	// suffix and not a directory: `**/*.test.*` cannot be widened into "everything under src".
+	{ pattern: "**/*.test.*", why: "the tests themselves, co-located beside the code they test" },
 	{ pattern: "**/migrations/**", why: "generated migrations and snapshots, never hand-written" },
 	{ pattern: "**/seed/**", why: "development seed data, not shipped product code" },
 ];
@@ -205,10 +213,14 @@ const MARKER_KEYS = ["issue", "reason"];
  * number in the same diff, so the win is banked and cannot be spent again on a different project.
  * That is the same rule `apps/console/shared-surface-allowlist.yaml`'s `debt:` follows.
  *
- * Three today — ee (#4105), packages/ui (#4104), apps/marketing (#4103) — one per open enrolment
- * issue, which is the invariant worth holding: a marker with no issue behind it is a mute.
+ * ZERO today. It was three — ee (#4105), packages/ui (#4104), apps/marketing (#4105) — and #4104
+ * and #4105 enrolled all three in one PR, so the win is banked here in the same diff. Every
+ * coverage-emitting project in the tree now carries a manifest, and the invariant this number
+ * holds is stronger than the one it started with: a NEW marker cannot be added without raising
+ * this line and saying why in the PR, and "every exclusion is manifested" is no longer a claim
+ * about the projects that happen to carry one.
  */
-const PENDING_MARKER_CEILING = 3;
+const PENDING_MARKER_CEILING = 0;
 
 /**
  * Read one pending-enrolment marker.
@@ -592,7 +604,12 @@ export function readAliases(rawSrc, projectDir) {
 			const value = text.slice(text.indexOf(":", key[0].length - 1) + 1).trim();
 			const resolved =
 				/^path\.resolve\(\s*__dirname\s*,\s*["']([^"']*)["']\s*\)$/.exec(value) ??
-				/^fileURLToPath\(\s*new URL\(\s*["']([^"']+)["']\s*,\s*import\.meta\.url\s*\)\s*\)$/.exec(value) ??
+				// The trailing `,?` is not cosmetic: `packages/ui/vitest.config.ts` writes this alias
+				// across three lines, and the formatter puts a dangling comma after the inner
+				// `new URL(...)`. Without it the target read as unparseable, which is REPORTED — so
+				// enrolling that project would have failed on its own config rather than on
+				// anything the manifest said.
+				/^fileURLToPath\(\s*new URL\(\s*["']([^"']+)["']\s*,\s*import\.meta\.url\s*\)\s*,?\s*\)$/.exec(value) ??
 				/^["']([^"']+)["']$/.exec(value);
 			if (resolved === null) {
 				problems.push(`alias \`${key[1]}\` has a target this parser cannot read: ${JSON.stringify(value.slice(0, 80))}`);
@@ -1190,13 +1207,22 @@ export function globToRegExp(glob) {
 /**
  * Run D0, D1 and D2 for one manifested project.
  *
+ * `hidden` is the D3 set — the files an `include` allowlist excludes by their ABSENCE from it —
+ * and D0's reverse direction has to see it, because those files ARE excluded and are nowhere in
+ * `coverage.exclude`. Without it the two rules contradict each other: D3 demands a manifest entry
+ * for every unlisted peer, and D0 then reports each of those entries as "no longer excluded by
+ * vitest.config.ts". Measured on a fixture before this parameter existed — a project enrolling its
+ * own allowlist could not be made green, in either direction, which is a guard whose only passing
+ * state is the unenrolled one.
+ *
  * @param {string} root repository root
  * @param {string} projectRel project path relative to root
  * @param {string} configRel the project's vitest config, relative to root
  * @param {string[]} testFiles project-relative test files, for the baseline check
+ * @param {string[]} hidden project-relative files hidden by an `include` allowlist (D3)
  * @returns {{problems: string[], counts: Record<string, number>}}
  */
-export function checkProject(root, projectRel, configRel, testFiles) {
+export function checkProject(root, projectRel, configRel, testFiles, hidden = []) {
 	const projectDir = path.join(root, projectRel);
 	/** @type {string[]} */
 	const problems = [];
@@ -1240,8 +1266,12 @@ export function checkProject(root, projectRel, configRel, testFiles) {
 			);
 		}
 	}
+	// An allowlist-hidden file is excluded as surely as a listed one, so it satisfies this
+	// direction too — and the day it is added back to `include:`, it stops being hidden, drops out
+	// of this set, and its manifest entry fails here exactly as a deleted `exclude:` entry does.
+	const hiddenSet = new Set(hidden);
 	for (const [entryPath, inSections] of claimed) {
-		if (!excludes.includes(entryPath)) {
+		if (!excludes.includes(entryPath) && !hiddenSet.has(entryPath)) {
 			problems.push(
 				`${manifestRel}: \`${entryPath}\` is recorded in [${inSections.join(", ")}] but is no longer excluded by ${configRel}.\n` +
 					"  The exclusion was removed or renamed — delete the manifest entry in the same PR, or the\n" +
@@ -1715,11 +1745,16 @@ export function run(root, files, opts = {}) {
 		const projectFiles = files.filter((f) => f.startsWith(`${projectRel}/`)).map((f) => f.slice(projectRel.length + 1));
 		const hasManifest = existsSync(path.join(root, projectRel, MANIFEST));
 
+		// D3 is computed FIRST because D0's reverse direction needs its result — see `checkProject`.
+		// Its own reporting still happens below, after the manifest has been read, so that a
+		// project which fails both reads in the order a person would fix them.
+		const d3 = checkIncludeAllowlist(root, projectRel, configRel, projectFiles);
+
 		if (hasManifest) {
 			counts.manifests += 1;
 			manifested.push(projectRel);
 			const testFiles = files.filter((f) => f.startsWith(`${projectRel}/`) && TEST_FILE.test(f));
-			const res = checkProject(root, projectRel, configRel, testFiles);
+			const res = checkProject(root, projectRel, configRel, testFiles, d3.allowlist ? d3.unlisted : []);
 			problems.push(...res.problems);
 			for (const [k, v] of Object.entries(res.counts)) counts[k] += v;
 		} else {
@@ -1756,7 +1791,6 @@ export function run(root, files, opts = {}) {
 		}
 
 		// ── D3 ──
-		const d3 = checkIncludeAllowlist(root, projectRel, configRel, projectFiles);
 		problems.push(...d3.problems);
 		if (!d3.allowlist) continue; // whether that leaves the record with nothing to hold is decided below.
 		owedAllowlist.add(projectRel);
@@ -2208,6 +2242,96 @@ function runSelfTest() {
 		const res = runFixture({ ...allowlist, "q/src/deep/nested.ts": "export const d = 4;\n" });
 		return res.problems.some((p) => p.includes("hidden.ts") && !p.includes("nested.ts"));
 	}));
+
+	// ── D3 × D0 · ENROLLING an allowlist (#4104) ──
+	//
+	// The two rules contradicted each other until `checkProject` was given the hidden set. D3
+	// demands a manifest entry for every unlisted peer; D0's reverse direction then reported each
+	// of those entries as "no longer excluded by vitest.config.ts", because the file is nowhere in
+	// `coverage.exclude`. Measured on this fixture: `packages/ui` could not be enrolled in either
+	// direction, which is a guard whose only passing state is the unenrolled one. The second case
+	// is the half that keeps the fix from being a hole — a manifest entry for a file that is
+	// neither excluded NOR hidden must still fail, or D0's reverse direction has been switched off
+	// for every allowlist project rather than taught about one more way to be excluded.
+	const enrolledAllowlist = {
+		...allowlist,
+		"q/coverage-exclusions.yaml": [
+			"infrastructural:",
+			'  - path: "src/**/*.d.ts"',
+			"    reason: r",
+			"baseline:",
+			"  - path: src/hidden.ts",
+			"    symbols: [b]",
+			'    issue: "#4104"',
+			"    state: no-test",
+			"    reason: r",
+			"  - path: src/also-hidden.tsx",
+			"    symbols: [c]",
+			'    issue: "#4104"',
+			"    state: no-test",
+			"    reason: r",
+			"",
+		].join("\n"),
+	};
+	check(
+		"an allowlist project that RECORDS every hidden peer passes — D0's reverse direction sees the hidden set",
+		attempt(() => {
+			const res = runFixture(enrolledAllowlist);
+			return res.problems.length === 0 || JSON.stringify(res.problems);
+		}),
+	);
+	check(
+		"...and an entry for a file that is neither excluded NOR hidden still FAILS",
+		attempt(() => {
+			const res = runFixture({
+				...enrolledAllowlist,
+				"q/coverage-exclusions.yaml": `${enrolledAllowlist["q/coverage-exclusions.yaml"]}  - path: src/kept.ts\n    symbols: [a]\n    issue: "#4104"\n    state: no-test\n    reason: r\n`,
+			});
+			return res.problems.some((p) => p.includes("src/kept.ts") && p.includes("no longer excluded")) || JSON.stringify(res.problems);
+		}),
+	);
+	check(
+		"...and dropping ONE hidden peer from the manifest fails, naming it — the mutation control",
+		attempt(() => {
+			const res = runFixture({
+				...enrolledAllowlist,
+				"q/coverage-exclusions.yaml": enrolledAllowlist["q/coverage-exclusions.yaml"].replace(
+					"  - path: src/also-hidden.tsx\n    symbols: [c]\n    issue: \"#4104\"\n    state: no-test\n    reason: r\n",
+					"",
+				),
+			});
+			return res.problems.some((p) => p.includes("also-hidden.tsx") && p.includes("ABSENCE")) || JSON.stringify(res.problems);
+		}),
+	);
+
+	// ── the infrastructural class for CO-LOCATED tests (#4105) ──
+	//
+	// `ee/` excludes `**/*.test.ts` because its tests sit beside the code, and `tests/**` — the
+	// class that says the same thing for a project with a tests directory — does not match it. The
+	// negative case is the one that matters: the class list must still refuse a source file, or
+	// the section that requires no evidence has become the mute button its own header forbids.
+	check(
+		"`**/*.test.*` is an infrastructural class — the ee layout, tests co-located with the code",
+		validateManifest(new Map([["infrastructural", [{ path: "**/*.test.ts", reason: "r" }]]]), "m.yaml").length === 0,
+	);
+	check(
+		"...and a plain source file is still REFUSED there",
+		validateManifest(new Map([["infrastructural", [{ path: "src/button.tsx", reason: "r" }]]]), "m.yaml").some((p) => p.includes("is in none of them")),
+	);
+
+	// ── the alias a formatter wrapped (#4104) ──
+	//
+	// packages/ui writes its stub alias across three lines and the formatter leaves a dangling
+	// comma after the inner `new URL(...)`. An unreadable alias is REPORTED, so this one line
+	// would have failed that project's enrolment on its own config rather than on its manifest.
+	check(
+		"a multi-line `fileURLToPath(new URL(…),)` alias with a trailing comma is read, not reported",
+		attempt(() => {
+			const src = 'export default { test: { alias: {\n"x": fileURLToPath(\n\t\tnew URL("./tests/stubs/flags.tsx", import.meta.url),\n\t),\n} } };\n';
+			const { aliases, problems } = readAliases(src, "/tmp/p");
+			return (problems.length === 0 && aliases.get("x") === "/tmp/p/tests/stubs/flags.tsx") || JSON.stringify({ problems, got: aliases.get("x") });
+		}),
+	);
 
 	// ── the pending-enrolment MARKER (#4103) ──
 	//
