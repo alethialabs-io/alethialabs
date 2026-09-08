@@ -57,7 +57,8 @@ az login
 #    "Remote state"), and a stack cannot keep its state in an account it has not created yet.
 cd infra/azure-e2e/bootstrap
 cp terraform.tfvars.example terraform.tfvars     # same subscription_id + YOUR Entra object id
-                                                 # + state_network_allowed_cidrs (REQUIRED, no default)
+$EDITOR terraform.tfvars                         # then UNCOMMENT state_network_allowed_cidrs and
+                                                 # answer it — `tofu plan` refuses until you do
 tofu init -backend=false && tofu apply
 cp backend.hcl.example backend.hcl && $EDITOR backend.hcl   # names from `tofu output`
 tofu init -backend-config=backend.hcl -migrate-state

@@ -13,11 +13,22 @@ subscription_id = "00000000-0000-0000-0000-000000000000"
 state_writer_principal_ids = ["00000000-0000-0000-0000-000000000000"]
 
 # REQUIRED, with no default (#3290). This value IS the storage account's network posture: non-empty
-# sets default_action = "Deny" and allows only these ranges; EMPTY sets "Allow". It has no default
-# precisely so that "Allow" cannot be reached by leaving a line out — it has to be written down.
-# Put your stable egress ranges here, or keep the empty list to choose "Allow" explicitly (the
-# account's other wall is that it has no shared key: state access is an Entra role assignment only).
-state_network_allowed_cidrs = []
+# sets default_action = "Deny" and allows only these ranges; EMPTY sets "Allow".
+#
+# ⚠ LEFT COMMENTED OUT ON PURPOSE, and it is the only REQUIRED line in this file that is. The other
+# two carry obviously-fake zero UUIDs, which Azure rejects — so an unedited copy fails loudly. An
+# empty list is a VALID value that silently means "Allow", so pre-filling `= []` here would hand the
+# permissive answer to anyone following the README's `cp terraform.tfvars.example terraform.tfvars`
+# step, without them deciding anything. That is exactly what removing the default was meant to stop:
+# "Allow" would still be reached by leaving a line alone, the line having merely moved from
+# variables.tf to this file.
+#
+# Uncomment and answer it. `tofu plan` refuses to run until you do, naming this variable.
+#   state_network_allowed_cidrs = ["203.0.113.0/24"]   # your stable egress ranges → "Deny" + allowlist
+#   state_network_allowed_cidrs = []                   # "Allow", chosen deliberately
+#
+# Choosing `[]` is a defensible answer, not a wrong one: the account's other wall is that it has no
+# shared key, so state access is an Entra role assignment only. It just has to be a choice.
 
 # Where the state resource group + storage account live.
 # location = "germanywestcentral"
