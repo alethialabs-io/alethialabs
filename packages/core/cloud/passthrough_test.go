@@ -1323,9 +1323,26 @@ func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.cloud, func(t *testing.T) {
 			written := rootTfvarKeys(t, tc.file)
+			// WHAT THIS CATCHES NOW, which is not what it was added for. It began as a floor
+			// against a text matcher going blind; the matcher is a parser now and cannot hand back
+			// a body that is merely too small, so that threat is gone. What remains is the one a
+			// parser cannot rule out: the local map being RENAMED. This walk keys on the identifier
+			// `tfvars`, so `tfv := map[string]interface{}{…}` finds nothing while the file is
+			// perfectly healthy — verified by mutation, not assumed.
+			//
+			// NOT `ProviderTfvars` being renamed: that one cannot happen quietly, because the
+			// method satisfies an interface and renaming it fails the BUILD. I wrote that into this
+			// message first and the mutation refused to compile, which is the same lesson as
+			// everywhere else in this file — a red for the wrong reason reads exactly like a red
+			// for the right one.
+			//
+			// Written as what it catches rather than why it was added, deliberately: a defence
+			// recorded by a threat that no longer exists reads as redundant, and the next reader
+			// deletes it.
 			if len(written) == 0 {
-				t.Fatalf("%s: the parser found no root tfvars keys at all — every provider writes "+
-					"some, so this is a broken reader rather than a clean file", tc.file)
+				t.Fatalf("%s: the parser found no root tfvars keys — every provider writes some, so "+
+					"the local `tfvars` map has been renamed and this walk is looking for an "+
+					"identifier that no longer exists", tc.file)
 			}
 
 			in := make(map[string]bool, len(tc.union))
