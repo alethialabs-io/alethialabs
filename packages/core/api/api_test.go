@@ -1037,9 +1037,13 @@ func TestGetProjectProtection_Success(t *testing.T) {
 	}
 }
 
+// A server that predates probe paging sends no `page` at all. PageInfo's zero value is an
+// exhausted page, so the walk must stop after one request rather than re-asking forever.
 func TestGetProjectProbes_Success(t *testing.T) {
+	requests := 0
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertAuth(t, r)
+		requests++
 		if r.URL.Path != "/api/cli/projects/my-proj/probes" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
@@ -1063,6 +1067,77 @@ func TestGetProjectProbes_Success(t *testing.T) {
 	}
 	if probes[1].Reachable != nil {
 		t.Errorf("expected dev reachable=nil (never probed), got %+v", probes[1].Reachable)
+	}
+	if requests != 1 {
+		t.Errorf("a page-less response is exhaustion; expected 1 request, got %d", requests)
+	}
+}
+
+func TestGetProjectProbes_WalksAllPages(t *testing.T) {
+	var requests int
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		requests++
+		if r.URL.Path != "/api/cli/projects/my-proj/probes" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if requests == 1 {
+			if cursor := r.URL.Query().Get("cursor"); cursor != "" {
+				t.Errorf("first request carried cursor %q", cursor)
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"probes": []map[string]any{
+					{"environment_id": "env-1", "environment": "production", "reachable": true, "message": nil, "probed_at": "2026-01-01T00:00:00.000Z"},
+				},
+				"page": map[string]any{"mode": "exact", "limit": 1, "total": 2, "next_cursor": "next-probes"},
+			})
+			return
+		}
+		if cursor := r.URL.Query().Get("cursor"); cursor != "next-probes" {
+			t.Errorf("second request carried cursor %q", cursor)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"probes": []map[string]any{
+				{"environment_id": "env-2", "environment": "dev", "reachable": nil, "message": nil, "probed_at": nil},
+			},
+			"page": map[string]any{"mode": "exact", "limit": 1, "total": 2, "next_cursor": nil},
+		})
+	}))
+
+	probes, err := client.GetProjectProbes("my-proj")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("expected two page requests, got %d", requests)
+	}
+	if len(probes) != 2 || probes[0].EnvironmentID != "env-1" || probes[1].EnvironmentID != "env-2" {
+		t.Errorf("pages were not accumulated in order: %+v", probes)
+	}
+}
+
+func TestGetProjectProbes_PageErrorReturnsNoPartialRows(t *testing.T) {
+	var requests int
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			json.NewEncoder(w).Encode(map[string]any{
+				"probes": []map[string]any{
+					{"environment_id": "env-1", "environment": "production", "reachable": true, "message": nil, "probed_at": "2026-01-01T00:00:00.000Z"},
+				},
+				"page": map[string]any{"mode": "exact", "limit": 1, "total": 2, "next_cursor": "next-probes"},
+			})
+			return
+		}
+		http.Error(w, "page failed", http.StatusInternalServerError)
+	}))
+
+	probes, err := client.GetProjectProbes("my-proj")
+	if err == nil || !strings.Contains(err.Error(), "paging: page 2") || !strings.Contains(err.Error(), "failed to get probes") {
+		t.Fatalf("expected named second-page error, got %v", err)
+	}
+	if probes != nil {
+		t.Errorf("partial rows escaped with an error: %+v", probes)
 	}
 }
 

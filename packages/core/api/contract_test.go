@@ -443,6 +443,7 @@ func TestContract_Protection(t *testing.T) {
 func TestContract_Probes(t *testing.T) {
 	var resp struct {
 		Probes []ProbeState `json:"probes"`
+		Page   PageInfo     `json:"page"`
 	}
 	strictDecode(t, "probes.json", &resp)
 	if len(resp.Probes) != 1 {

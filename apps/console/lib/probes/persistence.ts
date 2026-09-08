@@ -15,9 +15,13 @@
 // result was a true→false transition (the ingest route emits the outage alert on that). Service
 // role only (getServiceDb, RLS-bypassing) — mirrors recordDriftPosture.
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
-import { environmentProbes, projects } from "@/lib/db/schema";
+import {
+	environmentProbes,
+	projectEnvironments,
+	projects,
+} from "@/lib/db/schema";
 import { shouldAlertUnreachable } from "@/lib/probes/schedule";
 import type { ProbeDetail } from "@/types/jsonb.types";
 
@@ -74,38 +78,47 @@ export async function recordProbeResult(input: {
 
 /**
  * Latest cluster-alive state for a project's environments, keyed by environment_id — the read
- * for getEnvReconcileStates.probe. `environment_probes` is an RLS-less project-child table, so
- * the org boundary is enforced HERE by joining to the parent project and filtering on org
- * (mirrors getLatestDriftPosture / evidence). Returns the most recent probe per env; envs never
- * probed are simply absent from the map.
+ * for getEnvReconcileStates.probe and for GET /api/cli/projects/:id/probes. `environment_probes`
+ * is an RLS-less project-child table, so the org boundary is enforced HERE by joining to the
+ * parent project and filtering on org (mirrors getLatestDriftPosture / evidence). Returns the
+ * most recent probe per env; envs never probed are simply absent from the map.
+ *
+ * BOUNDED BY ENVIRONMENTS, NOT BY HISTORY. `environment_probes` is APPEND-ONLY — one row per
+ * probe per env, forever, on a 10-minute production cadence — so the previous shape (read every
+ * row for the project newest-first, keep the first one seen per env) transferred and discarded
+ * the whole history on every reconcile render and every CLI call. A year of one production env
+ * is ~52k rows to answer a question with one row in it, and it grows without limit while the
+ * answer's size never changes.
+ *
+ * The bounded shape is a LATERAL: drive from `project_environments` and take `LIMIT 1` of that
+ * env's probes. At most one probe row is read per environment, so the work is the size of the
+ * ANSWER. The join is the reason it is per-environment and not a project-wide `DISTINCT ON`:
+ * the only index on this table is `idx_environment_probes_env_time` on
+ * `(environment_id, probed_at DESC)`, which a correlated `WHERE environment_id = … ORDER BY
+ * probed_at DESC LIMIT 1` uses directly. A project-wide `DISTINCT ON (environment_id)` would
+ * need a `(project_id, environment_id, probed_at DESC)` index — a migration — to avoid scanning
+ * the project's whole history again, which is the cost being removed.
+ *
+ * INNER, so an env with no probe row contributes nothing and stays absent from the map — the
+ * same contract the dedupe loop had, and the reason the caller's `probesByEnv.get(id)` miss
+ * still means "never probed".
+ *
+ * `environmentIds` narrows the read to one page of environments; omit it for the whole project.
+ * An EMPTY array means "no environments asked for" and returns an empty map without a query —
+ * not "all of them", which is the mistake an `inArray(col, [])` would quietly make expensive.
  */
 export async function getLatestProbesByEnv(
 	projectId: string,
 	orgId: string,
+	environmentIds?: readonly string[],
 ): Promise<Map<string, ProbeState>> {
-	const db = getServiceDb();
-	// Newest-first across the project; the first row seen per env is its latest (the
-	// idx_environment_probes_env_time index serves this order).
-	const rows = await db
-		.select({
-			environment_id: environmentProbes.environment_id,
-			reachable: environmentProbes.reachable,
-			message: environmentProbes.message,
-			probed_at: environmentProbes.probed_at,
-		})
-		.from(environmentProbes)
-		.innerJoin(projects, eq(environmentProbes.project_id, projects.id))
-		.where(
-			and(
-				eq(environmentProbes.project_id, projectId),
-				eq(projects.org_id, orgId),
-			),
-		)
-		.orderBy(desc(environmentProbes.probed_at));
+	if (environmentIds !== undefined && environmentIds.length === 0) {
+		return new Map();
+	}
+	const rows = await latestProbesQuery(projectId, orgId, environmentIds);
 
 	const latest = new Map<string, ProbeState>();
 	for (const r of rows) {
-		if (latest.has(r.environment_id)) continue; // newest-first ⇒ first seen is latest
 		latest.set(r.environment_id, {
 			reachable: r.reachable,
 			message: r.message,
@@ -113,4 +126,59 @@ export async function getLatestProbesByEnv(
 		});
 	}
 	return latest;
+}
+
+/**
+ * The bounded latest-state SELECT behind {@link getLatestProbesByEnv}, unexecuted.
+ *
+ * Exported so the integration suite can `EXPLAIN` the statement this module actually issues
+ * rather than a hand-typed copy of it — the whole claim of this shape is a PLAN (one index
+ * lookup per environment, no sort of the history), and a plan assertion written against a copy
+ * stops describing the code the first time the two drift.
+ */
+export function latestProbesQuery(
+	projectId: string,
+	orgId: string,
+	environmentIds?: readonly string[],
+) {
+	const db = getServiceDb();
+	// Correlated on project_environments.id — legal only inside a LATERAL join, which is why
+	// this subquery is not usable as a plain sub-select.
+	const latestProbe = db
+		.select({
+			reachable: environmentProbes.reachable,
+			message: environmentProbes.message,
+			probed_at: environmentProbes.probed_at,
+		})
+		.from(environmentProbes)
+		.where(eq(environmentProbes.environment_id, projectEnvironments.id))
+		// `desc nulls last`, NOT drizzle's `desc()`. Postgres defaults a DESC sort to NULLS FIRST
+		// while `CREATE INDEX … DESC` — the form drizzle emitted for idx_environment_probes_env_time
+		// — is DESC NULLS LAST, and the two are not interchangeable to the planner even though
+		// probed_at is NOT NULL. Mismatched, this reads the env's whole history and sorts it, which
+		// is the cost the LATERAL exists to remove. See pageOrder() in lib/cli/paging.ts for the
+		// measurement that established this.
+		.orderBy(sql`${environmentProbes.probed_at} desc nulls last`)
+		.limit(1)
+		.as("latest_probe");
+
+	return db
+		.select({
+			environment_id: projectEnvironments.id,
+			reachable: latestProbe.reachable,
+			message: latestProbe.message,
+			probed_at: latestProbe.probed_at,
+		})
+		.from(projectEnvironments)
+		.innerJoin(projects, eq(projectEnvironments.project_id, projects.id))
+		.innerJoinLateral(latestProbe, sql`true`)
+		.where(
+			and(
+				eq(projectEnvironments.project_id, projectId),
+				eq(projects.org_id, orgId),
+				environmentIds === undefined
+					? undefined
+					: inArray(projectEnvironments.id, [...environmentIds]),
+			),
+		);
 }

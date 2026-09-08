@@ -693,9 +693,10 @@ export const probeStateWire = z.object({
 	message: z.string().nullable(),
 	probed_at: isoNullable,
 });
-/** GET /api/cli/projects/:id/probes result. */
+/** GET /api/cli/projects/:id/probes result — one page of the project's environments. */
 export const cliProbesResponse = z.object({
 	probes: z.array(probeStateWire),
+	page: pageInfoSchema,
 });
 
 /** One installed catalog add-on in an environment. */
