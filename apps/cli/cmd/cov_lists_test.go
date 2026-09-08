@@ -512,8 +512,10 @@ func TestList_ProjectGetOpensBrowserWhenConfirmed(t *testing.T) {
 
 	run("project", "get", "web")
 
-	if !strings.HasSuffix(got, "/dashboard") {
-		t.Errorf("openBrowser url = %q, want the dashboard URL", got)
+	// The project's own page. `/dashboard` was the legacy catch-all this command used to open
+	// after printing the project — see packages/core/routing.
+	if !strings.HasSuffix(got, "/acme/web") {
+		t.Errorf("openBrowser url = %q, want the project's page under its org", got)
 	}
 	if !strings.HasPrefix(got, os.Getenv("ALETHIA_WEB_ORIGIN")) {
 		t.Errorf("openBrowser url = %q, want it rooted at the configured web origin", got)

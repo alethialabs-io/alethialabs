@@ -170,3 +170,53 @@ func TestMisc_TerminalDetectionDelegatesToIsatty(t *testing.T) {
 		t.Errorf("stdoutIsTTY() = %v, want %v", got, want)
 	}
 }
+
+// TestMisc_OpenProjectAndOrg pins what `alethia open` sends the browser to now that it builds
+// over the console's route tree rather than at its origin: the active ORG's page, a PROJECT's
+// page under it, and the refusal that keeps `--project` from meaning anything for the docs.
+func TestMisc_OpenProjectAndOrg(t *testing.T) {
+	var opened []string
+	prev := openBrowser
+	openBrowser = func(url string) error { opened = append(opened, url); return nil }
+	t.Cleanup(func() { openBrowser = prev })
+
+	run := miscEnv(t, miscFull)
+	if err := run("open", "--output", "table", "--no-input"); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if len(opened) != 1 || !strings.HasSuffix(opened[0], "/acme") {
+		t.Fatalf("bare open should reach the active org's page, got %v", opened)
+	}
+	if err := run("open", "--project", "My Shop", "--output", "table", "--no-input"); err != nil {
+		t.Fatalf("open --project: %v", err)
+	}
+	if len(opened) != 2 || !strings.HasSuffix(opened[1], "/acme/my-shop") {
+		t.Errorf("open --project should reach the project's page, got %v", opened)
+	}
+	// The docs are not under an org, so --project has nothing to name there. Refused rather than
+	// ignored: a flag that is silently dropped is a flag somebody will believe worked.
+	trap := miscTrapExit(t, run)
+	if !trap("open", "docs", "--project", "shop", "--output", "table", "--no-input") {
+		t.Error("--project with the docs target must be fatal")
+	}
+}
+
+// TestMisc_OpenFallsBackToTheOriginWhenThereIsNoOrg pins the arm that must NOT fail: a machine
+// with no credential, or an account with no organization, still has somewhere to send a person.
+// The org page is an improvement on the origin, not a precondition for opening a browser.
+func TestMisc_OpenFallsBackToTheOriginWhenThereIsNoOrg(t *testing.T) {
+	var opened []string
+	prev := openBrowser
+	openBrowser = func(url string) error { opened = append(opened, url); return nil }
+	t.Cleanup(func() { openBrowser = prev })
+
+	run := miscEnv(t, miscEmpty)
+	isolatedHome(t) // no credentials: getAuthToken fails and the origin is the answer
+	t.Setenv(ServiceTokenEnv, "")
+	if err := run("open", "--output", "table", "--no-input"); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if len(opened) != 1 || opened[0] != WebOrigin() {
+		t.Errorf("a logged-out open should reach the origin, got %v", opened)
+	}
+}
