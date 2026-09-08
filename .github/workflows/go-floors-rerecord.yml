@@ -20,7 +20,9 @@
 # IT OPENS A PR; IT NEVER PUSHES. Same invariant as programme.yml, and the same reason: `dev` takes
 # PR merges, Mergify lands them, and a push would bypass the CODEOWNERS ruleset guarding
 # .github/workflows/**. The numbers also need a human to look at them — a floors diff is the review
-# signal for "coverage moved", and a bot silently rewriting it would delete that signal.
+# signal for "coverage moved", and a bot silently rewriting it would delete that signal. It opens
+# that PR as a DRAFT, because draft state is the whole of that mechanism — Mergify queues any
+# non-draft dev PR, and an `accept-regression` re-record cannot go red by construction.
 #
 # ── THE TOOLCHAIN HERE MUST MIRROR ci.yml's `go` JOB, PER MODULE ──────────────────────────────────
 #
@@ -50,6 +52,24 @@
 # every package it refused to lower — a `NOT LOWERED` line is the signal that `update` was the wrong
 # mode, and it must not be something a reader has to open the job log to find.
 #
+# ── ⚠️ AND IT DOES NOTHING UNTIL IT REACHES `main` ───────────────────────────────────────────────
+#
+# GitHub only exposes the "Run workflow" button — and only accepts `gh workflow run` / the dispatch
+# API — for a `workflow_dispatch:` workflow that is present on the repository's DEFAULT branch,
+# which here is `main`. Merged to `dev` this file is inert: it is not in the Actions list, and a
+# dispatch of it is a 404. It becomes dispatchable only after `dev → staging → main`.
+#
+# That matters because scripts/go-coverage.sh's demote message names this file as the fix. Until
+# the promotion lands, a reader who follows that instruction finds no such workflow and concludes
+# the workflow is broken rather than not yet promoted — so: it is not broken, it is not on `main`
+# yet. programme.yml carries the identical warning for its `schedule:` trigger, for the identical
+# reason. In the meantime the manual fallback is the same command this job runs, executed on a
+# Linux box whose toolchain matches ci.yml's `go` job.
+#
+# The `ref:` you pick in the dropdown selects the WORKFLOW FILE, not the code: both jobs pin
+# `ref: dev` (see the `record` job's checkout), so a dispatch from a branch tests changes to this
+# file while still measuring `dev`.
+#
 # COST: zero. Four ubuntu-latest jobs running suites CI already runs on every PR.
 
 name: Go coverage floors (re-record)
@@ -68,9 +88,17 @@ on:
 
 # Never two re-records at once: the second would open a competing PR against the same branch and
 # the two would carry different fingerprints.
+#
+# SERIALISE, DO NOT CANCEL. `deploy-console.yml:29-37` states the repo's rule: a group cancels
+# because a superseded CI run is not evidence and holding a runner is its only cost — EXCEPT where
+# the workflow mutates remote state, and this one does. `create-pull-request` pushes
+# `chore/go-floors-rerecord` before it calls the PR API, and `delete-branch: false` means a cancel
+# landing between the two leaves that branch pushed with no PR and nothing saying what is on it.
+# `false` still gives the "never two at once" this group exists for: both runs target the same
+# fixed branch and the same PR, so the second simply waits and then updates it.
 concurrency:
   group: go-floors-rerecord
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -115,7 +143,16 @@ jobs:
             helm: v3.21.4
             tofu: "1.9.0"
     steps:
+      # PINNED TO `dev`, and it must be — the `open-pr` job checks out `dev` and commits these
+      # numbers onto it. Left unpinned this takes GITHUB_REF, whatever branch the dispatcher
+      # picked in the "Run workflow" dropdown, so a dispatch from a feature branch would measure
+      # THAT branch's sources and commit the resulting covered/total pairs as `dev`'s floors —
+      # numbers describing code that is not on `dev`, with nothing in the PR saying so. Pinning
+      # both jobs also keeps the dropdown useful for its one legitimate purpose: selecting a ref
+      # picks which version of THIS FILE runs, which is how a change to this workflow is tested.
       - uses: actions/checkout@v7
+        with:
+          ref: dev
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.work
@@ -145,11 +182,26 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: GOWORK=${{ matrix.gowork }} go test -coverprofile=cover.out ./...
 
+      # `set -euo pipefail` IS LOAD-BEARING, and `pipefail` is the half that is easy to lose. A
+      # `run:` with no `shell:` key executes under `bash -e {0}` — WITHOUT pipefail; only an
+      # explicit `shell: bash` adds `-eo pipefail`. Unset, the pipeline below reports `tee`'s
+      # status, which is always 0: a `--update` that exits non-zero (no jq, an unreadable profile,
+      # a failing suite) would leave this step GREEN, the `cp` below would copy the committed,
+      # unmodified coverage-floors.json into out/, `if-no-files-found: error` would be met, and the
+      # open-pr job's anti-partial guard would see a non-empty file and pass — a PR that reads as
+      # a complete four-module re-record with one module's floors never re-recorded. The same
+      # note is recorded at e2e-nightly.yml:806.
       - name: Re-record the floors (--${{ inputs.mode }})
         run: |
+          set -euo pipefail
           mkdir -p out/${{ matrix.module }} logs
+          # First line of the log is the commit these numbers describe. `open-pr` reads it back,
+          # refuses to open a PR unless all four legs measured the SAME commit, and states it in
+          # the body — floors are a property of one tree, and four legs that disagree describe no
+          # tree that ever existed.
+          echo "measured-sha: $(git rev-parse HEAD)" > logs/${{ matrix.slug }}.txt
           bash scripts/go-coverage.sh --module ${{ matrix.module }} --${{ inputs.mode }} \
-            | tee logs/${{ matrix.slug }}.txt
+            | tee -a logs/${{ matrix.slug }}.txt
           cp ${{ matrix.module }}/coverage-floors.json out/${{ matrix.module }}/coverage-floors.json
           echo "── ${{ matrix.module }}/coverage-floors.json ──"
           cat ${{ matrix.module }}/coverage-floors.json
@@ -208,6 +260,17 @@ jobs:
           done
           [ "$missing" -eq 0 ]
 
+          # ONE TREE, OR NO PR. Each leg stamped the commit it measured into the first line of its
+          # log. All four are pinned to `dev`, so they agree unless `dev` moved mid-run — and a
+          # floors file is a property of ONE tree, so four legs straddling a merge describe a tree
+          # that never existed. Refuse rather than open an unreviewable PR.
+          shas=$(sed -n 's/^measured-sha: //p' artifacts/go-floors-log-*/*.txt | sort -u)
+          if [ "$(printf '%s\n' "$shas" | grep -c .)" -ne 1 ]; then
+            echo "::error::the four legs measured different commits ($(printf '%s' "$shas" | tr '\n' ' ')) — dev moved mid-run. NOT opening a PR; re-dispatch."
+            exit 1
+          fi
+          echo "MEASURED_SHA=$shas" >> "$GITHUB_ENV"
+
       # THE BODY STATES THE FINGERPRINT IT RECORDED. Without it a reader cannot tell WHICH
       # environment produced these numbers, and the fingerprint is the only thing that makes them
       # comparable to anything — a floors diff with an unstated fingerprint is unreviewable.
@@ -220,6 +283,19 @@ jobs:
             echo "Re-records the four Go modules' \`coverage-floors.json\` **on the runner image that"
             echo "enforces them**, which is the only environment whose fingerprint the ratchet can"
             echo "reproduce. See \`scripts/go-coverage.sh\`'s header for why a laptop cannot do this."
+            echo
+            # WHICH TREE THESE NUMBERS DESCRIBE. Both jobs pin `ref: dev`, but `dev` can move
+            # between the measurement and this commit, and a floors diff whose tree is unstated is
+            # not reviewable — the reader cannot tell a real coverage move from a merge that landed
+            # underneath the run.
+            base=$(git rev-parse HEAD)
+            echo "Measured on \`dev\` at \`${MEASURED_SHA}\`, committed onto \`dev\` at \`${base}\`."
+            if [ "$base" != "$MEASURED_SHA" ]; then
+              echo
+              echo ":warning: **\`dev\` moved between the measurement and this commit.** Any package"
+              echo "whose code changed in between is measured against the older tree. Check the range"
+              echo "before merging, and re-dispatch if it touches Go."
+            fi
             echo
             echo "### The fingerprint these numbers were recorded under"
             echo
@@ -281,11 +357,25 @@ jobs:
           owner: alethialabs-io
           repositories: alethialabs
 
+      # `draft: true` IS THE ENTIRE REVIEW GATE, and this action defaults it to false.
+      #
+      # Mergify auto-queues every non-draft, conflict-free `dev` PR with no unresolved review
+      # threads and squash-merges it once the required checks pass (CLAUDE.md §4); it reads no
+      # label. A non-draft floors PR therefore lands unattended — and the dangerous mode is the one
+      # that sails through: dispatched with `accept-regression` the floors are rewritten to equal
+      # the measurement, so this PR's own ratchet step is green BY CONSTRUCTION and no check can
+      # ever be red. That would silently accept every genuine regression sitting on `dev` at the
+      # time, and delete the exact signal this file's header says it preserves — "a floors diff is
+      # the review signal for 'coverage moved'". (`update` is only accidentally safe: its stale-high
+      # floors red the PR.)
+      #
+      # So it opens as a DRAFT and stays one. The maintainer reads the numbers and marks it ready.
       - name: Open or update the floors PR
         uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ steps.floors_token.outputs.token || github.token }}
           base: dev
+          draft: true
           branch: chore/go-floors-rerecord
           title: "chore(coverage): re-record the Go floors on the enforcing runner"
           commit-message: |

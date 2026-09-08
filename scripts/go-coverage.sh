@@ -312,7 +312,21 @@ EOF
 self_test() {
 	local fails=0 tmp
 	tmp=$(mktemp -d)
-	trap 'rm -rf "$tmp"' RETURN
+	# THE TWO FIXTURES UNDER $ROOT ARE IN THIS TRAP TOO, and they have to be. `--module` is
+	# repo-relative, so the bootstrap fixture and the fingerprint fixture cannot live in $tmp —
+	# they are created in the WORKING TREE. Each was removed only by the explicit `rm -rf` at the
+	# end of its own block, so any abort in between (a failing `jq -n`, a Ctrl-C, any `set -e`
+	# failure) left `.go-coverage-selftest-*` sitting untracked with a go.mod in it and nothing
+	# that would ever clean it up.
+	#
+	# EXIT and INT as well as RETURN: `set -euo pipefail` is in force, and a failure inside this
+	# function exits the SHELL — which runs the EXIT trap and never the RETURN one. The paths are
+	# expanded HERE, at trap-set time, so the handler does not depend on a local still being in
+	# scope when it fires.
+	# shellcheck disable=SC2064  # expanding NOW is the point: $tmp is a `local`, and on the EXIT
+	# path it is already out of scope when the handler fires — deferred expansion would run
+	# `rm -rf ''` and clean up nothing. $$ is stable for the life of the shell.
+	trap "rm -rf '$tmp' '$ROOT/.go-coverage-selftest-$$' '$ROOT/.go-coverage-selftest-fp-$$'" RETURN EXIT INT
 
 	_a() { if [ "$1" = "$2" ]; then echo "ok   - $3"; else echo "FAIL - $3: want '$1' got '$2'" >&2; fails=$((fails + 1)); fi; }
 	_pass() { if regressed "$1" "$2" "$3" "$4"; then echo "FAIL - $5: expected PASS, got REGRESSED" >&2; fails=$((fails + 1)); else echo "ok   - $5"; fi; }
@@ -483,8 +497,37 @@ a/two" "$(jq -r '.packages | keys[]' "$tmp/f.json")" "floors: package keys are s
 	# pins every other axis to a non-demoting value and runs the SAME regression twice: once with
 	# a mismatched Go minor (must demote and NAME go) and once with this environment's own
 	# (must fail for real, exit 1). Only the pair proves the key is what moved.
-	if ! command -v jq >/dev/null 2>&1 || [ "$(current_env go)" = "unknown" ]; then
-		echo 'ok   - (skipped the go-fingerprint cases: jq or a release go toolchain is unavailable)'
+	#
+	# GOTOOLCHAIN=local, EXPORTED, for the whole block. Two measured reasons:
+	#
+	#   1. `go env GOVERSION` with the cwd at the repo root reads go.work (`go 1.27.1`) and
+	#      performs TOOLCHAIN SELECTION, not a version read. Measured on a checkout whose
+	#      installed toolchain is go1.26.4: it prints `go1.27.1` — the go command switched. On a
+	#      runner whose image Go differs, that switch is a ~100 MB fetch from proxy.golang.org,
+	#      inside `Authz / open-core guards` (ci.yml:1414-1417), a required check with no setup-go
+	#      whose own comment reads "Hermetic: no go, no network, no repo state."
+	#   2. The subprocesses below re-probe `current_env go` for themselves. If the outer probe and
+	#      the inner one could resolve DIFFERENT toolchains, the CONTROL case would demote instead
+	#      of failing and this block would quietly assert the opposite of what it claims. One
+	#      exported setting pins both.
+	#
+	# The self-test only needs SOME minor it can compare against itself, never the workspace's.
+	export GOTOOLCHAIN=local
+
+	# A SKIP MUST NOT PRINT `ok`, AND AN UNREADABLE TOOLCHAIN IS NOT A SKIP. The old single
+	# condition printed `ok   - (skipped ...)` for both "jq is absent" and "GOVERSION did not
+	# parse", so all four assertions below could be silently absent with the step green — this
+	# repo's recurring defect, a guard whose "did not run" branch is indistinguishable from
+	# "nothing wrong". jq or go genuinely absent is an honest skip and says `skip`; go present but
+	# unreadable (a broken toolchain, a locked-down GOFLAGS/GOTOOLCHAIN, a `devel go1.28-abcdef`
+	# build) is a FAILURE, because on that runner the assertions were supposed to run.
+	if ! command -v jq >/dev/null 2>&1; then
+		echo 'skip - (the go-fingerprint cases need jq, which is not on PATH)'
+	elif ! command -v go >/dev/null 2>&1; then
+		echo 'skip - (the go-fingerprint cases need a go toolchain, which is not on PATH)'
+	elif [ "$(current_env go)" = "unknown" ]; then
+		echo "FAIL - fingerprint: go is on PATH but no minor could be read from it, so all four fingerprint assertions were skipped: 'go env GOVERSION' said '$(go env GOVERSION 2>&1 | head -1)'" >&2
+		fails=$((fails + 1))
 	else
 		local fp="$ROOT/.go-coverage-selftest-fp-$$" here
 		here=$(current_env go)
@@ -684,10 +727,19 @@ for k in $FINGERPRINT_KEYS; do
 		# on Linux with an otherwise identical fingerprint, and cmd/t2budget counts 24 statements
 		# under go1.26 and 36 under go1.27 without changing a byte. Any mismatch demotes.
 		#
-		# `unknown` on EITHER side does not demote: on the recorded side it is a floors file
-		# written before this key existed, and on the current side it is a runner with no `go` on
-		# PATH — which cannot have produced a profile in the first place, so F4 already fired.
-		if [ "$rec" != "unknown" ] && [ "$cur" != "unknown" ] && [ "$rec" != "$cur" ]; then
+		# `unknown` on the RECORDED side does not demote: that is a floors file written before
+		# this key existed, and an older file must not disarm the gate.
+		#
+		# `unknown` on the CURRENT side DOES demote, and the earlier reasoning for exempting it
+		# was wrong. It argued that a machine with no readable `go` cannot have produced a profile,
+		# so F4 already fired — true only when the profile is the one this script regenerates.
+		# `--profile` explicitly supports an absolute path, and comparing against a profile
+		# downloaded from a CI artifact is its motivating case (see the usage block). On that path
+		# the profile exists, F4 does not fire, and a compiler that cannot be read is exactly as
+		# incomparable as one that differs: `devel go1.28-abcdef` also maps to `unknown`. Exempting
+		# it would red the run and blame coverage for a compiler change — the #4247 defect, on the
+		# one path the fix had left uncovered. An unreadable compiler is not a matching one.
+		if [ "$rec" != "unknown" ] && [ "$rec" != "$cur" ]; then
 			DEMOTE=1
 			DRIFT="$DRIFT $k($rec!=$cur)"
 		fi
