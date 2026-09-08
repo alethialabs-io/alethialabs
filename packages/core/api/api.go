@@ -2155,16 +2155,40 @@ type ProbeState struct {
 	ProbedAt      *string `json:"probed_at"`
 }
 
-// GetProjectProbes returns each environment's latest cluster-alive probe state for a project.
+// GetProjectProbes returns each environment's latest cluster-alive probe state for a project,
+// walking the server's cursor to exhaustion. The server pages this list over the project's
+// ENVIRONMENTS — one probe state per environment — so the walk terminates on the environment
+// count, not on the append-only probe history behind it.
 func (c *Client) GetProjectProbes(project string) ([]ProbeState, error) {
+	return AllPages(func(cursor string) ([]ProbeState, PageInfo, error) {
+		page, err := c.getProjectProbesPage(project, cursor)
+		if err != nil {
+			return nil, PageInfo{}, err
+		}
+		return page.Probes, page.Page, nil
+	})
+}
+
+// getProjectProbesPage fetches one server page. A server predating probe paging omits Page,
+// whose zero value naturally describes one exhausted response to AllPages.
+func (c *Client) getProjectProbesPage(project, cursor string) (*struct {
+	Probes []ProbeState `json:"probes"`
+	Page   PageInfo     `json:"page"`
+}, error) {
 	endpoint := fmt.Sprintf("%s/cli/projects/%s/probes", c.baseURL, url.PathEscape(project))
-	var resp struct {
-		Probes []ProbeState `json:"probes"`
+	params := url.Values{}
+	PageOpts{Cursor: cursor}.Apply(params)
+	if len(params) > 0 {
+		endpoint = fmt.Sprintf("%s?%s", endpoint, params.Encode())
 	}
-	if err := c.doGet(endpoint, &resp); err != nil {
+	var page struct {
+		Probes []ProbeState `json:"probes"`
+		Page   PageInfo     `json:"page"`
+	}
+	if err := c.doGet(endpoint, &page); err != nil {
 		return nil, fmt.Errorf("failed to get probes: %w", err)
 	}
-	return resp.Probes, nil
+	return &page, nil
 }
 
 // --- Add-ons ---
