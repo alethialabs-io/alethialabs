@@ -18,16 +18,16 @@
 		"redirectOnly": 4,
 		"real": 36,
 		"predicates": 34,
-		"scoredHere": 23,
+		"scoredHere": 24,
 		"live": 10,
-		"notInstrumented": 1,
-		"findings": 24,
-		"findingFiles": 15,
+		"notInstrumented": 0,
+		"findings": 31,
+		"findingFiles": 18,
 		"liveNotMeasured": 14
 	},
 	"ledgers": {
 		"baseline": 16,
-		"debt": 0
+		"debt": 3
 	},
 	"live": {
 		"source": {
@@ -285,8 +285,15 @@
 		},
 		"H3": {
 			"family": "H",
-			"instrument": "none",
-			"owner": "#3797"
+			"instrument": "check-shared-surface",
+			"owner": null,
+			"pass": 37,
+			"fail": 3,
+			"na": 0,
+			"notMeasured": 0,
+			"naReasons": {},
+			"notMeasuredReasons": {},
+			"score": 0.925
 		},
 		"H4": {
 			"family": "H",
@@ -577,9 +584,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -605,7 +612,7 @@
 				}
 			},
 			"overall": {
-				"pass": 24,
+				"pass": 25,
 				"fail": 0,
 				"na": 9,
 				"notMeasured": 0,
@@ -636,9 +643,9 @@
 					"score": 0.5
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -664,11 +671,11 @@
 				}
 			},
 			"overall": {
-				"pass": 13,
+				"pass": 14,
 				"fail": 1,
 				"na": 18,
 				"notMeasured": 1,
-				"score": 0.9286
+				"score": 0.9333
 			}
 		},
 		{
@@ -695,13 +702,13 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
 					"pass": 8,
-					"fail": 0,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.8889
 				},
 				"F": {
 					"instrumented": 7,
@@ -724,10 +731,10 @@
 			},
 			"overall": {
 				"pass": 23,
-				"fail": 1,
+				"fail": 2,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.9583
+				"score": 0.92
 			}
 		},
 		{
@@ -754,9 +761,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -782,7 +789,7 @@
 				}
 			},
 			"overall": {
-				"pass": 25,
+				"pass": 26,
 				"fail": 0,
 				"na": 7,
 				"notMeasured": 1,
@@ -813,9 +820,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -841,11 +848,11 @@
 				}
 			},
 			"overall": {
-				"pass": 20,
+				"pass": 21,
 				"fail": 4,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.8333
+				"score": 0.84
 			}
 		},
 		{
@@ -872,9 +879,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -900,11 +907,11 @@
 				}
 			},
 			"overall": {
-				"pass": 30,
+				"pass": 31,
 				"fail": 1,
 				"na": 1,
 				"notMeasured": 1,
-				"score": 0.9677
+				"score": 0.9688
 			}
 		},
 		{
@@ -931,9 +938,9 @@
 					"score": 0.5
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -959,11 +966,11 @@
 				}
 			},
 			"overall": {
-				"pass": 12,
+				"pass": 13,
 				"fail": 2,
 				"na": 18,
 				"notMeasured": 1,
-				"score": 0.8571
+				"score": 0.8667
 			}
 		},
 		{
@@ -990,9 +997,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -1018,11 +1025,11 @@
 				}
 			},
 			"overall": {
-				"pass": 30,
+				"pass": 31,
 				"fail": 2,
 				"na": 0,
 				"notMeasured": 1,
-				"score": 0.9375
+				"score": 0.9394
 			}
 		},
 		{
@@ -1049,9 +1056,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -1077,11 +1084,11 @@
 				}
 			},
 			"overall": {
-				"pass": 30,
+				"pass": 31,
 				"fail": 2,
 				"na": 0,
 				"notMeasured": 1,
-				"score": 0.9375
+				"score": 0.9394
 			}
 		},
 		{
@@ -1108,9 +1115,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -1136,11 +1143,11 @@
 				}
 			},
 			"overall": {
-				"pass": 22,
+				"pass": 23,
 				"fail": 2,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.9167
+				"score": 0.92
 			}
 		},
 		{
@@ -1167,9 +1174,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -1195,11 +1202,11 @@
 				}
 			},
 			"overall": {
-				"pass": 22,
+				"pass": 23,
 				"fail": 2,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.9167
+				"score": 0.92
 			}
 		},
 		{
@@ -1226,9 +1233,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -1254,11 +1261,11 @@
 				}
 			},
 			"overall": {
-				"pass": 23,
+				"pass": 24,
 				"fail": 1,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.9583
+				"score": 0.96
 			}
 		},
 		{
@@ -1285,9 +1292,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -1313,11 +1320,11 @@
 				}
 			},
 			"overall": {
-				"pass": 26,
+				"pass": 27,
 				"fail": 5,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.8387
+				"score": 0.8438
 			}
 		},
 		{
@@ -1344,9 +1351,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -1372,7 +1379,7 @@
 				}
 			},
 			"overall": {
-				"pass": 24,
+				"pass": 25,
 				"fail": 0,
 				"na": 9,
 				"notMeasured": 0,
@@ -1403,13 +1410,13 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
 					"pass": 8,
-					"fail": 0,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.8889
 				},
 				"F": {
 					"instrumented": 7,
@@ -1432,10 +1439,10 @@
 			},
 			"overall": {
 				"pass": 27,
-				"fail": 3,
+				"fail": 4,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 0.9
+				"score": 0.871
 			}
 		},
 		{
@@ -1462,9 +1469,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -1490,11 +1497,11 @@
 				}
 			},
 			"overall": {
-				"pass": 30,
+				"pass": 31,
 				"fail": 1,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9677
+				"score": 0.9688
 			}
 		},
 		{
@@ -1521,9 +1528,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -1549,11 +1556,11 @@
 				}
 			},
 			"overall": {
-				"pass": 30,
+				"pass": 31,
 				"fail": 1,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9677
+				"score": 0.9688
 			}
 		},
 		{
@@ -1580,363 +1587,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"F": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 7,
-					"notMeasured": 0,
-					"score": null
-				},
-				"R": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 7,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				}
-			},
-			"overall": {
-				"pass": 22,
-				"fail": 1,
-				"na": 9,
-				"notMeasured": 1,
-				"score": 0.9565
-			}
-		},
-		{
-			"route": "/[org]/~/new",
-			"redirectOnly": false,
-			"surfaceFiles": 360,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 3,
-					"fail": 1,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.75
-				},
-				"T": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 4,
-					"fail": 0,
-					"na": 3,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"H": {
-					"instrumented": 8,
-					"of": 9,
-					"pass": 8,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"F": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 7,
-					"notMeasured": 0,
-					"score": null
-				},
-				"R": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 7,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				}
-			},
-			"overall": {
-				"pass": 22,
-				"fail": 1,
-				"na": 10,
-				"notMeasured": 0,
-				"score": 0.9565
-			}
-		},
-		{
-			"route": "/[org]/~/runners",
-			"redirectOnly": false,
-			"surfaceFiles": 272,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 4,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"T": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 5,
-					"fail": 0,
-					"na": 2,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"H": {
-					"instrumented": 8,
-					"of": 9,
-					"pass": 8,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"F": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 3,
-					"fail": 3,
-					"na": 0,
-					"notMeasured": 1,
-					"score": 0.5
-				},
-				"R": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 7,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				}
-			},
-			"overall": {
-				"pass": 27,
-				"fail": 3,
-				"na": 2,
-				"notMeasured": 1,
-				"score": 0.9
-			}
-		},
-		{
-			"route": "/[org]/~/settings",
-			"redirectOnly": true,
-			"surfaceFiles": 1,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 0,
-					"fail": 0,
-					"na": 4,
-					"notMeasured": 0,
-					"score": null
-				},
-				"T": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 1,
-					"fail": 1,
-					"na": 5,
-					"notMeasured": 0,
-					"score": 0.5
-				},
-				"H": {
-					"instrumented": 8,
-					"of": 9,
-					"pass": 8,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"F": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 7,
-					"notMeasured": 0,
-					"score": null
-				},
-				"R": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 3,
-					"fail": 1,
-					"na": 3,
-					"notMeasured": 0,
-					"score": 0.75
-				}
-			},
-			"overall": {
-				"pass": 12,
-				"fail": 2,
-				"na": 19,
-				"notMeasured": 0,
-				"score": 0.8571
-			}
-		},
-		{
-			"route": "/[org]/~/settings/access",
-			"redirectOnly": false,
-			"surfaceFiles": 213,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 4,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"T": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 5,
-					"fail": 0,
-					"na": 2,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"H": {
-					"instrumented": 8,
-					"of": 9,
-					"pass": 8,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"F": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8571
-				},
-				"R": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 7,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				}
-			},
-			"overall": {
-				"pass": 30,
-				"fail": 1,
-				"na": 2,
-				"notMeasured": 0,
-				"score": 0.9677
-			}
-		},
-		{
-			"route": "/[org]/~/settings/activity",
-			"redirectOnly": false,
-			"surfaceFiles": 278,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 4,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"T": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 4,
-					"fail": 0,
-					"na": 3,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"H": {
-					"instrumented": 8,
-					"of": 9,
-					"pass": 8,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"F": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8571
-				},
-				"R": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8571
-				}
-			},
-			"overall": {
-				"pass": 28,
-				"fail": 2,
-				"na": 3,
-				"notMeasured": 0,
-				"score": 0.9333
-			}
-		},
-		{
-			"route": "/[org]/~/settings/billing",
-			"redirectOnly": false,
-			"surfaceFiles": 194,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 4,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"T": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 4,
-					"fail": 0,
-					"na": 3,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"H": {
-					"instrumented": 8,
-					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -1963,6 +1616,360 @@
 			},
 			"overall": {
 				"pass": 23,
+				"fail": 1,
+				"na": 9,
+				"notMeasured": 1,
+				"score": 0.9583
+			}
+		},
+		{
+			"route": "/[org]/~/new",
+			"redirectOnly": false,
+			"surfaceFiles": 360,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 3,
+					"fail": 1,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 0.75
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 4,
+					"fail": 0,
+					"na": 3,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 8,
+					"fail": 1,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 0.8889
+				},
+				"F": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 7,
+					"notMeasured": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 7,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				}
+			},
+			"overall": {
+				"pass": 22,
+				"fail": 2,
+				"na": 10,
+				"notMeasured": 0,
+				"score": 0.9167
+			}
+		},
+		{
+			"route": "/[org]/~/runners",
+			"redirectOnly": false,
+			"surfaceFiles": 272,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 5,
+					"fail": 0,
+					"na": 2,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 3,
+					"fail": 3,
+					"na": 0,
+					"notMeasured": 1,
+					"score": 0.5
+				},
+				"R": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 7,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				}
+			},
+			"overall": {
+				"pass": 28,
+				"fail": 3,
+				"na": 2,
+				"notMeasured": 1,
+				"score": 0.9032
+			}
+		},
+		{
+			"route": "/[org]/~/settings",
+			"redirectOnly": true,
+			"surfaceFiles": 1,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 0,
+					"fail": 0,
+					"na": 4,
+					"notMeasured": 0,
+					"score": null
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 1,
+					"fail": 1,
+					"na": 5,
+					"notMeasured": 0,
+					"score": 0.5
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 7,
+					"notMeasured": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 3,
+					"fail": 1,
+					"na": 3,
+					"notMeasured": 0,
+					"score": 0.75
+				}
+			},
+			"overall": {
+				"pass": 13,
+				"fail": 2,
+				"na": 19,
+				"notMeasured": 0,
+				"score": 0.8667
+			}
+		},
+		{
+			"route": "/[org]/~/settings/access",
+			"redirectOnly": false,
+			"surfaceFiles": 213,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 5,
+					"fail": 0,
+					"na": 2,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 0.8571
+				},
+				"R": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 7,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				}
+			},
+			"overall": {
+				"pass": 31,
+				"fail": 1,
+				"na": 2,
+				"notMeasured": 0,
+				"score": 0.9688
+			}
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"redirectOnly": false,
+			"surfaceFiles": 278,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 4,
+					"fail": 0,
+					"na": 3,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 0.8571
+				},
+				"R": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 0.8571
+				}
+			},
+			"overall": {
+				"pass": 29,
+				"fail": 2,
+				"na": 3,
+				"notMeasured": 0,
+				"score": 0.9355
+			}
+		},
+		{
+			"route": "/[org]/~/settings/billing",
+			"redirectOnly": false,
+			"surfaceFiles": 194,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 4,
+					"fail": 0,
+					"na": 3,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 7,
+					"notMeasured": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 7,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				}
+			},
+			"overall": {
+				"pass": 24,
 				"fail": 0,
 				"na": 10,
 				"notMeasured": 0,
@@ -1993,304 +2000,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"F": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8571
-				},
-				"R": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 7,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				}
-			},
-			"overall": {
-				"pass": 29,
-				"fail": 1,
-				"na": 3,
-				"notMeasured": 0,
-				"score": 0.9667
-			}
-		},
-		{
-			"route": "/[org]/~/settings/classification",
-			"redirectOnly": false,
-			"surfaceFiles": 147,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 4,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"T": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 4,
-					"fail": 0,
-					"na": 3,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"H": {
-					"instrumented": 8,
-					"of": 9,
-					"pass": 8,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"F": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 7,
-					"notMeasured": 0,
-					"score": null
-				},
-				"R": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8571
-				}
-			},
-			"overall": {
-				"pass": 22,
-				"fail": 1,
-				"na": 10,
-				"notMeasured": 0,
-				"score": 0.9565
-			}
-		},
-		{
-			"route": "/[org]/~/settings/general",
-			"redirectOnly": false,
-			"surfaceFiles": 135,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 4,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"T": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 4,
-					"fail": 0,
-					"na": 3,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"H": {
-					"instrumented": 8,
-					"of": 9,
-					"pass": 8,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"F": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 0,
-					"fail": 0,
-					"na": 7,
-					"notMeasured": 0,
-					"score": null
-				},
-				"R": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8571
-				}
-			},
-			"overall": {
-				"pass": 22,
-				"fail": 1,
-				"na": 10,
-				"notMeasured": 0,
-				"score": 0.9565
-			}
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"redirectOnly": false,
-			"surfaceFiles": 221,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 4,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"T": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 4,
-					"fail": 0,
-					"na": 3,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"H": {
-					"instrumented": 8,
-					"of": 9,
-					"pass": 8,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"F": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 5,
-					"fail": 2,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.7143
-				},
-				"R": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8571
-				}
-			},
-			"overall": {
-				"pass": 27,
-				"fail": 3,
-				"na": 3,
-				"notMeasured": 0,
-				"score": 0.9
-			}
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"redirectOnly": false,
-			"surfaceFiles": 224,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 4,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"T": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 4,
-					"fail": 0,
-					"na": 3,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"H": {
-					"instrumented": 8,
-					"of": 9,
-					"pass": 8,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"F": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8571
-				},
-				"R": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8571
-				}
-			},
-			"overall": {
-				"pass": 28,
-				"fail": 2,
-				"na": 3,
-				"notMeasured": 0,
-				"score": 0.9333
-			}
-		},
-		{
-			"route": "/[org]/~/settings/sso",
-			"redirectOnly": false,
-			"surfaceFiles": 213,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 4,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"T": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 5,
-					"fail": 0,
-					"na": 2,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"H": {
-					"instrumented": 8,
-					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -2318,9 +2030,304 @@
 			"overall": {
 				"pass": 30,
 				"fail": 1,
-				"na": 2,
+				"na": 3,
 				"notMeasured": 0,
 				"score": 0.9677
+			}
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"redirectOnly": false,
+			"surfaceFiles": 147,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 4,
+					"fail": 0,
+					"na": 3,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 7,
+					"notMeasured": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 0.8571
+				}
+			},
+			"overall": {
+				"pass": 23,
+				"fail": 1,
+				"na": 10,
+				"notMeasured": 0,
+				"score": 0.9583
+			}
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"redirectOnly": false,
+			"surfaceFiles": 135,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 4,
+					"fail": 0,
+					"na": 3,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 0,
+					"fail": 0,
+					"na": 7,
+					"notMeasured": 0,
+					"score": null
+				},
+				"R": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 0.8571
+				}
+			},
+			"overall": {
+				"pass": 23,
+				"fail": 1,
+				"na": 10,
+				"notMeasured": 0,
+				"score": 0.9583
+			}
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"redirectOnly": false,
+			"surfaceFiles": 221,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 4,
+					"fail": 0,
+					"na": 3,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 5,
+					"fail": 2,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 0.7143
+				},
+				"R": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 0.8571
+				}
+			},
+			"overall": {
+				"pass": 28,
+				"fail": 3,
+				"na": 3,
+				"notMeasured": 0,
+				"score": 0.9032
+			}
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"redirectOnly": false,
+			"surfaceFiles": 224,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 4,
+					"fail": 0,
+					"na": 3,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 0.8571
+				},
+				"R": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 0.8571
+				}
+			},
+			"overall": {
+				"pass": 29,
+				"fail": 2,
+				"na": 3,
+				"notMeasured": 0,
+				"score": 0.9355
+			}
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"redirectOnly": false,
+			"surfaceFiles": 213,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 5,
+					"fail": 0,
+					"na": 2,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 0.8571
+				},
+				"R": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 7,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				}
+			},
+			"overall": {
+				"pass": 31,
+				"fail": 1,
+				"na": 2,
+				"notMeasured": 0,
+				"score": 0.9688
 			}
 		},
 		{
@@ -2347,9 +2354,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -2375,11 +2382,11 @@
 				}
 			},
 			"overall": {
-				"pass": 29,
+				"pass": 30,
 				"fail": 2,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9355
+				"score": 0.9375
 			}
 		},
 		{
@@ -2406,9 +2413,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -2434,7 +2441,7 @@
 				}
 			},
 			"overall": {
-				"pass": 23,
+				"pass": 24,
 				"fail": 0,
 				"na": 10,
 				"notMeasured": 0,
@@ -2465,9 +2472,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -2493,7 +2500,7 @@
 				}
 			},
 			"overall": {
-				"pass": 23,
+				"pass": 24,
 				"fail": 0,
 				"na": 10,
 				"notMeasured": 0,
@@ -2524,9 +2531,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -2552,11 +2559,11 @@
 				}
 			},
 			"overall": {
-				"pass": 22,
+				"pass": 23,
 				"fail": 1,
 				"na": 10,
 				"notMeasured": 0,
-				"score": 0.9565
+				"score": 0.9583
 			}
 		},
 		{
@@ -2583,9 +2590,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -2611,11 +2618,11 @@
 				}
 			},
 			"overall": {
-				"pass": 22,
+				"pass": 23,
 				"fail": 2,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.9167
+				"score": 0.92
 			}
 		},
 		{
@@ -2642,9 +2649,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -2670,11 +2677,11 @@
 				}
 			},
 			"overall": {
-				"pass": 29,
+				"pass": 30,
 				"fail": 2,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9355
+				"score": 0.9375
 			}
 		},
 		{
@@ -2701,9 +2708,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -2729,7 +2736,7 @@
 				}
 			},
 			"overall": {
-				"pass": 23,
+				"pass": 24,
 				"fail": 0,
 				"na": 10,
 				"notMeasured": 0,
@@ -2760,9 +2767,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -2788,7 +2795,7 @@
 				}
 			},
 			"overall": {
-				"pass": 23,
+				"pass": 24,
 				"fail": 0,
 				"na": 10,
 				"notMeasured": 0,
@@ -2819,9 +2826,9 @@
 					"score": 1
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -2847,7 +2854,7 @@
 				}
 			},
 			"overall": {
-				"pass": 22,
+				"pass": 23,
 				"fail": 0,
 				"na": 11,
 				"notMeasured": 0,
@@ -2878,9 +2885,9 @@
 					"score": 0.6667
 				},
 				"H": {
-					"instrumented": 8,
+					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
@@ -2906,11 +2913,11 @@
 				}
 			},
 			"overall": {
-				"pass": 14,
+				"pass": 15,
 				"fail": 1,
 				"na": 18,
 				"notMeasured": 0,
-				"score": 0.9333
+				"score": 0.9375
 			}
 		}
 	],
@@ -2965,6 +2972,11 @@
 		{
 			"route": "/[org]",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -3139,6 +3151,11 @@
 		{
 			"route": "/[org]/[project]",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -3328,6 +3345,12 @@
 		},
 		{
 			"route": "/[org]/[project]/architecture",
+			"predicate": "H3",
+			"verdict": "FAIL",
+			"detail": "3 occurrence(s) in 1 file(s), worst apps/console/components/design-project/canvas/node-inspector.tsx (3)"
+		},
+		{
+			"route": "/[org]/[project]/architecture",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -3503,6 +3526,11 @@
 		},
 		{
 			"route": "/[org]/[project]/clusters",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/clusters",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -3672,6 +3700,11 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/environments",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -3849,6 +3882,11 @@
 		},
 		{
 			"route": "/[org]/[project]/jobs",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/jobs",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -4019,6 +4057,11 @@
 		{
 			"route": "/[org]/[project]/settings",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -4204,6 +4247,11 @@
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/access",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -4373,6 +4421,11 @@
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/activity",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -4543,6 +4596,11 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -4719,6 +4777,11 @@
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -4899,6 +4962,11 @@
 		},
 		{
 			"route": "/[org]/[project]/usage",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/usage",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -5067,6 +5135,11 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/alerts",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -5247,6 +5320,11 @@
 		},
 		{
 			"route": "/[org]/~/clusters",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -5412,6 +5490,12 @@
 			"route": "/[org]/~/connectors",
 			"predicate": "H2",
 			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "H3",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/connectors/connection-ui.tsx (1)"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -5586,6 +5670,11 @@
 		},
 		{
 			"route": "/[org]/~/evidence",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/evidence",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -5755,6 +5844,11 @@
 		},
 		{
 			"route": "/[org]/~/jobs",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -5925,6 +6019,11 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/jobs/[id]",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -6105,6 +6204,12 @@
 		},
 		{
 			"route": "/[org]/~/new",
+			"predicate": "H3",
+			"verdict": "FAIL",
+			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/connectors/connection-ui.tsx (1)"
+		},
+		{
+			"route": "/[org]/~/new",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -6278,6 +6383,11 @@
 		},
 		{
 			"route": "/[org]/~/runners",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/runners",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -6448,6 +6558,11 @@
 		{
 			"route": "/[org]/~/settings",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -6633,6 +6748,11 @@
 		},
 		{
 			"route": "/[org]/~/settings/access",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/access",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -6798,6 +6918,11 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/activity",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -6978,6 +7103,11 @@
 		},
 		{
 			"route": "/[org]/~/settings/billing",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -7148,6 +7278,11 @@
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -7319,6 +7454,11 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/classification",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -7499,6 +7639,11 @@
 		},
 		{
 			"route": "/[org]/~/settings/general",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -7667,6 +7812,11 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -7842,6 +7992,11 @@
 		},
 		{
 			"route": "/[org]/~/settings/roles",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -8009,6 +8164,11 @@
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -8183,6 +8343,11 @@
 		},
 		{
 			"route": "/[org]/~/settings/teams",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/teams",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -8357,6 +8522,11 @@
 		},
 		{
 			"route": "/[org]/~/support",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -8463,186 +8633,191 @@
 		},
 		{
 			"route": "/[org]/~/support",
-			"predicate": "T5",
-			"verdict": "N/A",
-			"reason": "no-empty-state"
-		},
-		{
-			"route": "/[org]/~/support",
-			"predicate": "T6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support",
-			"predicate": "T7",
-			"verdict": "N/A",
-			"reason": "no-restricted-surface"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F1",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F2",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F3",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F4",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F5",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F6",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F7",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T3",
-			"verdict": "N/A",
-			"reason": "does-not-call-not-found"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
 			"predicate": "T5",
 			"verdict": "N/A",
 			"reason": "no-empty-state"
 		},
 		{
+			"route": "/[org]/~/support",
+			"predicate": "T6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "T7",
+			"verdict": "N/A",
+			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T5",
+			"verdict": "N/A",
+			"reason": "no-empty-state"
+		},
+		{
 			"route": "/[org]/~/support/abuse",
 			"predicate": "T6",
 			"verdict": "PASS"
@@ -8703,6 +8878,11 @@
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/ask",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -8883,6 +9063,11 @@
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -9054,6 +9239,11 @@
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/my-cases",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -9228,6 +9418,11 @@
 		},
 		{
 			"route": "/[org]/~/support/submit",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -9334,186 +9529,191 @@
 		},
 		{
 			"route": "/[org]/~/support/submit",
-			"predicate": "T5",
-			"verdict": "N/A",
-			"reason": "no-empty-state"
-		},
-		{
-			"route": "/[org]/~/support/submit",
-			"predicate": "T6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/submit",
-			"predicate": "T7",
-			"verdict": "N/A",
-			"reason": "no-restricted-surface"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "F1",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "F2",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "F3",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "F4",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "F5",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "F6",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "F7",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "R1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "R2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "R3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "R4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "R5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "R6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "R7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "T3",
-			"verdict": "N/A",
-			"reason": "does-not-call-not-found"
-		},
-		{
-			"route": "/[org]/~/usage",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/usage",
 			"predicate": "T5",
 			"verdict": "N/A",
 			"reason": "no-empty-state"
 		},
 		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "T6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/submit",
+			"predicate": "T7",
+			"verdict": "N/A",
+			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "R1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "R2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "R3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "R4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "R5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "R6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "R7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/usage",
+			"predicate": "T5",
+			"verdict": "N/A",
+			"reason": "no-empty-state"
+		},
+		{
 			"route": "/[org]/~/usage",
 			"predicate": "T6",
 			"verdict": "PASS"
@@ -9574,6 +9774,11 @@
 		{
 			"route": "/cli/login",
 			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/cli/login",
+			"predicate": "H3",
 			"verdict": "PASS"
 		},
 		{
@@ -9754,6 +9959,11 @@
 		},
 		{
 			"route": "/dashboard/[[...rest]]",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/dashboard/[[...rest]]",
 			"predicate": "H4",
 			"verdict": "PASS"
 		},
@@ -9909,6 +10119,17 @@
 				"predicate": "H2",
 				"owner": null
 			},
+			"status_badge": {
+				"total": 7,
+				"decision": 0,
+				"debt": 7,
+				"unlisted": 0,
+				"inPageClosure": 4,
+				"chromeOnly": 3,
+				"offTree": 0,
+				"predicate": "H3",
+				"owner": null
+			},
 			"data_table": {
 				"total": 0,
 				"decision": 0,
@@ -9977,6 +10198,10 @@
 			}
 		},
 		"chromeOnlyFiles": [
+			{
+				"file": "apps/console/components/agent/render-tool-parts/project-tool-parts.tsx",
+				"hits": 3
+			},
 			{
 				"file": "apps/console/components/agent/widgets/bodies/blocks.tsx",
 				"hits": 2

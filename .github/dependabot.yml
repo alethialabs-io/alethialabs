@@ -72,5 +72,13 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # The runner builder image's Go MINOR is never a lone bump. #3356 landed `golang:1.27-alpine`
+      # green while go.work and every go.mod stayed 1.26 (the shipped runner was compiled by a Go
+      # the required check never ran), and #4231 tried it again. packages/core/compat/
+      # go_toolchain_test.go now reds a lone bump, so leaving this on only produces a PR that is
+      # red by construction on every Go release. A Go minor is a hand-done change across go.work,
+      # the four go.mod files, apps/runner/Dockerfile.base and ci.yml's golangci-lint pin (#4241).
+      - dependency-name: golang
+        update-types: ["version-update:semver-minor"]
     schedule:
       interval: weekly

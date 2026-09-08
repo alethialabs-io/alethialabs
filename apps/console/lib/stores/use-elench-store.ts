@@ -13,13 +13,42 @@ import { AI_MODELS } from "@/lib/config/ai";
  * persistence, and the tool-render lanes — captured at open time and fixed until
  * the surface is reopened in a different context.
  */
-export type ElenchCtx = { kind: "org" } | { kind: "project"; projectId: string };
+export type ElenchCtx =
+	| { kind: "org" }
+	| {
+			kind: "project";
+			projectId: string;
+			/**
+			 * The environment the user is looking at (`?environment_id=`), or null for the project's
+			 * default. The assistant's plan/deploy proposals and its Environment knowledge block are
+			 * scoped to THIS — before it existed the project route planned and deployed the default
+			 * environment whatever the topbar switcher said. Re-scoped in place by `syncEnvironment`;
+			 * never part of the conversation lineage (threads are project-scoped).
+			 */
+			environmentId: string | null;
+	  };
 
 /** Pure presentation: fullscreen dialog vs docked drawer. Orthogonal to `ctx`. */
 export type ElenchView = "modal" | "panel";
 
 /** Which surface the modal's main region is showing (mutually exclusive). */
 export type ElenchMainView = "chat" | "artifacts" | "knowledge";
+
+/**
+ * The context to open with, given what the caller knows.
+ *
+ * A caller that cannot see the environment passes `null`, and that must not silently re-scope a
+ * conversation that IS scoped: the topbar's Ask AI button knows the project from the route but not
+ * always the environment, so toggling the panel closed and open again would have dropped the
+ * environment the user had switched to and sent the next turn against the project default.
+ * `null` means "I don't know"; only a real id re-scopes.
+ */
+function withKnownEnvironment(next: ElenchCtx, current: ElenchCtx): ElenchCtx {
+	if (next.kind !== "project" || current.kind !== "project") return next;
+	if (next.projectId !== current.projectId) return next;
+	if (next.environmentId !== null) return next;
+	return { ...next, environmentId: current.environmentId };
+}
 
 /** True when two contexts address the same conversation lineage. */
 function sameCtx(a: ElenchCtx, b: ElenchCtx): boolean {
@@ -84,6 +113,13 @@ interface ElenchState {
 	close: () => void;
 	/** Toggle the panel in the given context (used by the canvas AI button / ⌘K). */
 	togglePanel: (ctx: ElenchCtx) => void;
+	/**
+	 * Re-scope an OPEN project conversation to another environment of the same project — the
+	 * topbar switcher, Shift+Tab and a deep link all land here. Keeps the thread and the epoch:
+	 * the environment is request context (the prompt is rebuilt per turn), not a new lineage.
+	 * A no-op when the surface is closed, anchored to the org, or on another project.
+	 */
+	syncEnvironment: (projectId: string, environmentId: string | null) => void;
 
 	setMode: (mode: AgentMode) => void;
 	setModel: (model: string) => void;
@@ -134,8 +170,9 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	railOpen: true,
 	mainView: "chat",
 
-	openPanel: (ctx) => {
+	openPanel: (raw) => {
 		const cur = get();
+		const ctx = withKnownEnvironment(raw, cur.ctx);
 		// Switching context starts a fresh conversation (org tools must not bleed
 		// into a project conversation and vice-versa).
 		const fresh = !sameCtx(cur.ctx, ctx);
@@ -149,8 +186,9 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 		});
 	},
 
-	openModal: (ctx) => {
+	openModal: (raw) => {
 		const cur = get();
+		const ctx = withKnownEnvironment(raw, cur.ctx);
 		const fresh = !sameCtx(cur.ctx, ctx);
 		track("elench_chat_opened", { context: ctx.kind, view: "modal" });
 		set({
@@ -171,6 +209,14 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 		const cur = get();
 		if (cur.open && sameCtx(cur.ctx, ctx)) set({ open: false });
 		else get().openPanel(ctx);
+	},
+
+	syncEnvironment: (projectId, environmentId) => {
+		const cur = get();
+		if (!cur.open || cur.ctx.kind !== "project" || cur.ctx.projectId !== projectId)
+			return;
+		if (cur.ctx.environmentId === environmentId) return;
+		set({ ctx: { ...cur.ctx, environmentId } });
 	},
 
 	setMode: (mode) => set({ mode }),

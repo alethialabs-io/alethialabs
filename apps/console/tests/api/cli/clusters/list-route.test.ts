@@ -40,6 +40,10 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
+// A mock that wrote its own org list would be a second opinion about the values #4154 is about, so
+// the SCOPES BELOW ARE LITERAL and the mapping from a credential to them is proven separately, in
+// tests/lib/authz/guard.ts's `orgScopeFor` suite. Two assertions with one seam between them: the
+// guard decides which values, this file decides what SQL those values become.
 vi.mock("@/lib/authz/guard", () => ({
 	authorizeCli: vi.fn(),
 	ensureCliOrgAccess: vi.fn(),
@@ -83,7 +87,8 @@ function render(fragment: SQL | undefined): {
 	params: readonly unknown[];
 } {
 	// A missing fragment is a test that never reached the query, not an empty WHERE clause.
-	if (fragment === undefined) throw new Error("expected a SQL fragment, got none");
+	if (fragment === undefined)
+		throw new Error("expected a SQL fragment, got none");
 	const q = dialect.sqlToQuery(fragment);
 	return { sql: q.sql, params: q.params };
 }
@@ -203,7 +208,11 @@ function listRow(overrides: Record<string, unknown> = {}) {
 /** The envelope this route returns, narrowed enough to assert on without a cast. */
 const bodySchema = z.object({
 	clusters: z.array(
-		z.object({ id: z.string(), environment: z.string(), project_name: z.string() }),
+		z.object({
+			id: z.string(),
+			environment: z.string(),
+			project_name: z.string(),
+		}),
 	),
 	page: z.object({
 		mode: z.string(),
@@ -244,6 +253,8 @@ describe("GET /api/cli/clusters — a joined scope restated on one column (#3672
 		countResult = 0;
 		vi.mocked(authorizeCli).mockResolvedValue({
 			actor: { userId: USER, orgId: ORG },
+			credential: "session",
+			orgScope: [ORG, USER],
 		});
 		vi.mocked(getServiceDb).mockReturnValue(fakeDb() as never);
 	});
@@ -251,7 +262,9 @@ describe("GET /api/cli/clusters — a joined scope restated on one column (#3672
 	it("authorizes as a CLI project VIEW", async () => {
 		await drive("");
 		expect(vi.mocked(authorizeCli).mock.calls[0][1]).toBe("view");
-		expect(vi.mocked(authorizeCli).mock.calls[0][2]).toEqual({ type: "project" });
+		expect(vi.mocked(authorizeCli).mock.calls[0][2]).toEqual({
+			type: "project",
+		});
 	});
 
 	it("renders the scope as a semijoin on project_cluster.project_id and NOTHING else", async () => {
@@ -421,9 +434,13 @@ describe("GET /api/cli/clusters — a joined scope restated on one column (#3672
 			{ orgId: OTHER_ORG, list: "clusters" },
 			{ createdAt: CURSOR_KEY, id: CLUSTER_ID },
 		);
-		const { status, body } = await drive(`?cursor=${encodeURIComponent(foreign)}`);
+		const { status, body } = await drive(
+			`?cursor=${encodeURIComponent(foreign)}`,
+		);
 		expect(status).toBe(400);
-		expect(errorSchema.parse(body).error).toMatch(/different list or organization/);
+		expect(errorSchema.parse(body).error).toMatch(
+			/different list or organization/,
+		);
 		// It never reached the database.
 		expect(captured.rowsWhere).toBeUndefined();
 	});

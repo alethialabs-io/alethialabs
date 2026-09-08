@@ -284,6 +284,10 @@ type ProjectCacheConfig struct {
 	// this field json.Unmarshal dropped the value on every cloud and the cache
 	// was provisioned with the template's default access rules only (#1981).
 	AllowedCidrBlocks []string `json:"allowed_cidr_blocks"`
+	// ProviderConfig carries per-cloud cache knobs the typed fields above do not model
+	// (redis_*/valkey_*, memorystore_*, azure_cache_*, kvstore_*), merged into tfvars by
+	// name by each provider's passthrough. Same contract as the database's.
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 type ProjectQueueConfig struct {
@@ -299,6 +303,9 @@ type ProjectTopicConfig struct {
 	Placement
 	Name          string              `json:"name"`
 	Subscriptions []TopicSubscription `json:"subscriptions"`
+	// ProviderConfig carries per-cloud topic knobs (SNS / Pub/Sub / Service Bus / MNS)
+	// the typed fields do not model, merged into the topic's tfvars item by name.
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 type TopicSubscription struct {
@@ -321,6 +328,11 @@ type ProjectNosqlConfig struct {
 	// dropped the value and a global table got the template's default replica
 	// set, not the regions the user chose (#1982).
 	GlobalReplicas []string `json:"global_replicas"`
+	// ProviderConfig carries per-cloud table knobs (DynamoDB / Firestore / Cosmos / OTS).
+	// The column has existed on project_nosql_tables since the connectors phase; without
+	// this field json.Unmarshal dropped it, so a value the console stored never reached
+	// the runner.
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 type ProjectSecretConfig struct {

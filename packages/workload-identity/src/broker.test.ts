@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import {
   brokerAssertionRequestSchema,
   brokerAssertionResponseSchema,
+  providerAudience,
+  workloadProviderSchema,
 } from "./broker";
 
 const run = {
@@ -16,6 +18,13 @@ const run = {
 };
 
 describe("broker assertion protocol", () => {
+  it("names exactly one audience for every provider the schema admits", () => {
+    for (const provider of workloadProviderSchema.options) {
+      expect(providerAudience(provider)).toMatch(/\S/);
+    }
+    expect(providerAudience("aws")).toBe("sts.amazonaws.com");
+  });
+
   it("defaults the fixed subject and bounded lifetime", () => {
     const parsed = brokerAssertionRequestSchema.parse({
       provider: "aws",

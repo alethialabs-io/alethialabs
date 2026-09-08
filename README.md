@@ -27,8 +27,8 @@ An open-source, multi-cloud internal developer platform for provisioning and man
 | Layer | Technology |
 | --- | --- |
 | Web Control Plane | Next.js 16, React 19, TypeScript 5.9, Postgres + Drizzle, Better Auth, Tailwind CSS 4, shadcn/ui |
-| CLI | Go 1.25, Cobra, Charmbracelet TUI (bubbletea, huh, lipgloss) |
-| Runner | Go 1.25, OpenTofu exec, multi-cloud SDKs (AWS, GCP, Azure, Alibaba) |
+| CLI | Go 1.27, Cobra, Charmbracelet TUI (bubbletea, huh, lipgloss) |
+| Runner | Go 1.27, OpenTofu exec, multi-cloud SDKs (AWS, GCP, Azure, Alibaba) |
 | Documentation | Next.js 16, Fumadocs, MDX |
 | Infrastructure | OpenTofu (per-cloud project templates), Hetzner control plane + runner fleet, ArgoCD |
 | Monorepo | pnpm workspaces, Turborepo, Go workspaces |
@@ -72,7 +72,7 @@ deploy/              — Self-host bundle: compose overlays, Caddy, Helm chart, 
 
 - Node.js 22+ (see `.nvmrc`)
 - pnpm 9+
-- Go 1.25+
+- Go 1.27+
 - Docker + Compose v2 (for the self-host bundle: Postgres + S3-compatible storage)
 - An SSH key and a Hetzner Cloud token, if you want a dev environment (see below)
 

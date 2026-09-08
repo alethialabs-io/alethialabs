@@ -21,6 +21,29 @@ export const workloadProviderSchema = z.enum([
 ]);
 export type WorkloadProvider = z.infer<typeof workloadProviderSchema>;
 
+/**
+ * The audience each managed cloud's federation trust pins for an Alethia workload assertion.
+ *
+ * ONE copy, on purpose. The console's session modules forward these as `request.audience`, the
+ * connector setup (`infra/connector/<cloud>/main.tf`, `gcp-setup.sh`) pins the same strings on the
+ * customer side, and the E2E assertion broker refuses any other audience for a provider. A second
+ * hand-typed copy in the broker's environment (`PROVIDER_AUDIENCES_JSON`, #4236) meant a change
+ * here failed the nightly with `audience_not_allowed` and no repo diff to explain it.
+ */
+export const WORKLOAD_PROVIDER_AUDIENCES: Readonly<
+  Record<WorkloadProvider, string>
+> = {
+  aws: "sts.amazonaws.com",
+  gcp: "alethia-gcp-wif",
+  azure: "api://AzureADTokenExchange",
+  alibaba: "sts.aliyuncs.com",
+};
+
+/** Returns the one audience a broker assertion for `provider` may carry. */
+export function providerAudience(provider: WorkloadProvider): string {
+  return WORKLOAD_PROVIDER_AUDIENCES[provider];
+}
+
 /** GitHub Actions identity fields the broker cross-checks against the bearer token claims. */
 export const brokerRunSchema = z
   .object({

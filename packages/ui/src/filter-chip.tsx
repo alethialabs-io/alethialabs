@@ -15,11 +15,26 @@ interface FilterChipProps {
 	children: React.ReactNode;
 	/** Render the label in the mono voice (versions, regions, other technical values). */
 	mono?: boolean;
+	/**
+	 * A facet count, rendered as the chip's trailing mono figure. It lives here, not at the
+	 * call site, because every filter bar that re-derived it did so as `opacity-60` over the
+	 * chip's ink — and an alpha over `--muted-foreground` composites to a grey no token can
+	 * rescue (#4197: at α=0.6 over the page background the darkest reachable ink is 2.9:1).
+	 * The count is a real tier, `--text-tertiary`, at full strength.
+	 */
+	count?: number;
 	className?: string;
 }
 
 /** A single toggleable filter chip; filled when selected, `aria-pressed` for state. */
-export function FilterChip({ on, onClick, children, mono, className }: FilterChipProps) {
+export function FilterChip({
+	on,
+	onClick,
+	children,
+	mono,
+	count,
+	className,
+}: FilterChipProps) {
 	return (
 		<button
 			type="button"
@@ -28,6 +43,8 @@ export function FilterChip({ on, onClick, children, mono, className }: FilterChi
 			className={cn(
 				"inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 transition-colors",
 				mono ? "font-mono text-[11px]" : "text-xs",
+				// `group` so the count can follow the label on hover — see the count span below.
+				"group",
 				on
 					? "border-foreground bg-foreground text-background"
 					: "text-muted-foreground hover:border-foreground/40 hover:text-foreground",
@@ -35,6 +52,30 @@ export function FilterChip({ on, onClick, children, mono, className }: FilterChi
 			)}
 		>
 			{children}
+			{count !== undefined && (
+				// A filled chip is inverted ink end to end, so the count inherits `text-background`
+				// there; only the resting chip has a tertiary tier to step down to. That asymmetry is
+				// a TOKEN GAP, recorded in #4309: `tokens.css` has `--text-on-ink` but does not
+				// expose it as a `--color-*` utility, so there is no on-ink tertiary rung — the old
+				// `opacity-60` supplied the hierarchy and was the banned composite. The space is
+				// for the accessible name ("Healthy 3", not "Healthy3") — a whitespace-only run
+				// between flex items is not laid out, so `gap-1.5` alone sets the visual gap.
+				<>
+					{" "}
+					<span
+						className={cn(
+							"font-mono text-ui-2xs",
+							// The two halves of one control brighten together: without the
+							// group-hover rung the label snapped to `--foreground` while the count
+							// stayed tertiary, which the call-site span (no colour class, so it
+							// inherited the parent's) never did.
+							!on && "text-text-tertiary group-hover:text-foreground",
+						)}
+					>
+						{count}
+					</span>
+				</>
+			)}
 		</button>
 	);
 }
@@ -43,6 +84,8 @@ export function FilterChip({ on, onClick, children, mono, className }: FilterChi
 export interface FilterChipOption {
 	value: string;
 	label: string;
+	/** A facet count over the unfiltered universe; rendered by the chip when present. */
+	count?: number;
 }
 
 interface FilterChipGroupProps<T extends FilterChipOption> {
@@ -51,7 +94,13 @@ interface FilterChipGroupProps<T extends FilterChipOption> {
 	options: T[];
 	selected: string[];
 	onToggle: (value: string) => void;
-	/** Custom chip content (e.g. a ProviderIcon next to the label). */
+	/**
+	 * Custom chip content (e.g. a ProviderIcon next to the label).
+	 *
+	 * A `render` callback OWNS the whole chip, so the group stops passing `count` when one is
+	 * given: the four call sites this replaced each printed `opt.count` inside their own `render`,
+	 * and forwarding both would render `Healthy 3 3` — and that becomes the accessible name.
+	 */
 	render?: (opt: T, on: boolean) => React.ReactNode;
 	mono?: boolean;
 	/** Lay the chips out as a single bar row (no popover padding). */
@@ -87,7 +136,13 @@ export function FilterChipGroup<T extends FilterChipOption>({
 				{options.map((opt) => {
 					const on = selected.includes(opt.value);
 					return (
-						<FilterChip key={opt.value} on={on} onClick={() => onToggle(opt.value)} mono={mono}>
+						<FilterChip
+							key={opt.value}
+							on={on}
+							onClick={() => onToggle(opt.value)}
+							mono={mono}
+							count={render ? undefined : opt.count}
+						>
 							{render ? render(opt, on) : opt.label}
 						</FilterChip>
 					);

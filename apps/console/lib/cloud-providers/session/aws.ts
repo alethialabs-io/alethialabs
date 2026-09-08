@@ -8,6 +8,7 @@
 // (the role ARN is metadata). The resulting short-lived session backs the health probe + the asset
 // inventory sync, so a connection test needs no runner. Every managed cloud now federates the same way.
 
+import { providerAudience } from "@repo/workload-identity";
 import { STSClient, AssumeRoleWithWebIdentityCommand } from "@aws-sdk/client-sts";
 import {
 	assertionSourceForProvider,
@@ -38,7 +39,7 @@ export const DEFAULT_AWS_REGION = "us-east-1";
  * assertion to AWS (mirrors GCP_TOKEN_AUDIENCE / AZURE_TOKEN_AUDIENCE / ALIBABA_TOKEN_AUDIENCE). MUST match
  * the `IssuerAudience` in the connector setup (alethia-bootstrap.yaml / aws.tf) or the exchange is rejected.
  */
-export const AWS_TOKEN_AUDIENCE = "sts.amazonaws.com";
+export const AWS_TOKEN_AUDIENCE = providerAudience("aws");
 
 /** Whether this instance can federate to AWS at all (the workload-identity issuer is configured). */
 export function awsConfigured(): boolean {
