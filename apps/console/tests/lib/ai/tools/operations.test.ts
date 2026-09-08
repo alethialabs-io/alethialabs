@@ -13,6 +13,19 @@ import { operationTools } from "@/lib/ai/tools/operations";
 const ENV_ID = "3f7c1a2e-8b4d-4c6e-9a1b-2d3e4f5a6b7c";
 
 describe("operationSchema", () => {
+	// The field is model-supplied and reaches a uuid column comparison. A model handed environment
+	// NAMES in the prompt will sometimes propose the name, and Postgres then fails the query rather
+	// than the tool call — an opaque error on a proposal the user has already approved.
+	it("refuses an environment NAME where an id belongs", () => {
+		expect(() =>
+			operationSchema.parse({
+				operation: "plan_project",
+				projectId: "p1",
+				environmentId: "prod-eu-west",
+			}),
+		).toThrow();
+	});
+
 	it("accepts environmentId on both variants", () => {
 		expect(
 			operationSchema.parse({ operation: "plan_project", projectId: "p1", environmentId: ENV_ID }),

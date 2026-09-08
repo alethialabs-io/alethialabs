@@ -74,9 +74,13 @@ function scopeParagraph(scope: PromptScope): string[] {
 			"  targets the project's DEFAULT environment, which may not be the one the user is looking at.",
 		);
 	} else {
+		// NOT "the default environment will be used". The resolver already falls back to the default
+		// and even repairs a foreign id, so reaching this branch means the project has no environment
+		// at all — promising a default here describes one that does not exist, and the model would go
+		// on to propose a deploy that cannot run and report it as queued.
 		lines.push(
-			"- No environment could be resolved for this conversation, so any operation you propose runs",
-			"  against the project's DEFAULT environment — say so plainly when you propose one.",
+			"- This project has NO environment yet, so there is nothing to plan or deploy against.",
+			"  Do not propose an operation: say that an environment has to be created first.",
 		);
 	}
 	if (scope.view) {

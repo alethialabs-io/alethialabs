@@ -179,7 +179,11 @@ describe("POST /api/projects/[projectId]/assistant — environment scope", () =>
 		expect(systemPrompt()).toContain("The user is on the other surface (/acme/checkout/billing).");
 	});
 
-	it("says so in the prompt when no environment resolves, and scopes nothing", async () => {
+	// The resolver already falls back to the project's default and repairs a foreign id, so getting
+	// here means there is NO environment. Telling the model a default will be used describes one
+	// that does not exist, and it would go on to propose a deploy that cannot run and report it as
+	// queued — the wrong-environment failure again, in its most confident form.
+	it("says there is no environment at all, and does not promise a default", async () => {
 		vi.mocked(resolveActiveEnvironmentId).mockRejectedValue(
 			new Error("Project has no default environment"),
 		);
@@ -187,7 +191,9 @@ describe("POST /api/projects/[projectId]/assistant — environment scope", () =>
 		expect(buildEnvironmentKnowledge).not.toHaveBeenCalled();
 		expect(buildProjectAgentTools).toHaveBeenCalledWith(undefined, { environmentId: null });
 		const system = systemPrompt();
-		expect(system).toContain("No environment could be resolved for this conversation");
+		expect(system).toContain("This project has NO environment yet");
+		expect(system).toContain("an environment has to be created first");
+		expect(system).not.toMatch(/runs against the project's DEFAULT environment/);
 		expect(system).not.toContain("## Environment knowledge");
 	});
 

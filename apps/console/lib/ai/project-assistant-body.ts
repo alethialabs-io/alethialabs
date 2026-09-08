@@ -41,8 +41,15 @@ export const projectAssistantBodySchema = z.object({
 	messages: z.array(z.custom<UIMessage>()),
 	/** Live canvas snapshot when the canvas is active (undefined elsewhere). */
 	canvas: z.custom<CanvasContext>().optional(),
-	/** When set, the transcript is persisted to this (project-scoped) thread on finish. */
-	threadId: z.string().optional(),
+	/**
+	 * When set, the transcript is persisted to this (project-scoped) thread on finish.
+	 *
+	 * `nullish`, not `optional`. The Elench store types `threadId` as `string | null` and the client
+	 * sends it straight through, so a fresh project conversation — every first turn — puts an
+	 * explicit `null` on the wire. `.optional()` accepts only `undefined`, so it rejected exactly
+	 * the shape the live client always sends, and the turn died at the door.
+	 */
+	threadId: z.string().nullish(),
 	/** Resources the user @-referenced in the latest message. A malformed list is dropped rather
 	 * than rejected — the route degraded it that way before this schema existed, and losing the
 	 * @-mentions is a smaller failure than losing the turn. */
