@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	assistantViewSchema,
+	parseProjectAssistantBody,
 	projectAssistantBodySchema,
 } from "@/lib/ai/project-assistant-body";
 
@@ -58,6 +59,54 @@ describe("projectAssistantBodySchema", () => {
 
 	it("still refuses a body with no messages", () => {
 		expect(() => projectAssistantBodySchema.parse({ threadId: "t1" })).toThrow();
+	});
+});
+
+describe("parseProjectAssistantBody", () => {
+	// The route replaced an untyped destructure with this. A bare `.parse()` would have been
+	// strictly stricter — a shape the route used to accept would throw out of the handler and 500
+	// the turn, AFTER the AI budget hold was reserved. Both arms of that decision are pinned here,
+	// because only one of them is on the happy path.
+	it("returns the parsed body when it is well formed", () => {
+		const result = parseProjectAssistantBody({
+			messages: [],
+			environmentId: ENV,
+			view: { path: "/a/b/architecture", surface: "architecture" },
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.value.environmentId).toBe(ENV);
+		expect(result.value.view?.surface).toBe("architecture");
+	});
+
+	it("degrades the same inputs the route degraded before it existed", () => {
+		const result = parseProjectAssistantBody({
+			messages: [],
+			environmentId: "nonsense",
+			deepReasoning: "yes",
+			mentions: [{ shape: "wrong" }],
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.value.environmentId).toBeNull();
+		expect(result.value.deepReasoning).toBe(false);
+		expect(result.value.mentions).toBeUndefined();
+	});
+
+	it("reports the offending path rather than throwing, so the route can answer 400", () => {
+		const result = parseProjectAssistantBody({ threadId: "t1" });
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.message).toContain("messages");
+	});
+
+	it("a body that is not an object at all is a message, not a crash", () => {
+		for (const body of [null, undefined, "nope", 7, []]) {
+			const result = parseProjectAssistantBody(body);
+			expect(result.ok).toBe(false);
+			if (result.ok) continue;
+			expect(result.message.length).toBeGreaterThan(0);
+		}
 	});
 });
 
