@@ -23,6 +23,13 @@ tofu plan && tofu apply
 
 ## Inbound email — Cloudflare Email Routing (free)
 
+> **Terraform does not manage this today, deliberately (#3291).** `var.manage_email_routing`
+> defaults to `false`, nothing supplies it, and none of the 11 resources below is in this stack's
+> state — the live routing was bootstrapped out-of-band. Everything in this section describes what
+> the code *would* manage once adopted (#4374). Read `manage_email_routing`'s description in
+> `variables.tf` before importing anything: importing into state without setting the input in the
+> same change makes the next unattended `main` apply plan a **destroy** of live inbound mail.
+
 `email-routing.tf` receives at the apex addresses the product prints (`support@`,
 `sales@`, `legal@`, `security@`, `feedback@`, `dmarc@`, `borislav@`) and **forwards them
 to `var.email_forward_to`**. It coexists with the SES *send* stack (`infra/email-ses`):
