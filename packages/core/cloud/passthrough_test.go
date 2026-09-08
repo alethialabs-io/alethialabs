@@ -1150,18 +1150,28 @@ func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
 			}
 			text := string(src)
 
-			// Neither bound can lex the text it scans, so the two shapes that could defeat both at
-			// once are refused rather than handled: a raw string may contain a `//` and a line
-			// starting with `}`, and a block comment hides from a line-comment stripper. Neither
-			// appears in any provider today; if one does, this fails loudly rather than reading a
-			// span it has no way to trust.
-			if strings.Contains(text, "`") && strings.Contains(text, "/*") {
-				t.Fatalf("%s: contains both a raw string and a block comment — the span bounds "+
-					"below cannot be trusted against either", tc.file)
-			}
-			// The bounds run on a copy with comments blanked out; offsets are preserved, so the key
-			// extraction still reads the real source.
+			// The bounds run on a copy with `//` comments blanked to spaces; offsets are preserved,
+			// so the key extraction below still reads the real source.
 			scan := blankLineComments(text)
+
+			// Neither bound can lex what it scans, so the two shapes that could defeat both at once
+			// are REFUSED rather than handled: a raw string may contain a `//` and a line starting
+			// with `}`, which fools the stripper and both bounds together, and a block comment is
+			// invisible to a line-comment stripper entirely.
+			//
+			// The test runs on `scan`, not on `text`, and that is the whole point of it. Every one of
+			// these five files contains backticks — inside comments, where Go doc style puts symbol
+			// names — so asking `text` would fire on every file and asking it with an `&&` (which is
+			// what this was) would fire on none. Blanking first makes the question the right one: a
+			// backtick that SURVIVES comment-blanking is in code, and is a raw string.
+			if i := strings.IndexAny(scan, "`"); i >= 0 {
+				t.Fatalf("%s: a raw string literal at offset %d — it can contain both a `//` and a "+
+					"line starting with `}`, so neither span bound can be trusted past it", tc.file, i)
+			}
+			if i := strings.Index(scan, "/*"); i >= 0 {
+				t.Fatalf("%s: a block comment at offset %d — a line-comment stripper cannot see it, "+
+					"so the span bounds below are reading text they cannot lex", tc.file, i)
+			}
 
 			found := map[string]bool{}
 			for _, m := range assignRe.FindAllStringSubmatch(text, -1) {
