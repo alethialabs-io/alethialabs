@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/mattn/go-isatty"
 )
 
@@ -168,5 +169,169 @@ func TestMisc_TerminalDetectionDelegatesToIsatty(t *testing.T) {
 	}
 	if got, want := stdoutIsTTY(), isatty.IsTerminal(os.Stdout.Fd()); got != want {
 		t.Errorf("stdoutIsTTY() = %v, want %v", got, want)
+	}
+}
+
+// TestMisc_OpenProjectAndOrg pins what `alethia open` sends the browser to now that it builds
+// over the console's route tree rather than at its origin: the active ORG's page, a PROJECT's
+// page under it, and the refusal that keeps `--project` from meaning anything for the docs.
+func TestMisc_OpenProjectAndOrg(t *testing.T) {
+	// `--project` is a COMMAND-local flag bound to the package variable openProject, and
+	// execRootArgs resets only the ROOT's persistent flags — deliberately, per its own comment.
+	// Without this the test ends with openProject == "shop" and poisons every later `open`/`docs`
+	// invocation in the package: TestMisc_OpenTargets runs under miscEnv alone, does not trap
+	// exitFunc, and would take the `--project does not apply to the docs` arm straight into the
+	// real os.Exit(1), killing the binary mid-run instead of failing a test. Invisible in file
+	// order, found by `-shuffle` — the class hyg_cli_harness_test.go exists for.
+	resetFlagsAroundTest(t)
+
+	var opened []string
+	prev := openBrowser
+	openBrowser = func(url string) error { opened = append(opened, url); return nil }
+	t.Cleanup(func() { openBrowser = prev })
+
+	run := miscEnv(t, miscFull)
+	if err := run("open", "--output", "table", "--no-input"); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if len(opened) != 1 || !strings.HasSuffix(opened[0], "/acme") {
+		t.Fatalf("bare open should reach the active org's page, got %v", opened)
+	}
+	if err := run("open", "--project", "My Shop", "--output", "table", "--no-input"); err != nil {
+		t.Fatalf("open --project: %v", err)
+	}
+	if len(opened) != 2 || !strings.HasSuffix(opened[1], "/acme/my-shop") {
+		t.Errorf("open --project should reach the project's page, got %v", opened)
+	}
+	// The docs are not under an org, so --project has nothing to name there. Refused rather than
+	// ignored: a flag that is silently dropped is a flag somebody will believe worked.
+	trap := miscTrapExit(t, run)
+	if !trap("open", "docs", "--project", "shop", "--output", "table", "--no-input") {
+		t.Error("--project with the docs target must be fatal")
+	}
+}
+
+// TestMisc_OpenFallsBackToTheOriginWhenThereIsNoOrg pins the arm that must NOT fail: a machine
+// with no credential, or an account with no organization, still has somewhere to send a person.
+// The org page is an improvement on the origin, not a precondition for opening a browser.
+func TestMisc_OpenFallsBackToTheOriginWhenThereIsNoOrg(t *testing.T) {
+	var opened []string
+	prev := openBrowser
+	openBrowser = func(url string) error { opened = append(opened, url); return nil }
+	t.Cleanup(func() { openBrowser = prev })
+
+	run := miscEnv(t, miscEmpty)
+	isolatedHome(t) // no credentials: getAuthToken fails and the origin is the answer
+	t.Setenv(ServiceTokenEnv, "")
+	if err := run("open", "--output", "table", "--no-input"); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if len(opened) != 1 || opened[0] != WebOrigin() {
+		t.Errorf("a logged-out open should reach the origin, got %v", opened)
+	}
+}
+
+// TestMisc_OpenProjectWithoutACredentialRefuses pins the one exception to `open`'s origin
+// fallback.
+//
+// A bare `alethia open` on a machine with no credential still has somewhere sensible to go — the
+// origin — and falling back there is deliberate. `--project` is different: it names something only
+// the API can resolve, so dropping it answers a request for one project with a page about none,
+// and the only difference from success is a URL nobody reads. That is the rule the `docs` arm
+// already states in the same words; this is it applied consistently.
+func TestMisc_OpenProjectWithoutACredentialRefuses(t *testing.T) {
+	resetFlagsAroundTest(t)
+	isolatedHome(t)
+	t.Setenv("ALETHIA_WEB_ORIGIN", "https://alethialabs.io")
+	t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
+
+	var opened []string
+	prev := openBrowser
+	openBrowser = func(url string) error { opened = append(opened, url); return nil }
+	t.Cleanup(func() { openBrowser = prev })
+
+	run := func(args ...string) error {
+		execRootArgs(args)
+		return rootCmd.Execute()
+	}
+	trap := miscTrapExit(t, run)
+	if !trap("open", "--project", "shop", "--output", "table", "--no-input") {
+		t.Error("--project with no credential must refuse rather than opening the console home page")
+	}
+	if len(opened) != 0 {
+		t.Errorf("a refusal still opened a browser at %v", opened)
+	}
+
+	// The control: without --project the origin fallback is right and must stay.
+	//
+	// resetAllFlags because --project is COMMAND-local: execRootArgs clears only the root's
+	// persistent flags, so without this the control would still be carrying "shop" from the case
+	// above and would exercise the same arm. That is the leak this file's other open test now
+	// guards against, met here from the inside.
+	resetAllFlags()
+	if err := run("open", "--output", "table", "--no-input"); err != nil {
+		t.Fatalf("bare open with no credential should fall back to the origin: %v", err)
+	}
+	if len(opened) != 1 || opened[0] != "https://alethialabs.io" {
+		t.Errorf("bare open should have reached the origin, got %v", opened)
+	}
+}
+
+// TestMisc_OpenRefusesAProjectItCannotLinkTo drives the three arms `open` takes once it HAS a
+// credential — the ones the logged-out fallback test above can never reach, because it never gets
+// past `getAuthToken`.
+//
+// The rule they implement together: a bare `open` always has somewhere to go, and `--project` never
+// silently becomes somewhere else. The org page is an improvement on the origin rather than a
+// precondition, so losing it degrades; a project that cannot be resolved has no degraded form, so
+// it refuses.
+func TestMisc_OpenRefusesAProjectItCannotLinkTo(t *testing.T) {
+	// `openProject` is a package-level flag target and leaks into every later `open` in the
+	// package if it is not reset — the hazard this file already records against the docs arm.
+	resetFlagsAroundTest(t)
+
+	var opened []string
+	prev := openBrowser
+	openBrowser = func(url string) error { opened = append(opened, url); return nil }
+	t.Cleanup(func() { openBrowser = prev })
+
+	// An organization the account is not in: a credential resolves, whoami reports no active org,
+	// so the org slug every console link is built from cannot be found.
+	orgless := miscEnv(t, miscEmpty)
+	// miscEnv persists an active org, and `resolveOrgSlug` prefers the config over whoami — by
+	// design, so the common path costs no request. Clearing it is what makes the org genuinely
+	// unresolvable; the credential written beside it stays, which is the whole point of these
+	// three arms.
+	if err := types.SaveCliConfig(types.CliConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	trapOrgless := miscTrapExit(t, orgless)
+
+	// A bare open DEGRADES. This is the arm the logged-out test cannot reach: there the origin is
+	// chosen before any client exists, here it is chosen after `orgLink` has failed.
+	if err := orgless("open", "--output", "table", "--no-input"); err != nil {
+		t.Fatalf("a bare open must never be fatal, even with no org: %v", err)
+	}
+	if len(opened) != 1 || opened[0] != WebOrigin() {
+		t.Fatalf("a bare open with no org should reach the origin, got %v", opened)
+	}
+
+	// `--project` does NOT degrade. The name resolves fine; it is the org slug that does not, and
+	// a project page cannot be addressed without one.
+	if !trapOrgless("open", "--project", "My Shop", "--output", "table", "--no-input") {
+		t.Error("--project must be fatal when the org the link needs cannot be resolved")
+	}
+	if len(opened) != 1 {
+		t.Errorf("a refused --project must open no browser at all, got %v", opened)
+	}
+
+	// And the other half of the same rule, against a populated org: an id that resolves to no
+	// project is refused rather than opening the org's index.
+	trapFull := miscTrapExit(t, miscEnv(t, miscFull))
+	if !trapFull("open", "--project", "11111111-1111-1111-1111-111111111111", "--output", "table", "--no-input") {
+		t.Error("an unresolvable --project id must be fatal")
+	}
+	if len(opened) != 1 {
+		t.Errorf("a refused --project must open no browser at all, got %v", opened)
 	}
 }
