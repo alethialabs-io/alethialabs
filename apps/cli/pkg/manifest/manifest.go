@@ -388,6 +388,17 @@ func Find(dir string) (string, bool) {
 	return path, true
 }
 
+// Exists reports whether path is a manifest FILE that is already there.
+//
+// Separate from Find because the two answer different questions and confusing them is silent:
+// Find takes a DIRECTORY and looks for the conventional name inside it, so handing it
+// "alethia.yaml" asks about "alethia.yaml/alethia.yaml" — which never exists, so a command would
+// cheerfully overwrite the file it meant to leave alone.
+func Exists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
 // Render writes the manifest as YAML, in the field order a person would write it.
 func Render(m *Manifest) ([]byte, error) {
 	var buf bytes.Buffer

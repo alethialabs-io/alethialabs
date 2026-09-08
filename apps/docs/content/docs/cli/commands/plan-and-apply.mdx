@@ -117,6 +117,47 @@ for the server to place.
 
 `--output json` prints the plan and the result as typed objects instead of the lines above.
 
+## `alethia up`
+
+The whole first run in one command: sign in, attach nothing (see below), write the manifest, apply
+it. Every step is skipped when it is already done, so it resumes wherever the last run stopped.
+
+```bash
+alethia up                                  # asks for what it needs
+alethia up --project boutique --region nbg1 --cloud-account prod-account --yes --no-input
+```
+
+| Step | Skipped when |
+| --- | --- |
+| the control-plane URL and the login | this machine has a live credential |
+| a cloud account | one is connected — **otherwise `up` stops**, see below |
+| `alethia.yaml` | this directory has one |
+| the apply | never; that is the point |
+
+With the manifest already present and an account connected, `alethia up` **is** `alethia apply`.
+
+<Callout type="info">
+  `up` cannot attach a cloud account for you. Each cloud has its own keyless flow with its own
+  arguments — `alethia connector aws|gcp|azure|alibaba|hetzner` — so `up` stops and names them
+  rather than growing a sixth version that would drift from the five.
+</Callout>
+
+{/* fieldspec: alethia up */}
+
+| Field         | What it is                                                                                    | Set without the form |
+| ------------- | --------------------------------------------------------------------------------------------- | -------------------- |
+| Manifest      | The alethia.yaml to apply, written when it does not exist yet                                 | `--file`             |
+| Project name  | Name for a project this authors (asked for on a terminal when the file is missing)            | `--project`          |
+| Region        | Cloud region for a project this authors                                                       | `--region`           |
+| Cloud account | Cloud account to link, by its LABEL or its id                                                 | `--cloud-account`    |
+| Stage         | Stage for the environment this authors                                                        | `--stage`            |
+| Runner        | Runner to deploy with, by NAME or id. Omitted: the only online runner, or asked on a terminal | `--runner`           |
+| Confirm       | Apply without asking (required with --no-input)                                               | `--yes`              |
+| Wait          | Queue the deploys and return instead of waiting for them                                      | `--no-wait`          |
+
+Scripted, `up` writes a single environment at `--stage`; on a terminal it asks for the whole matrix.
+[`alethia project env add`](/cli/commands/project) is how a second environment arrives later.
+
 ## `alethia plan`
 
 The same comparison, with the writes left out: what `apply` would create, what already matches,
@@ -207,6 +248,9 @@ See [TUI Components](/cli/tui) for details on the interactive selectors.
 ## Scripting Examples
 
 ```bash
+# From nothing to a running project, unattended
+alethia up --project boutique --region nbg1 --cloud-account prod-account --yes --no-input
+
 # The whole project from its file, unattended
 alethia apply --yes --no-input
 
