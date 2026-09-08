@@ -1134,6 +1134,50 @@ func rootTfvarKeys(t *testing.T, path string) map[string]bool {
 			"looking for the wrong name rather than a file with no keys", path)
 	}
 
+	// Scoping to one body is a FLOOR, and a floor cannot tell "found all the writes" from "found
+	// most of them": extract half of `ProviderTfvars` into a helper and the scope check is still
+	// satisfied while the extracted keys go unseen. `ProviderTfvars` is 70 literal keys on aws,
+	// which is the size at which somebody extracts one. Measured in review: a helper taking a
+	// `tfvars` parameter and writing an unreserved root key passed the scoped walk and failed the
+	// file-wide one it replaced.
+	//
+	// So the rest of the file is reconciled rather than ignored. `mergeProviderConfig` also takes a
+	// parameter named `tfvars` and is harmless BECAUSE it indexes with the loop variable rather
+	// than a string literal — this tests that reason instead of relying on it, and starts at zero
+	// false positives: every literal-key root write in all five providers lives in ProviderTfvars.
+	//
+	// One case stays out of scope BY CONSTRUCTION and is named here rather than implied: this
+	// reader follows one name (`tfvars`) and one body, so a helper that takes the root map under
+	// any other parameter name can write an unreserved key with the suite green.
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil || fn.Name.Name == "ProviderTfvars" {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			assign, ok := n.(*ast.AssignStmt)
+			if !ok {
+				return true
+			}
+			for _, lhs := range assign.Lhs {
+				idx, ok := lhs.(*ast.IndexExpr)
+				if !ok {
+					continue
+				}
+				id, ok := idx.X.(*ast.Ident)
+				if !ok || id.Name != "tfvars" {
+					continue
+				}
+				if b, ok := idx.Index.(*ast.BasicLit); ok && b.Kind == token.STRING {
+					t.Errorf("%s: %s writes root tfvars key %s outside ProviderTfvars — the key "+
+						"walk does not enter it, so that key reaches a plan unreserved",
+						path, fn.Name.Name, b.Value)
+				}
+			}
+			return true
+		})
+	}
+
 	keys := map[string]bool{}
 	add := func(lit ast.Expr) {
 		if b, ok := lit.(*ast.BasicLit); ok && b.Kind == token.STRING {
