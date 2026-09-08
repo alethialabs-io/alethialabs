@@ -3,11 +3,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { draftScope, NEW_DRAFT_SCOPE } from "@/lib/canvas/design-revision";
+import { switchDraftScope, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import {
 	projectFormSchema,
 	type ProjectFormData,
@@ -15,11 +16,11 @@ import {
 } from "@/lib/validations/project-form.schema";
 import { DesignProjectCanvas } from "./canvas/design-project-canvas";
 import { formToGraph } from "./canvas/graph/form-to-graph";
-import { configName } from "./canvas/graph/node-config";
 import { ConnectorsProvider } from "./connectors-context";
 import { RepositoryProvider } from "./repository-context";
 import {
 	buildDefaultFormValues,
+	sourceRevision,
 	type SourceProjectData,
 } from "./source-project";
 
@@ -67,21 +68,55 @@ export function DesignProjectWorkbench({
 		mode: "onChange",
 	});
 
-	// Seed the canvas store. Identities are always refreshed; the graph is seeded only
-	// when loading a source project or when the store is pristine — otherwise a persisted
-	// sessionStorage draft is preserved across reloads/navigation.
+	// Identities are server data the store only looks up (labels, providers); refresh them
+	// whenever the server sends a new list. Never a reason to touch the graph.
 	useEffect(() => {
-		const store = useCanvasStore.getState();
-		store.setIdentities(cloudIdentities);
-		const project = store.nodes.find((n) => n.id === PROJECT_NODE_ID);
-		const pristine =
-			store.nodes.length <= 1 && !(project && configName(project.data));
-		if (sourceProject || pristine) {
-			store.setGraph(
-				formToGraph(buildDefaultFormValues(sourceProject), cloudIdentities),
+		useCanvasStore.getState().setIdentities(cloudIdentities);
+	}, [cloudIdentities]);
+
+	// The seed effect is keyed on WHAT the server design is (project, environment, content hash),
+	// never on the identity of the prop carrying it: a server component re-renders on every
+	// revalidate and sibling mutation, and each render hands us a new object of the same design.
+	// Before this, that re-ran `setGraph`, which closed the open card and discarded every unsaved
+	// edit. The create flow has no project, so it seeds under the fixed "new" scope + revision and
+	// its draft survives a reload exactly as it did before.
+	const revision = sourceProject ? sourceRevision(sourceProject) : NEW_DRAFT_SCOPE;
+	// The design to seed from, read at seed time rather than listed as a dependency — its identity
+	// changes on every render, its content is what `revision` already keys on.
+	const sourceRef = useRef(sourceProject);
+	useEffect(() => {
+		sourceRef.current = sourceProject;
+	}, [sourceProject]);
+	// The scope persistence is pointed at, with the switch that pointed it there. `switchDraftScope`
+	// moves the pointer synchronously and rehydrates asynchronously, so a later run for the SAME
+	// scope awaits the same switch instead of starting another, and a revision change within one
+	// scope re-seeds without rehydrating at all.
+	const switchRef = useRef<{ scope: string; done: Promise<boolean> } | null>(null);
+	useEffect(() => {
+		// An environment switch while the previous switch is still in flight: whichever run
+		// resolves later must not seed the store for a scope the user has already left.
+		let cancelled = false;
+		const scope = draftScope(projectId, environmentId);
+		/** Point persistence at this scope's slot (if not already), then seed under the revision. */
+		const seed = async () => {
+			let pending = switchRef.current;
+			if (!pending || pending.scope !== scope) {
+				pending = { scope, done: switchDraftScope(scope) };
+				switchRef.current = pending;
+			}
+			await pending.done;
+			if (cancelled) return;
+			const store = useCanvasStore.getState();
+			store.reseed(
+				formToGraph(buildDefaultFormValues(sourceRef.current), store.identities),
+				{ scope, revision },
 			);
-		}
-	}, [cloudIdentities, sourceProject]);
+		};
+		void seed();
+		return () => {
+			cancelled = true;
+		};
+	}, [projectId, environmentId, revision]);
 
 	return (
 		<ConnectorsProvider connectors={connectors}>
