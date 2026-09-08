@@ -377,6 +377,39 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 // that lets the UI drive any template variable by name without a dedicated Go field
 // per knob. `reserved` lists provider_config keys the typed code already consumed
 // under a different tfvar name, so they are skipped (no undeclared-var duplicates).
+// gatedTfvars are template variables NO component's provider_config may set, whatever component
+// the config belongs to.
+//
+// The `reserved` lists below are per CALL SITE, but every root-level merge writes the SAME flat
+// tfvars map — so a cache's provider_config could set `rds_iam_auth_enabled` whenever the database's
+// typed mapping had not, and a nosql table's could set `cloud_sql_iam_auth`. That turns keyless
+// database auth on for a cloud × engine cell the canvas deliberately does not offer, walking around
+// both the offer-parity guard (#1508) and the `visibleWhen` gate (#1510) — the exact walk-around the
+// database's own reservation exists to close, reachable from a neighbouring component instead.
+//
+// So the gate is GLOBAL rather than per component: these keys are decided by the canvas or by a
+// recorded withdrawal, and a passthrough is never the place to decide them. A component that
+// legitimately owns one still sets it through its typed field, which runs before this and wins.
+var gatedTfvars = map[string]bool{
+	// Keyless database auth, per cloud. The canvas gates the toggle per cloud × engine and the
+	// deploy refuses cells the renderer cannot build; neither check sees a passthrough key.
+	"rds_iam_auth_enabled": true,
+	"rds_iam_irsa":         true,
+	"cloud_sql_iam_auth":   true,
+	"azure_db_iam_auth":    true,
+	// Offers withdrawn from a cloud after measurement (#1841 and the Azure cache SKU family).
+	// Re-opening one from a neighbouring component's knobs would render and then fail at apply.
+	"azure_cache_sku":           true,
+	"azure_cache_redis_version": true,
+}
+
+// mergeProviderConfig copies template-variable overrides from a component's
+// provider_config JSONB into the flat tfvars map, WITHOUT clobbering keys already
+// set by the typed mappings (merge-if-absent). This is the generic "passthrough"
+// that lets the UI drive any template variable by name without a dedicated Go field
+// per knob. `reserved` lists provider_config keys the typed code already consumed
+// under a different tfvar name, so they are skipped (no undeclared-var duplicates);
+// `gatedTfvars` lists the ones no component may set at all.
 func mergeProviderConfig(tfvars map[string]interface{}, pc map[string]any, reserved ...string) {
 	if len(pc) == 0 {
 		return
@@ -386,7 +419,7 @@ func mergeProviderConfig(tfvars map[string]interface{}, pc map[string]any, reser
 		skip[r] = true
 	}
 	for k, v := range pc {
-		if skip[k] {
+		if skip[k] || gatedTfvars[k] {
 			continue
 		}
 		if _, exists := tfvars[k]; !exists {

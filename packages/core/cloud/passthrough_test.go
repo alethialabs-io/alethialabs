@@ -861,3 +861,37 @@ func TestProviderTfvars_LeafPassthrough_TypedWins(t *testing.T) {
 		})
 	}
 }
+
+// A component's provider_config must never reach a template variable the CANVAS decides.
+//
+// The `reserved` lists are per call site, but every root-level merge writes the same flat tfvars
+// map — so before `gatedTfvars` existed, a CACHE's provider_config could set
+// `rds_iam_auth_enabled` and a NoSQL table's could set `cloud_sql_iam_auth`, turning keyless
+// database auth on for a cloud × engine cell the canvas does not offer and the deploy gate would
+// refuse. The neighbouring component is the whole point of this test: the database's own
+// reservation already covered the database.
+func TestProviderTfvars_GatedKeysAreUnreachableFromAnyComponent(t *testing.T) {
+	cases := []struct {
+		cloud, key string
+	}{
+		{"aws", "rds_iam_auth_enabled"},
+		{"aws", "rds_iam_irsa"},
+		{"gcp", "cloud_sql_iam_auth"},
+		{"azure", "azure_db_iam_auth"},
+		{"azure", "azure_cache_sku"},
+		{"azure", "azure_cache_redis_version"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cloud+"/"+tc.key, func(t *testing.T) {
+			// Offered by a component that has no business setting it: the CACHE, whose own
+			// reservation lists only cache keys.
+			cfg := leafConfig("cache", map[string]any{tc.key: true})
+			tfvars := leafProviders[tc.cloud].ProviderTfvars(cfg)
+			if _, present := tfvars[tc.key]; present {
+				t.Fatalf("%s: a cache's provider_config set %q — the canvas decides that key, and a "+
+					"passthrough that can set it walks around both the offer gate and the deploy refusal",
+					tc.cloud, tc.key)
+			}
+		})
+	}
+}
