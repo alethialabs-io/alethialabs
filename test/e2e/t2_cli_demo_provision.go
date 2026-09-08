@@ -67,8 +67,12 @@ type CLIDemoRun struct {
 	// rather than by name, because two projects may share a name (#2663) and resolving by name
 	// would make the demo depend on which one the server picked.
 	ProjectID string
-	// IdentityID is the cloud identity `connector <cloud>` attached.
-	IdentityID string
+	// IdentityID is the cloud identity `connector <cloud>` attached, and IdentityLabel its label —
+	// the name a person types. The beats address the account by LABEL, because an id copied out
+	// of another command's output is the handoff this dimension exists to prove gone; the id is
+	// kept for the assertions that read the account back.
+	IdentityID    string
+	IdentityLabel string
 	// ApplyJobID is the DEPLOY job `project apply` enqueued — what `jobs logs` follows.
 	ApplyJobID string
 	// Token is the seeded service token the CLI authenticates with (ALETHIA_TOKEN).
@@ -220,13 +224,14 @@ var CLIDemoBeats = []CLIDemoBeat{
 		StepID: "project-create",
 		Phase:  CLIDemoAuthoring,
 		Args: func(r *CLIDemoRun) []string {
-			// --cloud-identity-id is what makes the project PROVISIONABLE. Without it the project
-			// is created with `cloud_identity_id: null` and the deploy has no credential to
-			// provision with — a failure that surfaces during apply, long after the beat that
-			// should have caught it. The id comes from the connector beat's read-back.
+			// --cloud-account is what makes the project PROVISIONABLE. Without it the project is
+			// created with `cloud_identity_id: null` and the deploy has no credential to provision
+			// with — a failure that surfaces during apply, long after the beat that should have
+			// caught it. The account is named by the LABEL the connector beat read back, never by
+			// its id: the id handoff is the thing #3662 deleted from the product.
 			return []string{
 				"project", "create", r.Project, "--region", r.Region, "--stage", "development",
-				"--cloud-identity-id", r.IdentityID, "--output", "json", "--no-input",
+				"--cloud-account", r.IdentityLabel, "--output", "json", "--no-input",
 			}
 		},
 		After: captureProjectID,
