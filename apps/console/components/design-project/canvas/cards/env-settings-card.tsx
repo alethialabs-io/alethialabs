@@ -4,7 +4,6 @@
 
 import { ArrowLeft, Settings2 } from "lucide-react";
 import { useMemo } from "react";
-import { Button } from "@repo/ui/button";
 import { Label } from "@repo/ui/label";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
@@ -21,23 +20,6 @@ import { ConnectorSelect } from "../inspector/connector-select";
 import { useNodeCapabilities } from "../inspector/use-node-capabilities";
 import { CompatAlert } from "../inspector/compat-alert";
 import { SheetCard } from "./sheet-card";
-
-/** The toolbar control that opens the environment-settings card. */
-export function EnvSettingsButton() {
-	const openCard = useCanvasStore((s) => s.openCard);
-	return (
-		<Button
-			type="button"
-			size="sm"
-			variant="outline"
-			className="h-8 text-xs"
-			onClick={() => openCard({ kind: "env-settings" })}
-		>
-			<Settings2 className="mr-1 h-3.5 w-3.5" />
-			Environment settings
-		</Button>
-	);
-}
 
 /**
  * W2 — the cluster + network are no longer cards on the board (one environment IS one cluster inside

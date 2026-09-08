@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Loader2, Rocket } from "lucide-react";
+import { Loader2, Rocket, Save } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { Button } from "@repo/ui/button";
@@ -22,6 +22,10 @@ interface PendingChangesBarProps {
   deployLabel?: string;
   /** Clear durable server-side staged changes (edit mode), alongside the client revert. */
   onDiscard?: () => void;
+  /** Persist the design WITHOUT provisioning (edit mode). Absent in the create flow, where the
+   * primary button already creates without deploying. */
+  onSave?: () => void;
+  saving?: boolean;
 }
 
 const OP_LABEL: Record<"new" | "modified" | "removed", string> = {
@@ -46,6 +50,8 @@ export function PendingChangesBar({
   deploying,
   deployLabel = "Deploy",
   onDiscard,
+  onSave,
+  saving,
 }: PendingChangesBarProps) {
   const nodes = useCanvasStore((s) => s.nodes);
   const baseline = useCanvasStore((s) => s.baseline);
@@ -145,12 +151,30 @@ export function PendingChangesBar({
         >
           Discard
         </Button>
+        {onSave && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={onSave}
+            disabled={saving || deploying}
+            title="Persist the design without provisioning (⌘S)"
+          >
+            {saving ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Save className="mr-1 h-3.5 w-3.5" />
+            )}
+            Save
+          </Button>
+        )}
         <Button
           type="button"
           size="sm"
           className="h-8 text-xs"
           onClick={onDeploy}
-          disabled={deploying}
+          disabled={deploying || saving}
         >
           {deploying ? (
             <>
