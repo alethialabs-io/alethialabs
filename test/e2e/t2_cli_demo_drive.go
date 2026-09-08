@@ -232,17 +232,20 @@ func captureIdentityID(r *CLIDemoRun, out string) error {
 			"per cloud:\n%s",
 			len(forProvider), r.Provider, strings.Join(labels, ", "), r.Provider, out)
 	}
-	for _, id := range forProvider {
-		{
-			r.IdentityID = id.ID
-			r.IdentityLabel = id.Label
-			if id.Label == "" {
-				return fmt.Errorf("the %s identity %s has no label — `project create` names the account by "+
-					"its label, so an unlabelled connector cannot be driven from the terminal:\n%s",
-					r.Provider, id.ID, out)
-			}
-			return nil
+	if len(forProvider) == 1 {
+		id := forProvider[0]
+		r.IdentityID = id.ID
+		r.IdentityLabel = id.Label
+		// DEFENSIVE, and stated as such: `buildLabel` is `provider.toUpperCase()` and never returns
+		// empty, so no connector the console creates reaches this. It stays because the beats
+		// address the account by its label and a label the harness cannot see is a `project create`
+		// against an empty `--cloud-account` — a 400 three beats later, naming nothing.
+		if id.Label == "" {
+			return fmt.Errorf("the %s identity %s has no label — `project create` names the account by "+
+				"its label, so an unlabelled connector cannot be driven from the terminal:\n%s",
+				r.Provider, id.ID, out)
 		}
+		return nil
 	}
 	return fmt.Errorf("no %s identity among %d connector(s) — `connector %s` reported success but "+
 		"attached nothing, and the project would be created with no credential to provision with:\n%s",
