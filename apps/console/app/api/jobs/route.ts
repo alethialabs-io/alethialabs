@@ -28,7 +28,10 @@ import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { jobs, runners, projects } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
-import { cliJobResponse, cliJobsPageResponse } from "@/lib/validations/cli-contract";
+import {
+	cliJobResponse,
+	cliJobsPageResponse,
+} from "@/lib/validations/cli-contract";
 
 // Job types the CLI is allowed to queue through this endpoint (a subset of the
 // full provision_job_type enum — runner-lifecycle types are created elsewhere).
@@ -74,7 +77,10 @@ export async function POST(req: Request) {
 
 	const userId = payload?.sub;
 	if (!userId) {
-		return NextResponse.json({ error: "Invalid token payload" }, { status: 401 });
+		return NextResponse.json(
+			{ error: "Invalid token payload" },
+			{ status: 401 },
+		);
 	}
 
 	try {
@@ -103,7 +109,8 @@ export async function POST(req: Request) {
 		if (!jobType) {
 			return NextResponse.json(
 				{
-					error: "job_type must be one of: DEPLOY, DESTROY, PLAN, DESTROY_RUNNER",
+					error:
+						"job_type must be one of: DEPLOY, DESTROY, PLAN, DESTROY_RUNNER",
 				},
 				{ status: 400 },
 			);
@@ -142,7 +149,9 @@ export async function POST(req: Request) {
 		// verifyCliToken already refuses a mismatched header before we get here; the fallback below
 		// is what stops an ABSENT header resolving the creator's default org instead.
 		const pinnedOrg =
-			typeof payload?.service_token_org_id === "string" ? payload.service_token_org_id : undefined;
+			typeof payload?.service_token_org_id === "string"
+				? payload.service_token_org_id
+				: undefined;
 		const headerOrg = pinnedOrg ?? req.headers.get("X-Alethia-Org")?.trim();
 		const actor = await getActiveScope(userId, headerOrg || undefined);
 		if (headerOrg) {
@@ -175,23 +184,25 @@ export async function POST(req: Request) {
 
 			const [job] = await db
 				.insert(jobs)
-				.values(signedJob({
-					user_id: userId,
-					// Explicit, so the set_org_id_from_project trigger's `NEW.org_id IS NULL`
-					// fallback (→ `NEW.user_id`, since getServiceDb() sets no app.current_org GUC
-					// and this row has no project) never runs. That fallback IS the defect.
-					org_id: actor.orgId,
-					environment_id: null,
-					cloud_identity_id: cloud_identity_id || null,
-					job_type: jobType,
-					initiated_by: "user",
-					project_id: null,
-					config_snapshot: config_snapshot || {},
-					configuration_hash: null,
-					status: "QUEUED",
-					assigned_runner_id: assigned_runner_id || null,
-					plan_job_id: plan_job_id || null,
-				}))
+				.values(
+					signedJob({
+						user_id: userId,
+						// Explicit, so the set_org_id_from_project trigger's `NEW.org_id IS NULL`
+						// fallback (→ `NEW.user_id`, since getServiceDb() sets no app.current_org GUC
+						// and this row has no project) never runs. That fallback IS the defect.
+						org_id: actor.orgId,
+						environment_id: null,
+						cloud_identity_id: cloud_identity_id || null,
+						job_type: jobType,
+						initiated_by: "user",
+						project_id: null,
+						config_snapshot: config_snapshot || {},
+						configuration_hash: null,
+						status: "QUEUED",
+						assigned_runner_id: assigned_runner_id || null,
+						plan_job_id: plan_job_id || null,
+					}),
+				)
 				.returning();
 
 			notifyScaler();
@@ -246,7 +257,10 @@ export async function POST(req: Request) {
 			.where(eq(jobs.id, jobId))
 			.limit(1);
 		if (!inserted) {
-			return NextResponse.json({ error: "Job not found after queue" }, { status: 500 });
+			return NextResponse.json(
+				{ error: "Job not found after queue" },
+				{ status: 500 },
+			);
 		}
 
 		// Preserve the CLI plan→apply drift guard: the runner compares the PLAN job's
@@ -296,7 +310,9 @@ const MINE_FALSE = new Set(["false", "0"]);
  * rather than coerced, and the empty string — what `?mine` with no value produces — is the bare
  * flag, which is what a shell user types.
  */
-function parseMine(raw: string | null): { ok: true; mine: boolean } | { ok: false } {
+function parseMine(
+	raw: string | null,
+): { ok: true; mine: boolean } | { ok: false } {
 	if (raw === null) return { ok: true, mine: false };
 	const v = raw.trim().toLowerCase();
 	if (MINE_TRUE.has(v)) return { ok: true, mine: true };
@@ -305,7 +321,9 @@ function parseMine(raw: string | null): { ok: true; mine: boolean } | { ok: fals
 }
 
 /** Parses the legacy `?offset=`: a non-negative integer, or absent. */
-function parseOffset(raw: string | null): { ok: true; offset: number } | { ok: false } {
+function parseOffset(
+	raw: string | null,
+): { ok: true; offset: number } | { ok: false } {
 	if (raw === null || raw === "") return { ok: true, offset: 0 };
 	if (!/^\d+$/.test(raw)) return { ok: false };
 	const n = Number(raw);
@@ -367,14 +385,22 @@ function badRequest(error: string): NextResponse {
  * tenant the token was never pinned to; a token lists `org_id = <pin>` and nothing else, while a
  * session keeps the two-element list. `authorizeCli` reports which it verified as `credential`.
  *
- * `?mine=true` NARROWS THE ORG SCOPE, IT DOES NOT REPLACE IT. `user_id = <caller> AND org_id in
- * (...)` — "my jobs in this org", not "my jobs anywhere". Replacing the scope with `user_id`
- * alone is the same leak as the old default arm reached through the flag instead.
+ * `?mine=true` NARROWS THE ORG SCOPE, IT DOES NOT REPLACE IT — `user_id = <the session's human>
+ * AND org_id in (...)`, "my jobs in this org" and not "my jobs anywhere". Replacing the scope with
+ * `user_id` alone is the same leak as the old default arm reached through the flag instead.
+ *
+ * IT IS A SESSION'S FLAG. `jobs` has no token-id column, so "this token's jobs" is not expressible;
+ * under a service token the same predicate binds `user_id` to the MINTER, which answers a question
+ * nobody asked — the minter's own interactive jobs, plus every other token they minted for this
+ * org. That is bounded inside the pin, so it is not a tenancy leak, but it is a wrong answer, and
+ * a wrong answer returned confidently is what this route is being fixed for. It is refused with a
+ * 400 naming the reason rather than silently ignored: a dropped filter reads as a filter that
+ * worked.
  *
  * The earlier worry — that ANDing the org back on drops the personal-org rows — was about
- * `org_id = <caller's org>` alone. It does not apply to the list: a personal org's id IS the
- * caller's user id, so those rows are INSIDE the scope, not excluded by it. That is what makes the
- * AND free. Being a
+ * `org_id = <caller's org>` alone. It does not apply to a SESSION's list: a personal org's id IS
+ * the caller's user id, so those rows are inside the scope rather than excluded by it. That is
+ * what makes the AND free. Being a
  * scope predicate rather than a post-filter, it moves `total` and `page.total` with the rows; a
  * count taken from a different set of predicates than the rows is the defect the console's filter
  * standard exists to prevent.
@@ -407,15 +433,26 @@ function badRequest(error: string): NextResponse {
 export async function GET(req: Request) {
 	const auth = await authorizeCli(req, "view", { type: "job" });
 	if ("error" in auth) return auth.error;
-	const { actor, credential } = auth;
+	const { actor, orgScope } = auth;
 
 	const { searchParams } = new URL(req.url);
 
 	const mine = parseMine(searchParams.get("mine"));
 	if (!mine.ok) return badRequest("mine must be true or false");
+	// `jobs` has no token-id column, so `?mine=true` under a service token would bind `user_id` to
+	// the MINTER: the minter's own interactive jobs plus every other token they minted for this
+	// org. Bounded inside the pin, so not a leak — and still a wrong answer, which is what this
+	// route is being fixed for. Refused rather than ignored: a filter that is silently dropped
+	// reads as a filter that worked.
+	if (mine.mine && auth.credential === "service_token") {
+		return badRequest(
+			"mine is not available to a service token: a job records the person who started it, not the credential, so mine would select the token's minter rather than the token",
+		);
+	}
 
 	const legacyOffset = parseOffset(searchParams.get("offset"));
-	if (!legacyOffset.ok) return badRequest("offset must be a non-negative integer");
+	if (!legacyOffset.ok)
+		return badRequest("offset must be a non-negative integer");
 
 	const cursorScope: CursorScope = { orgId: actor.orgId, list: JOBS_LIST };
 	const parsed = parsePageOpts(searchParams, cursorScope);
@@ -452,7 +489,7 @@ export async function GET(req: Request) {
 	// The two `eq()` fragments are embedded in the template rather than written out as
 	// `${jobs.org_id} = ${actor.orgId}` so each parameter still binds through the column's own
 	// drizzle type mapper — a raw interpolation would hand postgres-js a bare string for a `uuid`
-	// column. A `sql` template is used at all because `or()` is typed `SQL | undefined` and this
+	// column. A `sql` template is used at all because `and()` is typed `SQL | undefined` and this
 	// tuple's first element may not be optional; narrowing it would need an `as`, which is banned.
 	// EVERY ARM IS BOUNDED BY ORG. The first cut was
 	// `(org_id = actor.orgId or user_id = actor.userId)`, quoting the `owner_all` RLS policy
@@ -468,34 +505,43 @@ export async function GET(req: Request) {
 	// pipeline lists client B's jobs. The pin is re-checked on every request two files over
 	// precisely to stop a token acting outside its tenant; this walked past it.
 	//
-	// `org_id IN (orgId, userId)` is the same row set the owner arm was actually FOR. #3942 stamps
+	// `org_id IN (...)` is the same row set the owner arm was actually FOR. #3942 stamps
 	// `org_id` forward with no backfill, so pre-#3942 runner jobs still carry `org_id = user_id` —
 	// the caller's personal org, whose id IS their user id. That is the recovery this needs, and it
 	// is expressible on `org_id` alone, which keeps the tenancy boundary one column wide.
 	//
-	// THE LIST IS SPLIT BY CREDENTIAL, BECAUSE ITS SECOND ELEMENT MEANS TWO DIFFERENT THINGS (#4154).
-	// For a session, `actor.userId` is the caller and their personal org is a tenant they are the
-	// sole member of — listing it widens nothing. For a service token, `actor.userId` is the person
-	// who MINTED the credential, so that same element names a tenant the token is NOT pinned to: an
-	// org-T CI token would list the minter's personal-org runner jobs. Moving the boundary onto
-	// `org_id` alone closed the owner arm, but the problem was never the shape of the predicate, it
-	// is which VALUES are in the list — and this value is only the caller's for a session. A token
-	// therefore gets `org_id = <pin>` and nothing else; the pin is the whole of what it was issued
-	// for. (A token minted for the minter's own personal org is the degenerate case — `orgId ===
-	// userId` — and the two predicates agree there.)
+	// WHICH VALUES ARE IN THE LIST IS THE GUARD'S ANSWER, NOT THIS ROUTE'S (#4154). `authorizeCli`
+	// returns `orgScope` — `[pin]` for a service token, `[org, userId]` for a session — because the
+	// second element means two different things and the derivation is the whole defect. For a
+	// session, `actor.userId` is the caller and their personal org is a tenant they are the sole
+	// member of, so listing it widens nothing. For a service token it is the person who MINTED the
+	// credential, naming a tenant the token was never pinned to: an org-T CI token listed the
+	// minter's personal-org runner jobs. Moving the boundary onto `org_id` alone closed the owner
+	// arm, but the problem was never the predicate's SHAPE.
 	//
-	// The session arm is kept rather than narrowed too, and `?mine=true` composes onto it as
-	// before, because `alethia jobs list` is shipped and walks it: for a member of a Teams org the
-	// personal-org rows are the pre-#3942 runner-lifecycle jobs an `org_id = <team>` filter hid.
+	// Deriving it here would have written `credential === "service_token" ? narrow : wide`, whose
+	// ELSE arm is the wide one — the exact fall-through the closed `CliCredential` union exists to
+	// prevent, since a third kind would type-check straight into it. Four routes need this same
+	// list; `orgScope` is one derivation instead of four ternaries.
+	//
+	// The session arm stays two-wide rather than being narrowed too, because `alethia jobs list` is
+	// shipped and walks it: for a member of a Teams org those personal-org rows are the pre-#3942
+	// runner-lifecycle jobs an `org_id = <team>` filter hid.
+	//
+	// ONE COST OF THE TOKEN ARM, STATED RATHER THAN LEFT TO BE FOUND. Service tokens shipped
+	// 2026-08-26 (#2786) and explicit `org_id` stamping landed 2026-09-02 (#3942, no backfill), so
+	// jobs a token enqueued in that window carry `org_id = <minter>` and it can no longer list its
+	// OWN history. The bound is that this only makes the surface consistent: the by-id routes were
+	// already `org_id = actor.orgId`, so those rows were already unreadable and uncancellable for a
+	// token. Nothing that was usable stopped being usable.
 	//
 	// Either way the walk still uses `idx_jobs_org_cursor`: a disjunction across two columns plans a
 	// BitmapOr, which is unordered, so every page re-sorts. An `IN` (or `=`) on the leading index
 	// column does not.
-	const orgScope: SQL =
-		credential === "service_token"
-			? eq(jobs.org_id, actor.orgId)
-			: inArray(jobs.org_id, [actor.orgId, actor.userId]);
-	const visible: SQL = mine.mine ? sql`(${eq(jobs.user_id, actor.userId)} and ${orgScope})` : orgScope;
+	const scoped: SQL = inArray(jobs.org_id, [...orgScope]);
+	const visible: SQL = mine.mine
+		? sql`(${eq(jobs.user_id, actor.userId)} and ${scoped})`
+		: scoped;
 
 	const scope: [SQL, ...(SQL | undefined)[]] = [
 		visible,

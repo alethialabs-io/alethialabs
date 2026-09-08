@@ -31,7 +31,7 @@ import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { describeIfDb } from "./db";
+import { describeIfDb, seedJob } from "./db";
 
 vi.mock("@/lib/authz/guard", () => ({
 	authorizeCli: vi.fn(),
@@ -75,28 +75,6 @@ const bodySchema = z.object({
 });
 type Body = z.infer<typeof bodySchema>;
 
-/**
- * Inserts one job and returns its id.
- *
- * `orgId === null` OMITS the column so `set_org_id_from_project` runs its fallback chain — project
- * → `app.current_org` GUC → `NEW.user_id` — which is how the pre-#3942 runner-lifecycle rows were
- * written. The first test reads the stamp back rather than trusting this comment.
- */
-async function seedJob(userId: string, orgId: string | null): Promise<string> {
-	const [row] = await getServiceDb()
-		.insert(jobs)
-		.values({
-			user_id: userId,
-			...(orgId === null ? {} : { org_id: orgId }),
-			project_id: null,
-			job_type: "PLAN",
-			status: "QUEUED",
-			config_snapshot: {},
-		})
-		.returning({ id: jobs.id });
-	return row.id;
-}
-
 /** Reads a seeded row back, so an assertion can be made about what the DATABASE stored. */
 async function readJob(id: string) {
 	const [row] = await getServiceDb()
@@ -114,7 +92,14 @@ async function readJob(id: string) {
  * same `{ sub, org }` pair and differs only in which arm produced it.
  */
 function actingAs(userId: string, orgId: string, credential: CliCredential): void {
-	vi.mocked(authorizeCli).mockResolvedValue({ actor: { userId, orgId }, credential });
+	vi.mocked(authorizeCli).mockResolvedValue({
+		actor: { userId, orgId },
+		credential,
+		// Literal, with the credential→values mapping proven in tests/lib/authz/guard.ts. This
+		// file's subject is which ROWS a given scope reaches; that one's is which values a
+		// credential gets.
+		orgScope: credential === "service_token" || orgId === userId ? [orgId] : [orgId, userId],
+	});
 }
 
 /** Drives the route and parses a 200 body. Fails loudly on any other status. */
@@ -167,18 +152,27 @@ describeIfDb("GET /api/jobs — a service token lists its pin, a session lists i
 	 * cannot be satisfied by a predicate that regressed to that shape.
 	 */
 	let minterOtherOrgId = "";
-	let allIds: string[] = [];
+	// Collected AS THEY ARE SEEDED, not after all four resolve. Assigning the list at the end
+	// leaves a partway `beforeAll` failure with rows in the table and an EMPTY list to delete —
+	// and drizzle renders `inArray(col, [])` as `false`, so `afterAll` would remove nothing while
+	// reporting success. The cleanup has to survive the failure it exists for.
+	const seeded: string[] = [];
+	const seedTracked = async (userId: string, orgId: string | null): Promise<string> => {
+		const id = await seedJob(userId, orgId);
+		seeded.push(id);
+		return id;
+	};
 
 	beforeAll(async () => {
-		tMineId = await seedJob(USER_MINTER, ORG_T);
-		tPeerId = await seedJob(USER_PEER, ORG_T);
-		minterPersonalId = await seedJob(USER_MINTER, null);
-		minterOtherOrgId = await seedJob(USER_MINTER, ORG_OTHER);
-		allIds = [tMineId, tPeerId, minterPersonalId, minterOtherOrgId];
+		tMineId = await seedTracked(USER_MINTER, ORG_T);
+		tPeerId = await seedTracked(USER_PEER, ORG_T);
+		minterPersonalId = await seedTracked(USER_MINTER, null);
+		minterOtherOrgId = await seedTracked(USER_MINTER, ORG_OTHER);
 	});
 
 	afterAll(async () => {
-		await getServiceDb().delete(jobs).where(inArray(jobs.id, allIds));
+		if (seeded.length === 0) return;
+		await getServiceDb().delete(jobs).where(inArray(jobs.id, seeded));
 	});
 
 	it("the fixture's personal-org row really is stamped with the minter's id, and the others are not", async () => {
@@ -214,20 +208,8 @@ describeIfDb("GET /api/jobs — a service token lists its pin, a session lists i
 		expect(total).toBe(3);
 	});
 
-	it("the two answers differ by EXACTLY the personal-org row, so the split is doing one thing", async () => {
-		// Attributes the difference to the credential and nothing else: same actor, same query,
-		// one row apart, and that row is the one the issue names.
-		actingAs(USER_MINTER, ORG_T, "session");
-		const session = await idsOf("?limit=100");
-		actingAs(USER_MINTER, ORG_T, "service_token");
-		const token = await idsOf("?limit=100");
-		const onlyInSession = session.ids.filter((id) => !token.ids.includes(id));
-		expect(onlyInSession).toEqual([minterPersonalId]);
-		expect(token.ids.every((id) => session.ids.includes(id))).toBe(true);
-		expect(session.total - token.total).toBe(1);
-	});
 
-	it("(c) ?mine=true composes onto each credential's own scope, and narrows it — never replaces it", async () => {
+	it("(c) ?mine=true narrows a SESSION's scope, and is refused outright for a token", async () => {
 		// For a session, "mine" means my org-T job AND my personal-org job: the personal org is
 		// inside the list, so the AND costs nothing (the #3672 property, unchanged).
 		actingAs(USER_MINTER, ORG_T, "session");
@@ -235,25 +217,26 @@ describeIfDb("GET /api/jobs — a service token lists its pin, a session lists i
 		expect(session.ids).toEqual([tMineId, minterPersonalId].sort());
 		expect(session.total).toBe(2);
 
-		// For a token, `user_id = <minter>` ANDed onto `org_id = T` is the minter's org-T job only.
-		// This is the arm that most obviously reads as "me", and "me" is exactly the wrong boundary
-		// for a token: `?mine=true` must not become the way the personal-org row gets back in.
+		// For a token there is no honest answer. `jobs` records the person who STARTED a job, not
+		// the credential, so `user_id = <minter>` selects the minter — their own interactive jobs
+		// and every other token they minted for T. Bounded inside the pin, so not a leak, and
+		// still the wrong question answered confidently. Refused, not ignored.
 		actingAs(USER_MINTER, ORG_T, "service_token");
-		const token = await idsOf("?mine=true&limit=100");
-		expect(token.ids).toEqual([tMineId]);
-		expect(token.total).toBe(1);
+		const res = await GET(new Request("http://console.test/api/jobs?mine=true&limit=100"));
+		expect(res.status).toBe(400);
 	});
 
 	it("neither credential lists the minter's job from a THIRD org under T — in either mode", async () => {
 		// An owner arm (`user_id = actor.userId`) is what would answer this row, and it is the
 		// shape the session arm must not regress to while the token arm is being narrowed.
-		for (const credential of ["session", "service_token"] as const) {
-			actingAs(USER_MINTER, ORG_T, credential);
-			for (const q of ["?limit=100", "?mine=true&limit=100"]) {
-				const { ids } = await idsOf(q);
-				expect(ids).not.toContain(minterOtherOrgId);
-			}
+		// A session in both modes, and a token in the only mode it has: `?mine=true` is refused
+		// under a token (see (c)), so driving it here would assert a 400 rather than a scope.
+		actingAs(USER_MINTER, ORG_T, "session");
+		for (const q of ["?limit=100", "?mine=true&limit=100"]) {
+			expect((await idsOf(q)).ids).not.toContain(minterOtherOrgId);
 		}
+		actingAs(USER_MINTER, ORG_T, "service_token");
+		expect((await idsOf("?limit=100")).ids).not.toContain(minterOtherOrgId);
 	});
 
 	it("CONTROL: a token pinned to the minter's personal org DOES list that row — so its absence under T is scoping", async () => {

@@ -77,7 +77,12 @@ type Body = z.infer<typeof bodySchema>;
 
 /** Points the stubbed PDP guard at one tenant for the next request. */
 function actingAs(userId: string, orgId: string): void {
-	vi.mocked(authorizeCli).mockResolvedValue({ actor: { userId, orgId }, credential: "session" });
+	vi.mocked(authorizeCli).mockResolvedValue({
+		actor: { userId, orgId },
+		credential: "session",
+		// Literal, with the credential→values mapping proven in tests/lib/authz/guard.ts.
+		orgScope: orgId === userId ? [orgId] : [orgId, userId],
+	});
 }
 
 /** Calls the route and returns its status plus unparsed JSON body. */

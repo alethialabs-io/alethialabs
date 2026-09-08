@@ -24,6 +24,10 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
+// A mock that wrote its own org list would be a second opinion about the values #4154 is about, so
+// the SCOPES BELOW ARE LITERAL and the mapping from a credential to them is proven separately, in
+// tests/lib/authz/guard.ts's `orgScopeFor` suite. Two assertions with one seam between them: the
+// guard decides which values, this file decides what SQL those values become.
 vi.mock("@/lib/authz/guard", () => ({
 	authorizeCli: vi.fn(),
 	ensureCliOrgAccess: vi.fn(),
@@ -60,7 +64,8 @@ function render(fragment: SQL | undefined): {
 	params: readonly unknown[];
 } {
 	// A missing fragment is a test that never reached the query, not an empty WHERE clause.
-	if (fragment === undefined) throw new Error("expected a SQL fragment, got none");
+	if (fragment === undefined)
+		throw new Error("expected a SQL fragment, got none");
 	const q = dialect.sqlToQuery(fragment);
 	return { sql: q.sql, params: q.params };
 }
@@ -210,6 +215,7 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		vi.mocked(authorizeCli).mockResolvedValue({
 			actor: { userId: USER, orgId: ORG },
 			credential: "session",
+			orgScope: [ORG, USER],
 		});
 		vi.mocked(getServiceDb).mockReturnValue(fakeDb() as never);
 	});
@@ -248,7 +254,9 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		// ONE COLUMN. That is the property — the tenancy boundary is `org_id` and nothing else, so
 		// there is no second arm for a caller's identity to widen it through.
 		await drive("");
-		expect(normalized(render(captured.rowsWhere).sql)).toBe('"jobs"."org_id" in ($1, $2)');
+		expect(normalized(render(captured.rowsWhere).sql)).toBe(
+			'"jobs"."org_id" in ($1, $2)',
+		);
 	});
 
 	it("scopes a SERVICE TOKEN to its pin alone — the minter's personal org is not in the list (#4154)", async () => {
@@ -259,10 +267,15 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		vi.mocked(authorizeCli).mockResolvedValue({
 			actor: { userId: USER, orgId: ORG },
 			credential: "service_token",
+			orgScope: [ORG],
 		});
 		await drive("");
 		const where = render(captured.rowsWhere);
-		expect(normalized(where.sql)).toBe('"jobs"."org_id" = $1');
+		// `in ($1)` and not `= $1`: the predicate is built from the guard's scope tuple, which is
+		// one element for a token. Postgres plans a single-element IN exactly as an equality, so
+		// the index use the comment below describes is unchanged — but the rendered text is not,
+		// and a test that pinned the text would have to be re-read rather than re-run.
+		expect(normalized(where.sql)).toBe('"jobs"."org_id" in ($1)');
 		// ONE parameter: the pin. `USER` must not reach the query at all in the default mode.
 		expect(where.params).toEqual([ORG]);
 		expect(where.sql).not.toContain('"user_id"');
@@ -270,18 +283,41 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		expect(render(captured.countWhere).params).toEqual([ORG]);
 	});
 
-	it("composes ?mine=true onto the token's pin, not onto the session list", async () => {
-		// `?mine=true` is the arm that most obviously reads as "me", and for a token "me" is the
-		// minter. It narrows the pin; it must not become the way the personal org gets back in.
+	it("refuses ?mine=true under a service token rather than answering the minter's question", async () => {
+		// `jobs` records the person who STARTED a job, not the credential, so under a token
+		// `?mine=true` selects the minter: their own interactive jobs, plus every other token they
+		// minted for this org. Bounded inside the pin — not a leak — and a wrong answer. Refused
+		// rather than ignored, because a filter that is silently dropped reads as one that worked.
 		vi.mocked(authorizeCli).mockResolvedValue({
 			actor: { userId: USER, orgId: ORG },
 			credential: "service_token",
+			orgScope: [ORG],
+		});
+		const res = await GET(
+			new Request("http://console.test/api/jobs?mine=true"),
+		);
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({
+			error: expect.stringContaining(
+				"mine is not available to a service token",
+			),
+		});
+		// And nothing was queried: the refusal is before the boundary, not a filter on it.
+		expect(captured.rowsWhere).toBeUndefined();
+	});
+
+	it("still composes ?mine=true for a session, onto the two-element list", async () => {
+		vi.mocked(authorizeCli).mockResolvedValue({
+			actor: { userId: USER, orgId: ORG },
+			credential: "session",
+			orgScope: [ORG, USER],
 		});
 		await drive("?mine=true");
 		const where = render(captured.rowsWhere);
-		expect(normalized(where.sql)).toBe('("jobs"."user_id" = $1 and "jobs"."org_id" = $2)');
-		expect(where.params).toEqual([USER, ORG]);
-		expect(render(captured.countWhere).params).toEqual([USER, ORG]);
+		expect(normalized(where.sql)).toBe(
+			'("jobs"."user_id" = $1 and "jobs"."org_id" in ($2, $3))',
+		);
+		expect(where.params).toEqual([USER, ORG, USER]);
 	});
 
 	it("NARROWS to the caller INSIDE the org scope under ?mine=true, rather than replacing it", async () => {
@@ -334,7 +370,12 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		// precisely so they cannot drift, and this asserts the artifact rather than the intent —
 		// in both modes, because `?mine` is where a second, separately-built predicate would be
 		// easiest to introduce.
-		for (const q of ["", "?mine=true", "?status=QUEUED", "?mine=true&status=QUEUED"]) {
+		for (const q of [
+			"",
+			"?mine=true",
+			"?status=QUEUED",
+			"?mine=true&status=QUEUED",
+		]) {
 			captured.rowsWhere = undefined;
 			captured.countWhere = undefined;
 			await drive(q);
@@ -388,7 +429,8 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		// read, not its result.
 		await drive("");
 		const projection = captured.rowsProjection;
-		if (projection === undefined) throw new Error("the rows query was never built");
+		if (projection === undefined)
+			throw new Error("the rows query was never built");
 		const key = render(projection.cursor_key as SQL);
 		// Independent of `cursorKey`: `US` is postgres' six-digit microsecond field. `MS` is three,
 		// and three silently drops every row written in the same millisecond as the page boundary.
@@ -420,7 +462,9 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		// millisecond-precision Date, and a cursor minted from that skips every row in the gap.
 		const decoded = z
 			.object({ t: z.string() })
-			.parse(JSON.parse(Buffer.from(cursor ?? "", "base64url").toString("utf8")));
+			.parse(
+				JSON.parse(Buffer.from(cursor ?? "", "base64url").toString("utf8")),
+			);
 		expect(decoded.t).toBe(CURSOR_KEY);
 	});
 
@@ -448,7 +492,9 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 				{ orgId: OTHER_ORG, list: "jobs" },
 				{ createdAt: CURSOR_KEY, id: JOB_ID },
 			);
-			const { status, body } = await drive(`?cursor=${encodeURIComponent(foreign)}`);
+			const { status, body } = await drive(
+				`?cursor=${encodeURIComponent(foreign)}`,
+			);
 			expect(status).toBe(400);
 			expect(errorSchema.parse(body).error).toContain(
 				"different list or organization",
@@ -461,7 +507,9 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 				{ orgId: ORG, list: "clusters" },
 				{ createdAt: CURSOR_KEY, id: JOB_ID },
 			);
-			const { status } = await drive(`?cursor=${encodeURIComponent(wrongList)}`);
+			const { status } = await drive(
+				`?cursor=${encodeURIComponent(wrongList)}`,
+			);
 			expect(status).toBe(400);
 		});
 
@@ -482,14 +530,18 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 				{ orgId: ORG, list: "jobs" },
 				{ createdAt: CURSOR_KEY, id: JOB_ID },
 			);
-			const { status } = await drive(`?offset=0&cursor=${encodeURIComponent(cursor)}`);
+			const { status } = await drive(
+				`?offset=0&cursor=${encodeURIComponent(cursor)}`,
+			);
 			expect(status).toBe(200);
 			expect(captured.rowsOffset).toBe(0);
 		});
 
 		it("returns the guard's refusal untouched", async () => {
 			vi.mocked(authorizeCli).mockResolvedValue({
-				error: new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }),
+				error: new Response(JSON.stringify({ error: "Forbidden" }), {
+					status: 403,
+				}),
 			});
 			const { status } = await drive("");
 			expect(status).toBe(403);
