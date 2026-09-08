@@ -15,7 +15,10 @@ function NavItemBadge({ badge }: { badge: NavBadge }) {
 				"shrink-0 rounded-full px-1.5 py-px font-mono text-ui-3xs uppercase tracking-wide",
 				badge.tone === "beta"
 					? "border text-muted-foreground"
-					: "border border-dashed text-muted-foreground/70",
+					: // The tertiary tier, not an alpha over the secondary one: this badge renders on
+						// every route in the shell, so an unnamed fifth ink here is 40 failing routes
+						// rather than one (#4309).
+						"border border-dashed text-text-tertiary",
 			)}
 		>
 			{badge.text}
@@ -57,7 +60,7 @@ export function NavRow({
 			<span className="flex-1 truncate text-left">{item.label}</span>
 			{item.badge && <NavItemBadge badge={item.badge} />}
 			{item.drill && (
-				<ChevronRight className="h-[15px] w-[15px] shrink-0 text-muted-foreground/60" />
+				<ChevronRight className="h-[15px] w-[15px] shrink-0 text-text-tertiary" />
 			)}
 		</>
 	);

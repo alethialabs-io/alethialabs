@@ -311,7 +311,19 @@ export const RULE_PREDICATE = /** @type {const} */ ({
  * measures something the rubric has no row for lands here, with its owning issue, rather than
  * falling silently out of the reconciliation — which is the whole reason the table exists.
  */
-export const RULES_WITHOUT_A_PREDICATE = /** @type {const} */ ({});
+export const RULES_WITHOUT_A_PREDICATE = /** @type {const} */ ({
+	// The ink-alpha rule (#4309) is the first entry this table has had since #3798 emptied it, and
+	// it is here rather than mapped to R5 for a reason worth stating: it measures the SAME thing R5
+	// does — contrast — but statically and preventively, while R5 is a live axe measurement of what
+	// a browser actually painted. Mapping it to R5 would score one predicate with two instruments
+	// that disagree by construction: this rule fires on a class string whether or not the element
+	// renders, and R5 only ever sees what rendered. A static hit here is a WARNING that R5 will
+	// fail; it is not R5's verdict.
+	ink_alpha: {
+		owner: "#4309",
+		why: "a static, preventive guard for the contrast R5 measures live — a class-string finding is not a rendered verdict, and scoring one predicate with both would make a route's R5 depend on whether its dead code was linted",
+	},
+});
 
 /**
  * Every rubric predicate the STATIC half of this file does not score, and where its verdict comes
@@ -2014,7 +2026,15 @@ export function renderScoreboard(view) {
 	// "Every rule maps to a predicate" and "the table was never consulted" must not render the same,
 	// so the empty case is a sentence rather than an absent paragraph.
 	const unmapped = Object.entries(RULES_WITHOUT_A_PREDICATE);
-	if (unmapped.length === 0) {
+	if (unmapped.length > 0) {
+		L.push("**Matchers that map to no rubric predicate**, each with the issue that owns it. A rule here is");
+		L.push("not unscored by accident — it measures something the rubric has no row for, or measures a row's");
+		L.push("subject in a way that is not that row's verdict.");
+		L.push("");
+		L.push("| rule | owner | why it maps to nothing |");
+		L.push("| --- | --- | --- |");
+		for (const [id, e] of unmapped) L.push(`| \`${id}\` | ${e.owner} | ${e.why} |`);
+	} else if (unmapped.length === 0) {
 		L.push("**Every matcher maps to a rubric predicate.** `empty_state` was the one that did not — it guarded");
 		L.push("CLAUDE.md §6's `@repo/ui/empty` row and the rubric's H table had no row for it, so its occurrences");
 		L.push("were counted here and scored nowhere. #3798 gave the rubric **H9**, and it is scored like any other");
@@ -2422,9 +2442,20 @@ function selfTest() {
 	ok("type_scale → H8", RULE_PREDICATE.type_scale === "H8");
 	ok("status_badge → H3 — #3797, the last H row to get a matcher", RULE_PREDICATE.status_badge === "H3");
 	ok("empty_state → H9 — #3798's decision, not a fold into the live T5", RULE_PREDICATE.empty_state === "H9");
+	// The table stopped being empty with #4309. What is asserted now is the property it was empty
+	// FOR: every entry names an owning issue and a reason, so a rule cannot land here as a way of
+	// disappearing from the reconciliation.
 	ok(
-		"...and RULES_WITHOUT_A_PREDICATE is still empty, and still exists for the next matcher",
-		Object.keys(RULES_WITHOUT_A_PREDICATE).length === 0 && typeof RULES_WITHOUT_A_PREDICATE === "object",
+		"RULES_WITHOUT_A_PREDICATE carries ink_alpha, with an owner and a reason",
+		RULES_WITHOUT_A_PREDICATE.ink_alpha?.owner === "#4309" && (RULES_WITHOUT_A_PREDICATE.ink_alpha?.why ?? "").length > 40,
+	);
+	ok(
+		"...and every entry does, so the table cannot become a place rules go to vanish",
+		Object.values(RULES_WITHOUT_A_PREDICATE).every((e) => typeof e?.owner === "string" && typeof e?.why === "string"),
+	);
+	ok(
+		"...and ink_alpha is NOT also mapped to a predicate, which would score R5 twice",
+		!(("ink_alpha") in RULE_PREDICATE),
 	);
 	ok(
 		"the nine mapped rules are exactly the nine H rows — every one instrumented",
@@ -2729,10 +2760,14 @@ function selfTest() {
 	ok("an off-tree file is named", view.reconciliation.offTreeFiles.some((f) => f.file.endsWith("auth/form.tsx")));
 	ok("empty_state is counted AND scored, as H9 (#3798)", rec.empty_state.total === 1 && rec.empty_state.predicate === "H9" && rec.empty_state.owner === null);
 	// "Found nothing" and "was not run" must not render the same. The fixture trips seven of the
-	// nine rules; the other two must still have a row, reading 0.
+	// TEN rules; the other three must still have a row, reading 0.
+	//
+	// The count is written out rather than derived from the rule table on purpose: it is the
+	// denominator, and a denominator that updates itself cannot notice a rule that stopped being
+	// reported. It moved 9 → 10 with `ink_alpha` (#4309), which is the change being asserted.
 	ok(
 		"a rule that found NOTHING still gets a row reading 0, rather than no row at all",
-		Object.keys(rec).length === 9 && rec.data_table.total === 0 && rec.stat_strip.total === 0,
+		Object.keys(rec).length === 10 && rec.data_table.total === 0 && rec.stat_strip.total === 0 && rec.ink_alpha.total === 0,
 	);
 	ok("status_badge is counted AND scored, as H3 (#3797)", rec.status_badge.total === 1 && rec.status_badge.predicate === "H3" && rec.status_badge.owner === null);
 	ok("...and it is rendered", renderScoreboard(view).includes("| `stat_strip` | H6 | 0 |"));

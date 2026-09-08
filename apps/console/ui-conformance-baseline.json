@@ -21,13 +21,13 @@
 		"scoredHere": 24,
 		"live": 10,
 		"notInstrumented": 0,
-		"findings": 31,
-		"findingFiles": 18,
+		"findings": 81,
+		"findingFiles": 44,
 		"liveNotMeasured": 14
 	},
 	"ledgers": {
 		"baseline": 16,
-		"debt": 3
+		"debt": 30
 	},
 	"live": {
 		"source": {
@@ -10195,6 +10195,17 @@
 				"offTree": 0,
 				"predicate": "H9",
 				"owner": null
+			},
+			"ink_alpha": {
+				"total": 50,
+				"decision": 0,
+				"debt": 50,
+				"unlisted": 0,
+				"inPageClosure": 43,
+				"chromeOnly": 3,
+				"offTree": 4,
+				"predicate": null,
+				"owner": "#4309"
 			}
 		},
 		"chromeOnlyFiles": [
@@ -10207,11 +10218,19 @@
 				"hits": 2
 			},
 			{
+				"file": "apps/console/components/agent/widgets/widget-card.tsx",
+				"hits": 2
+			},
+			{
 				"file": "apps/console/components/agent/agent-knowledge-panel.tsx",
 				"hits": 1
 			},
 			{
 				"file": "apps/console/components/agent/elench/elench-empty-landing.tsx",
+				"hits": 1
+			},
+			{
+				"file": "apps/console/components/env-switcher.tsx",
 				"hits": 1
 			}
 		],
@@ -10229,7 +10248,23 @@
 				"hits": 2
 			},
 			{
+				"file": "apps/console/components/design-project/container-platform-selector.tsx",
+				"hits": 1
+			},
+			{
+				"file": "apps/console/components/design-project/help-tooltip.tsx",
+				"hits": 1
+			},
+			{
 				"file": "apps/console/components/legal/accept-terms-form.tsx",
+				"hits": 1
+			},
+			{
+				"file": "packages/ui/src/field-help.tsx",
+				"hits": 1
+			},
+			{
+				"file": "packages/ui/src/funnel-filter.tsx",
 				"hits": 1
 			}
 		]
