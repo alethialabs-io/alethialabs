@@ -134,6 +134,17 @@ variables:
     component: cluster
     reason: "Worker node architecture; read only through main.tf's arch → snapshot-id locals hub, which no single root file speaks for."
 
+  # ── A database knob the root declares and threads into nothing. It is recorded here because the
+  #    generator attributes a variable by the module it is passed to, and this one is passed to
+  #    none: `outputs.tf` reads `module.rds_maindb[0].rds_extra_credentials_secret_arn`, which is
+  #    the module's own OUTPUT rather than this variable going in. The name and the object shape
+  #    leave no doubt which component it belongs to, so it is attributed rather than left to fail
+  #    the generator — and it is ALSO in `dead` below, because attribution is not wiring.
+  - cloud: aws
+    variable: rds_extra_credentials
+    component: database
+    reason: "An extra DB username/password/database the root declares and passes to no module; the similarly-named outputs read the rds module's own output."
+
 cells:
   # ── `platform` is not a component. There is no `ProviderConfig` on a project's platform context and
   #    there must not be: `region`, `project_name`, `environment` and the `alethia_*` namespace are

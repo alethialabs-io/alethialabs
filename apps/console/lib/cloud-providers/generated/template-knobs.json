@@ -23,7 +23,7 @@
 		"azure": {
 			"declared": 90,
 			"reachable": 59,
-			"settable": 23,
+			"settable": 24,
 			"dead": 4
 		},
 		"gcp": {
@@ -110,7 +110,7 @@
 				"alibaba/modules/kvstore"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": "7.0"
 		},
@@ -129,7 +129,7 @@
 				"alibaba/modules/kvstore"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": "redis.master.small.default"
 		},
@@ -148,7 +148,7 @@
 				"alibaba/modules/kvstore"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": false
 		},
@@ -167,7 +167,7 @@
 				"alibaba/modules/kvstore"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": []
 		},
@@ -186,7 +186,7 @@
 				"alibaba/modules/kvstore"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": 0
 		},
@@ -1725,7 +1725,7 @@
 				"aws/modules/redis"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": true
 		},
@@ -1763,7 +1763,7 @@
 				"aws/modules/valkey"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": 2
 		},
@@ -1801,7 +1801,7 @@
 				"aws/modules/valkey"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": "7"
 		},
@@ -2171,6 +2171,24 @@
 		{
 			"cloud": "aws",
 			"component": "cluster",
+			"name": "rds_iam_irsa",
+			"kind": "bool",
+			"typeExpr": "bool",
+			"required": false,
+			"description": "Enable creation of RDS IAM Policy",
+			"sensitive": false,
+			"declaredAt": "infra/templates/project/aws/variables.tf:51",
+			"readBy": [
+				"aws"
+			],
+			"reachable": true,
+			"ownedByProvider": false,
+			"typed": true,
+			"default": false
+		},
+		{
+			"cloud": "aws",
+			"component": "cluster",
 			"name": "vpc_allowed_cidr_blocks",
 			"kind": "list",
 			"typeExpr": "list(string)",
@@ -2353,25 +2371,7 @@
 				"aws/modules/rds"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
-			"typed": true,
-			"default": false
-		},
-		{
-			"cloud": "aws",
-			"component": "database",
-			"name": "rds_iam_irsa",
-			"kind": "bool",
-			"typeExpr": "bool",
-			"required": false,
-			"description": "Enable creation of RDS IAM Policy",
-			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:51",
-			"readBy": [
-				"aws"
-			],
-			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": false
 		},
@@ -4357,7 +4357,7 @@
 				"azure/modules/azure-cache-redis"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": false
 		},
@@ -4375,8 +4375,8 @@
 				"azure"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
-			"typed": true,
+			"ownedByProvider": false,
+			"typed": false,
 			"default": "Basic"
 		},
 		{
@@ -4393,7 +4393,7 @@
 				"azure"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": null
 		},
@@ -4430,7 +4430,7 @@
 				"azure/modules/aks"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": []
 		},
@@ -4866,7 +4866,7 @@
 				"azure/modules/azure-db"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": false
 		},
@@ -6094,7 +6094,7 @@
 				"gcp"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": false
 		},
@@ -6129,7 +6129,7 @@
 				"gcp/modules/memorystore"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": 1
 		},
@@ -6148,7 +6148,7 @@
 				"gcp/modules/memorystore"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": "REDIS_7_0"
 		},
@@ -6167,7 +6167,7 @@
 				"gcp/modules/memorystore"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": "BASIC"
 		},
@@ -6202,7 +6202,7 @@
 				"gcp/modules/memorystore-valkey"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": "VALKEY_7_2"
 		},
@@ -6240,7 +6240,7 @@
 				"gcp/modules/memorystore-valkey"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": 0
 		},
@@ -6259,7 +6259,7 @@
 				"gcp/modules/memorystore-valkey"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": 1
 		},
@@ -6872,7 +6872,7 @@
 				"gcp/modules/cloud-sql"
 			],
 			"reachable": true,
-			"ownedByProvider": true,
+			"ownedByProvider": false,
 			"typed": true,
 			"default": false
 		},

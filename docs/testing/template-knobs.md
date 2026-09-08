@@ -19,7 +19,7 @@ provisioned.
 |---|---:|---:|---:|---:|
 | alibaba | 63 | 39 | 10 | 1 |
 | aws | 159 | 118 | 51 | 7 |
-| azure | 90 | 59 | 23 | 4 |
+| azure | 90 | 59 | 24 | 4 |
 | gcp | 104 | 77 | 32 | 8 |
 | hetzner | 37 | 16 | 2 | 2 |
 
@@ -34,9 +34,9 @@ argument — the shape a raw variable count cannot tell from a working knob.
 | Component | alibaba | aws | azure | gcp | hetzner |
 |---|---:|---:|---:|---:|---:|
 | bucket | 0 / 2 | 3 / 16 | 0 / 7 | 4 / 11 | 0 / 10 |
-| cache | 0 / 6 | 5 / 18 | 2 / 6 | 3 / 11 | — |
-| cluster | 9 / 17 | 11 / 20 | 11 / 18 | 13 / 21 | 2 / 11 |
-| database | 0 / 8 | 4 / 12 | 3 / 11 | 7 / 14 | — |
+| cache | 0 / 6 | 5 / 18 | 3 / 6 | 3 / 11 | — |
+| cluster | 9 / 17 | 11 / 21 | 11 / 18 | 13 / 21 | 2 / 11 |
+| database | 0 / 8 | 4 / 11 | 3 / 11 | 7 / 14 | — |
 | dns | 1 / 5 | 7 / 16 | 4 / 8 | 3 / 7 | 0 / 5 |
 | network | 0 / 6 | 0 / 4 | 0 / 5 | 0 / 7 | 0 / 6 |
 | nosql | 0 / 2 | 8 / 20 | 1 / 11 | 2 / 4 | — |
