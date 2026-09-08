@@ -1,14 +1,17 @@
 ---
 title: First-Run Setup (init)
-description: One command to point the CLI at a control plane and log in — the hosted default, or a self-hosted / dev URL.
+description: One command to point the CLI at a control plane, log in, and write the alethia.yaml this directory applies.
 ---
 
 # First-Run Setup
 
-`alethia init` is the guided one-time setup: it picks the **control-plane URL**, persists it, then
-runs the browser [device-code login](/cli/authentication). It's exactly the composition of
-[`alethia config set web-origin`](/cli/commands) + [`alethia login`](/cli/authentication) in a single
-prompt — nothing more.
+`alethia init` is the guided setup: it picks the **control-plane URL**, persists it, runs the browser
+[device-code login](/cli/authentication), and writes an `alethia.yaml` for this directory when there
+is none.
+
+Every step is skipped when it is already done, so it is safe to re-run. To go all the way to a
+running project in one command, use [`alethia up`](/cli/commands/plan-and-apply#alethia-up), which is
+this command and `alethia apply` together.
 
 ```bash
 alethia init
@@ -24,11 +27,40 @@ A form asks for the **control-plane URL**, pre-filled with the current value —
 ### Log in
 The device-code flow runs immediately: the CLI opens `<origin>/cli/login?device_code=<uuid>` in your
 browser and polls `<origin>/api/auth/cli/exchange` until you approve, then writes the tokens. See
-[Authentication](/cli/authentication) for the full RFC 8628 flow.
+[Authentication](/cli/authentication) for the full RFC 8628 flow. A machine that is already signed
+in skips this step.
+
+### Write an `alethia.yaml`
+
+When the current directory has no manifest, `init` writes one: the project's name, the cloud
+account by its **label**, the region, and the environments with their placements. That file is
+what [`alethia apply`](/cli/commands/plan-and-apply) reads.
+
+A directory that already has one is left alone, so re-running `init` is safe. Pass
+`--skip-manifest` to do the machine setup by itself.
 
 </Steps>
 
-`init` asks for exactly one value, and one flag supplies it:
+`init` skips whatever is already done — the login included, so adding a manifest to a second
+directory does not open a browser. Use [`alethia login --force`](/cli/authentication) to sign in
+again deliberately.
+
+## Flags
+
+What the manifest declares:
+
+{/* fieldspec: alethia init manifest */}
+
+| Field              | What it is                                                                        | Set without the form |
+| ------------------ | --------------------------------------------------------------------------------- | -------------------- |
+| Manifest           | Where to write the manifest (default: ./alethia.yaml)                             | `--file`             |
+| Project name       | Name for the project the manifest declares (asked for on a terminal when omitted) | `--project`          |
+| Region             | Cloud region to provision into                                                    | `--region`           |
+| Cloud account      | Cloud account to link, by its LABEL or its id                                     | `--cloud-account`    |
+| Stage              | Stage for the environment it declares                                             | `--stage`            |
+| Machine setup only | Set up the CLI without writing a manifest                                         | `--skip-manifest`    |
+
+And the control-plane URL:
 
 {/* fieldspec: alethia init */}
 
