@@ -103,6 +103,17 @@ check "primary_ip_survives_the_server" {
   }
 }
 
+# go.dev/dl has no MINOR-only tarball — every release since 1.21 is published as
+# go1.NN.P, so a go.work reading `go 1.28` would render a URL that 404s. curl -f then
+# fails inside a `||` group and cloud-init moves on: the box comes up with NO Go at
+# all, and the first `pnpm env:runner --native` is where you find out.
+check "go_version_carries_a_patch" {
+  assert {
+    condition     = can(regex("^[0-9]+[.][0-9]+[.][0-9]+$", local.go_version))
+    error_message = "go.work says `go ${local.go_version}`; the box's download URL needs a full go1.NN.P (go.dev/dl publishes no minor-only tarball). Pin the patch in go.work."
+  }
+}
+
 # The env cap and the port pools in scripts/box/env-registry.sh are sized together;
 # a cap the pools cannot satisfy fails at allocation time with a confusing
 # "registry is inconsistent" rather than here.
