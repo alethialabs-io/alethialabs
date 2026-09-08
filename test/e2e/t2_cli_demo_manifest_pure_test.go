@@ -17,9 +17,21 @@ import (
 	"testing"
 )
 
-// TestAssertManifestPlanIsClean_Verdicts drives all three arms: the refusal, the would-create, and
-// the clean plan the beat exists to see.
+// TestAssertManifestPlanIsClean_Verdicts drives every arm: the refusal, the two identity checks,
+// each of the three counts in the summary line, and the clean plan the beat exists to see.
+//
+// The run carries a project name and a region, because the assertion reads them out of the plan's
+// header — a zero-valued run would make that check vacuous and the table would then prove only that
+// the summary line was matched.
 func TestAssertManifestPlanIsClean_Verdicts(t *testing.T) {
+	run := &CLIDemoRun{Project: "cli-demo-42", Region: "nbg1"}
+	// The header and the summary as a real run prints them. Cases vary one clause at a time.
+	header := "▸ Reading alethia.yaml · cli-demo-42 · hetzner/nbg1\n"
+	clean := header +
+		"  development  dedicated  + environment\n" +
+		"  production is on the server and not in the file — left alone\n" +
+		"  0 projects to create · 1 environment · 0 components\n"
+
 	cases := []struct {
 		name string
 		out  string
@@ -33,17 +45,17 @@ func TestAssertManifestPlanIsClean_Verdicts(t *testing.T) {
 		},
 		{
 			name:    "a plan that would create the project names the two-projects failure",
-			out:     "1 project to create · 2 environments · 0 components",
-			wantErr: "would create a project",
+			out:     header + "  1 project to create · 1 environment · 0 components",
+			wantErr: "0 projects to create · 1 environment · 0 components",
 		},
 		{
 			name: "a clean plan passes",
-			out:  "0 projects to create · 0 environments · 1 component",
+			out:  clean,
 		},
 		{
 			name:    "empty output is not silently a pass",
 			out:     "",
-			wantErr: "would create a project",
+			wantErr: "does not name",
 		},
 		{
 			// The refusal arm is checked FIRST on purpose: a refused plan also lacks the
@@ -53,10 +65,35 @@ func TestAssertManifestPlanIsClean_Verdicts(t *testing.T) {
 			out:     "alethia.yaml cannot be applied as written",
 			wantErr: "REFUSED the manifest",
 		},
+		{
+			// The file planned cleanly — against SOME OTHER project. Nothing in the counts can
+			// see this; only the header can.
+			name:    "a file naming another project is caught by the header",
+			out:     "▸ Reading alethia.yaml · someone-elses · hetzner/nbg1\n  0 projects to create · 1 environment · 0 components",
+			wantErr: "cli-demo-42",
+		},
+		{
+			name:    "a file naming another region is caught by the header",
+			out:     "▸ Reading alethia.yaml · cli-demo-42 · hetzner/fsn1\n  0 projects to create · 1 environment · 0 components",
+			wantErr: "nbg1",
+		},
+		{
+			// The case the old substring form could not see: everything before the first
+			// separator is identical to a clean plan.
+			name:    "the project matches and the environment count does not",
+			out:     header + "  0 projects to create · 9 environments · 0 components",
+			wantErr: "0 projects to create · 1 environment · 0 components",
+		},
+		{
+			// The other half of it: the run would re-upsert components the file never declared.
+			name:    "the components would be rewritten",
+			out:     header + "  0 projects to create · 1 environment · 3 components",
+			wantErr: "0 projects to create · 1 environment · 0 components",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := assertManifestPlanIsClean(&CLIDemoRun{}, tc.out)
+			err := assertManifestPlanIsClean(run, tc.out)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("wanted a clean verdict, got: %v", err)
