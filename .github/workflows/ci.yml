@@ -1238,6 +1238,18 @@ jobs:
           pnpm -C apps/console run gen:go-brand
           git diff --exit-code -- packages/core/types/brand_gen.go \
             || { echo "::error::The Go brand projection is stale — run 'pnpm -C apps/console run gen:go-brand' and commit (source of truth: packages/brand/src/tokens.css for the values, apps/console/scripts/lib/brand-projection.ts for the exact/lossy/none decisions)."; exit 1; }
+      # The console's route tree, projected into Go so the CLI can build deep links over it. Same
+      # shape and same reason as the two above: before it, the ONE link the CLI built was
+      # `{origin}/dashboard` — a legacy catch-all that 307s to the org root — so `project get --open`
+      # did not open the project, and nothing could tell, because the URL was a string literal in Go
+      # and the routes are directories in a Next.js app. A route the console renames now removes a
+      # constant, and every Go builder over it stops compiling.
+      - name: The CLI's deep links match the console's route tree (app/(private)/** → routes_gen.go)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          pnpm -C apps/console run gen:go-routes
+          git diff --exit-code -- packages/core/routing/routes_gen.go \
+            || { echo "::error::The Go route table is stale — run 'pnpm -C apps/console run gen:go-routes' and commit (source of truth: apps/console/app/(private)/** through scripts/lib/console-routes.mjs). A route the CLI links to may have moved."; exit 1; }
       # The status vocabulary, on the same shape and for the same reason. The CLI decided a status
       # glyph from nine uppercase words with no case folding while the console decided it from 28
       # lower-cased keys; they disagreed on seven measured cases, and six pgEnums that shout on the
