@@ -198,6 +198,7 @@ func captureIdentityID(r *CLIDemoRun, out string) error {
 	}
 	var ids []struct {
 		ID       string `json:"id"`
+		Label    string `json:"label"`
 		Provider string `json:"provider"`
 	}
 	if err := json.Unmarshal([]byte(out[start:end+1]), &ids); err != nil {
@@ -206,6 +207,12 @@ func captureIdentityID(r *CLIDemoRun, out string) error {
 	for _, id := range ids {
 		if strings.EqualFold(id.Provider, r.Provider) && id.ID != "" {
 			r.IdentityID = id.ID
+			r.IdentityLabel = id.Label
+			if id.Label == "" {
+				return fmt.Errorf("the %s identity %s has no label — `project create` names the account by "+
+					"its label, so an unlabelled connector cannot be driven from the terminal:\n%s",
+					r.Provider, id.ID, out)
+			}
 			return nil
 		}
 	}

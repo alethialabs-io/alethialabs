@@ -147,19 +147,18 @@ func runProjectEnvList(c apiClient, out io.Writer, format, project string) error
 //
 //	--env prod:production:dedicated --env dev-1:development:namespace:boutique-dev-1
 //
-// One spec, four renderings, and all four are here or one hop away: the flag (`--env`, and
-// the `--stage`/`--placement-mode`/`--namespace` trio on `env add`), the interactive form
-// below, the wire shape (api.EnvironmentSpec), and the docs table — which
-// TestHygCliProject_DocsSpeakTheGeneratedVocabulary holds to the same generated enums the
-// form's options are built from.
+// One spec, four renderings, and all four are here or one hop away: the manifest (an
+// `environments:` entry in alethia.yaml, and the `--stage`/`--placement-mode`/`--namespace`
+// trio on `env add`), the interactive form below, the wire shape (api.EnvironmentSpec), and
+// the docs table — which TestHygCliProject_DocsSpeakTheGeneratedVocabulary holds to the same
+// generated enums the form's options are built from.
 //
-// The form and the flag are proven to be the same spec rather than asserted to be:
-// envTuple renders the form's answers back into `--env` syntax, and
-// TestProj_EnvFormAndEnvFlagAreOneSpec round-trips them through parseEnvMatrix — the real
-// parser, not a copy of it — and compares the resulting api.EnvironmentSpec.
+// The form and the file are proven to be the same spec rather than asserted to be:
+// TestProj_EnvFormAndManifestAreOneSpec renders the form's answers as the file, reads it back
+// through the real manifest reader, and compares the resulting api.EnvironmentSpec.
 
-// envAnswers is one environment as the form collects it: exactly the four fields the `--env`
-// tuple can express, and deliberately not one more. A form that could ask for something no
+// envAnswers is one environment as the form collects it: exactly the four fields a manifest
+// entry carries, and deliberately not one more. A form that could ask for something no
 // flag can set would break the --no-input contract silently, which is the failure mode this
 // group's whole design is arranged against — so `lifecycle`, `fabric` and `region` stay
 // flag-only on `env add` rather than being asked for here.
@@ -210,8 +209,8 @@ func stageSelectOptions() []huh.Option[string] {
 
 // defaultPlacementFor is the rung an unanswered form starts on. The FIRST environment of a
 // project owns the Fabric it provisions, so it starts `dedicated`; every later one starts on
-// the cheap rung. Same rule as parseEnvMatrix applies to a tuple that omits the mode, stated
-// once here and consumed by both.
+// the cheap rung. Same rule manifest.Normalize applies to an entry that omits the placement,
+// stated in both places because neither package may import the other's vocabulary.
 func defaultPlacementFor(isFirst bool) string {
 	if isFirst {
 		return string(placementDedicated)
@@ -308,27 +307,6 @@ func validateEnvAnswers(a envAnswers) error {
 		return err
 	}
 	return validateOneOf("placement-mode", a.PlacementMode, placementModes())
-}
-
-// envTuple renders one environment back into `--env name:stage[:mode[:namespace]]` — the flag
-// spelling of the answers the form just collected, for the replay line.
-//
-// It REFUSES a field containing a colon rather than emitting a tuple that would parse into
-// something else. The tuple's separator is its whole grammar, so an environment called
-// `a:b` would render as a four-part tuple whose namespace is a stage; the replay line would
-// be a plausible command that does a different thing, which is worse than no replay line.
-// (The server independently refuses such a name; this is about never PRINTING a lie.)
-func envTuple(a envAnswers) (string, error) {
-	parts := []string{a.Name, a.Stage, a.PlacementMode}
-	if a.Namespace != "" {
-		parts = append(parts, a.Namespace)
-	}
-	for _, p := range parts {
-		if strings.Contains(p, ":") {
-			return "", fmt.Errorf("%q contains a colon, which is the --env separator — pass this environment with `project env add` instead", p)
-		}
-	}
-	return strings.Join(parts, ":"), nil
 }
 
 // envSpecFrom turns collected answers into the wire spec. isDefault is positional and not

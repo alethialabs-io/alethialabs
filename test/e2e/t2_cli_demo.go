@@ -284,6 +284,15 @@ var CLIDemoSteps = []DemoStep{
 		Reach: CLIDriven,
 	},
 	{
+		ID:    "manifest-plan",
+		Title: "Declare the whole shape in one file and plan it",
+		Argv:  []string{"plan"},
+		Reach: CLIDriven,
+		Why: "#3662's golden path: `alethia apply` reads alethia.yaml — project, environments with their " +
+			"placements, components — and creates and deploys it; `alethia plan` is the same comparison " +
+			"with the writes left out. The run proves the file describes the project the commands built.",
+	},
+	{
 		ID:    "staged",
 		Title: "Review what is about to change",
 		Argv:  []string{"staged", "list"},
