@@ -4,8 +4,11 @@
 package cloud
 
 import (
-	"os"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -864,24 +867,21 @@ func TestProviderTfvars_LeafPassthrough_TypedWins(t *testing.T) {
 	}
 }
 
-// Both halves of the union are read from the SOURCE, not from a list written here.
+// Both halves of the union are read from the AST, not from a list written here.
 //
-// The two tests below this one enumerate components by hand, and a hand-written list is exactly
-// what a new component type is invisible to: add a kind, give it a reserved slice, forget to add
-// it here, and the carrier test reports all-clear for keys nothing closes. Same for the call sites
-// — one root merge added later without its union is the original defect surviving, and no test
-// that names sites individually would notice.
+// Two questions that cannot go stale: every `xxxReserved` slice a provider declares must be an
+// argument to that file's `unionReserved(...)`, and every root-level `mergeProviderConfig(tfvars,
+// …)` must be passed a `RootReserved` union. A hand-written list of either is what a new component
+// or a new call site is invisible to, which is the original defect surviving by omission.
 //
-// So this reads the provider files themselves and asks two questions that cannot go stale:
-// every `xxxReserved` slice a provider declares must be an argument to that file's
-// `unionReserved(...)`, and every root-level `mergeProviderConfig(tfvars, …)` must be passed a
-// `RootReserved` union. Text rather than an AST because the call site IS the text: what is being
-// checked is which identifier a human typed at a call, not what the program computes.
+// It reads the AST rather than the text, and the earlier version of this comment argued the
+// opposite — that the call site IS the text, since what is checked is which identifier a human
+// typed. That is true and it is not the point. A matcher has to FIND the call before it can read
+// the identifier, and four review passes on the sibling test were all one failure: a regex that
+// stops matching reports the same "nothing wrong" as a file with nothing wrong. A wrapped argument
+// list would have taken these `^\s*mergeProviderConfig\(tfvars,.*$` matches out silently, and none
+// of the checks below would have noticed. The parser cannot be blind to a shape.
 func TestEveryReservedSliceAndRootMergeIsCoveredBySource(t *testing.T) {
-	declRe := regexp.MustCompile(`(?m)^\t(\w+Reserved)\s*=\s*\[\]string\{`)
-	unionArgsRe := regexp.MustCompile(`(?s)unionReserved\((.*?)\)\n`)
-	rootMergeRe := regexp.MustCompile(`(?m)^\s*mergeProviderConfig\(tfvars,.*$`)
-
 	files := []string{
 		"aws_provider.go", "gcp_provider.go", "azure_provider.go",
 		"alibaba_provider.go", "hetzner_provider.go",
@@ -890,47 +890,86 @@ func TestEveryReservedSliceAndRootMergeIsCoveredBySource(t *testing.T) {
 		t.Fatalf("%d provider files scanned but %d providers exist — a cloud added without a file "+
 			"here is never asked either question", len(files), len(leafProviders))
 	}
+
 	for _, file := range files {
 		t.Run(file, func(t *testing.T) {
-			src, err := os.ReadFile(file)
+			fset := token.NewFileSet()
+			f, err := parser.ParseFile(fset, file, nil, 0)
 			if err != nil {
-				t.Fatalf("reading %s: %v", file, err)
+				t.Fatalf("parsing %s: %v", file, err)
 			}
-			text := string(src)
 
-			// 1. Every declared reserved slice is folded into this file's union.
-			union := ""
-			if m := unionArgsRe.FindStringSubmatch(text); m != nil {
-				union = m[1]
-			}
-			for _, d := range declRe.FindAllStringSubmatch(text, -1) {
-				name := d[1]
+			// `name = []string{…}` declarations, and the identifiers passed to `unionReserved(…)`.
+			declared := map[string]bool{}
+			unioned := map[string]bool{}
+			ast.Inspect(f, func(n ast.Node) bool {
+				switch node := n.(type) {
+				case *ast.ValueSpec:
+					for i, id := range node.Names {
+						if i < len(node.Values) {
+							if cl, ok := node.Values[i].(*ast.CompositeLit); ok {
+								if at, ok := cl.Type.(*ast.ArrayType); ok {
+									if el, ok := at.Elt.(*ast.Ident); ok && el.Name == "string" {
+										declared[id.Name] = true
+									}
+								}
+							}
+							if call, ok := node.Values[i].(*ast.CallExpr); ok {
+								if fn, ok := call.Fun.(*ast.Ident); ok && fn.Name == "unionReserved" {
+									for _, arg := range call.Args {
+										if a, ok := arg.(*ast.Ident); ok {
+											unioned[a.Name] = true
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				return true
+			})
+
+			for name := range declared {
 				if strings.HasSuffix(name, "RootReserved") {
 					continue // the union itself
 				}
-				if !strings.Contains(union, name) {
+				if !unioned[name] {
 					t.Errorf("%s declares %s but does not pass it to unionReserved — every root "+
 						"merge on this cloud would leave its keys open to every other component",
 						file, name)
 				}
 			}
 
-			// 2. Every root-level merge is passed a union.
-			//
-			// The count comes first, and that is the whole point of it: a text matcher that stops
-			// matching reports the same "no violations" as a file with nothing wrong. A gofmt
-			// change, a wrapped argument list or a rename would make this silently vacuous.
-			calls := rootMergeRe.FindAllString(text, -1)
-			if len(calls) < 1 {
-				t.Fatalf("%s: matched ZERO root-level merges — every provider has at least one, so "+
-					"the matcher is blind and this test would pass on any defect", file)
-			}
-			for _, call := range calls {
-				if !strings.Contains(call, "RootReserved...") {
-					t.Errorf("%s: root merge is not passed its cloud's union — one component's "+
-						"provider_config can decide another's variable:\n  %s",
-						file, strings.TrimSpace(call))
+			// Every `mergeProviderConfig(tfvars, …)` must end in a `…RootReserved...` spread. The
+			// count assertion is kept even with a parser doing the finding: it now catches a RENAME
+			// of the function or of the map, which would make the walk find nothing and say so
+			// instead of passing.
+			sites := 0
+			ast.Inspect(f, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
 				}
+				fn, ok := call.Fun.(*ast.Ident)
+				if !ok || fn.Name != "mergeProviderConfig" || len(call.Args) == 0 {
+					return true
+				}
+				if first, ok := call.Args[0].(*ast.Ident); !ok || first.Name != "tfvars" {
+					return true // an item-level merge, which correctly takes its own list
+				}
+				sites++
+				last := call.Args[len(call.Args)-1]
+				id, ok := last.(*ast.Ident)
+				if !call.Ellipsis.IsValid() || !ok || !strings.HasSuffix(id.Name, "RootReserved") {
+					t.Errorf("%s:%d: root merge is not passed its cloud's union — one component's "+
+						"provider_config can decide another's variable",
+						file, fset.Position(call.Pos()).Line)
+				}
+				return true
+			})
+			if sites == 0 {
+				t.Fatalf("%s: found no root-level merges at all — every provider has at least one, "+
+					"so the walk is looking for the wrong name and would pass on any defect", file)
 			}
 		})
 	}
@@ -1048,94 +1087,108 @@ func TestProviderTfvars_ReservedKeysAreClosedToEveryOtherComponent(t *testing.T)
 	}
 }
 
-// blankLineComments replaces every `//` comment with spaces, leaving byte offsets unchanged.
+// rootTfvarKeys returns every key the file writes into the root `tfvars` map, read from the Go AST
+// rather than matched out of the text.
 //
-// It exists because the two ways of finding the tfvars literal's end both read text they cannot
-// lex, and a comment is the one thing inside that span that is allowed to say anything at all.
-// `aws_provider.go` already carries a comment reading "It used to stay {}" INSIDE the literal; that
-// pair balances, so the brace count was right by luck. Blanking comments first removes the hazard
-// rather than detecting it after the fact — and blanking rather than deleting keeps every offset
-// aligned with the original text, so the key extraction still reads the real source.
+// This is the fourth version of this question and the first one that cannot have a blind spot, so
+// the three that came before are worth stating. A regex for `tfvars["k"] = …` missed the initial
+// `map[string]interface{}{…}` literal, which carries most of the keys. Adding a second regex for
+// the literal meant bounding its span, and a span has to be FOUND — by brace counting, which cannot
+// tell a brace in code from one in a comment, and `aws_provider.go` already contains "It used to
+// stay {}" inside that literal. Bounding it twice and requiring agreement caught that, and then a
+// raw string containing a line starting with `}` was shown to fool both bounds at once, agreeing
+// and both wrong.
 //
-// Double-quoted strings are respected (a `//` inside one is not a comment). Raw strings and block
-// comments are REFUSED by the caller rather than handled: a backtick string could contain both a
-// `//` and a line starting with `}`, which would fool the stripper and both bounds at once — the
-// one case where the two methods could agree and both be wrong.
-func blankLineComments(src string) string {
-	out := []byte(src)
-	inStr := false
-	for i := 0; i < len(out); i++ {
-		switch {
-		case inStr:
-			if out[i] == '\\' {
-				i++
-			} else if out[i] == '"' {
-				inStr = false
-			}
-		case out[i] == '"':
-			inStr = true
-		case out[i] == '/' && i+1 < len(out) && out[i+1] == '/':
-			for j := i; j < len(out) && out[j] != '\n'; j++ {
-				out[j] = ' '
+// Every one of those is the same defect: asking a matcher a question only a parser can answer. The
+// parser enumerates every assignment and every composite literal because it knows what those ARE,
+// so there is no shape to be blind to, no span to bound, no comment to strip and nothing to refuse.
+// It also drops the count floors, which existed only to notice a matcher going silent.
+//
+// The two shapes it collects are the two a provider actually uses, and nothing else can reach root
+// tfvars: the map literal `tfvars` is initialised from, and later `tfvars["k"] = v` assignments.
+// Nested composite literals are NOT collected — a key inside `buildSQSQueues`'s per-item object is
+// not a root variable — and that falls out of reading the literal's own elements rather than from a
+// rule anyone had to write.
+func rootTfvarKeys(t *testing.T, path string) map[string]bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		t.Fatalf("parsing %s: %v", path, err)
+	}
+
+	keys := map[string]bool{}
+	add := func(lit ast.Expr) {
+		if b, ok := lit.(*ast.BasicLit); ok && b.Kind == token.STRING {
+			if v, err := strconv.Unquote(b.Value); err == nil {
+				keys[v] = true
 			}
 		}
 	}
-	return string(out)
+
+	ast.Inspect(file, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for i, lhs := range assign.Lhs {
+			switch target := lhs.(type) {
+			// `tfvars["k"] = v`
+			case *ast.IndexExpr:
+				if id, ok := target.X.(*ast.Ident); ok && id.Name == "tfvars" {
+					add(target.Index)
+				}
+			// `tfvars := map[string]interface{}{ "k": v, … }` — only the literal's OWN elements.
+			case *ast.Ident:
+				if target.Name != "tfvars" || i >= len(assign.Rhs) {
+					continue
+				}
+				if cl, ok := assign.Rhs[i].(*ast.CompositeLit); ok {
+					for _, elt := range cl.Elts {
+						if kv, ok := elt.(*ast.KeyValueExpr); ok {
+							add(kv.Key)
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+	return keys
 }
 
-// The union must contain every key the TYPED MAPPING WRITES — the subject read out of the emitter,
-// not out of a list written here.
+// The union must contain every key the TYPED MAPPING WRITES, and contain nothing it does not.
 //
-// This replaces a test that compared each union against a hand-written map of the same component
-// slices it was built from. Those two agreed by construction, so it could only fail if
-// `unionReserved` itself dropped entries: it tested the helper, not the coverage. Review found
-// what that hid. Nine keys reached on four clouds while it was green — every cloud's cluster node
-// sizing (`eks_disk_size`, `gke_node_desired_size`, `aks_disk_size_gb`, `ack_node_max_size` and
-// their siblings) plus Alibaba's `network_id` and `subnet_ids`, so a DATABASE's provider_config
-// could pick the cluster's disk size and the brownfield VPC and vSwitch. They were in no slice at
-// all, and a union of slices cannot cover a key no slice names. The carrier probe shared the blind
-// spot and was worse there: its subjects ARE the slices, so deleting a key both opens the hole and
-// deletes the subtest that would have caught it.
+// The subject comes from the emitter, via `rootTfvarKeys`. The test it replaced compared each union
+// against a hand-written map of the same component slices the union was built from: the two agreed
+// by construction, so it could only fail if `unionReserved` itself dropped entries. It tested the
+// helper, not the coverage, and while it was green nine keys reached on four clouds — every cloud's
+// cluster node sizing, plus Alibaba's `network_id` and `subnet_ids`, so a DATABASE's provider_config
+// could pick the cluster's disk size and the brownfield VPC.
 //
-// Reading the emitter makes the subject independent of anything a person remembers to list.
+// A provider writes root tfvars in two shapes and BOTH are reserved. Nothing reached through the map
+// literal, because it runs before the merge and merge-if-absent covers what is already present — but
+// that is a property of statement order rather than of the reservation. The transition that would
+// break it catches itself: moving a key out of the literal into an `if` is what turns it into an
+// assignment, so at the instant the ordering protection is lost the key is still seen here and the
+// union must grow or this fails.
 //
-// A provider writes root tfvars in TWO shapes and both are read here. The first version of this
-// test read only `tfvars["k"] = …` and so was blind to the initial `map[string]interface{}{…}`
-// literal — 47 keys on aws alone, `project_name`, `vpc_cidr`, `eks_cluster_version` and the rest.
-// Nothing reached through them, because the literal runs before the merge and merge-if-absent then
-// covers every key already present. That safety is a property of STATEMENT ORDER rather than of the
-// reservation, so both shapes are reserved and it no longer has to be.
-//
-// The transition that would break it CATCHES ITSELF, which is worth knowing before anyone decides
-// the literal half is redundant: moving a key out of the literal and into an `if` is what turns it
-// into a `tfvars["k"] = …` assignment — the shape this test has always read. So at the instant the
-// ordering protection is lost, the key becomes visible here and the union must grow or the suite
-// goes red. The arrangement holds, and this is what holds it.
-//
-// Both loops assert a COUNT before they assert a property. A text matcher that stops matching —
-// after a gofmt change, a wrapped argument list, a rename — is indistinguishable from a file with
-// nothing to find, so "no violations" and "I could not see the file" have to be different answers.
+// BOTH DIRECTIONS ARE CHECKED, and the second one is load-bearing in a way its wording does not
+// suggest. Over-reserving is safe, so "reserves a key it never writes" reads like tidiness about
+// stale entries — but review demonstrated it catching a truncated span that the coverage direction
+// missed. Anyone pruning tests should know it is holding more than it says.
 func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
-	assignRe := regexp.MustCompile(`tfvars\["([a-z0-9_]+)"\]\s*=`)
-	literalRe := regexp.MustCompile(`(?m)^\s*"([a-z0-9_]+)":`)
-	literalOpenRe := regexp.MustCompile(`tfvars := map\[string\]interface\{\}\{`)
-
-	// The floor is the count observed when this was written. It exists to catch the matcher going
-	// blind, not to pin the exact surface, so it is a MINIMUM rather than an equality: adding a
-	// tfvar is normal and must not fail here, while dropping to zero is the failure this catches.
 	cases := []struct {
 		cloud, file string
 		union       []string
-		// The list generated from this file's own writes. Checked in BOTH directions against the
-		// source: the union must cover it, and it must contain nothing the file does not write.
-		typed   []string
-		minKeys int
+		// The list generated from this file's own writes.
+		typed []string
 	}{
-		{"aws", "aws_provider.go", awsRootReserved, awsTypedTfvars, 63},
-		{"gcp", "gcp_provider.go", gcpRootReserved, gcpTypedTfvars, 48},
-		{"azure", "azure_provider.go", azureRootReserved, azureTypedTfvars, 42},
-		{"alibaba", "alibaba_provider.go", alibabaRootReserved, alibabaTypedTfvars, 46},
-		{"hetzner", "hetzner_provider.go", hetznerRootReserved, hetznerRootReserved, 28},
+		{"aws", "aws_provider.go", awsRootReserved, awsTypedTfvars},
+		{"gcp", "gcp_provider.go", gcpRootReserved, gcpTypedTfvars},
+		{"azure", "azure_provider.go", azureRootReserved, azureTypedTfvars},
+		{"alibaba", "alibaba_provider.go", alibabaRootReserved, alibabaTypedTfvars},
+		{"hetzner", "hetzner_provider.go", hetznerRootReserved, hetznerRootReserved},
 	}
 	if len(cases) != len(leafProviders) {
 		t.Fatalf("%d clouds checked but %d providers exist — a cloud added without a union here "+
@@ -1144,117 +1197,25 @@ func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.cloud, func(t *testing.T) {
-			src, err := os.ReadFile(tc.file)
-			if err != nil {
-				t.Fatalf("reading %s: %v", tc.file, err)
-			}
-			text := string(src)
-
-			// The bounds run on a copy with `//` comments blanked to spaces; offsets are preserved,
-			// so the key extraction below still reads the real source.
-			scan := blankLineComments(text)
-
-			// Neither bound can lex what it scans, so the two shapes that could defeat both at once
-			// are REFUSED rather than handled: a raw string may contain a `//` and a line starting
-			// with `}`, which fools the stripper and both bounds together, and a block comment is
-			// invisible to a line-comment stripper entirely.
-			//
-			// The test runs on `scan`, not on `text`, and that is the whole point of it. Every one of
-			// these five files contains backticks — inside comments, where Go doc style puts symbol
-			// names — so asking `text` would fire on every file and asking it with an `&&` (which is
-			// what this was) would fire on none. Blanking first makes the question the right one: a
-			// backtick that SURVIVES comment-blanking is in code, and is a raw string.
-			if i := strings.IndexAny(scan, "`"); i >= 0 {
-				t.Fatalf("%s: a raw string literal at offset %d — it can contain both a `//` and a "+
-					"line starting with `}`, so neither span bound can be trusted past it", tc.file, i)
-			}
-			if i := strings.Index(scan, "/*"); i >= 0 {
-				t.Fatalf("%s: a block comment at offset %d — a line-comment stripper cannot see it, "+
-					"so the span bounds below are reading text they cannot lex", tc.file, i)
+			written := rootTfvarKeys(t, tc.file)
+			if len(written) == 0 {
+				t.Fatalf("%s: the parser found no root tfvars keys at all — every provider writes "+
+					"some, so this is a broken reader rather than a clean file", tc.file)
 			}
 
-			found := map[string]bool{}
-			for _, m := range assignRe.FindAllStringSubmatch(text, -1) {
-				found[m[1]] = true
-			}
-			// The initial literal, located rather than regex'd out of the whole file: `"name":`
-			// appears inside the nested item builders too, and those are per-item objects, not root
-			// tfvars. So the span has to be bounded, and it is bounded TWICE, by two methods that
-			// must agree.
-			//
-			// Brace counting alone is not sound here. It cannot tell a brace in code from one in a
-			// comment or a string, and `aws_provider.go` already contains a comment reading "It used
-			// to stay {}" INSIDE this literal. That pair happens to balance, so the count is right
-			// today by luck; a single unbalanced brace in a comment would move the end silently. The
-			// dangerous direction is SHORT — a truncated span reads fewer keys, and once the file
-			// grows past the floor a short read can still clear it, so the tail would go unreserved
-			// with the test green.
-			//
-			// The second method is gofmt's own structure: the literal closes with `}` at exactly one
-			// tab, and everything nested inside it is indented deeper. Requiring the two answers to
-			// be identical turns "a comment moved the end" from a silent short read into a failure
-			// that names itself.
-			if open := literalOpenRe.FindStringIndex(scan); open != nil {
-				depth, i := 1, open[1]
-				for i < len(scan) && depth > 0 {
-					switch scan[i] {
-					case '{':
-						depth++
-					case '}':
-						depth--
-					}
-					i++
-				}
-				byBrace := i - 1
-
-				rel := strings.Index(scan[open[1]:], "\n\t}")
-				if rel < 0 {
-					t.Fatalf("%s: the tfvars literal has no closing `}` at one tab — gofmt guarantees "+
-						"one, so the span cannot be bounded and every key past here would go unread",
-						tc.file)
-				}
-				byIndent := open[1] + rel + 2
-
-				if byBrace != byIndent {
-					t.Fatalf("%s: the two ways of finding the tfvars literal's end disagree (brace "+
-						"count says %d, indentation says %d). A brace in a comment or a string has "+
-						"moved one of them, and the short answer would read fewer keys while still "+
-						"clearing the count floor", tc.file, byBrace, byIndent)
-				}
-
-				for _, m := range literalRe.FindAllStringSubmatch(text[open[1]:byBrace], -1) {
-					found[m[1]] = true
-				}
-			} else {
-				t.Fatalf("%s: no `tfvars := map[string]interface{}{` literal found — every provider "+
-					"opens with one, so the matcher is blind to the shape that carries most of the keys",
-					tc.file)
-			}
-			if len(found) < tc.minKeys {
-				t.Fatalf("%s: matched %d root tfvars assignments, expected at least %d — the "+
-					"matcher has gone blind and every check below it would report all-clear",
-					tc.file, len(found), tc.minKeys)
-			}
 			in := make(map[string]bool, len(tc.union))
 			for _, k := range tc.union {
 				in[k] = true
 			}
-			for k := range found {
+			for k := range written {
 				if !in[k] {
 					t.Errorf("%s writes %q but does not reserve it — a component's provider_config "+
 						"can decide it whenever the typed mapping happens not to, which is exactly "+
 						"when the canvas declined to", tc.cloud, k)
 				}
 			}
-
-			// The other direction. Over-reserving is SAFE — a key nothing writes costs nothing to
-			// refuse — so this is not a hole, and it is checked anyway: a typo like
-			// `eks_disk_sizeZZ` reads as covering a key it does not cover, and an entry left behind
-			// when its assignment was deleted has nothing else to prune it. Both make the list look
-			// more authoritative than it is, and the same re-read that catches under-reservation
-			// gives this for free. Raised in review.
 			for _, k := range tc.typed {
-				if !found[k] {
+				if !written[k] {
 					t.Errorf("%s reserves %q in its typed list but writes it nowhere — a typo, or an "+
 						"entry outliving the assignment it was generated from", tc.cloud, k)
 				}
