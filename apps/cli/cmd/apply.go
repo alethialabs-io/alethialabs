@@ -112,49 +112,73 @@ project that already matches the file changes nothing and deploys again.`,
 		if err != nil {
 			fail(err)
 		}
-		client := api.NewClient(token)
-		plan, err := planFromFile(client, values.Get("file"))
-		if err != nil {
-			fail(err)
-		}
 		only, _ := applyBinder.Strings("env")
-		if err := plan.restrictTo(only); err != nil {
-			fail(err)
-		}
-		format := outputFormat(cmd)
-		if format == ui.FormatTable {
-			renderPlan(os.Stdout, plan)
-		}
-		if err := plan.refusal(); err != nil {
-			fail(err)
-		}
 		yes, _ := applyBinder.Bool("yes")
-		if !confirmApply(yes) {
-			return
-		}
-		runnerID, err := applyRunner(client, token, values.Get("runner"))
-		if err != nil {
-			fail(err)
-		}
 		noWait, _ := applyBinder.Bool("no-wait")
-		result, err := executeApply(client, os.Stdout, format, plan, runnerID, !noWait)
-		if err != nil {
+		runApply(cmd, api.NewClient(token), token, applyOptions{
+			file:   values.Get("file"),
+			runner: values.Get("runner"),
+			only:   only,
+			yes:    yes,
+			noWait: noWait,
+			format: outputFormat(cmd),
+		})
+	},
+}
+
+// applyOptions is one apply, as `apply` and `up` both describe it.
+//
+// It exists so `up` runs THIS code rather than a second copy: the plan, the refusal, the
+// confirmation, the runner rule and the deploy ordering are each a decision with a reason, and two
+// implementations of them is the defect the whole epic is named after.
+type applyOptions struct {
+	file   string
+	runner string
+	only   []string
+	yes    bool
+	noWait bool
+	format string
+}
+
+// runApply is the apply, from the file to the finished deploys.
+func runApply(_ *cobra.Command, client applyClient, token string, o applyOptions) {
+	plan, err := planFromFile(client, o.file)
+	if err != nil {
+		fail(err)
+	}
+	if err := plan.restrictTo(o.only); err != nil {
+		fail(err)
+	}
+	if o.format == ui.FormatTable {
+		renderPlan(os.Stdout, plan)
+	}
+	if err := plan.refusal(); err != nil {
+		fail(err)
+	}
+	if !confirmApply(o.yes) {
+		return
+	}
+	runnerID, err := applyRunner(client, token, o.runner)
+	if err != nil {
+		fail(err)
+	}
+	result, err := executeApply(client, os.Stdout, o.format, plan, runnerID, !o.noWait)
+	if err != nil {
+		fail(err)
+	}
+	if o.format != ui.FormatTable {
+		if err := ui.Render(os.Stdout, o.format, ui.TableSpec{}, result); err != nil {
 			fail(err)
 		}
-		if format != ui.FormatTable {
-			if err := ui.Render(os.Stdout, format, ui.TableSpec{}, result); err != nil {
-				fail(err)
-			}
-			return
+		return
+	}
+	if o.noWait {
+		for _, j := range result.Jobs {
+			ui.JobQueued("DEPLOY", j.JobID)
 		}
-		if noWait {
-			for _, j := range result.Jobs {
-				ui.JobQueued("DEPLOY", j.JobID)
-			}
-			return
-		}
-		ui.Success(fmt.Sprintf("%s is up.", plan.Manifest.Project))
-	},
+		return
+	}
+	ui.Success(fmt.Sprintf("%s is up.", plan.Manifest.Project))
 }
 
 var planCmd = &cobra.Command{
