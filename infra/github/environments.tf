@@ -70,8 +70,19 @@ resource "github_repository_environment" "cli_release" {
 
 # A TAG policy, not a branch policy — `custom_branch_policies = true` above is what enables custom
 # patterns of either kind; `tag_pattern` is what makes this one match `refs/tags/cli-v*` and NO
-# branch at all. So no job on any branch can select this environment, and no tag outside the
-# release-please version anchor can either.
+# branch at all. So no job on any branch can select this environment.
+#
+# WHAT THIS DOES NOT DO, stated because this comment is what somebody reads when deciding whether
+# to widen alethia-deploy-reader. `cli-v*` is a GLOB, with no relationship to release-please or to
+# any version anchor: it constrains the ref SHAPE and nothing about who created the ref. Every
+# ruleset in main.tf is `target = "branch"`, so nothing in this repository restricts tag creation —
+# anyone with write access can push a matching tag and reach this environment.
+#
+# That is accepted rather than overlooked. The environment holds no secret, and the whole grant it
+# unlocks is one read-only `GetSecretValue` for the release bearer, so the blast radius is a false
+# release-metadata post rather than anything that writes infrastructure. A `target = "tag"` ruleset
+# over `cli-v*` is what would tighten it, and it has to be weighed against release-please's own
+# tagging rather than added blind. Do NOT read this policy as an authorship control.
 resource "github_repository_environment_deployment_policy" "cli_release_tags" {
   repository  = var.repository
   environment = github_repository_environment.cli_release.environment
