@@ -138,9 +138,6 @@ type applyOptions struct {
 	yes    bool
 	noWait bool
 	format string
-	// project is a name `up` may have just authored, used only to make the closing line say what
-	// came up. Empty falls back to the manifest's own name.
-	project string
 }
 
 // runApply is the apply, from the file to the finished deploys.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/spec"
@@ -109,6 +110,8 @@ With alethia.yaml already present and an account connected, "alethia up" is "ale
 			if err := authorManifest(client, token, os.Stdout, format, path, values); err != nil {
 				fail(err)
 			}
+		} else if err := refuseAuthoringFlags(cmd, path); err != nil {
+			fail(err)
 		}
 
 		// 5. Everything `alethia apply` does, through the same code — a second implementation of
@@ -116,15 +119,51 @@ With alethia.yaml already present and an account connected, "alethia up" is "ale
 		// stop having.
 		yes, _ := upBinder.Bool("yes")
 		noWait, _ := upBinder.Bool("no-wait")
+		// No project name is passed: `runApply`'s closing line reads it from the manifest it just
+		// applied, which is the project that actually came up. `values.Get("project")` is the
+		// FLAG, and when the directory already held a manifest the two disagree.
 		runApply(cmd, client, token, applyOptions{
-			file:    path,
-			runner:  values.Get("runner"),
-			yes:     yes,
-			noWait:  noWait,
-			format:  format,
-			project: values.Get("project"),
+			file:   path,
+			runner: values.Get("runner"),
+			yes:    yes,
+			noWait: noWait,
+			format: format,
 		})
 	},
+}
+
+// authoringFlags are the `up` flags that only ever reach `authorManifest`. Each is read solely to
+// WRITE the manifest, so once a manifest exists none of them can change anything.
+var authoringFlags = []string{"project", "region", "stage", "cloud-account"}
+
+// refuseAuthoringFlags stops `up` when a manifest-authoring flag was passed for a manifest that
+// already exists.
+//
+// Ignoring them silently is the failure this refuses: `alethia up --project boutique --region nbg1
+// --cloud-account prod --yes` in a directory still holding `legacy-app`'s manifest would create and
+// DEPLOY legacy-app without a word about the four flags it was handed — a flag that is silently
+// dropped reads as a flag that worked. `--cloud-account` is the subtlest of the four, because it is
+// validated a few lines above and then not applied, so it looks the most like it took effect.
+//
+// Only flags CHANGED on the command line count. The same keys also resolve from the environment and
+// from the manifest itself (`ManifestKey`), and a value that came from the file cannot contradict
+// it; `stage` additionally carries a default, so a non-empty value proves nothing.
+func refuseAuthoringFlags(cmd *cobra.Command, path string) error {
+	var given []string
+	for _, f := range authoringFlags {
+		if cmd.Flags().Changed(f) {
+			given = append(given, "--"+f)
+		}
+	}
+	if len(given) == 0 {
+		return nil
+	}
+	list := strings.Join(given, ", ")
+	return fmt.Errorf(
+		"%s already exists, so %s would be ignored: those flags only ever author a new manifest, and "+
+			"this run applies the one on disk.\n"+
+			"Drop them and let the file speak, or point --file at a path that does not exist yet",
+		path, list)
 }
 
 // ensureLoggedIn returns a usable token, running the first-run setup when there is none.
@@ -135,6 +174,20 @@ func ensureLoggedIn(out io.Writer, format string) (string, error) {
 	if token, err := getAuthTokenInternal(false); err == nil && token != "" {
 		say(out, format, fmt.Sprintf("%s Already signed in to %s", ui.SymbolSuccess, WebOrigin()))
 		return token, nil
+	}
+	// A machine-readable run cannot carry the first-run setup. `promptWebOrigin`, `runConfigSet`
+	// and `performLoginFlow` all write prose to stdout unconditionally — the device-code box is
+	// the point of the flow, so it cannot be silenced — and that prose would land ahead of the
+	// ApplyResult document and break the caller's parse.
+	//
+	// Checked BEFORE the terminal test because it does not depend on one: `up --output json` with
+	// no credential cannot succeed on a terminal either, and this message names both remedies, so
+	// nothing is lost by answering the output question first.
+	if format != ui.FormatTable {
+		return "", fmt.Errorf(
+			"not signed in, and --output %s cannot run the first-run sign-in: it prints a device code "+
+				"that would corrupt the document.\nRun `alethia login` once, then re-run this command "+
+				"(or set %s to a service token)", format, ServiceTokenEnv)
 	}
 	if !canPromptForm() {
 		return "", fmt.Errorf(
@@ -239,7 +292,11 @@ func authorManifest(
 		{Name: values.Get("stage"), Stage: values.Get("stage"), PlacementMode: "dedicated", IsDefault: true},
 	}
 	if canPromptForm() {
-		asked, err := promptEnvMatrix()
+		// Declining leaves the one-element fallback above — NOT a server-seeded pair. `apply`
+		// creates exactly what this file says, so the question must describe the file.
+		asked, err := promptEnvMatrix(fmt.Sprintf(
+			"Otherwise the file declares one %s environment, and `alethia project env add` is how a second arrives",
+			values.Get("stage")))
 		if err != nil {
 			return err
 		}
