@@ -455,3 +455,30 @@ func TestParse_ABrokenDocumentKeepsItsOwnError(t *testing.T) {
 		t.Errorf("the alias pass reported a syntax error as an alias problem: %v", err)
 	}
 }
+
+// Exists takes a FILE and Find takes a DIRECTORY. Confusing them is silent in the direction that
+// matters: `Find("alethia.yaml")` asks about `alethia.yaml/alethia.yaml`, which never exists, so a
+// caller checking "is there already a manifest here?" would answer no and overwrite one.
+func TestExistsAndFindAnswerDifferentQuestions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, FileName)
+	if Exists(path) {
+		t.Error("Exists is true before anything is written")
+	}
+	if err := os.WriteFile(path, []byte(sample), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !Exists(path) {
+		t.Error("Exists is false for a file that is there")
+	}
+	if Exists(dir) {
+		t.Error("Exists is true for a DIRECTORY, so a directory named alethia.yaml would read as a manifest")
+	}
+	if found, ok := Find(dir); !ok || found != path {
+		t.Errorf("Find(dir) = %q %v", found, ok)
+	}
+	// The confusion itself, pinned: Find over a FILE path finds nothing.
+	if _, ok := Find(path); ok {
+		t.Error("Find accepted a file path — the two helpers have become interchangeable")
+	}
+}
