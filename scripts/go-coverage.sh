@@ -50,6 +50,21 @@
 # warning. Otherwise a pruned CI image reds the entire repository and the message would point at
 # coverage rather than at the missing binary.
 #
+# THE GO COMPILER IS PART OF THAT TOOLCHAIN, and it is the one axis that moves the DENOMINATOR
+# rather than skipping a test. Measured on an identical tree (#4247, determinism probe, five runs
+# each): test/e2e's root package is 3406/5082 under go1.26.6 and 3686/5532 under go1.27.1, and
+# cmd/t2budget — not one byte changed — counts 24 statements under 1.26 and 36 under 1.27. The
+# ratio fell, so the ratchet reported "`.` fell to 66.63%" and pointed at --update, which by design
+# cannot lower a floor. The only exit was --accept-regression, i.e. recording a compiler change as
+# a coverage regression in a file that says "do not hand-edit".
+#
+# So the Go MINOR is in the fingerprint, as a string, compared like `os`: any mismatch in either
+# direction demotes, because a compiler that counts MORE statements is exactly as incomparable as
+# one that counts fewer. A Go bump now reds with a message that names Go and a one-command fix,
+# instead of a red that names coverage. The PATCH is deliberately not fingerprinted — 1.27.0 and
+# 1.27.1 do not renumber statements, and a fingerprint that churns on every point release would
+# demote the gate more often than it enforced it.
+#
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 # USAGE
 #
@@ -93,7 +108,7 @@ while [ $# -gt 0 ]; do
 	--print) MODE="print"; shift ;;
 	--self-test) MODE="self-test"; shift ;;
 	--require-verdict) REQUIRE_VERDICT=1; shift ;;
-	-h | --help) sed -n '2,73p' "$0"; exit 0 ;;
+	-h | --help) sed -n '2,89p' "$0"; exit 0 ;;
 	*) echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
 	esac
 done
@@ -130,11 +145,43 @@ pct() { # $1=covered $2=total -> "63.57%"
 # key, a developer running this locally gets a failure they cannot act on. CI itself is unaffected
 # (it is always ubuntu-latest, and the 5-run determinism probe pins that), but "unaffected in CI"
 # is not a good enough reason to hand someone an unexplainable red.
-FINGERPRINT_KEYS="os docker git helm kubectl tofu alethia_credentials"
+#
+# `go` is the second string key, and it is here for the reason spelled out in the header: the
+# compiler renumbers statements between minors, which moves the DENOMINATOR of every package at
+# once. Unlike a missing binary that only ever lowers coverage, a compiler change is incomparable
+# in both directions, so it is compared like `os` — any mismatch demotes.
+FINGERPRINT_KEYS="os go docker git helm kubectl tofu alethia_credentials"
 
-current_env() { # $1 = key -> "true"|"false", or the OS name for `os`
+# The fingerprint keys whose value is a STRING compared for equality, rather than a boolean where
+# only true->false demotes. Named once, so write_floors() and the F7 loop cannot disagree about
+# which is which — they did have to be edited in lockstep, and that is exactly how a key ends up
+# serialised as a JSON string and then compared as a boolean.
+FINGERPRINT_STRING_KEYS="os go"
+
+is_string_key() { case " $FINGERPRINT_STRING_KEYS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+current_env() { # $1 = key -> "true"|"false", the OS name for `os`, or the Go minor for `go`
 	case "$1" in
 	os) uname -s ;;
+	go)
+		# MINOR ONLY: `go1.27.1` -> `1.27`. See the header for why the patch is excluded.
+		#
+		# Must always exit 0 and always print something. current_env is consumed as `v=$(...)`
+		# under `set -e`, so a non-zero return here would abort the whole run — and this script's
+		# every error path is fail-OPEN by contract. No go on PATH, or a GOVERSION shaped like
+		# `devel go1.28-abcdef`, prints `unknown`, which the F7 loop treats the same way it treats
+		# an older floors file with no `go` key: it does not demote, and it does not disarm.
+		local gv="" ver rest
+		gv=$(go env GOVERSION 2>/dev/null) || gv=""
+		case "$gv" in
+		go[0-9]*)
+			ver="${gv#go}"
+			rest="${ver#*.}"
+			echo "${ver%%.*}.${rest%%.*}"
+			;;
+		*) echo unknown ;;
+		esac
+		;;
 	alethia_credentials)
 		local cfg="${XDG_CONFIG_HOME:-$HOME/.config}"
 		[ "$(uname)" = "Darwin" ] && cfg="$HOME/Library/Application Support"
@@ -164,11 +211,13 @@ write_floors() { # $1 = floors path, $2 = module import path, $3 = covermode, st
 	for k in $FINGERPRINT_KEYS; do
 		[ $first -eq 1 ] || env_json="$env_json,"
 		v=$(current_env "$k")
-		# `os` is a string; every other key is a JSON boolean.
-		case "$k" in
-		os) env_json="$env_json\"$k\":\"$v\"" ;;
-		*) env_json="$env_json\"$k\":$v" ;;
-		esac
+		# `os` and `go` are strings; every other key is a JSON boolean. The set is named once in
+		# FINGERPRINT_STRING_KEYS so this and the F7 comparison cannot drift apart.
+		if is_string_key "$k"; then
+			env_json="$env_json\"$k\":\"$v\""
+		else
+			env_json="$env_json\"$k\":$v"
+		fi
 		first=0
 	done
 	env_json="$env_json}"
@@ -243,8 +292,11 @@ emit_report() { # stdin = failing rows "<pkg> <cov> <tot> <fcov> <ftot>"
 
     3. You did not touch $MODULE and believe this is spurious: re-run the job once.
        If it reproduces, the environment has drifted — this suite's coverage depends
-       on git, helm, kubectl and tofu being on PATH (see the "env" block in the
-       floors file; packages/core/tofu alone moves 15 points). Run
+       on git, helm, kubectl and tofu being on PATH, AND on the Go minor (see the
+       "env" block in the floors file; packages/core/tofu alone moves 15 points, and
+       a Go minor bump renumbers statements in every package at once). A drifted
+       environment normally DEMOTES this report to a warning; if you are reading it,
+       the fingerprint matched. Run
        scripts/go-coverage.sh --self-test and open an issue with its output.
        DO NOT hand-edit the JSON, and DO NOT hand-resolve a merge conflict in it —
        re-run --update instead.
@@ -260,7 +312,21 @@ EOF
 self_test() {
 	local fails=0 tmp
 	tmp=$(mktemp -d)
-	trap 'rm -rf "$tmp"' RETURN
+	# THE TWO FIXTURES UNDER $ROOT ARE IN THIS TRAP TOO, and they have to be. `--module` is
+	# repo-relative, so the bootstrap fixture and the fingerprint fixture cannot live in $tmp —
+	# they are created in the WORKING TREE. Each was removed only by the explicit `rm -rf` at the
+	# end of its own block, so any abort in between (a failing `jq -n`, a Ctrl-C, any `set -e`
+	# failure) left `.go-coverage-selftest-*` sitting untracked with a go.mod in it and nothing
+	# that would ever clean it up.
+	#
+	# EXIT and INT as well as RETURN: `set -euo pipefail` is in force, and a failure inside this
+	# function exits the SHELL — which runs the EXIT trap and never the RETURN one. The paths are
+	# expanded HERE, at trap-set time, so the handler does not depend on a local still being in
+	# scope when it fires.
+	# shellcheck disable=SC2064  # expanding NOW is the point: $tmp is a `local`, and on the EXIT
+	# path it is already out of scope when the handler fires — deferred expansion would run
+	# `rm -rf ''` and clean up nothing. $$ is stable for the life of the shell.
+	trap "rm -rf '$tmp' '$ROOT/.go-coverage-selftest-$$' '$ROOT/.go-coverage-selftest-fp-$$'" RETURN EXIT INT
 
 	_a() { if [ "$1" = "$2" ]; then echo "ok   - $3"; else echo "FAIL - $3: want '$1' got '$2'" >&2; fails=$((fails + 1)); fi; }
 	_pass() { if regressed "$1" "$2" "$3" "$4"; then echo "FAIL - $5: expected PASS, got REGRESSED" >&2; fails=$((fails + 1)); else echo "ok   - $5"; fi; }
@@ -337,6 +403,17 @@ a/three
 a/two" "$(jq -r '.packages | keys[]' "$tmp/f.json")" "floors: package keys are sorted"
 		_a "3" "$(jq -r '.packages["a/two"].covered' "$tmp/f.json")" "floors: covered round-trips as an integer"
 
+		# The fingerprint's TYPES. `os` and `go` are strings; everything else is a JSON boolean.
+		# Serialising a string key as a bare word produces invalid JSON, which F3 would then
+		# fail-open on — the gate disarmed by a typo nothing else would catch.
+		_a "string" "$(jq -r '.env.os | type' "$tmp/f.json")" "floors: env.os is a JSON string"
+		_a "string" "$(jq -r '.env.go | type' "$tmp/f.json")" "floors: env.go is a JSON string"
+		_a "boolean" "$(jq -r '.env.tofu | type' "$tmp/f.json")" "floors: a tool key is a JSON boolean"
+		# MINOR ONLY. `1.27.1` here would demote the gate on every patch release.
+		# (An rc toolchain reports `go1.28rc1`, which is a genuinely different compiler and is
+		# allowed to appear as `1.28rc1`. A second dot is what must never appear.)
+		_a "ok" "$(jq -r '.env.go | if test("^([0-9]+\\.[0-9]+[A-Za-z0-9]*|unknown)$") then "ok" else . end' "$tmp/f.json")" "floors: env.go is the Go MINOR (1.NN), never the patch"
+
 		# Every record must span exactly 4 lines, so two adjacent records always have >= 2
 		# unchanged lines between their `covered` lines.
 		_a "4" "$(awk '/"a\/three": \{/{n=NR} /"a\/two": \{/{print $0 ? NR-n : ""}' "$tmp/f.json")" "floors: each package record spans exactly 4 lines"
@@ -409,6 +486,78 @@ a/two" "$(jq -r '.packages | keys[]' "$tmp/f.json")" "floors: package keys are s
 	*"NO VERDICT"*"coverprofile"*) echo "ok   - exit: the no-verdict error names the cause" ;;
 	*) echo "FAIL - exit: the no-verdict error does not name the cause: $msg" >&2; fails=$((fails + 1)) ;;
 	esac
+
+	# ── F. F7 toolchain drift on the GO key, BOTH DIRECTIONS (#4247) ──────────────────────────
+	# A Go minor bump renumbers statements, so the ratchet used to report a compiler change as a
+	# coverage regression and point at --update, which cannot lower a floor. The `go` key routes
+	# it through F7 instead.
+	#
+	# THE CONTROL IS THE POINT. Asserting only "it demoted" cannot tell a demote caused by `go`
+	# from one caused by any other axis — every local run already demotes on `os`. So the fixture
+	# pins every other axis to a non-demoting value and runs the SAME regression twice: once with
+	# a mismatched Go minor (must demote and NAME go) and once with this environment's own
+	# (must fail for real, exit 1). Only the pair proves the key is what moved.
+	#
+	# GOTOOLCHAIN=local, EXPORTED, for the whole block. Two measured reasons:
+	#
+	#   1. `go env GOVERSION` with the cwd at the repo root reads go.work (`go 1.27.1`) and
+	#      performs TOOLCHAIN SELECTION, not a version read. Measured on a checkout whose
+	#      installed toolchain is go1.26.4: it prints `go1.27.1` — the go command switched. On a
+	#      runner whose image Go differs, that switch is a ~100 MB fetch from proxy.golang.org,
+	#      inside `Authz / open-core guards` (ci.yml:1414-1417), a required check with no setup-go
+	#      whose own comment reads "Hermetic: no go, no network, no repo state."
+	#   2. The subprocesses below re-probe `current_env go` for themselves. If the outer probe and
+	#      the inner one could resolve DIFFERENT toolchains, the CONTROL case would demote instead
+	#      of failing and this block would quietly assert the opposite of what it claims. One
+	#      exported setting pins both.
+	#
+	# The self-test only needs SOME minor it can compare against itself, never the workspace's.
+	export GOTOOLCHAIN=local
+
+	# A SKIP MUST NOT PRINT `ok`, AND AN UNREADABLE TOOLCHAIN IS NOT A SKIP. The old single
+	# condition printed `ok   - (skipped ...)` for both "jq is absent" and "GOVERSION did not
+	# parse", so all four assertions below could be silently absent with the step green — this
+	# repo's recurring defect, a guard whose "did not run" branch is indistinguishable from
+	# "nothing wrong". jq or go genuinely absent is an honest skip and says `skip`; go present but
+	# unreadable (a broken toolchain, a locked-down GOFLAGS/GOTOOLCHAIN, a `devel go1.28-abcdef`
+	# build) is a FAILURE, because on that runner the assertions were supposed to run.
+	if ! command -v jq >/dev/null 2>&1; then
+		echo 'skip - (the go-fingerprint cases need jq, which is not on PATH)'
+	elif ! command -v go >/dev/null 2>&1; then
+		echo 'skip - (the go-fingerprint cases need a go toolchain, which is not on PATH)'
+	elif [ "$(current_env go)" = "unknown" ]; then
+		echo "FAIL - fingerprint: go is on PATH but no minor could be read from it, so all four fingerprint assertions were skipped: 'go env GOVERSION' said '$(go env GOVERSION 2>&1 | head -1)'" >&2
+		fails=$((fails + 1))
+	else
+		local fp="$ROOT/.go-coverage-selftest-fp-$$" here
+		here=$(current_env go)
+		mkdir -p "$fp"
+		printf 'module example.com/fpselftest\n\ngo 1.24\n' >"$fp/go.mod"
+		printf 'mode: set\nexample.com/fpselftest/a/f.go:1.1,2.2 2 0\n' >"$fp/cover.out"
+
+		# Every axis but `go` pinned so it cannot demote: this OS, and every tool recorded false
+		# (only a true->false transition demotes a boolean key).
+		_fp_floors() { # $1 = the go minor to record
+			jq -n --arg os "$(uname -s)" --arg go "$1" \
+				'{module:"example.com/fpselftest",covermode:"set",
+				  env:{os:$os,go:$go,docker:false,git:false,helm:false,kubectl:false,tofu:false,alethia_credentials:false},
+				  packages:{a:{covered:2,total:2}}}' >"$fp/coverage-floors.json"
+		}
+
+		_fp_floors "0.0" # a minor no toolchain reports — guaranteed to differ from `here`
+		rc=0; msg=$(bash "$0" --module "$(basename "$fp")" --profile "$fp/cover.out" --require-verdict 2>&1) || rc=$?
+		_a "3" "$rc" "fingerprint: a Go minor that differs demotes (exit 3, not a coverage failure)"
+		case "$msg" in
+		*"drift:"*"go(0.0!=$here)"*) echo "ok   - fingerprint: the demote NAMES go and both minors" ;;
+		*) echo "FAIL - fingerprint: the demote does not name go: $msg" >&2; fails=$((fails + 1)) ;;
+		esac
+
+		_fp_floors "$here" # THE CONTROL: same regression, matching fingerprint -> a real failure
+		rc=0; bash "$0" --module "$(basename "$fp")" --profile "$fp/cover.out" --require-verdict >/dev/null 2>&1 || rc=$?
+		_a "1" "$rc" "fingerprint: CONTROL — a matching Go minor still fails on a real regression"
+
+		rm -rf "$fp"
+	fi
 
 	echo
 	if [ "$fails" -eq 0 ]; then
@@ -565,24 +714,40 @@ NOW=$(measure "$PROFILE_ABS" "$MODPATH") || { warn "$PROFILE has an unrecognised
 
 # F7 — TOOLCHAIN DRIFT. If the recording environment had something this one lacks, coverage is
 # not comparable and every failure is demoted. Measured: tofu is worth 15 points on
-# packages/core/tofu, 11 on provisioner; helm+tofu 2.3 on runner/internal/agent.
-DEMOTE="" MISSING=""
+# packages/core/tofu, 11 on provisioner; helm+tofu 2.3 on runner/internal/agent; and a Go MINOR
+# bump renumbers statements across every package at once (#4247 — test/e2e's root package went
+# 3406/5082 -> 3686/5532 on an identical tree).
+DEMOTE="" DRIFT=""
 for k in $FINGERPRINT_KEYS; do
 	rec=$(jq -r --arg k "$k" '.env[$k] // "unknown"' "$ROOT/$FLOORS")
 	cur=$(current_env "$k")
-	if [ "$k" = "os" ]; then
-		# A different OS makes the two numbers incomparable in BOTH directions — measured:
-		# apps/runner/internal/agent is 1669/3366 on Darwin and 1671/3366 on Linux with an
-		# otherwise identical fingerprint. Any mismatch demotes.
+	if is_string_key "$k"; then
+		# A different OS, or a different Go minor, makes the two numbers incomparable in BOTH
+		# directions — measured: apps/runner/internal/agent is 1669/3366 on Darwin and 1671/3366
+		# on Linux with an otherwise identical fingerprint, and cmd/t2budget counts 24 statements
+		# under go1.26 and 36 under go1.27 without changing a byte. Any mismatch demotes.
+		#
+		# `unknown` on the RECORDED side does not demote: that is a floors file written before
+		# this key existed, and an older file must not disarm the gate.
+		#
+		# `unknown` on the CURRENT side DOES demote, and the earlier reasoning for exempting it
+		# was wrong. It argued that a machine with no readable `go` cannot have produced a profile,
+		# so F4 already fired — true only when the profile is the one this script regenerates.
+		# `--profile` explicitly supports an absolute path, and comparing against a profile
+		# downloaded from a CI artifact is its motivating case (see the usage block). On that path
+		# the profile exists, F4 does not fire, and a compiler that cannot be read is exactly as
+		# incomparable as one that differs: `devel go1.28-abcdef` also maps to `unknown`. Exempting
+		# it would red the run and blame coverage for a compiler change — the #4247 defect, on the
+		# one path the fix had left uncovered. An unreadable compiler is not a matching one.
 		if [ "$rec" != "unknown" ] && [ "$rec" != "$cur" ]; then
 			DEMOTE=1
-			MISSING="$MISSING os($rec!=$cur)"
+			DRIFT="$DRIFT $k($rec!=$cur)"
 		fi
 	# Only a true->false transition can lower coverage. More tools than before cannot hurt, and
 	# an older floors file with no `env` block ("unknown") must NOT silently disarm the gate.
 	elif [ "$rec" = "true" ] && [ "$cur" != "true" ]; then
 		DEMOTE=1
-		MISSING="$MISSING $k"
+		DRIFT="$DRIFT $k(absent)"
 	fi
 done
 
@@ -647,7 +812,9 @@ fi
 
 if [ -n "$DEMOTE" ] || [ -n "$SUSPECT" ]; then
 	if [ -n "$DEMOTE" ]; then
-		warn "$MODULE: $fails package(s) are below their floor, but the toolchain differs from the one the floors were recorded in (missing:$MISSING). NOT failing the build — fix the environment, or re-record the floors in this one."
+		# The drift list names the AXIS, not just "something is missing": a Go minor bump reads as
+		# `go(1.26!=1.27)` rather than as a coverage collapse, which is the whole point of #4247.
+		warn "$MODULE: $fails package(s) are below their floor, but the toolchain differs from the one the floors were recorded in (drift:$DRIFT). NOT failing the build — the numbers are not comparable, so this run cannot blame the code. Fix the environment to match, or re-record the floors in an environment that matches the enforcing job (dispatch .github/workflows/go-floors-rerecord.yml)."
 	fi
 	if [ -n "$SUSPECT" ]; then
 		warn "$MODULE: $fails package(s) are below their floor, but the coverprofile looks PARTIAL rather than the code having changed ($SUSPECT_WHY). NOT failing the build — a truncated profile must never be reported as a coverage collapse. Re-run the job; if it reproduces, run --update to prune stale keys."
