@@ -65,6 +65,9 @@ describe("switchDraftScope", () => {
 		expect(await switchDraftScope(A)).toBe(true);
 		const a = useCanvasStore.getState();
 		expect(a.nodes.map((n) => n.id)).toEqual([PROJECT_NODE_ID, "database-a"]);
+		// The restored draft is still UNSAVED. `reseed` asks this before letting a moved server
+		// design replace the graph, so a draft that came back reading clean would be overwritten.
+		expect(a.dirty).toBe(true);
 		const db = a.nodes.find((n) => n.id === "database-a");
 		expect(db && "port" in db.data.config ? db.data.config.port : null).toBe(6543);
 		expect(a.seed).toEqual({ scope: A, revision: "1" });

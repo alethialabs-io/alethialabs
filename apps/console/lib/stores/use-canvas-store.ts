@@ -1189,8 +1189,15 @@ export const useCanvasStore = create<CanvasStore>()(
 			storage: createJSONStorage(() => sessionStorage),
 			version: 1,
 			// Persist the graph + baseline (so the pending-changes diff survives reload), where the
-			// collection cards were dragged to, any container geometry the user set, and which server
-			// revision all of it was seeded from; identities are server data and history is ephemeral.
+			// collection cards were dragged to, any container geometry the user set, which server
+			// revision all of it was seeded from, and WHETHER IT IS DIRTY; identities are server data
+			// and history is ephemeral.
+			//
+			// `dirty` is part of the draft, not a fact about this page load. Without it a draft
+			// restored from another environment's slot came back reading clean, and `reseed` asks
+			// exactly that question before deciding whether a moved server design may replace the
+			// graph — so the next revision bump would have overwritten unsaved work it believed
+			// wasn't there.
 			partialize: (state) => ({
 				nodes: state.nodes,
 				edges: state.edges,
@@ -1198,6 +1205,7 @@ export const useCanvasStore = create<CanvasStore>()(
 				collectionPositions: state.collectionPositions,
 				containerGeometry: state.containerGeometry,
 				seed: state.seed,
+				dirty: state.dirty,
 			}),
 		},
 	),
