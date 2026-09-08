@@ -151,12 +151,12 @@ describe("readEnvironmentFacts", () => {
 		expect(facts?.name).toBe("prod-eu");
 		expect(facts?.cost).toEqual({
 			monthly: 412.5,
-			capturedAt: "2026-09-01T10:00:00Z",
+			capturedAt: "2026-09-01T10:00:00.000Z",
 		});
 		expect(facts?.drift).toEqual({
 			inSync: false,
 			drifted: 2,
-			scannedAt: "2026-09-06T08:30:00Z",
+			scannedAt: "2026-09-06T08:30:00.000Z",
 		});
 		expect(facts?.recentJobs).toHaveLength(1);
 		expect(facts?.stagedChanges).toHaveLength(1);
