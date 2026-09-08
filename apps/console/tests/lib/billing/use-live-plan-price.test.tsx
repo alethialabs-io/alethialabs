@@ -94,9 +94,15 @@ const aiPrices: LiveAiPriceMap = {
 		interval: "month",
 		label: "ignored — the hook re-derives the label",
 	},
+	// 88, not the catalog's 90. `aiPlanMeta("ai_max")` is 100/90, so a fixture that matched it
+	// would satisfy the EUR assertion below whether or not the hook ever read Stripe's EUR amount
+	// — inverting the currency branch to prefer the catalog would have left this suite green.
+	// `community`, `enterprise` and `ai_free` still match their catalog rows because their amounts
+	// are 0 or null and there is nothing else to be; `team`, `ai_plus` and now `ai_max` are what
+	// discriminate.
 	ai_max: {
 		unitAmountUsd: 100,
-		unitAmountEur: 90,
+		unitAmountEur: 88,
 		currency: "usd",
 		interval: "month",
 		label: "ignored — the hook re-derives the label",
@@ -120,6 +126,13 @@ describe("useLivePlanPrice", () => {
 	it("writes the resolved price into state, and a failed fetch did not poison the cache", async () => {
 		vi.mocked(getLivePlanPrices).mockResolvedValue(planPrices);
 
+		// A DELTA, not a total. The mock is never cleared between tests (no `clearMocks` in
+		// vitest.config.ts or tests/setup.ts), so an absolute count asserts "what every earlier
+		// test did, plus this" — which makes this test unrunnable under `-t` or a temporary
+		// `it.only`, and makes inserting a case above it fail here with a message pointing at the
+		// cache claim rather than at the edit. The property being asserted is this mount's own
+		// fetch, so that is what is measured.
+		const before = vi.mocked(getLivePlanPrices).mock.calls.length;
 		const { result } = renderHook(() => useLivePlanPrice("team"));
 		// `loading` is `data === null`. It can only go false by way of `setData(m[plan])` — the
 		// statement that is otherwise executed or skipped depending on unmount timing.
@@ -127,13 +140,14 @@ describe("useLivePlanPrice", () => {
 
 		expect(result.current.label).toBe("$25 / seat / mo");
 		expect(result.current.unitAmount).toBe(25);
-		// A SECOND call proves the previous test's rejection reset the module cache — had `pending`
+		// ONE MORE call proves the previous test's rejection reset the module cache — had `pending`
 		// stayed as the rejected promise, this mount would have re-subscribed to it and never
 		// resolved. That reset (`pending = null; throw e`) has no other observable.
-		expect(getLivePlanPrices).toHaveBeenCalledTimes(2);
+		expect(vi.mocked(getLivePlanPrices).mock.calls.length).toBe(before + 1);
 	});
 
 	it("serves every later consumer from one fetch, in either currency", async () => {
+		const before = vi.mocked(getLivePlanPrices).mock.calls.length;
 		const eur = renderHook(() => useLivePlanPrice("team", "eur"));
 		await waitFor(() => expect(eur.result.current.loading).toBe(false));
 		expect(eur.result.current.label).toBe("€22 / seat / mo");
@@ -150,8 +164,9 @@ describe("useLivePlanPrice", () => {
 		expect(custom.result.current.unitAmount).toBeNull();
 		expect(custom.result.current.label).toBe(planMeta("enterprise").priceLabel);
 
-		// Still 2 — the map is fetched once and shared, which is the point of the module cache.
-		expect(getLivePlanPrices).toHaveBeenCalledTimes(2);
+		// ZERO further fetches across three more mounts — the map is fetched once and shared, which
+		// is the point of the module cache.
+		expect(vi.mocked(getLivePlanPrices).mock.calls.length).toBe(before);
 	});
 });
 
@@ -169,18 +184,20 @@ describe("useLiveAiPrice", () => {
 	it("writes the resolved AI price into state, and a failed fetch did not poison the cache", async () => {
 		vi.mocked(getLiveAiPrices).mockResolvedValue(aiPrices);
 
+		const before = vi.mocked(getLiveAiPrices).mock.calls.length;
 		const { result } = renderHook(() => useLiveAiPrice("ai_plus"));
 		await waitFor(() => expect(result.current.loading).toBe(false));
 
 		expect(result.current.label).toBe("$25 / mo");
 		expect(result.current.unitAmount).toBe(25);
-		expect(getLiveAiPrices).toHaveBeenCalledTimes(2);
+		expect(vi.mocked(getLiveAiPrices).mock.calls.length).toBe(before + 1);
 	});
 
 	it("serves every later consumer from one fetch, and keeps 'Free' free", async () => {
+		const before = vi.mocked(getLiveAiPrices).mock.calls.length;
 		const eur = renderHook(() => useLiveAiPrice("ai_max", "eur"));
 		await waitFor(() => expect(eur.result.current.loading).toBe(false));
-		expect(eur.result.current.label).toBe("€90 / mo");
+		expect(eur.result.current.label).toBe("€88 / mo");
 
 		// A live amount of 0 is the free tier: it keeps its catalog word, never "$0 / mo".
 		const free = renderHook(() => useLiveAiPrice("ai_free"));
@@ -188,6 +205,42 @@ describe("useLiveAiPrice", () => {
 		expect(free.result.current.unitAmount).toBe(0);
 		expect(free.result.current.label).toBe(aiPlanMeta("ai_free").priceLabel);
 
-		expect(getLiveAiPrices).toHaveBeenCalledTimes(2);
+		expect(vi.mocked(getLiveAiPrices).mock.calls.length).toBe(before);
+	});
+
+	// THE LIFECYCLE THIS WHOLE FILE IS ABOUT, and until now the one thing it did not exercise.
+	//
+	// Every test above mounts a fresh hook. The race in the header is not about mounting: it is
+	// `tier` CHANGING on a live component, which sets `active = false` on the first effect and is
+	// what decided whether `setData` ran. `ai-usage-section.tsx` does exactly that —
+	// `useLiveAiPrice(ai?.tier ?? "ai_free")` — so the transition happens on every visit as the
+	// summary resolves.
+	//
+	// Exercising it found a defect rather than only covering a statement: `data` was not cleared
+	// when `tier` changed, so the hook reported `loading: false` — its contract for "this is the
+	// authoritative price" — while still holding the PREVIOUS tier's row. A paid tier rendered as
+	// "Free" for at least one render, every time.
+	it("does not price a new tier with the old tier's row while the new one is in flight", async () => {
+		const { result, rerender } = renderHook(
+			({ t }: { t: "ai_free" | "ai_max" }) => useLiveAiPrice(t),
+			{ initialProps: { t: "ai_free" } },
+		);
+		await waitFor(() => expect(result.current.loading).toBe(false));
+		expect(result.current.label).toBe(aiPlanMeta("ai_free").priceLabel);
+
+		rerender({ t: "ai_max" });
+
+		// The moment the tier changes the hook must stop claiming to be authoritative. Asserted
+		// SYNCHRONOUSLY, before the new row can land: this is the render the console actually
+		// showed, and the assertion is meaningless once the promise has flushed.
+		expect(result.current.loading).toBe(true);
+		// And what it falls back to is ai_max's own catalog price, never ai_free's "Free".
+		expect(result.current.label).toBe(aiPlanMeta("ai_max").priceLabel);
+		expect(result.current.label).not.toBe(aiPlanMeta("ai_free").priceLabel);
+
+		// Then the live row arrives and replaces the catalog fallback — the `if (active)` guard's
+		// TRUE branch on the second effect.
+		await waitFor(() => expect(result.current.loading).toBe(false));
+		expect(result.current.unitAmount).toBe(100);
 	});
 });
