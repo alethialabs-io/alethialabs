@@ -40,6 +40,7 @@ const (
 	shellKeyToken   = "token"
 	shellKeyOrg     = "org"
 	shellKeyTarget  = "target"
+	shellKeyProject = "project"
 )
 
 // Docs pages, relative to the repository root.
@@ -99,6 +100,14 @@ var shellFields = []shellField{
 		Arg:     "[console|docs]",
 		Default: "console",
 		Docs:    "Which surface to open. Defaults to the console; the `docs` alias defaults to the documentation.",
+		Pages:   []string{docsCliIdentityPage},
+	},
+	{
+		Command: "alethia open",
+		Key:     shellKeyProject,
+		Flag:    "project",
+		Usage:   "Open a project's page instead of the organization's, by project name or id",
+		Docs:    "Open a project's page instead of the organization's, by project name or id. The URL is built from the console's own route tree, so a route rename fails the build rather than the link.",
 		Pages:   []string{docsCliIdentityPage},
 	},
 }
