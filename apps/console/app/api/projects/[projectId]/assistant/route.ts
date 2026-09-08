@@ -17,7 +17,7 @@ import {
 	buildEnvironmentKnowledge,
 	type EnvironmentKnowledge,
 } from "@/lib/ai/environment-knowledge";
-import { formatMentionsForPrompt, mentionsSchema } from "@/lib/ai/mentions";
+import { formatMentionsForPrompt } from "@/lib/ai/mentions";
 import {
 	type AssistantView,
 	parseProjectAssistantBody,
@@ -232,10 +232,15 @@ export async function POST(
 		const modelForStep = (stepNumber: number): string =>
 			stepNumber === 0 ? advisor.key : executor.key;
 
-		const parsedMentions = mentionsSchema.safeParse(mentions);
-		const mentionBlock = parsedMentions.success
-			? formatMentionsForPrompt(parsedMentions.data)
-			: "";
+		// No second validation here. `mentions` has already been through the SAME `mentionsSchema` in
+		// the body parser, so this `safeParse` could not fail and its `: ""` fallback was
+		// unreachable — dead code that read as a safety net. The behaviour it looked like it was
+		// protecting is intact and lives at the schema instead: the field is
+		// `mentionsSchema.catch(undefined)`, so an over-long or malformed list degrades to no
+		// mentions rather than rejecting the turn. Losing the @-mentions is a smaller failure than
+		// losing the message, which is why that field catches and `messages` does not. Found in
+		// review.
+		const mentionBlock = mentions ? formatMentionsForPrompt(mentions) : "";
 
 		// The Claude-Projects model: this chat lives inside an infra project, so it inherits that
 		// project's pinned instructions + knowledge — layered UNDER the org-level ones (org policy
