@@ -129,20 +129,51 @@ export function parseRequiredStatusChecks(varsText) {
  * written. Modelling the filter is what makes the comparison true rather than plausible.
  */
 export function parseDevFilter(mainText) {
+	return parseFilter(mainText, DEV_LOCAL);
+}
+
+/** The locals main.tf derives a ruleset's list from. Named once so the parser and the wiring check agree. */
+export const DEV_LOCAL = "dev_required_status_checks";
+export const STAGING_LOCAL = "staging_required_status_checks";
+const STAGING_RULESET = "protect-staging";
+
+/**
+ * The contexts a `<local> = [for c in var.required_status_checks : c if …]` filter removes.
+ *
+ * Generalised from the dev-only parser when the release gate arrived (#4265): staging now carries
+ * its own filtered local — the gate runs on staging PRs but is required only on main — and a
+ * parser that modelled dev alone would have compared staging against a list its ruleset does not
+ * use. Same grammar for both: only a conjunction of plain inequalities is modelled, and anything
+ * richer is an error rather than a guess about which contexts survive.
+ *
+ * @param {string} mainText
+ * @param {string} localName
+ * @returns {string[]} the excluded contexts
+ */
+export function parseFilter(mainText, localName) {
 	const src = stripHclComments(mainText);
-	const m = /dev_required_status_checks\s*=\s*\[for\s+(\w+)\s+in\s+var\.required_status_checks\s*:\s*\1\s+if\s+([^\]]+)\]/.exec(src);
-	if (!m) throw new Error(`${MAIN}: no \`dev_required_status_checks = [for c in var.required_status_checks : c if …]\` local. The dev ruleset's effective list cannot be derived, so this check would be comparing against the wrong set.`);
+	const re = new RegExp(`${localName}\\s*=\\s*\\[for\\s+(\\w+)\\s+in\\s+var\\.required_status_checks\\s*:\\s*\\1\\s+if\\s+([^\\]]+)\\]`);
+	const m = re.exec(src);
+	if (!m) throw new Error(`${MAIN}: no \`${localName} = [for c in var.required_status_checks : c if …]\` local. That ruleset's effective list cannot be derived, so this check would be comparing against the wrong set.`);
 	const [, , cond] = m;
-	// Only a conjunction of inequalities is modelled. Anything richer (a regex, a contains(), an
-	// `||`) changes which contexts survive in a way this parser would silently get wrong.
 	const clauses = cond.split("&&").map((s) => s.trim());
 	const excluded = [];
 	for (const clause of clauses) {
 		const c = /^\w+\s*!=\s*"([^"]+)"$/.exec(clause);
-		if (!c) throw new Error(`${MAIN}: the dev filter clause \`${clause}\` is not a plain \`c != "context"\`. This script models only a conjunction of inequalities; extend it deliberately rather than letting it guess which contexts survive.`);
+		if (!c) throw new Error(`${MAIN}: the ${localName} filter clause \`${clause}\` is not a plain \`c != "context"\`. This script models only a conjunction of inequalities; extend it deliberately rather than letting it guess which contexts survive.`);
 		excluded.push(c[1]);
 	}
 	return excluded;
+}
+
+/**
+ * The staging filter, or `null` when main.tf declares none — an absent staging local is the
+ * pre-#4265 shape (staging iterates the full variable) and is not an error; a PRESENT one that
+ * does not parse is.
+ */
+export function parseStagingFilter(mainText) {
+	if (!new RegExp(`\\b${STAGING_LOCAL}\\s*=`).test(stripHclComments(mainText))) return null;
+	return parseFilter(mainText, STAGING_LOCAL);
 }
 
 /**
@@ -343,7 +374,7 @@ export function compareThreadGate(conditionBlocks) {
 }
 
 /** The in-tree comparison. Returns `{failures, notes}` — nothing here reaches the network. */
-export function compare({ hclAll, devExcluded, wiring, mergifyBlocks, divergence }) {
+export function compare({ hclAll, devExcluded, wiring, mergifyBlocks, divergence, stagingExcluded = null }) {
 	const failures = [];
 	const notes = [];
 
@@ -365,6 +396,19 @@ export function compare({ hclAll, devExcluded, wiring, mergifyBlocks, divergence
 		failures.push(`${MAIN}: the \`${DEV_RULESET}\` ruleset iterates \`${dev.forEach}\`, not \`local.dev_required_status_checks\`. This check derives dev's effective list from that local; wired to anything else it would compare Mergify against a set the ruleset does not use.`);
 	}
 	for (const w of wiring.filter((x) => x.name !== DEV_RULESET)) {
+		// Staging may iterate its own filtered local (the release gate runs there but is required
+		// only on main). Wired to that local, the local must parse — a ruleset pointing at a name
+		// that does not exist requires nothing, silently.
+		if (w.name === STAGING_RULESET && w.forEach === `local.${STAGING_LOCAL}`) {
+			if (!Array.isArray(stagingExcluded)) {
+				failures.push(`${MAIN}: the \`${STAGING_RULESET}\` ruleset iterates \`local.${STAGING_LOCAL}\`, but no such local parses. It would require nothing.`);
+			} else if (hclAll.filter((c) => !stagingExcluded.includes(c)).length === 0) {
+				failures.push(`${MAIN}: the staging filter removes every context. Staging would require nothing.`);
+			} else {
+				notes.push(`${MAIN}: \`${STAGING_RULESET}\` requires everything but ${stagingExcluded.map((c) => `\`${c}\``).join(", ")} (observed there, required on main).`);
+			}
+			continue;
+		}
 		if (w.forEach !== "var.required_status_checks") {
 			notes.push(`${MAIN}: ruleset \`${w.name}\` iterates \`${w.forEach}\` rather than \`var.required_status_checks\`. Not checked here — Mergify only gates dev — but it is no longer covered by the assumption this file is built on.`);
 		}
@@ -458,10 +502,11 @@ export function readLiveRulesets(repo, run = (args) => execFileSync("gh", args, 
 }
 
 /** Drift between the HCL's intent and what the rulesets actually enforce today. */
-export function compareLive({ rulesets, hclAll, devExcluded }) {
+export function compareLive({ rulesets, hclAll, devExcluded, stagingExcluded = null }) {
 	const rows = [];
 	for (const rs of rulesets) {
-		const expected = rs.name === DEV_RULESET ? hclAll.filter((c) => !devExcluded.includes(c)) : hclAll;
+		const excluded = rs.name === DEV_RULESET ? devExcluded : rs.name === STAGING_RULESET && Array.isArray(stagingExcluded) ? stagingExcluded : [];
+		const expected = hclAll.filter((c) => !excluded.includes(c));
 		const missing = expected.filter((c) => !rs.checks.includes(c));
 		const extra = rs.checks.filter((c) => !expected.includes(c));
 		rows.push({ name: rs.name, branch: rs.branch, missing, extra, live: rs.checks.length, expected: expected.length });
@@ -541,6 +586,37 @@ ${list.map((c) => `      - "check-success=${c}"`).join("\n")}
 	P("the dev filter is read from the local, not assumed", JSON.stringify(parseDevFilter(main)) === JSON.stringify(["branch-flow-guard"]));
 	P("the dev ruleset's wiring is resolved", parseRulesetWiring(main).find((w) => w.name === "protect-dev")?.forEach === "local.dev_required_status_checks");
 	P("...and so is a sibling's", parseRulesetWiring(main).find((w) => w.name === "protect-main")?.forEach === "var.required_status_checks");
+
+	// ── staging's own filtered local (#4265). Absent is the old shape and not an error; present
+	//    must parse, and a ruleset wired to it must find it.
+	P("no staging local means null, not an error", parseStagingFilter(main) === null);
+	const mainStaging = main + `
+locals {
+  staging_required_status_checks = [for c in var.required_status_checks : c if c != "B"]
+}
+resource "github_repository_ruleset" "staging" {
+  name = "protect-staging"
+  rules {
+    required_status_checks {
+      dynamic "required_check" {
+        for_each = local.staging_required_status_checks
+      }
+    }
+  }
+}
+`;
+	P("the staging filter is read from its local", JSON.stringify(parseStagingFilter(mainStaging)) === JSON.stringify(["B"]));
+	P("an unmodelled staging clause is an error", (() => { try { parseStagingFilter("staging_required_status_checks = [for c in var.required_status_checks : c if contains(c, \"x\")]"); return false; } catch { return true; } })());
+	{
+		const w = parseRulesetWiring(mainStaging);
+		const a = compare({ hclAll: parseRequiredStatusChecks(vars), devExcluded: parseDevFilter(mainStaging), stagingExcluded: parseStagingFilter(mainStaging), wiring: w, mergifyBlocks: parseMergifyCheckBlocks(mergify(["A", "B"])), divergence: undefined });
+		P("staging wired to its local, with the local present, is not a failure", a.failures.length === 0, JSON.stringify(a.failures));
+		P("...and it is reported as observed-not-required", a.notes.some((n) => /protect-staging/.test(n) && /`B`/.test(n)), JSON.stringify(a.notes));
+		const b = compare({ hclAll: parseRequiredStatusChecks(vars), devExcluded: parseDevFilter(mainStaging), stagingExcluded: null, wiring: w, mergifyBlocks: parseMergifyCheckBlocks(mergify(["A", "B"])), divergence: undefined });
+		P("staging wired to a local that does not parse is a failure", b.failures.some((f) => /no such local parses/.test(f)), JSON.stringify(b.failures));
+		const live = compareLive({ rulesets: [{ name: "protect-staging", checks: ["A", "branch-flow-guard"] }], hclAll: parseRequiredStatusChecks(vars), devExcluded: parseDevFilter(mainStaging), stagingExcluded: parseStagingFilter(mainStaging) });
+		P("live staging drift is measured against the staging local, not the full list", live[0].missing.length === 0 && live[0].extra.length === 0, JSON.stringify(live));
+	}
 	P("both Mergify blocks are found separately", parseMergifyCheckBlocks(mergify(["A", "B"])).length === 2);
 	P("...and queue_conditions, which names no check, is not one of them", parseMergifyCheckBlocks(mergify(["A", "B"])).every((b) => b.key !== "queue_conditions"));
 
@@ -681,12 +757,14 @@ function main() {
 
 	let hclAll;
 	let devExcluded;
+	let stagingExcluded;
 	let wiring;
 	let mergifyBlocks;
 	let conditionBlocks;
 	try {
 		hclAll = parseRequiredStatusChecks(read(VARIABLES));
 		devExcluded = parseDevFilter(read(MAIN));
+		stagingExcluded = parseStagingFilter(read(MAIN));
 		wiring = parseRulesetWiring(read(MAIN));
 		mergifyBlocks = parseMergifyCheckBlocks(read(MERGIFY));
 		conditionBlocks = parseMergifyConditionBlocks(read(MERGIFY));
@@ -699,7 +777,7 @@ function main() {
 	// (every lead becomes a failure), never quieter.
 	const divergence = fs.existsSync(DIVERGENCE) ? JSON.parse(fs.readFileSync(DIVERGENCE, "utf8")) : {};
 
-	const { failures, notes, devHcl, mergify } = compare({ hclAll, devExcluded, wiring, mergifyBlocks, divergence });
+	const { failures, notes, devHcl, mergify } = compare({ hclAll, devExcluded, stagingExcluded, wiring, mergifyBlocks, divergence });
 	// The thread gate names no CHECK, so `compare` above is structurally blind to it — which is
 	// exactly why its placement needs its own question asked.
 	const gateFailures = compareThreadGate(conditionBlocks);
@@ -714,7 +792,7 @@ function main() {
 			process.exit(1);
 		}
 		let drifted = false;
-		for (const row of compareLive({ rulesets, hclAll, devExcluded })) {
+		for (const row of compareLive({ rulesets, hclAll, devExcluded, stagingExcluded })) {
 			const agree = row.missing.length === 0 && row.extra.length === 0;
 			drifted = drifted || !agree;
 			console.log(`- **${row.name}** (branch \`${row.branch}\`) — live ${row.live}, HCL ${row.expected}${agree ? " · agrees" : ""}`);

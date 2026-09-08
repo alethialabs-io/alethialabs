@@ -20,9 +20,10 @@
 // Isolation: seeds are uniquely named (`e2e-nav-*-${Date.now()}`) and scoped to the persona org.
 // We do NOT call cleanupOrg (sibling QA agents share this persona org during the parallel run).
 
-import type { Locator, Page } from "@playwright/test";
+import type { Locator } from "@playwright/test";
 import { test, expect } from "../fixtures/qa";
 import { seedProject, type Owner, type SeededProject } from "../helpers/seed";
+import { waitForShell } from "../helpers/shell";
 
 /** The persona's Owner id tuple for seeding. */
 function ownerId(s: { userId?: string; orgId?: string }): Owner {
@@ -36,13 +37,6 @@ const ACTIVE_CLASS = /(^|\s)bg-muted($|\s)/;
 /** Asserts a sidebar nav link is rendered in its active/highlighted state. */
 async function expectActive(link: Locator): Promise<void> {
 	await expect(link).toHaveClass(ACTIVE_CLASS);
-}
-
-/** Waits for the org shell to paint (the sidebar Overview link is the cheapest anchor). */
-async function waitForShell(page: Page): Promise<void> {
-	await expect(page.getByRole("link", { name: "Overview" })).toBeVisible({
-		timeout: 20_000,
-	});
 }
 
 test.describe("Navigation shell — org sidebar renders", () => {

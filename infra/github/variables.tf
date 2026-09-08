@@ -73,6 +73,19 @@ variable "required_status_checks" {
     # reports (green in seconds when no app path changed) and never wedges an unrelated PR.
     # One job, not a matrix, so there is exactly one context to name here.
     "Build console images (no push)",
+    # THE BROWSER RELEASE GATE (.github/workflows/release-gate.yml). Production deploys on a push to
+    # main, and main only takes PRs from staging, so requiring these on main is "before every
+    # production deployment". A matrix — one context per leg, listed literally as the comment at the
+    # top of this list demands — because the legs finish at different times and a promotion should
+    # read which one is red. They are filtered OUT of dev and staging in main.tf: the gate never runs
+    # on a dev PR (Mergify would wedge on a context that never reports), and on staging it runs but
+    # is observed rather than required until the ratchet has a history there.
+    "Release gate (hero)",
+    "Release gate (elench-ai)",
+    "Release gate (console)",
+    "Release gate (canvas)",
+    "Release gate (qa)",
+    "Release gate (audit)",
   ]
 }
 

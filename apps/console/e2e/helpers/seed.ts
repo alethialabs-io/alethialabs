@@ -135,7 +135,6 @@ export async function seedFinishedDeploy(project: Pick<SeededProject, "projectId
 			cluster_name = 'e2e-eks-cluster',
 			cluster_endpoint = 'https://e2e.eks.eu-central-1.amazonaws.com',
 			argocd_url = 'https://argocd.e2e.example.com',
-			argocd_admin_password = 'e2e-argo-pass',
 			provider_outputs = ${sql.json({ arn: "arn:aws:eks:eu-central-1:123456789012:cluster/e2e" })},
 			updated_at = now()
 		where project_id = ${project.projectId} and environment_id = ${project.envId}`;
