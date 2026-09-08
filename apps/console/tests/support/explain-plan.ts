@@ -86,6 +86,28 @@ export function relationsUnder(node: PlanNode): Set<string> {
   );
 }
 
+/**
+ * The root plan node of one `QUERY PLAN` element.
+ *
+ * ⚠ THE ROOT HANGS UNDER A `Plan` KEY, and getting this wrong is what shipped: each element is an
+ * ENVELOPE — `{"Plan": {...}, "Planning Time": 0.283, "Triggers": [], "Execution Time": 0.061}` —
+ * not the node itself. The first version walked the envelope, found no `Node Type` on it and threw
+ * on the first real plan it ever saw, while six hand-written fixtures asserting a shape Postgres
+ * never emits went green on every run. The throw did its job; the fixtures did not.
+ *
+ * Required rather than optional. An element with no `Plan` is a shape change and must be loud —
+ * falling back to treating the element as a node is exactly how the original defect would return.
+ */
+function rootOf(element: unknown): PlanNode {
+  if (typeof element !== "object" || element === null || !("Plan" in element)) {
+    throw new Error(
+      `EXPLAIN element has no "Plan" key — the root node hangs under it: ${JSON.stringify(element)}`,
+    );
+  }
+  const envelope: Record<string, unknown> = { ...element };
+  return asPlanNode(envelope.Plan);
+}
+
 /** Every node of every root in a serialized `EXPLAIN (FORMAT JSON)` document. */
 function allNodes(plan: string): PlanNode[] {
   const parsed: unknown = JSON.parse(plan);
@@ -95,7 +117,7 @@ function allNodes(plan: string): PlanNode[] {
   return explainSchema
     .parse(parsed)
     .flatMap((r) => r["QUERY PLAN"])
-    .flatMap((root) => planNodes(asPlanNode(root)));
+    .flatMap((element) => planNodes(rootOf(element)));
 }
 
 /**
