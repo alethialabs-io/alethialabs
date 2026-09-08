@@ -4,7 +4,9 @@
 package cloud
 
 import (
+	"os"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -857,6 +859,72 @@ func TestProviderTfvars_LeafPassthrough_TypedWins(t *testing.T) {
 			obj := tc.locate(t, leafProviders[tc.cloud].ProviderTfvars(leafConfig(tc.kind, pc(tc.key))))
 			if v, present := obj[tc.key]; present {
 				t.Errorf("%s/%s: provider_config re-opened reserved key %q (= %v) — %s", tc.cloud, tc.kind, tc.key, v, tc.why)
+			}
+		})
+	}
+}
+
+// Both halves of the union are read from the SOURCE, not from a list written here.
+//
+// The two tests below this one enumerate components by hand, and a hand-written list is exactly
+// what a new component type is invisible to: add a kind, give it a reserved slice, forget to add
+// it here, and the carrier test reports all-clear for keys nothing closes. Same for the call sites
+// — one root merge added later without its union is the original defect surviving, and no test
+// that names sites individually would notice.
+//
+// So this reads the provider files themselves and asks two questions that cannot go stale:
+// every `xxxReserved` slice a provider declares must be an argument to that file's
+// `unionReserved(...)`, and every root-level `mergeProviderConfig(tfvars, …)` must be passed a
+// `RootReserved` union. Text rather than an AST because the call site IS the text: what is being
+// checked is which identifier a human typed at a call, not what the program computes.
+func TestEveryReservedSliceAndRootMergeIsCoveredBySource(t *testing.T) {
+	// Hetzner has ONE root-level component (the database, cache and queue are in-cluster charts,
+	// buckets and registry hosts are per-item), so there is no other component to decide for and
+	// no union to pass. Recorded here rather than skipped silently.
+	const hetznerFile = "hetzner_provider.go"
+
+	declRe := regexp.MustCompile(`(?m)^\t(\w+Reserved)\s*=\s*\[\]string\{`)
+	unionArgsRe := regexp.MustCompile(`(?s)unionReserved\((.*?)\)\n`)
+	rootMergeRe := regexp.MustCompile(`(?m)^\s*mergeProviderConfig\(tfvars,.*$`)
+
+	for _, file := range []string{
+		"aws_provider.go", "gcp_provider.go", "azure_provider.go",
+		"alibaba_provider.go", hetznerFile,
+	} {
+		t.Run(file, func(t *testing.T) {
+			src, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatalf("reading %s: %v", file, err)
+			}
+			text := string(src)
+
+			// 1. Every declared reserved slice is folded into this file's union.
+			union := ""
+			if m := unionArgsRe.FindStringSubmatch(text); m != nil {
+				union = m[1]
+			}
+			for _, d := range declRe.FindAllStringSubmatch(text, -1) {
+				name := d[1]
+				if strings.HasSuffix(name, "RootReserved") {
+					continue // the union itself
+				}
+				if !strings.Contains(union, name) {
+					t.Errorf("%s declares %s but does not pass it to unionReserved — every root "+
+						"merge on this cloud would leave its keys open to every other component",
+						file, name)
+				}
+			}
+
+			// 2. Every root-level merge is passed a union.
+			for _, call := range rootMergeRe.FindAllString(text, -1) {
+				if file == hetznerFile {
+					continue
+				}
+				if !strings.Contains(call, "RootReserved...") {
+					t.Errorf("%s: root merge is not passed its cloud's union — one component's "+
+						"provider_config can decide another's variable:\n  %s",
+						file, strings.TrimSpace(call))
+				}
 			}
 		})
 	}
