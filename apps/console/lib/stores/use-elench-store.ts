@@ -19,11 +19,22 @@ export type ElenchCtx =
 			kind: "project";
 			projectId: string;
 			/**
+			 * The slug for the project the CONVERSATION is anchored to, captured when the panel was
+			 * opened. The scope chip used to read the slug out of the current pathname, so navigating
+			 * to another project relabelled a conversation that was still anchored to the first one —
+			 * a confidently wrong scope in the component whose job is to state the scope.
+			 */
+			projectSlug?: string;
+			/**
 			 * The environment the user is looking at (`?environment_id=`), or null for the project's
-			 * default. The assistant's plan/deploy proposals and its Environment knowledge block are
+			 * DEFAULT. The assistant's plan/deploy proposals and its Environment knowledge block are
 			 * scoped to THIS — before it existed the project route planned and deployed the default
 			 * environment whatever the topbar switcher said. Re-scoped in place by `syncEnvironment`;
 			 * never part of the conversation lineage (threads are project-scoped).
+			 *
+			 * `null` is an ANSWER, not an absence, and the difference is what `ElenchCtxRequest`
+			 * exists to carry: a caller that reads the URL and finds no `?environment_id=` is saying
+			 * "the default", and the panel must re-scope to it.
 			 */
 			environmentId: string | null;
 	  };
@@ -43,11 +54,30 @@ export type ElenchMainView = "chat" | "artifacts" | "knowledge";
  * environment the user had switched to and sent the next turn against the project default.
  * `null` means "I don't know"; only a real id re-scopes.
  */
-function withKnownEnvironment(next: ElenchCtx, current: ElenchCtx): ElenchCtx {
-	if (next.kind !== "project" || current.kind !== "project") return next;
-	if (next.projectId !== current.projectId) return next;
-	if (next.environmentId !== null) return next;
-	return { ...next, environmentId: current.environmentId };
+/**
+ * What an OPENER asks for. It differs from `ElenchCtx` in one place and that place was a defect:
+ * `environmentId` may be omitted, meaning "I cannot see one from here".
+ *
+ * `null` and `undefined` were the same value before, and they are opposite answers. A caller that
+ * read the URL and found no `?environment_id=` is saying THE DEFAULT; a caller with no way to know
+ * — the create form, an org route — is saying nothing. Collapsing them meant the panel could never
+ * be scoped back to the default: switch to prod, open Ask AI, click Jobs (which drops the query
+ * string), open Ask AI again, and the assistant kept planning against production while the topbar
+ * said otherwise. Reopening never fixed it. Found in review.
+ */
+export type ElenchCtxRequest =
+	| { kind: "org" }
+	| { kind: "project"; projectId: string; projectSlug?: string; environmentId?: string | null };
+
+/** Fill in an environment only when the caller had no view of one. See `ElenchCtxRequest`. */
+function withKnownEnvironment(next: ElenchCtxRequest, current: ElenchCtx): ElenchCtx {
+	if (next.kind !== "project") return next;
+	const asked = "environmentId" in next ? (next.environmentId ?? null) : undefined;
+	if (asked !== undefined) return { ...next, environmentId: asked };
+	if (current.kind === "project" && current.projectId === next.projectId) {
+		return { ...next, environmentId: current.environmentId };
+	}
+	return { ...next, environmentId: null };
 }
 
 /** True when two contexts address the same conversation lineage. */
@@ -102,9 +132,9 @@ interface ElenchState {
 	mainView: ElenchMainView;
 
 	/** Open as a docked panel in the given context. */
-	openPanel: (ctx: ElenchCtx) => void;
+	openPanel: (ctx: ElenchCtxRequest) => void;
 	/** Open as a fullscreen modal in the given context. */
-	openModal: (ctx: ElenchCtx) => void;
+	openModal: (ctx: ElenchCtxRequest) => void;
 	/** Modal → panel (same conversation). */
 	minimize: () => void;
 	/** Panel → modal (same conversation). */
@@ -112,7 +142,7 @@ interface ElenchState {
 	/** Hide the surface (keeps ctx/thread cached for the next open). */
 	close: () => void;
 	/** Toggle the panel in the given context (used by the canvas AI button / ⌘K). */
-	togglePanel: (ctx: ElenchCtx) => void;
+	togglePanel: (ctx: ElenchCtxRequest) => void;
 	/**
 	 * Re-scope an OPEN project conversation to another environment of the same project — the
 	 * topbar switcher, Shift+Tab and a deep link all land here. Keeps the thread and the epoch:

@@ -84,9 +84,16 @@ export function ElenchScopeChip({ className }: { className?: string }) {
 
 	if (!isProject) return null;
 
-	// The project's own name lives on the server; the slug in the path is what the breadcrumb and
-	// the topbar switcher already show the user, so the chip agrees with them by construction.
-	const project = projectScope(pathname)?.projectSlug ?? "Project";
+	// The slug the CONVERSATION was opened on, not the one in the current path. The panel is mounted
+	// in the app shell and survives navigation, and nothing re-scopes it on a project change — so
+	// reading the pathname relabelled a conversation still anchored to the previous project, and
+	// with a null environment it went on to name that project's default env too. A fully wrong
+	// scope, stated confidently, in the component whose job is to state the scope. Found in review.
+	//
+	// Falling back to the path only when the two agree keeps the old behaviour for every case that
+	// was already correct: a conversation opened here, on this project.
+	const here = projectScope(pathname)?.projectSlug;
+	const project = ctx.projectSlug ?? here ?? "Project";
 
 	return (
 		<span

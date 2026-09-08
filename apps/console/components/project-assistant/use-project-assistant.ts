@@ -72,6 +72,17 @@ export function snapshotView(): AssistantView {
 		path,
 		surface: toSurface(segments.at(-1)),
 	};
+	// The card is only reported ON Architecture, and the gate is not tidiness. `useCanvasStore` is
+	// a global store whose `reset()` runs only after a successful CREATE, so leaving the canvas
+	// clears neither `card` nor `nodes`. A question asked from the Jobs page — or from an org route
+	// with the project panel still open — shipped `openCard: {kind:"inspector", name:"prod-postgres"}`
+	// for a card the user cannot see, possibly from a DIFFERENT project's board, since the store is
+	// re-seeded only when a canvas mounts.
+	//
+	// The whole point of naming the node is pronoun resolution, so pointing "this database" at a
+	// stale card is worse than omitting it: the model answers confidently about the wrong thing
+	// instead of asking. Found in review.
+	if (view.surface !== "architecture") return view;
 	const card = useCanvasStore.getState().card;
 	if (!card) return view;
 	if (card.kind !== "inspector") return { ...view, openCard: { kind: card.kind } };

@@ -30,9 +30,15 @@ export function AskAiButton() {
 				// which the route resolves server-side — the same contract the canvas uses. Read
 				// at click time so the panel opens on the switcher's current environment rather
 				// than silently planning against the default.
+				// `environmentId` is always an ANSWER from here, never an absence: this button only
+				// reaches this branch inside a project workspace, where the absence of
+				// `?environment_id=` means the project's default. The store distinguishes the two —
+				// omitting the field means "I cannot see one", and passing null means "the default"
+				// — so passing the raw lookup re-scopes correctly in both directions.
 				togglePanel({
 					kind: "project",
 					projectId,
+					projectSlug: scope.projectSlug,
 					environmentId: searchParams.get("environment_id"),
 				});
 				return;
