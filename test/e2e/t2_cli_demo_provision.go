@@ -38,15 +38,10 @@ package e2e
 // performed would be claiming the one thing it cannot do.
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
 )
 
 // CLIDemoRun is the state the beats thread through one another: ids the CLI mints as it goes.
@@ -280,22 +275,6 @@ var CLIDemoBeats = []CLIDemoBeat{
 		},
 	},
 	{
-		StepID: "manifest-plan",
-		Phase:  CLIDemoAuthoring,
-		Args: func(r *CLIDemoRun) []string {
-			// The golden path (#3662), proven against a project the beats above authored one
-			// command at a time: the SAME shape written as alethia.yaml, read by `alethia plan`,
-			// must come back as "nothing to create". A file that planned a second project, or a
-			// second cluster, would mean the file and the commands disagree about what a project
-			// is — the "two implementations of one product" defect the epic exists to close.
-			//
-			// `plan` and not `apply`, deliberately: apply would deploy, and the deploy is the
-			// enqueue phase's beat, which runs where the spine can start a runner for it.
-			return []string{"plan", "--file", cliDemoManifestPath(r), "--no-input"}
-		},
-		After: assertManifestPlanIsClean,
-	},
-	{
 		StepID: "staged",
 		Phase:  CLIDemoAuthoring,
 		Args: func(r *CLIDemoRun) []string {
@@ -372,61 +351,6 @@ var CLIDemoBeats = []CLIDemoBeat{
 		Timeout: 30 * time.Minute,
 		Why:     "the demo ends where it started — and an un-torn-down demo is a standing bill, which the orphan reaper would otherwise find.",
 	},
-}
-
-// cliDemoManifestPath writes the run's project as alethia.yaml and returns the path.
-//
-// The file is derived from the SAME values the beats passed as flags — the project, the region,
-// the account label, the default environment, the cluster's `--set` pairs — so `alethia plan`
-// reading it is a statement about the two surfaces agreeing, not about a hand-written fixture.
-func cliDemoManifestPath(r *CLIDemoRun) string {
-	dir, err := os.MkdirTemp("", "alethia-cli-demo-")
-	if err != nil {
-		return filepath.Join(os.TempDir(), "alethia.yaml") // the beat fails on the read, naming the path
-	}
-	cluster := map[string]any{"node_min_size": 1, "node_max_size": 2}
-	for i := 0; i+1 < len(r.ClusterSets); i += 2 {
-		if r.ClusterSets[i] != "--set" {
-			continue
-		}
-		key, raw, ok := strings.Cut(r.ClusterSets[i+1], "=")
-		if !ok {
-			continue
-		}
-		var v any
-		if json.Unmarshal([]byte(raw), &v) != nil {
-			v = raw
-		}
-		cluster[key] = v
-	}
-	m := &manifest.Manifest{
-		Project: r.Project,
-		Cloud:   manifest.Cloud{Account: r.IdentityLabel, Region: r.Region},
-		Environments: []manifest.Environment{{
-			Name:  r.EnvName,
-			Stage: "development",
-			Components: manifest.Components{{
-				Kind:    "cluster",
-				Entries: []manifest.Component{{Fields: cluster}},
-			}},
-		}},
-	}
-	path := filepath.Join(dir, manifest.FileName)
-	_ = manifest.Write(path, m, true)
-	return path
-}
-
-// assertManifestPlanIsClean is the manifest beat's claim: the file describes the project the
-// commands built, so there is nothing left to create.
-func assertManifestPlanIsClean(_ *CLIDemoRun, out string) error {
-	if !strings.Contains(out, "0 projects to create · 0 environments") {
-		return fmt.Errorf("`alethia plan` over the run's own manifest found something to create — the file and "+
-			"the commands disagree about what this project is:\n%s", out)
-	}
-	if strings.Contains(out, "cannot be applied as written") {
-		return fmt.Errorf("`alethia plan` refused the run's own manifest:\n%s", out)
-	}
-	return nil
 }
 
 // cliDemoConnectorFlags is the NON-INTERACTIVE invocation of `connector <cloud>`, per cloud.

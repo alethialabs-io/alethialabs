@@ -547,9 +547,13 @@ func glyphFor(a Action) string {
 		return "+"
 	case ActionUpdate:
 		return "~"
-	default:
+	case ActionUnchanged:
 		return "="
 	}
+	// Unreachable for the three declared actions, and the `exhaustive` linter is what keeps it
+	// that way: a fourth action added without a glyph fails the build here rather than rendering
+	// as whatever the default arm happened to be.
+	return "?"
 }
 
 func plural(n int, noun string) string {
