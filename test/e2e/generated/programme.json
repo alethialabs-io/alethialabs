@@ -413,6 +413,18 @@
 			"reach": "cli"
 		},
 		{
+			"id": "manifest-init",
+			"title": "Write the project down as a file",
+			"reach": "cli",
+			"why": "#3662: `alethia init` authors alethia.yaml — the project, the cloud account by its LABEL, and every environment with its placement — so the answer to \"what do I commit\" is a file the product wrote rather than a command line reassembled by hand."
+		},
+		{
+			"id": "manifest-plan",
+			"title": "Plan the whole shape from that one file",
+			"reach": "cli",
+			"why": "`alethia apply` reads it and creates and deploys everything it declares; `plan` is the same comparison with the writes left out. `alethia up` is init and apply together."
+		},
+		{
 			"id": "staged",
 			"title": "Review what is about to change",
 			"reach": "cli"

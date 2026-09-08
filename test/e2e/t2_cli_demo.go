@@ -284,6 +284,23 @@ var CLIDemoSteps = []DemoStep{
 		Reach: CLIDriven,
 	},
 	{
+		ID:    "manifest-init",
+		Title: "Write the project down as a file",
+		Argv:  []string{"init"},
+		Reach: CLIDriven,
+		Why: "#3662: `alethia init` authors alethia.yaml — the project, the cloud account by its " +
+			"LABEL, and every environment with its placement — so the answer to \"what do I commit\" " +
+			"is a file the product wrote rather than a command line reassembled by hand.",
+	},
+	{
+		ID:    "manifest-plan",
+		Title: "Plan the whole shape from that one file",
+		Argv:  []string{"plan"},
+		Reach: CLIDriven,
+		Why: "`alethia apply` reads it and creates and deploys everything it declares; `plan` is the " +
+			"same comparison with the writes left out. `alethia up` is init and apply together.",
+	},
+	{
 		ID:    "staged",
 		Title: "Review what is about to change",
 		Argv:  []string{"staged", "list"},

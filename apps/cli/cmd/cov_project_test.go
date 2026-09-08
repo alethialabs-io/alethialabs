@@ -53,6 +53,11 @@ type projServer struct {
 	failOnPost []string
 	// configs overrides the project list; nil means the single default project.
 	configs []map[string]any
+	// noIdentities makes the cloud-account list EMPTY. `alethia up` stops on that and names the
+	// five connector commands, and an empty list is the only way to reach it.
+	noIdentities bool
+	// twoIdentities makes the picker a real choice; with one account `up` takes it without asking.
+	twoIdentities bool
 	// runners overrides the runner list; nil means the default trio (one online, one draining,
 	// one offline). `alethia apply` picks the ONLY online runner without a question, so reaching
 	// its picker needs a second online one.
@@ -268,6 +273,20 @@ func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			{"kind": "databases", "singleton": false, "fields": []string{"engine", "engine_version"}, "schema": map[string]any{}},
 		}})
 	case p == "/api/cli/cloud-identities":
+		s.mu.Lock()
+		empty, two := s.noIdentities, s.twoIdentities
+		s.mu.Unlock()
+		if two {
+			_ = enc.Encode(map[string]any{"cloud_identities": []map[string]any{
+				{"id": "ci1", "provider": "aws", "label": "prod-account"},
+				{"id": "ci2", "provider": "gcp", "label": "second-account"},
+			}})
+			return
+		}
+		if empty {
+			_ = enc.Encode(map[string]any{"cloud_identities": []map[string]any{}})
+			return
+		}
 		_ = enc.Encode(map[string]any{"cloud_identities": []map[string]any{
 			{"id": "ci1", "provider": "aws", "label": "prod-account"},
 		}})

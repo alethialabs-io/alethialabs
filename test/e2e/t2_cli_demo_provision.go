@@ -39,6 +39,8 @@ package e2e
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -275,6 +277,36 @@ var CLIDemoBeats = []CLIDemoBeat{
 		},
 	},
 	{
+		StepID: "manifest-init",
+		Phase:  CLIDemoAuthoring,
+		Args: func(r *CLIDemoRun) []string {
+			// #3662's golden path, driven through the REAL binary rather than assembled by the
+			// harness. `alethia init` writes the same project the beats above created one command
+			// at a time — same name, same region, same account, addressed by LABEL — and the next
+			// beat plans it. A harness that built the YAML itself would be a second opinion about
+			// the file format, which is the defect this dimension exists to detect.
+			//
+			// `--skip-manifest` is NOT passed: writing the file is the point. The login step is
+			// skipped on its own, because ALETHIA_TOKEN is already a live credential.
+			return []string{
+				"init", "--web-origin", r.APIBase, "--file", cliDemoManifestPath(r),
+				"--project", r.Project, "--region", r.Region,
+				"--cloud-account", r.IdentityLabel, "--no-input",
+			}
+		},
+		Why: "the file a prospect commits, written BY the product rather than by this harness.",
+	},
+	{
+		StepID: "manifest-plan",
+		Phase:  CLIDemoAuthoring,
+		Args: func(r *CLIDemoRun) []string {
+			return []string{"plan", "--file", cliDemoManifestPath(r), "--no-input"}
+		},
+		After: assertManifestPlanIsClean,
+		Why: "`alethia plan` over the file `alethia init` just wrote must find the project ALREADY " +
+			"there — the commands and the file describe one project, or they describe two.",
+	},
+	{
 		StepID: "staged",
 		Phase:  CLIDemoAuthoring,
 		Args: func(r *CLIDemoRun) []string {
@@ -351,6 +383,31 @@ var CLIDemoBeats = []CLIDemoBeat{
 		Timeout: 30 * time.Minute,
 		Why:     "the demo ends where it started — and an un-torn-down demo is a standing bill, which the orphan reaper would otherwise find.",
 	},
+}
+
+// cliDemoManifestPath is where this run's `alethia.yaml` lives.
+//
+// Deterministic from the run rather than stored on it, so the two beats that use it agree without
+// a field to keep in step; the directory is created here because `init` writes a file into it and
+// will not create a parent.
+func cliDemoManifestPath(r *CLIDemoRun) string {
+	dir := filepath.Join(os.TempDir(), "alethia-cli-demo-"+r.Project)
+	_ = os.MkdirAll(dir, 0o755)
+	return filepath.Join(dir, "alethia.yaml")
+}
+
+// assertManifestPlanIsClean is the manifest beats' claim: the file the product wrote describes the
+// project the commands built, so a plan over it has nothing to create.
+func assertManifestPlanIsClean(_ *CLIDemoRun, out string) error {
+	if strings.Contains(out, "cannot be applied as written") {
+		return fmt.Errorf("`alethia plan` REFUSED the manifest `alethia init` had just written — the "+
+			"writer and the reader disagree about the file's own format:\n%s", out)
+	}
+	if !strings.Contains(out, "0 projects to create") {
+		return fmt.Errorf("`alethia plan` over the run's own manifest would create a project that the "+
+			"beats already created — the file and the commands describe two different projects:\n%s", out)
+	}
+	return nil
 }
 
 // cliDemoConnectorFlags is the NON-INTERACTIVE invocation of `connector <cloud>`, per cloud.
