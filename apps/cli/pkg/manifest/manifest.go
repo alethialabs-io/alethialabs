@@ -181,13 +181,14 @@ func (c *Components) UnmarshalYAML(node *yaml.Node) error {
 				delete(fields, "name")
 				entries.Entries = append(entries.Entries, Component{Name: name, Fields: fields})
 			}
-		case yaml.DocumentNode, yaml.AliasNode:
-			// A document node cannot appear as a mapping VALUE, and an alias (`*ref`) is a
-			// feature this file deliberately does not take: an anchor defined elsewhere in the
-			// manifest would make one environment's components silently depend on another's, and
-			// the refusal is cheaper to read than the indirection. Named rather than left to the
-			// default arm so the `exhaustive` linter can see the decision.
-			return fmt.Errorf("components.%s: a YAML alias is not supported here — write the fields out (line %d)", kind, valNode.Line)
+		case yaml.AliasNode:
+			// Unreachable: refuseAliases rejects every alias in the document before this decodes.
+			// Kept as a named case so the `exhaustive` linter sees the kind, and separate from
+			// DocumentNode so neither ever reports the other's message.
+			return fmt.Errorf("components.%s: unexpected YAML alias (line %d)", kind, valNode.Line)
+		case yaml.DocumentNode:
+			// A document node cannot appear as a mapping value. Named for the same reason.
+			return fmt.Errorf("components.%s must be a mapping of fields or a list of named entries (line %d)", kind, valNode.Line)
 		case yaml.ScalarNode:
 			if valNode.Tag == "!!null" {
 				// `repositories:` with nothing under it declares the singleton with every field
@@ -244,6 +245,9 @@ func (c Components) MarshalYAML() (any, error) {
 // silently `dedicated` — the rung with a bill — and the person would learn about it from an
 // invoice. So an unknown key is an error naming the line.
 func Parse(data []byte) (*Manifest, error) {
+	if err := refuseAliases(data); err != nil {
+		return nil, err
+	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	var m Manifest
@@ -254,6 +258,80 @@ func Parse(data []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("%s: %w", FileName, err)
 	}
 	return &m, nil
+}
+
+// refuseAliases rejects a manifest containing a YAML alias, anywhere.
+//
+// # Why refuse at all
+//
+// The reason is REVERSIBILITY, not taste. Refusing is a decision that can be undone later without
+// breaking anyone; resolving is one-way, because the moment a manifest in somebody's repository
+// relies on an anchor, this reader can never stop resolving it. An `alethia.yaml` that means what
+// it says where it says it is also the version a person can diff, review and grep — but that
+// argument would lose the day somebody arrives with five near-identical environments, and the
+// asymmetry above does not.
+//
+// # Why it is a separate pass over the whole document
+//
+// The obvious place — an `AliasNode` arm in the components decoder — catches only the form nobody
+// writes:
+//
+//	components:
+//	  cluster: *base        # the whole value is an alias, so dev's cluster is IDENTICAL to prod's
+//
+// The form people reach for is the merge key, and yaml.v3 resolves it inside `Decode` before any
+// arm of ours runs:
+//
+//	components:
+//	  cluster:
+//	    <<: *base           # accepted and silently resolved, before this pass existed
+//	    node_min_size: 1
+//
+// That is exactly the cross-environment dependency the refusal is for, and everything outside
+// `components` — `project`, `cloud`, `iac`, the environment scalars — had no arm at all. So the
+// check walks the parsed node tree ONCE, before the typed decode, where every alias is still
+// visible as an alias.
+func refuseAliases(data []byte) error {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		// Not a refusal: a document that does not parse is the strict decoder's error to report,
+		// with its own message. Saying nothing here lets that happen.
+		return nil
+	}
+	anchors := map[string]int{}
+	var alias *yaml.Node
+	var walk func(n *yaml.Node)
+	walk = func(n *yaml.Node) {
+		if n == nil {
+			return
+		}
+		if n.Anchor != "" {
+			if _, seen := anchors[n.Anchor]; !seen {
+				anchors[n.Anchor] = n.Line
+			}
+		}
+		// The FIRST alias, not the last: a person fixes one at a time, and the first is the one
+		// their eye is already on.
+		if n.Kind == yaml.AliasNode && alias == nil {
+			alias = n
+		}
+		for _, c := range n.Content {
+			walk(c)
+		}
+	}
+	walk(&root)
+	if alias == nil {
+		return nil
+	}
+	where := ""
+	if line, ok := anchors[alias.Value]; ok {
+		where = fmt.Sprintf(", defined on line %d", line)
+	}
+	return fmt.Errorf(
+		"%s line %d: `*%s` refers to an anchor%s — this file does not resolve aliases or merge keys, "+
+			"so write the fields out. (Refusing is reversible; resolving is not, which is why it is "+
+			"refused while no manifest depends on it.)",
+		FileName, alias.Line, alias.Value, where)
 }
 
 // Load reads and decodes the manifest at path.
