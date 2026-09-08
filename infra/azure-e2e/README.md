@@ -57,6 +57,7 @@ az login
 #    "Remote state"), and a stack cannot keep its state in an account it has not created yet.
 cd infra/azure-e2e/bootstrap
 cp terraform.tfvars.example terraform.tfvars     # same subscription_id + YOUR Entra object id
+                                                 # + state_network_allowed_cidrs (REQUIRED, no default)
 tofu init -backend=false && tofu apply
 cp backend.hcl.example backend.hcl && $EDITOR backend.hcl   # names from `tofu output`
 tofu init -backend-config=backend.hcl -migrate-state
@@ -92,6 +93,14 @@ to leak and state access is an Entra role assignment (`Storage Blob Data Contrib
 `bootstrap/` creates the resource group, the storage account and the container: blob versioning,
 30-day soft delete on blobs and containers, TLS 1.2 floor, `prevent_destroy`. It also grants the
 maintainers listed in `state_writer_principal_ids` — leave that empty and every `init` 403s.
+
+`state_network_allowed_cidrs` has **no default** (#3290). The account's `network_rules` read
+`default_action = length(var.state_network_allowed_cidrs) > 0 ? "Deny" : "Allow"`, so while that
+variable defaulted to `[]` the *unset* value chose the open posture. Required means a bare apply
+exits **1** with *"No value for required variable"* — the posture is now written down rather than
+inherited. It does **not** mean the account is closed: `[]` remains a legal input and still selects
+`Allow`, which is the intended escape hatch for a maintainer whose laptop address moves. What is
+never open either way is key access — the account has no shared key, so state is Entra-only.
 
 **On `backend_override.tf`.** This stack shipped with an untracked, self-labelled TEMPORARY
 `backend_override.tf` forcing `backend "local" {}`, because the azurerm backend needed a storage

@@ -12,6 +12,13 @@ subscription_id = "00000000-0000-0000-0000-000000000000"
 #   az ad signed-in-user show --query id -o tsv
 state_writer_principal_ids = ["00000000-0000-0000-0000-000000000000"]
 
+# REQUIRED, with no default (#3290). This value IS the storage account's network posture: non-empty
+# sets default_action = "Deny" and allows only these ranges; EMPTY sets "Allow". It has no default
+# precisely so that "Allow" cannot be reached by leaving a line out — it has to be written down.
+# Put your stable egress ranges here, or keep the empty list to choose "Allow" explicitly (the
+# account's other wall is that it has no shared key: state access is an Entra role assignment only).
+state_network_allowed_cidrs = []
+
 # Where the state resource group + storage account live.
 # location = "germanywestcentral"
 
