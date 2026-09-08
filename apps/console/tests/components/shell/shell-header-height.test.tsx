@@ -101,6 +101,12 @@ function shellHeads(root: HTMLElement): Element[] {
 function literalHeights(root: HTMLElement): string[] {
 	const PER_UNIT: Record<string, number> = { px: 1, pt: 96 / 72, rem: 16, em: 16, ch: 8 };
 	return Array.from(root.querySelectorAll("*"))
+		// A BOTTOM-docked row is not a head. The sidebar's profile footer and the rail's bottom
+		// action both stand 56px tall with a `border-t`, and that height is their own — this file
+		// measures the HEADER seam, the line the topbar, the sidebar heads and the Elench panel
+		// draw together. Broadening the matcher to catch `h-14` surfaced them immediately, which is
+		// the matcher working: they were always there and always invisible to it.
+		.filter((el) => !el.classList.contains("border-t"))
 		.flatMap((el) => Array.from(el.classList))
 		.filter((cls) => {
 			// Strip any variant prefixes (`sm:`, `dark:`, `group-hover:`) — a height behind a

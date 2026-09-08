@@ -80,8 +80,14 @@ function withKnownEnvironment(next: ElenchCtxRequest, current: ElenchCtx): Elenc
 	return { ...next, environmentId: null };
 }
 
-/** True when two contexts address the same conversation lineage. */
-function sameCtx(a: ElenchCtx, b: ElenchCtx): boolean {
+/**
+ * True when two contexts address the same conversation lineage. The second side is a REQUEST,
+ * because `togglePanel` asks this before the request has been resolved into a context — and it can
+ * answer from `kind` and `projectId` alone, which both carry. The environment is deliberately not
+ * part of it: threads are project-scoped, so switching environment re-scopes in place rather than
+ * starting a new conversation.
+ */
+function sameCtx(a: ElenchCtx, b: ElenchCtxRequest): boolean {
 	if (a.kind !== b.kind) return false;
 	if (a.kind === "project" && b.kind === "project")
 		return a.projectId === b.projectId;
