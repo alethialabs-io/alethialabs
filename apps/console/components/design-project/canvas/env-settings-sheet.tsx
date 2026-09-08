@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Settings2 } from "lucide-react";
+import { ArrowLeft, Settings2 } from "lucide-react";
 import { useMemo } from "react";
 import { Button } from "@repo/ui/button";
 import { Label } from "@repo/ui/label";
@@ -45,8 +45,13 @@ import { CompatAlert } from "./inspector/compat-alert";
 export function EnvSettingsSheet() {
 	// Open state lives in the store, not here, so the Secrets panel's "Store · …" readout can send
 	// you straight to the control that changes it.
-	const open = useCanvasStore((s) => s.envSettingsOpen);
-	const setOpen = useCanvasStore((s) => s.setEnvSettingsOpen);
+	const open = useCanvasStore((s) => s.card?.kind === "env-settings");
+	const openCard = useCanvasStore((s) => s.openCard);
+	const closeCard = useCanvasStore((s) => s.closeCard);
+	const cardBack = useCanvasStore((s) => s.cardBack);
+	const goBackCard = useCanvasStore((s) => s.goBackCard);
+	const setOpen = (next: boolean) =>
+		next ? openCard({ kind: "env-settings" }) : closeCard();
 	const nodes = useCanvasStore((s) => s.nodes);
 	const updateNodeConfig = useCanvasStore((s) => s.updateNodeConfig);
 	const provider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
@@ -98,6 +103,19 @@ export function EnvSettingsSheet() {
 			<Sheet open={open} onOpenChange={setOpen}>
 				<SheetContent className="w-[440px] overflow-y-auto sm:max-w-[440px]">
 					<SheetHeader>
+						{/* Arrived here from the control that asked the question (the Secrets vault's
+						    "Store · …" row): one card on the rail means that card was replaced, so this
+						    is the way back to it. */}
+						{cardBack && (
+							<button
+								type="button"
+								onClick={goBackCard}
+								className="mb-1 flex items-center gap-1.5 self-start text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+							>
+								<ArrowLeft className="h-3.5 w-3.5" />
+								Back
+							</button>
+						)}
 						<SheetTitle>Environment settings</SheetTitle>
 						<SheetDescription>
 							Settings that belong to this environment as a whole rather than to any one card —

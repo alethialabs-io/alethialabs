@@ -10,6 +10,7 @@ import { Button } from "@repo/ui/button";
 import { track } from "@/lib/analytics/track";
 import type { OperationProposal } from "@/lib/ai/operation";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
+import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { cn } from "@repo/ui/utils";
 
 type Phase = "idle" | "running" | "done" | "rejected" | "denied";
@@ -19,6 +20,11 @@ type Phase = "idle" | "running" | "done" | "rejected" | "denied";
  * planProject/provisionProject (the M1 placement + usage gates run inside them) and opens
  * the artifact Logs tab on the returned job; a denial (Forbidden / usage cap) shows
  * the "held back" note from the action's error message.
+ *
+ * The operation runs against the ENVIRONMENT the proposal names, falling back to the one the
+ * Elench surface is scoped to (`ctx.environmentId`, the topbar switcher's). Only when neither
+ * knows does the action reach its own default — before this the card passed no environment at
+ * all, so on any non-default environment it planned and deployed the default one.
  */
 export function ApprovalCard({
 	proposal,
@@ -29,6 +35,7 @@ export function ApprovalCard({
 	onResolve?: (output: unknown) => void;
 }) {
 	const open = useArtifactStore((s) => s.open);
+	const ctx = useElenchStore((s) => s.ctx);
 	const [phase, setPhase] = useState<Phase>("idle");
 	const [reason, setReason] = useState<string | null>(null);
 
@@ -40,16 +47,21 @@ export function ApprovalCard({
 		setReason(null);
 		try {
 			const op = proposal.operation;
+			const envId =
+				op.environmentId ??
+				(ctx.kind === "project" ? ctx.environmentId : null) ??
+				undefined;
 			const { jobId } =
 				op.operation === "plan_project"
-					? await planProject(op.projectId)
-					: await provisionProject(op.projectId, op.planJobId);
+					? await planProject(op.projectId, undefined, envId)
+					: await provisionProject(op.projectId, op.planJobId, undefined, envId);
 			open({ projectId: op.projectId, jobId }, "logs");
 			setPhase("done");
 			onResolve?.({
 				status: "approved",
 				operation: op.operation,
 				projectId: op.projectId,
+				environmentId: envId ?? null,
 				jobId,
 			});
 		} catch (err) {

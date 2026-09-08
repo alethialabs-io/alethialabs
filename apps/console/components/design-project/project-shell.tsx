@@ -21,7 +21,7 @@ import { CONTENT_FRAME } from "@/components/shell/content-frame";
 import { EMPTY_ENVIRONMENT_STATUS } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import { useEnvironmentStatusQuery } from "@/lib/query/use-environment-status-query";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { selectInspectorNodeId, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { cn } from "@repo/ui/utils";
 
 export function ProjectShell({
@@ -36,7 +36,7 @@ export function ProjectShell({
 	const pathname = usePathname();
 	const searchParams = useSearchParams();
 	const openInspector = useCanvasStore((s) => s.openInspector);
-	const inspectorNodeId = useCanvasStore((s) => s.inspectorNodeId);
+	const inspectorNodeId = useCanvasStore(selectInspectorNodeId);
 
 	// Architecture is the only env-scoped design surface; the inspector belongs to it alone.
 	const onArchitecture = pathname.endsWith("/architecture");

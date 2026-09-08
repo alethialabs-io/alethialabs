@@ -98,7 +98,7 @@ function seed(secretNames: string[], config: Record<string, unknown> = {}, kind:
 		identities: [],
 		baseline: [],
 		collectionPositions: {},
-		envSettingsOpen: true,
+		card: { kind: "env-settings" },
 	});
 	return secrets;
 }
@@ -113,7 +113,7 @@ const providers = () => providersOf("secret");
 
 describe("environment secret store", () => {
 	beforeEach(() => {
-		useCanvasStore.setState({ envSettingsOpen: false });
+		useCanvasStore.setState({ card: null });
 	});
 
 	it("writes the chosen store to EVERY secret in the environment", async () => {
@@ -199,7 +199,7 @@ describe("environment secret store", () => {
 
 describe("environment container registry", () => {
 	beforeEach(() => {
-		useCanvasStore.setState({ envSettingsOpen: false });
+		useCanvasStore.setState({ card: null });
 	});
 
 	// Registry goes through the SAME dominantProvider collapse as secrets (compose.go:152): the first

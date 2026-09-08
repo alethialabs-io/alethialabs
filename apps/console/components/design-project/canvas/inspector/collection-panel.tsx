@@ -38,7 +38,7 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 	const env = useEnvironmentStatus();
 	const addNode = useCanvasStore((s) => s.addNode);
 	const updateNodeConfig = useCanvasStore((s) => s.updateNodeConfig);
-	const setEnvSettingsOpen = useCanvasStore((s) => s.setEnvSettingsOpen);
+	const openCard = useCanvasStore((s) => s.openCard);
 	const removeNodes = useCanvasStore((s) => s.removeNodes);
 	const openInspector = useCanvasStore((s) => s.openInspector);
 	const [filter, setFilter] = useState("");
@@ -91,7 +91,10 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 			{secretsStore && members.length > 0 ? (
 				<button
 					type="button"
-					onClick={() => setEnvSettingsOpen(true)}
+					// A DETOUR: the store this vault reads through is an environment setting, so the
+					// control that changes it lives on another card — and one card on the rail means
+					// opening it replaces this one. `back: true` remembers where you were.
+					onClick={() => openCard({ kind: "env-settings" }, { back: true })}
 					className="flex items-center justify-between gap-2 border-b border-border px-4 py-2 text-left hover:bg-accent"
 				>
 					<span className="text-xs text-muted-foreground">
