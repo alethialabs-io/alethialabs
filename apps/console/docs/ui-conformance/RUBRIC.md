@@ -286,7 +286,7 @@ H2: it hand-writes its own `<h2>`.
 | **R2** | every overlay computes above the chrome | see below | `opens-no-overlay` |
 | **R3** | exactly one scroll container, and it is the shell's | one element in the page has `scrollHeight > clientHeight` with a scrolling `overflow` | `redirect-only` |
 | **R4** | no two interactive elements overlap | no pair of focusable elements with intersecting layout boxes | `redirect-only` |
-| **R5** | axe reports zero serious or critical violations | `scanA11y()` returns none at `wcag2a`/`wcag2aa` | never |
+| **R5** | axe reports zero serious or critical violations, **in both themes** | `scanRouteThemes()` returns none at `wcag2a`/`wcag2aa` in **light and dark**, each violation naming its theme, and both themes applied and painted differently | never |
 | **R6** | zero console errors, zero failed requests | nothing on `console.error`, no response ≥ 400 | never |
 | **R7** | interactive within budget | p95 under the route's recorded budget | never |
 

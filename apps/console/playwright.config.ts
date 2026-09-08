@@ -219,6 +219,13 @@ function projectsInvokedByWorkflows(): Set<string> {
 	return found;
 }
 
+/**
+ * The theme every audited route STARTS in. Typed as the literal rather than left to inference: inside
+ * the `projects` array a bare `"light"` widens to `string`, which no `defineConfig` overload accepts
+ * — measured on the first CI run of #4195 (TS2769 at the `defineConfig` call).
+ */
+const AUDIT_START_THEME: "light" = "light";
+
 const projects = [
 	// Produces the reusable authenticated persona (e2e/.auth/persona.json). Specs that only need
 	// an authed session — not the onboarding demo — can add `dependencies: ["setup"]` +
@@ -323,7 +330,12 @@ const projects = [
 		// the best part of an hour, and would say nothing new.
 		retries: 0,
 		dependencies: ["setup"],
-		use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
+		// `colorScheme` is STATED, not inherited. Playwright's default is `light`, and with
+		// `app/layout.tsx` on `defaultTheme="system"` that default was the only theme the audit had
+		// ever painted — every R5 verdict was a light-mode verdict published as the verdict (#4195).
+		// This is the theme each route STARTS in; `e2e/audit/signals.ts` → `scanRouteThemes` then
+		// emulates dark for the second half of R5 and hands the page back in light.
+		use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE, colorScheme: AUDIT_START_THEME },
 	},
 
 	// The QA suite (e2e/flows). Needs ALETHIA_QA_E2E=1 so global-setup builds its personas.

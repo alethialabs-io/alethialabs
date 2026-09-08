@@ -110,13 +110,23 @@ describe("groupNodes — what survives the reduction", () => {
 });
 
 describe("producer → consumer, end to end", () => {
-	it("a real axe payload becomes a summary that NAMES the colour pair and ratio", () => {
+	// Since #4195 an R5 record is `{ themes, violations }` and every violation names the theme it was
+	// seen in — this fixture is the shape `e2e/audit/signals.ts` `scanRouteThemes` actually returns.
+	const themes = [
+		{ theme: "dark", applied: true, background: "rgb(13, 15, 18)", htmlClass: "dark", storedPreference: null },
+		{ theme: "light", applied: true, background: "rgb(255, 255, 255)", htmlClass: "", storedPreference: null },
+	];
+
+	it("a real axe payload becomes a summary that NAMES the colour pair, the ratio and the THEME", () => {
 		const nodes = Array.from({ length: 9 }, (_, i) => contrastNode("#8a8f98", "#0d0f12", 3.7148, `span.n${i}`));
 		const { groups, omittedNodes } = groupNodes(nodes);
-		const detail = summariseLiveEvidence("R5", [
-			{ id: "color-contrast", impact: "serious", nodes: nodes.length, groups, omittedNodes },
-		]);
-		expect(detail).toBe("color-contrast (serious) ×9 [#8a8f98 on #0d0f12 — 3.71:1, wants 4.5:1]");
+		const detail = summariseLiveEvidence("R5", {
+			themes,
+			violations: [{ id: "color-contrast", theme: "dark", impact: "serious", nodes: nodes.length, groups, omittedNodes }],
+		});
+		expect(detail).toBe(
+			"dark: color-contrast (serious) ×9 [#8a8f98 on #0d0f12 — 3.71:1, wants 4.5:1] [themes dark, light]",
+		);
 	});
 
 	// The state R5 was in before this unit: measured, scored, and saying nothing a person could act
@@ -124,7 +134,21 @@ describe("producer → consumer, end to end", () => {
 	it("and a producer that stops keeping the data makes the summary REFUSE, not shrug", () => {
 		const stripped = groupNodes([contrastNode("#8a8f98", "#0d0f12", 3.71, "span.a")]).groups.map((g) => ({ ...g, checks: [] }));
 		expect(() =>
-			summariseLiveEvidence("R5", [{ id: "color-contrast", impact: "serious", nodes: 1, groups: stripped, omittedNodes: 0 }]),
+			summariseLiveEvidence("R5", {
+				themes,
+				violations: [{ id: "color-contrast", theme: "dark", impact: "serious", nodes: 1, groups: stripped, omittedNodes: 0 }],
+			}),
 		).toThrow(/names no colour pair/);
+	});
+
+	// The theme half of the same contract: a producer that stops reporting which paints it scanned
+	// is the light-only verdict again, and it is refused rather than summarised as a clean one.
+	it("and a producer that stops naming the themes makes the summary REFUSE too", () => {
+		const { groups, omittedNodes } = groupNodes([contrastNode("#8a8f98", "#0d0f12", 3.71, "span.a")]);
+		expect(() =>
+			summariseLiveEvidence("R5", {
+				violations: [{ id: "color-contrast", theme: "dark", impact: "serious", nodes: 1, groups, omittedNodes }],
+			}),
+		).toThrow(/carries no `themes` array/);
 	});
 });
