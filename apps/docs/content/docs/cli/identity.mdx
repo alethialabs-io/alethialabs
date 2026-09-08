@@ -115,18 +115,31 @@ the behavior of each install channel.
 Open the Alethia web console (default) or the docs in your browser. Aliases: `docs`, `dashboard`.
 
 ```bash
-alethia open            # opens the console
-alethia open docs       # opens the documentation
-alethia open console    # explicit
+alethia open                        # opens the active organization's page
+alethia open --project boutique     # opens that project
+alethia open docs                   # opens the documentation
+alethia open console                # explicit
 ```
 
-| Argument | Default | Description |
+| Argument / Flag | Default | Description |
 |----------|---------|-------------|
 | `[console\|docs]` | `console` | Which surface to open. Defaults to the console; the `docs` alias defaults to the documentation. |
+| `--project` | — | Open a project's page instead of the organization's, by project name or id. The URL is built from the console's own route tree, so a route rename fails the build rather than the link. |
 
 `alethia docs` (the alias) defaults to the docs target. The argument is optional and has a default,
 so `alethia open --no-input` opens the console rather than asking — this is the one shell value a
 person supplies, and it is answered rather than prompted for.
+
+The console target opens the **active organization's** page, and `--project` opens a project under
+it. Both URLs are built from the route tree the console itself declares
+(`packages/core/routing`, generated from `apps/console/app/(private)/**` and checked by
+`pnpm check:route-parity`), rather than from a path written out in the CLI: the one link the CLI
+used to build was `/dashboard`, a legacy catch-all, so `alethia project get <name> --open` printed
+a project and then opened the organization root.
+
+Choosing an organization with [`alethia org switch`](/cli/commands/organizations) records its slug,
+so the link costs no request; a machine that has authenticated but never switched resolves it once
+through `whoami`.
 
 ### `alethia completion`
 

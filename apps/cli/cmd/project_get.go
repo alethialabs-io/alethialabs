@@ -75,7 +75,20 @@ the name never has to be copied out of another command's output.`,
 		}
 
 		if openInBrowser {
-			url := fmt.Sprintf("%s/dashboard", WebOrigin())
+			// THE PROJECT, not `{origin}/dashboard` — the legacy catch-all this used to build,
+			// which 307s to the org root, so `--open` did not open the project it had just
+			// printed. The URL comes from the console's own route tree (packages/core/routing).
+			url, err := projectLink(api.NewClient(token), config.ProjectName)
+			if err != nil {
+				// Refusing to build a wrong URL is right; making it this command's EXIT STATUS is
+				// not. The project has already been printed — the primary work succeeded — so
+				// `alethia project get web --open && …` would fail a script on the optional half,
+				// and answering yes to the interactive prompt would turn a successful `project
+				// get` into a failed one. Same shape as the browser-launch failure below, which
+				// TestProj_GetBrowserFailureIsNotFatal pins.
+				ui.Error(fmt.Sprintf("Failed to build the project link: %v", err))
+				return
+			}
 			fmt.Printf("Opening in browser: %s\n", url)
 			if err := openBrowser(url); err != nil {
 				ui.Error(fmt.Sprintf("Failed to open browser: %v", err))
