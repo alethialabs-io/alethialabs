@@ -61,15 +61,29 @@ variable "state_network_allowed_cidrs" {
     Public IP ranges allowed to reach the state account. Non-empty flips the account's network
     default action to `Deny`, so ONLY these ranges (plus trusted Azure services) can reach it.
 
-    Empty by default, and that is a deliberate trade rather than an oversight. This account is
-    reached from a maintainer's laptop, whose address changes with the network they are on; a
-    default-Deny with a stale allowlist locks the only person who can apply these stacks out of the
-    state that describes them. The account's real wall is that it has no shared key to steal
-    (`shared_access_key_enabled = false`) — every request carries an Entra identity that must hold
-    `Storage Blob Data Contributor`. Set this if you have a stable egress address.
+    REQUIRED, with no default, deliberately (#3290). `main.tf` reads
+    `default_action = length(var.state_network_allowed_cidrs) > 0 ? "Deny" : "Allow"`, so this
+    variable IS the account's network posture — and while it defaulted to `[]`, the UNSET value
+    selected `Allow`. Every other empty default #3108 swept fails in the safe direction; this one
+    inverted. Removing the default is the fix #3105 applied to `e2e_budget_alert_emails`: a bare
+    `tofu plan`/`apply` now exits 1 with "No value for required variable" instead of choosing.
+
+    WHAT THAT ENFORCES, exactly, because this is the comment somebody reads while deciding whether
+    to widen the account: OpenTofu refuses to run without a value. That is all it does. It makes the
+    posture CHOSEN; it does not make the account closed. `state_network_allowed_cidrs = []` is still
+    a legal input and still selects `Allow` — deliberately, because this account is reached from a
+    maintainer's laptop whose address changes with the network they are on, and a default-Deny with
+    a stale allowlist locks the only person who can apply these stacks out of the state that
+    describes them. Nothing here checks that a non-empty list is the RIGHT list, and no check block
+    fires on `[]`.
+
+    Unaffected either way, and the account's real wall: `shared_access_key_enabled = false`, so no
+    storage key exists to steal and every request carries an Entra identity that must hold
+    `Storage Blob Data Contributor` (see `state_writer_principal_ids`, which does have a check).
+
+    Set your stable egress ranges, or `[]` to opt into `Allow` explicitly.
   EOT
   type        = list(string)
-  default     = []
 }
 
 variable "state_retention_days" {

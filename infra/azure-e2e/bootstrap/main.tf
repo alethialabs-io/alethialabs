@@ -35,12 +35,13 @@ resource "azurerm_resource_group" "tfstate" {
   }
 }
 
-# The network default action is `Allow` until `state_network_allowed_cidrs` is set, which Trivy
+# The network default action is `Allow` whenever `state_network_allowed_cidrs` is empty, which Trivy
 # reports as AVD-AZU-0012. Accepted, and scoped to THIS resource with an inline ignore rather than a
 # repo-wide entry in infra/.trivyignore — that id must keep firing on the customer-facing Azure
 # templates. The reasoning is on the variable: this account is reached only from a maintainer's
 # laptop on a changing address, and its wall is that no shared key exists to steal — every request
-# carries an Entra identity holding Storage Blob Data Contributor.
+# carries an Entra identity holding Storage Blob Data Contributor. Since #3290 that empty list has
+# to be PASSED (`= []`) rather than inherited from a default, so Trivy is reporting a choice.
 #trivy:ignore:AVD-AZU-0012
 resource "azurerm_storage_account" "tfstate" {
   name                     = var.state_storage_account_name
@@ -59,9 +60,10 @@ resource "azurerm_storage_account" "tfstate" {
   min_tls_version                 = "TLS1_2"
   allow_nested_items_to_be_public = false
 
-  # Network ACL. Off by default and on the moment `state_network_allowed_cidrs` is non-empty — see
-  # that variable for why a default-Deny is the wrong default for an account only a maintainer's
-  # laptop ever reaches.
+  # Network ACL. `Deny` when `state_network_allowed_cidrs` is non-empty, `Allow` when it is empty.
+  # There is no longer an unset case: the variable is REQUIRED (#3290), so reaching `Allow` means
+  # somebody passed `[]`. See that variable for why `[]` stays legal for an account only a
+  # maintainer's laptop ever reaches, and for what "required" does and does not guarantee.
   network_rules {
     default_action = length(var.state_network_allowed_cidrs) > 0 ? "Deny" : "Allow"
     ip_rules       = var.state_network_allowed_cidrs

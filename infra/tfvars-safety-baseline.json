@@ -61,11 +61,6 @@
 		},
 		{
 			"stack": "infra/azure-e2e/bootstrap",
-			"variable": "state_network_allowed_cidrs",
-			"reason": "THE INVERSION, and the sharpest finding in the sweep: main.tf:66 reads `default_action = length(...) > 0 ? \"Deny\" : \"Allow\"`, so the UNSET value is the permissive one and the state storage account defaults to network-open. Not decided here — flipping the polarity can lock the maintainer out of their own backend. Filed as #3290."
-		},
-		{
-			"stack": "infra/azure-e2e/bootstrap",
 			"variable": "state_writer_principal_ids",
 			"reason": "[] removes every Storage Blob Data Contributor assignment on the state account (main.tf:103). Shared-key auth is disabled there, so with zero assignments every `tofu init` against that backend 403s and the state becomes unreachable. The value is a personal Entra object id, so it cannot be committed to a public repo; main.tf:112-117 already carries a `check` that names the failure and the `az ad signed-in-user show` command that produces the id."
 		},
