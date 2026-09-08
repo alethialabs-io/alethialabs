@@ -1,5 +1,5 @@
 {
-	"generatedBy": "apps/console/scripts/gen-template-knobs.mjs — do not edit; run `pnpm -F console gen:template-knobs`",
+	"generatedBy": "apps/console/scripts/gen-template-knobs.mjs — do not edit; run `pnpm -C apps/console run gen:template-knobs`",
 	"clouds": [
 		"alibaba",
 		"aws",

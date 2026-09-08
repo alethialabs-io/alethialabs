@@ -30,7 +30,7 @@
 //      MISSING, and a reader that stopped reading finds nothing missing — which is indistinguishable
 //      from a clean build. The floors are the difference.
 //
-// Run from apps/console: `pnpm -F console check:template-knobs`.
+// Run from apps/console: `pnpm -C apps/console run check:template-knobs`.
 
 import { existsSync, readFileSync } from "node:fs";
 
@@ -185,7 +185,7 @@ if (!existsSync(DOC_OUT) || readFileSync(DOC_OUT, "utf8") !== docText) stale.pus
 if (stale.length) {
 	fail(
 		`generated file(s) are stale: ${stale.join(", ")}`,
-		"Run `pnpm -F console gen:template-knobs` and commit. The console's card UI reads the manifest, so a stale one " +
+		"Run `pnpm -C apps/console run gen:template-knobs` and commit. The console's card UI reads the manifest, so a stale one " +
 			"offers knobs the templates no longer declare.",
 	);
 }
