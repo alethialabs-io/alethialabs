@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -197,5 +198,35 @@ func TestResolveProjectName_ResolvesAnIDAndPassesANameThrough(t *testing.T) {
 		t.Errorf("resolveProjectName(unknown id) = %q with no error — that URL 404s and reads as working", got)
 	} else if !strings.Contains(err.Error(), "web") {
 		t.Errorf("the refusal does not offer the projects that do exist: %v", err)
+	}
+}
+
+// TestResolveProjectName_RefusesRatherThanBuildingAWrongLink drives the two arms that turn a
+// `--project` id into a refusal instead of a URL.
+//
+// `alethia open --project <id>` has to resolve the id to a NAME, because the console's `[project]`
+// segment is a slug of the name and nothing else. Both arms below end with no link rather than a
+// plausible one, which is the property worth pinning: a deep link that opens the wrong page, or an
+// org page in answer to a request for a project, differs from success only in a URL nobody reads.
+func TestResolveProjectName_RefusesRatherThanBuildingAWrongLink(t *testing.T) {
+	const id = "11111111-1111-1111-1111-111111111111"
+
+	// A name is not an id and is returned untouched — no request, and the control for both arms
+	// below, since a resolver that never reached the API could pass them by accident.
+	if got, err := resolveProjectName(projFakeLister{err: errors.New("must not be called")}, "My Shop"); err != nil || got != "My Shop" {
+		t.Errorf("a name must pass through unresolved: got %q, %v", got, err)
+	}
+
+	// The listing itself failed. The id cannot be resolved, so there is no link to build.
+	_, err := resolveProjectName(projFakeLister{err: errors.New("503 upstream")}, id)
+	if err == nil || !strings.Contains(err.Error(), "503 upstream") || !strings.Contains(err.Error(), id) {
+		t.Errorf("a failed listing must be refused naming the id and the cause: %v", err)
+	}
+
+	// The id resolved to a project the server gave no name. Slugifying "" would produce a link to
+	// the organization's project index, which is a different page than the one asked for.
+	_, err = resolveProjectName(projFakeLister{configs: []types.ConfigurationSummary{{ID: id, ProjectName: ""}}}, id)
+	if err == nil || !strings.Contains(err.Error(), "no name") {
+		t.Errorf("a nameless project must be refused rather than slugified to nothing: %v", err)
 	}
 }

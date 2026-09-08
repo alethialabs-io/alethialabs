@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/mattn/go-isatty"
 )
 
@@ -273,5 +274,64 @@ func TestMisc_OpenProjectWithoutACredentialRefuses(t *testing.T) {
 	}
 	if len(opened) != 1 || opened[0] != "https://alethialabs.io" {
 		t.Errorf("bare open should have reached the origin, got %v", opened)
+	}
+}
+
+// TestMisc_OpenRefusesAProjectItCannotLinkTo drives the three arms `open` takes once it HAS a
+// credential — the ones the logged-out fallback test above can never reach, because it never gets
+// past `getAuthToken`.
+//
+// The rule they implement together: a bare `open` always has somewhere to go, and `--project` never
+// silently becomes somewhere else. The org page is an improvement on the origin rather than a
+// precondition, so losing it degrades; a project that cannot be resolved has no degraded form, so
+// it refuses.
+func TestMisc_OpenRefusesAProjectItCannotLinkTo(t *testing.T) {
+	// `openProject` is a package-level flag target and leaks into every later `open` in the
+	// package if it is not reset — the hazard this file already records against the docs arm.
+	resetFlagsAroundTest(t)
+
+	var opened []string
+	prev := openBrowser
+	openBrowser = func(url string) error { opened = append(opened, url); return nil }
+	t.Cleanup(func() { openBrowser = prev })
+
+	// An organization the account is not in: a credential resolves, whoami reports no active org,
+	// so the org slug every console link is built from cannot be found.
+	orgless := miscEnv(t, miscEmpty)
+	// miscEnv persists an active org, and `resolveOrgSlug` prefers the config over whoami — by
+	// design, so the common path costs no request. Clearing it is what makes the org genuinely
+	// unresolvable; the credential written beside it stays, which is the whole point of these
+	// three arms.
+	if err := types.SaveCliConfig(types.CliConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	trapOrgless := miscTrapExit(t, orgless)
+
+	// A bare open DEGRADES. This is the arm the logged-out test cannot reach: there the origin is
+	// chosen before any client exists, here it is chosen after `orgLink` has failed.
+	if err := orgless("open", "--output", "table", "--no-input"); err != nil {
+		t.Fatalf("a bare open must never be fatal, even with no org: %v", err)
+	}
+	if len(opened) != 1 || opened[0] != WebOrigin() {
+		t.Fatalf("a bare open with no org should reach the origin, got %v", opened)
+	}
+
+	// `--project` does NOT degrade. The name resolves fine; it is the org slug that does not, and
+	// a project page cannot be addressed without one.
+	if !trapOrgless("open", "--project", "My Shop", "--output", "table", "--no-input") {
+		t.Error("--project must be fatal when the org the link needs cannot be resolved")
+	}
+	if len(opened) != 1 {
+		t.Errorf("a refused --project must open no browser at all, got %v", opened)
+	}
+
+	// And the other half of the same rule, against a populated org: an id that resolves to no
+	// project is refused rather than opening the org's index.
+	trapFull := miscTrapExit(t, miscEnv(t, miscFull))
+	if !trapFull("open", "--project", "11111111-1111-1111-1111-111111111111", "--output", "table", "--no-input") {
+		t.Error("an unresolvable --project id must be fatal")
+	}
+	if len(opened) != 1 {
+		t.Errorf("a refused --project must open no browser at all, got %v", opened)
 	}
 }
