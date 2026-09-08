@@ -76,11 +76,20 @@ function Workbench({
 	source,
 	environmentId = "env-a",
 	projectId = "proj-1",
+	create,
 }: {
 	source?: SourceProjectData;
 	environmentId?: string;
 	projectId?: string;
+	/** The create flow (`~/new`): no project, no environment. A default parameter cannot express
+	 * this — passing `projectId={undefined}` is exactly what makes the default apply. */
+	create?: boolean;
 }) {
+	if (create) {
+		return (
+			<DesignProjectWorkbench cloudIdentities={IDENTITIES} sourceProject={source} dockInShell />
+		);
+	}
 	return (
 		<DesignProjectWorkbench
 			cloudIdentities={IDENTITIES}
@@ -222,7 +231,7 @@ describe("DesignProjectWorkbench seeding", () => {
 	});
 
 	it("the create flow seeds under the 'new' scope and its draft survives a remount", async () => {
-		const first = render(<Workbench projectId={undefined} environmentId={undefined} />);
+		const first = render(<Workbench create />);
 		await seeded("new");
 		expect(useCanvasStore.getState().seed).toEqual({ scope: "new", revision: "new" });
 
@@ -238,7 +247,7 @@ describe("DesignProjectWorkbench seeding", () => {
 		useCanvasStore.persist.setOptions({ name: "throwaway" });
 		useCanvasStore.getState().reset();
 		expect(sessionStorage.getItem(draftStorageKey("new"))).toBe(blob);
-		render(<Workbench projectId={undefined} environmentId={undefined} />);
+		render(<Workbench create />);
 		await seeded("new");
 		const root = useCanvasStore.getState().nodes.find((n) => n.id === "project-root");
 		expect(root && "project_name" in root.data.config ? root.data.config.project_name : null).toBe(
