@@ -251,8 +251,7 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		// UNCONDITIONALLY (not merely merge-if-absent) so keyless can never be switched on from
 		// provider_config for a cell the canvas did not offer — db.IamAuth == nil leaves them unset,
 		// and without this a passthrough key would sail past both #1508 and #1510.
-		mergeProviderConfig(tfvars, db.ProviderConfig,
-			"log_exports", "rds_iam_auth_enabled", "rds_iam_irsa")
+		mergeProviderConfig(tfvars, db.ProviderConfig, awsRootReserved...)
 	}
 
 	if len(config.Caches) > 0 {
@@ -316,12 +315,7 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		// merely protected by merge-if-absent: `redis_multi_az_enabled` is written only when the
 		// typed field is set, and without the reservation a provider_config key would fill the gap
 		// the canvas left on purpose — the same walk-around the IAM-auth reservation closes.
-		mergeProviderConfig(tfvars, cache.ProviderConfig,
-			"create_elasticache_redis", "create_elasticache_valkey",
-			"valkey_data_storage_max", "valkey_engine_version",
-			"redis_instance_type", "redis_engine_version", "redis_family", "redis_cluster_size",
-			"redis_cluster_mode_enabled", "redis_multi_az_enabled", "redis_allowed_cidr_blocks",
-			"redis_allowed_security_group_ids", "redis_cloudwatch_logs_enabled")
+		mergeProviderConfig(tfvars, cache.ProviderConfig, awsRootReserved...)
 	}
 
 	// Container registries are ROOT-level on AWS: the template declares a dozen `ecr_*` variables
@@ -335,9 +329,17 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		if r.Provider != "" && r.Provider != "native" {
 			continue
 		}
-		mergeProviderConfig(tfvars, r.ProviderConfig,
-			"provision_ecr", "ecr_names_map", "ecr_repo_settings",
-			"ecr_repository_image_tag_mutability", "ecr_repository_image_scan_on_push")
+		// The same name filter `buildECRNamesMap` and `buildECRRepoSettings` apply. A row whose
+		// name normalises to nothing produces no entry in either map, so `provision_ecr` stays
+		// false and the row owns no repository — but without this guard its provider_config would
+		// still reconfigure the whole ECR module (encryption, lifecycle policy, scanning) for
+		// repositories that OTHER registries and repo-sourced services created. Merge-if-absent
+		// makes that worse rather than better: reached in slice order, a phantom row wins over a
+		// real registry's answer.
+		if r.Name == "" || ecrRepoBaseName(r.Name) == "" {
+			continue
+		}
+		mergeProviderConfig(tfvars, r.ProviderConfig, awsRootReserved...)
 	}
 
 	if inst := resolveInstanceTypes("aws", config.Cluster); len(inst) > 0 {
@@ -365,42 +367,65 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	// provider_config can't shadow it. Consumed by the template's classification_tags var (B1.3).
 	tfvars["classification_tags"] = classificationTags(config, awsTagStyle)
 
-	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, "enable_karpenter")
-	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "cloudfront_waf", "acm_certificate", "application_waf")
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, awsRootReserved...)
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, awsRootReserved...)
 
 	return tfvars
 }
 
-// mergeProviderConfig copies template-variable overrides from a component's
-// provider_config JSONB into the flat tfvars map, WITHOUT clobbering keys already
-// set by the typed mappings (merge-if-absent). This is the generic "passthrough"
-// that lets the UI drive any template variable by name without a dedicated Go field
-// per knob. `reserved` lists provider_config keys the typed code already consumed
-// under a different tfvar name, so they are skipped (no undeclared-var duplicates).
-// gatedTfvars are template variables NO component's provider_config may set, whatever component
-// the config belongs to.
+// The `reserved` list at a merge call site names the keys THAT component's typed mapping owns —
+// but every root-level merge writes the SAME flat tfvars map, so a list consulted only at its own
+// site closes nothing. A cache's provider_config could set `rds_iam_auth_enabled` whenever the
+// database's typed mapping had not, and a nosql table's could set `cloud_sql_iam_auth`. That turns
+// keyless database auth on for a cloud × engine cell the canvas deliberately does not offer,
+// walking around both the offer-parity guard (#1508) and the `visibleWhen` gate (#1510) — the exact
+// walk-around the database's own reservation exists to close, reached from a neighbouring component
+// instead. The same shape re-opens an offer withdrawn after measurement: the Azure cache SKU family
+// (#1993, #2148), or `redis_multi_az_enabled`, which is written only when the canvas asked for it.
 //
-// The `reserved` lists below are per CALL SITE, but every root-level merge writes the SAME flat
-// tfvars map — so a cache's provider_config could set `rds_iam_auth_enabled` whenever the database's
-// typed mapping had not, and a nosql table's could set `cloud_sql_iam_auth`. That turns keyless
-// database auth on for a cloud × engine cell the canvas deliberately does not offer, walking around
-// both the offer-parity guard (#1508) and the `visibleWhen` gate (#1510) — the exact walk-around the
-// database's own reservation exists to close, reachable from a neighbouring component instead.
+// So a root-level merge is passed its CLOUD'S UNION rather than its own component's list. The
+// per-component slices stay named because they record who owns what; the union is DERIVED from
+// them, so adding a key to one component closes it to every other in the same edit. A second gate
+// written by hand would drift from the call sites it mirrors, and that drift stays invisible until
+// a knob nobody expected reaches a plan.
 //
-// So the gate is GLOBAL rather than per component: these keys are decided by the canvas or by a
-// recorded withdrawal, and a passthrough is never the place to decide them. A component that
-// legitimately owns one still sets it through its typed field, which runs before this and wins.
-var gatedTfvars = map[string]bool{
-	// Keyless database auth, per cloud. The canvas gates the toggle per cloud × engine and the
-	// deploy refuses cells the renderer cannot build; neither check sees a passthrough key.
-	"rds_iam_auth_enabled": true,
-	"rds_iam_irsa":         true,
-	"cloud_sql_iam_auth":   true,
-	"azure_db_iam_auth":    true,
-	// Offers withdrawn from a cloud after measurement (#1841 and the Azure cache SKU family).
-	// Re-opening one from a neighbouring component's knobs would render and then fail at apply.
-	"azure_cache_sku":           true,
-	"azure_cache_redis_version": true,
+// Item-level merges (`mergeItemProviderConfig`) are deliberately NOT unioned: they write into a
+// per-item object — one queue in `sqs_queues`, one bucket in `bucket_configuration` — where one
+// component's keys cannot reach another component at all.
+var (
+	awsDatabaseReserved = []string{"log_exports", "rds_iam_auth_enabled", "rds_iam_irsa"}
+	awsCacheReserved    = []string{
+		"create_elasticache_redis", "create_elasticache_valkey",
+		"valkey_data_storage_max", "valkey_engine_version",
+		"redis_instance_type", "redis_engine_version", "redis_family", "redis_cluster_size",
+		"redis_cluster_mode_enabled", "redis_multi_az_enabled", "redis_allowed_cidr_blocks",
+		"redis_allowed_security_group_ids", "redis_cloudwatch_logs_enabled",
+	}
+	awsRegistryReserved = []string{
+		"provision_ecr", "ecr_names_map", "ecr_repo_settings",
+		"ecr_repository_image_tag_mutability", "ecr_repository_image_scan_on_push",
+	}
+	awsClusterReserved = []string{"enable_karpenter"}
+	awsDNSReserved     = []string{"cloudfront_waf", "acm_certificate", "application_waf"}
+
+	awsRootReserved = unionReserved(awsDatabaseReserved, awsCacheReserved, awsRegistryReserved,
+		awsClusterReserved, awsDNSReserved)
+)
+
+// unionReserved flattens the per-component reserved lists of ONE cloud into the set every
+// root-level merge on that cloud is passed.
+func unionReserved(lists ...[]string) []string {
+	seen := make(map[string]bool, 32)
+	out := make([]string, 0, 32)
+	for _, l := range lists {
+		for _, k := range l {
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
+	}
+	return out
 }
 
 // mergeProviderConfig copies template-variable overrides from a component's
@@ -408,8 +433,9 @@ var gatedTfvars = map[string]bool{
 // set by the typed mappings (merge-if-absent). This is the generic "passthrough"
 // that lets the UI drive any template variable by name without a dedicated Go field
 // per knob. `reserved` lists provider_config keys the typed code already consumed
-// under a different tfvar name, so they are skipped (no undeclared-var duplicates);
-// `gatedTfvars` lists the ones no component may set at all.
+// under a different tfvar name, so they are skipped (no undeclared-var duplicates). A ROOT-level
+// caller passes its cloud's union of those lists, never just its own, so no component's knobs can
+// decide a variable another component owns; an item-level caller passes only its own.
 func mergeProviderConfig(tfvars map[string]interface{}, pc map[string]any, reserved ...string) {
 	if len(pc) == 0 {
 		return
@@ -419,7 +445,7 @@ func mergeProviderConfig(tfvars map[string]interface{}, pc map[string]any, reser
 		skip[r] = true
 	}
 	for k, v := range pc {
-		if skip[k] || gatedTfvars[k] {
+		if skip[k] {
 			continue
 		}
 		if _, exists := tfvars[k]; !exists {

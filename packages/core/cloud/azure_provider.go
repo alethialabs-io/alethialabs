@@ -42,6 +42,27 @@ func (p *azureProvider) ValidateConfig(config *types.ProjectConfig) error {
 	return validateNetworkCIDR(config, "vnet_cidr", azureMaxNetworkPrefix)
 }
 
+// The keys each ROOT-level component's typed mapping owns on Azure, and the union every root merge
+// is passed. Azure had the widest hole before the union: the registry loop reserved `provision_acr`
+// alone, so a registry's provider_config could set `azure_db_iam_auth` whenever the database had
+// not (#1508), and could re-open the whole withdrawn cache SKU family (#1993, #2148) that the cache
+// block spends nine lines closing. See `mergeProviderConfig` in aws_provider.go.
+var (
+	azureDatabaseReserved = []string{"log_exports", "azure_db_iam_auth"}
+	azureCacheReserved    = []string{
+		"create_azure_cache", "azure_cache_sku_name", "azure_cache_multi_az",
+		"azure_cache_sku", "azure_cache_redis_version",
+		"azure_cache_allowed_cidr_blocks", "azure_cache_firewall_rules",
+		"azure_cache_public_network_access",
+	}
+	azureRegistryReserved = []string{"provision_acr"}
+	azureClusterReserved  = []string{"aks_admin_group_object_ids"}
+	azureDNSReserved      = []string{"azure_waf", "managed_certificate"}
+
+	azureRootReserved = unionReserved(azureDatabaseReserved, azureCacheReserved,
+		azureRegistryReserved, azureClusterReserved, azureDNSReserved)
+)
+
 func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
 	wafEnabled := config.DNS.WafEnabled
@@ -162,7 +183,7 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		// provider_config key could switch keyless on for a cell the canvas never offered, walking
 		// around the offer-parity guard (#1508). `log_exports` is AWS-only — no Azure template
 		// variable declares a log-export set — so it is reserved rather than emitted undeclared.
-		mergeProviderConfig(tfvars, db.ProviderConfig, "log_exports", "azure_db_iam_auth")
+		mergeProviderConfig(tfvars, db.ProviderConfig, azureRootReserved...)
 	}
 
 	if len(config.Caches) > 0 {
@@ -197,10 +218,7 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		// (#2148) — none is declared, so each would be dropped at plan time while reading to the
 		// user exactly like a switch that worked. The same reasoning keeps alibaba's withdrawn
 		// `application_waf` reserved.
-		mergeProviderConfig(tfvars, cache.ProviderConfig,
-			"create_azure_cache", "azure_cache_sku_name", "azure_cache_multi_az",
-			"azure_cache_sku", "azure_cache_redis_version",
-			"azure_cache_allowed_cidr_blocks", "azure_cache_firewall_rules", "azure_cache_public_network_access")
+		mergeProviderConfig(tfvars, cache.ProviderConfig, azureRootReserved...)
 	}
 
 	// Container registries are ROOT-level on Azure: the template declares `acr_sku` for the one
@@ -210,7 +228,7 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		if r.Provider != "" && r.Provider != "native" {
 			continue
 		}
-		mergeProviderConfig(tfvars, r.ProviderConfig, "provision_acr")
+		mergeProviderConfig(tfvars, r.ProviderConfig, azureRootReserved...)
 	}
 
 	if inst := resolveInstanceTypes("azure", config.Cluster); len(inst) > 0 {
@@ -262,8 +280,8 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 	// aks_admin_group_object_ids is consumed above (unioned from cluster_admins + the explicit
 	// provider_config list), so reserve it from the generic passthrough — otherwise a
 	// provider_config value would be re-injected verbatim and could drop the cluster_admins half.
-	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, "aks_admin_group_object_ids")
-	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "azure_waf", "managed_certificate")
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, azureRootReserved...)
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, azureRootReserved...)
 
 	return tfvars
 }

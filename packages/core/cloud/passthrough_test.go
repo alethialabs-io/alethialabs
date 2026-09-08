@@ -862,35 +862,158 @@ func TestProviderTfvars_LeafPassthrough_TypedWins(t *testing.T) {
 	}
 }
 
-// A component's provider_config must never reach a template variable the CANVAS decides.
+// A registry that owns no ECR repository must not reconfigure the ECR module.
 //
-// The `reserved` lists are per call site, but every root-level merge writes the same flat tfvars
-// map — so before `gatedTfvars` existed, a CACHE's provider_config could set
-// `rds_iam_auth_enabled` and a NoSQL table's could set `cloud_sql_iam_auth`, turning keyless
-// database auth on for a cloud × engine cell the canvas does not offer and the deploy gate would
-// refuse. The neighbouring component is the whole point of this test: the database's own
-// reservation already covered the database.
-func TestProviderTfvars_GatedKeysAreUnreachableFromAnyComponent(t *testing.T) {
+// `buildECRNamesMap` and `buildECRRepoSettings` both skip a row whose name normalises to nothing,
+// so such a row produces no repository and leaves `provision_ecr` false. The passthrough loop was
+// missing that filter, so the phantom row's provider_config still set `ecr_*` on root tfvars —
+// configuring encryption, lifecycle policy and scanning for repositories that OTHER registries and
+// repo-sourced services created. Merge-if-absent makes it worse rather than safer: reached first in
+// slice order, the phantom wins over the real registry's answer.
+func TestProviderTfvars_AWSRegistryWithNoRepositoryCarriesNothing(t *testing.T) {
+	cfg := &types.ProjectConfig{
+		ProjectName: "p",
+		ContainerRegistries: []types.ProjectContainerRegistryConfig{
+			{Name: "--", ProviderConfig: map[string]any{"ecr_encryption_type": "KMS"}},
+			{Name: "real", ProviderConfig: map[string]any{"ecr_encryption_type": "AES256"}},
+		},
+	}
+	tfvars := leafProviders["aws"].ProviderTfvars(cfg)
+	if got := tfvars["ecr_encryption_type"]; got != "AES256" {
+		t.Fatalf("ecr_encryption_type = %v, want AES256 — a registry whose name normalises to "+
+			"nothing owns no repository, so it must not answer for the ones that do", got)
+	}
+}
+
+// A reserved key must be closed to every OTHER root-level component, not only to the one that
+// reserves it.
+//
+// This is the second axis the table above cannot have. There, each reserved key is offered through
+// the provider_config of the very component that reserves it, which is the one path the reservation
+// covers by construction — so that table stays green while a different root merge in the same
+// `ProviderTfvars` leaves the key wide open. It did: every root-level merge writes the same flat
+// tfvars map, so a cache's provider_config could set `rds_iam_auth_enabled` whenever the database's
+// typed mapping had not, an Azure registry's could re-open the whole withdrawn cache SKU family,
+// and a Firestore table's could set `cloud_sql_iam_auth` — keyless database auth on a cloud × engine
+// cell the canvas does not offer and the deploy gate would refuse.
+//
+// So this walks the cloud's whole reserved union against every carrier that is not its owner. It is
+// derived from the same slices the call sites pass, which is what stops it going stale: a key added
+// to a component is tested against every neighbour in the same edit.
+//
+// The probe is a SENTINEL rather than an absence check, because some reserved keys are written
+// unconditionally by typed code — `provision_acr` is emitted for every project with a registry — so
+// "the key is present" is not the question. "The carrier's value won" is.
+func TestProviderTfvars_ReservedKeysAreClosedToEveryOtherComponent(t *testing.T) {
+	const sentinel = "carrier-should-never-win"
+
 	cases := []struct {
-		cloud, key string
+		cloud string
+		// byOwner maps the component that owns a reserved list to that list. Owners that are not
+		// carriers (the cluster, the DNS zone) are listed so their keys are probed from every
+		// carrier — there is no self-pairing to skip.
+		byOwner map[string][]string
+		// carriers are the kinds whose provider_config reaches ROOT tfvars on this cloud.
+		carriers []string
 	}{
-		{"aws", "rds_iam_auth_enabled"},
-		{"aws", "rds_iam_irsa"},
-		{"gcp", "cloud_sql_iam_auth"},
-		{"azure", "azure_db_iam_auth"},
-		{"azure", "azure_cache_sku"},
-		{"azure", "azure_cache_redis_version"},
+		{
+			cloud: "aws",
+			byOwner: map[string][]string{
+				"database": awsDatabaseReserved, "cache": awsCacheReserved,
+				"registry": awsRegistryReserved, "cluster": awsClusterReserved, "dns": awsDNSReserved,
+			},
+			carriers: []string{"database", "cache", "registry"},
+		},
+		{
+			cloud: "gcp",
+			byOwner: map[string][]string{
+				"database": gcpDatabaseReserved, "cache": gcpCacheReserved,
+				"nosql": gcpNosqlReserved, "cluster": gcpClusterReserved, "dns": gcpDNSReserved,
+			},
+			carriers: []string{"database", "cache", "nosql"},
+		},
+		{
+			cloud: "azure",
+			byOwner: map[string][]string{
+				"database": azureDatabaseReserved, "cache": azureCacheReserved,
+				"registry": azureRegistryReserved, "cluster": azureClusterReserved,
+				"dns": azureDNSReserved,
+			},
+			carriers: []string{"database", "cache", "registry"},
+		},
+		{
+			cloud: "alibaba",
+			byOwner: map[string][]string{
+				"database": alibabaDatabaseReserved, "cache": alibabaCacheReserved,
+				"dns": alibabaDNSReserved,
+			},
+			carriers: []string{"database", "cache"},
+		},
+	}
+
+	for _, tc := range cases {
+		for owner, keys := range tc.byOwner {
+			for _, key := range keys {
+				for _, carrier := range tc.carriers {
+					if carrier == owner {
+						continue // the direction the reservation already covered
+					}
+					t.Run(tc.cloud+"/"+key+"/from-"+carrier, func(t *testing.T) {
+						cfg := leafConfig(carrier, map[string]any{key: sentinel})
+						tfvars := leafProviders[tc.cloud].ProviderTfvars(cfg)
+						if v, present := tfvars[key]; present && v == sentinel {
+							t.Fatalf("%s: a %s's provider_config set %q, which the %s owns — "+
+								"one component's knobs decided another's variable, walking around "+
+								"both the offer gate (#1508) and the deploy refusal (#1510)",
+								tc.cloud, carrier, key, owner)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+// The union each root-level merge is passed must actually contain every per-component list, or the
+// test above probes a set narrower than the one the call sites use and reports all-clear for keys
+// nothing closes. Deriving the union does not prove it was derived from the RIGHT slices.
+func TestRootReservedUnionsCoverEveryComponentList(t *testing.T) {
+	cases := []struct {
+		cloud string
+		union []string
+		parts map[string][]string
+	}{
+		{"aws", awsRootReserved, map[string][]string{
+			"database": awsDatabaseReserved, "cache": awsCacheReserved,
+			"registry": awsRegistryReserved, "cluster": awsClusterReserved, "dns": awsDNSReserved,
+		}},
+		{"gcp", gcpRootReserved, map[string][]string{
+			"database": gcpDatabaseReserved, "cache": gcpCacheReserved, "nosql": gcpNosqlReserved,
+			"cluster": gcpClusterReserved, "dns": gcpDNSReserved,
+		}},
+		{"azure", azureRootReserved, map[string][]string{
+			"database": azureDatabaseReserved, "cache": azureCacheReserved,
+			"registry": azureRegistryReserved, "cluster": azureClusterReserved,
+			"dns": azureDNSReserved,
+		}},
+		{"alibaba", alibabaRootReserved, map[string][]string{
+			"database": alibabaDatabaseReserved, "cache": alibabaCacheReserved,
+			"dns": alibabaDNSReserved,
+		}},
 	}
 	for _, tc := range cases {
-		t.Run(tc.cloud+"/"+tc.key, func(t *testing.T) {
-			// Offered by a component that has no business setting it: the CACHE, whose own
-			// reservation lists only cache keys.
-			cfg := leafConfig("cache", map[string]any{tc.key: true})
-			tfvars := leafProviders[tc.cloud].ProviderTfvars(cfg)
-			if _, present := tfvars[tc.key]; present {
-				t.Fatalf("%s: a cache's provider_config set %q — the canvas decides that key, and a "+
-					"passthrough that can set it walks around both the offer gate and the deploy refusal",
-					tc.cloud, tc.key)
+		t.Run(tc.cloud, func(t *testing.T) {
+			in := make(map[string]bool, len(tc.union))
+			for _, k := range tc.union {
+				in[k] = true
+			}
+			for owner, keys := range tc.parts {
+				for _, k := range keys {
+					if !in[k] {
+						t.Errorf("%s: %q is reserved by the %s but missing from the union every "+
+							"root merge is passed — every other component can set it", tc.cloud, k, owner)
+					}
+				}
 			}
 		})
 	}

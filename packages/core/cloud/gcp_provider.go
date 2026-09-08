@@ -47,6 +47,28 @@ func (p *gcpProvider) ValidateConfig(config *types.ProjectConfig) error {
 	return validateNodeDiskSize(config, "gke_disk_size_gb", gcpNodeDiskFloorGB)
 }
 
+// The keys each ROOT-level component's typed mapping owns on GCP, and the union every root merge
+// is passed. See the note above `mergeProviderConfig` in aws_provider.go for why a per-call-site
+// list closes nothing: `cloud_sql_iam_auth` is written only when the canvas asked for keyless auth,
+// so without the union a Firestore table's or a cache's provider_config fills the gap the database
+// deliberately left. Firestore is root-level on GCP alone — one database per project — which is why
+// the nosql list appears here and on no other cloud.
+var (
+	gcpDatabaseReserved = []string{"log_exports", "cloud_sql_iam_auth"}
+	gcpCacheReserved    = []string{
+		"create_memorystore", "create_memorystore_valkey",
+		"memorystore_valkey_shard_count", "memorystore_valkey_replica_count",
+		"memorystore_valkey_engine_version",
+		"memorystore_tier", "memorystore_memory_size_gb", "memorystore_redis_version",
+	}
+	gcpNosqlReserved   = []string{"create_firestore", "firestore_point_in_time_recovery"}
+	gcpClusterReserved = []string{"enable_autopilot"}
+	gcpDNSReserved     = []string{"cloud_armor", "managed_certificate"}
+
+	gcpRootReserved = unionReserved(gcpDatabaseReserved, gcpCacheReserved, gcpNosqlReserved,
+		gcpClusterReserved, gcpDNSReserved)
+)
+
 func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	enableAutopilot := false
 	if v, ok := config.Cluster.ProviderConfig["enable_autopilot"]; ok {
@@ -206,7 +228,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		// provider_config key could switch keyless on for a cell the canvas never offered, walking
 		// around the offer-parity guard (#1508). `log_exports` is AWS-only — no GCP template variable
 		// declares a Cloud SQL log-export set — so it is reserved rather than emitted undeclared.
-		mergeProviderConfig(tfvars, db.ProviderConfig, "log_exports", "cloud_sql_iam_auth")
+		mergeProviderConfig(tfvars, db.ProviderConfig, gcpRootReserved...)
 	}
 
 	if len(config.Caches) > 0 {
@@ -263,11 +285,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		// branch emits is reserved UNCONDITIONALLY: `memorystore_tier` and the valkey replica count
 		// are written only when the canvas asked, and a provider_config key must not fill the gap it
 		// left — the same rule the database's IAM-auth reservation applies.
-		mergeProviderConfig(tfvars, cache.ProviderConfig,
-			"create_memorystore", "create_memorystore_valkey",
-			"memorystore_valkey_shard_count", "memorystore_valkey_replica_count",
-			"memorystore_valkey_engine_version",
-			"memorystore_tier", "memorystore_memory_size_gb", "memorystore_redis_version")
+		mergeProviderConfig(tfvars, cache.ProviderConfig, gcpRootReserved...)
 	}
 
 	// NoSQL is ROOT-level on GCP, unlike every other cloud: Firestore is ONE database per project
@@ -276,7 +294,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	// Merge-if-absent means the first table naming a knob wins — the same rule PITR's ANY-aggregate
 	// applies to the one switch the typed fields carry.
 	for _, t := range config.NosqlTables {
-		mergeProviderConfig(tfvars, t.ProviderConfig, "create_firestore", "firestore_point_in_time_recovery")
+		mergeProviderConfig(tfvars, t.ProviderConfig, gcpRootReserved...)
 	}
 
 	if inst := resolveInstanceTypes("gcp", config.Cluster); len(inst) > 0 {
@@ -313,8 +331,8 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	// user's provider_config can't shadow it. Consumed by the classification_tags var (B1.3).
 	tfvars["classification_tags"] = classificationTags(config, gcpTagStyle)
 
-	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, "enable_autopilot")
-	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "cloud_armor", "managed_certificate")
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, gcpRootReserved...)
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, gcpRootReserved...)
 
 	return tfvars
 }

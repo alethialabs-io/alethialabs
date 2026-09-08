@@ -45,6 +45,21 @@ func (p *alibabaProvider) ValidateConfig(config *types.ProjectConfig) error {
 	return validateNetworkCIDR(config, "network_cidr", alibabaMaxNetworkPrefix)
 }
 
+// The keys each ROOT-level component's typed mapping owns on Alibaba, and the union every root
+// merge is passed. `application_waf` is the withdrawn offer here: reserved on the DNS site, and
+// without the union re-openable from the cache or the cluster. See aws_provider.go.
+var (
+	alibabaDatabaseReserved = []string{"log_exports"}
+	alibabaCacheReserved    = []string{
+		"create_kvstore", "kvstore_engine_version", "kvstore_instance_class", "kvstore_multi_az",
+		"kvstore_shard_count", "kvstore_security_ips",
+	}
+	alibabaDNSReserved = []string{"managed_certificate", "application_waf"}
+
+	alibabaRootReserved = unionReserved(alibabaDatabaseReserved, alibabaCacheReserved,
+		alibabaDNSReserved)
+)
+
 func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
 	managedCert := config.DNS.ManagedCertificate
@@ -164,7 +179,7 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		// Alibaba has no keyless DB cell (ApsaraDB exposes no data-plane token login we could find), so
 		// db.IamAuth is never emitted here and the offer-parity baseline records the gap. `log_exports`
 		// is AWS-only — no Alibaba template variable declares a log-export set.
-		mergeProviderConfig(tfvars, db.ProviderConfig, "log_exports")
+		mergeProviderConfig(tfvars, db.ProviderConfig, alibabaRootReserved...)
 	}
 
 	if len(config.Caches) > 0 {
@@ -200,9 +215,7 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		// reserved unconditionally; all four conditional ones render NOTHING when unset so an
 		// existing instance keeps its own topology and whitelist, and a provider_config key must not
 		// become the value the canvas deliberately left out.
-		mergeProviderConfig(tfvars, cache.ProviderConfig,
-			"create_kvstore", "kvstore_engine_version", "kvstore_instance_class", "kvstore_multi_az",
-			"kvstore_shard_count", "kvstore_security_ips")
+		mergeProviderConfig(tfvars, cache.ProviderConfig, alibabaRootReserved...)
 	}
 
 	if inst := resolveInstanceTypes("alibaba", config.Cluster); len(inst) > 0 {
@@ -239,12 +252,12 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	// provider_config can't shadow it. Consumed by the classification_tags var (B1.3).
 	tfvars["classification_tags"] = classificationTags(config, alibabaTagStyle)
 
-	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig)
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, alibabaRootReserved...)
 	// `application_waf` stays RESERVED even though nothing consumes it any more. The offer is
 	// withdrawn (#1841), so unreserving it would let a legacy provider_config key pass through
 	// verbatim as a tfvar the root template no longer declares — a value silently dropped at plan
 	// time, which reads to the user exactly like a switch that worked.
-	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "managed_certificate", "application_waf")
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, alibabaRootReserved...)
 
 	return tfvars
 }

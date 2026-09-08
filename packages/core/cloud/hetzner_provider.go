@@ -259,6 +259,11 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	// classification_tags var (B1.3).
 	tfvars["classification_tags"] = classificationTags(config, hetznerTagStyle)
 
+	// No union is passed here, and that is not an omission. Hetzner has exactly ONE root-level
+	// component: the database, cache and queue are in-cluster charts rather than managed services,
+	// and buckets and registry hosts merge into per-item objects. A union exists to stop one
+	// component deciding another's root variable, and with a single root component there is no
+	// other component to decide for. See `mergeProviderConfig` in aws_provider.go.
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig)
 
 	return tfvars
