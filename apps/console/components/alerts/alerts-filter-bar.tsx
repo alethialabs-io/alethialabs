@@ -91,7 +91,7 @@ export function ChannelsFilterBar({
 				searchPlaceholder="Search transports…"
 				emptyText="No transports configured."
 			/>
-			<FilterChipGroup<FacetCount>
+			<FilterChipGroup
 				options={facets.status}
 				selected={filters.status}
 				onToggle={(value) => set("status", toggled(filters.status, value))}
@@ -129,13 +129,13 @@ export function PoliciesFilterBar({
 				placeholder="Filter policies by name or description…"
 				className="w-[240px] max-w-[380px] flex-1"
 			/>
-			<FilterChipGroup<FacetCount>
+			<FilterChipGroup
 				options={facets.status}
 				selected={filters.status}
 				onToggle={(value) => set("status", toggled(filters.status, value))}
 				inline
 			/>
-			<FilterChipGroup<FacetCount>
+			<FilterChipGroup
 				options={facets.kinds}
 				selected={filters.kinds}
 				onToggle={(value) => set("kinds", toggled(filters.kinds, value))}
@@ -171,7 +171,7 @@ export function ActivityFilterBar({ facets }: { facets: ActivityView["facets"] }
 				placeholder="Filter activity by title or event…"
 				className="w-[240px] max-w-[380px] flex-1"
 			/>
-			<FilterChipGroup<FacetCount>
+			<FilterChipGroup
 				options={facets.status}
 				selected={filters.status}
 				onToggle={(value) => set("status", toggled(filters.status, value))}

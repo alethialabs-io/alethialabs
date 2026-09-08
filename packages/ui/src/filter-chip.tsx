@@ -43,6 +43,8 @@ export function FilterChip({
 			className={cn(
 				"inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 transition-colors",
 				mono ? "font-mono text-[11px]" : "text-xs",
+				// `group` so the count can follow the label on hover — see the count span below.
+				"group",
 				on
 					? "border-foreground bg-foreground text-background"
 					: "text-muted-foreground hover:border-foreground/40 hover:text-foreground",
@@ -52,12 +54,24 @@ export function FilterChip({
 			{children}
 			{count !== undefined && (
 				// A filled chip is inverted ink end to end, so the count inherits `text-background`
-				// there; only the resting chip has a tertiary tier to step down to. The space is
+				// there; only the resting chip has a tertiary tier to step down to. That asymmetry is
+				// a TOKEN GAP, recorded in #4309: `tokens.css` has `--text-on-ink` but does not
+				// expose it as a `--color-*` utility, so there is no on-ink tertiary rung — the old
+				// `opacity-60` supplied the hierarchy and was the banned composite. The space is
 				// for the accessible name ("Healthy 3", not "Healthy3") — a whitespace-only run
 				// between flex items is not laid out, so `gap-1.5` alone sets the visual gap.
 				<>
 					{" "}
-					<span className={cn("font-mono text-ui-2xs", !on && "text-text-tertiary")}>
+					<span
+						className={cn(
+							"font-mono text-ui-2xs",
+							// The two halves of one control brighten together: without the
+							// group-hover rung the label snapped to `--foreground` while the count
+							// stayed tertiary, which the call-site span (no colour class, so it
+							// inherited the parent's) never did.
+							!on && "text-text-tertiary group-hover:text-foreground",
+						)}
+					>
 						{count}
 					</span>
 				</>
@@ -80,7 +94,13 @@ interface FilterChipGroupProps<T extends FilterChipOption> {
 	options: T[];
 	selected: string[];
 	onToggle: (value: string) => void;
-	/** Custom chip content (e.g. a ProviderIcon next to the label). */
+	/**
+	 * Custom chip content (e.g. a ProviderIcon next to the label).
+	 *
+	 * A `render` callback OWNS the whole chip, so the group stops passing `count` when one is
+	 * given: the four call sites this replaced each printed `opt.count` inside their own `render`,
+	 * and forwarding both would render `Healthy 3 3` — and that becomes the accessible name.
+	 */
 	render?: (opt: T, on: boolean) => React.ReactNode;
 	mono?: boolean;
 	/** Lay the chips out as a single bar row (no popover padding). */
@@ -121,7 +141,7 @@ export function FilterChipGroup<T extends FilterChipOption>({
 							on={on}
 							onClick={() => onToggle(opt.value)}
 							mono={mono}
-							count={opt.count}
+							count={render ? undefined : opt.count}
 						>
 							{render ? render(opt, on) : opt.label}
 						</FilterChip>

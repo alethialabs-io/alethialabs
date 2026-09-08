@@ -83,11 +83,49 @@ describe("FilterChip", () => {
 				Healthy
 			</FilterChip>,
 		);
-		expect(screen.getByRole("button", { name: "Healthy" }).childNodes).toHaveLength(1);
+		// The direct form. `childNodes.toHaveLength(1)` asserted "exactly one DOM child", which is
+		// incidental to "renders no count node": it would fail on any unrelated structural change
+		// (an icon slot, wrapping the children) with a message about node counts. What it did catch
+		// that the accessible name cannot — an empty span, a stray `{" "}` — is the span assertion.
+		const button = screen.getByRole("button", { name: "Healthy" });
+		expect(button.querySelector("span")).toBeNull();
+		expect(button.textContent).toBe("Healthy");
+	});
+
+	// The two halves of one control brighten together: the count follows the label on hover rather
+	// than staying at the dimmer tier while the label snaps to `--foreground`.
+	it("gives the resting count a hover rung that matches the label", () => {
+		render(
+			<FilterChip on={false} onClick={() => {}} count={3}>
+				Healthy
+			</FilterChip>,
+		);
+		expect(screen.getByText("3").className).toContain("group-hover:text-foreground");
+		expect(screen.getByRole("button", { name: "Healthy 3" }).className).toContain("group");
 	});
 });
 
 describe("FilterChipGroup", () => {
+	// The group owns ONE renderer for the figure. A `render` callback owns the whole chip, and the
+	// four call sites this API replaced each printed `opt.count` inside their own — so forwarding
+	// both would render `Healthy 3 3`, and that becomes the accessible name.
+	it("does not also append the count when a render callback owns the chip", () => {
+		render(
+			<FilterChipGroup
+				options={[{ value: "healthy", label: "Healthy", count: 3 }]}
+				selected={[]}
+				onToggle={() => {}}
+				render={(opt) => (
+					<>
+						{opt.label} {opt.count}
+					</>
+				)}
+			/>,
+		);
+		expect(screen.getByRole("button", { name: "Healthy 3" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Healthy 3 3" })).toBeNull();
+	});
+
 	it("renders one chip per option and reports toggles by value", async () => {
 		const user = userEvent.setup();
 		const onToggle = vi.fn();
