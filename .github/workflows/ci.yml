@@ -368,10 +368,14 @@ jobs:
     # merge queue is off — so before this, a console change could break the sellable flow and only a
     # post-merge push would notice. That is exactly how the "Org evidence" assertion rotted for weeks.
     # Still runs on the merge queue, pushes, and manual dispatch as before.
+    # NOT on a promotion PR (into main or staging): release-gate.yml boots the same console and
+    # drives this same project there, as one of its legs; running it twice on one merge ref buys
+    # nothing but a runner slot. Dev PRs, pushes and dispatches are unchanged.
     if: >-
-      github.event_name == 'merge_group' || github.event_name == 'push'
+      (github.event_name == 'merge_group' || github.event_name == 'push'
       || github.event_name == 'workflow_dispatch'
-      || needs.detect-changes.outputs.console == 'true'
+      || needs.detect-changes.outputs.console == 'true')
+      && !(github.event_name == 'pull_request' && contains(fromJSON('["main","staging"]'), github.base_ref))
     # Own parallel job, OFF the fast path: builds + boots the real console against a real Postgres
     # and drives the sellable happy-path in a headless browser (sign-in → org → connect-a-cloud
     # surface → design → Deploy/pending-changes → evidence/clusters). Fully hermetic: email-OTP with
@@ -660,10 +664,14 @@ jobs:
     # now RUNS on any PR that touches the agent surface. It is the only test that drives the real
     # composer/rail/grid in a browser, and skipping it on PRs is how a broken Lexical composer
     # shipped green. Still runs on the merge queue, pushes, and manual dispatch as before.
+    # NOT on a promotion PR (into main or staging): release-gate.yml boots the same console and
+    # drives this same project there, as one of its legs; running it twice on one merge ref buys
+    # nothing but a runner slot. Dev PRs, pushes and dispatches are unchanged.
     if: >-
-      github.event_name == 'merge_group' || github.event_name == 'push'
+      (github.event_name == 'merge_group' || github.event_name == 'push'
       || github.event_name == 'workflow_dispatch'
-      || needs.detect-changes.outputs.agent == 'true'
+      || needs.detect-changes.outputs.agent == 'true')
+      && !(github.event_name == 'pull_request' && contains(fromJSON('["main","staging"]'), github.base_ref))
     # The Elench AI journeys end-to-end with a SCRIPTED model (ALETHIA_AI_MOCK=1 → the
     # MockLanguageModelV3 in lib/config/ai-mock). Only the model is deterministic: the agent
     # route, extended thinking, orchestration markers, TOOL EXECUTION (PDP-gated reads against
@@ -1010,6 +1018,17 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-filter-standard.mjs --self-test
+      # The release gate (.github/workflows/release-gate.yml) is green-by-RATCHET: every leg fails on
+      # regression against apps/console/e2e/gate-baseline.json, and the rules live in one script. A
+      # ratchet that stopped firing would let every leg pass on an empty ledger, so its self-test
+      # runs here beside the other guards' — and so does the capability promise's, whose CI branch
+      # must THROW on an unmet need rather than skip (the HAVE_MEMBER shape, at the ledger).
+      - name: The release gate's ratchet is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/e2e-ratchet.mjs --self-test
+      - name: ...and the capability promise fails closed in CI
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm -C apps/console exec tsx e2e/helpers/capabilities.ts --self-test
       # The console's published conformance score. #3618 landed apps/console/scripts/audit-report.mjs
       # and the two artifacts it owns — apps/console/docs/ui-conformance/scoreboard.md and
       # apps/console/ui-conformance-baseline.json — with the two-mode contract PROGRAMME.md uses:

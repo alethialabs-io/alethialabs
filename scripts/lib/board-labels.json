@@ -58,6 +58,7 @@
 		{ "name": "wave:truth", "kind": "wave", "color": "d93f0b", "description": "W0 truth & safety: verify/iacsafety gates tell the truth" },
 		{ "name": "wave:elench-repo", "kind": "wave", "color": "5319e7", "description": "W4 Elench analyzes your repo: repo→plan glue + alethia verify + Action" },
 		{ "name": "wave:hardening", "kind": "wave", "color": "c2e0c6", "description": "W6 tenancy · rate limits · receipts" },
+		{ "name": "wave:release-gate", "kind": "wave", "color": "0e8a16", "description": "program track: the browser release gate — Playwright in Actions on staging→main + prod QA pass" },
 		{ "name": "wave:console-ui", "kind": "wave", "color": "1d76db", "description": "program track: console UI conformance — every private page measured, then lifted" },
 
 		{ "name": "lane:schema", "kind": "lane", "color": "5319e7", "description": "file-ownership lane: schema" },
@@ -79,6 +80,8 @@
 		{ "name": "claimed", "kind": "runtime", "color": "fbca04", "description": "held by an instance (carries a lease comment)" },
 		{ "name": "blocked", "kind": "runtime", "color": "b60205", "description": "a blocked-by dependency is still open (coordinate-maintained)" },
 
+		{ "name": "release-gate:run", "kind": "board", "color": "0e8a16", "description": "run the browser release gate on this dev PR (release-gate.yml); never on a proposed unit" },
+		{ "name": "qa:prod", "kind": "board", "color": "5319e7", "description": "a defect or report from the /console-prod-qa pass on alethialabs.io; never on a proposed unit" },
 		{ "name": "epic", "kind": "board", "color": "8b5cf6", "description": "umbrella/tracking issue — decomposed into sub-issues, never directly built/claimed" }
 	]
 }
