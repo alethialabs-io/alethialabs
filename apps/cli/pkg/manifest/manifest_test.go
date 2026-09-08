@@ -186,13 +186,12 @@ environments:
 		"unknown component kind",
 		"databases components are named",
 		"does not take colour",
-		"no environment is `dedicated`",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("missing %q in:\n%s", want, msg)
 		}
 	}
-	if n := strings.Count(msg, "\n  - "); n < 12 {
+	if n := strings.Count(msg, "\n  - "); n < 11 {
 		t.Errorf("expected every problem listed, got %d lines:\n%s", n, msg)
 	}
 }
@@ -221,10 +220,45 @@ func TestValidate_NoSchemaChecksShapeOnly(t *testing.T) {
 }
 
 func TestValidate_SingleProblemHasNoHeading(t *testing.T) {
-	m := mustParse(t, "project: x\ncloud:\n  region: r\nenvironments:\n  - name: prod\n    stage: staging\n    placement: namespace\n")
+	m := mustParse(t, "project: x\ncloud:\n  region: r\nenvironments:\n  - name: prod\n    stage: nonsense\n    placement: namespace\n")
 	err := m.Validate(testRules())
 	if err == nil || strings.Contains(err.Error(), "problems:") {
 		t.Fatalf("one problem must read as one line: %v", err)
+	}
+}
+
+// The "one environment must be dedicated" rule is the SERVER's, and the server applies it
+// conditionally — only where a matrix brings a project's first Fabric into being. So it is not a
+// Validate finding at all: it is a question the caller asks once it knows whether the project
+// exists. Refusing it unconditionally rejected `dev-1: namespace` added to a project whose prod
+// environment was created in the console, which is precisely what a manifest is for.
+func TestNeedsADedicatedEnvironment(t *testing.T) {
+	shared := mustParse(t, "project: x\ncloud:\n  region: r\nenvironments:\n  - name: dev\n    stage: development\n    placement: namespace\n")
+	if !shared.NeedsADedicatedEnvironment() {
+		t.Error("a matrix of only shared placements needs one that owns the Fabric")
+	}
+	// And it is NOT a Validate problem, so a file adding an environment to an existing project
+	// passes the reader and is decided by the caller.
+	if err := shared.Validate(testRules()); err != nil {
+		t.Errorf("Validate refused a shared-only matrix: %v", err)
+	}
+	owned := mustParse(t, sample)
+	if owned.NeedsADedicatedEnvironment() {
+		t.Error("the sample's first environment is dedicated")
+	}
+	var empty Manifest
+	if empty.NeedsADedicatedEnvironment() {
+		t.Error("a manifest with no environments needs nothing; `environments` being required is Validate's finding")
+	}
+}
+
+func TestDeclaresComponents(t *testing.T) {
+	if !mustParse(t, sample).DeclaresComponents() {
+		t.Error("the sample declares components")
+	}
+	bare := mustParse(t, "project: x\ncloud:\n  region: r\nenvironments:\n  - name: prod\n    stage: production\n")
+	if bare.DeclaresComponents() {
+		t.Error("a file with no components must not make the caller fetch the schema")
 	}
 }
 

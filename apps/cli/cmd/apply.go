@@ -279,10 +279,22 @@ func planFromFile(c applyClient, path string) (*ApplyPlan, error) {
 		return nil, err
 	}
 	m.Normalize()
-	schema, err := c.GetComponentSchema()
-	if err != nil {
-		return nil, err
+	// FETCHED ONLY WHEN SOMETHING NEEDS IT. The document is ~1100 lines of JSON and
+	// `validateComponents` has nothing to check when no environment declares a component, so a
+	// plan over a components-free manifest was paying for it on every run. `manifestForCreate`
+	// already gates it this way; a nil schema is the reader's documented "could not check", and
+	// "nothing to check" reaches the same branch honestly.
+	var schema *api.ComponentSchemaDocument
+	if m.DeclaresComponents() {
+		schema, err = c.GetComponentSchema()
+		if err != nil {
+			return nil, err
+		}
 	}
+	// RequireDedicated is a CREATE-time rule and is asked as one: the server applies it when a
+	// matrix brings a project's first Fabric into being, not when a file adds an environment to a
+	// project that already has one. `computePlan` is where "does this project exist" is known, so
+	// the decision is deferred to it rather than assumed here.
 	if err := m.Validate(manifest.Rules{
 		Stages:     environmentStages(),
 		Placements: placementModes(),
@@ -290,7 +302,21 @@ func planFromFile(c applyClient, path string) (*ApplyPlan, error) {
 	}); err != nil {
 		return nil, err
 	}
-	return computePlan(c, m)
+	plan, err := computePlan(c, m)
+	if err != nil {
+		return nil, err
+	}
+	// The create-time rule, asked where its condition is known. A matrix with no `dedicated`
+	// environment can never provision — but only when it is the matrix that CREATES the project.
+	// Adding `dev-1: namespace` to a project whose prod environment was made in the console is
+	// exactly what the file is for, and refusing it contradicted this reader's own promise that
+	// unmentioned environments are left alone.
+	if plan.ProjectID == "" && m.NeedsADedicatedEnvironment() {
+		return nil, fmt.Errorf(
+			"%s: no environment is `dedicated` — one must own the Fabric a new project provisions, or nothing is ever built",
+			manifest.FileName)
+	}
+	return plan, nil
 }
 
 // computePlan compares the manifest with the organization. It reads and never writes.
@@ -354,9 +380,14 @@ func computePlan(c applyClient, m *manifest.Manifest) (*ApplyPlan, error) {
 			if existing.PlacementMode != "" && existing.PlacementMode != env.Placement {
 				ep.Problems = append(ep.Problems, fmt.Sprintf("the file says placement %s, the server has %s — placement cannot be changed from here; edit it in the console or the file", env.Placement, existing.PlacementMode))
 			}
-			existingComps, err = c.ListComponents(plan.ProjectID, "", existing.Name)
-			if err != nil {
-				return nil, fmt.Errorf("list components of %s/%s: %w", m.Project, env.Name, err)
+			// Only when the file declares components for THIS environment. `existingComps` is read
+			// nowhere else, so a four-environment project declaring components on one of them was
+			// issuing three round trips whose results nobody looked at.
+			if len(env.Components) > 0 {
+				existingComps, err = c.ListComponents(plan.ProjectID, "", existing.Name)
+				if err != nil {
+					return nil, fmt.Errorf("list components of %s/%s: %w", m.Project, env.Name, err)
+				}
 			}
 		}
 		for _, kind := range env.Components {
@@ -400,28 +431,6 @@ func hasComponent(comps []api.Component, kind, name string) bool {
 	return false
 }
 
-// matchCloudIdentity resolves a label or an id against the caller's accounts. It is the same
-// rule resolveCloudIdentityID applies, kept here because the plan also needs the PROVIDER.
-func matchCloudIdentity(identities []api.CloudIdentity, ref string) (api.CloudIdentity, error) {
-	var matches []api.CloudIdentity
-	for _, id := range identities {
-		if id.ID == ref {
-			return id, nil
-		}
-		if id.Label == ref {
-			matches = append(matches, id)
-		}
-	}
-	switch len(matches) {
-	case 1:
-		return matches[0], nil
-	case 0:
-		return api.CloudIdentity{}, fmt.Errorf("cloud.account %q not found (have: %s)", ref, knownIdentityLabels(identities))
-	default:
-		return api.CloudIdentity{}, fmt.Errorf("cloud.account label %q is ambiguous — %d accounts share it; relabel one, or put the id in the file", ref, len(matches))
-	}
-}
-
 // restrictTo narrows the deploy to the named environments. Creation is NOT narrowed: the file
 // is applied whole, and --env says which environments to deploy afterwards.
 func (p *ApplyPlan) restrictTo(only []string) error {
@@ -453,6 +462,7 @@ func (p *ApplyPlan) restrictTo(only []string) error {
 	return nil
 }
 
+// envNames is every environment the file declares, in file order, for a refusal that has to list them.
 func (p *ApplyPlan) envNames() []string {
 	out := make([]string, len(p.Environments))
 	for i, e := range p.Environments {
@@ -556,6 +566,7 @@ func glyphFor(a Action) string {
 	return "?"
 }
 
+// plural renders a count with its noun — "1 environment", "2 environments".
 func plural(n int, noun string) string {
 	if n == 1 {
 		return "1 " + noun
@@ -694,13 +705,24 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 	// The environment ids are read back rather than kept from the create response, because a
 	// project created with a matrix returns the project and not its environments, and an
 	// existing project's ids came from a list taken before anything was added.
-	envs, err := c.ListEnvironments(result.ProjectID)
-	if err != nil {
-		return nil, fmt.Errorf("list environments: %w", err)
-	}
+	// Re-listed only when this run CREATED something. A plan over an existing project already
+	// holds every id in `EnvPlan.ID`, and a project created here returns the project rather than
+	// its environments — so the read-back is for the ids that did not exist a moment ago, and a
+	// no-op apply should not pay for it.
 	ids := map[string]string{}
-	for _, env := range envs {
-		ids[names.NormalizeEnvironmentName(env.Name)] = env.ID
+	for _, e := range p.Environments {
+		if e.ID != "" {
+			ids[names.NormalizeEnvironmentName(e.Name)] = e.ID
+		}
+	}
+	if len(result.Created) > 0 {
+		envs, err := c.ListEnvironments(result.ProjectID)
+		if err != nil {
+			return nil, fmt.Errorf("list environments: %w", err)
+		}
+		for _, env := range envs {
+			ids[names.NormalizeEnvironmentName(env.Name)] = env.ID
+		}
 	}
 	for _, e := range p.Environments {
 		if !e.Deploy {
@@ -721,7 +743,7 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 		dj := DeployJob{Environment: e.Name, JobID: job.ID, Status: job.Status}
 		if wait {
 			say(fmt.Sprintf("%s Deploying %s (job %s)", ui.MutedStyle.Render(ui.SymbolPoint), e.Name, job.ID))
-			if err := waitForJob(c, job.ID); err != nil {
+			if err := waitForJobQuiet(c, job.ID, format != ui.FormatTable); err != nil {
 				result.Jobs = append(result.Jobs, dj)
 				return result, fmt.Errorf("deploy %s: %w", e.Name, err)
 			}

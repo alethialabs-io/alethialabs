@@ -64,7 +64,9 @@ type projServer struct {
 	// posts records the body of every mutating request, so a test can compare what an
 	// ANSWERED FORM sent with what the equivalent flags sent. Two paths that claim to be one
 	// spec are only one spec if they put the same bytes on the wire.
-	posts       []projPost
+	posts []projPost
+	// reads is every request path, so a test can assert a fetch did NOT happen.
+	reads       []string
 	config      map[string]any
 	envs        []map[string]any
 	comps       []map[string]any
@@ -175,6 +177,23 @@ func (s *projServer) recordPost(r *http.Request) {
 	})
 }
 
+// hits counts every request whose path contains sub, mutating or not.
+//
+// `posts` records only the mutating verbs, and three of this file's claims are about reads that
+// should NOT happen — a schema nobody can use, a component listing nobody reads. A count of zero
+// is the assertion, so the reads have to be recorded to be counted.
+func (s *projServer) hits(sub string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, p := range s.reads {
+		if strings.Contains(p, sub) {
+			n++
+		}
+	}
+	return n
+}
+
 // lastPost returns the most recent mutating request, or false when none was made.
 func (s *projServer) lastPost() (projPost, bool) {
 	s.mu.Lock()
@@ -194,6 +213,9 @@ func (s *projServer) forgetPosts() {
 
 func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
+	s.mu.Lock()
+	s.reads = append(s.reads, p)
+	s.mu.Unlock()
 	s.recordPost(r)
 	enc := json.NewEncoder(w)
 	if s.shouldFail(p) || s.shouldFailPost(r.Method, p) {

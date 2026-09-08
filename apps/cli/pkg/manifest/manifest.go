@@ -56,6 +56,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -177,7 +178,20 @@ func (c *Components) UnmarshalYAML(node *yaml.Node) error {
 				if err := item.Decode(&fields); err != nil {
 					return fmt.Errorf("components.%s[%d]: %w", kind, j, err)
 				}
-				name, _ := fields["name"].(string)
+				// A type-assertion MISS is refused rather than discarded. `name: 2024` decoded to
+				// `Name: ""` with the key deleted, so `Validate` then said the entry needed a name
+				// it visibly carried, and the person had no way to learn they must quote it. Worse,
+				// an unnamed entry and a numeric one both became `""`, which `hasComponent` reads
+				// as the singleton case.
+				var name string
+				if raw, ok := fields["name"]; ok {
+					s, isString := raw.(string)
+					if !isString {
+						return fmt.Errorf("components.%s[%d].name is %v, which YAML reads as %T — quote it (`name: \"%v\"`) if that is the name you meant",
+							kind, j, raw, raw, raw)
+					}
+					name = s
+				}
 				delete(fields, "name")
 				entries.Entries = append(entries.Entries, Component{Name: name, Fields: fields})
 			}
@@ -252,6 +266,12 @@ func Parse(data []byte) (*Manifest, error) {
 	dec.KnownFields(true)
 	var m Manifest
 	if err := dec.Decode(&m); err != nil {
+		// An EMPTY or comment-only document. yaml.Decoder reports that as io.EOF, which is not a
+		// syntax error and must not be reported as one: the honest answer is a manifest with
+		// nothing in it, and `Validate` then says exactly which required keys are missing.
+		if errors.Is(err, io.EOF) {
+			return &m, nil
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
