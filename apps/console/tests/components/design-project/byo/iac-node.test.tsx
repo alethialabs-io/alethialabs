@@ -3,7 +3,7 @@
 
 // Component tests for the read-only external-IaC node: it renders the module coords (repo · ref ·
 // path), the pinned + deployed commit short-shas, the deployed indicator, and a scan-status chip
-// that opens the findings sheet. The server actions (detach/scan) are mocked.
+// that opens the findings card on the workspace rail. The server actions (detach/scan) are mocked.
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -14,6 +14,7 @@ import {
 	type IacSourceCanvasContextValue,
 } from "@/components/design-project/byo/iac-source-canvas-context";
 import type { IacSourceState } from "@/app/server/actions/byo-iac";
+import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 vi.mock("@/app/server/actions/byo-iac", () => ({
 	detachIacSource: vi.fn().mockResolvedValue({ ok: true }),
@@ -97,10 +98,11 @@ describe("IacNode", () => {
 		expect(screen.getByText("1 finding")).toBeInTheDocument();
 	});
 
-	it("opens the scan sheet when the chip is clicked", async () => {
+	it("opens the scan card on the workspace rail when the chip is clicked", async () => {
 		const user = userEvent.setup();
+		useCanvasStore.getState().closeCard();
 		renderNode(makeSource());
 		await user.click(screen.getByTitle("IaC safety scan"));
-		expect(await screen.findByText(/no blocking issues found/i)).toBeInTheDocument();
+		expect(useCanvasStore.getState().card).toEqual({ kind: "iac-scan" });
 	});
 });

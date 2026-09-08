@@ -171,7 +171,10 @@ export function CanvasFlow() {
 			edgeTypes={edgeTypes}
 			onNodeClick={(_, node) => openInspector(node.id)}
 			onPaneClick={() => openInspector(null)}
-			deleteKeyCode={["Backspace", "Delete"]}
+			// Keyboard delete is the canvas key handler's (design-project-canvas.tsx), routed through the
+			// store's `removeNodes` so it respects `deletable: false` and commits an undo step. React
+			// Flow's own delete path applied the removal straight to the node array and left no history.
+			deleteKeyCode={null}
 			// ── Excalidraw/Miro traversal ─────────────────────────────────────────────────────────
 			// Left-drag marquee-selects (better click-state handling); Space or the hand tool turns
 			// left-drag into a pan. Middle + right mouse always pan. Scroll pans (trackpad-native);

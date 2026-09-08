@@ -195,7 +195,7 @@ const SWEPT: Record<string, string> = {
  * cannot leave a stale claim behind.
  */
 const UNSWEPT = [
-	"components/addons/addon-config-sheet.tsx",
+	"components/addons/addon-config-card.tsx",
 	"components/ai-elements/code-block.tsx",
 	"components/ai-elements/prompt-input.tsx",
 	"components/alerts/channel-routing.tsx",

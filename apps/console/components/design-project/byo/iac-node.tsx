@@ -29,9 +29,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@repo/ui/utils";
-import { detachIacSource, scanIacSource, type IacSourceState } from "@/app/server/actions/byo-iac";
-import { IacScanSheet } from "@/components/design-project/byo/iac-scan-sheet";
+import { detachIacSource, type IacSourceState } from "@/app/server/actions/byo-iac";
 import { useIacSourceCanvas } from "@/components/design-project/byo/iac-source-canvas-context";
+import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import type { IacScanReport } from "@/types/jsonb.types";
 
 /** The scan-status chip — label + tone + icon, derived from the scan lifecycle + the report's
@@ -65,8 +65,8 @@ function shortSha(sha: string | null): string {
 /** The read-only external-IaC source card, driven by IacSourceCanvasContext. */
 export function IacNode({ source }: { source: IacSourceState }) {
 	const ctx = useIacSourceCanvas();
+	const openCard = useCanvasStore((s) => s.openCard);
 	const [detaching, setDetaching] = useState(false);
-	const [sheetOpen, setSheetOpen] = useState(false);
 
 	const chip = scanChip(source.scanStatus, source.scanReport);
 	const ChipIcon = chip.Icon;
@@ -84,20 +84,6 @@ export function IacNode({ source }: { source: IacSourceState }) {
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : "Could not detach the IaC source.");
 			setDetaching(false);
-		}
-	};
-
-	const rescan = async () => {
-		if (!ctx) return;
-		try {
-			await scanIacSource({ projectId: ctx.projectId, environmentId: ctx.environmentId });
-			toast.message("Scanning module…");
-			ctx.refresh();
-			// Nudge a couple of refreshes as the runner finishes (best-effort — no live socket).
-			setTimeout(ctx.refresh, 4000);
-			setTimeout(ctx.refresh, 10000);
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Could not start the scan.");
 		}
 	};
 
@@ -146,10 +132,10 @@ export function IacNode({ source }: { source: IacSourceState }) {
 					)}
 				</div>
 
-				{/* Scan chip — opens the findings sheet. */}
+				{/* Scan chip — opens the findings card on the workspace rail. */}
 				<button
 					type="button"
-					onClick={() => setSheetOpen(true)}
+					onClick={() => openCard({ kind: "iac-scan" })}
 					title="IaC safety scan"
 					className="flex items-center gap-1.5 self-start rounded-none border border-border px-2 py-1 font-mono text-ui-2xs transition-colors hover:bg-muted"
 				>
@@ -172,18 +158,6 @@ export function IacNode({ source }: { source: IacSourceState }) {
 					</div>
 				)}
 			</div>
-
-			<IacScanSheet
-				open={sheetOpen}
-				onOpenChange={setSheetOpen}
-				repoUrl={source.repoUrl}
-				path={source.path}
-				scanRef={source.ref ?? "HEAD"}
-				scanStatus={source.scanStatus}
-				report={source.scanReport}
-				scanning={source.scanStatus === "scanning"}
-				onRescan={rescan}
-			/>
 		</div>
 	);
 }

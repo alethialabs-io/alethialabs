@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The add-on config sheet renders the catalog item's schema'd knobs + delivery mode, and switches
+// The add-on config card renders the catalog item's schema'd knobs + delivery mode, and switches
 // its footer between Enable/Cancel (not installed) and Save/Remove (installed). The enable/disable
 // mutation hooks are mocked so the test never touches the server actions.
 
@@ -22,7 +22,8 @@ vi.mock("@/lib/query/use-addons-query", () => ({
 	useAddonsQuery: vi.fn(),
 }));
 
-import { AddonConfigSheet } from "@/components/addons/addon-config-sheet";
+import { AddonConfigCard, AddonConfigForm } from "@/components/addons/addon-config-card";
+import { useAddonsQuery } from "@/lib/query/use-addons-query";
 
 const BASE_ITEM: AddonMarketItem = {
 	id: "kube-prometheus-stack",
@@ -96,17 +97,16 @@ const FIELD_TYPES_ITEM: AddonMarketItem = {
 	install: null,
 };
 
-describe("AddonConfigSheet", () => {
+describe("AddonConfigForm", () => {
 	it("renders the schema'd knobs + delivery mode when opening a not-installed add-on", () => {
 		render(
-			<AddonConfigSheet
+			<AddonConfigForm
 				item={BASE_ITEM}
 				projectId="p1"
 				environmentId="e1"
 				hasAppsRepo={false}
 				provider={null}
-				open
-				onOpenChange={vi.fn()}
+				onDone={vi.fn()}
 			/>,
 		);
 		expect(screen.getByText("Delivery")).toBeInTheDocument();
@@ -124,14 +124,13 @@ describe("AddonConfigSheet", () => {
 
 	it("shows Save + Remove for an installed add-on", () => {
 		render(
-			<AddonConfigSheet
+			<AddonConfigForm
 				item={{ ...BASE_ITEM, install: INSTALL }}
 				projectId="p1"
 				environmentId="e1"
 				hasAppsRepo
 				provider={null}
-				open
-				onOpenChange={vi.fn()}
+				onDone={vi.fn()}
 			/>,
 		);
 		expect(
@@ -145,14 +144,13 @@ describe("AddonConfigSheet", () => {
 
 	it("renders enum as a Select showing the default option's label", () => {
 		render(
-			<AddonConfigSheet
+			<AddonConfigForm
 				item={FIELD_TYPES_ITEM}
 				projectId="p1"
 				environmentId="e1"
 				hasAppsRepo={false}
 				provider={null}
-				open
-				onOpenChange={vi.fn()}
+				onDone={vi.fn()}
 			/>,
 		);
 		expect(screen.getByText("Mode")).toBeInTheDocument();
@@ -165,14 +163,13 @@ describe("AddonConfigSheet", () => {
 
 	it("renders secret as a masked, write-only input marked Unset (never the ciphertext)", () => {
 		render(
-			<AddonConfigSheet
+			<AddonConfigForm
 				item={FIELD_TYPES_ITEM}
 				projectId="p1"
 				environmentId="e1"
 				hasAppsRepo={false}
 				provider={null}
-				open
-				onOpenChange={vi.fn()}
+				onDone={vi.fn()}
 			/>,
 		);
 		const input = screen.getByLabelText("Root password");
@@ -183,7 +180,7 @@ describe("AddonConfigSheet", () => {
 
 	it("marks a stored secret Set without exposing its envelope", () => {
 		render(
-			<AddonConfigSheet
+			<AddonConfigForm
 				item={{
 					...FIELD_TYPES_ITEM,
 					install: {
@@ -198,8 +195,7 @@ describe("AddonConfigSheet", () => {
 				environmentId="e1"
 				hasAppsRepo
 				provider={null}
-				open
-				onOpenChange={vi.fn()}
+				onDone={vi.fn()}
 			/>,
 		);
 		const input = screen.getByLabelText("Root password");
@@ -211,14 +207,13 @@ describe("AddonConfigSheet", () => {
 
 	it("renders a nested field as a one-level group of its children", () => {
 		render(
-			<AddonConfigSheet
+			<AddonConfigForm
 				item={FIELD_TYPES_ITEM}
 				projectId="p1"
 				environmentId="e1"
 				hasAppsRepo={false}
 				provider={null}
-				open
-				onOpenChange={vi.fn()}
+				onDone={vi.fn()}
 			/>,
 		);
 		expect(screen.getByText("Resource requests")).toBeInTheDocument();
@@ -226,18 +221,26 @@ describe("AddonConfigSheet", () => {
 		expect(screen.getByLabelText("Memory")).toHaveValue("512Mi");
 	});
 
-	it("renders nothing when no item is selected", () => {
-		const { container } = render(
-			<AddonConfigSheet
-				item={null}
-				projectId="p1"
-				environmentId="e1"
-				hasAppsRepo={false}
-				provider={null}
-				open
-				onOpenChange={vi.fn()}
-			/>,
-		);
-		expect(container).toBeEmptyDOMElement();
+});
+
+describe("AddonConfigCard", () => {
+	it("resolves the item by id from the add-ons query and renders its form", () => {
+		vi.mocked(useAddonsQuery).mockReturnValue({
+			data: { items: [BASE_ITEM], hasAppsRepo: true },
+			isPending: false,
+		} as unknown as ReturnType<typeof useAddonsQuery>);
+		render(<AddonConfigCard itemId={BASE_ITEM.id} projectId="p1" environmentId="e1" />);
+		expect(screen.getByText("Metric retention (days)")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /enable add-on/i })).toBeInTheDocument();
+	});
+
+	it("says so when the id names nothing in the catalog", () => {
+		vi.mocked(useAddonsQuery).mockReturnValue({
+			data: { items: [], hasAppsRepo: false },
+			isPending: false,
+		} as unknown as ReturnType<typeof useAddonsQuery>);
+		render(<AddonConfigCard itemId="gone" projectId="p1" environmentId="e1" />);
+		expect(screen.getByText(/not in the catalog/i)).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /enable add-on/i })).not.toBeInTheDocument();
 	});
 });

@@ -2,83 +2,53 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The project workspace shell: a full-bleed flex row with the routed view on the left and the
-// docked panel on the right. Because the dock lives in this LAYOUT (not the routed page), the AI
-// assistant stays open as you switch views (Architecture / Environments / Jobs / …). The service
-// inspector is canvas-only and is cleared when you leave Architecture.
+// The project workspace shell: a full-bleed frame around the routed view. It owns the ONE
+// environment-status query every project view reads, and the content frame for the document views.
+// The workspace rail (inspector, environment settings, add-on config, scan verdicts) used to be
+// docked here so it could outlive a view switch; it is canvas-only and now lives inside the canvas,
+// where every card sits under the providers it needs and closes with it.
 
 import { usePathname, useSearchParams } from "next/navigation";
-import { useEffect } from "react";
-import { toast } from "sonner";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
-import { destroyProject } from "@/app/server/actions/projects";
-import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
-import {
-	CanvasDock,
-	useDockState,
-} from "@/components/design-project/canvas/canvas-dock";
-import { CONTENT_FRAME } from "@/components/shell/content-frame";
+import { CONTENT_FRAME, SHELL_VIEWPORT } from "@/components/shell/content-frame";
 import { EMPTY_ENVIRONMENT_STATUS } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import { useEnvironmentStatusQuery } from "@/lib/query/use-environment-status-query";
-import { selectInspectorNodeId, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { cn } from "@repo/ui/utils";
 
+/** The project workspace frame: env status for every view, full-bleed on Architecture. */
 export function ProjectShell({
 	projectId,
-	identities,
 	children,
 }: {
 	projectId: string;
-	identities: CloudIdentityOption[];
+	/** Kept for the layout's call site; the canvas seeds identities into its store itself. */
+	identities?: CloudIdentityOption[];
 	children: React.ReactNode;
 }) {
 	const pathname = usePathname();
 	const searchParams = useSearchParams();
-	const openInspector = useCanvasStore((s) => s.openInspector);
-	const inspectorNodeId = useCanvasStore(selectInspectorNodeId);
 
-	// Architecture is the only env-scoped design surface; the inspector belongs to it alone.
+	// Architecture is the only env-scoped design surface.
 	const onArchitecture = pathname.endsWith("/architecture");
-	const dock = useDockState(onArchitecture);
 
 	// The environment's server truth (component lifecycles, the in-flight job, drift, cluster
-	// liveness) — fetched ONCE here, because the shell is the only place that wraps BOTH the board
-	// and the docked inspector. Forty cards each running their own query would be forty round-trips
-	// and forty poll timers; instead every node picks its row out of this by `nodeStatusKey()`.
-	// An absent `environment_id` resolves to the project's default env server-side, exactly as the
+	// liveness) — fetched ONCE here, because the shell is the only place that wraps every project
+	// view. Forty cards each running their own query would be forty round-trips and forty poll
+	// timers; instead every node picks its row out of this by `nodeStatusKey()`. An absent
+	// `environment_id` resolves to the project's default env server-side, exactly as the
 	// Architecture page does.
 	const envStatus = useEnvironmentStatusQuery(
 		projectId,
 		searchParams.get("environment_id"),
 	);
 
-	// Leaving Architecture closes the canvas-only inspector (the assistant stays open).
-	useEffect(() => {
-		if (!onArchitecture && inspectorNodeId) openInspector(null);
-	}, [onArchitecture, inspectorNodeId, openInspector]);
-
-	/** Tear down the active environment (queued from the Project settings inspector). */
-	const handleDestroy = async () => {
-		try {
-			const envId = searchParams.get("environment_id") ?? undefined;
-			const activeEnvId = await resolveActiveEnvironmentId(projectId, envId);
-			await destroyProject(projectId, activeEnvId);
-			toast.success("Destroy queued");
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Failed to destroy");
-		}
-	};
-
 	return (
 		<EnvironmentStatusProvider value={envStatus.data ?? EMPTY_ENVIRONMENT_STATUS}>
-			<div className="-m-4 flex h-[calc(100dvh-3.5rem)] sm:-m-6 lg:-m-8 xl:-m-10">
-				<div
-					className={cn(
-						"relative min-w-0 flex-1",
-						dock && "border-r border-border",
-					)}
-				>
+			{/* One viewport less the topbar — `SHELL_VIEWPORT` reads the shell's header height, where
+			    this used to reserve 3.5rem (56px) against a 53px topbar and overflowed by 3px. */}
+			<div className={cn("-m-4 flex sm:-m-6 lg:-m-8 xl:-m-10", SHELL_VIEWPORT)}>
+				<div className="relative min-w-0 flex-1">
 					{/* Architecture fills the board full-bleed — a pan/zoom canvas has no document
 					    width, and centring it inside CONTENT_FRAME would leave gutters the board is
 					    meant to use. Every other project view is a document and gets the console's
@@ -91,12 +61,6 @@ export function ProjectShell({
 						</div>
 					)}
 				</div>
-
-				<CanvasDock
-					dock={dock}
-					projectId={projectId}
-					onDestroyEnvironment={handleDestroy}
-				/>
 			</div>
 		</EnvironmentStatusProvider>
 	);

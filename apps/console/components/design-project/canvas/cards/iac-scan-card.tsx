@@ -2,18 +2,25 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The IaC-safety scan sheet — surfaces the IAC_SCAN report over a bring-your-own OpenTofu root
+// The IaC-safety scan card — surfaces the IAC_SCAN report over a bring-your-own OpenTofu root
 // module: static iacsafety findings (grouped by severity), the providers + module sources the scan
 // discovered, and the ok / not-ok verdict (a not-ok scan clears the deploy pin, keeping provisioning
-// locked). Mirrors ChartScanSheet's grayscale tone language (verdict header + severity groups +
+// locked). Mirrors the chart-scan card's grayscale tone language (verdict header + severity groups +
 // finding cards) so the product speaks one security-report dialect. Reads the persisted report off
 // the project_iac_sources row; a `scanning` status shows a spinner, `failed` shows the error state.
+//
+// A docked card on the workspace rail (opened from the IaC source card's scan chip), not a modal
+// Sheet: the findings read beside the external cards they are about.
 
 import { Boxes, Layers, Loader2, Package, RotateCw, ShieldCheck } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
-import { Sheet, SheetContent } from "@repo/ui/sheet";
 import { cn } from "@repo/ui/utils";
+import { scanIacSource } from "@/app/server/actions/byo-iac";
+import { useIacSourceCanvas } from "@/components/design-project/byo/iac-source-canvas-context";
+import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { SheetCard } from "./sheet-card";
 import { EvIcon, type IconKey, TONE_TEXT } from "@/components/evidence/evidence-status";
 import type { Tone } from "@/components/evidence/evidence-derive";
 import type { IacScanFinding, IacScanReport } from "@/types/jsonb.types";
@@ -105,9 +112,55 @@ function InventoryList({
 	);
 }
 
-export interface IacScanSheetProps {
-	open: boolean;
-	onOpenChange: (open: boolean) => void;
+/**
+ * The IaC-scan card for the environment's attached source, read from the canvas's IaC-source
+ * context (one source per environment, so it needs no id). Re-runs the scan through that context.
+ */
+export function IacScanCard() {
+	const closeCard = useCanvasStore((s) => s.closeCard);
+	const ctx = useIacSourceCanvas();
+	const source = ctx?.source ?? null;
+
+	if (!ctx || !source) {
+		return (
+			<SheetCard title="IaC safety scan" eyebrow="External IaC" onClose={closeCard}>
+				<EmptyState
+					title="No IaC source is attached to this environment"
+					description="Attach a bring-your-own OpenTofu module from the command palette to scan it."
+				/>
+			</SheetCard>
+		);
+	}
+
+	/** Queue a (re)scan and nudge the source refresh as the runner finishes (best-effort, no socket). */
+	const rescan = async () => {
+		try {
+			await scanIacSource({ projectId: ctx.projectId, environmentId: ctx.environmentId });
+			toast.message("Scanning module…");
+			ctx.refresh();
+			setTimeout(ctx.refresh, 4000);
+			setTimeout(ctx.refresh, 10000);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Could not start the scan.");
+		}
+	};
+
+	return (
+		<IacScanBody
+			repoUrl={source.repoUrl}
+			path={source.path}
+			scanRef={source.ref ?? "HEAD"}
+			scanStatus={source.scanStatus}
+			report={source.scanReport}
+			scanning={source.scanStatus === "scanning"}
+			onRescan={rescan}
+			onClose={closeCard}
+		/>
+	);
+}
+
+export interface IacScanBodyProps {
+	onClose: () => void;
 	repoUrl: string;
 	path: string;
 	scanRef: string;
@@ -118,11 +171,11 @@ export interface IacScanSheetProps {
 	onRescan: () => void;
 }
 
-/** The scan sheet: header (module coords) → verdict + severity summary + finding cards + inventory,
- * or a scanning / unscanned / failed empty state. */
-export function IacScanSheet({
-	open,
-	onOpenChange,
+/** The scan card's body: header (module coords) → verdict + severity summary + finding cards +
+ * inventory, or a scanning / unscanned / failed empty state. Props-driven so it renders from the
+ * attached source or a fixture. */
+export function IacScanBody({
+	onClose,
 	repoUrl,
 	path,
 	scanRef,
@@ -130,7 +183,7 @@ export function IacScanSheet({
 	report,
 	scanning,
 	onRescan,
-}: IacScanSheetProps) {
+}: IacScanBodyProps) {
 	// Findings worst-first (severity order), so the risky checks sit at the top.
 	const findings = report
 		? [...report.findings].sort((a, b) => severityMeta(a.severity).order - severityMeta(b.severity).order)
@@ -151,28 +204,18 @@ export function IacScanSheet({
 				};
 
 	return (
-		<Sheet open={open} onOpenChange={onOpenChange}>
-			<SheetContent
-				side="right"
-				className="w-[min(560px,96vw)] gap-0 border-border-strong bg-surface-raised p-0 sm:max-w-none"
-			>
-				{/* Header — module identity */}
-				<div className="border-b border-border-faint px-5 py-4">
-					<div className="flex items-center gap-2">
-						<Boxes className="size-4 text-text-tertiary" />
-						<span className="font-mono text-ui-2xs uppercase tracking-[0.16em] text-text-tertiary">
-							IaC safety scan
-						</span>
-					</div>
-					<div className="mt-2 text-ui-lg font-semibold text-text-primary">
-						{repoUrl.replace(/^https?:\/\/(www\.)?/, "").replace(/\.git$/, "")}
-					</div>
-					<div className="mt-1 font-mono text-ui-xs text-text-tertiary">
-						/{path.replace(/^\/+/, "") || "(root)"} · {scanRef}
-					</div>
-				</div>
-
-				<div className="flex-1 overflow-y-auto px-5 py-4">
+		<SheetCard
+			eyebrow="IaC safety scan"
+			icon={<Boxes className="h-4 w-4" />}
+			title={repoUrl.replace(/^https?:\/\/(www\.)?/, "").replace(/\.git$/, "")}
+			description={
+				<span className="font-mono">
+					/{path.replace(/^\/+/, "") || "(root)"} · {scanRef}
+				</span>
+			}
+			onClose={onClose}
+		>
+			<div>
 					{scanning || scanStatus === "scanning" ? (
 						<EmptyState
 							className="px-0 py-16 md:px-0 md:py-16"
@@ -276,8 +319,7 @@ export function IacScanSheet({
 							}
 						/>
 					)}
-				</div>
-			</SheetContent>
-		</Sheet>
+			</div>
+		</SheetCard>
 	);
 }

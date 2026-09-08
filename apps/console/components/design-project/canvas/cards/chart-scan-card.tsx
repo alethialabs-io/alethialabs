@@ -2,18 +2,25 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The chart-safety scan sheet — surfaces the elench verify.Report over a bring-your-own Helm
+// The chart-safety scan card — surfaces the elench verify.Report over a bring-your-own Helm
 // chart's rendered manifests (privileged pods, host access, missing limits, wildcard RBAC …) so a
 // user sees what a chart would introduce before trusting it. Deliberately mirrors the Evidence
 // Drawer (verdict header + per-status summary pills + per-control cards with findings + honest
 // coverage), reusing the shared grayscale tone system — one security-report language across the
 // product. Scan runs as a CHART_SCAN job; this reads the persisted report off the chart.
+//
+// A docked card on the workspace rail (opened from the chart node's scan chip), not a modal
+// Sheet: the verdict reads beside the chart it is about.
 
 import { Loader2, RotateCw, ShieldCheck } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
-import { Sheet, SheetContent } from "@repo/ui/sheet";
 import { cn } from "@repo/ui/utils";
+import { scanByoChart } from "@/app/server/actions/byo-charts";
+import { useByoChartCanvas } from "@/components/design-project/byo/byo-chart-canvas-context";
+import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { SheetCard } from "./sheet-card";
 import { EvIcon, type IconKey, TONE_TEXT } from "@/components/evidence/evidence-status";
 import type { Tone } from "@/components/evidence/evidence-derive";
 import type {
@@ -121,9 +128,60 @@ function SummaryPill({ label, count, tone }: { label: string; count: number; ton
 	);
 }
 
-export interface ChartScanSheetProps {
-	open: boolean;
-	onOpenChange: (open: boolean) => void;
+/**
+ * The chart-scan card for a chart on the board, addressed by the chart's id. Reads the chart's
+ * scan state off its node and re-runs the scan through the canvas's BYO-chart context.
+ */
+export function ChartScanCard({ chartId }: { chartId: string }) {
+	const closeCard = useCanvasStore((s) => s.closeCard);
+	const node = useCanvasStore((s) =>
+		s.nodes.find((n) => n.data.kind === "chart" && n.data.config.id === chartId),
+	);
+	const ctx = useByoChartCanvas();
+
+	if (!node || node.data.kind !== "chart") {
+		return (
+			<SheetCard title="Chart safety scan" eyebrow="Helm chart" onClose={closeCard}>
+				<EmptyState
+					title="This chart is no longer on the board"
+					description="It was detached, or the environment changed under it."
+				/>
+			</SheetCard>
+		);
+	}
+	const c = node.data.config;
+
+	/** Queue a (re)scan and nudge the chart refresh as the runner finishes (best-effort, no socket). */
+	const rescan = async () => {
+		if (!ctx) return;
+		try {
+			await scanByoChart({ projectId: ctx.projectId, environmentId: ctx.environmentId, id: c.id });
+			toast.message("Scanning chart…");
+			ctx.refresh();
+			setTimeout(ctx.refresh, 4000);
+			setTimeout(ctx.refresh, 10000);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : "Could not start the scan.");
+		}
+	};
+
+	return (
+		<ChartScanBody
+			chartId={c.id}
+			repoUrl={c.repoUrl}
+			chartPath={c.chartPath}
+			chartRef={c.ref}
+			scanStatus={c.scanStatus ?? "unscanned"}
+			report={c.scanReport ?? null}
+			scanning={c.scanStatus === "scanning"}
+			onRescan={rescan}
+			onClose={closeCard}
+		/>
+	);
+}
+
+export interface ChartScanBodyProps {
+	onClose: () => void;
 	chartId: string;
 	repoUrl: string;
 	chartPath: string;
@@ -135,11 +193,10 @@ export interface ChartScanSheetProps {
 	onRescan: () => void;
 }
 
-/** The scan sheet: header (chart coords) → verdict + summary + control cards, or a scanning /
- * unscanned / failed empty state. */
-export function ChartScanSheet({
-	open,
-	onOpenChange,
+/** The scan card's body: header (chart coords) → verdict + summary + control cards, or a scanning /
+ * unscanned / failed empty state. Props-driven so it renders from a chart node or a fixture. */
+export function ChartScanBody({
+	onClose,
 	chartId,
 	repoUrl,
 	chartPath,
@@ -148,7 +205,7 @@ export function ChartScanSheet({
 	report,
 	scanning,
 	onRescan,
-}: ChartScanSheetProps) {
+}: ChartScanBodyProps) {
 	const controls = report
 		? [...report.controls].sort(
 				(a, b) =>
@@ -159,26 +216,18 @@ export function ChartScanSheet({
 	const verdict = report ? VERDICT[report.verdict] : null;
 
 	return (
-		<Sheet open={open} onOpenChange={onOpenChange}>
-			<SheetContent
-				side="right"
-				className="w-[min(560px,96vw)] gap-0 border-border-strong bg-surface-raised p-0 sm:max-w-none"
-			>
-				{/* Header — chart identity */}
-				<div className="border-b border-border-faint px-5 py-4">
-					<div className="flex items-center gap-2">
-						<ShieldCheck className="size-4 text-text-tertiary" />
-						<span className="font-mono text-ui-2xs uppercase tracking-[0.16em] text-text-tertiary">
-							Chart safety scan
-						</span>
-					</div>
-					<div className="mt-2 text-ui-lg font-semibold text-text-primary">{chartId}</div>
-					<div className="mt-1 font-mono text-ui-xs text-text-tertiary">
-						{repoUrl.replace(/^https?:\/\/(www\.)?/, "")} · /{chartPath.replace(/^\/+/, "")} · {chartRef}
-					</div>
-				</div>
-
-				<div className="flex-1 overflow-y-auto px-5 py-4">
+		<SheetCard
+			eyebrow="Chart safety scan"
+			icon={<ShieldCheck className="h-4 w-4" />}
+			title={chartId}
+			description={
+				<span className="font-mono">
+					{repoUrl.replace(/^https?:\/\/(www\.)?/, "")} · /{chartPath.replace(/^\/+/, "")} · {chartRef}
+				</span>
+			}
+			onClose={onClose}
+		>
+			<div>
 					{scanning || scanStatus === "scanning" ? (
 						<EmptyState
 							className="px-0 py-16 md:px-0 md:py-16"
@@ -255,8 +304,7 @@ export function ChartScanSheet({
 							}
 						/>
 					)}
-				</div>
-			</SheetContent>
-		</Sheet>
+			</div>
+		</SheetCard>
 	);
 }

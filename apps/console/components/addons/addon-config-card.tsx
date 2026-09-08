@@ -2,13 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The enable / configure / remove sheet for one cluster add-on, opened from the Architecture
+// The enable / configure / remove card for one cluster add-on, opened from the Architecture
 // canvas's Add palette (the standalone Add-ons page was retired — add-ons now live on the canvas).
 // It renders the add-on's schema'd knobs + a delivery-mode selector (Managed apply vs GitOps into
 // the customer's apps repo) + an Advanced raw Helm-values (YAML) override. Submitting writes a
 // PENDING project_addons row that reconciles on the next Deploy. The knobs mirror the Zod schema
 // (re-validated server-side); the YAML is validated on save and deep-merged on top of the knobs at
-// resolve time. Squared corners (`rounded-none`) to match the canvas chrome.
+// resolve time.
+//
+// A docked card on the workspace rail, not a modal Sheet: it used to open OVER the board, so you
+// could not read the cluster's cards while deciding an add-on's namespace or delivery mode.
 
 import { asRecord } from "@/lib/records";
 import { ChevronsUpDown } from "lucide-react";
@@ -16,7 +19,9 @@ import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { Badge } from "@repo/ui/badge";
 import { addonCompat } from "@/lib/compat";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { SheetCard } from "@/components/design-project/canvas/cards/sheet-card";
+import { EmptyState } from "@repo/ui/empty";
 import { Button } from "@repo/ui/button";
 import {
   Collapsible,
@@ -32,22 +37,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@repo/ui/select";
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@repo/ui/sheet";
 import { Switch } from "@repo/ui/switch";
 import { Textarea } from "@repo/ui/textarea";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import { REQUIREMENT_HINTS } from "@/lib/addons/requirements";
 import type { AddOnField, AddOnMode } from "@/lib/addons/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers/generated/catalog";
-import { useDisableAddon, useEnableAddon } from "@/lib/query/use-addons-query";
+import {
+  useAddonsQuery,
+  useDisableAddon,
+  useEnableAddon,
+} from "@/lib/query/use-addons-query";
 import { AddonIcon, AddonStatusBadge } from "./addon-visuals";
 
 /** Reserved RHF field names (kept distinct from add-on knob keys). */
@@ -104,32 +104,74 @@ function initialValues(item: AddonMarketItem): FormShape {
 }
 
 /**
- * The add-on config sheet. Controlled by the canvas (open/onOpenChange) so a single sheet serves
- * whichever add-on the user picked from the Add palette. `item` null-guards the closed state.
+ * The add-on card on the workspace rail. Resolves the catalog item by id from the environment's
+ * add-ons query (the same poll the Add palette reads), so the card is addressable by
+ * `{kind:"addon", itemId}` alone — and re-renders with the install state as it changes.
  */
-export function AddonConfigSheet({
+export function AddonConfigCard({
+  itemId,
+  projectId,
+  environmentId,
+}: {
+  itemId: string;
+  projectId: string;
+  environmentId: string | null;
+}) {
+  const addons = useAddonsQuery(projectId, environmentId);
+  const closeCard = useCanvasStore((s) => s.closeCard);
+  const provider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
+  const item = addons.data?.items.find((i) => i.id === itemId) ?? null;
+  if (!item) {
+    return (
+      <SheetCard title="Add-on" eyebrow="Add-on" onClose={closeCard}>
+        <EmptyState
+          title={addons.isPending ? "Loading the catalog…" : "This add-on is not in the catalog"}
+          description={
+            addons.isPending
+              ? undefined
+              : "It may have been removed from the marketplace. Pick one from the Add palette."
+          }
+        />
+      </SheetCard>
+    );
+  }
+  return (
+    <AddonConfigForm
+      item={item}
+      projectId={projectId}
+      environmentId={environmentId}
+      hasAppsRepo={addons.data?.hasAppsRepo ?? false}
+      provider={provider}
+      onDone={closeCard}
+    />
+  );
+}
+
+/**
+ * The add-on's enable / configure / remove form, as a card. Props-driven so the catalog item can
+ * be handed in directly (tests, and any surface that already holds the item); `onDone` is called
+ * after a successful save or removal, and by Cancel.
+ */
+export function AddonConfigForm({
   item,
   projectId,
   environmentId,
   hasAppsRepo,
   provider,
-  open,
-  onOpenChange,
+  onDone,
 }: {
-  item: AddonMarketItem | null;
+  item: AddonMarketItem;
   projectId: string;
   environmentId: string | null;
   hasAppsRepo: boolean;
   /** The project's effective cloud provider — drives the requirement hints (null = unset). */
   provider: CloudProviderSlug | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  onDone: () => void;
 }) {
   const enable = useEnableAddon(projectId, environmentId);
   const disable = useDisableAddon(projectId, environmentId);
-  const emptyForm: FormShape = { _mode: "managed", _valuesYaml: "" };
   const form = useForm<FormShape>({
-    values: item ? initialValues(item) : emptyForm,
+    values: initialValues(item),
   });
   const mode = form.watch("_mode");
   // The env's Kubernetes minor, straight from the canvas store — above the early return, since hooks
@@ -141,7 +183,6 @@ export function AddonConfigSheet({
     return typeof v === "string" && v ? v : undefined;
   });
 
-  if (!item) return null;
   // Silent when the add-on's recorded window fits — same calm rule as the canvas chip (#1222).
   const addonVerdict = addonCompat(item.id, k8sVersion);
   const compat = addonVerdict.status === "pass" ? null : addonVerdict;
@@ -163,7 +204,7 @@ export function AddonConfigSheet({
           ? `${item.name} updated — Deploy to apply`
           : `${item.name} enabled — Deploy to install`,
       );
-      onOpenChange(false);
+      onDone();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to save add-on");
     }
@@ -178,7 +219,7 @@ export function AddonConfigSheet({
         addonId: item.id,
       });
       toast.success(`${item.name} removed`);
-      onOpenChange(false);
+      onDone();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to remove add-on");
     }
@@ -299,35 +340,62 @@ export function AddonConfigSheet({
   };
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="flex w-full flex-col rounded-none sm:max-w-md">
-        <SheetHeader>
-          <div className="flex items-start gap-3">
-            <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-md border bg-muted/30 text-muted-foreground">
-              <AddonIcon icon={item.icon} className="h-5 w-5" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <SheetTitle className="flex flex-wrap items-center gap-2">
-                {item.name}
-                {item.install && (
-                  <AddonStatusBadge
-                    status={item.install.status}
-                    health={item.install.health}
-                  />
-                )}
-              </SheetTitle>
-              <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                <Badge variant="outline" className="text-ui-2xs uppercase">
-                  Free · OSS
-                </Badge>
-                <span>{item.license}</span>
-              </div>
-            </div>
+    <SheetCard
+      eyebrow="Add-on"
+      icon={<AddonIcon icon={item.icon} className="h-4 w-4" />}
+      title={
+        <span className="flex flex-wrap items-center gap-2">
+          {item.name}
+          {item.install && (
+            <AddonStatusBadge
+              status={item.install.status}
+              health={item.install.health}
+            />
+          )}
+        </span>
+      }
+      description={
+        <>
+          {item.summary} Installs the <code>{item.chart}</code> chart into{" "}
+          <code>{item.namespace}</code>. Reconciles on your next Deploy.
+        </>
+      }
+      onClose={onDone}
+      footer={
+        <>
+          {isInstalled ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-muted-foreground hover:text-destructive"
+              onClick={onRemove}
+              disabled={disable.isPending}
+            >
+              Remove
+            </Button>
+          ) : (
+            <Button type="button" variant="ghost" onClick={onDone}>
+              Cancel
+            </Button>
+          )}
+          <Button type="submit" form="addon-config-form" disabled={enable.isPending}>
+            {enable.isPending
+              ? "Saving…"
+              : isInstalled
+                ? "Save changes"
+                : "Enable add-on"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-5">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline" className="text-ui-2xs uppercase">
+              Free · OSS
+            </Badge>
+            <span>{item.license}</span>
           </div>
-          <SheetDescription className="pt-1">
-            {item.summary} Installs the <code>{item.chart}</code> chart into{" "}
-            <code>{item.namespace}</code>. Reconciles on your next Deploy.
-          </SheetDescription>
           {item.requires.length > 0 && (
             <div className="space-y-1.5 pt-2">
               <p className="text-xs font-medium text-muted-foreground">
@@ -366,13 +434,9 @@ export function AddonConfigSheet({
               <span className="text-xs text-muted-foreground">{compat.note}</span>
             </div>
           )}
-        </SheetHeader>
+        </div>
 
-        <form
-          onSubmit={onSubmit}
-          className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4"
-        >
-          <div className="space-y-5 py-2">
+        <form id="addon-config-form" onSubmit={onSubmit} className="space-y-5">
             {/* Delivery mode */}
             <div className="space-y-2">
               <Label>Delivery</Label>
@@ -431,38 +495,8 @@ export function AddonConfigSheet({
                 </p>
               </CollapsibleContent>
             </Collapsible>
-          </div>
-
-          <SheetFooter className="mt-auto flex-row items-center justify-between gap-2 px-0">
-            {isInstalled ? (
-              <Button
-                type="button"
-                variant="ghost"
-                className="text-muted-foreground hover:text-destructive"
-                onClick={onRemove}
-                disabled={disable.isPending}
-              >
-                Remove
-              </Button>
-            ) : (
-              <SheetClose
-                render={
-                  <Button type="button" variant="ghost">
-                    Cancel
-                  </Button>
-                }
-              />
-            )}
-            <Button type="submit" disabled={enable.isPending}>
-              {enable.isPending
-                ? "Saving…"
-                : isInstalled
-                  ? "Save changes"
-                  : "Enable add-on"}
-            </Button>
-          </SheetFooter>
         </form>
-      </SheetContent>
-    </Sheet>
+      </div>
+    </SheetCard>
   );
 }

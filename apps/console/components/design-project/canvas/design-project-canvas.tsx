@@ -11,7 +11,7 @@ import { track } from "@/lib/analytics/track";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { createProject, provisionProject } from "@/app/server/actions/projects";
+import { createProject, destroyProject, provisionProject } from "@/app/server/actions/projects";
 import {
 	applyStagedChanges,
 	discardStagedChanges,
@@ -19,7 +19,6 @@ import {
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
-import { AddonConfigSheet } from "@/components/addons/addon-config-sheet";
 import { ByoChartDialog } from "@/components/design-project/byo/byo-chart-dialog";
 import { ByoChartCanvasProvider } from "@/components/design-project/byo/byo-chart-canvas-context";
 import {
@@ -44,7 +43,7 @@ import {
 	DialogTitle,
 } from "@repo/ui/dialog";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { orgHref, projectHref } from "@/lib/routing";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
@@ -54,9 +53,10 @@ import { CostChip } from "./cost-chip";
 import { RunMenu } from "./run-menu";
 import { CanvasCommandPalette } from "./canvas-command-palette";
 import { CanvasControls } from "./canvas-controls";
-import { CanvasDock, useDockState } from "./canvas-dock";
 import { CanvasFlow, CanvasInteractionContext } from "./canvas-flow";
-import { EnvSettingsSheet } from "./env-settings-sheet";
+import { parseCardParam } from "./cards/card-param";
+import { EnvSettingsButton } from "./cards/env-settings-card";
+import { isRailOpen, WorkspaceRail } from "./cards/workspace-rail";
 import { useDropPosition } from "./use-drop-position";
 import { PendingChangesBar } from "./pending-changes-bar";
 import { buildShortcuts } from "./shortcuts";
@@ -71,8 +71,11 @@ interface DesignProjectCanvasProps {
 	 * Absent in the create flow (Deploy creates a new project instead). */
 	projectId?: string;
 	environmentId?: string;
-	/** When true the docked panel (inspector + assistant) is owned by the project shell, so the
-	 * board renders alone. When false (the standalone create flow) the board renders its own dock. */
+	/**
+	 * Inert. The workspace rail renders inside the canvas on every route now; the prop stays only
+	 * because the workbench and the Architecture page still pass it, and both are other lanes'
+	 * files. Delete it with them.
+	 */
 	dockInShell?: boolean;
 	/** Whether bring-your-own Helm charts are enabled on this instance (server flag). Gates the
 	 * ⌘K "Sources" entry. Server actions enforce the real gate regardless. */
@@ -99,7 +102,6 @@ function CanvasInner({
 	onToggleForm,
 	projectId,
 	environmentId,
-	dockInShell,
 	byoHelmEnabled,
 	byoDescribeEnabled,
 	byoIacEnabled,
@@ -124,11 +126,9 @@ function CanvasInner({
 		[handTool, spaceHeld],
 	);
 	// Cluster add-ons for this environment (edit mode only) — browsed from the Add palette,
-	// configured in a sheet. Add-ons live on the canvas now (the standalone page was retired).
+	// configured in a card on the workspace rail. Add-ons live on the canvas now (the standalone
+	// page was retired).
 	const addonsQuery = useAddonsQuery(projectId, environmentId);
-	const [configuringAddon, setConfiguringAddon] =
-		useState<AddonMarketItem | null>(null);
-	const [addonSheetOpen, setAddonSheetOpen] = useState(false);
 	const [byoDialogOpen, setByoDialogOpen] = useState(false);
 	const [iacDialogOpen, setIacDialogOpen] = useState(false);
 	// The environment's attached BYO IaC source (edit mode + flag on) — the module's provenance:
@@ -136,10 +136,13 @@ function CanvasInner({
 	// are external nodes on the board (see the setIacNodes effect below), because a customer who
 	// brought an entire infrastructure should see an architecture, not one card over a dimmed graph.
 	const [iacSource, setIacSource] = useState<IacSourceState | null>(null);
-	const openConfigureAddon = useCallback((item: AddonMarketItem) => {
-		setConfiguringAddon(item);
-		setAddonSheetOpen(true);
-	}, []);
+	const openCard = useCanvasStore((s) => s.openCard);
+	const closeCard = useCanvasStore((s) => s.closeCard);
+	const card = useCanvasStore((s) => s.card);
+	const openConfigureAddon = useCallback(
+		(item: AddonMarketItem) => openCard({ kind: "addon", itemId: item.id }),
+		[openCard],
+	);
 	const openPanel = useElenchStore((s) => s.openPanel);
 	const [shortcutsOpen, setShortcutsOpen] = useState(false);
 	const [deploying, setDeploying] = useState(false);
@@ -148,6 +151,7 @@ function CanvasInner({
 	const undo = useCanvasStore((s) => s.undo);
 	const redo = useCanvasStore((s) => s.redo);
 	const duplicateNodes = useCanvasStore((s) => s.duplicateNodes);
+	const removeNodes = useCanvasStore((s) => s.removeNodes);
 	const setChartNodes = useCanvasStore((s) => s.setChartNodes);
 	const setChartWorkloadNodes = useCanvasStore((s) => s.setChartWorkloadNodes);
 	const setAddonNodes = useCanvasStore((s) => s.setAddonNodes);
@@ -156,13 +160,30 @@ function CanvasInner({
 	// The environment's server truth (provided by the project shell) — it now also carries the BYO
 	// IaC module and the architecture derived from it.
 	const envStatus = useEnvironmentStatus();
-	// The project's effective cloud provider — drives the add-on sheet's requirement hints.
-	const effectiveProvider = useCanvasStore((s) =>
-		s.getEffectiveProvider(PROJECT_NODE_ID),
-	);
+	// A deep link can name the card to open (`?card=activity|env-settings|node:<id>|addon:<id>`)
+	// — the Jobs page and the assistant link here. Consumed once on mount and stripped, keeping
+	// every other param (the environment above all), so a refresh doesn't re-open it.
+	useEffect(() => {
+		const target = parseCardParam(searchParams.get("card"));
+		if (!target) return;
+		openCard(target);
+		const rest = new URLSearchParams(searchParams.toString());
+		rest.delete("card");
+		const query = rest.toString();
+		router.replace(`${window.location.pathname}${query ? `?${query}` : ""}`);
+	}, [searchParams, openCard, router]);
 
-	// The standalone (create-flow) dock — the project shell owns it otherwise (`dockInShell`).
-	const dock = useDockState(true);
+	/** Edit mode: tear down the active environment (queued from the project card's danger zone). */
+	const handleDestroyEnvironment = useCallback(async () => {
+		if (!projectId) return;
+		try {
+			const activeEnvId = await resolveActiveEnvironmentId(projectId, environmentId);
+			await destroyProject(projectId, activeEnvId);
+			toast.success("Destroy queued");
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Failed to destroy");
+		}
+	}, [projectId, environmentId]);
 
 	// BYO chart nodes are out-of-band: load them from getProjectByoCharts into the canvas on mount
 	// (and after attach/detach). Only in edit mode with the feature on.
@@ -421,6 +442,22 @@ function CanvasInner({
 					t.tagName === "TEXTAREA" ||
 					t.isContentEditable);
 			if (typing) return;
+			if (e.key === "Escape") {
+				// A dialog or menu owns its own Escape; the rail's card closes on the board's.
+				if (t?.closest('[role="dialog"],[role="menu"],[role="listbox"]')) return;
+				if (useCanvasStore.getState().card) closeCard();
+				return;
+			}
+			if (e.key === "Backspace" || e.key === "Delete") {
+				// Through the store, not React Flow's `deleteKeyCode`: respects `deletable: false`
+				// and commits an undo step, like every other delete path.
+				if (t?.closest('[role="dialog"],[role="menu"]')) return;
+				if (selectedIds.length) {
+					e.preventDefault();
+					removeNodes(selectedIds);
+				}
+				return;
+			}
 			if (e.key === " ") {
 				// Space-to-pan (Excalidraw/Figma). preventDefault stops the page from scrolling.
 				e.preventDefault();
@@ -466,6 +503,8 @@ function CanvasInner({
 		undo,
 		redo,
 		duplicateNodes,
+		removeNodes,
+		closeCard,
 		iacGoverned,
 	]);
 
@@ -529,7 +568,7 @@ function CanvasInner({
 				)}
 				{/* Cluster + network are env settings now (W2), not board cards — one env is one cluster.
 				    Meaningless while a BYO-IaC source governs the env (the module owns the substrate). */}
-				{!iacGoverned && <EnvSettingsSheet />}
+				{!iacGoverned && <EnvSettingsButton />}
 				{/* Adding components is meaningless while an IaC source governs the env (replace mode). */}
 				{!iacGoverned && (
 					<Button
@@ -563,17 +602,6 @@ function CanvasInner({
 				onConfigureAddon={projectId ? openConfigureAddon : undefined}
 				dropPosition={dropPosition}
 			/>
-			{projectId && (
-				<AddonConfigSheet
-					item={configuringAddon}
-					projectId={projectId}
-					environmentId={environmentId ?? null}
-					hasAppsRepo={addonsQuery.data?.hasAppsRepo ?? false}
-					provider={effectiveProvider}
-					open={addonSheetOpen}
-					onOpenChange={setAddonSheetOpen}
-				/>
-			)}
 			<CanvasCommandPalette
 				open={cmdOpen}
 				onOpenChange={setCmdOpen}
@@ -660,26 +688,25 @@ function CanvasInner({
 			content
 		);
 
-	// In the project shell the dock (inspector + persistent assistant) is rendered one level up, so
-	// the board renders alone. The standalone create flow renders its own dock beside the board.
-	if (dockInShell)
-		return withByoContext(
-			<div className="relative h-full min-h-[480px] w-full">
-				{boardContent}
-			</div>,
-		);
-
+	// The board and the workspace rail, one flex row, on every route: the rail lives INSIDE the
+	// canvas so each card sits under the React Flow provider and the BYO providers above. The
+	// board's right border is the seam the rail's card butts against; it appears only while a card
+	// is showing, so a closed rail leaves no stray line.
 	return withByoContext(
 		<div className="flex h-full min-h-[480px] w-full">
 			<div
 				className={cn(
 					"relative min-h-[480px] min-w-0 flex-1",
-					dock && "border-r border-border",
+					isRailOpen(card) && "border-r border-border",
 				)}
 			>
 				{boardContent}
 			</div>
-			<CanvasDock dock={dock} projectId={projectId} />
+			<WorkspaceRail
+				projectId={projectId}
+				environmentId={environmentId ?? null}
+				onDestroyEnvironment={projectId ? handleDestroyEnvironment : undefined}
+			/>
 		</div>,
 	);
 }
