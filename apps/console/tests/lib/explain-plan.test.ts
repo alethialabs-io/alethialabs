@@ -8,7 +8,7 @@ import {
   asPlanNode,
   relationsUnder,
   scanOf,
-  sortsOnly,
+  sortsRowsOf,
 } from "../support/explain-plan";
 
 // The instrument that reads a query plan, tested WITHOUT a database.
@@ -123,7 +123,7 @@ describe("reading a real EXPLAIN plan", () => {
   });
 
   it("is the plan the optimisation claims — one index lookup per environment, no sort", () => {
-    expect(sortsOnly(real, "environment_probes")).toBe(false);
+    expect(sortsRowsOf(real, "environment_probes")).toBe(false);
     // And the outer join really is in there, so the absence above is a measurement of the probe
     // access rather than of a plan too small to contain anything.
     expect(scanOf(real, "project_environments")["Node Type"]).toBe("Index Scan");
@@ -138,6 +138,27 @@ describe("reading a real EXPLAIN plan", () => {
     ]);
     expect(() => scanOf(bare, "x")).toThrow(/no "Plan" key/);
   });
+});
+
+/**
+ * A sort of the history sitting ABOVE a join — the control query's real shape, and the case the
+ * previous rule got backwards.
+ *
+ * `…from environment_probes join projects … order by probed_at desc` sorts after the join, so the
+ * Sort's subtree reads two relations. The old "reads this relation and nothing else" rule answered
+ * `false` — no sort of the history — for a plan whose entire cost is sorting the history.
+ */
+const historySortedAboveAJoin = asExplainOutput({
+  "Node Type": "Sort",
+  Plans: [
+    {
+      "Node Type": "Hash Join",
+      Plans: [
+        { "Node Type": "Seq Scan", "Relation Name": "environment_probes" },
+        { "Node Type": "Seq Scan", "Relation Name": "projects" },
+      ],
+    },
+  ],
 });
 
 describe("reading a synthetic EXPLAIN plan", () => {
@@ -160,18 +181,31 @@ describe("reading a synthetic EXPLAIN plan", () => {
   });
 
   it("reports a sort of the relation's own history", () => {
-    expect(sortsOnly(sortedHistory, "environment_probes")).toBe(true);
-    expect(sortsOnly(sortedHistoryViaTheIndex, "environment_probes")).toBe(true);
+    expect(sortsRowsOf(sortedHistory, "environment_probes")).toBe(true);
+    expect(sortsRowsOf(sortedHistoryViaTheIndex, "environment_probes")).toBe(true);
+  });
+
+  it("reports a sort of the history even with a join between it and the scan", () => {
+    // The case the PREVIOUS rule got backwards, and the reason it was loosened. The old rule was
+    // "a Sort whose subtree reads this relation and nothing else", so putting a join between the
+    // Sort and the scan made it answer `false` — no sort of the history — for a plan whose entire
+    // cost is sorting the history. That is the assertion this helper exists for, failing open.
+    expect(sortsRowsOf(historySortedAboveAJoin, "environment_probes")).toBe(
+      true,
+    );
+    expect(sortsRowsOf(historySortedAboveAJoin, "projects")).toBe(true);
   });
 
   it("does NOT report a sort that belongs to the outer join", () => {
     // The case the substring form got wrong. A Sort is present, and it reads two other relations.
     expect(lateralUnderAMergeJoin).toContain('"Node Type":"Sort"');
-    expect(sortsOnly(lateralUnderAMergeJoin, "environment_probes")).toBe(false);
+    expect(sortsRowsOf(lateralUnderAMergeJoin, "environment_probes")).toBe(false);
     // And it is genuinely a sort of something — the assertion above is not passing because the
-    // walker failed to find any Sort at all.
-    expect(sortsOnly(lateralUnderAMergeJoin, "project_environments")).toBe(
-      false,
+    // walker failed to find any Sort at all. That Sort IS sorting the outer relations' rows, and
+    // the rule says so, which is what makes the `false` above a statement about where the probe
+    // scan sits rather than an accident.
+    expect(sortsRowsOf(lateralUnderAMergeJoin, "project_environments")).toBe(
+      true,
     );
     const mergeSort = scanOf(lateralUnderAMergeJoin, "project_environments");
     expect(mergeSort["Node Type"]).toBe("Index Scan");

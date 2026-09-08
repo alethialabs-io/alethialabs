@@ -139,17 +139,24 @@ export function scanOf(plan: string, relation: string): PlanNode {
 }
 
 /**
- * Whether the plan sorts `relation` — a Sort whose subtree reads that relation AND NOTHING ELSE.
+ * Whether the plan sorts rows of `relation` — a Sort with that relation's scan anywhere beneath it.
  *
- * "And nothing else" is what makes this the honest question. A Sort above a join reads several
- * relations and is the outer plan's business; a Sort reading one relation is that relation's own
- * history being ordered, which is the cost a per-key index lookup exists to remove.
+ * ⚠ THIS WAS "a Sort whose subtree reads that relation AND NOTHING ELSE", and that was too strict
+ * in the direction that matters. A sort of a relation's own rows does not have to sit directly on
+ * its scan: put a join between them and the Sort's subtree reads two relations, so the old rule
+ * answered `false` for a plan that was sorting exactly the history it claimed not to. It made the
+ * assertion this exists for — "no sort of the probe history" — pass on a plan that sorts it.
+ *
+ * The looser rule is not looser in the direction that caused the original finding. The case that
+ * started this is a merge join above a LATERAL, sorting the OUTER relations while the correlated
+ * scan hangs off a sibling branch — so that relation's scan is not beneath the Sort, and this still
+ * answers `false`. What it no longer does is require the two to be adjacent.
+ *
+ * It is only meaningful for a query with no top-level ORDER BY of its own: one of those puts every
+ * scan beneath a Sort and the answer is `true` for everything. The caller owns that.
  */
-export function sortsOnly(plan: string, relation: string): boolean {
+export function sortsRowsOf(plan: string, relation: string): boolean {
   return allNodes(plan)
     .filter((n) => n["Node Type"] === "Sort")
-    .some((n) => {
-      const reads = relationsUnder(n);
-      return reads.size === 1 && reads.has(relation);
-    });
+    .some((n) => relationsUnder(n).has(relation));
 }

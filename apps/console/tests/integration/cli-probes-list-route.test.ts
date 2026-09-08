@@ -38,7 +38,7 @@ import {
 import {
 	explainSchema,
 	scanOf,
-	sortsOnly,
+	sortsRowsOf,
 } from "../support/explain-plan";
 
 const ORG_A = randomUUID();
@@ -450,7 +450,7 @@ describeIfDb("GET project probes — bounded latest state, paged (#4202)", () =>
 		);
 		// An index that is scanned and then sorted has bought nothing. Asked of the probe history
 		// alone, so a merge join the outer plan chooses cannot answer for it.
-		expect(sortsOnly(planned, "environment_probes")).toBe(false);
+		expect(sortsRowsOf(planned, "environment_probes")).toBe(false);
 
 		// THE CONTROL, and it is the shape this change REPLACED: read every probe row for the
 		// project newest-first and dedupe in JS. Without it "uses the index, no Sort" is not
@@ -477,7 +477,27 @@ describeIfDb("GET project probes — bounded latest state, paged (#4202)", () =>
 		);
 		// The control SORTS the history, which is the cost being removed, and the assertion says
 		// exactly that rather than "a Sort appears somewhere".
-		expect(sortsOnly(control, "environment_probes")).toBe(true);
+		//
+		// ⚠ THIS FAILED ONCE, and the cause was the reader rather than the claim. The rule was "a
+		// Sort whose subtree reads this relation AND NOTHING ELSE" — but this query joins `projects`
+		// and sorts AFTER the join, so the Sort's subtree reads two relations and the rule answered
+		// `false` for a plan whose entire cost is sorting the history. `sortsRowsOf` now asks
+		// whether the scan is anywhere beneath a Sort, which is the question, and the offline suite
+		// pins both shapes.
+		//
+		// The alternative reading offered for that failure was that the control can skip the sort by
+		// walking `idx_environment_probes_env_time`. It cannot: that index leads on `environment_id`
+		// and this query has no equality on it, so reading it in index order yields rows grouped by
+		// environment, not ordered by `probed_at`. The failure message carries the plan so the next
+		// run decides this on evidence rather than on either argument.
+		// Written as a value comparison rather than `toBe(true)` so a failure PRINTS the plan:
+		// `expect` takes no message argument here (vitest/valid-expect), and a bare
+		// `expected false to be true` is what made the first failure an argument instead of a
+		// measurement.
+		const sorted = "the control sorts the probe history";
+		expect(sortsRowsOf(control, "environment_probes") ? sorted : control).toBe(
+			sorted,
+		);
 		// NOTHING IS ASSERTED ABOUT WHICH INDEX THE CONTROL TOUCHES, deliberately. The obvious
 		// second assertion — that the old shape cannot reach idx_environment_probes_env_time — is
 		// not true: the index leads on environment_id and this query has no equality on it, so it
