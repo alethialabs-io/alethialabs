@@ -31,9 +31,10 @@ import { NODE_REGISTRY } from "./graph/node-registry";
 
 /**
  * What a right-click pointed at. `pane` is empty board; `node` is one card (a real store node or a
- * collapsed collection card); `selection` is the marquee's node set.
+ * collapsed collection card); `selection` is the marquee's node set. Reachable from outside as
+ * `CanvasContextMenuState["target"]`, so it is not exported on its own.
  */
-export type CanvasContextTarget =
+type CanvasContextTarget =
 	| { kind: "pane" }
 	| { kind: "node"; nodeId: string }
 	| { kind: "selection"; ids: string[] };
