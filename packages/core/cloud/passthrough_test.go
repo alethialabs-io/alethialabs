@@ -1067,11 +1067,15 @@ func TestProviderTfvars_ReservedKeysAreClosedToEveryOtherComponent(t *testing.T)
 // A provider writes root tfvars in TWO shapes and both are read here. The first version of this
 // test read only `tfvars["k"] = …` and so was blind to the initial `map[string]interface{}{…}`
 // literal — 47 keys on aws alone, `project_name`, `vpc_cidr`, `eks_cluster_version` and the rest.
-// Nothing reached through them, because the literal runs before the merge and merge-if-absent
-// then covers every key already present. But that safety is a property of STATEMENT ORDER, not of
-// the reservation, and the day a key moves from the literal into an `if` — which is exactly how
-// the cluster sizing keys became dangerous — the protection disappears with it. Reserving both
-// shapes says so rather than depending on it.
+// Nothing reached through them, because the literal runs before the merge and merge-if-absent then
+// covers every key already present. That safety is a property of STATEMENT ORDER rather than of the
+// reservation, so both shapes are reserved and it no longer has to be.
+//
+// The transition that would break it CATCHES ITSELF, which is worth knowing before anyone decides
+// the literal half is redundant: moving a key out of the literal and into an `if` is what turns it
+// into a `tfvars["k"] = …` assignment — the shape this test has always read. So at the instant the
+// ordering protection is lost, the key becomes visible here and the union must grow or the suite
+// goes red. The arrangement holds, and this is what holds it.
 //
 // Both loops assert a COUNT before they assert a property. A text matcher that stops matching —
 // after a gofmt change, a wrapped argument list, a rename — is indistinguishable from a file with
@@ -1087,13 +1091,16 @@ func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
 	cases := []struct {
 		cloud, file string
 		union       []string
-		minKeys     int
+		// The list generated from this file's own writes. Checked in BOTH directions against the
+		// source: the union must cover it, and it must contain nothing the file does not write.
+		typed   []string
+		minKeys int
 	}{
-		{"aws", "aws_provider.go", awsRootReserved, 63},
-		{"gcp", "gcp_provider.go", gcpRootReserved, 48},
-		{"azure", "azure_provider.go", azureRootReserved, 42},
-		{"alibaba", "alibaba_provider.go", alibabaRootReserved, 46},
-		{"hetzner", "hetzner_provider.go", hetznerRootReserved, 28},
+		{"aws", "aws_provider.go", awsRootReserved, awsTypedTfvars, 63},
+		{"gcp", "gcp_provider.go", gcpRootReserved, gcpTypedTfvars, 48},
+		{"azure", "azure_provider.go", azureRootReserved, azureTypedTfvars, 42},
+		{"alibaba", "alibaba_provider.go", alibabaRootReserved, alibabaTypedTfvars, 46},
+		{"hetzner", "hetzner_provider.go", hetznerRootReserved, hetznerRootReserved, 28},
 	}
 	if len(cases) != len(leafProviders) {
 		t.Fatalf("%d clouds checked but %d providers exist — a cloud added without a union here "+
@@ -1111,9 +1118,23 @@ func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
 			for _, m := range assignRe.FindAllStringSubmatch(text, -1) {
 				found[m[1]] = true
 			}
-			// The initial literal, read by brace-matching from its opener rather than by a regex over
-			// the whole file: `"name":` appears inside nested item builders too, and those are
-			// per-item objects, not root tfvars.
+			// The initial literal, located rather than regex'd out of the whole file: `"name":`
+			// appears inside the nested item builders too, and those are per-item objects, not root
+			// tfvars. So the span has to be bounded, and it is bounded TWICE, by two methods that
+			// must agree.
+			//
+			// Brace counting alone is not sound here. It cannot tell a brace in code from one in a
+			// comment or a string, and `aws_provider.go` already contains a comment reading "It used
+			// to stay {}" INSIDE this literal. That pair happens to balance, so the count is right
+			// today by luck; a single unbalanced brace in a comment would move the end silently. The
+			// dangerous direction is SHORT — a truncated span reads fewer keys, and once the file
+			// grows past the floor a short read can still clear it, so the tail would go unreserved
+			// with the test green.
+			//
+			// The second method is gofmt's own structure: the literal closes with `}` at exactly one
+			// tab, and everything nested inside it is indented deeper. Requiring the two answers to
+			// be identical turns "a comment moved the end" from a silent short read into a failure
+			// that names itself.
 			if open := literalOpenRe.FindStringIndex(text); open != nil {
 				depth, i := 1, open[1]
 				for i < len(text) && depth > 0 {
@@ -1125,7 +1146,24 @@ func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
 					}
 					i++
 				}
-				for _, m := range literalRe.FindAllStringSubmatch(text[open[1]:i-1], -1) {
+				byBrace := i - 1
+
+				rel := strings.Index(text[open[1]:], "\n\t}")
+				if rel < 0 {
+					t.Fatalf("%s: the tfvars literal has no closing `}` at one tab — gofmt guarantees "+
+						"one, so the span cannot be bounded and every key past here would go unread",
+						tc.file)
+				}
+				byIndent := open[1] + rel + 2
+
+				if byBrace != byIndent {
+					t.Fatalf("%s: the two ways of finding the tfvars literal's end disagree (brace "+
+						"count says %d, indentation says %d). A brace in a comment or a string has "+
+						"moved one of them, and the short answer would read fewer keys while still "+
+						"clearing the count floor", tc.file, byBrace, byIndent)
+				}
+
+				for _, m := range literalRe.FindAllStringSubmatch(text[open[1]:byBrace], -1) {
 					found[m[1]] = true
 				}
 			} else {
@@ -1147,6 +1185,19 @@ func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
 					t.Errorf("%s writes %q but does not reserve it — a component's provider_config "+
 						"can decide it whenever the typed mapping happens not to, which is exactly "+
 						"when the canvas declined to", tc.cloud, k)
+				}
+			}
+
+			// The other direction. Over-reserving is SAFE — a key nothing writes costs nothing to
+			// refuse — so this is not a hole, and it is checked anyway: a typo like
+			// `eks_disk_sizeZZ` reads as covering a key it does not cover, and an entry left behind
+			// when its assignment was deleted has nothing else to prune it. Both make the list look
+			// more authoritative than it is, and the same re-read that catches under-reservation
+			// gives this for free. Raised in review.
+			for _, k := range tc.typed {
+				if !found[k] {
+					t.Errorf("%s reserves %q in its typed list but writes it nowhere — a typo, or an "+
+						"entry outliving the assignment it was generated from", tc.cloud, k)
 				}
 			}
 		})
