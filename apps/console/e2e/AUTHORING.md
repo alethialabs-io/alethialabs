@@ -46,7 +46,7 @@ settings/activity). New project: `/${orgSlug}/~/new`.
 ## Preconditions via the seed helper (no real runner/cloud)
 
 ```ts
-import { seedCloudIdentity, seedProject, seedFinishedDeploy, seedJob, seedDrift, cleanupOrg } from "../helpers/seed";
+import { seedCloudIdentity, seedProject, seedFinishedDeploy, seedJob, seedDrift } from "../helpers/seed";
 const id = { userId: owner.userId!, orgId: owner.orgId! };
 const identity = await seedCloudIdentity(id, { provider: "aws" });         // connected cloud identity
 const project = await seedProject(id, { cloudIdentityId: identity.id, status: "ACTIVE" });
@@ -56,15 +56,20 @@ await seedDrift(project, { inSync: false, drifted: 2 });
 ```
 
 Job status enum is `QUEUED|CLAIMED|PROCESSING|SUCCESS|FAILED|CANCELLED` (**SUCCESS**, not SUCCEEDED).
-Clean up org-scoped seed rows in `afterAll` with `cleanupOrg(owner.orgId!)` when a spec seeds a lot.
+
+**Do NOT call `cleanupOrg` in `afterAll`.** The suite is `fullyParallel` and the persona org is
+shared, so deleting its jobs, projects and cloud identities pulls the floor out from under every
+other file still driving it — that is findings.md P0 §2, and `_seed-smoke.spec.ts` carries the
+post-mortem. Seed uniquely-named rows instead (`e2e-<what>-${Date.now()}`) and leave them: the
+personas are per-run accounts in a throwaway CI database, so nothing outlives the run.
 
 ## Conventions & rules
 
 1. **Selectors**: `getByRole` (name via accessible text) → `getByLabel`/`getByPlaceholder` → `getByText`.
    Avoid brittle CSS. If a control has NO accessible handle, DON'T edit app code — record a
    "testid gap" finding (file + element) instead.
-2. **Isolation**: prefer creating uniquely-named resources per test (`e2e-${Date.now()}`), or seed +
-   `cleanupOrg` in `afterAll`. Don't assume an empty org (other specs share the persona org).
+2. **Isolation**: create uniquely-named resources per test (`e2e-${Date.now()}`). Don't assume an
+   empty org, and don't empty it — other specs share the persona org and run in parallel.
 3. **Assertions**: 1–4 focused assertions per test; one concern per test. Use `await expect(...)`.
 4. **Waits**: `await page.waitForURL(...)` for nav; `expect(locator).toBeVisible({ timeout })` for
    data. Don't use fixed sleeps.

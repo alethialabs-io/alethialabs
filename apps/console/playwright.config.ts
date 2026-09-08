@@ -40,8 +40,14 @@ interface ProjectShape {
  * job anywhere, ~14 specs' worth, and read to every later reader as coverage that did not exist.
  */
 const RUN_POSTURE: Record<string, string | null> = {
-	// A dependency of the gating projects, never invoked on its own.
-	setup: "ci.yml · dependency of hero/elench-ai · release-gate.yml · dependency of every leg but hero",
+	// A dependency of the gating projects, never invoked on its own. Named leg by leg, because the
+	// shorthand was wrong in both halves: `hero` signs ITSELF in as step 1 and declares no
+	// dependency, `console` signs up per-spec, and `qa` builds its personas in `global-setup`
+	// behind ALETHIA_QA_E2E=1. Only elench-ai, elench-live, canvas and audit declare
+	// `dependencies: ["setup"]`. This string is what the dead-zone guard prints when it fails, so a
+	// reader debugging a `setup` problem on the `qa` or `hero` leg was being sent to look for a
+	// dependency that is not there.
+	setup: "ci.yml · dependency of elench-ai · release-gate.yml · dependency of elench-ai/canvas/audit",
 	// Twice-homed: the per-PR job on dev (ci.yml) and the promotion gate (release-gate.yml). ci.yml
 	// skips its copy on a PR into main/staging so one merge ref does not boot the same console twice.
 	hero: "ci.yml · E2E (browser · Playwright hero path) · release-gate.yml · Release gate (hero)",

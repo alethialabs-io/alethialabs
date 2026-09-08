@@ -23,7 +23,23 @@
 #   surface         the component file — PINNED; read it before asserting anything about the control
 #   mutation        the identifier the click reaches (a server action, an authClient method, a store
 #                   action); "" when the lane that owns the surface has yet to pin it (the census
-#                   refuses an empty mutation — it is a to-do, not an exemption)
+#                   refuses an empty mutation — it is a to-do, not an exemption).
+#                   TWO SHAPES, because two kinds of call site exist and the census greps for both:
+#                     · an identifier — `deleteProject`, `authClient.organization.delete`. Matched
+#                       whole, or by its last segment for a dotted path.
+#                     · a bare fetch — `<path> <VERB>`, e.g. `/api/org/logo DELETE`. There is no
+#                       identifier to grep, so the census matches the PATH and reads the verb as
+#                       documentation. Written this way rather than invented as a fake identifier:
+#                       a name that appears in no file is one a reader cannot chase.
+#   mutation_surface  OPTIONAL — the file that actually invokes `mutation`, when that is not
+#                   `surface`. Six controls are presentational: `pool-card.tsx` renders the trigger
+#                   and raises `onDelete`, and the parent (or a store) calls the server action.
+#                   `surface` answers "where does the spec find the control", which is what drives
+#                   it; this answers "where does the mutation live", which is what the census greps.
+#                   Collapsing the two would force a choice between a `surface` the spec cannot
+#                   drive and a census rule that cannot check anything — so they are two fields.
+#                   When absent, the census reads `mutation` from `surface`, which is the ordinary
+#                   case (35 of 41).
 #   reach           optional opener chain the spec walks first: {menu: "<name>"} | {section: "<title>"}
 #                   | {select: "<row>"} | {open: "<control>"}
 #   control         the trigger, by accessible role + name (never a CSS class)
@@ -38,8 +54,11 @@
 #   prod-qa         open-cancel | own-rows-only | skip
 #   reason          why prod-qa is `skip`, when it is
 #
-# A `missing` entry is a DEFECT recorded, not a decision. Seventeen were found on 2026-09-07 by
-# reading every surface; each names the lane that adds the ConfirmDialog.
+# A `missing` entry is a DEFECT recorded, not a decision. Of the 41 controls read on 2026-09-07,
+# 22 are `confirmed`, 18 are `missing` and 1 is `inert` — so NINETEEN fire on a bare click, and each
+# names the lane that adds the ConfirmDialog. (The count is stated as the three statuses rather than
+# one number because `inert` is not a missing confirmation, it is a control that does nothing at
+# all, and a single figure hid that distinction.)
 
 version: 1
 
@@ -127,6 +146,7 @@ controls:
   - id: env.destroy
     route: /[org]/[project]/architecture
     surface: apps/console/components/design-project/canvas/node-inspector.tsx
+    mutation_surface: apps/console/app/server/actions/projects.ts
     mutation: destroyProject
     reach: [{ select: "the project node" }, { section: "Destroy environment" }]
     control: { role: button, name: "Destroy" }
@@ -141,6 +161,7 @@ controls:
   - id: canvas.discard-staged
     route: /[org]/[project]/architecture
     surface: apps/console/components/design-project/canvas/pending-changes-bar.tsx
+    mutation_surface: apps/console/app/server/actions/staged-changes.ts
     mutation: discardStagedChanges
     reach: [{ open: "add a node so the pending-changes bar renders" }]
     control: { role: button, name: "Discard" }
@@ -488,6 +509,7 @@ controls:
   - id: runners.pool.delete
     route: /[org]/~/runners
     surface: apps/console/components/runners/pool-card.tsx
+    mutation_surface: apps/console/app/server/actions/fleet.ts
     mutation: deleteFleetPool
     reach: [{ menu: "Pool actions" }]
     control: { role: menuitem, name: "Delete" }
@@ -515,6 +537,7 @@ controls:
   - id: runners.remove
     route: /[org]/~/runners
     surface: apps/console/components/runners/runner-actions.tsx
+    mutation_surface: apps/console/app/server/actions/runners.ts
     mutation: removeRunner
     control: { role: button, name: "Remove" }
     confirm: alert-dialog
@@ -570,6 +593,7 @@ controls:
   - id: agent.thread.delete
     route: /[org]
     surface: apps/console/components/agent/thread-rail.tsx
+    mutation_surface: apps/console/app/server/actions/agent.ts
     mutation: deleteThread
     reach: [{ open: "Ask AI" }]
     control: { role: button, name: "Delete chat" }
@@ -596,6 +620,7 @@ controls:
   - id: agent.widget.remove
     route: /[org]
     surface: apps/console/components/agent/widgets/widget-card.tsx
+    mutation_surface: apps/console/app/server/actions/widgets.ts
     mutation: deleteWidget
     reach: [{ open: "Ask AI" }, { open: "a dashboard turn" }]
     control: { role: button, name: "Remove <title>" }

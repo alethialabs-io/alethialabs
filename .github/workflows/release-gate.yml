@@ -42,9 +42,23 @@ on:
         required: false
         default: ""
 
+# A LABEL EVENT MUST NEVER CANCEL A RUNNING GATE.
+#
+# The concurrency group is evaluated when a run is CREATED, before any job-level `if:` is
+# considered. So with a blanket `cancel-in-progress: true`, adding any unrelated label to a
+# promotion PR (`qa:prod`, a triage label) 40 minutes into the `qa` leg creates a new run, cancels
+# the in-flight one, and is then skipped by the `legs` guard below — which requires the added label
+# to be `release-gate:run`. The six required `Release gate (<leg>)` contexts never report, and the
+# PR sits permanently pending with nothing red to explain it, recovering only on a new push or
+# `ready_for_review`. The header above anticipated a random label RESTARTING the hour; the guard
+# turns that into cancel-and-never-restart, which is worse.
+#
+# Keying the cancellation on the event action fixes it at the source: a push supersedes its
+# predecessor as before, and a label event cannot cancel anything. A label that IS
+# `release-gate:run` starts a run that simply queues behind any in-flight one.
 concurrency:
   group: release-gate-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.action != 'labeled' }}
 
 permissions:
   contents: read

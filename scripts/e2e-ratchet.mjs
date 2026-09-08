@@ -54,10 +54,24 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const DEFAULT_BASELINE = "apps/console/e2e/gate-baseline.json";
 export const FIXME_RE = /^BUG: .+#\d+/;
 
+/**
+ * Is this baseline entry a recorded data-dependent skip (`{skip: "<why>"}`)?
+ *
+ * Narrowed here rather than inline so the three call sites in `compareProject` cannot drift on
+ * what counts — a `{fixme}` and a `{skip}` are both objects, and treating one as the other would
+ * either re-open the skip hole or demand a ledger move that flip-flops with the org's state.
+ *
+ * @param {Recorded|undefined} known
+ * @returns {known is {skip: string}}
+ */
+export function isSkipRecord(known) {
+	return typeof known === "object" && known !== null && typeof known.skip === "string";
+}
+
 // ── Playwright JSON → { file → { test → outcome } } ──────────────────────────────────────────
 
 /**
- * @typedef {{status: "passed"|"failed"|"flaky"|"skipped", fixme: string|null}} Outcome
+ * @typedef {{status: "passed"|"failed"|"flaky"|"skipped", fixme: string|null, skip: string|null}} Outcome
  * @typedef {Record<string, Record<string, Outcome>>} ProjectRun
  */
 
@@ -85,9 +99,17 @@ export function flattenResults(report, project) {
 				seen++;
 				const key = [...titles, spec.title].join(" › ");
 				const fixme = (t.annotations ?? []).find((a) => a && a.type === "fixme");
+				// A conditional `test.skip(cond, "why")` lands as a `skip` annotation, not a `fixme`.
+				// Both are read: a fixme records a KNOWN BUG, a skip records a data-dependent
+				// condition. They are different ledger entries and must not be conflated.
+				const skip = (t.annotations ?? []).find((a) => a && a.type === "skip");
 				const status =
 					t.status === "expected" ? "passed" : t.status === "flaky" ? "flaky" : t.status === "unexpected" ? "failed" : "skipped";
-				(out[file] ??= {})[key] = { status, fixme: fixme && typeof fixme.description === "string" ? fixme.description : null };
+				(out[file] ??= {})[key] = {
+					status,
+					fixme: fixme && typeof fixme.description === "string" ? fixme.description : null,
+					skip: skip && typeof skip.description === "string" ? skip.description : null,
+				};
 			}
 		}
 		for (const child of suite.suites ?? []) walk(child, file, [...titles, child.title]);
@@ -102,8 +124,25 @@ export function flattenResults(report, project) {
 // ── The comparison ───────────────────────────────────────────────────────────────────────────
 
 /**
- * @typedef {"passed"|"failed"|{fixme: string}} Recorded
+ * @typedef {"passed"|"failed"|{fixme: string}|{skip: string}} Recorded
  * @typedef {Record<string, Record<string, Recorded>>} ProjectBaseline
+ *
+ * Four recordable outcomes, and the difference between the last two is the whole point:
+ *
+ * - `"passed"` / `"failed"` — the ordinary ledger. Shrink-only.
+ * - `{fixme}` — a KNOWN BUG, skipped deliberately, carrying `BUG: <what> #<issue>`. The test is
+ *   expected to stay skipped until the issue is fixed; if it runs and passes, the ledger moves.
+ * - `{skip}` — a DATA-DEPENDENT condition, e.g. `test.skip(connected > 0, "Azure is connected
+ *   (seeded) in the shared org")`. On a shared persona org at `--workers=3` such a test skips in
+ *   one run and passes in the next, through no change of anyone's. Recording it as `passed` makes
+ *   the gate flip red on org state rather than on a regression; refusing to record it at all (the
+ *   original rule 5) makes the leg un-baselineable, because `--write` throws on the first one.
+ *
+ *   A `{skip}` entry therefore tolerates BOTH skipped and passed, and still fails on `failed`.
+ *   The hole rule 5 was written to close stays closed: an UNRECORDED skip is still a failure in
+ *   CI, so an unset variable that silently turns a denial into a green skip is caught the first
+ *   time it happens. Only skips written into the ledger — visible in a diff, reviewable — are
+ *   tolerated, and each one names its condition.
  */
 
 /**
@@ -114,10 +153,10 @@ export function flattenResults(report, project) {
 export function compareProject({ baseline, run, ci, bootstrap, project }) {
 	/** @type {string[]} */
 	const failures = [];
-	/** @type {Record<string, {passed: number, failed: number, flaky: number, fixme: number, skipped: number, newTests: number, regressions: number, nowPassing: number}>} */
+	/** @type {Record<string, {passed: number, failed: number, flaky: number, fixme: number, skipped: number, dataSkip: number, newTests: number, regressions: number, nowPassing: number}>} */
 	const perFile = {};
 	const row = (file) =>
-		(perFile[file] ??= { passed: 0, failed: 0, flaky: 0, fixme: 0, skipped: 0, newTests: 0, regressions: 0, nowPassing: 0 });
+		(perFile[file] ??= { passed: 0, failed: 0, flaky: 0, fixme: 0, skipped: 0, dataSkip: 0, newTests: 0, regressions: 0, nowPassing: 0 });
 
 	if (bootstrap) {
 		failures.push(
@@ -139,7 +178,12 @@ export function compareProject({ baseline, run, ci, bootstrap, project }) {
 				r.passed++;
 				if (outcome.status === "flaky") r.flaky++;
 				if (known === undefined) r.newTests++;
-				else if (known === "failed" || (typeof known === "object" && known !== null)) {
+				else if (isSkipRecord(known)) {
+					// A data-dependent skip that ran and passed this time. Both outcomes are
+					// recorded as acceptable, so this is not a ledger move — demanding one would
+					// send the lane into a loop, since the next run may skip it again.
+					r.dataSkip++;
+				} else if (known === "failed" || (typeof known === "object" && known !== null)) {
 					r.nowPassing++;
 					failures.push(
 						`${id}: baseline says ${known === "failed" ? "failed" : "fixme"}, the run says passed. Good — now move the ledger: ` +
@@ -155,6 +199,12 @@ export function compareProject({ baseline, run, ci, bootstrap, project }) {
 				} else if (known === "passed") {
 					r.regressions++;
 					failures.push(`${id}: REGRESSION — passed at the baseline, failed now.`);
+				} else if (isSkipRecord(known)) {
+					r.regressions++;
+					failures.push(
+						`${id}: recorded as a data-dependent skip ("${known.skip}"), but the run FAILED. ` +
+							"A skip entry tolerates skipped and passed, never failed.",
+					);
 				} else if (typeof known === "object" && known !== null) {
 					r.regressions++;
 					failures.push(`${id}: the fixme was lifted (the test ran) but it still fails. Re-mark it, or fix it.`);
@@ -164,9 +214,14 @@ export function compareProject({ baseline, run, ci, bootstrap, project }) {
 				// skipped
 				const fixme = outcome.fixme;
 				const isBugFixme = typeof fixme === "string" && FIXME_RE.test(fixme);
-				const baselineFixme = typeof known === "object" && known !== null ? known.fixme : null;
+				const baselineFixme = typeof known === "object" && known !== null && "fixme" in known ? known.fixme : null;
 				if (isBugFixme && baselineFixme === fixme) {
 					r.fixme++;
+				} else if (isSkipRecord(known)) {
+					// Recorded data-dependent skip. It skipped, which is one of the two outcomes
+					// the entry accepts. The reason is not re-compared: the condition is the
+					// point, and its wording is allowed to be refined without reddening a gate.
+					r.dataSkip++;
 				} else if (ci) {
 					r.skipped++;
 					failures.push(
@@ -175,7 +230,9 @@ export function compareProject({ baseline, run, ci, bootstrap, project }) {
 								? `Its fixme ("${fixme}") is not in the baseline — regenerate with --write --only=${file}.`
 								: fixme
 									? `A fixme must read "BUG: <what> #<issue>"; got "${fixme}".`
-									: "A plain test.skip is never accepted in CI; an unset variable once turned every RBAC denial into a green skip."),
+									: outcome.skip
+										? `It is a data-dependent skip ("${outcome.skip}") that the baseline does not record. If that condition is legitimate, record it with --write --only=${file}; the entry then accepts skipped or passed, never failed.`
+										: "A skip with no reason is never accepted in CI; an unset variable once turned every RBAC denial into a green skip."),
 					);
 				} else {
 					r.skipped++; // local: reported, not failed
@@ -213,10 +270,16 @@ export function toBaseline(run) {
 			if (o.status === "passed" || o.status === "flaky") v = "passed";
 			else if (o.status === "failed") v = "failed";
 			else if (typeof o.fixme === "string" && FIXME_RE.test(o.fixme)) v = { fixme: o.fixme };
+			else if (typeof o.skip === "string" && o.skip.trim() !== "") v = { skip: o.skip };
 			else {
+				// A skip with NO stated reason stays un-baselineable, deliberately. That is the
+				// shape an unset variable produces — `test.skip(!process.env.X)` with nothing to
+				// say — and it is the one that once turned every RBAC denial into a green skip.
+				// A reason is what makes the entry reviewable, so a reason is the price of record.
 				throw new Error(
-					`${file} › ${title}: skipped with ${o.fixme ? `fixme "${o.fixme}"` : "no fixme"} — cannot be baselined. ` +
-						'A skip must be `test.fixme(true, "BUG: <what> #<issue>")` to be recorded as debt.',
+					`${file} › ${title}: skipped with ${o.fixme ? `a fixme that is not "BUG: … #<issue>" ("${o.fixme}")` : "no reason given"} — cannot be baselined. ` +
+						'Give the skip a reason (`test.skip(cond, "why")`) to record it as a data-dependent skip, ' +
+						'or `test.fixme(true, "BUG: <what> #<issue>")` to record it as a known bug.',
 				);
 			}
 			(out[file] ??= {})[title] = v;
@@ -227,9 +290,16 @@ export function toBaseline(run) {
 
 /** A markdown table of per-file deltas, for $GITHUB_STEP_SUMMARY. */
 export function stepSummary(project, perFile, failures) {
-	const L = [`### Release gate · ${project} · ratchet`, "", "| file | passed | failed | fixme | flaky | new | regressions | now passing |", "|---|--:|--:|--:|--:|--:|--:|--:|"];
+	const L = [
+		`### Release gate · ${project} · ratchet`,
+		"",
+		"| file | passed | failed | fixme | data-skip | flaky | new | regressions | now passing |",
+		"|---|--:|--:|--:|--:|--:|--:|--:|--:|",
+	];
 	for (const [file, r] of Object.entries(perFile).sort(([a], [b]) => a.localeCompare(b))) {
-		L.push(`| \`${file}\` | ${r.passed} | ${r.failed} | ${r.fixme} | ${r.flaky} | ${r.newTests} | ${r.regressions} | ${r.nowPassing} |`);
+		L.push(
+			`| \`${file}\` | ${r.passed} | ${r.failed} | ${r.fixme} | ${r.dataSkip} | ${r.flaky} | ${r.newTests} | ${r.regressions} | ${r.nowPassing} |`,
+		);
 	}
 	L.push("", failures.length === 0 ? "**ratchet: no regression against the baseline.**" : `**ratchet: ${failures.length} problem(s)**`, "");
 	for (const f of failures) L.push(`- ${f}`);
@@ -291,16 +361,19 @@ function main(argv) {
 	}
 
 	if (args.write) {
-		const fresh = toBaseline(run);
+		// `--only` is applied to the RUN, before `toBaseline` sees it. Converting the whole run
+		// first and filtering afterwards meant one un-baselineable test in an unrelated file threw
+		// and a lane could not regenerate its own entries at all — including the very first
+		// bootstrap capture, which is the one moment every file is unrecorded.
 		const current = baselineDoc.projects[args.project] ?? {};
 		let next;
 		if (args.only.length) {
-			next = { ...current };
 			for (const file of args.only) {
-				if (!(file in fresh)) throw new Error(`--only=${file}: the run holds no tests for that file under project "${args.project}".`);
-				next[file] = fresh[file];
+				if (!(file in run)) throw new Error(`--only=${file}: the run holds no tests for that file under project "${args.project}".`);
 			}
-		} else next = fresh;
+			const scoped = Object.fromEntries(Object.entries(run).filter(([file]) => args.only.includes(file)));
+			next = { ...current, ...toBaseline(scoped) };
+		} else next = toBaseline(run);
 		baselineDoc.projects[args.project] = Object.fromEntries(Object.entries(next).sort(([a], [b]) => a.localeCompare(b)));
 		delete baselineDoc.bootstrap;
 		baselineDoc.version = 1;
@@ -318,8 +391,12 @@ function main(argv) {
 		bootstrap: Boolean(baselineDoc.bootstrap) || baselineDoc.projects[args.project] === undefined,
 		project: args.project,
 	});
+	// BOTH streams, always. The workflow runs this as `… --step-summary >> "$GITHUB_STEP_SUMMARY"`,
+	// so stdout is redirected away from the job log; emitting the annotations only in the `else`
+	// left a failing required check whose step log was completely EMPTY, with nothing on the job
+	// to say why. stdout and stderr are independent here, so printing both costs nothing.
 	if (args.summary) console.log(stepSummary(args.project, perFile, failures));
-	else for (const f of failures) console.error(`::error::${f}`);
+	for (const f of failures) console.error(`::error::${f}`);
 	if (failures.length === 0) console.log(`e2e-ratchet: ${args.project} — no regression against the baseline.`);
 	return failures.length === 0 ? 0 : 1;
 }
@@ -374,10 +451,28 @@ function selfTest() {
 	const baseline = toBaseline(run);
 	ok("--write records passed/failed/fixme", baseline["flows/a.spec.ts"]["A — journey › fails"] === "failed" && baseline["flows/a.spec.ts"]["A — journey › flakes"] === "passed" && typeof baseline["flows/a.spec.ts"]["A — journey › fixme"] === "object");
 	ok(
-		"--write refuses a plain skip",
+		"--write refuses a skip with no reason",
 		(() => {
 			try {
-				toBaseline({ f: { t: { status: "skipped", fixme: null } } });
+				toBaseline({ f: { t: { status: "skipped", fixme: null, skip: null } } });
+				return false;
+			} catch {
+				return true;
+			}
+		})(),
+	);
+	ok(
+		"--write records a data-dependent skip that states its reason",
+		(() => {
+			const b = toBaseline({ f: { t: { status: "skipped", fixme: null, skip: "Azure is connected (seeded) in the shared org" } } });
+			return b.f.t.skip === "Azure is connected (seeded) in the shared org";
+		})(),
+	);
+	ok(
+		"--write still refuses a skip whose only reason is whitespace",
+		(() => {
+			try {
+				toBaseline({ f: { t: { status: "skipped", fixme: null, skip: "   " } } });
 				return false;
 			} catch {
 				return true;
@@ -405,6 +500,29 @@ function selfTest() {
 	ok("rule 7: flaky counts as passed and is listed", cmp().perFile[F].flaky === 1 && cmp().perFile[F].passed >= 3);
 	ok("a lifted fixme that still fails is a regression", has(cmp((r) => ((r[F]["A — journey › fixme"] = { status: "failed", fixme: null }), r)).failures, /fixme was lifted/));
 	ok("the step summary names the project and each file", /flows\/a\.spec\.ts/.test(stepSummary("qa", cmp().perFile, [])) && /Release gate · qa/.test(stepSummary("qa", {}, [])));
+
+	// ── a recorded data-dependent skip tolerates skipped AND passed, never failed ──────────────
+	// The `qa` leg's real shape: `test.skip(connected > 0, "…seeded in the shared org")` skips in
+	// one run and passes in the next on a shared persona org. Both must be clean once recorded,
+	// or the required check flips red on org state rather than on a regression.
+	const skipBase = structuredClone(baseline);
+	skipBase[F]["A — journey › passes"] = { skip: "Azure is connected (seeded) in the shared org" };
+	const asSkip = (r) => ((r[F]["A — journey › passes"] = { status: "skipped", fixme: null, skip: "Azure is connected (seeded) in the shared org" }), r);
+	ok("a recorded data-dependent skip that skips is clean", cmp(asSkip, skipBase).failures.length === 0);
+	ok("a recorded data-dependent skip that PASSES is clean, with no ledger move demanded", cmp((r) => r, skipBase).failures.length === 0);
+	ok("a recorded data-dependent skip is counted separately from a fixme", cmp(asSkip, skipBase).perFile[F].dataSkip === 1);
+	ok(
+		"a recorded data-dependent skip that FAILS is still a regression",
+		has(cmp((r) => ((r[F]["A — journey › passes"] = { status: "failed", fixme: null, skip: null }), r), skipBase).failures, /tolerates skipped and passed, never failed/),
+	);
+	ok(
+		"an UNRECORDED data-dependent skip still fails in CI, naming how to record it",
+		has(cmp(asSkip).failures, /--write --only=flows\/a\.spec\.ts/),
+	);
+	ok(
+		"a skip with no reason at all keeps the original unset-variable message",
+		has(cmp((r) => ((r[F]["A — journey › passes"] = { status: "skipped", fixme: null, skip: null }), r)).failures, /unset variable/),
+	);
 
 	// End to end through the CLI, in a temp dir: write, then compare, then a regression.
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ratchet-"));
@@ -439,6 +557,46 @@ function selfTest() {
 	restore();
 	ok("CLI: a regression exits 1", regExit === 1);
 	ok("CLI: an unknown argument exits 2", (() => { const r = quiet(); const e = main(["--nope"]); r(); return e === 2; })());
+
+	// `--write --only=<file>` must convert ONLY that file. A run holding an un-baselineable test
+	// in an UNRELATED file used to make the whole call throw, so a lane could not regenerate its
+	// own entries — and neither could the first bootstrap capture, where nothing is recorded yet.
+	const twoFiles = structuredClone(report);
+	twoFiles.suites.push({
+		title: "flows/b.spec.ts",
+		file: "flows/b.spec.ts",
+		specs: [
+			{
+				title: "unbaselineable",
+				tests: [{ projectName: "qa", status: "skipped", annotations: [] }],
+			},
+		],
+	});
+	const results2 = path.join(dir, "results2.json");
+	const base2 = path.join(dir, "gate-baseline2.json");
+	fs.writeFileSync(results2, JSON.stringify(twoFiles));
+	fs.writeFileSync(base2, JSON.stringify({ version: 1, bootstrap: true, projects: {} }));
+	restore = quiet();
+	let onlyExit;
+	try {
+		onlyExit = main([`--project=qa`, `--results=${results2}`, `--baseline=${base2}`, "--write", "--only=flows/a.spec.ts"]);
+	} catch {
+		onlyExit = "threw";
+	}
+	restore();
+	const scoped = JSON.parse(fs.readFileSync(base2, "utf8"));
+	ok("CLI: --write --only is scoped past an un-baselineable test in another file", onlyExit === 0);
+	ok("CLI: --write --only records the named file and not the other", Boolean(scoped.projects?.qa?.["flows/a.spec.ts"]) && scoped.projects?.qa?.["flows/b.spec.ts"] === undefined);
+	restore = quiet();
+	let allExit;
+	try {
+		allExit = main([`--project=qa`, `--results=${results2}`, `--baseline=${base2}`, "--write"]);
+	} catch {
+		allExit = "threw";
+	}
+	restore();
+	ok("CLI: an unscoped --write still refuses the un-baselineable test", allExit === "threw");
+
 	fs.rmSync(dir, { recursive: true, force: true });
 
 	console.log(failures === 0 ? "\nself-test: all passed" : `\nself-test: ${failures} FAILED`);
