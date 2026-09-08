@@ -78,13 +78,19 @@ var (
 	// TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads them: a new `tfvars[...]`
 	// assignment fails the suite until it is listed here.
 	gcpTypedTfvars = []string{
-		"classification_tags", "cloud_sql_backup_retention_days", "cloud_sql_engine",
-		"cloud_sql_engine_version", "cloud_sql_iam_auth", "cloud_sql_port", "cloud_sql_tier",
-		"create_memorystore", "create_memorystore_valkey", "gke_disk_size_gb", "gke_instance_types",
-		"gke_node_desired_size", "gke_node_max_size", "gke_node_min_size",
-		"memorystore_memory_size_gb", "memorystore_redis_version", "memorystore_tier",
-		"memorystore_valkey_engine_version", "memorystore_valkey_replica_count",
-		"memorystore_valkey_shard_count", "network_id", "subnet_ids",
+		"artifact_registry_repos", "classification_tags", "cloud_armor_enabled", "cloud_dns_domain",
+		"cloud_dns_enabled", "cloud_dns_zone_name", "cloud_sql_authorized_networks",
+		"cloud_sql_backup_retention_days", "cloud_sql_engine", "cloud_sql_engine_version",
+		"cloud_sql_iam_auth", "cloud_sql_port", "cloud_sql_tier", "cloud_storage_buckets",
+		"create_cloud_sql", "create_cloud_storage", "create_firestore", "create_memorystore",
+		"create_memorystore_valkey", "create_pubsub", "custom_secrets", "environment",
+		"firestore_point_in_time_recovery", "gke_cluster_version", "gke_disk_size_gb",
+		"gke_enable_autopilot", "gke_instance_types", "gke_node_desired_size", "gke_node_max_size",
+		"gke_node_min_size", "memorystore_memory_size_gb", "memorystore_redis_version",
+		"memorystore_tier", "memorystore_valkey_engine_version", "memorystore_valkey_replica_count",
+		"memorystore_valkey_shard_count", "network_allowed_cidr_blocks", "network_cidr", "network_id",
+		"project_id", "project_name", "provision_artifact_registry", "provision_gke",
+		"provision_network", "pubsub_topics", "region", "single_cloud_nat", "subnet_ids",
 	}
 
 	gcpRootReserved = unionReserved(gcpTypedTfvars, gcpDatabaseReserved, gcpCacheReserved, gcpNosqlReserved,

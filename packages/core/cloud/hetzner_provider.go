@@ -107,9 +107,13 @@ func (p *hetznerProvider) ValidateConfig(config *types.ProjectConfig) error {
 // Kept honest by TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads the assignments below:
 // a new `tfvars[...]` fails the suite until it is listed here.
 var hetznerRootReserved = []string{
-	"buckets", "classification_tags", "hcloud_token", "hetzner_s3_access_key",
-	"hetzner_s3_endpoint", "hetzner_s3_region", "hetzner_s3_secret_key",
-	"incluster_registry_hosts",
+	"buckets", "classification_tags", "cloud_dns_enabled", "control_plane_arch",
+	"control_plane_count", "control_plane_server_type", "dns_hosted_zone", "dns_main_domain",
+	"environment", "hcloud_token", "hetzner_s3_access_key", "hetzner_s3_endpoint",
+	"hetzner_s3_region", "hetzner_s3_secret_key", "incluster_registry_hosts", "kubernetes_version",
+	"network_allowed_cidr_blocks", "network_cidr", "network_id", "pod_cidr", "project_name",
+	"provision_network", "region", "service_cidr", "talos_version", "worker_arch", "worker_count",
+	"worker_server_type",
 }
 
 func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {

@@ -1062,13 +1062,24 @@ func TestProviderTfvars_ReservedKeysAreClosedToEveryOtherComponent(t *testing.T)
 // spot and was worse there: its subjects ARE the slices, so deleting a key both opens the hole and
 // deletes the subtest that would have caught it.
 //
-// Reading the assignments makes the subject independent of anything a person remembers to list.
+// Reading the emitter makes the subject independent of anything a person remembers to list.
+//
+// A provider writes root tfvars in TWO shapes and both are read here. The first version of this
+// test read only `tfvars["k"] = …` and so was blind to the initial `map[string]interface{}{…}`
+// literal — 47 keys on aws alone, `project_name`, `vpc_cidr`, `eks_cluster_version` and the rest.
+// Nothing reached through them, because the literal runs before the merge and merge-if-absent
+// then covers every key already present. But that safety is a property of STATEMENT ORDER, not of
+// the reservation, and the day a key moves from the literal into an `if` — which is exactly how
+// the cluster sizing keys became dangerous — the protection disappears with it. Reserving both
+// shapes says so rather than depending on it.
 //
 // Both loops assert a COUNT before they assert a property. A text matcher that stops matching —
 // after a gofmt change, a wrapped argument list, a rename — is indistinguishable from a file with
 // nothing to find, so "no violations" and "I could not see the file" have to be different answers.
 func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
 	assignRe := regexp.MustCompile(`tfvars\["([a-z0-9_]+)"\]\s*=`)
+	literalRe := regexp.MustCompile(`(?m)^\s*"([a-z0-9_]+)":`)
+	literalOpenRe := regexp.MustCompile(`tfvars := map\[string\]interface\{\}\{`)
 
 	// The floor is the count observed when this was written. It exists to catch the matcher going
 	// blind, not to pin the exact surface, so it is a MINIMUM rather than an equality: adding a
@@ -1078,11 +1089,11 @@ func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
 		union       []string
 		minKeys     int
 	}{
-		{"aws", "aws_provider.go", awsRootReserved, 23},
-		{"gcp", "gcp_provider.go", gcpRootReserved, 22},
-		{"azure", "azure_provider.go", azureRootReserved, 17},
-		{"alibaba", "alibaba_provider.go", alibabaRootReserved, 20},
-		{"hetzner", "hetzner_provider.go", hetznerRootReserved, 8},
+		{"aws", "aws_provider.go", awsRootReserved, 63},
+		{"gcp", "gcp_provider.go", gcpRootReserved, 48},
+		{"azure", "azure_provider.go", azureRootReserved, 42},
+		{"alibaba", "alibaba_provider.go", alibabaRootReserved, 46},
+		{"hetzner", "hetzner_provider.go", hetznerRootReserved, 28},
 	}
 	if len(cases) != len(leafProviders) {
 		t.Fatalf("%d clouds checked but %d providers exist — a cloud added without a union here "+
@@ -1095,9 +1106,32 @@ func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
 			if err != nil {
 				t.Fatalf("reading %s: %v", tc.file, err)
 			}
+			text := string(src)
 			found := map[string]bool{}
-			for _, m := range assignRe.FindAllStringSubmatch(string(src), -1) {
+			for _, m := range assignRe.FindAllStringSubmatch(text, -1) {
 				found[m[1]] = true
+			}
+			// The initial literal, read by brace-matching from its opener rather than by a regex over
+			// the whole file: `"name":` appears inside nested item builders too, and those are
+			// per-item objects, not root tfvars.
+			if open := literalOpenRe.FindStringIndex(text); open != nil {
+				depth, i := 1, open[1]
+				for i < len(text) && depth > 0 {
+					switch text[i] {
+					case '{':
+						depth++
+					case '}':
+						depth--
+					}
+					i++
+				}
+				for _, m := range literalRe.FindAllStringSubmatch(text[open[1]:i-1], -1) {
+					found[m[1]] = true
+				}
+			} else {
+				t.Fatalf("%s: no `tfvars := map[string]interface{}{` literal found — every provider "+
+					"opens with one, so the matcher is blind to the shape that carries most of the keys",
+					tc.file)
 			}
 			if len(found) < tc.minKeys {
 				t.Fatalf("%s: matched %d root tfvars assignments, expected at least %d — the "+

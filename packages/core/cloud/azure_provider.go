@@ -72,11 +72,16 @@ var (
 	// TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads them: a new `tfvars[...]`
 	// assignment fails the suite until it is listed here.
 	azureTypedTfvars = []string{
-		"aks_admin_group_object_ids", "aks_disk_size_gb", "aks_instance_types",
+		"aks_admin_group_object_ids", "aks_cluster_version", "aks_disk_size_gb", "aks_instance_types",
 		"aks_node_desired_size", "aks_node_max_size", "aks_node_min_size", "azure_cache_multi_az",
 		"azure_cache_sku_name", "azure_db_backup_retention_days", "azure_db_engine",
 		"azure_db_engine_version", "azure_db_iam_auth", "azure_db_port", "azure_db_sku_name",
-		"classification_tags", "subnet_ids", "vnet_id",
+		"azure_dns_domain", "azure_dns_enabled", "azure_dns_zone_name", "azure_waf_enabled",
+		"classification_tags", "cosmos_db_collections", "create_azure_cache", "create_azure_db",
+		"create_cosmos_db", "create_service_bus", "create_storage_account", "custom_secrets",
+		"environment", "location", "project_name", "provision_acr", "provision_aks", "provision_vnet",
+		"service_bus_queues", "service_bus_topics", "single_nat_gateway", "storage_containers",
+		"subnet_ids", "subscription_id", "vnet_allowed_cidr_blocks", "vnet_cidr", "vnet_id",
 	}
 
 	azureRootReserved = unionReserved(azureTypedTfvars, azureDatabaseReserved, azureCacheReserved,

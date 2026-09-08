@@ -421,13 +421,23 @@ var (
 	// TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads them: a new `tfvars[...]`
 	// assignment fails the suite until it is listed here.
 	awsTypedTfvars = []string{
-		"classification_tags", "create_elasticache_redis", "create_elasticache_valkey",
-		"eks_disk_size", "eks_instance_types", "eks_ng_desired_size", "eks_ng_max_size",
-		"eks_ng_min_size", "rds_backup_retention_period", "rds_config", "rds_iam_auth_enabled",
-		"rds_iam_irsa", "rds_instance_type", "rds_logs_exports", "rds_scaling_config",
-		"redis_allowed_cidr_blocks", "redis_cluster_size", "redis_engine_version", "redis_family",
-		"redis_instance_type", "redis_multi_az_enabled", "valkey_data_storage_max",
-		"valkey_engine_version",
+		"acm_certificate_enable", "application_waf_enabled", "aws_account_id", "bucket_configuration",
+		"classification_tags", "cloud_dns_enabled", "cloudfront_waf_enabled",
+		"create_elasticache_redis", "create_elasticache_valkey", "create_rds", "custom_secrets",
+		"ddb_create", "ddb_global_create", "ddb_global_table_configuration", "ddb_table_configuration",
+		"dns_hosted_zone", "dns_main_domain", "ecr_names_map", "ecr_repo_settings",
+		"ecr_repository_image_scan_on_push", "ecr_repository_image_tag_mutability",
+		"eks_cluster_admins", "eks_cluster_version", "eks_disk_size", "eks_instance_types",
+		"eks_ng_desired_size", "eks_ng_max_size", "eks_ng_min_size", "enable_karpenter", "environment",
+		"project_name", "provision_ecr", "provision_sqs", "provision_vpc",
+		"rds_backup_retention_period", "rds_config", "rds_iam_auth_enabled", "rds_iam_irsa",
+		"rds_instance_type", "rds_logs_exports", "rds_scaling_config", "redis_allowed_cidr_blocks",
+		"redis_allowed_security_group_ids", "redis_cloudwatch_logs_enabled",
+		"redis_cluster_mode_enabled", "redis_cluster_size", "redis_engine_version", "redis_family",
+		"redis_instance_type", "redis_multi_az_enabled", "region", "s3_create", "sns_topics",
+		"sqs_queues", "valkey_data_storage_max", "valkey_engine_version", "vpc_allowed_cidr_blocks",
+		"vpc_cidr", "vpc_single_nat_gateway", "waf_log_retention_days", "waf_logging_enabled",
+		"waf_sampled_requests_enabled", "waf_webacl_cloudwatch_enabled",
 	}
 
 	awsRootReserved = unionReserved(awsTypedTfvars, awsDatabaseReserved, awsCacheReserved, awsRegistryReserved,

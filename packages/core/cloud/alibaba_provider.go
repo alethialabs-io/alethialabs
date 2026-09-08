@@ -69,11 +69,17 @@ var (
 	// TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads them: a new `tfvars[...]`
 	// assignment fails the suite until it is listed here.
 	alibabaTypedTfvars = []string{
-		"ack_disk_size_gb", "ack_instance_types", "ack_node_desired_size", "ack_node_max_size",
-		"ack_node_min_size", "classification_tags", "kvstore_engine_version", "kvstore_instance_class",
-		"kvstore_multi_az", "kvstore_security_ips", "kvstore_shard_count", "network_id",
+		"ack_cluster_version", "ack_disk_size_gb", "ack_instance_types", "ack_node_desired_size",
+		"ack_node_max_size", "ack_node_min_size", "alibaba_account", "alidns_domain", "alidns_enabled",
+		"alidns_managed_certificate", "alidns_zone_name", "classification_tags", "cr_repos",
+		"create_kvstore", "create_mns", "create_oss", "create_ots", "create_rds", "custom_secrets",
+		"environment", "kvstore_engine_version", "kvstore_instance_class", "kvstore_multi_az",
+		"kvstore_security_ips", "kvstore_shard_count", "mns_queues", "mns_topics",
+		"network_allowed_cidr_blocks", "network_cidr", "network_id", "oss_buckets", "ots_tables",
+		"project_name", "provision_ack", "provision_cr", "provision_network",
 		"rds_backup_retention_days", "rds_engine", "rds_engine_version", "rds_instance_type",
-		"rds_port", "rds_serverless_max_capacity", "rds_serverless_min_capacity", "subnet_ids",
+		"rds_port", "rds_serverless_max_capacity", "rds_serverless_min_capacity", "region",
+		"single_cloud_nat", "subnet_ids",
 	}
 
 	alibabaRootReserved = unionReserved(alibabaTypedTfvars, alibabaDatabaseReserved, alibabaCacheReserved,
