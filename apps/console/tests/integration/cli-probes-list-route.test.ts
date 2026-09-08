@@ -35,6 +35,11 @@ import {
 	getLatestProbesByEnv,
 	latestProbesQuery,
 } from "@/lib/probes/persistence";
+import {
+	explainSchema,
+	scanOf,
+	sortsOnly,
+} from "../support/explain-plan";
 
 const ORG_A = randomUUID();
 const ORG_B = randomUUID();
@@ -121,9 +126,6 @@ async function walk(projectId: string, pageSize: number) {
 	}
 	throw new Error("probe cursor did not exhaust in 30 pages");
 }
-
-/** The EXPLAIN (FORMAT JSON) envelope. Parsed, not cast — the plan tree itself stays opaque. */
-const explainSchema = z.array(z.object({ "QUERY PLAN": z.array(z.unknown()) }));
 
 /**
  * Returns `query`'s plan as JSON text with sequential scans disabled — the same instrument
@@ -442,9 +444,13 @@ describeIfDb("GET project probes — bounded latest state, paged (#4202)", () =>
 
 		// The EXPLAINed statement is the one lib/probes/persistence.ts issues, not a copy.
 		const planned = await explain(latestProbesQuery(PROJECT_A, ORG_A));
-		expect(planned).toContain("idx_environment_probes_env_time");
-		// An index that is scanned and then sorted has bought nothing.
-		expect(planned).not.toContain('"Node Type":"Sort"');
+		// The node that READS the probes, not the serialized plan. See scanOf.
+		expect(scanOf(planned, "environment_probes")["Index Name"]).toBe(
+			"idx_environment_probes_env_time",
+		);
+		// An index that is scanned and then sorted has bought nothing. Asked of the probe history
+		// alone, so a merge join the outer plan chooses cannot answer for it.
+		expect(sortsOnly(planned, "environment_probes")).toBe(false);
 
 		// THE CONTROL, and it is the shape this change REPLACED: read every probe row for the
 		// project newest-first and dedupe in JS. Without it "uses the index, no Sort" is not
@@ -469,7 +475,15 @@ describeIfDb("GET project probes — bounded latest state, paged (#4202)", () =>
 				)
 				.orderBy(desc(environmentProbes.probed_at)),
 		);
-		expect(control).toContain('"Node Type":"Sort"');
-		expect(control).not.toContain("idx_environment_probes_env_time");
+		// The control SORTS the history, which is the cost being removed, and the assertion says
+		// exactly that rather than "a Sort appears somewhere".
+		expect(sortsOnly(control, "environment_probes")).toBe(true);
+		// NOTHING IS ASSERTED ABOUT WHICH INDEX THE CONTROL TOUCHES, deliberately. The obvious
+		// second assertion — that the old shape cannot reach idx_environment_probes_env_time — is
+		// not true: the index leads on environment_id and this query has no equality on it, so it
+		// cannot serve the PREDICATE or the ORDERING, but with sequential scans disabled Postgres
+		// may still read the whole relation through it with no Index Cond at all, simply as a way
+		// to reach the heap. A correct control would then fail while proving nothing. The sort is
+		// the difference between the two shapes, and the sort is what is asserted.
 	});
 });
