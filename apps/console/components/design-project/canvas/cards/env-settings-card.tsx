@@ -14,6 +14,7 @@ import {
 	registryUnavailable,
 	secretsStoreUnavailable,
 } from "@/lib/canvas/environment-connector";
+import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { ConfigFields } from "../inspector/config-fields";
 import { getKindConfig } from "../inspector/config-schema";
 import { ConnectorSelect } from "../inspector/connector-select";
@@ -57,6 +58,15 @@ export function EnvSettingsButton() {
  * keep dragging cards on the board while it is open.
  */
 export function EnvSettingsCard() {
+	const envStatus = useEnvironmentStatus();
+	// A BYO-IaC source in replace mode OWNS the substrate: the cluster's version and the VPC come
+	// from the module, and a deploy ignores anything staged here. The toolbar button that used to be
+	// the only way in is hidden in that case, but the card is reachable by other routes — the Secrets
+	// vault's "Store · …" row, and the `?card=env-settings` deep link — so the gate belongs on the
+	// SECTIONS, not on the button. Hiding the two substrate sections rather than refusing the whole
+	// card keeps the settings the console still owns reachable; refusing outright would make that
+	// readout do nothing at all, with no way for the operator to tell why.
+	const iacGoverned = envStatus.iac !== null;
 	const closeCard = useCanvasStore((s) => s.closeCard);
 	const cardBack = useCanvasStore((s) => s.cardBack);
 	const goBackCard = useCanvasStore((s) => s.goBackCard);
@@ -117,7 +127,13 @@ export function EnvSettingsCard() {
 						Back
 					</button>
 				)}
-				{cluster && clusterSchema && (
+				{iacGoverned && (
+					<p className="text-xs text-muted-foreground">
+						This environment&apos;s cluster and network are defined by its infrastructure
+						source, so they are not edited here.
+					</p>
+				)}
+				{!iacGoverned && cluster && clusterSchema && (
 					<section className="space-y-2">
 						<SectionHeading level={3} title="Cluster" />
 						{/* Compat sits next to the Kubernetes version that causes it (#1221). Silent unless
@@ -137,7 +153,7 @@ export function EnvSettingsCard() {
 						/>
 					</section>
 				)}
-				{network && networkSchema && (
+				{!iacGoverned && network && networkSchema && (
 					<section className="space-y-2">
 						<SectionHeading level={3} title="Network (VPC)" />
 						<ConfigFields

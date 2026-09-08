@@ -6,14 +6,17 @@
 // closes the card (leaving Architecture used to need an effect in the shell for this), and the
 // deep-link grammar the canvas consumes on mount.
 
-import { render, screen } from "@testing-library/react";
+import { act, render, renderHook, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { parseCardParam } from "@/components/design-project/canvas/cards/card-param";
+import {
+	parseCardParam,
+	useCardDeepLink,
+} from "@/components/design-project/canvas/cards/card-param";
 import {
 	isRailOpen,
 	WorkspaceRail,
 } from "@/components/design-project/canvas/cards/workspace-rail";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useCanvasStore, type WorkspaceCard } from "@/lib/stores/use-canvas-store";
 
 // Each card body is mocked to a labelled stub: the rail's job is to route, not to render them.
 vi.mock("@/components/design-project/canvas/node-inspector", () => ({
@@ -44,44 +47,62 @@ describe("WorkspaceRail", () => {
 		expect(document.querySelector("[data-slot=sheet-overlay]")).toBeNull();
 	});
 
+	// Every store write goes through `act`. A zustand write from outside it does reach the store, but
+	// React is never told to flush, so the rail renders its INITIAL state and the assertion reads a
+	// closed rail — which looks exactly like a routing bug in the component under test.
 	it("routes every card kind to its card", () => {
 		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
-		const s = useCanvasStore.getState();
+		const open = (card: WorkspaceCard) =>
+			act(() => useCanvasStore.getState().openCard(card));
 
-		s.openCard({ kind: "inspector", nodeId: "database-orders" });
+		open({ kind: "inspector", nodeId: "database-orders" });
 		expect(screen.getByText("inspector card")).toBeInTheDocument();
 		expect(screen.getByTestId("workspace-rail")).toHaveAttribute("data-open", "true");
 
-		s.openCard({ kind: "env-settings" });
+		open({ kind: "env-settings" });
 		expect(screen.getByText("env settings card")).toBeInTheDocument();
 		expect(screen.queryByText("inspector card")).not.toBeInTheDocument();
 
-		s.openCard({ kind: "addon", itemId: "grafana" });
+		open({ kind: "addon", itemId: "grafana" });
 		expect(screen.getByText("addon card grafana")).toBeInTheDocument();
 
-		s.openCard({ kind: "chart-scan", chartId: "web" });
+		open({ kind: "chart-scan", chartId: "web" });
 		expect(screen.getByText("chart scan web")).toBeInTheDocument();
 
-		s.openCard({ kind: "iac-scan" });
+		open({ kind: "iac-scan" });
 		expect(screen.getByText("iac scan card")).toBeInTheDocument();
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 
-	it("the add-on card needs a project — the create flow has none, so the rail stays empty", () => {
+	// The rail must be SHUT, not merely empty. It was open-and-blank: 392px of nothing, with no
+	// header and no close button, reachable in the create flow through `?card=addon:grafana`.
+	it("the add-on card needs a project — the create flow has none, so the rail stays shut", () => {
 		render(<WorkspaceRail />);
-		useCanvasStore.getState().openCard({ kind: "addon", itemId: "grafana" });
+		act(() => useCanvasStore.getState().openCard({ kind: "addon", itemId: "grafana" }));
 		expect(screen.queryByText(/addon card/)).not.toBeInTheDocument();
+		expect(screen.getByTestId("workspace-rail")).toHaveAttribute("data-open", "false");
 	});
 
 	it("stays closed for the activity card until its lane lands", () => {
-		expect(isRailOpen({ kind: "activity" })).toBe(false);
-		expect(isRailOpen({ kind: "env-settings" })).toBe(true);
-		expect(isRailOpen(null)).toBe(false);
+		expect(isRailOpen({ kind: "activity" }, { projectId: "p1" })).toBe(false);
+		expect(isRailOpen({ kind: "env-settings" }, { projectId: "p1" })).toBe(true);
+		expect(isRailOpen(null, { projectId: "p1" })).toBe(false);
+	});
+
+	// `isRailOpen` and `CardBody` have to give ONE answer. Every kind a body can decline must be
+	// declined here too, or the rail opens onto a card that renders nothing.
+	it("agrees with the body about every card kind it can decline", () => {
+		const addon: WorkspaceCard = { kind: "addon", itemId: "grafana" };
+		expect(isRailOpen(addon, {})).toBe(false);
+		expect(isRailOpen(addon, { projectId: "p1" })).toBe(true);
+		// Cards whose subject is the canvas itself need nothing from the host.
+		expect(isRailOpen({ kind: "iac-scan" }, {})).toBe(true);
+		expect(isRailOpen({ kind: "inspector", nodeId: "n" }, {})).toBe(true);
 	});
 
 	it("unmounting the rail closes the card", () => {
 		const { unmount } = render(<WorkspaceRail projectId="p1" environmentId="e1" />);
-		useCanvasStore.getState().openCard({ kind: "env-settings" });
+		act(() => useCanvasStore.getState().openCard({ kind: "env-settings" }));
 		unmount();
 		expect(useCanvasStore.getState().card).toBeNull();
 	});
@@ -101,5 +122,45 @@ describe("parseCardParam", () => {
 		expect(parseCardParam("node:")).toBeNull();
 		expect(parseCardParam("bogus:1")).toBeNull();
 		expect(parseCardParam("inspector")).toBeNull();
+	});
+});
+
+describe("useCardDeepLink", () => {
+	// The regression this pins: the canvas is a CHILD of the workbench, whose mount effect seeds the
+	// graph and clears the open card. React runs the child's effects first, so opening the card
+	// synchronously was undone a moment later and the link silently did nothing.
+	it("opens the card AFTER a parent's mount effect has seeded the graph", async () => {
+		const search = new URLSearchParams("environment_id=e1&card=env-settings");
+		const openCard = (card: WorkspaceCard) => useCanvasStore.getState().openCard(card);
+
+		renderHook(() => useCardDeepLink(search, openCard));
+		// What the workbench does to the store immediately after this effect runs.
+		act(() => useCanvasStore.setState({ card: null }));
+
+		await Promise.resolve();
+		expect(useCanvasStore.getState().card).toEqual({ kind: "env-settings" });
+	});
+
+	it("strips only `card`, and without a router navigation", () => {
+		const replaceState = vi.spyOn(window.history, "replaceState");
+		const search = new URLSearchParams("environment_id=e1&card=activity");
+
+		renderHook(() => useCardDeepLink(search, () => {}));
+
+		// `router.replace` would re-render the server component, hand the workbench a fresh
+		// `sourceProject` and re-run its seeding effect — clearing the card a second time for a URL
+		// change the user never made. Editing the address bar directly is all this needs.
+		expect(replaceState).toHaveBeenCalledTimes(1);
+		const url = String(replaceState.mock.calls[0]?.[2]);
+		expect(url).toContain("environment_id=e1");
+		expect(url).not.toContain("card=");
+		replaceState.mockRestore();
+	});
+
+	it("does nothing at all without the param", () => {
+		const replaceState = vi.spyOn(window.history, "replaceState");
+		renderHook(() => useCardDeepLink(new URLSearchParams("environment_id=e1"), () => {}));
+		expect(replaceState).not.toHaveBeenCalled();
+		replaceState.mockRestore();
 	});
 });

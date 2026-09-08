@@ -243,4 +243,31 @@ describe("AddonConfigCard", () => {
 		expect(screen.getByText(/not in the catalog/i)).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /enable add-on/i })).not.toBeInTheDocument();
 	});
+
+	// The add-ons query polls every 15s and the form seeds react-hook-form through `values`, which
+	// re-`reset()`s whenever that object deep-changes. Resolving the item live meant a teammate (or
+	// the user's own second tab) enabling the same add-on would silently wipe whatever was being
+	// typed. The Sheet this card replaced captured the item at click time and could not do that.
+	it("keeps the row it opened with, so a background refetch cannot reset the open form", () => {
+		vi.mocked(useAddonsQuery).mockReturnValue({
+			data: { items: [BASE_ITEM], hasAppsRepo: true },
+			isPending: false,
+		} as unknown as ReturnType<typeof useAddonsQuery>);
+		const { rerender } = render(
+			<AddonConfigCard itemId={BASE_ITEM.id} projectId="p1" environmentId="e1" />,
+		);
+		// Not installed → the footer offers Enable.
+		expect(screen.getByRole("button", { name: /enable add-on/i })).toBeInTheDocument();
+
+		// A poll lands with the SAME add-on now installed by someone else.
+		vi.mocked(useAddonsQuery).mockReturnValue({
+			data: { items: [{ ...BASE_ITEM, install: INSTALL }], hasAppsRepo: true },
+			isPending: false,
+		} as unknown as ReturnType<typeof useAddonsQuery>);
+		rerender(<AddonConfigCard itemId={BASE_ITEM.id} projectId="p1" environmentId="e1" />);
+
+		// The form is unchanged: it still belongs to the person typing in it.
+		expect(screen.getByRole("button", { name: /enable add-on/i })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /remove/i })).not.toBeInTheDocument();
+	});
 });

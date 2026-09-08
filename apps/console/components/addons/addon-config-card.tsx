@@ -15,6 +15,7 @@
 
 import { asRecord } from "@/lib/records";
 import { ChevronsUpDown } from "lucide-react";
+import { useRef } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { Badge } from "@repo/ui/badge";
@@ -120,7 +121,22 @@ export function AddonConfigCard({
   const addons = useAddonsQuery(projectId, environmentId);
   const closeCard = useCanvasStore((s) => s.closeCard);
   const provider = useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID));
-  const item = addons.data?.items.find((i) => i.id === itemId) ?? null;
+  const live = addons.data?.items.find((i) => i.id === itemId) ?? null;
+
+  // The row is FROZEN at the moment the card resolves it, and that is the whole point. This query
+  // polls every 15s and `AddonConfigForm` seeds react-hook-form through the `values` option, which
+  // re-`reset()`s the form whenever that object deep-changes — so a teammate (or the user's own
+  // second tab) enabling or reconfiguring the same add-on would land a refetch that silently wiped
+  // whatever was half-typed, the Advanced YAML override above all. The Sheet this card replaced
+  // could not do that, because it captured the item at click time; a card resolving live from the
+  // poll reintroduced the hazard. Freezing restores the old guarantee: an open form belongs to the
+  // person typing in it.
+  const frozen = useRef<AddonMarketItem | null>(null);
+  if (live && (frozen.current === null || frozen.current.id !== itemId)) {
+    frozen.current = live;
+  }
+  const item = frozen.current?.id === itemId ? frozen.current : null;
+
   if (!item) {
     return (
       <SheetCard title="Add-on" eyebrow="Add-on" onClose={closeCard}>

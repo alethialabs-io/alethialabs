@@ -15,13 +15,33 @@ import { IacScanCard } from "./iac-scan-card";
 export const RAIL_W = 392;
 export const RAIL_GAP = 12;
 
+/** What the rail knows about its host, for the cards whose subject is not always present. */
+export interface RailContext {
+	/** The project the cards act on. Absent in the create flow, which has no project yet. */
+	projectId?: string;
+}
+
 /**
- * Whether the rail has something to draw for a card. The `activity` card is declared in the
- * store's union ahead of its lane; until that lands the rail stays closed for it rather than
- * drawing an empty column.
+ * Whether the rail has something to draw for a card. The `activity` card is declared in the store's
+ * union ahead of its lane; until that lands the rail stays closed for it rather than drawing an
+ * empty column.
+ *
+ * It takes the same context `CardBody` does, and that is the point rather than a convenience: the
+ * two answers must be one answer. An add-on card needs a project, so in the create flow — reachable
+ * with `?card=addon:grafana`, which `parseCardParam` accepts — `CardBody` drew nothing while this
+ * said the rail was open, leaving a 392px empty column with no header and no close button. Every
+ * case a body can decline has to be declined here too.
  */
-export function isRailOpen(card: WorkspaceCard | null): boolean {
-	return card !== null && card.kind !== "activity";
+export function isRailOpen(card: WorkspaceCard | null, ctx: RailContext = {}): boolean {
+	if (card === null) return false;
+	switch (card.kind) {
+		case "activity":
+			return false;
+		case "addon":
+			return ctx.projectId !== undefined;
+		default:
+			return true;
+	}
 }
 
 /** A stable key per card so switching cards crossfades instead of morphing one body into another. */
@@ -67,7 +87,7 @@ export function WorkspaceRail({
 
 	useEffect(() => () => closeCard(), [closeCard]);
 
-	const open = isRailOpen(card);
+	const open = isRailOpen(card, { projectId });
 
 	return (
 		<motion.div
@@ -123,6 +143,8 @@ function CardBody({
 		case "env-settings":
 			return <EnvSettingsCard />;
 		case "addon":
+			// `isRailOpen` declines this card without a project, so the rail never opens for it —
+			// this branch keeps the types honest rather than describing a reachable state.
 			return projectId ? (
 				<AddonConfigCard
 					itemId={card.itemId}

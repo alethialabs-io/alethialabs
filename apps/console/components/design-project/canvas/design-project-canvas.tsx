@@ -54,7 +54,7 @@ import { RunMenu } from "./run-menu";
 import { CanvasCommandPalette } from "./canvas-command-palette";
 import { CanvasControls } from "./canvas-controls";
 import { CanvasFlow, CanvasInteractionContext } from "./canvas-flow";
-import { parseCardParam } from "./cards/card-param";
+import { useCardDeepLink } from "./cards/card-param";
 import { EnvSettingsButton } from "./cards/env-settings-card";
 import { isRailOpen, WorkspaceRail } from "./cards/workspace-rail";
 import { useDropPosition } from "./use-drop-position";
@@ -161,17 +161,9 @@ function CanvasInner({
 	// IaC module and the architecture derived from it.
 	const envStatus = useEnvironmentStatus();
 	// A deep link can name the card to open (`?card=activity|env-settings|node:<id>|addon:<id>`)
-	// — the Jobs page and the assistant link here. Consumed once on mount and stripped, keeping
-	// every other param (the environment above all), so a refresh doesn't re-open it.
-	useEffect(() => {
-		const target = parseCardParam(searchParams.get("card"));
-		if (!target) return;
-		openCard(target);
-		const rest = new URLSearchParams(searchParams.toString());
-		rest.delete("card");
-		const query = rest.toString();
-		router.replace(`${window.location.pathname}${query ? `?${query}` : ""}`);
-	}, [searchParams, openCard, router]);
+	// — the Jobs page and the assistant link here. Both ordering hazards it has to survive are
+	// documented on the hook.
+	useCardDeepLink(searchParams, openCard);
 
 	/** Edit mode: tear down the active environment (queued from the project card's danger zone). */
 	const handleDestroyEnvironment = useCallback(async () => {
@@ -697,7 +689,7 @@ function CanvasInner({
 			<div
 				className={cn(
 					"relative min-h-[480px] min-w-0 flex-1",
-					isRailOpen(card) && "border-r border-border",
+					isRailOpen(card, { projectId }) && "border-r border-border",
 				)}
 			>
 				{boardContent}
