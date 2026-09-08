@@ -14,9 +14,11 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/spec"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
@@ -722,5 +724,96 @@ func TestHygUp_DocsCarryTheGeneratedTables(t *testing.T) {
 				t.Errorf("%s does not name --%s of `alethia %s`", tc.page, f.Name, tc.cmd)
 			}
 		})
+	}
+}
+
+// TestUp_RefusesAuthoringFlagsAgainstAnExistingManifest is the flag-silently-ignored refusal.
+//
+// Before it, `up --project boutique …` in a directory holding another project's manifest created
+// and DEPLOYED that other project without a word about the flags it was handed.
+func TestUp_RefusesAuthoringFlagsAgainstAnExistingManifest(t *testing.T) {
+	for _, flag := range []struct{ name, value string }{
+		{"--project", "boutique"},
+		{"--region", "nbg1"},
+		{"--stage", "production"},
+		{"--cloud-account", "prod-account"},
+	} {
+		t.Run(flag.name, func(t *testing.T) {
+			s := &projServer{envs: applyDemoEnvs()}
+			h := upEnv(t, s)
+			dir := chdirTo(t)
+			if err := os.WriteFile(filepath.Join(dir, manifest.FileName), []byte(applyDemoManifest), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if !h.run("up", "--yes", "--no-input", flag.name, flag.value) {
+				t.Fatalf("up must refuse %s when the manifest already exists", flag.name)
+			}
+		})
+	}
+}
+
+// TestUp_AppliesAnExistingManifestWithNoAuthoringFlags is the control for the refusal above: the
+// same command WITHOUT those flags must still run, or the guard has closed the ordinary path.
+func TestUp_AppliesAnExistingManifestWithNoAuthoringFlags(t *testing.T) {
+	s := &projServer{envs: applyDemoEnvs()}
+	h := upEnv(t, s)
+	dir := chdirTo(t)
+	if err := os.WriteFile(filepath.Join(dir, manifest.FileName), []byte(applyDemoManifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if h.run("up", "--yes", "--runner", "primary", "--no-wait", "--no-input") {
+		t.Error("up exited fatally with no authoring flags — the refusal is too wide")
+	}
+}
+
+// TestRefuseAuthoringFlags_NamesEveryFlagGiven drives the helper directly: the message has to list
+// what was passed, because "some flag was ignored" is not actionable.
+func TestRefuseAuthoringFlags_NamesEveryFlagGiven(t *testing.T) {
+	cmd := &cobra.Command{Use: "up"}
+	for _, f := range authoringFlags {
+		cmd.Flags().String(f, "", "")
+	}
+	if err := refuseAuthoringFlags(cmd, "alethia.yaml"); err != nil {
+		t.Fatalf("nothing was passed, so nothing may be refused: %v", err)
+	}
+	if err := cmd.Flags().Set("project", "boutique"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Flags().Set("region", "nbg1"); err != nil {
+		t.Fatal(err)
+	}
+	err := refuseAuthoringFlags(cmd, "alethia.yaml")
+	if err == nil {
+		t.Fatal("two authoring flags against an existing manifest must be refused")
+	}
+	for _, want := range []string{"--project", "--region", "alethia.yaml"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q:\n%v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "--stage") {
+		t.Errorf("the refusal names a flag that was not passed:\n%v", err)
+	}
+}
+
+// TestEnsureLoggedIn_RefusesFirstRunSignInForAMachineFormat covers the other half of the
+// prose-in-the-json-stream defect: the first-run flow prints a device code that cannot be
+// silenced, so a machine-readable run has to refuse rather than corrupt the document.
+func TestEnsureLoggedIn_RefusesFirstRunSignInForAMachineFormat(t *testing.T) {
+	// A config dir with no credentials.json, so the "already signed in" arm cannot fire.
+	// Both variables are set because os.UserConfigDir reads XDG_CONFIG_HOME on Linux and
+	// HOME on macOS, and this test has to mean the same thing on the CI runner and here.
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	t.Setenv(ServiceTokenEnv, "")
+	_, err := ensureLoggedIn(io.Discard, ui.FormatJSON)
+	if err == nil {
+		t.Fatal("--output json with no credential must refuse rather than print a device code")
+	}
+	for _, want := range []string{"alethia login", ServiceTokenEnv} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q, so it is not actionable:\n%v", want, err)
+		}
 	}
 }

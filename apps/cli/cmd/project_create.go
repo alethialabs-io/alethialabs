@@ -188,7 +188,8 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 			environments = m.EnvironmentSpecs()
 			fileRef = manifestPath
 		} else if promptsEnabled() {
-			if environments, err = promptEnvMatrix(); err != nil {
+			if environments, err = promptEnvMatrix(
+				"Otherwise the server creates its default Production + Preview pair"); err != nil {
 				fail(err)
 			}
 			matrixAsked = len(environments) > 0
@@ -352,13 +353,17 @@ func printManifestReplay(out io.Writer, format string, params api.CreateProjectP
 // promptEnvMatrix asks for the environment matrix one environment at a time and returns it as
 // the wire shape — the same shape a manifest's environments render to, so the form and the file
 // are one spec with two entry points rather than two grammars.
-func promptEnvMatrix() ([]api.EnvironmentSpec, error) {
+//
+// declineNote says what NOT declaring a matrix leaves you with, and it is a parameter because the
+// two callers give different answers. `project create` posts no environments and the server seeds
+// its Production + Preview pair; `up` writes a manifest whose fallback is one environment at the
+// chosen stage, and `apply` then creates exactly that. Sharing one sentence meant `up` promised a
+// preview environment it never created.
+func promptEnvMatrix(declineNote string) ([]api.EnvironmentSpec, error) {
 	if err := requireInteractiveForm(); err != nil {
 		return nil, err
 	}
-	declare, err := askYesNo(
-		"Declare the environment matrix now?",
-		"Otherwise the server creates its default Production + Preview pair")
+	declare, err := askYesNo("Declare the environment matrix now?", declineNote)
 	if err != nil {
 		return nil, err
 	}

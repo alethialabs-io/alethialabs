@@ -83,7 +83,12 @@ Pass --web-origin to supply the URL without the prompt; with --no-input and no
 			fail(err)
 		}
 		client := api.NewClient(token)
-		if err := ensureCloudAccount(client, os.Stdout, format, ""); err != nil {
+		// The resolved account is passed, not "": that is what turns `ensureCloudAccount` from a
+		// count into a REFUSAL. With "" a mistyped `--cloud-account prod-acount` writes the typo
+		// into alethia.yaml, prints a success line, and surfaces at the next `alethia apply` as
+		// `cloud.account "prod-acount" not found` — one command away from the flag that caused it.
+		// `up` has always passed its own value here; `init` writing the file is the same promise.
+		if err := ensureCloudAccount(client, os.Stdout, format, values.Get("account")); err != nil {
 			fail(err)
 		}
 		if err := authorManifest(client, token, os.Stdout, format, path, values); err != nil {
