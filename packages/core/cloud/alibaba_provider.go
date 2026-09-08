@@ -196,6 +196,13 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		if len(cache.AllowedCidrBlocks) > 0 {
 			tfvars["kvstore_security_ips"] = cache.AllowedCidrBlocks
 		}
+		// Generic passthrough — see mergeProviderConfig (aws_provider.go). Every typed emit above is
+		// reserved unconditionally; all four conditional ones render NOTHING when unset so an
+		// existing instance keeps its own topology and whitelist, and a provider_config key must not
+		// become the value the canvas deliberately left out.
+		mergeProviderConfig(tfvars, cache.ProviderConfig,
+			"create_kvstore", "kvstore_engine_version", "kvstore_instance_class", "kvstore_multi_az",
+			"kvstore_shard_count", "kvstore_security_ips")
 	}
 
 	if inst := resolveInstanceTypes("alibaba", config.Cluster); len(inst) > 0 {
@@ -321,6 +328,8 @@ func alibabaOutputString(outputs map[string]interface{}, key string) string {
 	return ""
 }
 
+// buildMNSQueues maps each canvas queue onto one entry of the `mns_queues` tfvar; a queue's
+// provider_config merges into its own entry.
 func buildMNSQueues(queues []types.ProjectQueueConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, q := range queues {
@@ -331,11 +340,14 @@ func buildMNSQueues(queues []types.ProjectQueueConfig) map[string]interface{} {
 		if q.MessageRetention != nil {
 			cfg["message_retention_period"] = *q.MessageRetention
 		}
+		mergeItemProviderConfig(cfg, q.ProviderConfig, "visibility_timeout", "message_retention_period")
 		result[q.Name] = cfg
 	}
 	return result
 }
 
+// buildMNSTopics maps each canvas topic onto one entry of the `mns_topics` tfvar, subscriptions
+// included; a topic's provider_config merges into its own entry.
 func buildMNSTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
@@ -346,7 +358,9 @@ func buildMNSTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 				"endpoint": s.Endpoint,
 			})
 		}
-		result[t.Name] = map[string]interface{}{"subscriptions": subs}
+		entry := map[string]interface{}{"subscriptions": subs}
+		mergeItemProviderConfig(entry, t.ProviderConfig, "subscriptions")
+		result[t.Name] = entry
 	}
 	return result
 }
@@ -375,6 +389,10 @@ func buildOTSTables(tables []types.ProjectNosqlConfig) []map[string]interface{} 
 				},
 			},
 		}
+		// `primary_key` / `primary_key_type` are the WRONG spellings this builder used to emit
+		// (#1836); reserving them keeps a stale provider_config from re-emitting the pair the
+		// module's `try` would once again swallow.
+		mergeItemProviderConfig(entry, t.ProviderConfig, "name", "primary_keys", "primary_key", "primary_key_type")
 		result = append(result, entry)
 	}
 	return result
@@ -430,11 +448,16 @@ func buildCRRepos(config *types.ProjectConfig) map[string]interface{} {
 		// default here is NO scan rule — before #1845 the module created none, so an older
 		// snapshot must keep planning none.
 		scanning := r.VulnerabilityScanning != nil && *r.VulnerabilityScanning
-		out[r.Name] = map[string]interface{}{
+		entry := map[string]interface{}{
 			"summary":                "Container images for " + r.Name,
 			"immutable_tags":         immutable,
 			"vulnerability_scanning": scanning,
 		}
+		// The registry is an ITEM on Alibaba, as on GCP: the template declares no root `cr_*` knob
+		// beyond the provision flag and this map, and — per the note above — the instance's own
+		// arguments are never a place for a per-registry value to land.
+		mergeItemProviderConfig(entry, r.ProviderConfig, "summary", "immutable_tags", "vulnerability_scanning")
+		out[r.Name] = entry
 	}
 	return out
 }
@@ -495,23 +518,30 @@ func buildOSSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]in
 			"cors_origins":  b.CorsOrigins,
 			"sse_algorithm": sseAlgorithm,
 		}
+		// `encryption_algorithm` is reserved because ossSSEAlgorithm consumes it under `sse_algorithm`.
+		mergeItemProviderConfig(entry, b.ProviderConfig,
+			"name_suffix", "acl", "versioning", "cors_origins", "sse_algorithm", "encryption_algorithm")
 		result = append(result, entry)
 	}
 	return result
 }
 
+// buildAlibabaSecrets maps each NATIVELY provisioned secret onto one entry of the `custom_secrets`
+// tfvar (KMS); a secret's provider_config merges into its own entry.
 func buildAlibabaSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
 		if !secretProvisionedNatively(s.Provider) {
 			continue // read via ESO from its pluggable/cross-account store, not created here
 		}
-		result = append(result, map[string]interface{}{
+		entry := map[string]interface{}{
 			"name":          s.Name,
 			"generate":      s.Generate,
 			"length":        s.Length,
 			"special_chars": s.SpecialChars,
-		})
+		}
+		mergeItemProviderConfig(entry, s.ProviderConfig, "name", "generate", "length", "special_chars")
+		result = append(result, entry)
 	}
 	return result
 }

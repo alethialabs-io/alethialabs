@@ -310,6 +310,34 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 				tfvars["redis_allowed_cidr_blocks"] = cache.AllowedCidrBlocks
 			}
 		}
+		// Generic passthrough — same contract as the database's above. The cache is a ROOT-level
+		// component on every cloud (one instance, `redis_*`/`valkey_*` variables), so the merge is
+		// into tfvars itself. Every key the two branches above emit is reserved UNCONDITIONALLY, not
+		// merely protected by merge-if-absent: `redis_multi_az_enabled` is written only when the
+		// typed field is set, and without the reservation a provider_config key would fill the gap
+		// the canvas left on purpose — the same walk-around the IAM-auth reservation closes.
+		mergeProviderConfig(tfvars, cache.ProviderConfig,
+			"create_elasticache_redis", "create_elasticache_valkey",
+			"valkey_data_storage_max", "valkey_engine_version",
+			"redis_instance_type", "redis_engine_version", "redis_family", "redis_cluster_size",
+			"redis_cluster_mode_enabled", "redis_multi_az_enabled", "redis_allowed_cidr_blocks",
+			"redis_allowed_security_group_ids", "redis_cloudwatch_logs_enabled")
+	}
+
+	// Container registries are ROOT-level on AWS: the template declares a dozen `ecr_*` variables
+	// (encryption type, lifecycle policy, registry scanning, access ARNs) that apply to the ECR
+	// module as a whole, so a registry's provider_config merges into tfvars rather than into its
+	// `ecr_repo_settings` entry — that map's object type declares only the two canvas switches and
+	// would drop anything else. Only NATIVE registries merge: a pluggable registry (connectors.slug)
+	// is not ECR's to configure. Merge-if-absent means the first native registry that names a knob
+	// wins, the same rule `config.Databases[0]` applies to the database.
+	for _, r := range config.ContainerRegistries {
+		if r.Provider != "" && r.Provider != "native" {
+			continue
+		}
+		mergeProviderConfig(tfvars, r.ProviderConfig,
+			"provision_ecr", "ecr_names_map", "ecr_repo_settings",
+			"ecr_repository_image_tag_mutability", "ecr_repository_image_scan_on_push")
 	}
 
 	if inst := resolveInstanceTypes("aws", config.Cluster); len(inst) > 0 {
@@ -365,6 +393,24 @@ func mergeProviderConfig(tfvars map[string]interface{}, pc map[string]any, reser
 			tfvars[k] = v
 		}
 	}
+}
+
+// mergeItemProviderConfig is mergeProviderConfig for a component the template models as ONE ENTRY
+// of a map(object)/list variable — a queue in `sqs_queues`, a bucket in `bucket_configuration`, a
+// repository in `artifact_registry_repos` — rather than as root-level variables of its own. The
+// contract is identical (merge-if-absent into the per-item object; `reserved` names the attributes
+// the builder owns, whether emitted conditionally, consumed under another name, or withdrawn), and
+// the body delegates. It exists as a separate name because the SHAPE is the fact a reader needs:
+// apps/console/scripts/check-config-carriage.mjs attributes a `mergeProviderConfig` site to a kind
+// by the root binding it merges into, and an item site merged under that name would be read as
+// reaching root tfvars it never touches.
+//
+// What survives is the template's decision, exactly as it is for a root variable: a `map(any)` /
+// `list(any)` item carries any attribute the caller names, while a typed `object({...})` item
+// silently drops an attribute it does not declare (#1994 is the recorded case). Declared coverage
+// is measured by check-offer-parity; this is only the plumbing.
+func mergeItemProviderConfig(item map[string]interface{}, pc map[string]any, reserved ...string) {
+	mergeProviderConfig(item, pc, reserved...)
 }
 
 func ensureSlice(s []interface{}) []interface{} {
@@ -561,11 +607,18 @@ func buildSQSQueues(queues []types.ProjectQueueConfig, topics []types.ProjectTop
 		if d, ok := providerInt(q.ProviderConfig, "delay_seconds"); ok {
 			cfg["delay_seconds"] = d
 		}
+		// `delay_seconds` is reserved even though it is consumed just above: providerInt refuses a
+		// non-numeric value, and without the reservation that refused value would be re-injected raw.
+		mergeItemProviderConfig(cfg, q.ProviderConfig,
+			"fifo_queue", "content_based_deduplication", "dlq_enable",
+			"visibility_timeout_seconds", "message_retention_seconds", "delay_seconds")
 		result[q.Name] = cfg
 	}
 	return result
 }
 
+// buildSNSTopics maps each canvas topic onto one entry of the `sns_topics` tfvar, subscriptions
+// included; a topic's provider_config merges into its own entry.
 func buildSNSTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
@@ -576,9 +629,11 @@ func buildSNSTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 				"endpoint": s.Endpoint,
 			})
 		}
-		result[t.Name] = map[string]interface{}{
+		entry := map[string]interface{}{
 			"subscriptions": subs,
 		}
+		mergeItemProviderConfig(entry, t.ProviderConfig, "subscriptions")
+		result[t.Name] = entry
 	}
 	return result
 }
@@ -702,6 +757,9 @@ func ecrRepoBaseName(name string) string {
 	return b.String()
 }
 
+// buildSecrets maps each NATIVELY provisioned secret onto one entry of the `custom_secrets` tfvar —
+// a generated one by length/charset, a manual one by the `manual` flag; a secret's provider_config
+// merges into its own entry.
 func buildSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
@@ -717,6 +775,9 @@ func buildSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} 
 		} else {
 			entry["manual"] = true
 		}
+		// `length`/`special`/`manual` are reserved on BOTH branches: each is written only on one
+		// side of the switch, and a provider_config key must not fill the side the switch left empty.
+		mergeItemProviderConfig(entry, s.ProviderConfig, "secret_name", "length", "special", "manual")
 		result = append(result, entry)
 	}
 	return result
@@ -731,6 +792,8 @@ func hasGlobalTables(tables []types.ProjectNosqlConfig) bool {
 	return false
 }
 
+// buildDDBTables maps the canvas's NoSQL tables of ONE table type (standard | global) onto the
+// matching `ddb_*_table_configuration` list; a table's provider_config merges into its own entry.
 func buildDDBTables(tables []types.ProjectNosqlConfig, tableType string) []map[string]interface{} {
 	result := []map[string]interface{}{}
 	for _, t := range tables {
@@ -755,11 +818,19 @@ func buildDDBTables(tables []types.ProjectNosqlConfig, tableType string) []map[s
 		if tableType == "global" && len(t.GlobalReplicas) > 0 {
 			entry["replicas"] = t.GlobalReplicas
 		}
+		// `replicas` is reserved on both table types: a regional table must never carry one, and a
+		// global table's come from the canvas's region picker, not from a hand-typed key.
+		mergeItemProviderConfig(entry, t.ProviderConfig,
+			"table_name_suffix", "hash_key", "hash_key_type", "range_key", "range_key_type",
+			"billing_mode", "enable_point_in_time_recovery", "replicas")
 		result = append(result, entry)
 	}
 	return result
 }
 
+// buildS3Buckets maps each canvas bucket onto one entry of the `bucket_configuration` tfvar —
+// public-access block, versioning, SSE and CORS; a bucket's provider_config merges into its own
+// entry. `encryption_algorithm` is reserved because s3SSEAlgorithm consumes it under `sse_algorithm`.
 func buildS3Buckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
@@ -774,7 +845,7 @@ func buildS3Buckets(buckets []types.ProjectStorageBucketConfig) []map[string]int
 				"max_age_seconds": 3600,
 			})
 		}
-		result = append(result, map[string]interface{}{
+		entry := map[string]interface{}{
 			"bucket_name_suffix":      b.Name,
 			"acl_type":                "private",
 			"create_s3_user":          false,
@@ -786,7 +857,13 @@ func buildS3Buckets(buckets []types.ProjectStorageBucketConfig) []map[string]int
 			"ignore_public_acls":      blockPublic,
 			"restrict_public_buckets": blockPublic,
 			"cors_configuration":      cors,
-		})
+		}
+		mergeItemProviderConfig(entry, b.ProviderConfig,
+			"bucket_name_suffix", "acl_type", "create_s3_user", "versioning_enabled",
+			"sse_algorithm", "encryption_algorithm", "store_access_key_in_ssm",
+			"block_public_acls", "block_public_policy", "ignore_public_acls",
+			"restrict_public_buckets", "cors_configuration")
+		result = append(result, entry)
 	}
 	return result
 }

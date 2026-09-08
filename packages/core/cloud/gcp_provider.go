@@ -259,6 +259,24 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 				tfvars["memorystore_redis_version"] = v
 			}
 		}
+		// Generic passthrough — see mergeProviderConfig (aws_provider.go). Every key either engine
+		// branch emits is reserved UNCONDITIONALLY: `memorystore_tier` and the valkey replica count
+		// are written only when the canvas asked, and a provider_config key must not fill the gap it
+		// left — the same rule the database's IAM-auth reservation applies.
+		mergeProviderConfig(tfvars, cache.ProviderConfig,
+			"create_memorystore", "create_memorystore_valkey",
+			"memorystore_valkey_shard_count", "memorystore_valkey_replica_count",
+			"memorystore_valkey_engine_version",
+			"memorystore_tier", "memorystore_memory_size_gb", "memorystore_redis_version")
+	}
+
+	// NoSQL is ROOT-level on GCP, unlike every other cloud: Firestore is ONE database per project
+	// (see the `create_firestore` note above), so a "table" has no per-item tfvars object to merge
+	// into and its provider_config reaches the database's own `firestore_*` variables instead.
+	// Merge-if-absent means the first table naming a knob wins — the same rule PITR's ANY-aggregate
+	// applies to the one switch the typed fields carry.
+	for _, t := range config.NosqlTables {
+		mergeProviderConfig(tfvars, t.ProviderConfig, "create_firestore", "firestore_point_in_time_recovery")
 	}
 
 	if inst := resolveInstanceTypes("gcp", config.Cluster); len(inst) > 0 {
@@ -356,10 +374,12 @@ func buildPubSubTopics(topics []types.ProjectTopicConfig, queues []types.Project
 				"enable_message_ordering": false,
 			})
 		}
-		result[t.Name] = map[string]interface{}{
+		entry := map[string]interface{}{
 			"message_retention_duration": "86400s",
 			"subscriptions":              subs,
 		}
+		mergeItemProviderConfig(entry, t.ProviderConfig, "message_retention_duration", "subscriptions")
+		result[t.Name] = entry
 	}
 	for _, q := range queues {
 		ackDeadline := 10
@@ -378,10 +398,14 @@ func buildPubSubTopics(topics []types.ProjectTopicConfig, queues []types.Project
 		}
 		sub["enable_message_ordering"] = derefBoolOr(q.Ordered, false)
 		subs := []map[string]interface{}{sub}
-		result[q.Name] = map[string]interface{}{
+		entry := map[string]interface{}{
 			"message_retention_duration": retention,
 			"subscriptions":              subs,
 		}
+		// The queue's typed knobs (ack deadline, ordering) live on its ONE subscription, which is
+		// built above; a queue's provider_config reaches the topic entry the queue is modelled as.
+		mergeItemProviderConfig(entry, q.ProviderConfig, "message_retention_duration", "subscriptions")
+		result[q.Name] = entry
 	}
 	return result
 }
@@ -426,18 +450,23 @@ func gcpMemorystoreRedisVersion(v string) string {
 	}
 }
 
+// buildGCPSecrets maps each NATIVELY provisioned secret onto one entry of the `custom_secrets`
+// tfvar. Shared by the GCP and Azure providers — their templates declare the same object shape — so
+// the per-secret provider_config merge here serves both clouds.
 func buildGCPSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
 		if !secretProvisionedNatively(s.Provider) {
 			continue // read via ESO from its pluggable/cross-account store, not created here
 		}
-		result = append(result, map[string]interface{}{
+		entry := map[string]interface{}{
 			"name":          s.Name,
 			"generate":      s.Generate,
 			"length":        s.Length,
 			"special_chars": s.SpecialChars,
-		})
+		}
+		mergeItemProviderConfig(entry, s.ProviderConfig, "name", "generate", "length", "special_chars")
+		result = append(result, entry)
 	}
 	return result
 }
@@ -491,11 +520,16 @@ func buildArtifactRegistryRepos(config *types.ProjectConfig) map[string]interfac
 		if r.VulnerabilityScanning != nil {
 			scanning = *r.VulnerabilityScanning
 		}
-		out[r.Name] = map[string]interface{}{
+		entry := map[string]interface{}{
 			"description":            "Container images for " + r.Name,
 			"immutable_tags":         immutable,
 			"vulnerability_scanning": scanning,
 		}
+		// The registry is an ITEM on GCP: the template declares no root `artifact_registry_*` knobs
+		// beyond the provision flag and this map, so a registry's provider_config merges into its
+		// own repository entry (the reverse of AWS, whose `ecr_*` knobs are root-level).
+		mergeItemProviderConfig(entry, r.ProviderConfig, "description", "immutable_tags", "vulnerability_scanning")
+		out[r.Name] = entry
 	}
 	return out
 }
@@ -519,6 +553,8 @@ func buildGCSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]in
 			"cors_origins":  b.CorsOrigins,
 			"cors_methods":  []string{"GET", "PUT", "POST"},
 		}
+		mergeItemProviderConfig(entry, b.ProviderConfig,
+			"name_suffix", "versioning", "public_access", "cors_origins", "cors_methods")
 		result = append(result, entry)
 	}
 	return result

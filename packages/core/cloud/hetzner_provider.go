@@ -346,13 +346,22 @@ func hetznerS3Region(region string) string {
 func buildHetznerBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
-		result = append(result, map[string]interface{}{
+		entry := map[string]interface{}{
 			"name":               b.Name,
 			"versioning":         b.Versioning,
 			"encryption_enabled": b.EncryptionEnabled,
 			"public_access":      b.PublicAccess,
 			"cors_origins":       ensureStringSlice(b.CorsOrigins),
-		})
+		}
+		// The bucket is the ONE leaf component Hetzner provisions through OpenTofu. The database,
+		// cache, queue, topic, nosql table and secret are in-cluster charts (CloudNativePG, Valkey,
+		// RabbitMQ, ScyllaDB, Vault) driven by Helm values, and the registry is a Harbor release
+		// whose only tofu surface is `incluster_registry_hosts` — a list(string) of mirror hosts with
+		// no per-registry object to merge into. None of those gets a passthrough invented for it
+		// here; each is a named exclusion in TestProviderTfvars_LeafPassthrough.
+		mergeItemProviderConfig(entry, b.ProviderConfig,
+			"name", "versioning", "encryption_enabled", "public_access", "cors_origins")
+		result = append(result, entry)
 	}
 	return result
 }

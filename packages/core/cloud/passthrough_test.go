@@ -532,3 +532,332 @@ func TestProviderTfvars_AzureCacheAllowedCidrBlocksWithdrawn(t *testing.T) {
 		}
 	}
 }
+
+// ── the leaf passthrough: 5 clouds × 7 kinds (#4259) ──────────────────────────────────
+//
+// Every leaf component carries a `provider_config` JSONB, and until #4259 only the cluster, the DNS
+// and the database handed theirs to mergeProviderConfig — a cache's, a queue's, a bucket's key was
+// stored by the console and reached no tfvar. These tests pin the plumbing per CELL, because the
+// shape differs: a cache is root-level variables on every cloud, a queue is one entry of a map, a
+// bucket one element of a list, and a Firestore "table" is the project's one database. A test that
+// only checked "the key is somewhere in tfvars" would pass a key that landed on the wrong object.
+
+// leafProbeKey names a knob NO template declares, so nothing but the passthrough can place it.
+const leafProbeKey = "x_probe_knob"
+
+// leafProbeValue is what the probe carries; the tests look for this exact value where it should land.
+const leafProbeValue = "probe"
+
+// leafBogus is the colliding value a provider_config offers for a key the typed code already owns.
+const leafBogus = "bogus"
+
+// leafLocator finds the object a component's provider_config merges into: the root tfvars for a
+// root-level component, or the component's own entry inside a map/list tfvar.
+type leafLocator func(t *testing.T, tf map[string]interface{}) map[string]interface{}
+
+// atRoot locates the root tfvars — cache on every cloud, registry on aws/azure, nosql on gcp.
+func atRoot(t *testing.T, tf map[string]interface{}) map[string]interface{} { return tf }
+
+// entryOfMap locates the named entry of a map(object) tfvar such as `sqs_queues`.
+func entryOfMap(root, name string) leafLocator {
+	return func(t *testing.T, tf map[string]interface{}) map[string]interface{} {
+		t.Helper()
+		m, ok := tf[root].(map[string]interface{})
+		if !ok {
+			t.Fatalf("tfvar %q = %T, want a map of entries", root, tf[root])
+		}
+		entry, ok := m[name].(map[string]interface{})
+		if !ok {
+			t.Fatalf("tfvar %q has no object entry %q (got %T)", root, name, m[name])
+		}
+		return entry
+	}
+}
+
+// firstOfList locates the first element of a list(object) tfvar such as `bucket_configuration`.
+func firstOfList(root string) leafLocator {
+	return func(t *testing.T, tf map[string]interface{}) map[string]interface{} {
+		t.Helper()
+		l, ok := tf[root].([]map[string]interface{})
+		if !ok || len(l) == 0 {
+			t.Fatalf("tfvar %q = %#v, want a non-empty list of objects", root, tf[root])
+		}
+		return l[0]
+	}
+}
+
+// tfvarsMentionKey walks every map nested anywhere inside the tfvars for a key of that name — the
+// question an EXCLUDED cell asks, where the probe must land nowhere rather than somewhere specific.
+func tfvarsMentionKey(v interface{}, key string) bool {
+	switch x := v.(type) {
+	case map[string]interface{}:
+		if _, ok := x[key]; ok {
+			return true
+		}
+		for _, e := range x {
+			if tfvarsMentionKey(e, key) {
+				return true
+			}
+		}
+	case map[string]string:
+		_, ok := x[key]
+		return ok
+	case []map[string]interface{}:
+		for _, e := range x {
+			if tfvarsMentionKey(e, key) {
+				return true
+			}
+		}
+	case []map[string]string:
+		for _, e := range x {
+			if tfvarsMentionKey(e, key) {
+				return true
+			}
+		}
+	case []interface{}:
+		for _, e := range x {
+			if tfvarsMentionKey(e, key) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// leafKinds is the row set of the passthrough table, in the order the issue names them.
+var leafKinds = []string{"cache", "queue", "topic", "nosql", "bucket", "secret", "registry"}
+
+// leafProviders is the column set of the passthrough table.
+var leafProviders = map[string]CloudProvider{
+	"aws":     &awsProvider{},
+	"gcp":     &gcpProvider{},
+	"azure":   &azureProvider{},
+	"alibaba": &alibabaProvider{},
+	"hetzner": &hetznerProvider{},
+}
+
+// leafConfig builds a project holding ONE component of the kind, whose provider_config is pc. The
+// component names are what the locators look entries up by.
+func leafConfig(kind string, pc map[string]any) *types.ProjectConfig {
+	cfg := &types.ProjectConfig{ProjectName: "p"}
+	switch kind {
+	case "database":
+		cfg.Databases = []types.ProjectDatabaseConfig{{Name: "d", ProviderConfig: pc}}
+	case "cache":
+		cfg.Caches = []types.ProjectCacheConfig{{Name: "c", ProviderConfig: pc}}
+	case "queue":
+		cfg.Queues = []types.ProjectQueueConfig{{Name: "q", ProviderConfig: pc}}
+	case "topic":
+		cfg.Topics = []types.ProjectTopicConfig{{Name: "t", ProviderConfig: pc}}
+	case "nosql":
+		cfg.NosqlTables = []types.ProjectNosqlConfig{{
+			Name: "n", PartitionKey: "pk", TableType: types.NosqlTableTypeStandard, ProviderConfig: pc,
+		}}
+	case "bucket":
+		cfg.StorageBuckets = []types.ProjectStorageBucketConfig{{Name: "b", ProviderConfig: pc}}
+	case "secret":
+		cfg.Secrets = []types.ProjectSecretConfig{{Name: "s", Generate: true, Length: 16, ProviderConfig: pc}}
+	case "registry":
+		cfg.ContainerRegistries = []types.ProjectContainerRegistryConfig{{Name: "reg", ProviderConfig: pc}}
+	}
+	return cfg
+}
+
+// TestProviderTfvars_LeafPassthrough pins, per cloud × kind, WHERE a leaf component's
+// provider_config lands: on the root tfvars, or on the component's own entry of the map/list
+// variable the template models it as. A hetzner row with no OpenTofu surface for the kind carries
+// the reason instead, and asserts the probe reaches NOTHING — an in-cluster chart's values are not
+// a tfvar, and inventing a passthrough for one would emit a key tofu silently drops.
+//
+// The table is asserted COMPLETE (every cloud × every kind exactly once) before a row is run, so a
+// deleted row cannot read as a passing one.
+func TestProviderTfvars_LeafPassthrough(t *testing.T) {
+	type leafCase struct {
+		cloud, kind string
+		// locate finds the object the probe must land on; nil for an excluded cell.
+		locate leafLocator
+		// excluded names why the cell has no OpenTofu surface for a passthrough to reach.
+		excluded string
+	}
+	cases := []leafCase{
+		// aws — the cache and the registry (`ecr_*`) are root-level; the rest are items.
+		{cloud: "aws", kind: "cache", locate: atRoot},
+		{cloud: "aws", kind: "queue", locate: entryOfMap("sqs_queues", "q")},
+		{cloud: "aws", kind: "topic", locate: entryOfMap("sns_topics", "t")},
+		{cloud: "aws", kind: "nosql", locate: firstOfList("ddb_table_configuration")},
+		{cloud: "aws", kind: "bucket", locate: firstOfList("bucket_configuration")},
+		{cloud: "aws", kind: "secret", locate: firstOfList("custom_secrets")},
+		{cloud: "aws", kind: "registry", locate: atRoot},
+
+		// gcp — a queue is a Pub/Sub topic with one subscription; Firestore is ONE database per
+		// project, so nosql is root-level; a registry is an entry of `artifact_registry_repos`.
+		{cloud: "gcp", kind: "cache", locate: atRoot},
+		{cloud: "gcp", kind: "queue", locate: entryOfMap("pubsub_topics", "q")},
+		{cloud: "gcp", kind: "topic", locate: entryOfMap("pubsub_topics", "t")},
+		{cloud: "gcp", kind: "nosql", locate: atRoot},
+		{cloud: "gcp", kind: "bucket", locate: firstOfList("cloud_storage_buckets")},
+		{cloud: "gcp", kind: "secret", locate: firstOfList("custom_secrets")},
+		{cloud: "gcp", kind: "registry", locate: entryOfMap("artifact_registry_repos", "reg")},
+
+		// azure — the registry (`acr_sku`) is root-level; secrets share gcp's builder.
+		{cloud: "azure", kind: "cache", locate: atRoot},
+		{cloud: "azure", kind: "queue", locate: entryOfMap("service_bus_queues", "q")},
+		{cloud: "azure", kind: "topic", locate: entryOfMap("service_bus_topics", "t")},
+		{cloud: "azure", kind: "nosql", locate: firstOfList("cosmos_db_collections")},
+		{cloud: "azure", kind: "bucket", locate: firstOfList("storage_containers")},
+		{cloud: "azure", kind: "secret", locate: firstOfList("custom_secrets")},
+		{cloud: "azure", kind: "registry", locate: atRoot},
+
+		// alibaba — a registry is an entry of `cr_repos`, never an instance argument.
+		{cloud: "alibaba", kind: "cache", locate: atRoot},
+		{cloud: "alibaba", kind: "queue", locate: entryOfMap("mns_queues", "q")},
+		{cloud: "alibaba", kind: "topic", locate: entryOfMap("mns_topics", "t")},
+		{cloud: "alibaba", kind: "nosql", locate: firstOfList("ots_tables")},
+		{cloud: "alibaba", kind: "bucket", locate: firstOfList("oss_buckets")},
+		{cloud: "alibaba", kind: "secret", locate: firstOfList("custom_secrets")},
+		{cloud: "alibaba", kind: "registry", locate: entryOfMap("cr_repos", "reg")},
+
+		// hetzner — the bucket is the one leaf the Talos template provisions through OpenTofu.
+		// Everything else is in-cluster, and the reason is recorded here until the exclusions
+		// ledger for template knobs lands in its own lane.
+		{cloud: "hetzner", kind: "bucket", locate: firstOfList("buckets")},
+		{cloud: "hetzner", kind: "cache", excluded: "Valkey runs in-cluster as a Helm release; its knobs are chart values, not OpenTofu variables"},
+		{cloud: "hetzner", kind: "queue", excluded: "RabbitMQ runs in-cluster as a Helm release; its knobs are chart values, not OpenTofu variables"},
+		{cloud: "hetzner", kind: "topic", excluded: "RabbitMQ runs in-cluster as a Helm release; a topic is an exchange declared by the application, not a resource tofu provisions"},
+		{cloud: "hetzner", kind: "nosql", excluded: "ScyllaDB runs in-cluster as a Helm release (#3228); its knobs are chart values, not OpenTofu variables"},
+		{cloud: "hetzner", kind: "secret", excluded: "Vault runs in-cluster as a Helm release; the template declares no `custom_secrets` variable"},
+		{cloud: "hetzner", kind: "registry", excluded: "Harbor runs in-cluster as a Helm release; the template's only registry surface is `incluster_registry_hosts`, a list(string) of mirror hosts with no per-registry object to merge into"},
+	}
+
+	// COMPLETENESS first: every cloud × kind exactly once.
+	seen := map[string]int{}
+	for _, tc := range cases {
+		seen[tc.cloud+"/"+tc.kind]++
+	}
+	for cloud := range leafProviders {
+		for _, kind := range leafKinds {
+			if n := seen[cloud+"/"+kind]; n != 1 {
+				t.Errorf("table has %d row(s) for %s/%s, want exactly 1 — a missing cell reads as a passing one", n, cloud, kind)
+			}
+		}
+	}
+	if len(cases) != len(leafProviders)*len(leafKinds) {
+		t.Fatalf("table has %d rows, want %d (5 clouds × 7 kinds)", len(cases), len(leafProviders)*len(leafKinds))
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.cloud+"/"+tc.kind, func(t *testing.T) {
+			if (tc.locate == nil) == (tc.excluded == "") {
+				t.Fatalf("a row is either located or excluded with a reason, never both or neither")
+			}
+			tf := leafProviders[tc.cloud].ProviderTfvars(leafConfig(tc.kind, map[string]any{leafProbeKey: leafProbeValue}))
+			if tc.excluded != "" {
+				if tfvarsMentionKey(tf, leafProbeKey) {
+					t.Errorf("%s/%s: the probe reached the tfvars, but the cell is excluded — %s", tc.cloud, tc.kind, tc.excluded)
+				}
+				return
+			}
+			if got := tc.locate(t, tf)[leafProbeKey]; got != leafProbeValue {
+				t.Errorf("%s/%s: provider_config[%q] did not reach its tfvars object (got %v) — the component's "+
+					"provider_config is stored by the console and read by nothing", tc.cloud, tc.kind, leafProbeKey, got)
+			}
+		})
+	}
+}
+
+// TestProviderTfvars_LeafPassthrough_TypedWins pins merge-if-absent at every new site: a
+// provider_config key that collides with an attribute the typed code emits is ignored, so the UI's
+// validated value can never be clobbered by a hand-typed one. The second table pins the reserved
+// keys: an attribute the builder OWNS but did not emit this time (a withdrawn offer, a value it
+// consumes under another name, the side of a switch left empty) must stay absent rather than be
+// filled from provider_config — the same rule the database's IAM-auth reservation applies.
+func TestProviderTfvars_LeafPassthrough_TypedWins(t *testing.T) {
+	yes, no := true, false
+	thirty := 30
+	pc := func(key string) map[string]any { return map[string]any{key: leafBogus} }
+
+	type typedCase struct {
+		cloud, kind string
+		cfg         *types.ProjectConfig
+		locate      leafLocator
+		key         string
+		// want is the typed value that must survive; nil asserts only that the bogus one did not land.
+		want interface{}
+	}
+	cases := []typedCase{
+		{"aws", "cache", &types.ProjectConfig{Caches: []types.ProjectCacheConfig{{Name: "c", EngineVersion: "7.0", ProviderConfig: pc("redis_engine_version")}}}, atRoot, "redis_engine_version", "7.0"},
+		{"aws", "queue", &types.ProjectConfig{Queues: []types.ProjectQueueConfig{{Name: "q", Ordered: &yes, ProviderConfig: pc("fifo_queue")}}}, entryOfMap("sqs_queues", "q"), "fifo_queue", true},
+		{"aws", "topic", &types.ProjectConfig{Topics: []types.ProjectTopicConfig{{Name: "t", Subscriptions: []types.TopicSubscription{{Protocol: types.TopicSubscriptionProtocolEmail, Endpoint: "a@b"}}, ProviderConfig: pc("subscriptions")}}}, entryOfMap("sns_topics", "t"), "subscriptions", nil},
+		{"aws", "nosql", &types.ProjectConfig{NosqlTables: []types.ProjectNosqlConfig{{Name: "n", PartitionKey: "pk", TableType: types.NosqlTableTypeStandard, ProviderConfig: pc("hash_key")}}}, firstOfList("ddb_table_configuration"), "hash_key", "pk"},
+		{"aws", "bucket", &types.ProjectConfig{StorageBuckets: []types.ProjectStorageBucketConfig{{Name: "b", Versioning: true, ProviderConfig: pc("versioning_enabled")}}}, firstOfList("bucket_configuration"), "versioning_enabled", true},
+		{"aws", "secret", &types.ProjectConfig{Secrets: []types.ProjectSecretConfig{{Name: "s", Generate: true, Length: 16, ProviderConfig: pc("secret_name")}}}, firstOfList("custom_secrets"), "secret_name", "s"},
+		{"aws", "registry", &types.ProjectConfig{ContainerRegistries: []types.ProjectContainerRegistryConfig{{Name: "reg", ProviderConfig: pc("provision_ecr")}}}, atRoot, "provision_ecr", true},
+
+		{"gcp", "cache", &types.ProjectConfig{Caches: []types.ProjectCacheConfig{{Name: "c", EngineVersion: "7.0", ProviderConfig: pc("memorystore_redis_version")}}}, atRoot, "memorystore_redis_version", "REDIS_7_0"},
+		{"gcp", "queue", &types.ProjectConfig{Queues: []types.ProjectQueueConfig{{Name: "q", MessageRetention: &thirty, ProviderConfig: pc("message_retention_duration")}}}, entryOfMap("pubsub_topics", "q"), "message_retention_duration", "30s"},
+		{"gcp", "topic", &types.ProjectConfig{Topics: []types.ProjectTopicConfig{{Name: "t", ProviderConfig: pc("message_retention_duration")}}}, entryOfMap("pubsub_topics", "t"), "message_retention_duration", "86400s"},
+		{"gcp", "nosql", &types.ProjectConfig{NosqlTables: []types.ProjectNosqlConfig{{Name: "n", PartitionKey: "pk", PointInTimeRecovery: true, ProviderConfig: pc("firestore_point_in_time_recovery")}}}, atRoot, "firestore_point_in_time_recovery", true},
+		{"gcp", "bucket", &types.ProjectConfig{StorageBuckets: []types.ProjectStorageBucketConfig{{Name: "b", Versioning: true, ProviderConfig: pc("versioning")}}}, firstOfList("cloud_storage_buckets"), "versioning", true},
+		{"gcp", "secret", &types.ProjectConfig{Secrets: []types.ProjectSecretConfig{{Name: "s", Generate: true, Length: 16, ProviderConfig: pc("length")}}}, firstOfList("custom_secrets"), "length", 16},
+		{"gcp", "registry", &types.ProjectConfig{ContainerRegistries: []types.ProjectContainerRegistryConfig{{Name: "reg", ImmutableTags: &no, ProviderConfig: pc("immutable_tags")}}}, entryOfMap("artifact_registry_repos", "reg"), "immutable_tags", false},
+
+		{"azure", "cache", &types.ProjectConfig{Caches: []types.ProjectCacheConfig{{Name: "c", MultiAz: &yes, ProviderConfig: pc("azure_cache_multi_az")}}}, atRoot, "azure_cache_multi_az", true},
+		{"azure", "queue", &types.ProjectConfig{Queues: []types.ProjectQueueConfig{{Name: "q", Ordered: &yes, ProviderConfig: pc("requires_session")}}}, entryOfMap("service_bus_queues", "q"), "requires_session", true},
+		{"azure", "topic", &types.ProjectConfig{Topics: []types.ProjectTopicConfig{{Name: "t", ProviderConfig: pc("subscriptions")}}}, entryOfMap("service_bus_topics", "t"), "subscriptions", nil},
+		{"azure", "nosql", &types.ProjectConfig{NosqlTables: []types.ProjectNosqlConfig{{Name: "n", PartitionKey: "/pk", ProviderConfig: pc("partition_key")}}}, firstOfList("cosmos_db_collections"), "partition_key", "/pk"},
+		{"azure", "bucket", &types.ProjectConfig{StorageBuckets: []types.ProjectStorageBucketConfig{{Name: "b", PublicAccess: true, ProviderConfig: pc("access_type")}}}, firstOfList("storage_containers"), "access_type", "blob"},
+		{"azure", "secret", &types.ProjectConfig{Secrets: []types.ProjectSecretConfig{{Name: "s", Generate: true, Length: 16, ProviderConfig: pc("length")}}}, firstOfList("custom_secrets"), "length", 16},
+		{"azure", "registry", &types.ProjectConfig{ContainerRegistries: []types.ProjectContainerRegistryConfig{{Name: "reg", ProviderConfig: pc("provision_acr")}}}, atRoot, "provision_acr", true},
+
+		{"alibaba", "cache", &types.ProjectConfig{Caches: []types.ProjectCacheConfig{{Name: "c", EngineVersion: "7.0", ProviderConfig: pc("kvstore_engine_version")}}}, atRoot, "kvstore_engine_version", "7.0"},
+		{"alibaba", "queue", &types.ProjectConfig{Queues: []types.ProjectQueueConfig{{Name: "q", VisibilityTimeout: &thirty, ProviderConfig: pc("visibility_timeout")}}}, entryOfMap("mns_queues", "q"), "visibility_timeout", 30},
+		{"alibaba", "topic", &types.ProjectConfig{Topics: []types.ProjectTopicConfig{{Name: "t", ProviderConfig: pc("subscriptions")}}}, entryOfMap("mns_topics", "t"), "subscriptions", nil},
+		{"alibaba", "nosql", &types.ProjectConfig{NosqlTables: []types.ProjectNosqlConfig{{Name: "n", PartitionKey: "pk", ProviderConfig: pc("primary_keys")}}}, firstOfList("ots_tables"), "primary_keys", nil},
+		{"alibaba", "bucket", &types.ProjectConfig{StorageBuckets: []types.ProjectStorageBucketConfig{{Name: "b", PublicAccess: true, ProviderConfig: pc("acl")}}}, firstOfList("oss_buckets"), "acl", "public-read"},
+		{"alibaba", "secret", &types.ProjectConfig{Secrets: []types.ProjectSecretConfig{{Name: "s", Generate: true, Length: 16, ProviderConfig: pc("length")}}}, firstOfList("custom_secrets"), "length", 16},
+		{"alibaba", "registry", &types.ProjectConfig{ContainerRegistries: []types.ProjectContainerRegistryConfig{{Name: "reg", ImmutableTags: &no, ProviderConfig: pc("immutable_tags")}}}, entryOfMap("cr_repos", "reg"), "immutable_tags", false},
+
+		{"hetzner", "bucket", &types.ProjectConfig{StorageBuckets: []types.ProjectStorageBucketConfig{{Name: "b", Versioning: true, ProviderConfig: pc("versioning")}}}, firstOfList("buckets"), "versioning", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cloud+"/"+tc.kind+"/"+tc.key, func(t *testing.T) {
+			got := tc.locate(t, leafProviders[tc.cloud].ProviderTfvars(tc.cfg))[tc.key]
+			if got == leafBogus {
+				t.Fatalf("%s/%s: provider_config[%q] overrode the typed emit — the passthrough must be merge-if-absent", tc.cloud, tc.kind, tc.key)
+			}
+			if tc.want != nil && got != tc.want {
+				t.Errorf("%s/%s: %s = %v (%T), want the typed value %v (%T)", tc.cloud, tc.kind, tc.key, got, got, tc.want, tc.want)
+			}
+		})
+	}
+
+	// RESERVED keys: owned by the builder, not emitted this time, and never to be filled from
+	// provider_config. Each row builds the kind with the typed field UNSET and offers the key.
+	reopen := []struct {
+		cloud, kind, key string
+		locate           leafLocator
+		why              string
+	}{
+		{"aws", "cache", "redis_multi_az_enabled", atRoot, "written only when MultiAz is set"},
+		{"aws", "nosql", "replicas", firstOfList("ddb_table_configuration"), "a regional table never carries replicas"},
+		{"aws", "bucket", "encryption_algorithm", firstOfList("bucket_configuration"), "consumed by s3SSEAlgorithm under sse_algorithm"},
+		{"aws", "secret", "manual", firstOfList("custom_secrets"), "the other side of the generate switch"},
+		{"gcp", "cache", "memorystore_tier", atRoot, "written only when the canvas asked for HA"},
+		{"azure", "cache", "azure_cache_sku", atRoot, "the tier flip the node count used to become (#1993)"},
+		{"azure", "cache", "azure_cache_redis_version", atRoot, "the engine-version variable the template deleted (#1993)"},
+		{"azure", "cache", "azure_cache_allowed_cidr_blocks", atRoot, "the allow-list is withdrawn on azure (#2148)"},
+		{"azure", "queue", "delay_seconds", entryOfMap("service_bus_queues", "q"), "withdrawn: a per-message property, not a queue setting (#1994)"},
+		{"azure", "queue", "forward_dead_lettered_messages_to", entryOfMap("service_bus_queues", "q"), "withdrawn: named no queue to forward to (#1994)"},
+		{"alibaba", "cache", "kvstore_shard_count", atRoot, "written only when NumCacheNodes is set"},
+		{"alibaba", "nosql", "primary_key", firstOfList("ots_tables"), "the wrong spelling the module's try swallowed (#1836)"},
+		{"alibaba", "bucket", "encryption_algorithm", firstOfList("oss_buckets"), "consumed by ossSSEAlgorithm under sse_algorithm"},
+	}
+	for _, tc := range reopen {
+		t.Run("reserved/"+tc.cloud+"/"+tc.kind+"/"+tc.key, func(t *testing.T) {
+			obj := tc.locate(t, leafProviders[tc.cloud].ProviderTfvars(leafConfig(tc.kind, pc(tc.key))))
+			if v, present := obj[tc.key]; present {
+				t.Errorf("%s/%s: provider_config re-opened reserved key %q (= %v) — %s", tc.cloud, tc.kind, tc.key, v, tc.why)
+			}
+		})
+	}
+}

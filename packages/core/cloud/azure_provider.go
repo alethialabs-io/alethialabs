@@ -189,6 +189,28 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		if cache.MultiAz != nil {
 			tfvars["azure_cache_multi_az"] = *cache.MultiAz
 		}
+		// Generic passthrough — see mergeProviderConfig (aws_provider.go). The typed emits above are
+		// reserved unconditionally, and so are the WITHDRAWN offers, which is the half that matters
+		// on Azure: `azure_cache_sku` is the tier flip the node count used to become (#1993),
+		// `azure_cache_redis_version` is the engine-version variable the template deleted (#1993),
+		// and the three CIDR spellings are what a caller would reach for to re-open the allow-list
+		// (#2148) — none is declared, so each would be dropped at plan time while reading to the
+		// user exactly like a switch that worked. The same reasoning keeps alibaba's withdrawn
+		// `application_waf` reserved.
+		mergeProviderConfig(tfvars, cache.ProviderConfig,
+			"create_azure_cache", "azure_cache_sku_name", "azure_cache_multi_az",
+			"azure_cache_sku", "azure_cache_redis_version",
+			"azure_cache_allowed_cidr_blocks", "azure_cache_firewall_rules", "azure_cache_public_network_access")
+	}
+
+	// Container registries are ROOT-level on Azure: the template declares `acr_sku` for the one
+	// registry the project gets and no per-repository map, so a NATIVE registry's provider_config
+	// merges into tfvars. A pluggable registry (connectors.slug) is not ACR's to configure.
+	for _, r := range config.ContainerRegistries {
+		if r.Provider != "" && r.Provider != "native" {
+			continue
+		}
+		mergeProviderConfig(tfvars, r.ProviderConfig, "provision_acr")
 	}
 
 	if inst := resolveInstanceTypes("azure", config.Cluster); len(inst) > 0 {
@@ -400,11 +422,19 @@ func buildServiceBusQueues(queues []types.ProjectQueueConfig) map[string]interfa
 		// a queue setting tofu can provision — and forwarding was emitted as the empty string, which
 		// names no queue to forward to. Carrying them further would have satisfied the guard while
 		// the values still meant nothing, which is the defect it exists to catch, not a way past it.
+		//
+		// Both stay RESERVED from the per-queue passthrough for that reason: the root's map(any)
+		// would carry them again and the module's typed object would drop them again, silently.
+		mergeItemProviderConfig(cfg, q.ProviderConfig,
+			"max_delivery_count", "lock_duration", "requires_session", "default_message_ttl",
+			"delay_seconds", "forward_dead_lettered_messages_to")
 		result[q.Name] = cfg
 	}
 	return result
 }
 
+// buildServiceBusTopics maps each canvas topic onto one entry of the `service_bus_topics` tfvar,
+// its subscriptions named from their endpoints; a topic's provider_config merges into its own entry.
 func buildServiceBusTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
@@ -415,9 +445,11 @@ func buildServiceBusTopics(topics []types.ProjectTopicConfig) map[string]interfa
 				"max_delivery_count": 10,
 			})
 		}
-		result[t.Name] = map[string]interface{}{
+		entry := map[string]interface{}{
 			"subscriptions": subs,
 		}
+		mergeItemProviderConfig(entry, t.ProviderConfig, "subscriptions")
+		result[t.Name] = entry
 	}
 	return result
 }
@@ -455,6 +487,11 @@ func buildCosmosDBCollections(tables []types.ProjectNosqlConfig) []map[string]in
 		if len(t.GlobalReplicas) > 0 {
 			entry["global_replicas"] = t.GlobalReplicas
 		}
+		// `analytical_storage_enabled` is deliberately NOT reserved: it is an accepted attribute of
+		// the container shape that no typed field derives any more (#1838), which makes it exactly
+		// the kind of knob this passthrough exists to reach.
+		mergeItemProviderConfig(entry, t.ProviderConfig,
+			"name", "partition_key", "billing_mode", "point_in_time_recovery", "global_replicas")
 		result = append(result, entry)
 	}
 	return result
@@ -480,7 +517,7 @@ func buildAzureContainers(buckets []types.ProjectStorageBucketConfig) []map[stri
 		if b.PublicAccess {
 			accessType = "blob"
 		}
-		result = append(result, map[string]interface{}{
+		entry := map[string]interface{}{
 			"name":               b.Name,
 			"access_type":        accessType,
 			"versioning_enabled": b.Versioning,
@@ -490,7 +527,9 @@ func buildAzureContainers(buckets []types.ProjectStorageBucketConfig) []map[stri
 			// template, next to the comment that explains it, not hidden in this builder (#1995).
 			// Honored on the other four clouds; azure was the only one dropping it.
 			"cors_origins": ensureStringSlice(b.CorsOrigins),
-		})
+		}
+		mergeItemProviderConfig(entry, b.ProviderConfig, "name", "access_type", "versioning_enabled", "cors_origins")
+		result = append(result, entry)
 	}
 	return result
 }
