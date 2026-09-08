@@ -111,7 +111,13 @@ export function EventMatrix({
                         <span
                           className={cn(
                             "flex items-center gap-1.5 font-mono text-ui-2xs uppercase",
-                            on ? "text-foreground" : "text-muted-foreground/50",
+                            // NOT `text-muted-foreground/50`: that composites to 2.33:1 over the
+                            // page, the same failure #4197 removed from the filter bars. It passes
+                            // today only because the audit seeds no alert policy, so this subtree
+                            // never renders — an unmeasured defect, not an absent one. The other
+                            // 52 sites of this shape, and the matcher that would catch them, are
+                            // #4309.
+                            on ? "text-foreground" : "text-text-tertiary",
                           )}
                         >
                           <span
