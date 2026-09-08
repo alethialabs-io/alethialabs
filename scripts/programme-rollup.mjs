@@ -3220,31 +3220,65 @@ function runSelfTest() {
 	// it. A red filed and closed between two refreshes therefore entered NEITHER, and PROGRAMME.md
 	// published `0 failing` and `gcp/floor ✅` on a morning that leg failed.
 	//
-	// The fixture is the worked case from the issue, to the minute: #3580 filed 2026-09-01T09:46Z,
-	// closed 11:25Z, snapshot derived 11:32Z — seven minutes later.
+	// The fixture is the worked case from the issue, to the minute: #3580 filed 09:46Z, closed
+	// 11:25Z, snapshot derived 11:32Z — seven minutes later.
+	//
+	// ⚠️ THOSE INSTANTS ARE HELD AS INTERVALS FROM NOW, NOT AS THE ISSUE'S ABSOLUTE DATES, and that
+	// is a defect this suite HAD rather than a style preference. They were written as
+	// 2026-09-01T11:32:00Z. Seven days later to the day, on 2026-09-08, the fixture aged past the
+	// snapshot-staleness rule at the top of `derive` — and that rule pushes an INTEGRITY FAILURE,
+	// inside the very case three lines below that asserts there are none. `--self-test` went red on
+	// a suite nobody had touched, and because it runs inside `Authz / open-core guards` it took
+	// every open pull request in the repository with it, naming a stale snapshot rather than a
+	// rotten fixture.
+	//
+	// The intervals ARE the case — a red filed before the window, closed inside it, seen by the very
+	// next refresh. The absolute instants were documentation, and documentation belongs in this
+	// comment where it cannot expire.
 	{
 		const passRow = row("2026-08-01", "aws", "floor", "PASS", "demos/proofs/aws/x");
-		/** A snapshot whose window opened at the previous nightly and closed at 11:32Z. */
+		const iso = (ms) => new Date(ms).toISOString();
+		const day = (ms) => iso(ms).slice(0, 10);
+		// Derived an hour ago, as `snap()` does, so the fixture is always FRESH by the same rule.
+		const WIN_DERIVED = Date.now() - 3600_000;
+		const WIN_CLOSED = WIN_DERIVED - 7 * 60_000; // 11:25 → 11:32
+		const WIN_FILED = WIN_CLOSED - 99 * 60_000; // 09:46 → 11:25
+		const WIN_PREVIOUS = WIN_DERIVED - 26.75 * 3600_000; // the previous nightly, 08:47 the day before
+		/** A snapshot whose window opened at the previous nightly and closed seven minutes after the red did. */
 		const winSnap = (closed_issues) => ({
 			...snap(),
-			derived_at: "2026-09-01T11:32:00Z",
-			previous_derived_at: "2026-08-31T08:47:00Z",
-			inventory_observed_at: "2026-09-01T11:32:00Z",
+			derived_at: iso(WIN_DERIVED),
+			previous_derived_at: iso(WIN_PREVIOUS),
+			inventory_observed_at: iso(WIN_DERIVED),
 			closed_issues,
 		});
 		const red3580 = (overrides = {}) => ({
 			number: 3580,
 			title: "e2e nightly: aws RED (floor)",
 			labels: [],
-			createdAt: "2026-09-01T09:46:00Z",
-			closedAt: "2026-09-01T11:25:00Z",
+			createdAt: iso(WIN_FILED),
+			closedAt: iso(WIN_CLOSED),
 			...overrides,
 		});
+
+		// THE GUARD AGAINST THE ROT, in both directions, because one direction proves nothing.
+		//
+		// An expiring fixture is invisible until the day it expires, and then it fires on every PR
+		// at once. So the suite asks whether its own window snapshot is fresh — and, as the control,
+		// whether the rule it is outrunning is even live. Without the second line a fixture that had
+		// stopped being checked at all would pass the first one just as happily as a correct one.
+		{
+			const fresh = derive({ ...base, ledgerText: hdr + passRow, snapshot: winSnap([]) });
+			ok("the window fixture is fresh by construction, not by calendar luck", fresh.failures.length === 0, JSON.stringify(fresh.failures));
+			const aged = derive({ ...base, ledgerText: hdr + passRow, snapshot: { ...winSnap([]), derived_at: iso(Date.now() - 8 * 24 * 3600_000) } });
+			ok("...and the staleness rule it outruns is live — the same fixture stamped eight days ago DOES fail",
+				aged.failures.some((f) => /is not being refreshed/.test(f)), JSON.stringify(aged.failures));
+		}
 
 		r = derive({ ...base, ledgerText: hdr + passRow, snapshot: winSnap([red3580()]) });
 		ok("a red filed AND closed inside the derivation window still contests its cell", r.grid.aws.floor.state === "contested", r.grid.aws.floor.state);
 		ok("...and the tally stops counting it as proven", r.tally.proven === 0 && r.tally.contested === 1, JSON.stringify(r.tally));
-		ok("...and it names the issue, the filing date and the closing date", /#3580/.test(r.grid.aws.floor.why) && /2026-09-01/.test(r.grid.aws.floor.why) && /2026-08-01/.test(r.grid.aws.floor.why), r.grid.aws.floor.why);
+		ok("...and it names the issue, the filing date and the closing date", /#3580/.test(r.grid.aws.floor.why) && r.grid.aws.floor.why.includes(day(WIN_FILED)) && /2026-08-01/.test(r.grid.aws.floor.why), r.grid.aws.floor.why);
 		ok("...and it is NOT an integrity failure (this gate reds every PR in the repo)", r.failures.length === 0, JSON.stringify(r.failures));
 		{
 			const out = render(r);
@@ -3252,12 +3286,12 @@ function runSelfTest() {
 			// count named where it went, so the summary read the same as a clean morning.
 			ok("...and the summary NAMES the contested count rather than only lowering the numerator", /1 contested/.test(out), out.split("\n").find((l) => /proof cells are proven/.test(l)));
 			// A reader sent to an OPEN issue that is closed learns the mechanism is lying to them.
-			ok("...and the contested table says the red is already closed", /closed 2026-09-01, inside this refresh window/.test(out), out.split("\n").find((l) => /#3580/.test(l)));
+			ok("...and the contested table says the red is already closed", out.includes(`closed ${day(WIN_CLOSED)}, inside this refresh window`), out.split("\n").find((l) => /#3580/.test(l)));
 		}
 
 		// A red closed BEFORE the window opened has already been through the file's documented
 		// clearing act. Reviving it forever would contest every cell that ever went red.
-		r = derive({ ...base, ledgerText: hdr + passRow, snapshot: winSnap([red3580({ closedAt: "2026-08-30T00:00:00Z" })]) });
+		r = derive({ ...base, ledgerText: hdr + passRow, snapshot: winSnap([red3580({ closedAt: iso(WIN_PREVIOUS - 3600_000) })]) });
 		ok("a red closed BEFORE the window opened does not contest — closing it is the documented clearing act", r.grid.aws.floor.state === "proven", r.grid.aws.floor.state);
 
 		// UNKNOWN NEVER COLLAPSES. A snapshot written before the fetch captured `closedAt` must not
