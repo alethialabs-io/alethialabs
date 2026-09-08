@@ -120,7 +120,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 16
-debt: 3
+debt: 30
 
 scanned:
   - scope: console_code
@@ -129,6 +129,11 @@ scanned:
     floor: 630
   - scope: console_pages
     floor: 400
+  # `packages/ui/src` — the shared components, reached by the ink-alpha rule only. 60 files today;
+  # the floor is the same kind of vacuity control as the three above, so narrowing the root (or
+  # dropping the scope) reds instead of silently reporting a clean package.
+  - scope: shared_ui
+    floor: 50
 
 format:
   - path: apps/console/components/runners/pool-card.tsx
@@ -259,3 +264,99 @@ status_badge:
   - path: apps/console/components/connectors/connection-ui.tsx
     hits: 1
     lifts: "#4295 — `VARIANT_ICON` draws `success`/`pending`/`error` as a check, a spinner and a cross: a second rendering of three states the badge already maps, so a pending test is a spinner here and a hollow dot in every table."
+
+ink_alpha:
+  # --- debt only: 50 occurrences in 27 files, measured 2026-09-08 on an unmodified dev by this
+  #     rule's own matcher. The instrument landed apart from its fix on purpose (#4309), the same
+  #     way #3797's did, so the guard is not tautological.
+  #
+  #     THE SHELL'S THREE ARE NOT ROWS — they are FIXED in the same commit, and that is the one
+  #     exception worth stating. `shell/nav-row.tsx` and `shell/switcher-trigger.tsx` render on
+  #     every route, so three sites there were worth more than the other fifty together; leaving
+  #     them as debt would have recorded a 40-route failure as a line in a file.
+  #
+  #     `packages/ui` appears here for the first time. Two of these rows live in the shared
+  #     package, which every console scope excludes — see the `shared_ui` scope's own comment for
+  #     why a console-rooted matcher would have reported the console clean while the primitive
+  #     every filter bar renders through kept the defect.
+  - path: apps/console/app/(private)/[org]/~/jobs/[id]/page.tsx
+    hits: 3
+    lifts: "#4309 — `text-foreground/80`, `text-muted-foreground/40`, `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/agent/widgets/widget-card.tsx
+    hits: 2
+    lifts: "#4309 — `text-muted-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/ai-elements/code-block.tsx
+    hits: 1
+    lifts: "#4309 — `text-muted-foreground/50` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/alerts/activity-panel.tsx
+    hits: 1
+    lifts: "#4309 — `text-muted-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/alerts/channels-panel.tsx
+    hits: 4
+    lifts: "#4309 — `text-foreground/70`, `text-muted-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/alerts/event-matrix.tsx
+    hits: 4
+    lifts: "#4309 — `text-foreground/80`, `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/alerts/policies-panel.tsx
+    hits: 6
+    lifts: "#4309 — `text-foreground/70`, `text-muted-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/alerts/policy-sheet.tsx
+    hits: 3
+    lifts: "#4309 — `text-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/connectors/connection-ui.tsx
+    hits: 1
+    lifts: "#4309 — `text-foreground/80` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/connectors/connector-detail-sheet.tsx
+    hits: 1
+    lifts: "#4309 — `text-foreground/80` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/connectors/connectors-page.tsx
+    hits: 1
+    lifts: "#4309 — `text-muted-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/data-table.tsx
+    hits: 1
+    lifts: "#4309 — `text-muted-foreground/50` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/design-project/byo/iac-node.tsx
+    hits: 5
+    lifts: "#4309 — `text-foreground/80`, `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/design-project/canvas/inspector/node-quick-config.tsx
+    hits: 1
+    lifts: "#4309 — `text-muted-foreground/50` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/design-project/canvas/nodes/base-node.tsx
+    hits: 1
+    lifts: "#4309 — `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/design-project/canvas/nodes/chart-node.tsx
+    hits: 3
+    lifts: "#4309 — `text-foreground/80`, `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/design-project/canvas/nodes/collection-node.tsx
+    hits: 1
+    lifts: "#4309 — `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/design-project/container-platform-selector.tsx
+    hits: 1
+    lifts: "#4309 — `text-muted-foreground/40` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/design-project/help-tooltip.tsx
+    hits: 1
+    lifts: "#4309 — `text-muted-foreground/50` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/env-switcher.tsx
+    hits: 1
+    lifts: "#4309 — `text-border/70` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/forms/accordion-form.tsx
+    hits: 1
+    lifts: "#4309 — `text-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/overview/project-card.tsx
+    hits: 2
+    lifts: "#4309 — `text-muted-foreground/50`, `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/runners/release-notes-popover.tsx
+    hits: 1
+    lifts: "#4309 — `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/settings/members/members-table.tsx
+    hits: 1
+    lifts: "#4309 — `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: apps/console/components/support/support-card.tsx
+    hits: 1
+    lifts: "#4309 — `text-muted-foreground/50` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: packages/ui/src/field-help.tsx
+    hits: 1
+    lifts: "#4309 — `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
+  - path: packages/ui/src/funnel-filter.tsx
+    hits: 1
+    lifts: "#4309 — `text-muted-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
