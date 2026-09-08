@@ -56,7 +56,27 @@ var (
 	}
 	alibabaDNSReserved = []string{"managed_certificate", "application_waf"}
 
-	alibabaRootReserved = unionReserved(alibabaDatabaseReserved, alibabaCacheReserved,
+	// Every key this file assigns to root tfvars — the KEYS THE TYPED MAPPING WRITES, whether
+	// unconditionally or only when the canvas asked. All of them are reserved, because
+	// merge-if-absent protects only the unconditional ones: a key written inside an `if` leaves a
+	// gap exactly when the canvas declined to fill it, which is the moment a passthrough must not.
+	// Cluster node sizing and the brownfield network selectors are the whole reason this list
+	// exists rather than the per-component lists alone — none of them appeared in any reservation,
+	// so on every cloud a database's provider_config could set the cluster's disk size, and on
+	// Alibaba its `network_id` and `subnet_ids`. Found in review.
+	//
+	// Generated once from the assignments below it and kept honest by
+	// TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads them: a new `tfvars[...]`
+	// assignment fails the suite until it is listed here.
+	alibabaTypedTfvars = []string{
+		"ack_disk_size_gb", "ack_instance_types", "ack_node_desired_size", "ack_node_max_size",
+		"ack_node_min_size", "classification_tags", "kvstore_engine_version", "kvstore_instance_class",
+		"kvstore_multi_az", "kvstore_security_ips", "kvstore_shard_count", "network_id",
+		"rds_backup_retention_days", "rds_engine", "rds_engine_version", "rds_instance_type",
+		"rds_port", "rds_serverless_max_capacity", "rds_serverless_min_capacity", "subnet_ids",
+	}
+
+	alibabaRootReserved = unionReserved(alibabaTypedTfvars, alibabaDatabaseReserved, alibabaCacheReserved,
 		alibabaDNSReserved)
 )
 

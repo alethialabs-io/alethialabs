@@ -59,7 +59,27 @@ var (
 	azureClusterReserved  = []string{"aks_admin_group_object_ids"}
 	azureDNSReserved      = []string{"azure_waf", "managed_certificate"}
 
-	azureRootReserved = unionReserved(azureDatabaseReserved, azureCacheReserved,
+	// Every key this file assigns to root tfvars — the KEYS THE TYPED MAPPING WRITES, whether
+	// unconditionally or only when the canvas asked. All of them are reserved, because
+	// merge-if-absent protects only the unconditional ones: a key written inside an `if` leaves a
+	// gap exactly when the canvas declined to fill it, which is the moment a passthrough must not.
+	// Cluster node sizing and the brownfield network selectors are the whole reason this list
+	// exists rather than the per-component lists alone — none of them appeared in any reservation,
+	// so on every cloud a database's provider_config could set the cluster's disk size, and on
+	// Alibaba its `network_id` and `subnet_ids`. Found in review.
+	//
+	// Generated once from the assignments below it and kept honest by
+	// TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads them: a new `tfvars[...]`
+	// assignment fails the suite until it is listed here.
+	azureTypedTfvars = []string{
+		"aks_admin_group_object_ids", "aks_disk_size_gb", "aks_instance_types",
+		"aks_node_desired_size", "aks_node_max_size", "aks_node_min_size", "azure_cache_multi_az",
+		"azure_cache_sku_name", "azure_db_backup_retention_days", "azure_db_engine",
+		"azure_db_engine_version", "azure_db_iam_auth", "azure_db_port", "azure_db_sku_name",
+		"classification_tags", "subnet_ids", "vnet_id",
+	}
+
+	azureRootReserved = unionReserved(azureTypedTfvars, azureDatabaseReserved, azureCacheReserved,
 		azureRegistryReserved, azureClusterReserved, azureDNSReserved)
 )
 

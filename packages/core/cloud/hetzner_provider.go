@@ -96,6 +96,22 @@ func (p *hetznerProvider) ValidateConfig(config *types.ProjectConfig) error {
 	return validateNetworkCIDR(config, "network_cidr", hetznerMaxNetworkPrefix)
 }
 
+// Every key this file assigns to root tfvars. Hetzner has ONE root-level component — the database,
+// cache and queue are in-cluster charts, and buckets and registry hosts merge into per-item objects
+// — so there is no second component whose knobs could decide these. It still gets a union, and the
+// reason is `hcloud_token` and the four `hetzner_s3_*` credentials sitting in this list: relying on
+// "it is written unconditionally, so merge-if-absent covers it" makes the guarantee depend on the
+// ORDER of two statements, and the day one of those moves inside an `if` the cluster's own
+// provider_config can name the cloud credential. Reserving them says so instead of assuming it.
+//
+// Kept honest by TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads the assignments below:
+// a new `tfvars[...]` fails the suite until it is listed here.
+var hetznerRootReserved = []string{
+	"buckets", "classification_tags", "hcloud_token", "hetzner_s3_access_key",
+	"hetzner_s3_endpoint", "hetzner_s3_region", "hetzner_s3_secret_key",
+	"incluster_registry_hosts",
+}
+
 func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	// Node sizing: prefer an explicit/ resolved instance type, else a cheap, orderable
 	// amd64 default (cpx22 = 2 vCPU / 4 GB). cax11 (ARM) is capacity-unreliable and
@@ -259,12 +275,7 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	// classification_tags var (B1.3).
 	tfvars["classification_tags"] = classificationTags(config, hetznerTagStyle)
 
-	// No union is passed here, and that is not an omission. Hetzner has exactly ONE root-level
-	// component: the database, cache and queue are in-cluster charts rather than managed services,
-	// and buckets and registry hosts merge into per-item objects. A union exists to stop one
-	// component deciding another's root variable, and with a single root component there is no
-	// other component to decide for. See `mergeProviderConfig` in aws_provider.go.
-	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig)
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, hetznerRootReserved...)
 
 	return tfvars
 }

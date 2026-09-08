@@ -65,7 +65,29 @@ var (
 	gcpClusterReserved = []string{"enable_autopilot"}
 	gcpDNSReserved     = []string{"cloud_armor", "managed_certificate"}
 
-	gcpRootReserved = unionReserved(gcpDatabaseReserved, gcpCacheReserved, gcpNosqlReserved,
+	// Every key this file assigns to root tfvars — the KEYS THE TYPED MAPPING WRITES, whether
+	// unconditionally or only when the canvas asked. All of them are reserved, because
+	// merge-if-absent protects only the unconditional ones: a key written inside an `if` leaves a
+	// gap exactly when the canvas declined to fill it, which is the moment a passthrough must not.
+	// Cluster node sizing and the brownfield network selectors are the whole reason this list
+	// exists rather than the per-component lists alone — none of them appeared in any reservation,
+	// so on every cloud a database's provider_config could set the cluster's disk size, and on
+	// Alibaba its `network_id` and `subnet_ids`. Found in review.
+	//
+	// Generated once from the assignments below it and kept honest by
+	// TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads them: a new `tfvars[...]`
+	// assignment fails the suite until it is listed here.
+	gcpTypedTfvars = []string{
+		"classification_tags", "cloud_sql_backup_retention_days", "cloud_sql_engine",
+		"cloud_sql_engine_version", "cloud_sql_iam_auth", "cloud_sql_port", "cloud_sql_tier",
+		"create_memorystore", "create_memorystore_valkey", "gke_disk_size_gb", "gke_instance_types",
+		"gke_node_desired_size", "gke_node_max_size", "gke_node_min_size",
+		"memorystore_memory_size_gb", "memorystore_redis_version", "memorystore_tier",
+		"memorystore_valkey_engine_version", "memorystore_valkey_replica_count",
+		"memorystore_valkey_shard_count", "network_id", "subnet_ids",
+	}
+
+	gcpRootReserved = unionReserved(gcpTypedTfvars, gcpDatabaseReserved, gcpCacheReserved, gcpNosqlReserved,
 		gcpClusterReserved, gcpDNSReserved)
 )
 

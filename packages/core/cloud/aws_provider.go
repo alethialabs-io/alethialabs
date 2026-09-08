@@ -408,7 +408,29 @@ var (
 	awsClusterReserved = []string{"enable_karpenter"}
 	awsDNSReserved     = []string{"cloudfront_waf", "acm_certificate", "application_waf"}
 
-	awsRootReserved = unionReserved(awsDatabaseReserved, awsCacheReserved, awsRegistryReserved,
+	// Every key this file assigns to root tfvars — the KEYS THE TYPED MAPPING WRITES, whether
+	// unconditionally or only when the canvas asked. All of them are reserved, because
+	// merge-if-absent protects only the unconditional ones: a key written inside an `if` leaves a
+	// gap exactly when the canvas declined to fill it, which is the moment a passthrough must not.
+	// Cluster node sizing and the brownfield network selectors are the whole reason this list
+	// exists rather than the per-component lists alone — none of them appeared in any reservation,
+	// so on every cloud a database's provider_config could set the cluster's disk size, and on
+	// Alibaba its `network_id` and `subnet_ids`. Found in review.
+	//
+	// Generated once from the assignments below it and kept honest by
+	// TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads them: a new `tfvars[...]`
+	// assignment fails the suite until it is listed here.
+	awsTypedTfvars = []string{
+		"classification_tags", "create_elasticache_redis", "create_elasticache_valkey",
+		"eks_disk_size", "eks_instance_types", "eks_ng_desired_size", "eks_ng_max_size",
+		"eks_ng_min_size", "rds_backup_retention_period", "rds_config", "rds_iam_auth_enabled",
+		"rds_iam_irsa", "rds_instance_type", "rds_logs_exports", "rds_scaling_config",
+		"redis_allowed_cidr_blocks", "redis_cluster_size", "redis_engine_version", "redis_family",
+		"redis_instance_type", "redis_multi_az_enabled", "valkey_data_storage_max",
+		"valkey_engine_version",
+	}
+
+	awsRootReserved = unionReserved(awsTypedTfvars, awsDatabaseReserved, awsCacheReserved, awsRegistryReserved,
 		awsClusterReserved, awsDNSReserved)
 )
 

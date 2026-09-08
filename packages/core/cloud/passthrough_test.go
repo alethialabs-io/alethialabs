@@ -878,19 +878,19 @@ func TestProviderTfvars_LeafPassthrough_TypedWins(t *testing.T) {
 // `RootReserved` union. Text rather than an AST because the call site IS the text: what is being
 // checked is which identifier a human typed at a call, not what the program computes.
 func TestEveryReservedSliceAndRootMergeIsCoveredBySource(t *testing.T) {
-	// Hetzner has ONE root-level component (the database, cache and queue are in-cluster charts,
-	// buckets and registry hosts are per-item), so there is no other component to decide for and
-	// no union to pass. Recorded here rather than skipped silently.
-	const hetznerFile = "hetzner_provider.go"
-
 	declRe := regexp.MustCompile(`(?m)^\t(\w+Reserved)\s*=\s*\[\]string\{`)
 	unionArgsRe := regexp.MustCompile(`(?s)unionReserved\((.*?)\)\n`)
 	rootMergeRe := regexp.MustCompile(`(?m)^\s*mergeProviderConfig\(tfvars,.*$`)
 
-	for _, file := range []string{
+	files := []string{
 		"aws_provider.go", "gcp_provider.go", "azure_provider.go",
-		"alibaba_provider.go", hetznerFile,
-	} {
+		"alibaba_provider.go", "hetzner_provider.go",
+	}
+	if len(files) != len(leafProviders) {
+		t.Fatalf("%d provider files scanned but %d providers exist — a cloud added without a file "+
+			"here is never asked either question", len(files), len(leafProviders))
+	}
+	for _, file := range files {
 		t.Run(file, func(t *testing.T) {
 			src, err := os.ReadFile(file)
 			if err != nil {
@@ -916,10 +916,16 @@ func TestEveryReservedSliceAndRootMergeIsCoveredBySource(t *testing.T) {
 			}
 
 			// 2. Every root-level merge is passed a union.
-			for _, call := range rootMergeRe.FindAllString(text, -1) {
-				if file == hetznerFile {
-					continue
-				}
+			//
+			// The count comes first, and that is the whole point of it: a text matcher that stops
+			// matching reports the same "no violations" as a file with nothing wrong. A gofmt
+			// change, a wrapped argument list or a rename would make this silently vacuous.
+			calls := rootMergeRe.FindAllString(text, -1)
+			if len(calls) < 1 {
+				t.Fatalf("%s: matched ZERO root-level merges — every provider has at least one, so "+
+					"the matcher is blind and this test would pass on any defect", file)
+			}
+			for _, call := range calls {
 				if !strings.Contains(call, "RootReserved...") {
 					t.Errorf("%s: root merge is not passed its cloud's union — one component's "+
 						"provider_config can decide another's variable:\n  %s",
@@ -1042,45 +1048,71 @@ func TestProviderTfvars_ReservedKeysAreClosedToEveryOtherComponent(t *testing.T)
 	}
 }
 
-// The union each root-level merge is passed must actually contain every per-component list, or the
-// test above probes a set narrower than the one the call sites use and reports all-clear for keys
-// nothing closes. Deriving the union does not prove it was derived from the RIGHT slices.
-func TestRootReservedUnionsCoverEveryComponentList(t *testing.T) {
+// The union must contain every key the TYPED MAPPING WRITES — the subject read out of the emitter,
+// not out of a list written here.
+//
+// This replaces a test that compared each union against a hand-written map of the same component
+// slices it was built from. Those two agreed by construction, so it could only fail if
+// `unionReserved` itself dropped entries: it tested the helper, not the coverage. Review found
+// what that hid. Nine keys reached on four clouds while it was green — every cloud's cluster node
+// sizing (`eks_disk_size`, `gke_node_desired_size`, `aks_disk_size_gb`, `ack_node_max_size` and
+// their siblings) plus Alibaba's `network_id` and `subnet_ids`, so a DATABASE's provider_config
+// could pick the cluster's disk size and the brownfield VPC and vSwitch. They were in no slice at
+// all, and a union of slices cannot cover a key no slice names. The carrier probe shared the blind
+// spot and was worse there: its subjects ARE the slices, so deleting a key both opens the hole and
+// deletes the subtest that would have caught it.
+//
+// Reading the assignments makes the subject independent of anything a person remembers to list.
+//
+// Both loops assert a COUNT before they assert a property. A text matcher that stops matching —
+// after a gofmt change, a wrapped argument list, a rename — is indistinguishable from a file with
+// nothing to find, so "no violations" and "I could not see the file" have to be different answers.
+func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
+	assignRe := regexp.MustCompile(`tfvars\["([a-z0-9_]+)"\]\s*=`)
+
+	// The floor is the count observed when this was written. It exists to catch the matcher going
+	// blind, not to pin the exact surface, so it is a MINIMUM rather than an equality: adding a
+	// tfvar is normal and must not fail here, while dropping to zero is the failure this catches.
 	cases := []struct {
-		cloud string
-		union []string
-		parts map[string][]string
+		cloud, file string
+		union       []string
+		minKeys     int
 	}{
-		{"aws", awsRootReserved, map[string][]string{
-			"database": awsDatabaseReserved, "cache": awsCacheReserved,
-			"registry": awsRegistryReserved, "cluster": awsClusterReserved, "dns": awsDNSReserved,
-		}},
-		{"gcp", gcpRootReserved, map[string][]string{
-			"database": gcpDatabaseReserved, "cache": gcpCacheReserved, "nosql": gcpNosqlReserved,
-			"cluster": gcpClusterReserved, "dns": gcpDNSReserved,
-		}},
-		{"azure", azureRootReserved, map[string][]string{
-			"database": azureDatabaseReserved, "cache": azureCacheReserved,
-			"registry": azureRegistryReserved, "cluster": azureClusterReserved,
-			"dns": azureDNSReserved,
-		}},
-		{"alibaba", alibabaRootReserved, map[string][]string{
-			"database": alibabaDatabaseReserved, "cache": alibabaCacheReserved,
-			"dns": alibabaDNSReserved,
-		}},
+		{"aws", "aws_provider.go", awsRootReserved, 23},
+		{"gcp", "gcp_provider.go", gcpRootReserved, 22},
+		{"azure", "azure_provider.go", azureRootReserved, 17},
+		{"alibaba", "alibaba_provider.go", alibabaRootReserved, 20},
+		{"hetzner", "hetzner_provider.go", hetznerRootReserved, 8},
 	}
+	if len(cases) != len(leafProviders) {
+		t.Fatalf("%d clouds checked but %d providers exist — a cloud added without a union here "+
+			"would never be asked the question", len(cases), len(leafProviders))
+	}
+
 	for _, tc := range cases {
 		t.Run(tc.cloud, func(t *testing.T) {
+			src, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatalf("reading %s: %v", tc.file, err)
+			}
+			found := map[string]bool{}
+			for _, m := range assignRe.FindAllStringSubmatch(string(src), -1) {
+				found[m[1]] = true
+			}
+			if len(found) < tc.minKeys {
+				t.Fatalf("%s: matched %d root tfvars assignments, expected at least %d — the "+
+					"matcher has gone blind and every check below it would report all-clear",
+					tc.file, len(found), tc.minKeys)
+			}
 			in := make(map[string]bool, len(tc.union))
 			for _, k := range tc.union {
 				in[k] = true
 			}
-			for owner, keys := range tc.parts {
-				for _, k := range keys {
-					if !in[k] {
-						t.Errorf("%s: %q is reserved by the %s but missing from the union every "+
-							"root merge is passed — every other component can set it", tc.cloud, k, owner)
-					}
+			for k := range found {
+				if !in[k] {
+					t.Errorf("%s writes %q but does not reserve it — a component's provider_config "+
+						"can decide it whenever the typed mapping happens not to, which is exactly "+
+						"when the canvas declined to", tc.cloud, k)
 				}
 			}
 		})
