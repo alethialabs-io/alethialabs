@@ -1048,6 +1048,41 @@ func TestProviderTfvars_ReservedKeysAreClosedToEveryOtherComponent(t *testing.T)
 	}
 }
 
+// blankLineComments replaces every `//` comment with spaces, leaving byte offsets unchanged.
+//
+// It exists because the two ways of finding the tfvars literal's end both read text they cannot
+// lex, and a comment is the one thing inside that span that is allowed to say anything at all.
+// `aws_provider.go` already carries a comment reading "It used to stay {}" INSIDE the literal; that
+// pair balances, so the brace count was right by luck. Blanking comments first removes the hazard
+// rather than detecting it after the fact — and blanking rather than deleting keeps every offset
+// aligned with the original text, so the key extraction still reads the real source.
+//
+// Double-quoted strings are respected (a `//` inside one is not a comment). Raw strings and block
+// comments are REFUSED by the caller rather than handled: a backtick string could contain both a
+// `//` and a line starting with `}`, which would fool the stripper and both bounds at once — the
+// one case where the two methods could agree and both be wrong.
+func blankLineComments(src string) string {
+	out := []byte(src)
+	inStr := false
+	for i := 0; i < len(out); i++ {
+		switch {
+		case inStr:
+			if out[i] == '\\' {
+				i++
+			} else if out[i] == '"' {
+				inStr = false
+			}
+		case out[i] == '"':
+			inStr = true
+		case out[i] == '/' && i+1 < len(out) && out[i+1] == '/':
+			for j := i; j < len(out) && out[j] != '\n'; j++ {
+				out[j] = ' '
+			}
+		}
+	}
+	return string(out)
+}
+
 // The union must contain every key the TYPED MAPPING WRITES — the subject read out of the emitter,
 // not out of a list written here.
 //
@@ -1114,6 +1149,20 @@ func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
 				t.Fatalf("reading %s: %v", tc.file, err)
 			}
 			text := string(src)
+
+			// Neither bound can lex the text it scans, so the two shapes that could defeat both at
+			// once are refused rather than handled: a raw string may contain a `//` and a line
+			// starting with `}`, and a block comment hides from a line-comment stripper. Neither
+			// appears in any provider today; if one does, this fails loudly rather than reading a
+			// span it has no way to trust.
+			if strings.Contains(text, "`") && strings.Contains(text, "/*") {
+				t.Fatalf("%s: contains both a raw string and a block comment — the span bounds "+
+					"below cannot be trusted against either", tc.file)
+			}
+			// The bounds run on a copy with comments blanked out; offsets are preserved, so the key
+			// extraction still reads the real source.
+			scan := blankLineComments(text)
+
 			found := map[string]bool{}
 			for _, m := range assignRe.FindAllStringSubmatch(text, -1) {
 				found[m[1]] = true
@@ -1135,10 +1184,10 @@ func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
 			// tab, and everything nested inside it is indented deeper. Requiring the two answers to
 			// be identical turns "a comment moved the end" from a silent short read into a failure
 			// that names itself.
-			if open := literalOpenRe.FindStringIndex(text); open != nil {
+			if open := literalOpenRe.FindStringIndex(scan); open != nil {
 				depth, i := 1, open[1]
-				for i < len(text) && depth > 0 {
-					switch text[i] {
+				for i < len(scan) && depth > 0 {
+					switch scan[i] {
 					case '{':
 						depth++
 					case '}':
@@ -1148,7 +1197,7 @@ func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
 				}
 				byBrace := i - 1
 
-				rel := strings.Index(text[open[1]:], "\n\t}")
+				rel := strings.Index(scan[open[1]:], "\n\t}")
 				if rel < 0 {
 					t.Fatalf("%s: the tfvars literal has no closing `}` at one tab — gofmt guarantees "+
 						"one, so the span cannot be bounded and every key past here would go unread",
