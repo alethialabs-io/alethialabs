@@ -1660,7 +1660,7 @@ func TestProj_ManifestRefusesAValueTheServerWouldRefuse(t *testing.T) {
 			if err := flags.Flags().Set("file", path); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := manifestForCreate(pb); err == nil {
+			if _, _, err := manifestForCreate(pb); err == nil {
 				t.Fatalf("%s was accepted", name)
 			}
 		})
@@ -1933,7 +1933,7 @@ func TestProj_CreateReplayPrefersTheLabelOverTheId(t *testing.T) {
 	// refuses both), so the label is what the replay names.
 	withLabel := replayLine(createReplayArgs(
 		api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1", CloudIdentityID: "ci-uuid-1"},
-		"prod-account")...)
+		"prod-account", "")...)
 	if strings.Contains(withLabel, "ci-uuid-1") {
 		t.Errorf("%q carries the resolved id although a label was given", withLabel)
 	}
@@ -1945,7 +1945,7 @@ func TestProj_CreateReplayPrefersTheLabelOverTheId(t *testing.T) {
 	// and --cloud-account takes an id, so the line still runs.
 	fromPicker := replayLine(createReplayArgs(
 		api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1", CloudIdentityID: "ci-uuid-1"},
-		"")...)
+		"", "")...)
 	if !strings.Contains(fromPicker, "--cloud-account ci-uuid-1") {
 		t.Errorf("%q dropped the only account reference there was", fromPicker)
 	}
@@ -1997,7 +1997,7 @@ func TestProj_CreateReplayNamesEveryFlagThatShapedTheProject(t *testing.T) {
 		Stage:       "production",
 		Placement:   "dedicated",
 		IacVersion:  "1.8.2",
-	}, "")...)
+	}, "", "")...)
 	for _, want := range []string{
 		"--region eu-west-1", "--stage production", "--placement-mode dedicated", "--iac-version 1.8.2",
 	} {
@@ -2008,11 +2008,33 @@ func TestProj_CreateReplayNamesEveryFlagThatShapedTheProject(t *testing.T) {
 	// What was not passed is not invented: the server defaults these, and naming a default
 	// the caller never chose pins it into a script that would then stop tracking the server.
 	bare := replayLine(createReplayArgs(
-		api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1"}, "")...)
-	for _, unwanted := range []string{"--stage", "--placement-mode", "--iac-version"} {
+		api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1"}, "", "")...)
+	for _, unwanted := range []string{"--stage", "--placement-mode", "--iac-version", "--file"} {
 		if strings.Contains(bare, unwanted) {
 			t.Errorf("%q names %s although nothing set it", bare, unwanted)
 		}
+	}
+}
+
+// TestProj_CreateReplayNamesTheFileTheMatrixCameFrom pins the third way a replay line can be a
+// different project than the one that just ran.
+//
+// A matrix is a list of records and has no flag spelling. When it came from alethia.yaml and a
+// scalar was asked for on the terminal, the line printed under "same result, without the
+// questions" carried --region and --stage and nothing about the file — so running it created the
+// server's DEFAULT environment pair instead of the file's matrix, silently and under a heading
+// promising the same result. The file is named exactly when it supplied the matrix.
+func TestProj_CreateReplayNamesTheFileTheMatrixCameFrom(t *testing.T) {
+	params := api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1", Stage: "production"}
+	fromFile := replayLine(createReplayArgs(params, "prod-account", "infra/alethia.yaml")...)
+	if !strings.Contains(fromFile, "--file infra/alethia.yaml") {
+		t.Errorf("%q does not name the file its matrix came from", fromFile)
+	}
+	// And it is not invented for a run whose matrix came from the form: there printManifestReplay
+	// prints the file itself, and a --file naming a path that does not exist yet would not run.
+	fromForm := replayLine(createReplayArgs(params, "prod-account", "")...)
+	if strings.Contains(fromForm, "--file") {
+		t.Errorf("%q names a file although no file supplied the matrix", fromForm)
 	}
 }
 

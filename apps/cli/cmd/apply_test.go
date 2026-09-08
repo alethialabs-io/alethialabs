@@ -72,7 +72,6 @@ func applyWriteManifest(t *testing.T, body string) string {
 func applyResetFlags() {
 	applyBinder.Reset()
 	planBinder.Reset()
-	applyRunnerID = ""
 }
 
 func applyEnv(t *testing.T, s *projServer) projHarness {
@@ -293,7 +292,7 @@ func TestApply_EnvNarrowsTheDeployNotTheCreate(t *testing.T) {
 	s := &projServer{envs: applyDemoEnvs()}
 	h := applyEnv(t, s)
 	path := applyWriteManifest(t, applyDemoManifest)
-	if h.run("apply", "--file", path, "--yes", "--runner-id", "r1", "--env", "dev-1", "--no-wait", "--no-input") {
+	if h.run("apply", "--file", path, "--yes", "--runner", "primary", "--env", "dev-1", "--no-wait", "--no-input") {
 		t.Error("apply exited fatally")
 	}
 	var deploys int
@@ -360,7 +359,7 @@ func TestApply_RunnerRule(t *testing.T) {
 		{ID: "r3", Name: "old", Status: "OFFLINE"},
 	}}
 	// The only online runner is picked without a question.
-	if id, err := applyRunner(one, "tok", "", ""); err != nil || id != "r1" {
+	if id, err := applyRunner(one, "tok", ""); err != nil || id != "r1" {
 		t.Errorf("one online runner: got %q, %v", id, err)
 	}
 	// Two online and nobody to ask: unassigned, for the server to place.
@@ -368,18 +367,15 @@ func TestApply_RunnerRule(t *testing.T) {
 		{ID: "r1", Name: "primary", Status: "ONLINE"},
 		{ID: "r2", Name: "edge", Status: "ONLINE"},
 	}}
-	if id, err := applyRunner(two, "tok", "", ""); err != nil || id != "" {
+	if id, err := applyRunner(two, "tok", ""); err != nil || id != "" {
 		t.Errorf("two online runners under --no-input: got %q, %v", id, err)
 	}
 	// A name resolves; an unknown name is refused naming the known ones.
-	if id, err := applyRunner(two, "tok", "edge", ""); err != nil || id != "r2" {
+	if id, err := applyRunner(two, "tok", "edge"); err != nil || id != "r2" {
 		t.Errorf("by name: got %q, %v", id, err)
 	}
-	if _, err := applyRunner(two, "tok", "nope", ""); err == nil || !strings.Contains(err.Error(), "primary") {
+	if _, err := applyRunner(two, "tok", "nope"); err == nil || !strings.Contains(err.Error(), "primary") {
 		t.Errorf("an unknown runner must be refused naming the known ones: %v", err)
-	}
-	if _, err := applyRunner(two, "tok", "edge", "r1"); err == nil {
-		t.Error("--runner and --runner-id together must be refused")
 	}
 }
 

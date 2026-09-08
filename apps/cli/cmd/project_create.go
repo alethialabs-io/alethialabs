@@ -140,7 +140,7 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 			b.SetArg("name", strings.TrimSpace(args[0]))
 		}
 
-		m, err := manifestForCreate(b)
+		m, manifestPath, err := manifestForCreate(b)
 		if err != nil {
 			fail(err)
 		}
@@ -181,14 +181,17 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 		// default pair.
 		var environments []api.EnvironmentSpec
 		matrixAsked := false
+		// fileRef is the path only when the file is what SUPPLIED the matrix, so the replay names
+		// `--file` exactly when running the line without it would produce a different project.
+		fileRef := ""
 		if m != nil && len(m.Environments) > 0 {
 			environments = m.EnvironmentSpecs()
+			fileRef = manifestPath
 		} else if promptsEnabled() {
 			if environments, err = promptEnvMatrix(); err != nil {
 				fail(err)
 			}
 			matrixAsked = len(environments) > 0
-			asked = asked || matrixAsked
 		}
 
 		params := api.CreateProjectParams{
@@ -225,7 +228,7 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 			printManifestReplay(os.Stdout, outputFormat(cmd), params, accountRef)
 			return
 		}
-		printReplay(os.Stdout, outputFormat(cmd), asked, createReplayArgs(params, accountRef)...)
+		printReplay(os.Stdout, outputFormat(cmd), asked, createReplayArgs(params, accountRef, fileRef)...)
 	},
 }
 
@@ -235,19 +238,23 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 // It is normalised and validated here, with no component schema — `project create` creates the
 // project and its environments and leaves components to `alethia apply`, so the only rules that
 // apply are the ones the create route itself enforces.
-func manifestForCreate(b *spec.Binder) (*manifest.Manifest, error) {
+// It returns the PATH it read alongside the manifest, because the replay line has to name it:
+// a run whose matrix came from a file and whose name was asked for prints "same result, without
+// the questions" over a command with no --file in it, which reproduces the server's default
+// environment pair instead of the file's matrix.
+func manifestForCreate(b *spec.Binder) (*manifest.Manifest, string, error) {
 	path, _ := b.String("file")
 	explicit := path != ""
 	if path == "" {
 		found, ok := manifest.Find(".")
 		if !ok {
-			return nil, nil
+			return nil, "", nil
 		}
 		path = found
 	}
 	m, err := manifest.Load(path)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	m.Normalize()
 	// RequireDedicated: `project create` is the front door that brings a project's first Fabric
@@ -261,11 +268,11 @@ func manifestForCreate(b *spec.Binder) (*manifest.Manifest, error) {
 			// A file nobody asked for, refused. Saying so is the difference between "your command
 			// is wrong" and "the directory you ran in holds a broken file" — a scripted caller
 			// that never passed `--file` would otherwise read this as a defect in its invocation.
-			return nil, fmt.Errorf("%s in this directory was read because no --file was given, and it cannot be used: %w", path, err)
+			return nil, "", fmt.Errorf("%s in this directory was read because no --file was given, and it cannot be used: %w", path, err)
 		}
-		return nil, err
+		return nil, "", err
 	}
-	return m, nil
+	return m, path, nil
 }
 
 // createReplayArgs renders the `project create` that would have produced this project.
@@ -279,8 +286,15 @@ func manifestForCreate(b *spec.Binder) (*manifest.Manifest, error) {
 // It prefers the LABEL the caller (or the picker) used over the resolved identity id, because a
 // replay line carrying a UUID is the thing this command exists to stop printing. The id appears
 // only when that is all we have — the picker returns one — and `--cloud-account` takes it too.
-func createReplayArgs(params api.CreateProjectParams, accountRef string) []string {
+func createReplayArgs(params api.CreateProjectParams, accountRef, fileRef string) []string {
 	args := []string{"alethia", "project", "create", params.ProjectName}
+	if fileRef != "" {
+		// The matrix came from the file, and a list of records has no flag spelling — so a replay
+		// line without it reproduces the SERVER's default environment pair, not the project that
+		// was just made. `--file` is named even when it is the discovered ./alethia.yaml, because
+		// the line is meant to be pasted into a script that runs in some other directory.
+		args = append(args, "--file", fileRef)
+	}
 	if params.Region != "" {
 		args = append(args, "--region", params.Region)
 	}

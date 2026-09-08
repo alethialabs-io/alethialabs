@@ -85,9 +85,6 @@ var planSpec = spec.Spec{
 var (
 	applyBinder *spec.Binder
 	planBinder  *spec.Binder
-	// applyRunnerID is the hidden id-only spelling, kept for one release so
-	// test/e2e/t2_cli_demo_provision.go's beats keep working until they move to --runner.
-	applyRunnerID string
 )
 
 // errApplyRequiresYes is the refusal when nobody can confirm a spend.
@@ -135,7 +132,7 @@ project that already matches the file changes nothing and deploys again.`,
 		if !confirmApply(yes) {
 			return
 		}
-		runnerID, err := applyRunner(client, token, values.Get("runner"), applyRunnerID)
+		runnerID, err := applyRunner(client, token, values.Get("runner"))
 		if err != nil {
 			fail(err)
 		}
@@ -609,9 +606,14 @@ func confirmApply(yes bool) bool {
 // to choose from a list of one is a question with no answer; then the picker on a terminal; and
 // under --no-input the job is left unassigned for the server to place, exactly as `project
 // apply` does.
-func applyRunner(c applyClient, token, ref, id string) (string, error) {
-	if ref != "" || id != "" {
-		return runnerIDFrom(c, ref, id, "--runner", "--runner-id")
+//
+// `--runner` takes the NAME or the id, and there is no `--runner-id` alias here. The other runner
+// commands carry one because scripts have always passed it to them; `apply` is new, so an alias
+// would be a compatibility shim with nothing to be compatible with — a hidden flag, a both-flags
+// refusal and two test cases on a "remove after one release" schedule that nothing tracks.
+func applyRunner(c applyClient, token, ref string) (string, error) {
+	if ref != "" {
+		return resolveRunnerRef(c, "--runner", ref)
 	}
 	runners, err := c.GetRunners()
 	if err != nil {
@@ -774,8 +776,6 @@ func findEnv(m *manifest.Manifest, name string) (manifest.Environment, error) {
 
 func init() {
 	applyBinder = spec.RegisterFlags(applyCmd, applySpec)
-	applyCmd.Flags().StringVar(&applyRunnerID, "runner-id", "", "Runner id (prefer --runner, which also takes the name)")
-	_ = applyCmd.Flags().MarkHidden("runner-id")
 	planBinder = spec.RegisterFlags(planCmd, planSpec)
 	rootCmd.AddCommand(applyCmd)
 	rootCmd.AddCommand(planCmd)
