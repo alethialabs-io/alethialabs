@@ -31,21 +31,48 @@ variable "domain" {
 
 variable "email_forward_to" {
   # Destination inbox for Cloudflare Email Routing (infra/cp-hetzner/email-routing.tf) — only
-  # used when manage_email_routing = true. The live routing was bootstrapped out-of-band (the
-  # cp-hetzner state is empty), so it stays "" and the routing resources are gated off until
-  # the existing routing is `tofu import`-ed post-launch (see README). Set the real inbox in
-  # the gitignored terraform.tfvars / CI when flipping manage_email_routing on.
+  # used when manage_email_routing = true. The live routing was bootstrapped out-of-band and is
+  # absent from this stack's state, so it stays "" and the routing resources are gated off. It
+  # is set in the SAME change as the import, never before and never after — see
+  # manage_email_routing's description for why either order alone breaks something, and #4374
+  # for the adoption itself.
   description = "Inbox that inbound alethialabs.io mail is forwarded to (when manage_email_routing)."
   type        = string
   default     = ""
 }
 
 variable "manage_email_routing" {
-  # false (default): Terraform does NOT manage the Cloudflare Email Routing resources. They were
-  # bootstrapped out-of-band and are live; the cp-hetzner state is empty, so a fresh apply would
-  # collide ("already exists") and fail the box provision. Flip true only AFTER `tofu import`-ing
-  # the existing settings/address/rules/catch-all into state (see README).
-  description = "Whether Terraform manages the Cloudflare Email Routing resources in email-routing.tf."
+  description = <<-EOT
+    Whether Terraform manages the 11 Cloudflare Email Routing resources in email-routing.tf —
+    the zone settings, the destination address, 8 inbound forward rules, and the catch-all.
+
+    `false`, and DELIBERATELY DORMANT rather than pending (#3291). The routing was bootstrapped
+    out-of-band and is live; NONE of it is in this stack's OpenTofu state. So the gate is not a
+    feature flag waiting to be flipped — it is the statement that these declarations describe
+    objects Terraform does not own. Adopting them is #4374, and is not done by setting this input.
+
+    THE HAZARD IS THE TRANSITION, AND IT IS REAL RATHER THAN THEORETICAL. Import any of these into
+    state — or create them from a local apply — while this input is still unset, and the
+    configuration gates the resource to zero instances while state holds one. That is a planned
+    DESTROY of live inbound mail, and .github/workflows/infra-cp-hetzner.yml applies it
+    `-auto-approve`, unattended, on the next push to `main` that touches `infra/cp-hetzner/**`
+    (the workflow's own `paths:` filter — not every push to main, but every push that edits this
+    stack, which includes the push that would carry the import). The eight local-parts are the
+    addresses printed in transactional email footers and on the contact, CLA, legal and security
+    pages, so the blast radius is inbound mail to the company.
+
+    Setting it true FIRST fails the other way: the objects already exist in Cloudflare, so create
+    collides ("already exists") and takes the box provision down with it. Neither order is safe on
+    its own — import and input have to land together, which is why #4374 is one unit and why this
+    is written here rather than left to whoever runs the import to rediscover.
+
+    WHAT ENFORCES THIS, precisely. The dormancy is enforced: `count`/`for_each` in email-routing.tf
+    read this variable, its default is false, this stack has no committed terraform.tfvars, and the
+    apply workflow loads exactly five TF_VAR_* from Secrets Manager — none of them this one. What is
+    NOT enforced is the transition above: no check, guard or CI job notices an import landing
+    without the input. This paragraph is the only thing standing between that import and the
+    destroy, which is the reason it is this long.
+  EOT
   type        = bool
   default     = false
 }
