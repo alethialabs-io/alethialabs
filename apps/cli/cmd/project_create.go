@@ -9,8 +9,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/names"
 	"github.com/spf13/cobra"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/spec"
@@ -42,10 +44,7 @@ var projectCreateSpec = spec.Spec{
 			ManifestKey: "cloud.region", Page: docsProjectPage},
 		{Command: "alethia project create", Key: "account", Title: "Cloud account",
 			Description: "Cloud account to link, by its LABEL or its id (asked for on a terminal when omitted)",
-			Flag:        "cloud-account", Selector: "label", Page: docsProjectPage},
-		{Command: "alethia project create", Key: "identity", Title: "Cloud account id",
-			Description: "Cloud account id to link (prefer --cloud-account, which also takes the label)",
-			Flag:        "cloud-identity-id", Page: docsProjectPage},
+			Flag:        "cloud-account", Selector: "label", ManifestKey: "cloud.account", Page: docsProjectPage},
 		{Command: "alethia project create", Key: "stage", Title: "Stage",
 			Description: "Initial environment stage", Flag: "stage",
 			Default: string(stageDevelopment), Options: "stages",
@@ -57,10 +56,12 @@ var projectCreateSpec = spec.Spec{
 			Description: "Placement of the default environment (default dedicated)",
 			Flag:        "placement-mode", Options: "placements",
 			ManifestKey: "placement", Page: docsProjectPage},
-		{Command: "alethia project create", Key: "env", Title: "Environments",
-			Description: "Environment as name:stage[:mode[:namespace]] (repeatable; the first is the default). " +
-				"Asked for on a terminal when omitted; without it the Production+Preview pair is created",
-			Flag: "env", Repeated: true, Page: docsProjectPage},
+		{Command: "alethia project create", Key: "file", Title: "Manifest",
+			Description: "alethia.yaml to take the values and the environment matrix from (the one in the current directory when present)",
+			Flag:        "file", Shorthand: "f", Page: docsProjectPage},
+		{Command: "alethia project create", Key: "no-manifest", Title: "Ignore the manifest",
+			Description: "Do not read the alethia.yaml in this directory (refused together with --file)",
+			Flag:        "no-manifest", Bool: true, Page: docsProjectPage},
 	},
 	// Derived from the generated enums rather than listed, so a new stage or placement mode reaches
 	// the flag help, the refusal message and the docs table together.
@@ -80,16 +81,13 @@ var projectCreatePrompt = defaultProjectCreatePrompt
 
 // defaultProjectCreatePrompt renders one unresolved project-create field through the existing
 // project forms. Optional fields return an empty answer and fall through to their defaults.
-func defaultProjectCreatePrompt(f spec.Field, token, accountRef string) (string, error) {
+func defaultProjectCreatePrompt(f spec.Field, token string) (string, error) {
 	switch f.Key {
 	case "name":
 		return promptProjectName()
 	case "region":
 		return promptRegion()
-	case "identity":
-		if accountRef != "" {
-			return "", nil
-		}
+	case "account":
 		id, _ := selectCloudIdentity(token)
 		return id, nil
 	}
@@ -104,30 +102,31 @@ func defaultProjectCreatePrompt(f spec.Field, token, accountRef string) (string,
 //	  --env dev-1:development:namespace:boutique-dev-1
 //
 // A four-field colon tuple typed three times, with two opaque ids copied out of other
-// commands' output. Three things changed, and none of them removed a flag:
+// commands' output. Three things changed, and the tuple and the id flag are GONE rather than
+// kept beside their replacements:
 //
-//   - the tuple is ASKED FOR, one environment at a time, from pickers built out of the
-//     generated enums — and the equivalent `--env` line is printed back, so the answer to
-//     "what do I commit to my repo" is on screen rather than in the docs;
-//   - `--cloud-account` takes the account's LABEL, so the identity id never has to be
-//     copied out of `alethia connector list`;
+//   - the environment matrix comes from `alethia.yaml` — or is ASKED FOR, one environment at
+//     a time, from pickers built out of the generated enums, and the file those answers add
+//     up to is printed back, so the answer to "what do I commit to my repo" is on screen;
+//   - `--cloud-account` takes the account's LABEL (or its id), so the identity id never has to
+//     be copied out of `alethia connector list`;
 //   - a mis-typed rung or stage is refused HERE, against the same generated enum the
 //     server's zod enum is generated from, instead of coming back as an opaque 400.
 //
-// What did not change: every question has a flag, so `--no-input` still drives the whole
-// command. TestHygCliProject_EveryLeafThatAsksCanBeScripted holds that.
+// What did not change: every question has a non-interactive answer, so `--no-input` still
+// drives the whole command. TestHygCliProject_EveryLeafThatAsksCanBeScripted holds that.
 
 var projectCreateCmd = &cobra.Command{
 	Use:   "create [name]",
 	Short: "Create a new project",
 	Long: `Create a new project (an infrastructure app) in the active organization.
 
-Pass --region and --cloud-account, or omit them on a terminal to be asked. --env declares
-the whole environment matrix in one command; omit it on a terminal and each environment is
-asked for in turn, then printed back as the flags that would produce the same project.
+Pass --region and --cloud-account, or omit them on a terminal to be asked. The environment
+matrix — every environment and how it is placed — comes from alethia.yaml when there is one
+(--file, or the file in the current directory); omit it on a terminal and each environment is
+asked for in turn, then printed back as the alethia.yaml that would produce the same project.
 
-A default environment is created with the project; add component resources afterwards with
-"alethia project component add".`,
+To create the project AND deploy it from the file in one step, use "alethia apply".`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
@@ -144,26 +143,27 @@ A default environment is created with the project; add component resources after
 			b.SetArg("name", strings.TrimSpace(args[0]))
 		}
 
-		// --cloud-account (a label or an id) and the older --cloud-identity-id (an id) both name
-		// the SAME field, so passing both is refused rather than resolved by precedence. This is
-		// a CROSS-FIELD rule and deliberately not something the kit models: preferring the id
-		// would skip resolving the label (an unknown or ambiguous one would never be reported),
-		// and createReplayArgs would then print `--cloud-account <label>`, a line that links a
-		// DIFFERENT account than the run did.
-		flagIdentity, _ := b.String("identity")
-		accountRef, _ := b.String("account")
-		if flagIdentity != "" && accountRef != "" {
-			failf("--cloud-account and --cloud-identity-id both name the cloud account: pass one (--cloud-account takes the label or the id)")
+		m, manifestPath, err := manifestForCreate(b)
+		if err != nil {
+			fail(err)
+		}
+		// A file nobody named, read anyway, SAYS SO. Discovery is a convenience, and a convenience
+		// that changes what gets created without appearing on screen is indistinguishable from the
+		// command ignoring the arguments it was given. `apply` prints the same line for the same
+		// reason. Human output only — prose in a `--output json` stream corrupts the document.
+		if flagPath, _ := b.String("file"); flagPath == "" && manifestPath != "" && outputFormat(cmd) == ui.FormatTable {
+			fmt.Fprintf(os.Stdout, "%s Reading %s from this directory (--no-manifest ignores it)\n",
+				ui.MutedStyle.Render(ui.SymbolPoint), manifestPath)
 		}
 
 		// The form is a source like any other, and the kit asks it only for what the flags, the
 		// environment and the manifest left unset — in the ruled order. `ask` is
 		// canPromptForm()'s answer through promptsEnabled(); a nil Prompt IS --no-input, so
 		// there is no second predicate here and the hygiene guard that forbids one stays happy.
-		src := spec.Sources{Env: os.LookupEnv}
+		src := spec.Sources{Env: os.LookupEnv, Manifest: m.Lookup}
 		if promptsEnabled() {
 			src.Prompt = func(f spec.Field) (string, error) {
-				return projectCreatePrompt(f, token, accountRef)
+				return projectCreatePrompt(f, token)
 			}
 		}
 
@@ -179,29 +179,30 @@ A default environment is created with the project; add component resources after
 
 		name := values.Get("name")
 		region := values.Get("region")
-		identity := values.Get("identity")
+		accountRef := values.Get("account")
 		asked := values.Asked()
 
-		if identity == "" && accountRef != "" {
-			if identity, err = resolveCloudIdentityID(client, accountRef); err != nil {
-				fail(err)
-			}
-		}
-
-		// --env is REPEATED, so it has no single value and no merge rule across sources; it is a
-		// flag or it is the form. Its colon tuple is #3662's to replace outright.
-		matrix, _ := b.Strings("env")
-		if len(matrix) == 0 && promptsEnabled() {
-			if matrix, err = promptEnvMatrix(); err != nil {
-				fail(err)
-			}
-			if len(matrix) > 0 {
-				asked = true
-			}
-		}
-		environments, err := parseEnvMatrix(matrix)
+		identity, err := resolveCloudIdentityID(client, accountRef)
 		if err != nil {
 			fail(err)
+		}
+
+		// The matrix is the one thing the flags cannot say: it is a list of records, and a flag
+		// is a scalar. So it comes from the file, or from the form, or the server creates its
+		// default pair.
+		var environments []api.EnvironmentSpec
+		matrixAsked := false
+		// fileRef is the path only when the file is what SUPPLIED the matrix, so the replay names
+		// `--file` exactly when running the line without it would produce a different project.
+		fileRef := ""
+		if m != nil && len(m.Environments) > 0 {
+			environments = m.EnvironmentSpecs()
+			fileRef = manifestPath
+		} else if promptsEnabled() {
+			if environments, err = promptEnvMatrix(); err != nil {
+				fail(err)
+			}
+			matrixAsked = len(environments) > 0
 		}
 
 		params := api.CreateProjectParams{
@@ -213,11 +214,89 @@ A default environment is created with the project; add component resources after
 			Placement:       values.Get("placement"),
 			Environments:    environments,
 		}
+		// `--stage` and `--placement-mode` describe the DEFAULT environment, and a matrix's first
+		// entry IS the default environment, so when only one of them speaks the matrix is the more
+		// specific statement and the top-level fields are taken from it. That keeps a form-declared
+		// matrix and a file-declared one putting the same bytes on the wire.
+		//
+		// AN EXPLICIT FLAG STILL WINS, which the first cut got wrong: it took the matrix
+		// unconditionally, so `--file x.yaml --stage production` sent `development` because that is
+		// what `environments[0]` said — silently, and contradicting project.mdx's own "a flag
+		// overrides the file for one run". The resolver already records WHERE each value came from,
+		// which is what `Origin` is for, so the question is answerable rather than guessable.
+		if len(environments) > 0 {
+			if values.Origin("stage") != spec.FromFlag {
+				params.Stage = environments[0].Stage
+			}
+			if values.Origin("placement") != spec.FromFlag {
+				params.Placement = environments[0].PlacementMode
+			}
+		}
 		if err := runProjectCreate(client, os.Stdout, outputFormat(cmd), params); err != nil {
 			failf("Failed to create project: %v", err)
 		}
-		printReplay(os.Stdout, outputFormat(cmd), asked, createReplayArgs(params, accountRef, matrix)...)
+		if matrixAsked {
+			printManifestReplay(os.Stdout, outputFormat(cmd), params, accountRef)
+			return
+		}
+		printReplay(os.Stdout, outputFormat(cmd), asked, createReplayArgs(params, accountRef, fileRef)...)
 	},
+}
+
+// manifestForCreate finds the manifest `project create` reads: --file when passed (and then it
+// must exist), else alethia.yaml in the current directory when there is one, else nothing.
+//
+// It is normalised and validated here, with no component schema — `project create` creates the
+// project and its environments and leaves components to `alethia apply`, so the only rules that
+// apply are the ones the create route itself enforces.
+// It returns the PATH it read alongside the manifest, because the replay line has to name it:
+// a run whose matrix came from a file and whose name was asked for prints "same result, without
+// the questions" over a command with no --file in it, which reproduces the server's default
+// environment pair instead of the file's matrix.
+func manifestForCreate(b *spec.Binder) (*manifest.Manifest, string, error) {
+	path, _ := b.String("file")
+	explicit := path != ""
+	ignore, _ := b.Bool("no-manifest")
+	if ignore {
+		// THE OPT-OUT, and the reason it exists. Discovery is what makes `alethia project create`
+		// in a checked-out repository do the right thing with no arguments, so it stays — but a
+		// scripted `project create svc-7 --region eu-west-1 --cloud-account acct --no-input` run
+		// from a tree that happens to hold an example alethia.yaml would take that file's
+		// environments, or fail naming a file the caller never mentioned, and before this flag
+		// there was no way to say "read none".
+		if explicit {
+			return nil, "", fmt.Errorf("--file names a manifest and --no-manifest says to read none: pass one")
+		}
+		return nil, "", nil
+	}
+	if path == "" {
+		found, ok := manifest.Find(".")
+		if !ok {
+			return nil, "", nil
+		}
+		path = found
+	}
+	m, err := manifest.Load(path)
+	if err != nil {
+		return nil, "", err
+	}
+	m.Normalize()
+	// RequireDedicated: `project create` is the front door that brings a project's first Fabric
+	// into being, which is exactly the case the server applies that rule to.
+	if err := m.Validate(manifest.Rules{
+		Stages:           environmentStages(),
+		Placements:       placementModes(),
+		RequireDedicated: true,
+	}); err != nil {
+		if !explicit {
+			// A file nobody asked for, refused. Saying so is the difference between "your command
+			// is wrong" and "the directory you ran in holds a broken file" — a scripted caller
+			// that never passed `--file` would otherwise read this as a defect in its invocation.
+			return nil, "", fmt.Errorf("%s in this directory was read because no --file was given, and it cannot be used: %w", path, err)
+		}
+		return nil, "", err
+	}
+	return m, path, nil
 }
 
 // createReplayArgs renders the `project create` that would have produced this project.
@@ -228,12 +307,18 @@ A default environment is created with the project; add component resources after
 // the reader to commit a command that creates a `development` project on the server's default
 // placement with an unpinned OpenTofu version.
 //
-// It prefers the LABEL the caller (or the picker) used over the resolved identity id,
-// because a replay line carrying a UUID is the thing this command exists to stop printing.
-// The id appears only when that is all we have — the picker returns one — and the docs say
-// so rather than the line pretending otherwise.
-func createReplayArgs(params api.CreateProjectParams, accountRef string, envs []string) []string {
+// It prefers the LABEL the caller (or the picker) used over the resolved identity id, because a
+// replay line carrying a UUID is the thing this command exists to stop printing. The id appears
+// only when that is all we have — the picker returns one — and `--cloud-account` takes it too.
+func createReplayArgs(params api.CreateProjectParams, accountRef, fileRef string) []string {
 	args := []string{"alethia", "project", "create", params.ProjectName}
+	if fileRef != "" {
+		// The matrix came from the file, and a list of records has no flag spelling — so a replay
+		// line without it reproduces the SERVER's default environment pair, not the project that
+		// was just made. `--file` is named even when it is the discovered ./alethia.yaml, because
+		// the line is meant to be pasted into a script that runs in some other directory.
+		args = append(args, "--file", fileRef)
+	}
 	if params.Region != "" {
 		args = append(args, "--region", params.Region)
 	}
@@ -241,7 +326,7 @@ func createReplayArgs(params api.CreateProjectParams, accountRef string, envs []
 	case accountRef != "":
 		args = append(args, "--cloud-account", accountRef)
 	case params.CloudIdentityID != "":
-		args = append(args, "--cloud-identity-id", params.CloudIdentityID)
+		args = append(args, "--cloud-account", params.CloudIdentityID)
 	}
 	if params.Stage != "" {
 		args = append(args, "--stage", params.Stage)
@@ -252,83 +337,46 @@ func createReplayArgs(params api.CreateProjectParams, accountRef string, envs []
 	if params.IacVersion != "" {
 		args = append(args, "--iac-version", params.IacVersion)
 	}
-	for _, e := range envs {
-		args = append(args, "--env", e)
-	}
 	return args
 }
 
-// parseEnvMatrix turns repeatable `--env name:stage[:mode[:namespace]]` flags into the environment
-// MATRIX the create front door fans out. Nothing is defaulted here beyond the placement mode: the
-// server validates the matrix with the console form's own schema, so inventing values locally would
-// only move a rejection further from the thing that decides it.
+// manifestFromCreate renders the create that just ran as the alethia.yaml that reproduces it.
 //
-// The first entry is the DEFAULT environment. The matrix is what makes a two-tier project cost one
-// cluster instead of two — without it every environment comes out `dedicated`.
-//
-//	--env prod:production                          → dedicated (the default mode for a first env)
-//	--env dev:development:namespace:boutique-dev   → placed as a namespace on the shared Fabric
-//	--env staging:staging:vcluster                 → placed as a vcluster, namespace derived
-//
-// The stage and the mode ARE checked against the generated enums (see validateOneOf), because a
-// typo in a positional tuple is otherwise a 400 that names neither the entry nor the field. The
-// name and the namespace are not: their grammar is #3665's single implementation and a copy here
-// would be the second opinion that lane exists to delete.
-func parseEnvMatrix(specs []string) ([]api.EnvironmentSpec, error) {
-	if len(specs) == 0 {
-		return nil, nil
+// This is the replay for a run that declared a matrix through the form: a list of records has no
+// flag spelling, so the thing a person commits is the file, and `alethia apply` reads it.
+func manifestFromCreate(params api.CreateProjectParams, accountRef string) *manifest.Manifest {
+	account := accountRef
+	if account == "" {
+		account = params.CloudIdentityID
 	}
-	out := make([]api.EnvironmentSpec, 0, len(specs))
-	seen := map[string]bool{}
-	for _, raw := range specs {
-		parts := strings.Split(raw, ":")
-		if len(parts) < 2 || len(parts) > 4 {
-			return nil, fmt.Errorf("invalid --env %q (want name:stage[:mode[:namespace]])", raw)
-		}
-		name := strings.TrimSpace(parts[0])
-		stage := strings.TrimSpace(parts[1])
-		if name == "" || stage == "" {
-			return nil, fmt.Errorf("invalid --env %q — name and stage are both required", raw)
-		}
-		if seen[name] {
-			return nil, fmt.Errorf("--env lists %q twice", name)
-		}
-		seen[name] = true
-
-		spec := api.EnvironmentSpec{
-			Name:  name,
-			Stage: stage,
-			// The FIRST entry owns the Fabric it provisions, so it defaults to `dedicated`; a later
-			// entry defaults to `namespace`, the cheap rung. Both are overridable per entry.
-			PlacementMode: defaultPlacementFor(len(out) == 0),
-			IsDefault:     len(out) == 0,
-		}
-		if len(parts) >= 3 && strings.TrimSpace(parts[2]) != "" {
-			spec.PlacementMode = strings.TrimSpace(parts[2])
-		}
-		if len(parts) == 4 {
-			spec.Namespace = strings.TrimSpace(parts[3])
-		}
-		if err := validateOneOf("--env stage", spec.Stage, environmentStages()); err != nil {
-			return nil, fmt.Errorf("in --env %q: %w", raw, err)
-		}
-		if err := validateOneOf("--env placement mode", spec.PlacementMode, placementModes()); err != nil {
-			return nil, fmt.Errorf("in --env %q: %w", raw, err)
-		}
-		out = append(out, spec)
+	return &manifest.Manifest{
+		Project:      params.ProjectName,
+		Cloud:        manifest.Cloud{Account: account, Region: params.Region},
+		IaC:          manifest.IaC{Version: params.IacVersion},
+		Environments: manifest.FromEnvironmentSpecs(params.Environments),
 	}
-	return out, nil
 }
 
-// promptEnvMatrix asks for the environment matrix one environment at a time, and returns it in
-// `--env` syntax so the SAME parser handles the answered and the typed forms.
-//
-// Returning tuples rather than []api.EnvironmentSpec is the deliberate part. A form that built
-// the wire shape directly would be a second implementation of the matrix rules — the first-entry
-// default, the duplicate-name check, the field ordering — and the two would drift. Round-tripping
-// through parseEnvMatrix means the interactive path is tested by everything that tests the flag,
-// and TestProj_EnvFormAndEnvFlagAreOneSpec proves the two agree rather than assuming it.
-func promptEnvMatrix() ([]string, error) {
+// printManifestReplay prints the file a form-declared matrix adds up to, under the same
+// conditions printReplay applies: only after questions were asked, and only on human output.
+func printManifestReplay(out io.Writer, format string, params api.CreateProjectParams, accountRef string) {
+	if format != ui.FormatTable {
+		return
+	}
+	data, err := manifest.Render(manifestFromCreate(params, accountRef))
+	if err != nil {
+		return
+	}
+	fmt.Fprintln(out, ui.MutedStyle.Render("Same result, without the questions — save this as "+manifest.FileName+" and run `alethia apply`:"))
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		fmt.Fprintln(out, ui.MutedStyle.Render("  "+line))
+	}
+}
+
+// promptEnvMatrix asks for the environment matrix one environment at a time and returns it as
+// the wire shape — the same shape a manifest's environments render to, so the form and the file
+// are one spec with two entry points rather than two grammars.
+func promptEnvMatrix() ([]api.EnvironmentSpec, error) {
 	if err := requireInteractiveForm(); err != nil {
 		return nil, err
 	}
@@ -342,32 +390,32 @@ func promptEnvMatrix() ([]string, error) {
 		return nil, nil
 	}
 
-	var tuples []string
+	var specs []api.EnvironmentSpec
+	seen := map[string]bool{}
 	for {
 		a := envAnswers{}
-		if err := askEnvironmentSpec(&a, len(tuples) == 0); err != nil {
+		if err := askEnvironmentSpec(&a, len(specs) == 0); err != nil {
 			return nil, err
 		}
-		tuple, err := envTuple(a)
-		if err != nil {
-			return nil, err
+		// Reported while the person is still answering rather than after the last question,
+		// against the same normalisation the server's uniqueness applies.
+		key := names.NormalizeEnvironmentName(a.Name)
+		if seen[key] {
+			return nil, fmt.Errorf("the matrix lists %q twice", a.Name)
 		}
-		tuples = append(tuples, tuple)
+		seen[key] = true
+		specs = append(specs, envSpecFrom(a, len(specs) == 0))
 
-		// Parse what we have SO FAR, so a duplicate name or a bad rung is reported while the
-		// person is still answering questions rather than after the last one. The check is
-		// the real parser, not a copy of its rules.
-		if _, err := parseEnvMatrix(tuples); err != nil {
-			return nil, err
+		var summary []string
+		for _, s := range specs {
+			summary = append(summary, fmt.Sprintf("%s (%s, %s)", s.Name, s.Stage, s.PlacementMode))
 		}
-
-		more, err := askYesNo("Add another environment?",
-			fmt.Sprintf("So far: %s", strings.Join(tuples, "  ")))
+		more, err := askYesNo("Add another environment?", "So far: "+strings.Join(summary, "  "))
 		if err != nil {
 			return nil, err
 		}
 		if !more {
-			return tuples, nil
+			return specs, nil
 		}
 	}
 }
