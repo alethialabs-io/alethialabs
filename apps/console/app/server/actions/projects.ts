@@ -1535,6 +1535,7 @@ async function buildConfigSnapshot(
 				capacity_mode: n.capacity_mode,
 				point_in_time_recovery: n.point_in_time_recovery,
 				global_replicas: n.global_replicas,
+				provider_config: n.provider_config,
 				...resolvePlacement(n),
 			})),
 			secrets: secrets.map((s) => ({
@@ -2417,6 +2418,7 @@ export async function getProjectAsFormData(
 			table_type: t.table_type ?? undefined,
 			capacity_mode: t.capacity_mode ?? undefined,
 			point_in_time_recovery: t.point_in_time_recovery ?? undefined,
+			provider_config: t.provider_config ?? undefined,
 		})),
 		// provider/provider_config are DESIGN (which secret store this environment reads through),
 		// not provisioned state — they must round-trip. Omitting them was a silent data-loss bug:

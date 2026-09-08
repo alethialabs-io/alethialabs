@@ -73,6 +73,29 @@ describe("switchDraftScope", () => {
 		expect(a.seed).toEqual({ scope: A, revision: "1" });
 	});
 
+	it("the undo history does not travel between scopes", async () => {
+		await switchDraftScope(A);
+		useCanvasStore.getState().reseed({ nodes: [projectNode(), dbNode("a")] }, { scope: A, revision: "1" });
+		// An edit in A, so A has an undoable step and an open card.
+		useCanvasStore.getState().openInspector("database-a");
+		useCanvasStore.getState().commit();
+		useCanvasStore.getState().updateNodeConfig("database-a", { port: 6543 });
+		expect(useCanvasStore.getState().past).toHaveLength(1);
+
+		await switchDraftScope(B);
+		useCanvasStore.getState().reseed({ nodes: [projectNode(), dbNode("b")] }, { scope: B, revision: "1" });
+		// Back to A: the persisted draft returns, but `rehydrate()` merges only the persisted keys,
+		// so without an explicit clear the stacks and the open card would be B's. An undo here used
+		// to replay the OTHER environment's node set into this one.
+		expect(await switchDraftScope(A)).toBe(true);
+		const s = useCanvasStore.getState();
+		expect(s.past).toEqual([]);
+		expect(s.future).toEqual([]);
+		expect(s.card).toBeNull();
+		expect(s.selectedIds).toEqual([]);
+		expect(s.nodes.map((n) => n.id)).toEqual([PROJECT_NODE_ID, "database-a"]);
+	});
+
 	it("a slot holding another scope's draft is discarded, never shown", async () => {
 		await switchDraftScope(A);
 		useCanvasStore.getState().reseed({ nodes: [projectNode(), dbNode("a")] }, { scope: A, revision: "1" });

@@ -1235,6 +1235,12 @@ export async function switchDraftScope(scope: string): Promise<boolean> {
 		useCanvasStore.getState().reset();
 		return false;
 	}
+	// `rehydrate()` MERGES the persisted keys over the live state, so everything outside
+	// `partialize` — the undo stacks, the open card, the selection — is whatever the scope we just
+	// left had. An undo after switching would then replay the OTHER environment's node set into
+	// this environment's draft and mark it dirty. The history belongs to the editing session of one
+	// scope; it does not travel.
+	useCanvasStore.setState({ past: [], future: [], card: null, selectedIds: [] });
 	return true;
 }
 
