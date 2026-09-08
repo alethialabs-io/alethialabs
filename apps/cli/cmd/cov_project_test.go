@@ -906,8 +906,14 @@ func TestProj_GetTableOpensBrowser(t *testing.T) {
 	if h.run("project", "get", "web", "--output", "table") {
 		t.Error("project get exited fatally")
 	}
-	if len(opened) != 1 || !strings.HasSuffix(opened[0], "/dashboard") {
-		t.Errorf("expected one /dashboard open, got %v", opened)
+	// THE PROJECT. This used to assert a `/dashboard` suffix, which is what the command built —
+	// a legacy catch-all that 307s to the org root, so `--open` printed the project and then
+	// opened something else. The URL now comes from the console's own route tree: /<org>/<project>.
+	if len(opened) != 1 || !strings.HasSuffix(opened[0], "/acme/web") {
+		t.Errorf("expected one /<org>/<project> open, got %v", opened)
+	}
+	if strings.Contains(opened[0], "/dashboard") {
+		t.Errorf("the legacy catch-all is back: %v", opened)
 	}
 	if h.run("project", "get", "web", "--open", "--output", "table") {
 		t.Error("project get --open exited fatally")

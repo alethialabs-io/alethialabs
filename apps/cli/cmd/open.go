@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/spf13/cobra"
 )
 
@@ -30,8 +31,33 @@ var openCmd = &cobra.Command{
 		var url string
 		switch target {
 		case "console", "dashboard":
-			url = WebOrigin()
+			// The active ORG's page, not the bare origin. The origin 307s through a legacy
+			// catch-all to wherever the console decides; naming the org is the same click
+			// without the redirect, and it is what makes `--project` below a variation on one
+			// rule rather than a special case.
+			//
+			// A machine that has authenticated but never switched org has no slug in its config
+			// and one request answers it. The fallback is deliberate rather than fatal: `alethia
+			// open` with no organization at all still has somewhere to go, and that is the origin.
+			token, err := getAuthToken()
+			if err != nil {
+				url = WebOrigin()
+				break
+			}
+			client := api.NewClient(token)
+			if openProject != "" {
+				if url, err = projectLink(client, openProject); err != nil {
+					fail(err)
+				}
+				break
+			}
+			if url, err = orgLink(client); err != nil {
+				url = WebOrigin()
+			}
 		case "docs":
+			if openProject != "" {
+				failf("--project names a console project and does not apply to the docs")
+			}
 			url = docsURL
 		default:
 			failf("unknown target %q (want console or docs)", target)
@@ -44,6 +70,14 @@ var openCmd = &cobra.Command{
 	},
 }
 
+// openProject is the --project value: a project NAME, the same reference every other command
+// takes. It is a flag rather than a second positional because `open [console|docs]` already spends
+// its one argument on the surface, and a command that took `open boutique` could not tell a project
+// named `docs` from the docs.
+var openProject string
+
 func init() {
+	project := mustShellField("alethia open", shellKeyProject)
+	openCmd.Flags().StringVar(&openProject, project.Flag, "", project.Usage)
 	rootCmd.AddCommand(openCmd)
 }

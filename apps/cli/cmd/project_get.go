@@ -75,7 +75,13 @@ the name never has to be copied out of another command's output.`,
 		}
 
 		if openInBrowser {
-			url := fmt.Sprintf("%s/dashboard", WebOrigin())
+			// THE PROJECT, not `{origin}/dashboard` — the legacy catch-all this used to build,
+			// which 307s to the org root, so `--open` did not open the project it had just
+			// printed. The URL comes from the console's own route tree (packages/core/routing).
+			url, err := projectLink(api.NewClient(token), config.ProjectName)
+			if err != nil {
+				fail(err)
+			}
 			fmt.Printf("Opening in browser: %s\n", url)
 			if err := openBrowser(url); err != nil {
 				ui.Error(fmt.Sprintf("Failed to open browser: %v", err))
