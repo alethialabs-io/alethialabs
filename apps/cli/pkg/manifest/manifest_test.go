@@ -324,3 +324,100 @@ func TestRenderAndWrite_RoundTrip(t *testing.T) {
 		t.Errorf("a broken file must be reported by path: %v", err)
 	}
 }
+
+// ── aliases ───────────────────────────────────────────────────────────────────────────────
+//
+// Both forms, because the first implementation caught only the second and claimed both. The
+// MERGE KEY is the one a person actually writes: the whole-value alias makes dev's cluster
+// identical to prod's, including the field they wanted to change, so nobody wants it.
+
+func TestParse_RefusesAMergeKey(t *testing.T) {
+	_, err := Parse([]byte(`project: boutique
+cloud:
+  region: nbg1
+environments:
+  - name: prod
+    stage: production
+    components:
+      cluster: &base
+        node_min_size: 5
+  - name: dev
+    stage: development
+    components:
+      cluster:
+        <<: *base
+        node_min_size: 1
+`))
+	if err == nil {
+		t.Fatal("a merge key resolved silently — this is the cross-environment dependency the refusal is for")
+	}
+	for _, want := range []string{"*base", "line 14", "defined on line 8", "write the fields out"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q:\n%v", want, err)
+		}
+	}
+}
+
+func TestParse_RefusesAWholeValueAlias(t *testing.T) {
+	_, err := Parse([]byte(`project: boutique
+cloud:
+  region: nbg1
+environments:
+  - name: prod
+    stage: production
+    components:
+      cluster: &base
+        node_min_size: 5
+  - name: dev
+    stage: development
+    components:
+      cluster: *base
+`))
+	if err == nil || !strings.Contains(err.Error(), "*base") {
+		t.Fatalf("a whole-value alias was accepted: %v", err)
+	}
+}
+
+// Outside `components` too — `project`, `cloud` and the environment scalars had no arm at all.
+func TestParse_RefusesAnAliasOutsideComponents(t *testing.T) {
+	_, err := Parse([]byte(`project: &name boutique
+cloud:
+  region: nbg1
+environments:
+  - name: *name
+    stage: production
+`))
+	if err == nil || !strings.Contains(err.Error(), "*name") {
+		t.Fatalf("an alias in an environment name was accepted: %v", err)
+	}
+}
+
+// The control. Without it, a refusal that fired on every document would pass all three tests
+// above while making the reader useless.
+func TestParse_AnAnchorWithNoAliasIsNotRefused(t *testing.T) {
+	// An anchor is only a definition; nothing resolves until something refers to it. Refusing
+	// the definition would reject a document that means exactly what it says.
+	m, err := Parse([]byte("project: &unused boutique\ncloud:\n  region: nbg1\nenvironments:\n  - name: prod\n    stage: production\n"))
+	if err != nil {
+		t.Fatalf("an unused anchor was refused: %v", err)
+	}
+	if m.Project != "boutique" {
+		t.Errorf("the anchored scalar did not decode: %+v", m)
+	}
+	// And the ordinary sample, which has neither, still parses.
+	if _, err := Parse([]byte(sample)); err != nil {
+		t.Fatalf("the sample manifest was refused: %v", err)
+	}
+}
+
+// A document that does not parse is the strict decoder's error to report, with its own message.
+// The alias pass must not swallow it or replace it.
+func TestParse_ABrokenDocumentKeepsItsOwnError(t *testing.T) {
+	_, err := Parse([]byte("project: [\n"))
+	if err == nil {
+		t.Fatal("a malformed document parsed")
+	}
+	if strings.Contains(err.Error(), "alias") {
+		t.Errorf("the alias pass reported a syntax error as an alias problem: %v", err)
+	}
+}
