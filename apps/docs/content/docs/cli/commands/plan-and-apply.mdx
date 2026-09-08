@@ -5,8 +5,182 @@ description: Queue plan, deploy, and destroy jobs from the CLI.
 
 # Plan & Apply
 
+One file describes a project; two commands take it from a file to a running cluster. Nothing has
+to be copied out of another command's output: the cloud account is named by its **label**, the
+runner by its **name**, and every environment by the name the file gives it.
+
+## `alethia.yaml`
+
+The manifest is the whole shape of a project — where it provisions, every environment with its
+placement, and the components each environment carries:
+
+```yaml
+project: boutique
+cloud:
+  account: prod-account        # the connector's label, as `alethia connector list` shows it
+  region: nbg1
+environments:
+  - name: prod
+    stage: production
+    placement: dedicated       # owns the Fabric: this is the environment with a cluster
+    components:
+      cluster:
+        node_min_size: 2
+        node_max_size: 3
+  - name: dev-1
+    stage: development
+    placement: namespace       # placed onto prod's Fabric, no new cluster
+    namespace: boutique-dev-1
+    components:
+      repositories:
+        apps_destination_repo: https://github.com/alethialabs-io/alethia-examples
+        apps_path: examples/online-boutique/overlays/dev-1
+      databases:
+        - name: orders
+          engine: postgres
+```
+
+| Key | What it is |
+| --- | --- |
+| `project` | The project's name. Unique in the organization, so `apply` finds an existing project by it. |
+| `cloud.account` | The cloud account's label (or its id). Omit it to create an unlinked project. |
+| `cloud.region` | The region to provision into. |
+| `iac.version` | OpenTofu version to pin. Optional; the server defaults it. |
+| `environments[].name` | The environment's name. |
+| `environments[].stage` | `development`, `staging` or `production`. |
+| `environments[].placement` | `dedicated`, `vcluster` or `namespace`. Optional: the **first** environment defaults to `dedicated` and owns the Fabric; every later one defaults to `namespace` and shares it. |
+| `environments[].namespace` | The destination namespace for a shared placement. Optional; derived from the name. Ignored on `dedicated`. |
+| `environments[].lifecycle` | `persistent` (default) or `ephemeral`. |
+| `environments[].components` | The environment's resources, keyed by kind. A one-per-environment kind (`cluster`, `network`, `dns`, `observability`, `repositories`) is written as its fields; a named kind (`databases`, `caches`, `queues`, …) as a list of entries, each with a `name`. `alethia project component kinds` lists them and the fields each takes. |
+
+A misspelt key, a stage outside the allowed set, a component kind the server does not publish or a
+field a kind does not take is refused **before anything is sent**, naming every problem at once.
+The CLI only ever refuses what the server would certainly refuse: anything else is passed through
+for the server to decide.
+
+<Callout type="warn">
+  Placement is the key with a bill attached. Each `dedicated` environment is a separate cluster with
+  its own OpenTofu state; `namespace` and `vcluster` share the Fabric that already exists. The
+  example above is **one** cluster hosting two environments.
+</Callout>
+
+## `alethia apply`
+
+Create whatever the file declares that does not exist yet, show the plan, and deploy every
+environment.
+
+```bash
+alethia apply                          # ./alethia.yaml, asks before applying
+alethia apply --yes --no-input         # in a pipeline
+alethia apply --runner my-box          # deploy with a named runner
+alethia apply --env dev-1              # create everything, deploy only dev-1
+```
+
+```
+▸ Reading alethia.yaml · boutique · hetzner/nbg1
+  + project boutique
+  prod   dedicated  + environment  + cluster
+  dev-1  namespace  + environment  + repositories  + databases/orders
+  1 project to create · 2 environments · 3 components
+Apply these changes? Yes
+  ✓ created project boutique
+  ✓ added cluster in prod
+  ✓ added repositories in dev-1
+  ✓ added databases/orders in dev-1
+▸ Deploying prod (job 4f3c2b1a-…)
+  ✓ Job completed successfully
+▸ Deploying dev-1 (job 8a1d0e77-…)
+  ✓ Job completed successfully
+
+✓ boutique is up.
+```
+
+`apply` is idempotent. Re-run it on a project that already matches the file and it creates
+nothing, marks each environment `=`, and deploys again. It **never deletes**: an environment on the
+server that the file does not mention is listed as left alone, not torn down. What it cannot
+reconcile — an existing environment whose stage or placement differs from the file — is shown and
+refused before a single write.
+
+The runner: `--runner` takes a name or an id. Omitted, the only online runner is used without a
+question; with several online you are asked on a terminal, and under `--no-input` the job is left
+for the server to place.
+
+{/* fieldspec: alethia apply */}
+
+| Field        | What it is                                                                                    | Set without the form |
+| ------------ | --------------------------------------------------------------------------------------------- | -------------------- |
+| Manifest     | The alethia.yaml to apply (default: ./alethia.yaml)                                           | `--file`             |
+| Runner       | Runner to deploy with, by NAME or id. Omitted: the only online runner, or asked on a terminal | `--runner`           |
+| Environments | Only deploy these environments (repeatable; default: every environment in the file)           | `--env`              |
+| Confirm      | Apply without asking (required with --no-input)                                               | `--yes`              |
+| Wait         | Queue the deploys and return instead of waiting for them                                      | `--no-wait`          |
+
+`--output json` prints the plan and the result as typed objects instead of the lines above.
+
+## `alethia up`
+
+The whole first run in one command: sign in, attach nothing (see below), write the manifest, apply
+it. Every step is skipped when it is already done, so it resumes wherever the last run stopped.
+
+```bash
+alethia up                                  # asks for what it needs
+alethia up --project boutique --region nbg1 --cloud-account prod-account --yes --no-input
+```
+
+| Step | Skipped when |
+| --- | --- |
+| the control-plane URL and the login | this machine has a live credential |
+| a cloud account | one is connected — **otherwise `up` stops**, see below |
+| `alethia.yaml` | this directory has one |
+| the apply | never; that is the point |
+
+With the manifest already present and an account connected, `alethia up` **is** `alethia apply`.
+
+<Callout type="info">
+  `up` cannot attach a cloud account for you. Each cloud has its own keyless flow with its own
+  arguments — `alethia connector aws|gcp|azure|alibaba|hetzner` — so `up` stops and names them
+  rather than growing a sixth version that would drift from the five.
+</Callout>
+
+{/* fieldspec: alethia up */}
+
+| Field         | What it is                                                                                    | Set without the form |
+| ------------- | --------------------------------------------------------------------------------------------- | -------------------- |
+| Manifest      | The alethia.yaml to apply, written when it does not exist yet                                 | `--file`             |
+| Project name  | Name for a project this authors (asked for on a terminal when the file is missing)            | `--project`          |
+| Region        | Cloud region for a project this authors                                                       | `--region`           |
+| Cloud account | Cloud account to link, by its LABEL or its id                                                 | `--cloud-account`    |
+| Stage         | Stage for the environment this authors                                                        | `--stage`            |
+| Runner        | Runner to deploy with, by NAME or id. Omitted: the only online runner, or asked on a terminal | `--runner`           |
+| Confirm       | Apply without asking (required with --no-input)                                               | `--yes`              |
+| Wait          | Queue the deploys and return instead of waiting for them                                      | `--no-wait`          |
+
+Scripted, `up` writes a single environment at `--stage`; on a terminal it asks for the whole matrix.
+[`alethia project env add`](/cli/commands/project) is how a second environment arrives later.
+
+## `alethia plan`
+
+The same comparison, with the writes left out: what `apply` would create, what already matches,
+and anything it would refuse. Nothing is written and no job is queued.
+
+```bash
+alethia plan
+alethia plan --file staging.yaml --output json
+```
+
+{/* fieldspec: alethia plan */}
+
+| Field    | What it is                                         | Set without the form |
+| -------- | -------------------------------------------------- | -------------------- |
+| Manifest | The alethia.yaml to plan (default: ./alethia.yaml) | `--file`             |
+
+The per-environment OpenTofu plan runs inside every deploy. To queue one on its own — for a
+pipeline that gates on it — use `alethia project plan` below.
+
+## The `project` job commands
+
 These `project` subcommands queue infrastructure operations that [Runners](/runner) execute. They
-implement the Plan-Review-Apply workflow from the terminal.
+implement the Plan-Review-Apply workflow from the terminal, one environment at a time.
 
 ## `alethia project plan`
 
@@ -74,10 +248,17 @@ See [TUI Components](/cli/tui) for details on the interactive selectors.
 ## Scripting Examples
 
 ```bash
-# Plan and wait, then apply
-JOB_ID=$(alethia project plan --project-id $PROJECT_ID --wait 2>&1 | grep "Job ID" | awk '{print $3}')
-alethia project apply --project-id $PROJECT_ID --plan-job-id $JOB_ID --wait
+# From nothing to a running project, unattended
+alethia up --project boutique --region nbg1 --cloud-account prod-account --yes --no-input
+
+# The whole project from its file, unattended
+alethia apply --yes --no-input
+
+# Plan one environment, review, apply that exact plan — --latest resolves the job you just queued
+alethia project plan --project boutique --env prod --wait
+alethia jobs get --latest
+alethia project apply --project boutique --env prod --plan-job-id "$(alethia jobs get --latest --output json | jq -r .id)" --wait
 
 # Destroy with wait
-alethia project destroy --project-id $PROJECT_ID --wait
+alethia project destroy --project boutique --env prod --wait
 ```

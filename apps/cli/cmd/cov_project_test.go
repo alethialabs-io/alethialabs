@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/spec"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -45,8 +47,21 @@ type projExit struct{ code int }
 type projServer struct {
 	mu     sync.Mutex
 	failOn []string
+	// failOnPost fails only MUTATING requests whose path contains an entry, so a test can reach
+	// "the create failed" on a path whose read succeeds — `/environments` is listed and added
+	// through one path, and failOn would refuse the list first.
+	failOnPost []string
 	// configs overrides the project list; nil means the single default project.
 	configs []map[string]any
+	// noIdentities makes the cloud-account list EMPTY. `alethia up` stops on that and names the
+	// five connector commands, and an empty list is the only way to reach it.
+	noIdentities bool
+	// twoIdentities makes the picker a real choice; with one account `up` takes it without asking.
+	twoIdentities bool
+	// runners overrides the runner list; nil means the default trio (one online, one draining,
+	// one offline). `alethia apply` picks the ONLY online runner without a question, so reaching
+	// its picker needs a second online one.
+	runners []map[string]any
 	// designChanges overrides the plan a design apply reports. nil means the default plan,
 	// which includes a DELETE; an empty (non-nil) slice is an add-only plan. The distinction
 	// is the whole subject of the delete gate, so it has to be expressible.
@@ -54,7 +69,9 @@ type projServer struct {
 	// posts records the body of every mutating request, so a test can compare what an
 	// ANSWERED FORM sent with what the equivalent flags sent. Two paths that claim to be one
 	// spec are only one spec if they put the same bytes on the wire.
-	posts       []projPost
+	posts []projPost
+	// reads is every request path, so a test can assert a fetch did NOT happen.
+	reads       []string
 	config      map[string]any
 	envs        []map[string]any
 	comps       []map[string]any
@@ -107,6 +124,21 @@ func (s *projServer) shouldFail(path string) bool {
 	return false
 }
 
+// shouldFailPost is shouldFail for the mutating verbs only.
+func (s *projServer) shouldFailPost(method, path string) bool {
+	if method == http.MethodGet {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, f := range s.failOnPost {
+		if strings.Contains(path, f) {
+			return true
+		}
+	}
+	return false
+}
+
 // snapshot copies the response slices under the lock (the handler runs on the
 // server's goroutine while the test mutates the struct between invocations).
 func (s *projServer) snapshot() (envs, comps, dims, assigns, channels []map[string]any, config map[string]any) {
@@ -150,6 +182,23 @@ func (s *projServer) recordPost(r *http.Request) {
 	})
 }
 
+// hits counts every request whose path contains sub, mutating or not.
+//
+// `posts` records only the mutating verbs, and three of this file's claims are about reads that
+// should NOT happen — a schema nobody can use, a component listing nobody reads. A count of zero
+// is the assertion, so the reads have to be recorded to be counted.
+func (s *projServer) hits(sub string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, p := range s.reads {
+		if strings.Contains(p, sub) {
+			n++
+		}
+	}
+	return n
+}
+
 // lastPost returns the most recent mutating request, or false when none was made.
 func (s *projServer) lastPost() (projPost, bool) {
 	s.mu.Lock()
@@ -169,9 +218,12 @@ func (s *projServer) forgetPosts() {
 
 func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
+	s.mu.Lock()
+	s.reads = append(s.reads, p)
+	s.mu.Unlock()
 	s.recordPost(r)
 	enc := json.NewEncoder(w)
-	if s.shouldFail(p) {
+	if s.shouldFail(p) || s.shouldFailPost(r.Method, p) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = enc.Encode(map[string]string{"error": "boom: " + p})
 		return
@@ -201,12 +253,40 @@ func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/api/cli/configurations/by-project-name/"):
 		_ = enc.Encode(map[string]any{"configuration": config})
 	case p == "/api/cli/runners":
-		_ = enc.Encode(map[string]any{"runners": []map[string]any{
-			{"id": "r1", "name": "primary", "operator": "managed", "status": "ONLINE", "is_default": true},
-			{"id": "r2", "name": "edge", "operator": "self", "provisioning": "deployed", "status": "DRAINING"},
-			{"id": "r3", "name": "old", "operator": "self", "status": "OFFLINE"},
+		s.mu.Lock()
+		list := s.runners
+		s.mu.Unlock()
+		if list == nil {
+			list = []map[string]any{
+				{"id": "r1", "name": "primary", "operator": "managed", "status": "ONLINE", "is_default": true},
+				{"id": "r2", "name": "edge", "operator": "self", "provisioning": "deployed", "status": "DRAINING"},
+				{"id": "r3", "name": "old", "operator": "self", "status": "OFFLINE"},
+			}
+		}
+		_ = enc.Encode(map[string]any{"runners": list})
+	case p == "/api/cli/schema/components":
+		// The published component registry, as `alethia apply` validates a manifest against it.
+		// Two singletons and one multi kind are enough to reach every branch of the reader.
+		_ = enc.Encode(map[string]any{"version": "v-test", "kinds": []map[string]any{
+			{"kind": "cluster", "singleton": true, "fields": []string{"cluster_version", "node_min_size", "node_max_size"}, "schema": map[string]any{}},
+			{"kind": "repositories", "singleton": true, "fields": []string{"apps_destination_repo", "apps_path"}, "schema": map[string]any{}},
+			{"kind": "databases", "singleton": false, "fields": []string{"engine", "engine_version"}, "schema": map[string]any{}},
 		}})
 	case p == "/api/cli/cloud-identities":
+		s.mu.Lock()
+		empty, two := s.noIdentities, s.twoIdentities
+		s.mu.Unlock()
+		if two {
+			_ = enc.Encode(map[string]any{"cloud_identities": []map[string]any{
+				{"id": "ci1", "provider": "aws", "label": "prod-account"},
+				{"id": "ci2", "provider": "gcp", "label": "second-account"},
+			}})
+			return
+		}
+		if empty {
+			_ = enc.Encode(map[string]any{"cloud_identities": []map[string]any{}})
+			return
+		}
 		_ = enc.Encode(map[string]any{"cloud_identities": []map[string]any{
 			{"id": "ci1", "provider": "aws", "label": "prod-account"},
 		}})
@@ -954,27 +1034,27 @@ func TestProj_CreateWithFlags(t *testing.T) {
 	h := projEnv(t, s)
 
 	if h.run("project", "create", "api", "--region", "eu-west-1",
-		"--cloud-identity-id", "ci1", "--stage", "development", "--iac-version", "1.11.4", "--output", "json") {
+		"--cloud-account", "ci1", "--stage", "development", "--iac-version", "1.11.4", "--output", "json") {
 		t.Error("project create exited fatally")
 	}
 	s.failOn = []string{"/cli/projects"}
-	if !h.run("project", "create", "api", "--region", "eu-west-1", "--cloud-identity-id", "ci1", "--output", "json") {
+	if !h.run("project", "create", "api", "--region", "eu-west-1", "--cloud-account", "ci1", "--output", "json") {
 		t.Error("project create should exit on a server error")
 	}
 }
 
 // TestProj_CreatePromptsOnTTY pins that an omitted --region opens the region form and an
-// omitted --cloud-identity-id opens the cloud-account picker when prompting is allowed.
+// omitted --cloud-account opens the cloud-account picker when prompting is allowed.
 func TestProj_CreatePromptsOnTTY(t *testing.T) {
 	h := projEnv(t, &projServer{})
 	projTTY(t)
 	projForm(t)
 	previousPrompt := projectCreatePrompt
-	projectCreatePrompt = func(f spec.Field, token, accountRef string) (string, error) {
+	projectCreatePrompt = func(f spec.Field, token string) (string, error) {
 		if f.Key == "region" {
 			return "eu-west-1", nil
 		}
-		return defaultProjectCreatePrompt(f, token, accountRef)
+		return defaultProjectCreatePrompt(f, token)
 	}
 	t.Cleanup(func() { projectCreatePrompt = previousPrompt })
 
@@ -1523,50 +1603,38 @@ func TestProj_ShellQuoteIsRunnableBySh(t *testing.T) {
 // The form collects four answers; envTuple renders them into `--env` syntax; parseEnvMatrix
 // — the REAL parser the flag uses, not a copy — reads them back. If the two renderings ever
 // disagree about what an environment is, the round trip stops being an identity.
-func TestProj_EnvFormAndEnvFlagAreOneSpec(t *testing.T) {
+func TestProj_EnvFormAndManifestAreOneSpec(t *testing.T) {
 	cases := []struct {
 		name    string
 		answers envAnswers
-		first   bool
 	}{
-		{"first environment, dedicated", envAnswers{Name: "prod", Stage: "production", PlacementMode: "dedicated"}, true},
-		{"later environment, namespace with an explicit namespace", envAnswers{Name: "dev-1", Stage: "development", PlacementMode: "namespace", Namespace: "boutique-dev-1"}, false},
-		{"later environment, namespace derived", envAnswers{Name: "dev-2", Stage: "development", PlacementMode: "namespace"}, false},
-		{"vcluster", envAnswers{Name: "staging", Stage: "staging", PlacementMode: "vcluster"}, false},
+		{"first environment, dedicated", envAnswers{Name: "prod", Stage: "production", PlacementMode: "dedicated"}},
+		{"later environment, namespace with an explicit namespace", envAnswers{Name: "dev-1", Stage: "development", PlacementMode: "namespace", Namespace: "boutique-dev-1"}},
+		{"later environment, namespace derived", envAnswers{Name: "dev-2", Stage: "development", PlacementMode: "namespace"}},
+		{"vcluster", envAnswers{Name: "staging", Stage: "staging", PlacementMode: "vcluster"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			a := normaliseEnvAnswers(tc.answers)
-			tuple, err := envTuple(a)
+			want := envSpecFrom(normaliseEnvAnswers(tc.answers), true)
+			// The form's answer, written as the file, read back as the wire shape: the manifest
+			// is the replay for a matrix, so it must reproduce exactly what the form sent.
+			file := manifestFromCreate(api.CreateProjectParams{
+				ProjectName: "boutique", Region: "eu-west-1", Environments: []api.EnvironmentSpec{want},
+			}, "prod-account")
+			data, err := manifest.Render(file)
 			if err != nil {
-				t.Fatalf("envTuple: %v", err)
+				t.Fatalf("Render: %v", err)
 			}
-			specs, err := parseEnvMatrix([]string{tuple})
+			back, err := manifest.Parse(data)
 			if err != nil {
-				t.Fatalf("parseEnvMatrix(%q): %v", tuple, err)
+				t.Fatalf("Parse:\n%s\n%v", data, err)
 			}
-			if len(specs) != 1 {
-				t.Fatalf("parseEnvMatrix(%q) returned %d specs, want 1", tuple, len(specs))
-			}
-			want := envSpecFrom(a, true)
-			if specs[0] != want {
-				t.Errorf("the form and the flag disagree about %q:\n  flag: %+v\n  form: %+v", tuple, specs[0], want)
+			back.Normalize()
+			specs := back.EnvironmentSpecs()
+			if len(specs) != 1 || specs[0] != want {
+				t.Errorf("the form and the file disagree:\n  file: %+v\n  form: %+v\n%s", specs, want, data)
 			}
 		})
-	}
-}
-
-// TestProj_EnvTupleRefusesAColonRatherThanLying pins the case that would make the replay
-// line a plausible command doing something else: a field carrying the tuple's own separator.
-func TestProj_EnvTupleRefusesAColonRatherThanLying(t *testing.T) {
-	for _, a := range []envAnswers{
-		{Name: "a:b", Stage: "development", PlacementMode: "namespace"},
-		{Name: "dev", Stage: "development", PlacementMode: "namespace", Namespace: "ns:1"},
-	} {
-		tuple, err := envTuple(a)
-		if err == nil {
-			t.Errorf("envTuple(%+v) = %q with no error — that tuple parses into a different environment", a, tuple)
-		}
 	}
 }
 
@@ -1590,20 +1658,31 @@ func TestProj_NormaliseEnvAnswersDropsANamespaceThatCannotApply(t *testing.T) {
 // TestProj_ParseEnvMatrixRefusesAValueTheServerWouldRefuse pins the local enum check. Both
 // halves matter: a bad rung must be refused NAMING the entry it was in, and a good matrix
 // must still parse — a validator that refused everything would also pass the first half.
-func TestProj_ParseEnvMatrixRefusesAValueTheServerWouldRefuse(t *testing.T) {
-	if _, err := parseEnvMatrix([]string{"prod:production:dedicted"}); err == nil {
-		t.Error("a mistyped placement rung must be refused locally")
-	} else if !strings.Contains(err.Error(), "prod:production:dedicted") || !strings.Contains(err.Error(), "dedicated") {
-		t.Errorf("error %q must name the offending --env entry and the allowed set", err)
-	}
-	if _, err := parseEnvMatrix([]string{"prod:prodution"}); err == nil {
-		t.Error("a mistyped stage must be refused locally")
-	}
-	if _, err := parseEnvMatrix([]string{"prod:production", "dev:development:namespace:boutique-dev"}); err != nil {
-		t.Errorf("a valid matrix must still parse: %v", err)
-	}
-	if _, err := parseEnvMatrix([]string{"prod:production", "prod:development"}); err == nil {
-		t.Error("a duplicate environment name must still be refused")
+func TestProj_ManifestRefusesAValueTheServerWouldRefuse(t *testing.T) {
+	for name, body := range map[string]string{
+		"a mistyped stage":     "environments:\n  - name: prod\n    stage: prodution\n",
+		"a mistyped placement": "environments:\n  - name: prod\n    stage: production\n    placement: dedicted\n",
+		"no dedicated rung":    "environments:\n  - name: prod\n    stage: production\n    placement: namespace\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), manifest.FileName)
+			if err := os.WriteFile(path, []byte("project: api\ncloud:\n  region: eu-west-1\n"+body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			b := spec.RegisterFlags(&cobra.Command{Use: "x"}, projectCreateSpec)
+			_ = b.Spec()
+			if err := b.Spec().Validate(); err != nil {
+				t.Fatal(err)
+			}
+			flags := &cobra.Command{Use: "probe"}
+			pb := spec.RegisterFlags(flags, projectCreateSpec)
+			if err := flags.Flags().Set("file", path); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := manifestForCreate(pb); err == nil {
+				t.Fatalf("%s was accepted", name)
+			}
+		})
 	}
 }
 
@@ -1677,7 +1756,7 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// TestProj_DefaultPlacementFollowsPosition pins the one rule parseEnvMatrix and the form
+// TestProj_DefaultPlacementFollowsPosition pins the one rule the manifest and the form
 // share: the first environment owns the Fabric it provisions, later ones share it.
 func TestProj_DefaultPlacementFollowsPosition(t *testing.T) {
 	if got := defaultPlacementFor(true); got != "dedicated" {
@@ -1686,10 +1765,12 @@ func TestProj_DefaultPlacementFollowsPosition(t *testing.T) {
 	if got := defaultPlacementFor(false); got != "namespace" {
 		t.Errorf("a later environment defaults to %q, want namespace — the cheap rung", got)
 	}
-	specs, err := parseEnvMatrix([]string{"prod:production", "dev:development"})
+	m, err := manifest.Parse([]byte("project: x\ncloud:\n  region: r\nenvironments:\n  - name: prod\n    stage: production\n  - name: dev\n    stage: development\n"))
 	if err != nil {
-		t.Fatalf("parseEnvMatrix: %v", err)
+		t.Fatalf("Parse: %v", err)
 	}
+	m.Normalize()
+	specs := m.EnvironmentSpecs()
 	if specs[0].PlacementMode != defaultPlacementFor(true) || !specs[0].IsDefault {
 		t.Errorf("first entry = %+v, want the dedicated default and IsDefault", specs[0])
 	}
@@ -1871,7 +1952,7 @@ func TestProj_CreateReplayPrefersTheLabelOverTheId(t *testing.T) {
 	// refuses both), so the label is what the replay names.
 	withLabel := replayLine(createReplayArgs(
 		api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1", CloudIdentityID: "ci-uuid-1"},
-		"prod-account", nil)...)
+		"prod-account", "")...)
 	if strings.Contains(withLabel, "ci-uuid-1") {
 		t.Errorf("%q carries the resolved id although a label was given", withLabel)
 	}
@@ -1879,18 +1960,45 @@ func TestProj_CreateReplayPrefersTheLabelOverTheId(t *testing.T) {
 		t.Errorf("%q does not carry the label", withLabel)
 	}
 	// The picker returns an id and there is no label, so the id is all we have. Printing it
-	// is honest; printing nothing would produce a command that creates an unlinked project.
+	// is honest; printing nothing would produce a command that creates an unlinked project —
+	// and --cloud-account takes an id, so the line still runs.
 	fromPicker := replayLine(createReplayArgs(
 		api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1", CloudIdentityID: "ci-uuid-1"},
-		"", nil)...)
-	if !strings.Contains(fromPicker, "--cloud-identity-id ci-uuid-1") {
+		"", "")...)
+	if !strings.Contains(fromPicker, "--cloud-account ci-uuid-1") {
 		t.Errorf("%q dropped the only account reference there was", fromPicker)
 	}
-	withEnvs := replayLine(createReplayArgs(
-		api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1"},
-		"prod-account", []string{"prod:production:dedicated", "dev-1:development:namespace:boutique-dev-1"})...)
-	if strings.Count(withEnvs, "--env ") != 2 {
-		t.Errorf("%q does not carry both --env entries", withEnvs)
+	if strings.Contains(fromPicker, "--cloud-identity-id") {
+		t.Errorf("%q names a flag that no longer exists", fromPicker)
+	}
+}
+
+// TestProj_CreateManifestReplayIsTheFileTheFormAddsUpTo pins the replay for a matrix: a list of
+// records has no flag spelling, so what is printed is alethia.yaml, and it must reproduce the run.
+func TestProj_CreateManifestReplayIsTheFileTheFormAddsUpTo(t *testing.T) {
+	params := api.CreateProjectParams{
+		ProjectName: "boutique", Region: "eu-west-1", CloudIdentityID: "ci-uuid-1", IacVersion: "1.8.2",
+		Environments: []api.EnvironmentSpec{
+			{Name: "prod", Stage: "production", PlacementMode: "dedicated", IsDefault: true},
+			{Name: "dev-1", Stage: "development", PlacementMode: "namespace", Namespace: "boutique-dev-1"},
+		},
+	}
+	var buf bytes.Buffer
+	printManifestReplay(&buf, ui.FormatTable, params, "prod-account")
+	out := buf.String()
+	for _, want := range []string{"save this as alethia.yaml", "project: boutique", "account: prod-account", "region: eu-west-1", "version: 1.8.2", "name: dev-1", "namespace: boutique-dev-1", "placement: namespace"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("replay is missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "ci-uuid-1") {
+		t.Errorf("the replay carries the resolved id although a label was given:\n%s", out)
+	}
+	// Prose never goes into a json stream.
+	buf.Reset()
+	printManifestReplay(&buf, ui.FormatJSON, params, "prod-account")
+	if buf.Len() != 0 {
+		t.Errorf("printed prose into --output json:\n%s", buf.String())
 	}
 }
 
@@ -1908,7 +2016,7 @@ func TestProj_CreateReplayNamesEveryFlagThatShapedTheProject(t *testing.T) {
 		Stage:       "production",
 		Placement:   "dedicated",
 		IacVersion:  "1.8.2",
-	}, "", nil)...)
+	}, "", "")...)
 	for _, want := range []string{
 		"--region eu-west-1", "--stage production", "--placement-mode dedicated", "--iac-version 1.8.2",
 	} {
@@ -1919,11 +2027,33 @@ func TestProj_CreateReplayNamesEveryFlagThatShapedTheProject(t *testing.T) {
 	// What was not passed is not invented: the server defaults these, and naming a default
 	// the caller never chose pins it into a script that would then stop tracking the server.
 	bare := replayLine(createReplayArgs(
-		api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1"}, "", nil)...)
-	for _, unwanted := range []string{"--stage", "--placement-mode", "--iac-version"} {
+		api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1"}, "", "")...)
+	for _, unwanted := range []string{"--stage", "--placement-mode", "--iac-version", "--file"} {
 		if strings.Contains(bare, unwanted) {
 			t.Errorf("%q names %s although nothing set it", bare, unwanted)
 		}
+	}
+}
+
+// TestProj_CreateReplayNamesTheFileTheMatrixCameFrom pins the third way a replay line can be a
+// different project than the one that just ran.
+//
+// A matrix is a list of records and has no flag spelling. When it came from alethia.yaml and a
+// scalar was asked for on the terminal, the line printed under "same result, without the
+// questions" carried --region and --stage and nothing about the file — so running it created the
+// server's DEFAULT environment pair instead of the file's matrix, silently and under a heading
+// promising the same result. The file is named exactly when it supplied the matrix.
+func TestProj_CreateReplayNamesTheFileTheMatrixCameFrom(t *testing.T) {
+	params := api.CreateProjectParams{ProjectName: "boutique", Region: "eu-west-1", Stage: "production"}
+	fromFile := replayLine(createReplayArgs(params, "prod-account", "infra/alethia.yaml")...)
+	if !strings.Contains(fromFile, "--file infra/alethia.yaml") {
+		t.Errorf("%q does not name the file its matrix came from", fromFile)
+	}
+	// And it is not invented for a run whose matrix came from the form: there printManifestReplay
+	// prints the file itself, and a --file naming a path that does not exist yet would not run.
+	fromForm := replayLine(createReplayArgs(params, "prod-account", "")...)
+	if strings.Contains(fromForm, "--file") {
+		t.Errorf("%q names a file although no file supplied the matrix", fromForm)
 	}
 }
 
@@ -1967,8 +2097,7 @@ var projectLeafSpecs = map[string][]projectLeafSpec{
 		interactive: []string{"project", "create"},
 		scripted: []string{"project", "create", "api", "--region", "eu-west-1",
 			"--cloud-account", "prod-account", "--stage", "development",
-			"--placement-mode", "dedicated", "--iac-version", "1.11.4",
-			"--env", "prod:production:dedicated", "--env", "dev:development:namespace:api-dev"},
+			"--placement-mode", "dedicated", "--iac-version", "1.11.4"},
 		asks: true,
 	}},
 	"alethia project plan": {{
@@ -2398,7 +2527,7 @@ func projScriptEnvSpecs(t *testing.T, specs ...envAnswers) *[]bool {
 // TestProj_PromptEnvMatrixBuildsTheTuplesTheFlagWouldHaveTaken drives the matrix loop and
 // asserts what it produces is `--env` syntax — the same strings a person would otherwise
 // have hand-assembled, which is the complaint this lane exists to answer.
-func TestProj_PromptEnvMatrixBuildsTheTuplesTheFlagWouldHaveTaken(t *testing.T) {
+func TestProj_PromptEnvMatrixBuildsTheMatrixTheFileWouldHaveDeclared(t *testing.T) {
 	hygCliConfirmSetNoInput(t, false)
 	asked := projScriptYesNo(t, true, true, false) // declare? yes · another? yes · another? no
 	firsts := projScriptEnvSpecs(t,
@@ -2406,14 +2535,17 @@ func TestProj_PromptEnvMatrixBuildsTheTuplesTheFlagWouldHaveTaken(t *testing.T) 
 		envAnswers{Name: "dev-1", Stage: "development", PlacementMode: "namespace", Namespace: "boutique-dev-1"},
 	)
 
-	got, err := promptEnvMatrix()
+	got, err := promptEnvMatrix("")
 	if err != nil {
 		t.Fatalf("promptEnvMatrix: %v", err)
 	}
-	want := []string{"prod:production:dedicated", "dev-1:development:namespace:boutique-dev-1"}
-	if !equalStrings(got, want) {
-		t.Errorf("promptEnvMatrix = %v, want %v — these are the exact tuples the issue's\n"+
-			"      complaint had to be typed by hand", got, want)
+	want := []api.EnvironmentSpec{
+		{Name: "prod", Stage: "production", PlacementMode: "dedicated", IsDefault: true},
+		{Name: "dev-1", Stage: "development", PlacementMode: "namespace", Namespace: "boutique-dev-1"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("promptEnvMatrix = %+v, want %+v — the matrix the issue's complaint had to be\n"+
+			"      typed by hand as colon tuples", got, want)
 	}
 	// The first entry must be asked as the first: that is what makes it default to the rung
 	// that owns the Fabric, and it is the only input defaultPlacementFor has.
@@ -2443,7 +2575,7 @@ func TestProj_PromptEnvMatrixDeclinedLeavesTheServerDefault(t *testing.T) {
 	hygCliConfirmSetNoInput(t, false)
 	projScriptYesNo(t, false)
 	projScriptEnvSpecs(t) // asking for even one environment is a scripted error
-	got, err := promptEnvMatrix()
+	got, err := promptEnvMatrix("")
 	if err != nil {
 		t.Fatalf("promptEnvMatrix: %v", err)
 	}
@@ -2462,20 +2594,10 @@ func TestProj_PromptEnvMatrixRefusesADuplicateWhileStillAsking(t *testing.T) {
 		envAnswers{Name: "prod", Stage: "production", PlacementMode: "dedicated"},
 		envAnswers{Name: "prod", Stage: "development", PlacementMode: "namespace"},
 	)
-	if _, err := promptEnvMatrix(); err == nil {
+	if _, err := promptEnvMatrix(""); err == nil {
 		t.Fatal("two environments called prod must be refused")
 	} else if !strings.Contains(err.Error(), "twice") {
 		t.Errorf("error %q does not say the name was listed twice", err)
-	}
-}
-
-// TestProj_PromptEnvMatrixPropagatesAColonRatherThanEmittingIt pins the loop's other refusal.
-func TestProj_PromptEnvMatrixPropagatesAColonRatherThanEmittingIt(t *testing.T) {
-	hygCliConfirmSetNoInput(t, false)
-	projScriptYesNo(t, true, false)
-	projScriptEnvSpecs(t, envAnswers{Name: "a:b", Stage: "production", PlacementMode: "dedicated"})
-	if _, err := promptEnvMatrix(); err == nil {
-		t.Fatal("an environment name carrying the tuple separator must not be turned into a tuple")
 	}
 }
 
@@ -2484,7 +2606,7 @@ func TestProj_PromptEnvMatrixPropagatesAColonRatherThanEmittingIt(t *testing.T) 
 func TestProj_PromptEnvMatrixRefusesWhenPromptingIsDisabled(t *testing.T) {
 	hygCliConfirmSetNoInput(t, true)
 	opened := projFormCounter(t)
-	if _, err := promptEnvMatrix(); err == nil {
+	if _, err := promptEnvMatrix(""); err == nil {
 		t.Fatal("promptEnvMatrix must refuse with prompting disabled")
 	}
 	if *opened != 0 {
@@ -2574,7 +2696,7 @@ func projFailingYesNo(t *testing.T) {
 func TestProj_ADismissedQuestionStopsTheLoop(t *testing.T) {
 	hygCliConfirmSetNoInput(t, false)
 	projFailingYesNo(t)
-	if _, err := promptEnvMatrix(); err == nil {
+	if _, err := promptEnvMatrix(""); err == nil {
 		t.Error("a dismissed matrix question must be an error, not an empty matrix")
 	}
 	if _, err := promptSetValues(nil); err == nil {
@@ -2815,7 +2937,7 @@ func TestProj_PromptEnvironmentSpecSeedsTheDefaults(t *testing.T) {
 // TestProj_CreateAnsweredAndFlaggedSendTheSameRequest is the headline.
 //
 // Interactively: the matrix is answered one environment at a time. Scripted: the same matrix
-// is the colon tuples from the issue's complaint. The POSTed body must be identical.
+// is the alethia.yaml the answered run prints back. The POSTed body must be identical.
 func TestProj_CreateAnsweredAndFlaggedSendTheSameRequest(t *testing.T) {
 	s := &projServer{}
 	h := projEnv(t, s)
@@ -2842,11 +2964,20 @@ func TestProj_CreateAnsweredAndFlaggedSendTheSameRequest(t *testing.T) {
 	}
 	s.forgetPosts()
 
-	// --- flagged: the command line from the issue, minus the opaque id ---
+	// --- from the file: the manifest the answered run printed back ---
+	file := manifestFromCreate(api.CreateProjectParams{
+		ProjectName: "boutique", Region: "eu-west-1",
+		Environments: []api.EnvironmentSpec{
+			{Name: "prod", Stage: "production", PlacementMode: "dedicated", IsDefault: true},
+			{Name: "dev-1", Stage: "development", PlacementMode: "namespace", Namespace: "boutique-dev-1"},
+		},
+	}, "prod-account")
+	path := filepath.Join(t.TempDir(), manifest.FileName)
+	if err := manifest.Write(path, file, false); err != nil {
+		t.Fatal(err)
+	}
 	if h.run("project", "create", "boutique", "--region", "eu-west-1", "--no-input",
-		"--cloud-account", "prod-account",
-		"--env", "prod:production:dedicated",
-		"--env", "dev-1:development:namespace:boutique-dev-1") {
+		"--cloud-account", "prod-account", "--file", path) {
 		t.Fatal("the flagged create exited fatally")
 	}
 	flagged, ok := s.lastPost()
@@ -3140,6 +3271,16 @@ func TestProj_ValidateEnvAnswersRefusesEitherField(t *testing.T) {
 	}
 }
 
+// projBadStageManifest writes a manifest whose stage the server would refuse.
+func projBadStageManifest(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), manifest.FileName)
+	if err := os.WriteFile(path, []byte("project: api\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: prod\n    stage: prodution\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // TestProj_CreateRefusesAValueTheServerWouldRefuseBeforeSending pins the flag-level checks,
 // which turn an opaque 400 into a message naming the allowed set.
 func TestProj_CreateRefusesAValueTheServerWouldRefuseBeforeSending(t *testing.T) {
@@ -3148,7 +3289,7 @@ func TestProj_CreateRefusesAValueTheServerWouldRefuseBeforeSending(t *testing.T)
 	for _, args := range [][]string{
 		{"project", "create", "api", "--region", "eu-west-1", "--stage", "prodution"},
 		{"project", "create", "api", "--region", "eu-west-1", "--placement-mode", "dedicted"},
-		{"project", "create", "api", "--region", "eu-west-1", "--env", "prod:prodution"},
+		{"project", "create", "api", "--region", "eu-west-1", "--file", projBadStageManifest(t)},
 	} {
 		s.forgetPosts()
 		if !h.run(append(args, "--no-input")...) {
@@ -3288,7 +3429,7 @@ func TestProj_PromptEnvMatrixSurfacesADismissedEnvironment(t *testing.T) {
 	hygCliConfirmSetNoInput(t, false)
 	projScriptYesNo(t, true, false)
 	projScriptEnvSpecs(t) // the script holds no environments, so the first ask fails
-	if _, err := promptEnvMatrix(); err == nil {
+	if _, err := promptEnvMatrix(""); err == nil {
 		t.Fatal("a dismissed environment form must stop the matrix")
 	}
 }
@@ -3717,7 +3858,7 @@ func TestProj_PromptEnvMatrixSurfacesADismissedContinuation(t *testing.T) {
 	t.Cleanup(func() { askYesNo = prev })
 	projScriptEnvSpecs(t, envAnswers{Name: "prod", Stage: "production", PlacementMode: "dedicated"})
 
-	if _, err := promptEnvMatrix(); err == nil {
+	if _, err := promptEnvMatrix(""); err == nil {
 		t.Fatal("a dismissed continuation must stop the matrix, not silently accept the environments so far")
 	}
 }
@@ -3740,44 +3881,6 @@ func TestProj_EnvAddPrintsTheReplayLineForAnAnsweredRun(t *testing.T) {
 	}
 	if !strings.Contains(got, "--placement-mode vcluster") {
 		t.Errorf("the replay line does not carry the placement that was used:\n%s", got)
-	}
-}
-
-// TestProj_CreateRefusesBothCloudAccountFlags pins the refusal --cloud-account grew when it
-// was added beside the older --cloud-identity-id.
-//
-// They name the SAME field, so a caller who set both either believes one is being ignored or
-// has an unnoticed leak from a wrapper script. Resolving that by precedence is worse than it
-// looks: preferring the id skips resolveCloudIdentityID entirely, so an unknown or ambiguous
-// label is never reported, and createReplayArgs still prints `--cloud-account <label>` — a
-// line inviting the reader to commit a command that links a DIFFERENT account than the run
-// did. The refusal happens before anything is sent.
-func TestProj_CreateRefusesBothCloudAccountFlags(t *testing.T) {
-	s := &projServer{}
-	h := projEnv(t, s)
-
-	if !h.run("project", "create", "boutique", "--region", "eu-west-1",
-		"--cloud-account", "prod-account", "--cloud-identity-id", "ci1",
-		"--no-input", "--output", "json") {
-		t.Error("both account flags at once must be fatal, not resolved by precedence")
-	}
-	if len(s.posts) > 0 {
-		t.Errorf("it still created the project: %+v", s.posts)
-	}
-
-	// And the refusal is about the PAIR, not about either flag: the label alone still
-	// resolves to the identity the project is linked to.
-	s.forgetPosts()
-	if h.run("project", "create", "boutique", "--region", "eu-west-1",
-		"--cloud-account", "prod-account", "--no-input", "--output", "json") {
-		t.Fatal("--cloud-account alone exited fatally")
-	}
-	last, ok := s.lastPost()
-	if !ok {
-		t.Fatal("--cloud-account alone created nothing")
-	}
-	if got := last.Body["cloud_identity_id"]; got != "ci1" {
-		t.Errorf("the payload carries cloud_identity_id %v, want the id the label resolved to", got)
 	}
 }
 
