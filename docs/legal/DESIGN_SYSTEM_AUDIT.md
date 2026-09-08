@@ -120,9 +120,25 @@ Two facts about how these marks are rendered bear on every row, and are stated
 once here rather than nine times:
 
 - `ConnectorIcon` (`apps/console/components/connectors/connector-icon.tsx`)
-  applies `grayscale opacity-90` unless `mono={false}` is passed. `mono`
-  defaults to `true`, so a connector mark is **desaturated by default** wherever
-  the console renders it.
+  applies `grayscale opacity-90` unless `mono={false}` is passed, and `mono`
+  defaults to `true`. **But the default is not what the console does.** Every
+  call site passes `mono={!isConnected}` — `connector-card.tsx:114,121`,
+  `connector-row.tsx:78,85` and `connector-detail-sheet.tsx:149,155` — so a
+  **connected** connector's mark renders in FULL COLOUR and UNMODIFIED, and only
+  a **disconnected** one is desaturated. The component's own doc comment says as
+  much: "pass `mono={false}` to show it in full color — e.g. for a connected
+  connector."
+
+  **So there are two questions per mark, not one**, and they can have different
+  answers. A colour-alteration clause reaches the disconnected state and does not
+  reach the connected one. Where an owner grants use conditioned on the logo
+  being unmodified, the connected state is what satisfies that condition and the
+  desaturated state is what fails it — `vault` and `bitbucket` are the rows where
+  this decides the answer rather than merely refining it.
+
+  An earlier draft of this section said a mark is desaturated "wherever the
+  console renders it". That was false, and it was the sentence the nine rows
+  below would have been read through.
 - The console is the UI of a commercial product, and the connector surfaces the
   marks appear on identify third-party services the product integrates with.
 
@@ -363,9 +379,11 @@ nine:
 2. **Some marks are not** — those rows go `icon_url: null` and render the
    monogram fallback that already exists, exactly as the eleven from #3876 do.
    No code change beyond the catalog.
-3. **The grayscale rendering is the problem rather than the marks** — then
-   `mono={false}` for third-party marks is a one-prop change in
-   `connector-icon.tsx` and the marks stay.
+3. **The grayscale rendering is the problem rather than the marks** — then the
+   change is at the six call sites rather than in `connector-icon.tsx`: they pass
+   `mono={!isConnected}`, so third-party marks would pass `mono={false}`
+   unconditionally and the marks stay. Note this only affects the DISCONNECTED
+   state; the connected one already renders unmodified.
 
 One finding narrows the decision and is worth stating separately: `vault` is the
 only one of the nine whose owner publishes an affirmative grant for website use
