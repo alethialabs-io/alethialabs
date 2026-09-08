@@ -181,6 +181,13 @@ func (c *Components) UnmarshalYAML(node *yaml.Node) error {
 				delete(fields, "name")
 				entries.Entries = append(entries.Entries, Component{Name: name, Fields: fields})
 			}
+		case yaml.DocumentNode, yaml.AliasNode:
+			// A document node cannot appear as a mapping VALUE, and an alias (`*ref`) is a
+			// feature this file deliberately does not take: an anchor defined elsewhere in the
+			// manifest would make one environment's components silently depend on another's, and
+			// the refusal is cheaper to read than the indirection. Named rather than left to the
+			// default arm so the `exhaustive` linter can see the decision.
+			return fmt.Errorf("components.%s: a YAML alias is not supported here — write the fields out (line %d)", kind, valNode.Line)
 		case yaml.ScalarNode:
 			if valNode.Tag == "!!null" {
 				// `repositories:` with nothing under it declares the singleton with every field
