@@ -7,7 +7,12 @@ import { useEffect, useRef } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
-import { draftScope, NEW_DRAFT_SCOPE } from "@/lib/canvas/design-revision";
+import {
+	draftScope,
+	fnv1a32,
+	NEW_DRAFT_SCOPE,
+	stableStringify,
+} from "@/lib/canvas/design-revision";
 import { switchDraftScope, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import {
 	projectFormSchema,
@@ -68,8 +73,8 @@ export function DesignProjectWorkbench({
 		mode: "onChange",
 	});
 
-	// Identities are server data the store only looks up (labels, providers); refresh them
-	// whenever the server sends a new list. Never a reason to touch the graph.
+	// Identities are server data the store looks up for labels; refresh them whenever the server
+	// sends a new list.
 	useEffect(() => {
 		useCanvasStore.getState().setIdentities(cloudIdentities);
 	}, [cloudIdentities]);
@@ -80,7 +85,17 @@ export function DesignProjectWorkbench({
 	// Before this, that re-ran `setGraph`, which closed the open card and discarded every unsaved
 	// edit. The create flow has no project, so it seeds under the fixed "new" scope + revision and
 	// its draft survives a reload exactly as it did before.
-	const revision = sourceProject ? sourceRevision(sourceProject) : NEW_DRAFT_SCOPE;
+	// The identity list is part of the revision, and this is not belt-and-braces. `formToGraph`
+	// resolves `providerOf(id)` and BAKES the result into `data.provider` on every node, and
+	// `getEffectiveProvider` reads that rather than re-resolving against the store — so the provider
+	// stamped on a node is a snapshot of the identity list at seed time. With the seed no longer
+	// re-running on every render, a design referencing an identity that arrives in a LATER list
+	// would keep whatever provider it was seeded with. Hashing the list makes a real change re-seed
+	// while a re-render with the same list still does not, which is the whole point of this effect.
+	// Found in review.
+	const revision = sourceProject
+		? `${sourceRevision(sourceProject)}:${fnv1a32(stableStringify(cloudIdentities))}`
+		: NEW_DRAFT_SCOPE;
 	// The design to seed from, read at seed time rather than listed as a dependency — its identity
 	// changes on every render, its content is what `revision` already keys on.
 	const sourceRef = useRef(sourceProject);
@@ -97,11 +112,22 @@ export function DesignProjectWorkbench({
 		// resolves later must not seed the store for a scope the user has already left.
 		let cancelled = false;
 		const scope = draftScope(projectId, environmentId);
+		// A PROJECT route whose design read failed is not a create flow. The page passes
+		// `getProjectAsFormData(...).catch(() => undefined)`, so `sourceProject` is undefined on any
+		// transient failure — a DB hiccup, an authz blip, a revalidate racing a write — and seeding
+		// the blank default over a real board would look exactly like the user's design being
+		// deleted. The create flow is the case with no `projectId` at all. Found in review.
+		if (projectId && !sourceRef.current) return;
 		/** Point persistence at this scope's slot (if not already), then seed under the revision. */
 		const seed = async () => {
 			let pending = switchRef.current;
 			if (!pending || pending.scope !== scope) {
-				pending = { scope, done: switchDraftScope(scope) };
+				// `switchDraftScope` writes to the store AFTER its own await, and the store and the
+				// persistence pointer are both global — so a superseded switch resuming late would
+				// rehydrate the NEW scope's slot, decide it does not match the scope it was called
+				// for, and `reset()` a board that had already been seeded correctly. `cancelled`
+				// cannot reach inside it, so it is handed the question instead. Found in review.
+				pending = { scope, done: switchDraftScope(scope, () => !cancelled) };
 				switchRef.current = pending;
 			}
 			await pending.done;

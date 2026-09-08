@@ -19,13 +19,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Deterministic JSON: object keys sorted recursively, arrays kept in order, `undefined` members
- * dropped (so `{a: undefined}` and `{}` read the same, as `JSON.stringify` already treats them).
- * A bare `undefined` at the root or inside an array becomes `null`, mirroring `JSON.stringify`.
+ * Deterministic JSON: object keys sorted recursively, ARRAYS SORTED BY THEIR OWN SERIALISATION,
+ * `undefined` members dropped (so `{a: undefined}` and `{}` read the same, as `JSON.stringify`
+ * already treats them). A bare `undefined` at the root or inside an array becomes `null`,
+ * mirroring `JSON.stringify`.
+ *
+ * Arrays used to keep their order, and that made the revision order-sensitive over rows that
+ * arrive in no defined order. `readEnvComponents` selects every component table with a `where` and
+ * NO `orderBy` — `projectDatabases`, `projectCaches`, `projectQueues`, `projectTopics`,
+ * `projectNosqlTables`, `projectSecrets`, `projectStorageBuckets`, `projectServices` — and
+ * Postgres promises nothing about row order without one. So the same unchanged design could hash
+ * two ways between reads, and the workbench would re-seed a board whose content had not moved,
+ * discarding the open card and any clean-draft state for nothing. Found in review.
+ *
+ * Sorting here rather than adding `orderBy` to eight selects is the fix that cannot regress: a
+ * ninth select added later needs nobody to remember. It is also the honest semantics — two designs
+ * differing only in the order rows came back ARE the same design, and this hash exists to answer
+ * exactly that question.
  */
 export function stableStringify(value: unknown): string {
 	if (Array.isArray(value)) {
-		return `[${value.map((v) => stableStringify(v === undefined ? null : v)).join(",")}]`;
+		return `[${value.map((v) => stableStringify(v === undefined ? null : v)).sort().join(",")}]`;
 	}
 	if (isRecord(value)) {
 		const parts: string[] = [];

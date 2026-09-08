@@ -39,15 +39,22 @@ function design(overrides: Partial<ProjectFormData> = {}): ProjectFormData {
 }
 
 describe("stableStringify", () => {
-	it("sorts object keys recursively and keeps array order", () => {
+	// Arrays are SORTED, not kept in order, and the reason is at the producer: `readEnvComponents`
+	// selects every component table with a `where` and no `orderBy`, so the rows arrive in whatever
+	// order Postgres gives — which it does not promise. Keeping order meant the same unchanged
+	// design could hash two ways between reads and re-seed a board that had not moved.
+	it("sorts object keys recursively AND array members", () => {
 		expect(stableStringify({ b: { z: 1, a: [3, 1, 2] }, a: "x" })).toBe(
-			'{"a":"x","b":{"a":[3,1,2],"z":1}}',
+			'{"a":"x","b":{"a":[1,2,3],"z":1}}',
 		);
 	});
 
 	it("drops undefined members and renders undefined array slots as null, like JSON.stringify", () => {
 		expect(stableStringify({ a: undefined, b: 1 })).toBe('{"b":1}');
-		expect(stableStringify([undefined, 1])).toBe("[null,1]");
+		// `[undefined, 1]` serialises to `null` and `1`, which sort to `1` then `null`. The slot is
+		// still rendered rather than dropped, which is the property this pins; where it lands is
+		// the sort's business.
+		expect(stableStringify([undefined, 1])).toBe("[1,null]");
 		expect(stableStringify(undefined)).toBe("null");
 		expect(stableStringify(null)).toBe("null");
 	});
@@ -105,14 +112,21 @@ describe("designRevision", () => {
 		expect(designRevision(withUndefined)).toBe(designRevision(absent));
 	});
 
-	it("moves when the content moves — a port change, a new table, a reordered list", () => {
+	it("moves when the content moves — a port change, a new table", () => {
 		const base = designRevision(design());
 		expect(designRevision(design({ databases: [{ ...ORDERS, port: 6543 }] }))).not.toBe(base);
 		const audit = { ...ORDERS, name: "audit" };
-		const two = design({ databases: [ORDERS, audit] });
-		expect(designRevision(two)).not.toBe(base);
-		expect(designRevision(design({ databases: [audit, ORDERS] }))).not.toBe(
-			designRevision(two),
+		expect(designRevision(design({ databases: [ORDERS, audit] }))).not.toBe(base);
+	});
+
+	// The inversion of what this file used to assert, and the assertion is the point rather than a
+	// consequence: two designs differing only in the order the rows came back ARE the same design,
+	// and this hash exists to answer exactly that question. It used to say they were different,
+	// which made every unordered read a candidate for a spurious re-seed.
+	it("does NOT move when only the row order moves", () => {
+		const audit = { ...ORDERS, name: "audit" };
+		expect(designRevision(design({ databases: [ORDERS, audit] }))).toBe(
+			designRevision(design({ databases: [audit, ORDERS] })),
 		);
 	});
 
