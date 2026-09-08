@@ -42,7 +42,16 @@ locals {
   # measured rather than asserted in a comment. Lifting a *quoted* HCL literal means
   # re-implementing HCL's escaping, so the test refuses a backslash rather than guess —
   # `[0-9]` and `[.]` say everything `\d` and `\.` would.
-  go_version = regex("(?m)^go +([0-9]+[.][0-9]+(?:[.][0-9]+)?)", file("${path.module}/../../go.work"))[0]
+  go_directive = regex("(?m)^go +([0-9]+[.][0-9]+(?:[.][0-9]+)?)", file("${path.module}/../../go.work"))[0]
+
+  # A MINOR-ONLY DIRECTIVE IS DEFAULTED, NOT REFUSED. `go 1.28` is legal Go and means
+  # 1.28.0; go.dev/dl publishes no minor-only tarball, so the URL needs the patch. An
+  # earlier version of this asserted the patch was present and FAILED THE PLAN without
+  # it — which stops `hcloud_server.sandbox` and `pnpm env:box` over a go.work line that
+  # is not broken. Refuse what is known broken; this is known FIXABLE, and `go1.NN.0` has
+  # existed for every release since 1.21, so appending it serves the case that a refusal
+  # would only have blocked.
+  go_version = length(split(".", local.go_directive)) == 3 ? local.go_directive : "${local.go_directive}.0"
 }
 
 resource "hcloud_ssh_key" "sandbox" {

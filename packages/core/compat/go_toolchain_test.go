@@ -224,12 +224,24 @@ func TestSandboxBoxGoToolchainComesFromGoWork(t *testing.T) {
 	}
 
 	localRe := regexp.MustCompile(
-		`(?m)^[ \t]*go_version[ \t]*=[ \t]*regex\("([^"]*)",[ \t]*file\("\$\{path\.module\}/\.\./\.\./go\.work"\)\)\[0\][ \t]*$`)
+		`(?m)^[ \t]*go_directive[ \t]*=[ \t]*regex\("([^"]*)",[ \t]*file\("\$\{path\.module\}/\.\./\.\./go\.work"\)\)\[0\][ \t]*$`)
 	lm := localRe.FindStringSubmatch(server)
 	if lm == nil {
-		t.Fatalf("%s has no `go_version = regex(\"…\", file(\"${path.module}/../../go.work\"))[0]` "+
+		t.Fatalf("%s has no `go_directive = regex(\"…\", file(\"${path.module}/../../go.work\"))[0]` "+
 			"local. That expression IS the mechanism — without it the box's toolchain is being "+
 			"remembered again rather than read.", sandboxServerTF)
+	}
+
+	// A MINOR-ONLY DIRECTIVE IS DEFAULTED, and the defaulting is asserted here because
+	// go.work carries a patch today, so nothing else would execute that branch until the
+	// day somebody writes `go 1.28` — which is exactly when a missing branch bites. The
+	// earlier design REFUSED a minor-only directive and failed the whole plan over a legal
+	// go.work line, stopping the sandbox to avoid a URL that appending ".0" fixes.
+	if !regexp.MustCompile(`(?m)^[ \t]*go_version[ \t]*=[ \t]*length\(split\("\.",[ \t]*local\.go_directive\)\)[ \t]*==[ \t]*3[ \t]*\?[ \t]*local\.go_directive[ \t]*:[ \t]*"\$\{local\.go_directive\}\.0"[ \t]*$`).MatchString(server) {
+		t.Fatalf("%s does not default a minor-only `go` directive to a .0 patch. go.dev/dl "+
+			"publishes no minor-only tarball, so `go 1.28` would render a URL that 404s and the "+
+			"box would come up with no Go at all — but `go 1.28` is legal Go meaning 1.28.0, so "+
+			"it must be SERVED rather than refused.", sandboxServerTF)
 	}
 	pattern := lm[1]
 
