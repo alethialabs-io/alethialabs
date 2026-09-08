@@ -59,6 +59,9 @@ var projectCreateSpec = spec.Spec{
 		{Command: "alethia project create", Key: "file", Title: "Manifest",
 			Description: "alethia.yaml to take the values and the environment matrix from (the one in the current directory when present)",
 			Flag:        "file", Shorthand: "f", Page: docsProjectPage},
+		{Command: "alethia project create", Key: "no-manifest", Title: "Ignore the manifest",
+			Description: "Do not read the alethia.yaml in this directory (refused together with --file)",
+			Flag:        "no-manifest", Bool: true, Page: docsProjectPage},
 	},
 	// Derived from the generated enums rather than listed, so a new stage or placement mode reaches
 	// the flag help, the refusal message and the docs table together.
@@ -143,6 +146,14 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 		m, manifestPath, err := manifestForCreate(b)
 		if err != nil {
 			fail(err)
+		}
+		// A file nobody named, read anyway, SAYS SO. Discovery is a convenience, and a convenience
+		// that changes what gets created without appearing on screen is indistinguishable from the
+		// command ignoring the arguments it was given. `apply` prints the same line for the same
+		// reason. Human output only — prose in a `--output json` stream corrupts the document.
+		if flagPath, _ := b.String("file"); flagPath == "" && manifestPath != "" && outputFormat(cmd) == ui.FormatTable {
+			fmt.Fprintf(os.Stdout, "%s Reading %s from this directory (--no-manifest ignores it)\n",
+				ui.MutedStyle.Render(ui.SymbolPoint), manifestPath)
 		}
 
 		// The form is a source like any other, and the kit asks it only for what the flags, the
@@ -245,6 +256,19 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 func manifestForCreate(b *spec.Binder) (*manifest.Manifest, string, error) {
 	path, _ := b.String("file")
 	explicit := path != ""
+	ignore, _ := b.Bool("no-manifest")
+	if ignore {
+		// THE OPT-OUT, and the reason it exists. Discovery is what makes `alethia project create`
+		// in a checked-out repository do the right thing with no arguments, so it stays — but a
+		// scripted `project create svc-7 --region eu-west-1 --cloud-account acct --no-input` run
+		// from a tree that happens to hold an example alethia.yaml would take that file's
+		// environments, or fail naming a file the caller never mentioned, and before this flag
+		// there was no way to say "read none".
+		if explicit {
+			return nil, "", fmt.Errorf("--file names a manifest and --no-manifest says to read none: pass one")
+		}
+		return nil, "", nil
+	}
 	if path == "" {
 		found, ok := manifest.Find(".")
 		if !ok {

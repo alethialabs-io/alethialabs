@@ -119,6 +119,10 @@ or from the manifest in the current directory, which also declares the environme
 alethia project create --file alethia.yaml
 ```
 
+The file in the current directory is read even when `--file` is not passed, and the command prints
+the line naming it. A script that must not be steered by whatever `alethia.yaml` happens to be in
+the tree passes `--no-manifest`.
+
 | Argument / Flag | Required | Description |
 |------|----------|-------------|
 | `[name]` | Yes* | Project name (positional). *Asked for on a terminal when omitted. |
@@ -127,7 +131,8 @@ alethia project create --file alethia.yaml
 | `--stage` | No | Initial environment stage: `development` (default), `staging`, `production` |
 | `--iac-version` | No | OpenTofu version to pin (defaults server-side) |
 | `--placement-mode` | No | Placement of the default environment: `namespace`, `vcluster`, `dedicated` (default `dedicated`) |
-| `--file` | No | `alethia.yaml` to take the values and the environment matrix from. The file in the current directory is read when present. |
+| `--file` | No | `alethia.yaml` to take the values and the environment matrix from. The file in the current directory is read when present, and the command says so. |
+| `--no-manifest` | No | Read no manifest, not even the one in this directory. Refused together with `--file`. |
 
 Every value resolves in one order — the flag, then `ALETHIA_REGION` and the other environment
 variables, then the manifest, then the form, then the default — so a checked-in file supplies what

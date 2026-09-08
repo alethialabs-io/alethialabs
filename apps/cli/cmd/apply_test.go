@@ -622,6 +622,68 @@ func TestProj_CreateReadsTheManifestInTheWorkingDirectory(t *testing.T) {
 	}
 }
 
+// TestProj_TheDiscoveredManifestIsAnnouncedAndCanBeRefused pins the two halves of implicit
+// discovery.
+//
+// Reading ./alethia.yaml with no --file is what makes `alethia project create` do the right thing
+// in a checked-out repository, so it stays. But a scripted run in a tree that happens to hold an
+// example manifest would take that file's environments — or fail naming a file the caller never
+// mentioned — and there was no way to say "read none". So the read announces itself, and
+// --no-manifest turns it off.
+func TestProj_TheDiscoveredManifestIsAnnouncedAndCanBeRefused(t *testing.T) {
+	write := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, manifest.FileName), []byte(
+			"project: api\ncloud:\n  account: prod-account\n  region: eu-west-1\nenvironments:\n  - name: prod\n    stage: production\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+
+	t.Run("the implicit read is on screen", func(t *testing.T) {
+		s := &projServer{}
+		h := projEnv(t, s)
+		t.Chdir(write(t))
+		read := projCaptureStdout(t)
+		if h.run("project", "create", "--no-input") {
+			t.Error("create from the discovered manifest exited fatally")
+		}
+		if out := read(); !strings.Contains(out, manifest.FileName) || !strings.Contains(out, "--no-manifest") {
+			t.Errorf("a file nobody named was read without saying so:\n%s", out)
+		}
+	})
+
+	t.Run("--no-manifest reads none", func(t *testing.T) {
+		s := &projServer{}
+		h := projEnv(t, s)
+		t.Chdir(write(t))
+		if h.run("project", "create", "svc-7", "--region", "eu-west-1", "--no-manifest", "--no-input", "--output", "json") {
+			t.Error("create with --no-manifest exited fatally")
+		}
+		post, ok := s.lastPost()
+		if !ok {
+			t.Fatal("nothing was sent")
+		}
+		// The file said `api` with one production environment. None of it may reach the wire.
+		if post.Body["project_name"] != "svc-7" {
+			t.Errorf("the ignored manifest supplied the name anyway: %+v", post.Body)
+		}
+		if envs, _ := post.Body["environments"].([]any); len(envs) != 0 {
+			t.Errorf("the ignored manifest supplied the matrix anyway: %+v", post.Body["environments"])
+		}
+	})
+
+	t.Run("--file and --no-manifest together are refused", func(t *testing.T) {
+		h := projEnv(t, &projServer{})
+		dir := write(t)
+		if !h.run("project", "create", "x", "--region", "r", "--file", filepath.Join(dir, manifest.FileName),
+			"--no-manifest", "--no-input") {
+			t.Error("naming a file and saying to read none must be refused rather than silently resolved")
+		}
+	})
+}
+
 func TestApply_RefusalsThroughTheApplyCommand(t *testing.T) {
 	// A file that cannot be reconciled is refused by apply as well as by plan, before any write.
 	s := &projServer{envs: []map[string]any{
