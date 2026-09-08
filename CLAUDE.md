@@ -219,6 +219,16 @@ length unit, variant prefix or not); on a centred one-off empty state (`text-cen
 more); on a `<Stat` cell and the `Stat` primitive behind it; on a raw stacking level of 40 or more,
 variant prefix or not; and on a `grid-cols-[…]` used as a table.
 
+It also fails on **an alpha applied to a text colour** — `text-muted-foreground/60`, `text-red-500/70`,
+`text-foreground/[0.7]`, variant prefix or not — which is not one of the nine rows: the design system
+has four named ink tiers and an alpha is a fifth that nobody chose, and at α=0.5 over the page
+background the darkest reachable composite is 3.94:1, so the node cannot pass 4.5:1 from any
+foreground (#4197). Use a named tier at full strength. An alpha on a **background** or a **border** is
+ordinary design and is not read, and neither is `text-ui-sm/5` — that is a rung with its line height,
+not an ink tier. This is also the **one rule that reads a file outside `apps/console`**: it runs over
+`packages/ui/src` too, because the primitives every console filter bar renders through carried the
+defect where no console-rooted scope could see it.
+
 Three of those are stated precisely on purpose, because the imprecise version is wrong. **The
 `<h1>` rule inverted in #3733** — it used to say "use `PageHeader`", it now says delete the heading,
 and the eleven recorded decisions under it are the pages with no breadcrumb. **The font-size rule is
