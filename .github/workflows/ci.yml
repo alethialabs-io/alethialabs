@@ -918,6 +918,26 @@ jobs:
       # anything — one `numeric` column rendered as `$12.50/mo`, `~$12/mo` and `€12.50`, and
       # in-app page titles rendered at five sizes. apps/console/shared-surface-allowlist.yaml
       # carries the documented exceptions and is shrink-only.
+      # THE CLI SURFACE CENSUS RUNS HERE RATHER THAN IN A JOB OF ITS OWN (#4373), and the placement
+      # is the decision. `ui-audit` was taken OFF the per-PR path in #4173 because runner SLOTS are
+      # the scarce currency — measured 2026-09-03, jobs spend 5,376 minutes waiting against 1,802
+      # executing — so adding a job to report four numbers would have pushed against that.
+      #
+      # This is a pure-Node walk over files. No Postgres, no build, no browser, seconds not minutes.
+      # Folded into a job that already runs, it costs ZERO additional slots, which is why it can
+      # afford to run on every PR rather than nightly.
+      #
+      # IT REPORTS; IT DOES NOT GATE ON ITS FINDINGS. The census exits 0 whatever the four counters
+      # say, and non-zero only when a counter cannot honestly measure — an emptied docs tree, a
+      # missing allowlist, a census below its floor. So being inside a REQUIRED job blocks a broken
+      # INSTRUMENT and never a finding, which is what report mode has to mean if #3664 is ever to
+      # flip on a series of real numbers instead of one hand-run snapshot.
+      - name: CLI surface census (reports four numbers; fails only if it cannot measure)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:cli-surface
+      - name: ...and that census is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-cli-surface.mjs --self-test
       - name: Console shared surface (@repo/format, @repo/ui/page-header) is not hand-rolled
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:shared-surface
