@@ -37,7 +37,9 @@ import type {
 	DnsProviderConfig,
 	HelmRegistryProviderConfig,
 	NodeSize,
+	CacheProviderConfig,
 	NosqlProviderConfig,
+	TopicProviderConfig,
 	RegistryProviderConfig,
 	SecretsProviderConfig,
 	StorageProviderConfig,
@@ -125,13 +127,16 @@ const databasesInsert = createInsertSchema(projectDatabases, {
 });
 const cachesInsert = createInsertSchema(projectCaches, {
 	storage_gb: z.number().int().min(1).max(512).nullable().optional(),
+	provider_config: z.custom<CacheProviderConfig>().optional(),
 });
 const queuesInsert = createInsertSchema(projectQueues, {
 	storage_gb: z.number().int().min(1).max(256).nullable().optional(),
 });
 // `subscriptions` is no longer a project_topics column (contract phase — it persists to the
 // topic_subscriptions child table), so it's a form-only field extended onto the insert shape.
-const topicsInsert = createInsertSchema(projectTopics).extend({
+const topicsInsert = createInsertSchema(projectTopics, {
+	provider_config: z.custom<TopicProviderConfig>().optional(),
+}).extend({
 	subscriptions: z.custom<TopicSubscription[]>().optional(),
 });
 const nosqlInsert = createInsertSchema(projectNosqlTables, {

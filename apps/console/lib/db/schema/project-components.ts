@@ -38,10 +38,12 @@ import type {
 	IacVarValues,
 	NodeSize,
 	HelmRegistryProviderConfig,
+	CacheProviderConfig,
 	NosqlProviderConfig,
 	ObservabilityProviderConfig,
 	ProviderOutputs,
 	QueueProviderConfig,
+	TopicProviderConfig,
 	RegistryProviderConfig,
 	ScanStatus,
 	SecretsProviderConfig,
@@ -548,6 +550,12 @@ export const projectCaches = pgTable(
 		num_cache_nodes: integer().default(1),
 		multi_az: boolean().default(false),
 		allowed_cidr_blocks: text().array().default([]),
+		// Per-cloud cache knobs the typed columns above do not model (redis_*/valkey_*,
+		// memorystore_*, azure_cache_*, kvstore_*), passed through to the template by name —
+		// the same contract project_databases has carried since the keyless work. Caches and
+		// topics were the two array kinds with no such column, so nothing typed here could
+		// ever reach a declared template variable.
+		provider_config: jsonb().$type<CacheProviderConfig>().default({}),
 		endpoint: text(),
 		// Redis/ElastiCache exposes a separate reader endpoint; the deploy finalizer
 		// persists it. Missing from the original vine_caches table (the write silently
@@ -620,6 +628,8 @@ export const projectTopics = pgTable(
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
 		region: text(),
+		// Per-cloud topic knobs (SNS / Pub/Sub / Service Bus / MNS), passed through by name.
+		provider_config: jsonb().$type<TopicProviderConfig>().default({}),
 		status: componentStatus().default("PENDING").notNull(),
 		status_message: text(),
 		estimated_monthly_cost: cost(),

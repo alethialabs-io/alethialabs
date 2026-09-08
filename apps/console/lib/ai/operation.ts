@@ -8,10 +8,18 @@ import { z } from "zod";
  * proposal the user approves (HITL) — the agent never runs plan/deploy autonomously.
  * Inline project creation is intentionally out of scope (build on the canvas instead).
  */
+const environmentIdField = z
+	.string()
+	.optional()
+	.describe(
+		"The environment to run against. Use the environment id the conversation is scoped to; omit only when none is in scope (the project's default environment is used).",
+	);
+
 export const operationSchema = z.discriminatedUnion("operation", [
 	z.object({
 		operation: z.literal("plan_project"),
 		projectId: z.string().describe("The project to plan."),
+		environmentId: environmentIdField,
 	}),
 	z.object({
 		operation: z.literal("provision_project"),
@@ -20,6 +28,7 @@ export const operationSchema = z.discriminatedUnion("operation", [
 			.string()
 			.optional()
 			.describe("The prior successful PLAN job id, if any."),
+		environmentId: environmentIdField,
 	}),
 ]);
 

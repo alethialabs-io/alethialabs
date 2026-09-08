@@ -8,7 +8,7 @@
 // dock is now inspector-only. The inspector is canvas-only (Architecture view).
 
 import { motion } from "motion/react";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { selectInspectorNodeId, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { InspectorPanel } from "./node-inspector";
 
 /** Docked panel geometry: the bordered panel width + the gap between it and the canvas. */
@@ -22,7 +22,7 @@ export type DockContent = "inspector" | null;
  * false on non-Architecture views. The AI assistant is a separate global overlay now.
  */
 export function useDockState(inspectorAllowed: boolean): DockContent {
-	const inspectorNodeId = useCanvasStore((s) => s.inspectorNodeId);
+	const inspectorNodeId = useCanvasStore(selectInspectorNodeId);
 	return inspectorAllowed && inspectorNodeId ? "inspector" : null;
 }
 
