@@ -13,7 +13,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const streamText = vi.fn(() => ({ toUIMessageStream: () => ({}) }));
+/**
+ * The argument type is declared, not inferred. `vi.fn(() => …)` infers a ZERO-argument signature, so
+ * the mock forwards below fail to type-check and `streamText.mock.calls[0][0]` is an index into an
+ * empty tuple — which is what `systemPrompt()` reads to make every assertion in this file.
+ */
+const streamText = vi.fn((_args: StreamTextArgs) => ({
+	toUIMessageStream: () => ({}),
+}));
+
+/** Only the shape this file reads back: the messages the route composed. */
+interface StreamTextArgs {
+	messages?: Array<{ role: string; content: string }>;
+	[key: string]: unknown;
+}
 vi.mock("ai", () => ({
 	convertToModelMessages: vi.fn(async (m: unknown) => m),
 	createUIMessageStream: vi.fn(
@@ -24,7 +37,7 @@ vi.mock("ai", () => ({
 	),
 	createUIMessageStreamResponse: vi.fn(() => new Response("ok")),
 	stepCountIs: vi.fn(() => () => false),
-	streamText: (args: unknown) => streamText(args),
+	streamText: (args: StreamTextArgs) => streamText(args),
 }));
 
 vi.mock("@/app/server/actions/agent", () => ({ saveThreadMessages: vi.fn() }));
@@ -84,10 +97,8 @@ async function post(body: Record<string, unknown>) {
 
 /** The system prompt the route handed to streamText. */
 function systemPrompt(): string {
-	const call = streamText.mock.calls[0]?.[0] as
-		| { messages: Array<{ role: string; content: string }> }
-		| undefined;
-	const system = call?.messages.find((m) => m.role === "system");
+	const call = streamText.mock.calls[0]?.[0];
+	const system = call?.messages?.find((m) => m.role === "system");
 	if (!system) throw new Error("streamText was not handed a system message");
 	return system.content;
 }
