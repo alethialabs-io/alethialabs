@@ -249,9 +249,9 @@ tier_separation:
     reason: Probe dispatch off the real schedule clock, including the due-window SQL.
 
   - path: lib/probes/persistence.ts
-    suite: [tests/integration/probes-b23.test.ts]
-    symbols: [getLatestProbesByEnv, recordProbeResult]
-    reason: Probe ingest and the latest-per-environment read, with its partial-status filters and ordering.
+    suite: [tests/integration/probes-b23.test.ts, tests/integration/cli-probes-list-route.test.ts]
+    symbols: [getLatestProbesByEnv, latestProbesQuery, recordProbeResult]
+    reason: Probe ingest and the bounded latest-per-environment read — the LATERAL's rows and its PLAN, which is the whole claim of that shape and is why the unexecuted query is exported.
 
 baseline:
   # The other two exports of lib/reconcile/gc.ts. The module stays excluded — it is partly proven,
