@@ -283,8 +283,11 @@ test.describe("the live predicates fail when the page is wrong", () => {
 	// A fixture that behaves like the console: next-themes with `attribute="class"` and
 	// `enableSystem` toggles `dark` on <html> from `prefers-color-scheme`, which is what
 	// `emulateMedia` flips. The dark ink is the only thing that varies between fixtures.
+	// Its OWN document rather than `controlFixture`: axe's `html-has-lang` and `document-title` are
+	// both SERIOUS at wcag2a, so a fixture without `lang` and a `<title>` fails R5 in every theme
+	// and can prove nothing about contrast — measured on the first CI run of #4195.
 	const themed = (darkInk: string, opts: { follow?: boolean; repaint?: boolean } = {}) =>
-		controlFixture(`
+		`<!doctype html><html lang="en"><head><title>R5 theme fixture</title><style>body{margin:0}</style></head><body>
 		  <style>
 		    body { background: #ffffff; color: #000000; font-size: 16px; }
 		    ${opts.repaint === false ? "" : `html.dark body { background: #171717; color: ${darkInk}; }`}
@@ -300,7 +303,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		    })();
 		  </script>`
 			}
-		  <p>The quick brown fox jumps over the lazy dog.</p>`);
+		  <p>The quick brown fox jumps over the lazy dog.</p></body></html>`;
 
 	test("R5 — the dark theme is scanned too, and a violation says which theme it came from", async ({ page }) => {
 		// #4a4a4a on #171717 is about 2.5:1 — a serious `color-contrast` in dark; black on white in light.
