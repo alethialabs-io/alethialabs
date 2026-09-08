@@ -53,6 +53,11 @@ type projServer struct {
 	failOnPost []string
 	// configs overrides the project list; nil means the single default project.
 	configs []map[string]any
+	// noIdentities makes the cloud-account list EMPTY. `alethia up` stops on that and names the
+	// five connector commands, and an empty list is the only way to reach it.
+	noIdentities bool
+	// twoIdentities makes the picker a real choice; with one account `up` takes it without asking.
+	twoIdentities bool
 	// runners overrides the runner list; nil means the default trio (one online, one draining,
 	// one offline). `alethia apply` picks the ONLY online runner without a question, so reaching
 	// its picker needs a second online one.
@@ -268,6 +273,20 @@ func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			{"kind": "databases", "singleton": false, "fields": []string{"engine", "engine_version"}, "schema": map[string]any{}},
 		}})
 	case p == "/api/cli/cloud-identities":
+		s.mu.Lock()
+		empty, two := s.noIdentities, s.twoIdentities
+		s.mu.Unlock()
+		if two {
+			_ = enc.Encode(map[string]any{"cloud_identities": []map[string]any{
+				{"id": "ci1", "provider": "aws", "label": "prod-account"},
+				{"id": "ci2", "provider": "gcp", "label": "second-account"},
+			}})
+			return
+		}
+		if empty {
+			_ = enc.Encode(map[string]any{"cloud_identities": []map[string]any{}})
+			return
+		}
 		_ = enc.Encode(map[string]any{"cloud_identities": []map[string]any{
 			{"id": "ci1", "provider": "aws", "label": "prod-account"},
 		}})
@@ -2548,7 +2567,7 @@ func TestProj_PromptEnvMatrixBuildsTheMatrixTheFileWouldHaveDeclared(t *testing.
 		envAnswers{Name: "dev-1", Stage: "development", PlacementMode: "namespace", Namespace: "boutique-dev-1"},
 	)
 
-	got, err := promptEnvMatrix()
+	got, err := promptEnvMatrix("")
 	if err != nil {
 		t.Fatalf("promptEnvMatrix: %v", err)
 	}
@@ -2588,7 +2607,7 @@ func TestProj_PromptEnvMatrixDeclinedLeavesTheServerDefault(t *testing.T) {
 	hygCliConfirmSetNoInput(t, false)
 	projScriptYesNo(t, false)
 	projScriptEnvSpecs(t) // asking for even one environment is a scripted error
-	got, err := promptEnvMatrix()
+	got, err := promptEnvMatrix("")
 	if err != nil {
 		t.Fatalf("promptEnvMatrix: %v", err)
 	}
@@ -2607,7 +2626,7 @@ func TestProj_PromptEnvMatrixRefusesADuplicateWhileStillAsking(t *testing.T) {
 		envAnswers{Name: "prod", Stage: "production", PlacementMode: "dedicated"},
 		envAnswers{Name: "prod", Stage: "development", PlacementMode: "namespace"},
 	)
-	if _, err := promptEnvMatrix(); err == nil {
+	if _, err := promptEnvMatrix(""); err == nil {
 		t.Fatal("two environments called prod must be refused")
 	} else if !strings.Contains(err.Error(), "twice") {
 		t.Errorf("error %q does not say the name was listed twice", err)
@@ -2619,7 +2638,7 @@ func TestProj_PromptEnvMatrixRefusesADuplicateWhileStillAsking(t *testing.T) {
 func TestProj_PromptEnvMatrixRefusesWhenPromptingIsDisabled(t *testing.T) {
 	hygCliConfirmSetNoInput(t, true)
 	opened := projFormCounter(t)
-	if _, err := promptEnvMatrix(); err == nil {
+	if _, err := promptEnvMatrix(""); err == nil {
 		t.Fatal("promptEnvMatrix must refuse with prompting disabled")
 	}
 	if *opened != 0 {
@@ -2709,7 +2728,7 @@ func projFailingYesNo(t *testing.T) {
 func TestProj_ADismissedQuestionStopsTheLoop(t *testing.T) {
 	hygCliConfirmSetNoInput(t, false)
 	projFailingYesNo(t)
-	if _, err := promptEnvMatrix(); err == nil {
+	if _, err := promptEnvMatrix(""); err == nil {
 		t.Error("a dismissed matrix question must be an error, not an empty matrix")
 	}
 	if _, err := promptSetValues(nil); err == nil {
@@ -3442,7 +3461,7 @@ func TestProj_PromptEnvMatrixSurfacesADismissedEnvironment(t *testing.T) {
 	hygCliConfirmSetNoInput(t, false)
 	projScriptYesNo(t, true, false)
 	projScriptEnvSpecs(t) // the script holds no environments, so the first ask fails
-	if _, err := promptEnvMatrix(); err == nil {
+	if _, err := promptEnvMatrix(""); err == nil {
 		t.Fatal("a dismissed environment form must stop the matrix")
 	}
 }
@@ -3871,7 +3890,7 @@ func TestProj_PromptEnvMatrixSurfacesADismissedContinuation(t *testing.T) {
 	t.Cleanup(func() { askYesNo = prev })
 	projScriptEnvSpecs(t, envAnswers{Name: "prod", Stage: "production", PlacementMode: "dedicated"})
 
-	if _, err := promptEnvMatrix(); err == nil {
+	if _, err := promptEnvMatrix(""); err == nil {
 		t.Fatal("a dismissed continuation must stop the matrix, not silently accept the environments so far")
 	}
 }

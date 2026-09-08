@@ -321,7 +321,7 @@ Excluded by **cost** — the cloud offers the kind and the product ships it, but
 
 ### Driven from the CLI
 
-**23 steps CLI-driven · 0 CLI gaps (our debt) · 4 cloud ceilings · 1 console by design.**
+**25 steps CLI-driven · 0 CLI gaps (our debt) · 4 cloud ceilings · 1 console by design.**
 
 The CLI debt is **zero** — every remaining blocker is a thing the cloud offers no API for, not a thing Alethia has not built. That distinction is the one worth carrying into a demo.
 

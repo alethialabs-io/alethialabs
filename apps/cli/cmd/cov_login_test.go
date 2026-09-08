@@ -786,7 +786,10 @@ func TestAuth_InitCmdPersistsOriginAndLogsIn(t *testing.T) {
 	authCovForm(t, nil)
 	authCovHeadless(t)
 
-	if err := authCovRunCLI(t, "init"); err != nil {
+	// `--skip-manifest`: this test's subject is the MACHINE setup — the origin and the login.
+	// The manifest half needs a working credential to list cloud accounts with, and this
+	// fixture's exchange writes a token the validator does not accept; it has its own test.
+	if err := authCovRunCLI(t, "init", "--skip-manifest"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	if got := types.LoadCliConfig().WebOrigin; got != srv.URL {
