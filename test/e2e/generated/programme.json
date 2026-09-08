@@ -413,6 +413,12 @@
 			"reach": "cli"
 		},
 		{
+			"id": "manifest-plan",
+			"title": "Declare the whole shape in one file and plan it",
+			"reach": "cli",
+			"why": "#3662's golden path: `alethia apply` reads alethia.yaml — project, environments with their placements, components — and creates and deploys it; `alethia plan` is the same comparison with the writes left out. The run proves the file describes the project the commands built."
+		},
+		{
 			"id": "staged",
 			"title": "Review what is about to change",
 			"reach": "cli"
