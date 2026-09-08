@@ -131,7 +131,9 @@ export function EnvironmentCard({
 							In sync
 						</span>
 					)}
-					<span className="opacity-50">·</span>
+					{/* Inherits the row's tertiary ink at full strength — an alpha here composited to
+					    a grey below 4.5:1 that no token could rescue (#4197). */}
+					<span aria-hidden="true">·</span>
 					<span>Updated {formatRelative(env.updated_at)}</span>
 				</div>
 
