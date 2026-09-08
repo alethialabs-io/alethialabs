@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { ChevronDown } from "lucide-react";
+import { useId } from "react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -91,32 +92,79 @@ export function PermissionMatrix({
             <CollapsibleContent>
               <div className="border-t border-border">
                 {g.permissions.map((p) => (
-                  <div
+                  <PermissionRow
                     key={p.key}
-                    className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5 last:border-b-0"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-ui-md capitalize text-text-primary">
-                        {p.action.replace(/_/g, " ")}
-                      </p>
-                      <p className="truncate font-mono text-ui-2xs text-text-tertiary">
-                        {p.key}
-                      </p>
-                    </div>
-                    <Switch
-                      checked={selected.has(p.key)}
-                      disabled={readOnly}
-                      onCheckedChange={
-                        readOnly ? undefined : (on) => toggle(p.key, on)
-                      }
-                    />
-                  </div>
+                    permissionKey={p.key}
+                    action={p.action}
+                    checked={selected.has(p.key)}
+                    readOnly={readOnly}
+                    onToggle={toggle}
+                  />
                 ))}
               </div>
             </CollapsibleContent>
           </Collapsible>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * One permission row: the action, its key, and the toggle that grants it.
+ *
+ * ITS OWN COMPONENT BECAUSE OF THE HOOK. `useId` cannot be called inside the `.map()` callback
+ * that used to render this inline, so the row is lifted out rather than the ids being generated
+ * from `p.key` — a key like `project:create` is not guaranteed to be a valid, collision-free id
+ * on a page that may render this matrix more than once (the role sheet does).
+ *
+ * WHY THE IDS EXIST. A `role="switch"` takes its accessible name from the AUTHOR only, so the
+ * two lines of text beside it are not its name: to a screen-reader user this was 39 unnamed
+ * toggles, and axe scored `aria-toggle-field-name` (serious) with exactly that node count on
+ * `/[org]/~/settings/roles`, in both themes — the route's only violation.
+ *
+ * `aria-labelledby` points at the two lines ALREADY on screen rather than authoring a 39-entry
+ * table of `aria-label` strings. The name is then the visible text by construction and cannot
+ * drift from it, and a permission added to the registry is named without anyone remembering to
+ * name it. Both lines, in the order they are read: "Create · project:create". The action alone
+ * is ambiguous across groups — every resource has a `create`.
+ */
+function PermissionRow({
+  permissionKey,
+  action,
+  checked,
+  readOnly,
+  onToggle,
+}: {
+  permissionKey: string;
+  action: string;
+  checked: boolean;
+  readOnly?: boolean;
+  onToggle: (key: string, on: boolean) => void;
+}) {
+  const actionId = useId();
+  const keyId = useId();
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5 last:border-b-0">
+      <div className="min-w-0">
+        <p id={actionId} className="text-ui-md capitalize text-text-primary">
+          {action.replace(/_/g, " ")}
+        </p>
+        <p
+          id={keyId}
+          className="truncate font-mono text-ui-2xs text-text-tertiary"
+        >
+          {permissionKey}
+        </p>
+      </div>
+      <Switch
+        aria-labelledby={`${actionId} ${keyId}`}
+        checked={checked}
+        disabled={readOnly}
+        onCheckedChange={
+          readOnly ? undefined : (on) => onToggle(permissionKey, on)
+        }
+      />
     </div>
   );
 }
