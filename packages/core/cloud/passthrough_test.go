@@ -940,11 +940,39 @@ func TestEveryReservedSliceAndRootMergeIsCoveredBySource(t *testing.T) {
 				}
 			}
 
-			// Every `mergeProviderConfig(tfvars, …)` must end in a `…RootReserved...` spread. The
-			// count assertion is kept even with a parser doing the finding: it now catches a RENAME
-			// of the function or of the map, which would make the walk find nothing and say so
-			// instead of passing.
-			sites := 0
+			// Every `mergeProviderConfig(tfvars, …)` must end in a `…RootReserved...` spread.
+			//
+			// A count FLOOR cannot tell "found all the call sites" from "found most of them" — if
+			// some moved behind a variable and others did not, the floor is still satisfied and the
+			// converted ones are simply unseen. So the count is reconciled rather than floored:
+			// every mention of the name is an `*ast.Ident`, and using the function as a VALUE (a
+			// variable, a method value, a wrapper, an alias) is exactly what produces an Ident that
+			// is not a call's `Fun` and not the declaration's own name. If mentions exceed calls
+			// plus the declaration, something reaches it by a path this walk does not follow, and
+			// that is a failure rather than a smaller number. Suggested in review.
+			//
+			// Comments are not Idents, so prose naming the function costs nothing.
+			sites, directCalls, idents, decls := 0, 0, 0, 0
+			ast.Inspect(f, func(n ast.Node) bool {
+				if id, ok := n.(*ast.Ident); ok && id.Name == "mergeProviderConfig" {
+					idents++
+				}
+				if fn, ok := n.(*ast.FuncDecl); ok && fn.Name.Name == "mergeProviderConfig" {
+					decls++
+				}
+				if call, ok := n.(*ast.CallExpr); ok {
+					if fn, ok := call.Fun.(*ast.Ident); ok && fn.Name == "mergeProviderConfig" {
+						directCalls++
+					}
+				}
+				return true
+			})
+			if idents != directCalls+decls {
+				t.Errorf("%s: %d mentions of mergeProviderConfig but only %d direct calls (+%d "+
+					"declaration) — it is reached as a VALUE somewhere, so the check below does not "+
+					"see every call site", file, idents, directCalls, decls)
+			}
+
 			ast.Inspect(f, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
@@ -1117,6 +1145,22 @@ func rootTfvarKeys(t *testing.T, path string) map[string]bool {
 		t.Fatalf("parsing %s: %v", path, err)
 	}
 
+	// Walk ONLY the file's own `ProviderTfvars` body, not the whole file. `mergeProviderConfig` has
+	// a parameter named `tfvars`, so a file-wide walk shadows: it is harmless today because that
+	// body indexes with a variable rather than a string literal, but the day it does not, the key
+	// would be attributed to whichever file the helper happens to live in. Scoping removes the
+	// mis-attribution instead of documenting it. Raised in review.
+	var body ast.Node
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "ProviderTfvars" && fn.Body != nil {
+			body = fn.Body
+		}
+	}
+	if body == nil {
+		t.Fatalf("%s declares no ProviderTfvars — every provider has one, so this is a reader "+
+			"looking for the wrong name rather than a file with no keys", path)
+	}
+
 	keys := map[string]bool{}
 	add := func(lit ast.Expr) {
 		if b, ok := lit.(*ast.BasicLit); ok && b.Kind == token.STRING {
@@ -1126,7 +1170,7 @@ func rootTfvarKeys(t *testing.T, path string) map[string]bool {
 		}
 	}
 
-	ast.Inspect(file, func(n ast.Node) bool {
+	ast.Inspect(body, func(n ast.Node) bool {
 		assign, ok := n.(*ast.AssignStmt)
 		if !ok {
 			return true
