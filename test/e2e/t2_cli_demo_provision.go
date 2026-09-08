@@ -406,16 +406,18 @@ func cliDemoManifestPath(r *CLIDemoRun) string {
 // assertion that cannot distinguish the state it claims from the state it warns about is a step the
 // bar performs and does not check.
 //
-// WHY ONE ENVIRONMENT IS THE CLEAN ANSWER, not zero. The `project-create` beat declares no matrix,
-// so the server made its default Production + Preview pair; `alethia init` writes one environment
-// named after `--stage`, which defaults to `development`. The file therefore declares one
-// environment the project does not have, and the plan says so. Asserting `0 environments` would be
-// asserting a falsehood and would red on the first real run. What matters is that the number is
-// EXACT — an off-by-one means the writer and the reader disagree about what the file declares.
+// WHY ALL THREE COUNTS ARE ZERO, and why that is a claim about the server rather than a guess. The
+// `project-create` beat passes `--stage development` and declares no matrix, and the create route
+// names the default environment after the stage (`name: input.environment_stage` in
+// lib/queries/projects.ts) and adds a `preview` namespace beside it. `alethia init` writes one
+// environment named after `--stage`, which defaults to the same `development`, placed `dedicated`
+// because it is first — which is what the route gave the default environment. So the file's one
+// environment is the project's one default environment, and the plan has nothing to create.
 //
-// And `0 components`: the file declares none, so the component the `component-add` beat created is
-// left alone rather than re-upserted. That is the reader's promise — what the file does not mention
-// is not touched — asserted rather than assumed.
+// `preview` is on the server and not in the file, so it is reported as left alone and counted
+// nowhere. That is the reader's promise — what the file does not mention is not touched — and the
+// same promise covers the component the `component-add` beat created, which is why the component
+// count is zero rather than one.
 func assertManifestPlanIsClean(r *CLIDemoRun, out string) error {
 	if strings.Contains(out, "cannot be applied as written") {
 		return fmt.Errorf("`alethia plan` REFUSED the manifest `alethia init` had just written — the "+
@@ -430,7 +432,7 @@ func assertManifestPlanIsClean(r *CLIDemoRun, out string) error {
 				"the file does not describe the project the beats built:\n%s", want, out)
 		}
 	}
-	const wantSummary = "0 projects to create · 1 environment · 0 components"
+	const wantSummary = "0 projects to create · 0 environments · 0 components"
 	if !strings.Contains(out, wantSummary) {
 		return fmt.Errorf("`alethia plan` over the run's own manifest did not summarise as %q. A project "+
 			"count above zero means the file and the commands describe two different projects; a different "+
