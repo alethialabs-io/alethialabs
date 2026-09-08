@@ -681,7 +681,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"redirectOnly": false,
-			"surfaceFiles": 387,
+			"surfaceFiles": 390,
 			"families": {
 				"S": {
 					"instrumented": 4,
