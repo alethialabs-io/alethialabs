@@ -80,7 +80,7 @@ controls:
     surface: apps/console/components/settings/general/org-general.tsx
     mutation: authClient.organization.delete
     reach: [{ section: "Delete organization" }]
-    control: { role: button, name: "Delete" }
+    control: { role: button, name: "Delete organization" }
     confirm: alert-dialog
     confirm_action: "Delete organization"
     dialog_title: "Delete this organization?"
@@ -95,7 +95,7 @@ controls:
     surface: apps/console/components/settings/general/project-general.tsx
     mutation: deleteProject
     reach: [{ section: "Delete project" }]
-    control: { role: button, name: "Delete" }
+    control: { role: button, name: "Delete project" }
     confirm: alert-dialog
     confirm_action: "Delete project"
     dialog_title: "Delete this project?"
