@@ -260,16 +260,40 @@ function escapeRe(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * The roles the registry is allowed to name.
+ *
+ * The ledger is DATA — a YAML file a person edits — so its `role` arrives as an unconstrained
+ * string, and `getByRole` takes a union. Narrowing against this list rather than casting is what
+ * turns a typo into a recorded finding: an unknown role withholds the control WITH its reason,
+ * where a cast would have thrown mid-test or, worse, silently matched nothing.
+ *
+ * It holds exactly what the ledger uses today (`button`, `menuitem`, `switch`) plus the roles a
+ * destructive trigger could plausibly take next. Extend it when a control needs one; the failure
+ * when you have not is legible.
+ */
+const CONTROL_ROLES = ["button", "menuitem", "switch", "link", "tab", "option", "checkbox", "radio", "menuitemcheckbox"] as const;
+
+type ControlRole = (typeof CONTROL_ROLES)[number];
+
+function asControlRole(role: string | undefined): ControlRole | null {
+	return CONTROL_ROLES.find((r): r is ControlRole => r === role) ?? null;
+}
+
 /** The trigger, by accessible role + name — never a CSS class, per the field contract. */
-function triggerFor(page: Page, entry: ControlEntry): Locator | null {
-	const role = entry.control?.role;
+function triggerFor(page: Page, entry: ControlEntry): { locator: Locator } | { problem: string } {
+	const role = asControlRole(entry.control?.role);
 	const name = entry.control?.name;
-	if (!role || !name) return null;
+	if (!entry.control?.role || !name) return { problem: "the entry declares no `control` role+name, so there is nothing to activate" };
+	if (!role) {
+		return {
+			problem: `the entry names role "${entry.control.role}", which is not one of ${CONTROL_ROLES.join(", ")}. Either the role is a typo or a destructive control has taken a new shape — add it to CONTROL_ROLES.`,
+		};
+	}
 	// A name carrying a `<placeholder>` is a template; match its literal prefix.
 	const literal = name.split("<")[0].trim();
 	const matcher = literal ? new RegExp(escapeRe(literal), "i") : new RegExp(escapeRe(name), "i");
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- role comes from the ledger as a string
-	return page.getByRole(role as any, { name: matcher }).first();
+	return { locator: page.getByRole(role, { name: matcher }).first() };
 }
 
 // ── the suite ───────────────────────────────────────────────────────────────────────────────────
@@ -313,11 +337,12 @@ for (const entry of CONTROLS) {
 			return;
 		}
 
-		const trigger = triggerFor(page, entry);
-		if (!trigger) {
-			withhold(entry, "the entry declares no `control` role+name, so there is nothing to activate");
+		const resolved_trigger = triggerFor(page, entry);
+		if ("problem" in resolved_trigger) {
+			withhold(entry, resolved_trigger.problem);
 			return;
 		}
+		const trigger = resolved_trigger.locator;
 		if ((await trigger.count()) === 0 || !(await trigger.isVisible().catch(() => false))) {
 			withhold(entry, `the trigger {${entry.control?.role}: "${entry.control?.name}"} is not rendered at ${url} for this persona`);
 			return;
