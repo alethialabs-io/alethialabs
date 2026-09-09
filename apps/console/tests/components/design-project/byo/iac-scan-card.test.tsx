@@ -1,18 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Component tests for the IaC scan sheet: the ok verdict + per-severity summary, findings rendered
+// Component tests for the IaC scan card: the ok verdict + per-severity summary, findings rendered
 // worst-first with their file:line + rule, the discovered providers/modules inventory, and the
 // scanning / unscanned empty states.
 
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { IacScanSheet } from "@/components/design-project/byo/iac-scan-sheet";
+import { IacScanBody } from "@/components/design-project/canvas/cards/iac-scan-card";
 import type { IacScanReport } from "@/types/jsonb.types";
 
 const baseProps = {
-	open: true,
-	onOpenChange: vi.fn(),
+	onClose: vi.fn(),
 	repoUrl: "https://github.com/acme/infra-tofu",
 	path: "infra/prod",
 	scanRef: "main",
@@ -31,10 +30,10 @@ const REPORT: IacScanReport = {
 	modules: ["git::https://github.com/acme/mod.git"],
 };
 
-describe("IacScanSheet", () => {
+describe("IacScanBody", () => {
 	it("renders the ok verdict when the scan passed", () => {
 		render(
-			<IacScanSheet
+			<IacScanBody
 				{...baseProps}
 				scanStatus="done"
 				scanning={false}
@@ -46,7 +45,7 @@ describe("IacScanSheet", () => {
 	});
 
 	it("renders findings grouped by severity with file:line + rule, worst-first", () => {
-		render(<IacScanSheet {...baseProps} scanStatus="done" scanning={false} report={REPORT} />);
+		render(<IacScanBody {...baseProps} scanStatus="done" scanning={false} report={REPORT} />);
 		expect(screen.getByText(/issues found — resolve before deploying/i)).toBeInTheDocument();
 		// Rules present.
 		expect(screen.getByText("HIGH1")).toBeInTheDocument();
@@ -64,7 +63,7 @@ describe("IacScanSheet", () => {
 	});
 
 	it("lists discovered providers and modules", () => {
-		render(<IacScanSheet {...baseProps} scanStatus="done" scanning={false} report={REPORT} />);
+		render(<IacScanBody {...baseProps} scanStatus="done" scanning={false} report={REPORT} />);
 		expect(screen.getByText("Providers")).toBeInTheDocument();
 		expect(screen.getByText("registry.opentofu.org/hashicorp/aws")).toBeInTheDocument();
 		expect(screen.getByText("Modules")).toBeInTheDocument();
@@ -72,12 +71,12 @@ describe("IacScanSheet", () => {
 	});
 
 	it("shows a spinner while scanning", () => {
-		render(<IacScanSheet {...baseProps} scanStatus="scanning" scanning report={null} />);
+		render(<IacScanBody {...baseProps} scanStatus="scanning" scanning report={null} />);
 		expect(screen.getByText(/scanning the module/i)).toBeInTheDocument();
 	});
 
 	it("shows the unscanned empty state with a scan action", () => {
-		render(<IacScanSheet {...baseProps} scanStatus="unscanned" scanning={false} report={null} />);
+		render(<IacScanBody {...baseProps} scanStatus="unscanned" scanning={false} report={null} />);
 		expect(screen.getByText(/hasn't been scanned yet/i)).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /scan module/i })).toBeInTheDocument();
 	});

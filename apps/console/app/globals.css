@@ -13,7 +13,7 @@
 @source "../../../packages/privacy/src";
 
 /* The shell header height — read by the topbar, the sidebar heads and the Elench panel header
-   through `SHELL_HEADER` / `SHELL_VIEWPORT` (components/shell/content-frame.ts). Console-only:
+   through `SHELL_HEADER` / `SHELL_VIEWPORT` (components/shell/shell-metrics.ts). Console-only:
    the brand token file is shared with marketing, whose header is a different height. */
 :root {
   --shell-header-h: 53px;
