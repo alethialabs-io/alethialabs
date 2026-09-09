@@ -73,11 +73,16 @@ receives merges from `staging`.
   a `@mergifyio requeue` comment.
 
   You do not need to merge anything yourself, and you must never use `--admin` (it bypasses the
-  queue) or merge a red PR. The heavy real-runner and browser E2Es run as observe-only signals,
-  tracked by `scripts/merge-signal-health.sh` and the weekly *Merge-signal health* workflow.
+  queue) or merge a red PR. The heavy real-runner and browser E2Es run as observe-only signals
+  **on `dev`**, tracked by `scripts/merge-signal-health.sh` and the weekly *Merge-signal health*
+  workflow — the release gate is a promotion-path check and does not run on a `dev` PR at all
+  unless you label it `release-gate:run`. See the promotion checklist below.
 
 - **A promotion PR (`dev → staging`, `staging → main`) lives as a DRAFT between promotions.**
-  Mark it ready when you are actually promoting, and draft it again after.
+  Mark it ready when you are actually promoting, and draft it again after. **Marking it ready is
+  what fires the release gate** — `release-gate.yml`'s `legs` job requires
+  `pull_request.draft == false`, so a draft promotion PR has no gate result at all, and
+  `ready_for_review` is one of the events that starts one.
 
   Its head is an integration branch, so every merge into `dev` is a `synchronize` on it — and its
   diff is everything `dev` is ahead of `staging` by, which matches nearly every path filter in the
@@ -96,21 +101,75 @@ receives merges from `staging`.
   bumps); this flow is unchanged by the branch model.
 - A production release is a `staging → main` PR. Hotfixes still go through
   `dev → staging → main` unless it's a true emergency (cherry-pick to `staging`).
-- **Merging the promotion PR is not the release.** The merge is pre-merge-gated; the deploy
-  runs *after* it, and `deploy` is gated `!cancelled() && !failure()`, so a red build silently
-  skips it and `main` moves while production does not. Between 2026-07-30 and 2026-08-25 that
-  shipped nothing for 26 days across 15 merges. So after merging a `staging → main` PR:
-  1. Watch the `Deploy Console` run to **`deploy: success`** — not merely to "green".
-  2. Confirm the deployed commit is the one you promoted, because a green run is *not*
-     sufficient on its own: `retag-unchanged` retags `latest` → the new SHA for an image group
-     that did not change, and on 2026-08-13 it did that to a 14-day-old image whose builds had
-     all failed — a green deploy of stale code under a fresh SHA.
-     `docker buildx imagetools inspect ghcr.io/alethialabs-io/console:<sha>` should report an
-     `ALETHIA_SOURCE_COMMIT` equal to `<sha>`.
 
-  `deploy-console.yml`'s `report-failure` job opens an issue when the run is red, and
-  `workflow-health.yml` catches a workflow that stays red across runs — but neither replaces
-  looking, and neither fires for the stale-retag case.
+### Promoting `staging → main` — the checklist
+
+**Before the merge.**
+
+1. **Mark the promotion PR ready.** Nothing above `dev` is measured while it is a draft.
+2. **Wait for all seven `Release gate (…)` contexts** — `hero`, `elench-ai`, `console`, `canvas`,
+   `qa`, `audit`, `audit-interaction`. Each boots its own ephemeral console and drives one
+   Playwright project against it; `release-gate.yml`'s own header budgets the set as a one-hour
+   gate, which is why it is kept off the per-merge path. Adding an unrelated label to the PR while
+   they run is safe — the concurrency group refuses to cancel on a `labeled` event, for exactly
+   that reason.
+3. **Read the step summaries, not the job colours.** Each leg is *green-by-ratchet*: the Playwright
+   step carries `continue-on-error`, and the only step that can fail the job is the ratchet against
+   `apps/console/e2e/gate-baseline.json`. So a green leg means "no regression against the recorded
+   debt", never "the suite passes", and the summary is where the leg says which tests it counted.
+4. **Never lower a baseline in a promotion PR.** The baseline is shrink-only and is regenerated with
+   `node scripts/e2e-ratchet.mjs --project=<leg> --results=… --write --only=<spec file>` in the
+   *feature* PR that fixed the test. A promotion PR that edits the ledger is a promotion PR that
+   moved the bar to fit the result.
+
+**What actually blocks what — and none of it is in force yet.** Measured 2026-09-09: every piece
+of the gate lives on `dev` and on `dev` only. `release-gate.yml`, `gate-baseline.json`,
+`scripts/e2e-ratchet.mjs`, the post-deploy smoke script and the `/console-prod-qa` skill are all
+absent from `origin/staging` and `origin/main`. So read the three mechanisms below as what the
+gate *will* do on the promotion after this one, not as what is guarding today's:
+
+- **Branch protection — declared, never applied.** `infra/github/variables.tf` names all seven
+  `Release gate (…)` contexts as required on `main`, and `main.tf` filters them out of `dev` and
+  `staging`. That stack has not been applied (#4286 is the maintainer's `tofu apply` — an absolute
+  `deny` rule refuses it to agents). The live `protect-main` ruleset carries ten contexts and not
+  one of them is a gate leg. That is the shape #1625 and #3180 both record: a requirement written
+  down in unapplied HCL, which nothing enforces.
+- **The workflow runs from the PR's head.** A `pull_request` run resolves the workflow from the
+  head branch, so a `dev → staging` promotion PR *will* fire the gate — `dev` has the file — while
+  a `staging → main` PR fires nothing until that first promotion carries it to `staging`. Expect
+  the first `staging → main` promotion after this wave to be the first one the gate has ever seen.
+- **The deploy receipt — the one that will bite.** `deploy-console.yml`'s `preflight` job gates the
+  entire deploy graph: it finds the merged `main` PR containing the pushed commit and requires the
+  latest `Release gate (<leg>)` check-run for **every** leg, derived from `release-gate.yml`'s own
+  leg table rather than a second list, to be `success`. Once `deploy-console.yml` reaches `main`
+  carrying that step, a commit promoted without a green gate cannot deploy — including a commit
+  promoted from a `staging` that does not yet carry the workflow. Do not route around it by
+  dispatching *Deploy Console* manually; the receipt step is skipped on `workflow_dispatch` by
+  design, and using that as the remedy is the bypass the receipt exists to catch.
+
+**After the merge.** Merging the promotion PR is not the release. The deploy runs *after* it, and
+`deploy` is gated `!cancelled() && !failure()`, so a red build silently skips it and `main` moves
+while production does not. Between 2026-07-30 and 2026-08-25 that shipped nothing for 26 days
+across 15 merges.
+
+1. **Watch the `Deploy Console` run to `deploy: success`** — not merely to "green".
+2. **Confirm `Post-deploy smoke (the public URL, and the build it serves)` is green.** This is the
+   check that replaced hand-running `docker buildx imagetools inspect`: it runs ten checks against
+   the public site, one of which asserts that the served build id equals the promoted SHA. That is
+   the assertion that catches the failure the manual step existed for — `retag-unchanged` retags
+   `latest` → the new SHA for an image group that did not change, and on 2026-08-13 it did that to
+   a 14-day-old image whose builds had all failed, a green deploy of stale code under a fresh SHA.
+   The comparison is skipped with a stated reason on a runner-only push, where the console images
+   are legitimately not rebuilt — read the step, because "skipped" and "passed" are different
+   answers.
+3. **Run `/console-prod-qa`** and open a PR with its report. It is the only layer that measures the
+   production *configuration* — the real Stripe keys, OAuth redirect URIs, email sender, DNS and
+   storage — in a real browser. The skill is `disable-model-invocation: true` because it mutates
+   production: the maintainer names it, no session reaches for it. Reports land in
+   `apps/console/docs/qa/prod-runs/`, one dated file per run.
+
+`deploy-console.yml`'s `report-failure` job opens an issue when the run is red, and
+`workflow-health.yml` catches a workflow that stays red across runs — but neither replaces looking.
 
 > The protections are **codified** in [`infra/github/`](infra/github/) (Terraform `github`
 > provider), applied once locally during bootstrap; a manual `gh api` fallback lives in
