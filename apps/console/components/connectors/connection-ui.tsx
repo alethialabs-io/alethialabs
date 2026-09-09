@@ -7,15 +7,13 @@ import { Button } from "@repo/ui/button";
 import { FieldHelp } from "@repo/ui/field-help";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 import { Separator } from "@repo/ui/separator";
+import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import {
-  CheckCircle2,
   HelpCircle,
   KeyRound,
-  Loader2,
   Lock,
   ShieldCheck,
-  XCircle,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
@@ -29,18 +27,30 @@ import type {
 
 type CalloutVariant = "success" | "pending" | "error";
 
-const VARIANT_ICON: Record<CalloutVariant, ReactNode> = {
-  success: <CheckCircle2 className="size-4 shrink-0 text-foreground" />,
-  pending: (
-    <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
-  ),
-  error: <XCircle className="mt-0.5 size-4 shrink-0 text-foreground" />,
+/**
+ * The callout's three states, resolved to the ONE status vocabulary the product has.
+ *
+ * This was a `Record<CalloutVariant, ReactNode>` of three lucide icons — a check, a spinner and a
+ * cross — which made the callout a second rendering of states the rest of the console already
+ * draws: a pending connection test showed a spinner here and a hollow dot in every table. A
+ * `Record<YourStatus, StatusTier>` handed to `<StatusBadge tier>` is what `statusTier()`'s own doc
+ * requires for a vocabulary the shared map does not know, so the mark comes from the badge and the
+ * words stay the caller's.
+ *
+ * `pending` takes the `live` tier rather than the shared map's `pending`: a verify in flight is
+ * the one thing on this surface that is genuinely still happening, and `live` is the tier that
+ * breathes. The other two resolve the way the shared map already resolves those words.
+ */
+const VARIANT_TIER: Record<CalloutVariant, StatusTier> = {
+  success: "active",
+  pending: "live",
+  error: "failed",
 };
 
 /**
  * The status banner shown while saving / after a verification attempt. Hairline row,
- * grayscale — the state reads from the icon + title, not a colored fill. Shared across
- * every provider connection component so the states look identical everywhere.
+ * grayscale — the state reads from the shared status dot + title, not a colored fill.
+ * Shared across every provider connection component so the states look identical everywhere.
  */
 export function StatusCallout({
   variant,
@@ -58,7 +68,12 @@ export function StatusCallout({
         variant === "error" ? "items-start" : "items-center",
       )}
     >
-      {VARIANT_ICON[variant]}
+      <StatusBadge
+        status={variant}
+        tier={VARIANT_TIER[variant]}
+        showLabel={false}
+        className={cn("shrink-0", variant === "error" && "mt-0.5")}
+      />
       <div className="min-w-0">
         <p className="font-medium text-foreground text-sm">{title}</p>
         <p className="mt-0.5 text-muted-foreground text-xs leading-relaxed">
