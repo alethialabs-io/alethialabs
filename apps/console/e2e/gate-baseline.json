@@ -46,9 +46,9 @@
 				"Billing — owned invoices › mirrored invoices render on the dedicated page with a working PDF route": "failed"
 			},
 			"connectors.spec.ts": {
-				"Connectors page › loads the connectors browser": "failed",
-				"Connectors page › search filters connectors": "passed",
-				"Connectors page › group dropdown narrows to a category": "failed",
+				"Connectors page › loads the board on the shared filter grammar": "passed",
+				"Connectors page › search filters the board by name": "passed",
+				"Connectors page › the Group facet narrows the board to one section": "passed",
 				"Connectors page › toggles between card and table view": "passed",
 				"Connectors page › a fresh org shows no phantom 'Verification failed' / 'Re-verify'": "passed",
 				"Connectors page › visiting connectors does not falsely complete 'Connect a cloud'": "passed"
