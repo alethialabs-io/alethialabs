@@ -303,11 +303,13 @@
 				"Deploy jobs — environments, drift, promotions, protection › protection-rules dialog opens with its promotion gates": "failed"
 			},
 			"flows/navigation-shell.negative.spec.ts": {
-				"Navigation shell — unknown routes (404) › an unknown project slug renders the branded 404, not /login": "failed",
+				"Navigation shell — unknown routes (404) › an unknown project slug renders the PROJECT 404, which names the project": "passed",
+				"Navigation shell — unknown routes (404) › it is answered INSIDE the shell — the org resolved, so the sidebar is still there": "passed",
 				"Navigation shell — unknown routes (404) › an unknown project sub-page also 404s": "passed",
 				"Navigation shell — unknown routes (404) › an unknown org-global (~) sub-page 404s": "passed",
-				"Navigation shell — unknown routes (404) › an unknown org slug renders the non-leaky org 404, not the root one": "failed",
-				"Navigation shell — unknown routes (404) › the 'Go home' action on a 404 returns to the app root": "failed"
+				"Navigation shell — unknown routes (404) › an unknown org slug renders the non-leaky ORG 404, not the root one": "passed",
+				"Navigation shell — unknown routes (404) › the org 404 is FULL PAGE — there is no shell behind an org that did not resolve": "passed",
+				"Navigation shell — unknown routes (404) › the way out of the project 404 is a LINK, and it lands on the org's projects": "passed"
 			},
 			"flows/navigation-shell.spec.ts": {
 				"Navigation shell — the org sidebar › renders every unconditional row, and none the shell stopped shipping": "passed",
