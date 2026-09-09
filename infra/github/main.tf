@@ -18,11 +18,11 @@ locals {
   # dev requires the same CI as main/staging MINUS branch-flow-guard: that check only runs on PRs into
   # main/staging (its `on: pull_request: branches: [main, staging]`), so requiring it on a dev PR would
   # wedge the merge — the check would be "expected" but never report.
-  dev_required_status_checks = [for c in var.required_status_checks : c if c != "branch-flow-guard" && c != "Release gate (hero)" && c != "Release gate (elench-ai)" && c != "Release gate (console)" && c != "Release gate (canvas)" && c != "Release gate (qa)" && c != "Release gate (audit)"]
+  dev_required_status_checks = [for c in var.required_status_checks : c if c != "branch-flow-guard" && c != "Release gate (hero)" && c != "Release gate (elench-ai)" && c != "Release gate (console)" && c != "Release gate (canvas)" && c != "Release gate (qa)" && c != "Release gate (audit)" && c != "Release gate (audit-interaction)"]
   # staging takes the same list MINUS the release gate: the gate RUNS on a PR into staging (so the
   # ratchet has a history before a promotion reaches main) but is required only on main, where the
   # deploy is. Requiring it here too is deleting these clauses once it has earned it.
-  staging_required_status_checks = [for c in var.required_status_checks : c if c != "Release gate (hero)" && c != "Release gate (elench-ai)" && c != "Release gate (console)" && c != "Release gate (canvas)" && c != "Release gate (qa)" && c != "Release gate (audit)"]
+  staging_required_status_checks = [for c in var.required_status_checks : c if c != "Release gate (hero)" && c != "Release gate (elench-ai)" && c != "Release gate (console)" && c != "Release gate (canvas)" && c != "Release gate (qa)" && c != "Release gate (audit)" && c != "Release gate (audit-interaction)"]
 }
 
 # ── dev — integration branch. PR + green CI, NO approval; queued by MERGIFY. ──

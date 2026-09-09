@@ -63,6 +63,10 @@ const RUN_POSTURE: Record<string, string | null> = {
 	canvas: "release-gate.yml · Release gate (canvas)",
 	console: "release-gate.yml · Release gate (console)",
 	qa: "release-gate.yml · Release gate (qa)",
+	// The one audit project that DRIVES the console rather than reading it. Separate leg because it
+	// needs the stripe promise (billing's controls must render to be opened) and 0 retries: a
+	// destructive control that only sometimes confirms is a finding, and a retry would hide it.
+	"audit-interaction": "release-gate.yml · Release gate (audit-interaction)",
 };
 
 /**
@@ -314,6 +318,11 @@ const projects = [
 		// path, and a checkout or worktree whose directory name merely contains "audit" must not
 		// pull unrelated specs in. The segment has to be exactly `audit`.
 		testMatch: /(^|\/)audit\/[^/]*\.spec\.ts$/,
+		// `destructive.spec.ts` lives in this directory but not in this project: it is the only
+		// audit spec that ACTIVATES controls rather than reading rendered state, so it runs in
+		// `audit-interaction` with its own leg, its own capability promise and no retries. Without
+		// this ignore the file would be selected by both projects and run twice per gate.
+		testIgnore: /(^|\/)audit\/destructive\.spec\.ts$/,
 		fullyParallel: false,
 		// One route test loads the page at FOUR viewport widths, runs axe, opens every overlay the
 		// page offers and hit-tests each one, then reloads it once more with an injected fault. The
@@ -342,6 +351,22 @@ const projects = [
 		name: "qa",
 		testMatch: /flows\/.*\.spec\.ts/,
 		use: { ...devices["Desktop Chrome"] },
+	},
+
+	// The destructive-action spec (#4266). It opens every control the registry records, asserts the
+	// confirmation the ledger declares, presses Cancel and proves nothing moved — so unlike every
+	// other audit project it MUTATES the page rather than reading it. Serial and un-retried on
+	// purpose: the suite takes a database fingerprint around each click, so two workers would read
+	// each other's rows, and a retry would let a control that confirms only sometimes report green.
+	{
+		name: "audit-interaction",
+		testMatch: /(^|\/)audit\/destructive\.spec\.ts$/,
+		fullyParallel: false,
+		workers: 1,
+		retries: 0,
+		timeout: 120_000,
+		dependencies: ["setup"],
+		use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE, colorScheme: AUDIT_START_THEME },
 	},
 ];
 
