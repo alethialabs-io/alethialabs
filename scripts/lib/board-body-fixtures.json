@@ -185,21 +185,57 @@
       "unusable": []
     },
     {
-      "name": "the FIRST declaration wins, matching decompose-validate.mjs",
+      "name": "INVERTED by #4473: TWO declarations are ambiguous, so NEITHER is used",
+      "_why": "This asserted the opposite until #4473: the regex was `m` but not `g`, so it silently took the first match. A body quoting another unit's scope line ABOVE its own therefore had its own declaration ignored — #4442's did, and the phantom collision it produced masked a real one. Refusing is loud: the unit renders under the report's gaps instead of buying a verdict from a scope nobody wrote for it.",
       "body": "scope: apps/a/**\nscope: apps/b/**\n",
+      "status": "ambiguous",
+      "globs": [],
+      "unusable": []
+    },
+    {
+      "name": "INVERTED by #4473: a FENCED declaration is a quotation, not a declaration",
+      "_why": "The module header used to record this as a tolerated gap on the argument that the failure direction was a visible phantom glob. That held for a stray glob and not for a quoted whole line, which REPLACED the declaration. `blocked-by:` has stripped fences since #3639; `scope:` now does too.",
+      "body": "Seed it like this:\n\n```\nscope: apps/x/**\n```\n",
+      "status": "missing",
+      "globs": [],
+      "unusable": []
+    },
+    {
+      "name": "#4473: a fenced quotation ABOVE a real declaration leaves the real one readable",
+      "_why": "The exact shape of #4442's body, which is what made this a wrong answer rather than a noisy one.",
+      "body": "#4309 declared:\n\n```\nscope: scripts/check-shared-surface.mjs\n```\n\nMine:\n\nscope: scripts/ci/check-pr-scope.mjs .github/workflows/ci.yml\n",
       "status": "declared",
       "globs": [
-        "apps/a/**"
+        "scripts/ci/check-pr-scope.mjs",
+        ".github/workflows/ci.yml"
       ],
       "unusable": []
     },
     {
-      "name": "KNOWN GAP pinned: a fenced declaration IS read (see the module header)",
-      "body": "Seed it like this:\n\n```\nscope: apps/x/**\n```\n",
+      "name": "#4473: a ~~~ fence strips too, and a fence closes on either marker",
+      "body": "~~~\nscope: apps/x/**\n~~~\n\nscope: apps/real/**\n",
+      "status": "declared",
+      "globs": [
+        "apps/real/**"
+      ],
+      "unusable": []
+    },
+    {
+      "name": "#4473: an UNTERMINATED fence keeps its contents — a typo must not un-declare a scope",
+      "_why": "coordinate.sh's blocked_by_from_body makes the same call, for the same reason: dropping everything after an unclosed fence would silently strip a real declaration, which is the direction that bit #3639.",
+      "body": "```\nscope: apps/x/**\n",
       "status": "declared",
       "globs": [
         "apps/x/**"
       ],
+      "unusable": []
+    },
+    {
+      "name": "#4473: `scope:` only inside a fence reads as MISSING, not mentioned-not-declared",
+      "_why": "Reporting it as 'mentions scope: but not as a declaration' would send a reader hunting for a formatting mistake they did not make.",
+      "body": "For example:\n\n```\nscope: apps/x/**\n```\n",
+      "status": "missing",
+      "globs": [],
       "unusable": []
     }
   ],
@@ -275,19 +311,43 @@
         {
           "number": 10,
           "title": "console lib lane",
-          "labels": [{ "name": "class:backend" }, { "name": "wave:W1" }],
+          "labels": [
+            {
+              "name": "class:backend"
+            },
+            {
+              "name": "wave:W1"
+            }
+          ],
           "body": "scope: apps/console/lib/**"
         },
         {
           "number": 11,
           "title": "console app lane",
-          "labels": [{ "name": "class:backend" }, { "name": "wave:W1" }],
+          "labels": [
+            {
+              "name": "class:backend"
+            },
+            {
+              "name": "wave:W1"
+            }
+          ],
           "body": "scope: apps/console/app/**"
         },
         {
           "number": 12,
           "title": "schema lane, waiting on the seams",
-          "labels": [{ "name": "class:backend" }, { "name": "wave:W1" }, { "name": "blocked" }],
+          "labels": [
+            {
+              "name": "class:backend"
+            },
+            {
+              "name": "wave:W1"
+            },
+            {
+              "name": "blocked"
+            }
+          ],
           "body": "scope: apps/console/lib/db/**"
         }
       ]
@@ -295,19 +355,41 @@
     {
       "name": "a CLAIMED unit overlapping a ready one, across waves, is a collision",
       "verdict": "COLLISIONS",
-      "collisions": [[20, 21]],
+      "collisions": [
+        [
+          20,
+          21
+        ]
+      ],
       "gaps": [],
       "board": [
         {
           "number": 20,
           "title": "query builders",
-          "labels": [{ "name": "class:backend" }, { "name": "wave:W2" }, { "name": "claimed" }],
+          "labels": [
+            {
+              "name": "class:backend"
+            },
+            {
+              "name": "wave:W2"
+            },
+            {
+              "name": "claimed"
+            }
+          ],
           "body": "scope: apps/console/lib/**"
         },
         {
           "number": 21,
           "title": "facet counts",
-          "labels": [{ "name": "class:backend" }, { "name": "wave:hygiene" }],
+          "labels": [
+            {
+              "name": "class:backend"
+            },
+            {
+              "name": "wave:hygiene"
+            }
+          ],
           "body": "scope: apps/console/lib/query/**"
         }
       ]
@@ -316,18 +398,34 @@
       "name": "a unit with no scope line is a GAP, never folded into the clean count",
       "verdict": "CLEAN-WITH-GAPS",
       "collisions": [],
-      "gaps": [31],
+      "gaps": [
+        31
+      ],
       "board": [
         {
           "number": 30,
           "title": "scoped lane",
-          "labels": [{ "name": "class:backend" }, { "name": "wave:W1" }],
+          "labels": [
+            {
+              "name": "class:backend"
+            },
+            {
+              "name": "wave:W1"
+            }
+          ],
           "body": "scope: apps/console/lib/**"
         },
         {
           "number": 31,
           "title": "unscoped lane",
-          "labels": [{ "name": "class:backend" }, { "name": "wave:W1" }],
+          "labels": [
+            {
+              "name": "class:backend"
+            },
+            {
+              "name": "wave:W1"
+            }
+          ],
           "body": "No file scope was ever written onto this issue."
         }
       ]
@@ -336,18 +434,34 @@
       "name": "a backtick-wrapped declaration reads as scoped to a human and unscoped to the parser",
       "verdict": "CLEAN-WITH-GAPS",
       "collisions": [],
-      "gaps": [40],
+      "gaps": [
+        40
+      ],
       "board": [
         {
           "number": 40,
           "title": "components lane",
-          "labels": [{ "name": "class:ui" }, { "name": "wave:W1" }],
+          "labels": [
+            {
+              "name": "class:ui"
+            },
+            {
+              "name": "wave:W1"
+            }
+          ],
           "body": "Files: `scope: apps/console/components/**`"
         },
         {
           "number": 41,
           "title": "runner lane",
-          "labels": [{ "name": "class:backend" }, { "name": "wave:W1" }],
+          "labels": [
+            {
+              "name": "class:backend"
+            },
+            {
+              "name": "wave:W1"
+            }
+          ],
           "body": "scope: apps/runner/**"
         }
       ]
@@ -356,18 +470,35 @@
       "name": "not one workable unit declares a scope — NOT CHECKED, and never ✓",
       "verdict": "NOT-CHECKED",
       "collisions": [],
-      "gaps": [50, 51],
+      "gaps": [
+        50,
+        51
+      ],
       "board": [
         {
           "number": 50,
           "title": "prose lane",
-          "labels": [{ "name": "class:backend" }, { "name": "wave:W1" }],
+          "labels": [
+            {
+              "name": "class:backend"
+            },
+            {
+              "name": "wave:W1"
+            }
+          ],
           "body": "Prose only."
         },
         {
           "number": 51,
           "title": "another prose lane",
-          "labels": [{ "name": "class:backend" }, { "name": "wave:W1" }],
+          "labels": [
+            {
+              "name": "class:backend"
+            },
+            {
+              "name": "wave:W1"
+            }
+          ],
           "body": "Prose only."
         }
       ]
