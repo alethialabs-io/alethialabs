@@ -345,10 +345,11 @@ immediately rather than on the next apply.
 One uniform group authors **all** of a project's component resources. The project is named with
 `--project`, and the environment with `--env`.
 
-Supported **kinds** — singletons (one per project *per environment*, name-less): `network`,
-`cluster`, `dns`, `observability`, `repositories`; and multi (named, many per environment):
-`databases`, `caches`, `queues`, `topics`, `nosql_tables`, `container_registries`, `secrets`,
-`storage_buckets`.
+**Which kinds exist is published by the server, and `component kinds` is how you read it.** This
+page used to list them, and that list drifted: it named thirteen while the server accepted fourteen.
+A kind has one of two cardinalities — **singleton** (one per project *per environment*, name-less) or
+**multi** (named, many per environment) — and `kinds` prints each with its own, so the answer to
+"does this one need a `--name`" comes from the same place as the list itself.
 
 ```bash
 # List the supported kinds
@@ -375,7 +376,7 @@ alethia project component remove --project boutique --kind network
 
 | Command | Flags | Description |
 |------|----------|-------------|
-| `component kinds` | — | List the supported component kinds + their cardinality |
+| `component kinds` | — | List the component kinds the server publishes, with each one's cardinality. Needs a session — the answer is the server's, not a built-in list |
 | `component list` | `--project` `--kind` `--env` | List components (all kinds, or one) |
 | `component add` | `--project` `--kind` `--name` `--env` `--set` | Create a component |
 | `component remove` | `--project` `--kind` `--name` `--env` `-y`, `--yes` | Delete a component (confirms) |
