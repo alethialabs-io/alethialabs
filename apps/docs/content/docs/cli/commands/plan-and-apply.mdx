@@ -224,10 +224,11 @@ alethia project apply --project boutique --env prod --wait   # scripted: names b
 changed since that plan was generated, the job fails with a
 [config hash mismatch](/console/jobs/plan-and-apply).
 
-It is the one value on this page that still comes out of another command's output. `alethia jobs get
---latest` resolves the job you just queued, so a script reads the id from there rather than from
-your scrollback — see [Scripting Examples](#scripting-examples) for the whole three-command recipe.
-`project apply` itself takes only the id.
+It takes an id and only an id — no name, no picker — so this is the one value in these three
+commands that still comes out of another command's output. Read it with
+`alethia jobs get --latest --type PLAN`, which resolves the plan job you just queued, rather than
+out of your scrollback — see [Scripting Examples](#scripting-examples) for the whole three-command
+recipe.
 
 <Callout type="info">
 A DEPLOY job is `tofu plan` → **[verify](/concepts/glossary) gate** → `tofu apply` → ArgoCD scaffold.
