@@ -145,7 +145,9 @@ scripts/claim-work.sh --class backend      # loop
   from autonomous picking (they await a maintainer decision) but they are NOT exempt from claiming — that was
   the gap behind #1247: unclaimable meant unprotected, so the only path was the forbidden hand-claim, leaving
   no lease and nothing to stop a second instance starting the same unit. `--issue` runs the full lock + lease +
-  verify on one named unit; it refuses if the unit is closed, already claimed, or already has a closing PR.
+  verify on one named unit; it refuses if the unit is closed, already claimed, or already has a closing PR
+  — unless the unit is genuinely STALLED and `--takeover` is passed, the one documented override, which
+  is described under **stalled units** below.
   A `class:ui` implementation PR opens as a **draft** and stays draft until the maintainer marks it ready; the
   building agent must never run `gh pr ready`. This is the actual merge gate — Mergify does not read the class
   label, and will auto-queue any non-draft, conflict-free `dev` PR once its review threads are resolved.
@@ -161,9 +163,23 @@ scripts/claim-work.sh --class backend      # loop
   itself stuck — CONFLICTING, or untouched for `ALETHIA_PR_IDLE_TTL` (default `4 × LEASE_TTL`). These are
   **reported, never auto-reclaimed**, deliberately. The board↔PR guards are fail-closed by contract, and
   reclaiming would not even help: `claim-work.sh` Guard 1 skips any unit with an open closing PR, so stripping
-  the label would only make the unit *look* ready while the loop kept skipping it. Take one over with
-  `scripts/claim-work.sh --issue <n>`, then rebase or close its PR. Both `--report` and the default full run
-  print this; only the reclaim writes are full-only.
+  the label would only make the unit *look* ready while the loop kept skipping it.
+
+  **Take one over with `scripts/claim-work.sh --issue <n> --takeover`.** The plain `--issue` form cannot do
+  it and never could: a stalled unit is *defined* as claimed AND held by a stuck PR, and those are exactly
+  the two conditions `--issue` refuses on — so this sentence named an action the script forbade, for 100% of
+  the units it describes (#4428). `--takeover` overrides those two guards and **only** for a unit that
+  actually satisfies the predicate above; anything it cannot establish — an unreadable lease, an unreachable
+  PR list, a lease that is merely old — answers "not stalled" and is refused, because the guard it overrides
+  is what prevents the #1247 double-claim.
+
+  Then **rebase or close that PR**: the claim is yours, but a stuck PR in front of the unit still stops it,
+  and `has_closing_pr` keeps every other instance off it either way.
+
+  **The issue lease is not the protection that matters here.** The worktree the previous holder left is
+  leased separately (see above) and `--takeover` does not touch it — if their tree is still leased,
+  `pnpm wt:steal <name>` is the sanctioned move, and it warns rather than refusing for the same reason.
+  Both `--report` and the default full run print the stalled list; only the reclaim writes are full-only.
 - **Migration mutex**: only ONE open issue may hold `mutex:migration` claimed at a time. `claim-work.sh`
   refuses to claim a second. Never run `pnpm -F console db:generate` in two worktrees at once — the drizzle
   snapshot chain is un-mergeable (this is the board-level guard on top of `scripts/db-generate.sh`).
@@ -218,6 +234,8 @@ Everything below already exists; none of it was reachable from this file.
 | `scripts/lib/board-pr.sh` | Shared, fail-closed board↔PR predicates. Extracted after two copies drifted and silently stopped matching `Fixes #n`. |
 | `scripts/merge-signal-health.sh` | Tracks whether the observe-only heavy E2Es are reliable enough to promote to required. |
 
-**Environment knobs:** `ALETHIA_LEASE_TTL` (3600s) · `ALETHIA_PR_IDLE_TTL` (4× lease TTL) ·
+**Environment knobs:** `ALETHIA_LEASE_TTL` (3600s) · `ALETHIA_PR_IDLE_TTL` (4× lease TTL) — the two the stalled
+predicate tests, through `board_unit_is_stalled` in `scripts/lib/board-pr.sh`, so the report and `--takeover`
+cannot come to disagree about what stalled means ·
 `ALETHIA_CLAIM_VERIFY_DELAY` (5s; `0` disables the verify pass) · `ALETHIA_CLAIM_WINDOW` (45s) ·
 `ALETHIA_INSTANCE_ID` (overrides the derived instance identity).
