@@ -1,13 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The mechanism behind the `Mirrors the Go X` comments in apps/console/types/jsonb.types.ts.
+// The mechanism behind the `Mirrors the Go X` comments in the console, across the ENROLLED
+// files listed in tsMirrorFiles below.
 //
-// Sixteen distinct Go types are claimed as mirrors in that file, and the interfaces that reach
-// them come to twenty-three. Every one asserted in prose that it carried the same wire shape as
-// a Go struct in packages/core. Nothing enforced it. A comment cannot fail, so a
-// field added on one side and not the other is invisible until a value silently zero-fills in
+// Every one of those comments asserted in prose that a TypeScript interface carried the same wire
+// shape as a Go struct in packages/core. Nothing enforced it. A comment cannot fail, so a field
+// added on one side and not the other is invisible until a value silently zero-fills in
 // production — which is the whole point of these payloads riding jobs.execution_metadata.
+//
+// ENROLMENT IS THE WHOLE MECHANISM, and it is the half that failed quietly. The file started
+// enforcing exactly ONE console file, which read as "the mirror claims are locked" and meant
+// "the mirror claims IN THAT FILE are locked". #4455 measured the difference: eight claims —
+// seven in the marketplace add-on install spec, one in the console's Rekor anchoring mirror —
+// were watched by nothing at all, while this file's header said the coverage was complete.
 //
 // Each claim becomes a committed fixture in testdata/jsonb/ plus a three-way lock:
 //
@@ -48,9 +54,24 @@
 // this test merely names. jsonbmirror is imported by nothing, so it cannot do that to anyone.
 // Verified, not assumed: with the file here, apps/cli/go.sum is byte-identical to dev's.
 //
+// THREE KINDS OF LOCK, because a claim is not always about a struct:
+//
+//   - a FIXTURE PAIR (mirrorPairs) — the three-way lock above. The strong one.
+//   - a VALUE VOCABULARY (valueVocabularies) — the accepted string values of a union, compared
+//     against the Go `const (…)` block that defines them.
+//   - a SYMBOL CLAIM (symbolClaims) — for a claim whose Go side is a FUNCTION the console
+//     re-implements (verify.VerifyAnchor). It locks that the named Go symbol still exists with
+//     the signature the claim depends on, and DELIBERATELY NOTHING MORE: the behavioural
+//     agreement between a Node implementation and a Go one is pinned by each side's own tests,
+//     and pretending a fixture could express it would be the empty comfort this file removes.
+//
+// A claim of the form `Type.Field` is answered by its OWNER's lock plus a check that the Go
+// struct really declares that field — see claimCoverage. The five such claims in the add-on
+// install spec are locked that way, and renaming the Go field turns them red.
+//
 // NOT locked here, enumerated so the coverage cannot be overread. This list is the whole of it:
-// every OTHER `Mirrors the Go X` claim in tsMirrorFile has a pair in mirrorPairs below, and the
-// review that produced this list found three claims an earlier, vaguer version of it had not
+// every OTHER `Mirrors the Go X` claim in an enrolled file has a pair in mirrorPairs below, and
+// the review that produced this list found three claims an earlier, vaguer version of it had not
 // named — so a claim that is hard to lock gets a line here, never silence.
 //
 //   - `ArgocdHealthStatus` / `ArgocdSyncStatus` — VALUES only. Their Go side is ArgoCD's own
@@ -63,9 +84,17 @@
 //     BEHAVIOUR, not about a struct's tags; no fixture can express it, and pretending otherwise
 //     would be the same empty comfort this file exists to remove.
 //
-// Everything else in tsMirrorFile that names a Go type is locked, including the three the review
-// caught: `DriftDetail` (which was stale — it was missing `attributes`), `ProbeDetail` /
+// Everything else in an enrolled file that names a Go type is locked, including the three the
+// review caught: `DriftDetail` (which was stale — it was missing `attributes`), `ProbeDetail` /
 // `ProbeResult`, and `ServiceBindingOutputKeys`.
+//
+// One nesting boundary is deliberate and is stated rather than left to be discovered:
+// types.ServiceBinding, reached through ChartWorkloadBinding.bindings, gets no pair of its own.
+// Its TypeScript `target` is an inline object literal with no exported interface, so
+// tsInterfaceFields has no subject to read — there is nothing to compare, and inventing an
+// interface to satisfy this test would be the test dictating the console's shape. Its keys are
+// still strict-decoded (DisallowUnknownFields is recursive) through the two fixtures that carry
+// one, so additive drift inside it is caught; a RENAME inside it is not.
 package jsonbmirror
 
 import (
@@ -87,9 +116,38 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/verify"
 )
 
-// tsMirrorFile is the console file whose `Mirrors the Go X` claims this test enforces,
-// relative to the monorepo root.
-const tsMirrorFile = "apps/console/types/jsonb.types.ts"
+// The console files whose `Mirrors the Go X` claims this test enforces, relative to the
+// monorepo root. ENROLMENT IS THE WHOLE MECHANISM: a claim in a file that is not in this list
+// is watched by nothing, which is what #4455 measured — seven claims in the add-on marketplace
+// spec and one in the Rekor anchoring mirror sat outside the single file this list used to be.
+//
+// Adding a file here is not free and is not meant to be: every `Mirrors the Go X` phrase it
+// carries must from then on be answered by a fixture pair, a value vocabulary, a symbol claim or
+// a named unlockableClaims entry, or TestJSONBMirror_EveryClaimIsLockedOrNamed goes red.
+const (
+	// tsMirrorFile is the jobs.execution_metadata payload family, and was for a while the whole
+	// enrolled set.
+	//
+	// THE IDENTIFIER IS LOAD-BEARING OUTSIDE THIS PACKAGE, and nothing enforces that: the census
+	// in scripts/check-cli-surface.mjs reads this file's enrolled set with the literal regex
+	// /tsMirrorFile\s*=\s*"([^"]+)"/, refuses to report counter 4 at all when it matches nothing,
+	// and compares each claim's FILE against the single path it captures. So renaming this const
+	// silently turns that counter from a number into a refusal, and the census still reads only
+	// this one file — the claims in the two files below are locked HERE and still counted
+	// unlocked THERE until that reader learns to take a list (#4455 · its file belongs to #3664).
+	tsMirrorFile = "apps/console/types/jsonb.types.ts"
+	// tsFileAddons is the marketplace add-on install spec that rides the DEPLOY job's config
+	// snapshot — the same wire, a different file.
+	tsFileAddons = "apps/console/lib/addons/types.ts"
+	// tsFileAnchor is the console-side Rekor anchoring mirror. It declares no mirrored
+	// INTERFACE; its single claim is about a Go FUNCTION and is locked as a symbol claim.
+	tsFileAnchor = "apps/console/lib/evidence/receipt-anchor.ts"
+)
+
+// tsMirrorFiles is the enrolled set, in the order the claim inventory reports them.
+func tsMirrorFiles() []string {
+	return []string{tsMirrorFile, tsFileAddons, tsFileAnchor}
+}
 
 // fixtureDir holds one committed fixture per mirrored shape. The fixtures are hand-written
 // (they ARE the declared wire shape, not a dump of a run), so there is no generator to name:
@@ -100,7 +158,9 @@ const fixtureDir = "testdata/jsonb"
 // mirrorPair is one `Mirrors the Go X` claim made enforceable: a TypeScript interface, the Go
 // struct it claims to mirror, and the committed fixture that is the agreed wire shape.
 type mirrorPair struct {
-	// TSName is the exported interface name in tsMirrorFile.
+	// TSFile is the enrolled console file the interface is declared in.
+	TSFile string
+	// TSName is the exported interface name in TSFile.
 	TSName string
 	// Fixture is the file name inside fixtureDir.
 	Fixture string
@@ -116,62 +176,77 @@ type mirrorPair struct {
 func mirrorPairs() []mirrorPair {
 	return []mirrorPair{
 		// ── argocd ──
-		{TSName: "AddOnStatusEntry", GoName: "argocd.AddOnHealth", Fixture: "addon_status_entry.json",
+		{TSFile: tsMirrorFile, TSName: "AddOnStatusEntry", GoName: "argocd.AddOnHealth", Fixture: "addon_status_entry.json",
 			New: func() any { return new(argocd.AddOnHealth) }},
-		{TSName: "SecurityReport", GoName: "argocd.SecurityPosture", Fixture: "security_report.json",
+		{TSFile: tsMirrorFile, TSName: "SecurityReport", GoName: "argocd.SecurityPosture", Fixture: "security_report.json",
 			New: func() any { return new(argocd.SecurityPosture) }},
-		{TSName: "GitopsStatusReport", GoName: "argocd.GitopsStatus", Fixture: "gitops_status.json",
+		{TSFile: tsMirrorFile, TSName: "GitopsStatusReport", GoName: "argocd.GitopsStatus", Fixture: "gitops_status.json",
 			New: func() any { return new(argocd.GitopsStatus) }},
-		{TSName: "GitopsServiceHealth", GoName: "argocd.ServiceHealth", Fixture: "gitops_service_health.json",
+		{TSFile: tsMirrorFile, TSName: "GitopsServiceHealth", GoName: "argocd.ServiceHealth", Fixture: "gitops_service_health.json",
 			New: func() any { return new(argocd.ServiceHealth) }},
 
 		// ── drift ──
-		{TSName: "DriftPosture", GoName: "drift.Posture", Fixture: "drift_posture.json",
+		{TSFile: tsMirrorFile, TSName: "DriftPosture", GoName: "drift.Posture", Fixture: "drift_posture.json",
 			New: func() any { return new(drift.Posture) }},
-		{TSName: "DriftDetail", GoName: "drift.ResourceDrift", Fixture: "drift_detail.json",
+		{TSFile: tsMirrorFile, TSName: "DriftDetail", GoName: "drift.ResourceDrift", Fixture: "drift_detail.json",
 			New: func() any { return new(drift.ResourceDrift) }},
-		{TSName: "DriftNormalizedResource", GoName: "drift.NormalizedResource", Fixture: "drift_normalized_resource.json",
+		{TSFile: tsMirrorFile, TSName: "DriftNormalizedResource", GoName: "drift.NormalizedResource", Fixture: "drift_normalized_resource.json",
 			New: func() any { return new(drift.NormalizedResource) }},
 
 		// ── verify (the elench gate + its evidence receipt) ──
-		{TSName: "VerifyFinding", GoName: "verify.Finding", Fixture: "verify_finding.json",
+		{TSFile: tsMirrorFile, TSName: "VerifyFinding", GoName: "verify.Finding", Fixture: "verify_finding.json",
 			New: func() any { return new(verify.Finding) }},
-		{TSName: "VerifyControlResult", GoName: "verify.ControlResult", Fixture: "verify_control_result.json",
+		{TSFile: tsMirrorFile, TSName: "VerifyControlResult", GoName: "verify.ControlResult", Fixture: "verify_control_result.json",
 			New: func() any { return new(verify.ControlResult) }},
-		{TSName: "VerifySummary", GoName: "verify.Summary", Fixture: "verify_summary.json",
+		{TSFile: tsMirrorFile, TSName: "VerifySummary", GoName: "verify.Summary", Fixture: "verify_summary.json",
 			New: func() any { return new(verify.Summary) }},
-		{TSName: "VerifyReport", GoName: "verify.Report", Fixture: "verify_report.json",
+		{TSFile: tsMirrorFile, TSName: "VerifyReport", GoName: "verify.Report", Fixture: "verify_report.json",
 			New: func() any { return new(verify.Report) }},
-		{TSName: "RecordedException", GoName: "verify.RecordedException", Fixture: "recorded_exception.json",
+		{TSFile: tsMirrorFile, TSName: "RecordedException", GoName: "verify.RecordedException", Fixture: "recorded_exception.json",
 			New: func() any { return new(verify.RecordedException) }},
-		{TSName: "VerifyOverrideInput", GoName: "verify.Override", Fixture: "verify_override.json",
+		{TSFile: tsMirrorFile, TSName: "VerifyOverrideInput", GoName: "verify.Override", Fixture: "verify_override.json",
 			New: func() any { return new(verify.Override) }},
-		{TSName: "VerifyReceiptBody", GoName: "verify.Receipt", Fixture: "verify_receipt.json",
+		{TSFile: tsMirrorFile, TSName: "VerifyReceiptBody", GoName: "verify.Receipt", Fixture: "verify_receipt.json",
 			New: func() any { return new(verify.Receipt) }},
-		{TSName: "SignedReceipt", GoName: "verify.SignedReceipt", Fixture: "signed_receipt.json",
+		{TSFile: tsMirrorFile, TSName: "SignedReceipt", GoName: "verify.SignedReceipt", Fixture: "signed_receipt.json",
 			New: func() any { return new(verify.SignedReceipt) }},
-		{TSName: "RekorInclusionProof", GoName: "verify.RekorInclusionProof", Fixture: "rekor_inclusion_proof.json",
+		{TSFile: tsMirrorFile, TSName: "RekorInclusionProof", GoName: "verify.RekorInclusionProof", Fixture: "rekor_inclusion_proof.json",
 			New: func() any { return new(verify.RekorInclusionProof) }},
-		{TSName: "RekorAnchor", GoName: "verify.RekorAnchor", Fixture: "rekor_anchor.json",
+		{TSFile: tsMirrorFile, TSName: "RekorAnchor", GoName: "verify.RekorAnchor", Fixture: "rekor_anchor.json",
 			New: func() any { return new(verify.RekorAnchor) }},
 
 		// ── packages/core/types (the BYO-IaC binding output map) ──
-		{TSName: "ServiceBindingOutputKeys", GoName: "types.ServiceBindingOutputKeys", Fixture: "service_binding_output_keys.json",
+		{TSFile: tsMirrorFile, TSName: "ServiceBindingOutputKeys", GoName: "types.ServiceBindingOutputKeys", Fixture: "service_binding_output_keys.json",
 			New: func() any { return new(types.ServiceBindingOutputKeys) }},
 
 		// ── provisioner (the PROBE_CLUSTER liveness probe) ──
-		{TSName: "ProbeResult", GoName: "provisioner.ProbeResult", Fixture: "probe_result.json",
+		{TSFile: tsMirrorFile, TSName: "ProbeResult", GoName: "provisioner.ProbeResult", Fixture: "probe_result.json",
 			New: func() any { return new(provisioner.ProbeResult) }},
-		{TSName: "ProbeDetail", GoName: "provisioner.ProbeDetail", Fixture: "probe_detail.json",
+		{TSFile: tsMirrorFile, TSName: "ProbeDetail", GoName: "provisioner.ProbeDetail", Fixture: "probe_detail.json",
 			New: func() any { return new(provisioner.ProbeDetail) }},
 
 		// ── packages/core/types (the ANALYZE_REPO digest) ──
-		{TSName: "RepoFile", GoName: "types.RepoFile", Fixture: "repo_file.json",
+		{TSFile: tsMirrorFile, TSName: "RepoFile", GoName: "types.RepoFile", Fixture: "repo_file.json",
 			New: func() any { return new(types.RepoFile) }},
-		{TSName: "DetectedService", GoName: "types.DetectedService", Fixture: "detected_service.json",
+		{TSFile: tsMirrorFile, TSName: "DetectedService", GoName: "types.DetectedService", Fixture: "detected_service.json",
 			New: func() any { return new(types.DetectedService) }},
-		{TSName: "RepoDigest", GoName: "types.RepoDigest", Fixture: "repo_digest.json",
+		{TSFile: tsMirrorFile, TSName: "RepoDigest", GoName: "types.RepoDigest", Fixture: "repo_digest.json",
 			New: func() any { return new(types.RepoDigest) }},
+
+		// ── the marketplace add-on install spec (apps/console/lib/addons/types.ts) ──
+		//
+		// Same wire, a different console file: this shape rides the DEPLOY job's config
+		// snapshot under `addons` and the runner renders one ArgoCD Application per entry.
+		// The two nested shapes are paired for the reason the header gives — a lock that
+		// stops at the first level of nesting is a lock with a hole in it.
+		{TSFile: tsFileAddons, TSName: "AddOnInstallSpec", GoName: "types.AddOnInstall", Fixture: "addon_install.json",
+			New: func() any { return new(types.AddOnInstall) }},
+		{TSFile: tsFileAddons, TSName: "AddOnSecretRef", GoName: "types.AddOnSecretRef", Fixture: "addon_secret_ref.json",
+			New: func() any { return new(types.AddOnSecretRef) }},
+		{TSFile: tsFileAddons, TSName: "AddOnBootstrap", GoName: "types.AddOnBootstrap", Fixture: "addon_bootstrap.json",
+			New: func() any { return new(types.AddOnBootstrap) }},
+		{TSFile: tsFileAddons, TSName: "ChartWorkloadBindingSpec", GoName: "types.ChartWorkloadBinding", Fixture: "chart_workload_binding.json",
+			New: func() any { return new(types.ChartWorkloadBinding) }},
 	}
 }
 
@@ -369,16 +444,16 @@ func monorepoRoot() (string, error) {
 	}
 }
 
-// consoleSource returns tsMirrorFile's contents with comments stripped, or skips the test when
-// there is no monorepo checkout. Inside a monorepo the file MUST be there: a missing mirror
+// consoleSource returns one enrolled file's contents with comments stripped, or skips the test
+// when there is no monorepo checkout. Inside a monorepo the file MUST be there: a missing mirror
 // source is drift of the loudest kind, not a reason to pass.
-func consoleSource(t *testing.T) string {
+func consoleSource(t *testing.T, file string) string {
 	t.Helper()
-	return stripTSComments(consoleSourceRaw(t))
+	return stripTSComments(consoleSourceRaw(t, file))
 }
 
 // consoleSourceRaw is the same file with its COMMENTS intact — the mirror claims live in them.
-func consoleSourceRaw(t *testing.T) string {
+func consoleSourceRaw(t *testing.T, file string) string {
 	t.Helper()
 	root, err := monorepoRoot()
 	if err != nil {
@@ -387,13 +462,24 @@ func consoleSourceRaw(t *testing.T) string {
 	if root == "" {
 		t.Skip("not a monorepo checkout — the console half of the mirror is not present")
 	}
-	path := filepath.Join(root, tsMirrorFile)
+	path := filepath.Join(root, file)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v\nThis test IS the mechanism behind that file's `Mirrors the Go X` "+
-			"comments. If the file moved, update tsMirrorFile; do not delete the lock.", tsMirrorFile, err)
+			"comments. If the file moved, update the tsFile* constant; do not delete the lock.", file, err)
 	}
 	return string(raw)
+}
+
+// consoleSources reads every enrolled file once, comments stripped, keyed by path. Each mirror
+// pair names the file it belongs to, so nothing reads a subject out of the wrong source.
+func consoleSources(t *testing.T) map[string]string {
+	t.Helper()
+	out := make(map[string]string, len(tsMirrorFiles()))
+	for _, f := range tsMirrorFiles() {
+		out[f] = consoleSource(t, f)
+	}
+	return out
 }
 
 // readFixture reads one committed fixture. Fixtures live inside packages/core, so unlike the
@@ -509,8 +595,8 @@ func tsInterfaceBody(src, name string) (string, error) {
 	re := regexp.MustCompile(`(?m)^export interface ` + regexp.QuoteMeta(name) + `\b[^{]*\{`)
 	loc := re.FindStringIndex(masked)
 	if loc == nil {
-		return "", fmt.Errorf("no `export interface %s` in %s — it was renamed or deleted; "+
-			"update the mirrorPairs entry rather than dropping the lock", name, tsMirrorFile)
+		return "", fmt.Errorf("no `export interface %s` in the console source — it was renamed or "+
+			"deleted; update the mirrorPairs entry rather than dropping the lock", name)
 	}
 	depth := 0
 	for i := loc[1] - 1; i < len(masked); i++ {
@@ -692,7 +778,7 @@ func TestJSONBMirror_GoStructMatchesFixture(t *testing.T) {
 // this is what turns `Mirrors the Go X` from a comment into a lock — neither side is derived
 // from the other, so a change to either one alone goes red.
 func TestJSONBMirror_ConsoleInterfaceMatchesFixture(t *testing.T) {
-	src := consoleSource(t)
+	srcs := consoleSources(t)
 	for _, p := range mirrorPairs() {
 		t.Run(p.TSName, func(t *testing.T) {
 			raw := readFixture(t, p.Fixture)
@@ -700,11 +786,11 @@ func TestJSONBMirror_ConsoleInterfaceMatchesFixture(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: %v", p.Fixture, err)
 			}
-			tsFields, err := tsInterfaceFields(src, p.TSName)
+			tsFields, err := tsInterfaceFields(srcs[p.TSFile], p.TSName)
 			if err != nil {
-				t.Fatalf("%v", err)
+				t.Fatalf("%s: %v", p.TSFile, err)
 			}
-			if err := diffFieldSets(tsMirrorFile+" "+p.TSName, tsFields, p.Fixture, keys); err != nil {
+			if err := diffFieldSets(p.TSFile+" "+p.TSName, tsFields, p.Fixture, keys); err != nil {
 				t.Errorf("%s\nThe console interface claims to mirror %s. Bring the interface, the "+
 					"fixture and the Go struct back into agreement.", err, p.GoName)
 			}
@@ -771,7 +857,7 @@ func valueVocabularies() []valueVocabulary {
 // not just the field names carrying them. A console that accepts a value the runner never emits
 // renders a state that cannot happen; a console missing one the runner does emit renders nothing.
 func TestJSONBMirror_ValueVocabularies(t *testing.T) {
-	src := consoleSource(t)
+	src := consoleSource(t, tsMirrorFile)
 	for _, v := range valueVocabularies() {
 		t.Run(v.Name, func(t *testing.T) {
 			tsValues, err := v.TS(src)
@@ -799,19 +885,21 @@ var (
 	mirrorClaimRe = regexp.MustCompile("(?i)mirrors the go `([^`]+)`")
 )
 
-// mirrorClaims returns the Go types the console CLAIMS to mirror, read out of the comments of
-// tsMirrorFile and reduced to their last dotted segment (a claim writes `verify.Report` or bare
-// `RepoDigest` depending on who wrote it). Derived from the source rather than listed, because a
-// hand-kept inventory of what a guard watches stops covering silently and nothing says so.
+// mirrorClaims returns the claims the console makes, EXACTLY AS WRITTEN — `verify.Report`,
+// `RepoDigest`, `AddOnInstall.Source` — read out of the comments of an enrolled file. Derived
+// from the source rather than listed, because a hand-kept inventory of what a guard watches
+// stops covering silently and nothing says so.
+//
+// It used to reduce every claim to its last dotted segment, which reads `pkg.Type` correctly and
+// `Type.Field` catastrophically: `AddOnInstall.Source` became the claim "Source", a name no Go
+// type has, so nothing could ever answer it. Resolving the two readings is claimCoverage's job,
+// and it cannot do it on a name whose owner has already been thrown away.
 func mirrorClaims(raw string) ([]string, error) {
 	flat := commentContinuationRe.ReplaceAllString(raw, " ")
 	seen := map[string]bool{}
 	var out []string
 	for _, m := range mirrorClaimRe.FindAllStringSubmatch(flat, -1) {
-		name := m[1]
-		if i := strings.LastIndex(name, "."); i >= 0 {
-			name = name[i+1:]
-		}
+		name := strings.TrimSpace(m[1])
 		if name == "" || seen[name] {
 			continue
 		}
@@ -819,73 +907,222 @@ func mirrorClaims(raw string) ([]string, error) {
 		out = append(out, name)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("found no `Mirrors the Go X` claims in %s — the phrase changed, "+
-			"and this check would then police an empty set", tsMirrorFile)
+		return nil, fmt.Errorf("found no `Mirrors the Go X` claims in the source — the phrase " +
+			"changed, and this check would then police an empty set")
 	}
 	slices.Sort(out)
 	return out, nil
+}
+
+// lastSegment is the part of a dotted name after the final dot — the TYPE in `verify.Report`,
+// and the FIELD in `AddOnInstall.Source`. Which of the two a claim means is decided by
+// claimCoverage, never here.
+func lastSegment(s string) string {
+	if i := strings.LastIndex(s, "."); i >= 0 {
+		return s[i+1:]
+	}
+	return s
+}
+
+// symbolClaim is a claim whose Go side is NOT a struct: a function the console re-implements.
+// No fixture pair can express "these two verifiers agree" — the console's copy runs in Node and
+// this test runs in Go, and the agreement is behavioural rather than structural.
+//
+// What a symbol claim locks is strictly weaker and is stated as such: that the Go symbol the
+// comment names still EXISTS, with the signature the comment's claim depends on. That is the
+// drift a rename or a deletion causes, and it is the drift that leaves the console pointing at
+// nothing. It is not a proof that the two implementations agree, and nothing here says it is.
+type symbolClaim struct {
+	// Claim is the text inside the backticks, as the console writes it.
+	Claim string
+	// GoPath is the Go source file, relative to packages/core.
+	GoPath string
+	// Decl must match the declaration in that file. It pins the SIGNATURE, not just the name,
+	// so a symbol that survives as something else — a variable, a method, a differently-shaped
+	// function — is reported rather than silently accepted.
+	Decl *regexp.Regexp
+	// Why records what this claim cannot be, so the weaker lock is never read as the strong one.
+	Why string
+}
+
+func symbolClaims() []symbolClaim {
+	return []symbolClaim{
+		{
+			Claim:  "verify.VerifyAnchor",
+			GoPath: filepath.Join("..", "verify", "rekor.go"),
+			Decl:   regexp.MustCompile(`(?m)^func VerifyAnchor\(r Receipt, a \*RekorAnchor, logKey \*ecdsa\.PublicKey\) error \{`),
+			Why: "verify.VerifyAnchor is a FUNCTION, and " + tsFileAnchor + " re-implements its " +
+				"offline checks in Node. A fixture pair locks a wire SHAPE; there is no shape here " +
+				"to lock, and the behavioural agreement is pinned on each side by its own tests " +
+				"(verify/rekor_test.go and the console's vitest suite). What is locked here is that " +
+				"the Go symbol the console names still exists with that signature.",
+		},
+	}
+}
+
+// assertSymbolDeclared is the symbol lock. Split out from its test so the mutation control can
+// call the same function on a claim that is known to be wrong.
+func assertSymbolDeclared(sc symbolClaim) error {
+	raw, err := os.ReadFile(sc.GoPath)
+	if err != nil {
+		return fmt.Errorf("`%s`: read %s: %w", sc.Claim, sc.GoPath, err)
+	}
+	if !sc.Decl.Match(raw) {
+		return fmt.Errorf("`%s` is claimed as mirrored but %s declares nothing matching %s — "+
+			"the symbol was renamed, deleted or reshaped, and the console comment now points at "+
+			"nothing. Fix the claim or fix the regex; do not delete the lock.",
+			sc.Claim, sc.GoPath, sc.Decl)
+	}
+	return nil
+}
+
+// TestJSONBMirror_SymbolClaimsResolve runs the symbol locks.
+func TestJSONBMirror_SymbolClaimsResolve(t *testing.T) {
+	for _, sc := range symbolClaims() {
+		t.Run(sc.Claim, func(t *testing.T) {
+			if err := assertSymbolDeclared(sc); err != nil {
+				t.Errorf("%v", err)
+			}
+		})
+	}
+}
+
+// TestJSONBMirror_SymbolClaimLockFires proves the symbol lock can say no — both when the file is
+// there and the declaration is not, and when the file itself is gone. A "found nothing" that
+// reads as "nothing is wrong" is the failure mode every source-reading guard in this file is
+// built against.
+func TestJSONBMirror_SymbolClaimLockFires(t *testing.T) {
+	real := symbolClaims()[0]
+
+	renamed := real
+	renamed.Decl = regexp.MustCompile(`(?m)^func NoSuchSymbolAnywhere\(`)
+	assertReports(t, "symbol lock (declaration absent)", assertSymbolDeclared(renamed), renamed.GoPath)
+
+	moved := real
+	moved.GoPath = filepath.Join("..", "verify", "no_such_file.go")
+	assertReports(t, "symbol lock (file absent)", assertSymbolDeclared(moved), "no_such_file.go")
+
+	// And the real one must still resolve, or the two controls above prove nothing about it.
+	if err := assertSymbolDeclared(real); err != nil {
+		t.Errorf("the real symbol claim does not resolve: %v", err)
+	}
 }
 
 // unlockableClaims are the `Mirrors the Go X` claims that CANNOT become a fixture pair, each
 // with the reason it cannot. It is deliberately a code-level list rather than prose: an entry
 // here is the only way past the test below, so adding one is a visible act in a diff.
 //
-// Empty today. Both surviving non-coverages in this file's header are VALUE vocabularies whose
-// interfaces are locked, not claims without a pair — which is why neither appears here.
+// Empty today, and it stays empty on purpose. The two non-coverages in this file's header are
+// VALUE vocabularies whose interfaces are locked, and the one claim with no struct behind it —
+// verify.VerifyAnchor — is a symbolClaim, which locks something rather than merely naming what
+// it does not lock. An entry here is the last resort, not the first.
 var unlockableClaims = map[string]string{}
 
 // TestJSONBMirror_EveryClaimIsLockedOrNamed is what keeps this file honest as the console grows.
-// The set of claims is DERIVED from the console source; each one must be answered by a fixture
-// pair, by a value vocabulary, or by a named entry in unlockableClaims. A new `Mirrors the Go X`
-// comment therefore turns this red until it is locked or its exemption is written down — which
-// is the failure the review found by hand: three claims existed that the header did not mention
-// and no pair covered.
+// The set of claims is DERIVED from every enrolled console source; each one must be answered by
+// a fixture pair, by a value vocabulary, by a symbol claim, or by a named entry in
+// unlockableClaims. A new `Mirrors the Go X` comment therefore turns this red until it is locked
+// or its exemption is written down — which is the failure the review found by hand: three claims
+// existed that the header did not mention and no pair covered.
 func TestJSONBMirror_EveryClaimIsLockedOrNamed(t *testing.T) {
-	claims, err := mirrorClaims(consoleSourceRaw(t))
-	if err != nil {
-		t.Fatalf("%v", err)
+	total := 0
+	for _, file := range tsMirrorFiles() {
+		t.Run(file, func(t *testing.T) {
+			claims, err := mirrorClaims(consoleSourceRaw(t, file))
+			if err != nil {
+				t.Fatalf("%s: %v", file, err)
+			}
+			total += len(claims)
+			if err := assertClaimsCovered(claims); err != nil {
+				t.Errorf("%s: %v", file, err)
+				return // never follow a failure with a line that reads like an all-clear.
+			}
+			t.Logf("%s: %d claims, all covered", file, len(claims))
+		})
 	}
-	if err := assertClaimsCovered(claims); err != nil {
-		t.Errorf("%v", err)
-		return // never follow a failure with a line that reads like an all-clear.
-	}
-	t.Logf("%d distinct Go types are claimed as mirrors, all covered", len(claims))
+	t.Logf("%d claims across %d enrolled files", total, len(tsMirrorFiles()))
 }
 
-// assertClaimsCovered is the guard: it reports every claimed Go type that no pair, vocabulary or
-// named exemption answers. Separated from the test so the mutation test below can call it on a
-// claim set that is known to be uncovered, rather than restating its logic.
+// assertClaimsCovered is the guard: it reports every claim that no pair, vocabulary, symbol lock
+// or named exemption answers. Separated from the test so the mutation test below can call it on
+// a claim set that is known to be uncovered, rather than restating its logic.
 func assertClaimsCovered(claims []string) error {
-	covered := map[string]bool{}
-	lastSegment := func(s string) string {
-		if i := strings.LastIndex(s, "."); i >= 0 {
-			return s[i+1:]
+	covered := coveredTypes()
+	var problems []string
+	for _, c := range claims {
+		if err := claimCoverage(covered, c); err != nil {
+			problems = append(problems, err.Error())
 		}
-		return s
 	}
+	if problems == nil {
+		return nil
+	}
+	return fmt.Errorf("these `Mirrors the Go X` claims are not locked:\n  %s\n"+
+		"Add a mirrorPairs entry (a fixture is all it needs), a symbolClaim when the Go side is a "+
+		"function, or — if the claim genuinely cannot be expressed as either — add it to "+
+		"unlockableClaims WITH its reason. A claim that is none of those is the "+
+		"comment-without-a-mechanism this whole file exists to abolish.",
+		strings.Join(problems, "\n  "))
+}
+
+// coveredTypes maps a locked Go TYPE name to the struct type behind it, or to nil when the thing
+// that answers the claim has no struct (a value vocabulary, a symbol claim). The reflect.Type is
+// what lets a `Type.Field` claim be checked against the real field set rather than waved through.
+func coveredTypes() map[string]reflect.Type {
+	covered := map[string]reflect.Type{}
 	for _, p := range mirrorPairs() {
-		covered[lastSegment(p.GoName)] = true
+		t := reflect.TypeOf(p.New())
+		for t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		covered[lastSegment(p.GoName)] = t
 	}
 	for _, v := range valueVocabularies() {
 		if v.GoType != "" {
-			covered[lastSegment(v.GoType)] = true
+			covered[lastSegment(v.GoType)] = nil
 		}
 	}
-	var uncovered []string
-	for _, c := range claims {
-		if covered[c] || unlockableClaims[c] != "" {
-			continue
-		}
-		uncovered = append(uncovered, c)
+	for _, sc := range symbolClaims() {
+		covered[lastSegment(sc.Claim)] = nil
 	}
-	if uncovered == nil {
+	return covered
+}
+
+// claimCoverage answers ONE claim, resolving the two ways a dotted claim can be read:
+//
+//	pkg.Type    — the last segment names the locked type          (verify.Report)
+//	Type.Field  — the OWNER is the locked type, the last segment
+//	              is one of its Go fields                          (AddOnInstall.Source)
+//
+// The second reading is not a wave-through: the field must actually exist on the locked Go
+// struct. A claim that a console property mirrors `AddOnInstall.PodSecurity` therefore goes red
+// when that Go field is renamed — which is the whole difference between a comment and a lock.
+func claimCoverage(covered map[string]reflect.Type, claim string) error {
+	if _, ok := covered[lastSegment(claim)]; ok {
 		return nil
 	}
-	return fmt.Errorf("%s claims to mirror these Go types and nothing here locks them: %s\n"+
-		"Add a mirrorPairs entry (a fixture is all it needs), or — if the claim genuinely cannot "+
-		"be expressed as a fixture — add it to unlockableClaims WITH its reason. A claim that is "+
-		"neither is the comment-without-a-mechanism this whole file exists to abolish.",
-		tsMirrorFile, strings.Join(uncovered, ", "))
+	if unlockableClaims[lastSegment(claim)] != "" {
+		return nil
+	}
+	if i := strings.LastIndex(claim, "."); i >= 0 {
+		owner, field := lastSegment(claim[:i]), claim[i+1:]
+		if t, ok := covered[owner]; ok {
+			if t == nil {
+				// The owner is locked by something with no struct behind it, so there is no
+				// field set to check the second half against. Refusing is the honest answer:
+				// accepting would report a field claim as locked by a lock that cannot see it.
+				return fmt.Errorf("`%s`: %s is locked by a vocabulary or a symbol claim, which "+
+					"has no field set — a field-level claim on it cannot be checked", claim, owner)
+			}
+			if f, ok := t.FieldByName(field); ok && f.IsExported() {
+				return nil
+			}
+			return fmt.Errorf("`%s`: %s is locked, but %s declares no exported field %q — the "+
+				"Go field was renamed or removed and the console comment still names it",
+				claim, owner, t, field)
+		}
+	}
+	return fmt.Errorf("`%s`: nothing here locks it", claim)
 }
 
 // TestJSONBMirror_NoOrphanFixtures pairs the fixture DIRECTORY against the pair table in both
@@ -925,7 +1162,7 @@ func TestJSONBMirror_NoOrphanFixtures(t *testing.T) {
 //	removed from the wire → both field-set locks name the dropped key
 //	emptied on the wire  → zeroValuedFields names the field
 func TestJSONBMirror_LocksFire(t *testing.T) {
-	src := consoleSource(t)
+	srcs := consoleSources(t)
 	const probe = "__mirror_drift_probe__"
 
 	for _, p := range mirrorPairs() {
@@ -935,9 +1172,9 @@ func TestJSONBMirror_LocksFire(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: %v", p.GoName, err)
 			}
-			tsFields, err := tsInterfaceFields(src, p.TSName)
+			tsFields, err := tsInterfaceFields(srcs[p.TSFile], p.TSName)
 			if err != nil {
-				t.Fatalf("%v", err)
+				t.Fatalf("%s: %v", p.TSFile, err)
 			}
 			var base map[string]json.RawMessage
 			if err := json.Unmarshal(raw, &base); err != nil {
@@ -1009,23 +1246,47 @@ func TestJSONBMirror_ClaimInventoryLockFires(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a wrapped claim was not seen at all: %v", err)
 	}
-	if !slices.Equal(got, []string{"ResourceDrift"}) {
-		t.Errorf("wrapped claim parsed as %v, want [ResourceDrift]", got)
+	if !slices.Equal(got, []string{"drift.ResourceDrift"}) {
+		t.Errorf("wrapped claim parsed as %v, want [drift.ResourceDrift]", got)
 	}
 	// A single-line claim, and a bare (undotted) type name, both count.
 	if got, err := mirrorClaims("// Mirrors the Go `RepoDigest` (packages/core/types)."); err != nil || !slices.Equal(got, []string{"RepoDigest"}) {
 		t.Errorf("single-line claim parsed as %v (err %v), want [RepoDigest]", got, err)
+	}
+	// A FIELD-level claim keeps its owner. Reducing it to its last segment — which is what this
+	// parser used to do — turns `AddOnInstall.Source` into the claim "Source", which no Go type
+	// answers and no lock can ever cover.
+	if got, err := mirrorClaims("// Mirrors the Go `AddOnInstall.Source`."); err != nil || !slices.Equal(got, []string{"AddOnInstall.Source"}) {
+		t.Errorf("field-level claim parsed as %v (err %v), want [AddOnInstall.Source]", got, err)
 	}
 	// Nothing to find must be an error, not an empty pass.
 	if _, err := mirrorClaims("// this file makes no claims at all"); err == nil {
 		t.Error("mirrorClaims accepted a source with no claims — the check would police nothing")
 	}
 	// And an uncovered claim must be named, while a covered one must not be dragged in with it.
-	err = assertClaimsCovered([]string{"AddOnHealth", "NothingLocksThis"})
+	err = assertClaimsCovered([]string{"argocd.AddOnHealth", "NothingLocksThis"})
 	assertReports(t, "claim-inventory lock", err, "NothingLocksThis")
 	if err != nil && strings.Contains(err.Error(), "AddOnHealth") {
 		t.Errorf("a covered claim was reported as uncovered: %v", err)
 	}
+
+	// ── the field-claim reading, in both directions ──
+	//
+	// A field that exists is covered by its owner's pair; a field that does NOT exist must be
+	// reported, or the reading would wave through every `Type.Field` claim ever written and the
+	// five such claims in the add-on spec would be locked in name only.
+	if err := assertClaimsCovered([]string{"AddOnInstall.PodSecurity"}); err != nil {
+		t.Errorf("a real field of a locked type was reported as uncovered: %v", err)
+	}
+	assertReports(t, "field-claim lock", assertClaimsCovered([]string{"AddOnInstall.NoSuchField"}), "NoSuchField")
+	// An UNLOCKED owner is not made covered by having a plausible-looking field name after it.
+	assertReports(t, "field-claim lock (owner unlocked)", assertClaimsCovered([]string{"NoSuchType.Name"}), "NoSuchType.Name")
+	// A symbol claim covers its own name and nothing beneath it: there is no field set to check.
+	if err := assertClaimsCovered([]string{"verify.VerifyAnchor"}); err != nil {
+		t.Errorf("the symbol claim did not cover itself: %v", err)
+	}
+	assertReports(t, "field-claim lock (owner has no field set)",
+		assertClaimsCovered([]string{"VerifyAnchor.Something"}), "no field set")
 }
 
 // TestJSONBMirror_VocabularyLockFires proves the value-vocabulary comparison speaks when the two
@@ -1033,7 +1294,7 @@ func TestJSONBMirror_ClaimInventoryLockFires(t *testing.T) {
 // dropped. Without this the vocabulary test would be indistinguishable from one that always
 // finds the sets equal.
 func TestJSONBMirror_VocabularyLockFires(t *testing.T) {
-	src := consoleSource(t)
+	src := consoleSource(t, tsMirrorFile)
 	for _, v := range valueVocabularies() {
 		t.Run(v.Name, func(t *testing.T) {
 			goValues, err := goConstBlockStrings(v.GoPath, v.GoAnchor)
