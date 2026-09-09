@@ -8,11 +8,17 @@ import { z } from "zod";
  * proposal the user approves (HITL) — the agent never runs plan/deploy autonomously.
  * Inline project creation is intentionally out of scope (build on the canvas instead).
  */
+// `uuid`, not a bare string. This value is model-supplied and reaches a uuid column comparison, and
+// a model handed an environment NAME in the prompt will sometimes propose the name. Postgres then
+// fails the query rather than the tool call, which surfaces as an opaque error on a proposal the
+// user has already approved. Rejecting it at the schema makes the model retry with an id, and an
+// omitted field still means "the project's default", which is a real answer.
 const environmentIdField = z
 	.string()
+	.uuid()
 	.optional()
 	.describe(
-		"The environment to run against. Use the environment id the conversation is scoped to; omit only when none is in scope (the project's default environment is used).",
+		"The environment to run against, as its UUID — never its name. Use the environment id the conversation is scoped to; omit only when none is in scope (the project's default environment is used).",
 	);
 
 export const operationSchema = z.discriminatedUnion("operation", [

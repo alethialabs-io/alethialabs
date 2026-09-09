@@ -195,13 +195,14 @@ describe("list_projects", () => {
 });
 
 describe("list_jobs", () => {
-	const mkJobs = (n: number) =>
+	const mkJobs = (n: number, environment_id?: string) =>
 		Array.from({ length: n }, (_, i) => ({
 			id: `j${i}`,
 			job_type: "plan",
 			status: "done",
 			project_name: "alpha",
 			cloud_provider: "aws",
+			environment_id,
 			created_at: "t",
 			completed_at: "t2",
 		}));
@@ -227,6 +228,35 @@ describe("list_jobs", () => {
 			created_at: "t",
 			completed_at: "t2",
 		});
+	});
+
+	it("defaults the filter to the scoped environment, so 'what ran here' is about the env on screen", async () => {
+		vi.mocked(getJobs).mockResolvedValue([
+			...mkJobs(2, "env-a"),
+			...mkJobs(3, "env-b"),
+			...mkJobs(1),
+		] as never);
+		const out = (await run(readTools({ environmentId: "env-b" }).list_jobs, {})) as {
+			jobs: Array<Record<string, unknown>>;
+		};
+		expect(out.jobs).toHaveLength(3);
+		expect(out.jobs.every((j) => j.environment_id === "env-b")).toBe(true);
+	});
+
+	it("lets an explicit environmentId override the scoped default", async () => {
+		vi.mocked(getJobs).mockResolvedValue([...mkJobs(2, "env-a"), ...mkJobs(3, "env-b")] as never);
+		const out = (await run(readTools({ environmentId: "env-b" }).list_jobs, {
+			environmentId: "env-a",
+		})) as { jobs: unknown[] };
+		expect(out.jobs).toHaveLength(2);
+	});
+
+	it("reads every job when nothing is scoped (the org agent, as before)", async () => {
+		vi.mocked(getJobs).mockResolvedValue([...mkJobs(2, "env-a"), ...mkJobs(3, "env-b")] as never);
+		const out = (await run(readTools().list_jobs, {})) as { jobs: unknown[] };
+		expect(out.jobs).toHaveLength(5);
+		expect(readTools().list_jobs.description).not.toContain("scoped");
+		expect(readTools({ environmentId: "env-b" }).list_jobs.description).toContain("env-b");
 	});
 });
 
