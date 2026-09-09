@@ -160,7 +160,8 @@ export function ProjectGeneral({
             <AlertDialog>
               <AlertDialogTrigger
                 render={
-                  <Button variant="outline" size="sm">
+                  // See org-general.tsx — the trigger agrees with its own dialog (#4462).
+                  <Button variant="outline" size="sm" aria-label="Delete project">
                     Delete
                   </Button>
                 }
