@@ -103,7 +103,13 @@ export function EventMatrix({
                           </TooltipContent>
                         </Tooltip>
                       ) : editable ? (
+                        // The row's text is not associated with its control by anything, so
+                        // without a name every one of the ~50 switches in this matrix announced
+                        // only "switch". The key rides along because two categories can carry the
+                        // same human label, and the key is what identifies the event everywhere
+                        // else in the product.
                         <Switch
+                          aria-label={`${e.label} (${e.key})`}
                           checked={on}
                           onCheckedChange={() => onToggle(e.key)}
                         />
