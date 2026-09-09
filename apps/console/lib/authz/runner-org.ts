@@ -2,9 +2,38 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { eq } from "drizzle-orm";
+import type { CliCredential } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
+import type { Actor } from "@/lib/authz/types";
 import type { Db, Tx } from "@/lib/db";
 import { runners } from "@/lib/db/schema";
+
+/**
+ * The `personalOrgId` to hand {@link assertRunnerInOrg} for a CLI caller — `undefined` for a service
+ * token (#4298).
+ *
+ * `personalOrgId` admits a runner whose `org_id` equals the CALLER's own id, which is the pre-#3874
+ * compatibility path. For a session that is the human's personal org and the arm is correct. For a
+ * service token `actor.userId` is the MINTING profile, so passing it admitted the minter's personal
+ * runner: a token pinned to org T could assign an org-T job to it, and `claim_next_job`'s legacy
+ * lifecycle arm would then execute that job with the minter's personal cloud identity. A pin that
+ * bounds the job but not the executor bounds nothing.
+ *
+ * A `switch` over the closed union rather than a ternary, in one place rather than at each call
+ * site: a third credential kind becomes a type error here, and the narrow answer cannot be reached
+ * by forgetting to ask.
+ */
+export function personalRunnerArm(
+	actor: Actor,
+	credential: CliCredential,
+): string | undefined {
+	switch (credential) {
+		case "service_token":
+			return undefined;
+		case "session":
+			return actor.userId;
+	}
+}
 
 /**
  * Validates that a client-supplied runner can execute a job for the active org.
