@@ -478,9 +478,10 @@
 				"RBAC — General settings › Transfer ownership is a stub → surfaces a 'coming soon' toast": "passed"
 			},
 			"flows/runners.negative.spec.ts": {
-				"Runners — entitlement gate (Hobby) › Hobby org is gated and shown the byoRunners upsell instead of the runner surface": "failed",
-				"Runners — entitlement gate (Hobby) › the gated Hobby surface offers no Add runner action": "failed",
-				"Runners — destroy queues a job › destroying a deployed runner queues a DESTROY_RUNNER job": "passed"
+				"Runners — the byoRunners gate is deployment-mode scoped › a Hobby org reaches the runner surface, because the upsell is hosted-only": "passed",
+				"Runners — the byoRunners gate is deployment-mode scoped › a runner in another org never appears in this org's grid": "passed",
+				"Runners — destroy › the destroy confirmation opens, warns, and dismissing it queues nothing": "passed",
+				"Runners — destroy › destroying a deployed runner queues a DESTROY_RUNNER job": "passed"
 			},
 			"flows/runners.spec.ts": {
 				"Runners — page & entitlement › Pro org loads the runner surface without bouncing to /login": "passed",
@@ -492,13 +493,17 @@
 				"Runners — Add runner sheet › Register button is disabled until a valid (non-empty, non-whitespace) name is entered": "passed",
 				"Runners — Add runner sheet › registering a runner reveals a one-time token that cannot be recovered": "passed",
 				"Runners — Add runner sheet › a registered runner appears in the grid after the sheet closes": "passed",
-				"Runners — Add runner sheet › Deploy sub-view renders its deploy description (form or connect-a-cloud state)": "failed",
+				"Runners — Add runner sheet › Deploy sub-view names the clouds a runner can actually be deployed into": "passed",
 				"Runners — lifecycle actions › toggling the default star marks a runner as default": "passed",
 				"Runners — lifecycle actions › removing a registered runner confirms via dialog and drops it from the grid": "passed",
 				"Runners — lifecycle actions › the remove confirmation can be cancelled, leaving the runner in place": "passed",
-				"Runners — search & filters › search narrows the grid to the matching runner": "passed",
-				"Runners — search & filters › a non-matching search shows the 'no runners match' message": "passed",
-				"Runners — search & filters › the filters popover exposes status and operator chip groups": "failed"
+				"Runners — the console filter standard › search narrows the grid to the matching runner": "passed",
+				"Runners — the console filter standard › a non-matching search shows the 'no runners match' message": "passed",
+				"Runners — the console filter standard › the bar carries all six axes the runner filter store declares": "passed",
+				"Runners — the console filter standard › a chip selection mirrors into the URL and Reset clears both": "passed",
+				"Runners — the console filter standard › a pasted filter URL hydrates the bar and narrows the grid": "passed",
+				"Runners — warm pools (self-managed only) › a configured pool renders its card in the left column": "passed",
+				"Runners — warm pools (self-managed only) › the pool delete confirmation opens, names the pool, and Cancel leaves it alone": "passed"
 			}
 		},
 		"audit": {
