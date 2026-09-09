@@ -21,13 +21,13 @@
 		"scoredHere": 24,
 		"live": 10,
 		"notInstrumented": 0,
-		"findings": 81,
-		"findingFiles": 44,
+		"findings": 74,
+		"findingFiles": 42,
 		"liveNotMeasured": 14
 	},
 	"ledgers": {
 		"baseline": 16,
-		"debt": 30
+		"debt": 27
 	},
 	"live": {
 		"source": {
@@ -287,13 +287,13 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 37,
-			"fail": 3,
+			"pass": 40,
+			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
 			"naReasons": {},
 			"notMeasuredReasons": {},
-			"score": 0.925
+			"score": 1
 		},
 		"H4": {
 			"family": "H",
@@ -704,11 +704,11 @@
 				"H": {
 					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
-					"fail": 1,
+					"pass": 9,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.8889
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -730,11 +730,11 @@
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 2,
+				"pass": 24,
+				"fail": 1,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.92
+				"score": 0.96
 			}
 		},
 		{
@@ -1412,11 +1412,11 @@
 				"H": {
 					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
-					"fail": 1,
+					"pass": 9,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.8889
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -1438,11 +1438,11 @@
 				}
 			},
 			"overall": {
-				"pass": 27,
-				"fail": 4,
+				"pass": 28,
+				"fail": 3,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 0.871
+				"score": 0.9032
 			}
 		},
 		{
@@ -1648,11 +1648,11 @@
 				"H": {
 					"instrumented": 9,
 					"of": 9,
-					"pass": 8,
-					"fail": 1,
+					"pass": 9,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.8889
+					"score": 1
 				},
 				"F": {
 					"instrumented": 7,
@@ -1674,11 +1674,11 @@
 				}
 			},
 			"overall": {
-				"pass": 22,
-				"fail": 2,
+				"pass": 23,
+				"fail": 1,
 				"na": 10,
 				"notMeasured": 0,
-				"score": 0.9167
+				"score": 0.9583
 			}
 		},
 		{
@@ -3346,8 +3346,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "H3",
-			"verdict": "FAIL",
-			"detail": "3 occurrence(s) in 1 file(s), worst apps/console/components/design-project/canvas/node-inspector.tsx (3)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -5494,8 +5493,7 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "H3",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/connectors/connection-ui.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -6205,8 +6203,7 @@
 		{
 			"route": "/[org]/~/new",
 			"predicate": "H3",
-			"verdict": "FAIL",
-			"detail": "1 occurrence(s) in 1 file(s), worst apps/console/components/connectors/connection-ui.tsx (1)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -10122,12 +10119,12 @@
 				"owner": null
 			},
 			"status_badge": {
-				"total": 7,
+				"total": 0,
 				"decision": 0,
-				"debt": 7,
+				"debt": 0,
 				"unlisted": 0,
-				"inPageClosure": 4,
-				"chromeOnly": 3,
+				"inPageClosure": 0,
+				"chromeOnly": 0,
 				"sharedPackage": 0,
 				"offTree": 0,
 				"predicate": "H3",
@@ -10219,10 +10216,6 @@
 			}
 		},
 		"chromeOnlyFiles": [
-			{
-				"file": "apps/console/components/agent/render-tool-parts/project-tool-parts.tsx",
-				"hits": 3
-			},
 			{
 				"file": "apps/console/components/agent/widgets/bodies/blocks.tsx",
 				"hits": 2
