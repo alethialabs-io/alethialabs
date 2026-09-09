@@ -98,6 +98,10 @@ const WORKFLOW = ".github/workflows/e2e-nightly.yml";
 const RESOLVER = "scripts/e2e/resolve-dimension.sh";
 const UNSUPPORTED_KINDS = "apps/console/lib/cloud-providers/unsupported-kinds.ts";
 const PROOFS_DIR = "demos/proofs";
+// The release gate's ratchet ledger (.github/workflows/release-gate.yml → scripts/e2e-ratchet.mjs).
+// It is the same species as the exclusion boards below it — a recording of debt that may only
+// shrink — so it is rendered in the same table rather than in a second one.
+const GATE_BASELINE = "apps/console/e2e/gate-baseline.json";
 const TARGET = "PROGRAMME.md";
 const REAPER_FRESH_HOURS = 48;
 
@@ -2354,6 +2358,44 @@ function countExclusions(file) {
 	return counts;
 }
 
+/**
+ * Count the release gate's recorded debt out of `apps/console/e2e/gate-baseline.json`.
+ *
+ * The gate is green-by-ratchet: every leg fails on REGRESSION against that file, not on absolute
+ * red, so "how red is the gate" is a number that lives in the ledger and nowhere else. Typing it
+ * into PROGRAMME.md would put it beside numbers that regenerate and let it rot alone.
+ *
+ * THREE numbers, not the two the debt is usually described with. `failed` and `fixme` are the debt
+ * — a recorded red and a known bug parked behind `test.fixme`. `skip` is counted alongside them
+ * because it is the ledger's only cheap escape route: converting a `failed` entry into a
+ * `{skip: "<why>"}` would otherwise shrink the debt with nothing fixed. Printed together, that
+ * conversion moves a number rather than deleting one.
+ *
+ * @returns {Record<string, number>|undefined} `undefined` when the ledger is absent (the row is
+ *   then not rendered at all, rather than rendered as zero debt).
+ */
+function countGateBaseline(file = GATE_BASELINE) {
+	if (!fs.existsSync(file)) return undefined;
+	let doc;
+	try {
+		doc = JSON.parse(fs.readFileSync(file, "utf8"));
+	} catch (e) {
+		console.error(`::error::programme-rollup: ${file} is present but unparseable (${e.message}). A ledger that cannot be read is not a ledger with no debt.`);
+		process.exit(3);
+	}
+	const counts = { failed: 0, fixme: 0, skip: 0 };
+	for (const files of Object.values(doc?.projects ?? {})) {
+		for (const tests of Object.values(files ?? {})) {
+			for (const outcome of Object.values(tests ?? {})) {
+				if (outcome === "failed") counts.failed++;
+				else if (typeof outcome === "object" && outcome !== null && typeof outcome.fixme === "string") counts.fixme++;
+				else if (typeof outcome === "object" && outcome !== null && typeof outcome.skip === "string") counts.skip++;
+			}
+		}
+	}
+	return counts;
+}
+
 function readInputs() {
 	const need = (f) => {
 		if (!fs.existsSync(f)) {
@@ -2396,6 +2438,7 @@ function readInputs() {
 				["infra/offer-exclusions.yaml", countExclusions("infra/offer-exclusions.yaml")],
 				["infra/config-carriage-exclusions.yaml", countExclusions("infra/config-carriage-exclusions.yaml")],
 				["infra/template-parity-exclusions.yaml", countExclusions("infra/template-parity-exclusions.yaml")],
+				[GATE_BASELINE, countGateBaseline()],
 			].filter(([, c]) => c !== undefined),
 		),
 	};
