@@ -68,11 +68,20 @@ needs a prompt.`,
 var configGetCmd = &cobra.Command{
 	Use:   "get [key]",
 	Short: "Get a config value",
-	Args:  cobra.MaximumNArgs(1),
+	Long: `Print one config value, or every one of them.
+
+The key is optional and its default is ALL of them, so a bare 'config get' answers
+rather than asks. A key this CLI does not have is refused with the keys it does
+have — or, on a terminal, replaced by a picker rather than a retype.`,
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		key := ""
 		if len(args) > 0 {
 			key = args[0]
+		}
+		key, err := resolveConfigGetKey(key)
+		if err != nil {
+			fail(err)
 		}
 		if err := runConfigGet(os.Stdout, outputFormat(cmd), key); err != nil {
 			fail(err)
@@ -363,6 +372,85 @@ func runConfigGet(out io.Writer, format, key string) error {
 	return ui.Render(out, format,
 		ui.TableSpec{Columns: []string{"Key", "Value"}, Rows: [][]string{{f.Key, v}}},
 		map[string]string{f.Key: v})
+}
+
+// configGetKeyOptions is what the `config get` picker offers: every key in the spec,
+// labelled with its own summary.
+//
+// It is a named function rather than a loop inside the form because the SET is the claim
+// worth testing — huh exposes no way to read a Select's options back, so a picker built
+// inline can only be checked by what it happens to return.
+func configGetKeyOptions() []huh.Option[string] {
+	opts := make([]huh.Option[string], 0, len(configFields))
+	for _, f := range configFields {
+		opts = append(opts, huh.NewOption(f.Key+" — "+f.Summary, f.Key))
+	}
+	return opts
+}
+
+// resolveConfigGetKey answers a `config get` key this CLI does not have, and leaves
+// every other case exactly as it was.
+//
+// # It does NOT put a picker in front of a bare `config get`
+//
+// That argument has a default and the default is EVERY key, so the bare command already
+// prints the fuller answer; a picker there would replace two printed rows with a keystroke
+// and one of them. The recorded reason in hyg_cli_authform_test.go's authFormNoFieldSpec —
+// "its only input is a key with a default (all of them), so there is no question to ask" —
+// is about that case and still holds. What this asks about is a value the CLI has already
+// REJECTED, which is a different question, and the only one the reader cannot answer
+// without retyping the whole command.
+//
+// The shape is openProjectName's, deliberately: a reference outside a closed, known set
+// buys a refusal that names the real members, or, on a terminal, a picker instead of a
+// retype. With prompting disabled the refusal is the one runConfigGet would have produced,
+// word for word, so nothing about `--no-input` changes — the argument remains the complete
+// non-interactive contract.
+//
+// # Why the picker offers every key and not the settable ones
+//
+// promptConfigSet's picker filters on settable(), because a read-only key is nothing `set`
+// can act on. `get` reads them all — `active-org` is read-only and is one of the two values
+// a person runs this command for — so filtering here would hide a key the refusal it
+// replaces had just named as supported.
+//
+// It is a package variable for the reason seams.go records: stubbing runHuhForm stops the
+// prompt blocking, but no stub can answer through a pointer the huh group owns.
+var resolveConfigGetKey = func(key string) (string, error) {
+	k := strings.ToLower(strings.TrimSpace(key))
+	if k == "" || k == "all" || lookupConfigField(k) != nil {
+		return key, nil
+	}
+	if !canPromptForm() {
+		return "", fmt.Errorf("unknown config key %q (supported: %s)", key, configKeyList(false))
+	}
+
+	opts := configGetKeyOptions()
+	if len(opts) == 0 {
+		// Unreachable while the spec holds a key, and a real answer if that ever stops being
+		// true: an empty picker is a box nobody can answer, and the empty string it would
+		// return is what `config get` reads as "all of them" — so the miss would print a
+		// whole configuration and read as a success.
+		return "", fmt.Errorf("unknown config key %q, and this CLI has no config key to offer", key)
+	}
+	chosen := opts[0].Value
+	// The title is written here rather than resolved from authFields, because `alethia config
+	// get` deliberately carries no row there and so there is nothing to resolve it from.
+	// Adding a row purely to have a source would fail
+	// TestHygCliAuthForm_InputTakingLeavesHaveFieldsOrAStatedReason unless the recorded
+	// exemption went with it — which would trade a local string for the deletion of a
+	// decision. openProjectName's picker is a local string for its own reason (its group's
+	// spec has no Title column at all), and this is the second case of the same trade.
+	if err := runHuhForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Config key").
+			Description(fmt.Sprintf("%q is not a config key — which one did you mean?", key)).
+			Options(opts...).
+			Value(&chosen),
+	)); err != nil {
+		return "", err
+	}
+	return chosen, nil
 }
 
 // promptConfigSet fills in a missing key or value from the interactive form, and
