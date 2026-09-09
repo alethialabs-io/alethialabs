@@ -251,8 +251,7 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		// UNCONDITIONALLY (not merely merge-if-absent) so keyless can never be switched on from
 		// provider_config for a cell the canvas did not offer — db.IamAuth == nil leaves them unset,
 		// and without this a passthrough key would sail past both #1508 and #1510.
-		mergeProviderConfig(tfvars, db.ProviderConfig,
-			"log_exports", "rds_iam_auth_enabled", "rds_iam_irsa")
+		mergeProviderConfig(tfvars, db.ProviderConfig, awsRootReserved...)
 	}
 
 	if len(config.Caches) > 0 {
@@ -310,6 +309,37 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 				tfvars["redis_allowed_cidr_blocks"] = cache.AllowedCidrBlocks
 			}
 		}
+		// Generic passthrough — same contract as the database's above. The cache is a ROOT-level
+		// component on every cloud (one instance, `redis_*`/`valkey_*` variables), so the merge is
+		// into tfvars itself. Every key the two branches above emit is reserved UNCONDITIONALLY, not
+		// merely protected by merge-if-absent: `redis_multi_az_enabled` is written only when the
+		// typed field is set, and without the reservation a provider_config key would fill the gap
+		// the canvas left on purpose — the same walk-around the IAM-auth reservation closes.
+		mergeProviderConfig(tfvars, cache.ProviderConfig, awsRootReserved...)
+	}
+
+	// Container registries are ROOT-level on AWS: the template declares a dozen `ecr_*` variables
+	// (encryption type, lifecycle policy, registry scanning, access ARNs) that apply to the ECR
+	// module as a whole, so a registry's provider_config merges into tfvars rather than into its
+	// `ecr_repo_settings` entry — that map's object type declares only the two canvas switches and
+	// would drop anything else. Only NATIVE registries merge: a pluggable registry (connectors.slug)
+	// is not ECR's to configure. Merge-if-absent means the first native registry that names a knob
+	// wins, the same rule `config.Databases[0]` applies to the database.
+	for _, r := range config.ContainerRegistries {
+		if r.Provider != "" && r.Provider != "native" {
+			continue
+		}
+		// The same name filter `buildECRNamesMap` and `buildECRRepoSettings` apply. A row whose
+		// name normalises to nothing produces no entry in either map, so `provision_ecr` stays
+		// false and the row owns no repository — but without this guard its provider_config would
+		// still reconfigure the whole ECR module (encryption, lifecycle policy, scanning) for
+		// repositories that OTHER registries and repo-sourced services created. Merge-if-absent
+		// makes that worse rather than better: reached in slice order, a phantom row wins over a
+		// real registry's answer.
+		if r.Name == "" || ecrRepoBaseName(r.Name) == "" {
+			continue
+		}
+		mergeProviderConfig(tfvars, r.ProviderConfig, awsRootReserved...)
 	}
 
 	if inst := resolveInstanceTypes("aws", config.Cluster); len(inst) > 0 {
@@ -337,10 +367,97 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	// provider_config can't shadow it. Consumed by the template's classification_tags var (B1.3).
 	tfvars["classification_tags"] = classificationTags(config, awsTagStyle)
 
-	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, "enable_karpenter")
-	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "cloudfront_waf", "acm_certificate", "application_waf")
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, awsRootReserved...)
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, awsRootReserved...)
 
 	return tfvars
+}
+
+// The `reserved` list at a merge call site names the keys THAT component's typed mapping owns —
+// but every root-level merge writes the SAME flat tfvars map, so a list consulted only at its own
+// site closes nothing. A cache's provider_config could set `rds_iam_auth_enabled` whenever the
+// database's typed mapping had not, and a nosql table's could set `cloud_sql_iam_auth`. That turns
+// keyless database auth on for a cloud × engine cell the canvas deliberately does not offer,
+// walking around both the offer-parity guard (#1508) and the `visibleWhen` gate (#1510) — the exact
+// walk-around the database's own reservation exists to close, reached from a neighbouring component
+// instead. The same shape re-opens an offer withdrawn after measurement: the Azure cache SKU family
+// (#1993, #2148), or `redis_multi_az_enabled`, which is written only when the canvas asked for it.
+//
+// So a root-level merge is passed its CLOUD'S UNION rather than its own component's list. The
+// per-component slices stay named because they record who owns what; the union is DERIVED from
+// them, so adding a key to one component closes it to every other in the same edit. A second gate
+// written by hand would drift from the call sites it mirrors, and that drift stays invisible until
+// a knob nobody expected reaches a plan.
+//
+// Item-level merges (`mergeItemProviderConfig`) are deliberately NOT unioned: they write into a
+// per-item object — one queue in `sqs_queues`, one bucket in `bucket_configuration` — where one
+// component's keys cannot reach another component at all.
+var (
+	awsDatabaseReserved = []string{"log_exports", "rds_iam_auth_enabled", "rds_iam_irsa"}
+	awsCacheReserved    = []string{
+		"create_elasticache_redis", "create_elasticache_valkey",
+		"valkey_data_storage_max", "valkey_engine_version",
+		"redis_instance_type", "redis_engine_version", "redis_family", "redis_cluster_size",
+		"redis_cluster_mode_enabled", "redis_multi_az_enabled", "redis_allowed_cidr_blocks",
+		"redis_allowed_security_group_ids", "redis_cloudwatch_logs_enabled",
+	}
+	awsRegistryReserved = []string{
+		"provision_ecr", "ecr_names_map", "ecr_repo_settings",
+		"ecr_repository_image_tag_mutability", "ecr_repository_image_scan_on_push",
+	}
+	awsClusterReserved = []string{"enable_karpenter"}
+	awsDNSReserved     = []string{"cloudfront_waf", "acm_certificate", "application_waf"}
+
+	// Every key this file assigns to root tfvars — the KEYS THE TYPED MAPPING WRITES, whether
+	// unconditionally or only when the canvas asked. All of them are reserved, because
+	// merge-if-absent protects only the unconditional ones: a key written inside an `if` leaves a
+	// gap exactly when the canvas declined to fill it, which is the moment a passthrough must not.
+	// Cluster node sizing and the brownfield network selectors are the whole reason this list
+	// exists rather than the per-component lists alone — none of them appeared in any reservation,
+	// so on every cloud a database's provider_config could set the cluster's disk size, and on
+	// Alibaba its `network_id` and `subnet_ids`. Found in review.
+	//
+	// Generated once from the assignments below it and kept honest by
+	// TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads them: a new `tfvars[...]`
+	// assignment fails the suite until it is listed here.
+	awsTypedTfvars = []string{
+		"acm_certificate_enable", "application_waf_enabled", "aws_account_id", "bucket_configuration",
+		"classification_tags", "cloud_dns_enabled", "cloudfront_waf_enabled",
+		"create_elasticache_redis", "create_elasticache_valkey", "create_rds", "custom_secrets",
+		"ddb_create", "ddb_global_create", "ddb_global_table_configuration", "ddb_table_configuration",
+		"dns_hosted_zone", "dns_main_domain", "ecr_names_map", "ecr_repo_settings",
+		"ecr_repository_image_scan_on_push", "ecr_repository_image_tag_mutability",
+		"eks_cluster_admins", "eks_cluster_version", "eks_disk_size", "eks_instance_types",
+		"eks_ng_desired_size", "eks_ng_max_size", "eks_ng_min_size", "enable_karpenter", "environment",
+		"project_name", "provision_ecr", "provision_sqs", "provision_vpc",
+		"rds_backup_retention_period", "rds_config", "rds_iam_auth_enabled", "rds_iam_irsa",
+		"rds_instance_type", "rds_logs_exports", "rds_scaling_config", "redis_allowed_cidr_blocks",
+		"redis_allowed_security_group_ids", "redis_cloudwatch_logs_enabled",
+		"redis_cluster_mode_enabled", "redis_cluster_size", "redis_engine_version", "redis_family",
+		"redis_instance_type", "redis_multi_az_enabled", "region", "s3_create", "sns_topics",
+		"sqs_queues", "valkey_data_storage_max", "valkey_engine_version", "vpc_allowed_cidr_blocks",
+		"vpc_cidr", "vpc_single_nat_gateway", "waf_log_retention_days", "waf_logging_enabled",
+		"waf_sampled_requests_enabled", "waf_webacl_cloudwatch_enabled",
+	}
+
+	awsRootReserved = unionReserved(awsTypedTfvars, awsDatabaseReserved, awsCacheReserved, awsRegistryReserved,
+		awsClusterReserved, awsDNSReserved)
+)
+
+// unionReserved flattens the per-component reserved lists of ONE cloud into the set every
+// root-level merge on that cloud is passed.
+func unionReserved(lists ...[]string) []string {
+	seen := make(map[string]bool, 32)
+	out := make([]string, 0, 32)
+	for _, l := range lists {
+		for _, k := range l {
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
+	}
+	return out
 }
 
 // mergeProviderConfig copies template-variable overrides from a component's
@@ -348,7 +465,9 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 // set by the typed mappings (merge-if-absent). This is the generic "passthrough"
 // that lets the UI drive any template variable by name without a dedicated Go field
 // per knob. `reserved` lists provider_config keys the typed code already consumed
-// under a different tfvar name, so they are skipped (no undeclared-var duplicates).
+// under a different tfvar name, so they are skipped (no undeclared-var duplicates). A ROOT-level
+// caller passes its cloud's union of those lists, never just its own, so no component's knobs can
+// decide a variable another component owns; an item-level caller passes only its own.
 func mergeProviderConfig(tfvars map[string]interface{}, pc map[string]any, reserved ...string) {
 	if len(pc) == 0 {
 		return
@@ -365,6 +484,24 @@ func mergeProviderConfig(tfvars map[string]interface{}, pc map[string]any, reser
 			tfvars[k] = v
 		}
 	}
+}
+
+// mergeItemProviderConfig is mergeProviderConfig for a component the template models as ONE ENTRY
+// of a map(object)/list variable — a queue in `sqs_queues`, a bucket in `bucket_configuration`, a
+// repository in `artifact_registry_repos` — rather than as root-level variables of its own. The
+// contract is identical (merge-if-absent into the per-item object; `reserved` names the attributes
+// the builder owns, whether emitted conditionally, consumed under another name, or withdrawn), and
+// the body delegates. It exists as a separate name because the SHAPE is the fact a reader needs:
+// apps/console/scripts/check-config-carriage.mjs attributes a `mergeProviderConfig` site to a kind
+// by the root binding it merges into, and an item site merged under that name would be read as
+// reaching root tfvars it never touches.
+//
+// What survives is the template's decision, exactly as it is for a root variable: a `map(any)` /
+// `list(any)` item carries any attribute the caller names, while a typed `object({...})` item
+// silently drops an attribute it does not declare (#1994 is the recorded case). Declared coverage
+// is measured by check-offer-parity; this is only the plumbing.
+func mergeItemProviderConfig(item map[string]interface{}, pc map[string]any, reserved ...string) {
+	mergeProviderConfig(item, pc, reserved...)
 }
 
 func ensureSlice(s []interface{}) []interface{} {
@@ -561,11 +698,18 @@ func buildSQSQueues(queues []types.ProjectQueueConfig, topics []types.ProjectTop
 		if d, ok := providerInt(q.ProviderConfig, "delay_seconds"); ok {
 			cfg["delay_seconds"] = d
 		}
+		// `delay_seconds` is reserved even though it is consumed just above: providerInt refuses a
+		// non-numeric value, and without the reservation that refused value would be re-injected raw.
+		mergeItemProviderConfig(cfg, q.ProviderConfig,
+			"fifo_queue", "content_based_deduplication", "dlq_enable",
+			"visibility_timeout_seconds", "message_retention_seconds", "delay_seconds")
 		result[q.Name] = cfg
 	}
 	return result
 }
 
+// buildSNSTopics maps each canvas topic onto one entry of the `sns_topics` tfvar, subscriptions
+// included; a topic's provider_config merges into its own entry.
 func buildSNSTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
@@ -576,9 +720,11 @@ func buildSNSTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 				"endpoint": s.Endpoint,
 			})
 		}
-		result[t.Name] = map[string]interface{}{
+		entry := map[string]interface{}{
 			"subscriptions": subs,
 		}
+		mergeItemProviderConfig(entry, t.ProviderConfig, "subscriptions")
+		result[t.Name] = entry
 	}
 	return result
 }
@@ -702,6 +848,9 @@ func ecrRepoBaseName(name string) string {
 	return b.String()
 }
 
+// buildSecrets maps each NATIVELY provisioned secret onto one entry of the `custom_secrets` tfvar —
+// a generated one by length/charset, a manual one by the `manual` flag; a secret's provider_config
+// merges into its own entry.
 func buildSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
@@ -717,6 +866,9 @@ func buildSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} 
 		} else {
 			entry["manual"] = true
 		}
+		// `length`/`special`/`manual` are reserved on BOTH branches: each is written only on one
+		// side of the switch, and a provider_config key must not fill the side the switch left empty.
+		mergeItemProviderConfig(entry, s.ProviderConfig, "secret_name", "length", "special", "manual")
 		result = append(result, entry)
 	}
 	return result
@@ -731,6 +883,8 @@ func hasGlobalTables(tables []types.ProjectNosqlConfig) bool {
 	return false
 }
 
+// buildDDBTables maps the canvas's NoSQL tables of ONE table type (standard | global) onto the
+// matching `ddb_*_table_configuration` list; a table's provider_config merges into its own entry.
 func buildDDBTables(tables []types.ProjectNosqlConfig, tableType string) []map[string]interface{} {
 	result := []map[string]interface{}{}
 	for _, t := range tables {
@@ -755,11 +909,19 @@ func buildDDBTables(tables []types.ProjectNosqlConfig, tableType string) []map[s
 		if tableType == "global" && len(t.GlobalReplicas) > 0 {
 			entry["replicas"] = t.GlobalReplicas
 		}
+		// `replicas` is reserved on both table types: a regional table must never carry one, and a
+		// global table's come from the canvas's region picker, not from a hand-typed key.
+		mergeItemProviderConfig(entry, t.ProviderConfig,
+			"table_name_suffix", "hash_key", "hash_key_type", "range_key", "range_key_type",
+			"billing_mode", "enable_point_in_time_recovery", "replicas")
 		result = append(result, entry)
 	}
 	return result
 }
 
+// buildS3Buckets maps each canvas bucket onto one entry of the `bucket_configuration` tfvar —
+// public-access block, versioning, SSE and CORS; a bucket's provider_config merges into its own
+// entry. `encryption_algorithm` is reserved because s3SSEAlgorithm consumes it under `sse_algorithm`.
 func buildS3Buckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
@@ -774,7 +936,7 @@ func buildS3Buckets(buckets []types.ProjectStorageBucketConfig) []map[string]int
 				"max_age_seconds": 3600,
 			})
 		}
-		result = append(result, map[string]interface{}{
+		entry := map[string]interface{}{
 			"bucket_name_suffix":      b.Name,
 			"acl_type":                "private",
 			"create_s3_user":          false,
@@ -786,7 +948,13 @@ func buildS3Buckets(buckets []types.ProjectStorageBucketConfig) []map[string]int
 			"ignore_public_acls":      blockPublic,
 			"restrict_public_buckets": blockPublic,
 			"cors_configuration":      cors,
-		})
+		}
+		mergeItemProviderConfig(entry, b.ProviderConfig,
+			"bucket_name_suffix", "acl_type", "create_s3_user", "versioning_enabled",
+			"sse_algorithm", "encryption_algorithm", "store_access_key_in_ssm",
+			"block_public_acls", "block_public_policy", "ignore_public_acls",
+			"restrict_public_buckets", "cors_configuration")
+		result = append(result, entry)
 	}
 	return result
 }
