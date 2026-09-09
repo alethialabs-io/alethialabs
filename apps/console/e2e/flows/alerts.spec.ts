@@ -180,7 +180,12 @@ test.describe("Alerts — the guided add-a-channel sheet", () => {
 		await expect(sheet.getByPlaceholder("name@acme.cloud")).toBeVisible();
 		await sheet.getByRole("button", { name: "Webhook HTTPS POST" }).click();
 		await expect(sheet.getByLabel("Payload URL", { exact: true })).toBeVisible();
-		await expect(sheet.getByLabel("Signing secret")).toBeVisible();
+		// `getByRole("textbox")`, not `getByLabel`: the FieldHelp trigger beside this field is a
+		// button named "Help: Signing secret", and getByLabel matches a substring — so the label
+		// alone resolves to the input AND its help popover trigger.
+		await expect(
+			sheet.getByRole("textbox", { name: "Signing secret" }),
+		).toBeVisible();
 	});
 
 	test("email: a blank name is rejected inline", async ({ team }) => {
