@@ -51,6 +51,7 @@ import path from "node:path";
 
 const OUT_DIR = path.resolve(import.meta.dirname, "../../smoke-results");
 
+
 /** A same-origin request the page made, with the status it came back with. */
 interface SeenRequest {
 	url: string;
@@ -247,8 +248,15 @@ const CHECKS: Check[] = [
 		async run(ctx) {
 			const expected = process.env.SMOKE_EXPECTED_SHA?.trim();
 			const v = await ctx.visit("/");
+			// No local `declare global` and no cast. `next-runtime-env` already declares
+			// `Window.__ENV: NodeJS.ProcessEnv`, so re-declaring it is TS2717/TS2687 (a different
+			// type and different modifiers) and a `window as …` cast is a lint error —
+			// `eslint.config.mjs` sets `assertionStyle: "never"` outside `tests/**` and `e2e/**`,
+			// and `scripts/e2e/**` is not that `e2e/`. The optional chain stays because the script
+			// tag genuinely may not have rendered, which is a state this check must observe rather
+			// than crash on.
 			const served = await v.page.evaluate(
-				() => (window as unknown as { __ENV?: Record<string, string> }).__ENV?.NEXT_PUBLIC_APP_VERSION ?? null,
+				() => window.__ENV?.NEXT_PUBLIC_APP_VERSION ?? null,
 			);
 			if (!expected) {
 				// Not every deploy moves the console image. Saying so is honest; inventing a pass is not.
