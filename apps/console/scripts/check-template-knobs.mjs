@@ -41,6 +41,7 @@ import {
 	JSON_OUT,
 	PASSTHROUGH,
 	deadKnobs,
+	reportedAsOutput,
 	docText,
 	entries,
 	jsonText,
@@ -159,13 +160,17 @@ for (const e of EXCLUDED.filter((x) => x.section === "cells")) {
 // ── rule 1 · declared, reachable, read by nothing ───────────────────────────────────
 
 const deadLedger = EXCLUDED.filter((x) => x.section === "dead");
+const reportedLedger = EXCLUDED.filter((x) => x.section === "reported");
+const listed = (led, d) => led.some((x) => x.cloud === d.cloud && x.component === d.component && x.knob === d.name);
+
 for (const d of deadKnobs) {
-	if (deadLedger.some((x) => x.cloud === d.cloud && x.component === d.component && x.knob === d.name)) continue;
+	if (listed(deadLedger, d) || listed(reportedLedger, d)) continue;
 	fail(
 		`${d.cloud}/${d.component}: \`${d.name}\` is declared, reachable, and read by nothing`,
 		`Declared at ${d.declaredAt}. A user can set it and no resource or module argument consumes it — the template ` +
-			"advertises a knob it does not honour. Wire it into the module, DELETE the declaration, or record it under " +
-			"`dead:` in infra/templates/project/knob-exclusions.yaml as backlog.",
+			"advertises a knob it does not honour. Wire it into the module, DELETE the declaration, record it under " +
+			"`dead:` as backlog, or — if its only correct reader IS an output — under `reported:` as a decision. " +
+			"See infra/templates/project/knob-exclusions.yaml.",
 	);
 }
 for (const x of deadLedger) {
@@ -174,6 +179,45 @@ for (const x of deadLedger) {
 		`ledger \`dead:\` entry ${x.cloud}/${x.component}/${x.knob} is not dead`,
 		"It is now read, or no longer declared. Delete the entry — the backlog can only shrink, and a fixed knob left " +
 			"listed here is a defect the board still believes in.",
+	);
+}
+
+// ── rule 2 · `reported:` — the knob whose only correct reader IS an output ───────────
+//
+// Checked in BOTH directions exactly as `dead:` is, plus one more that `dead:` does not need. The
+// extra arm is the whole point: without it `reported:` is a laundry chute — anything inconvenient in
+// the backlog could be moved across with a confident sentence, and the section that was supposed to
+// hold a decision would quietly hold the defects too.
+for (const x of reportedLedger) {
+	if (!deadKnobs.some((d) => d.cloud === x.cloud && d.component === x.component && d.name === x.knob)) {
+		fail(
+			`ledger \`reported:\` entry ${x.cloud}/${x.component}/${x.knob} is no longer output-only`,
+			"A resource or module argument now reads it, or it is no longer declared. Either is a real change: delete " +
+				"the entry, because a decision recorded about a variable that no longer has this shape is a decision " +
+				"about nothing.",
+		);
+		continue;
+	}
+	if (!reportedAsOutput(x.cloud, x.knob)) {
+		fail(
+			`ledger \`reported:\` entry ${x.cloud}/${x.component}/${x.knob} is not reported on any output`,
+			"`reported:` claims the variable's only correct reader is an `output`, and no output block in this cloud's " +
+				"root references it. That makes it an ordinary dead knob: move it to `dead:` with an issue, or wire it. " +
+				"Recording a defect as a decision is the one thing this section must not be able to do.",
+		);
+	}
+}
+// And the other way: a knob sitting in the BACKLOG that is in fact reported on an output is a
+// decision filed as a defect. `dead:` is documented as "can only shrink"; an entry that will never
+// legitimately shrink keeps a permanent line in a list whose whole meaning is that it empties.
+for (const x of deadLedger) {
+	if (!deadKnobs.some((d) => d.cloud === x.cloud && d.component === x.component && d.name === x.knob)) continue;
+	if (!reportedAsOutput(x.cloud, x.knob)) continue;
+	fail(
+		`ledger \`dead:\` entry ${x.cloud}/${x.component}/${x.knob} is reported on an output`,
+		"An output block references it, so this is the brought-resource shape — the caller supplies something the " +
+			"template deliberately does not create, and the id is echoed back. Move it to `reported:` with the reason. " +
+			"Leaving it in `dead:` puts a line in the backlog that can never shrink.",
 	);
 }
 
@@ -194,9 +238,15 @@ if (stale.length) {
 
 if (!failures.length) {
 	const dead = deadLedger.length;
+	const reported = reportedLedger.length;
+	// The two counts are printed APART because only one of them is a backlog. Saying "23 dead knobs,
+	// all recorded, the list can only shrink" would be false the moment `reported:` existed: those
+	// entries are decisions and will never shrink, and folding them in would quietly restate a
+	// permanent contract as outstanding debt.
 	console.log(
 		`\n· ${uncoveredCells.length} cell(s) with no passthrough and ${dead} declared-and-dead knob(s), every one recorded in ` +
-			"infra/templates/project/knob-exclusions.yaml. Both lists can only shrink.",
+			`infra/templates/project/knob-exclusions.yaml. Those two lists can only shrink. A further ${reported} knob(s) ` +
+			"are read only by an `output` — the brought-resource shape, recorded under `reported:` as decisions, which do not.",
 	);
 	console.log("\ntemplate-knobs: OK");
 	process.exit(0);
