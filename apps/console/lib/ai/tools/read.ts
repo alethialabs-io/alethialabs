@@ -24,8 +24,13 @@ const names = (a: Array<{ name: string }> | undefined) =>
  * Read tools — each wraps an existing PDP-gated server action (the actor was
  * already authorized by the route; the actions re-check their own verb). Returns
  * are TRIMMED and SECRET-FREE (never argocd passwords, tokens, or credentials).
+ *
+ * `opts.environmentId` is the environment a project conversation is scoped to; `list_jobs`
+ * defaults its filter to it so "what ran here" answers about the environment on screen.
+ * The org agent passes nothing and reads every job, as before.
  */
-export function readTools() {
+export function readTools(opts?: { environmentId?: string | null }) {
+	const scopedEnvironmentId = opts?.environmentId ?? null;
 	return {
 		get_project: tool({
 			description:
@@ -98,19 +103,29 @@ export function readTools() {
 		}),
 
 		list_jobs: tool({
-			description:
-				"List recent provisioning jobs (plan/deploy/destroy/…) with status. PDP-gated read.",
+			description: scopedEnvironmentId
+				? `List recent provisioning jobs (plan/deploy/destroy/…) with status. Defaults to the jobs of environment ${scopedEnvironmentId} (the one this conversation is scoped to); pass environmentId to read another environment's. PDP-gated read.`
+				: "List recent provisioning jobs (plan/deploy/destroy/…) with status; pass environmentId to narrow to one environment. PDP-gated read.",
 			inputSchema: z.object({
 				limit: z.number().int().positive().max(50).optional(),
+				environmentId: z
+					.string()
+					.optional()
+					.describe("Only jobs that ran against this environment."),
 			}),
-			execute: async ({ limit }) => {
+			execute: async ({ limit, environmentId }) => {
 				const all = await getJobs();
+				const envFilter = environmentId ?? scopedEnvironmentId;
+				const matching = envFilter
+					? all.filter((j) => j.environment_id === envFilter)
+					: all;
 				return {
-					jobs: all.slice(0, limit ?? 20).map((j) => ({
+					jobs: matching.slice(0, limit ?? 20).map((j) => ({
 						id: j.id,
 						type: j.job_type,
 						status: j.status,
 						project: j.project_name,
+						environment_id: j.environment_id,
 						provider: j.cloud_provider,
 						created_at: j.created_at,
 						completed_at: j.completed_at,
