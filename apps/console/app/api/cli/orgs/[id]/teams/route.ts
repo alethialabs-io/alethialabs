@@ -23,10 +23,10 @@ export async function GET(
 ) {
 	const auth = await authorizeCli(req, "view", { type: "member" });
 	if ("error" in auth) return auth.error;
-	const { actor } = auth;
+	const { actor, credential } = auth;
 	const { id } = await params;
 
-	const denied = await ensureCliOrgAccess(actor, actor.userId, id);
+	const denied = await ensureCliOrgAccess(actor, credential, id);
 	if (denied) return denied;
 
 	try {
@@ -55,10 +55,10 @@ export async function POST(
 ) {
 	const auth = await authorizeCli(req, "manage_members", { type: "member" });
 	if ("error" in auth) return auth.error;
-	const { actor } = auth;
+	const { actor, credential } = auth;
 	const { id } = await params;
 
-	const denied = await ensureCliOrgAccess(actor, actor.userId, id);
+	const denied = await ensureCliOrgAccess(actor, credential, id);
 	if (denied) return denied;
 
 	const parsed = createTeamBody.safeParse(await req.json().catch(() => null));
