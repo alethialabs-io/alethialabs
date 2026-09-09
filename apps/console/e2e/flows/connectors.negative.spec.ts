@@ -21,6 +21,28 @@ async function gotoConnectors(page: Page, orgSlug: string): Promise<void> {
 	await expect(page.getByLabel("Search connectors")).toBeVisible({ timeout: 60_000 });
 }
 
+/**
+ * Types a search term and waits for the board to actually be filtered by it.
+ *
+ * FILLING THE BOX IS NOT FILTERING THE BOARD. Free text goes through `useDebouncedValue` (250ms)
+ * before it reaches the query key, so an assertion fired straight after `fill()` reads the
+ * UNFILTERED board — which is how this file's first version failed: `getByText("Not enabled on
+ * this instance")` resolved to seven elements, one per unavailable connector in the whole
+ * catalog (aws · gcp · azure · alibaba · github · gitlab · bitbucket), and the Azure card was
+ * only one of them.
+ *
+ * The settle point is the toolbar's count pill, which IS the row count, so this states how many
+ * connectors the term is expected to match. `toHaveText` retries, so it waits out the debounce —
+ * and a catalog change that moves the number reds here, naming it, instead of silently making a
+ * sibling assertion true about the wrong card. That is the reason this is not a `.first()`.
+ */
+async function filterTo(page: Page, term: string, rows: number): Promise<void> {
+	await page.getByLabel("Search connectors").fill(term);
+	await expect(
+		page.locator('[data-slot="page-toolbar"] [data-slot="count-pill"]'),
+	).toHaveText(String(rows));
+}
+
 test.describe("Connectors — a cloud this instance cannot connect", () => {
 	// WHY AZURE, UNCONDITIONALLY. `computePlatformConfigured()` gates aws/gcp/azure/alibaba on the
 	// OIDC signing key, which the release-gate job does not set, so all four read "unavailable"
@@ -31,16 +53,21 @@ test.describe("Connectors — a cloud this instance cannot connect", () => {
 	// than the `test.skip(connected > 0, …)` it used to carry: an unset condition that skips is the
 	// `HAVE_MEMBER` shape, and the skip was reading a page-wide Manage count that said nothing
 	// about Azure anyway.
+	// "Microsoft Azure" matches three catalog rows — the cloud itself by name, and the ACR and Key
+	// Vault cross-account connectors by vendor. Only the cloud is `active`; the other two are
+	// coming-soon, so exactly one row can carry the unavailable wording.
+	const AZURE_MATCHES = 3;
+
 	test("a managed cloud with no platform credentials says so in words", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByLabel("Search connectors").fill("Microsoft Azure");
-		await expect(owner.page.getByText("Not enabled on this instance")).toBeVisible();
+		await filterTo(owner.page, "Microsoft Azure", AZURE_MATCHES);
+		await expect(owner.page.getByText("Not enabled on this instance")).toHaveCount(1);
 	});
 
 	test("…and offers an Unavailable pill instead of a doomed connect", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByLabel("Search connectors").fill("Microsoft Azure");
-		await expect(owner.page.getByText("Unavailable", { exact: true }).first()).toBeVisible();
+		await filterTo(owner.page, "Microsoft Azure", AZURE_MATCHES);
+		await expect(owner.page.getByText("Unavailable", { exact: true })).toHaveCount(1);
 		await expect(
 			owner.page.getByRole("button", { name: "Connect Microsoft Azure", exact: true }),
 		).toHaveCount(0);
@@ -49,10 +76,11 @@ test.describe("Connectors — a cloud this instance cannot connect", () => {
 	test("a coming-soon connector offers no action at all", async ({ owner }) => {
 		// DigitalOcean has no provisioning templates yet (`status: coming_soon` in the catalog), so
 		// the card states that and renders neither Connect nor Manage — connecting it would be a
-		// dead end rather than a slow one.
+		// dead end rather than a slow one. Two rows match: the cloud, and its container registry
+		// (which IS connectable — that is the pair that makes the exact button names below load-bearing).
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByLabel("Search connectors").fill("DigitalOcean");
-		await expect(owner.page.getByText("Coming soon").first()).toBeVisible();
+		await filterTo(owner.page, "DigitalOcean", 2);
+		await expect(owner.page.getByText("Coming soon")).toHaveCount(1);
 		await expect(
 			owner.page.getByRole("button", { name: "Connect DigitalOcean", exact: true }),
 		).toHaveCount(0);
