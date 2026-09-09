@@ -68,6 +68,7 @@
     "mutate:since": "stryker run --since origin/main",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "smoke:prod": "tsx scripts/e2e/post-deploy-smoke.ts",
     "email:dev": "email dev --dir emails --port 3001",
     "email:export": "email export --dir emails --outDir .react-email-out",
     "export:addon-catalog": "tsx scripts/export-addon-catalog.mts",
