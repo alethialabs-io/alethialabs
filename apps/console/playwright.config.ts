@@ -66,7 +66,7 @@ const RUN_POSTURE: Record<string, string | null> = {
 	// The one audit project that DRIVES the console rather than reading it. Separate leg because it
 	// needs the stripe promise (billing's controls must render to be opened) and 0 retries: a
 	// destructive control that only sometimes confirms is a finding, and a retry would hide it.
-	"audit-interaction": "release-gate.yml · Release gate (interaction)",
+	"audit-interaction": "release-gate.yml · Release gate (audit-interaction)",
 };
 
 /**
