@@ -17,11 +17,11 @@ provisioned.
 
 | Cloud | knobs | reachable | settable (offered) | declared-and-dead |
 |---|---:|---:|---:|---:|
-| alibaba | 63 | 39 | 10 | 1 |
-| aws | 159 | 118 | 51 | 7 |
-| azure | 90 | 59 | 24 | 4 |
-| gcp | 104 | 77 | 32 | 8 |
-| hetzner | 37 | 16 | 2 | 2 |
+| alibaba | 63 | 45 | 11 | 1 |
+| aws | 159 | 122 | 52 | 7 |
+| azure | 90 | 64 | 24 | 4 |
+| gcp | 104 | 84 | 34 | 8 |
+| hetzner | 37 | 27 | 4 | 3 |
 
 **knobs** = root variables the root module declares, plus the object attributes a leaf component's item
 passthrough reaches. **reachable** = a `provider_config` merge lands on it. **settable** = reachable, and neither
@@ -37,8 +37,8 @@ argument — the shape a raw variable count cannot tell from a working knob.
 | cache | 0 / 6 | 5 / 18 | 3 / 6 | 3 / 11 | — |
 | cluster | 9 / 17 | 11 / 21 | 11 / 18 | 13 / 21 | 2 / 11 |
 | database | 0 / 8 | 4 / 11 | 3 / 11 | 7 / 14 | — |
-| dns | 1 / 5 | 7 / 16 | 4 / 8 | 3 / 7 | 0 / 5 |
-| network | 0 / 6 | 0 / 4 | 0 / 5 | 0 / 7 | 0 / 6 |
+| dns | 1 / 5 | 7 / 16 | 4 / 8 | 3 / 7 | 2 / 5 |
+| network | 1 / 6 | 1 / 4 | 0 / 5 | 2 / 7 | 0 / 6 |
 | nosql | 0 / 2 | 8 / 20 | 1 / 11 | 2 / 4 | — |
 | platform | 0 / 6 | 0 / 22 | 0 / 9 | 0 / 10 | 0 / 5 |
 | queue | 0 / 2 | 0 / 4 | 0 / 3 | 0 / 2 | — |
@@ -52,16 +52,10 @@ Each cell is **settable / declared**. A `—` means the cloud declares nothing t
 
 | Cloud | Component | Recorded reason |
 |---|---|---|
-| alibaba | network | GAP, not a ceiling: ProjectNetworkConfig carries no ProviderConfig field, so no network knob is reachable on any cloud. Closing it is one Go field plus one merge call. |
 | alibaba | platform | Platform context is injected by the runner and the `alethia_*` namespace is reserved; a component's provider_config must not be able to rename the environment it is built in. |
-| aws | network | GAP, not a ceiling: ProjectNetworkConfig carries no ProviderConfig field, so no network knob is reachable on any cloud. Closing it is one Go field plus one merge call. |
 | aws | platform | Platform context is injected by the runner and the `alethia_*` namespace is reserved; a component's provider_config must not be able to rename the environment it is built in. |
-| azure | network | GAP, not a ceiling: ProjectNetworkConfig carries no ProviderConfig field, so no network knob is reachable on any cloud. Closing it is one Go field plus one merge call. |
 | azure | platform | Platform context is injected by the runner and the `alethia_*` namespace is reserved; a component's provider_config must not be able to rename the environment it is built in. |
-| gcp | network | GAP, not a ceiling: ProjectNetworkConfig carries no ProviderConfig field, so no network knob is reachable on any cloud. Closing it is one Go field plus one merge call. |
 | gcp | platform | Platform context is injected by the runner and the `alethia_*` namespace is reserved; a component's provider_config must not be able to rename the environment it is built in. |
-| hetzner | dns | GAP, not a ceiling: hetzner/dns.tf builds a real `hcloud_zone` (#1816) and declares its knobs, but hetzner_provider.go merges only the cluster's and the bucket's provider_config — so every hcloud DNS knob is declared and unreachable. |
-| hetzner | network | GAP, not a ceiling: ProjectNetworkConfig carries no ProviderConfig field, so no network knob is reachable on any cloud. Closing it is one Go field plus one merge call. |
 | hetzner | platform | Platform context is injected by the runner and the `alethia_*` namespace is reserved; a component's provider_config must not be able to rename the environment it is built in. |
 
 ## Declared, reachable, read by nothing
@@ -90,6 +84,7 @@ Each cell is **settable / declared**. A `—` means the cloud declares nothing t
 | gcp | database | `cloud_sql_default_username` | infra/templates/project/gcp/variables.tf:358 |
 | hetzner | bucket | `cors_origins` | infra/templates/project/hetzner/variables.tf:258 |
 | hetzner | bucket | `encryption_enabled` | infra/templates/project/hetzner/variables.tf:258 |
+| hetzner | dns | `dns_hosted_zone` | infra/templates/project/hetzner/variables.tf:244 |
 
 ## How a knob is attributed to a component
 
