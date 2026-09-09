@@ -11,23 +11,16 @@ import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
  * The runner has always run Infracost on every PLAN and posted the breakdown; nobody ever wrote it
  * down, so "what does production cost?" had nowhere to look. Now it does.
  *
- * The honest states matter here. Never planned = we genuinely don't know, and the chip says so
- * rather than showing $0.00 — a fabricated zero is worse than an admitted unknown, because you'd
- * believe it.
+ * Never priced = we genuinely don't know, and the chip says NOTHING rather than either a
+ * fabricated $0.00 (worse than an admitted unknown, because you'd believe it) or a dashed "Not
+ * priced" pill sitting in the toolbar of every fresh environment — a label for an absence, on the
+ * row that is meant to ease a first visit in. The node cards, the Cost tab and the assistant all
+ * still say "not priced yet" where the question is actually asked.
  */
 export function CostChip() {
 	const env = useEnvironmentStatus();
 
-	if (env.monthlyCost == null) {
-		return (
-			<span
-				className="flex h-8 items-center gap-1.5 border border-dashed border-border px-2.5 font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground"
-				title="Run a plan to price this environment."
-			>
-				Not priced
-			</span>
-		);
-	}
+	if (env.monthlyCost == null) return null;
 
 	return (
 		<span

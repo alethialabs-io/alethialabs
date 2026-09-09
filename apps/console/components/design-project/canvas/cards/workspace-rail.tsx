@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import { AddonConfigCard } from "@/components/addons/addon-config-card";
 import { useCanvasStore, type WorkspaceCard } from "@/lib/stores/use-canvas-store";
 import { InspectorPanel } from "../node-inspector";
+import { ActivityCard } from "./activity-card";
 import { ChartScanCard } from "./chart-scan-card";
 import { EnvSettingsCard } from "./env-settings-card";
 import { IacScanCard } from "./iac-scan-card";
@@ -19,29 +20,30 @@ export const RAIL_GAP = 12;
 export interface RailContext {
 	/** The project the cards act on. Absent in the create flow, which has no project yet. */
 	projectId?: string;
+	/** The environment the cards read. Absent in the create flow, and null until one resolves. */
+	environmentId?: string | null;
 }
 
 /**
- * Whether the rail has something to draw for a card. The `activity` card is declared in the store's
- * union ahead of its lane; until that lands the rail stays closed for it rather than drawing an
- * empty column.
+ * Whether the rail has something to draw for a card.
  *
  * It takes the same context `CardBody` does, and that is the point rather than a convenience: the
  * two answers must be one answer. An add-on card needs a project, so in the create flow — reachable
  * with `?card=addon:grafana`, which `parseCardParam` accepts — `CardBody` drew nothing while this
  * said the rail was open, leaving a 392px empty column with no header and no close button. Every
  * case a body can decline has to be declined here too.
+ *
+ * `activity` used to be declined here unconditionally, because the card was declared in the store's
+ * union ahead of its lane. That lane has landed, so it is declined on the same terms as the rest:
+ * only when the subject it reads is not there.
  */
 export function isRailOpen(card: WorkspaceCard | null, ctx: RailContext = {}): boolean {
 	if (card === null) return false;
-	switch (card.kind) {
-		case "activity":
-			return false;
-		case "addon":
-			return ctx.projectId !== undefined;
-		default:
-			return true;
-	}
+	if (card.kind === "addon") return ctx.projectId !== undefined;
+	// The activity card reads one environment's jobs, so it needs both halves — the same
+	// disagreement as the add-on card, one card further along.
+	if (card.kind === "activity") return Boolean(ctx.projectId && ctx.environmentId);
+	return true;
 }
 
 /** A stable key per card so switching cards crossfades instead of morphing one body into another. */
@@ -87,7 +89,7 @@ export function WorkspaceRail({
 
 	useEffect(() => () => closeCard(), [closeCard]);
 
-	const open = isRailOpen(card, { projectId });
+	const open = isRailOpen(card, { projectId, environmentId });
 
 	return (
 		<motion.div
@@ -157,7 +159,8 @@ function CardBody({
 		case "iac-scan":
 			return <IacScanCard />;
 		case "activity":
-			// Declared ahead of its lane; `isRailOpen` keeps the rail closed for it meanwhile.
-			return null;
+			return projectId && environmentId ? (
+				<ActivityCard projectId={projectId} environmentId={environmentId} />
+			) : null;
 	}
 }
