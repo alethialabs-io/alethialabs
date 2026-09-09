@@ -514,6 +514,159 @@ export function compareLive({ rulesets, hclAll, devExcluded, stagingExcluded = n
 	return rows;
 }
 
+// ── THE FOURTH QUESTION: has a required context ever been SATISFIED? ──────────────────────────────
+//
+// The three comparisons above all ask whether the LISTS agree. None of them asks whether the checks
+// on those lists can go green — and a context nothing has ever satisfied is the one failure that
+// cannot be recovered from without `--admin`: it blocks every PR into the branch, permanently, with
+// nothing red to point at. The merge box just says a required check has not run.
+//
+// This was reached twice in one day. #4435 added `Release gate (audit-interaction)` under a name no
+// job produced (a NAME mismatch, since fixed). #4510 then found the same context under the RIGHT
+// name with no observed success, because `apps/console/e2e/gate-baseline.json` carried no baseline
+// for it and the ratchet fails closed on an uncaptured one — correctly, since a gate that passes
+// against an empty ledger is vacuous. The three lists agreed perfectly in both cases.
+//
+// The hazard is at APPLY time, not now: `infra/github` is applied by hand, so the HCL's INTENT is
+// what this is measured against. The question is "would an apply wedge this branch", and it is worth
+// answering before the apply rather than discovering it afterwards on a promotion that will not move.
+
+/**
+ * Fold observed CI jobs into `context → Set(conclusion)`.
+ *
+ * Pure, so the fixtures exercise it without the network. A job that has not finished contributes its
+ * `status` (`queued`, `in_progress`) rather than a conclusion, and that distinction is load-bearing:
+ * a queued job is evidence the leg EXISTS, and is NOT evidence it can pass. Collapsing the two is
+ * exactly how #4510's leg read as "present" while never having gone green.
+ */
+export function collectObservedConclusions(jobs) {
+	const observed = new Map();
+	for (const j of jobs ?? []) {
+		const name = j?.name;
+		if (typeof name !== "string" || name === "") continue;
+		const outcome = j.conclusion ?? j.status ?? "unknown";
+		if (!observed.has(name)) observed.set(name, new Set());
+		observed.get(name).add(outcome);
+	}
+	return observed;
+}
+
+/**
+ * Required contexts nothing has ever been seen to satisfy.
+ *
+ * `unseen` and `neverGreen` are reported apart on purpose — they call for different actions. A
+ * context no job has ever produced is usually a NAME or a trigger (#4435's case); a context whose
+ * every run failed is a real red someone has to fix (#4510's case, and #4445's `canvas` today).
+ * Merging them into one "bad" list would have made those two indistinguishable in the report.
+ */
+export function neverSatisfied({ contexts, observed }) {
+	const unseen = [];
+	const neverGreen = [];
+	for (const c of contexts) {
+		const seen = observed.get(c);
+		if (!seen || seen.size === 0) {
+			unseen.push(c);
+			continue;
+		}
+		if (!seen.has("success")) neverGreen.push({ context: c, seen: [...seen].sort() });
+	}
+	return { unseen, neverGreen };
+}
+
+/**
+ * Re-ask, deeper, about the contexts the shallow pass flagged.
+ *
+ * The shallow window is uniform across workflows, so a leg that passes RARELY reads as never-green
+ * purely because its last success fell outside it — measured: at 8 runs per workflow `Release gate
+ * (audit)` was flagged, and it had in fact gone green 12 runs back. Deepening everything to cover
+ * that costs a multiple of the API calls for a question already answered about most contexts.
+ *
+ * So deepen only where the answer is still "no", and only in the workflows that actually emit the
+ * context — which pass 1 recorded. A context nothing produced at all (`unseen`) cannot be deepened
+ * and stays flagged, which is the correct answer for it: no workflow emits that name.
+ */
+export function deepenNeverGreen({ repo, neverGreen, jobs, depth, run }) {
+	const cleared = [];
+	for (const n of neverGreen) {
+		const wfs = [...new Set(jobs.filter((j) => j.name === n.context).map((j) => j.workflow))];
+		let green = false;
+		for (const wf of wfs) {
+			if (green) break;
+			try {
+				const runs = JSON.parse(run(["api", `repos/${repo}/actions/workflows/${wf}/runs?per_page=${depth}`]));
+				for (const r of runs?.workflow_runs ?? []) {
+					const page = JSON.parse(run(["api", `repos/${repo}/actions/runs/${r.id}/jobs?per_page=100`]));
+					if ((page?.jobs ?? []).some((j) => j.name === n.context && j.conclusion === "success")) {
+						green = true;
+						break;
+					}
+				}
+			} catch {
+				// A deepening that cannot read leaves the flag STANDING. Failing to clear an alarm is
+				// the safe direction; clearing one on an unread page is not.
+			}
+		}
+		if (green) cleared.push(n.context);
+	}
+	return cleared;
+}
+
+/**
+ * Read recent job names + conclusions across the repo's workflow runs.
+ *
+ * Bounded by `runLimit` because the question is "has this EVER gone green recently", not "produce a
+ * history" — and an unbounded walk over a repo with this much CI is a rate-limit incident.
+ *
+ * SAMPLE BY WORKFLOW, NOT BY RECENCY. This took three tries, and each wrong one over-reported:
+ *
+ *   1. The most recent runs, unfiltered, reported ALL 19 required contexts as never-green —
+ *      including `TypeScript (lint · types · test · docs)`, which passes on essentially every push.
+ *      On a busy queue the newest runs are `in_progress`, so the window held runs with no verdict.
+ *   2. `status=completed` reported the same 19, now all `cancelled`: Mergify's speculative queue
+ *      drafts are cancelled constantly, so recent COMPLETED runs are mostly cancellations.
+ *   3. `status=success` finally cleared the 12 ordinary contexts, but still flagged all seven
+ *      release-gate legs. Four of those seven were wrong — `hero`, `elench-ai`, `console` and
+ *      `audit` HAVE each gone green, inside runs whose overall conclusion was `failure`. A job's
+ *      conclusion is independent of its run's, so filtering by run status discards real evidence.
+ *
+ * Every one of those windows sampled by RECENCY, and recency is dominated by the chattiest
+ * workflow. A required context emitted by a rare, label-gated workflow (`release-gate.yml` runs
+ * only on a labelled PR) is crowded out of any recency window long before it is crowded out of its
+ * own workflow's history. So the frame is one slice per WORKFLOW: every workflow gets equal
+ * representation and a rare leg is as visible as a chatty one.
+ *
+ * The remaining bound is stated rather than hidden: only the last `perWorkflow` runs of each
+ * workflow are read, so a context that last passed longer ago than that reads as never-green. That
+ * direction is deliberate — it over-reports a wedge risk rather than under-reporting one, and a
+ * missed wedge is unrecoverable without `--admin` while a false alarm costs one look.
+ *
+ * FAIL-CLOSED, like every other reader in this file: an API error, or a walk that yields no jobs at
+ * all, returns an error rather than an empty map. "I could not look" must never render as "I looked
+ * and everything is fine" — that is the green-on-blindness defect this file exists to argue against.
+ */
+export function readObservedJobs(repo, { perWorkflow = 8, run = (args) => execFileSync("gh", args, { encoding: "utf8" }) } = {}) {
+	try {
+		const wfs = JSON.parse(run(["api", `repos/${repo}/actions/workflows?per_page=100`]));
+		const wfIds = (wfs?.workflows ?? []).filter((w) => w.state === "active").map((w) => w.id);
+		if (wfIds.length === 0) return { jobs: null, error: "the workflows endpoint returned no active workflows" };
+		const jobs = [];
+		let runsRead = 0;
+		for (const wf of wfIds) {
+			const runs = JSON.parse(run(["api", `repos/${repo}/actions/workflows/${wf}/runs?per_page=${perWorkflow}`]));
+			for (const r of runs?.workflow_runs ?? []) {
+				runsRead++;
+				const page = JSON.parse(run(["api", `repos/${repo}/actions/runs/${r.id}/jobs?per_page=100`]));
+				for (const j of page?.jobs ?? []) jobs.push({ name: j.name, conclusion: j.conclusion, status: j.status, workflow: wf });
+			}
+		}
+		if (runsRead === 0) return { jobs: null, error: `read ${wfIds.length} workflow(s) and found no runs at all` };
+		if (jobs.length === 0) return { jobs: null, error: `read ${runsRead} run(s) and found no jobs at all` };
+		return { jobs, error: null };
+	} catch (e) {
+		return { jobs: null, error: String(e.message ?? e).split("\n")[0] };
+	}
+}
+
 function ok(label, cond, detail = "") {
 	if (cond) {
 		console.log(`ok   - ${label}`);
@@ -739,6 +892,40 @@ resource "github_repository_ruleset" "staging" {
 	const liveExtra = compareLive({ rulesets: [{ name: "protect-dev", checks: ["A", "B", "Z"] }], hclAll, devExcluded });
 	P("...and what it requires that the HCL does not", liveExtra[0].extra.includes("Z"), JSON.stringify(liveExtra));
 
+	// ── the fourth question: a required context nothing can satisfy ──────────────────────────────
+	const jobsFixture = [
+		{ name: "TypeScript (lint · types · test · docs)", conclusion: "success", status: "completed" },
+		{ name: "TypeScript (lint · types · test · docs)", conclusion: "failure", status: "completed" },
+		{ name: "Release gate (canvas)", conclusion: "failure", status: "completed" },
+		{ name: "Release gate (audit-interaction)", conclusion: null, status: "queued" },
+	];
+	const obs = collectObservedConclusions(jobsFixture);
+	P("a context seen green at least once is satisfiable", neverSatisfied({ contexts: ["TypeScript (lint · types · test · docs)"], observed: obs }).neverGreen.length === 0);
+	P("a context observed only as failure is neverGreen, not unseen", (() => { const r = neverSatisfied({ contexts: ["Release gate (canvas)"], observed: obs }); return r.unseen.length === 0 && r.neverGreen[0]?.context === "Release gate (canvas)"; })(), JSON.stringify(neverSatisfied({ contexts: ["Release gate (canvas)"], observed: obs })));
+	// A QUEUED job must not read as satisfiable. This is the #4510 shape exactly: the leg existed,
+	// one run carried it, and it had never concluded — "present" was mistaken for "can pass".
+	P("a context only ever queued is NOT satisfied", neverSatisfied({ contexts: ["Release gate (audit-interaction)"], observed: obs }).neverGreen.some((n) => n.context === "Release gate (audit-interaction)"));
+	P("a context no job has ever produced is unseen, not neverGreen", (() => { const r = neverSatisfied({ contexts: ["Release gate (nobody-emits-this)"], observed: obs }); return r.unseen.length === 1 && r.neverGreen.length === 0; })());
+	// MUTATION CONTROL: drop the green fixture and the same context must flip to a finding. Without
+	// this the two assertions above would both pass against a predicate that never fires.
+	P("...and removing the only success flips it to a finding", neverSatisfied({ contexts: ["TypeScript (lint · types · test · docs)"], observed: collectObservedConclusions(jobsFixture.filter((j) => j.conclusion !== "success")) }).neverGreen.length === 1);
+	P("a job with no name is ignored rather than recorded as an empty context", collectObservedConclusions([{ name: "", conclusion: "success" }, { conclusion: "success" }]).size === 0);
+	// "Could not look" must never render as "looked and found nothing" — same rule as the rulesets reader.
+	// The deepening pass: it must CLEAR a context that passed outside the shallow window, and must
+	// leave one standing when the deeper look is unreadable (failing to clear is the safe direction).
+	const deepJobs = [{ name: "Release gate (audit)", conclusion: "failure", workflow: 7 }];
+	const deepRun = (a) => (a[1].includes("/runs?per_page") ? JSON.stringify({ workflow_runs: [{ id: 99 }] }) : JSON.stringify({ jobs: [{ name: "Release gate (audit)", conclusion: "success" }] }));
+	P("deepening clears a context that passed outside the shallow window", deepenNeverGreen({ repo: "x/y", neverGreen: [{ context: "Release gate (audit)", seen: ["failure"] }], jobs: deepJobs, depth: 30, run: deepRun }).includes("Release gate (audit)"));
+	P("deepening that cannot read leaves the flag standing", deepenNeverGreen({ repo: "x/y", neverGreen: [{ context: "Release gate (audit)", seen: ["failure"] }], jobs: deepJobs, depth: 30, run: () => { throw new Error("HTTP 500"); } }).length === 0);
+	P("deepening never invents a clear for a context nothing emits", deepenNeverGreen({ repo: "x/y", neverGreen: [{ context: "Nobody emits this", seen: ["failure"] }], jobs: deepJobs, depth: 30, run: deepRun }).length === 0);
+	const jobsBoom = readObservedJobs("x/y", { run: () => { throw new Error("HTTP 403: Resource not accessible by integration"); } });
+	P("an unreadable runs API returns an error, not an empty job list", jobsBoom.jobs === null && /403/.test(jobsBoom.error), JSON.stringify(jobsBoom));
+	const jobsEmpty = readObservedJobs("x/y", { run: () => JSON.stringify({ workflows: [] }) });
+	P("zero active workflows is an error, not 'every context is satisfiable'", jobsEmpty.jobs === null && /no active workflows/.test(jobsEmpty.error), JSON.stringify(jobsEmpty));
+	// A workflow list that yields no RUNS is also no measurement — the second fail-closed arm.
+	const jobsNoRuns = readObservedJobs("x/y", { run: (a) => (a[1].includes("/workflows?") ? JSON.stringify({ workflows: [{ id: 1, state: "active" }] }) : JSON.stringify({ workflow_runs: [] })) });
+	P("workflows with no runs is an error, not a clean bill", jobsNoRuns.jobs === null && /no runs at all/.test(jobsNoRuns.error), JSON.stringify(jobsNoRuns));
+
 	console.log(pass ? "\nself-test: all passed" : "\nself-test: FAILED");
 	return pass;
 }
@@ -800,6 +987,27 @@ function main() {
 			if (row.extra.length) console.log(`  - the ruleset requires, the HCL does NOT: ${row.extra.map((c) => `\`${c}\``).join(", ")} — an apply would REMOVE these`);
 		}
 		if (drifted) console.log(`\nThe fix is a \`tofu apply\` in \`infra/github/\`, which is the maintainer's — see #2606. Nothing here can close this by itself.`);
+
+		// THE FOURTH QUESTION. `hclAll` is what an apply would require on `main` — main takes the
+		// list unfiltered, which is why it is the branch a never-satisfiable context wedges.
+		const { jobs, error: jobsError } = readObservedJobs(repo);
+		console.log(`\n## Can every required context actually go green?\n`);
+		if (!jobs) {
+			console.log(`**Could not read recent job conclusions** (\`${jobsError}\`). That is not "every context is fine" — it is no measurement.`);
+			process.exit(1);
+		}
+		const first = neverSatisfied({ contexts: hclAll, observed: collectObservedConclusions(jobs) });
+		const cleared = deepenNeverGreen({ repo, neverGreen: first.neverGreen, jobs, depth: 30, run: (args) => execFileSync("gh", args, { encoding: "utf8" }) });
+		const unseen = first.unseen;
+		const neverGreen = first.neverGreen.filter((n) => !cleared.includes(n.context));
+		if (cleared.length) console.log(`- cleared on a deeper look (passed further back than the shallow window): ${cleared.map((c) => `\`${c}\``).join(", ")}`);
+		if (unseen.length === 0 && neverGreen.length === 0) {
+			console.log(`- all ${hclAll.length} context(s) the HCL requires have been observed \`success\` at least once.`);
+		}
+		for (const c of unseen) console.log(`- **\`${c}\`** — NO job by this name in the last runs read. Applying this would require a context nothing produces: every PR into \`main\` blocks with nothing red to point at, and \`--admin\` becomes the only way past.`);
+		for (const n of neverGreen) console.log(`- **\`${n.context}\`** — observed only as ${n.seen.map((x) => `\`${x}\``).join(", ")}, never \`success\`. It exists but has never passed; requiring it wedges \`main\` until it can.`);
+		const wedgeRisk = unseen.length > 0 || neverGreen.length > 0;
+		if (wedgeRisk) console.log(`\nHold these out of \`required_status_checks\` until each has one observed success, or fix the leg first. See #4510.`);
 		// REPORTED HERE TOO. These were computed above and then thrown away: this branch exits
 		// without ever reading `failures`, so the drift report could never mention a misplaced
 		// review gate it had just found. The PR-time run still catches it, so this was a missing
@@ -810,7 +1018,7 @@ function main() {
 			for (const f of gateFailures) console.log(`- ${f}`);
 			console.log(`\nThis is a \`.mergify.yml\` problem, not ruleset drift — no \`tofu apply\` will fix it.`);
 		}
-		process.exit(drifted || gateFailures.length ? 2 : 0);
+		process.exit(drifted || gateFailures.length || wedgeRisk ? 2 : 0);
 	}
 
 	for (const n of notes) console.log(`::warning::check-required-checks: ${n}`);
