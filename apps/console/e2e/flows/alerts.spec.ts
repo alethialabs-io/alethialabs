@@ -536,8 +536,13 @@ test.describe("Alerts — policies", () => {
 			.locator("[data-slot='popover-content']")
 			.getByRole("option", { name: channelName })
 			.click();
-		await team.page.keyboard.press("Escape");
-		// The binding landed (and the Escape closed the popover, not the sheet).
+		// Dismiss the picker by pressing inside the sheet but outside the popover. Escape would
+		// also close it, but Escape is the SHEET's dismissal too, and which one consumes the key
+		// is exactly the sort of thing that turns a test into a coin flip.
+		await sheet
+			.getByText("Watch a set of events and route them to your channels.")
+			.click();
+		// The binding landed, and the sheet is still open.
 		await expect(
 			sheet.getByRole("button", { name: `Remove ${channelName}` }),
 		).toBeVisible();
