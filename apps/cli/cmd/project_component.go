@@ -16,18 +16,101 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// componentKinds is the canonical list of authorable component kinds (mirrors the server
-// registry in lib/cli/project-components.ts). singletonKinds are 1:1 per project (name-less);
-// the rest are multi and keyed by name.
-var componentKinds = []string{
-	"network", "cluster", "dns", "observability", "repositories",
-	"databases", "caches", "queues", "topics", "nosql_tables",
-	"container_registries", "secrets", "storage_buckets",
+// THE VOCABULARY IS FETCHED, NOT TYPED (#4332).
+//
+// Two literals used to live here — `componentKinds` and `singletonKinds` — described as a "cache"
+// of the server registry. They had already drifted: the published document carries 14 kinds and the
+// literal carried 13, so `alethia project component kinds`, the command whose entire job is to name
+// the kinds, omitted `helm_registries`, and the interactive picker could not offer it. The only way
+// to author one was to know the string.
+//
+// They are DELETED rather than kept as a fallback, which was the open decision on #4332. A fallback
+// that quietly served a stale list is the same defect as the drift, one level down: it would answer
+// confidently and wrongly, and nothing would say which list had been used. `GET /api/cli/schema/components`
+// (#3671) is the one source, `apply` and `plan` already validate against it, and this makes the third
+// depth agree with the other two.
+//
+// WHAT REPLACES THEM, and why it is not simply "fetch everywhere":
+//
+//   - An INTERACTIVE path needs the document. A picker cannot offer options it does not know, and
+//     cardinality is what decides whether a name is required — guessing it authors the wrong thing.
+//     So those paths fail with the fetch error rather than degrading.
+//   - A HEADLESS path treats it as ADVISORY, exactly as the deleted literal was. The CLI's checks
+//     may only ever refuse what the server would certainly refuse (CLAUDE.md §5), so a fetch that
+//     fails there prints one line to stderr and lets the server decide. That is a visible
+//     degradation, not a silent stale answer.
+
+// componentVocabulary is the published component registry, resolved once per command run.
+//
+// A value type over a possibly-nil document: `known` and `isSingleton` answer false for an
+// unresolved vocabulary, which is the same answer the deleted literal gave for a kind it had never
+// heard of — so every "the server decides" branch below keeps its meaning with no new nil checks.
+type componentVocabulary struct {
+	doc *api.ComponentSchemaDocument
 }
 
-var singletonKinds = map[string]bool{
-	"network": true, "cluster": true, "dns": true,
-	"observability": true, "repositories": true,
+// componentSchemaClient is the slice of the API this group needs. Narrow and file-local, the same
+// shape as `applyClient` — it keeps the shared `apiClient` interface out of this change and lets the
+// compiler name the one call the component group makes.
+type componentSchemaClient interface {
+	GetComponentSchema() (*api.ComponentSchemaDocument, error)
+}
+
+// fetchComponentVocabulary resolves the registry. The error is returned rather than swallowed; each
+// caller decides whether its path can proceed without it.
+func fetchComponentVocabulary(c componentSchemaClient) (componentVocabulary, error) {
+	doc, err := c.GetComponentSchema()
+	if err != nil {
+		return componentVocabulary{}, err
+	}
+	return componentVocabulary{doc: doc}, nil
+}
+
+// advisoryComponentVocabulary resolves the registry for a headless path, where it is a hint and not
+// a gate. A failure is REPORTED on stderr and the empty vocabulary returned, so the run continues
+// with the server as the only authority. Never silent: the deleted literal's whole problem was that
+// nothing said which list had answered.
+func advisoryComponentVocabulary(c componentSchemaClient) componentVocabulary {
+	v, err := fetchComponentVocabulary(c)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not read the component registry (%v) — kind and cardinality checks are skipped and the server decides\n", err)
+	}
+	return v
+}
+
+// kinds is every published kind, in the document's registry order.
+func (v componentVocabulary) kinds() []string {
+	if v.doc == nil {
+		return nil
+	}
+	out := make([]string, 0, len(v.doc.Kinds))
+	for _, k := range v.doc.Kinds {
+		out = append(out, k.Kind)
+	}
+	return out
+}
+
+// known reports whether the published registry holds this kind. False for an unresolved vocabulary —
+// an unknown kind is not a wrong one, and the server is what refuses.
+func (v componentVocabulary) known(kind string) bool {
+	_, ok := v.doc.Kind(kind)
+	return ok
+}
+
+// isSingleton reports whether the kind is one per (project, environment) and takes no name. False
+// for an unknown or unresolved kind, so a name is neither required nor stripped on a guess.
+func (v componentVocabulary) isSingleton(kind string) bool {
+	k, ok := v.doc.Kind(kind)
+	return ok && k.Singleton
+}
+
+// first is the kind a picker starts on. Empty for an unresolved vocabulary, which the interactive
+// callers have already refused before reaching here.
+func (v componentVocabulary) first() string {
+	if v.doc == nil || len(v.doc.Kinds) == 0 {
+		return ""
+	}
+	return v.doc.Kinds[0].Kind
 }
 
 var projectComponentCmd = &cobra.Command{
@@ -46,7 +129,13 @@ var projectComponentKindsCmd = &cobra.Command{
 	Use:   "kinds",
 	Short: "List the supported component kinds",
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := runComponentKinds(os.Stdout, outputFormat(cmd)); err != nil {
+		// This command's whole job is to name what the SERVER accepts, so it needs a token and a
+		// round-trip. It used to answer offline from a literal, which is how it came to omit a kind.
+		token, err := getAuthToken()
+		if err != nil {
+			fail(err)
+		}
+		if err := runComponentKinds(api.NewClient(token), os.Stdout, outputFormat(cmd)); err != nil {
 			failf("Failed to list kinds: %v", err)
 		}
 	},
@@ -54,12 +143,13 @@ var projectComponentKindsCmd = &cobra.Command{
 
 var kindListColumns = []string{"Kind", "Cardinality"}
 
-// kindRows projects the kind registry into plain table rows.
-func kindRows() [][]string {
-	rows := make([][]string, len(componentKinds))
-	for i, k := range componentKinds {
+// kindRows projects the published registry into plain table rows, in its own order.
+func kindRows(v componentVocabulary) [][]string {
+	kinds := v.kinds()
+	rows := make([][]string, len(kinds))
+	for i, k := range kinds {
 		cardinality := "multi"
-		if singletonKinds[k] {
+		if v.isSingleton(k) {
 			cardinality = "singleton"
 		}
 		rows[i] = []string{k, cardinality}
@@ -67,12 +157,19 @@ func kindRows() [][]string {
 	return rows
 }
 
-// runComponentKinds renders the supported component kinds.
-func runComponentKinds(out io.Writer, format string) error {
+// runComponentKinds renders the kinds the server publishes.
+//
+// A fetch failure is returned, never degraded: an offline answer here is a GUESS about the server's
+// vocabulary, and one that was wrong is why this unit exists.
+func runComponentKinds(c componentSchemaClient, out io.Writer, format string) error {
+	v, err := fetchComponentVocabulary(c)
+	if err != nil {
+		return err
+	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: kindListColumns,
-		Rows:    kindRows(),
-	}, componentKinds)
+		Rows:    kindRows(v),
+	}, v.kinds())
 }
 
 // --- list ---
@@ -202,8 +299,16 @@ Values are parsed as JSON when possible, else taken literally:
 		// terminal path at all — flag-or-nothing for the one command that authors a
 		// project's actual infrastructure.
 		asked := false
+		client := api.NewClient(token)
 		if promptsEnabled() && (kind == "" || len(sets) == 0) {
-			answers, err := promptComponentAdd(api.NewClient(token), project, componentAddSpec{
+			// INTERACTIVE: the document is REQUIRED. A picker cannot offer kinds it does not know,
+			// and cardinality is what decides whether the second form asks for a name — a guess
+			// there authors the wrong shape. So a fetch failure fails the command with its cause.
+			v, vErr := fetchComponentVocabulary(client)
+			if vErr != nil {
+				failf("Could not read the component registry: %v", vErr)
+			}
+			answers, err := promptComponentAdd(client, v, project, componentAddSpec{
 				Kind: kind, Name: name, Env: env, Sets: sets,
 			})
 			if err != nil {
@@ -236,45 +341,32 @@ type componentAddSpec struct {
 	Sets []string
 }
 
-// knownComponentKind reports whether the cached registry holds this kind. An unknown kind is
-// not a wrong one: componentKinds is a CACHE the server's registry has already drifted from,
-// so the CLI answers "I have not heard of it" and leaves the verdict to the server.
-func knownComponentKind(kind string) bool {
-	for _, k := range componentKinds {
-		if k == kind {
-			return true
-		}
-	}
-	return false
-}
-
 // componentKindOptions builds the kind picker, annotating each with its cardinality so the
 // answer to "does this one need a name" is on screen at the moment it is asked. A seed that
 // the cached list does not hold is offered verbatim, as its last option.
 //
-// Built from componentKinds, which is a CACHE of the server's registry and not a second
-// opinion of it — #3671 publishes that registry at GET /api/cli/schema/components, and #3691
-// notes the Go list has already drifted (`helm_registries`). Consuming the published document
-// needs a client method in packages/core/api, which is another lane's file; until then this
-// picker offers what the cached list holds and the server remains the thing that decides,
-// so a kind missing from the cache is still authorable with --kind.
+// Built from the PUBLISHED registry since #4332 — `GET /api/cli/schema/components` (#3671), read
+// through `GetComponentSchema`. It used to be built from a hand-typed cache that had already
+// drifted, so `helm_registries` was offered by no picker at all. The seed branch below is what kept
+// that kind reachable and is kept for the case it was written for: a kind newer than the document
+// this run fetched.
 //
 // The seed option is what makes that last sentence TRUE on a terminal. huh binds a Select to
 // its first option when the bound value matches no option's value — it writes options[0].Value
 // back through the pointer — so `--kind helm_registries` fed into a picker of cached kinds
 // alone came back as `network`, and the run authored a different component entirely.
-func componentKindOptions(seed string) []huh.Option[string] {
-	kinds := componentKinds
-	if seed != "" && !knownComponentKind(seed) {
-		kinds = append(append([]string{}, componentKinds...), seed)
+func componentKindOptions(v componentVocabulary, seed string) []huh.Option[string] {
+	kinds := v.kinds()
+	if seed != "" && !v.known(seed) {
+		kinds = append(append([]string{}, kinds...), seed)
 	}
 	opts := make([]huh.Option[string], len(kinds))
 	for i, k := range kinds {
 		label := k + " (multi — needs a name)"
 		switch {
-		case singletonKinds[k]:
+		case v.isSingleton(k):
 			label = k + " (singleton — one per environment)"
-		case !knownComponentKind(k):
+		case !v.known(k):
 			label = k + " (passed with --kind — the server decides)"
 		}
 		opts[i] = huh.NewOption(label, k)
@@ -289,20 +381,20 @@ func componentKindOptions(seed string) []huh.Option[string] {
 // `--env` is a lookup key — authoring a component into the wrong tier is silent, and the next
 // thing that reads it is a deploy — so offering the names that exist beats accepting a typo
 // that the server resolves to the default environment.
-func promptComponentAdd(c apiClient, project string, seed componentAddSpec) (componentAddSpec, error) {
+func promptComponentAdd(c apiClient, v componentVocabulary, project string, seed componentAddSpec) (componentAddSpec, error) {
 	if err := requireInteractiveForm(); err != nil {
 		return seed, err
 	}
 	out := seed
 	if out.Kind == "" {
-		out.Kind = componentKinds[0]
+		out.Kind = v.first()
 	}
 
 	groups := []*huh.Group{huh.NewGroup(
 		huh.NewSelect[string]().
 			Title("Component kind").
 			Description("What to author into this project").
-			Options(componentKindOptions(out.Kind)...).
+			Options(componentKindOptions(v, out.Kind)...).
 			Value(&out.Kind),
 	)}
 	if err := runHuhForm(groups...); err != nil {
@@ -314,7 +406,7 @@ func promptComponentAdd(c apiClient, project string, seed componentAddSpec) (com
 	// huh decides which fields to show when a form is built. One form would have to decide
 	// that from the seed rather than the answer.
 	second := []huh.Field{}
-	if !singletonKinds[out.Kind] {
+	if !v.isSingleton(out.Kind) {
 		second = append(second, huh.NewInput().
 			Title("Component name").
 			Description("Required for a multi kind, e.g. main, sessions").
@@ -341,7 +433,7 @@ func promptComponentAdd(c apiClient, project string, seed componentAddSpec) (com
 	}
 	out.Name = strings.TrimSpace(out.Name)
 	out.Env = strings.TrimSpace(out.Env)
-	if singletonKinds[out.Kind] {
+	if v.isSingleton(out.Kind) {
 		// A singleton upserts the project's single row and the server ignores the name, so
 		// carrying a seeded one through would put it in the replay line as though it did
 		// something.
@@ -350,7 +442,7 @@ func promptComponentAdd(c apiClient, project string, seed componentAddSpec) (com
 	// Only a kind the cache KNOWS is multi is refused here. An unknown kind's cardinality is
 	// the server registry's answer, not this list's, so a blank name is sent and the server
 	// decides rather than the CLI refusing a component it has merely not heard of.
-	if knownComponentKind(out.Kind) && !singletonKinds[out.Kind] && out.Name == "" {
+	if v.known(out.Kind) && !v.isSingleton(out.Kind) && out.Name == "" {
 		return out, fmt.Errorf("%s is a multi kind and needs a name", out.Kind)
 	}
 
@@ -589,11 +681,29 @@ var projectComponentRemoveCmd = &cobra.Command{
 		client := api.NewClient(token)
 		env := currentComponentEnv(cmd)
 		kind, name := componentRemoveKind, componentRemoveName
+		// ADVISORY, and fetched UNCONDITIONALLY on this verb — which is the opposite of what
+		// `apply` does, deliberately.
+		//
+		// `apply` gates the fetch on the manifest declaring components, because the document is
+		// ~1100 lines and it has nothing to check otherwise. Here the registry is consulted on
+		// EVERY path, not only the picker: `removalDescription` asks `isSingleton` to decide whether
+		// to name the component, and a confirmation that says "network main" for a kind that has no
+		// name describes something that does not exist. One small GET to make a DESTRUCTIVE
+		// prompt accurate is the right trade.
+		//
+		// Advisory rather than required, because a read failure must not block a removal the caller
+		// has fully specified — the server refuses a nameless multi kind on its own. It warns on
+		// stderr and continues; the one path that cannot continue is the picker, which refuses
+		// below.
+		v := advisoryComponentVocabulary(client)
 		if kind == "" && promptsEnabled() {
 			// Asked BEFORE the confirmation, never after: the confirmation's whole job is to
 			// name what is about to go, and a prompt that asked "remove this component?" and
 			// only then asked which one would be a confirmation of nothing.
-			picked, err := promptComponentKind()
+			if v.doc == nil {
+				failf("Could not read the component registry, so there is nothing to offer — pass --kind (see `alethia project component kinds`)")
+			}
+			picked, err := promptComponentKind(v)
 			if err != nil {
 				fail(err)
 			}
@@ -607,9 +717,10 @@ var projectComponentRemoveCmd = &cobra.Command{
 		// here. Without it the interactive path dead-ended for the 8 multi kinds: it confirmed
 		// a destructive prompt naming a whole KIND and then failed on the request.
 		//
-		// Only a kind the cache knows is multi is held to this; an unknown one's cardinality
-		// is the server registry's answer, not this list's.
-		if name == "" && knownComponentKind(kind) && !singletonKinds[kind] {
+		// Only a kind the PUBLISHED registry says is multi is held to this. An unknown kind — or a
+		// registry this run could not read — leaves the cardinality to the server, which is the
+		// same answer the deleted literal gave for a kind it had not heard of.
+		if name == "" && v.known(kind) && !v.isSingleton(kind) {
 			if promptsEnabled() {
 				if name, err = promptComponentName(client, project, kind, env); err != nil {
 					fail(err)
@@ -619,10 +730,10 @@ var projectComponentRemoveCmd = &cobra.Command{
 				failf("%s is a multi kind and needs a name — pass --name (see `alethia project component list --kind %s`)", kind, kind)
 			}
 		}
-		if !confirmDestructive(componentRemoveYes, "Remove this component?", removalDescription(kind, name, env)) {
+		if !confirmDestructive(componentRemoveYes, "Remove this component?", removalDescription(v, kind, name, env)) {
 			return
 		}
-		if err := runComponentRemove(client, os.Stdout, project, kind, name, env); err != nil {
+		if err := runComponentRemove(client, v, os.Stdout, project, kind, name, env); err != nil {
 			failf("Failed to remove component: %v", err)
 		}
 	},
@@ -630,16 +741,16 @@ var projectComponentRemoveCmd = &cobra.Command{
 
 // promptComponentKind asks which kind to act on. Only reached with no --kind, so there is no
 // seed to keep on the list.
-func promptComponentKind() (string, error) {
+func promptComponentKind(v componentVocabulary) (string, error) {
 	if err := requireInteractiveForm(); err != nil {
 		return "", err
 	}
-	kind := componentKinds[0]
+	kind := v.first()
 	if err := runHuhForm(huh.NewGroup(
 		huh.NewSelect[string]().
 			Title("Component kind").
 			Description("Which kind to remove").
-			Options(componentKindOptions("")...).
+			Options(componentKindOptions(v, "")...).
 			Value(&kind),
 	)); err != nil {
 		return "", err
@@ -714,9 +825,9 @@ func componentNameOptions(c apiClient, project, kind, env string) []huh.Option[s
 // tier is the load-bearing half: `remove` deletes from one environment, a sibling tier keeps
 // its copy, and the default environment is what an omitted --env means — so the prompt says
 // which one rather than leaving the reader to remember the rule.
-func removalDescription(kind, name, env string) string {
+func removalDescription(v componentVocabulary, kind, name, env string) string {
 	what := kind
-	if name != "" && !singletonKinds[kind] {
+	if name != "" && !v.isSingleton(kind) {
 		what = kind + " " + name
 	}
 	where := "the project's default environment"
@@ -731,8 +842,8 @@ func removalDescription(kind, name, env string) string {
 // runComponentRemove deletes the component and confirms it. Singleton kinds ignore the name. An empty
 // env means the project's default environment; the delete is scoped to that ONE environment either
 // way, so a sibling tier's row is never collateral.
-func runComponentRemove(c apiClient, out io.Writer, project, kind, name, env string) error {
-	if singletonKinds[kind] {
+func runComponentRemove(c apiClient, v componentVocabulary, out io.Writer, project, kind, name, env string) error {
+	if v.isSingleton(kind) {
 		name = ""
 	}
 	if err := c.RemoveComponent(project, kind, name, env); err != nil {
