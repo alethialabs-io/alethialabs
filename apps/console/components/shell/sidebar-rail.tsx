@@ -60,6 +60,11 @@ function RailLink({
           <Link
             href={`${target}${envQuery}`}
             aria-label={item.label}
+            // Same statement the full sidebar's rows make (`nav-row.tsx`): the rail is the same
+            // navigation at 56px, so the active view must be readable from the accessibility tree
+            // here too — otherwise a project workspace, where the rail IS the sidebar, has an
+            // active route that only a class attribute knows about.
+            aria-current={active ? "page" : undefined}
             aria-disabled={item.disabled}
             className={cn(
               ICON_BUTTON,
