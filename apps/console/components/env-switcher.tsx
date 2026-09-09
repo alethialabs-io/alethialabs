@@ -11,6 +11,7 @@ import {
 } from "@/app/server/actions/resolve";
 import { NewEnvironmentDialog } from "@/components/environments/new-environment-dialog";
 import { SwitcherTrigger } from "@/components/shell/switcher-trigger";
+import { useElenchStore } from "@/lib/stores/use-elench-store";
 import {
 	Command,
 	CommandEmpty,
@@ -50,6 +51,24 @@ export function EnvSwitcher() {
 	const envUrl = (id: string) =>
 		`${pathname}?environment_id=${encodeURIComponent(id)}`;
 
+	/**
+	 * Re-scope an OPEN Elench project panel to the environment just picked. The assistant's
+	 * plan/deploy proposals are environment-scoped, so a switcher that moved the page but left
+	 * the conversation on the old environment would have the assistant answering about somewhere
+	 * the user is no longer looking. `syncEnvironment` keeps the thread and the epoch (the
+	 * environment is request context, not a new lineage) and no-ops when the panel is closed,
+	 * anchored to the org, or on another project. The project id comes free with the rows the
+	 * switcher already loaded — no extra resolve round-trip.
+	 */
+	const syncElench = useCallback(
+		(environmentId: string, rows: SwitcherEnv[]) => {
+			const projectId = rows[0]?.project_id;
+			if (projectId)
+				useElenchStore.getState().syncEnvironment(projectId, environmentId);
+		},
+		[],
+	);
+
 	/** Fetches the project's environments (never throws — resolves to [] on failure). */
 	const loadEnvs = useCallback(
 		() => getEnvironmentsForSlug(project).catch(() => Array<SwitcherEnv>()),
@@ -88,11 +107,12 @@ export function EnvSwitcher() {
 				envs[0];
 			const idx = envs.findIndex((x) => x.id === current.id);
 			const next = envs[(idx + 1) % envs.length];
+			syncElench(next.id, envs);
 			router.push(`${pathname}?environment_id=${encodeURIComponent(next.id)}`);
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [isDrilldown, envs, envId, pathname, router]);
+	}, [isDrilldown, envs, envId, pathname, router, syncElench]);
 
 	if (!isDrilldown || envs.length === 0) return null;
 
@@ -103,6 +123,7 @@ export function EnvSwitcher() {
 
 	const handleSelect = (id: string) => {
 		setOpen(false);
+		syncElench(id, envs);
 		router.push(envUrl(id));
 	};
 
@@ -111,7 +132,10 @@ export function EnvSwitcher() {
 		const rows = await loadEnvs();
 		setEnvs(rows);
 		const created = rows.find((e) => e.name === name);
-		if (created) router.push(envUrl(created.id));
+		if (created) {
+			syncElench(created.id, rows);
+			router.push(envUrl(created.id));
+		}
 	};
 
 	return (
