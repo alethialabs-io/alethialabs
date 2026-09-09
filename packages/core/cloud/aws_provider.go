@@ -369,6 +369,7 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, awsRootReserved...)
 	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, awsRootReserved...)
+	mergeProviderConfig(tfvars, config.Network.ProviderConfig, awsRootReserved...)
 
 	return tfvars
 }

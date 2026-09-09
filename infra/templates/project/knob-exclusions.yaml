@@ -154,17 +154,14 @@ cells:
     component: platform
     reason: "Platform context is injected by the runner and the `alethia_*` namespace is reserved; a component's provider_config must not be able to rename the environment it is built in."
 
-  # ── `network` has no passthrough on any cloud because `ProjectNetworkConfig`
-  #    (packages/core/types/project_config.go) carries no `ProviderConfig` field at all — the same
-  #    shape the registry was in before #4259 wired it. This is a GAP, not a ceiling: the network's
-  #    knobs are declared and unreachable, and closing it is one Go field plus one merge call.
-  - cloud: "*"
-    component: network
-    reason: "GAP, not a ceiling: ProjectNetworkConfig carries no ProviderConfig field, so no network knob is reachable on any cloud. Closing it is one Go field plus one merge call."
-
-  # ── hetzner. Six of these are ceilings copied VERBATIM from the table that asserts them —
+  # ── hetzner. All six are ceilings, copied VERBATIM from the table that asserts them —
   #    TestProviderTfvars_LeafPassthrough in packages/core/cloud/passthrough_test.go, whose rows
-  #    prove the probe reaches NOTHING. The seventh is not a ceiling and says so.
+  #    prove the probe reaches NOTHING.
+  #
+  #    There were SEVEN until #4319, and the seventh said of itself "GAP, not a ceiling": hetzner/dns.tf
+  #    builds a real `hcloud_zone` and declares its knobs, and hetzner_provider.go simply had no merge
+  #    call for them. It has one now, so the row is gone rather than reworded — an exclusion that
+  #    outlives its subject suppresses a real finding forever.
   - cloud: hetzner
     component: cache
     reason: "Valkey runs in-cluster as a Helm release; its knobs are chart values, not OpenTofu variables"
@@ -183,14 +180,18 @@ cells:
   - cloud: hetzner
     component: registry
     reason: "Harbor runs in-cluster as a Helm release; the template's only registry surface is `incluster_registry_hosts`, a list(string) of mirror hosts with no per-registry object to merge into"
-  - cloud: hetzner
-    component: dns
-    reason: "GAP, not a ceiling: hetzner/dns.tf builds a real `hcloud_zone` (#1816) and declares its knobs, but hetzner_provider.go merges only the cluster's and the bucket's provider_config — so every hcloud DNS knob is declared and unreachable."
 
 dead:
   # Declared AND reachable AND read by no resource or module argument on its chain — the `gke_spot`
   # shape. This is a BACKLOG: each line is a template defect, not a decision, and the check fails on
   # any dead knob that is not listed. It can only shrink.
+  # ── EXPOSED BY #4319, not caused by it. hetzner's `dns` cell had no passthrough, and an unreachable
+  #    knob cannot be `declared-and-dead` — so closing the gap is what made this visible. #4461.
+  - cloud: hetzner
+    component: dns
+    knob: dns_hosted_zone
+    reason: "#4461: the BYO-zone path provisions nothing. Its only reader is outputs.tf, which the generator excludes deliberately (an output builds no infrastructure), so an existing zone id is echoed back on dns_zone_id and no record is created in it. aws reads the same variable from route53.tf, acm-certificate.tf and eks.tf."
+
   - cloud: alibaba
     component: dns
     knob: alidns_managed_certificate
