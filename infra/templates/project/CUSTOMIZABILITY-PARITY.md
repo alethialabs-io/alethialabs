@@ -18,14 +18,25 @@ dedicated Go field. So **full customizability already exists for any variable th
 passthrough can't reach an undeclared knob. So the real parity gap is *declared-variable coverage*, not
 the plumbing.
 
-⚠️ **And the passthrough is per-COMPONENT, not global.** `mergeProviderConfig` is called for exactly
-three components — `Cluster.ProviderConfig`, `DNS.ProviderConfig` and each database's
-`ProviderConfig`. `ProjectContainerRegistryConfig` carries a `ProviderConfig` field
-(`packages/core/types/project_config.go`) that **no provider passes to it**, so a registry variable is
-reachable only by a BYO-IaC caller writing raw tfvars, whatever the template declares. Declaring more
-`ecr_*`-style registry knobs before that line exists would manufacture unreachable knobs — the
-"unwired template" state `apps/console/scripts/check-offer-parity.mjs` is built to catch. Wire the
-registry passthrough first.
+⚠️ **And the passthrough is per-COMPONENT, not global — and it has two SHAPES.** It was called for
+exactly three components (`Cluster`, `DNS` and each database) until [#4259](https://github.com/alethialabs-io/alethialabs/issues/4259)
+wired the seven leaf kinds on all five clouds. The shape differs per cell and the difference is
+load-bearing: a cache and a registry are modelled as ROOT-level variables (`redis_*`, `ecr_*`), so
+their keys merge into tfvars itself (`mergeProviderConfig`); a queue is one entry of a map and a
+bucket one element of a list, so their keys merge into that ENTRY (`mergeItemProviderConfig`). A root
+variable is therefore **not** reachable from an item-shaped component — `sqs_queues` is what a queue's
+`provider_config` reaches into, not something a queue can set — and what a queue CAN set is an
+attribute of that variable's object type. A `map(any)` / `list(any)` item carries any attribute the
+caller names; a typed `object({…})` silently drops one it does not declare
+([#1994](https://github.com/alethialabs-io/alethialabs/issues/1994) is the recorded case).
+
+Two cells still have no passthrough at all, and neither is a ceiling: **`network`** on every cloud
+(`ProjectNetworkConfig` carries no `ProviderConfig` field — the shape the registry was in before
+#4259) and **`dns` on hetzner** (the template builds a real `hcloud_zone`, the provider merges only
+the cluster's and the bucket's). Both are recorded in `knob-exclusions.yaml`, which is now what makes
+them fail a build rather than sit in prose. Declaring more knobs for either would manufacture
+unreachable ones — the "unwired template" state `apps/console/scripts/check-offer-parity.mjs` is
+built to catch.
 
 Two claims, not one: *declared in `variables.tf`* and *reachable through a component's
 `provider_config`*. `TestProviderTfvars_NodeShapeAndSecretKeepersAreReachable`
@@ -202,13 +213,32 @@ Every deferral on this page lives in prose — here, and in `.tf` comments. Neit
 `apps/console/scripts/check-offer-parity.mjs` builds `MEASURED_KINDS` from the **canvas offer
 surface**, and `check-config-carriage.mjs` measures **user-settable fields**. Node shape, registry
 depth, WAF depth, cluster-admin IAM and control-plane secret encryption are none of those things:
-they are template variables reached through `provider_config` passthrough. So no guard can red any
-cell on this page, and no deferral here can ever go stale the way a `baseline:` entry does.
+they are template variables reached through `provider_config` passthrough — so for a year no guard
+could red a cell on this page, and this paragraph said so.
 
-That is why entries above carry issue numbers and name the invariants they rest on rather than a
-confident sentence — #2005 is what a confident sentence costs here: a false "cloud-inherent"
-cluster-admin line stood unquestioned until the provider schema was re-checked, and the azure
-wiring sat recorded as backlog long after it shipped. The alibaba knob is now pinned by a suite
-(`alibaba/checks_cluster_admins.tftest.hcl`), but nothing reds a cell on this page itself. Until
-the template-variable surface has a ratchet of its own — or these knobs become first-class offers
-and inherit one — treat this page as a record of intent, not as enforcement.
+**That is no longer true.** The template-variable surface has a ratchet of its own:
+`apps/console/scripts/gen-template-knobs.mjs` derives every root variable and every reachable item
+attribute from the templates and the providers, and `check:template-knobs`
+([#4260](https://github.com/alethialabs-io/alethialabs/issues/4260)) fails a build on three states
+this page used to be able to describe only in prose:
+
+1. **declared, reachable, and read by nothing** — the `gke_spot` shape named above. There are 22 of
+   them today, every one listed in `knob-exclusions.yaml`'s `dead:` backlog, which can only shrink.
+2. **declared for a component no passthrough reaches** — `network` on every cloud and `dns` on
+   hetzner, plus hetzner's six in-cluster ceilings, each recorded under `cells:` with its reason
+   copied from the table that asserts it (`TestProviderTfvars_LeafPassthrough`).
+3. **a root variable that belongs to no component at all** — which fails the generator outright
+   until it is recorded, so the surface cannot shrink silently.
+
+The board is `docs/testing/template-knobs.md`, generated from the same measurement and diff-gated in
+CI, and the manifest the console's cards read is
+`apps/console/lib/cloud-providers/generated/template-knobs.json`. A `reason:` in the ledger is a
+decision; a `dead:` entry is a defect with a deadline. Both are checked in BOTH directions — an entry
+that no longer holds fails the build exactly as loudly as a state that is not recorded.
+
+What has NOT changed is why the entries above carry issue numbers and name the invariants they rest
+on rather than a confident sentence. #2005 is what a confident sentence costs here: a false
+"cloud-inherent" cluster-admin line stood unquestioned until the provider schema was re-checked, and
+the azure wiring sat recorded as backlog long after it shipped. The new guard measures whether a knob
+is reachable and read; it cannot tell you whether the knob is the RIGHT one, and the "Top gaps" table
+above is still a record of intent.

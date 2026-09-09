@@ -40,10 +40,14 @@
 // ── TWO THINGS THIS DELIBERATELY DOES NOT FLAG, both learned by getting them wrong ──────────────
 //
 //  1. PASSTHROUGH IS NOT A GAP — read precisely. `mergeProviderConfig` copies keys out of a
-//     component's `provider_config` JSONB onto same-named tofu variables. Its scope is DERIVED below
-//     (`PASSTHROUGH`) rather than asserted, and today it covers databases, cluster and DNS — not
-//     every kind, and not every cloud for those (Hetzner merges cluster only). What it does is make
-//     an ALREADY-DECLARED variable reachable by hand. It does NOT carry a typed column: this guard's
+//     component's `provider_config` JSONB onto same-named tofu variables, and
+//     `mergeItemProviderConfig` does the same into ONE ENTRY of a map/list variable. Its scope is
+//     DERIVED below (`PASSTHROUGH`, via lib/go-passthrough.mjs) rather than asserted, and the reason
+//     is written in this file's own history: the sentence here used to say "today it covers
+//     databases, cluster and DNS", which stopped being true when #4259 wired seven leaf kinds on
+//     five clouds. The printed line is the answer; this paragraph deliberately no longer names one.
+//     What passthrough does is make an ALREADY-DECLARED variable reachable by hand. It does NOT
+//     carry a typed column: this guard's
 //     unit is a COLUMN's value, and no amount of passthrough moves `caches.allowed_cidr_blocks` into
 //     tfvars when no Go field holds it. So passthrough is reported as context on a finding — "a user
 //     could still reach this by hand" — and NEVER suppresses one. Using it to excuse a hop-3 failure
@@ -94,6 +98,13 @@ import {
 	selfCheck as goStructsSelfCheck,
 } from "./lib/go-structs.mjs";
 import {
+	assertParsed as assertPassthroughParsed,
+	passthroughKeys,
+	readFuncParams,
+	readPassthrough,
+	selfCheck as passthroughSelfCheck,
+} from "./lib/go-passthrough.mjs";
+import {
 	assertParsed as assertGoTraceParsed,
 	keysDerivedFrom,
 	reachableFrom,
@@ -114,6 +125,7 @@ import {
 goTraceSelfCheck();
 tfWiringSelfCheck();
 goStructsSelfCheck();
+passthroughSelfCheck();
 
 const ROOT = "../..";
 const TEMPLATES = `${ROOT}/infra/templates/project`;
@@ -381,50 +393,24 @@ const TF_WIRING = Object.fromEntries(
 	}),
 );
 
-/**
- * The kinds each cloud's provider hands to `mergeProviderConfig`, derived from the call sites.
- *
- * NOT taken on trust, because the claim "passthrough covers databases, cluster and DNS" is exactly
- * the kind of remembered fact that goes stale: Hetzner merges only the cluster's, and a guard that
- * printed the remembered scope would tell a reader something false about a cloud. The argument is
- * either `config.<Field>.ProviderConfig` (resolved through ProjectConfig's own json tag) or a local
- * (`db.ProviderConfig`), resolved by finding the nearest preceding binding of that name to a
- * `config.<Field>` — which is `db := config.Databases[0]` on three clouds and a `range` on others,
- * so the match is on the BINDING, not on the loop keyword. Anything else is left UNRESOLVED and
- * printed — this only ever adds context to a finding, never removes one, so an unread call site
- * cannot hide a gap.
- */
-function readPassthrough() {
-	const byCloud = {};
-	const unresolved = [];
-	const fieldTag = new Map();
-	for (const f of STRUCTS.get("ProjectConfig") ?? []) if (f.name && f.tag) fieldTag.set(f.name, f.tag);
-	for (const cloud of PROVIDER_CLOUDS) {
-		const kinds = (byCloud[cloud] = new Set());
-		for (const key of reachableFrom(GO_PKG, `${cloud}Provider.ProviderTfvars`)) {
-			const { body } = GO_PKG.funcs.get(key);
-			for (const m of body.matchAll(/mergeProviderConfig\(\s*\w+\s*,\s*([\w.]+)\.ProviderConfig/g)) {
-				const direct = m[1].match(/^config\.(\w+)$/);
-				if (direct && fieldTag.has(direct[1])) {
-					kinds.add(fieldTag.get(direct[1]));
-					continue;
-				}
-				// The nearest binding of that name BEFORE the call — nearest, because one body can hold
-				// several, and the first one would attribute the databases passthrough to whichever
-				// collection happens to be looped first.
-				const bind = [...body.slice(0, m.index).matchAll(new RegExp(`\\b${m[1]}\\s*:=\\s*[^\\n]*config\\.(\\w+)`, "g"))].pop();
-				if (bind && fieldTag.has(bind[1])) {
-					kinds.add(fieldTag.get(bind[1]));
-					continue;
-				}
-				unresolved.push({ cloud, expr: m[1] });
-			}
-		}
-	}
-	return { byCloud, unresolved };
-}
-
-const PASSTHROUGH = readPassthrough();
+// The kinds each cloud's provider hands to `mergeProviderConfig` / `mergeItemProviderConfig`,
+// derived from the call sites by `lib/go-passthrough.mjs` — which is where this reader now lives,
+// because check-template-knobs.mjs asks the same question of every declared template variable and a
+// second copy of "what a passthrough is" would drift on its own schedule.
+//
+// NOT taken on trust, because the claim "passthrough covers databases, cluster and DNS" is exactly
+// the kind of remembered fact that goes stale — and it did: #4259 gave seven leaf kinds a
+// passthrough on five clouds, which the pre-lift reader could not see at all (it matched only the
+// ROOT helper, and a leaf arrives through the ITEM one, inside a builder). An unattributable site is
+// left UNRESOLVED and printed; passthrough only ever adds context to a finding here, so an unread
+// site cannot hide a gap.
+const PASSTHROUGH = readPassthrough(
+	GO_PKG,
+	readFuncParams(PROVIDERS),
+	new Map((STRUCTS.get("ProjectConfig") ?? []).filter((f) => f.name && f.tag).map((f) => [f.name, f.tag])),
+	PROVIDER_CLOUDS,
+);
+assertPassthroughParsed(PASSTHROUGH);
 
 // ── the field surface, assembled ────────────────────────────────────────────────────
 
@@ -1575,13 +1561,13 @@ console.log(
 
 if (PASSTHROUGH.unresolved.length) {
 	console.log(
-		`\n· ${PASSTHROUGH.unresolved.length} \`mergeProviderConfig\` call site(s) this guard could not attribute to a kind: ` +
+		`\n· ${PASSTHROUGH.unresolved.length} \`merge*ProviderConfig\` call site(s) this guard could not attribute to a kind: ` +
 			`${PASSTHROUGH.unresolved.map((u) => `${u.cloud}:${u.expr}`).join(", ")}. Passthrough only ever ADDS context to a ` +
 			"finding, so an unread call site cannot hide a gap — but the printed scope below is incomplete until it is read.",
 	);
 }
 console.log(
-	`\n· \`provider_config\` passthrough reaches: ${PROVIDER_CLOUDS.map((c) => `${c} → ${[...PASSTHROUGH.byCloud[c]].sort().join("/") || "nothing"}`).join(", ")}. ` +
+	`\n· \`provider_config\` passthrough reaches: ${PROVIDER_CLOUDS.map((c) => `${c} → ${passthroughKeys(PASSTHROUGH, c).join("/") || "nothing"}`).join(", ")}. ` +
 		"It copies JSONB keys onto same-named tofu variables, which makes an already-declared variable " +
 		"reachable BY HAND. It carries no typed column, so it never discharges a finding here.",
 );
