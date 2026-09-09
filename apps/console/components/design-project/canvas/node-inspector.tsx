@@ -2,14 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ArrowLeft, TriangleAlert, X } from "lucide-react";
+import { ArrowLeft, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { formatMonthlyRate } from "@repo/format";
 import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { CopyButton } from "@repo/ui/copy-button";
-import { Input } from "@repo/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
@@ -27,6 +26,11 @@ import type {
 } from "@/lib/canvas/component-status";
 import { selectInspectorNodeId, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import {
+	type InspectorTab,
+	isInspectorTab,
+	useInspectorPrefsStore,
+} from "@/lib/stores/use-inspector-prefs-store";
+import {
 	collectionNodeId,
 	isCollectionKind,
 	kindFromCollectionId,
@@ -39,6 +43,7 @@ import { NODE_REGISTRY } from "./graph/node-registry";
 import type { CanvasNode } from "./graph/types";
 import { configName } from "./graph/node-config";
 import { getKindConfig, type KindConfig } from "./inspector/config-schema";
+import { CardHeader } from "./inspector/card-header";
 import { ConfigFields } from "./inspector/config-fields";
 import { DangerZone } from "./inspector/danger-zone";
 import { useNodeCapabilities } from "./inspector/use-node-capabilities";
@@ -72,6 +77,12 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 
 	const env = useEnvironmentStatus();
 	const core = useCanvasStore((s) => s.getCoreIdentity());
+	// Which tab this KIND was last left on. A card that always reopens on Overview makes a second
+	// visit to the same database's settings a two-click errand, every time.
+	const setTab = useInspectorPrefsStore((s) => s.setTab);
+	const storedTab = useInspectorPrefsStore((s) =>
+		node ? s.tab[node.data.kind] : undefined,
+	);
 	const provider = node ? getEffectiveProvider(node.id) : null;
 	// Account-scoped picker options for THIS node's effective identity.
 	const capabilities = useNodeCapabilities(node?.id ?? null);
@@ -129,6 +140,11 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 	// riding the already-polled EnvironmentStatus — no per-node fetch.
 	const showDeploy = node.data.kind === "cluster";
 
+	// A remembered tab can name one this card does not have (Deploy is cluster-only), so it falls
+	// back rather than rendering an empty body.
+	const tab: InspectorTab =
+		storedTab && (storedTab !== "deploy" || showDeploy) ? storedTab : "overview";
+
 	// A member of a collapsed kind has no card of its own on the board, so without a way back up
 	// you'd be stranded in a secret with no route to the vault it belongs to.
 	const parentCollection = isCollectionKind(node.data.kind) ? node.data.kind : null;
@@ -145,64 +161,40 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 					{NODE_REGISTRY[parentCollection].collection?.title}
 				</button>
 			)}
-			<div className="flex items-start gap-3 border-b border-border p-4">
-				{Icon && (
-					<span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-none border text-muted-foreground">
-						<Icon className="h-4 w-4" />
-					</span>
-				)}
-				<div className="min-w-0 flex-1 space-y-1">
-					<div className="flex flex-wrap items-center gap-2">
-						{nameKey ? (
-							<Input
-								value={configName(node.data) ?? ""}
-								maxLength={nameKey === "project_name" ? 50 : undefined}
-								placeholder={nameKey === "project_name" ? "My Project" : "name"}
-								onChange={(e) =>
-									updateNodeConfig(node.id, {
-										[nameKey]:
-											nameKey === "project_name"
-												? e.target.value
-												: e.target.value.toLowerCase(),
-									})
-								}
-								className={cn(
-									"h-8 max-w-[16rem] border-0 bg-transparent px-0 text-base font-semibold shadow-none focus-visible:ring-0",
-									nameKey === "name" && "font-mono",
-								)}
-							/>
-						) : (
-							<span className="text-base font-semibold">{def.label}</span>
-						)}
-						<span className="vx-eyebrow rounded-none border border-border px-1.5 py-0.5">
-							{def.eyebrow}
-						</span>
-					</div>
-					<p className="truncate text-xs text-muted-foreground">
-						{summary ||
-							(def.classification === "root"
-								? "Project basics and the stack's core cloud account."
-								: def.classification === "core"
-									? "Core resource — must run on the stack's cloud."
-									: "Periphery — may run on any connected cloud.")}
-					</p>
-				</div>
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					className="h-7 w-7 shrink-0"
-					onClick={() => openInspector(null)}
-					aria-label="Close"
-				>
-					<X className="h-4 w-4" />
-				</Button>
-			</div>
+			<CardHeader
+				icon={Icon ? <Icon className="h-4 w-4" /> : undefined}
+				eyebrow={def.eyebrow}
+				title={def.label}
+				name={nameKey ? (configName(node.data) ?? "") : undefined}
+				onNameChange={
+					nameKey
+						? (next) =>
+								updateNodeConfig(node.id, {
+									[nameKey]: nameKey === "project_name" ? next : next.toLowerCase(),
+								})
+						: undefined
+				}
+				nameMono={nameKey === "name"}
+				nameMaxLength={nameKey === "project_name" ? 50 : undefined}
+				namePlaceholder={nameKey === "project_name" ? "My Project" : "name"}
+				summary={
+					summary ||
+					(def.classification === "root"
+						? "Project basics and the stack's core cloud account."
+						: def.classification === "core"
+							? "Core resource — must run on the stack's cloud."
+							: "Periphery — may run on any connected cloud.")
+				}
+				onClose={() => openInspector(null)}
+			/>
 
 			<StatusHeader nodeId={node.id} />
 
 			<Tabs
-				defaultValue="overview"
+				value={tab}
+				onValueChange={(next) => {
+					if (isInspectorTab(next)) setTab(node.data.kind, next);
+				}}
 				className="flex min-h-0 flex-1 flex-col gap-0"
 			>
 				<TabsList
