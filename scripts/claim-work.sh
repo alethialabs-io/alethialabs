@@ -18,6 +18,7 @@
 # Usage:
 #   scripts/claim-work.sh [--class backend|ui|any]   # claim the next ready unit (default backend)
 #   scripts/claim-work.sh --issue <n>                 # claim ONE named unit through the same path
+#   scripts/claim-work.sh --issue <n> --takeover      # …and override the two guards, IF it is stalled
 #   scripts/claim-work.sh --heartbeat <issue>         # re-stamp your lease (liveness; defeats reclaim)
 #   scripts/claim-work.sh --self-test                 # run the claim-winner unit fixtures (no board)
 #
@@ -26,6 +27,19 @@
 # verify, leaves no lease, and lets two instances start the same unit with nothing recording either.
 # That is the first domino in issue #1247. A named claim still goes through the whole path; it just
 # can't be picked autonomously, which is what the needs:human exclusion is actually for.
+#
+# --takeover exists because COORDINATION.md's documented remedy for a STALLED unit — "take one over
+# with `claim-work.sh --issue <n>`" — could not work, for 100% of stalled units (#4428). A stalled
+# unit is DEFINED as claimed AND held by a stuck PR, and the two `--issue` guards below refuse on
+# exactly those two conditions. The instruction named an action the script forbids.
+#
+# It is not a relaxation of those guards, and deliberately not a general `--force`: it is refused
+# unless the unit ACTUALLY satisfies the stalled predicate — `board_unit_is_stalled`, which is
+# COORDINATION.md's definition (lease older than the lease TTL, and a PR holding it CONFLICTING or
+# idle past ALETHIA_PR_IDLE_TTL) and is shared with the report rather than restated here, so the two
+# cannot come to disagree about what "stalled" means. Every arm of that predicate is fail-closed: an
+# unreadable lease, an unreachable PR list or a fresh lease all answer "not stalled", because this
+# flag's whole job is to justify overriding a guard and an UNKNOWN must never read as permission.
 # Env: ALETHIA_CLAIM_VERIFY_DELAY (default 5s; 0 disables the cross-box verify) ·
 #      ALETHIA_CLAIM_WINDOW (default 45s — the near-simultaneous contention window).
 # This script intentionally single-quotes jq programs, JSON fixtures, and the ```lease``` printf
@@ -38,6 +52,7 @@ CLASS="backend"
 HEARTBEAT=""
 SELFTEST=""
 ONLY_ISSUE=""
+TAKEOVER=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --class) CLASS="${2:?}"; shift 2 ;;
@@ -45,6 +60,7 @@ while [ "$#" -gt 0 ]; do
     --issue) ONLY_ISSUE="${2:?}"; shift 2 ;;
     --issue=*) ONLY_ISSUE="${1#*=}"; shift ;;
     --heartbeat) HEARTBEAT="${2:?}"; shift 2 ;;
+    --takeover) TAKEOVER=1; shift ;;
     --self-test) SELFTEST=1; shift ;;
     -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
@@ -140,11 +156,55 @@ run_self_test() {
   _ns UNKNOWN     ""                "$_now" "$_ttl" "alive: missing timestamp must not accuse a live PR"
   _ns MERGEABLE   "not-a-number"    "$_now" "$_ttl" "alive: garbage timestamp must not accuse a live PR"
 
+  # ── board_unit_is_stalled: BOTH halves, and every unknown answers NOT stalled (#4428) ─────────
+  #
+  # The composite is glue over two network reads, so the halves are STUBBED — the same technique
+  # coordinate.sh's own self-test uses for the scope matcher (ALETHIA_SCOPE_MATCHER). What is under
+  # test is the composition and its fail-closed DIRECTION, which is the only part that can be wrong
+  # in a way nobody notices: `--takeover` overrides the guard that prevents the #1247 double-claim, so
+  # an unknown reading as permission would hand a live instance's unit to a second one.
+  # The stubs bake their value into a variable rather than reading $1: the real functions take the
+  # ISSUE NUMBER as $1, so a stub that echoed $1 returned "X" and every `[ "$age" -gt ... ]` errored —
+  # which made four of these pass for the wrong reason on the first run. A stub has to answer the
+  # question the real function answers, not the one it is asked.
+  _stub_age() { _AGE="$1"; board_lease_age_seconds() { printf '%s' "$_AGE"; }; }
+  _stub_pr()  { _PRREF="$1"; stalled_pr_ref() { printf '%s' "$_PRREF"; }; }
+  # These RETURN a status instead of touching `fails`, because they run inside `( … )` — a subshell's
+  # variable assignment does not reach the parent, so an in-subshell counter printed FAIL and the
+  # summary still said "all passed". Caught by mutating the predicate and watching the run stay green:
+  # a self-test that cannot fail the run is a report, not a test.
+  _us() { if board_unit_is_stalled X 3600 14400; then echo "ok   - $1"; else echo "FAIL - $1: expected STALLED" >&2; return 1; fi; }
+  _nus() { if board_unit_is_stalled X 3600 14400; then echo "FAIL - $1: expected NOT stalled" >&2; return 1; else echo "ok   - $1"; fi; }
+
+  ( _stub_age 99999; _stub_pr "#1 (CONFLICTING, idle 9h)"; _us "stalled: dead lease AND a stuck PR" ) || fails=$((fails+1))
+  # Each half alone is NOT enough, and these are the two arms that matter most:
+  ( _stub_age 99999; _stub_pr ""; _nus "not stalled: dead lease but the PR looks alive — someone is on it" ) || fails=$((fails+1))
+  ( _stub_age 100;   _stub_pr "#1 (CONFLICTING, idle 9h)"; _nus "not stalled: stuck PR but a FRESH lease — the holder is heartbeating" ) || fails=$((fails+1))
+  # And the unknowns. An unreadable lease is the one that would otherwise silently permit a takeover.
+  ( _stub_age "";    _stub_pr "#1 (CONFLICTING, idle 9h)"; _nus "not stalled: lease age unreadable — an unknown is not permission" ) || fails=$((fails+1))
+  ( _stub_age 3600;  _stub_pr "#1 (CONFLICTING, idle 9h)"; _nus "not stalled: lease exactly AT the TTL, not past it (boundary)" ) || fails=$((fails+1))
+
+  # --takeover without --issue must REFUSE, not quietly do nothing: it overrides guards that exist
+  # only on the named-claim path, so on its own it is a flag that looks like it worked.
+  if ( "$0" --takeover >/dev/null 2>&1 ); then
+    echo "FAIL - --takeover without --issue was accepted" >&2; fails=$((fails+1))
+  else
+    echo "ok   - --takeover without --issue is refused rather than ignored"
+  fi
+
   if [ "$fails" -eq 0 ]; then echo "self-test: all passed"; exit 0; fi
   echo "self-test: $fails check(s) FAILED" >&2; exit 1
 }
 
 if [ -n "$SELFTEST" ]; then run_self_test; fi
+
+# --takeover overrides guards that only exist on the --issue path, so on its own it would silently do
+# nothing — the shape of flag that gets typed once, appears to work, and is then trusted.
+if [ -n "$TAKEOVER" ] && [ -z "$ONLY_ISSUE" ]; then
+  echo "✗ --takeover has no meaning without --issue <n>: it overrides the two guards on the NAMED-claim" >&2
+  echo "  path, and the autonomous loop skips a claimed or PR-held unit by design." >&2
+  exit 2
+fi
 
 # --- heartbeat: re-stamp the lease on an issue this instance holds, then exit ---
 # Ownership is CHECKED, not assumed: an unchecked heartbeat lets any instance keep any issue's
@@ -223,12 +283,36 @@ if [ -n "$ONLY_ISSUE" ]; then
   meta="$(gh issue view "$ONLY_ISSUE" --json number,title,state,labels 2>/dev/null)" || {
     echo "✗ #$ONLY_ISSUE not found." >&2; exit 1; }
   [ "$(echo "$meta" | jq -r .state)" = "OPEN" ] || { echo "✗ #$ONLY_ISSUE is not open." >&2; exit 1; }
-  if [ "$(echo "$meta" | jq -r '[.labels[].name]|index("claimed")//empty')" != "" ]; then
+  # --takeover is resolved ONCE, before either guard, because both refuse a stalled unit and the
+  # answer must be the same for both. The predicate is a network read, so it is not run at all unless
+  # the flag was passed.
+  STALLED=""
+  if [ -n "$TAKEOVER" ]; then
+    if board_unit_is_stalled "$ONLY_ISSUE" "${ALETHIA_LEASE_TTL:-3600}" \
+        "${ALETHIA_PR_IDLE_TTL:-$(( ${ALETHIA_LEASE_TTL:-3600} * 4 ))}"; then
+      STALLED=1
+      echo "⚠ --takeover: #$ONLY_ISSUE IS stalled — lease dead ($(board_lease_age_seconds "$ONLY_ISSUE")s) and its PR $(stalled_pr_ref "$ONLY_ISSUE" "${ALETHIA_PR_IDLE_TTL:-$(( ${ALETHIA_LEASE_TTL:-3600} * 4 ))}") is stuck." >&2
+      echo "  Overriding the claimed/closing-PR guards. The WORKTREE is leased separately and this does" >&2
+      echo "  not touch it: if the previous holder's tree is still leased, \`pnpm wt:steal <name>\`." >&2
+      echo "  Then rebase or close that PR — a stale claim with a live PR in front of it is still stuck." >&2
+    else
+      echo "✗ --takeover refused: #$ONLY_ISSUE is not stalled." >&2
+      echo "  Stalled means BOTH halves: the lease older than ALETHIA_LEASE_TTL, and a PR holding the" >&2
+      echo "  unit CONFLICTING or idle past ALETHIA_PR_IDLE_TTL. An unreadable lease or an unreachable" >&2
+      echo "  PR list answers 'not stalled' on purpose — this flag overrides the guard that prevents" >&2
+      echo "  the #1247 double-claim, so it may not act on a maybe." >&2
+      echo "  See what the board thinks:  scripts/coordinate.sh --report" >&2
+      exit 1
+    fi
+  fi
+  if [ "$(echo "$meta" | jq -r '[.labels[].name]|index("claimed")//empty')" != "" ] && [ -z "$STALLED" ]; then
     echo "✗ #$ONLY_ISSUE is already claimed. See who holds it:  gh issue view $ONLY_ISSUE --comments" >&2
+    echo "  If the report calls it ⚠ stalled, take it over with:  scripts/claim-work.sh --issue $ONLY_ISSUE --takeover" >&2
     exit 1
   fi
-  if has_closing_pr "$ONLY_ISSUE"; then
+  if has_closing_pr "$ONLY_ISSUE" && [ -z "$STALLED" ]; then
     echo "✗ #$ONLY_ISSUE already has an open/merged PR closing it — someone is on it." >&2
+    echo "  If the report calls it ⚠ stalled, take it over with:  scripts/claim-work.sh --issue $ONLY_ISSUE --takeover" >&2
     exit 1
   fi
   # An open "Part of #n" PR WARNS here rather than blocking: a human naming a unit may deliberately
