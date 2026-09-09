@@ -881,6 +881,10 @@ jobs:
     permissions:
       contents: read
       issues: read
+      # `pull-requests: read` for check-pr-scope.mjs: the guards job is a SHALLOW checkout, so
+      # `git diff base...head` has no base to reach and the changed-file list has to come from the
+      # API. Read-only, and the check writes nothing anywhere.
+      pull-requests: read
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -1558,6 +1562,31 @@ jobs:
       - name: Board scope-overlap matcher (one predicate · three outcomes · mutation controls)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/lib/scope-overlap.mjs --self-test
+      # …and the question that matcher STRUCTURALLY CANNOT ask (#4442). It compares the scopes units
+      # DECLARE; only a PR knows which files a unit actually touched. A wrong `scope:` line is
+      # therefore counted as disjoint and buys a "no overlap" verdict it has not earned — which is
+      # how #4441 came to edit five files #4270 owned and three #4268 owned while the board reported
+      # "compared, no overlap: 26 of 26".
+      #
+      # Hermetic half first. The fixtures include the incident REPLAYED — #4309's scope as declared
+      # against four of the files its PR changed — because the live PR no longer reproduces it: that
+      # scope has since been widened to 35 globs, exactly matching its diff.
+      - name: A PR's files are inside the scope of the unit it closes (no network)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-pr-scope.mjs --self-test
+      # …and the live question, against THIS pull request. Blocking on purpose, unlike the
+      # scheduled-measurement guard beside it: that one reports on the state of ANOTHER ref and is
+      # expected to be red through a promotion window, while this one reports on the diff in front of
+      # it, and the remedy — widen the `scope:` line, or move the file to the unit that owns it — is
+      # in the author's hands. On a non-PR event it prints that it measured nothing and exits 0.
+      - name: ...and no changed file belongs to a different open unit
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node scripts/ci/check-pr-scope.mjs
       # The CLA gate runs from `pull_request_target` — a privileged token, and comment text written
       # by whoever opened the pull request. It is also DORMANT until `pnpm legal:activate-ip` writes
       # cla/ACTIVE, so nothing exercises it until the day it starts gating every external
