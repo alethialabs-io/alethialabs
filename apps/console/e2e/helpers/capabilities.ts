@@ -20,8 +20,29 @@
 // fails the leg when a promised capability's variables are absent — an unset repository secret is
 // then a named failure at the top of the job rather than a downgraded run at the bottom.
 
+// ── `encryption`, AND WHY IT IS DECLARED BEFORE IT IS PROMISED (#4456) ─────────────────────────
+//
+// `ALETHIA_CRED_ENCRYPTION_KEY` is set on NO leg of release-gate.yml, so `isCredEncryptionConfigured()`
+// is false on all of them and every surface that stores a secret is inert: the add-channel sheet
+// shows its "needs an encryption key" note and disables submit, and every connector credential path
+// is unreachable behind the same mechanism.
+//
+// Before this, that could not be DECLARED. A spec could not write `@needs:encryption` and go red on
+// a leg that does not promise it — the only options were to avoid the surface or to write a test
+// that quietly asserts the disabled state, and both leave the gap invisible. That is the exact
+// outcome this module exists to prevent, so the capability is added FIRST, on its own: it turns
+// silence into a declarable, failing condition even before any leg promises it.
+//
+// NOTHING PROMISES IT YET, and that is a state, not an oversight. Promising it on `qa` is a
+// behaviour change with a cost that belongs to the lane that owns the specs: `e2e/flows/alerts.negative.spec.ts`
+// carries two tests that assert the DISABLED state and say so in their own comment ("If the gate
+// ever promises the key, THIS is the test that goes red and says so"). The key itself is NOT blocked
+// on anyone — `.github/workflows/e2e-nightly.yml` already sets a fixed non-secret throwaway value
+// for exactly this variable, with the same rationale and a `.gitleaks.toml` allowlist anchored to
+// the literal rather than to a file.
+
 /** Every capability a leg may promise. Adding one means adding what `--assert-env` requires of it. */
-export const CAPABILITIES = ["stripe", "ai-mock"] as const;
+export const CAPABILITIES = ["stripe", "ai-mock", "encryption"] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /** The variable a workflow sets. Comma-separated capability names; empty or absent means none. */
@@ -31,7 +52,26 @@ export const PROMISE_VAR = "ALETHIA_E2E_CAPABILITIES";
 const REQUIRED_ENV: Record<Capability, readonly string[]> = {
 	stripe: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICE_TEAM", "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"],
 	"ai-mock": ["ALETHIA_AI_MOCK"],
+	encryption: ["ALETHIA_CRED_ENCRYPTION_KEY"],
 };
+
+/** The key length `apps/console/lib/crypto/secrets.ts` refuses anything but, in bytes. */
+const CRED_KEY_BYTES = 32;
+
+/**
+ * Whether a value is a key `lib/crypto/secrets.ts` will accept — base64 decoding to exactly 32
+ * bytes. Returns the decoded length so the caller can say what it got.
+ *
+ * PRESENCE IS NOT ENOUGH HERE, unlike every other required variable. `decodeKey()` throws
+ * "must decode to 32 bytes (got N)", and the console does not throw it at boot — it throws at the
+ * first credential write, as a 400 at the bottom of a leg that has already spent its hour
+ * (scripts/env.sh records that exact string). A present-but-wrong key would therefore satisfy a
+ * presence check and still leave every secret-bearing surface unreachable, which is the downgraded
+ * run this whole module exists to convert into a named failure at the top of the job.
+ */
+function credKeyBytes(raw: string): number {
+	return Buffer.from(raw, "base64").length;
+}
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -120,6 +160,20 @@ export function assertEnvForPromises(env: Env = process.env): string[] {
 		if (cap === "ai-mock" && env.ALETHIA_AI_MOCK !== "1") {
 			problems.push(`${PROMISE_VAR} promises "ai-mock" but ALETHIA_AI_MOCK is "${env.ALETHIA_AI_MOCK}", not "1"`);
 		}
+		if (cap === "encryption") {
+			const raw = env.ALETHIA_CRED_ENCRYPTION_KEY;
+			// A missing/empty key is already reported by the loop above; only shape is left to ask.
+			if (raw !== undefined && raw.trim() !== "") {
+				const bytes = credKeyBytes(raw);
+				if (bytes !== CRED_KEY_BYTES) {
+					problems.push(
+						`${PROMISE_VAR} promises "encryption" but ALETHIA_CRED_ENCRYPTION_KEY decodes to ` +
+							`${bytes} bytes, not ${CRED_KEY_BYTES} — lib/crypto/secrets.ts refuses it, and it would ` +
+							`fail at the first credential write rather than here. Generate one with: openssl rand -base64 32`,
+					);
+				}
+			}
+		}
 	}
 	return problems;
 }
@@ -169,6 +223,46 @@ export function selfTest(): string[] {
 		"ai-mock must be the literal 1",
 		assertEnvForPromises({ [PROMISE_VAR]: "ai-mock", ALETHIA_AI_MOCK: "true" }).length === 1 &&
 			assertEnvForPromises({ [PROMISE_VAR]: "ai-mock", ALETHIA_AI_MOCK: "1" }).length === 0,
+	);
+
+	// ── encryption (#4456) ─────────────────────────────────────────────────────────────────────
+	// The two keys are CONSTRUCTED, not written out. A 44-character base64 literal in this file is
+	// a gitleaks finding (measured: it red the `Secret scan` check), and `.gitleaks.toml`'s one
+	// allowlisted key blob is anchored to an `ALETHIA_CRED_ENCRYPTION_KEY:` assignment — a bare
+	// literal here would not match it. These tests need a key of the right SHAPE, never a
+	// particular key, so there is nothing to write out.
+	const KEY32 = Buffer.from("0123456789abcdef0123456789abcdef").toString("base64"); // 32 bytes
+	const KEY5 = Buffer.from("short").toString("base64"); // 5 bytes — present, and refused
+	ok("encryption is a capability a leg may promise", (CAPABILITIES as readonly string[]).includes("encryption"));
+	ok("@needs:encryption parses", needsTags(["@needs:encryption"]).join() === "encryption");
+	ok(
+		"encryption promised with no key names the variable",
+		assertEnvForPromises({ [PROMISE_VAR]: "encryption" }).some((p) => p.includes("ALETHIA_CRED_ENCRYPTION_KEY")),
+	);
+	ok(
+		"a 32-byte base64 key satisfies the promise",
+		assertEnvForPromises({ [PROMISE_VAR]: "encryption", ALETHIA_CRED_ENCRYPTION_KEY: KEY32 }).length === 0,
+	);
+	ok(
+		"a PRESENT key of the wrong length is a problem, not a pass",
+		assertEnvForPromises({ [PROMISE_VAR]: "encryption", ALETHIA_CRED_ENCRYPTION_KEY: KEY5 }).some((p) =>
+			p.includes("decodes to 5 bytes"),
+		),
+	);
+	ok(
+		"an empty key is reported ONCE, as absent, not twice",
+		assertEnvForPromises({ [PROMISE_VAR]: "encryption", ALETHIA_CRED_ENCRYPTION_KEY: " " }).length === 1,
+	);
+	throws("CI without the encryption promise throws", () =>
+		requireCapability("encryption", { env: { CI: "1" }, skip: () => {} }),
+	);
+	ok(
+		"encryption promised → promised",
+		requireCapability("encryption", { env: { [PROMISE_VAR]: "encryption" }, skip: () => {} }) === "promised",
+	);
+	ok(
+		"a leg may promise encryption alongside stripe",
+		promised({ [PROMISE_VAR]: "stripe,encryption" }).size === 2,
 	);
 	return failures;
 }
