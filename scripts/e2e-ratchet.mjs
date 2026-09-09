@@ -4,14 +4,33 @@
 //
 // THE RELEASE GATE IS GREEN-BY-RATCHET, AND THIS IS THE RATCHET.
 //
-// The browser suites the gate runs were 39% green when it was built (apps/console/docs/qa/
-// findings.md, 2026-09-02: 136 pass / 192 fail / 17 never ran). An absolute-green requirement
-// would have blocked every promotion for weeks, so the gate could not have been REQUIRED on day
-// one — and a gate that is not required is a gate people learn to read past. Instead every leg
-// fails on REGRESSION against a committed baseline: the repo's own pattern for a measurement that
-// is allowed to be red while it is being worked through (`ui-conformance-live.json`,
-// `required-checks-divergence.json` — shrink-only, captured before the fix, moved in the same PR
-// as the code).
+// The browser suites were 39% green when the gate was built. That figure is ONE DATED RUN OF ONE
+// PROJECT — `--project=qa`, 346 tests, 2026-09-02, 136 passed / 192 failed / 1 skipped / 17 never
+// ran, written up in apps/console/docs/qa/findings.md — and it is NOT this ratchet's ledger, which
+// today spans six projects. Those two numbers sat adjacent here with nothing to tell them apart,
+// and were read as one (#4536); "17 never ran" in particular describes that run and no state the
+// ledger has ever had. So the ledger's own census is derived below rather than typed, and the
+// sentence you are reading is history that cannot go stale because it is dated.
+//
+// An absolute-green requirement would have blocked every promotion for weeks, so the gate could
+// not have been REQUIRED on day one — and a gate that is not required is a gate people learn to
+// read past. Instead every leg fails on REGRESSION against a committed baseline: the repo's own
+// pattern for a measurement that is allowed to be red while it is being worked through
+// (`ui-conformance-live.json`, `required-checks-divergence.json` — shrink-only, captured before
+// the fix, moved in the same PR as the code).
+//
+// ── THE LEDGER TODAY ─────────────────────────────────────────────────────────────────────────
+//
+// One line, and `--self-test` RECOUNTS it from apps/console/e2e/gate-baseline.json every time it
+// runs — in CI on every PR (`.github/workflows/ci.yml`, the `Authz / open-core guards` job). It
+// fails in BOTH directions: a ledger that moved without the line, and a line edited away from the
+// ledger. Do not retype it from memory — that is precisely what produced #4536. Move the ledger,
+// run `node scripts/e2e-ratchet.mjs --self-test`, and paste the line it names.
+//
+// Exactly one line in this file may carry the marker, and a second one — in prose, say — is itself
+// a failure rather than a tie-break, because two censuses are no census.
+//
+// LEDGER-CENSUS: 571 tests across 7 projects — 477 passed, 94 failed, 0 fixme, 0 data-skip; failing: audit 1, canvas 5, console 8, qa 80
 //
 //   node scripts/e2e-ratchet.mjs --project=<name> --results=<playwright json> [--baseline=<file>]
 //   node scripts/e2e-ratchet.mjs --project=<name> --results=<json> --write [--only=<spec file>]...
@@ -71,6 +90,79 @@ export const FIXME_RE = /^BUG: .+#\d+/;
  */
 export function isSkipRecord(known) {
 	return typeof known === "object" && known !== null && typeof known.skip === "string";
+}
+
+// ── the ledger's own census ──────────────────────────────────────────────────────────────────
+
+/**
+ * The marker for the single header line that states the ledger's census.
+ *
+ * Held as a constant so the writer (`censusLine`) and the reader (`--self-test`) cannot come to
+ * disagree about what they are looking for — the failure mode of a hand-copied token is that the
+ * check quietly finds nothing and reports green.
+ */
+const CENSUS_MARKER = "LEDGER-CENSUS: ";
+
+/**
+ * Recount a whole baseline document: totals across every project, and per-project failures.
+ *
+ * Throws on an entry that is none of `passed | failed | {fixme} | {skip}` rather than skipping it:
+ * an uncounted entry would shrink the census silently, which is the same defect the census exists
+ * to close.
+ *
+ * @param {unknown} doc parsed `apps/console/e2e/gate-baseline.json`
+ * @returns {{tests: number, projects: number, passed: number, failed: number, fixme: number, dataSkip: number, failedBy: Array<[string, number]>}}
+ */
+export function census(doc) {
+	if (typeof doc !== "object" || doc === null || typeof doc.projects !== "object" || doc.projects === null) {
+		throw new Error("census: the baseline has no `projects` object.");
+	}
+	const c = { tests: 0, projects: 0, passed: 0, failed: 0, fixme: 0, dataSkip: 0, failedBy: [] };
+	// Sorted, so the rendered line does not depend on the order projects happen to have been
+	// captured in — `--write` appends a new project, and an insertion-ordered census would churn
+	// the header for a reason that is not a change in the ledger.
+	for (const name of Object.keys(doc.projects).sort()) {
+		c.projects++;
+		let failed = 0;
+		for (const tests of Object.values(doc.projects[name])) {
+			for (const outcome of Object.values(tests)) {
+				c.tests++;
+				if (outcome === "passed") c.passed++;
+				else if (outcome === "failed") {
+					c.failed++;
+					failed++;
+				} else if (isSkipRecord(outcome)) c.dataSkip++;
+				else if (typeof outcome === "object" && outcome !== null && typeof outcome.fixme === "string") c.fixme++;
+				else throw new Error(`census: project "${name}" carries an entry that is none of passed|failed|{fixme}|{skip}: ${JSON.stringify(outcome)}`);
+			}
+		}
+		if (failed > 0) c.failedBy.push([name, failed]);
+	}
+	return c;
+}
+
+/**
+ * Render a census as the one header line `--self-test` pins, comment prefix and all.
+ *
+ * @param {ReturnType<typeof census>} c
+ * @returns {string} the exact source line, ready to paste
+ */
+export function censusLine(c) {
+	const failing = c.failedBy.length ? c.failedBy.map(([name, n]) => `${name} ${n}`).join(", ") : "none";
+	return `// ${CENSUS_MARKER}${c.tests} tests across ${c.projects} projects — ${c.passed} passed, ${c.failed} failed, ${c.fixme} fixme, ${c.dataSkip} data-skip; failing: ${failing}`;
+}
+
+/**
+ * Every line of this file that carries the census marker at column 0.
+ *
+ * Returns the list rather than the first hit so the caller can fail on TWO of them — the marker in
+ * prose re-declares the census, and a check that took the first match would read past it.
+ *
+ * @param {string} source this file's own text
+ * @returns {string[]}
+ */
+export function censusLinesIn(source) {
+	return source.split("\n").filter((line) => line.startsWith(`// ${CENSUS_MARKER}`));
 }
 
 // ── Playwright JSON → { file → { test → outcome } } ──────────────────────────────────────────
@@ -604,6 +696,70 @@ function selfTest() {
 	ok("CLI: an unscoped --write still refuses the un-baselineable test", allExit === "threw");
 
 	fs.rmSync(dir, { recursive: true, force: true });
+
+	// ── the header's census, against the REAL ledger ─────────────────────────────────────────
+	//
+	// Every assertion above runs on a fixture. This one deliberately does not: it reads the real
+	// apps/console/e2e/gate-baseline.json and this file's real header, because a census pinned to
+	// a fixture is a census of the fixture. It reds in both directions — the ledger moving without
+	// the line, and the line edited away from the ledger — and names the line to paste, so the
+	// failure branch is the branch that does the work.
+	const source = fs.readFileSync(fileURLToPath(import.meta.url), "utf8");
+	const stated = censusLinesIn(source);
+	ok(`the header carries exactly one census line (found ${stated.length})`, stated.length === 1);
+	const ledgerFile = path.join(ROOT, DEFAULT_BASELINE);
+	const ledgerExists = fs.existsSync(ledgerFile);
+	ok(`the ledger ${DEFAULT_BASELINE} is there to be counted`, ledgerExists);
+	if (stated.length === 1 && ledgerExists) {
+		const derived = censusLine(census(readJson(ledgerFile, "baseline")));
+		const agree = stated[0] === derived;
+		if (!agree) {
+			console.error(`     header: ${stated[0]}`);
+			console.error(`     ledger: ${derived}`);
+			console.error(`     → the ledger moved. Paste the second line over the first in scripts/e2e-ratchet.mjs.`);
+		}
+		ok("the header's census equals the ledger's, recounted", agree);
+	}
+	// The census counter itself, on fixtures — including that it REFUSES an entry it cannot
+	// classify, rather than dropping it and reporting a smaller, quieter number.
+	ok(
+		"census: counts every outcome kind, names the failing projects in NAME order not capture order, and omits the clean ones",
+		(() => {
+			// `zed` is declared first and must still be reported second; `mid` is clean and must
+			// not be reported at all. Both are what the label claims, so both are exercised.
+			const c = census({
+				projects: {
+					zed: { "z.spec.ts": { one: "passed", two: "failed" } },
+					alpha: { "a.spec.ts": { one: "passed", two: "failed", three: { fixme: "BUG: x #1" }, four: { skip: "no org" } } },
+					mid: { "m.spec.ts": { one: "passed" } },
+				},
+			});
+			return (
+				c.tests === 7 &&
+				c.projects === 3 &&
+				c.passed === 3 &&
+				c.failed === 2 &&
+				c.fixme === 1 &&
+				c.dataSkip === 1 &&
+				JSON.stringify(c.failedBy) === JSON.stringify([
+					["alpha", 1],
+					["zed", 1],
+				])
+			);
+		})(),
+	);
+	ok(
+		"census: an unclassifiable entry throws rather than going uncounted",
+		(() => {
+			try {
+				census({ projects: { qa: { "a.spec.ts": { one: "wobbly" } } } });
+				return false;
+			} catch (err) {
+				return err instanceof Error && /none of passed\|failed/.test(err.message);
+			}
+		})(),
+	);
+	ok("censusLine: a ledger with no failures says so, rather than trailing an empty list", censusLine(census({ projects: { qa: { "a.spec.ts": { one: "passed" } } } })).endsWith("failing: none"));
 
 	console.log(failures === 0 ? "\nself-test: all passed" : `\nself-test: ${failures} FAILED`);
 	return failures === 0 ? 0 : 1;
