@@ -8,6 +8,7 @@ import { EnvSwitcher } from "@/components/env-switcher";
 import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
 import { SetupGuideButton } from "@/components/onboarding/setup-guide";
 import { ProjectSwitcher } from "@/components/project-switcher";
+import { SHELL_HEADER } from "@/components/shell/shell-metrics";
 import { Button } from "@repo/ui/button";
 import { AskAiButton } from "./ask-ai-button";
 
@@ -45,7 +46,7 @@ import { AskAiButton } from "./ask-ai-button";
  */
 export function Topbar({ onOpenSidebar }: { onOpenSidebar: () => void }) {
 	return (
-		<header className="grid h-[53px] shrink-0 grid-cols-[minmax(max-content,1fr)_auto_minmax(max-content,1fr)] items-center gap-1 border-b bg-background px-2 sm:px-4">
+		<header className={`grid ${SHELL_HEADER} shrink-0 grid-cols-[minmax(max-content,1fr)_auto_minmax(max-content,1fr)] items-center gap-1 border-b bg-background px-2 sm:px-4`}>
 			<div className="flex items-center gap-1">
 				<Button
 					variant="ghost"
