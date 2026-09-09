@@ -208,7 +208,7 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/[org]/~/runners` | 272 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 3/6 · 0.50 · 1 withheld | 7/7 · 1.00 | **0.90** |
 | `/[org]/~/settings/members` | 221 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 5/7 · 0.71 | 6/7 · 0.86 | **0.90** |
 | `/[org]/~/new` | 360 | 3/4 · 0.75 | 4/4 · 1.00 | 8/9 · 0.89 | all N/A | 7/7 · 1.00 | **0.92** |
-| `/[org]/[project]/architecture` | 384 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 8/9 · 0.89 | all N/A | 6/7 · 0.86 | **0.92** |
+| `/[org]/[project]/architecture` | 385 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 8/9 · 0.89 | all N/A | 6/7 · 0.86 | **0.92** |
 | `/[org]/[project]/settings/general` | 216 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 5/7 · 0.71 | **0.92** |
 | `/[org]/[project]/settings/preview` | 143 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 5/7 · 0.71 | **0.92** |
 | `/[org]/~/support/cases/[id]` | 157 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 5/7 · 0.71 | **0.92** |
