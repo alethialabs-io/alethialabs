@@ -1711,6 +1711,29 @@ jobs:
         run: |
           node scripts/check-e2e-spend-guard.mjs --self-test
           node scripts/check-e2e-spend-guard.mjs
+      # `schedule:` fires the DEFAULT BRANCH's copy — the workflow AND, for an unpinned checkout, the
+      # whole tree it executes. So a measurement defined on `dev` can run green for days and publish
+      # nothing, which is #4395: eight successful orphan-reaper runs, zero artifacts, and MVP
+      # predicate 6 unsatisfiable with a green check every morning. Split in three on purpose.
+      - name: Scheduled-measurement guard self-test (no network)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-scheduled-measurements.mjs --self-test
+      - name: Every scheduled measurement declares the tree it runs (no network)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-scheduled-measurements.mjs --scan-only
+      # …and the live question. `continue-on-error` DELIBERATELY: the default branch being behind is
+      # a state change in ANOTHER REF, not in the diff, so this can go red on a PR that touched
+      # nothing — and it is EXPECTED to be red for the whole length of a promotion window. A guard
+      # that blocks unrelated work is a guard people route around. It annotates; the two steps above
+      # are the blocking half. Its findings name the promotion as the remedy, never a culprit.
+      - name: ...and the branch that actually runs it still publishes the evidence
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --depth=1 origin "$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)"
+          node scripts/check-scheduled-measurements.mjs
       # A knob the harness READS that no dispatch can SET is a scenario nobody can run at any price,
       # and it fails silently: the code is written, its unit tests pass, and every run takes the
       # default forever. #2775 found the BYO-IaC custody chain had never executed for exactly that

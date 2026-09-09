@@ -55,6 +55,7 @@
     "check:legal-hashes": "node scripts/check-legal-document-hashes.mjs",
     "check:e2e-knob-reach": "node scripts/check-e2e-knob-reach.mjs",
     "check:e2e-spend-guard": "node scripts/check-e2e-spend-guard.mjs",
+    "check:scheduled-measurements": "node scripts/check-scheduled-measurements.mjs",
     "check:hetzner-lb-location": "node scripts/check-hetzner-lb-location.mjs",
     "check:hetzner-image-cache": "node scripts/check-hetzner-image-cache.mjs",
     "check:tfvars-safety": "node scripts/check-tfvars-safety.mjs",
