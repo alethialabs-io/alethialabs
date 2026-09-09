@@ -8,6 +8,13 @@
 //   .mergify.yml                the dev queue's `merge_conditions` AND `merge_protections`
 //   the live rulesets           GitHub state, not in the tree
 //
+// It has since grown two more questions, each about a different way a list can be wrong rather than
+// merely out of step, and each with its own section below. The FOURTH asks whether a required
+// context has ever gone green (#4510). The FIFTH asks whether the release-gate leg names typed into
+// `infra/github` are the ones .github/workflows/release-gate.yml derives (#4438) — a fifth list,
+// and the only one of the five that is not a list of CHECKS but a list of LEGS the checks are
+// rendered from. So the header above is the original three; the file guards five.
+//
 // Measured 2026-08-28: the live `protect-dev` ruleset was last updated 2026-07-29 and carries 9
 // contexts; the HCL names 11 for dev. So the repository had been carrying written-down requirements
 // that nothing enforced, for a month. That is the SECOND occurrence — .mergify.yml's own header
@@ -514,6 +521,259 @@ export function compareLive({ rulesets, hclAll, devExcluded, stagingExcluded = n
 	return rows;
 }
 
+// ── THE FIFTH LIST: the release-gate LEG NAMES, TYPED here and DERIVED there (#4438) ──────────────
+//
+// `infra/github` names the gate's legs as literal strings — `"Release gate (hero)"` and six
+// siblings in variables.tf, and the same seven again in main.tf's dev and staging filters.
+// `.github/workflows/release-gate.yml` DERIVES them: one `const legs = [{ project: "hero", … }]`
+// table feeds the matrix, and the job renders its name from it. Two lists of one fact, kept in step
+// by hand, and until this nothing compared them.
+//
+// IT HAS ALREADY FIRED ONCE. On 2026-09-09 #4266's lane added an `audit-interaction` leg and typed
+// `"Release gate (interaction)"` into variables.tf — the name the issue body used. The job reports
+// `Release gate (audit-interaction)`. Caught by eye in review (941795be3, PR #4435), by a reader who
+// happened to compare it against #4432, which derives the names properly. No check saw it.
+//
+// WHAT IT WOULD HAVE COST, and why this is not a tidiness lint. The gate legs are required on `main`
+// and filtered out of dev and staging, so after the apply in #4286 the `protect-main` ruleset would
+// have required a context that no job can ever produce. A context that is never REPORTED is not a
+// failure, it is an ABSENCE: every promotion into `main` would sit blocked with nothing red, no
+// failing job to open, and `--admin` as the only way past. That is the fourth question's shape one
+// list further out — there the leg exists and has never passed; here it does not exist at all.
+//
+// THE DIRECTIONS ARE ASYMMETRIC, exactly as they are for Mergify above, and for the same reason:
+//
+//   TYPED ∖ DERIVED — `infra/github` names a gate context no leg produces. This is the wedge, and
+//   there is no state of the world in which it is what someone meant. UNDECLARABLE.
+//
+//   DERIVED ∖ TYPED — the workflow runs a leg that nothing requires. The leg gates nothing, which
+//   is the defect the release-gate wave exists to remove — but it is also the legitimate FIRST HALF
+//   of adding one: #4510's lesson is that a leg must have been observed green once before it may be
+//   required, or requiring it is itself the wedge. So it fails by default and is declarable in
+//   required-checks-divergence.json under `gate_legs_unrequired`, shrink-only like `mergify_leads`.
+//
+// A one-directional check would pass on the case that actually happened if you picked the wrong
+// direction, so both are fixtured — and the derived→typed one is fixtured first, because
+// under-reporting is the direction that passes silently on the very regression it exists for.
+//
+// WHY THE JOB'S OWN `name:` TEMPLATE, rather than hardcoding `Release gate (%s)`. That string is a
+// sixth copy of the same fact, and the one this file would be wrong about most quietly: rename the
+// job to `Gate (${…})` and a hardcoded renderer would still "agree" with the typed list while every
+// context in it became unreportable. So the template is read from the gate job and the leg is
+// substituted into it, and a template this script cannot render is an ERROR rather than a guess.
+
+/** The workflow that owns the leg table. Read, never written, by this check. */
+const GATE_WORKFLOW = ".github/workflows/release-gate.yml";
+
+/** Escape a literal for use inside a RegExp. */
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The workflow's top-level jobs, as `{key, line, body}`.
+ *
+ * Line-wise, like every other parser here and in check-guards-independent.mjs: `yaml` is a
+ * dependency of apps/console, not of the root, and this runs under plain `node`. The discipline
+ * that makes that safe is INDENTATION, and it is load-bearing twice over — release-gate.yml's
+ * picker job embeds a `node - <<'EOF'` heredoc full of JavaScript, and its gate job has an artifact
+ * step whose `name:` also interpolates `matrix.project`. Anchoring on exact column counts is what
+ * keeps a step's name out of a job's.
+ *
+ * @param {string} text
+ * @returns {{key: string, line: number, body: string}[]}
+ */
+export function parseWorkflowJobs(text) {
+	const lines = text.split("\n");
+	const at = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+	if (at < 0) throw new Error(`${GATE_WORKFLOW}: no top-level \`jobs:\` key. This script's model of the workflow is wrong, and a parse that finds nothing must not read as "no legs to disagree about".`);
+	const starts = [];
+	for (let i = at + 1; i < lines.length; i++) {
+		const m = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(lines[i]);
+		if (m) starts.push({ key: m[1], at: i });
+	}
+	if (starts.length === 0) throw new Error(`${GATE_WORKFLOW}: \`jobs:\` contains no job at two-space indent. A workflow with no jobs is not a state this file has ever been in — the parse is wrong.`);
+	return starts.map((s, i) => ({
+		key: s.key,
+		line: s.at + 1,
+		body: lines.slice(s.at, i + 1 < starts.length ? starts[i + 1].at : lines.length).join("\n"),
+	}));
+}
+
+/**
+ * The `const legs = [ … ]` table and the job that holds it.
+ *
+ * The same shape deploy-console.yml's promotion receipt reads (#4432) — that receipt is the reason
+ * #4435's typo was caught at all — and the same `"?project"?` tolerance scripts/merge-signal-health.sh
+ * uses, because the table is a JS array today and becomes JSON under #4440; matching both means that
+ * change cannot silently empty this list. Those two are the OTHER derived readers, and this is the
+ * third; the copy that decays is always the typed one, which is what this compares them against.
+ *
+ * @param {string} workflowText
+ * @returns {{job: string, legs: string[]}}
+ */
+export function parseGateLegTable(workflowText) {
+	const jobs = parseWorkflowJobs(workflowText);
+	const holders = jobs.filter((j) => j.body.includes("const legs = ["));
+	if (holders.length === 0) throw new Error(`${GATE_WORKFLOW}: no \`const legs = [\` table in any job. That table is the one place that decides which legs exist; without it there is nothing to compare \`infra/github\`'s typed contexts against, and reporting agreement from an empty list would be agreement about nothing.`);
+	if (holders.length > 1) throw new Error(`${GATE_WORKFLOW}: ${holders.length} jobs carry a \`const legs = [\` table (${holders.map((h) => h.key).join(", ")}). This script models exactly one; with two it cannot say which one feeds the matrix.`);
+	const job = holders[0];
+	const from = job.body.slice(job.body.indexOf("const legs = ["));
+	const end = from.indexOf("];");
+	if (end < 0) throw new Error(`${GATE_WORKFLOW}: the \`const legs = [\` table in job \`${job.key}\` is never closed by \`];\`. Reading to end-of-job would harvest project names out of the rules below it.`);
+	const legs = [...from.slice(0, end).matchAll(/\{\s*"?project"?:\s*"([^"]+)"/g)].map((m) => m[1]);
+	if (legs.length === 0) throw new Error(`${GATE_WORKFLOW}: the leg table in job \`${job.key}\` parsed to ZERO legs. A gate with no legs is not a gate — this is a broken parse, and it must not render as "nothing disagrees".`);
+	const seen = new Set();
+	for (const l of legs) {
+		if (seen.has(l)) throw new Error(`${GATE_WORKFLOW}: leg \`${l}\` appears twice in the table. Two matrix rows with one project produce two check-runs under ONE context name, and the second to finish decides the verdict.`);
+		seen.add(l);
+	}
+	return { job: job.key, legs };
+}
+
+/**
+ * The gate job's `name:` template and the expression its matrix reads.
+ *
+ * The job is identified by its name interpolating `matrix.project`, not by its key — the key is
+ * `gate` today and is not what GitHub reports. A job with NO `name:` is an error rather than a
+ * fallback to the key: GitHub would then report `gate (hero)`, every typed context would be
+ * unreportable, and silently modelling that is precisely the wedge this exists to refuse.
+ *
+ * @param {string} workflowText
+ * @returns {{job: string, template: string, matrixInclude: string | null}}
+ */
+export function parseGateNameTemplate(workflowText) {
+	const found = [];
+	for (const j of parseWorkflowJobs(workflowText)) {
+		// EXACTLY four spaces. A step's `name:` sits at eight and the artifact-upload step in the
+		// real gate job is `name: release-gate-${{ matrix.project }}` — a decoy that a
+		// leading-whitespace-agnostic match harvests as the job name, yielding a template whose
+		// rendered contexts nothing requires and a repo-wide false red.
+		const m = /^ {4}name:[ \t]*(.+?)[ \t]*$/m.exec(j.body);
+		if (!m || !/matrix\.project/.test(m[1])) continue;
+		const mat = j.body.indexOf("\n      matrix:");
+		const inc = mat < 0 ? null : (/^ {8}include:[ \t]*(.+?)[ \t]*$/m.exec(j.body.slice(mat))?.[1] ?? null);
+		found.push({ job: j.key, template: m[1].replace(/^(['"])(.*)\1$/, "$2"), matrixInclude: inc });
+	}
+	if (found.length === 0) throw new Error(`${GATE_WORKFLOW}: no job whose \`name:\` interpolates \`matrix.project\`. Either the gate job lost its name — in which case GitHub reports the job KEY and every \`Release gate (…)\` context in \`infra/github\` is already unreportable — or this parser has stopped reading the file. Both are failures, not passes.`);
+	if (found.length > 1) throw new Error(`${GATE_WORKFLOW}: ${found.length} jobs (${found.map((f) => f.job).join(", ")}) render a name from \`matrix.project\`. This script models one gate matrix; with two it would compare the typed contexts against whichever it happened to read first.`);
+	return found[0];
+}
+
+/**
+ * The literal text either side of the `matrix.project` substitution.
+ *
+ * The empty-affix refusal is the bound worth stating: with `name: ${{ matrix.project }}` the shape
+ * that identifies a gate context is `^(.+)$`, which matches EVERY required check in the repository
+ * — so the wedge direction below would flag all of them, and a guard whose cheapest escape route is
+ * to stop believing it is worse than no guard. Refuse instead.
+ */
+export function gateContextParts(template) {
+	const exprs = template.match(/\$\{\{[^}]*\}\}/g) ?? [];
+	if (exprs.length !== 1) throw new Error(`${GATE_WORKFLOW}: the gate job's name is \`${template}\`, which interpolates ${exprs.length} expression(s). This script renders a context by substituting exactly one; with any other count it would be guessing at what GitHub reports.`);
+	const [expr] = exprs;
+	if (!/^\$\{\{\s*matrix\.project\s*\}\}$/.test(expr)) throw new Error(`${GATE_WORKFLOW}: the gate job's name interpolates \`${expr}\`, which this script cannot evaluate. Only a bare \`matrix.project\` is modelled; extend this deliberately rather than letting it guess which contexts the matrix reports.`);
+	const i = template.indexOf(expr);
+	const prefix = template.slice(0, i);
+	const suffix = template.slice(i + expr.length);
+	if (prefix.trim() === "" && suffix.trim() === "") throw new Error(`${GATE_WORKFLOW}: the gate job's name is the leg and nothing else (\`${template}\`), so a gate context is indistinguishable from any other required check and this script cannot tell them apart. Give the job a literal prefix or suffix.`);
+	return { prefix, suffix };
+}
+
+/** The context GitHub reports for one leg. */
+export function renderGateContext(template, leg) {
+	const { prefix, suffix } = gateContextParts(template);
+	return `${prefix}${leg}${suffix}`;
+}
+
+/** A matcher for "a context of the gate's shape", capturing the leg it names. */
+export function gateContextShape(template) {
+	const { prefix, suffix } = gateContextParts(template);
+	return new RegExp(`^${escapeRe(prefix)}(.+)${escapeRe(suffix)}$`);
+}
+
+/**
+ * Reconcile the typed gate contexts in `infra/github` against the derived leg table.
+ *
+ * @param {object} args
+ * @param {string[]} args.legs           the leg table's projects
+ * @param {string}   args.template       the gate job's `name:`
+ * @param {string|null} args.matrixInclude the expression the gate matrix reads
+ * @param {string}   args.legTableJob    the job that holds the leg table
+ * @param {string[]} args.hclAll         `required_status_checks`, unfiltered — what main takes
+ * @param {{where: string, contexts: string[]}[]} args.filters main.tf's exclusion lists
+ * @param {object=}  args.divergence     the declaration ledger
+ */
+export function compareGateLegs({ legs, template, matrixInclude, legTableJob, hclAll, filters = [], divergence }) {
+	const failures = [];
+	const notes = [];
+
+	// THE MATRIX MUST BE FED BY THE TABLE THIS READ, verified rather than assumed — the same
+	// question the dev ruleset's `for_each` gets above. Wired to anything else, the leg list and the
+	// job name belong to two different mechanisms and every comparison below is true about nothing.
+	// It RETURNS rather than continuing, because a comparison against the wrong set is worse than
+	// no comparison: it would report agreement.
+	const want = `\${{ fromJSON(needs.${legTableJob}.outputs.include) }}`;
+	if (matrixInclude !== want) {
+		failures.push(
+			`${GATE_WORKFLOW}: the gate job's matrix reads \`${matrixInclude ?? "nothing this script could find"}\`, not \`${want}\` — the job holding the \`const legs\` table. ` +
+				`The leg list derived here may not be the one the matrix runs, so the contexts it renders would be compared against \`infra/github\` on a guess.`,
+		);
+		return { failures, notes };
+	}
+
+	const shape = gateContextShape(template);
+	const rendered = new Map(legs.map((l) => [renderGateContext(template, l), l]));
+
+	// ── the wedge direction: infra/github names a context no leg produces ──
+	for (const { where, contexts } of [{ where: VARIABLES, contexts: hclAll }, ...filters]) {
+		for (const c of contexts) {
+			const m = shape.exec(c);
+			if (!m || rendered.has(c)) continue;
+			failures.push(
+				`${where}: \`${c}\` has the shape of a release-gate context, but no leg named \`${m[1]}\` exists in ${GATE_WORKFLOW}'s \`const legs\` table (${legs.map((l) => `\`${l}\``).join(", ")}). ` +
+					`No job will ever report it. A required context that is never reported is not a failure, it is an ABSENCE: every PR into the branch requiring it blocks with nothing red to open and \`--admin\` as the only way past. ` +
+					`Fix the spelling here, or add the leg there. This direction cannot be declared away — #4435 typed \`Release gate (interaction)\` for a leg called \`audit-interaction\`, and it was caught by eye.`,
+			);
+		}
+	}
+
+	// ── the declarable direction: a leg nothing requires ──
+	const records = Array.isArray(divergence?.gate_legs_unrequired?.records) ? divergence.gate_legs_unrequired.records : [];
+	const unmatched = new Map();
+	for (const rec of records) {
+		if (unmatched.has(rec.leg)) {
+			failures.push(`${DIVERGENCE}: duplicate \`gate_legs_unrequired\` record for leg \`${rec.leg}\`. One record per leg is the most that can ever match; the extra can never be satisfied and would pad the list.`);
+			continue;
+		}
+		unmatched.set(rec.leg, rec);
+	}
+	for (const [ctx, leg] of rendered) {
+		if (hclAll.includes(ctx)) continue;
+		const rec = unmatched.get(leg);
+		if (rec) {
+			unmatched.delete(leg);
+			notes.push(`${GATE_WORKFLOW}: leg \`${leg}\` (\`${ctx}\`) runs but is required nowhere — declared in ${DIVERGENCE}: ${rec.reason ?? "no reason recorded"}${rec.issue ? ` (${rec.issue})` : ""}.`);
+			continue;
+		}
+		failures.push(
+			`${GATE_WORKFLOW}: leg \`${leg}\` renders \`${ctx}\`, which \`required_status_checks\` (${VARIABLES}) does not name. ` +
+				`The leg burns its runner-minutes on every promotion and gates nothing — a green promotion proves less than it appears to, which is the defect the release-gate wave exists to remove. ` +
+				`Either add \`${ctx}\` to the HCL, or — if the leg has not yet been observed green even once, which is its own way of wedging \`main\` (#4510) — record it in ${DIVERGENCE} under \`gate_legs_unrequired\` with the reason and the issue that will remove it.`,
+		);
+	}
+	for (const [leg, rec] of unmatched) {
+		failures.push(
+			`${DIVERGENCE}: the \`gate_legs_unrequired\` record for leg \`${leg}\` no longer corresponds to a divergence — the leg is either required now, or no longer in the table. ` +
+				`Delete it; this list only shrinks. A record for something that does not exist is the same stale-evidence shape the record was meant to expose.` +
+				(rec.issue ? ` It named ${rec.issue}.` : ""),
+		);
+	}
+
+	if (failures.length === 0) {
+		notes.push(`${GATE_WORKFLOW}: ${legs.length} leg(s) — ${legs.map((l) => `\`${l}\``).join(", ")} — rendered through \`${template}\`; every one is required in ${VARIABLES}, and every gate-shaped context there names one of them.`);
+	}
+	return { failures, notes };
+}
+
 // ── THE FOURTH QUESTION: has a required context ever been SATISFIED? ──────────────────────────────
 //
 // The three comparisons above all ask whether the LISTS agree. None of them asks whether the checks
@@ -926,6 +1186,143 @@ resource "github_repository_ruleset" "staging" {
 	const jobsNoRuns = readObservedJobs("x/y", { run: (a) => (a[1].includes("/workflows?") ? JSON.stringify({ workflows: [{ id: 1, state: "active" }] }) : JSON.stringify({ workflow_runs: [] })) });
 	P("workflows with no runs is an error, not a clean bill", jobsNoRuns.jobs === null && /no runs at all/.test(jobsNoRuns.error), JSON.stringify(jobsNoRuns));
 
+	// ── the fifth list: the leg names, typed in infra/github and derived in the workflow (#4438) ──
+	//
+	// The fixture is shaped like the real workflow in the two ways that matter and are NOT obvious:
+	// the leg table lives inside a `node - <<'EOF'` heredoc in the picker job, and the gate job
+	// carries a STEP whose name also interpolates `matrix.project`. Both are decoys — a parser that
+	// reads the heredoc as YAML, or that matches `name:` at any indent, produces a different answer
+	// here than the intended path does, so no assertion below can pass for the wrong reason.
+	const GATE_NAME = "Release gate (${{ matrix.project }})";
+	const gateWf = (projects, { name = GATE_NAME, include = "${{ fromJSON(needs.legs.outputs.include) }}", table = true } = {}) =>
+		[
+			"name: Release gate",
+			"on:",
+			"  pull_request:",
+			"jobs:",
+			"  legs:",
+			"    name: Which legs run",
+			"    outputs:",
+			"      include: ${{ steps.pick.outputs.include }}",
+			"    steps:",
+			"      - id: pick",
+			"        run: |",
+			"          node - <<'EOF'",
+			...(table
+				? ["          const legs = [", ...projects.map((p) => `            { project: "${p}", args: "--project=${p}", workers: 1 },`), "          ];"]
+				: ["          const rules = [];"]),
+			"          EOF",
+			"  gate:",
+			...(name === null ? [] : [`    name: ${name}`]),
+			"    needs: [legs]",
+			"    strategy:",
+			"      fail-fast: false",
+			"      matrix:",
+			`        include: ${include}`,
+			"    steps:",
+			"      - name: Upload the report",
+			"        with:",
+			"          name: release-gate-${{ matrix.project }}",
+		].join("\n");
+
+	const wf = gateWf(["hero", "audit-interaction"]);
+	const legTable = parseGateLegTable(wf);
+	const gateName = parseGateNameTemplate(wf);
+	P("the leg table is read out of the heredoc, in order", JSON.stringify(legTable.legs) === JSON.stringify(["hero", "audit-interaction"]), JSON.stringify(legTable));
+	P("...and attributed to the job that holds it", legTable.job === "legs", legTable.job);
+	// The decoy. A step's `name:` interpolates matrix.project too; only the four-space match skips it.
+	P("the JOB's name template is read, not the step's", gateName.template === GATE_NAME && gateName.job === "gate", JSON.stringify(gateName));
+	P("...and the matrix's source expression comes with it", gateName.matrixInclude === "${{ fromJSON(needs.legs.outputs.include) }}", String(gateName.matrixInclude));
+	P("a leg renders through the template rather than a hardcoded string", renderGateContext(GATE_NAME, "audit-interaction") === "Release gate (audit-interaction)");
+	P("...and a renamed job renames every context with it", renderGateContext("Gate · ${{ matrix.project }}", "qa") === "Gate · qa");
+
+	const GOOD = ["A", "Release gate (hero)", "Release gate (audit-interaction)"];
+	const gl = (hclAll, extra = {}) =>
+		compareGateLegs({ legs: legTable.legs, template: gateName.template, matrixInclude: gateName.matrixInclude, legTableJob: legTable.job, hclAll, ...extra });
+
+	P("a typed list that matches the derived legs raises nothing", gl(GOOD).failures.length === 0, JSON.stringify(gl(GOOD).failures));
+	P("...and a non-gate context is not dragged into the comparison", !JSON.stringify(gl(GOOD).failures).includes('"A"'));
+
+	// ── DIRECTION 1 (the one that fired): a leg TYPED that the workflow does not derive. #4435
+	//    verbatim — `interaction` for a leg called `audit-interaction`.
+	const typo = gl([...GOOD, "Release gate (interaction)"]);
+	P("a typed gate context no leg produces is a failure", typo.failures.some((f) => /`Release gate \(interaction\)`/.test(f)), JSON.stringify(typo.failures));
+	P("...and it names the missing LEG, and the legs that do exist", typo.failures.some((f) => /no leg named `interaction`/.test(f) && /`audit-interaction`/.test(f)), JSON.stringify(typo.failures));
+	P("...and it names the consequence — an absence, not a red", typo.failures.some((f) => /ABSENCE/.test(f) && /--admin/.test(f)), JSON.stringify(typo.failures));
+	// UNDECLARABLE. A wedge with an escape hatch is a wedge with a habit.
+	const typoDeclared = gl([...GOOD, "Release gate (interaction)"], { divergence: { gate_legs_unrequired: { records: [{ leg: "interaction", reason: "nope" }] } } });
+	P("...and it cannot be declared away", typoDeclared.failures.some((f) => /no leg named `interaction`/.test(f)), JSON.stringify(typoDeclared.failures));
+	// main.tf retypes every leg in its filters, so the same typo lands there too.
+	const inFilter = gl(GOOD, { filters: [{ where: `${MAIN} (dev)`, contexts: ["Release gate (interaction)"] }] });
+	P("a bogus gate context in main.tf's filter is a failure too", inFilter.failures.some((f) => /main\.tf \(dev\)/.test(f) && /interaction/.test(f)), JSON.stringify(inFilter.failures));
+	P("...and a filter naming only REAL legs is not", gl(GOOD, { filters: [{ where: `${MAIN} (dev)`, contexts: ["Release gate (hero)", "branch-flow-guard"] }] }).failures.length === 0);
+
+	// ── DIRECTION 2 (the dangerous one to omit): a leg DERIVED that nobody typed. Tested because a
+	//    one-directional check passes silently on exactly the regression it exists for.
+	const orphan = gl(["A", "Release gate (hero)"]);
+	P("a leg the workflow runs and nothing requires is a failure", orphan.failures.some((f) => /leg `audit-interaction` renders/.test(f)), JSON.stringify(orphan.failures));
+	P("...and it says the leg gates nothing rather than just 'missing'", orphan.failures.some((f) => /gates nothing/.test(f)), JSON.stringify(orphan.failures));
+	const orphanDeclared = gl(["A", "Release gate (hero)"], { divergence: { gate_legs_unrequired: { records: [{ leg: "audit-interaction", reason: "awaiting a first observed green", issue: "#4510" }] } } });
+	P("a declared unrequired leg is not a failure", orphanDeclared.failures.length === 0, JSON.stringify(orphanDeclared.failures));
+	P("...but it is still reported, with its reason", orphanDeclared.notes.some((n) => /audit-interaction/.test(n) && /awaiting a first observed green/.test(n)), JSON.stringify(orphanDeclared.notes));
+	// Shrink-only, both ways — a ledger that only fails on an undeclared hit lets an entry outlive
+	// its subject and suppress a real finding forever.
+	const stale = gl(GOOD, { divergence: { gate_legs_unrequired: { records: [{ leg: "audit-interaction", reason: "gone", issue: "#4510" }] } } });
+	P("a record for a leg that IS required now is a failure", stale.failures.some((f) => /no longer corresponds to a divergence/.test(f)), JSON.stringify(stale.failures));
+	const dupRec = gl(["A", "Release gate (hero)"], { divergence: { gate_legs_unrequired: { records: [{ leg: "audit-interaction" }, { leg: "audit-interaction" }] } } });
+	P("a duplicate record is a failure", dupRec.failures.some((f) => /duplicate `gate_legs_unrequired` record/.test(f)), JSON.stringify(dupRec.failures));
+
+	// ── the rename that a hardcoded `Release gate (%s)` would have been silently wrong about ──
+	const renamed = gateWf(["hero", "audit-interaction"], { name: "Gate (${{ matrix.project }})" });
+	const rn = parseGateNameTemplate(renamed);
+	const renamedCmp = compareGateLegs({ legs: legTable.legs, template: rn.template, matrixInclude: rn.matrixInclude, legTableJob: legTable.job, hclAll: GOOD });
+	P("renaming the gate job makes every typed context unreportable, and that is caught", renamedCmp.failures.some((f) => /leg `hero` renders `Gate \(hero\)`/.test(f)), JSON.stringify(renamedCmp.failures));
+	P("...and the old `Release gate (…)` strings are no longer read as gate contexts", !renamedCmp.failures.some((f) => /shape of a release-gate context/.test(f)), JSON.stringify(renamedCmp.failures));
+
+	// ── the wiring: the matrix must be fed by the table this parsed ──
+	const rewiredWf = gateWf(["hero"], { include: "${{ fromJSON(vars.SOMETHING_ELSE) }}" });
+	const rw = parseGateNameTemplate(rewiredWf);
+	const rwCmp = compareGateLegs({ legs: ["hero"], template: rw.template, matrixInclude: rw.matrixInclude, legTableJob: "legs", hclAll: ["Release gate (hero)"] });
+	P("a matrix fed from somewhere other than the leg table is a failure", rwCmp.failures.some((f) => /the gate job's matrix reads/.test(f)), JSON.stringify(rwCmp.failures));
+	P("...and it stops there rather than comparing against a set it does not trust", rwCmp.failures.length === 1, JSON.stringify(rwCmp.failures));
+
+	// ── blindness. Every one of these is a shape where "found nothing" would otherwise pass. ──
+	const throws = (fn) => { try { fn(); return false; } catch { return true; } };
+	P("a workflow with no leg table is an error, not zero legs", throws(() => parseGateLegTable(gateWf(["hero"], { table: false }))));
+	P("a leg table with no project rows is an error", throws(() => parseGateLegTable(gateWf([]))));
+	P("a leg listed twice in the table is an error", throws(() => parseGateLegTable(gateWf(["hero", "hero"]))));
+	P("a workflow with no `jobs:` is an error", throws(() => parseWorkflowJobs("name: x\non:\n  push:\n")));
+	// The decoy again, from the other side: with the JOB name gone, the STEP name must not stand in
+	// for it. GitHub would report the job KEY here, so every typed context is already unreportable.
+	P("a gate job with no name is an error, and the step's name does not stand in", throws(() => parseGateNameTemplate(gateWf(["hero"], { name: null }))));
+	P("two matrix-named jobs is an error, not a coin flip", throws(() => parseGateNameTemplate(`${gateWf(["hero"])}\n  gate2:\n    name: ${GATE_NAME}\n    steps: []\n`)));
+	P("a name that is the leg and nothing else is an error — every context would match its shape", throws(() => gateContextParts("${{ matrix.project }}")));
+	P("...and so is one this script cannot render", throws(() => gateContextParts("Release gate (${{ matrix.project }}) on ${{ github.ref }}")));
+	P("...and one interpolating something other than the leg", throws(() => gateContextParts("Release gate (${{ matrix.leg }})")));
+
+	// ── THE REAL FILES. Every fixture above is one this file wrote; these are the two it guards.
+	//    A parser that has silently stopped understanding the real workflow passes every synthetic
+	//    case and finds nothing where it matters.
+	if (fs.existsSync(GATE_WORKFLOW) && fs.existsSync(VARIABLES)) {
+		const realWf = fs.readFileSync(GATE_WORKFLOW, "utf8");
+		const realLegs = parseGateLegTable(realWf);
+		const realName = parseGateNameTemplate(realWf);
+		P("the REAL release-gate.yml yields a plural leg table", realLegs.legs.length >= 2, JSON.stringify(realLegs));
+		P("...and the real gate job's name is the one GitHub reports", realName.template.includes("${{ matrix.project }}") && realName.template !== "${{ matrix.project }}", realName.template);
+		const realHcl = parseRequiredStatusChecks(fs.readFileSync(VARIABLES, "utf8"));
+		// MUTATION, against the real pair: rename one real leg in the workflow and the typed context
+		// for it must go red. This is the assertion that cannot pass for the wrong reason — the leg
+		// name comes from the file, not from this test.
+		const victim = realLegs.legs[realLegs.legs.length - 1];
+		const mutated = parseGateLegTable(realWf.replace(`project: "${victim}"`, `project: "${victim}-renamed"`));
+		const mutCmp = compareGateLegs({ legs: mutated.legs, template: realName.template, matrixInclude: realName.matrixInclude, legTableJob: mutated.job, hclAll: realHcl });
+		P("renaming a REAL leg reds both directions at once", mutCmp.failures.some((f) => f.includes(renderGateContext(realName.template, victim))) && mutCmp.failures.some((f) => f.includes(`${victim}-renamed`)), JSON.stringify(mutCmp.failures));
+	} else {
+		// Said out loud rather than skipped quietly: run from anywhere but the repo root, the four
+		// assertions above do not run, and a silent skip reads exactly like four passes.
+		console.log(`skip - the real-file assertions need ${GATE_WORKFLOW} and ${VARIABLES}; run the self-test from the repo root`);
+	}
+
 	console.log(pass ? "\nself-test: all passed" : "\nself-test: FAILED");
 	return pass;
 }
@@ -948,6 +1345,8 @@ function main() {
 	let wiring;
 	let mergifyBlocks;
 	let conditionBlocks;
+	let legTable;
+	let gateName;
 	try {
 		hclAll = parseRequiredStatusChecks(read(VARIABLES));
 		devExcluded = parseDevFilter(read(MAIN));
@@ -955,6 +1354,9 @@ function main() {
 		wiring = parseRulesetWiring(read(MAIN));
 		mergifyBlocks = parseMergifyCheckBlocks(read(MERGIFY));
 		conditionBlocks = parseMergifyConditionBlocks(read(MERGIFY));
+		const gateWorkflow = read(GATE_WORKFLOW);
+		legTable = parseGateLegTable(gateWorkflow);
+		gateName = parseGateNameTemplate(gateWorkflow);
 	} catch (e) {
 		console.error(`::error::check-required-checks: ${e.message}`);
 		process.exit(1);
@@ -969,6 +1371,26 @@ function main() {
 	// exactly why its placement needs its own question asked.
 	const gateFailures = compareThreadGate(conditionBlocks);
 	failures.push(...gateFailures);
+
+	// The FIFTH list. Measured against `hclAll` unfiltered, because `protect-main` takes the
+	// variable whole and main is the branch a never-reportable context wedges. main.tf's two
+	// exclusion lists are read as well: they retype every leg name, so a typo lands there too, and
+	// there it is inert — the real leg is not excluded, which the Mergify comparison above catches
+	// on dev but nothing catches on staging.
+	const legNameFailures = compareGateLegs({
+		legs: legTable.legs,
+		template: gateName.template,
+		matrixInclude: gateName.matrixInclude,
+		legTableJob: legTable.job,
+		hclAll,
+		filters: [
+			{ where: `${MAIN} (\`${DEV_LOCAL}\`)`, contexts: devExcluded },
+			...(Array.isArray(stagingExcluded) ? [{ where: `${MAIN} (\`${STAGING_LOCAL}\`)`, contexts: stagingExcluded }] : []),
+		],
+		divergence,
+	});
+	failures.push(...legNameFailures.failures);
+	notes.push(...legNameFailures.notes);
 
 	if (argv.includes("--live")) {
 		const repo = process.env.GITHUB_REPOSITORY ?? "alethialabs-io/alethialabs";
@@ -1018,12 +1440,23 @@ function main() {
 			for (const f of gateFailures) console.log(`- ${f}`);
 			console.log(`\nThis is a \`.mergify.yml\` problem, not ruleset drift — no \`tofu apply\` will fix it.`);
 		}
-		process.exit(drifted || gateFailures.length || wedgeRisk ? 2 : 0);
+		// AND THE LEG NAMES, for the same reason: this branch already holds the finding, and the
+		// drift report is where a human reads about a `main` that will not move. It is also the one
+		// finding here that an apply would make WORSE rather than fix.
+		if (legNameFailures.failures.length) {
+			console.log(`\n## The release-gate leg names\n`);
+			for (const f of legNameFailures.failures) console.log(`- ${f}`);
+			console.log(`\nThis is a tree problem — \`infra/github\` and \`${GATE_WORKFLOW}\` disagree about which legs exist — and a \`tofu apply\` would not fix it but ENACT it. The PR-time run fails on this too.`);
+		}
+		process.exit(drifted || gateFailures.length || legNameFailures.failures.length || wedgeRisk ? 2 : 0);
 	}
 
 	for (const n of notes) console.log(`::warning::check-required-checks: ${n}`);
 	if (failures.length === 0) {
-		console.log(`check-required-checks: ${devHcl.length} required on ${DEV_RULESET}, ${mergify.length} in ${MERGIFY} — they agree.`);
+		// The leg count is stated here because ci.yml's step is named "(HCL vs Mergify)" — true when
+		// it was written and now half the question. A reader who sees this line is told what was
+		// actually compared, whatever the step above it is called.
+		console.log(`check-required-checks: ${devHcl.length} required on ${DEV_RULESET}, ${mergify.length} in ${MERGIFY} — they agree; and ${legTable.legs.length} release-gate leg(s) derived from ${GATE_WORKFLOW} match the contexts typed in ${VARIABLES}.`);
 		process.exit(0);
 	}
 	for (const f of failures) console.error(`::error::check-required-checks: ${f}`);
