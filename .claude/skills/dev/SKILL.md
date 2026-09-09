@@ -85,10 +85,15 @@ be the same machine. Browsers and their OS libraries install on first run, then 
   maintainer.** It caps at **2** environments. That is a hard memory budget, not a
   policy: an env floors at **5.2 GB** and reaches **~7 GB** after a browser run (measured
   on the box; the earlier "~2–3 GB" was a guess, and wrong by 3x), against 15.6 GB of
-  RAM. A third env OOMs the box. **`dev` permanently holds one** as the integration env
-  at `dev.alethialabs.io`, so there is **one branch slot** for everyone else. The next
-  one is refused with a list of who holds it — nothing is ever evicted automatically,
-  because a silent swap kills someone else's run.
+  RAM. A third env OOMs the box. The next one is refused with a list of who holds it —
+  nothing is ever evicted automatically, because a silent swap kills someone else's run.
+  **There is no standing integration env, so do not assume a slot is free** — this bullet
+  used to promise that "`dev` permanently holds one as the integration env at
+  `dev.alethialabs.io`, so there is one branch slot for everyone else", and on 2026-09-08
+  `dev` held none, `dev.alethialabs.io` 404'd, and BOTH slots were branch envs — one of
+  them a registration with nothing running behind it (#4350). Ask `pnpm env:status`, which
+  now separates an env that is merely slow (`?-no-answer`) from one with no session at all
+  (`?-not-running`).
 - **Take a slot only when you need a RUNNING app** — reproducing a bug, checking UI,
   testing auth. Building, type-checking, linting and unit tests do not need one. With
   one shared branch slot this is now a courtesy to whoever is waiting, not just tidiness.
