@@ -37,7 +37,7 @@ function SupportCardBody({
 		<div className="flex h-full flex-col px-6">
 			<div className="flex items-start justify-between">
 				<Icon className="size-[22px] text-muted-foreground" />
-				<ArrowRight className="size-[18px] text-muted-foreground/50 transition-[transform,color] duration-150 group-hover:translate-x-[3px] group-hover:text-foreground" />
+				<ArrowRight className="size-[18px] text-text-tertiary transition-[transform,color] duration-150 group-hover:translate-x-[3px] group-hover:text-foreground" />
 			</div>
 			<SectionHeading
 				level={3}

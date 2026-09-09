@@ -120,7 +120,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 16
-debt: 27
+debt: 0
 
 scanned:
   - scope: console_code
@@ -257,97 +257,31 @@ status_badge:
   #     clean rule looks like.
 
 ink_alpha:
-  # --- debt only: 50 occurrences in 27 files, measured 2026-09-08 on an unmodified dev by this
-  #     rule's own matcher. The instrument landed apart from its fix on purpose (#4309), the same
-  #     way #3797's did, so the guard is not tautological.
+  # --- EMPTY, and that is the finished state. The rule's two matchers found 53 occurrences in 29
+  #     files on an unmodified dev (2026-09-08). #4328 landed the instrument apart from its fix on
+  #     purpose (#3797's pattern, so the guard is not tautological) and took the SHELL's three —
+  #     `shell/nav-row.tsx` and `shell/switcher-trigger.tsx` render on every route, so leaving them
+  #     as debt would have recorded a 40-route failure as a line in a file. #4309 took the
+  #     remaining 50 across 27 files.
   #
-  #     THE SHELL'S THREE ARE NOT ROWS — they are FIXED in the same commit, and that is the one
-  #     exception worth stating. `shell/nav-row.tsx` and `shell/switcher-trigger.tsx` render on
-  #     every route, so three sites there were worth more than the other fifty together; leaving
-  #     them as debt would have recorded a 40-route failure as a line in a file.
+  #     Every one went to a NAMED TIER at full strength, and the mapping is the arithmetic rather
+  #     than a taste: composite each alpha over `--background` and take the nearest of the four.
+  #     `text-muted-foreground/40…70` all land between `--gray-500` and `--gray-600`, whose nearest
+  #     named tier is `--text-tertiary`; `text-foreground/70…80` lands beside `--gray-700`, which
+  #     IS `--text-secondary` (`text-muted-foreground`). One site was neither: the `aria-hidden`
+  #     slash in `env-switcher.tsx` carried `text-border/70`, chrome rather than ink, and took the
+  #     same colour without the unnamed alpha.
   #
-  #     `packages/ui` appears here for the first time. Two of these rows live in the shared
-  #     package, which every console scope excludes — see the `shared_ui` scope's own comment for
-  #     why a console-rooted matcher would have reported the console clean while the primitive
-  #     every filter bar renders through kept the defect.
-  - path: apps/console/app/(private)/[org]/~/jobs/[id]/page.tsx
-    hits: 3
-    lifts: "#4309 — `text-foreground/80`, `text-muted-foreground/40`, `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/agent/widgets/widget-card.tsx
-    hits: 2
-    lifts: "#4309 — `text-muted-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/ai-elements/code-block.tsx
-    hits: 1
-    lifts: "#4309 — `text-muted-foreground/50` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/alerts/activity-panel.tsx
-    hits: 1
-    lifts: "#4309 — `text-muted-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/alerts/channels-panel.tsx
-    hits: 4
-    lifts: "#4309 — `text-foreground/70`, `text-muted-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/alerts/event-matrix.tsx
-    hits: 4
-    lifts: "#4309 — `text-foreground/80`, `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/alerts/policies-panel.tsx
-    hits: 6
-    lifts: "#4309 — `text-foreground/70`, `text-muted-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/alerts/policy-sheet.tsx
-    hits: 3
-    lifts: "#4309 — `text-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/connectors/connection-ui.tsx
-    hits: 1
-    lifts: "#4309 — `text-foreground/80` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/connectors/connector-detail-sheet.tsx
-    hits: 1
-    lifts: "#4309 — `text-foreground/80` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/connectors/connectors-page.tsx
-    hits: 1
-    lifts: "#4309 — `text-muted-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/data-table.tsx
-    hits: 1
-    lifts: "#4309 — `text-muted-foreground/50` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/design-project/byo/iac-node.tsx
-    hits: 5
-    lifts: "#4309 — `text-foreground/80`, `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/design-project/canvas/inspector/node-quick-config.tsx
-    hits: 1
-    lifts: "#4309 — `text-muted-foreground/50` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/design-project/canvas/nodes/base-node.tsx
-    hits: 1
-    lifts: "#4309 — `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/design-project/canvas/nodes/chart-node.tsx
-    hits: 3
-    lifts: "#4309 — `text-foreground/80`, `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/design-project/canvas/nodes/collection-node.tsx
-    hits: 1
-    lifts: "#4309 — `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/design-project/container-platform-selector.tsx
-    hits: 1
-    lifts: "#4309 — `text-muted-foreground/40` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/design-project/help-tooltip.tsx
-    hits: 1
-    lifts: "#4309 — `text-muted-foreground/50` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/env-switcher.tsx
-    hits: 1
-    lifts: "#4309 — `text-border/70` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/forms/accordion-form.tsx
-    hits: 1
-    lifts: "#4309 — `text-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/overview/project-card.tsx
-    hits: 2
-    lifts: "#4309 — `text-muted-foreground/50`, `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/runners/release-notes-popover.tsx
-    hits: 1
-    lifts: "#4309 — `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/settings/members/members-table.tsx
-    hits: 1
-    lifts: "#4309 — `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: apps/console/components/support/support-card.tsx
-    hits: 1
-    lifts: "#4309 — `text-muted-foreground/50` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: packages/ui/src/field-help.tsx
-    hits: 1
-    lifts: "#4309 — `text-muted-foreground/60` at full strength; the alpha is a fifth ink tier nobody named."
-  - path: packages/ui/src/funnel-filter.tsx
-    hits: 1
-    lifts: "#4309 — `text-muted-foreground/70` at full strength; the alpha is a fifth ink tier nobody named."
+  #     `packages/ui` appeared here for the first time and leaves it empty too — see the
+  #     `shared_ui` scope's own comment for why a console-rooted matcher would have reported the
+  #     console clean while the primitive every filter bar renders through kept the defect.
+  #
+  #     ONE THING #4309 DID NOT CLOSE, and it is deliberate: a FILLED `FilterChip` is inverted ink
+  #     end to end, and `tokens.css` defines `--text-on-ink` without exposing it as a `--color-*`
+  #     utility — so there is no on-ink tertiary rung for its count to step down to. Exposing the
+  #     token is a design decision, not a conformance lane's, so the absence is written down at
+  #     `packages/ui/src/filter-chip.tsx` where the next reader meets it. It is NOT a row here:
+  #     nothing in the tree carries the defect, and a ledger entry for a decision nobody has taken
+  #     is exactly the fake `reason:` this file's header refuses.
+  #
+  #     The rule still runs against every file — an empty ledger is what a clean rule looks like.

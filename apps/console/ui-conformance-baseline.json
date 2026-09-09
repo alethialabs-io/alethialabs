@@ -21,13 +21,13 @@
 		"scoredHere": 24,
 		"live": 10,
 		"notInstrumented": 0,
-		"findings": 74,
-		"findingFiles": 42,
+		"findings": 24,
+		"findingFiles": 15,
 		"liveNotMeasured": 14
 	},
 	"ledgers": {
 		"baseline": 16,
-		"debt": 27
+		"debt": 0
 	},
 	"live": {
 		"source": {
@@ -10203,14 +10203,14 @@
 				"owner": null
 			},
 			"ink_alpha": {
-				"total": 50,
+				"total": 0,
 				"decision": 0,
-				"debt": 50,
+				"debt": 0,
 				"unlisted": 0,
-				"inPageClosure": 43,
-				"chromeOnly": 3,
-				"sharedPackage": 2,
-				"offTree": 2,
+				"inPageClosure": 0,
+				"chromeOnly": 0,
+				"sharedPackage": 0,
+				"offTree": 0,
 				"predicate": null,
 				"owner": "#4309"
 			}
@@ -10221,32 +10221,15 @@
 				"hits": 2
 			},
 			{
-				"file": "apps/console/components/agent/widgets/widget-card.tsx",
-				"hits": 2
-			},
-			{
 				"file": "apps/console/components/agent/agent-knowledge-panel.tsx",
 				"hits": 1
 			},
 			{
 				"file": "apps/console/components/agent/elench/elench-empty-landing.tsx",
 				"hits": 1
-			},
-			{
-				"file": "apps/console/components/env-switcher.tsx",
-				"hits": 1
 			}
 		],
-		"sharedPackageFiles": [
-			{
-				"file": "packages/ui/src/field-help.tsx",
-				"hits": 1
-			},
-			{
-				"file": "packages/ui/src/funnel-filter.tsx",
-				"hits": 1
-			}
-		],
+		"sharedPackageFiles": [],
 		"offTreeFiles": [
 			{
 				"file": "apps/console/components/auth/auth-form.tsx",
@@ -10259,14 +10242,6 @@
 			{
 				"file": "apps/console/components/forms/oauth-consent-form.tsx",
 				"hits": 2
-			},
-			{
-				"file": "apps/console/components/design-project/container-platform-selector.tsx",
-				"hits": 1
-			},
-			{
-				"file": "apps/console/components/design-project/help-tooltip.tsx",
-				"hits": 1
 			},
 			{
 				"file": "apps/console/components/legal/accept-terms-form.tsx",

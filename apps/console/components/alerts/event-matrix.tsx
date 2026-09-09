@@ -48,7 +48,7 @@ export function EventMatrix({
             <CollapsibleTrigger className="group flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-muted/40">
               <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[panel-open]:rotate-90" />
               <Icon className="size-4 shrink-0 text-muted-foreground" />
-              <span className="font-mono text-ui-2xs uppercase tracking-wider text-foreground/80">
+              <span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
                 {cat.label}
               </span>
               <span className="ml-auto font-mono text-ui-2xs text-muted-foreground">
@@ -76,12 +76,12 @@ export function EventMatrix({
                             {e.severity}
                           </span>
                           {!e.live && (
-                            <span className="font-mono text-ui-3xs text-muted-foreground/60">
+                            <span className="font-mono text-ui-3xs text-text-tertiary">
                               soon
                             </span>
                           )}
                         </div>
-                        <div className="truncate font-mono text-ui-2xs text-muted-foreground/60">
+                        <div className="truncate font-mono text-ui-2xs text-text-tertiary">
                           {e.key}
                         </div>
                       </div>
@@ -89,7 +89,7 @@ export function EventMatrix({
                         <Tooltip>
                           <TooltipTrigger
                             render={
-                              <span className="inline-flex cursor-default items-center gap-1.5 font-mono text-ui-2xs uppercase text-muted-foreground/60">
+                              <span className="inline-flex cursor-default items-center gap-1.5 font-mono text-ui-2xs uppercase text-text-tertiary">
                                 <Lock className="size-3" />
                                 Ent
                               </span>
@@ -117,12 +117,13 @@ export function EventMatrix({
                         <span
                           className={cn(
                             "flex items-center gap-1.5 font-mono text-ui-2xs uppercase",
-                            // NOT `text-muted-foreground/50`: that composites to 2.33:1 over the
-                            // page, the same failure #4197 removed from the filter bars. It passes
-                            // today only because the audit seeds no alert policy, so this subtree
-                            // never renders — an unmeasured defect, not an absent one. The other
-                            // 52 sites of this shape, and the matcher that would catch them, are
-                            // #4309.
+                            // A NAMED TIER, never an alpha over one: the banned spelling here was
+                            // `text-muted-foreground/50`, which composites to 2.33:1 over the page
+                            // — the same failure #4197 removed from the filter bars. It passed
+                            // review only because the audit seeds no alert policy, so this subtree
+                            // never renders, which is an unmeasured defect rather than an absent
+                            // one. The other 49 sites of that shape are gone with #4309 and the
+                            // `ink_alpha` matcher (#4328) now refuses the next one.
                             on ? "text-foreground" : "text-text-tertiary",
                           )}
                         >

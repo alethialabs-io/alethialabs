@@ -198,7 +198,7 @@ export function PolicySheet({
 					{/* events */}
 					<section className="space-y-3">
 						<div className="flex items-center gap-1.5">
-							<span className="font-mono text-ui-2xs uppercase tracking-wider text-foreground/70">
+							<span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
 								Trigger · events
 							</span>
 							<FieldHelp title="Events">
@@ -239,7 +239,7 @@ export function PolicySheet({
 					{/* routing */}
 					<section className="space-y-3">
 						<div className="flex items-center gap-1.5">
-							<span className="font-mono text-ui-2xs uppercase tracking-wider text-foreground/70">
+							<span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
 								Routing · channels
 							</span>
 							<FieldHelp title="Routing">
@@ -265,7 +265,7 @@ export function PolicySheet({
 
 					{/* conditions */}
 					<section className="space-y-3">
-						<span className="font-mono text-ui-2xs uppercase tracking-wider text-foreground/70">
+						<span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
 							Conditions
 						</span>
 						<PolicyConditions

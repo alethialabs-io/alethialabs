@@ -376,7 +376,7 @@ function FactGrid({ facts }: { facts: { label: string; value: string }[] }) {
 					<dd
 						className={cn(
 							"truncate font-mono text-ui-xs",
-							f.value ? "text-foreground" : "text-muted-foreground/60",
+							f.value ? "text-foreground" : "text-text-tertiary",
 						)}
 					>
 						{f.value || "—"}
