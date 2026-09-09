@@ -187,39 +187,53 @@ implement the Plan-Review-Apply workflow from the terminal, one environment at a
 Queue an [OpenTofu](/concepts/glossary) plan job — the Runner runs `tofu plan`.
 
 ```bash
-alethia project plan [--project-id <id>] [--runner-id <id>] [--wait]
+alethia project plan                                        # asks which project, then which runner
+alethia project plan --project boutique --env prod --wait   # scripted: names both, blocks on the job
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--project-id` | No | Project UUID (interactive selector if omitted) |
-| `--runner-id` | No | Specific Runner to execute (any available if omitted) |
-| `--wait` | No | Block until the job completes |
+| `--project` | No | Project to plan, by **name** or id. Omitted on a terminal, a picker asks. |
+| `--project-id` | No | Project id. Prefer `--project`, which also takes the id. Passing both is refused. |
+| `--env` | No | Environment name to plan. Omitted, the project's default environment. |
+| `--runner-id` | No | Runner to execute the job, by id. Omitted, a picker asks on a terminal; under `--no-input` the server places the job. |
+| `-w`, `--wait` | No | Block until the job completes |
 
-On success, prints the job ID. Use `alethia jobs logs <id> --follow` to stream the plan output.
+On success, prints the job ID. Stream the plan output with `alethia jobs logs --latest --follow`,
+which resolves the job you just queued — nothing has to be copied between the two commands.
 
 ## `alethia project apply`
 
 Queue a deployment (apply) job.
 
 ```bash
-alethia project apply [--project-id <id>] [--runner-id <id>] [--plan-job-id <id>] [--wait]
+alethia project apply                                        # asks which project, then which runner
+alethia project apply --project boutique --env prod --wait   # scripted: names both, blocks on the job
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--project-id` | No | Project UUID (interactive selector if omitted) |
-| `--runner-id` | No | Specific Runner to execute |
-| `--plan-job-id` | No | Reference a specific plan to apply |
-| `--wait` | No | Block until the job completes |
+| `--project` | No | Project to deploy, by **name** or id. Omitted on a terminal, a picker asks. |
+| `--project-id` | No | Project id. Prefer `--project`, which also takes the id. Passing both is refused. |
+| `--env` | No | Environment name to deploy. Omitted, the project's default environment. |
+| `--runner-id` | No | Runner to execute the job, by id. Omitted, a picker asks on a terminal; under `--no-input` the server places the job. |
+| `--plan-job-id` | No | Bind the apply to the plan a prior PLAN job produced, by that job's id. |
+| `-w`, `--wait` | No | Block until the job completes |
 
-The `--plan-job-id` flag ensures the apply uses the exact plan you reviewed. If the Project configuration changed since the plan was generated, the job fails with a [config hash mismatch](/console/jobs/plan-and-apply).
+`--plan-job-id` makes the apply use the exact plan you reviewed. If the project's configuration
+changed since that plan was generated, the job fails with a
+[config hash mismatch](/console/jobs/plan-and-apply).
+
+It is the one value on this page that still comes out of another command's output. `alethia jobs get
+--latest` resolves the job you just queued, so a script reads the id from there rather than from
+your scrollback — see [Scripting Examples](#scripting-examples) for the whole three-command recipe.
+`project apply` itself takes only the id.
 
 <Callout type="info">
 A DEPLOY job is `tofu plan` → **[verify](/concepts/glossary) gate** → `tofu apply` → ArgoCD scaffold.
 The verify gate is **fail-closed**: a hard control failure blocks *before* `tofu apply` unless an
 authorized override waives it. The report is attached to the job's `execution_metadata` and rendered
-in the console Plan tab — inspect it with `alethia jobs logs <apply-job-id> --follow`.
+in the console Plan tab — inspect it with `alethia jobs logs --latest --type DEPLOY --follow`.
 </Callout>
 
 ## `alethia project destroy`
@@ -227,10 +241,24 @@ in the console Plan tab — inspect it with `alethia jobs logs <apply-job-id> --
 Destroy a Project's provisioned infrastructure.
 
 ```bash
-alethia project destroy [--project-id <id>] [--runner-id <id>] [--wait]
+alethia project destroy                                                  # asks which project, then confirms
+alethia project destroy --project boutique --env prod --wait --yes       # scripted: no confirmation prompt
 ```
 
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project` | No | Project to destroy, by **name** or id. Omitted on a terminal, a picker asks. |
+| `--project-id` | No | Project id. Prefer `--project`, which also takes the id. Passing both is refused. |
+| `--env` | No | Environment name to destroy. Omitted, the project's default environment. |
+| `--runner-id` | No | Runner to execute the job, by id. Omitted, a picker asks on a terminal; under `--no-input` the server places the job. |
+| `-y`, `--yes` | No | Skip the confirmation prompt. Required with `--no-input`. |
+| `-w`, `--wait` | No | Block until the job completes |
+
 Queues a DESTROY job. The Runner runs `tofu destroy` to tear down all resources. OpenTofu state is preserved (it lives behind the Console state proxy, not on the Runner), so accidental destroys can be recovered by re-applying.
+
+`--project` and `--project-id` name the same field, so passing both is an error rather than a
+precedence rule. The command they are being passed to is `destroy`: quietly preferring one of them
+would let a wrong belief about which project is being torn down survive until it had been.
 
 <Callout type="info">
 To tear down a deployed **Runner** (not a Project), use [`alethia runner destroy`](/cli/commands/runners).
@@ -238,10 +266,17 @@ To tear down a deployed **Runner** (not a Project), use [`alethia runner destroy
 
 ## Interactive Selection
 
-When `--project-id` is omitted, alethia launches a TUI selector:
+`plan`, `apply` and `destroy` each ask for what you did not name, so none of the three needs an id
+typed at it:
 
-1. Select a Project from the list
-2. The command proceeds with the selected Project
+1. With neither `--project` nor `--project-id`, a picker lists the projects and you choose one.
+2. With no `--runner-id`, a second picker lists your runners, marking each one online, draining or
+   offline. **Any available** is its first option, so pressing Enter leaves the job for the server
+   to place.
+
+Neither picker is shown under `--no-input` or when stdin is not a terminal. There, name the project
+with `--project` — it takes the name, so a script never has to hold an id — and leave the runner
+unset for the server to place.
 
 See [TUI Components](/cli/tui) for details on the interactive selectors.
 
