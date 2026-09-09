@@ -204,8 +204,12 @@ async function fingerprint(): Promise<Map<string, number>> {
 		ORDER BY table_name`;
 	const counts = new Map<string, number>();
 	for (const { table_name } of tables) {
-		const rows = await sql.unsafe(`SELECT count(*)::int AS n FROM public."${table_name}"`);
-		counts.set(table_name, (rows[0] as { n: number }).n);
+		// `sql.unsafe` is generic, so the row shape is DECLARED rather than cast. CLAUDE.md §6 bans
+		// `as`, and the ban earns its keep here: the cast this replaced claimed `{ n: number }` of a
+		// value the driver types as `Row & Iterable<Row>`, which is exactly the assertion a reader
+		// cannot check and the compiler had already refused.
+		const rows = await sql.unsafe<{ n: number }[]>(`SELECT count(*)::int AS n FROM public."${table_name}"`);
+		counts.set(table_name, rows[0].n);
 	}
 	return counts;
 }
