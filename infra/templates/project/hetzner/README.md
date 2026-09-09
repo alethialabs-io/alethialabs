@@ -223,6 +223,15 @@ decides `cloud_dns_enabled` for Route 53. With an existing zone, nothing is crea
 either way. `dns_provider != "native"` suppresses the zone entirely — a pluggable DNS
 connector owns the records then.
 
+**No DNS record is created here — and none is created by any other cloud's template either.** The
+one record resource under `infra/templates/project/` is AWS's ACM cert-validation CNAME, which
+exists because ACM demands one. Every platform hostname is published in-cluster by **external-dns**,
+on Hetzner through the official webhook provider driven by a Cloud API token the deploy path seeds —
+into the zone this template creates, or into the zone `dns_hosted_zone` names, whichever is serving.
+So `dns_hosted_zone` is read only by `outputs.tf`, and that is the design rather than a gap (#4461):
+the address worth publishing is a load balancer the in-cluster hcloud CCM creates *after* this apply
+has finished, and tofu never sees it.
+
 **This is not the same question as TLS or WAF on Hetzner.** Those two remain documented
 exclusions (`infra/offer-exclusions.yaml`): a managed certificate is issued in-cluster by
 cert-manager and never travels through OpenTofu, and Hetzner sells no web application
