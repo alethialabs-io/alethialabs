@@ -34,6 +34,7 @@ import {
 } from "@/app/server/actions/byo-iac";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { useAddonsQuery } from "@/lib/query/use-addons-query";
+import { arrangeBoard } from "@/lib/canvas/arrange";
 import { qk } from "@/lib/query/keys";
 import { Button } from "@repo/ui/button";
 import {
@@ -48,14 +49,14 @@ import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { orgHref, projectHref } from "@/lib/routing";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
 import { SourceReposCard } from "../source-repos-card";
-import { ActivityRail } from "./activity-rail";
+import { ActivityStatusLine } from "./cards/activity-status-line";
+import { CanvasMoreMenu } from "./canvas-more-menu";
 import { CostChip } from "./cost-chip";
 import { RunMenu } from "./run-menu";
 import { CanvasCommandPalette } from "./canvas-command-palette";
 import { CanvasControls } from "./canvas-controls";
 import { CanvasFlow, CanvasInteractionContext } from "./canvas-flow";
 import { useCardDeepLink } from "./cards/card-param";
-import { EnvSettingsButton } from "./cards/env-settings-card";
 import { isRailOpen, WorkspaceRail } from "./cards/workspace-rail";
 import { useDropPosition } from "./use-drop-position";
 import { PendingChangesBar } from "./pending-changes-bar";
@@ -146,6 +147,7 @@ function CanvasInner({
 	const openPanel = useElenchStore((s) => s.openPanel);
 	const [shortcutsOpen, setShortcutsOpen] = useState(false);
 	const [deploying, setDeploying] = useState(false);
+	const [saving, setSaving] = useState(false);
 	const selectedIds = useCanvasStore((s) => s.selectedIds);
 	const openInspector = useCanvasStore((s) => s.openInspector);
 	const undo = useCanvasStore((s) => s.undo);
@@ -349,6 +351,36 @@ function CanvasInner({
 		}
 	}, [router, orgSlug, projectId]);
 
+	/**
+	 * Edit mode: persist the desired config to the live project WITHOUT provisioning. There was no
+	 * such path — the pending-changes bar's only verb was Deploy, so a design you were not ready to
+	 * provision had nowhere to go but the tab's sessionStorage draft. `applyStagedChanges` writes the
+	 * live design tables and the durable staged rows; `commitBaseline` clears the bar.
+	 */
+	const handleSaveDesign = useCallback(async () => {
+		if (!projectId) return;
+		const nodes = useCanvasStore.getState().nodes;
+		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
+		if (!parsed.success) {
+			const first = parsed.error.issues[0];
+			toast.error(
+				`Can't save: ${first?.path.join(".") || "project"} — ${first?.message}`,
+			);
+			return;
+		}
+		setSaving(true);
+		try {
+			const activeEnvId = await resolveActiveEnvironmentId(projectId, environmentId);
+			await applyStagedChanges(projectId, activeEnvId, parsed.data);
+			useCanvasStore.getState().commitBaseline();
+			toast.success("Design saved");
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Failed to save");
+		} finally {
+			setSaving(false);
+		}
+	}, [projectId, environmentId]);
+
 	/** Edit mode: persist the desired config to the live project, then provision the
 	 * active environment. Falls back to create when there's no projectId. */
 	const handleDeploy = useCallback(async () => {
@@ -406,9 +438,10 @@ function CanvasInner({
 			}
 			if (mod && e.key.toLowerCase() === "s") {
 				// Swallowed in BOTH modes so the browser's own Save-page dialog never lands on the
-				// canvas — but it only means anything in the create flow (see handleSave).
+				// canvas. Create flow: create the project. Edit mode: save the design without deploying.
 				e.preventDefault();
-				if (!projectId) void handleSave();
+				if (projectId) void handleSaveDesign();
+				else void handleSave();
 				return;
 			}
 			if (mod && e.key.toLowerCase() === "z") {
@@ -488,6 +521,7 @@ function CanvasInner({
 		};
 	}, [
 		handleSave,
+		handleSaveDesign,
 		selectedIds,
 		openInspectorExclusive,
 		openAssistantExclusive,
@@ -528,10 +562,8 @@ function CanvasInner({
 			{/* Bottom-left: scanned source repos + monorepo services (hidden when none). */}
 			<SourceReposCard />
 
-			{/* Top-left: what has run against this environment, and what's running now. */}
-			{projectId && environmentId && (
-				<ActivityRail projectId={projectId} environmentId={environmentId} />
-			)}
+			{/* Top-left: the job running now, else the last one — opens the Activity card. */}
+			{projectId && environmentId && <ActivityStatusLine />}
 
 			{/* Top-right: cost · run a job · add a service. (Ask AI lives in the app shell.) */}
 			<div className="absolute right-3 top-3 z-10 flex items-center gap-2">
@@ -550,7 +582,7 @@ function CanvasInner({
 							// The rail and the node statuses both key off the environment; nudge them so a
 							// queued job shows up immediately rather than on the next poll.
 							void queryClient.invalidateQueries({
-								queryKey: ["environment-jobs", projectId, environmentId],
+								queryKey: qk.environmentJobs(projectId, environmentId),
 							});
 							void queryClient.invalidateQueries({
 								queryKey: qk.environmentStatus(projectId, environmentId),
@@ -558,9 +590,6 @@ function CanvasInner({
 						}}
 					/>
 				)}
-				{/* Cluster + network are env settings now (W2), not board cards — one env is one cluster.
-				    Meaningless while a BYO-IaC source governs the env (the module owns the substrate). */}
-				{!iacGoverned && <EnvSettingsButton />}
 				{/* Adding components is meaningless while an IaC source governs the env (replace mode). */}
 				{!iacGoverned && (
 					<Button
@@ -573,6 +602,11 @@ function CanvasInner({
 						Add
 					</Button>
 				)}
+				{/* Everything else — the two cards, the View submenu, the shortcut sheet. */}
+				<CanvasMoreMenu
+					iacGoverned={iacGoverned}
+					onShowShortcuts={() => setShortcutsOpen(true)}
+				/>
 			</div>
 
 			{/* Bottom-left: settings / zoom / fit / undo-redo / layers */}
@@ -584,6 +618,8 @@ function CanvasInner({
 				deploying={deploying}
 				deployLabel={projectId ? "Deploy" : "Create project"}
 				onDiscard={projectId ? () => void handleDiscardStaged() : undefined}
+				onSave={projectId ? () => void handleSaveDesign() : undefined}
+				saving={saving}
 			/>
 
 			<NodePalette
@@ -601,6 +637,11 @@ function CanvasInner({
 				onToggleView={onToggleForm}
 				onFitView={() => fitView({ padding: 0.3 })}
 				onAskAi={openAssistantExclusive}
+				onArrange={() => void arrangeBoard(fitView)}
+				onEnvSettings={iacGoverned ? undefined : () => openCard({ kind: "env-settings" })}
+				onActivity={
+					projectId && environmentId ? () => openCard({ kind: "activity" }) : undefined
+				}
 				dropPosition={dropPosition}
 				onAttachChart={
 					byoHelmEnabled && projectId ? () => setByoDialogOpen(true) : undefined
@@ -689,7 +730,7 @@ function CanvasInner({
 			<div
 				className={cn(
 					"relative min-h-[480px] min-w-0 flex-1",
-					isRailOpen(card, { projectId }) && "border-r border-border",
+					isRailOpen(card, { projectId, environmentId }) && "border-r border-border",
 				)}
 			>
 				{boardContent}

@@ -16,6 +16,7 @@ const baseProps = {
 	onSave: vi.fn(),
 	onFitView: vi.fn(),
 	onAskAi: vi.fn(),
+	onArrange: vi.fn(),
 };
 
 describe("CanvasCommandPalette — BYO IaC gating", () => {

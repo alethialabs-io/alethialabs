@@ -34,6 +34,11 @@ vi.mock("@/components/design-project/canvas/cards/chart-scan-card", () => ({
 vi.mock("@/components/design-project/canvas/cards/iac-scan-card", () => ({
 	IacScanCard: () => <div>iac scan card</div>,
 }));
+vi.mock("@/components/design-project/canvas/cards/activity-card", () => ({
+	ActivityCard: ({ environmentId }: { environmentId: string }) => (
+		<div>activity card {environmentId}</div>
+	),
+}));
 
 beforeEach(() => {
 	useCanvasStore.getState().reset();
@@ -71,39 +76,47 @@ describe("WorkspaceRail", () => {
 
 		open({ kind: "iac-scan" });
 		expect(screen.getByText("iac scan card")).toBeInTheDocument();
+
+		open({ kind: "activity" });
+		expect(screen.getByText("activity card e1")).toBeInTheDocument();
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 
 	// The rail must be SHUT, not merely empty. It was open-and-blank: 392px of nothing, with no
 	// header and no close button, reachable in the create flow through `?card=addon:grafana`.
-	it("the add-on card needs a project — the create flow has none, so the rail stays shut", () => {
+	it("the add-on and activity cards need a project — the create flow has none, so the rail stays shut", () => {
 		render(<WorkspaceRail />);
 		act(() => useCanvasStore.getState().openCard({ kind: "addon", itemId: "grafana" }));
 		expect(screen.queryByText(/addon card/)).not.toBeInTheDocument();
 		expect(screen.getByTestId("workspace-rail")).toHaveAttribute("data-open", "false");
-	});
 
-	it("stays closed for the activity card until its lane lands", () => {
-		expect(isRailOpen({ kind: "activity" }, { projectId: "p1" })).toBe(false);
-		expect(isRailOpen({ kind: "env-settings" }, { projectId: "p1" })).toBe(true);
-		expect(isRailOpen(null, { projectId: "p1" })).toBe(false);
+		act(() => useCanvasStore.getState().openCard({ kind: "activity" }));
+		expect(screen.queryByText(/activity card/)).not.toBeInTheDocument();
+		expect(screen.getByTestId("workspace-rail")).toHaveAttribute("data-open", "false");
 	});
 
 	// `isRailOpen` and `CardBody` have to give ONE answer. Every kind a body can decline must be
 	// declined here too, or the rail opens onto a card that renders nothing.
 	it("agrees with the body about every card kind it can decline", () => {
+		const full = { projectId: "p1", environmentId: "e1" };
 		const addon: WorkspaceCard = { kind: "addon", itemId: "grafana" };
 		expect(isRailOpen(addon, {})).toBe(false);
-		expect(isRailOpen(addon, { projectId: "p1" })).toBe(true);
+		expect(isRailOpen(addon, full)).toBe(true);
+		// Activity reads ONE environment's jobs, so it needs both halves.
+		expect(isRailOpen({ kind: "activity" }, {})).toBe(false);
+		expect(isRailOpen({ kind: "activity" }, { projectId: "p1" })).toBe(false);
+		expect(isRailOpen({ kind: "activity" }, full)).toBe(true);
 		// Cards whose subject is the canvas itself need nothing from the host.
+		expect(isRailOpen({ kind: "env-settings" }, {})).toBe(true);
 		expect(isRailOpen({ kind: "iac-scan" }, {})).toBe(true);
 		expect(isRailOpen({ kind: "inspector", nodeId: "n" }, {})).toBe(true);
+		expect(isRailOpen(null, full)).toBe(false);
 	});
 
 	it("unmounting the rail closes the card", () => {
 		const { unmount } = render(<WorkspaceRail projectId="p1" environmentId="e1" />);
 		act(() => useCanvasStore.getState().openCard({ kind: "env-settings" }));
-		unmount();
+		act(() => unmount());
 		expect(useCanvasStore.getState().card).toBeNull();
 	});
 });
