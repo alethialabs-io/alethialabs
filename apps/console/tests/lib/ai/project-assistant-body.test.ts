@@ -100,6 +100,25 @@ describe("parseProjectAssistantBody", () => {
 		expect(result.message).toContain("messages");
 	});
 
+	// The Elench store types `threadId` as `string | null` and the client sends it straight through,
+	// so a fresh project conversation puts an explicit `null` on the wire. `.optional()` accepts only
+	// `undefined`, so the schema rejected the shape the live client ALWAYS sends on a first turn and
+	// every new project conversation died at the door.
+	it("accepts the explicit null a fresh conversation sends for threadId", () => {
+		const result = parseProjectAssistantBody({ messages: [], threadId: null });
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.value.threadId ?? null).toBeNull();
+	});
+
+	it("still accepts an omitted threadId and a real one", () => {
+		expect(parseProjectAssistantBody({ messages: [] }).ok).toBe(true);
+		const withId = parseProjectAssistantBody({ messages: [], threadId: "t1" });
+		expect(withId.ok).toBe(true);
+		if (!withId.ok) return;
+		expect(withId.value.threadId).toBe("t1");
+	});
+
 	it("a body that is not an object at all is a message, not a crash", () => {
 		for (const body of [null, undefined, "nope", 7, []]) {
 			const result = parseProjectAssistantBody(body);
