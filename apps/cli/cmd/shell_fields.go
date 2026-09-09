@@ -116,9 +116,17 @@ var shellFields = []shellField{
 // when it does not, why that is a decision rather than an omission.
 //
 // The programme's rule is that every leaf taking input gets an interactive path. `open` is the only
-// shell leaf that takes anything, and it deliberately does NOT prompt: the value has a DEFAULT, and
-// a bare `alethia open` opening the console is the right command. Adding a picker in front of it
-// would make the commonest invocation slower to answer, which is the opposite of the rule's point.
+// shell leaf that takes anything, and its POSITIONAL deliberately does NOT prompt: that value has a
+// DEFAULT, and a bare `alethia open` opening the console is the right command. Adding a picker in
+// front of it would make the commonest invocation slower to answer, which is the opposite of the
+// rule's point.
+//
+// `--project`, added later (#4308), is the other half and it is not the same case: it has no
+// default, and until #4454 there was no way to be asked for it — a reference the org does not have
+// became a console 404 that looked like a working command. So `open` DOES open a form now, on that
+// flag alone and only when the reference misses (cmd/open.go records the bound). The sentence above
+// is unchanged in what it governs: the positional is still answered, never asked, and a bare
+// `alethia open` still asks nothing.
 //
 // Recorded here rather than left implicit so the guard can tell "no field, decided" from "no field,
 // forgotten" — the distinction an empty absence cannot carry.
