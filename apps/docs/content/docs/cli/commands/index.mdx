@@ -95,6 +95,9 @@ alethia
 │   └── list [--provider github]      # provider: github, gitlab, bitbucket
 ├── cloud                             # inspect discovered cloud resources
 │   └── inventory [provider|cloud_identity_id]
+├── provider                          # aliases: providers — read and re-verify a connection
+│   ├── status [provider]             # asks when omitted; `alethia connector` is what CHANGES one
+│   └── verify [provider]             # re-run the server-side auth + capability probe
 ├── agent                             # alias: agents — inspect agent identities
 │   ├── list
 │   └── get [agent_id]                # asks when omitted
