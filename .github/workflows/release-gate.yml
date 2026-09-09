@@ -37,6 +37,12 @@ name: Release gate
 # infra/github/main.tf and are named nowhere in .mergify.yml, so a leg that does not run on a dev PR
 # leaves no required context unreported and no queue entry waiting. See the `legs` job for the rules.
 #
+# That is a statement about the DECLARATION, which is the half this repo can read from the tree.
+# What GitHub actually enforces is a separate question and a separate instrument —
+# `node scripts/ci/check-required-checks.mjs --live`, which exists because the HCL and the live
+# rulesets have already drifted for a month once. The narrowing above is sound under either answer:
+# the tree never asks for a leg on dev, and a ruleset that has not been applied asks for even less.
+#
 # Every `pnpm` invocation is `-C <dir> run` or `exec` (scripts/ci/check-pnpm-script-refs.mjs); every
 # step past the checkout that runs on failure carries the #4084 conjunct
 # (scripts/ci/check-workflow-shape.mjs). The `WORKFLOW_HEALTH_SUBSTANTIVE_JOB` line lets
@@ -58,8 +64,8 @@ on:
 # considered. So with a blanket `cancel-in-progress: true`, adding any unrelated label to a
 # promotion PR (`qa:prod`, a triage label) 40 minutes into the `qa` leg creates a new run, cancels
 # the in-flight one, and is then skipped by the `legs` guard below — which requires the added label
-# to be one of the two `release-gate:*` ones. The required `Release gate (<leg>)` contexts on a
-# promotion PR never report, and the
+# to be one of the two `release-gate:*` ones. The SEVEN required `Release gate (<leg>)` contexts on
+# a promotion PR never report, and the
 # PR sits permanently pending with nothing red to explain it, recovering only on a new push or
 # `ready_for_review`. The header above anticipated a random label RESTARTING the hour; the guard
 # turns that into cancel-and-never-restart, which is worse.
@@ -314,7 +320,7 @@ jobs:
             for (const r of decision.rows) md.push(`| \`${r.file}\` | ${r.legs} | ${r.why} |`);
           }
           if (skipped.length > 0) {
-            md.push("", "A skipped leg reports no `Release gate (<leg>)` context. Those contexts are required on `main` only (infra/github/main.tf), and a promotion PR never reaches this branch of the rules.");
+            md.push("", "A skipped leg reports no `Release gate (<leg>)` context. `infra/github/main.tf` declares those contexts required on `main` alone — it filters them out of `protect-dev` and `protect-staging`, and `.mergify.yml` names none of them — and a promotion PR never reaches this branch of the rules. (What GitHub enforces is `check-required-checks.mjs --live`'s question, not this one; the narrowing is sound under either answer.)");
           }
           if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `${md.join("\n")}\n`);
           console.log(md.join("\n"));
@@ -445,8 +451,9 @@ jobs:
       # `continue-on-error` IS THE GREEN-BY-RATCHET MECHANISM, not a softened check.
       #
       # Playwright exits non-zero whenever ANY test fails, and the whole premise of this gate is
-      # that a leg is allowed to be red while it is repaired — the baseline records 172 failures
-      # across four legs. Without this, those four can never conclude `success` no matter what
+      # that a leg is allowed to be red while it is repaired — the baseline records 94 failures
+      # across four legs (console 8, canvas 5, qa 80, audit 1; 429 recorded passes beside them).
+      # Without this, those four can never conclude `success` no matter what
       # the ratchet says, so the gate could never be required and the ledger below would gate
       # nothing. Measured: on run 34247389000 the `console` leg's Ratchet step SUCCEEDED
       # ("no regression against the baseline") and the job was red anyway, on this step. The two
