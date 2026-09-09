@@ -328,7 +328,7 @@ test.describe("Projects — delete (non-live)", () => {
 			waitUntil: "domcontentloaded",
 		});
 		// Open the danger-zone delete dialog.
-		await owner.page.getByRole("button", { name: /^delete$/i }).click({ timeout: 15_000 });
+		await owner.page.getByRole("button", { name: /^Delete project$/ }).click({ timeout: 15_000 });
 		const dialog = owner.page.getByRole("alertdialog");
 		await expect(dialog.getByText(/delete this project\?/i)).toBeVisible();
 		await dialog.getByRole("button", { name: /delete project/i }).click();

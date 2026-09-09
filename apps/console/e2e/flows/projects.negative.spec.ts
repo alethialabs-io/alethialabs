@@ -114,7 +114,7 @@ test.describe("Projects — delete guard on a live environment", () => {
 			status: "ACTIVE", // default env ACTIVE → in LIVE_ENV_STATUSES
 		});
 		await owner.page.goto(`/${owner.orgSlug}/${project.slug}/settings/general`);
-		await owner.page.getByRole("button", { name: /^delete$/i }).click({ timeout: 15_000 });
+		await owner.page.getByRole("button", { name: /^Delete project$/ }).click({ timeout: 15_000 });
 		const dialog = owner.page.getByRole("alertdialog");
 		await dialog.getByRole("button", { name: /delete project/i }).click();
 		// Server refuses; an error toast surfaces and we stay on the settings page.
