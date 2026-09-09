@@ -17,10 +17,10 @@ export async function DELETE(
 ) {
 	const auth = await authorizeCli(req, "manage_members", { type: "member" });
 	if ("error" in auth) return auth.error;
-	const { actor } = auth;
+	const { actor, credential } = auth;
 	const { id, memberId } = await params;
 
-	const denied = await ensureCliOrgAccess(actor, actor.userId, id);
+	const denied = await ensureCliOrgAccess(actor, credential, id);
 	if (denied) return denied;
 
 	try {
