@@ -187,10 +187,22 @@ export function SettingsDangerRow({
 	description: ReactNode;
 	children: ReactNode;
 }) {
+	const titleId = useId();
 	return (
-		<div className="flex items-center justify-between gap-5 border-b border-border px-[22px] py-4 last:border-b-0">
+		// `role="group"` + `aria-labelledby` so the row's title reaches the accessibility tree at
+		// all. It was a bare `<div>`: visible, and associated with nothing — so a control announced
+		// only "Delete" carried no trace of WHAT it deletes. `SettingsFieldRow` above already wires
+		// its label this way; this row simply did not (#4462).
+		//
+		// A group rather than a heading on purpose: these are rows inside a panel, not sections of
+		// the page, and promoting them would put every danger row into the document outline.
+		<div
+			role="group"
+			aria-labelledby={titleId}
+			className="flex items-center justify-between gap-5 border-b border-border px-[22px] py-4 last:border-b-0"
+		>
 			<div className="min-w-0">
-				<div className="mb-[3px] text-ui-md font-medium text-text-primary">
+				<div id={titleId} className="mb-[3px] text-ui-md font-medium text-text-primary">
 					{title}
 				</div>
 				<div className="max-w-[52ch] text-ui-xs leading-[1.45] text-text-tertiary">
