@@ -203,6 +203,15 @@ export function ConnectorCard({
 					<Button
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						// The board renders one of these per connector and the visible word is the
+						// same on every one of them — 29 buttons reading "Connect", one "Manage" per
+						// connected connector. That is not only a Playwright strict-mode problem: a
+						// screen-reader user tabbing the grid hears "Connect, button" 29 times with
+						// nothing to tell them apart, because the name sits in the CARD, not in the
+						// control. `aria-label` puts the connector's name INTO the control's
+						// accessible name; the visible word is unchanged and stays a prefix of it,
+						// so WCAG 2.5.3 (Label in Name) still holds for voice control.
+						aria-label={`Reconnect ${integration.name}`}
 						disabled={isConnecting}
 						onClick={onConnect}
 					>
@@ -218,6 +227,7 @@ export function ConnectorCard({
 						variant="ghost"
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						aria-label={`Manage ${integration.name}`}
 						onClick={onManage}
 					>
 						Manage
@@ -233,6 +243,7 @@ export function ConnectorCard({
 							variant="ghost"
 							size="sm"
 							className="h-7 px-2.5 text-xs"
+							aria-label={`Manage ${integration.name}`}
 							onClick={onManage}
 						>
 							Manage
@@ -240,6 +251,7 @@ export function ConnectorCard({
 						<Button
 							size="sm"
 							className="h-7 px-2.5 text-xs"
+							aria-label={`Re-verify ${integration.name}`}
 							disabled={isConnecting}
 							onClick={onReverify}
 						>
@@ -255,6 +267,7 @@ export function ConnectorCard({
 					<Button
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						aria-label={`Connect ${integration.name}`}
 						disabled={isConnecting}
 						onClick={onConnect}
 					>

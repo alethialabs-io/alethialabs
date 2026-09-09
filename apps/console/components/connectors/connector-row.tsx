@@ -164,6 +164,10 @@ export function ConnectorRow({
 					<Button
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						// Same accessible naming as `connector-card.tsx` — the two views are one
+						// affordance rendered twice, so a name added to one and not the other would
+						// make the board's addressability depend on which layout you happen to be in.
+						aria-label={`Reconnect ${integration.name}`}
 						disabled={isConnecting}
 						onClick={onConnect}
 					>
@@ -179,6 +183,7 @@ export function ConnectorRow({
 						variant="ghost"
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						aria-label={`Manage ${integration.name}`}
 						onClick={onManage}
 					>
 						Manage
@@ -193,6 +198,7 @@ export function ConnectorRow({
 							variant="ghost"
 							size="sm"
 							className="h-7 px-2.5 text-xs"
+							aria-label={`Manage ${integration.name}`}
 							onClick={onManage}
 						>
 							Manage
@@ -200,6 +206,7 @@ export function ConnectorRow({
 						<Button
 							size="sm"
 							className="h-7 px-2.5 text-xs"
+							aria-label={`Re-verify ${integration.name}`}
 							disabled={isConnecting}
 							onClick={onReverify}
 						>
@@ -215,6 +222,7 @@ export function ConnectorRow({
 					<Button
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						aria-label={`Connect ${integration.name}`}
 						disabled={isConnecting}
 						onClick={onConnect}
 					>
