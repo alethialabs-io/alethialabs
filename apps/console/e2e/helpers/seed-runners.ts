@@ -28,6 +28,24 @@ export interface SeededRunner {
 	name: string;
 }
 
+/** Every runner id this worker has seeded and not yet swept — see `purgeSeededRunners`. */
+const seededRunnerIds: string[] = [];
+
+/** Runners a spec created THROUGH THE UI, which have no id here — see `trackUiRunner`. */
+const uiCreatedRunners: { userId: string; name: string }[] = [];
+
+/**
+ * Registers a runner the spec created through the Add-runner sheet so the sweep removes it too.
+ *
+ * Without this the two "register a runner" tests leak a row per run, and the leak is not
+ * cosmetic: `shows the empty-runners first-run state when the org has no runners` asserts the
+ * team org is empty, so the second leaked runner turns that test permanently red. The old
+ * `name like 'e2e-%'` sweep caught these by accident; a precise sweep has to be told.
+ */
+export function trackUiRunner(userId: string, name: string): void {
+	uiCreatedRunners.push({ userId, name });
+}
+
 /**
  * Retries a DB write on a transient Postgres deadlock (40P01).
  *
@@ -103,6 +121,7 @@ export async function seedRunner(
 			})}
 			returning id`,
 	);
+	seededRunnerIds.push(row.id);
 	return { id: row.id, name: opts.name };
 }
 
@@ -185,11 +204,29 @@ export async function runnerIsDefault(runnerId: string): Promise<boolean | null>
 	return rows[0]?.is_default ?? null;
 }
 
-/** Removes every `e2e-`-prefixed runner for a persona — the per-test isolation sweep. */
-export async function purgeE2ERunners(userId: string): Promise<void> {
-	await withDeadlockRetry(
-		() => db()`delete from runners where user_id = ${userId} and name like 'e2e-%'`,
-	);
+/**
+ * Deletes exactly the runners THIS worker seeded and has not yet swept.
+ *
+ * The sweep it replaces was `delete from runners where user_id = … and name like 'e2e-%'`, which
+ * is every runner test's rows, not the caller's. Under `fullyParallel` that is a test deleting a
+ * sibling's fixture mid-assertion from another worker — invisible, and it reads as the product
+ * losing a runner. Playwright runs a worker's tests one at a time and each worker gets its own
+ * module instance, so this list holds this test's rows (plus any an earlier test in the same
+ * worker left behind, which is by then finished with them).
+ *
+ * A row already deleted through the UI is simply not there — `delete … in (…)` is a no-op for it.
+ */
+export async function purgeSeededRunners(): Promise<void> {
+	const sql = db();
+	if (seededRunnerIds.length > 0) {
+		const ids = seededRunnerIds.splice(0);
+		await withDeadlockRetry(() => sql`delete from runners where id in ${sql(ids)}`);
+	}
+	for (const r of uiCreatedRunners.splice(0)) {
+		await withDeadlockRetry(
+			() => sql`delete from runners where user_id = ${r.userId} and name = ${r.name}`,
+		);
+	}
 }
 
 /** Drops a seeded identity and any jobs that reference it (jobs first — FK). */

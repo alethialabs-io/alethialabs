@@ -19,7 +19,7 @@
 import { test, expect } from "../fixtures/qa";
 import {
 	destroyJobCount,
-	purgeE2ERunners,
+	purgeSeededRunners,
 	purgeSeededIdentity,
 	seedDeployedRunner,
 	seedRunner,
@@ -33,6 +33,18 @@ const RUNNERS_PATH = (slug: string) => `/${slug}/~/runners`;
 /** A runner card, located by the name printed in its header. */
 const cardFor = (page: import("@playwright/test").Page, name: string) =>
 	page.locator('[data-slot="card"]').filter({ hasText: name });
+
+/**
+ * The open destroy popover.
+ *
+ * Scoped to `[data-slot="popover-content"]` (packages/ui/popover.tsx puts it on the base-ui Popup)
+ * rather than reached as `getByRole("button", { name: "Destroy" }).last()`. The confirm shares its
+ * label with every card's trigger, and `.last()` only meant "the portal, appended after the grid"
+ * while exactly ONE deployed runner existed in the org. Two specs in this file now seed one each and
+ * the suite is fullyParallel, so `.last()` had become a bet on DOM order between two cards.
+ */
+const destroyPopover = (page: import("@playwright/test").Page) =>
+	page.locator('[data-slot="popover-content"]');
 
 test.describe("Runners — the byoRunners gate is deployment-mode scoped", () => {
 	test("a Hobby org reaches the runner surface, because the upsell is hosted-only", async ({
@@ -72,7 +84,7 @@ test.describe("Runners — the byoRunners gate is deployment-mode scoped", () =>
 			});
 			await expect(cardFor(owner.page, name)).toHaveCount(0);
 		} finally {
-			await purgeE2ERunners(team.userId!);
+			await purgeSeededRunners();
 		}
 	});
 });
@@ -80,10 +92,10 @@ test.describe("Runners — the byoRunners gate is deployment-mode scoped", () =>
 test.describe("Runners — destroy", () => {
 	let identityId: string | null = null;
 
-	test.afterEach(async ({ team }) => {
+	test.afterEach(async () => {
 		if (identityId) await purgeSeededIdentity(identityId);
 		identityId = null;
-		await purgeE2ERunners(team.userId!);
+		await purgeSeededRunners();
 	});
 
 	test("the destroy confirmation opens, warns, and dismissing it queues nothing", async ({
@@ -104,13 +116,14 @@ test.describe("Runners — destroy", () => {
 		await expect(card).toBeVisible({ timeout: 15_000 });
 
 		await card.getByRole("button", { name: "Destroy" }).click();
-		await expect(team.page.getByText("Select runner")).toBeVisible();
+		const popover = destroyPopover(team.page);
+		await expect(popover.getByText("Select runner")).toBeVisible();
 		await expect(
-			team.page.getByText(/This will tear down all cloud resources for/),
+			popover.getByText(new RegExp(`This will tear down all cloud resources for "${name}"`)),
 		).toBeVisible();
 
 		await team.page.keyboard.press("Escape");
-		await expect(team.page.getByText("Select runner")).toHaveCount(0);
+		await expect(popover).toHaveCount(0);
 		expect(await destroyJobCount(runner.id)).toBe(0);
 	});
 
@@ -133,10 +146,11 @@ test.describe("Runners — destroy", () => {
 		await expect(card).toBeVisible({ timeout: 15_000 });
 
 		// Open the destroy popover from the card, then confirm. The confirm control shares the
-		// "Destroy" label with its trigger; it is the one inside the popover (last in DOM).
+		// "Destroy" label with its trigger, so it is reached inside the popover, never positionally.
 		await card.getByRole("button", { name: "Destroy" }).click();
-		await expect(team.page.getByText("Select runner")).toBeVisible();
-		await team.page.getByRole("button", { name: "Destroy" }).last().click();
+		const popover = destroyPopover(team.page);
+		await expect(popover.getByText("Select runner")).toBeVisible();
+		await popover.getByRole("button", { name: "Destroy" }).click();
 
 		// The job is inserted QUEUED. Assert only that it EXISTS — a live runner sharing this
 		// database could claim and then fail it against the fake credentials, and pinning a
