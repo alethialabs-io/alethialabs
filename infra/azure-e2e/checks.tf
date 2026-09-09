@@ -1,10 +1,17 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Loud invariant assertions on the e2e federated stack (per infra IaC rule #2). A `check` block fails
-# the plan/apply if any security property regresses — a wildcarded federation subject, a role
-# assignment that escaped the subscription scope, or a runaway budget can never ship silently. Mirrors
-# infra/aws-oidc/checks.tf.
+# Loud invariant assertions on the e2e federated stack (per infra IaC rule #2): a wildcarded
+# federation subject, a role assignment that escaped the subscription scope, or a runaway budget is
+# reported on every plan. Mirrors infra/aws-oidc/checks.tf.
+#
+# A `check` block WARNS; it does not fail the plan or the apply — `tofu plan` still exits 0 with the
+# assertion's message printed above it. So these are a LOUD REPORT, not a gate: they are how a
+# regression announces itself to somebody reading the plan, and they cannot stop one being applied.
+# `infra/status/main.tf` and the two chart-template checks say the same thing; this header used to
+# claim the opposite, which mattered because a reader concluded a wildcarded subject was UNAPPLIABLE
+# (#4394). If a property here must be un-appliable rather than merely noisy, it needs a real
+# mechanism — a `precondition` on the resource, or a plan-JSON assertion in CI.
 
 # ── Federation subjects are exact + ref/environment-bound, never wildcarded ───
 check "federation_subjects_exact" {
