@@ -458,7 +458,7 @@ jobs:
       - name: Build the console (production image the browser drives)
         run: pnpm -C apps/console run build
       - name: Install Playwright (Chromium + OS deps)
-        run: pnpm -F console exec playwright install --with-deps chromium
+        run: bash scripts/ci/playwright-install.sh
       # Guard against a vacuous green: if the hero spec is ever renamed without updating the
       # project's testMatch, `playwright test --project=hero` would match 0 tests and could exit 0.
       # Fail loudly instead.
@@ -595,7 +595,7 @@ jobs:
       - name: Build the console (production image the browser drives)
         run: pnpm -C apps/console run build
       - name: Install Playwright (Chromium + OS deps)
-        run: pnpm -F console exec playwright install --with-deps chromium
+        run: bash scripts/ci/playwright-install.sh
       # The route manifest IS the audit's denominator. If the seam raises — a moved route group, a
       # zero-route scan — every route below would be "audited" over nothing, so it is run here on
       # its own where the failure names itself. NOT piped: a pipe would report the pipe's exit code.
@@ -752,7 +752,7 @@ jobs:
       - name: Build the console (production image the browser drives)
         run: pnpm -C apps/console run build
       - name: Install Playwright (Chromium + OS deps)
-        run: pnpm -F console exec playwright install --with-deps chromium
+        run: bash scripts/ci/playwright-install.sh
       # Guard against a vacuous green (renamed spec → testMatch drift → 0 tests → exit 0).
       - name: Guard — elench-ai project must match at least one test
         run: |
@@ -1972,6 +1972,12 @@ jobs:
       - name: The chart-fetch retry retries a fetch and refuses a real failure
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/ci/tofu-test-retry-fetch.sh --self-test
+      # The same shape one host over: Playwright's `--with-deps` shells out to apt, and the runner
+      # image carries Google's Chrome channel that Chromium does not need. Both directions pinned —
+      # a transient fetch is retried, a real failure is not (#4499).
+      - name: The playwright-install retry retries a fetch and refuses a real failure
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/ci/playwright-install.sh --self-test
       - name: Guards self-test (runtime · compose · merge)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |

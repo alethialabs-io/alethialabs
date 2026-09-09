@@ -223,7 +223,7 @@ jobs:
       - name: Build the console (the production image the browser drives)
         run: pnpm -C apps/console run build
       - name: Install Playwright (Chromium + OS deps)
-        run: pnpm -F console exec playwright install --with-deps chromium
+        run: bash scripts/ci/playwright-install.sh
       # The audit's denominator. The manifest RAISES on zero routes rather than returning [], and
       # this proves it still does before the leg spends an hour on it.
       - name: Guard — the route manifest still resolves (audit legs)

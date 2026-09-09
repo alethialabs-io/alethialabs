@@ -120,7 +120,7 @@ jobs:
       - name: Build the console
         run: pnpm -C apps/console run build
       - name: Install Playwright (Chromium + OS deps)
-        run: pnpm -F console exec playwright install --with-deps chromium
+        run: bash scripts/ci/playwright-install.sh
       - name: Guard — elench-live project must match at least one test
         run: |
           list=$(pnpm -F console exec playwright test --project=elench-live --list 2>&1) || { echo "$list"; exit 1; }

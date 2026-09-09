@@ -1308,7 +1308,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm -F console exec playwright install --with-deps chromium
+      - run: bash scripts/ci/playwright-install.sh
 
       # THE FLOOR. `--list` prints the manifest length, and this asserts it — the same shape as the
       # release gate's per-leg floor. A suite that silently shrank to two checks and passed is the
