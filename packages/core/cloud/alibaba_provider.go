@@ -284,6 +284,7 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	// verbatim as a tfvar the root template no longer declares — a value silently dropped at plan
 	// time, which reads to the user exactly like a switch that worked.
 	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, alibabaRootReserved...)
+	mergeProviderConfig(tfvars, config.Network.ProviderConfig, alibabaRootReserved...)
 
 	return tfvars
 }
