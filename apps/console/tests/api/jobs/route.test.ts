@@ -16,6 +16,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/authz/guard", () => ({
 	authorize: vi.fn(),
 	ensureCliOrgAccess: vi.fn(),
+	// The service-token arm asks this one instead (#4298) — "is the MINTER still a member".
+	// Stubbed here rather than left off the factory: without it the token tests below would
+	// exercise `undefined(...)`, which throws where the route expects a 403-or-null.
+	assertMintingProfileStillMember: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({ withActorScope: vi.fn(), withScope: vi.fn(), getServiceDb: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
@@ -29,7 +33,11 @@ vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
 
 import { POST } from "@/app/api/jobs/route";
 import { getActiveScope } from "@/lib/auth/scope";
-import { authorize, ensureCliOrgAccess } from "@/lib/authz/guard";
+import {
+	assertMintingProfileStillMember,
+	authorize,
+	ensureCliOrgAccess,
+} from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
@@ -243,6 +251,7 @@ beforeEach(() => {
 	} as never);
 	vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
 	vi.mocked(ensureCliOrgAccess).mockResolvedValue(null);
+	vi.mocked(assertMintingProfileStillMember).mockResolvedValue(null);
 	vi.mocked(assertUsageAllowed).mockResolvedValue(undefined as never);
 	vi.mocked(assertJobQuotaAllowed).mockResolvedValue(undefined);
 });
@@ -387,6 +396,84 @@ describe("POST /api/jobs (CLI queue)", () => {
 		);
 		expect(res.status).toBe(403);
 		expect(authorize).not.toHaveBeenCalled();
+	});
+
+	// ── THE CREDENTIAL KIND IS A TYPE, NOT A STRING'S TRUTHINESS (#4468) ──
+	//
+	// This route resolves its own scope, so it inherited none of the `switch`es #4298 put in
+	// `lib/authz/guard.ts`. It read `service_token_org_id` and asked whether the string was
+	// non-empty, three times: which org to scope to, which membership question to ask, and
+	// which personal-runner arm to admit. `credentialOf` derives the closed union once.
+
+	it("REFUSES a payload that claims a service-token pin but leaves it blank", async () => {
+		setupTx({ select: snapshotSelect() });
+		mockServiceDb({});
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: { sub: "user-1", service_token_org_id: "" },
+			error: null,
+		});
+
+		const res = await post({ job_type: "PLAN", configuration_id: "p1" });
+
+		expect(res.status).toBe(401);
+		// The assertion that makes this a fail-CLOSED test rather than a status-code test.
+		// Before #4468, `"" ?? header` did not fall back (`??` catches null and undefined only)
+		// and `getActiveScope(userId, "" || undefined)` resolved the MINTER'S DEFAULT ORG, with
+		// both membership branches skipped — the pin, the org check and the runner arm all wrong
+		// at once. Nothing may be resolved for a credential whose org is unreadable.
+		expect(getActiveScope).not.toHaveBeenCalled();
+		expect(assertMintingProfileStillMember).not.toHaveBeenCalled();
+		expect(ensureCliOrgAccess).not.toHaveBeenCalled();
+	});
+
+	it("a service token asks the MINTER's membership, and never the header question", async () => {
+		setupTx({ select: snapshotSelect() });
+		mockServiceDb({});
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: { sub: "user-1", service_token_org_id: "org-pinned" },
+			error: null,
+		});
+
+		// Denied, so the route returns before it reaches the server actions — what is under test
+		// is WHICH question was asked and with what, not what planProject does afterwards.
+		vi.mocked(assertMintingProfileStillMember).mockResolvedValue(
+			new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }),
+		);
+
+		const res = await post({ job_type: "PLAN", configuration_id: "p1" });
+
+		expect(res.status).toBe(403);
+		// Scoped to the PIN, and the pin is what the offboarding check is asked about.
+		expect(getActiveScope).toHaveBeenCalledWith("user-1", "org-pinned");
+		expect(assertMintingProfileStillMember).toHaveBeenCalledWith(
+			expect.anything(),
+			"org-pinned",
+		);
+		// `ensureCliOrgAccess` would compare the pin to itself and pass vacuously; it is the
+		// session arm's question and a token must never reach it.
+		expect(ensureCliOrgAccess).not.toHaveBeenCalled();
+	});
+
+	it("a service token's pin wins over a header naming another org", async () => {
+		setupTx({ select: snapshotSelect() });
+		mockServiceDb({});
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: { sub: "user-1", service_token_org_id: "org-pinned" },
+			error: null,
+		});
+
+		vi.mocked(assertMintingProfileStillMember).mockResolvedValue(
+			new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }),
+		);
+
+		await post(
+			{ job_type: "PLAN", configuration_id: "p1" },
+			{ "X-Alethia-Org": "org-other" },
+		);
+
+		// `verifyCliToken` refuses a CONFLICTING header at the chokepoint; it is stubbed here, so
+		// what this pins is the half this route owns — the header is not consulted on this arm.
+		expect(getActiveScope).not.toHaveBeenCalledWith("user-1", "org-other");
 	});
 
 	it("DESTROY_RUNNER keeps the legacy passthrough insert (client-provided snapshot)", async () => {

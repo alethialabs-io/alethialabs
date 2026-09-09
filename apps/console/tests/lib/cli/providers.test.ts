@@ -48,8 +48,9 @@ import {
 	ensureCliOrgAccess,
 } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
-import { verifyCliToken } from "@/lib/cli/auth";
+import { type CliTokenPayload, verifyCliToken } from "@/lib/cli/auth";
 import {
+	credentialOf,
 	enforceProviderPermission,
 	errorResponse,
 	isCloudProvider,
@@ -351,6 +352,93 @@ describe("resolveCliProvider — organization scoping", () => {
 
 		expect(result.errorResponse?.status).toBe(403);
 		expect(result.scope).toBeNull();
+	});
+});
+
+/**
+ * `credentialOf` — the one derivation of the credential KIND (#4468).
+ *
+ * Both files that resolve their own CLI scope used to re-infer the kind from whether
+ * `service_token_org_id` was a non-empty string, and they DISAGREED about the empty case: this
+ * module turned `""` into `undefined` (⇒ a human), `app/api/jobs/route.ts` kept it as `""` (⇒ a
+ * pin that is not one, and a `??` that does not fall back). Neither answer is safe, so the third
+ * one is asserted here: refuse.
+ *
+ * These are unit assertions on a pure function BECAUSE the callers cannot reach every input. The
+ * pin comes from `cli_service_tokens.organization_id`, which is `uuid().notNull()`, so no request
+ * that exists today produces the blank or non-string cases. What makes them worth pinning is that
+ * the constraint keeping them unreachable is two files away and can be relaxed by an author who
+ * never reads this one, while `CliTokenPayload` already declares the field optional.
+ */
+describe("credentialOf", () => {
+	it("reads an absent pin as a session, with no org of its own", () => {
+		expect(credentialOf({ sub: "user-123" })).toEqual({
+			credential: "session",
+			pinnedOrg: null,
+		});
+	});
+
+	it("reads a real pin as a service token and carries it on the same value", () => {
+		expect(credentialOf({ sub: "user-123", service_token_org_id: "org-svc" })).toEqual({
+			credential: "service_token",
+			pinnedOrg: "org-svc",
+		});
+	});
+
+	// The whole reason the return type is nullable. `""` is not "no pin" and it is not a pin: a
+	// credential that cannot say which org it is for is not a credential.
+	it("REFUSES a blank pin rather than reading it as either kind", () => {
+		expect(credentialOf({ sub: "user-123", service_token_org_id: "" })).toBeNull();
+		expect(credentialOf({ sub: "user-123", service_token_org_id: "   " })).toBeNull();
+	});
+
+	// `CliTokenPayload extends jose.JWTPayload`, whose index signature makes the `?: string`
+	// declaration a claim about the writer rather than a check on the reader. A JSON `null` and a
+	// number both type-check their way in through it at runtime.
+	it("REFUSES a pin that is not a string", () => {
+		// Built by PARSING JSON, which is how a payload actually reaches this function — and the
+		// only way to produce the shapes `service_token_org_id?: string` denies at compile time
+		// without an `as` cast, which the code style bans outright.
+		const parsed = (raw: string): CliTokenPayload => JSON.parse(raw);
+		expect(credentialOf(parsed('{"sub":"u","service_token_org_id":null}'))).toBeNull();
+		expect(credentialOf(parsed('{"sub":"u","service_token_org_id":7}'))).toBeNull();
+	});
+
+	// Unreachable from either caller — both establish `payload.sub` first — and refused anyway,
+	// because the alternative is writing "absent ⇒ human" into the one function whose job is to
+	// stop that sentence existing.
+	it("refuses a missing payload rather than calling it a session", () => {
+		expect(credentialOf(undefined)).toBeNull();
+		expect(credentialOf(null)).toBeNull();
+	});
+});
+
+/**
+ * The refusal, driven through the route resolver rather than the pure function — because the
+ * failure being prevented is not "returns the wrong tuple", it is "resolves a SCOPE for a
+ * credential whose org is unreadable". Before #4468 this input took the session path and
+ * `getActiveScope(userId)` answered with the MINTER'S DEFAULT ORG, which is somebody's session
+ * state standing in for a machine's tenancy.
+ */
+describe("resolveCliProvider — a malformed pin", () => {
+	it("401s and resolves NO scope when the pin is present but blank", async () => {
+		mockedVerify.mockResolvedValue({
+			payload: { sub: "user-123", service_token_org_id: "" },
+			error: null,
+		});
+
+		const result = await resolveCliProvider(
+			req(),
+			Promise.resolve({ provider: "aws" }),
+		);
+
+		expect(result.errorResponse?.status).toBe(401);
+		expect(result.scope).toBeNull();
+		// The assertion that separates "refused" from "refused, having already computed the wrong
+		// answer": no org was resolved at all, by either arm.
+		expect(mockedScope).not.toHaveBeenCalled();
+		expect(mockedEnsure).not.toHaveBeenCalled();
+		expect(mockedMinterCheck).not.toHaveBeenCalled();
 	});
 });
 
