@@ -84,7 +84,7 @@ RUBRIC.md defines **34 predicates**. This report scores **34** of them —
 | `scripts/check-shared-surface.mjs` | every H-family occurrence, per file |
 | `scripts/check-filter-standard.mjs` | F1–F6 per filter SURFACE, joined to the routes whose closure reaches it |
 | `apps/console/tests/lib/queries/filter-standard-facets.test.ts` | F7 — the behaviour RUBRIC.md says a matcher cannot answer |
-| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 30`) |
+| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 27`) |
 | `apps/console/ui-conformance-live.json` | T5–T7 and R1–R7 as MEASURED, imported from a CI run of the Playwright `audit` project |
 | `apps/console/docs/ui-conformance/RUBRIC.md` | the predicate set itself, read out of its own tables |
 
@@ -162,7 +162,7 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **T7** | T | live — `permissions` | 0 | 0 | 27 | 13 | — | `no-restricted-surface` 27 |
 | **H1** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H2** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
-| **H3** | H | `check-shared-surface` | 37 | 3 | 0 | 0 | 0.93 | — |
+| **H3** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H4** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H5** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H6** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
@@ -204,11 +204,9 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/[org]/~/alerts` | 291 | 2/4 · 0.50 | 5/5 · 1.00 | 9/9 · 1.00 | 4/7 · 0.57 | 7/7 · 1.00 | **0.84** |
 | `/[org]/[project]/settings` · | 1 | all N/A | 1/2 · 0.50 · 1 withheld | 9/9 · 1.00 | all N/A | 3/4 · 0.75 | **0.87** |
 | `/[org]/~/settings` · | 1 | all N/A | 1/2 · 0.50 | 9/9 · 1.00 | all N/A | 3/4 · 0.75 | **0.87** |
-| `/[org]/~/connectors` | 211 | 4/4 · 1.00 | 4/4 · 1.00 | 8/9 · 0.89 | 6/7 · 0.86 | 5/7 · 0.71 | **0.87** |
+| `/[org]/~/connectors` | 211 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 5/7 · 0.71 | **0.90** |
 | `/[org]/~/runners` | 272 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 3/6 · 0.50 · 1 withheld | 7/7 · 1.00 | **0.90** |
 | `/[org]/~/settings/members` | 221 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 5/7 · 0.71 | 6/7 · 0.86 | **0.90** |
-| `/[org]/~/new` | 360 | 3/4 · 0.75 | 4/4 · 1.00 | 8/9 · 0.89 | all N/A | 7/7 · 1.00 | **0.92** |
-| `/[org]/[project]/architecture` | 385 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 8/9 · 0.89 | all N/A | 6/7 · 0.86 | **0.92** |
 | `/[org]/[project]/settings/general` | 216 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 5/7 · 0.71 | **0.92** |
 | `/[org]/[project]/settings/preview` | 143 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 5/7 · 0.71 | **0.92** |
 | `/[org]/~/support/cases/[id]` | 157 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 5/7 · 0.71 | **0.92** |
@@ -221,9 +219,11 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/[org]/[project]/settings/access` | 214 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 6/7 · 0.86 | **0.94** |
 | `/[org]/[project]/settings/activity` | 279 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 6/7 · 0.86 | **0.94** |
 | `/[org]/~/jobs/[id]` | 223 | 3/4 · 0.75 | 4/4 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **0.96** |
+| `/[org]/~/new` | 360 | 3/4 · 0.75 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **0.96** |
 | `/[org]/~/settings/classification` | 147 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/7 · 0.86 | **0.96** |
 | `/[org]/~/settings/general` | 135 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/7 · 0.86 | **0.96** |
 | `/[org]/~/support/ask` | 200 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/7 · 0.86 | **0.96** |
+| `/[org]/[project]/architecture` | 385 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 6/7 · 0.86 | **0.96** |
 | `/[org]/[project]/usage` | 148 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 6/7 · 0.86 | **0.96** |
 | `/[org]/~/settings/billing/invoices` | 194 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
 | `/[org]/[project]/jobs` | 221 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
@@ -248,7 +248,7 @@ the console errors it produces and the time it takes to land are real and are me
 
 ## Where every shared-surface occurrence landed
 
-`check-shared-surface` found **81 occurrences across 44 files**. This section
+`check-shared-surface` found **74 occurrences across 42 files**. This section
 accounts for all of them twice — once by ledger, once by reach — so a rule or a file falling out
 of the scoreboard cannot be quiet.
 
@@ -262,9 +262,9 @@ of the scoreboard cannot be quiet.
 | `page_title` | H1 | 17 | 17 | 0 | 0 | 7 | 1 | 0 | 9 |
 | `section_header` | H2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `stat_strip` | H6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `status_badge` | H3 | 7 | 0 | 7 | 0 | 4 | 3 | 0 | 0 |
+| `status_badge` | H3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `type_scale` | H8 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
-| **total** | | 81 | 24 | 57 | 0 | 57 | 10 | 2 | 12 |
+| **total** | | 74 | 24 | 50 | 0 | 53 | 7 | 2 | 12 |
 
 **`unlisted` is the column to read first.** A non-zero value means the guard is red — an
 occurrence neither a `reason:` nor a `lifts:` entry accounts for. It is not a defect of this
@@ -278,7 +278,7 @@ subject in a way that is not that row's verdict.
 | --- | --- | --- |
 | `ink_alpha` | #4309 | a static, preventive guard for the contrast R5 measures live — a class-string finding is not a rendered verdict, and scoring one predicate with both would make a route's R5 depend on whether its dead code was linted |
 
-**Reachable only from the shared layout chain** — 6 files. These are real
+**Reachable only from the shared layout chain** — 5 files. These are real
 occurrences in the sidebar, topbar, breadcrumbs and shells that every route renders. They are not
 in any route's H column, because attributing the chrome's drift to all 40 routes would say the
 console is 40 times worse than it is. The full list is in `ui-conformance-baseline.json`.

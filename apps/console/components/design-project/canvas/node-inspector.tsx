@@ -15,9 +15,9 @@ import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import {
 	NODE_STATUS_META,
+	nodeStatusHint,
 	useNodeStatus,
 	type NodeStatusMeta,
-	type NodeStatusState,
 } from "@/lib/canvas/node-status";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { ago, JOB_LABEL, JOB_STATUS } from "@/lib/canvas/job-display";
@@ -373,22 +373,6 @@ function DestroyEnvironmentZone({ onDestroy }: { onDestroy: () => void }) {
 	);
 }
 
-/** The default line for a state when the server gave us no message of its own. */
-const STATUS_HINT: Partial<Record<NodeStatusState, string>> = {
-	gated: "Cross-cloud core placement — won't provision until colocated.",
-	ready: "Configured and ready to deploy.",
-	live: "Provisioned and matching the design.",
-	"not-deployed": "Designed, but never applied.",
-	queued: "Waiting for a runner to claim the job.",
-	applying: "The runner is applying this resource now.",
-	updating: "An apply is changing this resource in place.",
-	"update-pending": "The design has moved ahead of what's deployed.",
-	destroying: "Teardown in flight.",
-	destroyed: "Torn down. Remove it from the design to clear it.",
-	failed: "The last apply failed.",
-	unreachable: "The cluster's API server did not answer the last probe.",
-};
-
 /**
  * A compact status strip under the inspector header: the node's RESOLVED status (design readiness
  * merged with the environment's server truth) and the most actionable line — the server's own
@@ -403,7 +387,7 @@ function StatusHeader({ nodeId }: { nodeId: string }) {
 		<div className="flex items-center gap-2.5 border-b border-border bg-surface-sunken/60 px-4 py-2.5">
 			<StatusBadge status={meta.label} tier={meta.vx} className="shrink-0" />
 			<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-				{status.message ?? STATUS_HINT[status.state] ?? ""}
+				{status.message ?? nodeStatusHint(status.state) ?? ""}
 			</span>
 			{drifted > 0 && (
 				<span
