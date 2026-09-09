@@ -356,8 +356,29 @@ for (const entry of CONTROLS) {
 			return;
 		}
 		const trigger = resolved_trigger.locator;
-		if ((await trigger.count()) === 0 || !(await trigger.isVisible().catch(() => false))) {
+		const matches = await trigger.count();
+		if (matches === 0 || !(await trigger.isVisible().catch(() => false))) {
 			withhold(entry, `the trigger {${entry.control?.role}: "${entry.control?.name}"} is not rendered at ${url} for this persona`);
+			return;
+		}
+		// AMBIGUITY IS A FINDING, NOT A COIN FLIP.
+		//
+		// `.first()` would pick one of N identically-named controls and record the verdict against
+		// whichever it happened to be — a true assertion about the wrong control, which is worse
+		// than no assertion because it reads as measured. The settings pages make this concrete:
+		// `SettingsDangerRow` names every destructive button just "Delete" and puts the thing being
+		// deleted in an unassociated `<div>`, so two danger rows on one page are two identical
+		// buttons.
+		//
+		// After `reach` has run, more than one match means the entry's reach did not narrow to a
+		// single control — that is a defect in the registry entry, or in the product's naming, and
+		// either way it must be reported rather than guessed past.
+		if (matches > 1) {
+			withhold(
+				entry,
+				`the trigger {${entry.control?.role}: "${entry.control?.name}"} matches ${matches} controls at ${url} after its reach chain — ` +
+					"ambiguous, so no verdict can be attributed. Narrow the entry's `reach`, or give the control an accessible name that distinguishes it.",
+			);
 			return;
 		}
 
