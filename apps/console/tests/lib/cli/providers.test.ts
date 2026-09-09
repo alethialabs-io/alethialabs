@@ -30,6 +30,11 @@ vi.mock("@/lib/auth/scope", () => ({
 // re-implementing the query here would verify a copy.
 vi.mock("@/lib/authz/guard", () => ({
 	ensureCliOrgAccess: vi.fn(async () => null),
+	// #4298 split the one function in two, because its two callers ask different questions. The
+	// service-token branch here asks "is the MINTER still a member", which is the new name; the
+	// header branch still asks the credential-aware question. Both are stubbed for the same reason
+	// the comment above gives — re-implementing the membership query here would verify a copy.
+	assertMintingProfileStillMember: vi.fn(async () => null),
 }));
 
 // Hoisted so the factory below can close over it without a TDZ error, and so the test body
@@ -38,7 +43,10 @@ const pdp = vi.hoisted(() => ({ enforce: vi.fn() }));
 vi.mock("@/lib/authz", () => ({ getPdp: () => ({ enforce: pdp.enforce }) }));
 
 import { getActiveScope } from "@/lib/auth/scope";
-import { ensureCliOrgAccess } from "@/lib/authz/guard";
+import {
+	assertMintingProfileStillMember,
+	ensureCliOrgAccess,
+} from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
 import { verifyCliToken } from "@/lib/cli/auth";
 import {
@@ -50,6 +58,7 @@ import {
 
 const mockedVerify = vi.mocked(verifyCliToken);
 const mockedEnsure = vi.mocked(ensureCliOrgAccess);
+const mockedMinterCheck = vi.mocked(assertMintingProfileStillMember);
 const mockedScope = vi.mocked(getActiveScope);
 
 function req(headers?: Record<string, string>) {
@@ -61,6 +70,7 @@ beforeEach(() => {
 	// getActiveScope stub declared in the factory above stays in force for every test.
 	vi.clearAllMocks();
 	mockedEnsure.mockResolvedValue(null);
+	mockedMinterCheck.mockResolvedValue(null);
 	pdp.enforce.mockResolvedValue(undefined);
 });
 
@@ -187,7 +197,9 @@ describe("resolveCliProvider — organization scoping", () => {
 		expect(mockedEnsure).toHaveBeenCalledTimes(1);
 		expect(mockedEnsure).toHaveBeenCalledWith(
 			expect.objectContaining({ userId: "user-123", orgId: "user-123" }),
-			"user-123",
+			// The CREDENTIAL, not a userId, since #4298 — and `"session"` is the arm that keeps the
+			// membership query. A token reaching this call would be the defect.
+			"session",
 			"org-B",
 		);
 	});
@@ -251,13 +263,17 @@ describe("resolveCliProvider — organization scoping", () => {
 
 		expect(result.scope?.orgId).toBe("org-svc");
 		// The DEFAULT scope is what goes in, never one resolved from the pin — see the comment
-		// in providers.ts. `ensureCliOrgAccess` short-circuits on `actor.orgId === orgId`, so
-		// passing the pinned scope would compare the pin to itself and skip the query entirely.
-		expect(mockedEnsure).toHaveBeenCalledWith(
+		// in providers.ts. The function short-circuits on `actor.orgId === orgId`, so passing the
+		// pinned scope would compare the pin to itself and skip the query entirely.
+		//
+		// `assertMintingProfileStillMember` since #4298, and the RENAME IS THE POINT: this branch
+		// never asked the credential-aware question, and calling the same function as the header
+		// branch is what made a token arm look safe to add to it.
+		expect(mockedMinterCheck).toHaveBeenCalledWith(
 			expect.objectContaining({ orgId: "user-123" }),
-			"user-123",
 			"org-svc",
 		);
+		expect(mockedEnsure).not.toHaveBeenCalled();
 	});
 
 	it("lets the service token's pin win over a header, never the other way round", async () => {
@@ -273,9 +289,8 @@ describe("resolveCliProvider — organization scoping", () => {
 
 		expect(result.scope?.orgId).toBe("org-svc");
 		// Checked against the PIN, not the header — the header is not consulted on this branch.
-		expect(mockedEnsure).toHaveBeenCalledWith(
+		expect(mockedMinterCheck).toHaveBeenCalledWith(
 			expect.anything(),
-			"user-123",
 			"org-svc",
 		);
 	});
@@ -292,7 +307,7 @@ describe("resolveCliProvider — organization scoping", () => {
 			payload: { sub: "user-123", service_token_org_id: "org-svc" },
 			error: null,
 		});
-		mockedEnsure.mockResolvedValue(
+		mockedMinterCheck.mockResolvedValue(
 			new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }),
 		);
 
@@ -301,9 +316,8 @@ describe("resolveCliProvider — organization scoping", () => {
 			Promise.resolve({ provider: "aws" }),
 		);
 
-		expect(mockedEnsure).toHaveBeenCalledWith(
+		expect(mockedMinterCheck).toHaveBeenCalledWith(
 			expect.objectContaining({ orgId: "user-123" }),
-			"user-123",
 			"org-svc",
 		);
 		expect(result.errorResponse?.status).toBe(403);

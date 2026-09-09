@@ -10,7 +10,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn() }));
-vi.mock("@/lib/authz/runner-org", () => ({ assertRunnerInOrg: vi.fn() }));
+// `assertRunnerInOrg` is stubbed (its predicate is tested with its own file), but
+// `personalRunnerArm` is kept REAL via importOriginal — it is the decision #4298 added, and a stub
+// here would re-implement its switch and then verify the copy rather than the route.
+vi.mock("@/lib/authz/runner-org", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/authz/runner-org")>()),
+	assertRunnerInOrg: vi.fn(),
+}));
 vi.mock("@/lib/billing/job-quota", () => ({ assertJobQuotaAllowed: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
@@ -64,8 +70,12 @@ const DEPLOY = { name: "Cloud", cloud_identity_id: "ci-1", region: "us-east-1" }
 beforeEach(() => {
 	vi.clearAllMocks();
 	mock = makeDb();
+	// `credential` is REQUIRED on authorizeCli's success arm (#4298) and the default here is a
+	// session, which is what every pre-existing case in this file assumes. A token case sets it
+	// explicitly below.
 	vi.mocked(authorizeCli).mockResolvedValue({
 		actor: { userId: "user-1", orgId: "org-1" },
+		credential: "session",
 	} as never);
 	vi.mocked(getServiceDb).mockReturnValue(mock.db as never);
 });
@@ -119,6 +129,7 @@ describe("POST /api/cli/runners/deploy", () => {
 	});
 
 	// The caller-owned legacy admission pairs with claim_next_job's lifecycle-only compatibility.
+	// A SESSION only, since #4298 — the token case is the next test.
 	it("admits the caller's pre-#3874 assigned runner", async () => {
 		mock.queue.push(
 			[{ id: "ci-1", provider: "aws", org_id: "org-1" }],
@@ -131,6 +142,44 @@ describe("POST /api/cli/runners/deploy", () => {
 		).toBe(201);
 
 		expect(assertRunnerInOrg).toHaveBeenCalledWith(
+			expect.anything(),
+			"runner-x",
+			"org-1",
+			"user-1",
+		);
+	});
+
+	// #4298. THE SAME REQUEST FROM A SERVICE TOKEN GETS NO PERSONAL ARM.
+	//
+	// `actor.userId` is the MINTING profile for a token, so passing it as `personalOrgId` admitted
+	// the minter's own pre-#3874 runner: a token pinned to org-1 could hand an org-1 job to an
+	// executor outside the pin, which `claim_next_job`'s legacy lifecycle arm then runs with the
+	// minter's personal cloud identity. Asserted as `undefined` in the fourth argument rather than
+	// as a status, because the route still answers 201 — the stubbed `assertRunnerInOrg` is what
+	// would refuse, and what this pins is the ARGUMENT it is asked with.
+	it("gives a service token no personal-runner arm", async () => {
+		vi.mocked(authorizeCli).mockResolvedValue({
+			actor: { userId: "user-1", orgId: "org-1" },
+			credential: "service_token",
+		} as never);
+		mock.queue.push(
+			[{ id: "ci-1", provider: "aws", org_id: "org-1" }],
+			[{ version: "1.4.0" }],
+			[{ id: "r-dep", name: "Cloud" }],
+			[{ id: "job-1", status: "QUEUED", created_at: new Date() }],
+		);
+		expect(
+			(await POST(req({ ...DEPLOY, assigned_runner_id: "runner-x" }))).status,
+		).toBe(201);
+
+		expect(assertRunnerInOrg).toHaveBeenCalledWith(
+			expect.anything(),
+			"runner-x",
+			"org-1",
+			undefined,
+		);
+		// Stated as an inequality too: the minter's id must not reach that argument by any route.
+		expect(assertRunnerInOrg).not.toHaveBeenCalledWith(
 			expect.anything(),
 			"runner-x",
 			"org-1",
