@@ -21,8 +21,14 @@ const facts: ProjectFacts = {
 	iacVersion: "1.9.0",
 	monthlyCost: 412,
 	environments: [
-		{ name: "prod", stage: "production", status: "ACTIVE", region: "eu-central-1" },
-		{ name: "staging", stage: "staging", status: "DRAFT", region: null },
+		{
+			id: "e-prod",
+			name: "prod",
+			stage: "production",
+			status: "ACTIVE",
+			region: "eu-central-1",
+		},
+		{ id: "e-staging", name: "staging", stage: "staging", status: "DRAFT", region: null },
 	],
 	recentJobs: [
 		{ type: "DEPLOY", status: "SUCCESS", error: null },
@@ -70,6 +76,18 @@ describe("formatProjectKnowledge", () => {
 
 	it("is deterministic (same facts → same string, so the prompt stays cacheable)", () => {
 		expect(formatProjectKnowledge(facts)).toBe(formatProjectKnowledge(facts));
+	});
+
+	it("marks the active environment when one is scoped, and only then", () => {
+		const scoped = formatProjectKnowledge(facts, "e-prod");
+		expect(scoped).toContain("prod (production, eu-central-1) — ACTIVE (active)");
+		expect(scoped).toContain("staging (staging) — DRAFT\n");
+		expect(scoped).not.toContain("DRAFT (active)");
+		// The org route and the knowledge preview pass nothing: byte-identical to the unscoped block.
+		expect(formatProjectKnowledge(facts, null)).toBe(formatProjectKnowledge(facts));
+		expect(formatProjectKnowledge(facts)).not.toContain("(active)");
+		// An id that matches no environment marks nothing rather than guessing.
+		expect(formatProjectKnowledge(facts, "e-unknown")).toBe(formatProjectKnowledge(facts));
 	});
 
 	it("states the empty cases rather than omitting them", () => {

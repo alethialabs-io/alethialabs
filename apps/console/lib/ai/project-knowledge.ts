@@ -36,6 +36,8 @@ export interface ProjectFacts {
 	iacVersion: string;
 	monthlyCost: number | null;
 	environments: Array<{
+		/** Present when the reader fetched it; lets the formatter mark the ACTIVE environment. */
+		id?: string;
 		name: string;
 		stage: string;
 		status: string;
@@ -55,8 +57,15 @@ function cap(text: string): string {
 /**
  * Render the derived knowledge block for a project. Pure: same facts → same string, so the
  * prompt stays cacheable and the shape is unit-testable.
+ *
+ * `activeEnvironmentId` marks the environment the conversation is scoped to as `(active)` in
+ * the environments list; without it (the org route, the knowledge preview) the output is
+ * byte-identical to before.
  */
-export function formatProjectKnowledge(facts: ProjectFacts): string {
+export function formatProjectKnowledge(
+	facts: ProjectFacts,
+	activeEnvironmentId?: string | null,
+): string {
 	const lines: string[] = [
 		"## Project knowledge (live, auto-derived — no need to look these up)",
 		`- Name: ${facts.name}${facts.slug ? ` (slug: ${facts.slug})` : ""}`,
@@ -72,7 +81,9 @@ export function formatProjectKnowledge(facts: ProjectFacts): string {
 		lines.push("- Environments:");
 		for (const e of facts.environments) {
 			const region = e.region ? `, ${e.region}` : "";
-			lines.push(`  - ${e.name} (${e.stage}${region}) — ${e.status}`);
+			const active =
+				activeEnvironmentId && e.id === activeEnvironmentId ? " (active)" : "";
+			lines.push(`  - ${e.name} (${e.stage}${region}) — ${e.status}${active}`);
 		}
 	} else {
 		lines.push("- Environments: none yet");
@@ -171,11 +182,13 @@ export async function readAgentContext(
  * Assemble the derived project-knowledge block from live state. Returns "" if the project isn't
  * visible in scope. Scope depends on {@link orgAgentContextEnabled}: OFF → `withOwnerScope`
  * (per-user, byte-identical to before); ON → `withActorScope`, so a teammate resolves an org
- * project's knowledge (projects are org-shared).
+ * project's knowledge (projects are org-shared). `activeEnvironmentId` marks that environment
+ * `(active)` in the list; omitted, the block is byte-identical to before.
  */
 export async function buildProjectKnowledge(
 	actor: ReadActor,
 	projectId: string,
+	activeEnvironmentId?: string | null,
 ): Promise<string> {
 	const read = async (tx: Tx): Promise<ProjectFacts | null> => {
 		const [p] = await tx
@@ -187,6 +200,7 @@ export async function buildProjectKnowledge(
 
 		const envs = await tx
 			.select({
+				id: projectEnvironments.id,
 				name: projectEnvironments.name,
 				stage: projectEnvironments.stage,
 				status: projectEnvironments.status,
@@ -221,5 +235,5 @@ export async function buildProjectKnowledge(
 		? await withActorScope(actor, read)
 		: await withOwnerScope(actor.userId, read);
 
-	return facts ? formatProjectKnowledge(facts) : "";
+	return facts ? formatProjectKnowledge(facts, activeEnvironmentId) : "";
 }
