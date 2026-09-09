@@ -58,6 +58,18 @@ async function openGroupFacet(page: Page): Promise<void> {
 	await expect(page.getByRole("option", { name: /^Clouds/ })).toBeVisible();
 }
 
+/**
+ * The count the Group facet prints beside one option. `FacetFilter` renders it as the option's
+ * `hint`, so it is the trailing digits of the row's text — read as a NUMBER rather than compared as
+ * a string, so the assertion cannot pass on two differently-rendered spellings of the same tally.
+ * Requires the popover to be open.
+ */
+async function facetCount(page: Page, label: string): Promise<number> {
+	const text = await page.getByRole("option", { name: new RegExp(`^${label}`) }).textContent();
+	const digits = (text ?? "").replace(/\D/g, "");
+	return digits === "" ? Number.NaN : Number(digits);
+}
+
 /** A group section's `<h2>` — `SectionHeading` renders the label, the count rides beside it. */
 const groupHeading = (page: Page, label: string) =>
 	page.getByRole("heading", { name: label, exact: true });
@@ -190,16 +202,15 @@ test.describe("Connectors — the board and its filter bar", () => {
 		// which makes the bar un-un-selectable.
 		await gotoConnectors(owner.page, owner.orgSlug);
 		await openGroupFacet(owner.page);
-		const before = await owner.page.getByRole("option", { name: /^Registries/ }).textContent();
+		const before = await facetCount(owner.page, "Registries");
+		expect(before, "the Registries facet must carry a count to compare").toBeGreaterThan(0);
 		await owner.page.getByRole("option", { name: /^Clouds/ }).click();
 		await owner.page.keyboard.press("Escape");
 		// The board now shows Clouds only — and the Registries option must still be offered, with
 		// the same count it had over the unfiltered catalog.
 		await expect(groupHeading(owner.page, "Registries")).toHaveCount(0);
 		await openGroupFacet(owner.page);
-		await expect(owner.page.getByRole("option", { name: /^Registries/ })).toHaveText(
-			before ?? "",
-		);
+		expect(await facetCount(owner.page, "Registries")).toBe(before);
 	});
 
 	test("the Status chips filter the board by health bucket", async ({ owner }) => {
