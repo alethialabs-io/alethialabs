@@ -19,6 +19,8 @@
     "gen:offer-parity": "node scripts/check-offer-parity.mjs --matrix",
     "check:config-carriage": "node scripts/check-config-carriage.mjs",
     "check:template-parity": "node scripts/check-template-parity.mjs",
+    "check:template-knobs": "node scripts/check-template-knobs.mjs",
+    "gen:template-knobs": "node scripts/gen-template-knobs.mjs",
     "gen:config-carriage": "node scripts/check-config-carriage.mjs --matrix",
     "gen:template-parity": "node scripts/check-template-parity.mjs --matrix",
     "gen:offer-surface": "tsx scripts/gen-offer-surface.ts lib/cloud-providers/generated/offer-surface.json",
