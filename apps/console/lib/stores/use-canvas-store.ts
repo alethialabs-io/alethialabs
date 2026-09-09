@@ -1234,7 +1234,18 @@ export const useCanvasStore = create<CanvasStore>()(
  * scope's draft (a stale slot is discarded rather than shown as this environment's design), in
  * which case the store is reset and the caller seeds it from the server.
  */
-export async function switchDraftScope(scope: string): Promise<boolean> {
+export async function switchDraftScope(
+	scope: string,
+	/**
+	 * Whether this switch is still the one the caller wants, asked AFTER the await. Both the store
+	 * and the persistence pointer are global, so a superseded switch resuming late would rehydrate
+	 * the NEW scope's slot, find it does not match the scope it was called for, and `reset()` a
+	 * board that had already been seeded correctly. The caller's own `cancelled` flag cannot reach
+	 * in here, so it is handed the question instead. Defaults to "yes" for callers with no race.
+	 * Found in review.
+	 */
+	stillWanted: () => boolean = () => true,
+): Promise<boolean> {
 	const key = draftStorageKey(scope);
 	useCanvasStore.persist.setOptions({ name: key });
 	let raw: string | null = null;
@@ -1248,6 +1259,10 @@ export async function switchDraftScope(scope: string): Promise<boolean> {
 		return false;
 	}
 	await useCanvasStore.persist.rehydrate();
+	// Superseded while suspended: the pointer and the state now belong to another scope, so neither
+	// the mismatch below nor the history clear is ours to act on. Returning without touching the
+	// store leaves the run that overtook us in charge of it.
+	if (!stillWanted()) return false;
 	if (useCanvasStore.getState().seed?.scope !== scope) {
 		useCanvasStore.getState().reset();
 		return false;
