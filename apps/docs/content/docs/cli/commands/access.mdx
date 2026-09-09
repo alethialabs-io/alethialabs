@@ -109,6 +109,11 @@ alethia grants add --principal platform --principal-type team --permission proje
 alethia grants add
 ```
 
+With no `--principal` on a terminal you are asked for all seven, in order, and every one of them
+that has a list behind it is a **picker over live values** — the members and teams of the org, its
+roles or the server's permission catalog, and the projects, runners or cloud accounts of the kind
+you scope to.
+
 {/* fieldspec: alethia grants add */}
 
 | Field | What it is | Flag or argument | Name it by |
@@ -119,12 +124,32 @@ alethia grants add
 | Role | The role to bind, by name or id (give this or a permission, never both) | `--role` | — |
 | Permission | The single resource:action key to bind (give this or a role, never both) | `--permission` | — |
 | Resource kind | What kind of thing the grant is scoped to; org means org-wide | `--resource-type` | — |
-| Resource | The id of the one resource to scope to; leave empty for org-wide | `--resource` | — |
+| Resource | Which one thing of that kind the grant is scoped to; the whole kind when none is given | `--resource` | — |
 
 `--principal-type` is `user` (default) or `team`; `--effect` is `allow` (default) or `deny`. Both
 are closed sets and a value outside them is refused before anything is sent. `--resource-type` is
 not: `org` (default), `project`, `runner` and `cloud_identity` are what the picker offers, but the
 control plane stores whatever kind you name.
+
+### The resource is picked, not typed
+
+Once you have chosen a **kind**, the form lists that kind's live resources and you choose one:
+projects from `alethia project list`, runners from `alethia runner list`, cloud accounts from
+`alethia connector list`. Nothing has to be copied out of another command's output.
+
+Every one of those lists opens with **Every _kind_ in this organization** — the id-less scope, which
+is what `--resource-type project` with no `--resource` has always meant and what `grants list`
+renders as a bare `project`. Choosing it is how you grant over a whole kind.
+
+The `org` kind asks nothing at all. `org` *is* org-wide: the control plane treats a grant as
+org-wide when the kind is `org` **or** the id is absent, so an id given alongside `--resource-type
+org` would be stored on the grant and then ignored by everything that reads it. `--resource` with
+the `org` kind is therefore **refused** rather than sent — and since `org` is the default kind, that
+refusal is what you get from `--resource <id>` with no `--resource-type`, which would otherwise have
+granted over the whole organization while the command line read as one project.
+
+A kind this CLI has no list for is still askable — you are asked for the id, and the question names
+the kind — because the control plane accepts kinds beyond the four above.
 
 For a **user** principal the id is the *user* id, not the member id — the same person carries both,
 which is why naming them by email is the shorter and the safer route.

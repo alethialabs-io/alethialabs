@@ -158,6 +158,18 @@ whole grant is asked for.`,
 		if (answers.RoleID == "") == (answers.Permission == "") {
 			failf("Provide exactly one of --role or --permission")
 		}
+		// `--resource` under the `org` kind names a scope that cannot exist. The control plane
+		// computes `orgWide = resourceId === null || resourceType === "org"`
+		// (apps/console/lib/authz/fga-tuples.ts) BEFORE it expands a single tuple, so the id is
+		// written to the grant row and then ignored: the grant covers the whole organization while
+		// the command line reads as one project. That is the silent class this command's form was
+		// rebuilt to close (#4452), and it is the same defect whichever path reaches it — the more
+		// so because `org` is the DEFAULT, so forgetting --resource-type is how you land here.
+		if answers.ResourceID != "" && answers.ResourceType == grantResourceTypeOrg {
+			failf("--resource %s is not meaningful with --resource-type org: an org grant is org-wide, "+
+				"so the id would be stored and then ignored. Drop --resource, or name the kind the "+
+				"resource is (project, runner, cloud_identity).", answers.ResourceID)
+		}
 
 		principals := func() ([]orgChoice, error) {
 			if orgErr != nil {

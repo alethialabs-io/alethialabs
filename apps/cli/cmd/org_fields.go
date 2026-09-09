@@ -197,7 +197,7 @@ var orgFields = []orgField{
 		Command:     "alethia grants add",
 		Key:         orgFieldKeyResource,
 		Title:       "Resource",
-		Description: "The id of the one resource to scope to; leave empty for org-wide",
+		Description: "Which one thing of that kind the grant is scoped to; the whole kind when none is given",
 		Flag:        "resource",
 		Page:        docsAccessPage,
 	},

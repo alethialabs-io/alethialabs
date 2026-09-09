@@ -11,6 +11,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 )
@@ -184,6 +185,13 @@ func (c orgSelectFailingClient) ListTeams(string) ([]api.Team, error)         { 
 func (c orgSelectFailingClient) ListRoles() ([]api.Role, error)               { return nil, c.err }
 func (c orgSelectFailingClient) ListGrants() ([]api.Grant, error)             { return nil, c.err }
 func (c orgSelectFailingClient) ListSsoProviders() ([]api.SsoProvider, error) { return nil, c.err }
+func (c orgSelectFailingClient) GetRunners() ([]api.Runner, error)            { return nil, c.err }
+func (c orgSelectFailingClient) GetCloudIdentities() ([]api.CloudIdentity, error) {
+	return nil, c.err
+}
+func (c orgSelectFailingClient) GetConfigurations() ([]types.ConfigurationSummary, error) {
+	return nil, c.err
+}
 
 // TestOrgSelect_EveryListerReportsItsFailure pins the arm this package has got wrong before: a list
 // that could not be READ must never be reported as a list that is EMPTY.
@@ -202,6 +210,9 @@ func TestOrgSelect_EveryListerReportsItsFailure(t *testing.T) {
 		"sso providers":   ssoChoices(c),
 		"principals/user": grantPrincipalChoices(c, "o1", "user"),
 		"principals/team": grantPrincipalChoices(c, "o1", "team"),
+		"projects":        projectScopeChoices(c),
+		"runners":         runnerScopeChoices(c),
+		"cloud accounts":  cloudIdentityScopeChoices(c),
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := list()
@@ -237,16 +248,34 @@ func TestOrgSelect_PrincipalListDependsOnTheKind(t *testing.T) {
 
 // orgSelectFixedClient answers the list calls with fixed data.
 type orgSelectFixedClient struct {
-	members []api.Member
-	teams   []api.Team
-	roles   []api.Role
+	members    []api.Member
+	teams      []api.Team
+	roles      []api.Role
+	projects   []types.ConfigurationSummary
+	runners    []api.Runner
+	identities []api.CloudIdentity
 }
 
 func (c orgSelectFixedClient) ListMembers(string) ([]api.Member, error) { return c.members, nil }
 func (c orgSelectFixedClient) ListTeams(string) ([]api.Team, error)     { return c.teams, nil }
 func (c orgSelectFixedClient) ListRoles() ([]api.Role, error)           { return c.roles, nil }
+func (c orgSelectFixedClient) GetRunners() ([]api.Runner, error)        { return c.runners, nil }
+func (c orgSelectFixedClient) GetCloudIdentities() ([]api.CloudIdentity, error) {
+	return c.identities, nil
+}
+func (c orgSelectFixedClient) GetConfigurations() ([]types.ConfigurationSummary, error) {
+	return c.projects, nil
+}
 
 // ── the grants form ─────────────────────────────────────────────────────────────────────────────
+
+// The scoped resources the grants form can bind to. Distinct from the org group's own fixture ids
+// so an assertion that reads a project id where a team id belongs cannot pass.
+const (
+	orgSelectProjectID  = "55555555-5555-4555-8555-555555555555"
+	orgSelectRunnerID   = "77777777-7777-4777-8777-777777777777"
+	orgSelectIdentityID = "88888888-8888-4888-8888-888888888888"
+)
 
 // orgSelectGrantsClient is the whole surface promptGrantsAdd reads.
 func orgSelectGrantsClient() orgSelectFixedClient {
@@ -257,26 +286,37 @@ func orgSelectGrantsClient() orgSelectFixedClient {
 			{ID: orgFormOwnerID, Name: "owner", IsBuiltin: true, PermissionKeys: []string{"project:deploy", "member:view"}},
 			{ID: orgFormRoleID, Name: "deployers", PermissionKeys: []string{"project:deploy"}},
 		},
+		projects: []types.ConfigurationSummary{{
+			ID: orgSelectProjectID, ProjectName: "web", Region: "eu-central-1",
+			CloudProvider: types.CloudProviderAws, EnvironmentStage: types.EnvironmentStageProduction,
+		}},
+		runners: []api.Runner{{
+			ID: orgSelectRunnerID, Name: "prod", Operator: "managed", Status: "online", IsDefault: true,
+		}},
+		identities: []api.CloudIdentity{{ID: orgSelectIdentityID, Label: "prod-aws", Provider: "aws"}},
 	}
 }
 
 // TestOrgSelect_GrantsFormBindsARole drives the whole multi-step form on the role branch and asserts
 // EVERY field it wrote back.
 //
-// Four forms in order: the kind/effect/binding page, the principal picker, the role picker, and the
-// resource page. Asserting only the role would pass for a form that had silently dropped the
-// principal, which is the field that decides who the grant is for.
+// Five forms in order: the kind/effect/binding page, the principal picker, the role picker, the
+// resource-KIND page, and the picker over that kind's live resources. Asserting only the role would
+// pass for a form that had silently dropped the principal, which is the field that decides who the
+// grant is for.
+//
+// The resource is chosen by moving DOWN once on the last page and NOT by typing: index 0 there is
+// "every project", so an assertion that lands on the project id can only have come from reading the
+// picker's answer.
 func TestOrgSelect_GrantsFormBindsARole(t *testing.T) {
 	orgFormInteractive(t)
 	authFormAnswer(t,
 		&authFormScript{keys: authFormKey(nil, tea.KeyEnter, tea.KeyEnter, tea.KeyEnter)},
 		&authFormScript{keys: authFormKey(nil, tea.KeyEnter)},
 		&authFormScript{keys: authFormKey(nil, tea.KeyDown, tea.KeyEnter)},
-		// The resource page is a Select then an Input, so the first Enter confirms the kind and
-		// moves focus; the padding is typed on purpose — a resource id sent with spaces is a 400.
-		&authFormScript{keys: append(
-			append(authFormKey(nil, tea.KeyEnter), authFormType("  p-9  ")...),
-			tea.KeyMsg{Type: tea.KeyEnter})},
+		// The resource-kind page: org, project, runner, cloud_identity — one Down is `project`.
+		&authFormScript{keys: authFormKey(nil, tea.KeyDown, tea.KeyEnter)},
+		&authFormScript{keys: authFormKey(nil, tea.KeyDown, tea.KeyEnter)},
 	)
 
 	got, err := promptGrantsAdd(orgSelectGrantsClient(), "o1", grantsAddAnswers{
@@ -294,9 +334,285 @@ func TestOrgSelect_GrantsFormBindsARole(t *testing.T) {
 	if got.Permission != "" {
 		t.Errorf("permission = %q; a role grant carries no permission key", got.Permission)
 	}
-	if got.ResourceID != "p-9" {
-		t.Errorf("resource = %q, want %q — the input must be trimmed, or the id goes to the server padded",
-			got.ResourceID, "p-9")
+	if got.ResourceType != "project" {
+		t.Errorf("resource kind = %q, want %q", got.ResourceType, "project")
+	}
+	if got.ResourceID != orgSelectProjectID {
+		t.Errorf("resource = %q, want the picked project %q — the id must come from the live list, "+
+			"never from a box the operator typed a uuid into", got.ResourceID, orgSelectProjectID)
+	}
+}
+
+// TestOrgSelect_GrantsFormPicksEachKindFromItsOwnLiveList is the unit's whole point, one kind at a
+// time: choosing `project`, `runner` or `cloud_identity` offers THAT kind's live rows, and the id
+// that comes back is the fixture's, which no stub and no typed value could have produced.
+//
+// The wrong-list failure is the one worth pinning. `resource_id` is `z.uuid()` on the wire, so a
+// runner id posted against `resource_type: project` is accepted, stored, and expands into
+// `project:<a runner id>` tuples — a scope that matches nothing, forever, with no error at any
+// layer. Each case therefore asserts the id AND that it is not either of the other two.
+func TestOrgSelect_GrantsFormPicksEachKindFromItsOwnLiveList(t *testing.T) {
+	for _, tc := range []struct {
+		kind  string
+		downs int
+		want  string
+	}{
+		{"project", 1, orgSelectProjectID},
+		{"runner", 2, orgSelectRunnerID},
+		{"cloud_identity", 3, orgSelectIdentityID},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			orgFormInteractive(t)
+			kindKeys := authFormKey(nil)
+			for i := 0; i < tc.downs; i++ {
+				kindKeys = authFormKey(kindKeys, tea.KeyDown)
+			}
+			scripts := authFormAnswer(t,
+				&authFormScript{keys: authFormKey(nil, tea.KeyEnter, tea.KeyEnter, tea.KeyEnter)},
+				&authFormScript{keys: authFormKey(nil, tea.KeyEnter)},
+				&authFormScript{keys: authFormKey(nil, tea.KeyEnter)},
+				&authFormScript{keys: authFormKey(kindKeys, tea.KeyEnter)},
+				&authFormScript{keys: authFormKey(nil, tea.KeyDown, tea.KeyEnter)},
+			)
+
+			got, err := promptGrantsAdd(orgSelectGrantsClient(), "o1", grantsAddAnswers{
+				PrincipalType: "user", Effect: "allow", ResourceType: "org",
+			})
+			if err != nil {
+				t.Fatalf("promptGrantsAdd: %v", err)
+			}
+			if !scripts[4].ran {
+				t.Fatal("no resource picker was opened; the kind was chosen and nothing asked which one")
+			}
+			if got.ResourceType != tc.kind {
+				t.Fatalf("resource kind = %q, want %q", got.ResourceType, tc.kind)
+			}
+			if got.ResourceID != tc.want {
+				t.Errorf("resource = %q, want %q — %s's picker is reading another kind's list",
+					got.ResourceID, tc.want, tc.kind)
+			}
+			for _, other := range []string{orgSelectProjectID, orgSelectRunnerID, orgSelectIdentityID} {
+				if other != tc.want && got.ResourceID == other {
+					t.Errorf("resource = %q, which belongs to a DIFFERENT kind: the grant would scope "+
+						"to %s:<an id of another type> and match nothing", got.ResourceID, tc.kind)
+				}
+			}
+			if _, ok := grantResourceScope(orgSelectGrantsClient(), tc.kind); !ok {
+				t.Errorf("%q reports no live list although the picker just used one", tc.kind)
+			}
+		})
+	}
+}
+
+// TestOrgSelect_GrantsFormScopesToTheWholeKind pins the FIRST row of every scoped picker: the grant
+// covers the kind, not one thing.
+//
+// It is what `--resource-type project` with no `--resource` already meant, so a picker that offered
+// instances alone would be a narrower command than the typed-id box it replaces — and an operator
+// who wanted "every project" would have no key to press.
+func TestOrgSelect_GrantsFormScopesToTheWholeKind(t *testing.T) {
+	orgFormInteractive(t)
+	authFormAnswer(t,
+		&authFormScript{keys: authFormKey(nil, tea.KeyEnter, tea.KeyEnter, tea.KeyEnter)},
+		&authFormScript{keys: authFormKey(nil, tea.KeyEnter)},
+		&authFormScript{keys: authFormKey(nil, tea.KeyEnter)},
+		&authFormScript{keys: authFormKey(nil, tea.KeyDown, tea.KeyEnter)},
+		&authFormScript{keys: authFormKey(nil, tea.KeyEnter)},
+	)
+
+	got, err := promptGrantsAdd(orgSelectGrantsClient(), "o1", grantsAddAnswers{
+		PrincipalType: "user", Effect: "allow", ResourceType: "org", ResourceID: orgSelectRunnerID,
+	})
+	if err != nil {
+		t.Fatalf("promptGrantsAdd: %v", err)
+	}
+	if got.ResourceType != "project" {
+		t.Fatalf("resource kind = %q, want %q", got.ResourceType, "project")
+	}
+	if got.ResourceID != "" {
+		t.Errorf("resource = %q, want empty — the first row scopes to every project, and the id the "+
+			"flags carried must not survive it", got.ResourceID)
+	}
+	if want := "Every project in this organization"; grantWholeKindChoice(
+		grantResourceKind{Noun: "project"})[0].Label != want {
+		t.Errorf("the whole-kind row reads %q, want %q",
+			grantWholeKindChoice(grantResourceKind{Noun: "project"})[0].Label, want)
+	}
+}
+
+// TestOrgSelect_GrantsFormAsksNoResourceForTheOrgKind pins the kind that takes no id at all.
+//
+// `resource_type: "org"` is org-wide BY CONSTRUCTION: apps/console/lib/authz/fga-tuples.ts computes
+// `orgWide = resourceId === null || resourceType === "org"` before it expands anything, so an id
+// stored against it reaches no tuple. The form used to accept one — a question whose answer could
+// not matter, in the exact silent class this unit exists to close — so it now asks nothing, and any
+// id the flags carried is cleared rather than posted.
+func TestOrgSelect_GrantsFormAsksNoResourceForTheOrgKind(t *testing.T) {
+	orgFormInteractive(t)
+	scripts := authFormAnswer(t,
+		&authFormScript{keys: authFormKey(nil, tea.KeyEnter, tea.KeyEnter, tea.KeyEnter)},
+		&authFormScript{keys: authFormKey(nil, tea.KeyEnter)},
+		&authFormScript{keys: authFormKey(nil, tea.KeyEnter)},
+		&authFormScript{keys: authFormKey(nil, tea.KeyEnter)},
+	)
+
+	got, err := promptGrantsAdd(orgSelectGrantsClient(), "o1", grantsAddAnswers{
+		PrincipalType: "user", Effect: "allow", ResourceType: "org", ResourceID: orgSelectProjectID,
+	})
+	if err != nil {
+		t.Fatalf("promptGrantsAdd: %v", err)
+	}
+	if got.ResourceType != grantResourceTypeOrg {
+		t.Fatalf("resource kind = %q, want %q", got.ResourceType, grantResourceTypeOrg)
+	}
+	if got.ResourceID != "" {
+		t.Errorf("resource = %q; an id under the org kind is written to the row and then ignored by "+
+			"every tuple the grant syncs, so it must not be carried", got.ResourceID)
+	}
+	if scripts[3].state != huh.StateCompleted {
+		t.Errorf("the resource-kind page ended in state %v, want completed", scripts[3].state)
+	}
+}
+
+// TestOrgSelect_GrantsFormTypesTheIDForAKindItCannotList pins the fallback arm, and it is a real
+// arm rather than a defensive one: `resource_type` is `z.string().min(1)` on the wire, so a kind
+// added to grantResourceTypeSuggestions before its arm reaches grantResourceScope has to stay
+// askable — a form that could only offer what it can list would REMOVE a grant the server accepts.
+//
+// `connector` is that shape today: an instance type in apps/console/lib/authz/fga-hierarchy.ts that
+// neither list knows about.
+func TestOrgSelect_GrantsFormTypesTheIDForAKindItCannotList(t *testing.T) {
+	orgFormInteractive(t)
+	if _, ok := grantResourceScope(orgSelectGrantsClient(), "connector"); ok {
+		t.Skip("connector has gained a live list; pick another unlisted kind for this arm")
+	}
+	script := &authFormScript{keys: append(authFormType("  "+orgSelectIdentityID+"  "),
+		tea.KeyMsg{Type: tea.KeyEnter})}
+	authFormAnswer(t, script)
+
+	got, err := promptGrantResource(orgSelectGrantsClient(), grantsAddAnswers{ResourceType: "connector"})
+	if err != nil {
+		t.Fatalf("promptGrantResource: %v", err)
+	}
+	if !script.ran {
+		t.Fatal("no form was opened; a kind with no list became unaskable")
+	}
+	if got.ResourceID != orgSelectIdentityID {
+		t.Errorf("resource = %q, want %q — the typed id must be trimmed, or it goes to the server padded",
+			got.ResourceID, orgSelectIdentityID)
+	}
+}
+
+// TestOrgSelect_EverySuggestedKindIsListable is the guard the fallback above leans on: every kind
+// the resource-KIND picker offers, other than org, must have an arm in grantResourceScope.
+//
+// Without it the two declarations drift silently and the picker quietly degrades back into the
+// typed-id box this unit removed — which is a regression nothing else in the suite can see, because
+// typing an id still works.
+func TestOrgSelect_EverySuggestedKindIsListable(t *testing.T) {
+	c := orgSelectGrantsClient()
+	for _, kind := range grantResourceTypeSuggestions {
+		if kind == grantResourceTypeOrg {
+			continue
+		}
+		got, ok := grantResourceScope(c, kind)
+		if !ok {
+			t.Errorf("%q is offered by the resource-kind picker with no live list behind it; add an "+
+				"arm to grantResourceScope or stop suggesting it", kind)
+			continue
+		}
+		if got.Noun == "" || got.ListCmd == "" || got.List == nil {
+			t.Errorf("%q resolves to %+v; a kind needs a noun, the command that shows the same rows, "+
+				"and the list itself", kind, got)
+		}
+		rows, err := got.List()
+		if err != nil || len(rows) == 0 {
+			t.Errorf("%q listed %d row(s), err = %v; the fixture answers all three lists", kind, len(rows), err)
+		}
+	}
+}
+
+// TestOrgSelect_GrantsFormReportsAResourceListItCouldNotRead pins the arm this package has got
+// wrong before, on the newest list: a list that could not be READ must stop the form, never read as
+// an org-wide grant the operator did not ask for.
+func TestOrgSelect_GrantsFormReportsAResourceListItCouldNotRead(t *testing.T) {
+	orgFormInteractive(t)
+	boom := errors.New("the control plane refused the read")
+	authFormNoForm(t)
+
+	got, err := promptGrantResource(orgSelectFailingClient{err: boom},
+		grantsAddAnswers{ResourceType: "project", ResourceID: orgSelectProjectID})
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the cause wrapped", err)
+	}
+	if got.ResourceID != orgSelectProjectID {
+		t.Errorf("a failed list rewrote the resource to %q; the answers must come back untouched",
+			got.ResourceID)
+	}
+}
+
+// TestOrgSelect_ScopeLabelsReadAsSentences pins what a person sees in the resource picker.
+//
+// A project NAME does not identify a project — two may share one (#3145) — so the provider, region
+// and stage are on the line, and an empty identifying field renders the shared sentinel rather than
+// a gap. Each case names the exact string: "is not empty" would pass for a label that had lost the
+// half that tells two rows apart.
+func TestOrgSelect_ScopeLabelsReadAsSentences(t *testing.T) {
+	sep := " " + ui.SymbolBullet + " "
+
+	t.Run("project", func(t *testing.T) {
+		got := projectScopeLabel(types.ConfigurationSummary{
+			ProjectName: "web", Region: "eu-central-1",
+			CloudProvider: types.CloudProviderAws, EnvironmentStage: types.EnvironmentStageProduction,
+		})
+		want := strings.Join([]string{"web", "aws", "eu-central-1", "production"}, sep)
+		if got != want {
+			t.Errorf("label = %q, want %q", got, want)
+		}
+		if nameless := projectScopeLabel(types.ConfigurationSummary{Region: "eu-west-1"}); !strings.HasPrefix(nameless, ui.SymbolDash+sep) {
+			t.Errorf("a nameless project renders %q; want the shared sentinel, not a gap", nameless)
+		}
+	})
+
+	t.Run("runner", func(t *testing.T) {
+		got := runnerScopeLabel(api.Runner{Name: "prod", Operator: "managed", Status: "online"})
+		want := strings.Join([]string{"prod", "managed", "online"}, sep)
+		if got != want {
+			t.Errorf("label = %q, want %q", got, want)
+		}
+		marked := runnerScopeLabel(api.Runner{Name: "prod", Operator: "managed", Status: "online", IsDefault: true})
+		if marked != want+ui.DefaultBadge() {
+			t.Errorf("the org default renders %q, want %q", marked, want+ui.DefaultBadge())
+		}
+	})
+
+	t.Run("cloud account", func(t *testing.T) {
+		got := cloudIdentityScopeLabel(api.CloudIdentity{Label: "prod-aws", Provider: "aws"})
+		if want := "prod-aws" + sep + "aws"; got != want {
+			t.Errorf("label = %q, want %q", got, want)
+		}
+		if unlabelled := cloudIdentityScopeLabel(api.CloudIdentity{Provider: "gcp"}); unlabelled != ui.SymbolDash+sep+"gcp" {
+			t.Errorf("an unlabelled account renders %q; want the shared sentinel", unlabelled)
+		}
+	})
+}
+
+// TestOrgSelect_ResourcePickSpecIsBuiltFromTheField pins that the resource picker's wording comes
+// from the ONE spec entry, not from a second sentence written beside the widget: the form, the
+// refusal and the docs table are all renderings of orgFields, and a hand-typed title here is how
+// they come apart.
+func TestOrgSelect_ResourcePickSpecIsBuiltFromTheField(t *testing.T) {
+	field := mustOrgField("alethia grants add", orgFieldKeyResource)
+	spec := grantResourcePickSpec(grantResourceKind{Noun: "runner", ListCmd: "alethia runner list"})
+	if spec.Field.Title != field.Title || spec.Field.Description != field.Description {
+		t.Errorf("the picker asks %q/%q; the spec says %q/%q",
+			spec.Field.Title, spec.Field.Description, field.Title, field.Description)
+	}
+	if spec.Noun != "runner" || spec.ListCmd != "alethia runner list" {
+		t.Errorf("spec = %+v; the noun and the list command come from the kind", spec)
+	}
+	if !strings.Contains(spec.Empty, "runners") {
+		t.Errorf("the empty sentence %q does not name the kind", spec.Empty)
 	}
 }
 
@@ -416,6 +732,13 @@ type orgSelectHalfClient struct {
 func (c orgSelectHalfClient) ListMembers(string) ([]api.Member, error) { return c.members, nil }
 func (c orgSelectHalfClient) ListTeams(string) ([]api.Team, error)     { return c.teams, nil }
 func (c orgSelectHalfClient) ListRoles() ([]api.Role, error)           { return nil, c.rolesErr }
+func (c orgSelectHalfClient) GetRunners() ([]api.Runner, error)        { return nil, nil }
+func (c orgSelectHalfClient) GetCloudIdentities() ([]api.CloudIdentity, error) {
+	return nil, nil
+}
+func (c orgSelectHalfClient) GetConfigurations() ([]types.ConfigurationSummary, error) {
+	return nil, nil
+}
 
 // TestOrgSelect_RoleOptionsKeepTheCallersOwnValue pins the arm where --role already names one of the
 // org's roles: it must be offered ONCE, not prepended a second time.
@@ -475,6 +798,53 @@ func TestOrgSelect_GrantsAddRefusesAValueOutsideTheRouteEnums(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestOrgSelect_GrantsAddRefusesAnIDTheOrgKindWouldIgnore pins the headless half of the same rule
+// the form now enforces by asking nothing: `--resource` with `--resource-type org` is refused, and
+// NOTHING is sent.
+//
+// The control plane computes `orgWide = resourceId === null || resourceType === "org"`
+// (apps/console/lib/authz/fga-tuples.ts) before it expands a tuple, so accepting the pair posts a
+// grant over the WHOLE organization while the command line reads as one resource. `org` is also the
+// default kind, so the case that matters is `--resource <id>` with no `--resource-type` at all —
+// which is why that arm is driven here too, and why the refusal names the id it was given.
+func TestOrgSelect_GrantsAddRefusesAnIDTheOrgKindWouldIgnore(t *testing.T) {
+	for name, args := range map[string][]string{
+		"the kind is named": {"grants", "add", "--principal", orgFormUserID, "--role", orgFormRoleID,
+			"--resource-type", "org", "--resource", orgSelectProjectID},
+		"the kind is left at its default": {"grants", "add", "--principal", orgFormUserID,
+			"--role", orgFormRoleID, "--resource", orgSelectProjectID},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, run := orgFormEnv(t, orgFormDefaultPayloads())
+			code, out := run(append(args, "--no-input", "--output", "json")...)
+			if code == 0 {
+				t.Fatalf("exit = 0; the id would be stored and ignored\n       said: %q", strings.TrimSpace(out))
+			}
+			if !strings.Contains(out, orgSelectProjectID) {
+				t.Errorf("the refusal does not name the id it was given:\n       %q", strings.TrimSpace(out))
+			}
+			if !strings.Contains(out, "org-wide") {
+				t.Errorf("the refusal does not say WHY the id cannot apply:\n       %q", strings.TrimSpace(out))
+			}
+			if muts := s.mutations(); len(muts) > 0 {
+				t.Errorf("a grant was sent although the pair was refused: %v", muts)
+			}
+		})
+	}
+
+	t.Run("a scoped kind is untouched", func(t *testing.T) {
+		s, run := orgFormEnv(t, orgFormDefaultPayloads())
+		code, out := run("grants", "add", "--principal", orgFormUserID, "--role", orgFormRoleID,
+			"--resource-type", "project", "--resource", orgSelectProjectID, "--no-input", "--output", "json")
+		if code != 0 {
+			t.Fatalf("exit = %d; a scoped kind takes an id\n       said: %q", code, strings.TrimSpace(out))
+		}
+		if muts := s.mutations(); len(muts) != 1 {
+			t.Errorf("mutations = %v, want the one POST", muts)
+		}
+	})
 }
 
 // TestOrgSelect_GrantsAddReportsAServerRefusal pins that a control plane saying no is fatal, not a
@@ -572,16 +942,35 @@ func TestOrgSelect_EveryPromptReportsAnAbandonedForm(t *testing.T) {
 			t.Errorf("err = %v, want the form's error", err)
 		}
 	})
+	// The typed-id fallback is the one grants-add page promptGrantsAdd cannot reach on its own —
+	// its resource-KIND picker can only write back a kind grantResourceScope knows — so it is
+	// abandoned here directly, on the kind that has no live list.
+	t.Run("grants add · the typed-id fallback", func(t *testing.T) {
+		orgFormInteractive(t)
+		orgSelectFailOnForm(t, 1, boom)
+		got, err := promptGrantResource(client, grantsAddAnswers{
+			ResourceType: "connector", ResourceID: orgSelectProjectID})
+		if !errors.Is(err, boom) {
+			t.Errorf("err = %v, want the form's error", err)
+		}
+		if got.ResourceID != orgSelectProjectID {
+			t.Errorf("an abandoned input rewrote the resource to %q", got.ResourceID)
+		}
+	})
 
 	// The grants form's pages, one at a time. Page 2 is the principal picker, page 3 the binding,
-	// page 4 the resource scope; each must stop the form rather than carry an empty answer forward.
+	// page 4 the resource KIND and page 5 the picker over that kind's live resources; each must stop
+	// the form rather than carry an empty answer forward.
 	for name, tc := range map[string]struct {
 		page int
 		in   grantsAddAnswers
 	}{
 		"grants add · the role picker":     {3, grantsAddAnswers{PrincipalType: "user", Effect: "allow", ResourceType: "org"}},
 		"grants add · the permission list": {3, grantsAddAnswers{PrincipalType: "user", Effect: "allow", ResourceType: "org", Permission: "member:view"}},
-		"grants add · the resource scope":  {4, grantsAddAnswers{PrincipalType: "user", Effect: "allow", ResourceType: "org"}},
+		"grants add · the resource kind":   {4, grantsAddAnswers{PrincipalType: "user", Effect: "allow", ResourceType: "org"}},
+		// Page 5 exists only once a SCOPED kind is chosen. The stub answers no form, so the kind
+		// the caller carried survives page 4 and the picker over that kind's live rows opens.
+		"grants add · the resource picker": {5, grantsAddAnswers{PrincipalType: "user", Effect: "allow", ResourceType: "project"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			orgFormInteractive(t)
