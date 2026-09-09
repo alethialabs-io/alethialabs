@@ -16,10 +16,10 @@ the spend page.
 maintainer's act and nobody else's — `PROGRAMME.md` §3, *"Never turn a cloud gate on from an agent
 session. Surface it and stop."*
 
-**And it carries no status.** Which cells are proven, which clouds are priced, and what the reaper
-last saw are all derived into `PROGRAMME.md`'s generated half, which regenerates. A number typed
-here would rot, and a second board disagreeing with the first is exactly what `PROGRAMME.md` §1's
-first phase exists to prevent. Everything below links; nothing restates.
+**And it carries no status.** Which cells carry a proof, which clouds have a price, and what the
+reaper last saw are all derived into `PROGRAMME.md`'s generated half, which regenerates. A number
+typed here would rot, and a second board disagreeing with the first is exactly what `PROGRAMME.md`
+§1's first phase exists to prevent. Everything below links; nothing restates.
 
 ---
 
