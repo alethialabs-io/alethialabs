@@ -31,12 +31,17 @@ test.describe("Alerts — the plan gate (community org)", () => {
 		owner,
 	}) => {
 		await owner.page.goto(ALERTS(owner.orgSlug!));
-		await expect(owner.page.locator("[data-slot='empty']")).toBeVisible({
-			timeout: 15_000,
+		const heading = owner.page.getByRole("heading", {
+			name: "Alerts & notifications",
+			level: 3,
 		});
+		await expect(heading).toBeVisible({ timeout: 15_000 });
+		// The heading is INSIDE the shared empty-state shell — asserted as containment rather than
+		// as two separate visibilities, so a page that happened to carry another `Empty` somewhere
+		// could not satisfy it by accident.
 		await expect(
-			owner.page.getByRole("heading", { name: "Alerts & notifications", level: 3 }),
-		).toBeVisible();
+			owner.page.locator("[data-slot='empty']").filter({ has: heading }),
+		).toHaveCount(1);
 	});
 
 	test("the upsell exposes no channel or policy management controls", async ({
