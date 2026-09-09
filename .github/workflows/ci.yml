@@ -942,6 +942,16 @@ jobs:
       - name: ...and that census is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-cli-surface.mjs --self-test
+      # The destructive-action registry, censused against the tree in BOTH directions (#4266):
+      # every destructive call site has an entry, and every entry's mutation really occurs in the
+      # file that invokes it. The second direction is the one that matters silently — a stale entry
+      # makes a real site look accounted for. The self-test carries the floor's own argument.
+      - name: Every destructive control is in the registry, and every entry still has its control
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:destructive-actions
+      - name: ...and that census is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-destructive-actions.mjs --self-test
       - name: Console shared surface (@repo/format, @repo/ui/page-header) is not hand-rolled
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:shared-surface
