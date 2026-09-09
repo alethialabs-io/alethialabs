@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/format"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -46,6 +48,97 @@ var jobTypeLabels = map[string]string{
 	string(types.JobTypeBuild):         "Build",
 }
 
+// jobsListEveryStatusLabel is how the picker spells "do not filter".
+//
+// Its VALUE is the empty string — the same value `--status` carries when nobody set it — so the
+// answered form and the skipped one converge on ONE code path instead of two that have to agree
+// about what "no filter" means.
+const jobsListEveryStatusLabel = "Every status"
+
+// jobsListStatusOptions is the picker's option list: every status first, then the lifecycle.
+//
+// The vocabulary is jobStatusValues() — the generated provision_job_status enum — and not a list
+// typed here, for the same reason `--status`'s help text reads it: a hand-typed copy of a
+// generated set is a copy that stops covering it silently. It is a function, and separate from
+// the form, because a huh.Group answers no question about the options it was handed: this is the
+// only shape of the picker a test can read.
+func jobsListStatusOptions() []huh.Option[string] {
+	values := jobStatusValues()
+	opts := make([]huh.Option[string], 0, len(values)+1)
+	opts = append(opts, huh.NewOption(jobsListEveryStatusLabel, ""))
+	for _, s := range values {
+		opts = append(opts, huh.NewOption(s, s))
+	}
+	return opts
+}
+
+// promptJobsListStatus asks which slice of the lifecycle to list.
+//
+// It is a package variable for the reason config.go's promptConfigSet records: stubbing
+// runHuhForm stops the prompt blocking, but no stub can answer THROUGH the pointer the huh group
+// owns, so the answered branch is otherwise unreachable from a test.
+//
+// The seed is what the caller already holds, and "Every status" is FIRST, so a reader who only
+// wants the list presses Enter and gets exactly what `alethia jobs list` printed before this form
+// existed. A form that cannot be completed returns the seed with its error; the caller decides.
+var promptJobsListStatus = func(current string) (string, error) {
+	chosen := current
+	if err := runHuhForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Which jobs?").
+			Description("The closed set the --status flag takes, from the schema's job-status enum").
+			Options(jobsListStatusOptions()...).
+			Value(&chosen),
+	)); err != nil {
+		return current, err
+	}
+	return chosen, nil
+}
+
+// jobsListStatusFor answers "which status is this run filtered by" from the flag or the picker.
+//
+// Three conditions, and each removes a way the question would be wrong to ask:
+//
+//   - a `--status` already given is the answer. Asking again would let a form overwrite what the
+//     operator typed, which is the one thing a picker must never do.
+//   - `interactiveTable(cmd)` — a reader about to BROWSE the list on screen. `-o json`, a pipe and
+//     `--no-input` have already said what they want, and a document that will not appear until a
+//     question is answered is `jobs list -o json > jobs.json` with the spinner in it one level up.
+//   - `canPromptForm()` — the gate every other prompt in this package reads, and the one that
+//     knows a form draws on STDERR. It is the predicate and not requireInteractiveForm because
+//     this field has a working answer when nobody types one: listing every job is what the command
+//     did before, so a caller that cannot be asked must be SERVED, never refused. `jobs list` takes
+//     no required input, so refuseNoForm's arm — the one `config set` needs, because a key and a
+//     value have no default — has nothing here to refuse.
+//
+// The flag contract stays complete: anything the picker can choose, `--status` can set.
+//
+// A form that FAILED is not a form that was answered "no", and the two get different answers. An
+// ABORT — the reader pressed Esc or Ctrl-C at the picker — is an instruction and is returned, so
+// the command stops. Any other error means the picker could not be SHOWN, and a filter that could
+// not be offered must not take the list away: `canPromptForm` is a TTY question and huh needs a
+// /dev/tty it can open, so the gate can say yes to a form that then cannot draw. That is the whole
+// reason this field uses the predicate rather than requireInteractiveForm — falling back is the
+// contract, not an accident — and the fallback SAYS so on stderr rather than being silent, because
+// an unfiltered list nobody asked for should be explicable.
+func jobsListStatusFor(cmd *cobra.Command, flag string) (string, error) {
+	if flag != "" || !interactiveTable(cmd) || !canPromptForm() {
+		return flag, nil
+	}
+	chosen, err := promptJobsListStatus(flag)
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return flag, err
+		}
+		// STDERR, for announceResolvedJob's reason: the table is the document and a line about a
+		// choice the CLI made for the reader is a diagnostic. ui.Muted would put it on stdout.
+		fmt.Fprintln(os.Stderr, ui.MutedStyle.Render(
+			fmt.Sprintf("%s Listing every status — the picker could not be shown (%v).", ui.SymbolPoint, err)))
+		return flag, nil
+	}
+	return chosen, nil
+}
+
 var jobsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all provisioning jobs",
@@ -57,10 +150,19 @@ var jobsListCmd = &cobra.Command{
 		if jobsListStatus != "" && !containsFold(jobStatusValues(), jobsListStatus) {
 			failf("invalid --status %q (want one of: %s)", jobsListStatus, strings.Join(jobStatusValues(), ", "))
 		}
+
+		// Asked before the fetch, because the answer is what gets fetched. A local and not the
+		// flag variable: jobsListStatus is a package global bound by cobra, and a form answer
+		// written back into it would outlive this run.
+		statusFilter, err := jobsListStatusFor(cmd, jobsListStatus)
+		if err != nil {
+			fail(err)
+		}
+
 		// Upper-cased for the wire. The column is a Postgres enum compared as text, so `success`
 		// would match no row — accepting a spelling and then sending it verbatim would turn a
 		// friendly flag into a silent empty page.
-		status := strings.ToUpper(jobsListStatus)
+		status := strings.ToUpper(statusFilter)
 
 		token, err := getAuthToken()
 		if err != nil {
