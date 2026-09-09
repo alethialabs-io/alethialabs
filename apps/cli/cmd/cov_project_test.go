@@ -2005,7 +2005,6 @@ func TestProj_ComponentKindOptionsSayWhichNeedAName(t *testing.T) {
 	}
 }
 
-
 // TestProj_SetsSoFarDistinguishesNothingSetFromSomething pins the loop's prompt: an empty
 // list must not render as an empty "So far:", which reads as a bug rather than a state.
 func TestProj_SetsSoFarDistinguishesNothingSetFromSomething(t *testing.T) {
