@@ -81,6 +81,9 @@ var docsGroups = map[string]string{
 	"alerts":         "notifications",
 	"activity":       "notifications",
 	"fleet":          "billing",
+	"connector":      "connector",
+	"cloud":          "cloud",
+	"provider":       "providers",
 }
 
 // docsRepoRoot is the repo root as seen from apps/cli/cmd.
