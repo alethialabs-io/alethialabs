@@ -199,8 +199,10 @@ alethia project plan --project boutique --env prod --wait   # scripted: names bo
 | `--runner-id` | No | Runner to execute the job, by id. Omitted, a picker asks on a terminal; under `--no-input` the server places the job. |
 | `-w`, `--wait` | No | Block until the job completes |
 
-On success, prints the job ID. Stream the plan output with `alethia jobs logs --latest --follow`,
-which resolves the job you just queued — nothing has to be copied between the two commands.
+On success, prints the job ID. Stream the plan output with
+`alethia jobs logs --latest --project boutique --follow` — nothing has to be copied between the two
+commands. Narrow it to the project you just planned: an unnarrowed `alethia jobs logs --latest`
+takes the most recent job **the organization** has, which may be somebody else's.
 
 ## `alethia project apply`
 
@@ -226,15 +228,20 @@ changed since that plan was generated, the job fails with a
 
 It takes an id and only an id — no name, no picker — so this is the one value in these three
 commands that still comes out of another command's output. Read it with
-`alethia jobs get --latest --type PLAN`, which resolves the plan job you just queued, rather than
-out of your scrollback — see [Scripting Examples](#scripting-examples) for the whole three-command
-recipe.
+`alethia jobs get --latest --project boutique --type PLAN` rather than out of your scrollback — see
+[Scripting Examples](#scripting-examples) for the whole three-command recipe.
+
+**Narrow that lookup to the project and the type.** `alethia jobs get --latest` resolves over every
+job the organization has, not over the ones you queued, so an unnarrowed lookup can hand you
+another project's plan. The apply then fails on the config hash mismatch above — caught, but as a
+confusing failure rather than avoided.
 
 <Callout type="info">
 A DEPLOY job is `tofu plan` → **[verify](/concepts/glossary) gate** → `tofu apply` → ArgoCD scaffold.
 The verify gate is **fail-closed**: a hard control failure blocks *before* `tofu apply` unless an
 authorized override waives it. The report is attached to the job's `execution_metadata` and rendered
-in the console Plan tab — inspect it with `alethia jobs logs --latest --type DEPLOY --follow`.
+in the console Plan tab — inspect it with
+`alethia jobs logs --latest --project boutique --type DEPLOY --follow`.
 </Callout>
 
 ## `alethia project destroy`
@@ -290,10 +297,11 @@ alethia up --project boutique --region nbg1 --cloud-account prod-account --yes -
 # The whole project from its file, unattended
 alethia apply --yes --no-input
 
-# Plan one environment, review, apply that exact plan — --latest resolves the job you just queued
+# Plan one environment, review, apply that exact plan.
+# --latest is resolved over the whole org, so narrow it to this project and this job type.
 alethia project plan --project boutique --env prod --wait
-alethia jobs get --latest
-alethia project apply --project boutique --env prod --plan-job-id "$(alethia jobs get --latest --output json | jq -r .id)" --wait
+alethia jobs get --latest --project boutique --type PLAN
+alethia project apply --project boutique --env prod --plan-job-id "$(alethia jobs get --latest --project boutique --type PLAN --output json | jq -r .id)" --wait
 
 # Destroy with wait
 alethia project destroy --project boutique --env prod --wait
