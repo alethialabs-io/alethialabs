@@ -336,7 +336,7 @@ function readExclusions() {
 		if (/^\s*#/.test(raw)) continue;
 		const line = raw.trimEnd();
 		if (!line.trim()) continue;
-		const head = line.match(/^(cells|variables|dead):\s*$/);
+		const head = line.match(/^(cells|variables|dead|reported):\s*$/);
 		if (head) {
 			if (cur) {
 				out.push(cur);
@@ -442,12 +442,36 @@ function itemRoots(cloud) {
 const entries = [];
 const unattributed = [];
 
+/** Each cloud's ROOT `.tf` text, joined — the only thing `reportedAsOutput` below needs. */
+const rootTfText = {};
+
+/**
+ * Is this root variable referenced by an `output` block?
+ *
+ * `lib/tf-wiring.mjs` deliberately does NOT count an output as a reader, and that is right for every
+ * other caller: reporting a value builds nothing from it. But it makes an output-only variable
+ * indistinguishable from one nothing reads at all, and those are opposite facts — the first is a
+ * BROUGHT-resource contract (the caller supplies a zone; the template creates nothing and echoes the
+ * id back), the second is a knob the template advertises and never honours.
+ *
+ * DUPLICATED, KNOWINGLY. `apps/console/scripts/check-config-carriage.mjs:726` has this function
+ * character for character as `reportedAsOutputIn`, with its own fixtures — and its worked example is
+ * the very variable this section exists for. It is not exported, and that file is outside this
+ * unit's `scope:`, so grabbing it would be reaching into another unit's files. The shared home is
+ * `lib/tf-wiring.mjs`, which both guards already import; recorded here with a pointer rather than
+ * left for the next reader to discover, in the shape #4480 used for exactly this situation.
+ */
+function reportedAsOutput(cloud, root) {
+	return new RegExp(`\\boutput\\s+"[^"]*"\\s*\\{[^}]*\\bvar\\.${root}\\b`, "s").test(rootTfText[cloud] ?? "");
+}
+
 for (const cloud of CLOUDS) {
 	const files = readTfFiles(`${TEMPLATES}/${cloud}`);
 	const rootDir = normalize(`${TEMPLATES}/${cloud}`);
 	const wiring = readTfWiring(files, rootDir);
 	assertWiringParsed(cloud, wiring);
 	const rootFiles = files.filter((f) => normalize(dirname(f.path)) === rootDir);
+	rootTfText[cloud] = rootFiles.map((f) => f.text ?? "").join("\n");
 	const variables = readTfVariables(rootFiles);
 	assertVariablesParsed(cloud, variables);
 
@@ -733,7 +757,7 @@ const docText = renderDoc();
 // EVERYTHING above is measurement, and it is exported so `check-template-knobs.mjs` adjudicates the
 // SAME numbers a reader sees in the manifest. A checker that recomputed would be a second definition
 // of "reachable", free to disagree with the file it is checking.
-export { manifest, entries, unattributed, uncoveredCells, deadKnobs, jsonText, docText, EXCLUDED, JSON_OUT, DOC_OUT, PASSTHROUGH, CLOUDS };
+export { manifest, entries, unattributed, uncoveredCells, deadKnobs, jsonText, docText, EXCLUDED, JSON_OUT, DOC_OUT, PASSTHROUGH, CLOUDS, reportedAsOutput };
 
 // The CLI half runs ONLY when this file is the process entry. Importing it must measure and nothing
 // else — a module that writes two files on import cannot be read by a checker without also becoming
