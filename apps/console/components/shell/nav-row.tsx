@@ -45,6 +45,12 @@ export function NavRow({
 	onClick?: (e: React.MouseEvent) => void;
 }) {
 	const Icon = item.icon;
+	// The active row says so in the accessibility tree, not only in a class. `bg-muted` is how the
+	// row LOOKS; `aria-current="page"` is what it IS, and it is the only half a screen reader — or
+	// a test — can read. The e2e suite used to match `/(^|\s)bg-muted($|\s)/` on the class
+	// attribute, which is a token away from passing on `hover:bg-muted/60` and cannot survive a
+	// restyle (#4267).
+	const current = active ? "page" : undefined;
 	const className = cn(
 		"flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-ui-md transition-colors",
 		active
@@ -77,7 +83,7 @@ export function NavRow({
 		const drillId = item.drill;
 		if (item.anchor) {
 			return (
-				<Link href={item.anchor} className={className}>
+				<Link href={item.anchor} aria-current={current} className={className}>
 					{inner}
 				</Link>
 			);
@@ -98,7 +104,7 @@ export function NavRow({
 	}
 
 	return (
-		<Link href={item.href} className={className} onClick={onClick}>
+		<Link href={item.href} aria-current={current} className={className} onClick={onClick}>
 			{inner}
 		</Link>
 	);

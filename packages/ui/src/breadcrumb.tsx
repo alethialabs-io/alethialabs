@@ -54,12 +54,27 @@ function BreadcrumbLink({
   })
 }
 
+/**
+ * The trail's CURRENT page. It is a `<span aria-current="page">` and nothing more.
+ *
+ * IT USED TO CARRY `role="link"` + `aria-disabled="true"` — upstream shadcn's shape, which models
+ * the crumb as a link that has been switched off. It is not a link: it navigates nowhere, it takes
+ * no focus, and there is no href behind it. The cost was not theoretical. The console paints this
+ * bar on every route inside the shell, and the crumb's label is by construction the label of the
+ * page you are on — which is also the label of the sidebar row that got you there. So every
+ * `getByRole("link", { name: "Jobs" })` in the app resolved to TWO nodes, the real navigation
+ * control and this one, and Playwright's strict mode refused the locator before any assertion ran:
+ * 19 of `flows/navigation-shell.spec.ts`'s tests failed on it, and `helpers/shell.ts` exists to
+ * scope around it (#4267).
+ *
+ * `aria-current="page"` is the whole accessible statement a current crumb has to make, and a
+ * screen reader announces it from a bare span. `aria-disabled` went with the role: it is not an
+ * allowed attribute on a generic element, so keeping it would trade one defect for an axe finding.
+ */
 function BreadcrumbPage({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
       data-slot="breadcrumb-page"
-      role="link"
-      aria-disabled="true"
       aria-current="page"
       className={cn("font-normal text-foreground", className)}
       {...props}
