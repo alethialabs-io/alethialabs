@@ -361,6 +361,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, gcpRootReserved...)
 	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, gcpRootReserved...)
+	mergeProviderConfig(tfvars, config.Network.ProviderConfig, gcpRootReserved...)
 
 	return tfvars
 }

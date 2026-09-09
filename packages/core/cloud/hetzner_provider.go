@@ -280,6 +280,10 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	tfvars["classification_tags"] = classificationTags(config, hetznerTagStyle)
 
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, hetznerRootReserved...)
+	// DNS was the other half of #4319: hetzner grew a real `hcloud_zone` resource and, unlike the
+	// four managed clouds, never got the merge call to reach it.
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, hetznerRootReserved...)
+	mergeProviderConfig(tfvars, config.Network.ProviderConfig, hetznerRootReserved...)
 
 	return tfvars
 }

@@ -157,6 +157,17 @@ type ProjectNetworkConfig struct {
 	// which is also what keeps it from locking the external runner out of a cluster it
 	// still has to provision.
 	AllowedCidrBlocks []string `json:"allowed_cidr_blocks,omitempty"`
+	// ProviderConfig carries per-cloud NETWORK knobs the typed fields above do not model, merged
+	// into tfvars by name (mergeProviderConfig), the same shape #4259 landed for the seven leaf
+	// kinds. Its absence is what #4319 found: the template-knob manifest measures which
+	// `(cloud, component)` cells a `provider_config` can reach, and `network` reached NOTHING on
+	// every cloud — each one declares network variables and no field existed to carry a value to
+	// them. That is a gap and not a ceiling: the resource exists and the knobs are declared.
+	//
+	// Reserved keys are the per-cloud root lists (`awsRootReserved` and friends), consulted at every
+	// root-level merge rather than only at this one — a key a typed field above already owns must not
+	// arrive again under its own name as an undeclared duplicate.
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 // NodeSize is a cloud-indifferent node capability; the catalog resolver maps it to the
