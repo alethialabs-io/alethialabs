@@ -198,6 +198,11 @@ alethia activity -n 200
 alethia activity -o json
 ```
 
+Omit `-n` on a terminal and you are asked how many rows, from a short ladder with the cursor already
+on the default — so Enter reads the same 50 entries it read before. The value has a default, so
+nothing is ever refused for omitting it: `activity --no-input`, and anything running where a prompt
+cannot be shown, reads 50 without a question, and `-n` answers it outright either way.
+
 {/* fieldspec: alethia activity */}
 
 | Field | What it is | Set with |

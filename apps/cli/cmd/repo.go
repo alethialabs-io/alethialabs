@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -32,6 +34,9 @@ var repoListCmd = &cobra.Command{
 			fail(err)
 		}
 		client := api.NewClient(token)
+		if provider, err = promptRepoProvider(cmd, provider); err != nil {
+			fail(err)
+		}
 		if interactiveTable(cmd) {
 			var repos []api.Repository
 			runSpinner("Fetching repositories...", func() {
@@ -51,6 +56,44 @@ var repoListCmd = &cobra.Command{
 			failf("Failed to list repositories: %v", err)
 		}
 	},
+}
+
+// promptRepoProvider asks which connected git provider to browse.
+//
+// The provider HAS a default, so this reads canPromptForm rather than requireInteractiveForm — the
+// rule output.go states for every defaulted field: a scripted caller is never REFUSED for omitting
+// `--provider`, and a person at a terminal is still asked, because a default is rarely what they
+// meant. `alethia repo list --no-input` therefore lists exactly what it listed before.
+//
+// It asks the SAME question promptRepoURL asks in front of the repository picker (byo_prompt.go),
+// from the same gitProviders list and under the same field spec, so the two are one question about
+// one thing rather than two that can come to disagree about which providers exist. The list is an
+// OFFER and not a validation set: an unknown `--provider` still reaches the server, which is the
+// only side that knows.
+//
+// The flag's own value seeds the select, so the cursor opens on the answer `--provider` would have
+// given and a bare Enter changes nothing. It is appended when gitProviders does not carry it,
+// because a picker that cannot offer the current value turns Enter into a silent change of it.
+func promptRepoProvider(cmd *cobra.Command, provider string) (string, error) {
+	if cmd.Flags().Changed("provider") || !canPromptForm() {
+		return provider, nil
+	}
+	f := mustByoField("alethia repo list", byoKeyProvider)
+	offered := append([]string{}, gitProviders...)
+	if !slices.Contains(offered, provider) {
+		offered = append(offered, provider)
+	}
+	options := make([]huh.Option[string], len(offered))
+	for i, p := range offered {
+		options[i] = huh.NewOption(p, p)
+	}
+	chosen := provider
+	if err := runHuhForm(huh.NewGroup(
+		huh.NewSelect[string]().Title(f.Title).Description(f.Description).Options(options...).Value(&chosen),
+	)); err != nil {
+		return provider, err
+	}
+	return chosen, nil
 }
 
 var repoColumns = []string{"Name", "Visibility", "Default branch", "URL"}
