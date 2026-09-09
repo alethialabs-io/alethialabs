@@ -21,14 +21,21 @@ This directory holds the deliverables of the exhaustive e2e QA pass over `apps/c
 
 ## The suite
 
-25 spec files under `apps/console/e2e/flows/**` — 22 domain files plus three harness ones
-(`_smoke`, `_seed-smoke`, `_persona-integrity`) — and **346 tests**.
-`playwright test --project=qa --list` is the only authority on that count: three earlier documents
-in this directory each asserted a different one (320, 340, 307) and the tree held none of them.
-A test count is not a file count, either — several files build their cases in a loop.
+26 spec files under `apps/console/e2e/flows/**` — 22 domain files (11 domains × a positive and a
+`.negative` half) plus four harness ones (`_smoke`, `_seed-smoke`, `_persona-integrity`,
+`_capabilities`).
+`playwright test --project=qa --list` is the only authority on the **test** count: three earlier
+documents in this directory each asserted a different one (320, 340, 307) and the tree held none of
+them. A test count is not a file count, either — several files build their cases in a loop.
 
-It is its own Playwright project, `qa`, and it is **not** wired into any required check. See
-*Gate posture* below.
+There is now a second, weaker authority worth knowing about: `apps/console/e2e/gate-baseline.json`
+carries one entry per test the gate has actually observed, and it holds **384 for this project, 304
+recorded `passed` and 80 recorded `failed`**. That is a recording of a real gate run, not a `--list`
+of today's tree, so it goes stale the moment a spec is added and the ratchet is what re-reads it —
+never cite it as the suite's size.
+
+It is its own Playwright project, `qa`, and it is a **leg of the release gate** — `Release gate
+(qa)`, by ratchet. See *Gate posture* below for what "by ratchet" buys and what it does not.
 
 ### Personas
 
@@ -71,9 +78,33 @@ Smoke (page loads) · Journey (multi-step happy path with real mutations) · Neg
 
 ## How to run
 
+### In CI — the `Release gate (qa)` leg
+
+This is where the suite runs for real, and it needs no box and no slot. It is a leg of
+`.github/workflows/release-gate.yml`, which fires on a non-draft PR into `main` or `staging`, on a
+PR into `dev` labelled `release-gate:run`, and on `workflow_dispatch`:
+
+```bash
+gh workflow run release-gate.yml --ref <branch> -f legs=qa
+```
+
+The leg boots its own console — a `postgres:17` service, `pnpm -C apps/console run db:migrate`,
+`pnpm -F @alethia/ee build` (guarded, because without `ee/dist` the console falls back to community
+scope and every org-scoped assertion goes vacuous), then `next start` under Playwright's
+`webServer`. It sets `ALETHIA_QA_E2E=1` so `global-setup` builds the personas, promises the
+`stripe` capability from the repo's test-mode secrets, and sets `ALETHIA_AUTH_RATE_LIMIT=0` — the
+5-OTP/60s cap was the *recorded* reason this suite could not be gating, and removing it is what let
+it in. It runs with `--workers=3 --retries=1`, and a `--list` floor refuses the leg if it reports
+fewer than 300 tests.
+
+Its report, traces and the `results.json` the ratchet read are uploaded as the
+`release-gate-qa` artifact, 14-day retention.
+
+### On the sandbox box — a full local pass
+
 **Not on your Mac.** Sign-in scrapes the one-time code out of the console's stdout, and that log
-only exists on the machine running the console (`.claude/skills/dev/SKILL.md`). So the suite runs on
-the sandbox box, against that box's own console.
+only exists on the machine running the console (`.claude/skills/dev/SKILL.md`). So a hand-driven
+pass runs on the sandbox box, against that box's own console.
 
 ```bash
 pnpm env:up          # this branch gets a console, a database, a URL
@@ -113,13 +144,60 @@ Spec authoring contract: `apps/console/e2e/AUTHORING.md`.
 
 ## Gate posture
 
-`qa` joins **no required check**, and this pass did not change that. `playwright.config.ts`'s
-`RUN_POSTURE.qa` is `null` with a reason in `LOCAL_ONLY_REASON.qa`, and `assertNoDeadZone()` checks
-that map against `.github/workflows/**` in both directions on every Playwright invocation — so the
-`null` is verified, not asserted.
+`qa` has a job. `RUN_POSTURE.qa` in `playwright.config.ts` now reads
+`release-gate.yml · Release gate (qa)`, `LOCAL_ONLY_REASON` is empty, and `assertNoDeadZone()`
+still checks that map against `.github/workflows/**` in both directions on every Playwright
+invocation — so the posture is verified against the workflows, not asserted.
 
-#2417 is what happens when a 320-test suite becomes a merge gate unvalidated. The bar for promotion
-is not "the suite exists": it is a triaged run where every red is either fixed or recorded with a
-reason, which is what `findings.md` now starts. Promotion also needs a workflow job that does not
-exist yet — and the posture map, its reason string and that job have to move in one change, or
-`assertNoDeadZone()` fails the two merge-gating Playwright runs.
+**The promotion bar is the ratchet, not a green suite.** #2417 is what happens when a large suite
+becomes a merge gate unvalidated, and an absolute-green requirement here would have blocked every
+promotion for weeks. So the leg fails on **regression** against `apps/console/e2e/gate-baseline.json`:
+80 of this project's tests are recorded `failed` there, and the gate is satisfied as long as no
+recorded pass regresses, no new test arrives red, no test is skipped without a recorded reason, and
+no recorded failure has started passing without its ledger entry moving in the same PR. The rules
+and the `--write --only=<file>` regeneration are documented in `apps/console/e2e/README.md`.
+
+Two consequences worth stating plainly:
+
+- **A green `Release gate (qa)` does not mean the QA suite passes.** It means "no worse than the
+  ledger". `findings.md` is still where you read what is actually broken; the baseline is where you
+  read what the gate has agreed to tolerate.
+- **Fixing a spec without moving the ledger reds the gate.** That is deliberate — shrink-only means
+  the ledger can never overstate debt, so the fix and the ledger move are one diff.
+
+### What actually stops a bad promotion — nothing yet
+
+Measured 2026-09-09: **the whole gate lives on `dev` and nowhere else.**
+`.github/workflows/release-gate.yml`, `gate-baseline.json` and `scripts/e2e-ratchet.mjs` are all
+absent from `origin/staging` and `origin/main`, and the live `protect-main` ruleset carries ten
+required contexts, not one of which is a gate leg — `infra/github/variables.tf` declares them, but
+that stack has never been applied (#4286 is the maintainer's `tofu apply`, which an absolute `deny`
+rule refuses to agents).
+
+So the two mechanisms below describe the promotion *after* this wave rides `dev → staging → main`,
+not the one you would run today:
+
+- **Branch protection**, once #4286 is applied: a red leg blocks the `staging → main` merge.
+- **The deploy receipt**, once `deploy-console.yml` reaches `main` carrying it:
+  `preflight` gates the whole deploy graph, resolving the merged `main` PR that contains the pushed
+  commit and requiring the latest `Release gate (<leg>)` check-run for **every** leg on that PR's
+  head to be `success`. The leg list is parsed out of `release-gate.yml`'s own `const legs` table,
+  so it cannot drift from the gate. Its one escape hatch is a manual `workflow_dispatch` of
+  *Deploy Console*, where the step is skipped by design.
+
+A `pull_request` run resolves the workflow from the PR's **head**, so a `dev → staging` promotion
+already fires the gate (`dev` has the file) while a `staging → main` promotion fires nothing until
+that first promotion carries it across. The promotion checklist in `CONTRIBUTING.md` is where this
+is stated for the person doing it.
+
+## Production runs
+
+The QA suite measures a *build*. It cannot measure the production configuration — the real Stripe
+keys, the real OAuth redirect URIs, the real email sender, the real DNS and object storage. That is
+layer 3: `/console-prod-qa` (`.claude/skills/console-prod-qa/SKILL.md`), a witnessed pass in the
+maintainer's own Chrome over one QA organization, reversible mutations only, every destructive
+dialog opened and cancelled.
+
+Its reports live in `apps/console/docs/qa/prod-runs/` — one dated file per run, schema and index in
+that directory's README. A production run appends to neither `findings.md` nor `coverage-matrix.md`;
+those describe the Playwright suite and a later change reconciles them.
