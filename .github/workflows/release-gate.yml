@@ -62,6 +62,9 @@ concurrency:
 
 permissions:
   contents: read
+  # The `legs` job asks the API which files this PR touches, to decide which legs the diff can
+  # affect. Read-only, and only ever used to NARROW a dev PR's selection — never a promotion's.
+  pull-requests: read
 
 env:
   WORKFLOW_HEALTH_SUBSTANTIVE_JOB: "Release gate (qa)"
@@ -84,39 +87,54 @@ jobs:
       include: ${{ steps.pick.outputs.include }}
     steps:
       - id: pick
-        name: Pick the legs (all, or the dispatch input)
+        name: Pick the legs (all, the dispatch input, or the ones this diff can affect)
         env:
           LEGS: ${{ inputs.legs }}
+          BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          WANT_ALL: ${{ contains(github.event.pull_request.labels.*.name, 'release-gate:all') }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
-          node - "$LEGS" <<'EOF'
-          // THE LEG TABLE. One row per Playwright project the gate drives; `capabilities` is the
-          // promise the leg makes (apps/console/e2e/helpers/capabilities.ts) and `floor` is the
-          // fewest tests `--list` may report before the leg is called testMatch drift, not a suite.
-          // `args` is the LITERAL `--project=<name>` flag, spelled out per row on purpose:
-          // playwright.config.ts's dead-zone guard (#2875) reads every workflow for exactly that
-          // string to prove a project runs somewhere, and `--project=${{ matrix.project }}` is a
-          // template it cannot see through. The emitter stays literal so the guard stays honest.
-          const legs = [
-            { project: "hero",      args: "--project=hero",      workers: 1, retries: 1, capabilities: "",        manifest: false, floor: 1 },
-            { project: "elench-ai", args: "--project=elench-ai", workers: 1, retries: 1, capabilities: "ai-mock", manifest: false, floor: 1 },
-            { project: "console",   args: "--project=console",   workers: 2, retries: 1, capabilities: "stripe",  manifest: false, floor: 1 },
-            { project: "canvas",    args: "--project=canvas",    workers: 1, retries: 1, capabilities: "",        manifest: false, floor: 1 },
-            { project: "qa",        args: "--project=qa",        workers: 3, retries: 1, capabilities: "stripe",  manifest: false, floor: 300 },
-            { project: "audit",     args: "--project=audit",     workers: 1, retries: 1, capabilities: "",        manifest: true,  floor: 1 },
-            { project: "audit-interaction", args: "--project=audit-interaction", workers: 1, retries: 0, capabilities: "stripe", manifest: true, floor: 46 },
-          ];
-          const want = (process.argv[2] || "").split(",").map((s) => s.trim()).filter(Boolean);
-          for (const w of want) {
-            if (!legs.some((l) => l.project === w)) {
-              console.error(`::error::unknown leg "${w}" (known: ${legs.map((l) => l.project).join(", ")})`);
-              process.exit(1);
-            }
-          }
-          const chosen = want.length ? legs.filter((l) => want.includes(l.project)) : legs;
-          if (chosen.length === 0) { console.error("::error::no legs selected"); process.exit(1); }
-          require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, `include=${JSON.stringify(chosen)}\n`);
-          console.log(`legs: ${chosen.map((l) => l.project).join(", ")}`);
-          EOF
+          # THE LEG TABLE. One row per Playwright project the gate drives; `capabilities` is the
+          # promise the leg makes (apps/console/e2e/helpers/capabilities.ts) and `floor` is the
+          # fewest tests `--list` may report before the leg is called testMatch drift, not a suite.
+          #
+          # `args` is the LITERAL `--project=<name>` flag, spelled out per row on purpose, and this
+          # table stays HERE rather than moving into the picker script for the same reason:
+          # playwright.config.ts's dead-zone guard (#2875) reads every workflow for exactly that
+          # string to prove a project runs somewhere. `--project=${{ matrix.project }}` is a
+          # template it cannot see through, and a table in `scripts/` is a file it does not read.
+          cat > /tmp/gate-legs.json <<'JSON'
+          [
+            { "project": "hero",      "args": "--project=hero",      "workers": 1, "retries": 1, "capabilities": "",        "manifest": false, "floor": 1 },
+            { "project": "elench-ai", "args": "--project=elench-ai", "workers": 1, "retries": 1, "capabilities": "ai-mock", "manifest": false, "floor": 1 },
+            { "project": "console",   "args": "--project=console",   "workers": 2, "retries": 1, "capabilities": "stripe",  "manifest": false, "floor": 1 },
+            { "project": "canvas",    "args": "--project=canvas",    "workers": 1, "retries": 1, "capabilities": "",        "manifest": false, "floor": 1 },
+            { "project": "qa",        "args": "--project=qa",        "workers": 3, "retries": 1, "capabilities": "stripe",  "manifest": false, "floor": 300 },
+            { "project": "audit",     "args": "--project=audit",     "workers": 1, "retries": 1, "capabilities": "",        "manifest": true,  "floor": 1 },
+            { "project": "audit-interaction", "args": "--project=audit-interaction", "workers": 1, "retries": 0, "capabilities": "stripe", "manifest": true, "floor": 46 }
+          ]
+          JSON
+          # The changed-file list, or EMPTY on any failure. Empty means "cannot narrow", and the
+          # picker runs every leg — a lookup that fails must never read as "this diff affects
+          # nothing". See rule 4 in scripts/ci/pick-release-gate-legs.mjs.
+          : > /tmp/gate-changed.txt
+          if [ -n "${PR_NUMBER:-}" ]; then
+            gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename' > /tmp/gate-changed.txt 2>/dev/null || : > /tmp/gate-changed.txt
+          fi
+          extra=""
+          [ "${WANT_ALL:-}" = "true" ] && extra="--all"
+          include=$(node scripts/ci/pick-release-gate-legs.mjs \
+            --legs=/tmp/gate-legs.json \
+            --changed=/tmp/gate-changed.txt \
+            --base-ref="${BASE_REF:-}" \
+            --want="${LEGS:-}" $extra 2>/tmp/gate-why.txt) || { cat /tmp/gate-why.txt; exit 1; }
+          cat /tmp/gate-why.txt
+          # A leg that silently did not run reads as a leg that passed, so the decision reaches the
+          # job summary and not only the log.
+          { echo "### Which legs run"; echo; sed 's/^/- /' /tmp/gate-why.txt; } >> "$GITHUB_STEP_SUMMARY"
+          echo "include=$include" >> "$GITHUB_OUTPUT"
 
   gate:
     name: Release gate (${{ matrix.project }})

@@ -948,6 +948,12 @@ jobs:
       - name: ...and that census is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-destructive-actions.mjs --self-test
+      # The release gate's leg picker may only ever NARROW a dev PR, never a promotion. Its
+      # self-test pins both directions — a spec-only diff narrows, and product code, an empty file
+      # list, a seam or a promotion all run every leg.
+      - name: ...and the release-gate leg picker cannot narrow a promotion
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/pick-release-gate-legs.mjs --self-test
       - name: Console shared surface (@repo/format, @repo/ui/page-header) is not hand-rolled
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:shared-surface
