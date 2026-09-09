@@ -236,9 +236,22 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 		const name = String(nameRaw);
 		try {
 			if (kind === "section") {
+				// A `section` is the LABELLED REGION holding the control, and in this console that
+				// label is often not a heading. `SettingsDangerRow` (settings-ui.tsx:193) renders
+				// its `title` as `<div className="… font-medium …">` with no role at all, so a
+				// heading-only lookup withheld `org.delete` and `project.delete` — both of which
+				// need no fixture and were the two controls this suite could otherwise have
+				// measured on a bare org. Measured on run 34364283140: 0 of 46.
+				//
+				// So: heading first, because that is the correct markup and the one the console is
+				// moving toward (CLAUDE.md §6 / SectionHeading); plain text second, because that is
+				// what is there today. Falling back is not papering over the a11y gap — the gap is
+				// reported separately — it is refusing to let this suite's denominator depend on it.
 				const heading = page.getByRole("heading", { name: new RegExp(escapeRe(name), "i") }).first();
-				await heading.waitFor({ state: "visible", timeout: 8_000 });
-				await heading.scrollIntoViewIfNeeded();
+				const label = page.getByText(new RegExp(`^\\s*${escapeRe(name)}\\s*$`, "i")).first();
+				const target = (await heading.count()) > 0 ? heading : label;
+				await target.waitFor({ state: "visible", timeout: 8_000 });
+				await target.scrollIntoViewIfNeeded();
 				continue;
 			}
 			// menu / open / select all resolve to "activate the thing named, then wait for it".
