@@ -20,12 +20,22 @@ name: Release gate
 #     the standing dev→staging promotion PR lives as a DRAFT between promotions and was 22% of all
 #     CI runs (CONTRIBUTING.md); a one-hour gate re-fired on every dev merge would be the single most
 #     expensive mistake this file could make.
-#   · a PR into dev carrying the `release-gate:run` label — for a lane that wants per-PR gate
-#     feedback, and for capturing the baseline. `labeled` fires for ANY label, so the job also
-#     requires that the label just added is that one, or a random label would restart an hour.
+#   · a PR into dev carrying the `release-gate:run` (or `release-gate:all`) label — for a lane that
+#     wants per-PR gate feedback, and for capturing the baseline. `labeled` fires for ANY label, so
+#     the job also requires that the label just added is one of those two, or a random label would
+#     restart an hour.
 #   · workflow_dispatch, with an optional comma-separated `legs` input.
 # Never `merge_group` (Mergify replaced it), never `paths:` (a filtered-out required workflow reports
 # nothing and wedges every PR — validate-console.yml's header has the incident).
+#
+# WHICH legs run is a separate question from WHETHER the gate runs, and it is answered once, in the
+# `legs` job. A PR into main or staging runs every leg — that is the gate, and a promotion must not
+# choose what measures it. A dev PR MAY narrow, because on that path the seven legs cost ~76
+# runner-minutes per push (measured, run 34351806933) and CI capacity, not authoring, is this wave's
+# ceiling. Narrowing there is safe for a reason that is written down rather than assumed: the seven
+# `Release gate (<leg>)` contexts are filtered OUT of `protect-dev` and `protect-staging` in
+# infra/github/main.tf and are named nowhere in .mergify.yml, so a leg that does not run on a dev PR
+# leaves no required context unreported and no queue entry waiting. See the `legs` job for the rules.
 #
 # Every `pnpm` invocation is `-C <dir> run` or `exec` (scripts/ci/check-pnpm-script-refs.mjs); every
 # step past the checkout that runs on failure carries the #4084 conjunct
@@ -38,7 +48,7 @@ on:
   workflow_dispatch:
     inputs:
       legs:
-        description: "Comma-separated legs to run (hero, elench-ai, console, canvas, qa, audit). Empty runs every leg."
+        description: "Comma-separated legs to run (hero, elench-ai, console, canvas, qa, audit, audit-interaction). Empty runs every leg."
         required: false
         default: ""
 
@@ -48,14 +58,15 @@ on:
 # considered. So with a blanket `cancel-in-progress: true`, adding any unrelated label to a
 # promotion PR (`qa:prod`, a triage label) 40 minutes into the `qa` leg creates a new run, cancels
 # the in-flight one, and is then skipped by the `legs` guard below — which requires the added label
-# to be `release-gate:run`. The six required `Release gate (<leg>)` contexts never report, and the
+# to be one of the two `release-gate:*` ones. The required `Release gate (<leg>)` contexts on a
+# promotion PR never report, and the
 # PR sits permanently pending with nothing red to explain it, recovering only on a new push or
 # `ready_for_review`. The header above anticipated a random label RESTARTING the hour; the guard
 # turns that into cancel-and-never-restart, which is worse.
 #
 # Keying the cancellation on the event action fixes it at the source: a push supersedes its
-# predecessor as before, and a label event cannot cancel anything. A label that IS
-# `release-gate:run` starts a run that simply queues behind any in-flight one.
+# predecessor as before, and a label event cannot cancel anything. A label that IS one of the
+# `release-gate:*` pair starts a run that simply queues behind any in-flight one.
 concurrency:
   group: release-gate-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event.action != 'labeled' }}
@@ -77,18 +88,59 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch'
       || (github.event.pull_request.draft == false
-          && (github.event.action != 'labeled' || github.event.label.name == 'release-gate:run')
+          && (github.event.action != 'labeled'
+              || contains(fromJSON('["release-gate:run","release-gate:all"]'), github.event.label.name))
           && (contains(fromJSON('["main","staging"]'), github.base_ref)
-              || contains(github.event.pull_request.labels.*.name, 'release-gate:run')))
+              || contains(github.event.pull_request.labels.*.name, 'release-gate:run')
+              || contains(github.event.pull_request.labels.*.name, 'release-gate:all')))
+    # `pull-requests: read` is what `GET /pulls/{n}/files` needs; the workflow-level grant is
+    # `contents: read` only. Without it the API call 403s — which selects EVERY leg, loudly, rather
+    # than silently narrowing. The `gate` job below keeps the workflow-level grant.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       include: ${{ steps.pick.outputs.include }}
     steps:
+      # The denominator of the path inference below. It CANNOT fail the job: an API error, a
+      # revoked scope, GitHub's 3000-file cap — each writes an empty list and a `read=` value the
+      # picker turns into "every leg". A file list this step could not read is not an empty diff.
+      - id: changed
+        name: List the PR's changed files (unreadable or empty selects every leg)
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CHANGED_FILES: /tmp/release-gate-changed-files.txt
+        run: |
+          set -uo pipefail
+          read_ok=yes
+          if ! gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --jq '.[].filename' > "$CHANGED_FILES"; then
+            echo "::warning::could not list the changed files for this PR — every leg will run"
+            : > "$CHANGED_FILES"
+            read_ok=no
+          fi
+          count=$(wc -l < "$CHANGED_FILES" | tr -d ' ')
+          # GitHub's file list is capped at 3000. At the cap the list is a TRUNCATION, and inferring
+          # from a truncated diff is exactly the under-reporting this file refuses.
+          if [ "$count" -ge 3000 ]; then
+            echo "::warning::the changed-file list hit GitHub's 3000-file cap — every leg will run"
+            read_ok=no
+          fi
+          echo "changed files: $count (readable: $read_ok)"
+          cat "$CHANGED_FILES"
+          echo "read=$read_ok" >> "$GITHUB_OUTPUT"
       - id: pick
-        name: Pick the legs (all, or the dispatch input)
+        name: Pick the legs for this event
         env:
           LEGS: ${{ inputs.legs }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          CHANGED_READ: ${{ steps.changed.outputs.read }}
+          CHANGED_FILES: /tmp/release-gate-changed-files.txt
         run: |
-          node - "$LEGS" <<'EOF'
+          node - <<'EOF'
           // THE LEG TABLE. One row per Playwright project the gate drives; `capabilities` is the
           // promise the leg makes (apps/console/e2e/helpers/capabilities.ts) and `floor` is the
           // fewest tests `--list` may report before the leg is called testMatch drift, not a suite.
@@ -105,17 +157,167 @@ jobs:
             { project: "audit",     args: "--project=audit",     workers: 1, retries: 1, capabilities: "",        manifest: true,  floor: 1 },
             { project: "audit-interaction", args: "--project=audit-interaction", workers: 1, retries: 0, capabilities: "stripe", manifest: true, floor: 47 },
           ];
-          const want = (process.argv[2] || "").split(",").map((s) => s.trim()).filter(Boolean);
-          for (const w of want) {
-            if (!legs.some((l) => l.project === w)) {
-              console.error(`::error::unknown leg "${w}" (known: ${legs.map((l) => l.project).join(", ")})`);
-              process.exit(1);
+          const ALL = legs.map((l) => l.project);
+
+          // ── WHAT MAY NARROW, AND WHAT MAY NOT ─────────────────────────────────────────────────
+          //
+          // A labelled dev PR used to run all seven legs: ~76 runner-minutes a push (measured, run
+          // 34351806933), most of it seven copies of the same `next build`, for a lane whose whole
+          // diff is one spec file. CI capacity is this wave's binding constraint, so a dev PR may
+          // narrow. Three things never do, and the order below is the order they are asked in:
+          //
+          //   1. A PR into main or staging runs EVERY leg. That is the gate; a promotion must not
+          //      choose what measures it. `release-gate:all` is the same answer asked for by hand.
+          //   2. A diff touching a SEAM runs every leg — a file any leg reads, where a change can
+          //      move any of them, so inferring from its path is the under-reporting this repo
+          //      keeps paying for.
+          //   3. A path matching NO rule runs every leg. "nothing matched" and "nothing needs
+          //      running" are the same input, and making them the same output is the vacuous-green
+          //      shape the gate exists to refuse. So does a file list this job could not read, and
+          //      so does a diff of zero files.
+          //
+          // The consequence, stated plainly because it is the honest bound: inference narrows ONLY
+          // for a diff made ENTIRELY of leg-specific files under apps/console/e2e/. A console
+          // source change selects everything, because it can break anything.
+
+          // A file any leg reads. The first six are the list #4440 names; `global-setup.ts` and
+          // `reporters/` are added with the same argument — Playwright has no per-project
+          // globalSetup so that file runs for every invocation, and every leg's `--reporter=`
+          // flag below names `./e2e/reporters/qa-reporter.ts`.
+          //
+          // MEASURED, so the next reader is not misled: not one of these paths is matched by any
+          // RULE below TODAY, so deleting this list would change no answer — rule 3 (unmatched
+          // runs everything) already covers every one of them. It is kept, and checked FIRST, for
+          // the case rule 3 stops covering: the day someone widens a rule to a directory — an
+          // `^apps/console/e2e/` catch-all is the obvious one — a seam under it would be swallowed
+          // and the diff would look like a tidy-up. That widening is what this list is for, and it
+          // is the only thing it does.
+          const SEAMS = [
+            /^apps\/console\/playwright\.config\.ts$/,
+            /^apps\/console\/e2e\/helpers\//,
+            /^apps\/console\/e2e\/fixtures\//,
+            /^apps\/console\/e2e\/gate-baseline\.json$/,
+            /^apps\/console\/e2e\/global-setup\.ts$/,
+            /^apps\/console\/e2e\/reporters\//,
+            /^scripts\/e2e-ratchet\.mjs$/,
+            /^\.github\/workflows\/release-gate\.yml$/,
+          ];
+
+          // FIRST MATCH WINS, so the order is load-bearing. Each `when` mirrors a project's
+          // `testMatch` in apps/console/playwright.config.ts rather than restating a belief about
+          // it — that file is where these regexes come from and where they must be kept true.
+          const RULES = [
+            { when: /^apps\/console\/e2e\/flows\//, legs: ["qa"], why: "e2e/flows/** is the qa project's testMatch" },
+            { when: /^apps\/console\/e2e\/audit\/destructive\.spec\.ts$/, legs: ["audit-interaction"], why: "the audit-interaction project's whole testMatch" },
+            { when: /^apps\/console\/e2e\/audit\/[^/]*\.spec\.ts$/, legs: ["audit"], why: "an audit spec (destructive.spec.ts is testIgnored out of this project)" },
+            // NOT "other e2e/audit/** -> audit". destructive.spec.ts imports ./context and
+            // ./manifest, so a shared audit module moves BOTH audit legs; sending it to `audit`
+            // alone would be a silent under-selection.
+            { when: /^apps\/console\/e2e\/audit\//, legs: ["audit", "audit-interaction"], why: "a shared audit module — both audit legs import from this directory" },
+            { when: /^apps\/console\/e2e\/hero-happy-path\.spec\.ts$/, legs: ["hero"], why: "the hero project's whole testMatch" },
+            { when: /^apps\/console\/e2e\/elench-(ai|ux)\.spec\.ts$/, legs: ["elench-ai"], why: "the elench-ai project's testMatch" },
+            { when: /^apps\/console\/e2e\/architecture-canvas\.spec\.ts$/, legs: ["canvas"], why: "the canvas project's whole testMatch" },
+            { when: /^apps\/console\/e2e\/(account-settings|activity|billing|connectors|elench-agent|evidence|usage)\.spec\.ts$/, legs: ["console"], why: "the console project's testMatch" },
+          ];
+
+          const fs = require("node:fs");
+          const env = process.env;
+
+          /** Decide which legs run, and the one sentence that says why. Rows are per-path detail. */
+          function decide() {
+            if (env.EVENT_NAME === "workflow_dispatch") {
+              const want = (env.LEGS || "").split(",").map((s) => s.trim()).filter(Boolean);
+              for (const w of want) {
+                if (!ALL.includes(w)) {
+                  console.error(`::error::unknown leg "${w}" (known: ${ALL.join(", ")})`);
+                  process.exit(1);
+                }
+              }
+              return want.length
+                ? { legs: want, rule: `workflow_dispatch named \`${want.join(", ")}\`` }
+                : { legs: ALL, rule: "workflow_dispatch with an empty `legs` input — every leg" };
             }
+
+            const base = env.BASE_REF || "";
+            if (base === "main" || base === "staging") {
+              return { legs: ALL, rule: `a PR into \`${base}\` — the promotion path runs every leg; a promotion must not choose what measures it` };
+            }
+
+            let labels = [];
+            try { labels = JSON.parse(env.PR_LABELS || "[]") || []; } catch { labels = []; }
+            if (labels.includes("release-gate:all")) {
+              return { legs: ALL, rule: "`release-gate:all` is on the PR — the manual override, every leg" };
+            }
+
+            if (env.CHANGED_READ !== "yes") {
+              return { legs: ALL, rule: "the changed-file list could not be read (or was truncated) — every leg. A list this job cannot read is not an empty diff." };
+            }
+            let changed = [];
+            try {
+              changed = fs.readFileSync(env.CHANGED_FILES, "utf8").split("\n").map((s) => s.trim()).filter(Boolean);
+            } catch {
+              return { legs: ALL, rule: "the changed-file list is missing — every leg" };
+            }
+            if (changed.length === 0) {
+              return { legs: ALL, rule: "the PR reported ZERO changed files — every leg. Zero is a number this job does not believe." };
+            }
+
+            const seamHits = changed.filter((f) => SEAMS.some((re) => re.test(f)));
+            if (seamHits.length > 0) {
+              return { legs: ALL, rule: `a shared seam changed (${seamHits.join(", ")}) — a seam can move any leg, so every leg runs` };
+            }
+
+            const rows = [];
+            const selected = new Set();
+            const unmatched = [];
+            for (const f of changed) {
+              const rule = RULES.find((r) => r.when.test(f));
+              if (rule === undefined) {
+                unmatched.push(f);
+                rows.push({ file: f, legs: "every leg", why: "no rule matches this path" });
+                continue;
+              }
+              for (const l of rule.legs) selected.add(l);
+              rows.push({ file: f, legs: rule.legs.join(", "), why: rule.why });
+            }
+            if (unmatched.length > 0) {
+              return { legs: ALL, rule: `${unmatched.length} changed path(s) match no rule — every leg runs, never none`, rows };
+            }
+            if (selected.size === 0) {
+              return { legs: ALL, rule: "the rules selected nothing at all — every leg runs, never none", rows };
+            }
+            return { legs: ALL.filter((p) => selected.has(p)), rule: "inferred from the changed paths", rows };
           }
-          const chosen = want.length ? legs.filter((l) => want.includes(l.project)) : legs;
+
+          const decision = decide();
+          const chosen = legs.filter((l) => decision.legs.includes(l.project));
           if (chosen.length === 0) { console.error("::error::no legs selected"); process.exit(1); }
-          require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, `include=${JSON.stringify(chosen)}\n`);
+          if (env.GITHUB_OUTPUT) fs.appendFileSync(env.GITHUB_OUTPUT, `include=${JSON.stringify(chosen)}\n`);
           console.log(`legs: ${chosen.map((l) => l.project).join(", ")}`);
+          console.log(`why: ${decision.rule}`);
+
+          // A LEG THAT SILENTLY DOES NOT RUN READS AS A LEG THAT PASSED. So the selection is
+          // published where the run is read, with the skipped legs named and the rule that decided.
+          const ran = chosen.map((l) => l.project);
+          const skipped = ALL.filter((p) => !ran.includes(p));
+          const md = [
+            "## Release gate — which legs run",
+            "",
+            `**Rule:** ${decision.rule}`,
+            "",
+            `**Running (${ran.length}/${ALL.length}):** ${ran.map((p) => `\`${p}\``).join(", ")}`,
+            "",
+            `**Skipped (${skipped.length}):** ${skipped.length ? skipped.map((p) => `\`${p}\``).join(", ") : "none"}`,
+          ];
+          if (decision.rows && decision.rows.length > 0) {
+            md.push("", "| changed path | selects | because |", "| --- | --- | --- |");
+            for (const r of decision.rows) md.push(`| \`${r.file}\` | ${r.legs} | ${r.why} |`);
+          }
+          if (skipped.length > 0) {
+            md.push("", "A skipped leg reports no `Release gate (<leg>)` context. Those contexts are required on `main` only (infra/github/main.tf), and a promotion PR never reaches this branch of the rules.");
+          }
+          if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `${md.join("\n")}\n`);
+          console.log(md.join("\n"));
           EOF
 
   gate:
