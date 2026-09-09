@@ -36,15 +36,18 @@
 //   CLEAN-WITH-GAPS  what could be read does not overlap, but N units could not   (exit 5)
 //                    be read — a partial pass, reported as a partial pass
 //
-// ── KNOWN GAP, stated rather than silently carried ───────────────────────────────────────────
-// The declaration regex is `decompose-validate.mjs`'s, character for character, because a looser
-// or stricter one here would make the seed-time verdict and the continuous verdict disagree —
-// which is the drift this file exists to end. That regex does NOT strip fenced code blocks, so a
-// ```-fenced `scope:` line at column 0 is read as a declaration (coordinate.sh's `blocked-by:`
-// parser DOES strip fences, after #3639 bit exactly that way). The failure direction is
-// over-reporting a phantom glob, which is visible in the report and fails closed; the
-// `blocked-by:` case failed OPEN, which is why it was worth the asymmetry there. Fixing it means
-// moving BOTH parsers together, deliberately, not this one alone.
+// ── THE GAP THAT USED TO BE HERE IS CLOSED (#4473) ───────────────────────────────────────────
+// This paragraph recorded that the declaration regex did not strip fenced code blocks, and argued
+// the failure direction was tolerable — "over-reporting a phantom glob, which is visible in the
+// report and fails closed". That argument held for a body with a stray extra glob. It did NOT hold
+// for a body quoting a whole `scope:` line ABOVE its own, because the regex was `m` but not `g` and
+// took only the FIRST match: the phantom REPLACED the declaration, so the unit's real files were
+// compared against nothing. #4442's body did exactly that, and the phantom collision it produced
+// masked a real one underneath.
+// Both halves are now fixed here, in one place, because `decompose-validate.mjs` IMPORTS these
+// functions rather than carrying copies — the "moving BOTH parsers together" this paragraph warned
+// about had already been done by the extraction. `blocked_by_from_body` in coordinate.sh remains a
+// separate implementation of fence-stripping for a different line; #4480 tracks that convergence.
 //
 // Usage:
 //   gh issue list --state open --limit 300 --json number,title,labels,body \
@@ -67,16 +70,77 @@ export function normalizeGlob(glob) {
 }
 
 /**
+ * Strip CLOSED fenced code blocks from an issue body, so a quoted machine-read line is not read as a
+ * declaration (#4473).
+ *
+ * This is `coordinate.sh`'s `blocked_by_from_body` awk in JS, including its two judgement calls,
+ * because the two machine-read lines in one body must be parsed to one standard:
+ *
+ *   · An UNTERMINATED fence keeps its contents. A body whose author opened a fence and never closed
+ *     it is far more likely to be a typo than an intention to hide a declaration, and dropping
+ *     everything after it would silently un-declare a unit's scope — the failure direction that bit
+ *     #3639.
+ *   · Both ``` and ~~~ open a fence, and a fence closes on either marker. Markdown is stricter than
+ *     that; being looser here only ever strips MORE, and a stripped declaration is loud (the unit
+ *     appears unscoped) while an unstripped quote is silent.
+ *
+ * @param {string} text
+ * @returns {string} the body with closed fenced blocks removed, line count NOT preserved
+ */
+export function stripFences(text) {
+	const lines = String(text ?? "").split("\n");
+	const drop = new Set();
+	let openAt = null;
+	for (let i = 0; i < lines.length; i++) {
+		if (!/^\s*(```|~~~)/.test(lines[i])) continue;
+		if (openAt === null) {
+			openAt = i;
+		} else {
+			for (let k = openAt; k <= i; k++) drop.add(k);
+			openAt = null;
+		}
+	}
+	return lines.filter((_, i) => !drop.has(i)).join("\n");
+}
+
+/**
+ * Every `scope:` DECLARATION in a body, after fenced blocks are stripped — normally one.
+ *
+ * Exported so a caller can tell "no declaration" from "two declarations", which `scopeGlobs` cannot:
+ * it answers with globs, and both cases have none to give.
+ *
+ * @param {string} body
+ * @returns {string[][]} one token list per declaration, in document order
+ */
+export function scopeDeclarations(body) {
+	const out = [];
+	for (const line of stripFences(body).split("\n")) {
+		const m = line.match(/^[ \t]*scope:[ \t]*(.+)$/i);
+		if (m) out.push(m[1].trim().split(/\s+/).filter(Boolean));
+	}
+	return out;
+}
+
+/**
  * Parse a machine-readable scope declaration from a board issue body.
  *
  * THE ANCHOR IS THE CONTRACT. `scope:` is a machine-read line that must start at column 0 (a
  * leading indent is tolerated); a `scope:` token inside prose is not a declaration, for the same
  * reason a prose `blocked-by:` is not one. Callers that need to know an unreadable declaration
- * from an absent one want `readScope` instead — this returns `[]` for both.
+ * from an absent one want `readScope` instead — this returns `[]` for all of them.
+ *
+ * TWO DECLARATIONS YIELD NOTHING, and that is the fix rather than an omission (#4473). The regex was
+ * `m` but not `g`, so it silently took the FIRST match — and a body that quotes another unit's scope
+ * line ABOVE its own therefore had its own declaration ignored entirely. That is exactly what #4442's
+ * body did: `coordinate.sh` reported a phantom collision between #4442 and #4309 over globs belonging
+ * to #4309, and the real collision underneath it (#4460, on `.github/workflows/ci.yml`) was invisible
+ * until the quote was de-fanged by hand. Fence-stripping removes almost every occurrence; refusing on
+ * what is left is the honest answer for a genuinely ambiguous body, and it is LOUD — the unit renders
+ * under the report's gaps instead of buying a verdict from a scope nobody wrote for it.
  */
 export function scopeGlobs(body) {
-	const match = String(body ?? "").match(/^[ \t]*scope:[ \t]*(.+)$/im);
-	return match ? match[1].trim().split(/\s+/).filter(Boolean) : [];
+	const decls = scopeDeclarations(body);
+	return decls.length === 1 ? decls[0] : [];
 }
 
 /** Compile one path SEGMENT (no `/`) into an anchored regex; `*` → any run of non-slash chars. */
@@ -192,10 +256,17 @@ export function globDefect(token) {
  */
 export function readScope(body) {
 	const text = String(body ?? "");
-	const tokens = scopeGlobs(text);
+	const decls = scopeDeclarations(text);
+	if (decls.length > 1) {
+		return { status: "ambiguous", globs: [], unusable: [], declarations: decls.length };
+	}
+	const tokens = decls.length === 1 ? decls[0] : [];
 	if (tokens.length === 0) {
 		return {
-			status: /scope:/i.test(text) ? "mentioned-not-declared" : "missing",
+			// `mentioned-not-declared` is decided on the STRIPPED body: a `scope:` inside a fence is a
+			// quotation, and reporting it as "mentions scope: but not as a declaration" would send a
+			// reader looking for a formatting mistake they did not make.
+			status: /scope:/i.test(stripFences(text)) ? "mentioned-not-declared" : "missing",
 			globs: [],
 			unusable: [],
 		};
@@ -306,6 +377,12 @@ export function auditBoard(board) {
  */
 export function scopeGapReason(unit) {
 	if (unit.status === "missing") return "no `scope:` line";
+	if (unit.status === "ambiguous") {
+		return (
+			`${unit.declarations ?? 2} \`scope:\` declarations — ambiguous, so none is used. Quoting another ` +
+			`unit's scope line? Put text before it; indenting is not enough, the anchor tolerates whitespace`
+		);
+	}
 	if (unit.status === "mentioned-not-declared") {
 		return "mentions `scope:` but not as a declaration at the start of a line (backticks? a bullet?)";
 	}
