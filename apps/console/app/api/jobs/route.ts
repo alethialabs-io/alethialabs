@@ -31,6 +31,7 @@ import {
 	paginate,
 	parsePageOpts,
 } from "@/lib/cli/paging";
+import { type CliCaller, credentialOf } from "@/lib/cli/providers";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { jobs, runners, projects } from "@/lib/db/schema";
@@ -43,6 +44,37 @@ import {
 // Job types the CLI is allowed to queue through this endpoint (a subset of the
 // full provision_job_type enum — runner-lifecycle types are created elsewhere).
 type CreatableJobType = "DEPLOY" | "DESTROY" | "PLAN" | "DESTROY_RUNNER";
+
+/**
+ * The organization a verified CLI call is scoped to: a service token's own pin, else the org a
+ * human named with `X-Alethia-Org` (the CLI's `--org`), else none.
+ *
+ * A `switch` over the closed union rather than `pin ?? header`, and the difference is not style.
+ * `??` falls back on null and undefined ONLY, so under the old `pinnedOrg` — a raw string read
+ * straight off the payload — a pin of `""` was not null, the header was never consulted, and
+ * `headerOrg || undefined` one line down then turned it into `undefined`: the call resolved the
+ * MINTER'S DEFAULT ORG, and both membership branches, testing those same two falsy strings, were
+ * skipped. {@link credentialOf} removes the input at the source (a blank pin is refused, never
+ * demoted to a session), so this function no longer has to know any of that to be right.
+ */
+function scopedOrgOf(caller: CliCaller, req: Request): string | undefined {
+	switch (caller.credential) {
+		case "service_token":
+			return caller.pinnedOrg;
+		case "session":
+			// `|| undefined`, not `?? undefined`: a header of `""` or `"   "` is a human who typed
+			// nothing, and `getActiveScope(userId, "")` would look up an org that cannot exist.
+			return req.headers.get("X-Alethia-Org")?.trim() || undefined;
+		default: {
+			// A THIRD CREDENTIAL KIND STOPS THE BUILD HERE. Without this arm it would not: the
+			// declared return type already contains `undefined`, so a switch that answers for
+			// fewer kinds than exist still type-checks, and the new kind would silently scope to
+			// no org — the wide answer, arrived at by falling off the end instead of by a ternary.
+			const unhandled: never = caller;
+			return unhandled;
+		}
+	}
+}
 
 /** Narrows an untrusted body value to a CreatableJobType (no cast). */
 function parseJobType(v: unknown): CreatableJobType | null {
@@ -153,15 +185,24 @@ export async function POST(req: Request) {
 		// comment above was true of three of the route's four verbs. Hoisting it is what makes
 		// the promise cover the fourth.
 		//
-		// verifyCliToken already refuses a mismatched header before we get here; the fallback below
-		// is what stops an ABSENT header resolving the creator's default org instead.
-		const pinnedOrg =
-			typeof payload?.service_token_org_id === "string"
-				? payload.service_token_org_id
-				: undefined;
-		const headerOrg = pinnedOrg ?? req.headers.get("X-Alethia-Org")?.trim();
-		const actor = await getActiveScope(userId, headerOrg || undefined);
-		// WHICH QUESTION TO ASK DEPENDS ON WHERE `headerOrg` CAME FROM (#4298).
+		// verifyCliToken already refuses a mismatched header before we get here; the fallback in
+		// `scopedOrgOf` is what stops an ABSENT header resolving the creator's default org instead.
+		//
+		// WHAT THE CALLER IS, DERIVED ONCE (#4468). `credentialOf` returns the closed
+		// `CliCredential` union with the pin carried by the arm that has one, so the three
+		// decisions below — which org, which membership question, which runner arm — all read the
+		// SAME value, and none of them re-infers the kind from whether a string is non-empty.
+		// A payload that claims a pin it does not have has no arm and is refused here.
+		const caller = credentialOf(payload);
+		if (!caller) {
+			return NextResponse.json(
+				{ error: "Invalid token payload" },
+				{ status: 401 },
+			);
+		}
+		const scopedOrg = scopedOrgOf(caller, req);
+		const actor = await getActiveScope(userId, scopedOrg);
+		// WHICH QUESTION TO ASK DEPENDS ON WHAT THE CREDENTIAL IS (#4298).
 		//
 		// This route resolves its own scope rather than going through `authorizeCli`, so it
 		// inherits none of that function's checks and has to pick the right one itself.
@@ -172,19 +213,46 @@ export async function POST(req: Request) {
 		// that provisions and tears down real infrastructure. Same reasoning as #4041 for the
 		// provider routes, and it needs the DEFAULT scope, never `actor`.
 		//
-		// A SESSION: `headerOrg` is user input (`--org`), and a human's memberships are what bound
+		// A SESSION: `scopedOrg` is user input (`--org`), and a human's memberships are what bound
 		// it. `actor` is resolved from that input, so this keeps the pre-#4298 shape — the fast
 		// path can fire, and it is sound only because `verifyCliToken` has already refused a
 		// mismatched header for a token, which is the only caller that could forge one.
-		if (pinnedOrg) {
-			const denied = await assertMintingProfileStillMember(
-				await getActiveScope(userId),
-				pinnedOrg,
-			);
-			if (denied) return denied;
-		} else if (headerOrg) {
-			const denied = await ensureCliOrgAccess(actor, "session", headerOrg);
-			if (denied) return denied;
+		//
+		// A `switch` and not `if (pinnedOrg) … else if (headerOrg) …`: that else-arm was the wide
+		// one, so a third credential kind would have quietly meant "this is a human" at three
+		// sites at once — here, in `scopedOrgOf`, and at the runner arm below — on the route that
+		// provisions and tears down real cloud infrastructure.
+		//
+		// TWO OF THE THREE NOW REFUSE TO COMPILE, and it is worth saying which and why, because
+		// "we switched on a union" does not by itself buy it: a statement `switch` with no
+		// `default` falls through in silence, exactly like the else-arm did. Each of these two
+		// therefore ends in a `default` that assigns the leftover member to `never`. The third
+		// site decides nothing any more — it forwards `caller.credential` to `personalRunnerArm`
+		// instead of re-deriving the kind from the pin, so the answer is that function's switch.
+		switch (caller.credential) {
+			case "service_token": {
+				const denied = await assertMintingProfileStillMember(
+					await getActiveScope(userId),
+					caller.pinnedOrg,
+				);
+				if (denied) return denied;
+				break;
+			}
+			case "session": {
+				if (scopedOrg) {
+					const denied = await ensureCliOrgAccess(
+						actor,
+						caller.credential,
+						scopedOrg,
+					);
+					if (denied) return denied;
+				}
+				break;
+			}
+			default: {
+				const unhandled: never = caller;
+				return unhandled;
+			}
 		}
 
 		if (jobType === "DESTROY_RUNNER") {
@@ -204,7 +272,7 @@ export async function POST(req: Request) {
 						db,
 						assigned_runner_id,
 						actor.orgId,
-						personalRunnerArm(actor, pinnedOrg ? "service_token" : "session"),
+						personalRunnerArm(actor, caller.credential),
 					);
 				} catch (e: unknown) {
 					if (e instanceof ForbiddenError) {
