@@ -10,33 +10,33 @@
 	"counts": {
 		"alibaba": {
 			"declared": 63,
-			"reachable": 39,
-			"settable": 10,
+			"reachable": 45,
+			"settable": 11,
 			"dead": 1
 		},
 		"aws": {
 			"declared": 159,
-			"reachable": 118,
-			"settable": 51,
+			"reachable": 122,
+			"settable": 52,
 			"dead": 7
 		},
 		"azure": {
 			"declared": 90,
-			"reachable": 59,
+			"reachable": 64,
 			"settable": 24,
 			"dead": 4
 		},
 		"gcp": {
 			"declared": 104,
-			"reachable": 77,
-			"settable": 32,
+			"reachable": 84,
+			"settable": 34,
 			"dead": 8
 		},
 		"hetzner": {
 			"declared": 37,
-			"reachable": 16,
-			"settable": 2,
-			"dead": 2
+			"reachable": 27,
+			"settable": 4,
+			"dead": 3
 		}
 	},
 	"knobs": [
@@ -758,7 +758,7 @@
 				"alibaba",
 				"alibaba/modules/network"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": []
@@ -776,7 +776,7 @@
 			"readBy": [
 				"alibaba"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
 			"default": ""
@@ -794,7 +794,7 @@
 			"readBy": [
 				"alibaba"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": true
@@ -813,7 +813,7 @@
 				"alibaba",
 				"alibaba/modules/network"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": true
@@ -831,7 +831,7 @@
 			"readBy": [
 				"alibaba"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
 			"default": []
@@ -850,7 +850,7 @@
 				"alibaba",
 				"alibaba/modules/network"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
 			"default": 3
@@ -2741,7 +2741,7 @@
 			"readBy": [
 				"aws"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": true
@@ -2759,7 +2759,7 @@
 			"readBy": [
 				"aws"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": ""
@@ -2777,7 +2777,7 @@
 			"readBy": [
 				"aws"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
 			"default": [
@@ -2797,7 +2797,7 @@
 			"readBy": [
 				"aws"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": false
@@ -5120,7 +5120,7 @@
 			"readBy": [
 				"azure"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": true
@@ -5139,7 +5139,7 @@
 				"azure",
 				"azure/modules/vnet"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": false
@@ -5157,7 +5157,7 @@
 			"readBy": [
 				"azure"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
 			"default": []
@@ -5176,7 +5176,7 @@
 				"azure",
 				"azure/modules/vnet"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": []
@@ -5195,7 +5195,7 @@
 				"azure",
 				"azure/modules/vnet"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": "10.0.0.0/16"
@@ -7056,7 +7056,7 @@
 			"readBy": [
 				"gcp"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": []
@@ -7075,7 +7075,7 @@
 				"gcp",
 				"gcp/modules/vpc-network"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": "10.0.0.0/16"
@@ -7094,7 +7094,7 @@
 				"gcp",
 				"gcp/modules/vpc-network"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
 			"default": "10.1.0.0/16"
@@ -7112,7 +7112,7 @@
 			"readBy": [
 				"gcp"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": true
@@ -7131,7 +7131,7 @@
 				"gcp",
 				"gcp/modules/vpc-network"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
 			"default": "10.2.0.0/20"
@@ -7149,7 +7149,7 @@
 			"readBy": [
 				"gcp"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": false
@@ -7167,7 +7167,7 @@
 			"readBy": [
 				"gcp"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
 			"default": []
@@ -8205,7 +8205,7 @@
 			"readBy": [
 				"hetzner"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": false
@@ -8221,7 +8221,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/hetzner/variables.tf:244",
 			"readBy": [],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": ""
@@ -8239,7 +8239,7 @@
 			"readBy": [
 				"hetzner"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": ""
@@ -8257,7 +8257,7 @@
 			"readBy": [
 				"hetzner"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
 			"default": "native"
@@ -8275,7 +8275,7 @@
 			"readBy": [
 				"hetzner"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
 			"default": 3600
@@ -8293,7 +8293,7 @@
 			"readBy": [
 				"hetzner"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": []
@@ -8311,7 +8311,7 @@
 			"readBy": [
 				"hetzner"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": "10.0.0.0/16"
@@ -8329,7 +8329,7 @@
 			"readBy": [
 				"hetzner"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": ""
@@ -8347,7 +8347,7 @@
 			"readBy": [
 				"hetzner"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": null
@@ -8365,7 +8365,7 @@
 			"readBy": [
 				"hetzner"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": true
@@ -8383,7 +8383,7 @@
 			"readBy": [
 				"hetzner"
 			],
-			"reachable": false,
+			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
 			"default": null
