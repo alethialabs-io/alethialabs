@@ -210,10 +210,13 @@ var docsTreeComparableLeaves = [][]string{
 	{"project", "env", "add"},       // nested two deep
 	{"project", "component", "add"}, // shares its final name with the line above
 	{"config", "set"},               // two positionals
-	{"classification", "show"},      // a REQUIRED positional — the bracket that must stay angled.
-	// Was `alerts delete` until this lane converted the governance groups to flags: the shape this
-	// canary watches for left that leaf, so the sample moved to one that still carries it.
-	// `classification show <kind> <id>` carries two.
+	{"classification", "assign"},    // a REQUIRED positional — the bracket that must stay angled.
+	// Was `alerts delete` until the governance conversion moved that group to flags, then
+	// `classification show` until #4454 gave IT a form and its two positionals became optional.
+	// The shape keeps leaving whichever leaf holds it, which is why this canary is checked by
+	// shape rather than by length. `classification assign <kind> <id> [dimension-key]
+	// [value-slug]` carries two required and two optional, and the required pair is required for
+	// a stated reason: a verb that WRITES has to know its target before it opens any form.
 	{"runner", "list"}, // none at all
 }
 

@@ -252,6 +252,8 @@ func govFormCallSites() []govFormLookup {
 		{"alethia alerts create", fieldKeyAlertEvent},
 		{"alethia alerts create", fieldKeyAlertChannel},
 		{"alethia alerts create", fieldKeyAlertSeverity},
+		{"alethia classification show", fieldKeyClassKind},
+		{"alethia classification show", fieldKeyClassID},
 		{"alethia classification assign", fieldKeyClassDimension},
 		{"alethia classification assign", fieldKeyClassValue},
 		{"alethia classification unassign", fieldKeyClassValue},
