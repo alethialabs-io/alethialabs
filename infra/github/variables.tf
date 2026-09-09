@@ -86,6 +86,10 @@ variable "required_status_checks" {
     "Release gate (canvas)",
     "Release gate (qa)",
     "Release gate (audit)",
+    # The one gate leg that ACTIVATES controls: it opens every destructive control the registry
+    # records, asserts the declared confirmation and presses Cancel (#4266). Required on main like
+    # its siblings and filtered out of dev/staging in main.tf, for the same reason they are.
+    "Release gate (audit-interaction)",
   ]
 }
 

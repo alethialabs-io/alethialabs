@@ -103,6 +103,7 @@ jobs:
             { project: "canvas",    args: "--project=canvas",    workers: 1, retries: 1, capabilities: "",        manifest: false, floor: 1 },
             { project: "qa",        args: "--project=qa",        workers: 3, retries: 1, capabilities: "stripe",  manifest: false, floor: 300 },
             { project: "audit",     args: "--project=audit",     workers: 1, retries: 1, capabilities: "",        manifest: true,  floor: 1 },
+            { project: "audit-interaction", args: "--project=audit-interaction", workers: 1, retries: 0, capabilities: "stripe", manifest: true, floor: 47 },
           ];
           const want = (process.argv[2] || "").split(",").map((s) => s.trim()).filter(Boolean);
           for (const w of want) {
