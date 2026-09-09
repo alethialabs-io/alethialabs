@@ -11,13 +11,23 @@
 //    the CLI resolved was undefined. #2663 imposed a total order; #3145 then made project names
 //    UNIQUE per org (`projects_org_id_project_name_key`, on (org_id, lower(project_name))).
 //
-//    THE ORDER IS STILL LOAD-BEARING, AND THIS FIXTURE IS WHY. The constraint is per-ORG; this
-//    resolver filters on `user_id` (the route: "Still scoped by user_id (community-correct;
-//    threaded to org in 4.5)"). So one person who belongs to two orgs can still legitimately own
-//    two projects of the same name, the resolver still sees both, and the ORDER BY is still the
-//    only thing deciding which they get. The fixture therefore moved from two projects in ONE org
-//    — which the database now refuses, and which is asserted below — to two projects in TWO orgs,
-//    owned by one user. Same defect, same guarantee, the shape the schema still permits.
+//    #4298 THEN THREADED THE ORG THROUGH, and that RETIRES the ordering question at this door —
+//    said plainly, because the paragraph this replaces asserted the opposite and a stale "still
+//    load-bearing" reads as coverage nobody has. `getCliConfig` now filters on `org_id`, so
+//    `projects_org_id_project_name_key` makes (org, name) unique and the `.limit(1)` single-row by
+//    construction. The ORDER BY is UNREACHABLE from here and this file no longer tests it.
+//
+//    What the fixture tests instead is STRICTLY STRONGER, and it is why the two projects were kept:
+//    one user, two orgs, one name. Before #4298 the resolver saw BOTH rows and a tie-break chose;
+//    now the org scope must choose, and the assertions below pin that each org gets ITS OWN project
+//    rather than whichever the order happened to favour. That is the tenancy boundary, not a
+//    preference — for a service token `actor.userId` is the MINTING profile, so the old `user_id`
+//    filter handed back a project (its cluster endpoint, DNS zone and cloud identity id) from an
+//    org the token was never pinned to.
+//
+//    The ORDER BY is still load-bearing in `lib/cli/resolve-project.ts`, whose `or()` spans id, slug
+//    and name and so can still match two DISTINCT rows inside one org. That door is not this file's
+//    subject and is not covered here.
 //
 // 2. `lib/queries/**` is excluded from the unit coverage scope under the claim that each file is
 //    "verified by the integration tier". For `lib/queries/cli-config.ts` that claim was FALSE — no
@@ -159,16 +169,29 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 		expect(await nameClash(SHARED_NAME.toUpperCase(), `${SHARED_NAME}-case`)).toBe(true);
 	});
 
-	it("resolves the OLDEST project, not an arbitrary one", async () => {
-		const cfg = await getCliConfig(getServiceDb(), {
-			userId: USER,
+	// #4298. One user, two orgs, one project name — and each org resolves to ITS OWN project. Before
+	// the org scope this pair was decided by the ORDER BY, so `ORG_NEWER` could not have been asked
+	// for at all: both calls returned OLDER.
+	it("resolves each org to ITS OWN project of the shared name", async () => {
+		const older = await getCliConfig(getServiceDb(), {
+			orgId: ORG_OLDER,
 			projectName: SHARED_NAME,
 		});
-		expect(cfg).not.toBeNull();
-		expect(cfg?.id).toBe(OLDER);
+		expect(older?.id).toBe(OLDER);
 		// The region is what a user would actually notice resolving to the wrong project: it is the
 		// field the CLI hands onward.
-		expect(cfg?.region).toBe("eu-central-1");
+		expect(older?.region).toBe("eu-central-1");
+
+		const newer = await getCliConfig(getServiceDb(), {
+			orgId: ORG_NEWER,
+			projectName: SHARED_NAME,
+		});
+		expect(newer?.id).toBe(NEWER);
+
+		// Stated as an inequality too: two calls that both returned the same row would satisfy the
+		// two assertions above only if the ids differ, and saying so is what makes a future change
+		// that collapses the scope fail HERE rather than somewhere downstream.
+		expect(older?.id).not.toBe(newer?.id);
 	});
 
 	it("returns the same project on repeated calls (no per-call variation)", async () => {
@@ -183,10 +206,15 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 		//
 		// This case earns its place for a narrower reason: it catches per-call VARIATION — a cache
 		// or memoisation between calls returning a different row on a later invocation.
+		//
+		// NARROWER STILL SINCE #4298. With the filter on `org_id` the unique constraint makes this
+		// query single-row, so ordering cannot vary the answer even in principle. Memoisation across
+		// calls is the only failure left that this loop can see, and it is kept for that alone —
+		// not as evidence the resolution order is covered, which here it is not.
 		const ids = new Set<string>();
 		for (let i = 0; i < 5; i += 1) {
 			const cfg = await getCliConfig(getServiceDb(), {
-				userId: USER,
+				orgId: ORG_OLDER,
 				projectName: SHARED_NAME,
 			});
 			if (cfg) ids.add(cfg.id);
@@ -196,7 +224,7 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 
 	it("still honours an explicit envId, and refuses one from another project", async () => {
 		const mine = await getCliConfig(getServiceDb(), {
-			userId: USER,
+			orgId: ORG_OLDER,
 			projectName: SHARED_NAME,
 			envId: ENV_OLDER,
 		});
@@ -206,16 +234,18 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 		// project, so this must miss rather than cross the boundary — asserted so a future
 		// refactor that "helpfully" widens the environment lookup is caught here.
 		const crossed = await getCliConfig(getServiceDb(), {
-			userId: USER,
+			orgId: ORG_OLDER,
 			projectName: SHARED_NAME,
 			envId: ENV_NEWER,
 		});
 		expect(crossed).toBeNull();
 	});
 
-	it("returns null for another user's project of the same name", async () => {
+	// The boundary from the outside: an org with no project of this name gets null, never a row
+	// belonging to the user's OTHER org. This is the assertion a service token depends on.
+	it("returns null for an org that has no project of that name", async () => {
 		const other = await getCliConfig(getServiceDb(), {
-			userId: randomUUID(),
+			orgId: randomUUID(),
 			projectName: SHARED_NAME,
 		});
 		expect(other).toBeNull();
@@ -250,7 +280,7 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 
 		// And the row is untouched — the failed statement rolled back, so the resolver still answers.
 		const cfg = await getCliConfig(getServiceDb(), {
-			userId: USER,
+			orgId: ORG_OLDER,
 			projectName: SHARED_NAME,
 		});
 		expect(cfg?.environment_stage).toBe("older-default");
