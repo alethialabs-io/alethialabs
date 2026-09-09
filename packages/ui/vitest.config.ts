@@ -60,6 +60,13 @@ export default defineConfig({
 				"src/provider-icon.tsx",
 				"src/copy-button.tsx",
 				"src/status-badge.tsx",
+				// Authored behaviour, not a vendored re-export: it drives base-ui's Menu from a
+				// VIRTUAL anchor because React Flow swallows the pane's `contextmenu` when
+				// `panOnDrag` includes button 2. `check-coverage-exclusions` is right that an
+				// include allowlist is an exclusion with the sign flipped — leaving a new file out
+				// of it silently drops it from the number, which is the same shape as a guard whose
+				// "nothing found" and "nothing wrong" branches are one branch.
+				"src/context-menu.tsx",
 			],
 			exclude: ["src/**/*.d.ts"],
 		},
