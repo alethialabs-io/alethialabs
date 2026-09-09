@@ -126,10 +126,10 @@ export function PoolCard({ pool, economics, canManage, onEdit, onToggle, onDelet
 					{showMenu && (
 						<DropdownMenu>
 							{/* The destructive-action registry reaches this control through
-							    `reach: [{ menu: "Pool actions" }]` (apps/console/destructive-actions.yaml,
-							    `runners.pool.delete`). The trigger is an icon-only button, so without
-							    this label the menu the registry names does not exist by any accessible
-							    name and neither a spec nor a screen reader can find it. */}
+							`reach: [{ menu: "Pool actions" }]` (apps/console/destructive-actions.yaml,
+							`runners.pool.delete`). The trigger is an icon-only button, so without this
+							label the menu the registry names does not exist by any accessible name, and
+							neither a spec nor a screen reader can find it. */}
 							<DropdownMenuTrigger
 								aria-label="Pool actions"
 								className="-mr-1 ml-0.5 flex size-6 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
