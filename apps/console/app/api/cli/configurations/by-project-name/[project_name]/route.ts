@@ -19,9 +19,10 @@ export async function GET(
 
 		const { project_name } = await params;
 
-		// Still scoped by user_id (community-correct; threaded to org in 4.5).
+		// Scoped by the ACTIVE ORG (#4298). `actor.userId` is the minting profile for a service
+		// token, so a user_id scope handed back a project from an org the pin excludes.
 		const configuration = await getCliConfig(getServiceDb(), {
-			userId: actor.userId,
+			orgId: actor.orgId,
 			projectName: project_name,
 			envId: new URL(req.url).searchParams.get("env") ?? undefined,
 		});

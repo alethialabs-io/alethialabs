@@ -166,14 +166,22 @@ function toCliConfig(
 }
 
 /**
- * Resolves one CLI user's project config by name — the TS replacement for
- * `queryProjectFull({ user_id, project_name })`. Env-aware: `envId` selects a specific environment;
- * absent, it falls back to the project's default env (the view's hardcoded behaviour). Returns null
- * when the project (or requested env) isn't found. Service path (getServiceDb), scoped by user_id.
+ * Resolves one project's CLI config by name, scoped to an ORG — the TS replacement for
+ * `queryProjectFull`. Env-aware: `envId` selects a specific environment; absent, it falls back to
+ * the project's default env (the view's hardcoded behaviour). Returns null when the project (or
+ * requested env) isn't found. Service path (getServiceDb), so `orgId` IS the tenancy boundary.
+ *
+ * SCOPED BY `orgId`, NOT `userId`, SINCE #4298 — the "remaining half" the ORDER BY note below
+ * describes. The old `user_id` filter meant a service token resolved a project belonging to its
+ * MINTING profile in an org the token was never pinned to, handing back that project's cluster
+ * endpoint, DNS zone and cloud identity id. It also made this door disagree with
+ * `resolveCliProject(orgId, …)`, the OTHER CLI front door, and with
+ * `app/api/cli/configurations/export/route.ts`, which already scoped by org. One boundary, three
+ * doors.
  */
 export async function getCliConfig(
 	db: Executor,
-	opts: { userId: string; projectName: string; envId?: string },
+	opts: { orgId: string; projectName: string; envId?: string },
 ): Promise<CliProjectConfig | null> {
 	// ORDER BY is load-bearing here, and #3145 changed WHY.
 	//
@@ -191,18 +199,20 @@ export async function getCliConfig(
 	// the OLDEST row's name — this expression's own tie-break — so every name that resolved to a
 	// project before the migration resolves to the same project after it.
 	//
-	// The order stays, and is no longer redundant, because THIS resolver filters on `user_id` and
-	// not `org_id` (the route records it: "Still scoped by user_id (community-correct; threaded to
-	// org in 4.5)"). A per-org unique does not make a per-USER lookup single-row: one person in two
-	// orgs can legitimately own two projects of the same name, and this is what decides which they
-	// get. Threading the org through is the remaining half, and it is a route-signature change in
-	// `apps/console/app/api/cli/**` — another lane's scope.
+	// The order stays, and #4298 changed its status again. While this resolver filtered on `user_id`
+	// the order was the whole defence for a per-USER lookup, because a per-org unique does not make
+	// one single-row: a person in two orgs can legitimately own two projects of the same name. Now
+	// that the filter IS `org_id`, `projects_org_id_project_name_key` makes the name+org pair unique
+	// and the LIMIT 1 single-row by construction. It is kept because the tie-break is shared with
+	// `resolveCliProject` and migration 0150, so all three agree on which row "first" means — and
+	// because an unordered LIMIT over a filter that is only unique BY CONSTRAINT is one migration
+	// away from being undefined again.
 	const [project] = await db
 		.select()
 		.from(projects)
 		.where(
 			and(
-				eq(projects.user_id, opts.userId),
+				eq(projects.org_id, opts.orgId),
 				// CASE-INSENSITIVE, matching `projects_org_id_project_name_key` — UNIQUE on
 				// (org_id, lower(project_name)) — and matching `resolveCliProject`, the OTHER CLI
 				// front door. `alethia project get` does not go through that one: it hits

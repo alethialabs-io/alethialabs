@@ -6,7 +6,10 @@ import { verifyCliToken } from "@/lib/cli/auth";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import type { Action, Resource } from "@/lib/authz/registry";
-import { ensureCliOrgAccess } from "@/lib/authz/guard";
+import {
+	assertMintingProfileStillMember,
+	ensureCliOrgAccess,
+} from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import type { CloudProvider } from "@/lib/cloud-providers/connections";
 import { NextResponse } from "next/server";
@@ -157,7 +160,11 @@ export async function resolveCliProvider(
 		// reporting it as a missing membership, so a database blip surfaces as a 500 and never as
 		// a silent refusal or a silent fallback.
 		const defaultScope = await getActiveScope(userId);
-		const denied = await ensureCliOrgAccess(defaultScope, userId, pinnedOrg);
+		// `assertMintingProfileStillMember`, not `ensureCliOrgAccess`, since #4298 split them. The
+		// question here is the one the paragraph above describes — is the MINTER still a member — and
+		// the credential-aware guard's token arm is now equality alone, which would refuse every
+		// token whose minter's default org is not the pin, i.e. the normal case.
+		const denied = await assertMintingProfileStillMember(defaultScope, pinnedOrg);
 		if (denied) {
 			return { userId: null, scope: null, provider: null, errorResponse: denied };
 		}
@@ -186,7 +193,9 @@ export async function resolveCliProvider(
 	if (!headerOrg) {
 		return { userId, scope: defaultScope, provider, errorResponse: null };
 	}
-	const denied = await ensureCliOrgAccess(defaultScope, userId, headerOrg);
+	// A human, so the session arm — `actor.orgId === orgId`, else a membership query. Identical to
+	// the behaviour before #4298; only the way the kind is named has changed.
+	const denied = await ensureCliOrgAccess(defaultScope, "session", headerOrg);
 	if (denied) {
 		return { userId: null, scope: null, provider: null, errorResponse: denied };
 	}
