@@ -307,6 +307,7 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 	// provider_config value would be re-injected verbatim and could drop the cluster_admins half.
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, azureRootReserved...)
 	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, azureRootReserved...)
+	mergeProviderConfig(tfvars, config.Network.ProviderConfig, azureRootReserved...)
 
 	return tfvars
 }
