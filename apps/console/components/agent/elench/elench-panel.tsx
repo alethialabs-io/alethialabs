@@ -5,12 +5,16 @@
 import { motion } from "motion/react";
 import { Maximize2, Plus, X } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
+import { SHELL_HEADER } from "@/components/shell/shell-metrics";
 import type { AgentThread } from "@/lib/db/schema";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { ElenchConversationSwitcher } from "./elench-conversation-switcher";
 
-/** Docked-panel width — the assistant drawer squeezes the workspace by exactly this much. */
-export const ELENCH_PANEL_W = 458;
+/**
+ * Docked-panel width — the assistant drawer squeezes the workspace by exactly this much. 392 is
+ * the workspace rail's width, so the two docks that can sit on the right edge are the same size.
+ */
+export const ELENCH_PANEL_W = 392;
 
 /** The faint grayscale dot-grid the panel content sits on. */
 const DOT_GRID: CSSProperties = {
@@ -55,9 +59,9 @@ export function ElenchPanel({
 				role="dialog"
 				aria-label="Elench assistant"
 				style={{ width: ELENCH_PANEL_W }}
-				className="flex h-full max-w-full flex-col border-l border-border bg-background shadow-[-8px_0_30px_rgba(0,0,0,0.06)]"
+				className="flex h-full max-w-full flex-col border-l border-border bg-background"
 			>
-				<header className="flex flex-none items-center gap-2 border-b border-border px-3.5 py-2.5">
+				<header className={`flex ${SHELL_HEADER} flex-none items-center gap-2 border-b border-border px-3.5`}>
 					<ElenchConversationSwitcher
 						isOrg={isOrg}
 						threads={threads}
