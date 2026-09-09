@@ -3,7 +3,10 @@
 
 import { authorizeCli } from "@/lib/authz/guard";
 import { signedJob } from "@/lib/db/signed-job";
-import { assertRunnerInOrg } from "@/lib/authz/runner-org";
+import {
+	assertRunnerInOrg,
+	personalRunnerArm,
+} from "@/lib/authz/runner-org";
 import { ForbiddenError } from "@/lib/authz/types";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getServiceDb } from "@/lib/db";
@@ -35,7 +38,7 @@ import { deployRunnerWire } from "@/lib/validations/cli-contract";
 export async function POST(req: Request) {
 	const auth = await authorizeCli(req, "deploy", { type: "runner" });
 	if ("error" in auth) return auth.error;
-	const { actor } = auth;
+	const { actor, credential } = auth;
 
 	try {
 		const body = await req.json();
@@ -56,7 +59,15 @@ export async function POST(req: Request) {
 		// missing runner — so we never disclose a runner in another org.
 		if (assigned_runner_id) {
 			try {
-				await assertRunnerInOrg(db, assigned_runner_id, actor.orgId, actor.userId);
+				// `personalRunnerArm` and not `actor.userId`: for a service token that id is the
+				// MINTER, and admitting their personal runner would let a pinned token hand an
+				// org job to an executor outside the pin (#4298).
+				await assertRunnerInOrg(
+					db,
+					assigned_runner_id,
+					actor.orgId,
+					personalRunnerArm(actor, credential),
+				);
 			} catch (e: unknown) {
 				if (e instanceof ForbiddenError) {
 					return NextResponse.json(
