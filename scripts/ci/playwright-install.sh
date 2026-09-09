@@ -73,22 +73,35 @@ is_transient_apt_failure() {
 
 # ── the run ─────────────────────────────────────────────────────────────────────────────────────
 
+# The restore state is FILE-SCOPED, not `local` to main, and that is the whole point (#4511).
+#
+# An EXIT trap runs after `main` has returned, so bash's dynamic scoping has already discarded
+# anything `local` to it. With `set -u` in force the trap then dies on `restore_needed: unbound
+# variable` — and because a trap's failure is the script's exit status, EVERY Playwright leg went
+# red immediately AFTER reporting `playwright-install: ok on attempt 1`. An install that succeeds
+# and then fails the job is worse than one that fails outright: the log's last useful line says it
+# worked.
+MOVED_SOURCES=()
+RESTORE_NEEDED=0
+
+# Restore on EVERY exit path, so a later step in the same job sees the image it expected.
+restore() {
+	[ "$RESTORE_NEEDED" = "1" ] || return 0
+	local src
+	for src in "${MOVED_SOURCES[@]}"; do sudo mv "$src.alethia-disabled" "$src" 2>/dev/null || true; done
+}
+
 main() {
-	local moved=() src restore_needed=0
+	local src
 	for src in "${UNNEEDED_SOURCES[@]}"; do
 		if [ -f "$src" ]; then
 			if sudo mv "$src" "$src.alethia-disabled" 2>/dev/null; then
-				moved+=("$src")
-				restore_needed=1
+				MOVED_SOURCES+=("$src")
+				RESTORE_NEEDED=1
 				echo "playwright-install: set aside $src (not needed for Chromium; #4499)"
 			fi
 		fi
 	done
-	# Restore on EVERY exit path, so a later step in the same job sees the image it expected.
-	restore() {
-		[ "$restore_needed" = "1" ] || return 0
-		for src in "${moved[@]}"; do sudo mv "$src.alethia-disabled" "$src" 2>/dev/null || true; done
-	}
 	trap restore EXIT
 
 	local log attempt=1 rc
@@ -163,6 +176,23 @@ FIX
 	printf '%s\n' "${UNNEEDED_SOURCES[@]}" | grep -q 'google-chrome.list' \
 		&& check "the source that failed on 2026-09-09 is in UNNEEDED_SOURCES" 1 \
 		|| check "the source that failed on 2026-09-09 is in UNNEEDED_SOURCES" 0
+
+	# THE CASE THIS SUITE DID NOT HAVE, AND THAT COST EVERY PLAYWRIGHT LEG (#4511).
+	#
+	# Every check above reads the CLASSIFIER — a pure function over a log file. Nothing ran the
+	# EXIT trap, so nothing noticed that its state was `local` to `main`: the trap fires after main
+	# returns, bash has already discarded those locals, and `set -u` turned that into
+	# `restore_needed: unbound variable`. A trap's failure is the script's exit status, so the leg
+	# died with `playwright-install: ok on attempt 1` as its last useful line.
+	#
+	# The subshell reproduces the trap's real conditions — `set -u` on, no function frame in scope.
+	# It fails before the fix and passes after, which is the only property that makes it a test
+	# rather than a restatement.
+	if ( set -u; restore ) >/dev/null 2>&1; then
+		check "restore runs under set -u with no function frame, as the EXIT trap does" 1
+	else
+		check "restore runs under set -u with no function frame, as the EXIT trap does" 0
+	fi
 
 	echo
 	echo "  ${pass} passed, ${fail} failed"
