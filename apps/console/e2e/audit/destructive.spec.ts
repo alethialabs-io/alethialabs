@@ -258,9 +258,17 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 				continue;
 			}
 			// menu / open / select all resolve to "activate the thing named, then wait for it".
+			//
+			// `option` is in the list because a rail row is not always a button: #4433 rebuilt the
+			// alerts channel and policy rails as `role="listbox"` of `role="option"`, precisely so a
+			// policy's rail row stops colliding by role with its "Used by" pill. A button-only
+			// opener would withhold every `select:` control on that route and blame the fixture.
+			const named = new RegExp(escapeRe(name), "i");
 			const opener = page
-				.getByRole("button", { name: new RegExp(escapeRe(name), "i") })
-				.or(page.getByLabel(new RegExp(escapeRe(name), "i")))
+				.getByRole("button", { name: named })
+				.or(page.getByRole("option", { name: named }))
+				.or(page.getByRole("menuitem", { name: named }))
+				.or(page.getByLabel(named))
 				.first();
 			await opener.waitFor({ state: "visible", timeout: 8_000 });
 			await opener.click();

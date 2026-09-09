@@ -142,6 +142,7 @@ export const HIDDEN_VERBS = new Map([
 	["useDisableAddon", "a hook wrapping the disable mutation; the call site is the hook, not the action"],
 	["discardStagedChanges", "discards every staged canvas edit — destructive, and named for the buffer"],
 	["upsertAgentContext", "the knowledge-doc delete rewrites the whole context; the delete is an upsert of a shorter list"],
+	["togglePolicy", "disabling an alert policy silences a class of alerts across every channel routed to it — found by a human reading the surface, not by this table (#4492)"],
 ]);
 
 /**

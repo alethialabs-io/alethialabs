@@ -345,13 +345,13 @@ controls:
     route: /[org]/~/alerts
     surface: apps/console/components/alerts/channels-panel.tsx
     mutation: deleteChannel
-    reach: [{ select: "a channel row" }]
+    reach: [{ select: "a channel row" }]  # role=option since #4433
     control: { role: button, name: "Delete channel" }
     confirm: confirm-dialog
     confirm_action: "Delete channel"
     dialog_title: "Delete channel \"<name>\"?"
     fixture: alert-channel
-    persona: owner
+    persona: team
     status: confirmed
     prod-qa: own-rows-only
 
@@ -359,13 +359,13 @@ controls:
     route: /[org]/~/alerts
     surface: apps/console/components/alerts/channels-panel.tsx
     mutation: setChannelEnabled
-    reach: [{ select: "a channel row" }]
+    reach: [{ select: "a channel row" }]  # role=option since #4433
     control: { role: switch, name: "Enabled" }
     confirm: confirm-dialog
     confirm_action: "Disable"
     dialog_title: "Disable this channel?"
     fixture: alert-channel
-    persona: owner
+    persona: team
     status: confirmed
     prod-qa: own-rows-only
 
@@ -373,17 +373,31 @@ controls:
     route: /[org]/~/alerts
     surface: apps/console/components/alerts/policies-panel.tsx
     mutation: deletePolicy
-    reach: [{ select: "a policy row" }]
+    reach: [{ select: "a policy row" }]  # role=option since #4433
     control: { role: button, name: "Delete policy" }
     confirm: confirm-dialog
     confirm_action: "Delete policy"
     dialog_title: "Delete policy \"<name>\"?"
     fixture: alert-policy
-    persona: owner
+    persona: team
     status: confirmed
     prod-qa: own-rows-only
 
   # ── settings ───────────────────────────────────────────────────────────────────────────────
+  - id: alerts.policy.disable
+    route: /[org]/~/alerts
+    surface: apps/console/components/alerts/policies-panel.tsx
+    mutation: togglePolicy
+    reach: [{ select: "a policy row" }]
+    control: { role: switch, name: "Enabled" }
+    confirm: none
+    fixture: alert-policy
+    persona: team
+    status: missing
+    issue: "#4492"
+    prod-qa: skip
+    reason: disabling a live policy silences a class of alerts across every channel routed to it
+
   - id: classification.dimension.delete
     route: /[org]/~/settings/classification
     surface: apps/console/components/classification/classification-manager.tsx
