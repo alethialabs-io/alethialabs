@@ -1026,6 +1026,15 @@ function main() {
 		}
 	}
 
+	// The registry, through THIS reader, for the live spec. `e2e/audit/manifest.ts` reads
+	// `console-routes.mjs` the same way — a subprocess rather than an import — because a spec and a
+	// repo script do not share a module system, and a second reader of one list is the disagreement
+	// the registry exists to prevent, one level down.
+	if (argv.includes("--registry-json")) {
+		console.log(JSON.stringify(registry, null, 2));
+		return 0;
+	}
+
 	const { sites, refusals, files } = collectSites(io);
 	if (argv.includes("--json")) {
 		console.log(JSON.stringify({ files, sites, controls: registry.controls.length, allow: registry.allow.length }, null, 2));
