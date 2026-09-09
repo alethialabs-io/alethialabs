@@ -32,9 +32,12 @@ import { verifyCliToken } from "@/lib/cli/auth";
 import { ForbiddenError, type Actor } from "@/lib/authz/types";
 
 import {
+	assertMintingProfileStillMember,
 	authorize,
 	authorizeCli,
+	ensureCliOrgAccess,
 	orgScopeFor,
+	userIdIsTheCaller,
 	authorizeQuiet,
 	authorizeUserId,
 	currentActor,
@@ -207,6 +210,128 @@ describe("orgScopeFor", () => {
 		expect(
 			orgScopeFor({ userId: "u-minter", orgId: "org-t" }, "service_token"),
 		).not.toContain("u-minter");
+	});
+});
+
+// #4298. `ensureCliOrgAccess` and `assertMintingProfileStillMember` were ONE function, and the merge
+// was the defect underneath the defect: the two callers ask different questions of the same
+// arguments. These describes pin both answers, and — the part that matters — pin that splitting them
+// did not delete the offboarding control.
+//
+// `dbLimit` is the mocked `isOrgMember` read: `[{ id: … }]` is "a member", `[]` is "not".
+// #4298. The three reads that scope on the caller's own `user_id` as well as their org — the org
+// list and the two agent-identity reads — ask this ONE question, and it is a named predicate rather
+// than `credential === "service_token"` at each site for the reason `orgScopeFor`'s own doc gives: a
+// ternary's else-arm is the WIDE one, so a third credential kind would inherit "this is a human" at
+// three call sites at once.
+describe("userIdIsTheCaller", () => {
+	it("is true for a session — the id IS the human asking", () => {
+		expect(userIdIsTheCaller("session")).toBe(true);
+	});
+
+	it("is false for a service token — the id is the minting profile", () => {
+		expect(userIdIsTheCaller("service_token")).toBe(false);
+	});
+
+	// The predicate has to SEPARATE the two, or every call site collapses to one arm and the reads
+	// are back to where #4154 found them.
+	it("separates the two credentials", () => {
+		expect(userIdIsTheCaller("session")).not.toBe(
+			userIdIsTheCaller("service_token"),
+		);
+	});
+});
+
+describe("ensureCliOrgAccess", () => {
+	it("admits a service token to the org it is pinned to", async () => {
+		expect(
+			await ensureCliOrgAccess(
+				{ userId: "u-minter", orgId: "org-t" },
+				"service_token",
+				"org-t",
+			),
+		).toBeNull();
+		expect(dbLimit).not.toHaveBeenCalled();
+	});
+
+	// THE DEFECT. A token pinned to org T, minted by someone who is also in org U, used to reach
+	// org U because the membership fall-through asked about the MINTER.
+	it("refuses a service token an org its minter belongs to but its pin does not name", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-minter-in-org-u" }]);
+		const denied = await ensureCliOrgAccess(
+			{ userId: "u-minter", orgId: "org-t" },
+			"service_token",
+			"org-u",
+		);
+		expect(denied?.status).toBe(403);
+	});
+
+	// …and it must not even ASK. A membership query whose answer is ignored is a query that the
+	// next edit will start trusting.
+	it("does not consult membership at all for a service token", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-minter-in-org-u" }]);
+		await ensureCliOrgAccess(
+			{ userId: "u-minter", orgId: "org-t" },
+			"service_token",
+			"org-u",
+		);
+		expect(dbLimit).not.toHaveBeenCalled();
+	});
+
+	it("admits a session to its own resolved org without a query", async () => {
+		expect(
+			await ensureCliOrgAccess(CLI_ACTOR, "session", "org-cli"),
+		).toBeNull();
+		expect(dbLimit).not.toHaveBeenCalled();
+	});
+
+	it("admits a session to another org it is a member of", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-1" }]);
+		expect(await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other")).toBeNull();
+		expect(dbLimit).toHaveBeenCalled();
+	});
+
+	it("refuses a session an org it is not a member of", async () => {
+		dbLimit.mockResolvedValue([]);
+		const denied = await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other");
+		expect(denied?.status).toBe(403);
+	});
+});
+
+describe("assertMintingProfileStillMember", () => {
+	// The offboarding case, and the whole reason this is a separate function: the token keeps
+	// working after its author leaves, because revoking tokens is not part of removing a person.
+	it("refuses a pinned org whose minting profile has been removed", async () => {
+		dbLimit.mockResolvedValue([]);
+		const denied = await assertMintingProfileStillMember(
+			{ userId: "u-departed", orgId: "org-their-remaining" },
+			"org-t",
+		);
+		expect(denied?.status).toBe(403);
+		expect(dbLimit).toHaveBeenCalled();
+	});
+
+	// THE REGRESSION THE SPLIT EXISTS TO AVOID. This is the normal, overwhelming case for a service
+	// token: still a member, but the default scope is some OTHER org. `ensureCliOrgAccess`'s token
+	// arm — equality alone — would 403 it, which would have broken every scripted `connector` call.
+	it("admits a still-member whose default scope is a different org", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-still" }]);
+		expect(
+			await assertMintingProfileStillMember(
+				{ userId: "u-minter", orgId: "org-default" },
+				"org-t",
+			),
+		).toBeNull();
+	});
+
+	it("takes the fast path when the default scope already IS the pin", async () => {
+		expect(
+			await assertMintingProfileStillMember(
+				{ userId: "u-minter", orgId: "org-t" },
+				"org-t",
+			),
+		).toBeNull();
+		expect(dbLimit).not.toHaveBeenCalled();
 	});
 });
 
