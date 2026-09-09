@@ -153,7 +153,7 @@
 				"Alerts — empty states, through EmptyState › an empty universe leaves both count pills reading 0": "passed",
 				"Alerts — empty states, through EmptyState › the ledger's empty state is the table's own message, not an EmptyState": "passed",
 				"Alerts — the guided add-a-channel sheet › opens with the transport gallery": "passed",
-				"Alerts — the guided add-a-channel sheet › picking a transport swaps the credential field": "failed",
+				"Alerts — the guided add-a-channel sheet › picking a transport swaps the credential field": "passed",
 				"Alerts — the guided add-a-channel sheet › email: a blank name is rejected inline": "passed",
 				"Alerts — the guided add-a-channel sheet › email: no recipients is rejected inline, before any server call": "passed",
 				"Alerts — the guided add-a-channel sheet › the recipients editor rejects a malformed address": "passed",
