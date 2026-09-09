@@ -1,11 +1,18 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# BYOC A3.1 — loud invariant assertions on the e2e-nightly RAM role. A `check` block fails the
-# plan/apply if any security property regresses, so a mis-scoped trust, a wildcarded subject, or an
-# admin-grade policy can never ship silently. Mirrors infra/aws-oidc/checks.tf; the properties are
-# the ones controls_alibaba.go (the verify gate) enforces on provisioning plans, asserted here on
-# the trust/policy this stack itself creates.
+# BYOC A3.1 — loud invariant assertions on the e2e-nightly RAM role: a mis-scoped trust, a
+# wildcarded subject, or an admin-grade policy is reported on every plan. Mirrors
+# infra/aws-oidc/checks.tf; the properties are the ones controls_alibaba.go (the verify gate)
+# enforces on provisioning plans, asserted here on the trust/policy this stack itself creates.
+#
+# A `check` block WARNS; it does not fail the plan or the apply — `tofu plan` still exits 0 with the
+# assertion's message printed above it. So these are a LOUD REPORT, not a gate: they are how a
+# regression announces itself to somebody reading the plan, and they cannot stop one being applied.
+# `infra/status/main.tf` and the two chart-template checks say the same thing; this header used to
+# claim the opposite, which mattered because a reader concluded a wildcarded subject was UNAPPLIABLE
+# (#4394). If a property here must be un-appliable rather than merely noisy, it needs a real
+# mechanism — a `precondition` on the resource, or a plan-JSON assertion in CI.
 
 # ── The OIDC subject is EXACT and non-wildcarded (ALI-OIDC-001 shape) ─────────
 check "e2e_subject_exact_non_wildcard" {
