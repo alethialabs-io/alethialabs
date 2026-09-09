@@ -1,5 +1,92 @@
 # Changelog
 
+## [0.6.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.5.0...runner-v0.6.0) (2026-08-29)
+
+
+### Features
+
+* **addons:** vault initialises and unseals; velero installs a plugin and reaches any S3-compatible store ([#3154](https://github.com/alethialabs-io/alethialabs/issues/3154)) ([9fc2c20](https://github.com/alethialabs-io/alethialabs/commit/9fc2c2050a5411850e9b79d65eeb19214d5a3df5)), closes [#2717](https://github.com/alethialabs-io/alethialabs/issues/2717)
+
+
+### Bug Fixes
+
+* **e2e:** the ARN reached the product one level down, and the reader only ever looked at the top ([#3042](https://github.com/alethialabs-io/alethialabs/issues/3042)) ([#3132](https://github.com/alethialabs-io/alethialabs/issues/3132)) ([86f11d8](https://github.com/alethialabs-io/alethialabs/commit/86f11d8e6032b58e0fdc26792698ff4ee815f1e0))
+
+## [0.5.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.4.0...runner-v0.5.0) (2026-08-25)
+
+
+### Features
+
+* **hetzner:** carry the secret kind as a platform-operated in-cluste… ([67ef9bf](https://github.com/alethialabs-io/alethialabs/commit/67ef9bf09c718f4fb8d1c48324c5de3fe2d1f140))
+* **hetzner:** carry the secret kind as a platform-operated in-cluster Vault ([#2444](https://github.com/alethialabs-io/alethialabs/issues/2444)) ([7952b07](https://github.com/alethialabs-io/alethialabs/commit/7952b0767afe892504ae7a8b90abd800593ad3a0)), closes [#2432](https://github.com/alethialabs-io/alethialabs/issues/2432)
+* **hetzner:** give the in-cluster Harbor pull credentials, and open the registry kind ([#2437](https://github.com/alethialabs-io/alethialabs/issues/2437)) ([d21679c](https://github.com/alethialabs-io/alethialabs/commit/d21679c7c3e27624001df56916bd7ee94d8fa354))
+
+## [0.4.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.3.0...runner-v0.4.0) (2026-08-12)
+
+
+### Features
+
+* **ci:** arm the Go coverage ratchet, and revive both badges that have been dead since July ([#2001](https://github.com/alethialabs-io/alethialabs/issues/2001)) ([fa093c2](https://github.com/alethialabs-io/alethialabs/commit/fa093c2436f685b9ffa6db387130ac459de248e9))
+
+
+### Bug Fixes
+
+* **agent:** bound the ACR token exchange with its own http client ([#2203](https://github.com/alethialabs-io/alethialabs/issues/2203)) ([989e3da](https://github.com/alethialabs-io/alethialabs/commit/989e3da373c46ec60ed801cf9fadba4dd563e1c7)), closes [#2037](https://github.com/alethialabs-io/alethialabs/issues/2037)
+* **agent:** derive the build Job name from the renderer instead of re-deriving it ([#2194](https://github.com/alethialabs-io/alethialabs/issues/2194)) ([f1f836a](https://github.com/alethialabs-io/alethialabs/commit/f1f836a8eadf4b09b5a767baea3d8432cb1e454d)), closes [#2032](https://github.com/alethialabs-io/alethialabs/issues/2032)
+* **agent:** send the db-authproxy mysql error packet with sequence id 2 ([#2208](https://github.com/alethialabs-io/alethialabs/issues/2208)) ([fd299a8](https://github.com/alethialabs-io/alethialabs/commit/fd299a8e4125f37302af337d5021b4f5780ae63c)), closes [#2043](https://github.com/alethialabs-io/alethialabs/issues/2043)
+* **agent:** write the tofu plan artifact with utils.WriteSecretFile instead of a world-readable 0644 file ([#2209](https://github.com/alethialabs-io/alethialabs/issues/2209)) ([84e5ecb](https://github.com/alethialabs-io/alethialabs/commit/84e5ecb3fc81b3b9d99c4fbb5ac4b273a9cdfe9c)), closes [#2015](https://github.com/alethialabs-io/alethialabs/issues/2015)
+* **caches:** carry the allowed-CIDR list from the canvas to the deploy ([#2155](https://github.com/alethialabs-io/alethialabs/issues/2155)) ([f62cfe2](https://github.com/alethialabs-io/alethialabs/commit/f62cfe2890fd12ed91b4042c983d916dc39840f3))
+* **console:** pick the component lists explicitly, and give the subtree a CI detector before enforcing ([#1980](https://github.com/alethialabs-io/alethialabs/issues/1980)) ([a8b29de](https://github.com/alethialabs-io/alethialabs/commit/a8b29de04fe025895f1b5945727c213eca984019))
+* **nosql:** carry a global table's replica regions from the canvas to the deploy ([#2175](https://github.com/alethialabs-io/alethialabs/issues/2175)) ([0b548f1](https://github.com/alethialabs-io/alethialabs/commit/0b548f1c5a9f7a5ffbe3c86816e4e7a1ddc84c24)), closes [#1982](https://github.com/alethialabs-io/alethialabs/issues/1982)
+* **obs:** gate each OTLP signal on its own endpoint instead of OR-ing all three ([#2226](https://github.com/alethialabs-io/alethialabs/issues/2226)) ([1338b28](https://github.com/alethialabs-io/alethialabs/commit/1338b2884aee359c47f405bbd6310c48eca9f75e))
+* **provisioner:** route a namespace-placement teardown away from the full-cluster tofu destroy ([#2162](https://github.com/alethialabs-io/alethialabs/issues/2162)) ([66a556d](https://github.com/alethialabs-io/alethialabs/commit/66a556dca4e0b091e298a829d4b3a4fc26923b80))
+* **runner:** AKS token minting worked only for workload identity ([#1728](https://github.com/alethialabs-io/alethialabs/issues/1728)) ([117680b](https://github.com/alethialabs-io/alethialabs/commit/117680b7ac12de2ad386935a915485b607777eb3))
+* **runner:** delete two vacuous deploy-validation tests and give the safety poll a test seam ([#2227](https://github.com/alethialabs-io/alethialabs/issues/2227)) ([62c4dee](https://github.com/alethialabs-io/alethialabs/commit/62c4dee8d174c59cfccc4c690f8107df71ce8690))
+* **runner:** derive the runner's own image ref instead of asking an operator for it ([#1795](https://github.com/alethialabs-io/alethialabs/issues/1795)) ([1cddd19](https://github.com/alethialabs-io/alethialabs/commit/1cddd19aa6a1edcc1b96d4fc3bee13c7308acda4)), closes [#1787](https://github.com/alethialabs-io/alethialabs/issues/1787)
+* **runner:** fail closed on a config_snapshot key the contract does not model, and stop the DB-row spread that feeds it ([#1973](https://github.com/alethialabs-io/alethialabs/issues/1973)) ([44bbcf6](https://github.com/alethialabs-io/alethialabs/commit/44bbcf6452cf14e9dd7b6583b37f720116c10c2a))
+* **sandbox:** make Passthrough refuse a NoEgress spec instead of silently running it ([#2163](https://github.com/alethialabs-io/alethialabs/issues/2163)) ([f11a96a](https://github.com/alethialabs-io/alethialabs/commit/f11a96a904f8ff6a5f591693ca4473c045d7ce59)), closes [#2042](https://github.com/alethialabs-io/alethialabs/issues/2042)
+
+## [0.3.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.2.0...runner-v0.3.0) (2026-07-30)
+
+
+### Features
+
+* **compat:** apply-time COMPAT-001 fail-closed gate + compat_result metadata ([#1358](https://github.com/alethialabs-io/alethialabs/issues/1358)) ([81043d9](https://github.com/alethialabs-io/alethialabs/commit/81043d98385dbed6ac26430ce21769b23ccaee98)), closes [#1215](https://github.com/alethialabs-io/alethialabs/issues/1215)
+* **compat:** formalize the 7 version couplings against matrix.json ([#1214](https://github.com/alethialabs-io/alethialabs/issues/1214)) ([#1252](https://github.com/alethialabs-io/alethialabs/issues/1252)) ([fd4b5e0](https://github.com/alethialabs-io/alethialabs/commit/fd4b5e006d6cf575d7ab029e433d5e3b8ba8e7e2))
+* **connectors:** helm_registry keyless OCI ECR — in-cluster token refresh ([#1185](https://github.com/alethialabs-io/alethialabs/issues/1185)) ([#1303](https://github.com/alethialabs-io/alethialabs/issues/1303)) ([409e2b8](https://github.com/alethialabs-io/alethialabs/commit/409e2b8ab472b14a624ab97dc392f1cf868e160e))
+* **fabric:** activate azure namespace placement — federated-identity per-namespace provisioner ([#1408](https://github.com/alethialabs-io/alethialabs/issues/1408)) ([7c56870](https://github.com/alethialabs-io/alethialabs/commit/7c5687024a95b8ee4d8bbaaaa67e52d594b48737))
+* **fabric:** activate gcp namespace placement — Workload-Identity per-namespace provisioner ([#1405](https://github.com/alethialabs-io/alethialabs/issues/1405)) ([e43bd0b](https://github.com/alethialabs-io/alethialabs/commit/e43bd0b3638f35c0a781653477242fe9086b888f))
+* **fabric:** activate vcluster placement path + delivery renderer ([#1307](https://github.com/alethialabs-io/alethialabs/issues/1307)) ([a7de7e5](https://github.com/alethialabs-io/alethialabs/commit/a7de7e504b62cc780241e287a292c4f219588aea)), closes [#1231](https://github.com/alethialabs-io/alethialabs/issues/1231)
+* **fabric:** namespace-placement keyless-mint dispatch seam ([#1013](https://github.com/alethialabs-io/alethialabs/issues/1013)) ([#1138](https://github.com/alethialabs-io/alethialabs/issues/1138)) ([5b870e8](https://github.com/alethialabs-io/alethialabs/commit/5b870e8ea90ea8f4e7b29250c3f3508a967f89bd))
+* **fabric:** per-namespace cloud identity (AWS IRSA) for namespace placement (Closes [#957](https://github.com/alethialabs-io/alethialabs/issues/957)) ([#1029](https://github.com/alethialabs-io/alethialabs/issues/1029)) ([3cc73a7](https://github.com/alethialabs-io/alethialabs/commit/3cc73a7a62b2e5d1840ae08da9d46e664caa4635))
+* **fabric:** runner-injected kube-conn seam + activate gcp & azure vcluster placement ([#1392](https://github.com/alethialabs-io/alethialabs/issues/1392)) ([03ca029](https://github.com/alethialabs-io/alethialabs/commit/03ca0290064c674a249cd1428cf1964197a14bb2))
+* **fabric:** vcluster provisioner seam — helm-create + exportKubeConfig ([#960](https://github.com/alethialabs-io/alethialabs/issues/960)) ([#1239](https://github.com/alethialabs-io/alethialabs/issues/1239)) ([c16dc75](https://github.com/alethialabs-io/alethialabs/commit/c16dc75e16974fd892b202c5d9bc6cec8f590633))
+* **keyless:** couple the three alethia_app literals so they cannot drift silently ([#1552](https://github.com/alethialabs-io/alethialabs/issues/1552)) ([#1554](https://github.com/alethialabs-io/alethialabs/issues/1554)) ([5d85383](https://github.com/alethialabs-io/alethialabs/commit/5d853837c50f671ea3ae71f9a458b5fdd2c6b647))
+* **placement:** activate alibaba placement (both tiers — keyless RRSA-signed ACK + per-namespace RAM identity) ([#1431](https://github.com/alethialabs-io/alethialabs/issues/1431)) ([e3ebe7e](https://github.com/alethialabs-io/alethialabs/commit/e3ebe7e643fdf673f0fbd5f7b60f31b81255849b))
+* **placement:** activate hetzner-talos placement tier (Talos-API kubeconfig from persisted talosconfig) ([#1433](https://github.com/alethialabs-io/alethialabs/issues/1433)) ([701eba9](https://github.com/alethialabs-io/alethialabs/commit/701eba9eca0aebb7dda4b16fc1a07548cd656a4d))
+* **runner:** `registry-token` cross-account keyless registry refresher (B2/PR B) (Part of [#925](https://github.com/alethialabs-io/alethialabs/issues/925)) ([#1036](https://github.com/alethialabs-io/alethialabs/issues/1036)) ([fb77a43](https://github.com/alethialabs-io/alethialabs/commit/fb77a43e95c30d477342815a2bd65ee8dfc8c8dc))
+* **runner:** alethia db-authproxy — in-process token mint + TLS upstream + wire splice (pg & mysql) ([#1521](https://github.com/alethialabs-io/alethialabs/issues/1521)) ([36bbad2](https://github.com/alethialabs-io/alethialabs/commit/36bbad24c6a2233a2237a59eb48ba91f9e3430fa))
+* **runner:** azure-mysql keyless bootstrap SQL dialect + AAD token scope ([#1456](https://github.com/alethialabs-io/alethialabs/issues/1456)) ([1f25368](https://github.com/alethialabs-io/alethialabs/commit/1f25368b7efe66141f1604ef3151b631745a3127))
+* **runner:** keyless MySQL bootstrap SQL — aws AWSAuthenticationPlugin + gcp IAM grants ([#1506](https://github.com/alethialabs-io/alethialabs/issues/1506)) ([#1541](https://github.com/alethialabs-io/alethialabs/issues/1541)) ([f1f302d](https://github.com/alethialabs-io/alethialabs/commit/f1f302db83765bb900912f14589057ead44e94ce))
+* **runner:** scan BYO charts pulled from an OCI registry ([#1300](https://github.com/alethialabs-io/alethialabs/issues/1300)) ([#1313](https://github.com/alethialabs-io/alethialabs/issues/1313)) ([e18d171](https://github.com/alethialabs-io/alethialabs/commit/e18d171088f0792fc1bb4fc7a65713acc48eb6d4))
+
+
+### Bug Fixes
+
+* **core,runner:** make git clone/pull cancellable via context ([#987](https://github.com/alethialabs-io/alethialabs/issues/987)) ([#1025](https://github.com/alethialabs-io/alethialabs/issues/1025)) ([efc55fe](https://github.com/alethialabs-io/alethialabs/commit/efc55fe94aae926d15c6389dc5af73c33d6ee543))
+* **e2e:** pin the project templates' providers so the nightly stops resolving live ([#1573](https://github.com/alethialabs-io/alethialabs/issues/1573)) ([6586eb5](https://github.com/alethialabs-io/alethialabs/commit/6586eb5a232ae493a4afab748f979071df4c125d))
+* **infracost:** checksum-verify, timeout, and config-driven version ([#983](https://github.com/alethialabs-io/alethialabs/issues/983)) ([3eca757](https://github.com/alethialabs-io/alethialabs/commit/3eca7570bef8478b977276db57e7959edcbbc968)), closes [#946](https://github.com/alethialabs-io/alethialabs/issues/946) [#950](https://github.com/alethialabs-io/alethialabs/issues/950)
+* **runner,console:** stop persisting live runner_token at rest; re-mint on update ([#945](https://github.com/alethialabs-io/alethialabs/issues/945)) ([#1014](https://github.com/alethialabs-io/alethialabs/issues/1014)) ([8d9fcb0](https://github.com/alethialabs-io/alethialabs/commit/8d9fcb04be5d886e59ce0ec10fa8b0f2add4edb4))
+* **runner:** ActivateTokenCloud restores a pre-existing token on cleanup ([#988](https://github.com/alethialabs-io/alethialabs/issues/988)) ([#1020](https://github.com/alethialabs-io/alethialabs/issues/1020)) ([f7cb0a7](https://github.com/alethialabs-io/alethialabs/commit/f7cb0a78cdd11829309ae8af984440574641241b))
+* **runner:** cross-compile the runner image for its target arch (multi-arch build bug) ([#1052](https://github.com/alethialabs-io/alethialabs/issues/1052)) ([17ab6d9](https://github.com/alethialabs-io/alethialabs/commit/17ab6d901481942b8849780a89e03adf80896962)), closes [#1050](https://github.com/alethialabs-io/alethialabs/issues/1050)
+* **runner:** derive CloudAccountID from ambient env in the self-operator path ([#1190](https://github.com/alethialabs-io/alethialabs/issues/1190)) ([d5791ef](https://github.com/alethialabs-io/alethialabs/commit/d5791ef9f877d3ee7141f5fe1c60f8378487b4a1))
+* **runner:** fail the audit job when the verify verdict can't persist ([#991](https://github.com/alethialabs-io/alethialabs/issues/991)) ([cd2950c](https://github.com/alethialabs-io/alethialabs/commit/cd2950c7bf1a4a25de936b7e2d6d6a493495620d)), closes [#986](https://github.com/alethialabs-io/alethialabs/issues/986)
+* **runner:** nil-guard resolveAccountID ([#989](https://github.com/alethialabs-io/alethialabs/issues/989)) ([#1018](https://github.com/alethialabs-io/alethialabs/issues/1018)) ([d052776](https://github.com/alethialabs-io/alethialabs/commit/d05277650dca237a1e421e3c95e991e420750016))
+* **runner:** set X-Amz-Expires on the EKS presigned token ([#1040](https://github.com/alethialabs-io/alethialabs/issues/1040)) ([#1209](https://github.com/alethialabs-io/alethialabs/issues/1209)) ([85ccd39](https://github.com/alethialabs-io/alethialabs/commit/85ccd39dfe94557bb745d9b7963d0a61f5b7c556))
+* **runner:** single config-driven tofu version + panic-safe id truncation ([#964](https://github.com/alethialabs-io/alethialabs/issues/964)) ([977396c](https://github.com/alethialabs-io/alethialabs/commit/977396ce5f00d0b51e0e136fe9a7477b2890f3bf)), closes [#947](https://github.com/alethialabs-io/alethialabs/issues/947) [#949](https://github.com/alethialabs-io/alethialabs/issues/949)
+* **runner:** StreamWake reuses the configured transport + gets an idle deadline ([#953](https://github.com/alethialabs-io/alethialabs/issues/953)) ([#1024](https://github.com/alethialabs-io/alethialabs/issues/1024)) ([d29cee5](https://github.com/alethialabs-io/alethialabs/commit/d29cee50212a71f971ddd3beb47ccf1cf6ac4ad4))
+* **security:** write secret-bearing files owner-only (0600) ([#961](https://github.com/alethialabs-io/alethialabs/issues/961)) ([e684a6a](https://github.com/alethialabs-io/alethialabs/commit/e684a6a0f034c3c84abfdbc371d773333e860a12))
+
 ## [0.2.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.1.0...runner-v0.2.0) (2026-07-19)
 
 
