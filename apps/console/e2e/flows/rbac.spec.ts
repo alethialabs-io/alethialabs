@@ -454,7 +454,7 @@ test.describe("RBAC — General settings", () => {
 		await expect(owner.page.getByRole("heading", { name: "Danger zone" })).toBeVisible({
 			timeout: 30_000,
 		});
-		await owner.page.getByRole("button", { name: /^Delete$/ }).click();
+		await owner.page.getByRole("button", { name: /^Delete organization$/ }).click();
 		const dialog = owner.page.getByRole("alertdialog");
 		await expect(dialog.getByText("Delete this organization?")).toBeVisible();
 		// Abort — never confirm; deleting the persona org would break every sibling spec.
