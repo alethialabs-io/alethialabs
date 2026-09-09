@@ -17,7 +17,10 @@ import {
 import { orgRenderToolPart } from "@/components/agent/render-tool-parts/org-tool-parts";
 import { projectRenderToolPart } from "@/components/agent/render-tool-parts/project-tool-parts";
 import { useAgentChat } from "@/components/agent/use-agent-chat";
-import { snapshotCanvas } from "@/components/project-assistant/use-project-assistant";
+import {
+	snapshotCanvas,
+	snapshotView,
+} from "@/components/project-assistant/use-project-assistant";
 import { track } from "@/lib/analytics/track";
 import type { Mention } from "@/lib/ai/mentions";
 import type { AgentThread } from "@/lib/db/schema";
@@ -161,12 +164,25 @@ export function ElenchConversation({
 							cellTarget: takePendingCellTarget(),
 						};
 					}
-				: () => ({
-						projectId,
-						threadId: useElenchStore.getState().threadId,
-						canvas: snapshotCanvas(),
-						mentions: useElenchStore.getState().pendingMentions,
-					}),
+				: () => {
+						const s = useElenchStore.getState();
+						return {
+							projectId,
+							threadId: s.threadId,
+							canvas: snapshotCanvas(),
+							mentions: s.pendingMentions,
+							// Read FRESH from the store, never from the `ctx` this factory closed
+							// over: `prepareBody` is memoized on the project id, so a `syncEnvironment`
+							// from the topbar switcher would otherwise keep sending the environment
+							// the panel was opened on for the rest of the conversation.
+							environmentId:
+								s.ctx.kind === "project" ? s.ctx.environmentId : null,
+							// Where the question was asked from — the route, its surface, and the
+							// card on the workspace rail.
+							view: snapshotView(),
+							deepReasoning: s.deepReasoning,
+						};
+					},
 		[isOrg, projectId],
 	);
 

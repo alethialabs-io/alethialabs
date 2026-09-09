@@ -85,17 +85,41 @@ function shellHeads(root: HTMLElement): Element[] {
 }
 
 /**
- * Every class in `root` that types a header-sized pixel height of its own (`h-[53px]`, `h-[56px]`).
- * Small literals are left alone on purpose: the nav rows size their chevrons at `h-[15px]`, and an
- * icon is not a header. Anything at 40px or more inside the shell chrome is a head re-typing the
- * number the token exists to own.
+ * Every class in `root` that types a header-sized height of its own.
+ *
+ * The first version matched `/^h-\[(\d+)px\]$/`, integer pixels only — and the regression this
+ * file's own header names is `3.5rem`, which it could not see. `h-14`, `min-h-[53px]` and
+ * `sm:h-[56px]` were all green too, so the matcher was blind to four of the five ways the number
+ * comes back, including the one that actually happened.
+ *
+ * It reads the same length units the shared-surface guard does (`px|rem|em|pt|ch|%`), the
+ * `min-h`/`max-h` spellings, a leading variant prefix, and Tailwind's own `h-<n>` scale from 10 up
+ * (`h-10` is 40px). Small literals stay exempt: the nav rows size their chevrons at `h-[15px]`, and
+ * an icon is not a header. The threshold is 40px, in whatever unit — 2.5rem and 40px are the same
+ * claim, so the matcher converts rather than treating one as unmatched.
  */
 function literalHeights(root: HTMLElement): string[] {
+	const PER_UNIT: Record<string, number> = { px: 1, pt: 96 / 72, rem: 16, em: 16, ch: 8 };
 	return Array.from(root.querySelectorAll("*"))
+		// A BOTTOM-docked row is not a head. The sidebar's profile footer and the rail's bottom
+		// action both stand 56px tall with a `border-t`, and that height is their own — this file
+		// measures the HEADER seam, the line the topbar, the sidebar heads and the Elench panel
+		// draw together. Broadening the matcher to catch `h-14` surfaced them immediately, which is
+		// the matcher working: they were always there and always invisible to it.
+		.filter((el) => !el.classList.contains("border-t"))
 		.flatMap((el) => Array.from(el.classList))
 		.filter((cls) => {
-			const px = /^h-\[(\d+)px\]$/.exec(cls);
-			return px !== null && Number(px[1]) >= 40;
+			// Strip any variant prefixes (`sm:`, `dark:`, `group-hover:`) — a height behind a
+			// breakpoint is the same re-typed number, just harder to notice.
+			const bare = cls.slice(cls.lastIndexOf(":") + 1);
+
+			const arbitrary = /^(?:min-|max-)?h-\[(\d*\.?\d+)(px|rem|em|pt|ch)\]$/.exec(bare);
+			if (arbitrary) {
+				return Number(arbitrary[1]) * (PER_UNIT[arbitrary[2]] ?? 1) >= 40;
+			}
+			// Tailwind's scale: `h-14` is 3.5rem is 56px. 0.25rem per step, so 10 is the floor.
+			const scale = /^(?:min-|max-)?h-(\d+)$/.exec(bare);
+			return scale !== null && Number(scale[1]) * 4 >= 40;
 		});
 }
 
