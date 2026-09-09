@@ -13,7 +13,14 @@ Synced (from `alethialabs-io/skills`): `grilling`, `grill-me`, `research`, `hand
 attribution).
 
 App-only (not from the source repo, edit here): `vercel-microfrontends`, `dev`, `db-pipeline`,
-`foundry`, `decompose`.
+`foundry`, `decompose`, `console-prod-qa`.
+
+`console-prod-qa` is app-only for the same reason `dev` is — it names this repo's production host,
+its route manifest and its destructive-action registry — and it is the one skill here that is
+`disable-model-invocation: true` **because it mutates production**, not merely because it is
+long-running. A session reasoning about QA must not reach it; the maintainer names it. Its
+`allowlist.yaml` ships with empty digests on purpose, so an unfilled checkout refuses the run
+rather than aiming it at whatever account happens to be signed in.
 
 `dev` is app-only on purpose: it describes *this* repo's sandbox box and `pnpm env:*`
 commands, which mean nothing in another codebase. `sync-skills.sh` never prunes skills
