@@ -48,23 +48,31 @@ test.describe("Runners — the byoRunners gate is deployment-mode scoped", () =>
 	});
 
 	test("a runner in another org never appears in this org's grid", async ({ owner, team }) => {
-		// The tenancy assertion the entitlement tests were standing in for. Seeded into the HOBBY
-		// persona's org; the runner list is read through RLS-scoped queries, so the Pro org must not
-		// see it. Both halves are asserted — a denial only counts where somebody else DOES see the
-		// row, otherwise an empty grid passes this vacuously (flows/_persona-integrity.spec.ts).
+		// The tenancy assertion the entitlement tests were standing in for. Both halves are
+		// asserted — a denial only counts where somebody else DOES see the row, otherwise an empty
+		// grid passes this vacuously (flows/_persona-integrity.spec.ts).
+		//
+		// SEEDED INTO THE *TEAM* ORG, NEVER THE HOBBY ONE, and the direction is load-bearing. The
+		// sidebar's Runners entry is gated on `orgHasSelfRunners(orgId)` ([org]/layout.tsx), so a
+		// self runner in an org makes that nav link APPEAR. Three navigation-shell tests are
+		// recorded `failed` in gate-baseline.json precisely because the Hobby org has none; seeding
+		// one there — even inside a try/finally — opens a window in which those three can pass, and
+		// the ratchet is shrink-only, so it would fail the whole leg naming a file this lane does
+		// not own and cannot re-baseline. Every other runners spec already seeds into the team org,
+		// so this direction adds no window that was not already open.
 		const name = `e2e-tenancy-${Date.now()}`;
-		await seedRunner({ userId: owner.userId!, orgId: owner.orgId! }, { name });
+		await seedRunner({ userId: team.userId!, orgId: team.orgId! }, { name });
 		try {
-			await owner.page.goto(RUNNERS_PATH(owner.orgSlug));
-			await expect(cardFor(owner.page, name)).toBeVisible({ timeout: 15_000 });
-
 			await team.page.goto(RUNNERS_PATH(team.orgSlug));
-			await expect(team.page.getByRole("button", { name: "Add runner" }).first()).toBeVisible({
+			await expect(cardFor(team.page, name)).toBeVisible({ timeout: 15_000 });
+
+			await owner.page.goto(RUNNERS_PATH(owner.orgSlug));
+			await expect(owner.page.getByRole("button", { name: "Add runner" }).first()).toBeVisible({
 				timeout: 15_000,
 			});
-			await expect(cardFor(team.page, name)).toHaveCount(0);
+			await expect(cardFor(owner.page, name)).toHaveCount(0);
 		} finally {
-			await purgeE2ERunners(owner.userId!);
+			await purgeE2ERunners(team.userId!);
 		}
 	});
 });
