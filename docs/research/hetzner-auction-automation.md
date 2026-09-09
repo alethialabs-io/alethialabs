@@ -497,11 +497,111 @@ saving at ~0 engineering. Auction metal is the *last* 2x, bought with a whole ne
 - **I did not verify Talos's `metal` platform against a Hetzner dedicated NIC layout.** Sidero's Hetzner page
   covers Cloud only; the bare-metal path is documented by third-party tooling, which I did not read in depth
   because it does not change the "new carriage" conclusion.
-- **The Hetzner Cloud `cpx11/21/31` types priced in `apps/console/lib/fleet/costs.ts:9-22` have no EU price in
-  Hetzner's current `cloud_data.json`** (only the newer `cpx12…62` generation does). That is a possible stale
-  cost model in the fleet COGS view — out of scope here, but worth a separate look.
+- ~~**The Hetzner Cloud `cpx11/21/31` types priced in `apps/console/lib/fleet/costs.ts:9-22` have no EU price
+  in Hetzner's current `cloud_data.json`**~~ — **SETTLED, and the suspicion was right for the wrong reason.**
+  They *do* have EU prices; `cloud_data.json` is a marketing comparison file and is not the price list. The
+  API has them, and §10 below prices every one against it. The cost model IS stale, by 6–68%. See §10.2.
 
 ---
+
+---
+
+## 10. Holding CCX/CPX continuously — what #4359 asked for, measured
+
+§8 recommends this and the maintainer ruled for it on 2026-09-08. #4359 requires four measurements
+before any `fleet_pools` tuning number is chosen. **Two are settled below from first-party data; two
+are not reachable from here and are named as such rather than estimated.** No tuning number is
+proposed, because choosing one without the duty cycle is the thing §2.7 says decides the question.
+
+### 10.1 What the fleet actually runs
+
+Not CCX. `apps/console/lib/fleet/hcloud.ts:113` sets `DEFAULT_SERVER_TYPES = ["cax21", "cpx31"]` —
+**shared ARM first, shared x86 as the capacity fallback** — and `costs.ts:fleetServerType()` defaults
+to `cax21`. CCX is the dedicated-vCPU line and nothing selects it today. So "hold CCX/CPX
+continuously" is, as the code stands, *hold `cax21` continuously*, and that is what should be priced.
+
+ARM is EU-only: `cax*` prices exist in `fsn1`, `hel1`, `nbg1` and nowhere else, while `cpx*` also
+price in `ash`, `hil` and `sin`. `fleet_pools.locations` defaults to `["fsn1"]`, so this is not
+binding today — but `min_per_location` multiplies whatever is listed, and adding a US location to a
+pool whose preferred type is `cax21` silently forces every server there onto the x86 fallback.
+
+### 10.2 The cost model in the tree is wrong, in one direction, worst where it matters most
+
+Measured 2026-09-09 with `hcloud server-type describe <type> -o json`, gross EUR, `fsn1` (identical
+in `nbg1`/`hel1`), against the hardcoded table at `apps/console/lib/fleet/costs.ts:9-22`:
+
+| type | `costs.ts` €/mo | live €/mo | error | `costs.ts` €/h | live €/h |
+|---|---|---|---|---|---|
+| `cax11` | 3.79 | **5.99** | **+58.0%** | 0.0052 | 0.0096 |
+| `cax21` *(the fleet default)* | 6.49 | **10.49** | **+61.6%** | 0.0089 | 0.0168 |
+| `cax31` | 12.49 | **20.99** | **+68.1%** | 0.0171 | 0.0336 |
+| `cax41` | 24.49 | **40.99** | **+67.4%** | 0.0335 | 0.0657 |
+| `cpx11` | 4.59 | **5.49** | +19.6% | 0.0063 | 0.0088 |
+| `cpx21` | 8.49 | **9.49** | +11.8% | 0.0116 | 0.0152 |
+| `cpx31` *(the fallback)* | 16.49 | **17.49** | +6.1% | 0.0226 | 0.0280 |
+
+Every entry understates, and the ARM family — which is the default and the preferred placement — is
+understated by **58–68%**. `FALLBACK_HOURLY_EUR` is `cax21`, so an unknown type inherits the worst
+error. Every COGS figure the console shows for the managed fleet is low by roughly that much.
+
+**This is out of #4359's `scope:` (`costs.ts` is not one of its two files) and is filed as #4412.**
+
+### 10.3 Hetzner's monthly price is a CAP, not `hourly × 730` — and that argues FOR holding
+
+`costs.ts:6` states *"Hourly ≈ monthly / 730"* and the table is built that way. Hetzner bills the
+other way round: hourly, capped at the monthly price. For `cax21`, `0.0168 × 730 = €12.26` against a
+monthly cap of **€10.49** — so a server held for a full month costs **14% less** than the hourly
+model predicts, and the gap widens the longer it is held.
+
+That is material to this decision rather than a pedantic point: the saving from holding continuously
+is *larger* than an hourly model shows, and the existing model is the one the console reports. It
+also means a break-even utilisation computed from `hourly × hours` is the wrong denominator above
+~87% of a month.
+
+### 10.4 The reaper — proven in one direction, and there is a real gap in the other
+
+#4359 asks that a held server "must never be swept while a pool still claims it, and must be swept
+the moment one does not". Those halves have different answers.
+
+**Never swept while claimed — holds, by construction, twice over.**
+
+- `reapDeletedPools` (`apps/console/lib/fleet/pools-db.ts:64`) only ever deletes a pool *row*, never
+  a VM, and only when all three of: `deleting = true`, `provider.list()` returns zero instances, and
+  no managed runner is non-`offline`. A live pool with `warm_min ≥ 1` is not a candidate at any tick.
+- The e2e orphan reaper cannot see fleet VMs at all. `scripts/e2e/hcloud-cleanup.sh:155` scopes every
+  call to `SELECTOR="cluster=${CLUSTER_NAME}"` and its own header states it *"only ever deletes
+  resources labelled `cluster=<name>` — never account-wide."* Fleet VMs carry
+  `alethia-managed=true` / `alethia-pool=<provider>` / `alethia-version` (`hcloud.ts:354-358`) and no
+  `cluster=` label, so no selector the reaper builds can match one.
+
+**Swept the moment nothing claims it — DOES NOT HOLD, and holding continuously is what makes it
+matter.** Nothing enumerates `alethia-managed=true` and reconciles it against `fleet_pools`. The
+teardown path is the *controller* draining a `deleting` pool; `reapDeletedPools` merely removes the
+row once the controller has already finished. So if the controller stops — a deploy gap, a crash, a
+paused reconcile loop — held VMs keep billing with nothing that will ever notice them. §8's
+reopening condition 4 says exactly this about Robot ("a leak is recurring and invisible to every
+sweeper that exists"); the same sentence is true of Hetzner Cloud fleet VMs today. It is survivable
+while `warm_min` is 0 and every VM is short-lived. **A continuously-held floor is precisely the
+posture that turns it from a bounded leak into an unbounded one**, so a sweeper that enumerates
+`GET /servers?label_selector=alethia-managed=true` and reconciles against the pool table should land
+*before* the floor is raised, not after.
+
+### 10.5 The two numbers only the maintainer can supply
+
+Both gate the decision and neither is reachable from an agent session; they are stated here so the
+next reader does not mistake their absence for a small gap.
+
+1. **What the runners cost today.** #3321's ≈ USD 57.67/mo across four Fargate services at
+   `desired_count = 1` must be confirmed against the actual bill, not inherited. Needs AWS billing.
+2. **The duty cycle.** The instrument already exists — `warmCapacityUtilization` in `costs.ts`
+   computes busy job-minutes over `provisionedHours × 60 × slotsPerRunner` — but the data is in the
+   production `runner_usage_sessions` / `fleet_actions` tables. Needs a production read.
+
+Until (2) exists, no `warm_min` / `min_per_location` change should be made. §2.7 makes break-even
+utilisation the number that decides, and a floor chosen without it is the shape of change #4359's own
+closing line warns about: *"A change that lowers the bill and quietly leaves a server standing has not
+lowered anything."*
+
 
 ## Sources
 
