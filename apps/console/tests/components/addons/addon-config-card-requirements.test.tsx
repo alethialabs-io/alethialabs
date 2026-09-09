@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The add-on config sheet's Requirements block: renders one provider-aware hint row per
+// The add-on config card's Requirements block: renders one provider-aware hint row per
 // declared requirement (badge label + hint text), and renders nothing for add-ons with no
 // requirements. The enable/disable mutation hooks are mocked.
 
@@ -19,7 +19,7 @@ vi.mock("@/lib/query/use-addons-query", () => ({
 	useAddonsQuery: vi.fn(),
 }));
 
-import { AddonConfigSheet } from "@/components/addons/addon-config-sheet";
+import { AddonConfigForm } from "@/components/addons/addon-config-card";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 /** A minimal marketplace item; `requires` varies per test. */
@@ -41,17 +41,16 @@ function makeItem(requires: AddonMarketItem["requires"]): AddonMarketItem {
 	};
 }
 
-describe("AddonConfigSheet requirements", () => {
+describe("AddonConfigForm requirements", () => {
 	it("renders provider-aware hints for storage + ingress on hetzner", () => {
 		render(
-			<AddonConfigSheet
+			<AddonConfigForm
 				item={makeItem(["storage", "ingress"])}
 				projectId="p1"
 				environmentId="e1"
 				hasAppsRepo={false}
 				provider="hetzner"
-				open
-				onOpenChange={vi.fn()}
+				onDone={vi.fn()}
 			/>,
 		);
 		expect(screen.getByText("Requirements")).toBeInTheDocument();
@@ -67,14 +66,13 @@ describe("AddonConfigSheet requirements", () => {
 
 	it("renders no Requirements block for an add-on without requirements", () => {
 		render(
-			<AddonConfigSheet
+			<AddonConfigForm
 				item={makeItem([])}
 				projectId="p1"
 				environmentId="e1"
 				hasAppsRepo={false}
 				provider="hetzner"
-				open
-				onOpenChange={vi.fn()}
+				onDone={vi.fn()}
 			/>,
 		);
 		expect(screen.queryByText("Requirements")).not.toBeInTheDocument();
@@ -82,7 +80,7 @@ describe("AddonConfigSheet requirements", () => {
 });
 
 // #1221 — the Kubernetes compatibility hint, in the same register as Requirements.
-describe("AddonConfigSheet compat hint", () => {
+describe("AddonConfigForm compat hint", () => {
 	/** The sheet reads the cluster's version straight from the canvas store. */
 	function setCluster(version: string | null) {
 		useCanvasStore.setState({
@@ -109,14 +107,13 @@ describe("AddonConfigSheet compat hint", () => {
 	it("flags an add-on the cluster's Kubernetes minor is too old for", () => {
 		setCluster("1.24"); // kyverno is 1.25+
 		render(
-			<AddonConfigSheet
+			<AddonConfigForm
 				item={kyverno}
 				projectId="p1"
 				environmentId="e1"
 				hasAppsRepo={false}
 				provider="aws"
-				open
-				onOpenChange={vi.fn()}
+				onDone={vi.fn()}
 			/>,
 		);
 		expect(screen.getByText("Incompatible")).toBeInTheDocument();
@@ -126,14 +123,13 @@ describe("AddonConfigSheet compat hint", () => {
 	it("says nothing when the recorded window fits", () => {
 		setCluster("1.35");
 		render(
-			<AddonConfigSheet
+			<AddonConfigForm
 				item={kyverno}
 				projectId="p1"
 				environmentId="e1"
 				hasAppsRepo={false}
 				provider="aws"
-				open
-				onOpenChange={vi.fn()}
+				onDone={vi.fn()}
 			/>,
 		);
 		expect(screen.queryByText("Incompatible")).not.toBeInTheDocument();
@@ -144,14 +140,13 @@ describe("AddonConfigSheet compat hint", () => {
 		// harbor has no recorded window — the majority case.
 		setCluster("1.35");
 		render(
-			<AddonConfigSheet
+			<AddonConfigForm
 				item={makeItem([])}
 				projectId="p1"
 				environmentId="e1"
 				hasAppsRepo={false}
 				provider="aws"
-				open
-				onOpenChange={vi.fn()}
+				onDone={vi.fn()}
 			/>,
 		);
 		expect(screen.getByText("Unverified")).toBeInTheDocument();
