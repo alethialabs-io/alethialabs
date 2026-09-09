@@ -7,7 +7,7 @@
 
 import { and, eq, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { authorizeCli } from "@/lib/authz/guard";
+import { authorizeCli, userIdIsTheCaller } from "@/lib/authz/guard";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { agentIdentities } from "@/lib/db/schema";
@@ -19,7 +19,7 @@ export async function GET(
 ) {
 	const auth = await authorizeCli(req, "view", { type: "org" });
 	if ("error" in auth) return auth.error;
-	const { actor } = auth;
+	const { actor, credential } = auth;
 	const { id } = await params;
 
 	try {
@@ -29,12 +29,16 @@ export async function GET(
 			.where(
 				and(
 					eq(agentIdentities.id, id),
-					// The (user_id OR org_id) scope mirrors the web getAgent — both are the caller's own
-					// keys; agent_identities has no RLS/org trigger, so this is the tenancy wall.
-					or(
-						eq(agentIdentities.user_id, actor.userId), // authz-scope-ok: caller's own globally-unique id; org_id arm scopes Teams
-						eq(agentIdentities.org_id, actor.orgId),
-					),
+					// #4298: the `user_id` arm is the CALLER's own id for a session, and the MINTING
+					// profile's for a service token — so on a token this returned the minter's personal
+					// and other-org agent identities through a credential pinned to one org. A token
+					// sees the org arm alone; the pin is the whole of what it was issued for.
+					userIdIsTheCaller(credential)
+						? or(
+								eq(agentIdentities.user_id, actor.userId), // authz-scope-ok: session caller's own globally-unique id; org_id arm scopes Teams
+								eq(agentIdentities.org_id, actor.orgId),
+							)
+						: eq(agentIdentities.org_id, actor.orgId),
 				),
 			)
 			.limit(1);
