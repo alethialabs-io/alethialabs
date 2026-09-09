@@ -110,7 +110,21 @@ Release gate (release-gate.yml, pull_request into main/staging): no runs in the 
     gh api "repos/{owner}/{repo}/actions/runs/$id/jobs" --jq '.jobs[] | {name, conclusion}'
   done)"
   gate_report=""
-  for leg in hero elench-ai console canvas qa audit; do
+  # DERIVED from the leg table, not retyped. This loop was the THIRD hand-written copy of the leg
+  # list (after infra/github's required checks and the workflow's own table); #4266 added a seventh
+  # leg and this one kept measuring six — so the instrument built to notice a leg that never runs
+  # would itself have gone quiet about exactly that leg. Caught in review on #4435.
+  #
+  # The pattern accepts `project: "x"` and `"project": "x"` because the table is a JS array today
+  # and becomes JSON under #4440; matching both means that change does not silently empty this list.
+  gate_legs="$(grep -oE '"?project"?: *"[a-z][a-z-]*"' "$(dirname "$0")/../.github/workflows/release-gate.yml" 2>/dev/null \
+    | sed -E 's/.*"([a-z][a-z-]*)"$/\1/' | sort -u)"
+  # A scan that finds nothing is broken, not a gate with no legs. Refuse rather than report 0%.
+  if [ "$(printf '%s\n' "$gate_legs" | grep -c .)" -lt 2 ]; then
+    printf '%s\n' "Release gate: could not read the leg table out of .github/workflows/release-gate.yml — refusing to report a health signal over an unknown set of legs."
+    return 1
+  fi
+  for leg in $gate_legs; do
     sig="Release gate ($leg)"
     total=$(printf '%s\n' "$gate_jobs" | jq -rs --arg n "$sig" '[.[] | select(.name==$n and (.conclusion=="success" or .conclusion=="failure"))] | length')
     passed=$(printf '%s\n' "$gate_jobs" | jq -rs --arg n "$sig" '[.[] | select(.name==$n and .conclusion=="success")] | length')
