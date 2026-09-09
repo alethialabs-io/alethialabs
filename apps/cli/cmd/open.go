@@ -5,9 +5,11 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -57,7 +59,7 @@ var openCmd = &cobra.Command{
 			if openProject != "" {
 				// NAME or id, as every other --project in this CLI takes. An id has to be
 				// resolved rather than slugified — see resolveProjectName.
-				name, nameErr := resolveProjectName(client, openProject)
+				name, nameErr := openProjectName(client, openProject)
 				if nameErr != nil {
 					fail(nameErr)
 				}
@@ -83,6 +85,80 @@ var openCmd = &cobra.Command{
 			ui.Error(fmt.Sprintf("Failed to open browser: %v", err))
 		}
 	},
+}
+
+// openProjectName maps `--project` to the console `[project]` segment's NAME, and offers the
+// picker when the reference names no project this organization has.
+//
+// # Why `open` asks about the PROJECT and never about the target
+//
+// shell_fields.go records that `open`'s positional deliberately does not prompt: it has a default,
+// and a bare `alethia open` opening the console is the right command, so a picker in front of the
+// commonest invocation would be a cost with nothing bought. That decision stands and this function
+// does not touch it — the target is still answered, never asked, and `alethia open --no-input` with
+// no flag still opens the console without a question. `--project` is the other value, added later
+// (#4308), and it is the one with no default and no way to be asked for at all.
+//
+// # Why an unknown reference is a REFUSAL rather than a link
+//
+// resolveProjectName returns a non-UUID reference unchanged and without a request, which is right
+// for its callers and wrong here: `open` turns the answer into a URL, so a mistyped name became a
+// console 404 that looks exactly like a working command. The project list is closed and org-scoped
+// and this link is built for the same org, so a reference outside it is one the console would
+// certainly refuse — which is the bound the CLI puts on what a client may reject (the same one
+// resolveClassification applies to a dimension key), and it buys a refusal that names the real
+// projects, or, on a terminal, a picker instead of a retype.
+//
+// A name shared by two projects keeps projectLink's documented residual: such a link is suffixed
+// server-side and 404s rather than opening the wrong project.
+func openProjectName(c projectLister, ref string) (string, error) {
+	configs, err := c.GetConfigurations()
+	if err != nil {
+		return "", fmt.Errorf("resolve --project %q: %w", ref, err)
+	}
+	for _, cfg := range configs {
+		if cfg.ID != ref && !strings.EqualFold(cfg.ProjectName, ref) {
+			continue
+		}
+		if cfg.ProjectName == "" {
+			return "", fmt.Errorf("project %q has no name to build a console link from", ref)
+		}
+		return cfg.ProjectName, nil
+	}
+
+	if ferr := requireInteractiveForm(); ferr != nil {
+		return "", fmt.Errorf("no project %q in this organization (have: %s) (%w)",
+			ref, knownProjectNames(configs), ferr)
+	}
+	options := make([]huh.Option[string], 0, len(configs))
+	for _, cfg := range configs {
+		if cfg.ProjectName == "" {
+			continue
+		}
+		options = append(options, huh.NewOption(
+			fmt.Sprintf("%s (%s)", cfg.ProjectName, cfg.EnvironmentStage), cfg.ProjectName))
+	}
+	if len(options) == 0 {
+		// Nothing to offer, so nothing is asked: an empty picker is a box a reader cannot answer,
+		// and "this org has no named project" is a different problem from "you picked none".
+		return "", fmt.Errorf("no project %q in this organization (have: %s)",
+			ref, knownProjectNames(configs))
+	}
+	chosen := options[0].Value
+	if err := runHuhForm(huh.NewGroup(
+		// The title is the one promptProjectNameRef already uses, so the two project pickers in
+		// this CLI read as one question rather than two. The shell group's spec carries no Title
+		// column (shell_fields.go describes flags, not form fields), so there is nothing to
+		// resolve it from without adding a rendering that nothing holds in step.
+		huh.NewSelect[string]().
+			Title("Select Project").
+			Description("Which project's console page to open").
+			Options(options...).
+			Value(&chosen),
+	)); err != nil {
+		return "", err
+	}
+	return chosen, nil
 }
 
 // openProject is the --project value: a project NAME OR ID, the same reference every other command

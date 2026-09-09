@@ -37,8 +37,11 @@ alethia repo list --provider bitbucket -o json
 |---|---|---|
 | Provider | Which connected git provider to browse | `--provider` |
 
-The provider defaults to `github`; the other accepted values are `gitlab` and `bitbucket`. Because
-it has a default, this command asks no questions — there is no missing value to ask about.
+The provider defaults to `github`; the other accepted values are `gitlab` and `bitbucket`. Omit
+`--provider` on a terminal and you are asked which one, with the cursor already on the default — so
+Enter is exactly the list `repo list` printed before. Because the value has a default, nothing is
+ever refused for omitting it: `repo list --no-input`, and anything running where a prompt cannot be
+shown, reads `github` without a question. `--provider` answers it outright either way.
 
 The same provider list backs the repository picker in
 [`chart attach` and `iac attach`](/cli/commands/charts), which is what stops a URL printed here from
