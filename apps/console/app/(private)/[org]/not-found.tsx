@@ -36,7 +36,13 @@ export default function OrgNotFound() {
 			title="Not found"
 			description="This page doesn't exist, or you don't have access to it."
 			actions={
-				<Button size="sm" nativeButton={false} render={<Link href="/" />}>
+				// `role="link"` is not decoration. base-ui's Button adds `role="button"` whenever
+				// `nativeButton` is false (`use-button/useButton.js` merges `{role: 'button'}` for
+				// the non-native branch), so this control — an `<a href="/">` in the DOM, the only
+				// way out of a 404 — announced itself as a button and could not be found by
+				// `getByRole("link")` at all. External props win that merge, so naming the role the
+				// element actually has restores the truth without giving up the Button's chrome.
+				<Button size="sm" nativeButton={false} role="link" render={<Link href="/" />}>
 					Go home
 				</Button>
 			}
