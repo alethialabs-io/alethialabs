@@ -249,6 +249,23 @@ func hygCliConfirmResetFlags() {
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
 		c.Flags().VisitAll(func(f *pflag.Flag) {
+			// EVERY `--yes` IS RESET, Changed or not (#4448).
+			//
+			// `addYesFlag` (helpers.go) is the ONE registration point for the opt-in — all fifteen go
+			// through it, with the flag always named `yes` — and pflag's bool value IS the pointer to
+			// the package global. So setting the flag back to its default writes through to the
+			// variable, which is what the hand-written list below used to do one name at a time.
+			//
+			// Unconditional because the case that list existed for is a test ASSIGNING the global
+			// directly (`alertsDeleteYes = true`) rather than passing the flag: `Changed` stays false,
+			// the walk skipped it, and a `--yes` left set here pre-confirms a LATER test in the same
+			// package run. A destructive command that silently skipped its confirmation is the worst
+			// thing this suite could fail to notice, so the reset does not depend on remembering.
+			if f.Name == "yes" {
+				_ = f.Value.Set(f.DefValue)
+				f.Changed = false
+				return
+			}
 			if !f.Changed {
 				return
 			}
@@ -266,20 +283,83 @@ func hygCliConfirmResetFlags() {
 	walk(rootCmd)
 	projectDestroyProjectID, projectDestroyRunnerID = "", ""
 	destroyRunnerID, destroyRunnerAssignedID = "", ""
-	// The --yes opt-ins, in case a caller assigned one without going through a flag.
-	alertsDeleteYes, channelsDeleteYes, connectorRemoveYes, fleetSetYes = false, false, false, false
-	grantsRemoveYes, membersRemoveYes, componentRemoveYes, projectDestroyYes = false, false, false, false
-	rolesDeleteYes, destroyRunnerYes, runnerRemoveYes, teamsDeleteYes = false, false, false, false
-	// Added with the commands they gate. `tokenEnv` does not reset the cobra tree, so a --yes left
-	// set here pre-confirms a LATER test in the same package run — which is the failure this
-	// explicit list exists to prevent, and which is why a new --yes global must always be added to
-	// it rather than relying on the VisitAll walk above.
-	classificationUnassignYes, jobsCancelYes = false, false
-	// The break-glass group's opt-ins live in one map keyed by command path (ops_fields.go), so
-	// adding a verb never means remembering to extend the line above.
+	// THE FIFTEEN `--yes` GLOBALS USED TO BE LISTED HERE BY NAME, four lines of them, under a comment
+	// saying a new one "must always be added to it". They are gone: the walk above resets every flag
+	// named `yes` through its own binding, so adding a `--yes` to a new command needs nothing here.
+	//
+	// That is what this seams unit is for. A lane that adds a destructive verb had to edit this one
+	// line, which made it the highest-conflict edit in the wave — every lane rebasing against every
+	// other — and the cost of forgetting was silent: a pre-confirmed destructive command in a later
+	// test, with nothing red.
+	//
+	// The ops group already solved it this way (`resetOpsConfirmFlags`, one map keyed by command path
+	// in ops_fields.go) and its comment said so; this generalises that to every group.
 	resetOpsConfirmFlags()
-	designApplyYes = false
 	designApplyFile, designApplyDryRun, designApplyStage = "", false, false
+}
+
+// THE DERIVED RESET IS PINNED, because deleting a hand-written list is only safe if something proves
+// the replacement covers the same ground (#4448).
+//
+// Two directions, and the second is the one the list existed for:
+//
+//   - a `--yes` set by PASSING THE FLAG is reset (the old walk already did this, via `Changed`)
+//   - a `--yes` set by ASSIGNING THE GLOBAL is reset (the old walk did NOT — `Changed` stays false,
+//     which is why fifteen names were listed by hand)
+//
+// Asserted over EVERY `--yes` in the tree rather than a sample, and the count is asserted too: a walk
+// that found none would pass every per-flag assertion vacuously, which is the shape of a guard that
+// silently stopped guarding.
+func TestHygCliConfirm_EveryYesFlagIsResetHoweverItWasSet(t *testing.T) {
+	var yesFlags []*pflag.Flag
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if f := c.Flags().Lookup("yes"); f != nil {
+			yesFlags = append(yesFlags, f)
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(rootCmd)
+
+	if len(yesFlags) < 15 {
+		t.Fatalf("found %d --yes flag(s); addYesFlag is called at least 15 times, so this walk is "+
+			"not seeing the tree and every assertion below would be vacuous", len(yesFlags))
+	}
+
+	t.Cleanup(hygCliConfirmResetFlags)
+
+	// Direction 1: set through the flag.
+	for _, f := range yesFlags {
+		if err := f.Value.Set("true"); err != nil {
+			t.Fatalf("set --yes: %v", err)
+		}
+		f.Changed = true
+	}
+	hygCliConfirmResetFlags()
+	for _, f := range yesFlags {
+		if f.Value.String() != "false" || f.Changed {
+			t.Errorf("--yes on a command was left %q (changed=%v) after a reset", f.Value.String(), f.Changed)
+		}
+	}
+
+	// Direction 2: set WITHOUT the flag — `Changed` stays false. This is the case the deleted list
+	// existed for, and the one whose failure is silent: a later test's destructive command would skip
+	// its confirmation with nothing red.
+	for _, f := range yesFlags {
+		if err := f.Value.Set("true"); err != nil {
+			t.Fatalf("set --yes: %v", err)
+		}
+		// deliberately NOT marking Changed
+	}
+	hygCliConfirmResetFlags()
+	for _, f := range yesFlags {
+		if f.Value.String() != "false" {
+			t.Errorf("a --yes assigned without its flag survived the reset as %q — the derived reset "+
+				"does not cover what the hand-written list did", f.Value.String())
+		}
+	}
 }
 
 // hygCliConfirmEnv stands up isolated credentials, an active org and a fake control
