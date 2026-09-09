@@ -216,8 +216,16 @@ export function RunnerActions({ runner }: { runner: RunnerRow }) {
         <Tooltip>
           <TooltipTrigger
             render={
+              // The tooltip is the only thing that named this control, and a tooltip
+              // is not an accessible name — the star was an unlabelled icon button
+              // that a spec could only reach positionally (`getByRole("button").first()`).
+              // The label states the ACTION the click performs, so it flips with the
+              // state the same way the tooltip does.
               <button
                 type="button"
+                aria-label={
+                  runner.is_default ? "Clear default runner" : "Set as default runner"
+                }
                 onClick={handleToggleDefault}
                 className="rounded p-1 transition-colors hover:bg-muted"
               >
