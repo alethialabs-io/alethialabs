@@ -379,7 +379,9 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 				fmt.Fprintf(stdoutLogger, "Assuming role %s into account %s...\n", claim.CloudIdentity.RoleArn, claim.CloudIdentity.AccountID)
 				sessionName := fmt.Sprintf("runner-%s", shortID(job.ID, 8))
 				if err := AssumeRole(ctx, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID, sessionName); err != nil {
-					errMsg := fmt.Sprintf("Failed to assume role: %v", err)
+					// #3348: say WHICH credential path this is and why it had nothing to read. The
+					// SDK's own message names EC2 IMDS, which is its last source, not the cause.
+					errMsg := ambientCredentialFailure("Failed to assume role", "aws", w.config.Operator, err)
 					fmt.Fprintln(stderrLogger, errMsg)
 					_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
 					return err
@@ -410,7 +412,8 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 				fmt.Fprintf(stdoutLogger, "Activating WIF for project %s (SA: %s)...\n", claim.CloudIdentity.ProjectID, claim.CloudIdentity.ServiceAccountEmail)
 				cleanup, err := ActivateGcpWIF(claim.CloudIdentity.WifConfig, claim.CloudIdentity.ProjectID)
 				if err != nil {
-					errMsg := fmt.Sprintf("Failed to activate GCP WIF: %v", err)
+					// #3348, the GCP half: ADC exhaustion reads the same way as the AWS IMDS 404.
+					errMsg := ambientCredentialFailure("Failed to activate GCP WIF", "gcp", w.config.Operator, err)
 					fmt.Fprintln(stderrLogger, errMsg)
 					_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
 					return err
