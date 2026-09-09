@@ -137,6 +137,14 @@ it. Both URLs are built from the route tree the console itself declares
 used to build was `/dashboard`, a legacy catch-all, so `alethia project get <name> --open` printed
 a project and then opened the organization root.
 
+`--project` takes a project name or id, and the CLI resolves it against the organization's own
+projects before it builds the link. Only a miss asks anything: a name or id the organization has
+becomes a link directly. A reference the organization does not have is refused, and the refusal
+names the projects it does have — on a terminal, a picker replaces the retype. With `--no-input`,
+or when the prompt has no terminal to draw on, the miss stays a refusal. Before this, an unknown
+reference was passed through unchanged and built a console link to a page that does not exist,
+which reads exactly like a command that worked.
+
 Choosing an organization with [`alethia org switch`](/cli/commands/organizations) records its slug,
 so the link costs no request; a machine that has authenticated but never switched resolves it once
 through `whoami`.
