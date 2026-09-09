@@ -1101,7 +1101,20 @@ probe() {
     DEFECT)     echo "$s COMMUNITY" ;;
     unknown)
       case "${2:-000}" in
-        000|"") echo "$s ?-no-answer" ;;
+        000|"")
+          # A console that is DOWN and a registration that was never STARTED answer a probe
+          # identically — connection-refused, 000 — and they want completely different words.
+          # `?-no-answer` reads as "possibly slow, try again"; the second case is "this env is
+          # not running at all, and it is holding one of the cap slots for nothing".
+          #
+          # ASKED, not inferred, for the same reason `?-stale-script` is asked rather than
+          # deduced from an unparsable answer: the session question has its own answer and a
+          # catch-all would send someone to restart a console that is merely busy.
+          if tmux has-session -t "alethia-$s" >/dev/null 2>&1; then
+            echo "$s ?-no-answer"
+          else
+            echo "$s ?-not-running"
+          fi ;;
         *)      echo "$s ?-http-${2}" ;;
       esac ;;
     *)          echo "$s ?-probe-failed-rc$rc" ;;
@@ -1153,13 +1166,23 @@ cmd_status() {
   still refused with 403 upgrade_required, so EVERY enterprise-scoped verification on it is
   vacuous. Fix it with `pnpm env:up`; `community-pinned` means that env's .env asked for it.
   A leading `?` is the absence of an answer, never a verdict, and each one names the cause it
-  actually measured: `?-no-answer` (the console did not respond), `?-http-NNN` (it answered,
+  actually measured: `?-no-answer` (the console did not respond, but its tmux session is there
+  — it is up and busy, or wedged), `?-not-running` (there is NO session behind this
+  registration: it is not slow, it is absent, and it is holding one of the cap slots for
+  nothing — see RECLAIMING below), `?-http-NNN` (it answered,
   but not usefully), `?-stale-script` (the box's env-mode.sh was read and predates the probe —
   `git -C <main checkout> pull --ff-only`, then any `pnpm env:up` re-ships it), `?-no-probe`
   (that script could not be read at all — the box is broken, not the checkout stale) and
   `?-probe-failed-rcN` (the probe is on the box and exited N without producing a verdict; N is
   the lead — 126/127 mean the file is not runnable and any `pnpm env:up` re-ships it, anything
   else is a defect in the probe rather than in the box).
+
+  Reclaiming a `?-not-running` env: there is no non-destructive path today. `pnpm env:down`
+  is the only way to free the slot and it DESTROYS that env's database and storage, so this
+  command names the state and stops there rather than reclaiming anything for you. A stale
+  `lastSeen` is weak evidence that nobody wants an env — check `pnpm wt:who` for a live holder
+  of that branch first, and ask in the channel if there is one. What the label buys you is
+  that you no longer have to infer any of this from a timestamp.
 
   Sign-in: OAuth redirect URIs cannot be wildcarded, so social sign-in and the Stripe
   test webhook only work on the PRIMARY env. Branch envs are email-OTP only — the code

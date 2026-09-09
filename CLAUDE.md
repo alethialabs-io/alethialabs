@@ -64,11 +64,20 @@ pnpm env:down    # RELEASE the slot when you're finished with the branch
 ```
 
 The box is **shared** with every other instance and the maintainer: 2 environments (a
-measured memory ceiling — an env needs 5–7 GB), and `dev` permanently holds one as the
-integration env, leaving **one branch slot**. Take it only when you need a *running* app
-— build, type-check, lint and unit tests do not need one — and release it when you are
+measured memory ceiling — an env needs 5–7 GB). Take a slot only when you need a *running*
+app — build, type-check, lint and unit tests do not need one — and release it when you are
 done. Nothing is reclaimed automatically. If the box is down, **ask the maintainer**;
 restoring it runs `tofu apply`, which agents are refused.
+
+**Ask `pnpm env:status` what is there; do not assume a free slot.** This paragraph used to
+promise that "`dev` permanently holds one as the integration env, leaving one branch slot",
+and on 2026-09-08 that was false in both halves: `dev` held none, `https://dev.alethialabs.io`
+404'd, and BOTH slots were taken by branch envs — one of them a registration with no session
+behind it (#4350). An instance reading the old sentence would reason that one slot was free
+when zero were, and would also treat `dev.alethialabs.io` as somewhere to check something
+against. There is no standing integration env; whether one exists is a question for
+`env:status`, which now distinguishes an env that is merely slow (`?-no-answer`) from a
+registration with nothing running behind it (`?-not-running`).
 
 The box bills by the hour it **exists**, running or idle — deleting it is the only thing
 that stops the meter, so a box left up costs €69.49/mo against €0.72 reaped. Run
