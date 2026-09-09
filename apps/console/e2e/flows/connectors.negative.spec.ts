@@ -61,7 +61,13 @@ test.describe("Connectors — a cloud this instance cannot connect", () => {
 	test("a managed cloud with no platform credentials says so in words", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
 		await filterTo(owner.page, "Microsoft Azure", AZURE_MATCHES);
-		await expect(owner.page.getByText("Not enabled on this instance")).toHaveCount(1);
+		// `exact` throughout this describe: `getByText` defaults to a CASE-INSENSITIVE SUBSTRING
+		// match, which on this board reaches two things that are not a card's status — the health
+		// filter chip, whose text is the label plus its facet count, and a connector's own
+		// description. The claim is about the status wording, so match the status wording.
+		await expect(
+			owner.page.getByText("Not enabled on this instance", { exact: true }),
+		).toHaveCount(1);
 	});
 
 	test("…and offers an Unavailable pill instead of a doomed connect", async ({ owner }) => {
@@ -80,7 +86,11 @@ test.describe("Connectors — a cloud this instance cannot connect", () => {
 		// (which IS connectable — that is the pair that makes the exact button names below load-bearing).
 		await gotoConnectors(owner.page, owner.orgSlug);
 		await filterTo(owner.page, "DigitalOcean", 2);
-		await expect(owner.page.getByText("Coming soon")).toHaveCount(1);
+		// `exact` is load-bearing here and was measured: without it this resolved to THREE
+		// elements on a two-row board — the card's status, the "Coming soon" filter chip (whose
+		// text is "Coming soon <count>"), and DigitalOcean's own description, which ends
+		// "Provisioning templates coming soon." on a case-insensitive substring match.
+		await expect(owner.page.getByText("Coming soon", { exact: true })).toHaveCount(1);
 		await expect(
 			owner.page.getByRole("button", { name: "Connect DigitalOcean", exact: true }),
 		).toHaveCount(0);
