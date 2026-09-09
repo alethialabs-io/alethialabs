@@ -1365,3 +1365,80 @@ func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
 		})
 	}
 }
+
+// TestProviderTfvars_NetworkAndDNSPassthrough — #4319, the two cells that reached NOTHING.
+//
+// The template-knob manifest measures reachability STATICALLY: it reads the provider files and asks
+// which `(cloud, component)` cells a `provider_config` can land on. That is the right instrument for
+// "is there a passthrough at all", and it is not evidence that a value gets there — a merge call the
+// manifest can see could still be passing the wrong field. This asserts the behaviour.
+//
+// Two gaps, both closed by one field and six merge calls:
+//
+//   - `network` on EVERY cloud. `ProjectNetworkConfig` carried no `ProviderConfig` at all, so every
+//     cloud declared network variables with nothing able to carry a value to them.
+//   - `dns` on hetzner. A real `hcloud_zone` resource, and `hetzner_provider.go` merged only the
+//     cluster's and the bucket's `provider_config`.
+//
+// WHY TWO KINDS OF KEY. Where the template declares a network knob that no typed field owns, the row
+// uses that REAL knob — taken from the generated manifest, not invented — so the case doubles as
+// evidence the cell is genuinely settable. azure and hetzner declare no such knob today (theirs are
+// all typed or provider-owned), so those rows use a probe key: `mergeProviderConfig` merges by NAME
+// and does not consult the template, so what is under test there is the CALL, which is what was
+// missing. Stated rather than left as an inconsistency for the next reader to wonder about.
+func TestProviderTfvars_NetworkAndDNSPassthrough(t *testing.T) {
+	cases := []struct {
+		cloud, component, key string
+		real                  bool
+		cfg                   *types.ProjectConfig
+		want                  interface{}
+	}{
+		{cloud: "aws", component: "network", key: "vpc_private_route_table_ids", real: true,
+			cfg: &types.ProjectConfig{Network: types.ProjectNetworkConfig{ProviderConfig: map[string]any{"vpc_private_route_table_ids": []string{"rtb-1"}}}}},
+		{cloud: "gcp", component: "network", key: "pods_cidr_range", real: true,
+			cfg: &types.ProjectConfig{Network: types.ProjectNetworkConfig{ProviderConfig: map[string]any{"pods_cidr_range": "10.4.0.0/14"}}}, want: "10.4.0.0/14"},
+		{cloud: "alibaba", component: "network", key: "vswitch_count", real: true,
+			cfg: &types.ProjectConfig{Network: types.ProjectNetworkConfig{ProviderConfig: map[string]any{"vswitch_count": 3}}}, want: 3},
+		{cloud: "azure", component: "network", key: "alethia_probe_network_knob",
+			cfg: &types.ProjectConfig{Network: types.ProjectNetworkConfig{ProviderConfig: map[string]any{"alethia_probe_network_knob": "x"}}}, want: "x"},
+		{cloud: "hetzner", component: "network", key: "alethia_probe_network_knob",
+			cfg: &types.ProjectConfig{Network: types.ProjectNetworkConfig{ProviderConfig: map[string]any{"alethia_probe_network_knob": "x"}}}, want: "x"},
+		// The other half of #4319.
+		{cloud: "hetzner", component: "dns", key: "alethia_probe_dns_knob",
+			cfg: &types.ProjectConfig{DNS: types.ProjectDNSConfig{ProviderConfig: map[string]any{"alethia_probe_dns_knob": "x"}}}, want: "x"},
+	}
+
+	if len(cases) == 0 {
+		t.Fatal("no cases — every assertion below would be vacuous")
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.cloud+"/"+tc.component+"/"+tc.key, func(t *testing.T) {
+			p, ok := leafProviders[tc.cloud]
+			if !ok {
+				t.Fatalf("no provider registered for %q — this table names a cloud the suite cannot drive", tc.cloud)
+			}
+			tf := p.ProviderTfvars(tc.cfg)
+			got, present := tf[tc.key]
+			if !present {
+				t.Fatalf("%s/%s: provider_config[%q] never reached tfvars — the merge call for this "+
+					"component is missing, which is exactly the gap #4319 closed", tc.cloud, tc.component, tc.key)
+			}
+			if tc.want != nil && got != tc.want {
+				t.Errorf("%s/%s: %s = %v (%T), want %v (%T)", tc.cloud, tc.component, tc.key, got, got, tc.want, tc.want)
+			}
+		})
+	}
+
+	// AND THE ONE THING A PASSTHROUGH MUST NEVER DO: fill a key the typed mapping owns. The root
+	// reserved lists are consulted at every root-level merge, so adding two more merge sites must not
+	// open a door for a network's provider_config to set another component's reserved key. Asserted on
+	// the database IAM-auth flag, which is the one this repo has already had to close twice.
+	guarded := &types.ProjectConfig{
+		Network: types.ProjectNetworkConfig{ProviderConfig: map[string]any{"rds_iam_auth_enabled": true}},
+	}
+	if got := leafProviders["aws"].ProviderTfvars(guarded)["rds_iam_auth_enabled"]; got == true {
+		t.Error("a network provider_config switched on rds_iam_auth_enabled — the root reserved list " +
+			"must bind every merge site, not only the database's own")
+	}
+}
