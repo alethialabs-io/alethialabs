@@ -640,6 +640,53 @@ func TestProj_ComponentKinds(t *testing.T) {
 	}
 }
 
+// THE THREE COMMAND-LEVEL REFUSALS #4332 ADDED, each pinned by the ROUTE BEING HIT and not only by
+// the exit — `component remove` with no `--kind` already exits on "--kind is required", so an exit
+// alone would pass whether or not the registry was ever consulted.
+
+// `kinds` answers with the server's vocabulary or not at all. A table rendered from nothing would be
+// the offline literal all over again, one release later.
+func TestProj_ComponentKindsRefusesAnUnreadableRegistry(t *testing.T) {
+	s := &projServer{failOn: []string{"/schema/components"}}
+	h := projEnv(t, s)
+	if !h.run("project", "component", "kinds", "--output", "json") {
+		t.Error("kinds succeeded without reading the published registry")
+	}
+	if s.hits("/api/cli/schema/components") == 0 {
+		t.Error("kinds never asked for the registry, so this test proves nothing about it")
+	}
+}
+
+// The `add` picker cannot be offered without the document: cardinality is what decides whether the
+// second form asks for a name, so a guess authors the wrong shape.
+func TestProj_ComponentAddRefusesAPickerWithNoRegistry(t *testing.T) {
+	s := &projServer{failOn: []string{"/schema/components"}}
+	h := projEnv(t, s)
+	projTTY(t)
+	projForm(t)
+	if !h.run("project", "component", "add", "--project", "web", "--output", "json") {
+		t.Error("the add picker was built without a registry to build it from")
+	}
+	if s.hits("/api/cli/schema/components") == 0 {
+		t.Error("add never asked for the registry")
+	}
+}
+
+// The `remove` picker likewise. Distinguished from the pre-existing "--kind is required" exit by the
+// route hit: on this path the fetch is attempted and its failure is what stops the run.
+func TestProj_ComponentRemoveRefusesAPickerWithNoRegistry(t *testing.T) {
+	s := &projServer{failOn: []string{"/schema/components"}}
+	h := projEnv(t, s)
+	projTTY(t)
+	projForm(t)
+	if !h.run("project", "component", "remove", "--project", "web", "--output", "json") {
+		t.Error("the remove picker was offered with no registry to offer from")
+	}
+	if s.hits("/api/cli/schema/components") == 0 {
+		t.Error("remove never asked for the registry")
+	}
+}
+
 // TestProj_ComponentListInteractive pins the TTY arm of `project component list`: the
 // spinner-backed fetch, the populated table, and the empty-list notice.
 func TestProj_ComponentListInteractive(t *testing.T) {

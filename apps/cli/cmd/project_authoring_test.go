@@ -271,6 +271,50 @@ func TestKindRowsCardinality(t *testing.T) {
 	}
 }
 
+// THE UNRESOLVED VOCABULARY, end to end (#4332). Both of these are branches the deleted literal
+// could not have had — it was always present — so they are the ones a coverage floor notices.
+func TestComponentVocabularyUnresolved(t *testing.T) {
+	// `first` is what seeds a picker. Empty rather than a panic on an index into no kinds: the
+	// interactive callers refuse before reaching it, and this pins that the helper does not rely on
+	// their having done so.
+	if got := (componentVocabulary{}).first(); got != "" {
+		t.Errorf("an unresolved vocabulary seeded a picker with %q", got)
+	}
+	if got := (componentVocabulary{doc: &api.ComponentSchemaDocument{}}).first(); got != "" {
+		t.Errorf("a document with no kinds seeded a picker with %q", got)
+	}
+	// And a resolved one answers the document's own first kind, not a sorted or hard-coded one.
+	if got := (componentVocabulary{doc: testKindsDocument()}).first(); got != "network" {
+		t.Errorf("first() = %q, want the document's first kind", got)
+	}
+}
+
+// THE ADVISORY PATH IS A WARNING, NOT A GATE. `remove` with an explicit --kind and --name must still
+// run when the registry cannot be read — the server refuses a nameless multi kind on its own — so
+// this must hand back an EMPTY vocabulary rather than an error. What it must never do is return a
+// stale one, which is the whole reason the literal was deleted.
+func TestAdvisoryComponentVocabularyDegradesRatherThanFailing(t *testing.T) {
+	v := advisoryComponentVocabulary(&kindsSchemaClient{err: errBoom})
+	if v.doc != nil {
+		t.Error("a failed advisory fetch produced a document")
+	}
+	if got := v.kinds(); len(got) != 0 {
+		t.Errorf("a failed advisory fetch offered %d kind(s)", len(got))
+	}
+	// Cardinality is unknown, not guessed: `isSingleton` false means a name is neither required nor
+	// stripped, and the server decides.
+	if v.isSingleton("network") {
+		t.Error("an unresolved vocabulary claimed a kind is a singleton")
+	}
+	if v.known("network") {
+		t.Error("an unresolved vocabulary claimed to know a kind")
+	}
+	// A successful advisory fetch is the ordinary case and must be the real document.
+	if got := advisoryComponentVocabulary(&kindsSchemaClient{doc: testKindsDocument()}); !got.known("helm_registries") {
+		t.Error("a successful advisory fetch lost the document")
+	}
+}
+
 // kindsSchemaClient is the one-method client the kinds command needs.
 type kindsSchemaClient struct {
 	doc *api.ComponentSchemaDocument
