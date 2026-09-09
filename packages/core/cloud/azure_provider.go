@@ -42,6 +42,52 @@ func (p *azureProvider) ValidateConfig(config *types.ProjectConfig) error {
 	return validateNetworkCIDR(config, "vnet_cidr", azureMaxNetworkPrefix)
 }
 
+// The keys each ROOT-level component's typed mapping owns on Azure, and the union every root merge
+// is passed. Azure had the widest hole before the union: the registry loop reserved `provision_acr`
+// alone, so a registry's provider_config could set `azure_db_iam_auth` whenever the database had
+// not (#1508), and could re-open the whole withdrawn cache SKU family (#1993, #2148) that the cache
+// block spends nine lines closing. See `mergeProviderConfig` in aws_provider.go.
+var (
+	azureDatabaseReserved = []string{"log_exports", "azure_db_iam_auth"}
+	azureCacheReserved    = []string{
+		"create_azure_cache", "azure_cache_sku_name", "azure_cache_multi_az",
+		"azure_cache_sku", "azure_cache_redis_version",
+		"azure_cache_allowed_cidr_blocks", "azure_cache_firewall_rules",
+		"azure_cache_public_network_access",
+	}
+	azureRegistryReserved = []string{"provision_acr"}
+	azureClusterReserved  = []string{"aks_admin_group_object_ids"}
+	azureDNSReserved      = []string{"azure_waf", "managed_certificate"}
+
+	// Every key this file assigns to root tfvars — the KEYS THE TYPED MAPPING WRITES, whether
+	// unconditionally or only when the canvas asked. All of them are reserved, because
+	// merge-if-absent protects only the unconditional ones: a key written inside an `if` leaves a
+	// gap exactly when the canvas declined to fill it, which is the moment a passthrough must not.
+	// Cluster node sizing and the brownfield network selectors are the whole reason this list
+	// exists rather than the per-component lists alone — none of them appeared in any reservation,
+	// so on every cloud a database's provider_config could set the cluster's disk size, and on
+	// Alibaba its `network_id` and `subnet_ids`. Found in review.
+	//
+	// Generated once from the assignments below it and kept honest by
+	// TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads them: a new `tfvars[...]`
+	// assignment fails the suite until it is listed here.
+	azureTypedTfvars = []string{
+		"aks_admin_group_object_ids", "aks_cluster_version", "aks_disk_size_gb", "aks_instance_types",
+		"aks_node_desired_size", "aks_node_max_size", "aks_node_min_size", "azure_cache_multi_az",
+		"azure_cache_sku_name", "azure_db_backup_retention_days", "azure_db_engine",
+		"azure_db_engine_version", "azure_db_iam_auth", "azure_db_port", "azure_db_sku_name",
+		"azure_dns_domain", "azure_dns_enabled", "azure_dns_zone_name", "azure_waf_enabled",
+		"classification_tags", "cosmos_db_collections", "create_azure_cache", "create_azure_db",
+		"create_cosmos_db", "create_service_bus", "create_storage_account", "custom_secrets",
+		"environment", "location", "project_name", "provision_acr", "provision_aks", "provision_vnet",
+		"service_bus_queues", "service_bus_topics", "single_nat_gateway", "storage_containers",
+		"subnet_ids", "subscription_id", "vnet_allowed_cidr_blocks", "vnet_cidr", "vnet_id",
+	}
+
+	azureRootReserved = unionReserved(azureTypedTfvars, azureDatabaseReserved, azureCacheReserved,
+		azureRegistryReserved, azureClusterReserved, azureDNSReserved)
+)
+
 func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
 	wafEnabled := config.DNS.WafEnabled
@@ -162,7 +208,7 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		// provider_config key could switch keyless on for a cell the canvas never offered, walking
 		// around the offer-parity guard (#1508). `log_exports` is AWS-only — no Azure template
 		// variable declares a log-export set — so it is reserved rather than emitted undeclared.
-		mergeProviderConfig(tfvars, db.ProviderConfig, "log_exports", "azure_db_iam_auth")
+		mergeProviderConfig(tfvars, db.ProviderConfig, azureRootReserved...)
 	}
 
 	if len(config.Caches) > 0 {
@@ -189,6 +235,25 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		if cache.MultiAz != nil {
 			tfvars["azure_cache_multi_az"] = *cache.MultiAz
 		}
+		// Generic passthrough — see mergeProviderConfig (aws_provider.go). The typed emits above are
+		// reserved unconditionally, and so are the WITHDRAWN offers, which is the half that matters
+		// on Azure: `azure_cache_sku` is the tier flip the node count used to become (#1993),
+		// `azure_cache_redis_version` is the engine-version variable the template deleted (#1993),
+		// and the three CIDR spellings are what a caller would reach for to re-open the allow-list
+		// (#2148) — none is declared, so each would be dropped at plan time while reading to the
+		// user exactly like a switch that worked. The same reasoning keeps alibaba's withdrawn
+		// `application_waf` reserved.
+		mergeProviderConfig(tfvars, cache.ProviderConfig, azureRootReserved...)
+	}
+
+	// Container registries are ROOT-level on Azure: the template declares `acr_sku` for the one
+	// registry the project gets and no per-repository map, so a NATIVE registry's provider_config
+	// merges into tfvars. A pluggable registry (connectors.slug) is not ACR's to configure.
+	for _, r := range config.ContainerRegistries {
+		if r.Provider != "" && r.Provider != "native" {
+			continue
+		}
+		mergeProviderConfig(tfvars, r.ProviderConfig, azureRootReserved...)
 	}
 
 	if inst := resolveInstanceTypes("azure", config.Cluster); len(inst) > 0 {
@@ -240,8 +305,8 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 	// aks_admin_group_object_ids is consumed above (unioned from cluster_admins + the explicit
 	// provider_config list), so reserve it from the generic passthrough — otherwise a
 	// provider_config value would be re-injected verbatim and could drop the cluster_admins half.
-	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, "aks_admin_group_object_ids")
-	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "azure_waf", "managed_certificate")
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, azureRootReserved...)
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, azureRootReserved...)
 
 	return tfvars
 }
@@ -400,11 +465,19 @@ func buildServiceBusQueues(queues []types.ProjectQueueConfig) map[string]interfa
 		// a queue setting tofu can provision — and forwarding was emitted as the empty string, which
 		// names no queue to forward to. Carrying them further would have satisfied the guard while
 		// the values still meant nothing, which is the defect it exists to catch, not a way past it.
+		//
+		// Both stay RESERVED from the per-queue passthrough for that reason: the root's map(any)
+		// would carry them again and the module's typed object would drop them again, silently.
+		mergeItemProviderConfig(cfg, q.ProviderConfig,
+			"max_delivery_count", "lock_duration", "requires_session", "default_message_ttl",
+			"delay_seconds", "forward_dead_lettered_messages_to")
 		result[q.Name] = cfg
 	}
 	return result
 }
 
+// buildServiceBusTopics maps each canvas topic onto one entry of the `service_bus_topics` tfvar,
+// its subscriptions named from their endpoints; a topic's provider_config merges into its own entry.
 func buildServiceBusTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
@@ -415,9 +488,11 @@ func buildServiceBusTopics(topics []types.ProjectTopicConfig) map[string]interfa
 				"max_delivery_count": 10,
 			})
 		}
-		result[t.Name] = map[string]interface{}{
+		entry := map[string]interface{}{
 			"subscriptions": subs,
 		}
+		mergeItemProviderConfig(entry, t.ProviderConfig, "subscriptions")
+		result[t.Name] = entry
 	}
 	return result
 }
@@ -455,6 +530,11 @@ func buildCosmosDBCollections(tables []types.ProjectNosqlConfig) []map[string]in
 		if len(t.GlobalReplicas) > 0 {
 			entry["global_replicas"] = t.GlobalReplicas
 		}
+		// `analytical_storage_enabled` is deliberately NOT reserved: it is an accepted attribute of
+		// the container shape that no typed field derives any more (#1838), which makes it exactly
+		// the kind of knob this passthrough exists to reach.
+		mergeItemProviderConfig(entry, t.ProviderConfig,
+			"name", "partition_key", "billing_mode", "point_in_time_recovery", "global_replicas")
 		result = append(result, entry)
 	}
 	return result
@@ -480,7 +560,7 @@ func buildAzureContainers(buckets []types.ProjectStorageBucketConfig) []map[stri
 		if b.PublicAccess {
 			accessType = "blob"
 		}
-		result = append(result, map[string]interface{}{
+		entry := map[string]interface{}{
 			"name":               b.Name,
 			"access_type":        accessType,
 			"versioning_enabled": b.Versioning,
@@ -490,7 +570,9 @@ func buildAzureContainers(buckets []types.ProjectStorageBucketConfig) []map[stri
 			// template, next to the comment that explains it, not hidden in this builder (#1995).
 			// Honored on the other four clouds; azure was the only one dropping it.
 			"cors_origins": ensureStringSlice(b.CorsOrigins),
-		})
+		}
+		mergeItemProviderConfig(entry, b.ProviderConfig, "name", "access_type", "versioning_enabled", "cors_origins")
+		result = append(result, entry)
 	}
 	return result
 }
