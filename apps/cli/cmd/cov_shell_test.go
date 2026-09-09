@@ -297,7 +297,14 @@ func TestMisc_OpenRefusesAProjectItCannotLinkTo(t *testing.T) {
 
 	// An organization the account is not in: a credential resolves, whoami reports no active org,
 	// so the org slug every console link is built from cannot be found.
-	orgless := miscEnv(t, miscEmpty)
+	//
+	// The PROJECT list is populated here, and that is the arm's whole point since #4454: `open`
+	// now resolves `--project` against the org's own projects before it builds anything, so an
+	// env with no projects would refuse at the reference and never reach projectLink. Under
+	// miscFull the name resolves and the org slug is the only thing that does not — which is the
+	// failure this arm is named for. miscEmpty would have kept the assertion true and moved it
+	// onto a different mechanism.
+	orgless := miscEnv(t, miscFull)
 	// miscEnv persists an active org, and `resolveOrgSlug` prefers the config over whoami — by
 	// design, so the common path costs no request. Clearing it is what makes the org genuinely
 	// unresolvable; the credential written beside it stays, which is the whole point of these

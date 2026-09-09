@@ -10,6 +10,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -27,9 +28,13 @@ number of rows.`,
 			fail(err)
 		}
 		client := api.NewClient(token)
+		limit, err := promptActivityRows(cmd, activityLimit)
+		if err != nil {
+			fail(err)
+		}
 		if interactiveTable(cmd) {
 			var entries []api.ActivityEntry
-			runSpinner("Fetching activity...", func() { entries, err = client.ListActivity(activityLimit) })
+			runSpinner("Fetching activity...", func() { entries, err = client.ListActivity(limit) })
 			if err != nil {
 				failf("Failed to read activity: %v", err)
 			}
@@ -40,10 +45,67 @@ number of rows.`,
 			_ = ui.ShowTable(activityColumns, activityRows(entries, ui.FormatTable), "activity")
 			return
 		}
-		if err := runActivity(client, os.Stdout, outputFormat(cmd), activityLimit); err != nil {
+		if err := runActivity(client, os.Stdout, outputFormat(cmd), limit); err != nil {
 			failf("Failed to read activity: %v", err)
 		}
 	},
+}
+
+// activityRowLadder is what the row-count question offers when nobody passes `-n`.
+//
+// A ladder rather than a typed number, because every answer to "how many rows" is a round one and a
+// select cannot be answered with a value the route refuses. It is deliberately NOT a validation
+// set: `-n 137` still reaches the server, which is the only side that knows what it will serve.
+var activityRowLadder = []int{25, 50, 100, 200, 500}
+
+// promptActivityRows asks how many entries to read back.
+//
+// The limit HAS a default, so this reads canPromptForm rather than requireInteractiveForm — the
+// rule output.go states for every defaulted field: a scripted caller is never REFUSED for omitting
+// `-n`, because the flag contract is complete without it, and a person at a terminal is still
+// asked, because a default is rarely what they meant. `alethia activity --no-input` therefore reads
+// exactly the rows it read before this form existed.
+//
+// The flag's own value is what seeds the select, so the cursor opens on the answer `-n` would have
+// given and a bare Enter changes nothing. It is INSERTED into the ladder when the ladder does not
+// already carry it, because a picker that cannot offer the current value turns Enter into a silent
+// change of it — which is the one thing a seeded form must never do.
+func promptActivityRows(cmd *cobra.Command, limit int) (int, error) {
+	if cmd.Flags().Changed("limit") || !canPromptForm() {
+		return limit, nil
+	}
+	f := mustGovField("alethia activity", fieldKeyGovLimit)
+	options := make([]huh.Option[int], 0, len(activityRowLadder)+1)
+	for _, n := range activityRowsOffered(limit) {
+		options = append(options, huh.NewOption(fmt.Sprintf("%d rows", n), n))
+	}
+	chosen := limit
+	if err := runHuhForm(huh.NewGroup(
+		huh.NewSelect[int]().Title(f.Title).Description(f.Description).Options(options...).Value(&chosen),
+	)); err != nil {
+		return limit, err
+	}
+	return chosen, nil
+}
+
+// activityRowsOffered is the ladder with the current value merged in, ascending.
+func activityRowsOffered(limit int) []int {
+	offered := make([]int, 0, len(activityRowLadder)+1)
+	inserted := false
+	for _, n := range activityRowLadder {
+		if !inserted && limit < n {
+			offered = append(offered, limit)
+			inserted = true
+		}
+		if n == limit {
+			inserted = true
+		}
+		offered = append(offered, n)
+	}
+	if !inserted {
+		offered = append(offered, limit)
+	}
+	return offered
 }
 
 var activityColumns = []string{"Time", "Actor", "Action", "Resource", "Decision", "Reason"}

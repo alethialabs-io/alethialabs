@@ -155,7 +155,7 @@ alethia
 │   └── set [provider] [--warm-min <n>] [--max <n>] [--slots <n>] [--enabled] [--channel <c>] [--version <v>]
 ├── classification                   # alias: class — governed taxonomy on resources
 │   ├── dimensions                   # list the org's dimensions + their values
-│   ├── show <kind> <id>             # values assigned to a resource
+│   ├── show [kind] [id]             # values assigned to a resource — asks for both when omitted
 │   ├── assign <kind> <id> [dimension-key] [value-slug]   # asks for the slugs when omitted
 │   └── unassign <kind> <id> [value-slug] [-y/--yes]
 ├── activity [-n/--limit <N>]         # org delivery/activity log

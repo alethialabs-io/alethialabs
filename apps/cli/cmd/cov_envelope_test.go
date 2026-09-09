@@ -83,6 +83,11 @@ func miscEnvelope(mode miscMode) map[string]any {
 		},
 		"configurations": []any{
 			map[string]any{"id": "p1", "project_name": "web", "environment_stage": "production", "status": "ACTIVE"},
+			// The multi-word name is the SLUGIFICATION case TestMisc_OpenProjectAndOrg asserts
+			// (`My Shop` → `/acme/my-shop`), and it has to be a project this org actually has:
+			// `open --project` resolves the reference against this list before building a link,
+			// so that a name the org does not carry is a refusal rather than a console 404 (#4454).
+			map[string]any{"id": "p2", "project_name": "My Shop", "environment_stage": "production", "status": "ACTIVE"},
 		},
 		"alert_rules": []any{
 			map[string]any{
