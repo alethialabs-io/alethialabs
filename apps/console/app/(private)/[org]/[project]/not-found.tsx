@@ -26,9 +26,13 @@ export default function ProjectNotFound() {
 			title="Project not found"
 			description="This project doesn't exist, or you don't have access to it."
 			actions={
+				// `role="link"`, as on the other two 404 boundaries: base-ui's Button stamps
+				// `role="button"` on a non-native render, so the only way out of this page — an
+				// `<a href>` in the DOM — announced itself as a button. See `[org]/not-found.tsx`.
 				<Button
 					size="sm"
 					nativeButton={false}
+					role="link"
 					render={<Link href={org ? orgHref(org) : "/"} />}
 				>
 					All projects

@@ -10,11 +10,20 @@
 // never arrived here; it is answered by `(private)/not-found.tsx`, one segment up — see the
 // mechanism written out there.
 //
-// What does arrive here is a notFound() thrown BELOW this layout by a route that has no nearer
-// boundary of its own: a project slug that does not resolve, a support case id that does not
-// exist. The org resolved for all of those, so this renders INSIDE AppShell and `fullPage` is the
-// wrong variant — it would paint a min-h-screen centred panel inside the dashboard chrome. The
-// compact in-content ErrorState is the right one.
+// What arrives here is a notFound() thrown BELOW this layout by a route that has no nearer
+// boundary of its own. The org resolved for any such throw, so this renders INSIDE AppShell and
+// `fullPage` is the wrong variant — it would paint a min-h-screen centred panel inside the
+// dashboard chrome. The compact in-content ErrorState is the right one.
+//
+// ⚠ NOTHING REACHES IT TODAY, and the two examples this comment used to give are the reason to say
+// so out loud. It named "a project slug that does not resolve, a support case id that does not
+// exist" — and BOTH have since grown their own nearer boundary (`[org]/[project]/not-found.tsx`,
+// #3880; `~/support/cases/[id]/not-found.tsx`), which is precisely the remedy the paragraph below
+// recommends. Every `notFound()` call under `[org]` is inside one of those two subtrees, so this
+// file is a dormant fallback waiting for the next segment that throws without one. That is a fine
+// thing to be; it is not a fine thing to describe as if users were seeing it. #4267 was written
+// against the old sentence and asserted this copy on the project 404 — the run said
+// "Project not found".
 //
 // The copy is resource-neutral for the same reason. It is a fallback for whatever below `[org]`
 // has not been given its own not-found.tsx yet; naming the organization here told the user the
