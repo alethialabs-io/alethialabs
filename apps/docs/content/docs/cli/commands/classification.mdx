@@ -75,15 +75,21 @@ Backing call: `GET /cli/classification/dimensions`.
 Show the values currently assigned to one resource.
 
 ```bash
+alethia classification show
 alethia classification show project_environment 8f3c1a2b-0000-4000-8000-000000000000
 ```
+
+Both tokens are optional at a terminal. Given neither, you are asked which **kind** — offered from
+the kinds the org's own dimensions target, so it is not a string you have to have read out of
+`dimensions` first — and then for the resource id. Scripted, pass both; `--no-input` with either
+missing is refused, and the refusal names the two tokens rather than the prompt it could not open.
 
 {/* fieldspec: alethia classification show */}
 
 | Field | What it is | Set with |
 |-------|------------|----------|
-| Resource kind | The record type being labelled, e.g. project_environment | `<kind>` |
-| Resource id | The UUID of the resource whose labels to read | `<id>` |
+| Resource kind | The record type being labelled, e.g. project_environment | `[kind]` |
+| Resource id | The UUID of the resource whose labels to read | `[id]` |
 
 Columns: **Dimension**, **Value** (both rendered as their human labels). Prints `Not classified.`
 when the resource carries no values. Backing call:
