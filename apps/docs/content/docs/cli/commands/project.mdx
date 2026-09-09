@@ -211,6 +211,9 @@ the command queues a `DESTROY`, and picking one of two plausible projects is not
 CLI should make for you. `--runner` and `--runner-id` are the same pair, refused the same way, and
 a runner name shared by two runners is refused naming both ids.
 
+`destroy` is destructive: on a terminal it confirms, and with `--no-input` it requires `--yes`
+rather than silently doing nothing.
+
 ### Applying the plan you just reviewed
 
 `--latest-plan` resolves the project's own most recent `PLAN` job, so a review-then-apply pass
@@ -234,9 +237,6 @@ do:
   one you never asked for.
 
 `--plan-job-id` is still there for a plan you already hold the id of.
-
-`destroy` is destructive: on a terminal it confirms, and with `--no-input` it requires `--yes`
-rather than silently doing nothing.
 
 ## `alethia project design apply`
 
