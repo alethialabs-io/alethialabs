@@ -73,12 +73,28 @@
 //     rather than folded into the numerator, because #3663 holds the `--yes` contract as its own
 //     item and conflating the two would let a `--yes` prompt pay for a missing form.
 //
-//   * The GO CALL GRAPH IS PACKAGE-LOCAL. Reachability is computed over top-level `func` bodies in
-//     package `cmd` only. It follows FUNCTIONS, never package-level `var`s, which is also why the
-//     auth gate does not leak in through `authRequiredPrompt` (a var holding `ui.AuthRequiredPrompt`).
-//     A form reached only through a var indirection is therefore INVISIBLE to this counter and the
-//     numerator is a floor, not an exact count. That is the honest direction to be wrong in for a
-//     report-mode census whose job is to be flipped into a ratchet later.
+//   * The GO CALL GRAPH IS PACKAGE-LOCAL, and the numerator is a FLOOR. Reachability is computed
+//     over package `cmd` only, following three shapes: `func name(…)`, `var name = func(…)`, and
+//     `var name = otherName` aliasing one of those. What it still does NOT follow is a METHOD
+//     (`func (r recv) name(…)`, whose call site `x.name(…)` a name-based closure cannot resolve to
+//     one declaration) and an indirection to something other than a package-local func (`var
+//     exitFunc = os.Exit`). A form reached only through one of those is invisible here.
+//
+//     THIS BULLET USED TO DESCRIBE A NARROWER GAP THAN THE CODE HAD, and that is what #4513 is
+//     about. It declared the var indirection as the one blind spot while a SECOND, undeclared one
+//     was live: `parseFuncs` took the first `{` after a declaration as the body brace, so any func
+//     with an inline `interface`/`struct` or a `map[string]interface{}` in its signature had its
+//     "body" cut to the type literal and was never walked (`promptGrantsAdd` — 110 lines, seven
+//     asked-for inputs — captured three). Four shipped forms read as missing and three lanes were
+//     specced from the number. Both are now resolved: the var indirection is followed (`runHuhForm`
+//     is a var, and it is what actually runs a `huh` form, so nothing else was worth doing), and
+//     `funcBodyOpen` finds the real brace. What remains above is the whole of what is left, and a
+//     reader who needs that to stay true should read `parseFuncs`, which states it again in situ.
+//
+//     `authRequiredPrompt` is NOT relied on being unreachable any more: it sits in a grouped `var`
+//     block aliasing a DOTTED name, so neither var shape resolves it — and it is in
+//     NOT_AN_INPUT_PATH regardless, which is the exclusion the self-test drives in both directions.
+//     A blind spot is not an access control, and using one as one is how a fix becomes a leak.
 //
 //   * The MIRROR counter reads BACKTICKED claims only — `Mirrors the Go ` + "`Type`". Prose that
 //     says "Mirrors the Go pattern in packages/core/cloud/aws/s3.go" names no type, so there is
@@ -94,14 +110,24 @@
 //     `<job-id>` is not an example — it is an instruction to go and find a value somewhere else,
 //     which is the ergonomic failure the CLI programme exists to remove.
 //
-//     The collection rule and the placeholder rule are DELIBERATELY THE SAME ONES the Go guard in
-//     `apps/cli/cmd/hyg_cli_docs_test.go` already uses (docsFencedExamples / docsPlaceholderToken),
-//     restated here rather than invented: two mechanisms answering one question with two rules is
-//     how a number stops meaning what its name says. The difference is SCOPE, and it is the reason
-//     this counter exists at all — the Go ratchet holds only the groups ENROLLED in
-//     `docsPlaceholderRatchetGroups`, deliberately, so that a sibling lane's merge cannot red a
-//     branch that never touched the page. This censuses EVERY page, enrolled or not, which is the
-//     programme's number.
+//     The COLLECTION rule is deliberately the same one the Go guard in
+//     `apps/cli/cmd/hyg_cli_docs_test.go` already uses (docsFencedExamples), restated here rather
+//     than invented: two mechanisms answering one question with two rules is how a number stops
+//     meaning what its name says. The Go ratchet's SCOPE is the difference that makes this counter
+//     worth having — it holds only the groups ENROLLED in `docsPlaceholderRatchetGroups`,
+//     deliberately, so that a sibling lane's merge cannot red a branch that never touched the page.
+//     This censuses EVERY page, enrolled or not, which is the programme's number.
+//
+//     The TOKEN rule is that guard's `docsPlaceholderToken` NARROWED, and the divergence is stated
+//     because it is a divergence: #4513 measured that a shell redirect (`alethia jobs list -o csv >
+//     jobs.csv`, counted because the token `>` "carries `>`") and bracketed FLAG notation
+//     (`[--wait]`, `[-f/--follow]`) were in this total. Neither is a value anyone substitutes, and
+//     several lanes' done-when is "this counter reads zero" — which under the wide rule REQUIRED an
+//     agent to reword a runnable example to satisfy a tokeniser. Both are now counted and printed
+//     separately instead. A bracketed VALUE (`[job_id]`) is still a handoff: the reader has to go
+//     and find the id. On an enrolled page the two numbers therefore differ by construction, this
+//     one being the smaller; the Go guard is the wider net and is left that way, because a docs
+//     guard over-reporting is noisy and a census over-reporting steers work.
 //
 // 2 · FORM COVERAGE. Runnable commands with an interactive path ÷ runnable commands that take
 //     input. "Runnable" matches the Go guard's docsLeaves: every command with a Run or RunE,
@@ -292,20 +318,72 @@ function fencedExamples(page) {
 }
 
 /**
+ * A shell REDIRECTION, which is not a substitution: `>`, `>>`, `2>`, `&>`, `2>&1`, `>out.csv`,
+ * `< in.json`.
+ *
+ * `alethia jobs list -o csv > jobs.csv` was counted as a handoff because the token `>` "carries
+ * `>`" (#4513). The line is runnable exactly as written; nobody substitutes anything into it. The
+ * discriminator is that a placeholder is DELIMITED and a redirect is not — `<job-id>` closes its
+ * angle bracket, `< in.json` does not — so the leading-`<` form is refused here only when the
+ * token carries no balanced `<…>` pair, which `placeholderToken` checks first.
+ * @param {string} token
+ * @returns {boolean}
+ */
+function redirectToken(token) {
+	return /^(?:&>>?|[0-9]*>>?|[0-9]*<)(?:&[0-9-]+|[^\s<>]*)$/.test(token);
+}
+
+/**
+ * Bracketed OPTIONAL-FLAG notation: `[--wait]`, `[-f/--follow]`, `[-n]`.
+ *
+ * Not a handoff, and this is the narrower half of the same #4513 finding. `[job_id]` is a VALUE
+ * the reader has to go and find in another command's output — the handoff itself. `[--wait]` is
+ * usage notation saying a flag is optional: there is nothing to substitute, and the only way to
+ * satisfy a counter that counts it is to reword a runnable example, which damages good docs to
+ * move a bad number. It is REPORTED beside the total instead (`by shape:` names it), because a
+ * bracketed flag in a runnable example is still not runnable as written — just not a handoff.
+ *
+ * Every `/`-separated part must be a flag. `[--project-id <id>]` never reaches here as one token
+ * and must not: the `<id>` inside it is a real substitution and is counted through that token.
+ * @param {string} token
+ * @returns {boolean}
+ */
+function flagNotationToken(token) {
+	if (!(token.startsWith("[") && token.endsWith("]") && token.length > 2)) return false;
+	return token
+		.slice(1, -1)
+		.split("/")
+		.every((part) => /^-{1,2}[A-Za-z0-9][A-Za-z0-9-]*$/.test(part));
+}
+
+/**
  * Whether one token of an example is a placeholder a reader must SUBSTITUTE rather than a literal
- * they can paste. A restatement of `docsPlaceholderToken`, deliberately.
+ * they can paste. A narrowed restatement of `docsPlaceholderToken`.
  *
  * Three shapes, and the third is the one it exists for. `<job-id>` and `[selector]` announce
  * themselves; `…` and `...` are how a truncated id is written, and `8f3c2a1e-...` is exactly the
  * token a reader would copy, paste, and get a 404 from. A token is judged WHOLE — `--repo=<url>`
  * is a placeholder because its value is one, and `oci://x/y` is not, because nothing in it is a
  * substitution.
+ *
+ * TWO NARROWINGS against `docsPlaceholderToken`, both from #4513, and both stated because a
+ * narrowing is the dangerous direction: an over-reporting matcher is noisy and gets found, an
+ * under-reporting one passes silently on the very regression it exists to catch.
+ *
+ *   1. A SUBSTITUTION must be a BALANCED `<…>` with something inside it, not a stray angle
+ *      bracket. `token.includes("<") || token.includes(">")` counted every shell redirect. The
+ *      cost of the narrowing is that an unbalanced `<job-id` typo now reads as a redirect; the
+ *      self-test pins both arms, and `redirectToken` states the shape it will accept.
+ *   2. Bracketed FLAG notation is not a handoff — see `flagNotationToken`. A bracketed VALUE
+ *      (`[job_id]`, `[sel]`) still is.
  * @param {string} token
  * @returns {boolean}
  */
 function placeholderToken(token) {
-	if (token.includes("<") || token.includes(">")) return true;
+	if (/<[^<>]+>/.test(token)) return true;
 	if (token.includes("…") || token.includes("...")) return true;
+	if (redirectToken(token)) return false;
+	if (flagNotationToken(token)) return false;
 	return token.startsWith("[") && token.endsWith("]") && token.length > 2;
 }
 
@@ -321,9 +399,11 @@ const CLI_DOCS_DIR = "apps/docs/content/docs/cli";
 function censusHandoffs(io, pagesFloor) {
 	const name = "handoffs";
 	const method =
-		`placeholder tokens (\`<x>\`, \`[x]\`, \`…\`/\`...\`) in shell-fenced \`alethia …\` examples across ` +
-		`every .mdx under ${CLI_DOCS_DIR}; collection and token rules restated from ` +
-		`apps/cli/cmd/hyg_cli_docs_test.go so the two mechanisms answer the same question`;
+		`placeholder tokens (a balanced \`<x>\`, a bracketed VALUE \`[x]\`, \`…\`/\`...\`) in shell-fenced ` +
+		`\`alethia …\` examples across every .mdx under ${CLI_DOCS_DIR}. The COLLECTION rule is restated ` +
+		`from apps/cli/cmd/hyg_cli_docs_test.go unchanged; the TOKEN rule is that file's ` +
+		`docsPlaceholderToken NARROWED by #4513 — a shell redirect (\`> jobs.csv\`) and bracketed flag ` +
+		`notation (\`[--wait]\`) are reported beside the total, not in it`;
 
 	const pages = io.list(CLI_DOCS_DIR, ".mdx");
 	if (pages.length === 0) {
@@ -349,23 +429,31 @@ function censusHandoffs(io, pagesFloor) {
 	/** @type {string[]} */
 	const findings = [];
 	let tokens = 0;
-	const shapes = { substitution: 0, optionalNotation: 0, truncation: 0 };
+	const shapes = { substitution: 0, bracketedValue: 0, truncation: 0 };
+	// REPORTED, NEVER COUNTED — the two #4513 removed from the total. They are kept as numbers
+	// rather than dropped for the same reason counter 4 prints its `prose` and counter 2 its
+	// `confirmOnly`: a matcher that stops counting something must still be able to say how much of
+	// it there was, or the next reader cannot tell a narrowing from a corpus that changed.
+	const excluded = { redirect: 0, flagNotation: 0 };
 	for (const page of pages) {
 		for (const example of fencedExamples(io.read(page))) {
 			examples++;
 			for (const token of example.split(/\s+/).filter(Boolean)) {
-				if (!placeholderToken(token)) continue;
+				if (!placeholderToken(token)) {
+					if (redirectToken(token)) excluded.redirect++;
+					else if (flagNotationToken(token)) excluded.flagNotation++;
+					continue;
+				}
 				tokens++;
 				// The three shapes are counted apart because they are not equally bad and a reader
 				// deciding what to fix needs to know which is which. `<id>` is a value copied out of
 				// another command's output — the handoff itself. `...` is a TRUNCATED id, which is
-				// the same handoff written so that it looks pasteable and 404s. `[--flag]` is usage
-				// NOTATION that leaked into a runnable example: still not runnable as written, which
-				// is why the shared rule catches it, but the fix is to delete the brackets rather
-				// than to remove a dependency between two commands.
-				if (token.includes("<") || token.includes(">")) shapes.substitution++;
+				// the same handoff written so that it looks pasteable and 404s. `[job_id]` is the
+				// same value written in cobra's usage notation: still a value fetched from another
+				// command's output, so still a handoff — unlike `[--wait]`, which is not counted.
+				if (/<[^<>]+>/.test(token)) shapes.substitution++;
 				else if (token.includes("…") || token.includes("...")) shapes.truncation++;
-				else shapes.optionalNotation++;
+				else shapes.bracketedValue++;
 				findings.push(`${page}: \`${example}\` carries ${token}`);
 			}
 		}
@@ -384,10 +472,16 @@ function censusHandoffs(io, pagesFloor) {
 	// token boundary and therefore counts EXAMPLES-with-a-placeholder rather than TOKENS. It is
 	// here to catch a tokeniser that has stopped splitting, not to replace the number: it is a
 	// lower bound on it by construction, so `lines > tokens` is the disagreement worth reporting.
+	//
+	// It mirrors the tokeniser's two DECISIONS and none of its mechanism: a substitution is a
+	// balanced non-empty `<…>`, and a bracket whose content starts with `-` is flag notation. Those
+	// are answers to "what counts as a handoff", which the two derivations must share or the bound
+	// is a bound on a different question. HOW a line is split into tokens is still not shared, and
+	// that is the thing this corroboration exists to check.
 	let lines = 0;
 	for (const page of pages) {
 		for (const example of fencedExamples(io.read(page))) {
-			if (/<[^>\s]*>|\.\.\.|…|(?:^|\s)\[[^\]\s]+\](?:$|\s)/.test(example)) lines++;
+			if (/<[^<>\s]+>|\.\.\.|…|(?:^|\s)\[(?!-)[^\]\s]+\](?:$|\s)/.test(example)) lines++;
 		}
 	}
 	const notes = [
@@ -397,9 +491,17 @@ function censusHandoffs(io, pagesFloor) {
 		`scope: ${pages.length} pages, ${examples} examples.`,
 		`by shape: ${shapes.substitution} substitutions (\`<id>\` — the handoff itself), ` +
 			`${shapes.truncation} truncated ids (\`8f3c…\` — the same handoff written so it looks ` +
-			`pasteable), ${shapes.optionalNotation} bracketed usage notation (\`[--flag]\` — not a ` +
-			`handoff, but not runnable as written either, and the shared rule catches it for that).`,
-		`the Go ratchet in hyg_cli_docs_test.go holds only its ENROLLED groups; this censuses all pages.`,
+			`pasteable), ${shapes.bracketedValue} bracketed values (\`[job_id]\` — the same handoff in ` +
+			`cobra's usage notation; the value still comes from another command's output).`,
+		`reported, NOT counted (#4513): ${excluded.redirect} shell redirect(s) (\`… -o csv > jobs.csv\` ` +
+			`is runnable exactly as written — nothing is substituted into it) and ${excluded.flagNotation} ` +
+			`bracketed FLAG notation(s) (\`[--wait]\`, \`[-f/--follow]\` — not runnable as written, but ` +
+			`not a handoff either, and the only way to satisfy a counter that counts them is to reword ` +
+			`a good example). Both were in this total until #4513; a lane whose done-when reads "the ` +
+			`counter is zero" was therefore asking for docs damage.`,
+		`the Go ratchet in hyg_cli_docs_test.go holds only its ENROLLED groups; this censuses all pages. ` +
+			`Its docsPlaceholderToken is the WIDER rule — it still counts both exclusions above — so on ` +
+			`an enrolled page the two numbers differ BY CONSTRUCTION and this one is the smaller.`,
 	];
 	return { name, method, refusal: null, value: tokens, rendered: String(tokens), notes, findings };
 }
@@ -458,6 +560,46 @@ const NOT_AN_INPUT_PATH = new Set(["getAuthToken", "getAuthTokenInternal", "auth
  */
 
 /**
+ * If a Go comment, string or rune literal STARTS at `i`, the index of its LAST character; -1 when
+ * nothing does.
+ *
+ * Extracted so the brace matcher and the signature scanner below cannot come to disagree about
+ * what a `{` inside a string is. Two scanners answering that question with two rules is the same
+ * defect class as two greps answering one census question — one of them is silently wrong and
+ * nothing says which.
+ * @param {string} src
+ * @param {number} i
+ * @returns {number} index of the literal's last character, or -1
+ */
+function literalEnd(src, i) {
+	const c = src[i];
+	if (c === "/" && src[i + 1] === "/") {
+		const nl = src.indexOf("\n", i);
+		return nl === -1 ? src.length : nl;
+	}
+	if (c === "/" && src[i + 1] === "*") {
+		const end = src.indexOf("*/", i + 2);
+		return end === -1 ? src.length : end + 1;
+	}
+	if (c === "`") {
+		const end = src.indexOf("`", i + 1);
+		return end === -1 ? src.length : end;
+	}
+	if (c === '"' || c === "'") {
+		for (let j = i + 1; j < src.length; j++) {
+			if (src[j] === "\\") {
+				j++;
+				continue;
+			}
+			if (src[j] === c || src[j] === "\n") return j;
+			if (j === src.length - 1) return j;
+		}
+		return src.length;
+	}
+	return -1;
+}
+
+/**
  * Find the matching close brace for the `{` at `open`, respecting Go string, rune and comment
  * syntax. A brace counter that does not know about `"}"` inside a Long string closes the literal
  * early and every field after it disappears — which reads as a command with no Run.
@@ -468,40 +610,87 @@ const NOT_AN_INPUT_PATH = new Set(["getAuthToken", "getAuthTokenInternal", "auth
 function matchBrace(src, open) {
 	let depth = 0;
 	for (let i = open; i < src.length; i++) {
+		const skip = literalEnd(src, i);
+		if (skip !== -1) {
+			i = skip;
+			continue;
+		}
 		const c = src[i];
-		if (c === "/" && src[i + 1] === "/") {
-			const nl = src.indexOf("\n", i);
-			i = nl === -1 ? src.length : nl;
-			continue;
-		}
-		if (c === "/" && src[i + 1] === "*") {
-			const end = src.indexOf("*/", i + 2);
-			i = end === -1 ? src.length : end + 1;
-			continue;
-		}
-		if (c === "`") {
-			const end = src.indexOf("`", i + 1);
-			i = end === -1 ? src.length : end;
-			continue;
-		}
-		if (c === '"' || c === "'") {
-			for (let j = i + 1; j < src.length; j++) {
-				if (src[j] === "\\") {
-					j++;
-					continue;
-				}
-				if (src[j] === c || src[j] === "\n") {
-					i = j;
-					break;
-				}
-				if (j === src.length - 1) i = j;
-			}
-			continue;
-		}
 		if (c === "{") depth++;
 		else if (c === "}") {
 			depth--;
 			if (depth === 0) return i;
+		}
+	}
+	return -1;
+}
+
+/**
+ * Whether the `{` at `brace` opens an inline `interface`/`struct` TYPE rather than a block.
+ *
+ * The keyword immediately before it is the whole discriminator: `interface {` and `struct {` are
+ * the only two composite type literals Go writes with a brace, and a body brace is preceded by a
+ * `)`, a result type or a `}` — never by either word.
+ * @param {string} src
+ * @param {number} brace
+ * @returns {boolean}
+ */
+function opensCompositeType(src, brace) {
+	let i = brace - 1;
+	while (i >= 0 && /\s/.test(src[i])) i--;
+	const end = i + 1;
+	while (i >= 0 && /[A-Za-z0-9_]/.test(src[i])) i--;
+	const word = src.slice(i + 1, end);
+	return word === "interface" || word === "struct";
+}
+
+/**
+ * The index of a func's BODY brace, given the `(` that opens its parameter list.
+ *
+ * `src.indexOf("{", declIndex)` — what this replaced (#4513) — assumes the first `{` after the
+ * declaration opens the body. For a signature carrying an inline composite type it does not, and
+ * the captured "body" is then the TYPE:
+ *
+ *     func promptGrantsAdd(c interface {
+ *         memberLister
+ *         teamLister
+ *         roleLister
+ *     }, orgID string, in grantsAddAnswers) (grantsAddAnswers, error) {
+ *
+ * captured three lines, so the real 110-line form was never walked and `alethia grants add` — a
+ * command whose seven inputs are all asked for — reported as having no form. `map[string]interface{}`
+ * in a parameter or a result does exactly the same, silently, to every func that carries one.
+ * Measured on `dev` 2026-09-09: ELEVEN top-level funcs in apps/cli/cmd had their body cut short —
+ * nine on a `map[string]interface{}`, two on an inline `interface{…}` — and three lanes were then
+ * specced from the resulting number.
+ *
+ * So: walk the signature from the parameter list, skip every balanced literal inside it, and take
+ * the first `{` that is outside every paren and bracket AND is not introduced by
+ * `interface`/`struct`. Scanning "from the closing paren of the parameter list" is not enough on
+ * its own — the RESULT may be a `map[string]interface{}` too.
+ * @param {string} src
+ * @param {number} parenOpen index of the `(` opening the parameter list
+ * @returns {number} index of the body's `{`, or -1
+ */
+function funcBodyOpen(src, parenOpen) {
+	let paren = 0;
+	let bracket = 0;
+	for (let i = parenOpen; i < src.length; i++) {
+		const skip = literalEnd(src, i);
+		if (skip !== -1) {
+			i = skip;
+			continue;
+		}
+		const c = src[i];
+		if (c === "(") paren++;
+		else if (c === ")") paren--;
+		else if (c === "[") bracket++;
+		else if (c === "]") bracket--;
+		else if (c === "{") {
+			if (paren <= 0 && bracket <= 0 && !opensCompositeType(src, i)) return i;
+			const close = matchBrace(src, i);
+			if (close === -1) return -1;
+			i = close;
 		}
 	}
 	return -1;
@@ -615,11 +804,29 @@ function parseEdges(io, files, funcs) {
 }
 
 /**
- * Every top-level `func name(…)` body in package `cmd`, for the reachability closure.
+ * Every callable-by-name body in package `cmd`, for the reachability closure. THREE shapes.
  *
- * Methods (`func (r recv) name(…)`) are skipped: a receiver makes the call site `x.name(…)`, which
- * this name-based closure cannot resolve to one declaration anyway, and pretending otherwise would
- * add edges that are not there.
+ *   func name(…) { … }          the ordinary declaration
+ *   var name = func(…) { … }    the package-level indirection (see below)
+ *   var name = otherName        an alias to one of the two above
+ *
+ * The second and third are a RESOLVED blind spot, not a refinement. The CLI writes every seam its
+ * tests substitute as a package-level `var` holding a func literal — `runHuhForm`, `askChoice`,
+ * `confirm`, `askLine`, `askYesNo`, `askKeyValue`, `promptTokenCreate`, `selectServiceToken`,
+ * `promptConfigSet` — and `runHuhForm` is the thing that actually runs a `huh` form. A closure
+ * that stopped at `^func` therefore could not see the form kit through the one indirection the
+ * whole package uses to reach it, and reported SHIPPED forms as missing (#4513).
+ *
+ * What is still not followed, stated rather than left to be inferred:
+ *
+ *   * METHODS (`func (r recv) name(…)`). A receiver makes the call site `x.name(…)`, which a
+ *     name-based closure cannot resolve to one declaration; pretending otherwise adds edges that
+ *     are not there.
+ *   * An indirection whose right-hand side is not a func literal and not a package-local name —
+ *     `var exitFunc = os.Exit`, a struct field, a map of funcs. Resolving one means resolving a
+ *     value, which is a different program from this one.
+ *
+ * Both leave the numerator a FLOOR, and the header says so beside the number.
  * @param {Io} io
  * @param {string[]} files
  * @returns {Map<string, string>} function name → body source
@@ -627,15 +834,29 @@ function parseEdges(io, files, funcs) {
 function parseFuncs(io, files) {
 	/** @type {Map<string, string>} */
 	const funcs = new Map();
-	const decl = /^func\s+([A-Za-z0-9_]+)\s*\(/gm;
+	const decl = /^(?:func\s+([A-Za-z0-9_]+)\s*\(|var\s+([A-Za-z0-9_]+)\s*=\s*func\s*\()/gm;
 	for (const file of files) {
 		const src = io.read(file);
 		for (const m of src.matchAll(decl)) {
-			const open = src.indexOf("{", m.index);
+			const name = m[1] ?? m[2];
+			if (name === undefined) continue;
+			const open = funcBodyOpen(src, m.index + m[0].length - 1);
 			if (open === -1) continue;
 			const close = matchBrace(src, open);
 			if (close === -1) continue;
-			funcs.set(m[1], src.slice(open, close + 1));
+			funcs.set(name, src.slice(open, close + 1));
+		}
+	}
+	// Pass 2 — the aliases, after every body is known: `var askEnvironmentSpec = promptEnvironmentSpec`
+	// is the same indirection one step further out, and the target may be declared in any file. It
+	// resolves ONLY to a name this parse already holds, so `var exitFunc = os.Exit` gets no edge
+	// rather than a wrong one.
+	for (const file of files) {
+		const src = io.read(file);
+		for (const m of src.matchAll(/^var\s+([A-Za-z0-9_]+)\s*=\s*([A-Za-z0-9_]+)\s*$/gm)) {
+			const body = funcs.get(m[2]);
+			if (body === undefined || funcs.has(m[1])) continue;
+			funcs.set(m[1], body);
 		}
 	}
 	return funcs;
@@ -711,7 +932,8 @@ function censusFormCoverage(io, filesFloor) {
 		`(tests excluded). Runnable = has Run/RunE, matching docsLeaves in hyg_cli_docs_test.go — a ` +
 		`runnable GROUP counts, cobra's help/completion and Hidden do not. Takes input = a positional ` +
 		`in Use, an own flag, an inherited group persistent flag, or a spec.RegisterFlags binder. ` +
-		`Interactive = reaches ${VALUE_WIDGETS.join("/")} through package-cmd function calls`;
+		`Interactive = reaches ${VALUE_WIDGETS.join("/")} through package-cmd calls, following ` +
+		`\`func name(…)\`, \`var name = func(…)\` and \`var name = otherFunc\`; never a method`;
 
 	const files = io.list(CLI_CMD_DIR, ".go").filter((f) => !f.endsWith("_test.go"));
 	if (files.length === 0) {
@@ -870,8 +1092,13 @@ function censusFormCoverage(io, filesFloor) {
 			`${docsCount === 0 ? " IT DREW ZERO — the tree fence moved and this corroboration is inert." : ""}`,
 		`${confirmOnly} of the ${takingInput - interactive} uncovered commands reach a ${CONFIRM_WIDGET} ` +
 			`and nothing else. A confirmation is not a way to supply an input and is not counted; see the header.`,
-		`blind spot, stated: the closure follows package-cmd FUNCTIONS only, so a form reached through ` +
-			`a package-level var indirection is invisible and ${interactive} is a FLOOR on the numerator.`,
+		`blind spot, stated, and it is now ONE rather than the two it was: the closure follows ` +
+			`package-cmd \`func name(…)\`, \`var name = func(…)\` and \`var name = otherFunc\`, so a form ` +
+			`reached only through a METHOD or through an indirection to a non-package-local value is ` +
+			`still invisible and ${interactive} is a FLOOR on the numerator. #4513 removed the other: ` +
+			`the body-brace scan stopped at an inline \`interface{…}\`/\`map[string]interface{}\` in a ` +
+			`SIGNATURE, so any func carrying one was walked three lines deep and its form never seen — ` +
+			`undeclared, while this note claimed one known gap.`,
 		`CAVEAT, and it is the one that decides what this percentage means: the unit is #3664's — a ` +
 			`LEAF — so a command counts as covered when ANY of its inputs can be asked for, not when ` +
 			`all of them can. A command that picks its project interactively and still cannot ask for ` +
@@ -1356,11 +1583,36 @@ function selfTest() {
 		ok("`[sel]` is", placeholderToken("[sel]"));
 		ok("`[]` is not — nothing to substitute", !placeholderToken("[]"));
 
+		// ── #4513's two narrowings, EACH IN BOTH DIRECTIONS ───────────────────────────────────
+		//
+		// A narrowing is the dangerous direction: an over-reporting matcher is noisy and gets
+		// found, an under-reporting one passes silently on the very regression it guards. So every
+		// token this stopped counting is paired here with the nearest token it MUST still count.
+
+		// 1 · a shell redirect is not a substitution — but a real `<…>` still is.
+		ok("a bare `>` redirect is NOT a placeholder", !placeholderToken(">"));
+		ok("`>>` is not", !placeholderToken(">>"));
+		ok("`2>&1` is not", !placeholderToken("2>&1"));
+		ok("`>jobs.csv` (no space) is not", !placeholderToken(">jobs.csv"));
+		ok("`< in.json` — an INPUT redirect — is not", !placeholderToken("<"));
+		ok("CONTROL: `<job-id>` still is", placeholderToken("<job-id>"));
+		ok("CONTROL: `<S>]` — a substitution inside notation — still is", placeholderToken("<S>]"));
+		ok("CONTROL: `--project-id=<id>` still is", placeholderToken("--project-id=<id>"));
+		ok("`<>` is not — balanced but nothing to substitute", !placeholderToken("<>"));
+
+		// 2 · bracketed FLAG notation is not a handoff — but a bracketed VALUE is.
+		ok("`[--wait]` is NOT a placeholder", !placeholderToken("[--wait]"));
+		ok("`[-f/--follow]` is not", !placeholderToken("[-f/--follow]"));
+		ok("`[-n]` is not", !placeholderToken("[-n]"));
+		ok("CONTROL: `[job_id]` still is — the value comes from another command", placeholderToken("[job_id]"));
+		ok("CONTROL: `[name]` still is", placeholderToken("[name]"));
+		ok("CONTROL: `[--status` is not a whole bracket and is not swallowed as one", !placeholderToken("[--status"));
+
 		// The shape breakdown, which is what makes the total defensible: a reader deciding what to
 		// fix has to be able to tell a copied id from usage notation that leaked into an example.
 		const shaped = censusHandoffs(
 			memoryIo({
-				[`${CLI_DOCS_DIR}/a.mdx`]: "```bash\nalethia jobs logs <id>\nalethia jobs get 8f3c...\nalethia jobs list [--all]\n```\n",
+				[`${CLI_DOCS_DIR}/a.mdx`]: "```bash\nalethia jobs logs <id>\nalethia jobs get 8f3c...\nalethia jobs cancel [job_id]\n```\n",
 			}),
 			1,
 		);
@@ -1369,7 +1621,41 @@ function selfTest() {
 			shaped.value === 3 &&
 				(shaped.notes.find((n) => n.startsWith("by shape:")) ?? "").includes("1 substitutions") &&
 				(shaped.notes.find((n) => n.startsWith("by shape:")) ?? "").includes("1 truncated") &&
-				(shaped.notes.find((n) => n.startsWith("by shape:")) ?? "").includes("1 bracketed"),
+				(shaped.notes.find((n) => n.startsWith("by shape:")) ?? "").includes("1 bracketed values"),
+		);
+
+		// And the exclusions END TO END, not just at the token predicate: the two real lines #4513
+		// names must produce a clean ZERO from the census, and must be REPORTED rather than dropped
+		// — a matcher that stops counting something silently cannot be told from a corpus that
+		// changed.
+		const excludedIo = memoryIo({
+			[`${CLI_DOCS_DIR}/a.mdx`]:
+				"```bash\nalethia jobs list -o csv > jobs.csv\nalethia jobs logs 4f2 [-f/--follow]\n```\n",
+		});
+		const ex = censusHandoffs(excludedIo, 1);
+		ok("a redirect and flag notation together are a clean ZERO", ex.refusal === null && ex.value === 0);
+		ok(
+			"...and both are reported, with their counts",
+			(ex.notes.find((n) => n.startsWith("reported, NOT counted")) ?? "").includes("1 shell redirect(s)") &&
+				(ex.notes.find((n) => n.startsWith("reported, NOT counted")) ?? "").includes("1 bracketed FLAG notation(s)"),
+		);
+		// The regression that narrowing could hide: the SAME two lines with a real handoff added
+		// must still be a finding. If this ever passes as a zero, the tokeniser has been narrowed
+		// into uselessness and every count above is a clean zero over a broken rule.
+		const stillDirty = censusHandoffs(
+			memoryIo({
+				[`${CLI_DOCS_DIR}/a.mdx`]:
+					"```bash\nalethia jobs list -o csv > jobs.csv\nalethia jobs logs <job-id> [-f/--follow]\n```\n",
+			}),
+			1,
+		);
+		ok("CONTROL: a real handoff on a line WITH a redirect and notation is still counted", stillDirty.value === 1);
+
+		// The corroboration must remain a LOWER bound after the narrowing — it mirrors the two
+		// decisions and nothing else, so a line carrying only excluded tokens must not count.
+		ok(
+			"the whole-line corroboration agrees about what counts",
+			(ex.notes.find((n) => n.startsWith("corroborating:")) ?? "").startsWith("corroborating: 0 of 2"),
 		);
 	}
 
@@ -1537,6 +1823,159 @@ function selfTest() {
 				}),
 				1,
 			).notes.find((n) => n.includes("still have no parent")) ?? "").includes("wCmd"),
+		);
+
+		// ── #4513 · the body brace, IN BOTH DIRECTIONS ────────────────────────────────────────
+		//
+		// `src.indexOf("{", declIndex)` took the first `{` after a `func` as the body brace. For a
+		// signature carrying an inline composite type it is the TYPE, the captured body is a few
+		// lines long, and the real form is never walked — silently, for every func that takes a
+		// `map[string]interface{}`. Each fixture below is paired with a control in which the same
+		// signature reaches NOTHING, so a matcher that started returning "covered" for everything
+		// would fail here rather than read as a fix.
+		const inlineInterface = memoryIo({
+			[`${CLI_CMD_DIR}/a.go`]: goFile(
+				'var aCmd = &cobra.Command{Use: "add [id]", Run: func() { promptGrantsAdd(c, o, in) }}\n' +
+					"func init() { rootCmd.AddCommand(aCmd) }\n" +
+					"func promptGrantsAdd(c interface {\n\tmemberLister\n\tteamLister\n}, orgID string) (answers, error) {\n" +
+					"\treturn huh.NewSelect[string]().Title(t), nil\n}\n",
+			),
+		});
+		ok(
+			"a form behind an INLINE INTERFACE in the signature is seen (#4513)",
+			censusFormCoverage(inlineInterface, 1).value === 1,
+		);
+		const inlineInterfaceEmpty = memoryIo({
+			[`${CLI_CMD_DIR}/a.go`]: goFile(
+				'var aCmd = &cobra.Command{Use: "add [id]", Run: func() { promptGrantsAdd(c, o, in) }}\n' +
+					"func init() { rootCmd.AddCommand(aCmd) }\n" +
+					"func promptGrantsAdd(c interface {\n\tmemberLister\n\tteamLister\n}, orgID string) (answers, error) {\n" +
+					"\treturn fmt.Errorf(\"no form here\")\n}\n",
+			),
+		});
+		ok(
+			"CONTROL: the same signature with NO form is still uncovered",
+			censusFormCoverage(inlineInterfaceEmpty, 1).value === 0,
+		);
+		const mapInterface = memoryIo({
+			[`${CLI_CMD_DIR}/a.go`]: goFile(
+				'var aCmd = &cobra.Command{Use: "create [n]", Run: func() { runCreate(c, cfg) }}\n' +
+					"func init() { rootCmd.AddCommand(aCmd) }\n" +
+					"func runCreate(c apiClient, config map[string]interface{}) error { return askIt() }\n" +
+					"func askIt() error { return huh.NewInput().Value(&v) }\n",
+			),
+		});
+		ok("a `map[string]interface{}` PARAMETER no longer truncates the body", censusFormCoverage(mapInterface, 1).value === 1);
+		const mapInterfaceResult = memoryIo({
+			[`${CLI_CMD_DIR}/a.go`]: goFile(
+				'var aCmd = &cobra.Command{Use: "create [n]", Run: func() { creds(a, b, c) }}\n' +
+					"func init() { rootCmd.AddCommand(aCmd) }\n" +
+					"func creds(a, b, c string) map[string]interface{} { return ask() }\n" +
+					"func ask() map[string]interface{} { huh.NewInput(); return nil }\n",
+			),
+		});
+		ok(
+			"...and neither does one in the RESULT (scanning from the close paren is not enough)",
+			censusFormCoverage(mapInterfaceResult, 1).value === 1,
+		);
+		ok(
+			"CONTROL: a `{` inside a signature STRING is not mistaken for either",
+			censusFormCoverage(
+				memoryIo({
+					[`${CLI_CMD_DIR}/a.go`]: goFile(
+						'var aCmd = &cobra.Command{Use: "create [n]", Run: func() { tagged() }}\n' +
+							"func init() { rootCmd.AddCommand(aCmd) }\n" +
+							'func tagged(x string) error { /* "{" */ return huh.NewInput() }\n',
+					),
+				}),
+				1,
+			).value === 1,
+		);
+
+		// ── #4513 · the package-level `var` indirection, IN BOTH DIRECTIONS ───────────────────
+		//
+		// This was the DECLARED blind spot and it is now resolved rather than declared, because
+		// `runHuhForm` — the thing that actually runs a huh form in this CLI — is one of these.
+		// The control below is the reason it is safe to resolve: the auth gate must not walk in
+		// through the same door, and it does not, because the exclusion is BY NAME.
+		const varFunc = memoryIo({
+			[`${CLI_CMD_DIR}/a.go`]: goFile(
+				'var aCmd = &cobra.Command{Use: "create [name]", Run: func() { promptTokenCreate(n, d) }}\n' +
+					"func init() { rootCmd.AddCommand(aCmd) }\n" +
+					"var promptTokenCreate = func(name string, days int) (string, int, error) {\n" +
+					"\treturn huh.NewInput().Value(&name), days, nil\n}\n",
+			),
+		});
+		ok("a form behind `var name = func(…)` IS reached (#4513)", censusFormCoverage(varFunc, 1).value === 1);
+		ok(
+			"CONTROL: a `var name = func(…)` that reaches no widget is still uncovered",
+			censusFormCoverage(
+				memoryIo({
+					[`${CLI_CMD_DIR}/a.go`]: goFile(
+						'var aCmd = &cobra.Command{Use: "create [name]", Run: func() { promptTokenCreate(n, d) }}\n' +
+							"func init() { rootCmd.AddCommand(aCmd) }\n" +
+							"var promptTokenCreate = func(name string, days int) (string, int, error) {\n" +
+							"\treturn name, days, nil\n}\n",
+					),
+				}),
+				1,
+			).value === 0,
+		);
+		const varAlias = memoryIo({
+			[`${CLI_CMD_DIR}/a.go`]: goFile(
+				'var aCmd = &cobra.Command{Use: "create [name]", Run: func() { askEnvironmentSpec(a, b) }}\n' +
+					"func init() { rootCmd.AddCommand(aCmd) }\n" +
+					"var askEnvironmentSpec = promptEnvironmentSpec\n" +
+					"func promptEnvironmentSpec(a *envAnswers, first bool) error { return huh.NewText().Value(&v) }\n",
+			),
+		});
+		ok("...and so is one behind `var name = otherFunc`, declared LATER in the file", censusFormCoverage(varAlias, 1).value === 1);
+		// The alias pass must resolve to NOTHING rather than to a wrong body, and there are TWO
+		// separate reasons it can decline. They are driven apart on purpose: a mutation that made
+		// the pass resolve any right-hand side survived a suite that only had the first, because
+		// the DOTTED name never reached the check being tested — the regex had already declined it.
+		// A control that passes for the wrong reason is not a control.
+		ok(
+			"CONTROL: a DOTTED rhs (`var exitFunc = os.Exit`) is not matched as an alias at all",
+			censusFormCoverage(
+				memoryIo({
+					[`${CLI_CMD_DIR}/a.go`]: goFile(
+						'var aCmd = &cobra.Command{Use: "create [name]", Run: func() { exitFunc(1) }}\n' +
+							"func init() { rootCmd.AddCommand(aCmd) }\n" +
+							"var exitFunc = os.Exit\n" +
+							"func Exit(code int) { huh.NewInput() }\n",
+					),
+				}),
+				1,
+			).value === 0,
+		);
+		ok(
+			"CONTROL: a bare rhs naming a package VALUE, not a func, resolves to nothing",
+			censusFormCoverage(
+				memoryIo({
+					[`${CLI_CMD_DIR}/a.go`]: goFile(
+						'var aCmd = &cobra.Command{Use: "create [name]", Run: func() { pageSize(1) }}\n' +
+							"func init() { rootCmd.AddCommand(aCmd) }\n" +
+							"var pageSize = defaultPageSize\n" +
+							"var defaultPageSize = 50\n" +
+							"func unrelated() { huh.NewInput() }\n",
+					),
+				}),
+				1,
+			).value === 0,
+		);
+		ok(
+			"CONTROL: the AUTH GATE does not walk in through the var door either",
+			censusFormCoverage(
+				memoryIo({
+					[`${CLI_CMD_DIR}/a.go`]: goFile(
+						'var aCmd = &cobra.Command{Use: "create [name]", Run: func() { getAuthToken() }}\n' +
+							"func init() { rootCmd.AddCommand(aCmd) }\n" +
+							"var getAuthToken = func() string { return huh.NewInput().Value(&v) }\n",
+					),
+				}),
+				1,
+			).value === 0,
 		);
 
 		// The brace matcher: a `}` inside a Long string must not close the literal early, or a
