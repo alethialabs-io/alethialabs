@@ -65,11 +65,72 @@ const LANE_LABELS = namesOfKind("lane");
 const CLASS_LABELS = namesOfKind("class");
 // Operational labels are maintained at RUNTIME by claim-work.sh / coordinate.sh — a fresh
 // proposal must not pre-set them (they'd corrupt the claim/blocked bookkeeping). mutex/needs
-// labels ARE legitimately authored into a proposal. `kind: "board"` labels (today just `epic`) are
-// minted for the board but are never valid on a proposed unit, so they stay out of KNOWN_LABELS
-// and a proposal carrying one still fails — same behaviour as before.
+// labels ARE legitimately authored into a proposal.
 const RUNTIME_LABELS = namesOfKind("runtime");
 const AUTHORABLE_EXTRA = namesOfKind("authorable");
+
+// ── `kind: "board"` — minted FOR the board, never valid ON a proposed unit ────────────────────
+//
+// A board label marks a whole programme on the live board rather than a claimable unit of work.
+// Nothing a decomposition proposes is one, so every member of the kind is kept out of
+// KNOWN_LABELS and a proposal carrying one fails as `unknown label`.
+//
+// That is a statement about the KIND, and the membership is DERIVED. Both halves are the fix for
+// #4551: this comment used to assert the kind was "today just `epic`", which stopped being true
+// the moment a second one was minted and survived a third and a fourth — and the exclusion itself
+// was by OMISSION, so no check could tell "left out on purpose" from "forgotten". `BOARD_LABELS`
+// names the kind, and `--self-test` proves every member of it is rejected — for whatever the
+// membership is on the day it runs, not for the one that held when this was written.
+const BOARD_LABELS = namesOfKind("board");
+
+// ── the kind's census ────────────────────────────────────────────────────────────────────────
+//
+// One line, and `--self-test` RECOUNTS it from scripts/lib/board-labels.json every run — in CI on
+// every PR (`.github/workflows/ci.yml`, the `Authz / open-core guards` job). It fails in BOTH
+// directions: a kind that grew without the line, and a line edited away from the ledger. Do not
+// retype it from memory — a hand-maintained membership list inside the file that describes it is
+// exactly what produced #4551. Mint a board label, run
+// `node scripts/decompose-validate.mjs --self-test`, and paste the line it names.
+//
+// Exactly one line in this file may carry the marker; a second — in prose, say — is itself a
+// failure rather than a tie-break, because two censuses are no census.
+//
+// BOARD-LABEL-CENSUS: 4 — epic, qa:prod, release-gate:all, release-gate:run
+
+/**
+ * The marker for the single header line that states the board-label census.
+ *
+ * Held as a constant so the writer (`boardCensusLine`) and the reader (`boardCensusLinesIn`)
+ * cannot come to disagree about what they are looking for: the failure mode of a hand-copied
+ * token is that the check quietly finds nothing and reports green.
+ */
+const BOARD_CENSUS_MARKER = "BOARD-LABEL-CENSUS: ";
+
+/**
+ * Render a board-label set as the one header line `--self-test` pins, comment prefix and all.
+ *
+ * @param {Iterable<string>} names the `kind: "board"` label names
+ * @returns {string} the exact source line, ready to paste
+ */
+function boardCensusLine(names) {
+	const sorted = [...names].sort();
+	return `// ${BOARD_CENSUS_MARKER}${sorted.length} — ${sorted.length ? sorted.join(", ") : "none"}`;
+}
+
+/**
+ * Every line of a source text that carries the census marker at column 0.
+ *
+ * Returns the list rather than the first hit so the caller can fail on TWO of them — a marker
+ * repeated in prose re-declares the census, and a check that took the first match would read
+ * straight past the real line.
+ *
+ * @param {string} source this file's own text
+ * @returns {string[]}
+ */
+function boardCensusLinesIn(source) {
+	return source.split("\n").filter((line) => line.startsWith(`// ${BOARD_CENSUS_MARKER}`));
+}
+
 /**
  * The lanes that own RENDERED product UI. A `class:backend` unit in one of these is taking the
  * routing that skips the human design gate, and therefore owes a `check:`.
@@ -489,6 +550,15 @@ function runSelfTest() {
 			);
 		}
 	};
+	/** Assert a plain boolean, printing an ok/FAIL line. */
+	const ok = (name, cond) => {
+		if (cond) {
+			console.log(`ok   - ${name}`);
+			return;
+		}
+		fails++;
+		console.error(`FAIL - ${name}`);
+	};
 	/**
 	 * Assert a proposal validates against a stubbed open board as expected. A FAIL expectation
 	 * MUST also give `expectError`, a regex over the joined error text: `validateAgainstBoard`
@@ -855,18 +925,9 @@ function runSelfTest() {
 	];
 	expect("a program wave (wave:offer-parity) PASSes", programWave, true);
 
-	// `epic` is minted for the board but is never valid on a proposed unit — an umbrella is
-	// decomposed, not built. It carries kind "board" in the catalog for exactly this reason.
-	const epicLabel = [
-		{
-			id: 1,
-			title: "seams: shared",
-			labels: ["wave:hygiene", "lane:core", "class:backend", "epic"],
-			scope: ["apps/console/lib/db/schema/shared.ts"],
-			blockedBy: [],
-		},
-	];
-	expect("a proposal carrying `epic` FAILs", epicLabel, false);
+	// `epic` used to be asserted here as a one-value fixture. It is now covered — with the rest of
+	// its kind, and on the error TEXT rather than the error count — by the derived loop at the end
+	// of this function, which reads the ledger instead of naming a member of it.
 
 	// Two class labels.
 	const twoClasses = [
@@ -929,6 +990,75 @@ function runSelfTest() {
 	relabelEscape[1].labels = ["wave:console-ui", "lane:canvas", "class:backend"];
 	relabelEscape[1].scope = ["apps/console/components/design-project/**"];
 	expect("relabelling lane:console -> lane:canvas does NOT shed the check:", relabelEscape, false);
+
+	// ── the `kind: "board"` exclusion, against the REAL ledger ─────────────────────────────
+	//
+	// Every fixture above is inline. These four deliberately are not: they read the real
+	// scripts/lib/board-labels.json and this file's own text, because a census pinned to a fixture
+	// is a census of the fixture — and the sentence #4551 was raised about was wrong about the
+	// real ledger, not about a made-up one.
+
+	// The loop below is vacuously green on an empty kind, which would make "every board label is
+	// rejected" true and meaningless. Assert the population first.
+	ok(
+		`the ledger declares at least one kind:"board" label (found ${BOARD_LABELS.size})`,
+		BOARD_LABELS.size > 0,
+	);
+
+	const censusSource = readFileSync(new URL(import.meta.url), "utf8");
+	const statedCensus = boardCensusLinesIn(censusSource);
+	ok(
+		`the header carries exactly one board-label census line (found ${statedCensus.length})`,
+		statedCensus.length === 1,
+	);
+	if (statedCensus.length === 1) {
+		const derivedCensus = boardCensusLine(BOARD_LABELS);
+		const agree = statedCensus[0] === derivedCensus;
+		if (!agree) {
+			console.error(`     header: ${statedCensus[0]}`);
+			console.error(`     ledger: ${derivedCensus}`);
+			console.error(
+				"     → the kind moved. Paste the second line over the first in scripts/decompose-validate.mjs.",
+			);
+		}
+		ok("the header's board-label census equals the ledger's, recounted", agree);
+	}
+
+	// Not "epic is rejected" — EVERY member of the kind, whatever it is today. This is the
+	// assertion the old "(today just `epic`)" parenthesis stood in for, and it answers the question
+	// that parenthesis stopped a reader asking: what should a second, third or fourth board label
+	// do? Exactly what the first one does. Matching the label NAME in the error text, not the error
+	// count, so a proposal that fails for some unrelated shape reason cannot satisfy this.
+	for (const label of [...BOARD_LABELS].sort()) {
+		const { errors } = validate([
+			{
+				id: 1,
+				title: "seams: the shared contract",
+				labels: ["wave:W1", "lane:schema", "class:backend", label],
+				scope: ["scripts/the-contract.mjs"],
+				blockedBy: [],
+			},
+		]);
+		ok(
+			`a proposal carrying the board label "${label}" FAILs as an unknown label`,
+			errors.some((e) => e.includes(`unknown label "${label}"`)),
+		);
+	}
+
+	// A kind nobody names is a kind nobody excluded on purpose. Every label in the ledger is either
+	// authorable into a proposal or a board label; a NEW kind: added to board-labels.json would
+	// otherwise be silently unauthorable here, with no error and nobody having decided which side
+	// of the line it belongs on — the same by-omission hole `BOARD_LABELS` closes for this kind.
+	const unaccounted = LABEL_CATALOG.labels
+		.map((l) => l.name)
+		.filter((name) => !KNOWN_LABELS.has(name) && !BOARD_LABELS.has(name));
+	if (unaccounted.length) {
+		console.error(`     unaccounted: ${unaccounted.join(", ")}`);
+		console.error(
+			"     → a kind: in board-labels.json that this file neither authorises nor excludes.",
+		);
+	}
+	ok("every ledger label is either authorable on a proposal or a board label", unaccounted.length === 0);
 
 	if (fails === 0) {
 		console.log("\nself-test: all passed");
