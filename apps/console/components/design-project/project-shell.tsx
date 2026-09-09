@@ -10,7 +10,8 @@
 
 import { usePathname, useSearchParams } from "next/navigation";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
-import { CONTENT_FRAME, SHELL_VIEWPORT } from "@/components/shell/content-frame";
+import { CONTENT_FRAME } from "@/components/shell/content-frame";
+import { SHELL_VIEWPORT } from "@/components/shell/shell-metrics";
 import { EMPTY_ENVIRONMENT_STATUS } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import { useEnvironmentStatusQuery } from "@/lib/query/use-environment-status-query";
