@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
@@ -94,19 +95,26 @@ func runClassificationDimensions(c apiClient, out io.Writer, format string) erro
 }
 
 var classificationShowCmd = &cobra.Command{
-	Use:   "show <kind> <id>",
+	Use:   "show [kind] [id]",
 	Short: "Show the classification values assigned to a resource",
-	Args:  cobra.ExactArgs(2),
+	Long: `Read the classification values a resource carries. The kind and the id are OPTIONAL:
+omit them on a terminal and you are asked, with the kinds offered from the org's own taxonomy
+rather than from a string you copied out of "dimensions".`,
+	Args: cobra.RangeArgs(0, 2),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
 		client := api.NewClient(token)
+		kind, id, err := resolveClassificationTarget(client, args)
+		if err != nil {
+			fail(err)
+		}
 		if interactiveTable(cmd) {
 			var rows []api.ClassificationAssignment
 			runSpinner("Fetching classifications...", func() {
-				rows, err = client.GetResourceClassifications(args[0], args[1])
+				rows, err = client.GetResourceClassifications(kind, id)
 			})
 			if err != nil {
 				failf("Failed to fetch classifications: %v", err)
@@ -118,10 +126,128 @@ var classificationShowCmd = &cobra.Command{
 			_ = ui.ShowTable(assignmentColumns, assignmentRows(rows), "classifications")
 			return
 		}
-		if err := runClassificationShow(client, os.Stdout, outputFormat(cmd), args[0], args[1]); err != nil {
+		if err := runClassificationShow(client, os.Stdout, outputFormat(cmd), kind, id); err != nil {
 			failf("Failed to fetch classifications: %v", err)
 		}
 	},
+}
+
+// resolveClassificationTarget answers "which resource?" for `show`.
+//
+// Both values are REQUIRED — neither has a default and neither can be guessed — so this is the
+// requireInteractiveForm arm rather than the canPromptForm one: a scripted caller that names
+// neither is refused, and the refusal names the two tokens to pass rather than saying "interactive
+// input required" and stopping there.
+//
+// The kind comes from the taxonomy's own `applies_to`, which is the same source
+// `assign` picks a dimension from. That is the point of asking at all: `show` used to take a kind
+// that had to be read out of the `dimensions` table (or out of the docs example) and typed back in,
+// which is exactly the copied token this programme exists to remove.
+func resolveClassificationTarget(c apiClient, args []string) (kind, id string, err error) {
+	if len(args) > 0 {
+		kind = strings.TrimSpace(args[0])
+	}
+	if len(args) > 1 {
+		id = strings.TrimSpace(args[1])
+	}
+	if kind != "" && id != "" {
+		return kind, id, nil
+	}
+
+	kindField := mustGovField("alethia classification show", fieldKeyClassKind)
+	idField := mustGovField("alethia classification show", fieldKeyClassID)
+	if ferr := requireInteractiveForm(); ferr != nil {
+		var missing []string
+		if kind == "" {
+			missing = append(missing, strings.ToLower(kindField.Title))
+		}
+		if id == "" {
+			missing = append(missing, strings.ToLower(idField.Title))
+		}
+		return "", "", fmt.Errorf(
+			"no %s given: `alethia classification show %s %s` takes both, and "+
+				"`alethia classification dimensions` names the kinds the taxonomy targets (%w)",
+			strings.Join(missing, " and "), kindField.Arg, idField.Arg, ferr)
+	}
+
+	if kind == "" {
+		if kind, err = pickClassificationKind(c, kindField); err != nil {
+			return "", "", err
+		}
+	}
+	if id == "" {
+		if err := runHuhForm(huh.NewGroup(
+			huh.NewInput().
+				Title(idField.Title).
+				Description(idField.Description).
+				Value(&id).
+				Validate(requireNonEmpty(strings.ToLower(idField.Title))),
+		)); err != nil {
+			return "", "", err
+		}
+		id = strings.TrimSpace(id)
+	}
+	return kind, id, nil
+}
+
+// pickClassificationKind asks which record type to read labels off.
+//
+// The offer is the union of every dimension's `applies_to`, and it is an OFFER and not a validation
+// set — the same bound dimensionsFor records. A taxonomy whose dimensions all target every kind
+// names no kinds at all, and that is a real answer rather than an empty picker: the question falls
+// back to a typed line, which is what the positional carried before.
+func pickClassificationKind(c apiClient, f govField) (string, error) {
+	dims, err := c.ListClassificationDimensions()
+	if err != nil {
+		return "", err
+	}
+	kinds := classificationKinds(dims)
+	if len(kinds) == 0 {
+		kind := ""
+		if err := runHuhForm(huh.NewGroup(
+			huh.NewInput().
+				Title(f.Title).
+				Description(f.Description).
+				Value(&kind).
+				Validate(requireNonEmpty(strings.ToLower(f.Title))),
+		)); err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(kind), nil
+	}
+	options := make([]huh.Option[string], len(kinds))
+	for i, k := range kinds {
+		options[i] = huh.NewOption(k, k)
+	}
+	chosen := kinds[0]
+	if err := runHuhForm(huh.NewGroup(
+		huh.NewSelect[string]().Title(f.Title).Description(f.Description).Options(options...).Value(&chosen),
+	)); err != nil {
+		return "", err
+	}
+	return chosen, nil
+}
+
+// classificationKinds returns the resource kinds the taxonomy targets, sorted and de-duplicated.
+//
+// A dimension with an EMPTY applies_to targets every kind and therefore names none — it contributes
+// nothing to a list of kinds to choose from, which is why an all-empty taxonomy returns an empty
+// slice rather than a list of one blank option.
+func classificationKinds(dims []api.ClassificationDimension) []string {
+	seen := map[string]bool{}
+	var kinds []string
+	for _, d := range dims {
+		for _, k := range d.AppliesTo {
+			k = strings.TrimSpace(k)
+			if k == "" || seen[k] {
+				continue
+			}
+			seen[k] = true
+			kinds = append(kinds, k)
+		}
+	}
+	sort.Strings(kinds)
+	return kinds
 }
 
 var assignmentColumns = []string{"Dimension", "Value"}

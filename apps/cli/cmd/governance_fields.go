@@ -267,12 +267,16 @@ var govFields = []govField{
 	},
 
 	// ── classification ───────────────────────────────────────────────────────────────────────
+	// `show`'s two positionals are OPTIONAL where `assign`'s and `unassign`'s are required, and
+	// the bracket spelling is the difference. Both are asked for on a terminal (#4454), so both
+	// are `[…]`; the angle brackets on the other two verbs still mean what they say, because a
+	// verb that WRITES needs to know its target before it opens any form.
 	{
 		Command:     "alethia classification show",
 		Key:         fieldKeyClassKind,
 		Title:       "Resource kind",
 		Description: "The record type being labelled, e.g. project_environment",
-		Arg:         "<kind>",
+		Arg:         "[kind]",
 		Page:        docsClassificationPage,
 	},
 	{
@@ -280,7 +284,7 @@ var govFields = []govField{
 		Key:         fieldKeyClassID,
 		Title:       "Resource id",
 		Description: "The UUID of the resource whose labels to read",
-		Arg:         "<id>",
+		Arg:         "[id]",
 		Page:        docsClassificationPage,
 	},
 	{

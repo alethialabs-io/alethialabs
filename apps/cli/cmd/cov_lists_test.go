@@ -334,8 +334,13 @@ type covListCase struct {
 
 // covListCommands is every list command whose interactive-table arm this file
 // exercises, with the arguments each one needs to resolve its target.
+// `activity` and `repo list` NAME their one value here, and that is not decoration. This file
+// forces a TTY, and both now ask for a defaulted field on a terminal (#4454) — so left bare they
+// would open a real huh form, which a headless test terminal refuses, and every case would fail on
+// the harness instead of on the interactive-table arm it is testing. Naming the value is the same
+// thing `--project web` does for the eight project-scoped commands below.
 var covListCommands = []covListCase{
-	{args: []string{"activity"}},
+	{args: []string{"activity", "-n", "50"}},
 	{args: []string{"addon", "list", "--project", "web"}},
 	{args: []string{"agent", "list"}},
 	{args: []string{"alerts", "list"}},
@@ -356,7 +361,7 @@ var covListCommands = []covListCase{
 	{args: []string{"project", "list"}, fatalOnTableError: true},
 	{args: []string{"promotion", "list", "--project", "web"}},
 	{args: []string{"protection", "list", "--project", "web"}},
-	{args: []string{"repo", "list"}},
+	{args: []string{"repo", "list", "--provider", "github"}},
 	{args: []string{"roles", "list"}},
 	{args: []string{"runner", "list"}, fatalOnTableError: true},
 	{args: []string{"sso", "list"}},
