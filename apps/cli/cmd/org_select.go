@@ -12,6 +12,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 )
 
@@ -482,6 +483,17 @@ var (
 // something the server accepts.
 var grantResourceTypeSuggestions = []string{"org", "project", "runner", "cloud_identity"}
 
+// grantResourceTypeOrg is the kind that means "the whole organization", and the ONE kind that takes
+// no resource id.
+//
+// Not by convention: apps/console/lib/authz/fga-tuples.ts computes
+// `orgWide = resourceId === null || resourceType === "org"` BEFORE it expands anything, so an id
+// given against this kind is written to the grant row and then ignored by every tuple the grant
+// syncs. That is the same silent class as the wrong-id failure the resource picker below exists to
+// remove — a grant that stores what you asked for and authorizes something else — so the form does
+// not ask for one.
+const grantResourceTypeOrg = "org"
+
 // uuidPattern is the shape `z.uuid()` accepts on the grants route.
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
@@ -515,6 +527,212 @@ func grantPrincipalChoices(c interface {
 		}
 		return out, nil
 	}
+}
+
+// ── grants add: the resource is a lookup key too ────────────────────────────────────────────────
+
+// grantsAddClient is everything the `grants add` form reads: the principals, the roles, and the
+// live list behind each scoped resource kind.
+//
+// Named rather than written inline at promptGrantsAdd, where it used to sit. An interface literal
+// in a signature is legal and reads fine, but it also puts a `{` between the function's name and
+// its body, and this exact declaration is the specimen behind #4513: the CLI census took that brace
+// as the body brace and reported a 110-line form as an empty one, which is why THIS unit (#4452)
+// was filed as "no interactive path" while six of its seven inputs were already pickers. The census
+// itself was fixed in #4513/#4518 and no longer depends on the shape — naming the interface removes
+// the shape anyway, because the next reader of this signature should not have to know any of that.
+type grantsAddClient interface {
+	memberLister
+	teamLister
+	roleLister
+	projectLister
+	runnerLister
+	cloudIdentityLister
+}
+
+// projectScopeLabel renders one project as "web · aws · eu-central-1 · production".
+//
+// The provider, the region and the stage are all on the line because a NAME does not identify a
+// project: two may share one (#3145). Scoping a grant to the wrong half of such a pair is stored,
+// syncs tuples, and authorizes the wrong infrastructure with no error anywhere — so the picker has
+// to show enough to tell them apart, not merely enough to look like a list.
+func projectScopeLabel(p types.ConfigurationSummary) string {
+	sep := " " + ui.SymbolBullet + " "
+	return strings.Join([]string{
+		ui.OrDash(p.ProjectName), string(p.CloudProvider), p.Region, string(p.EnvironmentStage),
+	}, sep)
+}
+
+// runnerScopeLabel renders one runner as "prod · managed · online", with the org default marked.
+func runnerScopeLabel(r api.Runner) string {
+	sep := " " + ui.SymbolBullet + " "
+	label := strings.Join([]string{ui.OrDash(r.Name), r.Operator, r.Status}, sep)
+	if r.IsDefault {
+		label += ui.DefaultBadge()
+	}
+	return label
+}
+
+// cloudIdentityScopeLabel renders one connected cloud account as "prod-aws · aws".
+func cloudIdentityScopeLabel(i api.CloudIdentity) string {
+	return ui.OrDash(i.Label) + " " + ui.SymbolBullet + " " + i.Provider
+}
+
+// projectScopeChoices lists the org's projects, addressable by name.
+func projectScopeChoices(c projectLister) func() ([]orgChoice, error) {
+	return func() ([]orgChoice, error) {
+		projects, err := c.GetConfigurations()
+		if err != nil {
+			return nil, fmt.Errorf("failed to list projects: %w", err)
+		}
+		out := make([]orgChoice, len(projects))
+		for i, p := range projects {
+			out[i] = orgChoice{ID: p.ID, Label: projectScopeLabel(p), Keys: []string{p.ProjectName}}
+		}
+		return out, nil
+	}
+}
+
+// runnerScopeChoices lists the org's runners, addressable by name.
+func runnerScopeChoices(c runnerLister) func() ([]orgChoice, error) {
+	return func() ([]orgChoice, error) {
+		runners, err := c.GetRunners()
+		if err != nil {
+			return nil, fmt.Errorf("failed to list runners: %w", err)
+		}
+		out := make([]orgChoice, len(runners))
+		for i, r := range runners {
+			out[i] = orgChoice{ID: r.ID, Label: runnerScopeLabel(r), Keys: []string{r.Name}}
+		}
+		return out, nil
+	}
+}
+
+// cloudIdentityScopeChoices lists the org's connected cloud accounts, addressable by label.
+func cloudIdentityScopeChoices(c cloudIdentityLister) func() ([]orgChoice, error) {
+	return func() ([]orgChoice, error) {
+		identities, err := c.GetCloudIdentities()
+		if err != nil {
+			return nil, fmt.Errorf("failed to list cloud accounts: %w", err)
+		}
+		out := make([]orgChoice, len(identities))
+		for i, id := range identities {
+			out[i] = orgChoice{ID: id.ID, Label: cloudIdentityScopeLabel(id), Keys: []string{id.Label}}
+		}
+		return out, nil
+	}
+}
+
+// grantResourceKind is how ONE scoped resource kind is asked for: the noun a person reads, the
+// command that shows the same rows, and the live list itself.
+type grantResourceKind struct {
+	Noun    string
+	ListCmd string
+	List    func() ([]orgChoice, error)
+}
+
+// grantResourceScope answers "what can this CLI list, for a grant scoped to this kind?".
+//
+// The three arms are the three INSTANCE resource types a grant can usefully name — PARENTS in
+// apps/console/lib/authz/fga-hierarchy.ts is `project`, `runner`, `cloud_identity`, `connector` —
+// minus `connector`, which grantResourceTypeSuggestions does not offer either.
+//
+// ok is false for a kind this CLI holds no list for, and the caller answers that with the typed-id
+// input rather than a refusal. `resource_type` is `z.string().min(1)` on the wire, so a kind this
+// switch does not know is STORED rather than refused, and a form that could only offer what it can
+// list would be removing a grant the server accepts — the same provable-subset rule the closed sets
+// above are validated under, applied in the direction that keeps the surface whole.
+func grantResourceScope(c grantsAddClient, resourceType string) (grantResourceKind, bool) {
+	switch resourceType {
+	case "project":
+		return grantResourceKind{"project", "alethia project list", projectScopeChoices(c)}, true
+	case "runner":
+		return grantResourceKind{"runner", "alethia runner list", runnerScopeChoices(c)}, true
+	case "cloud_identity":
+		return grantResourceKind{"cloud account", "alethia connector list", cloudIdentityScopeChoices(c)}, true
+	}
+	return grantResourceKind{}, false
+}
+
+// grantResourcePickSpec is the "which one?" wording for one scoped resource kind, built from the
+// same orgField the typed-id input used — so the question a person reads did not change when the
+// widget did.
+func grantResourcePickSpec(kind grantResourceKind) orgPickSpec {
+	return orgPickSpec{
+		Field:   mustOrgField("alethia grants add", orgFieldKeyResource),
+		Noun:    kind.Noun,
+		ListCmd: kind.ListCmd,
+		Empty:   "this organization has no " + kind.Noun + "s",
+	}
+}
+
+// grantWholeKindChoice is the id-less row every scoped picker offers FIRST: bind the grant to the
+// KIND rather than to one thing.
+//
+// It has to be there, and it has to be first. `--resource-type project` with no `--resource` is a
+// grant over every project — the flags' own default, and the shape `grants list` renders as a bare
+// `project` — so a picker that offered instances alone would have made "one project" the only
+// reachable answer once a kind was chosen, i.e. a narrower command than the free-text box it
+// replaced. First, because an empty resource id is what the caller had before they were asked.
+func grantWholeKindChoice(kind grantResourceKind) []orgChoice {
+	return []orgChoice{{Label: "Every " + kind.Noun + " in this organization"}}
+}
+
+// promptGrantResource asks WHICH resource, once the kind is known.
+//
+// This is the field the unit exists for. It was a free-text input, and a resource id is not
+// something anybody knows: the only way to obtain one was to run `alethia project list` and copy a
+// uuid across by eye — the copied handoff this programme removes — and a grant authored against the
+// wrong one of two same-named projects is stored, syncs tuples, and allows or denies the wrong
+// infrastructure with nothing anywhere reporting it.
+//
+// It is a separate pass from the kind question for the reason promptGrantsAdd runs in passes at
+// all: the list to offer depends on the answer to the previous question, and huh cannot show
+// options that a later answer produces.
+func promptGrantResource(c grantsAddClient, in grantsAddAnswers) (grantsAddAnswers, error) {
+	if in.ResourceType == grantResourceTypeOrg {
+		in.ResourceID = ""
+		return in, nil
+	}
+	kind, ok := grantResourceScope(c, in.ResourceType)
+	if !ok {
+		return promptGrantResourceID(in)
+	}
+	choices, err := kind.List()
+	if err != nil {
+		return in, err
+	}
+	ref, err := pickOrgChoice(grantResourcePickSpec(kind), append(grantWholeKindChoice(kind), choices...))
+	if err != nil {
+		return in, err
+	}
+	in.ResourceID = ref.ID
+	return in, nil
+}
+
+// promptGrantResourceID asks for the id as text, for a kind this CLI holds no list for.
+//
+// The kind is named in the question, because "Resource" on its own does not say which id to go and
+// find. This arm is what lets grantResourceTypeSuggestions and grantResourceScope be edited one at
+// a time: a kind added to the suggestions with no matching arm in the switch is asked for here
+// rather than becoming unaskable. It is not a permanent path for any kind shipped today —
+// TestOrgSelect_EverySuggestedKindIsListable fails while one of them is missing its arm.
+func promptGrantResourceID(in grantsAddAnswers) (grantsAddAnswers, error) {
+	field := mustOrgField("alethia grants add", orgFieldKeyResource)
+	if err := runHuhForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title(field.Title).
+				Description(fmt.Sprintf(
+					"The id of the one %s to scope to; this CLI has no list of them to offer",
+					in.ResourceType)).
+				Value(&in.ResourceID),
+		),
+	); err != nil {
+		return in, err
+	}
+	in.ResourceID = strings.TrimSpace(in.ResourceID)
+	return in, nil
 }
 
 // resolveByNameOrID turns a value that may be a uuid OR a human name into the id the server wants.
@@ -761,19 +979,17 @@ type grantsAddAnswers struct {
 
 // promptGrantsAdd asks the whole grant.
 //
-// It runs in two passes on purpose. The principal LIST depends on the principal KIND, and the value
-// bound depends on whether the caller is binding a role or a single permission, so a single form
-// would have to offer every member and every team at once and both a role picker and a permission
-// picker — which is how a form ends up asking a question that cannot apply.
-func promptGrantsAdd(c interface {
-	memberLister
-	teamLister
-	roleLister
-}, orgID string, in grantsAddAnswers) (grantsAddAnswers, error) {
+// It runs in SEVERAL passes on purpose, and each split is the same shape: a list this form has to
+// offer is not known until an earlier answer is in. The principal list depends on the principal
+// KIND; the value bound depends on whether the caller is binding a role or a single permission;
+// and the resources to scope to depend on the resource KIND (promptGrantResource). One form would
+// have to offer every member and every team at once, both a role picker and a permission picker,
+// and every project, runner and cloud account together — which is how a form ends up asking a
+// question that cannot apply.
+func promptGrantsAdd(c grantsAddClient, orgID string, in grantsAddAnswers) (grantsAddAnswers, error) {
 	kindField := mustOrgField("alethia grants add", orgFieldKeyPrincipalType)
 	effectField := mustOrgField("alethia grants add", orgFieldKeyEffect)
 	resourceTypeField := mustOrgField("alethia grants add", orgFieldKeyResourceType)
-	resourceField := mustOrgField("alethia grants add", orgFieldKeyResource)
 	principalField := mustOrgField("alethia grants add", orgFieldKeyPrincipal)
 	roleField := mustOrgField("alethia grants add", orgFieldKeyBoundRole)
 	permField := mustOrgField("alethia grants add", orgFieldKeyPermission)
@@ -858,16 +1074,11 @@ func promptGrantsAdd(c interface {
 				Description(resourceTypeField.Description).
 				Options(stringOptions(grantResourceTypeSuggestions)...).
 				Value(&in.ResourceType),
-			huh.NewInput().
-				Title(resourceField.Title).
-				Description(resourceField.Description).
-				Value(&in.ResourceID),
 		),
 	); err != nil {
 		return in, err
 	}
-	in.ResourceID = strings.TrimSpace(in.ResourceID)
-	return in, nil
+	return promptGrantResource(c, in)
 }
 
 // stringOptions renders a closed set as picker options whose label is the value.
