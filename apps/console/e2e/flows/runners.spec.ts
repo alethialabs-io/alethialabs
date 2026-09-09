@@ -16,18 +16,20 @@
 //   · the warm-Pools column IS rendered (`{!isHosted && …}`) and `getFleetPoolViews()` returns rows,
 //     so `PoolCard` and its delete confirmation are reachable. On hosted they are not.
 //
-// Isolation: the team org's runners are seeded per test with an `e2e-` prefix and swept in
-// `afterEach` by that prefix, never by emptying the org (AUTHORING.md's fullyParallel rule). The
-// warm pool is the one exception — it is a GLOBAL platform row, seeded once and left in place; see
-// `seedFleetPool`'s contract in helpers/seed-runners.ts.
+// Isolation: every runner a test creates is swept in `afterEach` BY ITS OWN ID (or, for the two the
+// Add-runner sheet creates, by the name handed to `trackUiRunner`) — never by emptying the org, and
+// no longer by a `name like 'e2e-%'` sweep, which under fullyParallel deleted a sibling worker's
+// fixture mid-assertion. The warm pool is the one exception: it is a GLOBAL platform row, seeded
+// once and left in place; see `seedFleetPool`'s contract in helpers/seed-runners.ts.
 
 import { test, expect } from "../fixtures/qa";
 import {
-	purgeE2ERunners,
+	purgeSeededRunners,
 	runnerIsDefault,
 	runnerExists,
 	seedFleetPool,
 	seedRunner,
+	trackUiRunner,
 	type SeededFleetPool,
 } from "../helpers/seed-runners";
 
@@ -42,8 +44,8 @@ const cardFor = (page: import("@playwright/test").Page, name: string) =>
 	page.locator('[data-slot="card"]').filter({ hasText: name });
 
 test.describe("Runners — page & entitlement", () => {
-	test.afterEach(async ({ team }) => {
-		await purgeE2ERunners(team.userId!);
+	test.afterEach(async () => {
+		await purgeSeededRunners();
 	});
 
 	test("Pro org loads the runner surface without bouncing to /login", async ({ team }) => {
@@ -83,8 +85,8 @@ test.describe("Runners — page & entitlement", () => {
 });
 
 test.describe("Runners — Add runner sheet", () => {
-	test.afterEach(async ({ team }) => {
-		await purgeE2ERunners(team.userId!);
+	test.afterEach(async () => {
+		await purgeSeededRunners();
 	});
 
 	test("opens to a path chooser with Deploy + Register options and a managed-pools hint", async ({
@@ -130,6 +132,8 @@ test.describe("Runners — Add runner sheet", () => {
 		team,
 	}) => {
 		const name = `e2e-reg-${Date.now()}`;
+		// Created through the UI, so the sweep has no id for it — hand it the name.
+		trackUiRunner(team.userId!, name);
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
 		await team.page.getByRole("button", { name: "Add runner" }).first().click();
 		await team.page.getByRole("button", { name: /Register your own/ }).click();
@@ -146,6 +150,8 @@ test.describe("Runners — Add runner sheet", () => {
 
 	test("a registered runner appears in the grid after the sheet closes", async ({ team }) => {
 		const name = `e2e-appears-${Date.now()}`;
+		// Created through the UI, so the sweep has no id for it — hand it the name.
+		trackUiRunner(team.userId!, name);
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
 		await team.page.getByRole("button", { name: "Add runner" }).first().click();
 		await team.page.getByRole("button", { name: /Register your own/ }).click();
@@ -175,8 +181,8 @@ test.describe("Runners — Add runner sheet", () => {
 });
 
 test.describe("Runners — lifecycle actions", () => {
-	test.afterEach(async ({ team }) => {
-		await purgeE2ERunners(team.userId!);
+	test.afterEach(async () => {
+		await purgeSeededRunners();
 	});
 
 	test("toggling the default star marks a runner as default", async ({ team }) => {
@@ -240,8 +246,8 @@ test.describe("Runners — lifecycle actions", () => {
 });
 
 test.describe("Runners — the console filter standard", () => {
-	test.afterEach(async ({ team }) => {
-		await purgeE2ERunners(team.userId!);
+	test.afterEach(async () => {
+		await purgeSeededRunners();
 	});
 
 	test("search narrows the grid to the matching runner", async ({ team }) => {
