@@ -294,7 +294,10 @@ export function OrgGeneral() {
             <AlertDialog>
               <AlertDialogTrigger
                 render={
-                  <Button variant="outline" size="sm">
+                  // The name says WHAT it deletes. The dialog this opens is titled "Delete
+                  // organization"; a trigger announced only "Delete" disagreed with its own
+                  // dialog, on a control that cannot be undone (#4462).
+                  <Button variant="outline" size="sm" aria-label="Delete organization">
                     Delete
                   </Button>
                 }
