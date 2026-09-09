@@ -18,19 +18,22 @@
 //
 // ── "NOTHING MUTATED", TWO WAYS ─────────────────────────────────────────────────────────────────
 //
-// One observation is not enough, because each is blind in a different direction:
+// Two observations, and NEITHER is complete. The first version of this comment claimed they were
+// two independent proofs; run 34368830312 refuted that, and the corrected bounds are stated here
+// because an assertion that is true about the wrong thing is worse than a missing one:
 //
-//   1. A REQUEST deny-list. Every request the page issues while the dialog is open is recorded; a
-//      non-GET to the route (a Next server action posts to the current URL with a `Next-Action`
-//      header) or to the entry's fetch path is a finding. This catches a mutation that fired
-//      optimistically on open — but it cannot see one that already happened before the listener
-//      attached.
-//   2. A DATABASE fingerprint. Row counts across every public table, before and after. This catches
-//      a mutation however it travelled — but it cannot tell an update from a no-op.
+//   1. A REQUEST deny-list, ASSERTED ONLY WHERE ATTRIBUTABLE. A Next server action POSTs to the
+//      current URL carrying an opaque id in `Next-Action` — the action's name is nowhere in the
+//      request — so "a POST happened" does not mean "this control's mutation fired". `project.delete`
+//      produced six unrelated such POSTs from the page's own work. It is therefore asserted only
+//      for the bare-fetch shape (`<path> <VERB>`), where the path IS the identifier, and merely
+//      RECORDED otherwise.
+//   2. A DATABASE fingerprint, row counts across every public table before and after. This carries
+//      the assertion in every other case. It sees an insert or a delete and CANNOT see an update in
+//      place, so a mutation that flips a column — `setMemberSuspended` — would pass it.
 //
-// A control that mutated on open fails (1); a control that mutated by some path the listener does
-// not model fails (2). Requiring both is what makes "nothing happened" a measurement rather than an
-// absence of evidence.
+// What this suite proves, stated at its real strength: the declared confirmation appears, Cancel
+// closes it, and **no row was created or destroyed**. Not "nothing happened at all".
 //
 // ── A WITHHELD VERDICT IS NOT A PASS ────────────────────────────────────────────────────────────
 //
@@ -110,14 +113,14 @@ const MIN_MEASURED = 1;
 
 // ── the record ──────────────────────────────────────────────────────────────────────────────────
 
-type Observed = "confirmed" | "missing" | "inert" | "undo" | "not-measured";
+type Observed = "confirmed" | "missing" | "inert" | "undo" | "not-measured" | "errored";
 
 interface Verdict {
 	id: string;
 	route: string;
 	expected: string;
 	observed: Observed;
-	verdict: "match" | "mismatch" | "withheld";
+	verdict: "match" | "mismatch" | "withheld" | "errored";
 	reason?: string;
 }
 
@@ -437,9 +440,39 @@ for (const entry of CONTROLS) {
 		const moved = diffFingerprints(before, after);
 
 		if (expectsDialog) {
-			// Nothing may have travelled, and nothing may have moved.
+			// ── WHAT EACH OBSERVATION CAN AND CANNOT PROVE ──────────────────────────────────
+			//
+			// The header comment used to claim these were two independent proofs of "nothing
+			// mutated". The first run showed that to be an overclaim, and the retraction is worth
+			// stating precisely because the shape is this repo's most expensive defect: an
+			// assertion that is true about the wrong thing.
+			//
+			// A Next server action POSTs to the CURRENT url carrying an opaque action id in
+			// `Next-Action` — the action's NAME is nowhere in the request. So "a POST happened
+			// while the dialog was open" does not mean "this control's mutation fired": measured on
+			// run 34368830312, `project.delete` produced SIX such POSTs to `…/settings/general`
+			// from the page's own unrelated work, and the assertion failed on all of them.
+			//
+			// So the deny-list asserts ONLY where the request can be attributed to this entry's
+			// mutation — the bare-fetch shape (`<path> <VERB>`), where the path IS the identifier.
+			// For a server action it is recorded as evidence and not asserted on, because an
+			// unattributable request is not evidence about THIS control.
+			//
+			// The DATABASE FINGERPRINT carries the assertion in every other case. It is not
+			// complete either, and the bound is stated rather than implied: it counts rows, so it
+			// sees an insert or a delete and CANNOT see an update in place — a mutation like
+			// `setMemberSuspended` that flips a column would pass it. That is a real gap, and the
+			// honest answer is that this suite proves "no row was created or destroyed", not
+			// "nothing happened at all".
 			const mutating = requests.filter((r) => r.method() !== "GET");
-			expect(mutating.length, `${entry.id}: a request went out while the confirmation was open and Cancel was pressed — the mutation fired before the user agreed. ${describeRequests(mutating)}`).toBe(0);
+			const fetchShape = entry.mutation.match(/^(\S+)\s+(DELETE|PUT|POST)$/);
+			if (fetchShape) {
+				const attributable = mutating.filter((r) => new URL(r.url()).pathname.includes(fetchShape[1]) && r.method() === fetchShape[2]);
+				expect(
+					attributable.length,
+					`${entry.id}: \`${entry.mutation}\` was issued while the confirmation was open and Cancel was pressed — the mutation fired before the user agreed. ${describeRequests(attributable)}`,
+				).toBe(0);
+			}
 			expect(moved, `${entry.id}: Cancel was pressed and rows still moved: ${moved.join(", ")}`).toEqual([]);
 		}
 
@@ -467,7 +500,29 @@ for (const entry of CONTROLS) {
 test.afterAll(async () => {
 	const dir = path.resolve(__dirname, "..", "..", "test-results");
 	if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-	const measured = verdicts.filter((v) => v.verdict !== "withheld").length;
+
+	// RECONCILE, so the ledger's own arithmetic holds. A test that THREW — a failed assertion, a
+	// timeout — never reaches its `record()`, so it is neither measured nor withheld: it is absent,
+	// and the report silently describes fewer controls than exist. Measured on run 34368830312,
+	// which printed "0 of 46 controls measured, 44 withheld" — the missing 2 are exactly the two
+	// that failed, and the two numbers not summing to 46 is the only thing that said so.
+	//
+	// An absent row and a withheld one are different findings, so they get different words rather
+	// than a shared silence.
+	const seen = new Set(verdicts.map((v) => v.id));
+	for (const c of CONTROLS) {
+		if (seen.has(c.id)) continue;
+		record({
+			id: c.id,
+			route: c.route,
+			expected: String(c.status),
+			observed: "errored",
+			verdict: "errored",
+			reason: "the test threw before recording a verdict — see this control's failure in the run log",
+		});
+	}
+
+	const measured = verdicts.filter((v) => v.verdict === "match" || v.verdict === "mismatch").length;
 	writeFileSync(
 		path.join(dir, "destructive.json"),
 		`${JSON.stringify(
@@ -475,7 +530,8 @@ test.afterAll(async () => {
 				generatedAt: new Date().toISOString(),
 				ledgerCount: CONTROLS.length,
 				measured,
-				withheld: verdicts.length - measured,
+				withheld: verdicts.filter((v) => v.verdict === "withheld").length,
+				errored: verdicts.filter((v) => v.verdict === "errored").length,
 				controls: verdicts,
 			},
 			null,
@@ -486,11 +542,17 @@ test.afterAll(async () => {
 });
 
 test("the run measured something — a withheld verdict is not a pass", async () => {
-	const measured = verdicts.filter((v) => v.verdict !== "withheld").length;
+	const measured = verdicts.filter((v) => v.verdict === "match" || v.verdict === "mismatch").length;
 	const withheld = verdicts.filter((v) => v.verdict === "withheld");
+	const errored = verdicts.filter((v) => v.verdict === "errored");
 	const summary = withheld.map((v) => `  · ${v.id}: ${v.reason}`).join("\n");
 	// Printed on every run, pass or fail: this number is what the next reader raises MIN_MEASURED to.
-	console.log(`destructive: ${measured} of ${CONTROLS.length} controls measured, ${withheld.length} withheld.\n${summary}`);
+	// The three counts MUST sum to the ledger — if they do not, a control went unrecorded, which is
+	// the failure this reconciliation exists to make impossible to miss.
+	console.log(
+		`destructive: ${measured} measured, ${withheld.length} withheld, ${errored.length} errored ` +
+			`= ${measured + withheld.length + errored.length} of ${CONTROLS.length} in the ledger.\n${summary}`,
+	);
 	expect(
 		measured,
 		`only ${measured} of ${CONTROLS.length} controls were actually driven. A suite whose fixtures all stopped seeding reports green while asserting nothing, so this floor exists to make that loud.\n${summary}`,
