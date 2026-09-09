@@ -1635,11 +1635,41 @@ func TestConnField_EveryLeafHasBothCases(t *testing.T) {
 // other, so this cannot pass by construction.
 // ---------------------------------------------------------------------------
 
-// connDocsPages maps a command group onto the docs page that documents it.
-var connDocsPages = map[string]string{
-	"connector": "../../docs/content/docs/cli/commands/connector.mdx",
-	"cloud":     "../../docs/content/docs/cli/commands/cloud.mdx",
-	"provider":  "../../docs/content/docs/cli/commands/providers.mdx",
+// THERE IS ONE GROUP→PAGE REGISTRY AND IT IS `docsGroups` (#4448).
+//
+// This file used to carry a second map of its own — `connDocsPages`, group → a full relative path —
+// while `hyg_cli_docs_test.go` carried `docsGroups`, group → a page basename. Two mechanisms
+// answering the same question, and the connectors lane (#3737) built this one because it did not
+// register in that one. The tree then held one registry plus one orphan, which is how a page rename
+// corrected in one map and missed in the other becomes a guard that reads the wrong file and passes.
+//
+// The two CHECKS are genuinely different and both are kept: `hyg_cli_docs_test.go` asks whether every
+// leaf is documented and every example resolves; this file asks whether the FLAG TABLE matches the
+// registered flags, in both directions. What is no longer different is where they look up the page.
+//
+// `connector`, `cloud` and `provider` are now registered in `docsGroups`, so they answer that file's
+// checks too — which is what registering them was for, and it cost one missing `provider` block in
+// the command tree to find out.
+
+// connDocsFlagTableGroups are the groups whose docs flag table is checked in BOTH directions.
+//
+// Opt-in and only growing, deliberately, for the same reason `docsGroups` is: turned on for all
+// twenty-eight groups at once this would be red for months and would be switched off rather than
+// fixed. #3664 is where it stops being a subset. The list is here rather than inferred from
+// `docsGroups` because being registered for the leaf checks and being ready for the flag-table check
+// are two different states, and collapsing them would silently widen this check.
+var connDocsFlagTableGroups = []string{"connector", "cloud", "provider"}
+
+// connDocsPage resolves a group's docs page through the one registry. A group missing from it is a
+// FAILURE and never a skipped row — the same rule `docsGroups` states for itself.
+func connDocsPage(t *testing.T, group string) string {
+	t.Helper()
+	page, ok := docsGroups[group]
+	if !ok {
+		t.Fatalf("the %q group is checked here but is not in docsGroups — register it there rather "+
+			"than adding a second page mapping, which is the drift #4448 removed", group)
+	}
+	return docsPagePath(page)
 }
 
 // connDocsGlobalFlags are the root-level flags every page may mention without registering
@@ -1710,16 +1740,18 @@ func connDocsSections(body string) map[string]string {
 
 // TestConnField_DocsTableMatchesTheRegisteredFlags compares both directions.
 func TestConnField_DocsTableMatchesTheRegisteredFlags(t *testing.T) {
-	groups := map[string]*cobra.Command{
+	byName := map[string]*cobra.Command{
 		"connector": connectorCmd, "cloud": cloudCmd, "provider": providerCmd,
 	}
 
 	scannedFlags, scannedSections := 0, 0
-	for group, root := range groups {
-		path, ok := connDocsPages[group]
+	for _, group := range connDocsFlagTableGroups {
+		root, ok := byName[group]
 		if !ok {
-			t.Fatalf("no docs page mapped for the %q group", group)
+			t.Fatalf("connDocsFlagTableGroups names %q, which this test has no command for — the "+
+				"list and the commands must move together, or a named group is silently unchecked", group)
 		}
+		path := connDocsPage(t, group)
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
