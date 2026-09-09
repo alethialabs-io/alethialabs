@@ -13,6 +13,7 @@ import type { AgentThread } from "@/lib/db/schema";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { Dialog, DialogContent, DialogTitle } from "@repo/ui/dialog";
+import { ElenchScopeChip } from "./elench-scope-chip";
 
 /**
  * Split-pane bounds as RATIOS of the split width (the panes sit ~50/50, so a fixed pixel
@@ -217,7 +218,7 @@ export function ElenchModal({
 					) : (
 						/* Active-conversation top bar: centered title, split-view + minimize. */
 						<div className="flex flex-none items-center gap-2 border-b border-border px-3 py-2.5">
-							<div className="flex flex-1 items-center gap-1">
+							<div className="flex min-w-0 flex-1 items-center gap-1">
 								{!sidebarOpen && (
 									<button
 										type="button"
@@ -228,6 +229,9 @@ export function ElenchModal({
 										<PanelLeft className="h-4 w-4" />
 									</button>
 								)}
+								{/* Which project + environment this conversation plans against — the modal
+								    hides the topbar switcher, so without it the scope is unreadable. */}
+								<ElenchScopeChip className="px-1" />
 							</div>
 							<div className="truncate text-sm font-medium text-foreground">
 								{title}
