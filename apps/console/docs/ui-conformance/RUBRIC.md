@@ -369,11 +369,18 @@ so "which pages are worst" was an impression until it existed.
 
 ### What the generator found that this file did not say
 
-Three gaps, each now owned. They are recorded here because a rubric that does not name its own
-blind spots reads as a rubric that has none.
+Three gaps, each now owned — and all three now closed. They are recorded here because a rubric
+that does not name its own blind spots reads as a rubric that has none.
 
-- **H3 has no instrument** (#3797). `StatusBadge` is the one H row with no matcher, and
-  `check-shared-surface.mjs` says why: the rule has no negative form to grep for.
+- **H3 has no instrument** (#3797) — **closed**. `check-shared-surface.mjs`'s `status_badge` rule
+  scores it with two matchers: the `vx-status` class token, which means the badge's markup was
+  rebuilt by hand, and a SECOND DEFINITION of the status vocabulary — two consecutive entries of one
+  object literal both keyed on a word the badge already maps, with the vocabulary derived from
+  `packages/ui/src/status-badge.tsx` on every run. What that unit found is that this sentence had
+  the shape of the defect wrong too: the rule's negative form is not "a `<Badge>` plus a local
+  colour map" (an object literal a token scan cannot tell from any other) but those two token
+  shapes, which ARE greppable. It measured 7 occurrences in 3 files on an unmodified `dev`; #4295
+  removed all three and the rule's ledger is empty.
 - **F1–F7 had no instrument at all** (#3796) — **closed**. `scripts/check-filter-standard.mjs`
   now scores F1–F6 over the console's fifteen filter SURFACES, and
   `apps/console/tests/lib/queries/filter-standard-facets.test.ts` measures F7 by running every
