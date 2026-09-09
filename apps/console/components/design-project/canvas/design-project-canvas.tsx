@@ -54,6 +54,10 @@ import { CanvasMoreMenu } from "./canvas-more-menu";
 import { CostChip } from "./cost-chip";
 import { RunMenu } from "./run-menu";
 import { CanvasCommandPalette } from "./canvas-command-palette";
+import {
+	CanvasContextMenu,
+	useCanvasContextMenu,
+} from "./canvas-context-menu";
 import { CanvasControls } from "./canvas-controls";
 import { CanvasFlow, CanvasInteractionContext } from "./canvas-flow";
 import { useCardDeepLink } from "./cards/card-param";
@@ -126,6 +130,10 @@ function CanvasInner({
 		() => ({ handTool, setHandTool, spaceHeld }),
 		[handTool, spaceHeld],
 	);
+	// Right-click. Held here for the same reason as the hand tool: which menu is showing is view
+	// interaction, not design state. The three handlers go to the board (React Flow raises the
+	// events); the menu itself renders below, next to the palettes.
+	const contextMenu = useCanvasContextMenu();
 	// Cluster add-ons for this environment (edit mode only) — browsed from the Add palette,
 	// configured in a card on the workspace rail. Add-ons live on the canvas now (the standalone
 	// page was retired).
@@ -545,7 +553,11 @@ function CanvasInner({
 				transition={{ duration: 0.15 }}
 				className="h-full"
 			>
-				<CanvasFlow />
+				<CanvasFlow
+					onPaneContextMenu={contextMenu.onPaneContextMenu}
+					onNodeContextMenu={contextMenu.onNodeContextMenu}
+					onSelectionContextMenu={contextMenu.onSelectionContextMenu}
+				/>
 			</motion.div>
 
 			{/* Bottom-right: the BYO IaC module's PROVENANCE — repo · ref · the commit the scan pinned ·
@@ -620,6 +632,13 @@ function CanvasInner({
 				onDiscard={projectId ? () => void handleDiscardStaged() : undefined}
 				onSave={projectId ? () => void handleSaveDesign() : undefined}
 				saving={saving}
+			/>
+
+			<CanvasContextMenu
+				state={contextMenu.state}
+				onClose={contextMenu.close}
+				iacGoverned={iacGoverned}
+				onAddService={() => setPaletteOpen(true)}
 			/>
 
 			<NodePalette
