@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1811,21 +1812,43 @@ func TestProj_DefaultPlacementFollowsPosition(t *testing.T) {
 	}
 }
 
+// testComponentVocabulary is a published registry for the pure component helpers.
+//
+// COMPOSED, and deliberately so: what these tests measure is how the CLI RENDERS whatever the
+// document says — cardinality labels, the seed escape hatch, the confirmation text — not what the
+// document contains. The document's real contents are pinned by `packages/core/api`'s own test
+// against `testdata/component_schema.json` (14 kinds), and `projServer` serves a three-kind copy for
+// the routes. Composing one here keeps each assertion's subject visible instead of hiding it behind
+// a 1100-line fixture. It DOES carry `helm_registries`, because that is the kind the deleted literal
+// omitted and the one whose reachability #4332 is about.
+func testComponentVocabulary() componentVocabulary {
+	return componentVocabulary{doc: &api.ComponentSchemaDocument{
+		Version: "v-test",
+		Kinds: []api.ComponentSchemaKind{
+			{Kind: "network", Singleton: true},
+			{Kind: "cluster", Singleton: true},
+			{Kind: "databases"},
+			{Kind: "helm_registries"},
+		},
+	}}
+}
+
 // TestProj_RemovalDescriptionNamesTheComponentAndTheTier pins the confirmation text. A
 // confirmation that does not name its object is read as "yes"; the tier is the half that
 // matters, because remove touches ONE environment and the default is implicit.
 func TestProj_RemovalDescriptionNamesTheComponentAndTheTier(t *testing.T) {
-	got := removalDescription("databases", "main", "staging")
+	v := testComponentVocabulary()
+	got := removalDescription(v, "databases", "main", "staging")
 	for _, want := range []string{"databases main", "staging"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("%q does not name %q", got, want)
 		}
 	}
 	// A singleton has no name; naming one would describe a component that does not exist.
-	if got := removalDescription("network", "ignored", ""); strings.Contains(got, "ignored") {
+	if got := removalDescription(v, "network", "ignored", ""); strings.Contains(got, "ignored") {
 		t.Errorf("%q names a singleton's --name, which the server ignores", got)
 	}
-	if got := removalDescription("network", "", ""); !strings.Contains(got, "default environment") {
+	if got := removalDescription(v, "network", "", ""); !strings.Contains(got, "default environment") {
 		t.Errorf("%q does not say which environment an omitted --env means", got)
 	}
 }
@@ -1879,19 +1902,20 @@ func TestProj_ComponentReplayLineReproducesTheRun(t *testing.T) {
 	}
 }
 
-// TestProj_ComponentKindOptionsSayWhichNeedAName pins that the picker answers the question
-// its next prompt depends on, and that it offers the whole cached registry.
+// TestProj_ComponentKindOptionsSayWhichNeedAName pins that the picker answers the question its next
+// prompt depends on, and that it offers the whole PUBLISHED registry (#4332) rather than a literal.
 func TestProj_ComponentKindOptionsSayWhichNeedAName(t *testing.T) {
-	opts := componentKindOptions("")
-	if len(opts) != len(componentKinds) {
-		t.Fatalf("the kind picker offers %d of %d kinds", len(opts), len(componentKinds))
+	v := testComponentVocabulary()
+	opts := componentKindOptions(v, "")
+	if len(opts) != len(v.kinds()) {
+		t.Fatalf("the kind picker offers %d of %d published kinds", len(opts), len(v.kinds()))
 	}
 	if len(opts) == 0 {
 		t.Fatal("no component kinds — every assertion here is vacuous")
 	}
 	for _, o := range opts {
 		want := "multi"
-		if singletonKinds[o.Value] {
+		if v.isSingleton(o.Value) {
 			want = "singleton"
 		}
 		if !strings.Contains(o.Key, want) {
@@ -1899,23 +1923,41 @@ func TestProj_ComponentKindOptionsSayWhichNeedAName(t *testing.T) {
 		}
 	}
 
-	// A kind the cache has not caught up with is still offered, because huh writes its FIRST
-	// option back through the bound pointer when the seed matches none of them — so a picker
-	// that dropped the seed would turn `--kind helm_registries` into a `network` component.
-	// componentKinds is documented as a cache the server registry has already drifted from,
-	// and the escape hatch is only real if the picker cannot silently overwrite it.
-	seeded := componentKindOptions("helm_registries")
-	if len(seeded) != len(componentKinds)+1 {
-		t.Fatalf("a seed outside the cache produced %d options, want %d", len(seeded), len(componentKinds)+1)
+	// THE DEFECT #4332 CLOSES. `helm_registries` is published and was absent from the deleted
+	// literal, so no picker offered it and `kinds` did not list it. Asserted as an OFFERED OPTION
+	// rather than as a count, because the count would pass on any 4-kind document.
+	var offered []string
+	for _, o := range opts {
+		offered = append(offered, o.Value)
 	}
-	if got := seeded[len(seeded)-1].Value; got != "helm_registries" {
+	if !slices.Contains(offered, "helm_registries") {
+		t.Errorf("the picker offers %v, without the published kind the old literal omitted", offered)
+	}
+
+	// A kind NEWER than the document this run fetched is still offered, because huh writes its FIRST
+	// option back through the bound pointer when the seed matches none of them — so a picker that
+	// dropped the seed would turn `--kind something_new` into a `network` component. The escape
+	// hatch outlives the literal it was written for: a document is a snapshot too.
+	seeded := componentKindOptions(v, "something_newer")
+	if len(seeded) != len(v.kinds())+1 {
+		t.Fatalf("a seed outside the document produced %d options, want %d", len(seeded), len(v.kinds())+1)
+	}
+	if got := seeded[len(seeded)-1].Value; got != "something_newer" {
 		t.Errorf("the seed is offered as %q, want it verbatim", got)
 	}
-	// A seed the cache DOES hold is not offered twice.
-	if got := componentKindOptions("databases"); len(got) != len(componentKinds) {
-		t.Errorf("a cached seed produced %d options, want %d", len(got), len(componentKinds))
+	// A seed the document DOES hold is not offered twice.
+	if got := componentKindOptions(v, "databases"); len(got) != len(v.kinds()) {
+		t.Errorf("a published seed produced %d options, want %d", len(got), len(v.kinds()))
+	}
+
+	// AND THE UNRESOLVED CASE, which the literal could not have: a vocabulary that could not be
+	// fetched offers NOTHING, rather than a stale list. The interactive callers refuse before
+	// reaching here; this pins that the helper does not invent options if one ever does not.
+	if got := componentKindOptions(componentVocabulary{}, ""); len(got) != 0 {
+		t.Errorf("an unresolved vocabulary offered %d option(s), want none", len(got))
 	}
 }
+
 
 // TestProj_SetsSoFarDistinguishesNothingSetFromSomething pins the loop's prompt: an empty
 // list must not render as an empty "So far:", which reads as a bug rather than a state.
@@ -2836,11 +2878,11 @@ func TestProj_PromptComponentAddRefusesAMultiKindWithNoName(t *testing.T) {
 	projScriptYesNo(t, false)
 	f := &fakeClient{environments: []api.Environment{{ID: "e1", Name: "production", Stage: "production"}}}
 
-	if _, err := promptComponentAdd(f, "boutique", componentAddSpec{Kind: "databases"}); err == nil {
+	if _, err := promptComponentAdd(f, testComponentVocabulary(), "boutique", componentAddSpec{Kind: "databases"}); err == nil {
 		t.Error("a multi kind with no name must be refused before the request is built")
 	}
 	// A singleton needs none, and a seeded one is dropped rather than sent.
-	got, err := promptComponentAdd(f, "boutique", componentAddSpec{Kind: "cluster", Name: "ignored"})
+	got, err := promptComponentAdd(f, testComponentVocabulary(), "boutique", componentAddSpec{Kind: "cluster", Name: "ignored"})
 	if err != nil {
 		t.Fatalf("promptComponentAdd(singleton): %v", err)
 	}
@@ -2853,7 +2895,7 @@ func TestProj_PromptComponentAddRefusesAMultiKindWithNoName(t *testing.T) {
 func TestProj_PromptComponentAddRefusesWhenPromptingIsDisabled(t *testing.T) {
 	hygCliConfirmSetNoInput(t, true)
 	opened := projFormCounter(t)
-	if _, err := promptComponentAdd(&fakeClient{}, "boutique", componentAddSpec{}); err == nil {
+	if _, err := promptComponentAdd(&fakeClient{}, testComponentVocabulary(), "boutique", componentAddSpec{}); err == nil {
 		t.Fatal("promptComponentAdd must refuse with prompting disabled")
 	}
 	if *opened != 0 {
@@ -2872,7 +2914,7 @@ func TestProj_PromptsShortCircuitWhenPromptingIsDisabled(t *testing.T) {
 		"promptRegion":      func() error { _, err := promptRegion(); return err },
 		"promptDesignFile":  func() error { _, err := promptDesignFile(); return err },
 		"promptComponentKind": func() error {
-			_, err := promptComponentKind()
+			_, err := promptComponentKind(testComponentVocabulary())
 			return err
 		},
 		"promptProjectRef":      func() error { _, err := promptProjectRef("tok"); return err },
@@ -3629,7 +3671,7 @@ func TestProj_ComponentAddRefusalArms(t *testing.T) {
 	t.Run("a dismissed details form stops it", func(t *testing.T) {
 		hygCliConfirmSetNoInput(t, false)
 		projFormSeq(t, nil, fmt.Errorf("dismissed"))
-		if _, err := promptComponentAdd(&fakeClient{}, "web", componentAddSpec{Kind: "cluster"}); err == nil {
+		if _, err := promptComponentAdd(&fakeClient{}, testComponentVocabulary(), "web", componentAddSpec{Kind: "cluster"}); err == nil {
 			t.Error("a dismissed details form must be an error")
 		}
 	})
@@ -3638,7 +3680,7 @@ func TestProj_ComponentAddRefusalArms(t *testing.T) {
 		hygCliConfirmSetNoInput(t, false)
 		projForm(t)
 		projFailingYesNo(t)
-		if _, err := promptComponentAdd(&fakeClient{}, "web", componentAddSpec{Kind: "cluster"}); err == nil {
+		if _, err := promptComponentAdd(&fakeClient{}, testComponentVocabulary(), "web", componentAddSpec{Kind: "cluster"}); err == nil {
 			t.Error("a dismissed --set question must be an error")
 		}
 	})
@@ -3662,7 +3704,7 @@ func TestProj_ComponentEnvFallsBackToATextBox(t *testing.T) {
 	hygCliConfirmSetNoInput(t, false)
 	projForm(t)
 	projScriptYesNo(t, false)
-	got, err := promptComponentAdd(&fakeClient{err: errProjTestBoom}, "web", componentAddSpec{Kind: "cluster"})
+	got, err := promptComponentAdd(&fakeClient{err: errProjTestBoom}, testComponentVocabulary(), "web", componentAddSpec{Kind: "cluster"})
 	if err != nil {
 		t.Fatalf("a failed environment list must not stop the form: %v", err)
 	}
