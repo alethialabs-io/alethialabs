@@ -13,8 +13,15 @@ import {
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
-import { authorizeCli, ensureCliOrgAccess } from "@/lib/authz/guard";
-import { assertRunnerInOrg } from "@/lib/authz/runner-org";
+import {
+	assertMintingProfileStillMember,
+	authorizeCli,
+	ensureCliOrgAccess,
+} from "@/lib/authz/guard";
+import {
+	assertRunnerInOrg,
+	personalRunnerArm,
+} from "@/lib/authz/runner-org";
 import { ForbiddenError } from "@/lib/authz/types";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { verifyCliToken } from "@/lib/cli/auth";
@@ -154,8 +161,29 @@ export async function POST(req: Request) {
 				: undefined;
 		const headerOrg = pinnedOrg ?? req.headers.get("X-Alethia-Org")?.trim();
 		const actor = await getActiveScope(userId, headerOrg || undefined);
-		if (headerOrg) {
-			const denied = await ensureCliOrgAccess(actor, userId, headerOrg);
+		// WHICH QUESTION TO ASK DEPENDS ON WHERE `headerOrg` CAME FROM (#4298).
+		//
+		// This route resolves its own scope rather than going through `authorizeCli`, so it
+		// inherits none of that function's checks and has to pick the right one itself.
+		//
+		// A SERVICE TOKEN: the org is the token's own pin, and `actor` was resolved FROM it, so
+		// asking `ensureCliOrgAccess` would compare the pin to itself and pass vacuously. The
+		// check that has content is the minter's membership — the offboarding case, on the route
+		// that provisions and tears down real infrastructure. Same reasoning as #4041 for the
+		// provider routes, and it needs the DEFAULT scope, never `actor`.
+		//
+		// A SESSION: `headerOrg` is user input (`--org`), and a human's memberships are what bound
+		// it. `actor` is resolved from that input, so this keeps the pre-#4298 shape — the fast
+		// path can fire, and it is sound only because `verifyCliToken` has already refused a
+		// mismatched header for a token, which is the only caller that could forge one.
+		if (pinnedOrg) {
+			const denied = await assertMintingProfileStillMember(
+				await getActiveScope(userId),
+				pinnedOrg,
+			);
+			if (denied) return denied;
+		} else if (headerOrg) {
+			const denied = await ensureCliOrgAccess(actor, "session", headerOrg);
 			if (denied) return denied;
 		}
 
@@ -168,8 +196,16 @@ export async function POST(req: Request) {
 			// only by claim_next_job's lifecycle-only compatibility predicate.
 			if (assigned_runner_id) {
 				try {
-					// The caller's personal id admits only their own pre-#3874 runner row.
-					await assertRunnerInOrg(db, assigned_runner_id, actor.orgId, userId);
+					// The caller's personal id admits only their own pre-#3874 runner row — and
+					// only for a SESSION. For a service token that id is the minter's, and
+					// admitting their personal runner would put the executor outside the pin
+					// (#4298).
+					await assertRunnerInOrg(
+						db,
+						assigned_runner_id,
+						actor.orgId,
+						personalRunnerArm(actor, pinnedOrg ? "service_token" : "session"),
+					);
 				} catch (e: unknown) {
 					if (e instanceof ForbiddenError) {
 						return NextResponse.json(
