@@ -8,6 +8,7 @@ import { listSharedArtifacts } from "@/app/server/actions/artifact-shares";
 import { deleteArtifact, listArtifacts } from "@/app/server/actions/artifacts";
 import { AgentArtifactViewer } from "@/components/agent/agent-artifact-viewer";
 import { GALLERY_EMPTY } from "@/components/agent/gallery-empty";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import type { AgentArtifact } from "@/lib/db/schema";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
@@ -44,6 +45,17 @@ export function AgentArtifactGallery({
 	const [selected, setSelected] = useState<AgentArtifact | null>(null);
 	// "yours" = artifacts you created; "shared" = ones teammates shared into your org.
 	const [tab, setTab] = useState<GalleryTab>("yours");
+	// The artifact a delete has been REQUESTED for. Deleting is irreversible and the trigger is a
+	// one-click icon that appears on hover, so the click asks before it destroys (#4280). One piece
+	// of state for both triggers — the card's and the viewer's — because there is one answer.
+	const [pendingDelete, setPendingDelete] = useState<AgentArtifact | null>(
+		null,
+	);
+	// The id whose `deleteArtifact` is IN FLIGHT. The viewer used to gate itself by awaiting
+	// `onDelete`, but `onDelete` now only raises the dialog — it settles on the next microtask, long
+	// before the answer and the mutation. The window belongs to whoever owns the confirmation, so
+	// it is tracked here and handed down.
+	const [removing, setRemoving] = useState<string | null>(null);
 
 	const load = useCallback(() => {
 		setItems(null);
@@ -56,27 +68,57 @@ export function AgentArtifactGallery({
 
 	/** Delete an artifact, then optimistically drop it from the list. */
 	const remove = useCallback(async (id: string) => {
+		setRemoving(id);
 		try {
 			await deleteArtifact(id);
 			setItems((prev) => prev?.filter((a) => a.id !== id) ?? prev);
 			setSelected((s) => (s?.id === id ? null : s));
 		} catch {
 			// Non-fatal — the next load reconciles.
+		} finally {
+			setRemoving(null);
 		}
 	}, []);
+
+	/**
+	 * The one confirmation both delete triggers raise. Rendered in BOTH branches below rather than
+	 * once around them: the viewer replaces the list outright, and a dialog that unmounts with the
+	 * view it was opened from cannot be answered.
+	 */
+	const confirmDelete = (
+		<ConfirmDialog
+			open={pendingDelete !== null}
+			onOpenChange={(o) => {
+				if (!o) setPendingDelete(null);
+			}}
+			title={`Delete ${pendingDelete?.name ?? "artifact"}?`}
+			description="This permanently deletes the saved artifact and every widget in it. Conversations that used it are unaffected. This cannot be undone."
+			confirmLabel="Delete artifact"
+			onConfirm={() => {
+				if (pendingDelete) void remove(pendingDelete.id);
+				setPendingDelete(null);
+			}}
+		/>
+	);
 
 	// A selected artifact takes over the region — read-only, with explicit actions.
 	if (selected) {
 		return (
-			<AgentArtifactViewer
-				artifact={selected}
-				hasActiveChat={hasActiveChat}
-				owned={tab === "yours"}
-				onBack={() => setSelected(null)}
-				onAddToChat={() => onAddToChat(selected.id)}
-				onOpenInNewChat={() => onOpenInNewChat(selected.id, selected.name)}
-				onDelete={() => remove(selected.id)}
-			/>
+			<>
+				<AgentArtifactViewer
+					artifact={selected}
+					hasActiveChat={hasActiveChat}
+					owned={tab === "yours"}
+					onBack={() => setSelected(null)}
+					onAddToChat={() => onAddToChat(selected.id)}
+					onOpenInNewChat={() => onOpenInNewChat(selected.id, selected.name)}
+					onDelete={() => setPendingDelete(selected)}
+					deleting={
+						pendingDelete?.id === selected.id || removing === selected.id
+					}
+				/>
+				{confirmDelete}
+			</>
 		);
 	}
 
@@ -167,6 +209,15 @@ export function AgentArtifactGallery({
 								<button
 									type="button"
 									// Opens the VIEWER. It does not touch any conversation.
+									//
+									// The name is spelled out rather than left to the card's text
+									// because the viewer is a REACH STEP: `ArtifactSharePopover`
+									// renders nowhere else, so `agent.artifact.unshare` cannot be
+									// measured without a step that opens an artifact, and a step
+									// can only name a control it can predict — an artifact's own
+									// name is not knowable to the registry. It still contains the
+									// visible label, so WCAG 2.5.3 holds.
+									aria-label={`Open artifact ${a.name}`}
 									onClick={() => setSelected(a)}
 									className="flex flex-1 flex-col items-start gap-3 text-left"
 								>
@@ -192,8 +243,8 @@ export function AgentArtifactGallery({
 									{tab === "yours" && (
 										<button
 											type="button"
-											aria-label={`Delete ${a.name}`}
-											onClick={() => void remove(a.id)}
+											aria-label={`Delete artifact ${a.name}`}
+											onClick={() => setPendingDelete(a)}
 											className="text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/card:opacity-100"
 										>
 											<Trash2 className="h-3.5 w-3.5" />
@@ -206,6 +257,8 @@ export function AgentArtifactGallery({
 				)}
 				</div>
 			</ScrollArea>
+
+			{confirmDelete}
 		</div>
 	);
 }
