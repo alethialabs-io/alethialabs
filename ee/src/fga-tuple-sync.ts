@@ -37,7 +37,7 @@ function grantSubject(g: { principalType: "user" | "team"; principalId: string }
  * through, taken as an argument rather than reached for, so the two cannot be given different
  * ones — and it takes the effect for the same reason the expander does: an allow row is asked
  * what it confers, a deny row what it excludes, and those come apart for a row that scopes to
- * nothing (`EMPTY_SCOPE_DENIES` in lib/authz/grant-scope.ts).
+ * nothing (`EMPTY_SCOPE_DENIES` in apps/console/lib/authz/grant-scope.ts).
  *
  * It used to be `resourceId ? \`${resourceType}:${resourceId}\` : \`org:${orgId}\`` — the two
  * columns read independently of the expander. For an `('org', <resource-uuid>)` row that produced
@@ -85,7 +85,7 @@ export class FgaTupleSync implements TupleSync {
 	 * legitimate org-wide grant conferring the same permission on the same subject, so deleting
 	 * them here would revoke real access. Whether any exist, and whether removing them takes
 	 * access from anyone, is what the #4583 audit answers per row
-	 * (docs/ops/grants-org-kind-with-resource-id.sql).
+	 * (docs/ops/grants-scope-contradictions.sql).
 	 */
 	private async clearGrantTuples(
 		subject: string,
