@@ -665,7 +665,7 @@
 				"runners.pool.delete — declares alert-dialog (confirmed)": "passed",
 				"runners.destroy — declares popover (confirmed)": "passed",
 				"runners.remove — declares alert-dialog (confirmed)": "passed",
-				"jobs.cancel — declares none (missing)": "passed",
+				"jobs.cancel — declares confirm-dialog (confirmed)": "passed",
 				"agent.artifact.delete — declares none (missing)": "passed",
 				"agent.artifact.unshare — declares none (missing)": "passed",
 				"agent.thread.delete — declares none (missing)": "passed",

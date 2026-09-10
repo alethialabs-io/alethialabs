@@ -181,6 +181,16 @@ export default function JobDetailPage() {
 
 	const isActive = jobState === "QUEUED" || jobState === "CLAIMED" || jobState === "PROCESSING";
 	const isTerminal = jobState === "SUCCESS" || jobState === "FAILED" || jobState === "CANCELLED";
+	// A QUEUED job has no runner and no run in flight: `cancelJob` only signals a runner when
+	// `job.runner_id && (status === CLAIMED || PROCESSING)` (app/server/actions/jobs.ts). Told
+	// unconditionally that "its runner is signalled to abort the run in flight" and "anything
+	// already applied is not rolled back", an operator cancelling a job that has not started reads
+	// the SAFE case as the dangerous one — and having been told once that a cancel leaves debris,
+	// hesitates on every queued job after it. So the middle clause is conditioned on the state.
+	// Anything that is not QUEUED takes the started copy, including a status that went terminal
+	// while the dialog was open; the dialog is deliberately mounted outside `isActive`, so the
+	// sentence tracks the job rather than freezing at click time.
+	const cancelStarted = jobState !== "QUEUED";
 	const isPlanSuccess = job?.job_type === "PLAN" && jobState === "SUCCESS";
 	const info = job ? JOB_TYPES[job.job_type] : null;
 	const Icon = info?.icon;
@@ -454,7 +464,11 @@ export default function JobDetailPage() {
 				open={confirmCancel}
 				onOpenChange={setConfirmCancel}
 				title="Cancel this job?"
-				description="The job is marked cancelled and its runner is signalled to abort the run in flight. Anything already applied is not rolled back, and a cancelled job cannot be resumed — re-running it starts a new one."
+				description={
+					cancelStarted
+						? "The job is marked cancelled and its runner is signalled to abort the run in flight. Anything already applied is not rolled back, and a cancelled job cannot be resumed — re-running it starts a new one."
+						: "This job has not started — no runner has claimed it and nothing has been applied. It is marked cancelled and never runs. A cancelled job cannot be resumed — re-running it starts a new one."
+				}
 				confirmLabel="Cancel job"
 				onConfirm={() => {
 					void handleCancel();
