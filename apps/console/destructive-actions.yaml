@@ -621,11 +621,12 @@ controls:
     mutation: "/api/org/logo DELETE"
     reach: [{ section: "Organization profile" }]
     control: { role: button, name: "Remove" }
-    confirm: none
+    confirm: confirm-dialog
+    confirm_action: "Remove logo"
+    dialog_title: "Remove the organization logo?"
     fixture: org-with-a-logo
     persona: owner
-    status: missing
-    issue: "#4273"
+    status: confirmed
     prod-qa: own-rows-only
 
   # ── runners ────────────────────────────────────────────────────────────────────────────────
