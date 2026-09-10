@@ -389,7 +389,10 @@
 				"Onboarding negatives — OTP code › the code step lets you go back to change the email": "passed",
 				"Onboarding negatives — wizard validation › a reserved slug is rejected": "failed",
 				"Onboarding negatives — wizard validation › a blank org name keeps the create button disabled": "passed",
-				"Onboarding negatives — create-org sheet › continuing with a blank team name surfaces a validation error": "passed"
+				"Onboarding negatives — create-org sheet › continuing with a blank team name surfaces a validation error": "passed",
+				"Onboarding negatives — invitation accept › an invitation addressed to somebody else is refused for the wrong account": "passed",
+				"Onboarding negatives — the CLI hand-off › a malformed CLI login link errors and offers no Approve": "passed",
+				"Onboarding negatives — the CLI hand-off › a CLI login link with no codes at all errors the same way": "passed"
 			},
 			"flows/onboarding.spec.ts": {
 				"Onboarding — public auth pages › signup page renders the create-account hero": "passed",
@@ -413,7 +416,18 @@
 				"Onboarding — auth gating › /onboarding while logged out redirects to /login": "passed",
 				"Onboarding — auth gating › /invites/accept with a token while logged out redirects to /login (carrying next)": "passed",
 				"Onboarding — auth gating › /invites/accept without a token shows an invalid-invitation message": "passed",
-				"Onboarding — auth gating › an authed persona is not bounced to /login on its org overview": "passed"
+				"Onboarding — auth gating › an authed persona is not bounced to /login on its org overview": "passed",
+				"Onboarding — the code step › the code step names the address the code was sent to": "passed",
+				"Onboarding — the code step › sending a code arms the resend cooldown — disabled, with a live countdown": "passed",
+				"Onboarding — the clickwrap gate › a fresh account is held at /accept-terms until it ticks the box": {
+					"skip": "no legal document is pending acceptance on this deployment — the clickwrap gate does not engage"
+				},
+				"Onboarding — a second organization › the switcher lists both organizations the member belongs to": "passed",
+				"Onboarding — a second organization › picking the other organization navigates to it": "passed",
+				"Onboarding — invitation accept › an invited address signs up, accepts, and gains the inviting org": "passed",
+				"Onboarding — the CLI hand-off › /cli/login while logged out redirects to /login, carrying the device code": "passed",
+				"Onboarding — the CLI hand-off › /cli/login renders the device-authorization screen for a signed-in operator": "passed",
+				"Onboarding — signing out › Log Out ends the session, and a private route then redirects to /login": "passed"
 			},
 			"flows/projects.negative.spec.ts": {
 				"Projects — create validation › empty name blocks 'Create empty project' with a required error": "failed",
