@@ -1138,6 +1138,12 @@ jobs:
       # producing nothing. Do not merge them back, and do not add a third path to either: every
       # entry added widens the set of ways the guard is satisfied by something other than the thing
       # it is guarding. `pnpm check:upload-aggregate` refuses the merged shape.
+      #
+      # Splitting a step makes the second half skippable when the first fails, which would trade one
+      # silent gap for another. Here the `guards` job's own independence rule already covers it:
+      # every step carries `steps.setup.outcome == 'success'`, so the community-source upload still
+      # runs when the compliance upload has just gone red. The floors dispatch below has no such
+      # rule and needed an explicit `if:`.
       - name: Upload compliance evidence
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         uses: actions/upload-artifact@v7
@@ -2319,6 +2325,7 @@ jobs:
       # rejects anything below 2; this comment records why the rejection is there rather than
       # leaving it to look like fussiness.
       - name: N runs, compared — then the floors those numbers produce
+        id: probe
         env:
           ALETHIA_TS_PROBE_RUNS: ${{ inputs.ts_probe_runs || '5' }}
         run: scripts/ci/ts-coverage-probe.sh
@@ -2342,7 +2349,16 @@ jobs:
       # having armed nothing, which is the one outcome the `error` is there to prevent. Split, an
       # empty `ts-coverage-floors/` fails the step above on its own. `pnpm check:upload-aggregate`
       # refuses any re-merge.
+      #
+      # THE `if:` IS PART OF THE SPLIT, not decoration. Actions stops a job at its first failing
+      # step, so once the step above can fail — which is the entire point — an empty floors
+      # directory would ALSO skip this one, and a dispatch that used to yield the fixture would
+      # start yielding nothing at all. Splitting a step to make one artefact's absence loud must not
+      # make the other artefact's presence conditional on it. Gated on the probe rather than left
+      # bare: if the probe itself died there is legitimately nothing to upload, and a second red
+      # step accusing the fixture of being missing would name the wrong cause.
       - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && steps.probe.outcome == 'success' }}
         with:
           name: ts-coverage-plan-catalog-fixture
           path: packages/plan-catalog/coverage/coverage-final.json

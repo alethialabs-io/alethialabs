@@ -38,11 +38,19 @@
 //   node scripts/ci/check-upload-aggregate.mjs --self-test
 //
 // THE RULE, stated as a shape rather than as a text pattern: an `actions/upload-artifact` step
-// whose `with.path` resolves to TWO OR MORE inclusion entries, and whose `with.if-no-files-found`
-// is `error`. Reformatting the block, quoting the value or reordering the keys does not dodge it,
-// because none of those changes the shape. The fix is one step per artefact, each keeping its own
-// `if-no-files-found: error` — the shape `go-floors-rerecord.yml` and `deploy-console.yml` already
-// use — or an explicit pre-upload assertion that each specific path is non-empty.
+// whose `with.path` RESOLVES to two or more inclusion entries, and whose `with.if-no-files-found`
+// resolves to `error`. Resolves, not "is written as": a first pass of this check tested the written
+// form and an adversarial read found five valid-YAML spellings of the identical defective step that
+// all walked past it — a double-quoted `"a\nb"`, a single-quoted scalar folded over a blank line,
+// `with:` children indented by four, extra spaces after the sequence dash, a quoted `uses:`, and a
+// value on the line below its key. None is exotic; each is one edit from the shape it evades, and
+// the worst of them also zeroed the repo-wide floor that was supposed to notice. So the values are
+// RESOLVED — folding, quoting and block indicators and all — and a value that cannot be resolved is
+// REFUSED rather than scored as one path.
+//
+// The fix is one step per artefact, each keeping its own `if-no-files-found: error` — the shape
+// `go-floors-rerecord.yml` and `deploy-console.yml` already use — or an explicit pre-upload
+// assertion that each specific path is non-empty.
 //
 // WHAT THIS DOES NOT SAY. A multi-path step with `if-no-files-found` at `warn` or left unset is
 // NOT reported. Two of those exist here deliberately (ci.yml's `ui-audit`, release-gate.yml's
@@ -66,8 +74,22 @@
 //     counted and then discounted. A step whose only extra entries are exclusions is fine.
 //   * A `#` line inside a `path: |` literal block is CONTENT, not a comment — YAML says so — and
 //     is counted as an entry. Commenting a path out in there does not remove it; it renames it.
+//   * A FOLDED block (`>`) joins its lines with SPACES, so it is ONE pattern, not several. Reading
+//     it as several would red a file that is not defective, which is how a check gets routed
+//     around. Blank lines inside one do yield newlines, and that IS read.
+//   * A trailing `\` inside a double-quoted scalar suppresses the line fold. Not modelled; such a
+//     value is folded with a space, which can only ever UNDER-count entries by joining two.
+//   * A flow sequence (`path: [a, b]`) is not read, because `actionlint` rejects it outright: the
+//     action's input is a string. A second refusal here would be a rule with no reachable subject.
+//   * YAML anchors and aliases are not read. Actions does not support them; a workflow using one
+//     does not run at all.
+//   * `ERROR` in any other casing is not `error` here and is not treated as one. The action's
+//     `input-helper.ts` calls `setFailed` on an unrecognised value, so that spelling is LOUD at
+//     runtime rather than a silent downgrade — a different failure, already visible.
 //   * Reusable workflows and composite actions are invisible to a line scan, as they are to every
 //     other line-based check here.
+//   * `if-no-files-found: warn`, or the key left unset, is not read as a defect. See the note
+//     above; the escape it leaves open is real and named in #4347's follow-up.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -77,8 +99,150 @@ const DIR = ".github/workflows";
 /** The action this is about. Matched on the owner/repo, so any `@version` is covered. */
 const UPLOAD = /^actions\/upload-artifact@/;
 
-/** A block scalar indicator — `|`, `|-`, `|+`, `>`, `>-`, `>2`, and so on. */
-const BLOCK_SCALAR = /^[|>][-+]?\d*$/;
+/**
+ * A LITERAL block indicator — `|`, `|-`, `|+`, `|2`. Every line of the block is its own entry, and
+ * this is the only spelling in the repo.
+ */
+const LITERAL_BLOCK = /^\|[-+\d]*$/;
+
+/**
+ * A FOLDED block indicator — `>`, `>-`, `>2`. NOT the same thing: folding joins the lines with
+ * SPACES, so `>` over two lines is ONE glob pattern, not two. Reading it as two would report a
+ * step that is not defective — and a guard that fires on a correct file is how a check gets
+ * routed around. Blank lines inside a folded block DO produce newlines, and `fold` handles that,
+ * so the distinction costs nothing.
+ */
+const FOLDED_BLOCK = /^>[-+\d]*$/;
+
+/** @param {string} line */
+const indentOf = (line) => line.match(/^(\s*)/)?.[1].length ?? 0;
+
+/**
+ * YAML line folding, which is what makes several of the evasions below equivalent to a block list.
+ * Between two non-empty lines a break folds to a SPACE; N consecutive blank lines yield N newlines.
+ * Used for folded blocks, multi-line plain scalars and multi-line quoted scalars alike.
+ *
+ * @param {string[]} parts trimmed lines, "" for a blank one
+ * @returns {string}
+ */
+export function fold(parts) {
+	let out = "";
+	let blanks = 0;
+	let started = false;
+	for (const p of parts) {
+		if (p === "") {
+			if (started) blanks += 1;
+			continue;
+		}
+		if (!started) {
+			out = p;
+			started = true;
+			continue;
+		}
+		out += blanks > 0 ? "\n".repeat(blanks) : " ";
+		out += p;
+		blanks = 0;
+	}
+	return out;
+}
+
+/**
+ * The body of a quoted scalar, which may span lines.
+ *
+ * A quoted `path:` is the sharpest evasion of the rule: `path: "a\nb"` is ONE line of YAML, is not
+ * a block scalar, and means exactly what the two-line block means. So the quote has to be closed
+ * properly — and when it cannot be, that is REPORTED, never skipped. A value this cannot read is
+ * not a value with one entry.
+ *
+ * @param {string} inline the value text on the key's own line, starting with the quote
+ * @param {string[]} cont the continuation lines, trimmed, "" for blank
+ * @returns {{parts: string[], closed: boolean, quote: string}}
+ */
+export function gatherQuoted(inline, cont) {
+	const quote = inline[0];
+	/** index of the closing quote in `s`, or -1 */
+	const closesAt = (s) => {
+		for (let i = 0; i < s.length; i++) {
+			if (quote === "'") {
+				if (s[i] !== "'") continue;
+				if (s[i + 1] === "'") {
+					i += 1;
+					continue;
+				}
+				return i;
+			}
+			if (s[i] === "\\") {
+				i += 1;
+				continue;
+			}
+			if (s[i] === '"') return i;
+		}
+		return -1;
+	};
+	const first = inline.slice(1);
+	const at = closesAt(first);
+	if (at !== -1) return { parts: [first.slice(0, at)], closed: true, quote };
+	const parts = [first];
+	for (const l of cont) {
+		if (l === "") {
+			parts.push("");
+			continue;
+		}
+		const c = closesAt(l);
+		if (c !== -1) {
+			parts.push(l.slice(0, c));
+			return { parts, closed: true, quote };
+		}
+		parts.push(l);
+	}
+	return { parts, closed: false, quote };
+}
+
+/**
+ * Undo one level of quoting, AFTER folding — the order matters, because a `\n` escape inside a
+ * double-quoted scalar is a newline the fold must not have already turned into a space.
+ *
+ * @param {string} s folded body
+ * @param {string} quote `'` or `"`
+ */
+function unquote(s, quote) {
+	if (quote === "'") return s.replace(/''/g, "'");
+	return s.replace(/\\(.)/g, (_, c) => (c === "n" ? "\n" : c === "t" ? "\t" : c === "r" ? "\r" : c === "0" ? "\0" : c));
+}
+
+/**
+ * Resolve a `with:` key's value to the string YAML would produce, across every spelling the value
+ * can take: inline plain, inline quoted, multi-line quoted, multi-line plain, and block scalars.
+ *
+ * @param {string[]} lines the whole file
+ * @param {number} raw index of the key's own line
+ * @param {string} inline the text after `key:` on that line
+ * @returns {{value: string, kind: string, readable: boolean}} `value` may contain newlines
+ */
+export function resolveValue(lines, raw, inline) {
+	const keyCol = indentOf(lines[raw]);
+	/** every continuation line, trimmed; blanks kept, trailing blanks dropped */
+	const cont = [];
+	for (let r = raw + 1; r < lines.length; r++) {
+		if (lines[r].trim() === "") {
+			cont.push("");
+			continue;
+		}
+		if (indentOf(lines[r]) <= keyCol) break;
+		cont.push(lines[r].trim());
+	}
+	while (cont.length > 0 && cont[cont.length - 1] === "") cont.pop();
+
+	if (LITERAL_BLOCK.test(inline)) return { value: cont.filter((l) => l !== "").join("\n"), kind: "literal", readable: true };
+	if (FOLDED_BLOCK.test(inline)) return { value: fold(cont), kind: "folded", readable: true };
+	if (inline === "") return { value: fold(cont), kind: "plain", readable: true };
+	if (inline[0] === "'" || inline[0] === '"') {
+		const { parts, closed, quote } = gatherQuoted(inline, cont);
+		return { value: unquote(fold(parts), quote), kind: `quoted(${quote})`, readable: closed };
+	}
+	// A plain scalar may still continue onto more-indented lines, folding with spaces.
+	return { value: fold([inline, ...cont]), kind: "plain", readable: true };
+}
 
 /**
  * Every `actions/upload-artifact` step in one workflow, with its `path:` entries resolved.
@@ -89,24 +253,33 @@ const BLOCK_SCALAR = /^[|>][-+]?\d*$/;
  * `path:` block is then read back from the RAW lines, where a `#` inside a literal block is the
  * content YAML says it is.
  *
+ * Every spelling of a value that YAML resolves to the same thing is resolved to the same thing —
+ * see `resolveValue`. A step whose `path:` this parser cannot resolve goes in `unreadable` and is
+ * REPORTED; it is never scored as a step with one path.
+ *
  * @param {string} text
- * @returns {{uploads: number, pathKeys: number, guarded: number, multi: number, problems: {line: number, name: string, artifact: string, entries: string[], excludes: string[]}[]}}
+ * @returns {{uploads: number, pathKeys: number, guarded: number, multi: number, problems: {line: number, name: string, artifact: string, entries: string[], excludes: string[], kind: string}[], unreadable: {line: number, name: string, artifact: string, why: string}[]}}
  */
 export function scanUploads(text) {
 	const lines = text.split("\n");
 	const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
-	if (jobsAt === -1) return { uploads: 0, pathKeys: 0, guarded: 0, multi: 0, problems: [] };
+	if (jobsAt === -1) return { uploads: 0, pathKeys: 0, guarded: 0, multi: 0, problems: [], unreadable: [] };
 
 	let uploads = 0;
 	let pathKeys = 0;
 	let guarded = 0;
 	let multi = 0;
 	const problems = [];
+	const unreadable = [];
 
 	for (let i = jobsAt + 1; i < lines.length; i++) {
-		const item = lines[i].match(/^(\s+)-\s+(\S.*)$/);
+		const item = lines[i].match(/^(\s+)-(\s+)(\S.*)$/);
 		if (item === null) continue;
 		const indent = item[1].length;
+		// The column the step's own keys sit at. DERIVED, not `indent + 2`: `-   uses:` is ordinary
+		// YAML, and a hard-coded two would re-base every following line by the wrong amount, so
+		// `uses:` would never match and the step would not be seen at all.
+		const childCol = indent + 1 + item[2].length;
 
 		// Only list items inside a `steps:` block: the nearest preceding bare key at or above this
 		// item's own column. `<=` and not `<` because YAML lets a sequence sit at the SAME
@@ -123,68 +296,88 @@ export function scanUploads(text) {
 		}
 		if (owner !== "steps") continue;
 
-		// The step's own lines, re-based so a top-level key of the step sits at column 0. Each
-		// keeps its absolute line number, which is what the `path:` block re-read needs.
-		const own = [{ text: item[2], line: i + 1, raw: i }];
+		// The step's own lines, re-based so a top-level key of the step sits at column 0. Each keeps
+		// its absolute line number, which is what the value resolver needs.
+		const own = [{ text: item[3], line: i + 1, raw: i }];
 		for (let j = i + 1; j < lines.length; j++) {
 			if (new RegExp(`^\\s{${indent}}-\\s`).test(lines[j])) break;
-			if (lines[j].trim() !== "" && (lines[j].match(/^(\s*)/)?.[1].length ?? 0) <= indent && !/^\s*#/.test(lines[j])) break;
+			if (lines[j].trim() !== "" && indentOf(lines[j]) <= indent && !/^\s*#/.test(lines[j])) break;
 			if (/^\s*#/.test(lines[j])) continue;
-			own.push({ text: lines[j].slice(indent + 2), line: j + 1, raw: j });
+			own.push({ text: lines[j].slice(childCol), line: j + 1, raw: j });
 		}
 
 		const usesAt = own.find((o) => /^uses:\s*\S/.test(o.text));
 		if (usesAt === undefined) continue;
-		if (!UPLOAD.test(usesAt.text.replace(/^uses:\s*/, "").trim())) continue;
+		// The quotes come off BEFORE the anchored test: `uses: "actions/upload-artifact@v7"` is the
+		// same step, and an anchored match against a leading `"` is a one-character evasion.
+		if (!UPLOAD.test(usesAt.text.replace(/^uses:\s*/, "").trim().replace(/^['"]|['"]$/g, ""))) continue;
 		uploads += 1;
 
-		let name = own.find((o) => /^name:\s*\S/.test(o.text))?.text.replace(/^name:\s*/, "").trim() ?? usesAt.text.trim();
+		const name = own.find((o) => /^name:\s*\S/.test(o.text))?.text.replace(/^name:\s*/, "").trim() ?? usesAt.text.trim();
 
-		// The direct children of the step's `with:` — column 2 exactly, so a `path: |` block's own
-		// deeper lines cannot be read as keys of it.
-		const withIdx = own.findIndex((o) => /^with:\s*$/.test(o.text));
-		if (withIdx === -1) continue;
+		// The direct children of the step's `with:`: the block's OWN indent, whatever it is, taken
+		// from its first key rather than assumed to be two. Four-space `with:` children are ordinary
+		// YAML, and hard-coding two made every key of such a step invisible — including its `path:`,
+		// which then also kept the repo-wide "read zero paths" floor from ever noticing.
+		const withIdx = own.findIndex((o) => /^with:/.test(o.text));
+		const withInline = withIdx === -1 ? "" : own[withIdx].text.replace(/^with:\s*/, "").trim();
 		const withKeys = [];
-		for (let k = withIdx + 1; k < own.length; k++) {
-			const t = own[k].text;
-			if (t.trim() === "") continue;
-			if (/^\S/.test(t)) break;
-			const m = t.match(/^ {2}([A-Za-z0-9_-]+):\s*(.*)$/);
-			if (m !== null) withKeys.push({ key: m[1], value: m[2].trim(), line: own[k].line, raw: own[k].raw });
+		let childIndent = null;
+		if (withIdx !== -1 && withInline === "") {
+			for (let k = withIdx + 1; k < own.length; k++) {
+				const t = own[k].text;
+				if (t.trim() === "") continue;
+				if (/^\S/.test(t)) break;
+				const ind = indentOf(t);
+				if (childIndent === null) childIndent = ind;
+				if (ind !== childIndent) continue;
+				const m = t.match(/^\s+([A-Za-z0-9_-]+):\s*(.*)$/);
+				if (m !== null) withKeys.push({ key: m[1], inline: m[2].trim(), line: own[k].line, raw: own[k].raw });
+			}
 		}
 
-		const artifact = withKeys.find((w) => w.key === "name")?.value ?? "(unnamed)";
+		const artifact = withKeys.find((w) => w.key === "name")?.inline ?? "(unnamed)";
 		const pathKey = withKeys.find((w) => w.key === "path");
 		const inffKey = withKeys.find((w) => w.key === "if-no-files-found");
-		if (pathKey === undefined) continue;
+
+		// `path` is REQUIRED by the action, so a step this parser finds none in is a step this
+		// parser did not understand — an inline `with: {…}` mapping, a shape not modelled here, or a
+		// walk that has stopped walking. Reported, because skipping it is exactly the silent pass
+		// this whole check exists to remove: the repo-wide floor below cannot see one step going
+		// unread among seventeen that are.
+		if (pathKey === undefined) {
+			unreadable.push({
+				line: own[withIdx === -1 ? 0 : withIdx].line,
+				name,
+				artifact,
+				why: withIdx === -1 ? "it declares no `with:` block" : withInline !== "" ? `its \`with:\` is an inline mapping (\`${withInline}\`)` : "no `path:` key was found among its `with:` keys",
+			});
+			continue;
+		}
 		pathKeys += 1;
 
-		// The entries. A block scalar's are read from the raw lines below the key: everything
-		// indented past the key's own column, up to the next line that is not.
-		let entries = [];
-		if (pathKey.value === "" || BLOCK_SCALAR.test(pathKey.value)) {
-			const col = lines[pathKey.raw].match(/^(\s*)/)?.[1].length ?? 0;
-			for (let r = pathKey.raw + 1; r < lines.length; r++) {
-				if (lines[r].trim() === "") continue;
-				if ((lines[r].match(/^(\s*)/)?.[1].length ?? 0) <= col) break;
-				entries.push(lines[r].trim());
-			}
-		} else {
-			entries = [pathKey.value.replace(/^['"]|['"]$/g, "")];
+		const resolvedPath = resolveValue(lines, pathKey.raw, pathKey.inline);
+		if (!resolvedPath.readable) {
+			unreadable.push({ line: pathKey.line, name, artifact, why: `its \`path:\` is a quoted scalar this parser could not close` });
+			continue;
 		}
+		const entries = resolvedPath.value
+			.split("\n")
+			.map((e) => e.trim())
+			.filter((e) => e !== "");
 
 		const excludes = entries.filter((e) => e.startsWith("!"));
 		const includes = entries.filter((e) => !e.startsWith("!"));
 		if (includes.length > 1) multi += 1;
 
-		const inff = inffKey?.value.replace(/^['"]|['"]$/g, "");
+		const inff = inffKey === undefined ? undefined : resolveValue(lines, inffKey.raw, inffKey.inline).value.trim();
 		if (inff === "error") guarded += 1;
 		if (inff !== "error" || includes.length < 2) continue;
 
-		problems.push({ line: pathKey.line, name, artifact, entries: includes, excludes });
+		problems.push({ line: pathKey.line, name, artifact, entries: includes, excludes, kind: resolvedPath.kind });
 	}
 
-	return { uploads, pathKeys, guarded, multi, problems };
+	return { uploads, pathKeys, guarded, multi, problems, unreadable };
 }
 
 /** @returns {string[]} failures */
@@ -223,6 +416,16 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 					"`if-no-files-found: error` — the shape go-floors-rerecord.yml and deploy-console.yml use — or assert each " +
 					"path is non-empty before uploading. Do NOT add a path to a step like this: every entry widens the set of " +
 					"ways the guard is satisfied by something other than the thing it is guarding (#4347).",
+			);
+		}
+		for (const u of scan.unreadable) {
+			out.push(
+				`${dir}/${f}:${u.line}: the \`actions/upload-artifact\` step \`${u.name}\` (artifact \`${u.artifact}\`) could not be ` +
+					`read: ${u.why}. \`path\` is REQUIRED by the action, so this is either a workflow that would fail at runtime or a ` +
+					"shape this parser does not model — and the difference matters, because an unread step is scored as nothing at " +
+					"all. It is refused rather than skipped: skipping one step among many is invisible to the repo-wide floors " +
+					"below, and a silent pass is the exact failure this check exists to remove. Write the `with:` block as ordinary " +
+					"indented keys with a plain or block-scalar `path:`, or teach this parser the shape.",
 			);
 		}
 	}
@@ -335,9 +538,13 @@ function selfTest() {
 	ok("a multi-path step at `warn` is NOT reported", scan(WARN).problems.length === 0, JSON.stringify(scan(WARN).problems));
 	ok("a multi-path step with the key unset is NOT reported", scan(UNSET).problems.length === 0, JSON.stringify(scan(UNSET).problems));
 	ok("...and both are still counted as multi-entry", scan(WARN).multi === 1 && scan(UNSET).multi === 1);
-	// ci.yml's `ui-audit` and release-gate.yml's per-project report, in shape.
+	// The two deliberate multi-path uploads in this repo, LIFTED VERBATIM — ci.yml's `ui-audit` and
+	// release-gate.yml's per-project report. Composed lookalikes were the first version of this
+	// case, and a composed fixture only ever proves the guard agrees with what its author already
+	// believed the file said.
 	const UI_AUDIT =
 		"      - name: Upload the audit report\n" +
+		"        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}\n" +
 		"        uses: actions/upload-artifact@v7\n" +
 		"        with:\n" +
 		"          name: ui-audit\n" +
@@ -345,7 +552,22 @@ function selfTest() {
 		"            apps/console/playwright-report/\n" +
 		"            apps/console/test-results/ui-audit*.json\n" +
 		"          retention-days: 14\n";
-	ok("the two deliberate multi-path uploads in this repo are clean", scan(UI_AUDIT).problems.length === 0, JSON.stringify(scan(UI_AUDIT).problems));
+	const RELEASE_GATE =
+		"      - name: Upload the report, traces and the JSON the ratchet read\n" +
+		"        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}\n" +
+		"        uses: actions/upload-artifact@v7\n" +
+		"        with:\n" +
+		"          name: release-gate-${{ matrix.project }}\n" +
+		"          path: |\n" +
+		"            apps/console/playwright-report/\n" +
+		"            apps/console/test-results/\n" +
+		"          retention-days: 14\n";
+	ok("ci.yml's `ui-audit` upload, verbatim, is clean", scan(UI_AUDIT).problems.length === 0, JSON.stringify(scan(UI_AUDIT).problems));
+	ok("...and is seen as the multi-path step it is", scan(UI_AUDIT).multi === 1 && scan(UI_AUDIT).uploads === 1, JSON.stringify(scan(UI_AUDIT)));
+	ok("release-gate.yml's per-project upload, verbatim, is clean", scan(RELEASE_GATE).problems.length === 0, JSON.stringify(scan(RELEASE_GATE).problems));
+	ok("...and it too is seen as multi-path", scan(RELEASE_GATE).multi === 1 && scan(RELEASE_GATE).uploads === 1, JSON.stringify(scan(RELEASE_GATE)));
+	// Both are one edit from being reportable, and that edit must report.
+	ok("...and adding `if-no-files-found: error` to it DOES report", scan(RELEASE_GATE.replace("          retention-days: 14\n", "          if-no-files-found: error\n          retention-days: 14\n")).problems.length === 1);
 
 	// A single path with `error` is the whole point of the setting and must never be reported.
 	const SINGLE = "      - uses: actions/upload-artifact@v7\n        with:\n          name: post-deploy-smoke\n          path: apps/console/smoke-results/\n          if-no-files-found: error\n";
@@ -376,6 +598,80 @@ function selfTest() {
 	ok("a blank line inside the block is not a third path", scan(BLANKLINE).problems[0]?.entries.length === 2, JSON.stringify(scan(BLANKLINE).problems[0]?.entries));
 	const OLDVERSION = SITE1.replace("upload-artifact@v7", "upload-artifact@v4");
 	ok("an older action version is the same action", scan(OLDVERSION).problems.length === 1);
+
+	// ── THE SIX EVASIONS AN ADVERSARIAL READ FOUND (#4595 review) ────────────────────────────────
+	//
+	// Every one of these is valid YAML, passes actionlint, and parses to a step semantically
+	// IDENTICAL to SITE1. The first pass of this check walked past all six. They are asserted
+	// against the resolver directly as well as end to end, so a regression says which half broke.
+
+	// E1 — a double-quoted scalar with an escaped newline. Not a block scalar, so a check that
+	// tests "is it a block?" takes the whole thing as one path.
+	const E1 = '      - uses: actions/upload-artifact@v7\n        with:\n          name: compliance\n          path: "dist/compliance\\ndist/community-source"\n          if-no-files-found: error\n';
+	ok("E1 a double-quoted `\\n` is two paths", scan(E1).problems[0]?.entries.length === 2, JSON.stringify(scan(E1)));
+	ok("...and both are printed", scan(E1).problems[0]?.entries.join(",") === "dist/compliance,dist/community-source", JSON.stringify(scan(E1).problems[0]?.entries));
+
+	// E2 — a single-quoted flow scalar spanning lines. YAML folds a lone break to a SPACE and a
+	// blank line to a newline, so the blank line is what makes this two patterns.
+	const E2 = "      - uses: actions/upload-artifact@v7\n        with:\n          name: compliance\n          path: 'dist/compliance\n\n            dist/community-source'\n          if-no-files-found: error\n";
+	ok("E2 a folded single-quoted scalar over a blank line is two paths", scan(E2).problems[0]?.entries.length === 2, JSON.stringify(scan(E2)));
+	// The same scalar WITHOUT the blank line folds to one pattern and must NOT be reported.
+	const E2_ONE = E2.replace("dist/compliance\n\n", "dist/compliance\n");
+	ok("...and without the blank line it folds to ONE pattern and is clean", scan(E2_ONE).problems.length === 0, JSON.stringify(scan(E2_ONE)));
+
+	// E3 — `with:` children indented by four. The worst of the six: a matcher pinned to two spaces
+	// found no `path:` key at all, and a step scored as declaring nothing also kept the repo-wide
+	// "read zero `path:` keys" floor from ever noticing.
+	const E3 = SITE1.replace(/^ {10}/gm, "            ").replace(/^ {12}dist/gm, "              dist");
+	ok("the E3 fixture really re-indented", E3 !== SITE1);
+	ok("E3 four-space `with:` children are read", scan(E3).problems.length === 1, JSON.stringify(scan(E3)));
+	ok("...and the step is not scored as pathless", scan(E3).pathKeys === 1 && scan(E3).unreadable.length === 0, JSON.stringify(scan(E3)));
+
+	// E4 — extra spaces after the sequence dash. A re-base of `indent + 2` shifts every following
+	// line, so `uses:` never matches and the step is not seen at all.
+	// The whole body shifts with the dash: `-   name:` starts the mapping at column 10, so its
+	// siblings align there too. A fixture that moved only the dash would not be valid YAML, and a
+	// self-test that feeds the parser something Actions would reject proves nothing about either.
+	const E4 = SITE1.split("\n")
+		.map((l, i) => (i === 0 ? l.replace("      - ", "      -   ") : l === "" ? l : `  ${l}`))
+		.join("\n");
+	ok("E4 extra spaces after the dash still yield a step", scan(E4).uploads === 1, JSON.stringify(scan(E4)));
+	ok("...and it is still caught", scan(E4).problems.length === 1, JSON.stringify(scan(E4)));
+
+	// E5 — a quoted `uses:`. One character in front of an anchored match.
+	const E5 = SITE1.replace("uses: actions/upload-artifact@v7", 'uses: "actions/upload-artifact@v7"');
+	ok("E5 a quoted `uses:` is the same action", scan(E5).uploads === 1 && scan(E5).problems.length === 1, JSON.stringify(scan(E5)));
+	const E5B = SITE1.replace("uses: actions/upload-artifact@v7", "uses: 'actions/upload-artifact@v7'");
+	ok("...single quotes too", scan(E5B).problems.length === 1);
+
+	// E6 — the value on the line below its key. A reader of the key's own line sees "" and skips.
+	const E6 = SITE1.replace("          if-no-files-found: error\n", "          if-no-files-found:\n            error\n");
+	ok("the E6 fixture really moved the value", E6 !== SITE1);
+	ok("E6 a next-line scalar value is read", scan(E6).problems.length === 1, JSON.stringify(scan(E6)));
+	ok("...and counted as guarded", scan(E6).guarded === 1, JSON.stringify(scan(E6)));
+
+	// The resolver, directly — the six above go through `scanUploads`, so a resolver regression
+	// could hide behind a walk regression and vice versa.
+	const rv = (src) => resolveValue(src.split("\n"), 0, src.split("\n")[0].replace(/^\s*path:\s*/, ""));
+	ok("resolveValue: a literal block splits per line", rv("path: |\n  a\n  b\n").value === "a\nb");
+	ok("resolveValue: a FOLDED block joins with a space", rv("path: >\n  a\n  b\n").value === "a b");
+	ok("resolveValue: a folded block with a blank line yields a newline", rv("path: >\n  a\n\n  b\n").value === "a\nb");
+	ok("resolveValue: a double-quoted `\\n` unescapes", rv('path: "a\\nb"\n').value === "a\nb");
+	ok("resolveValue: `\\\\n` is a literal backslash-n, not a break", rv('path: "a\\\\nb"\n').value === "a\\nb", JSON.stringify(rv('path: "a\\\\nb"\n').value));
+	ok("resolveValue: a single-quoted `''` is one quote", rv("path: 'a''b'\n").value === "a'b");
+	ok("resolveValue: an unterminated quote is UNREADABLE, not one entry", rv("path: 'a\n").readable === false);
+	ok("resolveValue: a plain multi-line scalar folds to one", rv("path: a\n  b\n").value === "a b");
+
+	// And the refusal for a value that cannot be read: the point is that it is not scored as one
+	// path, because "unread" and "one path" are the same green line otherwise.
+	const UNCLOSED = "      - uses: actions/upload-artifact@v7\n        with:\n          name: x\n          path: 'dist/compliance\n";
+	ok("an unclosable `path:` scalar is REFUSED, not scored as one path", scanUploads(wf(UNCLOSED)).unreadable.length === 1, JSON.stringify(scanUploads(wf(UNCLOSED))));
+	const INLINE_WITH = "      - uses: actions/upload-artifact@v7\n        with: { name: x, path: dist/compliance }\n";
+	ok("an inline `with:` mapping is REFUSED rather than skipped", scanUploads(wf(INLINE_WITH)).unreadable.length === 1, JSON.stringify(scanUploads(wf(INLINE_WITH))));
+	const NOPATH = "      - uses: actions/upload-artifact@v7\n        with:\n          name: x\n          if-no-files-found: error\n";
+	ok("an upload step with no `path:` at all is REFUSED — the action requires one", scanUploads(wf(NOPATH)).unreadable.length === 1, JSON.stringify(scanUploads(wf(NOPATH))));
+	const refusal = check("d", () => ["a.yml"], () => wf(UNCLOSED));
+	ok("...and the refusal reaches check() and names the artifact", refusal.some((p) => /could not be read/.test(p) && /artifact `x`/.test(p)), JSON.stringify(refusal));
 
 	// Three paths is worse, not different.
 	const THREE = SITE1.replace("            dist/community-source\n", "            dist/community-source\n            dist/sbom\n");
