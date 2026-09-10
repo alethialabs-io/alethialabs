@@ -38,13 +38,27 @@ name: Release gate
 # legs they imply and the label that is missing. The seven legs still run only on a promotion, a
 # dispatch, or a labelled PR.
 #
-# THE PRICE, STATED IN THE CURRENCY THAT BINDS. `legs` now takes ONE RUNNER SLOT on every non-draft
-# PR into main, staging or dev, on every push to it, and it now also does a checkout of this
-# monorepo — including on a docs-only PR, which is more than "one short job" and is the honest cost.
-# scripts/ci/ci-demand.mjs measures slots rather than minutes because 75% of this repo's CI
-# wall-clock is queue wait: a five-second job that waits twenty minutes holds a slot for twenty. That
-# is also the whole reason the answer is a red check and not an automatic run — one slot per dev PR,
-# against seven legs and ~76 runner-minutes for a verdict nobody asked for.
+# THE PRICE, MEASURED, AND IT IS NOT THE SMALL HALF. Two costs, and the second is the one that
+# decides whether this check should be binding.
+#
+#   · ASKING costs one runner SLOT on every non-draft PR into main, staging or dev, on every push,
+#     plus a checkout of this monorepo — including on a docs-only PR. scripts/ci/ci-demand.mjs counts
+#     slots rather than minutes because 75% of this repo's CI wall-clock is queue wait: a five-second
+#     job that waits twenty minutes holds a slot for twenty.
+#   · ANSWERING costs the gate. Replaying the last 80 `dev` merges through this exact logic:
+#     41 OF 80 (51%) GO RED unlabelled. 39 of those 41 would run all seven legs — a console source
+#     path matches no rule, and rule 3 sends it everywhere — for 275 leg-runs, about 3,000 RUNNER-
+#     MINUTES over that window, and that is one push each. In a file whose header argues that CI
+#     capacity is this wave's binding constraint, that number belongs here rather than in a PR body.
+#
+# The check is not over-reporting to get there: of the 41, three are paths that cannot reach the
+# browser, all of them console source that no rule narrows. The number is what the invariant COSTS
+# at today's leg selection, not a matcher being loose — half of dev PRs touch the console, and the
+# gate measures the console. Two honest ways to spend less: require it and pay (the legs are seven
+# copies of one `next build`, so the bill is the build, not the specs), or make a dev-path console
+# change select fewer than seven legs, which is the under-selection #4516 deliberately refuses.
+# The one disposition that is worse than both is the one this lands in by default — red on half of
+# dev PRs and binding on none, which is how a shared instrument gets trained into noise.
 #
 # WHICH legs run is a separate question from WHETHER the gate runs, and it is answered once, in the
 # `legs` job. A PR into main or staging runs every leg — that is the gate, and a promotion must not
@@ -219,7 +233,7 @@ jobs:
           echo "changed files: $count (readable: $read_ok)"
           cat "$CHANGED_FILES"
           echo "read=$read_ok" >> "$GITHUB_OUTPUT"
-      # ── THIS STEP'S `run:` BLOCK HAS A 21,000-CHARACTER CEILING, AND IT IS A LOAD FAILURE ─────
+      # ── THIS STEP'S `run:` BLOCK HAS A 21,000-BYTE CEILING, AND BREACHING IT IS A LOAD FAILURE ─
       #
       # GitHub renders every `run:` scalar as a template expression before a job starts, and REFUSES
       # THE WHOLE FILE past 21,000: `(Line: 174, Col: 14): Exceeded max expression length 21000`.
@@ -238,8 +252,18 @@ jobs:
       # SO PROSE LIVES UP HERE, IN YAML COMMENTS, NOT DOWN THERE IN THE HEREDOC, and the check that
       # needs its own thousands of bytes is its own step with its own budget. A `#` line here costs
       # nothing; the same sentence a few columns right, inside the script, is spent out of 21,000.
-      # Measured after the split: `pick` 13.2 KB, `require-label` 7.7 KB. `check-workflow-shape.mjs`
-      # does not measure this, and neither does anything else in the tree.
+      # Measured after the split, in the one unit that binds: `pick` 13,721 bytes, `require-label`
+      # 7,878 — and the two together are 21,599, which is over the ceiling and loads, because the
+      # ceiling is per SCALAR. `scripts/ci/check-workflow-shape.mjs` now takes this measurement on
+      # every workflow and prints it on a green run; before #4466 nothing in the tree did.
+      #
+      # AND THE CHEAPEST FIX IS NOT ALWAYS THE SPLIT. Actions compiles a `run:` scalar as a template
+      # only if it CONTAINS an expression. The 21,119-byte block that was refused contained exactly
+      # one — `${{ matrix.project }}`, inside a JavaScript COMMENT explaining a flag in another job.
+      # Prose about an expression IS an expression, and that one mention put 21 KB of script under a
+      # template compiler. deploy-console.yml carries an untemplated 22,422-byte block that has
+      # deployed production repeatedly. The split is kept because it does not depend on nobody ever
+      # writing `${{` in a comment again.
       #
       # ── WHETHER THE GATE RUNS AT ALL, WHICH IS NOW A QUESTION ABOUT THE DIFF (#4466) ──────────
       #
@@ -560,9 +584,12 @@ jobs:
       #
       # ONE RECORDED EXEMPTION, and it is a decision rather than an oversight. `release-gate.yml` is
       # a SEAM — a change to it can move any leg — but it is exempt from DEMANDING the label, because
-      # the PR's own `legs` run already executes the edited file: that is how the 21,119-byte
-      # rejection above was caught, on the PR that wrote it, before any leg would have run. The seven
-      # legs cannot see a YAML change at all, and the leg table's half is checked independently by
+      # the seven legs cannot see a YAML change at all: they boot the console, and the console is
+      # byte-identical either side of an edit to this file. What DOES read the edited file is CI
+      # itself, and two things there are stronger than a leg would be: GitHub's own load of the file
+      # on the push (which is what caught the 21,119-byte rejection — not this job, which does not
+      # even run on a draft), and `check-workflow-shape.mjs`, which now measures the budget that
+      # rejection came from. The leg table's half is checked independently by
       # `scripts/ci/check-required-checks.mjs` and by deploy-console.yml's promotion receipt. The
       # bound, stated: an edit to the `gate` job's STEPS is not measured by the PR's own run, and
       # this exemption does not pretend otherwise — it buys back ~76 runner-minutes on every edit of
@@ -595,7 +622,7 @@ jobs:
           /** `apps/console` plus every workspace package it depends on. Fails CLOSED at every step. */
           function surfaceDirs() {
             const die = (m) => {
-              console.error(`::error::${m} A surface this step could not derive is not an empty surface — reading it as one would pass exactly the PR this check exists to stop.`);
+              console.error(`::error::${m} This step must not answer "nothing the gate measures changed" from a surface it cannot vouch for — that would pass exactly the PR it exists to stop.`);
               process.exit(1);
             };
             const read = (p) => { try { return fs.readFileSync(p, "utf8"); } catch { return null; } };
@@ -639,13 +666,30 @@ jobs:
                 }
               }
             }
-            // A FLOOR, and its honest bound: NO mutation of the tree reaches it today. Every way of
-            // dropping a package — quoting, an inline comment, a malformed or renamed package.json,
-            // an unlistable glob — leaves a `workspace:` dependency that resolves to nothing, and
-            // the `die` above fires first. It is kept because it asks a different question ("is the
-            // ANSWER plausible") from all of them ("did this step work"), and it is the only one
-            // that survives someone rewriting the resolution above it.
-            if (surface.size < 4) die(`the walk resolved only ${surface.size} director(y/ies) — \`${[...surface].join("`, `")}\`.`);
+            // THE INVERSE QUESTION, which is the one a floor cannot ask. Every `die` above catches a
+            // resolution that BROKE. None of them catches a dependency quietly REMOVED: delete
+            // `@alethia/ee` from the console's `optionalDependencies`, or move `@repo/brand` into
+            // `devDependencies`, and the walk completes, resolves everything it was asked to
+            // resolve, and returns a surface with a package missing. Measured, both of them: a PR
+            // whose whole diff was that package went GREEN and no refusal fired. A floor of four
+            // directories was no help — losing ten of fourteen would still clear it — which is what
+            // "no mutation ever reached the threshold" was really telling me.
+            //
+            // So ask it the other way round: every `@repo/*`/`@alethia/*` package this tree carries
+            // is either compiled into the console or RECORDED here as not. Both directions fail — an
+            // unlisted package off the surface, and a listed one that has since joined it, which is
+            // the stale record that would otherwise suppress a real finding forever.
+            const NOT_COMPILED_IN = {
+              "@repo/eslint-config": "lint configuration; it reaches the console only through a surface package's devDependencies",
+              "@repo/typescript-config": "tsconfig bases, the same way — neither changes what the browser renders",
+              "@repo/e2e-issuer": "a standalone OIDC issuer the E2E rig runs as its own app; the console never imports it",
+            };
+            for (const [name, dir] of byName) {
+              if (!/^@(repo|alethia)\//.test(name)) continue;
+              const recorded = Object.hasOwn(NOT_COMPILED_IN, name);
+              if (surface.has(dir) && recorded) die(`\`${name}\` (\`${dir}\`) IS on the gate's surface and is ALSO recorded as not compiled into the console — one of the two is stale.`);
+              if (!surface.has(dir) && !recorded) die(`\`${name}\` (\`${dir}\`) is a workspace package in this tree that is neither on the gate's surface nor recorded as not compiled into the console. If the console stopped depending on it, say so in \`NOT_COMPILED_IN\` with the reason; if the dependency was dropped by accident, that is the bug.`);
+            }
             return [...surface].sort();
           }
 
