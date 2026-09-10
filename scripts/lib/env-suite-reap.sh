@@ -55,12 +55,24 @@ _suite_tag=""
 _suite_slug=""
 _suite_live=0
 
-# The reap, as the remote shell runs it. Single-quoted so NOTHING in it expands locally; `tag` and
-# `dir` are supplied as plain assignments in front of it by suite_reap.
+# The reap, as the remote shell runs it. Single-quoted so NOTHING in it expands locally; `tag`,
+# `base` and `slug` are supplied as plain assignments in front of it by suite_reap.
 #
-# `tagged` is a function because it is asked TWICE. The KILL sweep targets pids collected before
-# the TERM, and a pid is the one thing in here that is not the tag — so "the box is clear of this
-# run" is re-measured against the tag rather than asserted from the earlier snapshot.
+# THE ENV PATH IS ASSEMBLED HERE, from `base` and `slug`, and never passed whole. `pgrep -af
+# "$dir"` searches command lines, and this reap IS a command line: hand it `dir='/opt/alethia/
+# envs/l6-cards/'` and the pattern matches the reaper itself. A `$$` filter does not save it,
+# because the command substitution around pgrep FORKS — the child has an identical
+# /proc/<pid>/cmdline and a different pid — so the evidence block would name the reaper's own
+# shell as a suspect in the one branch whose entire purpose is to hand an operator a trustworthy
+# list. Assembling the path means the string the pattern looks for exists nowhere but in the
+# processes it is asking about, and no filter is needed. Asserted against the composed command in
+# scripts/lib/env-suite-reap-test.sh.
+#
+# `tagged` is a function because it is asked THREE times, and every one of them is the tag rather
+# than a pid: a pid is a name for whatever occupies that slot NOW, and two seconds is long enough
+# on a busy box for it to name something else. So the KILL sweep re-derives instead of reusing the
+# TERM list, and "the box is clear of this run" is a fresh measurement rather than a claim about a
+# snapshot taken before any signal was sent.
 #
 # The failure branch is the interesting one. A tagged reap names only this run, so "nothing
 # matched" is an ordinary outcome — but it is also what a tag that failed to propagate looks like,
@@ -71,15 +83,18 @@ _suite_live=0
 # `2>/dev/null` precedes the input redirection deliberately: redirections apply left to right, so
 # with it after `< "$d/environ"` the "no such file" for a process that exited between the glob and
 # the read goes to the ORIGINAL stderr and lands in the middle of the report.
+#
+# NO `$$` SKIP in the loop, and its absence is deliberate. /proc/<pid>/environ is the exec-time
+# copy, so an `export tag=…` added to the prefix above could not put the tag in THIS shell's
+# environ at all; what it would tag is the helpers the loop execs — `tr`, `grep`, `sleep` — none of
+# which a `$$` comparison covers. The invariant that actually protects the reaper is that the
+# prefix stays unexported, and that is what the test asserts.
 # shellcheck disable=SC2016  # the point: this expands on the BOX, not here.
 _SUITE_REAP_SH='
+dir="$base/envs/$slug/"
 tagged() {
   for d in /proc/[0-9]*; do
     p=${d#/proc/}
-    # Cannot fire today: `tag` and `dir` are plain assignments, ssh forwards no environment, so
-    # this shell does not carry the tag it is matching. It is here so that adding an `export`
-    # cannot quietly make the reaper its own first victim.
-    [ "$p" = "$$" ] && continue
     tr 2>/dev/null "\0" "\n" < "$d/environ" | grep -Fqx "ALETHIA_SUITE_TAG=$tag" || continue
     printf " %s" "$p"
   done
@@ -89,7 +104,8 @@ if [ -n "$pids" ]; then
   echo "  signalling:$pids"
   for p in $pids; do kill -TERM "$p" 2>/dev/null || true; done
   sleep 2
-  for p in $pids; do kill -KILL "$p" 2>/dev/null || true; done
+  for p in $(tagged); do kill -KILL "$p" 2>/dev/null || true; done
+  sleep 1
   still=$(tagged)
   if [ -z "$still" ]; then
     echo "  the box is clear of this run."
@@ -98,7 +114,7 @@ if [ -n "$pids" ]; then
   fi
 else
   echo "  nothing carrying this run tag is still running."
-  left=$(pgrep -af "$dir" 2>/dev/null | grep -v "^$$ " || true)
+  left=$(pgrep -af "$dir" 2>/dev/null || true)
   if [ -n "$left" ]; then
     echo "  ⚠ but these are still running under $dir — NOT killed, because a tagged reap"
     echo "    names only its own run and one of these may be the environment itself:"
@@ -148,8 +164,9 @@ suite_reap() {
 	# read, and `set -e` ends the script on a failed ssh; from inside an EXIT trap either one
 	# would replace the run's real exit code with this cleanup's. Cleanup never speaks for a run.
 	#
-	# `dir` carries its trailing slash INTO the assignment, so this command line matches the
-	# `pgrep -af "$dir"` above and the self-filter it feeds is a live rule rather than a comment.
-	(ssh_box "tag='$_suite_tag' dir='$REMOTE/envs/$_suite_slug/'; $_SUITE_REAP_SH") >&2 || true
+	# `base` and `slug` SEPARATELY, never the joined path: the reap assembles it remotely so that
+	# the string `pgrep` searches for cannot appear in the reaper's own command line. See the
+	# comment on _SUITE_REAP_SH.
+	(ssh_box "tag='$_suite_tag' base='$REMOTE' slug='$_suite_slug'; $_SUITE_REAP_SH") >&2 || true
 	return "$rc"
 }

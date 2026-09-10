@@ -16,11 +16,19 @@
 #
 # THE SHAPE OF THE SIGNAL CASES IS THE POINT. An earlier private harness stood a backgrounded
 # `sleep` plus `wait` in for the ssh, and `wait` is a special case: bash TERMINATES on an unhandled
-# INT while in `wait`, so removing the INT trap left that harness green and the PR shipped with a
-# comment claiming the EXIT trap alone covered it. In the real cmd_check shape — a FOREGROUND child
-# and a signal delivered to the SCRIPT ALONE — bash abandons the wait and CONTINUES to suite_disarm,
-# so no reap fires and an interrupted check returns 0. Section 1 runs both deliveries, to the
-# process alone and to the group, and section 4 requires the INT-only mutation to be caught.
+# INT while in `wait`, so removing the INT trap left that harness green and a comment claiming the
+# EXIT trap alone covered it nearly shipped. In the real cmd_check shape — a FOREGROUND child and a
+# signal delivered to the SCRIPT ALONE — bash abandons the wait and CONTINUES to suite_disarm, so
+# no reap fires and an interrupted check returns 0. Section 3 runs both deliveries.
+#
+# AND THE CALL SITES ARE HALF THE SAFETY ARGUMENT, so they get their own mode and their own
+# mutants. A tag exported one line too early is a correct reap with the wrong blast radius:
+# `playwright install --with-deps` is apt/dpkg as root, and TERM-then-KILL through it leaves the
+# package database interrupted for every other env on the box. The first version of that guard
+# anchored on a line number taken from a COMMENT mentioning the command rather than the command
+# itself, and passed the very defect it was written for — which is why section 7 strips comments
+# before it counts anything, treats a missing anchor as a FAILURE rather than a skip, and is
+# re-run in section 8 against mutated copies of env.sh.
 #
 #   bash scripts/lib/env-suite-reap-test.sh
 
@@ -28,7 +36,6 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-ENV_SH="$ROOT/scripts/env.sh"
 LIB="$HERE/env-suite-reap.sh"
 # Absolute: this file re-invokes itself for the child and the mutation probes, and a relative
 # ${BASH_SOURCE[0]} would only resolve for one working directory.
@@ -48,17 +55,22 @@ if [ "${1:-}" = "--child" ]; then
 	ssh_box() { printf 'SSH<<%s>>\n' "$(printf '%s' "$*" | tr '\n' ' ')" >>"$LOG"; }
 	# shellcheck source=/dev/null
 	. "$2"
+	# The suite command carries the tag, exactly as both call sites compose it. Modelling it
+	# WITHOUT the tag would make "how many reaps happened" answerable by grepping for the tag,
+	# which is a property of the model rather than of the code.
+	# shellcheck disable=SC2154  # $_suite_tag comes from the lib sourced above, as in env.sh.
+	suite() { ssh_box "cd /opt/alethia/envs/s1 && pnpm install && export ALETHIA_SUITE_TAG='$_suite_tag' && $1"; }
 	rc=0
 	case "$5" in
 	ok)
 		suite_arm s1
-		ssh_box "fake suite --pass" || rc=$?
+		suite "run --pass" || rc=$?
 		suite_disarm
 		exit "$rc"
 		;;
 	red)
 		suite_arm s1
-		{ ssh_box "fake suite --fail"; false; } || rc=$?
+		{ suite "run --fail"; false; } || rc=$?
 		suite_disarm
 		exit "$rc"
 		;;
@@ -86,7 +98,7 @@ bad() {
 	fails=$((fails + 1))
 }
 
-# ── mode: every mechanical assertion, against ONE lib (the real one, or a mutant) ─────────────
+# ── mode: every lib assertion, against ONE lib (the real one, or a mutant) ────────────────────
 if [ "${1:-}" = "--probe" ]; then
 	lib="$2"
 	TMP="$(mktemp -d)"
@@ -96,9 +108,10 @@ if [ "${1:-}" = "--probe" ]; then
 	# trap never fired" about a trap that was never given the chance — a false RED.
 	set -m
 
-	# `|| true`, NOT `|| echo 0`: grep -c already PRINTS 0 when it matches nothing and exits 1, so
-	# the echo appends a second line and every "= 0" comparison below fails against "0\n0".
-	reaps() { grep -c "^SSH<<.*ALETHIA_SUITE_TAG=" "$1" 2>/dev/null || true; }
+	# Counted on `tagged() {`, which exists only in the reap script. NOT on the tag: the suite
+	# command carries that too, so a tag count would report a reap on every passing run.
+	# `|| true`, not `|| echo 0`: grep -c already PRINTS 0 when it matches nothing and exits 1.
+	reaps() { grep -c 'tagged() {' "$1" 2>/dev/null || true; }
 	child() { bash "$SELF" --child "$lib" "$2" "$TMP/ready" "$1" >/dev/null 2>&1; }
 
 	# 1. A run that ENDS reaps nothing: green, red, and the exit code survives the trap.
@@ -107,7 +120,7 @@ if [ "${1:-}" = "--probe" ]; then
 	child ok "$TMP/ok.log" || rc=$?
 	[ "$rc" = 0 ] || bad "a passing run should exit 0, got $rc"
 	[ "$(reaps "$TMP/ok.log")" = 0 ] || bad "a passing run reaped — it has nothing left to stop"
-	grep -q 'fake suite --pass' "$TMP/ok.log" || bad "the suite never ran"
+	grep -q 'run --pass' "$TMP/ok.log" || bad "the suite never ran"
 
 	: >"$TMP/red.log"
 	rc=0
@@ -184,7 +197,7 @@ PY
 	fi
 
 	# 4. The scope of the kill, read off the command the REAL suite_reap composed.
-	cmd="$(grep "^SSH<<.*ALETHIA_SUITE_TAG=" "$TMP/INT-group.log" | head -1)"
+	cmd="$(grep "^SSH<<.*tagged() {" "$TMP/INT-group.log" | head -1)"
 	case "$cmd" in
 	*"tag='alethia-suite-s1-"*) ok "the kill is keyed on a tag unique to this run" ;;
 	*) bad "no per-run tag in the reap command: $cmd" ;;
@@ -197,16 +210,23 @@ PY
 	*"ALETHIA_SUITE_TAG=\$tag"*) ok "the remote match reads the supplied tag" ;;
 	*) bad "the remote match does not use \$tag: $cmd" ;;
 	esac
-	# The self-filter is only real if the composed command line can actually match the pattern it
-	# filters — i.e. dir carries its trailing slash. Without this the filter is decoration and its
-	# mutation cannot go red.
+	# THE REAPER MUST NOT BE FINDABLE BY ITS OWN PATTERN. `pgrep -af "$dir"` searches command
+	# lines and this reap IS one, so the joined path may appear nowhere in it: the parts are sent
+	# and the path is assembled on the box. A `$$` filter cannot substitute — the command
+	# substitution around pgrep forks, and the fork has the same argv and a different pid.
 	case "$cmd" in
-	*"dir='/opt/alethia/envs/s1/'"*) ok "dir carries the trailing slash the self-filter needs" ;;
-	*) bad "dir has no trailing slash, so the pgrep self-filter can never match: $cmd" ;;
+	*"/opt/alethia/envs/s1/"*) bad "the joined env path is IN the reaper's command line: $cmd" ;;
+	*) ok "the env path is assembled on the box, so pgrep's pattern cannot match the reaper" ;;
 	esac
 	case "$cmd" in
-	*'export tag='* | *'export dir='*) bad "tag/dir are exported — the reaper can now match itself" ;;
-	*) ok "tag/dir stay unexported, so the reaper cannot become its own victim" ;;
+	*"base='/opt/alethia'"*) ok "the path is sent as parts" ;;
+	*) bad "the reap command carries no base to assemble from: $cmd" ;;
+	esac
+	case "$cmd" in
+	*'export tag='* | *'export base='* | *'export slug='*)
+		bad "the prefix is exported — the reap's own helpers would carry the tag"
+		;;
+	*) ok "the prefix stays unexported, so nothing the reaper execs can carry the tag" ;;
 	esac
 
 	# 5. The remote script itself, against a fixture /proc. Selection is the part that must not be
@@ -215,6 +235,9 @@ PY
 	awk "/^_SUITE_REAP_SH='\$/{f=1;next} f&&/^'\$/{exit} f" "$lib" >"$raw"
 	[ -s "$raw" ] || bad "could not lift _SUITE_REAP_SH out of $lib"
 	bash -n "$raw" 2>/dev/null || bad "the remote script is not valid shell"
+	# The trailing slash is what stops `envs/l6` matching `envs/l6-cards` in the report.
+	grep -q 'dir="\$base/envs/\$slug/"' "$raw" ||
+		bad "the reported path has no trailing slash — a slug that is a prefix of another matches"
 
 	mkproc() {
 		mkdir -p "$TMP/proc/$1"
@@ -224,60 +247,158 @@ PY
 			printf 'PATH=/usr/bin\0ALETHIA_SUITE_TAG=%s\0HOME=/root\0' "$2" >"$TMP/proc/$1/environ"
 		fi
 	}
+	seed_proc() {
+		rm -rf "$TMP/proc"
+		mkproc 121475 "$TAG"                      # this run's vitest worker
+		mkproc 121479 "$TAG"                      # …and another
+		mkproc 200001 -                           # the env's own console: untagged
+		mkproc 200002 alethia-suite-l6-cards-99-1 # a different run of the SAME slug
+		mkproc 200003 alethia-suite-other-1-1     # another instance's suite
+		mkproc 200004 "${TAG}x"                   # a tag this one is a PREFIX of
+	}
 	TAG=alethia-suite-l6-cards-4242-1757500000
-	mkproc 121475 "$TAG"                        # this run's vitest worker
-	mkproc 121479 "$TAG"                        # …and another
-	mkproc 200001 -                             # the env's own console: untagged
-	mkproc 200002 alethia-suite-l6-cards-99-1   # a different run of the SAME slug
-	mkproc 200003 alethia-suite-other-1-1       # another instance's suite
-	mkproc 200004 "${TAG}x"                     # a tag this one is a PREFIX of
 
-	compose() { # <killfile> <tag> <pgrep body>
+	# `mortal`   — TERM works, so the fixture process disappears. A KILL sweep that re-derives
+	#              from the tag has nothing left to sweep; one that reuses the TERM list signals
+	#              pids that no longer belong to it, which on a shared box is somebody else's.
+	# `immortal` — nothing dies, so the final pass must SAY so instead of claiming the box is
+	#              clear from a snapshot taken before any signal was sent.
+	compose() { # <mode> <killfile> <tag> <pgrep body>
 		{
-			echo "kill() { printf 'KILL %s\\n' \"\$*\" >>\"$1\"; }"
+			if [ "$1" = mortal ]; then
+				echo "kill() { printf 'KILL %s\\n' \"\$*\" >>\"$2\"; case \"\$1\" in -TERM) rm -rf \"$TMP/proc/\$2\" ;; esac; }"
+			else
+				echo "kill() { printf 'KILL %s\\n' \"\$*\" >>\"$2\"; }"
+			fi
 			echo "sleep() { :; }"
-			echo "$3"
-			echo "tag='$2'"
-			echo "dir='/opt/alethia/envs/l6-cards/'"
+			echo "$4"
+			echo "tag='$3'"
+			echo "base='/opt/alethia'"
+			echo "slug='l6-cards'"
 			sed "s#/proc/#$TMP/proc/#g" "$raw"
 		}
 	}
+	termed() { sed -n 's/^KILL -TERM \([0-9]*\)$/\1/p' "$1" | sort -u | tr '\n' ' '; }
+	killed() { sed -n 's/^KILL -KILL \([0-9]*\)$/\1/p' "$1" | sort -u | tr '\n' ' '; }
 
-	: >"$TMP/killed"
-	compose "$TMP/killed" "$TAG" 'pgrep() { return 1; }' >"$TMP/reap.run"
-	bash "$TMP/reap.run" >"$TMP/out" 2>&1
-	got="$(sed -n 's/^KILL -TERM \([0-9]*\)$/\1/p' "$TMP/killed" | sort -u | tr '\n' ' ')"
-	[ "$got" = "121475 121479 " ] || bad "TERM went to '$got', want exactly this run's two pids"
-	got="$(sed -n 's/^KILL -KILL \([0-9]*\)$/\1/p' "$TMP/killed" | sort -u | tr '\n' ' ')"
-	[ "$got" = "121475 121479 " ] || bad "the KILL sweep went to '$got', want the same two pids"
+	seed_proc
+	: >"$TMP/k.mortal"
+	compose mortal "$TMP/k.mortal" "$TAG" 'pgrep() { return 1; }' >"$TMP/r.mortal"
+	bash "$TMP/r.mortal" >"$TMP/o.mortal" 2>&1
+	[ "$(termed "$TMP/k.mortal")" = "121475 121479 " ] ||
+		bad "TERM went to '$(termed "$TMP/k.mortal")', want exactly this run's two pids"
+	[ -z "$(killed "$TMP/k.mortal")" ] ||
+		bad "KILL went to '$(killed "$TMP/k.mortal")' — pids that TERM already retired, re-used by now"
+	grep -q 'the box is clear of this run' "$TMP/o.mortal" ||
+		bad "a run that did die was not reported clear: $(cat "$TMP/o.mortal")"
 	for p in 200001 200002 200003 200004; do
-		grep -q " $p\$" "$TMP/killed" && bad "signalled $p, which is not this run"
+		grep -q " $p\$" "$TMP/k.mortal" && bad "signalled $p, which is not this run"
 	done
-	# `kill` is stubbed, so nothing actually died — which is what makes the SECOND tag pass
-	# visible. "the box is clear of this run" must be a measurement, not a claim about a snapshot
-	# taken before the sweep.
-	if grep -q 'still carrying this run tag' "$TMP/out"; then
-		ok "the clear-of-this-run claim is re-measured against the tag after the sweep"
-	else
-		bad "clear was asserted from the pre-TERM snapshot: $(cat "$TMP/out")"
-	fi
 
-	# 6. The no-match branch: kill NOTHING, report the evidence, and drop the reaper's own line.
-	: >"$TMP/killed.none"
-	compose "$TMP/killed.none" no-such-tag \
-		'pgrep() { echo "$$ bash -c dir=/opt/alethia/envs/l6-cards/"; echo "121475 node /opt/alethia/envs/l6-cards/node_modules/vitest/dist/worker.js"; }' \
-		>"$TMP/reap.none"
-	bash "$TMP/reap.none" >"$TMP/out.none" 2>&1
-	[ -s "$TMP/killed.none" ] && bad "the no-match branch killed something"
-	grep -q '121475 node' "$TMP/out.none" || bad "the no-match branch reported no evidence"
-	ev="$(grep -c '^      [0-9]' "$TMP/out.none")"
-	[ "$ev" = 1 ] || bad "evidence lines: $ev, want 1 (the reaper's own line filtered out)"
+	seed_proc
+	: >"$TMP/k.immortal"
+	compose immortal "$TMP/k.immortal" "$TAG" 'pgrep() { return 1; }' >"$TMP/r.immortal"
+	bash "$TMP/r.immortal" >"$TMP/o.immortal" 2>&1
+	[ "$(killed "$TMP/k.immortal")" = "121475 121479 " ] ||
+		bad "a process that survived TERM was not KILLed: '$(killed "$TMP/k.immortal")'"
+	grep -q 'still carrying this run tag' "$TMP/o.immortal" ||
+		bad "clear was claimed while two pids still carry the tag: $(cat "$TMP/o.immortal")"
+
+	# 6. The no-match branch: kill NOTHING and report the evidence.
+	#
+	# THE pgrep STUB IS COMPOSED — one hand-written line — so nothing here can establish what real
+	# `pgrep -af` output looks like, and in particular it cannot establish that the reaper is
+	# absent from it. That property is asserted in section 4 instead, against the command line
+	# suite_reap actually built: if the joined path is not in the reaper's own argv, no pgrep can
+	# return it, whatever its output looks like. Checked end to end once, off-CI, with a ps-backed
+	# pgrep: the joined form lists the reaper AND its fork (identical argv, different pid, which is
+	# why a `$$` filter cannot work); the assembled form lists neither.
+	seed_proc
+	: >"$TMP/k.none"
+	compose immortal "$TMP/k.none" no-such-tag \
+		'pgrep() { echo "121475 node /opt/alethia/envs/l6-cards/node_modules/vitest/dist/worker.js"; }' \
+		>"$TMP/r.none"
+	bash "$TMP/r.none" >"$TMP/o.none" 2>&1
+	[ -s "$TMP/k.none" ] && bad "the no-match branch killed something"
+	grep -q '121475 node' "$TMP/o.none" || bad "the no-match branch reported no evidence"
 
 	[ "$fails" = 0 ] || echo "probe($lib): $fails failed" >&2
 	exit "$fails"
 fi
 
+# ── mode: the call sites, against ONE env.sh (the real one, or a mutant) ──────────────────────
+# No amount of testing the lib reaches these: arming after the run leaves the whole fix inert, and
+# a tag exported one line early is a correct reap with the wrong blast radius.
+if [ "${1:-}" = "--callsites" ]; then
+	env_sh="$2"
+
+	# COMMENTS STRIPPED BEFORE ANYTHING IS COUNTED. Every anchor below also appears in prose that
+	# explains it — `playwright install --with-deps` three times in cmd_test, twice in comments —
+	# and `head -1` on the un-stripped body takes the first COMMENT. That is not a weak guard, it
+	# is an inverted one: with the install anchor resolving to a comment above the export and the
+	# pnpm-install anchor resolving to real code below it, the only position that passed was the
+	# defect itself.
+	body() { sed -n "/^$1() {/,/^}/p" "$env_sh" | grep -v '^[[:space:]]*#'; }
+
+	# A MISSING ANCHOR IS A FAILURE, never a skip. `if [ -n "$x" ] && …` reads like a guard and
+	# behaves like an opt-out: rename the command it looks for and the assertion evaporates
+	# silently, which is the failure mode an exception ledger is supposed to make loud.
+	at() { # <function> <label> <literal anchor> <body>
+		local n
+		n="$(grep -n -F "$3" <<<"$4" | head -1 | cut -d: -f1)"
+		if [ -z "$n" ]; then
+			bad "$1: the '$2' anchor ('$3') is gone — this assertion would have passed vacuously"
+			echo 0
+			return
+		fi
+		echo "$n"
+	}
+
+	for fn in cmd_check cmd_test; do
+		b="$(body "$fn")"
+		[ -n "$b" ] || {
+			bad "$fn is gone from env.sh"
+			continue
+		}
+		arm_at="$(at "$fn" arm 'suite_arm' "$b")"
+		dis_at="$(at "$fn" disarm 'suite_disarm' "$b")"
+		tag_at="$(at "$fn" tag 'export ALETHIA_SUITE_TAG' "$b")"
+		inst_at="$(at "$fn" install 'pnpm install --frozen-lockfile' "$b")"
+		# THE RUN is not "the first ssh_box in this function" — cmd_test opens with two others (the
+		# registry lookup and the edition probe), and anchoring on the first named the wrong one.
+		# It is the ssh_box whose command string carries the tag: the LAST one at or before the
+		# export. Derived from tag_at so the two can never drift apart.
+		run_at="$(grep -n 'ssh_box "' <<<"$b" | cut -d: -f1 |
+			awk -v t="$tag_at" '$1 < t { n = $1 } END { print n + 0 }')"
+		[ "$run_at" != 0 ] ||
+			bad "$fn: no ssh_box invocation carries the tag export — the run cannot be located"
+
+		[ "$arm_at" != 0 ] && [ "$run_at" != 0 ] && [ "$arm_at" -lt "$run_at" ] ||
+			bad "$fn arms the trap at line $arm_at, AFTER the run at $run_at — nothing is armed for it"
+		[ "$dis_at" != 0 ] && [ "$run_at" != 0 ] && [ "$dis_at" -gt "$run_at" ] ||
+			bad "$fn disarms at $dis_at, before the run at $run_at"
+		[ "$tag_at" != 0 ] && [ "$inst_at" != 0 ] && [ "$tag_at" -gt "$inst_at" ] ||
+			bad "$fn tags its pnpm install (tag $tag_at, install $inst_at) — a Ctrl-C kills it mid-write"
+
+		if [ "$fn" = cmd_test ]; then
+			apt_at="$(at "$fn" apt 'playwright install --with-deps' "$b")"
+			[ "$apt_at" != 0 ] && [ "$tag_at" != 0 ] && [ "$tag_at" -gt "$apt_at" ] ||
+				bad "cmd_test tags 'playwright install --with-deps' (tag $tag_at, apt $apt_at) — that is apt/dpkg as root on a SHARED box"
+			# The failure branch ends in `exit 1`, so disarming after the artefact fetch would fire
+			# the EXIT trap in the middle of it.
+			fetch_at="$(at "$fn" fetch 'fetch_artifacts' "$b")"
+			[ "$fetch_at" != 0 ] && [ "$dis_at" -lt "$fetch_at" ] ||
+				bad "cmd_test disarms at $dis_at, after the failure branch's fetch at $fetch_at"
+		fi
+	done
+	grep -q 'lib/env-suite-reap.sh' "$env_sh" || bad "env.sh does not source the reap lib"
+
+	[ "$fails" = 0 ] || echo "callsites($env_sh): $fails failed" >&2
+	exit "$fails"
+fi
+
 # ── the orchestrator ──────────────────────────────────────────────────────────────────────────
+ENV_SH="$ROOT/scripts/env.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -285,80 +406,83 @@ echo "# 1-6: the shipped lib"
 bash "$SELF" --probe "$LIB" || fails=$((fails + 1))
 [ "$fails" = 0 ] && ok "every property holds for scripts/lib/env-suite-reap.sh"
 
-# ── 7. the call sites, which no amount of testing the lib can reach ───────────────────────────
-# A tag exported one line too early is not a defect in anything above: it is a correct reap with
-# the wrong blast radius, and the blast radius is the whole safety argument.
 echo "# 7: env.sh's call sites"
-body() { sed -n "/^$1() {/,/^}/p" "$ENV_SH"; }
-
-for fn in cmd_check cmd_test; do
-	b="$(body "$fn")"
-	[ -n "$b" ] || {
-		bad "$fn is gone from env.sh"
-		continue
-	}
-	grep -q 'suite_arm' <<<"$b" || bad "$fn does not arm the trap"
-	grep -q 'suite_disarm' <<<"$b" || bad "$fn never disarms — a finished run would reap"
-	# The ordering. `pnpm install` and `playwright install --with-deps` (apt/dpkg as root) must be
-	# OUTSIDE the tagged region; a TERM-then-KILL through dpkg leaves the package database
-	# interrupted for every other env on the shared box.
-	tag_at="$(grep -n 'export ALETHIA_SUITE_TAG' <<<"$b" | head -1 | cut -d: -f1)"
-	[ -n "$tag_at" ] || {
-		bad "$fn never exports the tag — the reap can match nothing"
-		continue
-	}
-	inst_at="$(grep -n 'pnpm install --frozen-lockfile' <<<"$b" | head -1 | cut -d: -f1)"
-	if [ -n "$inst_at" ] && [ "$tag_at" -lt "$inst_at" ]; then
-		bad "$fn tags its pnpm install — a Ctrl-C would kill it mid-write"
-	fi
-	apt_at="$(grep -n 'playwright install --with-deps' <<<"$b" | head -1 | cut -d: -f1)"
-	if [ -n "$apt_at" ] && [ "$tag_at" -lt "$apt_at" ]; then
-		bad "$fn tags 'playwright install --with-deps', which is apt/dpkg as root on a SHARED box"
-	fi
-done
-grep -q 'lib/env-suite-reap.sh' "$ENV_SH" || bad "env.sh does not source the reap lib"
-# cmd_test's failure branch ends in `exit 1`; disarming after the artefact fetch would fire the
-# EXIT trap in the middle of it.
-if sed -n '/tests failed — pulling the report/,/^  }/p' "$ENV_SH" | grep -q 'suite_disarm'; then
-	bad "cmd_test disarms INSIDE its failure branch's tail rather than at its head"
-fi
-sed -n '/pnpm -F console exec playwright test \$proj" || {/,/^  }/p' "$ENV_SH" |
-	head -2 | grep -q 'suite_disarm' ||
-	bad "cmd_test's failure branch does not disarm FIRST"
-[ "$fails" = 0 ] && ok "both call sites arm, disarm on every path, and tag only what they started"
+bash "$SELF" --callsites "$ENV_SH" || fails=$((fails + 1))
+[ "$fails" = 0 ] && ok "both call sites arm before the run, disarm after it, and tag only what they started"
 
 # ── 8. the assertions above must be able to fail ──────────────────────────────────────────────
-# Every row is a defect that shipped, or nearly did. #4 is the one that matters most: the private
-# harness this test replaces stayed GREEN against it, and a false conclusion about bash's EXIT trap
-# was written into a code comment on the strength of that.
+# Every row is a defect that shipped, or nearly did. The env.sh rows are here because the first
+# version of section 7 had none: nine mutants all edited the lib, so not one call-site assertion
+# had ever been shown capable of failing — while the defect it was written for was a call site.
 echo "# 8: mutations (each must be caught)"
-mutate() { # <name> <sed program|@disarm>
-	local out="$TMP/$1.sh"
+detect() { # <mode> <name> <file>
+	if bash "$SELF" "$1" "$3" >/dev/null 2>&1; then
+		bad "mutation '$2' went UNDETECTED — the assertions above prove less than they appear to"
+	else
+		ok "mutation '$2' caught"
+	fi
+}
+mutate_lib() { # <name> <sed program|@disarm>
+	local out="$TMP/lib-$1.sh"
 	if [ "$2" = "@disarm" ]; then
 		cat "$LIB" >"$out"
 		printf '\nsuite_disarm() { :; }\n' >>"$out"
 	else
 		sed "$2" "$LIB" >"$out"
 	fi
-	if cmp -s "$LIB" "$out"; then
+	cmp -s "$LIB" "$out" && {
 		bad "mutation '$1' changed nothing — it is not testing what it names"
 		return
-	fi
-	if bash "$SELF" --probe "$out" >/dev/null 2>&1; then
-		bad "mutation '$1' went UNDETECTED — the assertions above prove less than they appear to"
-	else
-		ok "mutation '$1' caught"
-	fi
+	}
+	detect --probe "$1" "$out"
 }
-mutate no-traps "/trap 'suite_reap/d"
-mutate no-int-trap "/trap 'suite_reap || true; trap - INT/d"
-mutate no-disarm '@disarm'
-mutate cleanup-speaks-for-the-run 's/^\treturn "\$rc"$/\texit 0/'
-mutate unanchored-tag-match 's/grep -Fqx/grep -Fq/'
-mutate no-second-tag-pass 's/^  still=\$(tagged)$/  still=/'
-mutate no-self-filter 's/ | grep -v "\^\$\$ "//'
-mutate reap-status-aborts-the-handler 's/suite_reap || true; trap - INT/suite_reap; trap - INT/'
-mutate dir-without-slash "s#envs/\$_suite_slug/'#envs/\$_suite_slug'#"
+mutate_env() { # <name> — reads the program from stdin, applied by awk
+	local out="$TMP/env-$1.sh"
+	awk -f /dev/stdin "$ENV_SH" >"$out"
+	cmp -s "$ENV_SH" "$out" && {
+		bad "mutation '$1' changed nothing — it is not testing what it names"
+		return
+	}
+	detect --callsites "$1" "$out"
+}
+
+mutate_lib no-traps "/trap 'suite_reap/d"
+mutate_lib no-int-trap "/trap 'suite_reap || true; trap - INT/d"
+mutate_lib no-disarm '@disarm'
+mutate_lib cleanup-speaks-for-the-run 's/^\treturn "\$rc"$/\texit 0/'
+mutate_lib unanchored-tag-match 's/grep -Fqx/grep -Fq/'
+mutate_lib reap-status-aborts-the-handler 's/suite_reap || true; trap - INT/suite_reap; trap - INT/'
+mutate_lib kill-a-stale-pid-list 's/^  for p in \$(tagged); do kill -KILL/  for p in \$pids; do kill -KILL/'
+mutate_lib no-final-tag-pass 's/^  still=\$(tagged)$/  still=/'
+mutate_lib path-back-in-the-command-line "s/base='\\\$REMOTE' slug='\\\$_suite_slug'/base='\\\$REMOTE' slug='\\\$_suite_slug' d='\\\$REMOTE\\/envs\\/\\\$_suite_slug\\/'/"
+mutate_lib reported-path-without-slash 's|^dir="\$base/envs/\$slug/"$|dir="$base/envs/$slug"|'
+
+# The F4 defect, verbatim: the tag exported between the two installs, so apt/dpkg as root is back
+# inside the blast radius. This is the mutation the comment-anchored guard passed green.
+mutate_env tag-between-the-installs <<'AWK'
+/^    export ALETHIA_SUITE_TAG/ { next }
+{ print }
+/^    pnpm install --frozen-lockfile >\/dev\/null$/ { print "    export ALETHIA_SUITE_TAG=\047$_suite_tag\047" }
+AWK
+
+# Arming after the run leaves the entire fix inert, with no trap set for the whole suite.
+mutate_env arm-after-the-run <<'AWK'
+/^  suite_arm "\$slug_"$/ && !done_del { done_del = 1; next }
+{ print }
+/--minWorkers=\$workers" \|\| rc=\$\?$/ { print "  suite_arm \"$slug_\"" }
+AWK
+
+# Renaming an anchor must FAIL, not silently skip the assertion built on it.
+mutate_env install-anchor-renamed <<'AWK'
+{ sub(/pnpm install --frozen-lockfile/, "pnpm i --frozen-lockfile"); print }
+AWK
+mutate_env apt-anchor-renamed <<'AWK'
+{ sub(/playwright install --with-deps/, "playwright install --deps"); print }
+AWK
+mutate_env no-disarm-at-all <<'AWK'
+/^ *suite_disarm$/ { next }
+{ print }
+AWK
 
 if [ "$fails" = 0 ]; then
 	echo "env suite-reap: all passed"

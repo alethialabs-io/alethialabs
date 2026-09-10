@@ -260,7 +260,12 @@ ssh_box() {
   # ends the `$( )` subshell, so a caller that handles failure (`ssh_box … || rc=$?`, an `if`, a
   # `&&` chain) suppressed errexit for the assignment too and carried on with an EMPTY ip: `ssh
   # root@` fails 255, gets treated as a stale host key and retried, and the operator is told about
-  # a host key instead of a down box. Introduced by #4343's `|| rc=$?`, fixed for every caller.
+  # a host key instead of a down box.
+  #
+  # NOT introduced by #4343 — `|| restore_rc=$?`, `|| mode_rc=$?`, `|| up_rc=$?` and two `|| true`s
+  # were already doing it (the failure-tolerant ones happen to sit inside `$( )`, which contains
+  # the damage). #4343's suite call is simply the first on a path long enough for the box to go
+  # away underneath it. Fixed here, for every caller, rather than at the new one.
   ip="$(require_box)" || exit $?
   # shellcheck disable=SC2029  # remote expansion is intended
   ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$ip" "$@" && return 0
@@ -727,7 +732,14 @@ push_tree() {
   #     "a suite is running for a slug that owns no env".
   #   A run longer than REAP_AFTER_MIN — NOT covered. Nothing re-touches mid-run.
   # Both residuals are recorded on #4343 rather than left for the next reader to rediscover.
-  ssh_box "$REMOTE/bin/env-registry.sh touch '$slug_'"
+  #
+  # WARNS, and must never be the status push_tree returns. A touch is advisory — the rsync above
+  # is the thing that was asked for, and it has already succeeded. Letting this line decide the
+  # function's exit code would make a registry hiccup fail `env:push` after a good push, and in
+  # `--watch` (`push_tree && build_ee`) it would silently skip the ee build for the rest of the
+  # session while every push still printed as if it had worked.
+  ssh_box "$REMOTE/bin/env-registry.sh touch '$slug_'" ||
+    echo "⚠ could not record activity for '$slug_' — the idle reaper cannot see this session." >&2
 }
 
 # Rebuild @alethia/ee ON THE BOX, from the ee/src that was just pushed (#3732).
