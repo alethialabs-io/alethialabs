@@ -48,9 +48,12 @@ import {
 	p95,
 	r6Failures,
 	R7_BUDGET_MS,
-	requireAxe,
 	scanRouteThemes,
 } from "./signals";
+// `requireAxe` is a SEAM import, not an audit one: it guards `scanA11y`'s empty-array no-op for
+// every gate built on it, and it lives beside that no-op so a `qa` spec can take it without
+// importing from `e2e/audit/**` — a path release-gate.yml maps to the audit legs alone.
+import { requireAxe } from "../helpers/a11y";
 import { closeDb } from "../helpers/db";
 import { STORAGE_STATE } from "../fixtures/auth";
 
