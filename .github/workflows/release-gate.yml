@@ -22,8 +22,10 @@ name: Release gate
 #     expensive mistake this file could make.
 #   · a PR into dev carrying the `release-gate:run` (or `release-gate:all`) label — for a lane that
 #     wants per-PR gate feedback, and for capturing the baseline. `labeled` fires for ANY label, so
-#     the job also requires that the label just added is one of those two, or a random label would
-#     restart an hour.
+#     the GATE job also requires that the label just added is one of those two, or a random label
+#     would restart an hour. That clause sits on the `gate` job, not on `legs`: since #4466 `legs`
+#     reports on every non-draft PR event, because a check that sometimes reports `skipped` cannot
+#     be required without wedging the queue.
 #   · workflow_dispatch, with an optional comma-separated `legs` input.
 # Never `merge_group` (Mergify replaced it), never `paths:` (a filtered-out required workflow reports
 # nothing and wedges every PR — validate-console.yml's header has the incident).
@@ -80,8 +82,10 @@ on:
 # The concurrency group is evaluated when a run is CREATED, before any job-level `if:` is
 # considered. So with a blanket `cancel-in-progress: true`, adding any unrelated label to a
 # promotion PR (`qa:prod`, a triage label) 40 minutes into the `qa` leg creates a new run, cancels
-# the in-flight one, and is then skipped by the `legs` guard below — which requires the added label
-# to be one of the two `release-gate:*` ones. The SEVEN required `Release gate (<leg>)` contexts on
+# the in-flight one, and is then skipped by the label guard below — which requires the added label
+# to be one of the two `release-gate:*` ones. (That guard was on the `legs` job when this was
+# written and is on `gate` since #4466; the mechanism is unchanged.) The SEVEN required
+# `Release gate (<leg>)` contexts on
 # a promotion PR never report, and the
 # PR sits permanently pending with nothing red to explain it, recovering only on a new push or
 # `ready_for_review`. The header above anticipated a random label RESTARTING the hour; the guard
@@ -130,17 +134,42 @@ jobs:
     # an unlabelled dev PR skipped this job — and with it the only place in the repo that holds both
     # the changed-file list and the leg table, i.e. the only place that can ask whether the diff
     # needed a leg. A question cannot be answered by a job that does not run, so the job runs and the
-    # `run` output carries the same conjunct, evaluated where the changed files are in hand. What is
-    # NOT relaxed: `draft == false`, and the rule that a `labeled` event starts nothing unless the
-    # label added is one of the two. Read that second clause together with the `concurrency` note
-    # above and not on its own: a random label cannot CANCEL a running gate either — that is what
-    # `cancel-in-progress: ${{ github.event.action != 'labeled' }}` buys — so an unrelated label on a
-    # promotion PR creates a run whose jobs are skipped and leaves the in-flight one alone.
+    # `run` output carries the same conjunct, evaluated where the changed files are in hand.
+    #
+    # THE `labeled` CONJUNCT MOVED TOO — down to the `gate` job, which is what it was always about.
+    # It exists so that adding a triage label does not restart an hour of browser legs; it was never
+    # about this job, which takes seconds. Leaving it here had a second cost that only appears once
+    # this job is a check somebody reads: an unrelated label produced a SKIPPED check-run under this
+    # job's name, and a required context whose latest run is `skipped` is not a success. That is the
+    # queue wedge `.mergify.yml`'s `Build console images (no push)` note spells out — "a required
+    # check that does not always report WEDGES the queue" — and it is the difference between this
+    # check being registerable and not. So the rule now reads: this job reports on EVERY non-draft
+    # pull_request event; the legs still refuse to restart for a label that is not one of the two.
+    #
+    # What is NOT relaxed: `draft == false`. And read the label rule together with the `concurrency`
+    # note above rather than on its own — a label event cannot CANCEL a running gate either, which is
+    # what `cancel-in-progress: ${{ github.event.action != 'labeled' }}` buys.
+    #
+    # ── BEFORE ANYONE REQUIRES THIS CHECK, which is what would make its red BINDING ───────────────
+    #
+    # It is not in `.mergify.yml` or `infra/github`, so today it is advisory: a dev PR can be
+    # squash-merged with it red. Making it binding is `check-success=Which legs run, and whether the
+    # gate runs at all` in BOTH `.mergify.yml` blocks plus a `mergify_leads` record in
+    # infra/github/required-checks-divergence.json — the documented order, Mergify first. Two of the
+    # three conditions that makes safe are now met: the job always reports on a non-draft PR event
+    # (above), and its failure is a real check rather than an annotation.
+    #
+    # THE THIRD IS NOT MET AND IS THE DECIDING ONE. Mergify validates a batch on a SPECULATIVE
+    # DRAFT PR authored by `mergify[bot]` (`.mergify.yml` says so, in the `contribution-legal`
+    # note). A draft skips this job by the clause above, so `check-success=` on this context would
+    # never be satisfied on the temporary branch and the dev queue would stop merging — the #1653
+    # shape that file records. Admitting mergify[bot] drafts is not the fix either: `merge_conditions`
+    # are evaluated on that temporary PR, which carries none of the real PR's LABELS, so every batch
+    # containing a labelled console PR would then fail this check instead. Whoever registers it
+    # answers that first; it is a merge-policy change, not a workflow one.
     if: >-
       github.event_name == 'workflow_dispatch'
-      || (github.event.pull_request.draft == false
-          && (github.event.action != 'labeled'
-              || contains(fromJSON('["release-gate:run","release-gate:all"]'), github.event.label.name)))
+      || github.event.pull_request.draft == false
     # `pull-requests: read` is what `GET /pulls/{n}/files` needs; the workflow-level grant is
     # `contents: read` only. Without it the API call 403s — which selects EVERY leg, loudly, rather
     # than silently narrowing. The `gate` job below keeps the workflow-level grant.
@@ -686,12 +715,20 @@ jobs:
   gate:
     name: Release gate (${{ matrix.project }})
     needs: [legs]
-    # The other half of the conjunct that left the `legs` job's `if:` (#4466). `legs` now runs on
-    # every non-draft PR so it can ask whether a leg was needed; only this line decides whether the
-    # runner-hours are spent. `run` is `yes` for a dispatch, a promotion PR and a labelled PR — the
-    # exact set the old job-level clause admitted — and the legs job FAILS rather than saying `no`
-    # when a dev PR changes what a leg measures without asking for one.
-    if: ${{ needs.legs.outputs.run == 'yes' }}
+    # BOTH halves of the conjunct that left the `legs` job's `if:` (#4466). `legs` now runs on every
+    # non-draft PR so it can ask whether a leg was needed, and reports either way; only this line
+    # decides whether the runner-hours are spent.
+    #
+    #   · `run` is `yes` for a dispatch, a promotion PR and a labelled PR — the exact set the old
+    #     job-level clause admitted, and the `legs` job FAILS rather than saying `no` when a dev PR
+    #     changes what a leg measures without asking for one.
+    #   · the `labeled` clause is the one that was always about THIS job: `labeled` fires for ANY
+    #     label, and a `qa:prod` or a triage label added to a promotion PR must not restart an hour
+    #     of browser legs. It is not a second copy — it left the `legs` job when it moved here.
+    if: >-
+      needs.legs.outputs.run == 'yes'
+      && (github.event.action != 'labeled'
+          || contains(fromJSON('["release-gate:run","release-gate:all"]'), github.event.label.name))
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
