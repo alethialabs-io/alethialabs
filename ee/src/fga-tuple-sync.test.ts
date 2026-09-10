@@ -67,7 +67,7 @@ const scopes = [
 	},
 	// The deny side of each shape. An allow row is asked what it CONFERS and a deny row what it
 	// EXCLUDES, so `grantObject` and `expandGrant` both take the effect — and the invariant has to
-	// hold on this side too, under whichever way `EMPTY_SCOPE_DENIES` is ruled.
+	// hold on this side too, under the ruled answer for a deny row (#4584: excludes org-wide).
 	{
 		name: "DENY, org-wide",
 		scope: { ...denying, resourceType: "org", resourceId: null },
@@ -77,7 +77,7 @@ const scopes = [
 		scope: { ...denying, resourceType: "project", resourceId: PROJECT },
 	},
 	{
-		name: "DENY, THE BAD PAIR — the undecided direction (#4584)",
+		name: "DENY, THE BAD PAIR — excludes org-wide (#4584, ruled)",
 		scope: { ...denying, resourceType: "org", resourceId: PROJECT },
 	},
 	{
@@ -131,15 +131,18 @@ describe("the specific rows the revoke leak was made of", () => {
 		).toBe(`org:${ORG}`);
 	});
 
-	// The deny direction is the maintainer's open ruling, so this asserts what the constant SAYS
-	// rather than a number typed here: flipping `EMPTY_SCOPE_DENIES` moves the expectation with
-	// the behaviour, which is the whole point of the constant existing.
-	it("a DENY row that scopes to nothing follows EMPTY_SCOPE_DENIES", () => {
+	// RULED (#4584): a scope-to-nothing DENY excludes the whole org. Asserted as a literal, not
+	// read from the constant — a derived expectation would let the decision be reverted silently.
+	//
+	// This is also the case that would leak if the two effects shared one answer: the deny row's
+	// tuples DO live on `org:<orgId>` under the ruling, so a `grantObject` that returned null for
+	// it would delete nothing on revoke — the very defect this file exists to pin, reappearing on
+	// the other effect.
+	it("RULED: a DENY row that scopes to nothing points at the ORG object", () => {
+		expect(EMPTY_SCOPE_DENIES).toBe("the_whole_org");
 		const scope = { ...denying, resourceType: "org", resourceId: PROJECT };
-		expect(grantObject(targetForEffect, scope)).toBe(
-			EMPTY_SCOPE_DENIES === "the_whole_org" ? `org:${ORG}` : null,
-		);
-		// And the ALLOW row of the same shape is unaffected by that ruling either way.
+		expect(grantObject(targetForEffect, scope)).toBe(`org:${ORG}`);
+		// And the ALLOW row of the same shape still confers nothing, so it still has no object.
 		expect(
 			grantObject(targetForEffect, { ...principal, resourceType: "org", resourceId: PROJECT }),
 		).toBeNull();

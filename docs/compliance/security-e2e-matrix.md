@@ -118,13 +118,31 @@ FAIL when the protection is removed; two were proven so by flipping the guard:
   (it previously composed that half from hand-written literals, which is the second, independent
   reason this control did not catch the divergence).
 
-  ⚠ **The DENY direction is NOT closed and must not be read as closed.** `grantTarget` answers what
-  a row CONFERS; a deny row is asked what it EXCLUDES, and for a row that scopes to nothing those
-  have opposite safe answers — conferring nothing is fail-closed, excluding nothing is fail-OPEN.
-  Held behind `EMPTY_SCOPE_DENIES` (`lib/authz/grant-scope.ts`) with both expressible options
-  built and every fixture reading the constant; the ruling is the maintainer's. A third reading —
-  "excludes only the resource it names", which is what Postgres does today — is not on offer
-  because OpenFGA cannot express it (no object of that type and id to hang a deny tuple on).
+  **The DENY direction is CLOSED too, and it resolves to a DIFFERENT VALUE — deliberately.**
+  `grantTarget` answers what a row CONFERS; a deny row is asked what it EXCLUDES, and treating one
+  answer as both is fail-OPEN on the deny side (dropping the row hands back a permission both
+  engines refuse). The maintainer's ruling, made knowingly:
+
+  | effect | an uninterpretable scope… | direction |
+  |---|---|---|
+  | `allow` | confers **nothing** | fail-closed — an ambiguous request is not a grant |
+  | `deny` | excludes the **whole org** | fail-closed — an ambiguous exclusion is not a licence |
+
+  What is symmetric is the DIRECTION, not the value, and that is the part a future reader will try
+  to simplify away. `targetForEffect` (`lib/authz/grant-scope.ts`) is the seam where the second
+  question gets its own answer; `EMPTY_SCOPE_DENIES` records the decision as a named constant so
+  it stays greppable and the rejected option stays visible beside it. `"the_whole_org"` is also
+  what OpenFGA does for the pair today and what every deployed store's already-written tuples
+  still say (`backfill` only writes), so **no deployed store's deny behaviour changes**.
+
+  ⚠ A third reading — "excludes only the resource it names", which is what Postgres does today —
+  **is not on the menu because OpenFGA cannot express it**, and it looks like the obvious right
+  answer until you try to write the tuple: the object would be `org:<project-uuid>`, which does not
+  exist, and writing `project:<uuid>` instead would require KNOWING the id names a project, which
+  is exactly what the row never says. That collapsed a three-way choice to two and is what the
+  ruling was made on. Pinned by `pdp-parity.test.ts` (decide AND enumerate, on a project the row
+  names and two it does not), `postgres-rbac-pdp.test.ts`, `ee/src/fga-tuple-sync.test.ts` and
+  `tests/authz/grant-scope.test.ts` — as literals, so reverting the constant reds all four.
 
   ⚠ **Two consumers are still unreconciled, and neither is a test gap.** (a) Revoking such a row
   removes it and leaves the OpenFGA tuples it already wrote — before the fix because the delete

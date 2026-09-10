@@ -207,10 +207,11 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 				permission_key: "project:plan",
 				resource_id: PROJ_A1,
 			}),
-			// G9 + G10: the DENY scaffolding for the open ruling (#4584). An org-wide destroy
-			// ALLOW, minus a destroy DENY written with the contradictory pair. Whichever way
-			// `EMPTY_SCOPE_DENIES` is ruled, the two engines must AGREE — that assertion holds
-			// under both, and only the `want` value below moves.
+			// G9 + G10: the DENY half of the pair (#4584). An org-wide destroy ALLOW, minus a
+			// destroy DENY written with the CONTRADICTORY PAIR — `resource_type = 'org'` carrying
+			// a project id. RULED: such a row excludes the WHOLE ORG, so G10 removes destroy from
+			// every project in ORG_A, not just the one it names. Both engines must agree on that,
+			// and the OpenFGA half only sees this row at all because it is DERIVED from the table.
 			grantRow({ permission_key: "project:destroy", resource_id: null }),
 			grantRow({
 				permission_key: "project:destroy",
@@ -377,14 +378,18 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		{ name: "plan on PROJ_A1 via a TEAM grant (member of TEAM_A)", action: "plan", id: PROJ_A1, want: true },
 		{ name: "plan on PROJ_A2 — the team grant is scoped to A1", action: "plan", id: PROJ_A2, want: false },
 
-		// ── #4584, the UNDECIDED deny direction ──────────────────────────────────────────────
-		// Org-wide destroy ALLOW + a destroy DENY written with the contradictory pair on A3.
-		// The parity assertion holds either way; `want` is read from the constant so the
-		// maintainer's ruling is a one-line change here too. Under "nothing" the deny is
-		// dropped and A3 keeps destroy (fail-OPEN); under "the_whole_org" the exclusion applies
-		// to every project in the org.
-		{ name: "destroy on PROJ_A3 — the bad-pair DENY, per EMPTY_SCOPE_DENIES", action: "destroy", id: PROJ_A3, want: EMPTY_SCOPE_DENIES !== "the_whole_org" },
-		{ name: "destroy on PROJ_A1 — a project the bad-pair DENY does not name", action: "destroy", id: PROJ_A1, want: EMPTY_SCOPE_DENIES !== "the_whole_org" },
+		// ── #4584, the DENY half — RULED: an uninterpretable exclusion applies org-wide ──────
+		// Org-wide destroy ALLOW (G9) + a destroy DENY written with the contradictory pair on A3
+		// (G10). Literals, not derived from `EMPTY_SCOPE_DENIES`: while the question was open
+		// these read the constant so the ruling would be one line, but a ruled decision with a
+		// derived expectation is a decision nothing pins. Reverting it must red this suite.
+		//
+		// A3 is the project the row names; A1 and A2 are ones it does not. All three lose
+		// `destroy`, which is what "excludes the whole org" MEANS — and the alternative reading
+		// ("nothing") would have left all three ALLOWED via G9, from a row nobody edited.
+		{ name: "destroy on PROJ_A3 — the bad-pair DENY names it", action: "destroy", id: PROJ_A3, want: false },
+		{ name: "destroy on PROJ_A1 — and reaches a project it never named", action: "destroy", id: PROJ_A1, want: false },
+		{ name: "destroy on PROJ_A2 — org-wide means org-wide", action: "destroy", id: PROJ_A2, want: false },
 	];
 
 	for (const c of cases) {
@@ -450,6 +455,19 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		expect(fgaIds).not.toContain(PROJ_A3);
 		// And never leaks a cross-tenant project.
 		expect(fgaIds).not.toContain(PROJ_B1);
+	});
+
+	it("RULED: the bad-pair DENY empties the destroy list on BOTH engines", async () => {
+		// The enumerate half of the ruling. Postgres sees an org-wide deny (`denyIds` carries
+		// null) and returns []; OpenFGA takes its org-wide branch, finds `project_deny_destroy`
+		// on `org:<ORG_A>` and returns [] too. Under the rejected reading both would have
+		// returned all three projects — a silent widening on the enumerate path, which is the
+		// same shape as the already-closed divergence recorded in the compliance matrix.
+		expect(EMPTY_SCOPE_DENIES).toBe("the_whole_org");
+		const pgIds = await pg.listAccessible(actor, "destroy", "project");
+		const fgaIds = await fgaListAccessible("destroy", "project");
+		expect(pgIds).toEqual([]);
+		expect(new Set(fgaIds)).toEqual(new Set(pgIds));
 	});
 
 	it("listAccessible agrees on the bad pair: it widens NEITHER engine's list", async () => {

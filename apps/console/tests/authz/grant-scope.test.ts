@@ -68,12 +68,11 @@ describe("grantTarget — the rows that confer nothing", () => {
 	});
 });
 
-// ── The deny direction (#4584, UNDECIDED) ───────────────────────────────────────────────────────
+// ── The deny direction (#4584 — RULED: excludes the whole org) ──────────────────────────────────
 // `grantTarget` answers what a row CONFERS. A deny row is asked what it EXCLUDES, and for a row
-// that scopes to nothing those have opposite safe answers: conferring nothing is fail-closed,
-// excluding nothing is fail-OPEN. These assert the SPLIT — that the two questions are asked of
-// different predicates — and read the ruling from the constant rather than hardcoding it, so
-// flipping `EMPTY_SCOPE_DENIES` moves the expectations with the behaviour.
+// that scopes to nothing those get DIFFERENT answers by ruling (#4584): confers nothing, excludes
+// the whole org. Both fail closed — the symmetry is in the direction, not the value. These assert
+// the SPLIT (the two questions go to different predicates) and, below, the ruled value itself.
 describe("targetForEffect asks a DENY row a different question", () => {
 	it("routes allow rows to grantTarget and deny rows to denyTarget", () => {
 		for (const [type, id] of [
@@ -102,13 +101,18 @@ describe("targetForEffect asks a DENY row a different question", () => {
 		}
 	});
 
-	it("resolves a scope-to-nothing deny per EMPTY_SCOPE_DENIES", () => {
+	// ⚠ THE RULING, PINNED AS A LITERAL (#4584). While the deny direction was undecided these
+	// expectations READ `EMPTY_SCOPE_DENIES`, so that flipping it moved the tests with the
+	// behaviour — which is what made the switch a one-line change. The ruling is now made, and a
+	// derived expectation would mean the decision had nothing behind it: flipping the constant
+	// back would be silently green. So the value is asserted directly, here and at every level.
+	it("RULED: a scope-to-nothing DENY excludes the whole org", () => {
+		expect(EMPTY_SCOPE_DENIES).toBe("the_whole_org");
 		for (const type of ["org", "banana", "job"]) {
-			expect(denyTarget(type, "P1")).toEqual(
-				EMPTY_SCOPE_DENIES === "the_whole_org"
-					? { kind: "org" }
-					: grantTarget(type, "P1"),
-			);
+			expect(denyTarget(type, "P1")).toEqual({ kind: "org" });
+			// …and the ALLOW row of the same shape still confers nothing. The two answers are
+			// different VALUES on purpose — what is symmetric is the direction, both fail-closed.
+			expect(grantTarget(type, "P1").kind).toBe("none");
 		}
 	});
 

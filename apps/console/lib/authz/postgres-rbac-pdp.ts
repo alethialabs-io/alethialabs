@@ -38,9 +38,9 @@ type GrantRow = {
  * CONFERS; a deny row is being asked what it EXCLUDES. For a row whose scope resolves to nothing
  * those questions have opposite safe answers — conferring nothing is fail-closed, excluding
  * nothing is fail-OPEN — so `targetForEffect` routes them to different predicates rather than
- * letting one answer stand in for both. See `EMPTY_SCOPE_DENIES` in lib/authz/grant-scope.ts:
- * the deny direction is the maintainer's open ruling, and this function reads it rather than
- * assuming it.
+ * letting one answer stand in for both. RULED (#4584): an uninterpretable scope confers nothing
+ * and EXCLUDES THE WHOLE ORG. Two different values, both failing closed; see
+ * `EMPTY_SCOPE_DENIES` in lib/authz/grant-scope.ts for the decision and the option it rejected.
  *
  * Before #4584 this engine did not project `resource_type` at all, so an `('org', <uuid>)` row
  * read as a scoped grant on that uuid while the OpenFGA engine read the same row as
