@@ -6,9 +6,18 @@
 //   (a) no redirect to /login (the authed session resolves the route),
 //   (b) the document response is < 500 AND no uncaught pageerror / >=500 response fired,
 //   (c) the shell `main` landmark renders (proof the page painted, not a blank/crash),
-//   (d) an optional, non-failing a11y record on the overview.
+//   (d) — in its own describe, so one verdict never stands for two facts — an axe scan of that
+//       surface's `main`.
 // This is intentionally shallow-but-wide: it catches broken pages / 500s fast across the whole app
 // surface. Deep per-domain behavior lives in the domain specs (connectors/runners/jobs/alerts/…).
+//
+// THE ROUTE LISTS ARE THE SPEC'S ONLY CLAIM ABOUT WHAT EXISTS, and they had drifted (#4274). They
+// carried `/[org]/~/agent`, which is not a route at all — there is no `app/(private)/[org]/~/agent`
+// directory; the agent is reached from the topbar, and #4272 owns it. The sweep therefore spent one
+// recorded FAIL per run asserting that a page nobody ships renders a `main` landmark. It also missed
+// three org routes that DO ship (`evidence`, `support`, `settings/classification`) and one project
+// route (`settings/preview`), so four real surfaces had no resilience cover while a fifth that does
+// not exist had a permanent red. Both halves are fixed here; the lists are now what the app tree says.
 //
 // Rule 6 (AUTHORING.md): read-only page loads emit expected 401/analytics noise — we only FAIL on a
 // genuine pageerror or a >=500 response, never on console.error / 4xx.
@@ -24,7 +33,8 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "../fixtures/qa";
 import type { ConsoleGuard } from "../helpers/console-errors";
-import { scanA11y } from "../helpers/a11y";
+import { scanA11y, type A11yViolation } from "../helpers/a11y";
+import { requireAxe } from "../audit/signals";
 import { waitForShell } from "../helpers/shell";
 import {
 	seedCloudIdentity,
@@ -48,6 +58,13 @@ function fatalErrors(guard: ConsoleGuard): string[] {
 		.map((e) => `[${e.kind}] ${e.text}`);
 }
 
+/** One line per violation, so a failure names WHAT failed rather than only how many did. */
+function describeViolations(violations: A11yViolation[]): string[] {
+	return violations.map(
+		(v) => `${v.id} [${v.impact}] ${v.help} — ${v.nodes} node(s), e.g. ${v.target}`,
+	);
+}
+
 /**
  * Loads `url`, asserts the document response isn't a 5xx, the route didn't bounce to /login, and the
  * shell `main` landmark painted. Returns after the assertions so the caller can inspect the guard.
@@ -60,6 +77,13 @@ async function loadAndAssertShell(page: Page, url: string): Promise<void> {
 	await expect(page.getByRole("main"), `main landmark for ${url}`).toBeVisible({ timeout: 25_000 });
 }
 
+// The QA dev server SSR is slow under parallel load and Next compiles each route on first hit; the
+// a11y sweep pays a scan on top of that nav. Give every test in this file the same headroom the
+// domain specs take.
+test.beforeEach(() => {
+	test.setTimeout(180_000);
+});
+
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 // Org-scope routes — no seed needed (the persona org always exists).
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -70,9 +94,10 @@ const ORG_ROUTES: { label: string; path: (slug: string) => string }[] = [
 	{ label: "runners", path: (s) => `/${s}/~/runners` },
 	{ label: "jobs", path: (s) => `/${s}/~/jobs` },
 	{ label: "clusters", path: (s) => `/${s}/~/clusters` },
+	{ label: "evidence", path: (s) => `/${s}/~/evidence` },
 	{ label: "alerts", path: (s) => `/${s}/~/alerts` },
-	{ label: "agent", path: (s) => `/${s}/~/agent` },
 	{ label: "usage", path: (s) => `/${s}/~/usage` },
+	{ label: "support", path: (s) => `/${s}/~/support` },
 	{ label: "new project", path: (s) => `/${s}/~/new` },
 	{ label: "settings/general", path: (s) => `/${s}/~/settings/general` },
 	{ label: "settings/billing", path: (s) => `/${s}/~/settings/billing` },
@@ -80,6 +105,7 @@ const ORG_ROUTES: { label: string; path: (slug: string) => string }[] = [
 	{ label: "settings/teams", path: (s) => `/${s}/~/settings/teams` },
 	{ label: "settings/roles", path: (s) => `/${s}/~/settings/roles` },
 	{ label: "settings/access", path: (s) => `/${s}/~/settings/access` },
+	{ label: "settings/classification", path: (s) => `/${s}/~/settings/classification` },
 	{ label: "settings/sso", path: (s) => `/${s}/~/settings/sso` },
 	{ label: "settings/activity", path: (s) => `/${s}/~/settings/activity` },
 ];
@@ -131,6 +157,7 @@ const PROJECT_ROUTES: { label: string; sub: string }[] = [
 	{ label: "clusters", sub: "/clusters" },
 	{ label: "usage", sub: "/usage" },
 	{ label: "settings/general", sub: "/settings/general" },
+	{ label: "settings/preview", sub: "/settings/preview" },
 	{ label: "settings/access", sub: "/settings/access" },
 	{ label: "settings/activity", sub: "/settings/activity" },
 ];
@@ -156,6 +183,51 @@ test.describe("Cross-cutting — project page resilience sweep", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
+// A11y per surface.
+//
+// WHY THIS IS NOT THE AUDIT'S R5, AND WHY BOTH EARN THEIR KEEP. `e2e/audit/routes.spec.ts` scores
+// a11y over the route MANIFEST, in both themes, against fixtures it materialises itself — that is
+// the conformance gate and it is the stronger instrument. This sweep scans the same surfaces as the
+// QA persona finds them: an org that every sibling spec in this suite has been writing rows into all
+// run. The audit's parameterised pass proves a route is clean with one project and one job on it;
+// this proves it is still clean with a populated table, a filter bar carrying facet counts, and a
+// project someone else's spec left half-configured. Those are different trees, and a violation that
+// only the populated one has would be invisible to a scan of the empty one.
+//
+// SCOPED TO `main`, deliberately. The shell — sidebar, topbar, breadcrumb — is identical on all
+// twenty-nine surfaces, so an unscoped scan would report one shell defect twenty-nine times and bury
+// the per-route signal underneath it. The shell is the audit's to score once.
+//
+// `requireAxe()` is the precondition and it is not optional: `helpers/a11y.ts` answers `[]` when
+// `@axe-core/playwright` cannot be imported, which is byte-identical to a clean page. Without this,
+// every surface below would report a11y-clean on the strength of the scanner being absent — the
+// helper's own header says any new gate built on it owes itself this check.
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+test.describe("Cross-cutting — a11y per surface", () => {
+	test.beforeAll(async () => {
+		await requireAxe();
+	});
+
+	for (const route of ORG_ROUTES) {
+		test(`${route.label} has no serious/critical a11y violations`, async ({ owner }) => {
+			await loadAndAssertShell(owner.page, route.path(owner.orgSlug));
+			const violations = await scanA11y(owner.page, { include: "main" });
+			expect(describeViolations(violations), `a11y on ${route.label}`).toEqual([]);
+		});
+	}
+
+	for (const route of PROJECT_ROUTES) {
+		test(`project ${route.label} has no serious/critical a11y violations`, async ({ owner }) => {
+			const proj = await ensureProject(owner);
+			await loadAndAssertShell(owner.page, `/${owner.orgSlug}/${proj.slug}${route.sub}`);
+			const violations = await scanA11y(owner.page, { include: "main" });
+			expect(describeViolations(violations), `a11y on project ${route.label}`).toEqual([]);
+		});
+	}
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
 // Landmark & title sanity — a couple of explicit anchors so the sweep proves the shell + a titled
 // page really rendered (not just that `main` exists).
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -175,25 +247,14 @@ test.describe("Cross-cutting — landmark & title sanity", () => {
 
 	test("a metadata-titled page sets its document title (Jobs)", async ({ owner }) => {
 		await owner.page.goto(`/${owner.orgSlug}/~/jobs`);
-		await expect(owner.page).toHaveTitle(/Jobs/, { timeout: 20_000 });
+		// The root layout's template is `%s — Alethia`, so the whole title is the claim.
+		await expect(owner.page).toHaveTitle(/^Jobs — Alethia$/, { timeout: 20_000 });
 	});
 
 	test("a settings section titles as '… · Settings'", async ({ owner }) => {
 		await owner.page.goto(`/${owner.orgSlug}/~/settings/roles`);
-		await expect(owner.page).toHaveTitle(/Roles/, { timeout: 20_000 });
-	});
-});
-
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-// A11y — non-failing record on the overview (axe no-ops to [] if @axe-core/playwright is absent).
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-
-test.describe("Cross-cutting — a11y record", () => {
-	test("overview has no serious/critical a11y violations (recorded, non-blocking)", async ({ owner }) => {
-		await owner.page.goto(`/${owner.orgSlug}`);
-		await expect(owner.page.getByRole("main")).toBeVisible({ timeout: 25_000 });
-		const violations = await scanA11y(owner.page);
-		// Record only — axe is optional in this suite; a positive count is surfaced by the reporter.
-		expect(Array.isArray(violations)).toBe(true);
+		// The assertion says what the test's name says. It used to be `/Roles/`, which passes on a
+		// title that dropped the section entirely — the half this test exists to pin.
+		await expect(owner.page).toHaveTitle(/^Roles · Settings — Alethia$/, { timeout: 20_000 });
 	});
 });
