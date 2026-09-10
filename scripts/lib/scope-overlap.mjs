@@ -612,9 +612,9 @@ export function auditShipped(input) {
 	const keywords = (input?.closingKeywords ?? []).map((k) => String(k).trim()).filter(Boolean);
 	const debt = input?.debt && typeof input.debt === "object" ? input.debt : {};
 
-	// Read each PR's text ONCE. The board is ~250 units against a 300-PR corpus whose bodies run to
-	// megabytes, so joining title+body — and compiling a keyword regex — per unit-PR pair is 75,000
-	// of each. The closing refs a PR declares do not depend on which unit is asking.
+	// Read each PR's text ONCE. Measured 2026-09-10: 96 open units against a 300-PR corpus of
+	// ~2 MB, so joining title+body — and compiling a keyword regex — per unit-PR pair is 28,800 of
+	// each. The closing refs a PR declares do not depend on which unit is asking.
 	const corpus = merged.map((pr) => {
 		const text = `${pr?.title ?? ""}\n${pr?.body ?? ""}`;
 		return { pr, text, closes: closingRefsIn(text, keywords) };
@@ -661,6 +661,12 @@ export function auditShipped(input) {
 			continue;
 		}
 
+		// A PARTLY read scope is the quiet half of the same three-valued rule. #4326 declares
+		// `scope: (no repository files — a cloud console/CLI action)`: seven prose fragments the
+		// glob whitelist admits, plus one token it refuses. Compare on what is readable and find
+		// nothing, and the unit falls into "mention-only" — suppressed on a comparison that was
+		// never complete. So an unusable token withholds the suppression, exactly as an unreadable
+		// file list does.
 		const evidence = refs.map((pr) => ({ number: pr?.number, ...prScopeEvidence(pr, scope.globs) }));
 		const closes = keywords.length > 0 && cited.some((c) => c.closes.has(n));
 		const hit = evidence.filter((e) => e.hits.length > 0);
@@ -672,18 +678,17 @@ export function auditShipped(input) {
 			rows.push({ n, title, tier: "closes-only", prList, prs: [], check });
 		} else if (hit.length > 0) {
 			rows.push({ n, title, tier: "touches", prList, prs: hit, check });
-		} else if (blind.length > 0) {
-			rows.push({
-				n,
-				title,
-				tier: "cannot-compare",
-				prList,
-				prs: [],
-				check,
-				why: `no changed-file list to compare (${blind
-					.map((e) => `#${e.number} ${e.known ? `truncated at ${FILES_PAGE_CAP} files` : "file list absent"}`)
-					.join(", ")})`,
-			});
+		} else if (blind.length > 0 || scope.unusable.length > 0) {
+			const why = [];
+			if (blind.length > 0) {
+				why.push(
+					`no changed-file list to compare (${blind
+						.map((e) => `#${e.number} ${e.known ? `truncated at ${FILES_PAGE_CAP} files` : "file list absent"}`)
+						.join(", ")})`,
+				);
+			}
+			if (scope.unusable.length > 0) why.push(scopeGapReason(scope));
+			rows.push({ n, title, tier: "cannot-compare", prList, prs: [], check, why: why.join("; ") });
 		} else {
 			counts.mentionOnly++;
 		}
@@ -951,6 +956,20 @@ const SHIPPED_FIXTURES = Object.freeze({
 				body: "The lane is declared as:\n\n```\nscope: apps/console/lib/**\n```\n",
 			},
 			prs: [{ number: 4500, title: "chore: unrelated", body: "Ordered behind #4482.", files: [{ path: "apps/console/lib/x.ts" }] }],
+		},
+		{
+			// The scope line is #4326's, verbatim. The PR is constructed: no merged PR names #4326
+			// today, so the case cannot be captured whole — the half that had to be measured, and
+			// was, is the declaration the parser has to survive.
+			name: "#4326's real scope line is PARTLY unreadable, so an empty intersection is not an absence",
+			tier: "cannot-compare",
+			issue: {
+				number: 4326,
+				title: "cost(sandbox): the alethia-sandbox project has no budget",
+				labels: [{ name: "class:backend" }],
+				body: "scope: (no repository files — a cloud console/CLI action)",
+			},
+			prs: [{ number: 9105, title: "chore: budgets", body: "Related to #4326.", files: [{ path: "infra/sandbox/main.tf" }] }],
 		},
 		{
 			name: "a PR whose changed-file list is ABSENT cannot prove absence",
