@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     permissions:
-      contents: read
+      contents: read # checkout, and the gate receipt's read of release-gate.yml AT THE GRADED HEAD
       id-token: write # same read-only vault role the deploy uses; no stored secrets
       checks: read # the gate receipt reads the PR head's check-runs
       pull-requests: read # …and has to resolve which PR produced this commit
