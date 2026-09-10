@@ -4,6 +4,7 @@
 
 import { cancelJob, rerunJob } from "@/app/server/actions/jobs";
 import { provisionProject } from "@/app/server/actions/projects";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
 // `FactList`/`Fact` are the console's ONE label-and-value list. They live under `settings/usage`
@@ -122,6 +123,10 @@ export default function JobDetailPage() {
 	const jobError = job?.error_message ?? null;
 	const { logs } = useJobLogStream(jobId);
 	const [actionLoading, setActionLoading] = useState(false);
+	// Cancelling is not undoable — `cancelJob` writes CANCELLED and signals the runner to abort the
+	// in-flight tofu run — so the click opens a confirmation rather than reaching the action.
+	// Registry: `jobs.cancel` in apps/console/destructive-actions.yaml.
+	const [confirmCancel, setConfirmCancel] = useState(false);
 
 	const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -176,6 +181,16 @@ export default function JobDetailPage() {
 
 	const isActive = jobState === "QUEUED" || jobState === "CLAIMED" || jobState === "PROCESSING";
 	const isTerminal = jobState === "SUCCESS" || jobState === "FAILED" || jobState === "CANCELLED";
+	// A QUEUED job has no runner and no run in flight: `cancelJob` only signals a runner when
+	// `job.runner_id && (status === CLAIMED || PROCESSING)` (app/server/actions/jobs.ts). Told
+	// unconditionally that "its runner is signalled to abort the run in flight" and "anything
+	// already applied is not rolled back", an operator cancelling a job that has not started reads
+	// the SAFE case as the dangerous one — and having been told once that a cancel leaves debris,
+	// hesitates on every queued job after it. So the middle clause is conditioned on the state.
+	// Anything that is not QUEUED takes the started copy, including a status that went terminal
+	// while the dialog was open; the dialog is deliberately mounted outside `isActive`, so the
+	// sentence tracks the job rather than freezing at click time.
+	const cancelStarted = jobState !== "QUEUED";
 	const isPlanSuccess = job?.job_type === "PLAN" && jobState === "SUCCESS";
 	const info = job ? JOB_TYPES[job.job_type] : null;
 	const Icon = info?.icon;
@@ -261,7 +276,7 @@ export default function JobDetailPage() {
 											variant="outline"
 											size="sm"
 											className="h-8 text-destructive hover:text-destructive"
-											onClick={handleCancel}
+											onClick={() => setConfirmCancel(true)}
 											disabled={actionLoading}
 										>
 											{actionLoading ? (
@@ -437,6 +452,28 @@ export default function JobDetailPage() {
 					)}
 				</div>
 			</div>
+
+			{/* Rendered OUTSIDE the `isActive` guard that gates the Cancel button. A job whose status
+			    flips to terminal while the dialog is open would otherwise have its confirmation
+			    unmounted mid-decision, which reads as the click having done something. Here the
+			    dialog survives the transition and `cancelJob` refuses a non-cancellable status on the
+			    server, so the worst case is an honest error toast rather than a vanished dialog.
+			    `confirmLabel` is NOT "Cancel": the dialog's own way out is already called that, and
+			    two buttons reading "Cancel" is the one confirmation that means nothing. */}
+			<ConfirmDialog
+				open={confirmCancel}
+				onOpenChange={setConfirmCancel}
+				title="Cancel this job?"
+				description={
+					cancelStarted
+						? "The job is marked cancelled and its runner is signalled to abort the run in flight. Anything already applied is not rolled back, and a cancelled job cannot be resumed — re-running it starts a new one."
+						: "This job has not started — no runner has claimed it and nothing has been applied. It is marked cancelled and never runs. A cancelled job cannot be resumed — re-running it starts a new one."
+				}
+				confirmLabel="Cancel job"
+				onConfirm={() => {
+					void handleCancel();
+				}}
+			/>
 		</div>
 	);
 }
