@@ -39,6 +39,10 @@ export function ManageTeamDialog({
 	// team member drops every team-scoped grant that reached them through it, so the row’s X opens
 	// a confirmation rather than the mutation (registry: `teams.member.remove`).
 	const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
+	// The name the confirmation is RENDERING, which outlives `pendingRemoval` by one close: the
+	// dialog stays mounted and is driven by `open`, so it still renders for the length of its exit
+	// transition, and a description derived from the cleared id would blank out mid-fade.
+	const [pendingName, setPendingName] = useState<string>("");
 
 	const load = useCallback(async () => {
 		const [orgMembers, res] = await Promise.all([
@@ -84,13 +88,32 @@ export function ManageTeamDialog({
 		const m = members.find((x) => x.userId === userId);
 		return m ? (m.name ?? m.email) : `${userId.slice(0, 8)}…`;
 	};
+
+	/** Ask before removing: records who, and the copy the confirmation will keep through its close. */
+	const askToRemove = (userId: string) => {
+		setPendingName(nameFor(userId));
+		setPendingRemoval(userId);
+	};
 	const addable = members
 		.filter((m) => !teamUserIds.includes(m.userId))
 		.map((m) => ({ value: m.userId, label: m.name ?? m.email }));
 
 	return (
 		<>
-		<Dialog open={open} onOpenChange={onOpenChange}>
+		{/* THE TEAM DIALOG CLOSES WHILE THE CONFIRMATION IS UP, and that is the whole mechanism.
+		    An earlier version of this file moved the `ConfirmDialog` from a JSX child of `<Dialog>`
+		    to its sibling and claimed that fixed which popup a `[role=dialog]`-style lookup binds.
+		    It does not: base-ui's `Dialog.Portal` and `AlertDialog.Portal` each append their
+		    container to `document.body` at mount, a CSS selector list returns matches in DOCUMENT
+		    order, and the team dialog mounts first either way — so `.first()` still landed on the
+		    OUTER dialog and `e2e/audit/destructive.spec.ts` would have looked for "Remove from team"
+		    inside a dialog that only holds the row's "Remove". Re-parenting in JSX changes nothing
+		    about portal order; not being open at the same time does.
+		    It is also the better of the two shapes on its own merits — one modal at a time, with the
+		    question that needs answering the only thing on screen — and the team dialog comes back the
+		    moment the confirmation is answered either way (`remove` reloads the roster itself, so the
+		    list it returns to is the one the answer produced). */}
+		<Dialog open={open && pendingRemoval === null} onOpenChange={onOpenChange}>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle>{teamName} · members</DialogTitle>
@@ -129,10 +152,10 @@ export function ManageTeamDialog({
 										variant="ghost"
 										size="icon"
 										className="h-7 w-7 text-destructive"
-										onClick={() => setPendingRemoval(uid)}
+										onClick={() => askToRemove(uid)}
 									>
 										<X className="h-4 w-4" />
-										<span className="sr-only">Remove</span>
+										<span className="sr-only">Remove {nameFor(uid)}</span>
 									</Button>
 								</div>
 							))
@@ -141,25 +164,26 @@ export function ManageTeamDialog({
 				</div>
 			</DialogContent>
 		</Dialog>
-		{/* A SIBLING of the team dialog, not a child of it — mounted only while a removal is pending,
-		    so the pending user id IS the open state and the two cannot disagree. `confirmLabel` is
-		    "Remove from team", not "Remove": the row’s own button is already called that, and a
-		    confirm button repeating its trigger’s label leaves the destructive-action spec with two
-		    matches on one page and therefore no attributable verdict. */}
-		{pendingRemoval && (
-			<ConfirmDialog
-				open
-				onOpenChange={(next) => {
-					if (!next) setPendingRemoval(null);
-				}}
-				title="Remove this team member?"
-				description={`${nameFor(pendingRemoval)} leaves ${teamName}. Every grant that reached them through this team stops applying; their organization membership and role are untouched.`}
-				confirmLabel="Remove from team"
-				onConfirm={() => {
-					void remove(pendingRemoval);
-				}}
-			/>
-		)}
+		{/* MOUNTED, and driven by `open` — the shape the console's other six `ConfirmDialog` call
+		    sites use. The pending user id is still the single source of open state; what conditional
+		    mounting cost was the close, because `onOpenChange(false)` clears it in the same tick and
+		    the base-ui `AlertDialog.Root` was then torn out while still `open`: no exit transition,
+		    and focus with nothing to return to.
+		    `confirmLabel` is "Remove from team", not "Remove": the row’s own button is already called
+		    that, and a confirm button repeating its trigger’s label leaves the destructive-action
+		    spec with two matches on one page and therefore no attributable verdict. */}
+		<ConfirmDialog
+			open={pendingRemoval !== null}
+			onOpenChange={(next) => {
+				if (!next) setPendingRemoval(null);
+			}}
+			title="Remove this team member?"
+			description={`${pendingName} leaves ${teamName}. Every grant that reached them through this team stops applying; their organization membership and role are untouched.`}
+			confirmLabel="Remove from team"
+			onConfirm={() => {
+				if (pendingRemoval) void remove(pendingRemoval);
+			}}
+		/>
 		</>
 	);
 }
