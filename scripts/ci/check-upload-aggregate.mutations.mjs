@@ -17,6 +17,13 @@
 // escaping had failed to apply the edit. So: literal string anchors, each required to match exactly
 // once, and a non-zero exit if any of that is untrue.
 //
+// AND WHY "RED" IS NOT ENOUGH ON ITS OWN. A mutation that makes the self-test THROW is red without
+// having been caught: the assertions after the crash never ran, and a mutation that fails its own
+// case and then throws prints a plausible-looking couple of FAIL lines while a hundred others went
+// unevaluated. `selfTest` therefore requires the self-test's own summary line — printed only on the
+// orderly failure path — and requires its count to agree with the FAIL lines seen. Without that,
+// exit 0 on a partial run is the harness telling you it verified something it did not.
+//
 //   node scripts/ci/check-upload-aggregate.mutations.mjs
 //
 // NOT wired into CI: it rewrites the guard's source in place (restoring after each case), which is
@@ -70,8 +77,8 @@ const MUTATIONS = [
 	},
 	{
 		name: "M5  a folded block trimmed line-by-line (N1 — the narrowing regression)",
-		from: "if (FOLDED_BLOCK.test(head)) return { value: foldBlock(contRaw), kind: \"folded\", readable: true };",
-		to: 'if (FOLDED_BLOCK.test(head)) return { value: fold(cont), kind: "folded", readable: true };',
+		from: "\t\treturn { value: foldBlock(contRaw, digit === null ? null : keyCol + Number(digit[1])), kind: \"folded\", readable: true };",
+		to: '\t\treturn { value: fold(cont), kind: "folded", readable: true };',
 		expect: /N1/,
 	},
 	{
@@ -111,6 +118,30 @@ const MUTATIONS = [
 		expect: /P6/,
 	},
 	{
+		name: "M13 a folded block's DECLARED indentation discarded (F1)",
+		from: "return { value: foldBlock(contRaw, digit === null ? null : keyCol + Number(digit[1])), kind: \"folded\", readable: true };",
+		to: 'return { value: foldBlock(contRaw, null), kind: "folded", readable: true };',
+		expect: /F1/,
+	},
+	{
+		name: "M14 a bare `-` requiring content after it (F2)",
+		from: "const bare = lines[i].match(/^(\\s+)-\\s*(#.*)?$/);",
+		to: "const bare = null;",
+		expect: /F2/,
+	},
+	{
+		name: "M16 a quoted scalar below its key read as plain (F3)",
+		from: "\t\tif (first.startsWith(\"'\") || first.startsWith('\"')) {",
+		to: "\t\tif (false) {",
+		expect: /F3/,
+	},
+	{
+		name: "M17 the `steps` owner rule removed (F7)",
+		from: 'if (owner !== "steps") continue;',
+		to: "if (false) continue;",
+		expect: /F7/,
+	},
+	{
 		name: "M12 the rule itself — stop reporting entirely",
 		from: 'if (inffValue !== "error" || includes.length < 2) continue;',
 		to: "if (true) continue;",
@@ -121,15 +152,37 @@ const MUTATIONS = [
 const ORIGINAL = fs.readFileSync(GUARD, "utf8");
 let bad = 0;
 
-/** @returns {{rc: number, fails: string[]}} */
+/**
+ * Run the self-test and read its result — including whether it RAN TO THE END.
+ *
+ * A self-test that THREW is not a self-test that failed. If the throw happens before any `FAIL`
+ * line, `fails` is empty and that is visible; but a mutation that fails its own case and THEN
+ * throws prints a couple of `FAIL` lines, dies before the remaining hundred assertions run, and is
+ * indistinguishable from a clean load-bearing catch. So the self-test's own summary line is the
+ * evidence: it is printed only on the orderly failure path, and it states the count, which must
+ * agree with the lines seen. That is what makes "RED" mean "red for the reason claimed".
+ *
+ * @returns {{rc: number, fails: string[], orderly: boolean, why: string}}
+ */
 function selfTest() {
+	let text;
+	let rc = 0;
 	try {
-		execFileSync(process.execPath, [GUARD, "--self-test"], { encoding: "utf8" });
-		return { rc: 0, fails: [] };
+		text = execFileSync(process.execPath, [GUARD, "--self-test"], { encoding: "utf8" });
 	} catch (e) {
-		const text = `${e.stdout ?? ""}\n${e.stderr ?? ""}`;
-		return { rc: e.status ?? 1, fails: text.split("\n").filter((l) => l.startsWith("FAIL")).map((l) => l.replace(/ \{.*$/, "").replace(/^FAIL - /, "")) };
+		rc = e.status ?? 1;
+		text = `${e.stdout ?? ""}\n${e.stderr ?? ""}`;
 	}
+	const fails = text.split("\n").filter((l) => l.startsWith("FAIL")).map((l) => l.replace(/ \{.*$/, "").replace(/^FAIL - /, ""));
+	if (rc === 0) return { rc, fails, orderly: true, why: "" };
+	const summary = /check-upload-aggregate self-test: (\d+) failure\(s\)/.exec(text);
+	if (summary === null) {
+		return { rc, fails, orderly: false, why: `the self-test DIED instead of failing — it never printed its summary line, so ${fails.length} FAIL line(s) is a floor, not a count` };
+	}
+	if (Number(summary[1]) !== fails.length) {
+		return { rc, fails, orderly: false, why: `the self-test reported ${summary[1]} failure(s) but ${fails.length} were printed` };
+	}
+	return { rc, fails, orderly: true, why: "" };
 }
 
 const control = selfTest();
@@ -147,10 +200,15 @@ for (const m of MUTATIONS) {
 		continue;
 	}
 	fs.writeFileSync(GUARD, ORIGINAL.replace(m.from, m.to));
-	const { rc, fails } = selfTest();
+	const { rc, fails, orderly, why } = selfTest();
 	fs.writeFileSync(GUARD, ORIGINAL);
 	if (rc === 0) {
 		console.error(`!! ${m.name}\n   SELF-TEST STILL PASSED — this fix is not load-bearing, or nothing tests it.`);
+		bad += 1;
+		continue;
+	}
+	if (!orderly) {
+		console.error(`!! ${m.name}\n   RED FOR THE WRONG REASON: ${why}. A mutation must make assertions FAIL, not make the run crash — otherwise the assertions after the crash were never evaluated and this proves nothing about them. Rewrite the mutation so the code still runs.`);
 		bad += 1;
 		continue;
 	}

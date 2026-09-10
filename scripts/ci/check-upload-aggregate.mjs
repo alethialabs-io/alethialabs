@@ -240,13 +240,29 @@ export function gatherQuoted(inline, cont) {
  * function exists separately: the first attempt at the folded case fixed a false positive by
  * introducing a miss, which is the worse of the two directions.
  *
+ * THE BLOCK'S INDENTATION MAY BE DECLARED RATHER THAN INFERRED, and inferring it when it is
+ * declared is the same defect one turn further in. `path: >2` puts the content indentation at the
+ * KEY's column plus two, so
+ *
+ *     path: >2
+ *         dist/a
+ *         dist/b
+ *
+ * has both lines MORE-indented than the block — nothing folds, and it is two patterns. Inferring
+ * `Math.min` over the content makes them look uniform and folds them into one, silently. Verified
+ * against a real parser across `>1`–`>4` at three content depths before this was written, rather
+ * than after: the rule is `keyCol + N`, and the leading spaces the content keeps are exactly the
+ * difference. (`|N` needs none of this — a literal block is one entry per line whatever the
+ * indentation, and the consumer trims.)
+ *
  * @param {string[]} raw the block's lines, untrimmed, "" for a blank one
+ * @param {number | null} declared the block's content indentation when the indicator states it
  * @returns {string}
  */
-export function foldBlock(raw) {
+export function foldBlock(raw, declared = null) {
 	const content = raw.filter((l) => l.trim() !== "");
 	if (content.length === 0) return "";
-	const blockIndent = Math.min(...content.map(indentOf));
+	const blockIndent = declared ?? Math.min(...content.map(indentOf));
 	let out = "";
 	let blanks = 0;
 	let started = false;
@@ -360,8 +376,27 @@ export function resolveValue(lines, raw, inline) {
 	// resolves to something plausible is an evasion. Refused, not guessed at.
 	if (head.startsWith("!")) return { value: "", kind: "tag", readable: false };
 	if (LITERAL_BLOCK.test(head)) return { value: cont.filter((l) => l !== "").join("\n"), kind: "literal", readable: true };
-	if (FOLDED_BLOCK.test(head)) return { value: foldBlock(contRaw), kind: "folded", readable: true };
-	if (head === "") return { value: fold(cont.map(stripComment)), kind: "plain", readable: true };
+	if (FOLDED_BLOCK.test(head)) {
+		// An explicit indentation indicator (`>2`, `>-2`, `>2-`) DECLARES the content column, in
+		// spaces relative to the key. Passing it through is the whole of F1; discarding the digit and
+		// inferring from the content is what made a two-pattern block read as one.
+		const digit = /(\d)/.exec(head);
+		return { value: foldBlock(contRaw, digit === null ? null : keyCol + Number(digit[1])), kind: "folded", readable: true };
+	}
+	if (head === "") {
+		// A value on the line BELOW its key may itself be quoted — E6 composed with E1. Each was
+		// closed on its own and the composition was not, for `path:`, though commit 3 closed exactly
+		// this composition for `uses:`. Route it the same way.
+		const firstIdx = cont.findIndex((l) => l !== "");
+		const first = firstIdx === -1 ? "" : cont[firstIdx];
+		if (first.startsWith("!")) return { value: "", kind: "tag", readable: false };
+		if (first.startsWith("'") || first.startsWith('"')) {
+			const q = gatherQuoted(first, cont.slice(firstIdx + 1));
+			const u = unquote(fold(q.parts), q.quote);
+			return { value: u.value, kind: `quoted(${q.quote})`, readable: q.closed && u.ok };
+		}
+		return { value: fold(cont.map(stripComment)), kind: "plain", readable: true };
+	}
 	if (quoted) {
 		const { parts, closed, quote } = gatherQuoted(inline, cont);
 		const { value, ok } = unquote(fold(parts), quote);
@@ -405,13 +440,31 @@ export function scanUploads(text) {
 	const unreadable = [];
 
 	for (let i = jobsAt + 1; i < lines.length; i++) {
-		const item = lines[i].match(/^(\s+)-(\s+)(\S.*)$/);
-		if (item === null) continue;
-		const indent = item[1].length;
+		// A sequence entry is EITHER `- <content>` or a dash alone with its mapping starting on the
+		// next line. The second is checked first, because `- # a comment` matches both readings and
+		// only the second is right. Requiring content after the dash made the whole step invisible —
+		// `uploads` did not even increment, so no refusal, no floor, nothing: the E4 family one
+		// keystroke further on, and it survived three passes.
+		const bare = lines[i].match(/^(\s+)-\s*(#.*)?$/);
+		const item = bare === null ? lines[i].match(/^(\s+)-(\s+)(\S.*)$/) : null;
+		if (bare === null && item === null) continue;
+		const indent = (bare ?? item)[1].length;
 		// The column the step's own keys sit at. DERIVED, not `indent + 2`: `-   uses:` is ordinary
 		// YAML, and a hard-coded two would re-base every following line by the wrong amount, so
-		// `uses:` would never match and the step would not be seen at all.
-		const childCol = indent + 1 + item[2].length;
+		// `uses:` would never match and the step would not be seen at all. For a bare dash it is the
+		// first following line's own column, which is where the mapping actually begins.
+		let childCol;
+		const own = [];
+		if (bare !== null) {
+			let k = i + 1;
+			while (k < lines.length && lines[k].trim() === "") k += 1;
+			if (k >= lines.length) continue;
+			childCol = indentOf(lines[k]);
+			if (childCol <= indent) continue;
+		} else {
+			childCol = indent + 1 + item[2].length;
+			own.push({ text: item[3], line: i + 1, raw: i });
+		}
 
 		// Only list items inside a `steps:` block: the nearest preceding bare key at or above this
 		// item's own column. `<=` and not `<` because YAML lets a sequence sit at the SAME
@@ -430,7 +483,11 @@ export function scanUploads(text) {
 
 		// The step's own lines, re-based so a top-level key of the step sits at column 0. Each keeps
 		// its absolute line number, which is what the value resolver needs.
-		const own = [{ text: item[3], line: i + 1, raw: i }];
+		//
+		// A BARE next dash ends this body through the SECOND condition, not the first: it sits at
+		// the item's own column, so the indent test catches it. Widening the dash pattern to `-$` as
+		// well was tried and reverted — the mutation harness showed it changed no outcome, and a
+		// redundant branch that reads as load-bearing is a lie the next person has to disprove.
 		for (let j = i + 1; j < lines.length; j++) {
 			if (new RegExp(`^\\s{${indent}}-\\s`).test(lines[j])) break;
 			if (lines[j].trim() !== "" && indentOf(lines[j]) <= indent && !/^\s*#/.test(lines[j])) break;
@@ -648,9 +705,14 @@ function selfTest() {
 		"      - uses: actions/upload-artifact@v7\n" +
 		"        with:\n" +
 		"          name: ts-coverage-floors\n" +
-		"          # ONE staged directory, written by the probe from the sweep record.\n" +
+		"          # ONE staged directory, written by the probe from the sweep record. The explicit list\n" +
+		"          # that used to live here named the same three projects as the loops did, so even with\n" +
+		"          # the loops fixed, marketing's and ee's floors would never have left the runner — and\n" +
+		"          # arming them is the whole reason anybody dispatches this job.\n" +
 		"          #\n" +
-		"          # plan-catalog's raw artefact rides along deliberately: it is the smallest project.\n" +
+		"          # plan-catalog's raw artefact rides along deliberately: it is the smallest project, so a\n" +
+		"          # verbatim copy is a committable size, and it is how the --self-test fixture gets\n" +
+		"          # captured from a REAL vitest run with real CI absolute paths rather than hand-written.\n" +
 		"          path: |\n" +
 		"            ts-coverage-floors/\n" +
 		"            packages/plan-catalog/coverage/coverage-final.json\n" +
@@ -910,6 +972,75 @@ function selfTest() {
 	const EMPTYPATH = "      - uses: actions/upload-artifact@v7\n        with:\n          name: x\n          path:\n          if-no-files-found: error\n";
 	ok("an empty `path:` is REFUSED, not scored as a step with no problem", scanUploads(wf(EMPTYPATH)).unreadable.length === 1, JSON.stringify(scanUploads(wf(EMPTYPATH))));
 
+	// ── THE THIRD ADVERSARIAL PASS (#4595 re-re-review) ──────────────────────────────────────────
+
+	// F1 — an EXPLICIT indentation indicator. `>2` declares the content column as the key's plus
+	// two, so content deeper than that is entirely more-indented and nothing folds. Inferring the
+	// column with `Math.min` made both lines look uniform and folded them into one: the N1 defect
+	// one turn further in, and narrower for being invisible.
+	const F1 =
+		"      - uses: actions/upload-artifact@v7\n" +
+		"        with:\n" +
+		"          name: compliance\n" +
+		"          path: >2\n" +
+		"              dist/compliance\n" +
+		"              dist/community-source\n" +
+		"          if-no-files-found: error\n";
+	ok("F1 an explicit `>2` indicator is honoured, so this is two paths", scan(F1).problems.length === 1, JSON.stringify(scan(F1)));
+	ok("...and both are printed", scan(F1).problems[0]?.entries.join(",") === "dist/compliance,dist/community-source", JSON.stringify(scan(F1).problems[0]?.entries));
+	// `path:` sits at column 10 here and the content at 14, so `>1`..`>3` leave it more-indented
+	// and `>4` puts it EXACTLY at the declared column, where it folds like any other block. That
+	// asymmetry is the test: a fixed offset, or a reading that just calls any digit "multi-line",
+	// gets `>4` wrong in the noisy direction. All five verified against a real parser, and `>5` is
+	// left alone because that parser rejects the document outright.
+	for (const n of ["1", "3"]) {
+		ok(`...and \`>${n}\` likewise`, scan(F1.replace("path: >2", `path: >${n}`)).problems.length === 1, `>${n}`);
+	}
+	ok("...while `>4` puts the content AT the declared column, so it folds to one and is clean", scan(F1.replace("path: >2", "path: >4")).problems.length === 0, JSON.stringify(scan(F1.replace("path: >2", "path: >4"))));
+	ok("...and a chomped `>2-` too", scan(F1.replace("path: >2", "path: >2-")).problems.length === 1);
+	ok("...and `>-2`, the other spelling of it", scan(F1.replace("path: >2", "path: >-2")).problems.length === 1);
+	// `|N` needs none of this: a literal block is one entry per line at any indentation.
+	ok("a literal `|2` is unaffected and still two paths", scan(F1.replace("path: >2", "path: |2")).problems.length === 1);
+
+	// F2 — a BARE dash, with the mapping starting on the next line. Requiring content after the
+	// dash made the step invisible: `uploads` did not increment, so there was no refusal and no
+	// floor either. It survived all three passes because it is one keystroke past E4.
+	const F2 = SITE1.replace("      - name: Upload compliance evidence\n        ", "      -\n        name: Upload compliance evidence\n        ");
+	ok("the F2 fixture really moved the mapping down", F2 !== SITE1);
+	ok("F2 a bare `-` still yields a step", scan(F2).uploads === 1, JSON.stringify(scan(F2)));
+	ok("...and it is caught", scan(F2).problems.length === 1, JSON.stringify(scan(F2)));
+	ok("...and a dash with a trailing space is the same thing", scan(F2.replace("      -\n", "      - \n")).problems.length === 1);
+	ok("...and a dash carrying only a comment too", scan(F2.replace("      -\n", "      - # the compliance upload\n")).problems.length === 1);
+	// Two bare-dash steps in a row: the body walk must END one step at the next bare dash, or the
+	// second step's keys are read as the first's.
+	const F2_TWO = `      -\n        uses: actions/upload-artifact@v7\n        with:\n          name: one\n          path: dist/a\n          if-no-files-found: error\n${F2}`;
+	ok("...and a bare dash ENDS the previous step's body", scanUploads(wf(F2_TWO)).uploads === 2, JSON.stringify(scanUploads(wf(F2_TWO))));
+	ok("...without the first step inheriting the second's paths", scanUploads(wf(F2_TWO)).problems.length === 1, JSON.stringify(scanUploads(wf(F2_TWO)).problems));
+
+	// F3 — a QUOTED scalar on the line below its key: E6 composed with E1. Each was closed alone,
+	// and the composition was closed for `uses:` and not for `path:`.
+	const F3 = "      - uses: actions/upload-artifact@v7\n        with:\n          name: compliance\n          path:\n            \"dist/compliance\\ndist/community-source\"\n          if-no-files-found: error\n";
+	ok("F3 a quoted scalar below `path:` is not read as plain text", scan(F3).problems.length === 1, JSON.stringify(scan(F3)));
+	ok("...and resolves to both paths", scan(F3).problems[0]?.entries.length === 2, JSON.stringify(scan(F3).problems[0]?.entries));
+	const F3B = F3.replace('"dist/compliance\\ndist/community-source"', "!!str dist/compliance");
+	ok("...and a TAG below the key is refused, not resolved", scanUploads(wf(F3B)).unreadable.length === 1, JSON.stringify(scanUploads(wf(F3B))));
+
+	// F7 — the `steps` owner rule had no test of its own: deleting it left the self-test green,
+	// because the only non-step list in the fixtures sat ABOVE `jobs:` and carried no `uses:`.
+	// A matrix entry is the case that matters — it is a list of mappings inside a job.
+	const F7 =
+		"name: x\njobs:\n  a:\n    strategy:\n      matrix:\n        include:\n" +
+		"          - uses: actions/upload-artifact@v7\n" +
+		"            with:\n" +
+		"              name: not-a-step\n" +
+		"              path: |\n" +
+		"                dist/a\n" +
+		"                dist/b\n" +
+		"              if-no-files-found: error\n" +
+		"    steps:\n      - run: true\n";
+	ok("F7 a matrix entry that looks like an upload step is NOT a step", scanUploads(F7).uploads === 0, JSON.stringify(scanUploads(F7)));
+	ok("...and is not reported", scanUploads(F7).problems.length === 0 && scanUploads(F7).unreadable.length === 0, JSON.stringify(scanUploads(F7)));
+
 	// The resolver, directly — the six above go through `scanUploads`, so a resolver regression
 	// could hide behind a walk regression and vice versa.
 	const rv = (src) => resolveValue(src.split("\n"), 0, src.split("\n")[0].replace(/^\s*path:\s*/, ""));
@@ -1007,9 +1138,11 @@ function selfTest() {
 
 // ── entry ─────────────────────────────────────────────────────────────────────────────────────
 //
-// Guarded on being the process's OWN entry point. Without that, `import`ing any export of this file
-// — which the mutation harness beside it does — runs the CLI as a side effect and can `process.exit(1)`
-// inside the importer. Same idiom as check-pr-scope.mjs.
+// Guarded on being the process's OWN entry point. Without it, `import`ing any export of this file
+// runs the CLI as a side effect and can `process.exit(1)` inside the importer. Nothing in the repo
+// imports it today — the mutation harness beside it shells out rather than importing — so this is
+// a guard on the exports being usable at all, which is what a differential test against a real YAML
+// parser needs. Same idiom as check-pr-scope.mjs.
 if (import.meta.url !== `file://${process.argv[1]}`) {
 	// imported as a module: export only
 } else if (process.argv.includes("--self-test")) {
