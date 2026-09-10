@@ -28,6 +28,19 @@
 import { test, expect } from "../fixtures/qa";
 import { scanA11y } from "../helpers/a11y";
 
+/**
+ * A members row's actions trigger and its select checkbox, BY PREFIX.
+ *
+ * Both accessible names carry the row's subject now (`Manage member Ada Lovelace`,
+ * `Manage invitation ada@…`, `Select Ada Lovelace`): one "Manage" repeated down a column named
+ * nothing to a screen reader and gave any locator N matches to choose between, which is the
+ * ambiguity `e2e/audit/destructive.spec.ts` refuses to guess past. A bare `{ name: "Manage" }` is
+ * an EXACT match in Playwright, so these have to be regexes — and the anchor is what keeps
+ * "Manage member …" from also being reached as "Manage billing".
+ */
+const ROW_MENU = /^Manage /;
+const ROW_SELECT = /^Select /;
+
 const teamsUrl = (slug: string) => `/${slug}/~/settings/teams`;
 const rolesUrl = (slug: string) => `/${slug}/~/settings/roles`;
 const accessUrl = (slug: string) => `/${slug}/~/settings/access`;
@@ -99,8 +112,8 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 	test("Hobby has NO manage controls (no per-row select checkbox)", async ({ owner }) => {
 		// canManage = entitlement("organizations") is false on Hobby → the select column is absent.
 		await membersReady(owner);
-		await expect(owner.page.getByRole("checkbox", { name: "Select" })).toHaveCount(0);
-		await expect(owner.page.getByRole("button", { name: "Manage" })).toHaveCount(0);
+		await expect(owner.page.getByRole("checkbox", { name: ROW_SELECT })).toHaveCount(0);
+		await expect(owner.page.getByRole("button", { name: ROW_MENU })).toHaveCount(0);
 	});
 
 	test("Invite member is gated → opens the Pro upgrade dialog", async ({ owner }) => {
@@ -164,7 +177,7 @@ test.describe("RBAC — Members (Pro owner)", () => {
 	test("Pro org exposes manage controls (per-row select checkbox)", async ({ team }) => {
 		await membersReady(team);
 		// canManage true on Pro → the select column renders a checkbox for every row.
-		await expect(team.page.getByRole("checkbox", { name: "Select" }).first()).toBeVisible();
+		await expect(team.page.getByRole("checkbox", { name: ROW_SELECT }).first()).toBeVisible();
 	});
 
 	test("Invite member opens the real invite dialog (not the upsell)", async ({ team }) => {
@@ -272,7 +285,7 @@ test.describe("RBAC — Members (Pro owner)", () => {
 		// Clean up: cancel the invitation so seeded rows don't accumulate. Cancelling ASKS FIRST as
 		// of #4271, and the confirm button is "Revoke invitation" — a third spelling, because the
 		// menu item that opened it says "Cancel invitation" and the way out says "Cancel".
-		await inviteRow.getByRole("button", { name: "Manage" }).click();
+		await inviteRow.getByRole("button", { name: ROW_MENU }).click();
 		await team.page.getByRole("menuitem", { name: /cancel invitation/i }).click();
 		const confirm = team.page.getByRole("alertdialog");
 		await expect(confirm.getByText("Cancel this invitation?")).toBeVisible();
@@ -294,7 +307,7 @@ test.describe("RBAC — Members (Pro owner)", () => {
 		const inviteRow = team.page.getByRole("row").filter({ hasText: email });
 		await expect(inviteRow).toBeVisible({ timeout: 30_000 });
 
-		await inviteRow.getByRole("button", { name: "Manage" }).click();
+		await inviteRow.getByRole("button", { name: ROW_MENU }).click();
 		await team.page.getByRole("menuitem", { name: /cancel invitation/i }).click();
 		const confirm = team.page.getByRole("alertdialog");
 		await expect(confirm.getByText("Cancel this invitation?")).toBeVisible();
@@ -307,7 +320,7 @@ test.describe("RBAC — Members (Pro owner)", () => {
 		});
 
 		// Now really revoke it, so the org does not accumulate a pending row per run.
-		await team.page.getByRole("row").filter({ hasText: email }).getByRole("button", { name: "Manage" }).click();
+		await team.page.getByRole("row").filter({ hasText: email }).getByRole("button", { name: ROW_MENU }).click();
 		await team.page.getByRole("menuitem", { name: /cancel invitation/i }).click();
 		await team.page.getByRole("alertdialog").getByRole("button", { name: "Revoke invitation" }).click();
 		await expect(team.page.getByRole("row").filter({ hasText: email })).toHaveCount(0, {

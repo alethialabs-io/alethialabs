@@ -23,8 +23,21 @@
 // Nothing here touches a row it did not create. In particular it never suspends, re-roles or
 // removes the `member` persona: suspending revokes that member's PDP grant, and a persona denied
 // for want of ACCESS rather than of ROLE is exactly the failure that makes an RBAC suite report a
-// column of green while measuring nothing (the `HAVE_MEMBER` lesson, one layer down). Seeded rows
-// are recognised by their email prefix and by nothing else, so the cleanup cannot widen by accident.
+// column of green while measuring nothing (the `HAVE_MEMBER` lesson, one layer down).
+//
+// ── AND CLEANUP IS BY ID, NEVER BY (org, prefix) ────────────────────────────────────────────────
+//
+// `helpers/seed-nav.ts` recorded this rule first, and it applies here for the same reason. The `qa`
+// project is `fullyParallel`, and the release gate runs it with `--workers=3` — the matrix passes
+// the flag, which OVERRIDES the config's `workers: isCI ? 1 : undefined`, so CI is genuinely
+// multi-worker and not just a local hazard. Playwright runs `beforeAll`/`afterAll` once per worker,
+// so a purge scoped to "every `e2e-rbac-%` member in this org" would delete the row a SIBLING
+// worker is mid-assertion on: its denial then fails naming a missing row rather than a permission,
+// which is the instrument answering a different question than the one asked.
+//
+// A seeder's blast radius must be a set it can ENUMERATE, not a set it can describe. The prefix
+// still makes a row recognisably ours — it is what keeps `seedEmail` collision-free and what a
+// human grepping the database reads — but it is not what the removals below match on.
 
 import fs from "node:fs";
 import { db } from "./db";
@@ -32,11 +45,12 @@ import { personaMetaPath, type PersonaName, type PersonaRecord } from "./persona
 import type { Owner } from "./seed";
 
 /**
- * The email prefix that MAKES a row seeded.
+ * The email prefix that MARKS a row as seeded.
  *
- * The cleanup below matches on this and only this. A cleanup that instead deleted "every member
- * that is not the owner" would reap the `member` persona the moment a spec ran in the wrong order —
- * the blast radius of a seeder must be a set it can enumerate, not a set it can describe.
+ * It makes a seeded address unique and recognisable; it is deliberately NOT what the removal below
+ * matches on (see the header). A cleanup keyed on it would be a purge over an org several workers
+ * share, and a cleanup keyed on "every member that is not the owner" would reap the `member`
+ * persona outright.
  */
 export const RBAC_SEED_PREFIX = "e2e-rbac-";
 
@@ -46,12 +60,6 @@ export interface SeededMember {
 	userId: string;
 	email: string;
 	name: string;
-}
-
-/** A pending invitation this file created. */
-export interface SeededInvitation {
-	id: string;
-	email: string;
 }
 
 /** A seeded address, unique per row so two workers cannot collide on the `user.email` unique index. */
@@ -112,45 +120,17 @@ export async function seedOrgMember(
 }
 
 /**
- * Inserts a pending invitation into the org — the `pending-invitation` fixture, without walking the
- * invite dialog for it.
+ * Removes ONE seeded member, by the ids the seed handed back.
  *
- * `expires_at` is NOT NULL and carries no default, so it is stated here; a week out, because a
- * fixture instant pinned to "now" is a fixture that reads differently on a slow run.
- */
-export async function seedPendingInvitation(
-	owner: Owner,
-	opts: { label?: string; role?: string } = {},
-): Promise<SeededInvitation> {
-	const sql = db();
-	const email = seedEmail(opts.label ?? "invite");
-	const [row] = await sql<{ id: string }[]>`
-		insert into invitation ${sql({
-			organization_id: owner.orgId,
-			email,
-			role: opts.role ?? "viewer",
-			status: "pending",
-			expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-			inviter_id: owner.userId,
-		})}
-		returning id`;
-	if (!row) throw new Error(`insert into invitation returned no row for ${email}`);
-	return { id: row.id, email };
-}
-
-/**
- * Removes every row this file seeded into `orgId`, and nothing else.
+ * Deleting the `user` row is what removes the member — `member` cascades from it — and the id is
+ * the whole predicate: no org scope, no email prefix, nothing that could reach a row this call did
+ * not create. That is the rule `helpers/seed-nav.ts` states and the header above argues for; the
+ * (org, prefix) purge this replaces could delete a sibling worker's fixture mid-test.
  *
- * Members go first through their user rows (the `member` FK cascades from `user`), then any
- * invitation carrying the prefix. Both are scoped to the org AND to the prefix: either predicate
- * alone would be too wide — the org holds the persona, and the prefix is shared across runs.
+ * It does not raise on zero rows deleted. A teardown that fails because the thing it was removing
+ * is already gone reports a problem that does not exist, and buries the one that does.
  */
-export async function cleanRbacSeed(orgId: string): Promise<void> {
+export async function removeSeededMember(member: SeededMember): Promise<void> {
 	const sql = db();
-	const like = `${RBAC_SEED_PREFIX}%`;
-	await sql`
-		delete from "user"
-		where email like ${like}
-		  and id in (select user_id from member where organization_id = ${orgId})`;
-	await sql`delete from invitation where organization_id = ${orgId} and email like ${like}`;
+	await sql`delete from "user" where id = ${member.userId}`;
 }
