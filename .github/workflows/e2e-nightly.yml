@@ -2168,7 +2168,12 @@ jobs:
           export PROBE_LEDGER="${VDIR}/ledger"
           export PROBE_UNATTRIB_LEDGER="${VDIR}/ledger.unattributable"
           export PROBE_ATTEST_FILE="${VDIR}/attest"
-          export PROBE_VERDICT_FILE="${VDIR}/teardown-verify.json"
+          # The receipt lives in its OWN directory, one level below the ledgers, and only that
+          # directory is uploaded. The ledgers hold RAW provider-CLI stderr; the receipt is scrubbed
+          # and then re-grepped by demos/proofs/scrub.sh's tripwire, which greps a DIRECTORY — so
+          # the two must not share one, or the tripwire would fire on text nobody publishes.
+          mkdir -p "${VDIR}/out"
+          export PROBE_VERDICT_FILE="${VDIR}/out/teardown-verify.json"
           rc=0
           if [ -z "${E2E_CLUSTER:-}" ] || [ -z "${E2E_ENV:-}" ]; then
             echo "::error::E2E_CLUSTER/E2E_ENV is unset — refusing to run an unscoped verification."
@@ -2192,14 +2197,19 @@ jobs:
             fi
           fi
           # ONE translation, in the library that owns the four-state taxonomy — never a `case` here.
-          # A verdict decided in a workflow is a verdict with no test.
+          # A verdict decided in a workflow is a verdict with no test. The same call SCRUBS the
+          # receipt through demos/proofs/scrub.sh and re-greps it fail-closed before it can be
+          # uploaded or summarised: it carries verbatim provider-CLI stderr, this repo is public,
+          # and the neighbour four steps up exists because exactly that published a live token
+          # (#1854). A receipt it cannot make safe is DELETED, and the rollup reads the absence as
+          # UNMEASURED — which is why the summary below prints the FILE and never the raw ledgers.
           bash scripts/e2e/lib/sweep-probe.sh --record-verdict \
             "$PROVIDER" "$RUN_TAG" "run ${E2E_ENV:-<unscoped>}" "$rc" || true
           {
             echo "### Post-teardown cloud verification — ${PROVIDER}"
             echo
             echo '```json'
-            cat "$PROBE_VERDICT_FILE" 2>/dev/null || echo '{"verdict":"UNVERIFIABLE","reason":"no receipt was written"}'
+            cat "$PROBE_VERDICT_FILE" 2>/dev/null || echo '{"verdict":"UNVERIFIABLE","reason":"no receipt survived the scrub, or none was written"}'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           # Always 0: this step reports, it does not judge. See the header.
@@ -2214,7 +2224,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: e2e-teardown-verify-${{ matrix.provider }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/teardown-verify/teardown-verify.json
+          # The `out/` subdirectory ONLY — the raw probe ledgers sit beside it and are never
+          # published. A glob for the one filename, so this cannot widen by accident.
+          path: ${{ runner.temp }}/teardown-verify/out/teardown-verify.json
           if-no-files-found: warn
           retention-days: 30
 

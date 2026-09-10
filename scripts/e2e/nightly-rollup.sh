@@ -116,8 +116,15 @@ scan_teardown_verdicts() {
 #
 # A verdict this script does not recognise is also `none`. An unknown word is not evidence of an
 # empty account.
+#
+# ⚠️ WORST WINS, and it is not first-past-the-post. Two receipts for one provider is not reachable
+# through today's one-artifact-per-leg upload, but "not reachable today" is the state every
+# resolution bug is in before it is reachable — and `find … | sort` resolves by PATH, so a `CLEAN`
+# in a directory that sorts early would have silently outranked a `RESIDUAL` that sorts late. This
+# whole file's thesis is that the ambiguous case must never resolve TOWARD clean. RESIDUAL (money
+# is being spent) outranks UNVERIFIABLE (nobody knows) outranks CLEAN (measured empty).
 teardown_verdict() {
-	local want="$1" prov tag v
+	local want="$1" prov tag v best=""
 	while IFS="$(printf '\t')" read -r prov tag v; do
 		[ "$prov" = "$want" ] || continue
 		case "$tag" in
@@ -125,12 +132,14 @@ teardown_verdict() {
 		*) continue ;;
 		esac
 		case "$v" in
-		CLEAN | RESIDUAL | UNVERIFIABLE) printf '%s\n' "$v"; return 0 ;;
+		RESIDUAL) best=RESIDUAL ;;
+		UNVERIFIABLE) [ "$best" = "RESIDUAL" ] || best=UNVERIFIABLE ;;
+		CLEAN) [ -n "$best" ] || best=CLEAN ;;
 		esac
 	done <<-EOF
 		$(scan_teardown_verdicts "${PROOFS_DIR:-proofs}")
 	EOF
-	echo none
+	printf '%s\n' "${best:-none}"
 }
 
 # summary_for <provider> <run_id> — the first bundle claiming this provider AND this run.
@@ -1422,6 +1431,28 @@ run_self_test() {
 		>"$c/proofs/e2e-teardown-verify-aws-777/teardown-verify.json"
 	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
 		"(V8) an unrecognised verdict is UNMEASURED, never 'done'"
+
+	# (V10) TWO RECEIPTS FOR ONE PROVIDER RESOLVE WORST-FIRST, NOT PATH-FIRST.
+	#
+	#       Not reachable through today's one-artifact-per-leg upload — which is exactly the state
+	#       every resolution bug is in before it becomes reachable. `find … | LC_ALL=C sort` orders
+	#       by PATH, so a CLEAN in a directory that sorts early silently outranked a RESIDUAL that
+	#       sorts late: the ambiguous case resolving TOWARD clean, which is the one direction this
+	#       whole file forbids. The fixture puts them in that order deliberately.
+	c="$tmp/v10-two-receipts"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure applied
+	write_jobs_steps "$c/jobs.json" aws success
+	write_verdict "$c/proofs/aaa-clean" aws "nightly-777-1" 0
+	write_verdict "$c/proofs/zzz-residual" aws "nightly-777-1" 1
+	_a "RESIDUAL" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+		"(V10) a RESIDUAL receipt outranks a CLEAN one that sorts earlier by path"
+	c="$tmp/v10-unverifiable-over-clean"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure applied
+	write_jobs_steps "$c/jobs.json" aws success
+	write_verdict "$c/proofs/aaa-clean" aws "nightly-777-1" 0
+	write_verdict "$c/proofs/zzz-unver" aws "nightly-777-1" 4 "cloud-sql:exit 1 — PERMISSION_DENIED"
+	_a "UNVERIFIABLE" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+		"(V10) …and 'nobody could look' outranks 'measured empty' too"
 
 	# (V9) THE VERDICT'S WEIGHT. A residual finding is loud and does NOT rewrite PASS/FAIL — the
 	#      issue's own preference, and the same orthogonality #2330 established. A cleanup defect

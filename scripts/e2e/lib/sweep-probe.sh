@@ -482,7 +482,12 @@ probe_verdict_from_rc() {
 		;;
 	1) printf 'RESIDUAL\tthe cloud was re-listed after the sweep and STILL LISTS billable resources for this run\n' ;;
 	4) printf 'UNVERIFIABLE\tat least one probe did not answer, so nothing here proves the account is empty\n' ;;
-	124 | 125) printf 'UNVERIFIABLE\tthe verification pass hit its wall-clock budget and was cut off — it did not finish asking\n' ;;
+	124) printf 'UNVERIFIABLE\tthe verification pass hit its wall-clock budget and was cut off — it did not finish asking\n' ;;
+	# 125 is NOT a timeout. GNU `timeout` returns it when TIMEOUT ITSELF failed and the command
+	# never started at all — a different fact with the same verdict, and a sentence a human reads
+	# has to be true even when the verdict it justifies is unchanged.
+	125) printf 'UNVERIFIABLE\t`timeout` itself failed, so the verification never started\n' ;;
+	126 | 127) printf 'UNVERIFIABLE\tthe sweeper could not be executed (exit %s) — nothing asked the cloud\n' "$1" ;;
 	130 | 137 | 143) printf 'UNVERIFIABLE\tthe verification pass was KILLED (exit %s) before it could answer\n' "$1" ;;
 	*) printf 'UNVERIFIABLE\tthe sweeper exited %s, which is not a verification verdict — it did not get to ask\n' "${1:-<none>}" ;;
 	esac
@@ -530,6 +535,67 @@ probe_write_verdict() {
 		"$cloud" "$verdict" "$rc" "$PROBE_VERDICT_FILE"
 }
 
+# ── THE RECEIPT IS PUBLISHED, SO IT IS SCRUBBED. ────────────────────────────────────────────────
+#
+# `unverifiable_detail[]` carries up to 200 characters of VERBATIM provider-CLI stderr per resource
+# type, and the receipt is uploaded as an artifact with 30-day retention on a PUBLIC repo and
+# printed into the job summary. That is #1854's exact shape: a verbatim upload from this same
+# workflow published a live HCLOUD_TOKEN, which is why `Scrub the runner log before upload` exists
+# four steps above the one that writes this file.
+#
+# So the published receipt goes through the same fail-closed library, and "fail closed" here means
+# something specific: the VERDICT is never lost — it carries no secret and it is the whole point of
+# the file — but the DETAIL is dropped the moment anything looks unsafe, and the receipt is deleted
+# outright if even that is not enough. A withheld detail costs a reader one click into the run; a
+# published credential costs a rotation.
+#
+# It lives on the `--record-verdict` path and NOT inside probe_write_verdict, deliberately: the
+# five sweepers source this file on every run and must not acquire a load-time dependency on
+# demos/proofs/. The entry point that PUBLISHES is the one that scrubs.
+
+# probe_withhold_detail <why> — rewrite the receipt with its CLI-derived text removed. Everything
+# else survives: the type names are this file's own vocabulary, and `reason` is our own sentence.
+probe_withhold_detail() {
+	local tmp
+	tmp="${PROBE_VERDICT_FILE}.withheld"
+	jq --arg why "$1" '.unverifiable_detail = [] | .detail_withheld = $why' \
+		"$PROBE_VERDICT_FILE" >"$tmp" 2>/dev/null && mv "$tmp" "$PROBE_VERDICT_FILE"
+	rm -f "$tmp"
+	echo "::warning::the teardown verification receipt's detail was WITHHELD (${1}) — the verdict stands; open the run's log for the probe reasons." >&2
+}
+
+# probe_scrub_verdict — scrub the published receipt, then re-grep it, fail closed. Returns non-zero
+# only when the receipt had to be DELETED, which the rollup then reads as UNMEASURED.
+probe_scrub_verdict() {
+	local dir scrub
+	dir="$(dirname "$PROBE_VERDICT_FILE")"
+	scrub="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/demos/proofs/scrub.sh"
+	if [ ! -r "$scrub" ]; then
+		probe_withhold_detail "demos/proofs/scrub.sh could not be read — nothing verified the text"
+		return 0
+	fi
+	# shellcheck source=demos/proofs/scrub.sh
+	if ! . "$scrub" 2>/dev/null; then
+		probe_withhold_detail "demos/proofs/scrub.sh could not be sourced"
+		return 0
+	fi
+	scrub_literals_from_env
+	scrub_file "$PROBE_VERDICT_FILE"
+	# The tripwire is a SECOND pair of eyes over the finished file — deliberately independent of the
+	# scrubber, exactly as capture-proof.sh uses it. `dir` holds only the receipt: the raw ledgers
+	# live one level up, unpublished, so this greps what is actually uploaded and nothing else.
+	if assert_grep_clean "$dir" >/dev/null 2>&1; then
+		return 0
+	fi
+	probe_withhold_detail "a secret shape survived the scrub"
+	if assert_grep_clean "$dir" >/dev/null 2>&1; then
+		return 0
+	fi
+	rm -f "$PROBE_VERDICT_FILE"
+	echo "::error::the teardown verification receipt STILL carried a secret shape after its detail was withheld — DELETED rather than published. The rollup will report this leg UNMEASURED, which is the honest answer: the measurement exists but could not be shipped safely." >&2
+	return 1
+}
+
 # ── `--record-verdict` — the PARENT-side entry point (#4398). ───────────────────────────────────
 #
 #   PROBE_LEDGER=… PROBE_UNATTRIB_LEDGER=… PROBE_ATTEST_FILE=… PROBE_VERDICT_FILE=… \
@@ -547,7 +613,9 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--record-verdict" ]; then
 		echo "usage: sweep-probe.sh --record-verdict <cloud> <run-tag> <scope> <exit-code>" >&2
 		exit 2
 	fi
-	probe_write_verdict "$2" "$3" "$4" "$5"
+	probe_write_verdict "$2" "$3" "$4" "$5" || exit "$?"
+	# Written, then made publishable. Never the other way round: the scrub reads the finished file.
+	probe_scrub_verdict
 	exit "$?"
 fi
 
@@ -848,6 +916,21 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
 	st_case "a kill (137) is UNVERIFIABLE" 137 UNVERIFIABLE
 	st_case "a scope refusal (2) is UNVERIFIABLE" 2 UNVERIFIABLE
 	st_case "a missing interpreter (127) is UNVERIFIABLE" 127 UNVERIFIABLE
+	st_case "\`timeout\` failing to start the command (125) is UNVERIFIABLE" 125 UNVERIFIABLE
+
+	# The verdict for 124 and 125 is the same; the SENTENCE must not be. GNU timeout returns 125
+	# when timeout ITSELF failed and the command never ran — calling that "hit its wall-clock
+	# budget" is a true-looking sentence about a thing that did not happen, which is the one defect
+	# class no test, type or linter catches.
+	probe_reset
+	case "$(probe_verdict_from_rc 125)" in
+	*"never started"*) ok "…and it says the command never STARTED, not that it timed out" ;;
+	*) bad "…and it says the command never STARTED" "got '$(probe_verdict_from_rc 125 | cut -f2-)'" ;;
+	esac
+	case "$(probe_verdict_from_rc 124)" in
+	*"wall-clock budget"*) ok "…while a real timeout still says it ran out of budget" ;;
+	*) bad "…while a real timeout still says it ran out of budget" "got '$(probe_verdict_from_rc 124 | cut -f2-)'" ;;
+	esac
 
 	# The rendered receipt. The consumer is nightly-rollup.sh in another JOB, so what is asserted is
 	# the PAYLOAD, not a log line: provider and run_tag are what it keys on (never the path, #1613),
@@ -908,6 +991,68 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
 	else
 		bad "an env-supplied PROBE_LEDGER still leaves probes runnable" "probe_run could not execute, or recorded a false UNVERIFIABLE"
 	fi
+	rm -rf "$st_ext"
+
+	# ── THE PUBLISHED RECEIPT CARRIES NO SECRET (#1854's shape). ────────────────────────────────
+	#
+	# `unverifiable_detail[]` is verbatim provider-CLI stderr, and the receipt is uploaded from a
+	# PUBLIC repo with 30-day retention. Driven through the real `--record-verdict` entry point in a
+	# fresh process — the scrub lives there, not in probe_write_verdict — with a fake credential
+	# planted in the ledger the way a real CLI would echo one back.
+	#
+	# Both halves are asserted: the literal is GONE, and the verdict SURVIVES. A scrub that threw
+	# the measurement away to be safe would be its own defect — the verdict carries no secret and it
+	# is the entire reason the file exists.
+	st_ext="$(mktemp -d "${TMPDIR:-/tmp}/alethia-probe-scrub.XXXXXX")"
+	mkdir -p "$st_ext/out"
+	st_fake_token="hcloud-fake-token-4398-DO-NOT-PUBLISH"
+	# ⚠️ The ledger is filled by THIS shell's already-loaded probe_note_unverifiable — the real
+	# producer — with the globals pointed at the temp dir and restored after. NOT by sourcing this
+	# file in a subshell: `$0` and `${BASH_SOURCE[0]}` are the same path while the self-test runs,
+	# so a `. "${BASH_SOURCE[0]}"` re-enters this very block and recurses until the process is
+	# killed. It is the same trap the header names, arriving from inside the tests.
+	st_prev_ledger="$PROBE_LEDGER"
+	st_prev_unattr="$PROBE_UNATTRIB_LEDGER"
+	PROBE_LEDGER="$st_ext/ledger"
+	PROBE_UNATTRIB_LEDGER="$st_ext/unattr"
+	probe_reset
+	probe_note_unverifiable load-balancer "exit 1 — unauthorized (token ${st_fake_token})"
+	PROBE_LEDGER="$st_prev_ledger"
+	PROBE_UNATTRIB_LEDGER="$st_prev_unattr"
+	PROBE_LEDGER="$st_ext/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/unattr" \
+		PROBE_ATTEST_FILE="$st_ext/attest" PROBE_VERDICT_FILE="$st_ext/out/teardown-verify.json" \
+		HCLOUD_TOKEN="$st_fake_token" \
+		bash "${BASH_SOURCE[0]}" --record-verdict hetzner "nightly-777-1" "run 777-1" 4 >/dev/null 2>&1
+	if grep -qF "$st_fake_token" "$st_ext/ledger" 2>/dev/null; then
+		ok "the fixture is real: the raw ledger DOES carry the credential"
+	else
+		bad "the fixture is real: the raw ledger carries the credential" "it does not, so the next assertion proves nothing"
+	fi
+	if grep -qF "$st_fake_token" "$st_ext/out/teardown-verify.json" 2>/dev/null; then
+		bad "the PUBLISHED receipt does not carry the credential" "the literal survived into the uploaded artifact"
+	else
+		ok "the PUBLISHED receipt does not carry the credential"
+	fi
+	if [ "$(jq -r .verdict "$st_ext/out/teardown-verify.json" 2>/dev/null)" = "UNVERIFIABLE" ]; then
+		ok "…and the VERDICT survives the scrub — the measurement is not thrown away to be safe"
+	else
+		bad "…and the VERDICT survives the scrub" "got '$(jq -r .verdict "$st_ext/out/teardown-verify.json" 2>/dev/null)'"
+	fi
+	# The WITHHOLDING path itself, driven directly — the happy path above never reaches it, so
+	# without this the fail-closed branch is code nothing runs. What it must do is narrow: remove
+	# the CLI-derived text, say so, and KEEP the verdict.
+	probe_reset
+	PROBE_VERDICT_FILE="$st_ext/out/teardown-verify.json"
+	probe_note_unverifiable load-balancer "exit 1 — unauthorized"
+	probe_write_verdict hetzner "nightly-777-1" "run 777-1" 4 >/dev/null 2>&1
+	probe_withhold_detail "a secret shape survived the scrub" 2>/dev/null
+	st_out="$(jq -r '[.verdict, (.unverifiable_detail|length|tostring), (.detail_withheld // ""), (.unverifiable|join(","))] | join("|")' "$PROBE_VERDICT_FILE" 2>/dev/null || echo BROKEN)"
+	if [ "$st_out" = "UNVERIFIABLE|0|a secret shape survived the scrub|load-balancer" ]; then
+		ok "withholding the detail keeps the verdict, the type and a stated reason"
+	else
+		bad "withholding the detail keeps the verdict, the type and a stated reason" "got '${st_out}'"
+	fi
+	PROBE_VERDICT_FILE="${PROBE_ERR_DIR}/verdict.json"
 	rm -rf "$st_ext"
 
 	# A receipt with nowhere to go is refused rather than silently skipped: the caller asked for a
