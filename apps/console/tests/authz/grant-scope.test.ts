@@ -8,7 +8,12 @@
 
 import { describe, expect, it } from "vitest";
 import { INSTANCE_TYPES, PARENTS } from "@/lib/authz/fga-hierarchy";
-import { grantTarget } from "@/lib/authz/grant-scope";
+import {
+	denyTarget,
+	EMPTY_SCOPE_DENIES,
+	grantTarget,
+	targetForEffect,
+} from "@/lib/authz/grant-scope";
 import { GRANT_SCOPES } from "@/lib/queries/access-grants";
 import { RESOURCES } from "@/lib/authz/registry";
 
@@ -60,6 +65,59 @@ describe("grantTarget — the rows that confer nothing", () => {
 				reason: "unscopable_resource_kind",
 			});
 		}
+	});
+});
+
+// ── The deny direction (#4584, UNDECIDED) ───────────────────────────────────────────────────────
+// `grantTarget` answers what a row CONFERS. A deny row is asked what it EXCLUDES, and for a row
+// that scopes to nothing those have opposite safe answers: conferring nothing is fail-closed,
+// excluding nothing is fail-OPEN. These assert the SPLIT — that the two questions are asked of
+// different predicates — and read the ruling from the constant rather than hardcoding it, so
+// flipping `EMPTY_SCOPE_DENIES` moves the expectations with the behaviour.
+describe("targetForEffect asks a DENY row a different question", () => {
+	it("routes allow rows to grantTarget and deny rows to denyTarget", () => {
+		for (const [type, id] of [
+			["org", null],
+			["project", "P1"],
+			["org", "P1"],
+			["banana", "P1"],
+		] as const) {
+			expect(targetForEffect("allow", type, id)).toEqual(grantTarget(type, id));
+			expect(targetForEffect("deny", type, id)).toEqual(denyTarget(type, id));
+		}
+	});
+
+	it("agrees with grantTarget on every row that DOES scope to something", () => {
+		// The split may only touch the `none` case. If a deny row that names a real resource
+		// started resolving differently, every scoped exclusion in the product would move.
+		for (const [type, id] of [
+			["org", null],
+			["project", null],
+			["project", "P1"],
+			["runner", "R1"],
+			["connector", "C1"],
+			["cloud_identity", "I1"],
+		] as const) {
+			expect(denyTarget(type, id)).toEqual(grantTarget(type, id));
+		}
+	});
+
+	it("resolves a scope-to-nothing deny per EMPTY_SCOPE_DENIES", () => {
+		for (const type of ["org", "banana", "job"]) {
+			expect(denyTarget(type, "P1")).toEqual(
+				EMPTY_SCOPE_DENIES === "the_whole_org"
+					? { kind: "org" }
+					: grantTarget(type, "P1"),
+			);
+		}
+	});
+
+	it("never resolves a deny to the resource it names — OpenFGA cannot express that", () => {
+		// The third possible ruling, and the reason it is not on offer: there is no object of
+		// that type and id for a deny tuple to sit on, so choosing it would move the divergence
+		// rather than close it. `GrantTarget`'s resource arm is typed to make it unwritable.
+		const target = denyTarget("org", "P1");
+		expect(target.kind).not.toBe("resource");
 	});
 });
 

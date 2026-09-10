@@ -3,7 +3,7 @@
 
 import { sql } from "drizzle-orm";
 import { enforceDecision } from "@/lib/authz/activity";
-import { grantTarget } from "@/lib/authz/grant-scope";
+import { targetForEffect } from "@/lib/authz/grant-scope";
 import { listOrgResourceIds } from "@/lib/authz/resource-tables";
 import { getServiceDb } from "@/lib/db";
 import { coversResource, decide, permissionKey } from "./evaluate";
@@ -32,20 +32,26 @@ type GrantRow = {
 /**
  * The rows of one effect, reduced to the ids they cover: `null` for an org-wide grant, the
  * resource id for a scoped one. This is the ONLY place this engine interprets a grant's scope,
- * and it does it through the same `grantTarget` the OpenFGA expander uses.
+ * and it does it through the same `targetForEffect` the OpenFGA expander uses.
  *
- * Rows whose scope resolves to NOTHING are DROPPED rather than reduced to an id. Before #4584
- * this engine did not project `resource_type` at all, so an `('org', <uuid>)` row read as a
- * scoped grant on that uuid while the OpenFGA engine read the same row as organization-wide —
- * one row, two opposite answers, decided by which engine an installation happens to run. It
- * confers nothing on both engines now, which is the only direction such a disagreement may be
- * resolved in.
+ * ⚠ THE EFFECT IS PASSED IN, AND IT IS NOT JUST A FILTER. An allow row is being asked what it
+ * CONFERS; a deny row is being asked what it EXCLUDES. For a row whose scope resolves to nothing
+ * those questions have opposite safe answers — conferring nothing is fail-closed, excluding
+ * nothing is fail-OPEN — so `targetForEffect` routes them to different predicates rather than
+ * letting one answer stand in for both. See `EMPTY_SCOPE_DENIES` in lib/authz/grant-scope.ts:
+ * the deny direction is the maintainer's open ruling, and this function reads it rather than
+ * assuming it.
+ *
+ * Before #4584 this engine did not project `resource_type` at all, so an `('org', <uuid>)` row
+ * read as a scoped grant on that uuid while the OpenFGA engine read the same row as
+ * organization-wide — one row, two opposite answers, decided by which engine an installation
+ * happens to run.
  */
 function coveredIds(rows: GrantRow[], effect: "allow" | "deny"): (string | null)[] {
 	const ids: (string | null)[] = [];
 	for (const row of rows) {
 		if (row.effect !== effect) continue;
-		const target = grantTarget(row.resource_type, row.resource_id);
+		const target = targetForEffect(effect, row.resource_type, row.resource_id);
 		if (target.kind === "org") ids.push(null);
 		else if (target.kind === "resource") ids.push(target.resourceId);
 	}

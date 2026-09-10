@@ -33,8 +33,11 @@ function grantSubject(g: { principalType: "user" | "team"; principalId: string }
  * there is consequently nothing to read or delete.
  *
  * THE INVARIANT: this must name the object every tuple `expandGrant` produces for the same scope
- * sits on. It is therefore derived from the very predicate the expander expands through, taken as
- * an argument rather than reached for, so the two cannot be given different ones.
+ * AND EFFECT sits on. It is therefore derived from the very predicate the expander expands
+ * through, taken as an argument rather than reached for, so the two cannot be given different
+ * ones — and it takes the effect for the same reason the expander does: an allow row is asked
+ * what it confers, a deny row what it excludes, and those come apart for a row that scopes to
+ * nothing (`EMPTY_SCOPE_DENIES` in lib/authz/grant-scope.ts).
  *
  * It used to be `resourceId ? \`${resourceType}:${resourceId}\` : \`org:${orgId}\`` — the two
  * columns read independently of the expander. For an `('org', <resource-uuid>)` row that produced
@@ -51,10 +54,15 @@ function grantSubject(g: { principalType: "user" | "team"; principalId: string }
  * wrote nothing.
  */
 export function grantObject(
-	grantTarget: CoreContext["fga"]["grantTarget"],
-	g: { orgId: string; resourceType: string; resourceId: string | null },
+	targetForEffect: CoreContext["fga"]["targetForEffect"],
+	g: {
+		orgId: string;
+		effect: "allow" | "deny";
+		resourceType: string;
+		resourceId: string | null;
+	},
 ): string | null {
-	const target = grantTarget(g.resourceType, g.resourceId);
+	const target = targetForEffect(g.effect, g.resourceType, g.resourceId);
 	if (target.kind === "org") return `org:${g.orgId}`;
 	if (target.kind === "resource") {
 		return `${target.resourceType}:${target.resourceId}`;
@@ -81,9 +89,14 @@ export class FgaTupleSync implements TupleSync {
 	 */
 	private async clearGrantTuples(
 		subject: string,
-		grant: { orgId: string; resourceType: string; resourceId: string | null },
+		grant: {
+			orgId: string;
+			effect: "allow" | "deny";
+			resourceType: string;
+			resourceId: string | null;
+		},
 	): Promise<void> {
-		const object = grantObject(this.core.fga.grantTarget, grant);
+		const object = grantObject(this.core.fga.targetForEffect, grant);
 		if (object === null) return;
 		await this.deleteTuples(await this.existingFor(subject, object));
 	}
