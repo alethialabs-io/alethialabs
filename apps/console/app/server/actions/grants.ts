@@ -10,6 +10,10 @@ import { recordActivity } from "@/lib/authz/activity";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { actorCanGrant } from "@/lib/authz/ceiling";
 import { getEntitlements } from "@/lib/authz/entitlements";
+import {
+	orgScopeCarriesResourceId,
+	ORG_SCOPE_WITH_RESOURCE_ID,
+} from "@/lib/authz/fga-tuples";
 import { authorize } from "@/lib/authz/guard";
 import {
 	BUILTIN_ROLE_IDS,
@@ -118,6 +122,9 @@ export async function assignGrant(input: AssignGrantInput): Promise<void> {
 	}
 	if (input.permissionKey && !VALID_KEYS.has(input.permissionKey)) {
 		throw new Error("Unknown permission.");
+	}
+	if (orgScopeCarriesResourceId(input.resourceType, input.resourceId ?? null)) {
+		throw new Error(ORG_SCOPE_WITH_RESOURCE_ID);
 	}
 	// Privilege ceiling: an allow-grant may not exceed the grantor's own effective permissions
 	// (a deny-grant only removes access, so it can never escalate the grantee — skip it).
