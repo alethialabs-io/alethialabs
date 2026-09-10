@@ -4,14 +4,30 @@
 // #4490: the sheet's five icon-only account-row controls (Save name, Cancel rename, Re-verify,
 // Rename, Disconnect) were named by `title` alone — no `aria-label`. `title` IS a valid fallback
 // in the accname algorithm, so a role query by name and an axe `button-name` scan both stayed
-// quiet; that is exactly why this needed a test that reaches the controls the way a screen reader
-// does, rather than one that checks for the `aria-label` attribute's presence (which would pass
-// even for a wrong or duplicated name, and would have passed before the fix too).
+// quiet.
 //
 // Nothing else renders this sheet: `apps/console/e2e` has no `connector-detail-sheet` hit, and the
 // one axe sweep in this repo (`e2e/flows/cross-cutting.spec.ts`) only ever scans the org overview
 // route, non-failing. Save/Cancel additionally sit behind a second conditional (`editingId`) that
 // only renders once "Rename" is clicked — a route-level scan could never reach them.
+//
+// EACH CONTROL BELOW CARRIES TWO ASSERTIONS, DELIBERATELY, AND NEITHER SHOULD BE DELETED:
+//
+//  - `getByRole("button", { name })` proves the accessible name is correct and unambiguous — an
+//    `aria-label` set to the wrong string, or one that collides with another control's name, fails
+//    here even though the attribute is "present".
+//  - `toHaveAttribute("aria-label", …)` is the one that actually pins THIS fix. For four of the
+//    five controls (Save name, Cancel rename, Rename, Disconnect) the `aria-label` text chosen is
+//    CHARACTER-IDENTICAL to the pre-existing `title` — only Re-verify's `title` carries extra text
+//    ("… with the stored credentials"). jsdom's accname computation falls back to `title` when
+//    `aria-label` is absent, so for those four the role query above returns the exact same node,
+//    named the exact same way, whether or not `aria-label` exists — it would have passed on the
+//    pre-fix tree too. The attribute assertion is what actually distinguishes "named by
+//    `aria-label`" from "named by the `title` fallback", which matters because `title` is not a
+//    reliable accessible name in real assistive tech: it never reaches touch, and some
+//    screen-reader configurations suppress it outright. A future reader who "simplifies" this back
+//    to a single role query per control silently re-introduces a test that cannot fail on a
+//    reverted fix.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render as rtlRender, screen } from "@testing-library/react";
@@ -100,23 +116,37 @@ describe("ConnectorDetailSheet — account row controls are reachable by accessi
 
 		// Two accounts, so "Rename"/"Disconnect" alone would be ambiguous — each name carries the
 		// account, same as the board's Connect/Manage controls (#4439).
-		expect(
-			screen.getByRole("button", { name: "Rename Prod AWS" }),
-		).toBeInTheDocument();
-		expect(
-			screen.getByRole("button", { name: "Disconnect Prod AWS" }),
-		).toBeInTheDocument();
-		expect(
-			screen.getByRole("button", { name: "Rename Staging AWS" }),
-		).toBeInTheDocument();
-		expect(
-			screen.getByRole("button", { name: "Disconnect Staging AWS" }),
-		).toBeInTheDocument();
+		const renameProd = screen.getByRole("button", { name: "Rename Prod AWS" });
+		expect(renameProd).toBeInTheDocument();
+		expect(renameProd).toHaveAttribute("aria-label", "Rename Prod AWS");
+
+		const disconnectProd = screen.getByRole("button", {
+			name: "Disconnect Prod AWS",
+		});
+		expect(disconnectProd).toBeInTheDocument();
+		expect(disconnectProd).toHaveAttribute("aria-label", "Disconnect Prod AWS");
+
+		const renameStaging = screen.getByRole("button", {
+			name: "Rename Staging AWS",
+		});
+		expect(renameStaging).toBeInTheDocument();
+		expect(renameStaging).toHaveAttribute("aria-label", "Rename Staging AWS");
+
+		const disconnectStaging = screen.getByRole("button", {
+			name: "Disconnect Staging AWS",
+		});
+		expect(disconnectStaging).toBeInTheDocument();
+		expect(disconnectStaging).toHaveAttribute(
+			"aria-label",
+			"Disconnect Staging AWS",
+		);
 
 		// Only the failed account is eligible to re-verify.
-		expect(
-			screen.getByRole("button", { name: "Re-verify Staging AWS" }),
-		).toBeInTheDocument();
+		const reverifyStaging = screen.getByRole("button", {
+			name: "Re-verify Staging AWS",
+		});
+		expect(reverifyStaging).toBeInTheDocument();
+		expect(reverifyStaging).toHaveAttribute("aria-label", "Re-verify Staging AWS");
 		expect(
 			screen.queryByRole("button", { name: /re-verify prod aws/i }),
 		).not.toBeInTheDocument();
@@ -136,9 +166,12 @@ describe("ConnectorDetailSheet — account row controls are reachable by accessi
 
 		// Exactly one row can be editing (`editingId` is a single id, not a set), so these two
 		// names need no account in them to stay unique on the page.
-		expect(screen.getByRole("button", { name: "Save name" })).toBeInTheDocument();
-		expect(
-			screen.getByRole("button", { name: "Cancel rename" }),
-		).toBeInTheDocument();
+		const save = screen.getByRole("button", { name: "Save name" });
+		expect(save).toBeInTheDocument();
+		expect(save).toHaveAttribute("aria-label", "Save name");
+
+		const cancel = screen.getByRole("button", { name: "Cancel rename" });
+		expect(cancel).toBeInTheDocument();
+		expect(cancel).toHaveAttribute("aria-label", "Cancel rename");
 	});
 });
