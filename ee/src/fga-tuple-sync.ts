@@ -28,13 +28,38 @@ function grantSubject(g: { principalType: "user" | "team"; principalId: string }
 		: `user:${g.principalId}`;
 }
 
-/** The OpenFGA object a grant targets — the resource instance, or the org if org-wide. */
-function grantObject(g: {
-	orgId: string;
-	resourceType: string;
-	resourceId: string | null;
-}): string {
-	return g.resourceId ? `${g.resourceType}:${g.resourceId}` : `org:${g.orgId}`;
+/**
+ * The OpenFGA object a grant's tuples LIVE on — or null when the grant expands to no tuples and
+ * there is consequently nothing to read or delete.
+ *
+ * THE INVARIANT: this must name the object every tuple `expandGrant` produces for the same scope
+ * sits on. It is therefore derived from the very predicate the expander expands through, taken as
+ * an argument rather than reached for, so the two cannot be given different ones.
+ *
+ * It used to be `resourceId ? \`${resourceType}:${resourceId}\` : \`org:${orgId}\`` — the two
+ * columns read independently of the expander. For an `('org', <resource-uuid>)` row that produced
+ * `org:<resource-uuid>`, an object type/id pair that does not exist, while `expandGrant` had
+ * written the tuples on `org:<orgId>`. The pre-write delete and `removeScopedGrant` both looked
+ * there and found nothing, so REVOKING SUCH A GRANT REMOVED THE ROW AND LEFT THE ACCESS —
+ * unrevokable privilege through the supported path, silent, with the UI showing the grant gone
+ * (#4584). Two readers deciding separately where a grant's tuples are is the defect; one predicate
+ * feeding both is the fix.
+ *
+ * Exported because that invariant is a PURE property and is unit-tested as one: for each scope
+ * shape, expand the grant for real and assert every tuple's object equals what this returns (and
+ * that an expansion of nothing returns null). Null is not an error — a row that confers nothing
+ * wrote nothing.
+ */
+export function grantObject(
+	grantTarget: CoreContext["fga"]["grantTarget"],
+	g: { orgId: string; resourceType: string; resourceId: string | null },
+): string | null {
+	const target = grantTarget(g.resourceType, g.resourceId);
+	if (target.kind === "org") return `org:${g.orgId}`;
+	if (target.kind === "resource") {
+		return `${target.resourceType}:${target.resourceId}`;
+	}
+	return null;
 }
 
 export class FgaTupleSync implements TupleSync {
@@ -42,6 +67,26 @@ export class FgaTupleSync implements TupleSync {
 		private readonly core: CoreContext,
 		private readonly client: OpenFgaClient,
 	) {}
+
+	/**
+	 * The idempotent "replace this grant's tuples" delete: clear whatever the subject already has
+	 * on the object this grant writes to. A no-op when the grant expands to nothing.
+	 *
+	 * ⚠ It does NOT clear tuples an already-existing bad-pair row wrote under the PRE-#4584
+	 * reading. Those are on `org:<orgId>`, where they are indistinguishable from the tuples of a
+	 * legitimate org-wide grant conferring the same permission on the same subject, so deleting
+	 * them here would revoke real access. Whether any exist, and whether removing them takes
+	 * access from anyone, is what the #4583 audit answers per row
+	 * (docs/ops/grants-org-kind-with-resource-id.sql).
+	 */
+	private async clearGrantTuples(
+		subject: string,
+		grant: { orgId: string; resourceType: string; resourceId: string | null },
+	): Promise<void> {
+		const object = grantObject(this.core.fga.grantTarget, grant);
+		if (object === null) return;
+		await this.deleteTuples(await this.existingFor(subject, object));
+	}
 
 	private async writeTuples(tuples: FgaTuple[]): Promise<void> {
 		for (const batch of chunk(tuples, BATCH)) {
@@ -123,16 +168,12 @@ export class FgaTupleSync implements TupleSync {
 			},
 			keys,
 		);
-		await this.deleteTuples(
-			await this.existingFor(grantSubject(grant), grantObject(grant)),
-		);
+		await this.clearGrantTuples(grantSubject(grant), grant);
 		await this.writeTuples(tuples);
 	}
 
 	async removeScopedGrant(grant: ScopedGrant): Promise<void> {
-		await this.deleteTuples(
-			await this.existingFor(grantSubject(grant), grantObject(grant)),
-		);
+		await this.clearGrantTuples(grantSubject(grant), grant);
 	}
 
 	async syncHierarchyEdge(edge: HierarchyEdge): Promise<void> {
@@ -165,27 +206,20 @@ export class FgaTupleSync implements TupleSync {
 			from grants where role_id = ${roleId}
 		`);
 		for (const g of grants) {
-			const subject =
-				g.principal_type === "team"
-					? `team:${g.principal_id}#member`
-					: `user:${g.principal_id}`;
-			const object = g.resource_id
-				? `${g.resource_type}:${g.resource_id}`
-				: `org:${g.org_id}`;
-			await this.deleteTuples(await this.existingFor(subject, object));
-			await this.writeTuples(
-				this.core.fga.expandGrant(
-					{
-						orgId: g.org_id,
-						principalType: g.principal_type,
-						principalId: g.principal_id,
-						effect: g.effect,
-						resourceType: g.resource_id ? g.resource_type : "org",
-						resourceId: g.resource_id,
-					},
-					keys,
-				),
-			);
+			// The scope, EXACTLY as syncScopedGrant sees it. This loop used to inline its own
+			// copy of the object expression and its own `g.resource_id ? g.resource_type : "org"`
+			// normalisation — a structural duplicate that a fix to `grantObject` alone would have
+			// left wrong, which is the shape where the second renderer never gets the fix.
+			const scope = {
+				orgId: g.org_id,
+				principalType: g.principal_type,
+				principalId: g.principal_id,
+				effect: g.effect,
+				resourceType: g.resource_type,
+				resourceId: g.resource_id,
+			};
+			await this.clearGrantTuples(grantSubject(scope), scope);
+			await this.writeTuples(this.core.fga.expandGrant(scope, keys));
 		}
 	}
 
