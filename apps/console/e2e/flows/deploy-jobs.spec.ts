@@ -15,11 +15,13 @@
 //   4. environments: drift, the default tag, auto-heal, and the promotion gates behind Edit rules.
 //
 // WHAT IS DELIBERATELY NOT HERE, because a test that is silently someone else's is worse than none:
-//   · **Cancelling a job.** `destructive-actions.yaml` records `jobs.cancel` as `confirm: none`,
-//     `status: missing`, `issue: #4288` — the lane that puts a ConfirmDialog in front of it flips
-//     that entry and owns the flow. Driving the mutation here would go red the moment #4288 lands,
-//     from a file that has no business knowing about the dialog. The Cancel BUTTON's presence is
-//     measured; the click is not.
+//   · **Cancelling a job.** #4288 has LANDED — `destructive-actions.yaml` now records `jobs.cancel`
+//     as `confirm: confirm-dialog`, `dialog_title: "Cancel this job?"`, `status: confirmed`. That
+//     registry is the single record of what stands between the click and the mutation, and it is
+//     `scripts/check-destructive-actions.mjs` and `audit/destructive.spec.ts` that hold the code to
+//     it. Driving the click here would be a second, weaker copy of a flow that registry owns, kept
+//     in step by hand with a dialog this file has no business knowing about. The Cancel BUTTON's
+//     presence is what this file measures; the click is not.
 //   · **Re-running a job.** `rerunJob` inserts a real QUEUED job into the shared persona org, and
 //     the QA env runs a live runner that claims QUEUED DEPLOY jobs within seconds. The assertion
 //     that used to live here ("navigate to a DIFFERENT job id") therefore raced a runner and was a
@@ -241,9 +243,17 @@ test.describe("Deploy jobs — the org jobs list on the filter standard", () => 
 			timeout: 25_000,
 		});
 		// One of this project's two jobs is FAILED.
+		//
+		// 25s, LIKE EVERY OTHER ASSERTION IN THIS FILE, and this is the one that needs it most.
+		// `useFilterUrlSync` hydrates the store AFTER mount, so the first query goes out with
+		// `search: ""` and paints the org-wide first page — which already holds this project's two
+		// rows, since they were just seeded. The "before" state is therefore exactly 2, and this
+		// cannot reach 1 until the hydrated `search` clears `useDebouncedValue(filters.search, 300)`,
+		// re-keys the query, round-trips and re-renders. On the default 5s, on a 3-worker runner
+		// this file elsewhere describes as taking 1.5 min for a cold nav, that is a coin flip.
 		await expect(
 			owner.page.getByRole("row").filter({ hasText: deployed.name }),
-		).toHaveCount(1);
+		).toHaveCount(1, { timeout: 25_000 });
 	});
 
 	test("choosing a facet option writes it back to the URL", async ({ owner }) => {
@@ -258,9 +268,11 @@ test.describe("Deploy jobs — the org jobs list on the filter standard", () => 
 		await owner.page.getByPlaceholder("All statuses").click();
 		await owner.page.getByRole("button", { name: /^Failed/ }).click();
 		await expect(owner.page).toHaveURL(/[?&]statuses=FAILED\b/);
+		// The URL is written synchronously; the ROWS are a debounce plus a refetch behind it, so
+		// this waits as long as its siblings rather than on the default 5s.
 		await expect(
 			owner.page.getByRole("row").filter({ hasText: deployed.name }),
-		).toHaveCount(1);
+		).toHaveCount(1, { timeout: 25_000 });
 	});
 
 	test("facet counts come from the unfiltered universe", async ({ owner }) => {
@@ -278,9 +290,10 @@ test.describe("Deploy jobs — the org jobs list on the filter standard", () => 
 		// An option click `preventDefault`s its mousedown to keep focus in the input, so the list
 		// stays open — which is what lets the SAME list be re-read after the selection lands.
 		await owner.page.getByRole("button", { name: /^Failed/ }).click();
+		// Same debounce + refetch as its sibling above, so the same 25s.
 		await expect(
 			owner.page.getByRole("row").filter({ hasText: deployed.name }),
-		).toHaveCount(1);
+		).toHaveCount(1, { timeout: 25_000 });
 		// Both are still offered even though the rows are now one status: the one just selected,
 		// and one the current filter excludes entirely.
 		await expect(owner.page.getByRole("button", { name: /^Failed/ })).toBeVisible();
@@ -292,12 +305,20 @@ test.describe("Deploy jobs — the org jobs list on the filter standard", () => 
 			owner.page,
 			`/${owner.orgSlug}/~/jobs?search=e2e-no-such-project-${Date.now()}`,
 		);
+		// THIS ONE ASSERTION IS THE WHOLE TEST, and it is the one that bites. `jobs-client.tsx` picks
+		// its empty state with `total === 0 ? "No jobs yet" : noMatch`, where `total` is the count
+		// over the UNFILTERED universe — the onboarding copy would otherwise tell an org with a
+		// year of history that it has never run a job. The org here HAS jobs and the filter matches
+		// none of them, which is exactly the state that separates the two branches: a `total`
+		// computed over the filtered rows renders "No jobs yet" and this `toBeVisible` times out.
+		//
+		// The line removed from under it — `expect(getByText("No jobs yet")).toHaveCount(0)` —
+		// asserted the other branch's copy from inside this one. The two are mutually exclusive
+		// arms of a single ternary, so it was implied by the assertion above and had no failing
+		// input of its own.
 		await expect(owner.page.getByText("No jobs match these filters")).toBeVisible({
 			timeout: 25_000,
 		});
-		// `total` is the count over the UNFILTERED universe, so the onboarding copy here would tell
-		// an org with a year of history that it has never run a job.
-		await expect(owner.page.getByText("No jobs yet")).toHaveCount(0);
 	});
 
 	test("the project-scoped list pins the project and drops its facet", async ({ owner }) => {
@@ -359,7 +380,9 @@ test.describe("Deploy jobs — the job detail page", () => {
 	});
 
 	test("a terminal job offers Re-run", async ({ owner }) => {
-		// Presence only — see this file's header for why the click is #4288-adjacent runner work.
+		// Presence only. The reason is the live runner, NOT #4288 — see this file's header: `rerunJob`
+		// inserts a real QUEUED job that the QA runner claims within seconds, so the post-click state
+		// cannot be asserted without racing it.
 		await visit(owner.page, `/${owner.orgSlug}/~/jobs/${successJobId}`);
 		await expect(owner.page.getByRole("button", { name: /re-?run/i })).toBeEnabled({
 			timeout: 25_000,
@@ -386,8 +409,9 @@ test.describe("Deploy jobs — the job detail page", () => {
 			envId: deployed.envId,
 		});
 		await visit(owner.page, `/${owner.orgSlug}/~/jobs/${id}`);
-		// The BUTTON, not the mutation: `destructive-actions.yaml` has `jobs.cancel` as
-		// `status: missing` behind #4288, and that lane owns what happens after the click.
+		// The BUTTON, not the mutation: `jobs.cancel` is `confirm: confirm-dialog`, `status: confirmed`
+		// in `destructive-actions.yaml` since #4288 landed, and that registry and its checks own what
+		// happens after the click. This file measures that the control is offered at all.
 		await expect(owner.page.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled({
 			timeout: 25_000,
 		});

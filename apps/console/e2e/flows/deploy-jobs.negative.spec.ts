@@ -78,9 +78,21 @@ test.describe("Deploy jobs — negative & empty states", () => {
 		await expect(
 			owner.page.getByText(/Clusters appear here once a project deploys its first environment/i),
 		).toBeVisible();
-		// The OTHER state this surface can render. A fetch failure that fell through to "no
-		// clusters provisioned" would tell the user their infrastructure vanished.
-		await expect(owner.page.getByText("Couldn't load clusters")).toHaveCount(0);
+		// WHAT THIS MEASURES IS THE `clusters.length === 0` PREDICATE, and its other direction is
+		// `deploy-jobs.spec.ts` › "the project's clusters page names the cluster and its endpoint":
+		// `ClustersClient` filters ONE org-wide list by `projectId`, so a filter that dropped a
+		// project's real clusters would show this same empty state, and that sibling test is the
+		// only thing that would notice. The two together are the measurement.
+		//
+		// THE LINE REMOVED HERE WAS `expect(getByText("Couldn't load clusters")).toHaveCount(0)`.
+		// `clusters-client.tsx` is `isError ? ErrorState : clusters.length === 0 ? Empty : grid` —
+		// mutually exclusive branches of one component — so asserting the error copy's absence from
+		// inside the empty branch has no failing input at all. The error branch is real and is NOT
+		// covered here: `getClusters` is a Next server action, and `audit/destructive.spec.ts`
+		// records that an action's name is nowhere in its request (an opaque `Next-Action` header on
+		// a POST to the current URL), so a route-level fault cannot target this query without
+		// faulting every other action the page makes. Driving it needs a component-level test, which
+		// is not this suite.
 	});
 
 	test("a single-environment project hides Promote and says why, without claiming to be empty", async ({
