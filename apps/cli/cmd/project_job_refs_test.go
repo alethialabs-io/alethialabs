@@ -196,10 +196,10 @@ func TestPlanJobToApply_RefusesBothFormsOfOnePlan(t *testing.T) {
 	}
 }
 
-// TestPlanJobToApply_NeedsAProject pins the guard behind the narrowing. The selector's project
-// field matches an id by PREFIX, and every string has the empty string as a prefix — so without
-// this refusal `--latest-plan` with no project resolves whatever PLAN ran most recently anywhere
-// in the organization.
+// TestPlanJobToApply_NeedsAProject pins the guard behind the narrowing. With no project the
+// field is dropped from the filter entirely — `set()` keeps only non-empty fields — so `--type
+// PLAN` is the only narrowing left and `--latest-plan` resolves whatever PLAN ran most recently
+// anywhere in the organization.
 func TestPlanJobToApply_NeedsAProject(t *testing.T) {
 	f := &jobsSelectLister{jobs: planRefJobs()}
 	got, err := planJobToApply(f, "", "", true)
@@ -207,7 +207,7 @@ func TestPlanJobToApply_NeedsAProject(t *testing.T) {
 		t.Fatalf("--latest-plan with no project must be refused, resolved %q", got.ID)
 	}
 	if got.ID == "plan-other-project" {
-		t.Fatal("matched every job in the org — an empty id is a prefix of all of them")
+		t.Fatal("matched every job in the org — with no project the field is dropped from the filter")
 	}
 	if !strings.Contains(err.Error(), "--project") {
 		t.Errorf("the refusal must name the flag that fixes it: %v", err)
