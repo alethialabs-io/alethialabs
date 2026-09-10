@@ -425,9 +425,16 @@ jobs:
       # The runner-minutes METER price (#4276). `lib/billing/config.ts` reads it as
       # `meterPrices.team`; without it the metered half of a Pro subscription is unset, so any
       # usage or overage surface a spec drives measures a console that has no meter — a green
-      # assertion about a product that is not configured. `capabilities.ts` does not REQUIRE it
-      # for the `stripe` promise (nothing fails closed on it today), so it is set here and only
-      # here, with the first spec that needs it.
+      # assertion about a product that is not configured.
+      #
+      # IT IS NOT A DISPLAY SETTING, which is what an earlier revision of this comment claimed
+      # while deliberately keeping it out of `REQUIRED_ENV.stripe` (#4631). `planCreateItems`
+      # (app/server/actions/billing.ts) reads it on the CREATION path and pushes the meter as a
+      # SECOND subscription item, so setting it changes what every Stripe leg's subscription is
+      # made of — starting with the one `global-setup` builds through `startProTrial`, before a
+      # single test runs. So it is REQUIRED for the `stripe` promise, and `--assert-env` names it
+      # at the top of the job: a leg that promises `stripe` with this half unset builds a
+      # one-item subscription and measures a persona this suite does not describe.
       STRIPE_PRICE_METER_TEAM: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PRICE_METER_TEAM || '' }}
       STRIPE_PRICE_AI_PLUS: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PRICE_AI_PLUS || '' }}
       STRIPE_PRICE_AI_MAX: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PRICE_AI_MAX || '' }}

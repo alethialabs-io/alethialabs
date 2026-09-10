@@ -59,6 +59,33 @@ export function mapStatus(s: Stripe.Subscription.Status): BillingStatus {
 }
 
 /**
+ * The subscription's PLAN-bearing line: the LICENSED item, never the metered runner-minutes
+ * add-on. Returns `undefined` when the subscription carries no licensed item at all.
+ *
+ * NOT `items.data[0]`, and the difference is a paying org's entitlement. A Pro subscription is
+ * created with TWO items the moment `STRIPE_PRICE_METER_TEAM` is set — the flat per-seat plan
+ * price plus the graduated METERED price (`planCreateItems`, app/server/actions/billing.ts). The
+ * Stripe API does not promise `items.data` in creation order, so position 0 is whichever line the
+ * API happened to list first; when that is the meter, `planForPriceId` returns null and the write
+ * below stamps `community` over a live Pro subscription. `seats` and `currentPeriodEnd` come off
+ * the same item and would be wrong in the same silent way.
+ *
+ * The predicate is the price's own `usage_type` — the identical question `getBillingSummary`
+ * (app/server/actions/billing.ts) and `syncOrgSeats` (lib/billing/seats.ts) already ask, in the
+ * same words. A price with no `recurring` at all counts as the plan line, matching both.
+ *
+ * The `undefined` case is not a fallback to position 0 on purpose: a subscription made of nothing
+ * but metered lines is a shape this platform never creates, and resolving the plan from
+ * `metadata.plan` alone (see `planFromSubscription`) is the fail-closed answer. Guessing from a
+ * meter price is how the defect above reappears wearing a different name.
+ */
+export function planItem(
+	sub: Stripe.Subscription,
+): Stripe.SubscriptionItem | undefined {
+	return sub.items.data.find((i) => i.price.recurring?.usage_type !== "metered");
+}
+
+/**
  * Applies a subscription's current state to its org's billing record, resolving the
  * org from `subscription.metadata.organization_id`. Events without it are ignored
  * (logged), so a stray Stripe object can never mutate the wrong tenant.
@@ -73,7 +100,15 @@ export async function syncSubscriptionToBilling(
 		);
 		return;
 	}
-	const item = sub.items.data[0];
+	const item = planItem(sub);
+	if (!item && sub.items.data.length > 0) {
+		// Loud rather than silent: everything below now resolves from `metadata.plan` alone, and a
+		// reader looking at a `community` row needs to be able to find out why.
+		console.warn(
+			`[stripe] subscription ${sub.id} carries ${sub.items.data.length} item(s) and none is a ` +
+				"licensed plan line — syncing from metadata.plan only",
+		);
+	}
 	const priceId = item?.price.id;
 
 	// STANDALONE AI subscription (ai_plus/ai_max) — a SEPARATE Stripe product from the org

@@ -67,9 +67,26 @@ export type Capability = (typeof CAPABILITIES)[number];
 /** The variable a workflow sets. Comma-separated capability names; empty or absent means none. */
 export const PROMISE_VAR = "ALETHIA_E2E_CAPABILITIES";
 
-/** What each promise requires to be present in the console's environment for the promise to be true. */
+/**
+ * What each promise requires to be present in the console's environment for the promise to be true.
+ *
+ * `STRIPE_PRICE_METER_TEAM` is in the `stripe` list because it is NOT a display-only setting, which
+ * is how it was first read (#4631). `planCreateItems` (app/server/actions/billing.ts) pushes the
+ * meter price as a SECOND subscription item on the creation path, so the variable decides what
+ * every Stripe leg's subscription is MADE OF — including the one `global-setup` builds through
+ * `startProTrial` before a single test runs. A leg that promises `stripe` with the meter half unset
+ * therefore does not build the `team` persona this suite documents; it builds a different, one-item
+ * subscription and measures that. Half-configured is exactly the downgraded run this file exists to
+ * turn into a named failure at the top of the job.
+ */
 const REQUIRED_ENV: Record<Capability, readonly string[]> = {
-	stripe: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICE_TEAM", "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"],
+	stripe: [
+		"STRIPE_SECRET_KEY",
+		"STRIPE_WEBHOOK_SECRET",
+		"STRIPE_PRICE_TEAM",
+		"STRIPE_PRICE_METER_TEAM",
+		"NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+	],
 	"ai-mock": ["ALETHIA_AI_MOCK"],
 	encryption: ["ALETHIA_CRED_ENCRYPTION_KEY"],
 };
