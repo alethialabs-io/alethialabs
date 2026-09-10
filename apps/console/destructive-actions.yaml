@@ -715,12 +715,25 @@ controls:
     route: /[org]
     surface: apps/console/components/agent/artifact-share-popover.tsx
     mutation: unshareArtifact
-    reach: [{ open: "Ask AI" }, { open: "Artifacts" }, { open: "Share" }]
+    # FOUR steps, because `ArtifactSharePopover` is rendered in exactly one place —
+    # `agent-artifact-viewer.tsx`, i.e. INSIDE an opened artifact. A chain that went straight from
+    # the gallery to `{ open: "Share" }` never opened one, and worse, it did not sit still: `/Share/i`
+    # matched the gallery's "Shared with you" TAB, so the audit switched to the shared tab — where no
+    # owned artifact and no Share button exist — and then withheld blaming the trigger. The gallery
+    # card now names itself "Open artifact <name>" so a step can predict it.
+    reach: [{ open: "Ask AI" }, { open: "Artifacts" }, { open: "Open artifact" }, { open: "Share" }]
     # NOT a switch named "Shared" — no such control has ever existed here. The popover lists one
     # BUTTON per share target ("Everyone in org", then a row per team and per role), each with a
-    # check box drawn inside it. The entry named a control the spec could never locate, so it
-    # withheld rather than measuring; the role and the name now say what is on screen.
-    control: { role: button, name: "Everyone in org" }
+    # check box drawn inside it.
+    #
+    # The name is the ACT, not the target, and that is what makes this entry safe to run. `toggle()`
+    # is destructive in ONE direction: it raises the dialog only when the target is already shared,
+    # and on an unshared one the same click PERFORMS a `shareArtifact` mutation. Naming the row
+    # "Everyone in org" made both directions equally locatable, so a run against an unshared fixture
+    # would have mutated and then failed "no confirmation appeared" — from a suite whose contract is
+    # to open, assert, cancel and prove nothing changed. The row now answers to "Stop sharing with …"
+    # only while it is ON, so an unshared fixture withholds rather than mutating.
+    control: { role: button, name: "Stop sharing with <target>" }
     # Granting is a bare click — it is not destructive. REVOKING asks, per #4280's default; the
     # dialog is rendered outside the Popover, because opening it moves focus and closes the popover.
     confirm: confirm-dialog
@@ -730,7 +743,9 @@ controls:
     persona: owner
     status: confirmed
     prod-qa: skip
-    reason: needs a shared artifact in a collaborating org, and the trigger only asks on the OFF direction
+    # The chain reaches the control now; what is left is the FIXTURE — the popover self-gates on
+    # `canShare` (paid org, more than one member) and the row is only nameable while it is ON.
+    reason: needs a collaborating org holding an artifact already shared with a target
 
   - id: agent.thread.delete
     route: /[org]

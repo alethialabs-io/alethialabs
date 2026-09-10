@@ -209,6 +209,15 @@ export function AgentArtifactGallery({
 								<button
 									type="button"
 									// Opens the VIEWER. It does not touch any conversation.
+									//
+									// The name is spelled out rather than left to the card's text
+									// because the viewer is a REACH STEP: `ArtifactSharePopover`
+									// renders nowhere else, so `agent.artifact.unshare` cannot be
+									// measured without a step that opens an artifact, and a step
+									// can only name a control it can predict — an artifact's own
+									// name is not knowable to the registry. It still contains the
+									// visible label, so WCAG 2.5.3 holds.
+									aria-label={`Open artifact ${a.name}`}
 									onClick={() => setSelected(a)}
 									className="flex flex-1 flex-col items-start gap-3 text-left"
 								>

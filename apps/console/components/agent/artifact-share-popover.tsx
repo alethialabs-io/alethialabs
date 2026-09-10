@@ -229,6 +229,16 @@ function ShareRow({
   return (
     <button
       type="button"
+      // The name carries the ACT, and the act depends on the state. The check box is a bare
+      // <span> with no semantics, so "Everyone in org" told a screen reader nothing about whether
+      // this row was on or off — and it told the destructive-action audit even less: one name for
+      // both directions means the audit can locate a row it is about to SHARE and click it, which
+      // performs a `shareArtifact` mutation from a suite whose contract is to open, assert, cancel
+      // and prove nothing changed. Only the OFF direction is destructive, so only the OFF
+      // direction answers to "Stop sharing with …"; an unshared row cannot be resolved by that
+      // entry at all, and the audit withholds instead of mutating. Both forms contain the visible
+      // label, so WCAG 2.5.3 holds.
+      aria-label={checked ? `Stop sharing with ${label}` : `Share with ${label}`}
       disabled={busy}
       onClick={onClick}
       className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-muted disabled:opacity-60"
