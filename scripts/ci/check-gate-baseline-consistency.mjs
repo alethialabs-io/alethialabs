@@ -506,7 +506,18 @@ function selfTest() {
 	);
 
 	// ── the floors ─────────────────────────────────────────────────────────────────────────────
-	ok("the floor is under the ledger, not over it", MIN_LISTED_TESTS > 0 && MIN_LISTED_TESTS < 571);
+	// Against the REAL ledger, not a literal. A floor typed above the ledger's own size would
+	// refuse every honest tree, and `571` written here as a number goes stale the first time a
+	// lane regenerates a slice — the assertion would then be about a fact nobody re-measured.
+	ok(
+		"the floor sits under the ledger it is meant to protect",
+		(() => {
+			const doc = JSON.parse(fs.readFileSync(path.join(ROOT, BASELINE), "utf8"));
+			let entries = 0;
+			for (const files of Object.values(doc.projects)) for (const tests of Object.values(files)) entries += Object.keys(tests).length;
+			return MIN_LISTED_TESTS > 0 && MIN_LISTED_TESTS < entries;
+		})(),
+	);
 	ok(
 		"a listing that collapsed is refused, not compared",
 		(() => {
