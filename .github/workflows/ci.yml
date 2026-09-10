@@ -1496,6 +1496,18 @@ jobs:
       - name: "env:reap refusal — replays incident #3841 against env.sh"
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/env-reap-test.sh
+      # A stopped `env:check` used to leave its vitest workers running on the SHARED box — three
+      # per abandoned run, one set measured at 8h40m, and nothing on the box reaps them (#4343).
+      # The fix is three traps, an exit-code contract and a matcher that decides what dies on a
+      # machine other people are working on; `bash -n` two hundred lines below parses every line of
+      # it and calls none. This step also pins the CALL SITES — a tag exported one line too early
+      # puts `playwright install --with-deps`, apt/dpkg as root, inside the blast radius — and five
+      # of its mutants edit env.sh rather than the lib, because the first version of that guard
+      # anchored on a COMMENT mentioning the command and passed the exact defect it was written
+      # for. An assertion nothing has ever made fail is a claim, not a check.
+      - name: "Suite-reap trap + scope — replays incident #4343 (15 mutations, 5 on the call sites)"
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/lib/env-suite-reap-test.sh
       - name: Worktree landed-detection (squash merges; merged-PR-plus-new-commit is NOT landed)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-landed-test.sh
