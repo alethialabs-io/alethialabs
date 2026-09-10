@@ -40,38 +40,49 @@ test.beforeEach(() => {
 
 // ── Agent — reached from the topbar ─────────────────────────────────────────────────────────
 test.describe("Agent — reached from the topbar (owner)", () => {
-	test("Ask AI opens the assistant as a docked panel from an arbitrary route", async ({
-		owner,
-	}) => {
-		// Deliberately NOT the org home: `ask-ai-button.tsx` promises the launcher on "every
-		// authenticated view", and the org home is the one view elench-agent.spec.ts already
-		// proves. A settings-shaped route is the other side of that promise.
-		await owner.page.goto(usagePath(owner.orgSlug));
-		await expect(owner.page).not.toHaveURL(/\/login/);
+	test(
+		"Ask AI opens the assistant as a docked panel from an arbitrary route",
+		{ tag: "@needs:stripe" },
+		async ({ owner }) => {
+			// Deliberately NOT the org home: `ask-ai-button.tsx` promises the launcher on "every
+			// authenticated view", and the org home is the one view elench-agent.spec.ts already
+			// proves. A settings-shaped route is the other side of that promise.
+			await owner.page.goto(usagePath(owner.orgSlug));
+			await expect(owner.page).not.toHaveURL(/\/login/);
 
-		await owner.page.getByRole("button", { name: "Ask AI" }).click();
+			await owner.page.getByRole("button", { name: "Ask AI" }).click();
 
-		// Two assertions, and the second is the load-bearing one. The panel is a `role="dialog"`
-		// labelled "Elench assistant" (elench-panel.tsx) — but a dialog can be present and empty,
-		// so the composer, which only the OPEN surface mounts, is what proves the click did
-		// something rather than that something was already there.
-		const panel = owner.page.getByRole("dialog", { name: /elench assistant/i });
-		await expect(panel).toBeVisible({ timeout: 30_000 });
-		await expect(owner.page.getByTestId("elench-composer")).toBeVisible();
-	});
+			// Two assertions, and the second is the load-bearing one. The panel is a `role="dialog"`
+			// labelled "Elench assistant" (elench-panel.tsx) — but a dialog can be present and empty,
+			// so the composer, which only the OPEN surface mounts, is what proves the click did
+			// something rather than that something was already there.
+			const panel = owner.page.getByRole("dialog", { name: /elench assistant/i });
+			await expect(panel).toBeVisible({ timeout: 30_000 });
+			await expect(owner.page.getByTestId("elench-composer")).toBeVisible();
+		},
+	);
 });
 
 // ── Usage — meters + over-time chart ────────────────────────────────────────────────────────
 //
-// ALL NINE `Usage —` TESTS CARRY `@needs:stripe`, and the two Pro ones are not the only reason.
-// `UsagePanel` is fronted by `getBillingSummary()` (app/server/actions/billing.ts), which resolves
-// the org's LIVE subscription through Stripe whenever the org has one, and overrides the plan,
-// the status and the period the card renders with what it finds. The `team` persona has one, so
-// its card is Stripe's answer; the Hobby card is only meaningful as the other side of that
-// comparison. Tagging the surface — not just the two tests that name "Pro" — is what makes "this
-// leg measured the plan" a true sentence. The `qa` leg promises `stripe`
-// (.github/workflows/release-gate.yml); on a leg that does not, `fixtures/qa.ts` fails the test in
-// CI and skips it locally with a reason that begins NOT MEASURED. Never a `test.skip(!env)`.
+// `@needs:stripe` IS A PROPERTY OF THE SURFACE, NOT OF THE ASSERTION, and the two Pro tests are
+// not the only reason. `UsagePanel` is fronted by `getBillingSummary()`
+// (app/server/actions/billing.ts), which resolves the org's LIVE subscription through Stripe
+// whenever the org has one, and overrides the plan, the status and the period the card renders
+// with what it finds. The `team` persona has one, so its card is Stripe's answer; the Hobby card
+// is only meaningful as the other side of that comparison. Tagging the surface — not just the
+// tests that name "Pro" — is what makes "this leg measured the plan" a true sentence. The `qa`
+// leg promises `stripe` (.github/workflows/release-gate.yml); on a leg that does not,
+// `fixtures/qa.ts` fails the test in CI and skips it locally with a reason that begins NOT
+// MEASURED. Never a `test.skip(!env)`.
+//
+// SO THE TAG FOLLOWS `usagePath`, NOT THIS DESCRIBE (#4619 review). TWELVE tests in this file
+// reach that surface and all twelve carry it: the nine `Usage —` tests below, plus
+// "Ask AI opens the assistant as a docked panel from an arbitrary route" and both
+// "Account settings dialog (owner)" tests, which `goto(usagePath(...))` to get a shell to open
+// their affordance from and so render the Stripe-fronted panel behind it. Tagging only the
+// describes whose assertions mention a plan left three counter-examples in the file, which made
+// the rule above un-checkable by anything but reading it and disagreeing.
 test.describe("Usage — meters + over-time chart", () => {
 	test(
 		"authed persona reaches usage (not bounced to /login)",
@@ -403,29 +414,37 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 
 // ── Account settings dialog ─────────────────────────────────────────────────────────────────
 test.describe("Account settings dialog (owner)", () => {
-	test("opens from the account menu and shows the user email", async ({ owner }) => {
-		await owner.page.goto(usagePath(owner.orgSlug));
-		await owner.page.getByRole("button", { name: /account menu/i }).click();
-		await owner.page.getByRole("button", { name: /account settings/i }).click();
+	test(
+		"opens from the account menu and shows the user email",
+		{ tag: "@needs:stripe" },
+		async ({ owner }) => {
+			await owner.page.goto(usagePath(owner.orgSlug));
+			await owner.page.getByRole("button", { name: /account menu/i }).click();
+			await owner.page.getByRole("button", { name: /account settings/i }).click();
 
-		const dialog = owner.page.getByRole("dialog");
-		await expect(
-			dialog.getByRole("heading", { name: /account settings/i }),
-		).toBeVisible({ timeout: 15_000 });
-		await expect(dialog.getByText(owner.email)).toBeVisible();
-	});
+			const dialog = owner.page.getByRole("dialog");
+			await expect(
+				dialog.getByRole("heading", { name: /account settings/i }),
+			).toBeVisible({ timeout: 15_000 });
+			await expect(dialog.getByText(owner.email)).toBeVisible();
+		},
+	);
 
-	test("the dialog exposes the profile fields, auth badge and danger zone", async ({ owner }) => {
-		await owner.page.goto(usagePath(owner.orgSlug));
-		await owner.page.getByRole("button", { name: /account menu/i }).click();
-		await owner.page.getByRole("button", { name: /account settings/i }).click();
+	test(
+		"the dialog exposes the profile fields, auth badge and danger zone",
+		{ tag: "@needs:stripe" },
+		async ({ owner }) => {
+			await owner.page.goto(usagePath(owner.orgSlug));
+			await owner.page.getByRole("button", { name: /account menu/i }).click();
+			await owner.page.getByRole("button", { name: /account settings/i }).click();
 
-		const dialog = owner.page.getByRole("dialog");
-		await expect(dialog.getByLabel(/display name/i)).toBeVisible({ timeout: 15_000 });
-		// The email input is read-only (immutable after registration).
-		await expect(dialog.getByLabel("Email", { exact: true })).toBeDisabled();
-		await expect(
-			dialog.getByRole("button", { name: /delete account/i }),
-		).toBeVisible();
-	});
+			const dialog = owner.page.getByRole("dialog");
+			await expect(dialog.getByLabel(/display name/i)).toBeVisible({ timeout: 15_000 });
+			// The email input is read-only (immutable after registration).
+			await expect(dialog.getByLabel("Email", { exact: true })).toBeDisabled();
+			await expect(
+				dialog.getByRole("button", { name: /delete account/i }),
+			).toBeVisible();
+		},
+	);
 });
