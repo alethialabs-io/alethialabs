@@ -380,45 +380,64 @@ test.describe("Onboarding — a second organization", () => {
 	});
 
 	test("picking the other organization navigates to it", async ({ member }) => {
-		// An org overview load, a popover, a client-side push and a second org overview load. The
-		// 30s default is not a budget for that — it is less than the navigation wait BELOW on its
-		// own, so the test died on its own deadline before that wait could ever report (measured on
-		// run 34469855618, both attempts `timedOut` with no assertion having failed).
-		test.setTimeout(120_000);
+		// Two org-overview loads, a popover, and possibly a no-op selection in between. The 30s
+		// default is not a budget for that — it is less than the navigation wait below on its own.
+		test.setTimeout(180_000);
 		await member.page.goto(`/${member.orgSlug}`);
-		const trigger = member.page.getByRole("button", { name: /switch organization/i });
-		// The trigger renders the ACTIVE org's name (components/org-switcher.tsx · SwitcherTrigger),
-		// which is how the option that is not it can be identified without knowing either name.
-		const activeLabel = (await trigger.innerText()).trim();
-		await trigger.click();
-
+		const chevron = member.page.getByRole("button", { name: /switch organization/i });
+		const search = member.page.getByPlaceholder(/find organization/i);
 		const options = member.page.getByRole("option");
-		await expect(options.first()).toBeVisible();
-		// First line only: each option also renders a plan badge and, for the active one, a check.
-		const names = (await options.allInnerTexts()).map((t) => t.split("\n")[0].trim());
-		const other = names.findIndex((n) => n.length > 0 && !activeLabel.includes(n));
-		expect(
-			other,
-			`no option distinct from the active org "${activeLabel}" — the switcher offered ${JSON.stringify(names)}`,
-		).toBeGreaterThanOrEqual(0);
 
-		await options.nth(other).click();
-		// The popover closing is `handleSelect` having RUN; the URL moving is it having chosen a
-		// target. Separating them is what tells "the click missed" from "the switch went nowhere"
-		// — components/org-switcher.tsx closes and then refuses to navigate for an org with no
-		// slug, and a single timeout on the URL cannot tell those two apart.
-		await expect(member.page.getByPlaceholder(/find organization/i)).toBeHidden({
-			timeout: 15_000,
-		});
-		// The URL segment is what scopes the request, so the switch is only real once it moves.
-		await member.page.waitForURL(
-			(url) => {
-				const parts = url.pathname.split("/").filter(Boolean);
-				return parts.length >= 1 && parts[0] !== member.orgSlug;
-			},
-			{ timeout: 30_000 },
-		);
-		await expect(member.page.getByRole("button", { name: /switch organization/i })).toBeVisible();
+		await chevron.click();
+		await expect(options.first()).toBeVisible();
+		const count = await options.count();
+		expect(count, "the member belongs to two organizations").toBeGreaterThanOrEqual(2);
+
+		// WHICH OPTION IS THE ACTIVE ONE IS NOT SOMETHING THIS TEST GUESSES ANY MORE, and the guess
+		// it used to make is exactly why it failed twice. The org switcher is a SPLIT button
+		// (components/shell/switcher-trigger.tsx): the BODY is a link carrying the active org's
+		// name, and the CHEVRON — the only control named "Switch organization" — carries no text at
+		// all. Reading the chevron's `innerText` therefore returned "", every option compared as
+		// "not the active one", index 0 was clicked, and index 0 WAS the active org. `handleSelect`
+		// returns early on the active id, so the popover closed and the URL correctly never moved:
+		// an assertion that was true about the wrong thing, failing on the product for a defect that
+		// was entirely in the test (run 34485439701).
+		//
+		// So the option is found by CONSEQUENCE rather than by label, badge, icon or class name:
+		// press each in turn until the URL leaves this org. Selecting the active one is a no-op by
+		// design and is tolerated; a switcher that navigates for NONE of them fails the assertion
+		// below rather than passing on an absence.
+		let landedOn: string | null = null;
+		for (let i = 0; i < count && landedOn === null; i++) {
+			if (!(await search.isVisible().catch(() => false))) {
+				await chevron.click();
+				await expect(options.first()).toBeVisible();
+			}
+			await options.nth(i).click();
+			// The popover closing is `handleSelect` having RUN; the URL moving is it having chosen a
+			// target. Separating them is what tells "the click missed" from "the selection was a
+			// no-op" — org-switcher.tsx closes and only then decides whether it has anywhere to go.
+			await expect(search).toBeHidden({ timeout: 15_000 });
+			try {
+				await member.page.waitForURL(
+					(url) => {
+						const parts = url.pathname.split("/").filter(Boolean);
+						return parts.length >= 1 && parts[0] !== member.orgSlug;
+					},
+					{ timeout: 20_000 },
+				);
+				landedOn = new URL(member.page.url()).pathname.split("/").filter(Boolean)[0] ?? null;
+			} catch {
+				// The active org (or one with no slug, which the list renders disabled). Next.
+			}
+		}
+
+		expect(
+			landedOn,
+			`no option in the switcher navigated away from /${member.orgSlug} — ${count} option(s) were offered and every one of them was a no-op`,
+		).toBeTruthy();
+		// It is a real org overview, not a bounce: the shell rendered, with its own switcher.
+		await expect(chevron).toBeVisible();
 	});
 });
 
