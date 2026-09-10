@@ -443,6 +443,111 @@ if [ "${1:-}" = "--callsites" ]; then
 	exit "$fails"
 fi
 
+# ── mode: env.sh's two status contracts, DRIVEN rather than read ──────────────────────────────
+# Both of these shipped broken out of this issue's own work, and neither is visible to a guard
+# that reads text: they are about what a status IS, under an errexit that a caller can suspend.
+#
+# The functions are lifted verbatim out of env.sh and given stubs, the same way the remote script
+# is lifted for the fixture — so these assertions are about the shipped text, not a copy.
+if [ "${1:-}" = "--functions" ]; then
+	env_sh="$2"
+	[ -r "$env_sh" ] || {
+		echo "FAIL - $env_sh is not readable" >&2
+		exit 3
+	}
+	TMP="$(mktemp -d)"
+	trap 'rm -rf "$TMP"' EXIT
+	for f in push_tree ssh_box read_registry; do
+		sed -n "/^$f() {/,/^}/p" "$env_sh" >"$TMP/$f.sh"
+		[ -s "$TMP/$f.sh" ] || bad "could not lift $f() out of $env_sh"
+	done
+
+	# A. push_tree's status is the RSYNC's — not the registry touch's, and not nothing.
+	#
+	# `cmd_push --watch` runs `push_tree && build_ee && echo pushed`, and as the left operand of
+	# `&&` push_tree runs with errexit SUSPENDED for its whole body. So a trailing
+	# `ssh_box … || echo …` — which always returns 0 — took the rsync's status out along with the
+	# touch's, and a failed push went on to rebuild ee/dist from the stale tree and print "pushed"
+	# for the rest of the session. The plain `env:push` path kept working, which is why only the
+	# watch shape can catch it.
+	cat >"$TMP/drive-push.sh" <<'SH'
+set -euo pipefail
+LOG="$1"; RSYNC_RC="$2"; TOUCH_RC="$3"
+ROOT=/tmp/nonexistent; REMOTE=/opt/alethia
+require_box() { printf '1.2.3.4'; }
+slug() { printf 's1'; }
+rsync() { echo RSYNC >>"$LOG"; return "$RSYNC_RC"; }
+ssh_box() { echo TOUCH >>"$LOG"; return "$TOUCH_RC"; }
+build_ee() { echo BUILD >>"$LOG"; }
+. "$4"
+push_tree && build_ee && echo PUSHED >>"$LOG"
+SH
+	push_case() { # <label> <rsync-rc> <touch-rc>
+		: >"$TMP/push.log"
+		bash "$TMP/drive-push.sh" "$TMP/push.log" "$2" "$3" "$TMP/push_tree.sh" >/dev/null 2>&1
+		echo "$?"
+	}
+	before="$fails"
+
+	rc="$(push_case fail 1 0)"
+	[ "$rc" != 0 ] || bad "a failed rsync left the watch chain succeeding (status $rc)"
+	grep -q BUILD "$TMP/push.log" &&
+		bad "a failed rsync still reached build_ee — ee/dist would be rebuilt from a stale tree"
+	grep -q PUSHED "$TMP/push.log" &&
+		bad "a failed rsync still printed 'pushed'"
+
+	rc="$(push_case ok 0 0)"
+	[ "$rc" = 0 ] || bad "a good push returned $rc"
+	grep -q BUILD "$TMP/push.log" || bad "a good push did not reach build_ee"
+	grep -q TOUCH "$TMP/push.log" || bad "a good push did not record activity"
+
+	rc="$(push_case touch-fails 0 1)"
+	[ "$rc" = 0 ] || bad "a registry hiccup failed a good push (status $rc)"
+	grep -q BUILD "$TMP/push.log" || bad "a registry hiccup stopped build_ee"
+	# CONDITIONAL. An unconditional summary line prints "ok" underneath its own failures, which is
+	# the shape of every guard that reports green while measuring red.
+	[ "$fails" = "$before" ] &&
+		ok "push_tree's status is the rsync's: a failed push stops the watch chain, a failed touch does not"
+
+	# B. ssh_box RETURNS on an unreachable box; it does not exit the caller's shell.
+	#
+	# `exit` inside a function ends the shell, so `|| true` cannot catch it — it never returns to
+	# be caught. Inside `$( )` the exit is confined to the subshell, which is the reassuring half
+	# and not the operative one: the ASSIGNMENT then carries status 1 and errexit aborts the
+	# caller. read_registry documents itself as failing CLOSED, and `reg="$(read_registry)"` in
+	# cmd_reap_dry_run became a mute abort — require_box's message swallowed by its own 2>/dev/null.
+	cat >"$TMP/drive-ssh.sh" <<'SH'
+set -euo pipefail
+REMOTE=/opt/alethia
+require_box() { echo "✗ the sandbox box is not up" >&2; exit 1; }
+forget_stale_host_key() { :; }
+ssh() { echo "SSH-RAN" ; return 0; }
+. "$1"
+. "$2"
+ssh_box "anything" 2>/dev/null || echo CAUGHT
+reg="$(read_registry)"
+[ -z "$reg" ] || echo "NOT-EMPTY"
+echo SURVIVED
+SH
+	out="$(bash "$TMP/drive-ssh.sh" "$TMP/ssh_box.sh" "$TMP/read_registry.sh" 2>/dev/null)"
+	rc=$?
+	case "$out" in
+	*CAUGHT*) ok "a caller's '|| …' can catch an unreachable box — ssh_box returns, it does not exit" ;;
+	*) bad "'|| …' never saw a status: ssh_box ended the shell instead of returning" ;;
+	esac
+	case "$out" in
+	*SURVIVED*) ok "read_registry still fails CLOSED: empty answer, status 0, caller alive" ;;
+	*) bad "read_registry's documented fail-closed contract is broken — the caller died (rc $rc)" ;;
+	esac
+	case "$out" in
+	*SSH-RAN*) bad "ssh ran with an empty ip — require_box's failure did not stop it" ;;
+	*NOT-EMPTY*) bad "read_registry returned content from an unreachable box" ;;
+	esac
+
+	[ "$fails" = 0 ] || echo "functions($env_sh): $fails failed" >&2
+	exit "$fails"
+fi
+
 # ── the orchestrator ──────────────────────────────────────────────────────────────────────────
 ENV_SH="$ROOT/scripts/env.sh"
 TMP="$(mktemp -d)"
@@ -455,6 +560,9 @@ bash "$SELF" --probe "$LIB" || fails=$((fails + 1))
 echo "# 7: env.sh's call sites"
 bash "$SELF" --callsites "$ENV_SH" || fails=$((fails + 1))
 [ "$fails" = 0 ] && ok "both call sites arm before the run, disarm after it, and tag only what they started"
+
+echo "# 7b: env.sh's status contracts"
+bash "$SELF" --functions "$ENV_SH" || fails=$((fails + 1))
 
 # ── 8. the assertions above must be able to fail ──────────────────────────────────────────────
 # Every row is a defect that shipped, or nearly did. The env.sh rows are here because the first
@@ -482,11 +590,19 @@ mutate_lib() { # <name> <sed program|@disarm>
 	}
 	detect --probe "$1" "$out"
 }
+# A MUTANT MUST STILL PARSE. One of these was written badly enough to delete an unrelated `fi` in
+# cmd_up, and it was duly "caught" — by `bash -n` failing inside the probe, which says nothing
+# about the assertion it was supposed to exercise. A mutation that breaks the file is not a
+# mutation, it is a typo with a green tick.
 mutate_env() { # <name> — reads the program from stdin, applied by awk
 	local out="$TMP/env-$1.sh"
 	awk -f /dev/stdin "$ENV_SH" >"$out"
 	cmp -s "$ENV_SH" "$out" && {
 		bad "mutation '$1' changed nothing — it is not testing what it names"
+		return
+	}
+	bash -n "$out" 2>/dev/null || {
+		bad "mutation '$1' does not parse — it would be 'caught' for the wrong reason"
 		return
 	}
 	detect --callsites "$1" "$out"
@@ -550,6 +666,41 @@ AWK
 # degrades to report-only) and completely silent, so the anchor is the whole assignment.
 mutate_env tag-exported-with-the-wrong-value <<'AWK'
 { sub(/export ALETHIA_SUITE_TAG='\$_suite_tag'/, "export ALETHIA_SUITE_TAG=\047hello\047"); print }
+AWK
+
+# The two status contracts, mutated back to the forms that shipped. `mutate_env` probes the call
+# sites; these need the --functions probe, which is what actually drives them.
+mutate_fn() { # <name> — awk program on stdin
+	local out="$TMP/fn-$1.sh"
+	awk -f /dev/stdin "$ENV_SH" >"$out"
+	cmp -s "$ENV_SH" "$out" && {
+		bad "mutation '$1' changed nothing — it is not testing what it names"
+		return
+	}
+	bash -n "$out" 2>/dev/null || {
+		bad "mutation '$1' does not parse — it would be 'caught' for the wrong reason"
+		return
+	}
+	detect --functions "$1" "$out"
+}
+
+# push_tree ending on `ssh_box … || echo …` — always 0, so nothing decides its status, the rsync
+# included. Under `--watch` that fed build_ee a stale tree and printed "pushed" indefinitely.
+# SCOPED TO push_tree by a range, not by proximity to the touch: cmd_up runs a registry touch of
+# its own, and a looser rule deleted an `fi` out of THAT function instead.
+mutate_fn push-status-swallowed-by-the-touch <<'AWK'
+/^push_tree\(\) \{/ { inside = 1 }
+inside && /^  return "\$rsync_rc"$/ { next }
+inside && /^  if \[ "\$rsync_rc" = 0 \]; then$/ { next }
+inside && /^  fi$/ { next }
+{ print }
+inside && /^\}$/ { inside = 0 }
+AWK
+
+# ssh_box exiting instead of returning: `|| true` can never catch it, and inside `$( )` the
+# containment turns a CAUGHT failure into an uncaught assignment status that errexit acts on.
+mutate_fn ssh-box-exits-instead-of-returning <<'AWK'
+{ sub(/ip="\$\(require_box\)" \|\| return \$\?/, "ip=\"$(require_box)\" || exit $?"); print }
 AWK
 
 # ── 9. and it must NOT fire on a legal reflow ─────────────────────────────────────────────────

@@ -76,9 +76,17 @@ _suite_live=0
 #
 # The failure branch is the interesting one. A tagged reap names only this run, so "nothing
 # matched" is an ordinary outcome — but it is also what a tag that failed to propagate looks like,
-# and the two are indistinguishable from here. So when nothing matched, REPORT what is still under
-# this env's tree instead of killing it: that is the operator's evidence, in the shape the issue's
-# own detection snippet prints, and the one case where a human should reach for the scoped pkill.
+# and the two are indistinguishable from here. So when nothing matched, report what is still under
+# this env's tree instead of killing it: the operator's evidence, in the shape the issue's own
+# detection snippet prints, and the one case where a human should reach for the scoped pkill.
+#
+# IT REPORTS WHAT CARRIES THE PATH IN ITS ARGV, which is not the same as "everything under the
+# tree" and must not be read as it. `pgrep -af` matches command lines, and a Next server's argv is
+# literally `next-server (v16.2.12)` with no path in it — the same fact env_rss_mb in scripts/env.sh
+# is built on, which is why THAT function resolves /proc/<pid>/cwd instead. So a running console
+# never appears here. The class #4343 measured does: those vitest workers are `node
+# …/envs/<slug>/node_modules/…`, path and all. A quiet report is therefore weaker evidence than a
+# loud one, and `ps -eo pid,ppid,etime,args` on the box remains the complete answer.
 #
 # `2>/dev/null` precedes the input redirection deliberately: redirections apply left to right, so
 # with it after `< "$d/environ"` the "no such file" for a process that exited between the glob and

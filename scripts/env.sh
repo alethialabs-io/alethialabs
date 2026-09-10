@@ -255,18 +255,27 @@ forget_stale_host_key() { # <ip>
 
 ssh_box() {
   local ip rc
-  # `|| exit $?` rather than leaning on `set -e`, because errexit is not always on when this runs.
-  # require_box's own `exit 1` — with the "the box is not up" message that names the remedy — only
-  # ends the `$( )` subshell, so a caller that handles failure (`ssh_box … || rc=$?`, an `if`, a
-  # `&&` chain) suppressed errexit for the assignment too and carried on with an EMPTY ip: `ssh
-  # root@` fails 255, gets treated as a stale host key and retried, and the operator is told about
-  # a host key instead of a down box.
+  # `|| return $?` rather than leaning on `set -e`, because errexit is not always on when this
+  # runs. require_box's own `exit 1` — with the "the box is not up" message that names the remedy
+  # — only ends the `$( )` subshell, so a caller that handles failure (`ssh_box … || rc=$?`, an
+  # `if`, a `&&` chain) suppressed errexit for the assignment too and carried on with an EMPTY ip:
+  # `ssh root@` fails 255, gets treated as a stale host key and retried, and the operator is told
+  # about a host key instead of a down box.
   #
   # NOT introduced by #4343 — `|| restore_rc=$?`, `|| mode_rc=$?`, `|| up_rc=$?` and two `|| true`s
-  # were already doing it (the failure-tolerant ones happen to sit inside `$( )`, which contains
-  # the damage). #4343's suite call is simply the first on a path long enough for the box to go
-  # away underneath it. Fixed here, for every caller, rather than at the new one.
-  ip="$(require_box)" || exit $?
+  # were already doing it. #4343's suite call is simply the first on a path long enough for the box
+  # to go away underneath it. Fixed here, for every caller, rather than at the new one.
+  #
+  # RETURN, NOT EXIT, and the difference is a regression this shipped once. `exit` inside a
+  # function ends the SHELL, so `|| true` cannot catch it — it never returns to be caught. Inside a
+  # command substitution the exit is confined to the subshell, which sounds safe and is the wrong
+  # half of the story: the ASSIGNMENT then carries status 1, and under `set -e` that aborts the
+  # caller. read_registry is `ssh_box … 2>/dev/null || true` and documents itself as failing CLOSED
+  # — "an empty answer means assume someone is there" — and `reg="$(read_registry)"` in
+  # cmd_reap_dry_run turned that into a mute abort with require_box's message swallowed by the
+  # 2>/dev/null. env_scopes did the same to `env:status`, one line after it printed "box: up".
+  # `return` gives the property without ending anyone's shell.
+  ip="$(require_box)" || return $?
   # shellcheck disable=SC2029  # remote expansion is intended
   ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$ip" "$@" && return 0
   rc=$?
@@ -679,7 +688,7 @@ provision_box() {
 # have in front of you, not what you have pushed. node_modules/.next/.git are excluded:
 # they are platform-specific or huge, and the box builds its own.
 push_tree() {
-  local ip slug_
+  local ip slug_ rsync_rc=0
   ip="$(require_box)"
   slug_="$(slug)"
   # --delete keeps the box honest about renames and deletions, which makes these two
@@ -713,7 +722,7 @@ push_tree() {
     --exclude=/.env --exclude='.env.local' --exclude='.env.*.local' \
     --exclude='apps/*/.env.local' \
     -e "ssh -o StrictHostKeyChecking=accept-new" \
-    "$ROOT/" "root@$ip:$REMOTE/envs/$slug_/"
+    "$ROOT/" "root@$ip:$REMOTE/envs/$slug_/" || rsync_rc=$?
 
   # PUSHING A TREE IS SOMEONE USING THIS ENV, and until #4343 only `env:up` ever said so. Every
   # other path — `env:push --watch` for a whole session, a browser run, a console suite — left
@@ -733,13 +742,26 @@ push_tree() {
   #   A run longer than REAP_AFTER_MIN — NOT covered. Nothing re-touches mid-run.
   # Both residuals are recorded on #4343 rather than left for the next reader to rediscover.
   #
-  # WARNS, and must never be the status push_tree returns. A touch is advisory — the rsync above
-  # is the thing that was asked for, and it has already succeeded. Letting this line decide the
-  # function's exit code would make a registry hiccup fail `env:push` after a good push, and in
-  # `--watch` (`push_tree && build_ee`) it would silently skip the ee build for the rest of the
-  # session while every push still printed as if it had worked.
-  ssh_box "$REMOTE/bin/env-registry.sh touch '$slug_'" ||
-    echo "⚠ could not record activity for '$slug_' — the idle reaper cannot see this session." >&2
+  # WARNS, and must never be the status push_tree returns. A touch is advisory — the rsync is the
+  # thing that was asked for. Letting this line decide the function's exit code would make a
+  # registry hiccup fail `env:push` after a good push, and in `--watch` (`push_tree && build_ee`)
+  # silently skip the ee build for the rest of the session while every push still printed as if it
+  # had worked.
+  #
+  # BUT "not the touch's status" IS NOT "no status", and the first attempt at this shipped the
+  # second. `ssh_box … || echo …` as the LAST command of the function always returns 0, which took
+  # the rsync's status out with the touch's — and as the left operand of `&&`, push_tree runs with
+  # errexit suspended for its whole body, so a failing rsync no longer aborted it either. Net:
+  # `--watch` fed build_ee a stale tree and printed "pushed" for the rest of the session. The
+  # non-watch path kept working, which is exactly why it was easy to miss.
+  #
+  # So the rsync's status is captured above and returned below, and it is the ONLY thing that
+  # decides. Driven in scripts/lib/env-suite-reap-test.sh with rsync stubbed to fail.
+  if [ "$rsync_rc" = 0 ]; then
+    ssh_box "$REMOTE/bin/env-registry.sh touch '$slug_'" ||
+      echo "⚠ could not record activity for '$slug_' — the idle reaper cannot see this session." >&2
+  fi
+  return "$rsync_rc"
 }
 
 # Rebuild @alethia/ee ON THE BOX, from the ee/src that was just pushed (#3732).
@@ -865,6 +887,10 @@ cmd_up() {
   # empty env with nothing anywhere saying the flag was dropped. Ask the SHIPPED script
   # whether it understands the argument before promising it.
   local mode_rc=0
+  # `= 1` below means "grep found nothing", and ssh_box now has a SECOND way to return 1: an
+  # unreachable box (require_box). That cannot be confused here only because the `alloc` above
+  # exits first on exactly that condition — checked, not assumed. Anything moved ahead of this
+  # probe must keep that property, or a down box starts reporting a stale box script.
   ssh_box "grep -q SEED_REQUEST $REMOTE/bin/env-mode.sh" >/dev/null 2>&1 || mode_rc=$?
   # ONLY rc 1 — grep's own "not found" — means the shipped script is stale. Anything else
   # (2 = no such file, 255 = ssh transport) is a broken box, and reading a failure as an
