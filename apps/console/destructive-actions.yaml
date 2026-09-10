@@ -471,11 +471,12 @@ controls:
     mutation: removeTeamMember
     reach: [{ open: "Manage team" }]
     control: { role: button, name: "Remove" }
-    confirm: none
+    confirm: confirm-dialog
+    confirm_action: "Remove from team"
+    dialog_title: "Remove this team member?"
     fixture: team-with-a-member
     persona: team
-    status: missing
-    issue: "#4271"
+    status: confirmed
     prod-qa: own-rows-only
 
   - id: sso.provider.remove
@@ -510,39 +511,48 @@ controls:
     route: /[org]/~/settings/members
     surface: apps/console/components/settings/members/members-table.tsx
     mutation: authClient.organization.removeMember
-    reach: [{ menu: "Row actions" }]
+    # "Manage", not "Row actions": the trigger's accessible name is the button's `aria-label` in
+    # members-table.tsx, and a reach step naming something the page does not render withholds the
+    # control's verdict WITHOUT failing — a confirmation nobody ever opened, recorded as fine.
+    reach: [{ menu: "Manage" }]
     control: { role: menuitem, name: "Remove from organization" }
-    confirm: none
+    confirm: confirm-dialog
+    confirm_action: "Remove member"
+    dialog_title: "Remove this member?"
     fixture: member-row
     persona: team
-    status: missing
-    issue: "#4271"
+    status: confirmed
     prod-qa: own-rows-only
 
   - id: members.invitation.cancel
     route: /[org]/~/settings/members
     surface: apps/console/components/settings/members/members-table.tsx
     mutation: authClient.organization.cancelInvitation
-    reach: [{ menu: "Row actions" }]
+    reach: [{ menu: "Manage" }]
     control: { role: menuitem, name: "Cancel invitation" }
-    confirm: none
+    confirm: confirm-dialog
+    # "Revoke invitation" — a THIRD spelling on purpose. The menu item that opens this dialog says
+    # "Cancel invitation" and the dialog's own way out says "Cancel"; a confirm button spelled like
+    # either one gives the spec two matches and no attributable verdict.
+    confirm_action: "Revoke invitation"
+    dialog_title: "Cancel this invitation?"
     fixture: pending-invitation
     persona: team
-    status: missing
-    issue: "#4271"
+    status: confirmed
     prod-qa: own-rows-only
 
   - id: members.suspend
     route: /[org]/~/settings/members
     surface: apps/console/components/settings/members/members-table.tsx
     mutation: setMemberSuspended
-    reach: [{ menu: "Row actions" }]
+    reach: [{ menu: "Manage" }]
     control: { role: menuitem, name: "Suspend" }
-    confirm: none
+    confirm: confirm-dialog
+    confirm_action: "Suspend member"
+    dialog_title: "Suspend this member?"
     fixture: member-row
     persona: team
-    status: missing
-    issue: "#4271"
+    status: confirmed
     prod-qa: skip
     reason: suspends a real person's access; the QA org's only other member is the founder
 
@@ -550,13 +560,17 @@ controls:
     route: /[org]/~/settings/members
     surface: apps/console/components/settings/members/members-table.tsx
     mutation: setMemberSuspended
-    reach: [{ menu: "Row actions" }]
+    reach: [{ menu: "Manage" }]
     control: { role: menuitem, name: "Reactivate" }
-    confirm: none
+    # Reactivating destroys nothing, and it is registered and confirmed anyway: it is the same
+    # `setMemberSuspended` write on the same menu, and a toggle whose two directions disagree about
+    # whether they ask first teaches the reader that the question is decoration.
+    confirm: confirm-dialog
+    confirm_action: "Reactivate member"
+    dialog_title: "Reactivate this member?"
     fixture: suspended-member-row
     persona: team
-    status: missing
-    issue: "#4271"
+    status: confirmed
     prod-qa: skip
     reason: the inverse of members.suspend, which is skipped
 
@@ -564,13 +578,17 @@ controls:
     route: /[org]/~/settings/members
     surface: apps/console/components/settings/members/members-table.tsx
     mutation: authClient.organization.removeMember
-    reach: [{ open: "select two rows" }]
+    # `Select` is the per-row checkbox's accessible name — ticking ONE row raises the bulk bar, which
+    # is all this entry needs. The previous step, "select two rows", was a sentence rather than a
+    # control, so it could never be taken.
+    reach: [{ open: "Select" }]
     control: { role: button, name: "Remove" }
-    confirm: none
+    confirm: confirm-dialog
+    confirm_action: "Remove selected"
+    dialog_title: "Remove the selected people?"
     fixture: two-member-rows
     persona: team
-    status: missing
-    issue: "#4271"
+    status: confirmed
     prod-qa: skip
     reason: bulk over real people
 
@@ -578,13 +596,14 @@ controls:
     route: /[org]/~/settings/members
     surface: apps/console/components/settings/members/members-table.tsx
     mutation: setMemberSuspended
-    reach: [{ open: "select two rows" }]
+    reach: [{ open: "Select" }]
     control: { role: button, name: "Suspend" }
-    confirm: none
+    confirm: confirm-dialog
+    confirm_action: "Suspend selected"
+    dialog_title: "Suspend the selected members?"
     fixture: two-member-rows
     persona: team
-    status: missing
-    issue: "#4271"
+    status: confirmed
     prod-qa: skip
     reason: bulk over real people
 
