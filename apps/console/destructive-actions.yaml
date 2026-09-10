@@ -390,11 +390,12 @@ controls:
     mutation: togglePolicy
     reach: [{ select: "a policy row" }]
     control: { role: switch, name: "Enabled" }
-    confirm: none
+    confirm: confirm-dialog
+    confirm_action: "Disable"
+    dialog_title: "Disable this policy?"
     fixture: alert-policy
     persona: team
-    status: missing
-    issue: "#4492"
+    status: confirmed
     prod-qa: skip
     reason: disabling a live policy silences a class of alerts across every channel routed to it
 
