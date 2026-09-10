@@ -377,10 +377,19 @@ test.describe("Onboarding — a second organization", () => {
 		await expect(member.page.getByPlaceholder(/find organization/i)).toBeVisible();
 		const options = member.page.getByRole("option");
 		await expect(options.first()).toBeVisible();
-		expect(
-			await options.count(),
-			"the member owns its own Hobby org and is a member of the team org — the switcher must offer both",
-		).toBeGreaterThanOrEqual(2);
+		// THE COUNT IS POLLED, NOT SAMPLED. The switcher renders the memberships it has so far and
+		// re-renders as `fetchWorkspace()` answers, so `await options.count()` is a single
+		// non-retrying read of a list that is still filling: the FIRST option being visible says
+		// nothing about the second having arrived. `expect.poll` re-reads it until it is 2 or the
+		// window is out, so a red here means the switcher never offered both — not that this line
+		// asked half a second too early.
+		await expect
+			.poll(() => options.count(), {
+				timeout: 15_000,
+				message:
+					"the member owns its own Hobby org and is a member of the team org — the switcher must offer both",
+			})
+			.toBeGreaterThanOrEqual(2);
 	});
 
 	test("picking the other organization navigates to it", async ({ member }) => {
@@ -394,8 +403,18 @@ test.describe("Onboarding — a second organization", () => {
 
 		await chevron.click();
 		await expect(options.first()).toBeVisible();
+		// THE LOOP BOUND BELOW IS THIS NUMBER, which is why sampling it once was worse here than in
+		// the test above: a `count()` taken while `fetchWorkspace()` was still answering could read
+		// 1, and the loop would then press ONLY option 0 — the very second organization this test
+		// exists to switch to would never be pressed at all. Polling first makes the list settle
+		// before it is measured; the read below is then the settled value.
+		await expect
+			.poll(() => options.count(), {
+				timeout: 15_000,
+				message: "the member belongs to two organizations",
+			})
+			.toBeGreaterThanOrEqual(2);
 		const count = await options.count();
-		expect(count, "the member belongs to two organizations").toBeGreaterThanOrEqual(2);
 
 		// WHICH OPTION IS THE ACTIVE ONE IS NOT SOMETHING THIS TEST GUESSES ANY MORE, and the guess
 		// it used to make is exactly why it failed twice. The org switcher is a SPLIT button
@@ -474,22 +493,31 @@ test.describe("Onboarding — invitation accept", () => {
 		//    the clickwrap, exactly as a person would walk them.
 		await signUpHobby(page, invitee);
 
-		/** How many organizations this account's switcher offers right now. */
-		async function orgCount(): Promise<number> {
+		/**
+		 * Asserts how many organizations this account's switcher offers, waiting for the list.
+		 *
+		 * IT ASSERTS RATHER THAN RETURNING A NUMBER, and that is the whole point: the returned
+		 * `await options.count()` it replaced was a single non-retrying read taken the moment the
+		 * first option became visible, while `fetchWorkspace()` was still answering. Reading `1`
+		 * during the AFTER is a red that names the product for a defect in this line's timing, and
+		 * reading `1` during the BEFORE is worse — it is the expected value, so a membership still
+		 * in flight would be reported as a clean measurement. `toHaveCount` re-reads until the list
+		 * settles on the number claimed, or fails naming both counts.
+		 */
+		async function expectOrgCount(expected: number, why: string): Promise<void> {
 			const trigger = page.getByRole("button", { name: /switch organization/i });
 			await expect(trigger).toBeVisible();
 			await trigger.click();
 			const options = page.getByRole("option");
 			await expect(options.first()).toBeVisible();
-			const n = await options.count();
+			await expect(options, why).toHaveCount(expected, { timeout: 15_000 });
 			await page.keyboard.press("Escape");
-			return n;
 		}
 
 		// THE BEFORE. One org — its own. Measured the same way as the after, so the pair is a
 		// DIFFERENCE rather than an absolute: "the team org is reachable" would also be true of an
 		// account that had been a member all along.
-		expect(await orgCount(), "a fresh account belongs to exactly one organization").toBe(1);
+		await expectOrgCount(1, "a fresh account belongs to exactly one organization");
 
 		// 3. Accept, through the product's own /invites/accept screen.
 		const token = await pendingInvitationId(orgId, invitee);
@@ -504,7 +532,7 @@ test.describe("Onboarding — invitation accept", () => {
 		// THE AFTER. Two orgs, and the inviting org is reachable by slug.
 		await page.goto(`/${team.orgSlug}`);
 		await expect(page).toHaveURL(new RegExp(`/${team.orgSlug}(/|$)`));
-		expect(await orgCount(), "accepting the invitation adds the inviting organization").toBe(2);
+		await expectOrgCount(2, "accepting the invitation adds the inviting organization");
 	});
 });
 
