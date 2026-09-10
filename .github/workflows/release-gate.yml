@@ -154,14 +154,21 @@ jobs:
           // playwright.config.ts's dead-zone guard (#2875) reads every workflow for exactly that
           // string to prove a project runs somewhere, and `--project=${{ matrix.project }}` is a
           // template it cannot see through. The emitter stays literal so the guard stays honest.
+          //
+          // `capabilities` IS A COMMA-SEPARATED SET, and the `env:` block below reads it with
+          // `contains(...)`, never `==`. Until #4456 every row held at most one name and the block
+          // compared the whole set against one name with `==`, so the first row to promise two things
+          // would have matched NOTHING and blanked all five Stripe variables — a leg that then
+          // fails its own `--assert-env` pre-check, or (had that check not existed) runs every
+          // billing assertion against an unconfigured console. See the env block for the six sites.
           const legs = [
-            { project: "hero",      args: "--project=hero",      workers: 1, retries: 1, capabilities: "",        manifest: false, floor: 1 },
-            { project: "elench-ai", args: "--project=elench-ai", workers: 1, retries: 1, capabilities: "ai-mock", manifest: false, floor: 1 },
-            { project: "console",   args: "--project=console",   workers: 2, retries: 1, capabilities: "stripe",  manifest: false, floor: 1 },
-            { project: "canvas",    args: "--project=canvas",    workers: 1, retries: 1, capabilities: "",        manifest: false, floor: 1 },
-            { project: "qa",        args: "--project=qa",        workers: 3, retries: 1, capabilities: "stripe",  manifest: false, floor: 300 },
-            { project: "audit",     args: "--project=audit",     workers: 1, retries: 1, capabilities: "",        manifest: true,  floor: 1 },
-            { project: "audit-interaction", args: "--project=audit-interaction", workers: 1, retries: 0, capabilities: "stripe", manifest: true, floor: 47 },
+            { project: "hero",      args: "--project=hero",      workers: 1, retries: 1, capabilities: "",                   manifest: false, floor: 1 },
+            { project: "elench-ai", args: "--project=elench-ai", workers: 1, retries: 1, capabilities: "ai-mock",            manifest: false, floor: 1 },
+            { project: "console",   args: "--project=console",   workers: 2, retries: 1, capabilities: "stripe,encryption",  manifest: false, floor: 1 },
+            { project: "canvas",    args: "--project=canvas",    workers: 1, retries: 1, capabilities: "",                   manifest: false, floor: 1 },
+            { project: "qa",        args: "--project=qa",        workers: 3, retries: 1, capabilities: "stripe,encryption",  manifest: false, floor: 300 },
+            { project: "audit",     args: "--project=audit",     workers: 1, retries: 1, capabilities: "",                   manifest: true,  floor: 1 },
+            { project: "audit-interaction", args: "--project=audit-interaction", workers: 1, retries: 0, capabilities: "stripe,encryption", manifest: true, floor: 47 },
           ];
           const ALL = legs.map((l) => l.project);
 
@@ -370,20 +377,45 @@ jobs:
       PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/results.json
       # THE PROMISE. A spec tagged `@needs:<capability>` on a leg that does not promise it is red,
       # never a skip; a promise whose variables are absent fails the pre-check step in seconds.
+      #
+      # ⚠ EVERY TEST BELOW IS `contains(matrix.capabilities, …)`, NEVER `== '…'`. `capabilities` is
+      # a comma-separated SET, and `==` asks whether the set has exactly one member with that name:
+      # the moment a leg promises two things (`stripe,encryption`, #4456) every `== 'stripe'` goes
+      # false and hands the leg an EMPTY Stripe key, an empty webhook secret and three empty price
+      # ids. `--assert-env` catches that as a named failure — but the shape it would otherwise
+      # produce, billing assertions running green against an unconfigured console, is the exact
+      # silent downgrade helpers/capabilities.ts exists to end.
+      #
+      # `contains` is a SUBSTRING test, so it is only equivalent to set membership while no
+      # capability name is a substring of another. That is not left to a comment:
+      # `capabilities.ts --assert-env` refuses the whole set when it stops holding, and that check
+      # runs on every leg, below, before the build.
       ALETHIA_E2E_CAPABILITIES: ${{ matrix.capabilities }}
-      ALETHIA_AI_MOCK: ${{ matrix.capabilities == 'ai-mock' && '1' || '' }}
+      ALETHIA_AI_MOCK: ${{ contains(matrix.capabilities, 'ai-mock') && '1' || '' }}
       ALETHIA_QA_E2E: ${{ matrix.project == 'qa' && '1' || '' }}
+      # The credential-encryption key, only where promised (#4456). Without it
+      # `isCredEncryptionConfigured()` is false and EVERY secret-bearing surface is inert: the
+      # add-channel sheet renders its "needs an encryption key" note and disables submit, and no
+      # connector credential can be stored. The gate could therefore exercise none of it.
+      #
+      # A FIXED NON-SECRET, not a repository secret, and the same literal `e2e-nightly.yml` already
+      # uses: base64 for the ASCII `alethia-e2e-cli-demo-throwaway!!`, exactly 32 bytes, which is
+      # what lib/crypto/secrets.ts accepts. The console it unlocks lives for one job against a
+      # throwaway database, nothing it encrypts outlives the run, and the key is fixed rather than
+      # generated so a failed decrypt stays reproducible. It must never be reused anywhere real.
+      # `.gitleaks.toml` allowlists this blob anchored to this variable name.
+      ALETHIA_CRED_ENCRYPTION_KEY: ${{ contains(matrix.capabilities, 'encryption') && 'YWxldGhpYS1lMmUtY2xpLWRlbW8tdGhyb3dhd2F5ISE=' || '' }}
       # Stripe TEST mode, only where promised. `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` is inlined at
       # BUILD time (apps/console/lib/billing/config.ts), which is why it is job-level env and not a
       # run-step env. The webhook secret is any test-mode `whsec_`: nothing reaches CI, and the
       # card-less trial syncs deterministically without one. NEVER `ALETHIA_DEPLOYMENT_MODE=hosted`
       # here — packages/email then refuses the OTP log fallback and nothing can sign in.
-      STRIPE_SECRET_KEY: ${{ matrix.capabilities == 'stripe' && secrets.STRIPE_TEST_SECRET_KEY || '' }}
-      STRIPE_WEBHOOK_SECRET: ${{ matrix.capabilities == 'stripe' && secrets.STRIPE_TEST_WEBHOOK_SECRET || '' }}
-      STRIPE_PRICE_TEAM: ${{ matrix.capabilities == 'stripe' && vars.STRIPE_TEST_PRICE_TEAM || '' }}
-      STRIPE_PRICE_AI_PLUS: ${{ matrix.capabilities == 'stripe' && vars.STRIPE_TEST_PRICE_AI_PLUS || '' }}
-      STRIPE_PRICE_AI_MAX: ${{ matrix.capabilities == 'stripe' && vars.STRIPE_TEST_PRICE_AI_MAX || '' }}
-      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ matrix.capabilities == 'stripe' && vars.STRIPE_TEST_PUBLISHABLE_KEY || '' }}
+      STRIPE_SECRET_KEY: ${{ contains(matrix.capabilities, 'stripe') && secrets.STRIPE_TEST_SECRET_KEY || '' }}
+      STRIPE_WEBHOOK_SECRET: ${{ contains(matrix.capabilities, 'stripe') && secrets.STRIPE_TEST_WEBHOOK_SECRET || '' }}
+      STRIPE_PRICE_TEAM: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PRICE_TEAM || '' }}
+      STRIPE_PRICE_AI_PLUS: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PRICE_AI_PLUS || '' }}
+      STRIPE_PRICE_AI_MAX: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PRICE_AI_MAX || '' }}
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PUBLISHABLE_KEY || '' }}
     steps:
       # `id:` so the two `!cancelled()` steps at the bottom can ask whether there is a WORKSPACE:
       # the `services:` block starts before this checkout, and a failed image pull skips everything
