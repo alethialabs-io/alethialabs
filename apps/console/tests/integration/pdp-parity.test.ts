@@ -22,7 +22,8 @@ import { z } from "zod";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { checksFor, denyChecksFor } from "@/lib/authz/fga-mapping";
 import { buildAuthorizationModel } from "@/lib/authz/fga-model";
-import { expandGrant, hierarchyTuple, type FgaTuple } from "@/lib/authz/fga-tuples";
+import { expandGrant, hierarchyTuple, teamMemberTuple, type FgaTuple } from "@/lib/authz/fga-tuples";
+import { EMPTY_SCOPE_DENIES } from "@/lib/authz/grant-scope";
 import { PostgresRbacPDP } from "@/lib/authz/postgres-rbac-pdp";
 import type { Action, Resource } from "@/lib/authz/registry";
 import { listOrgResourceIds } from "@/lib/authz/resource-tables";
@@ -34,6 +35,8 @@ import {
 	organization,
 	projects,
 	resourceHierarchy,
+	team,
+	teamMember,
 	user,
 } from "@/lib/db/schema";
 import { DB_UP } from "./db";
@@ -120,6 +123,7 @@ const PROJ_A1 = randomUUID(); // in ORG_A, USER_A has a scoped view grant on it
 const PROJ_A2 = randomUUID(); // in ORG_A, no scoped grant (org-wide deploy reaches it)
 const PROJ_A3 = randomUUID(); // in ORG_A, org-wide deploy ALLOW + a per-instance deploy DENY
 const PROJ_B1 = randomUUID(); // in ORG_B — the cross-tenant target
+const TEAM_A = randomUUID(); // in ORG_A, USER_A is a member — the team-principal path
 
 const pg = new PostgresRbacPDP();
 const actor: Actor = { userId: USER_A, orgId: ORG_A };
@@ -137,6 +141,8 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 			{ id: ORG_A, name: `A-${ORG_A.slice(0, 8)}` },
 			{ id: ORG_B, name: `B-${ORG_B.slice(0, 8)}` },
 		]);
+		await db.insert(team).values({ id: TEAM_A, name: "platform", organizationId: ORG_A });
+		await db.insert(teamMember).values({ teamId: TEAM_A, userId: USER_A });
 		await db.insert(projects).values([
 			mkProject(PROJ_A1, ORG_A),
 			mkProject(PROJ_A2, ORG_A),
@@ -191,6 +197,27 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 			// without it, "edit is denied everywhere" would also be the answer for a permission
 			// nobody holds, and the G6 cases would pass while asserting nothing.
 			grantRow({ permission_key: "project:edit", resource_id: PROJ_A2 }),
+			// G8: a TEAM principal, scoped to PROJ_A1. USER_A is a member, so both engines must
+			// reach it — Postgres through `team_member`, OpenFGA through the `team:T#member`
+			// userset. Nothing else in this fixture is granted to a team, so `expandGrant`'s
+			// team branch and the membership tuple were both unexercised here.
+			grantRow({
+				principal_type: "team",
+				principal_id: TEAM_A,
+				permission_key: "project:plan",
+				resource_id: PROJ_A1,
+			}),
+			// G9 + G10: the DENY scaffolding for the open ruling (#4584). An org-wide destroy
+			// ALLOW, minus a destroy DENY written with the contradictory pair. Whichever way
+			// `EMPTY_SCOPE_DENIES` is ruled, the two engines must AGREE — that assertion holds
+			// under both, and only the `want` value below moves.
+			grantRow({ permission_key: "project:destroy", resource_id: null }),
+			grantRow({
+				permission_key: "project:destroy",
+				resource_type: "org",
+				resource_id: PROJ_A3,
+				effect: "deny",
+			}),
 		];
 		await db.insert(grants).values(grantRows);
 
@@ -242,6 +269,10 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 				),
 			),
 			...edges.map((e) => hierarchyTuple(e)),
+			// Team membership is a fact about the org, not about a grant, so it is not something
+			// `expandGrant` can derive from a `grants` row — the dual-write mirrors it separately
+			// (`syncTeamMember`). Without it G8 reaches nobody and its cases would pass vacuously.
+			teamMemberTuple(TEAM_A, USER_A),
 		];
 		await writeTuples(storeId, tuples);
 	});
@@ -254,6 +285,8 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 			.where(inArray(resourceHierarchy.parent_id, [ORG_A, ORG_B]));
 		await db.delete(projects).where(inArray(projects.org_id, [ORG_A, ORG_B]));
 		await db.delete(organization).where(inArray(organization.id, [ORG_A, ORG_B]));
+		await db.delete(teamMember).where(eq(teamMember.teamId, TEAM_A));
+		await db.delete(team).where(eq(team.id, TEAM_A));
 		await db.delete(user).where(eq(user.id, USER_A));
 		if (storeId) {
 			await fetch(`${FGA_URL}/stores/${storeId}`, { method: "DELETE" }).catch(() => {});
@@ -337,6 +370,21 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		{ name: "edit on PROJ_A1 — the bad pair names it and confers nothing", action: "edit", id: PROJ_A1, want: false },
 		{ name: "edit on PROJ_A2 — the PROPERLY scoped grant does confer it (non-vacuity for the two false cases)", action: "edit", id: PROJ_A2, want: true },
 		{ name: "edit on PROJ_A3 — the bad pair is NOT org-wide either", action: "edit", id: PROJ_A3, want: false },
+
+		// A grant to a TEAM the actor belongs to. Postgres resolves it through `team_member`,
+		// OpenFGA through the `team:T#member` userset — two entirely different mechanisms that
+		// must agree, and neither was exercised by this fixture before.
+		{ name: "plan on PROJ_A1 via a TEAM grant (member of TEAM_A)", action: "plan", id: PROJ_A1, want: true },
+		{ name: "plan on PROJ_A2 — the team grant is scoped to A1", action: "plan", id: PROJ_A2, want: false },
+
+		// ── #4584, the UNDECIDED deny direction ──────────────────────────────────────────────
+		// Org-wide destroy ALLOW + a destroy DENY written with the contradictory pair on A3.
+		// The parity assertion holds either way; `want` is read from the constant so the
+		// maintainer's ruling is a one-line change here too. Under "nothing" the deny is
+		// dropped and A3 keeps destroy (fail-OPEN); under "the_whole_org" the exclusion applies
+		// to every project in the org.
+		{ name: "destroy on PROJ_A3 — the bad-pair DENY, per EMPTY_SCOPE_DENIES", action: "destroy", id: PROJ_A3, want: EMPTY_SCOPE_DENIES !== "the_whole_org" },
+		{ name: "destroy on PROJ_A1 — a project the bad-pair DENY does not name", action: "destroy", id: PROJ_A1, want: EMPTY_SCOPE_DENIES !== "the_whole_org" },
 	];
 
 	for (const c of cases) {
@@ -445,11 +493,13 @@ function grantRow(v: {
 	resource_id: string | null;
 	effect?: "allow" | "deny";
 	resource_type?: string;
+	principal_type?: "user" | "team";
+	principal_id?: string;
 }) {
 	return {
 		org_id: ORG_A,
-		principal_type: "user" as const,
-		principal_id: USER_A,
+		principal_type: v.principal_type ?? ("user" as const),
+		principal_id: v.principal_id ?? USER_A,
 		effect: v.effect ?? ("allow" as const),
 		permission_key: v.permission_key,
 		resource_type: v.resource_type ?? "project",

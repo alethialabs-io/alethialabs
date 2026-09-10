@@ -19,7 +19,7 @@
 
 import { describe, expect, it } from "vitest";
 import { expandGrant } from "@/lib/authz/fga-tuples";
-import { grantTarget } from "@/lib/authz/grant-scope";
+import { EMPTY_SCOPE_DENIES, targetForEffect } from "@/lib/authz/grant-scope";
 import { BUILT_IN_ROLES, PERMISSIONS } from "@/lib/authz/registry";
 import { grantObject } from "./fga-tuple-sync";
 
@@ -37,6 +37,7 @@ const principal = {
 	principalId: USER,
 	effect: "allow" as const,
 };
+const denying = { ...principal, effect: "deny" as const };
 
 /** The scopes a `grants` row can present, including the two that confer nothing. */
 const scopes = [
@@ -64,13 +65,32 @@ const scopes = [
 		name: "an unrecognised resource kind carrying an id",
 		scope: { ...principal, resourceType: "banana", resourceId: PROJECT },
 	},
+	// The deny side of each shape. An allow row is asked what it CONFERS and a deny row what it
+	// EXCLUDES, so `grantObject` and `expandGrant` both take the effect — and the invariant has to
+	// hold on this side too, under whichever way `EMPTY_SCOPE_DENIES` is ruled.
+	{
+		name: "DENY, org-wide",
+		scope: { ...denying, resourceType: "org", resourceId: null },
+	},
+	{
+		name: "DENY, scoped to a project",
+		scope: { ...denying, resourceType: "project", resourceId: PROJECT },
+	},
+	{
+		name: "DENY, THE BAD PAIR — the undecided direction (#4584)",
+		scope: { ...denying, resourceType: "org", resourceId: PROJECT },
+	},
+	{
+		name: "DENY, an unrecognised resource kind carrying an id",
+		scope: { ...denying, resourceType: "banana", resourceId: PROJECT },
+	},
 ] as const;
 
 describe("grantObject names the object expandGrant actually writes to", () => {
 	for (const { name, scope } of scopes) {
 		it(name, () => {
 			const tuples = expandGrant(scope, VIEWER_KEYS);
-			const object = grantObject(grantTarget, scope);
+			const object = grantObject(targetForEffect, scope);
 
 			if (tuples.length === 0) {
 				// Nothing was written, so there is nothing to read or delete. Returning an
@@ -92,8 +112,8 @@ describe("the specific rows the revoke leak was made of", () => {
 	// pass if BOTH sides moved to the same wrong place.
 	it("the bad pair yields null, never org:<resource-uuid>", () => {
 		const scope = { ...principal, resourceType: "org", resourceId: PROJECT };
-		expect(grantObject(grantTarget, scope)).toBeNull();
-		expect(grantObject(grantTarget, scope)).not.toBe(`org:${PROJECT}`);
+		expect(grantObject(targetForEffect, scope)).toBeNull();
+		expect(grantObject(targetForEffect, scope)).not.toBe(`org:${PROJECT}`);
 		expect(expandGrant(scope, VIEWER_KEYS)).toEqual([]);
 	});
 
@@ -103,7 +123,7 @@ describe("the specific rows the revoke leak was made of", () => {
 	// that shape are covered above.
 	it("a genuine org-wide grant still points at the org object", () => {
 		expect(
-			grantObject(grantTarget, {
+			grantObject(targetForEffect, {
 				...principal,
 				resourceType: "org",
 				resourceId: null,
@@ -111,9 +131,23 @@ describe("the specific rows the revoke leak was made of", () => {
 		).toBe(`org:${ORG}`);
 	});
 
+	// The deny direction is the maintainer's open ruling, so this asserts what the constant SAYS
+	// rather than a number typed here: flipping `EMPTY_SCOPE_DENIES` moves the expectation with
+	// the behaviour, which is the whole point of the constant existing.
+	it("a DENY row that scopes to nothing follows EMPTY_SCOPE_DENIES", () => {
+		const scope = { ...denying, resourceType: "org", resourceId: PROJECT };
+		expect(grantObject(targetForEffect, scope)).toBe(
+			EMPTY_SCOPE_DENIES === "the_whole_org" ? `org:${ORG}` : null,
+		);
+		// And the ALLOW row of the same shape is unaffected by that ruling either way.
+		expect(
+			grantObject(targetForEffect, { ...principal, resourceType: "org", resourceId: PROJECT }),
+		).toBeNull();
+	});
+
 	it("a normal scoped grant still points at the resource instance", () => {
 		expect(
-			grantObject(grantTarget, {
+			grantObject(targetForEffect, {
 				...principal,
 				resourceType: "project",
 				resourceId: PROJECT,

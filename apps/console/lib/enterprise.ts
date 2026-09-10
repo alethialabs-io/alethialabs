@@ -19,7 +19,7 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { enforceDecision, recordActivity } from "@/lib/authz/activity";
 import { checksFor, denyChecksFor } from "@/lib/authz/fga-mapping";
 import { buildAuthorizationModel } from "@/lib/authz/fga-model";
-import { grantTarget } from "@/lib/authz/grant-scope";
+import { targetForEffect } from "@/lib/authz/grant-scope";
 import {
   expandGrant,
   hierarchyTuple,
@@ -95,13 +95,16 @@ export interface CoreContext {
     buildModel: typeof buildAuthorizationModel;
     expandGrant: typeof expandGrant;
     /**
-     * "What does this grant row scope to?" — the ONE predicate both PDP engines answer that
-     * question with. Injected here rather than imported in ee/, on the same seam as
+     * "What does this grant row scope to, for this effect?" — the ONE predicate both PDP engines
+     * answer that question with. Injected here rather than imported in ee/, on the same seam as
      * `expandGrant`, because the two must never be able to disagree: ee's tuple writer decides
-     * where a grant's tuples LIVE and `expandGrant` decides what they ARE, and if those two
-     * read the scope separately a revoke deletes from an object the write never touched.
+     * where a grant's tuples LIVE and `expandGrant` decides what they ARE, and if those two read
+     * the scope separately a revoke deletes from an object the write never touched.
+     *
+     * Effect-aware because an allow row is asked what it CONFERS and a deny row what it EXCLUDES,
+     * and those diverge for a row that scopes to nothing (see `EMPTY_SCOPE_DENIES`).
      */
-    grantTarget: typeof grantTarget;
+    targetForEffect: typeof targetForEffect;
     hierarchyTuple: typeof hierarchyTuple;
     teamMemberTuple: typeof teamMemberTuple;
     rolePermissionKeys: typeof rolePermissionKeys;
@@ -209,7 +212,7 @@ function loadEnterprise(): void {
       fga: {
         buildModel: buildAuthorizationModel,
         expandGrant,
-        grantTarget,
+        targetForEffect,
         hierarchyTuple,
         teamMemberTuple,
         rolePermissionKeys,

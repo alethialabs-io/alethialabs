@@ -10,6 +10,7 @@
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
+import { EMPTY_SCOPE_DENIES } from "@/lib/authz/grant-scope";
 import { PostgresRbacPDP } from "@/lib/authz/postgres-rbac-pdp";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { seedAuthz } from "@/lib/authz/seed";
@@ -217,6 +218,60 @@ describeIfDb("PostgresRbacPDP (community RBAC over Postgres)", () => {
 		expect(d.allowed).toBe(false);
 		expect(d.reason).toBe("no_grant");
 		expect(await pdp.listAccessible(actor, "view", "project")).toEqual([]);
+	});
+
+	// ⚠ THE DENY DIRECTION IS UNDECIDED (#4584) and this is the case that shows why it matters:
+	// dropping a deny row that scopes to nothing is fail-OPEN. It hands the subject a permission
+	// that BOTH engines refuse today. The expectation reads `EMPTY_SCOPE_DENIES` rather than a
+	// hardcoded boolean, so the maintainer's ruling is a one-line change and this test moves with
+	// it instead of having to be rewritten.
+	it("a DENY row that scopes to nothing follows EMPTY_SCOPE_DENIES (open ruling)", async () => {
+		await seedGrant({
+			principal_type: "user",
+			principal_id: USER,
+			effect: "allow",
+			permission_key: "project:deploy",
+			resource_type: "org",
+			resource_id: null, // org-wide allow
+		});
+		await seedGrant({
+			principal_type: "user",
+			principal_id: USER,
+			effect: "deny",
+			permission_key: "project:deploy",
+			resource_type: "org",
+			resource_id: PROJ_A, // …minus PROJ_A, said with the contradictory pair
+		});
+
+		const denied = EMPTY_SCOPE_DENIES === "the_whole_org";
+		// Under "the_whole_org" the exclusion applies to the org, so BOTH projects lose it.
+		// Under "nothing" the row excludes nothing and the org-wide allow stands everywhere —
+		// which is a widening of live access and exactly what the ruling has to settle.
+		expect((await pdp.can(actor, "deploy", { type: "project", id: PROJ_A })).allowed).toBe(!denied);
+		expect((await pdp.can(actor, "deploy", { type: "project", id: PROJ_B })).allowed).toBe(!denied);
+		expect(await pdp.listAccessible(actor, "deploy", "project")).toHaveLength(denied ? 0 : 2);
+	});
+
+	it("a scoped DENY is untouched by that ruling — it names a real resource", async () => {
+		// The guard on the guard: the deny split may only affect rows that scope to NOTHING.
+		await seedGrant({
+			principal_type: "user",
+			principal_id: USER,
+			effect: "allow",
+			permission_key: "project:deploy",
+			resource_type: "org",
+			resource_id: null,
+		});
+		await seedGrant({
+			principal_type: "user",
+			principal_id: USER,
+			effect: "deny",
+			permission_key: "project:deploy",
+			resource_type: "project",
+			resource_id: PROJ_A,
+		});
+		expect((await pdp.can(actor, "deploy", { type: "project", id: PROJ_A })).allowed).toBe(false);
+		expect((await pdp.can(actor, "deploy", { type: "project", id: PROJ_B })).allowed).toBe(true);
 	});
 
 	it("a genuine org-wide grant written with the 'org' kind still covers everything", async () => {
