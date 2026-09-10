@@ -32,7 +32,8 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
 
 `pnpm wt <name>` creates `../wt-<name>` on `feat/<name>` off `dev`. Commit there, push, open a
 PR into `dev`. `pnpm wt:ls` lists them · `pnpm wt:who` shows holders · `pnpm wt:rm <name>` ·
-`pnpm wt:prune` sweeps landed ones (`--dry-run` previews) · `pnpm wt:release` · `pnpm wt:steal <name>`.
+`pnpm wt:prune` sweeps landed ones (`--dry-run` previews) · `pnpm wt:dehydrate` gives back the
+`node_modules` of the ones nobody holds · `pnpm wt:release` · `pnpm wt:steal <name>`.
 `pnpm branch:prune` does the same for the *branches* they leave behind (also `--dry-run`); plain
 `git branch -d` cannot, because it asks an ancestry question that a squash merge always answers "no".
 
@@ -45,6 +46,15 @@ reuse, remove, edit, or commit from it — it is told who holds it. Reads stay a
 it") and committed the first instance's **uncommitted** work under its own message (#1247).
 
 Worktrees are **de-hydrated** — no local `node_modules`. Run their checks with `pnpm env:check`.
+
+Nothing used to put one *back* into that state. A tree that is abandoned but whose branch never
+landed is invisible to `wt:prune` — which removes only LANDED, clean trees — so its ~2 GB sat there
+for good; five such trees held 9.7 GB with the laptop at 1.8 GiB free (#4580). `pnpm wt:dehydrate
+[--dry-run]` reaps `node_modules` and nothing else from every tree whose lease is not live: the
+tree, its tracked files and its uncommitted work all stay, which is why it can touch the trees
+`wt:prune` must refuse. It never touches a tree a live instance holds — *including yours*;
+`pnpm wt:release` first if you mean it. Its byte figures are an upper bound (`du` cannot see APFS
+clones or hardlinks); `df -h /` is what actually answers "did that help".
 
 If you do have to install one — a generator such as `gen:go-enums` needs a real `node_modules` —
 pass **`--frozen-lockfile`**. pnpm enables it in CI and leaves it OFF everywhere else, so a bare

@@ -79,6 +79,13 @@ require_free() { # <dir> <verb>
 # `--no-index` the first test is a pure PATTERN question and the second is the whole of the
 # tracked-file protection: two questions, two failure modes, two fixtures that can each fail alone.
 #
+# HONEST SCOPE: removing EITHER guard is caught by mutation, but removing only the `--no-index` flag
+# is NOT — index-aware check-ignore refuses the same fixtures for its own reason, so the verdict is
+# unchanged and nothing can observe the difference. The flag is here to keep the `ls-files` guard
+# REACHABLE, not to change any answer; that is an argument about the code's shape, and no fixture
+# can hold it. Said out loud so the next reader does not delete the flag, watch the suite stay
+# green, and conclude it was decorative.
+#
 # The second test is not hypothetical: `git add -f` inside an ignored directory produces a path that
 # is ignored by pattern and tracked in fact. It is rare, and its cost is somebody's source, so it is
 # asked rather than assumed.
@@ -87,6 +94,14 @@ require_free() { # <dir> <verb>
 # pnpm store's tens of thousands of nested `.pnpm/*/node_modules` from being enumerated at all, and
 # from being listed a second time under a parent that is about to take them anyway.
 # `-type d` does not follow symlinks, so a symlinked node_modules is skipped: the safe direction.
+#
+# KNOWN GAP — tracked as #4609. There is no "stop at another worktree" prune here, so if one
+# worktree were nested inside another, a `stale` outer tree's walk would list a LIVE inner tree's
+# node_modules and the reap would take them: the inner tree's own lease is never consulted, because
+# the lease is read per SWEPT tree, not per found path. Not reachable today — the harness nests only
+# under `app/.claude/worktrees/`, whose parent is the main checkout and always skipped — but
+# wt-lease.sh's longest-prefix root matching exists precisely because nested worktrees are a thing
+# this harness creates.
 #
 # The trailing `|| true` is precautionary, and the precise reason matters more than the guard does.
 # This script runs under `set -o pipefail`, and ONE unreadable directory in one abandoned tree makes
@@ -118,11 +133,25 @@ wt_node_modules_dirs() { # <worktree> → absolute paths, one per line
 }
 
 # Bytes ON DISK under <dir>. `du -sk` — 1024-blocks, the one unit both BSD and GNU du agree on —
-# rather than a sum of apparent sizes: what a reap hands back is allocated blocks. Unreadable or
-# missing is 0, never an error: a sweep must not die on one tree. `|| true` for the same measured
-# `set -o pipefail` reason as the walk above, and with the same caveat — du exits 1 on a
-# subdirectory it cannot read while STILL printing a usable total, so the guard keeps the total; it
-# is precautionary against a top-level caller, not load-bearing for today's.
+# rather than a sum of apparent sizes.
+#
+# WHAT THIS NUMBER IS, AND IS NOT. du counts allocated blocks per inode and is BLIND TO SHARING, so
+# every figure derived from it is an UPPER BOUND on what a reap gives back — not a prediction.
+# Measured on this machine: a 400 MiB APFS clone (`cp -c`) reports 409600 KiB to du and reclaims
+# −100 KiB when deleted, because the blocks belong to the other copy too. That is not a corner case
+# here: every sampled file under `app/node_modules/.pnpm` has nlink=1 with the store on the same
+# volume, i.e. pnpm on this machine is CLONING, not hardlinking. A hardlinked store shares blocks
+# just as invisibly.
+#
+# So every figure this command prints is worded "up to N on disk", and that wording is the point:
+# the tool's whole justification is a disk number, and a maintainer reading "freed 1.9G" at 95%
+# full will believe the problem is solved. `df` is the only thing that can answer what was actually
+# reclaimed, and it is one command away.
+#
+# Unreadable or missing is 0, never an error: a sweep must not die on one tree. `|| true` for the
+# same measured `set -o pipefail` reason as the walk above, and with the same caveat — du exits 1 on
+# a subdirectory it cannot read while STILL printing a usable total, so the guard keeps the total;
+# it is precautionary against a top-level caller, not load-bearing for today's.
 wt_dir_bytes() { # <dir> → bytes
 	local kb
 	kb="$(du -sk "$1" 2>/dev/null | awk 'NR==1{print $1}' || true)"
@@ -156,6 +185,16 @@ wt_human_bytes() { # <bytes> → 1.9G · 12.0M · 4.0K · 0B
 # oversight: the rule is "never touch a tree with a live lease", and the tree I am sitting in is the
 # one most likely to have a `pnpm install` or a `tsc` reading node_modules right now. `wt:steal` or
 # `wt:release` is how you make your own tree reapable, and both already exist.
+#
+# KNOWN, AND WIDER THAN #4580's PREDICATE — tracked as #4609, read it before narrowing this:
+#   · `free` is reaped as well as `stale`, and `free` means no lease was EVER taken. wt-lease.sh
+#     says plainly that "Humans and CI are not gated by this file", so a worktree a HUMAN created
+#     and hydrated has no lease and therefore no protection here.
+#   · `stale` is not proof that nothing is running. An agent that exits while a `pnpm install` it
+#     started keeps going leaves a stale lease over a live install, and this will reap under it.
+# Both are the same shape: the lease answers "is an AGENT holding this tree", and this command asks
+# it "is anything using these files". Narrowing to `stale` alone would not fix it and would lose
+# the human-created case entirely; the fix is a liveness signal, which is #4609's job.
 wt_dehydrate_verdict() { # <worktree> → verb<TAB>bytes<TAB>why
 	local wt="$1" state dirs bytes=0 n=0 d
 	# Asked FIRST, because `git worktree list` still names a directory somebody deleted by hand, and
@@ -168,7 +207,15 @@ wt_dehydrate_verdict() { # <worktree> → verb<TAB>bytes<TAB>why
 	state="$(wt_lease_state "$wt")"
 	case "$state" in
 		main)
-			printf 'skip\t0\tthe shared main checkout — it is the one tree that is meant to be hydrated\n'
+			# wt_lease_dir() reports "not leasable" for the shared main checkout AND for a tree
+			# whose .git git can no longer read — and a broken .git is exactly what an abandoned
+			# worktree has. Same safe action, but one sentence would be false. The residual of the
+			# gone-directory case above: a true mechanism under a false label.
+			if git -C "$wt" rev-parse --absolute-git-dir >/dev/null 2>&1; then
+				printf 'skip\t0\tthe shared main checkout — it is the one tree that is meant to be hydrated\n'
+			else
+				printf 'skip\t0\tgit cannot read this tree (.git missing or broken) — not touching it\n'
+			fi
 			return 0
 			;;
 		live)
@@ -192,29 +239,68 @@ wt_dehydrate_verdict() { # <worktree> → verb<TAB>bytes<TAB>why
 	done <<NMEOF
 $dirs
 NMEOF
-	printf 'reap\t%s\t%s across %s node_modules dir(s), lease %s\n' "$bytes" "$(wt_human_bytes "$bytes")" "$n" "$state"
+	printf 'reap\t%s\tup to %s on disk across %s node_modules dir(s), lease %s\n' "$bytes" "$(wt_human_bytes "$bytes")" "$n" "$state"
 }
 
-# Remove <worktree>'s reapable node_modules and NOTHING else. 0 = reaped · 1 = a live instance holds it.
+# Remove <worktree>'s reapable node_modules and NOTHING else.
+#   0 = reaped
+#   1 = REFUSED, and nothing was touched — a live instance holds it
 #
-# The verdict above was read WITHOUT taking ownership, so acquiring here is not belt-and-braces: it
-# is the arbiter. An instance that started work in the seconds between the scan and the reap wins,
-# and loses nothing. (require_free() is this same primitive with an exit() on top, which is wrong
-# for a sweep — one held tree must not end the run. --prune calls wt_lease_acquire directly for
-# exactly that reason.)
-wt_dehydrate_tree() { # <worktree>
-	local wt="$1" d
+# The verdict was read WITHOUT taking ownership, so the window between the scan and the `rm` is real
+# — a find, a `du -sk` over up to 2 GB, then a second find. Something has to re-ask the question
+# here, and it takes TWO calls, because neither one alone answers it:
+#
+#   · wt_lease_acquire  TAKES the tree, so the reap owns what it deletes and a racing instance is
+#     blocked for the duration. But it is agent-scoped by design: it returns 0 WITHOUT LOOKING AT
+#     THE LEASE when there is no agent marker (wt-lease.sh: "Humans and CI are not gated by this
+#     file") and again under ALETHIA_ALLOW_FOREIGN_WT=1. `|| return 1` reads both of those as "I own
+#     it, delete".
+#   · wt_lease_state    READS the lease and honours NEITHER hatch, so it is the only one of the two
+#     that can still say "live" for a human at a terminal — which is exactly who runs this command
+#     at 94% disk. It cannot take the tree, so it cannot replace the acquire either.
+#
+# MEASURED before the second line existed, with a live holder and the tree already scanned: an agent
+# was refused (rc 1, node_modules intact); a HUMAN and an agent under the hatch both deleted it.
+# So: acquire for ownership, then re-read for the answer, and refuse on either.
+#
+# (require_free() is the acquire with an exit() on top, which is wrong for a sweep — one held tree
+# must not end the run. --prune calls wt_lease_acquire directly for exactly that reason.)
+#
+# HONEST SCOPE: the self-test kills the loss of the STATE re-read, but NOT the loss of the acquire —
+# the state check alone already refuses every live tree a single-process fixture can build. What the
+# acquire adds is mutual exclusion for the DURATION of the rm, against an instance arriving after
+# the check, and observing that needs two processes racing, not a fixture. Removing it would leave
+# the suite green. It stays because the window it closes is the one the whole function is about.
+# Would `wt:dehydrate` actually reach this tree? Used ONLY by --prune's hint line, which must not
+# promise a command that will refuse: counting a live-held hydrated tree there tells the reader to
+# run something that reaches neither it nor, possibly, anything at all.
+wt_count_reachable_hydrated() { # <worktree> → 0 if wt:dehydrate would reap it
+	[ "$(wt_dehydrate_verdict "$1" | cut -f1)" = reap ]
+}
+
+wt_dehydrate_tree() { # <worktree> → prints the bytes it removed, on stdout
+	local wt="$1" d dirs bytes=0
 	wt_lease_acquire "$wt" >/dev/null 2>&1 || return 1
+	# NOT redundant with the line above. See the two bullets: this is the half that survives a
+	# missing agent marker and the escape hatch, and refusing here leaves the holder's lease alone.
+	case "$(wt_lease_state "$wt")" in live) return 1 ;; esac
+	# Derive the set ONCE, under the lease, and measure THE SET WE ARE ABOUT TO DELETE. Reporting
+	# the verdict's figure instead was measurably wrong: that one is taken before the acquire, and
+	# the set is re-derived after it — observed drift of 716800 B against a set that had shrunk in
+	# between, printed as though it were what the reap gave back.
+	dirs="$(wt_node_modules_dirs "$wt")"
 	while IFS= read -r d; do
 		[ -n "$d" ] || continue
+		bytes=$((bytes + $(wt_dir_bytes "$d")))
 		rm -rf "$d"
 	done <<NMEOF
-$(wt_node_modules_dirs "$wt")
+$dirs
 NMEOF
 	# Hand it straight back. The tree SURVIVES a reap, so a lease left behind would make an
 	# abandoned worktree read as LIVE-held by a process that has since exited — un-reapable for
 	# everyone after, which is the exact wedge this command was written to clear.
 	wt_lease_release "$wt" >/dev/null 2>&1 || true
+	printf '%s' "$bytes"
 	return 0
 }
 
@@ -311,13 +397,13 @@ if [ "${1:-}" = "--prune" ]; then
 		if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
 			echo "  skip  $wt  ($br) — uncommitted or untracked work"
 			kept=$((kept + 1))
-			[ -n "$(wt_node_modules_dirs "$wt")" ] && hydrated=$((hydrated + 1)) || true
+			wt_count_reachable_hydrated "$wt" && hydrated=$((hydrated + 1)) || true
 			continue
 		fi
 		if ! wt_branch_landed "$wt" "$br" "$base"; then
 			echo "  skip  $wt  ($br) — ${WT_LANDED_WHY}"
 			kept=$((kept + 1))
-			[ -n "$(wt_node_modules_dirs "$wt")" ] && hydrated=$((hydrated + 1)) || true
+			wt_count_reachable_hydrated "$wt" && hydrated=$((hydrated + 1)) || true
 			continue
 		fi
 		if [ "$dry" = 1 ]; then
@@ -347,7 +433,7 @@ if [ "${1:-}" = "--prune" ]; then
 			kept=$((kept + 1))
 		fi
 	done <<EOF
-$(git worktree list --porcelain | awk '/^worktree /{print $2}')
+$(git worktree list --porcelain | sed -n 's/^worktree //p')
 EOF
 	echo ""
 	if [ "$dry" = 1 ]; then
@@ -357,7 +443,7 @@ EOF
 		echo "✓ removed $removed, kept $kept. Nothing was forced."
 	fi
 	if [ "$hydrated" -gt 0 ]; then
-		echo "  ↳ $hydrated kept tree(s) still carry node_modules that this command cannot reach."
+		echo "  ↳ $hydrated kept tree(s) carry node_modules that --prune cannot reach and wt:dehydrate CAN."
 		echo "    pnpm wt:dehydrate --dry-run     # node_modules only; the tree and its work stay"
 	fi
 	exit 0
@@ -415,8 +501,11 @@ if [ "${1:-}" = "--dehydrate" ]; then
 		esac
 		if [ "$dry" = 1 ]; then
 			echo "  WOULD reap  $wt  ($br) — $why"
-		elif wt_dehydrate_tree "$wt"; then
-			echo "  reap  $wt  ($br) — freed $(wt_human_bytes "$bytes")"
+		elif freed="$(wt_dehydrate_tree "$wt")"; then
+			# The REAP's own figure, not the verdict's: the verdict measured before the lease was
+			# taken and the set was re-derived after it.
+			bytes="$freed"
+			echo "  reap  $wt  ($br) — freed up to $(wt_human_bytes "$bytes") on disk"
 		else
 			echo "  skip  $wt  ($br) — a live instance took it between the scan and the reap"
 			kept=$((kept + 1))
@@ -424,15 +513,20 @@ if [ "${1:-}" = "--dehydrate" ]; then
 		fi
 		total=$((total + bytes))
 		reaped=$((reaped + 1))
+		# `sed -n 's/^worktree //p'`, never `awk '{print $2}'`: awk splits on whitespace and so
+		# truncates any worktree path containing a space, handing a TRUNCATED PATH to a function
+		# that deletes. Both forms were already in this file; --who had the right one.
 	done <<EOF
-$(git worktree list --porcelain | awk '/^worktree /{print $2}')
+$(git worktree list --porcelain | sed -n 's/^worktree //p')
 EOF
 	echo ""
 	if [ "$dry" = 1 ]; then
-		echo "✓ dry run: would reap $reaped tree(s) for $(wt_human_bytes "$total"), skipping $kept held one(s). Nothing was touched."
+		echo "✓ dry run: would reap $reaped tree(s), up to $(wt_human_bytes "$total") on disk, skipping $kept held one(s). Nothing was touched."
 	else
-		echo "✓ reaped $reaped tree(s), freed $(wt_human_bytes "$total"), skipped $kept held one(s)."
+		echo "✓ reaped $reaped tree(s), up to $(wt_human_bytes "$total") on disk, skipped $kept held one(s)."
 		echo "  No worktree, tracked file or uncommitted change was removed."
+		echo "  \"up to\" is not hedging: du cannot see APFS clones or hardlinks, so it over-reports"
+		echo "  what a delete gives back. For what was actually reclaimed:  df -h /"
 		echo "  Re-hydrate one when a generator needs it:  pnpm install --frozen-lockfile"
 	fi
 	exit 0
@@ -452,7 +546,7 @@ fi
 # a pipeline. A self-test that increments `fails` in a subshell prints FAIL and then summarises
 # "all passed", which is a report, not a test. Mutate something and watch the EXIT CODE.
 wt_dehydrate_self_test() {
-	local fails=0 tmp wt ld me out bytes
+	local fails=0 tmp wt ld me out bytes nl_dir reaped_bytes
 	_a() { if [ "$1" = "$2" ]; then echo "ok   - $3"; else
 		echo "FAIL - $3: want '$1' got '$2'" >&2
 		fails=$((fails + 1))
@@ -478,9 +572,14 @@ wt_dehydrate_self_test() {
 	wt="$tmp/wt-fixture"
 
 	git init -q "$tmp/main"
+	# `node_modules`, with NO trailing slash — copied from the real repo's .gitignore:4, not invented.
+	# The difference is not cosmetic. `node_modules/` matches DIRECTORIES ONLY, so it silently
+	# refuses a SYMLINK named node_modules and any not-yet-existing relative path — which made
+	# check-ignore mask the `-type d` and under-the-worktree guards, and left both unkillable by
+	# mutation while the fixture looked thorough. A fixture must be CAPTURED, not composed.
 	# `!/vendored/…` re-includes one node_modules, which is how the "git does not ignore it" arm
 	# gets a subject. Contrived on purpose: the guard must not rest on the directory's NAME.
-	printf 'node_modules/\n!/vendored/node_modules/\n' >"$tmp/main/.gitignore"
+	printf 'node_modules\n!/vendored/node_modules\n' >"$tmp/main/.gitignore"
 	git -C "$tmp/main" add .gitignore
 	git -C "$tmp/main" -c user.email=t@t -c user.name=t commit -q -m init
 	git -C "$tmp/main" worktree add -q -b wtdehydrate "$wt" 2>/dev/null
@@ -541,6 +640,41 @@ wt_dehydrate_self_test() {
 	chmod 755 "$wt/locked" "$wt/node_modules/locked" 2>/dev/null || true
 	rm -rf "$wt/locked" "$wt/node_modules/locked"
 
+	# ── the three guards inside the DELETING function that nothing else pins ────────────────────
+	#
+	# `-type d`. The comment on the walk makes a SAFETY CLAIM about deletion — "a symlinked
+	# node_modules is skipped: the safe direction" — and a safety claim with nothing keeping it true
+	# is the defect class this repo keeps rediscovering. Without `-type d`, `-name node_modules`
+	# matches the LINK, and `rm -rf` on it removes the link out of a tree we were asked not to alter.
+	mkdir -p "$tmp/outside-target"
+	: >"$tmp/outside-target/keep-me"
+	ln -s "$tmp/outside-target" "$wt/apps/node_modules"
+	_absent '/apps/node_modules$' "walk: a SYMLINKED node_modules is skipped (-type d), not followed and not deleted"
+	_a "yes" "$([ -e "$tmp/outside-target/keep-me" ] && echo yes || echo no)" "walk: … and what it points at is untouched"
+
+	# `-name .git -prune`. Asked of the fixture's MAIN checkout, the only tree here whose .git is a
+	# directory rather than a file — which is exactly where a node_modules under .git could hide.
+	mkdir -p "$tmp/main/.git/node_modules"
+	if wt_node_modules_dirs "$tmp/main" | grep -q '/\.git/'; then
+		echo "FAIL - walk: a node_modules under .git was listed" >&2
+		fails=$((fails + 1))
+	else echo "ok   - walk: .git is pruned, so no node_modules under it is ever a target"; fi
+	rmdir "$tmp/main/.git/node_modules"
+
+	# `[ "$rel" != "$d" ] || continue`. A directory name containing a NEWLINE makes find emit two
+	# lines, and `read -r` hands the second one over as a RELATIVE fragment ("ird/node_modules").
+	# Without the guard, check-ignore matches it by pattern, ls-files finds nothing tracked, and the
+	# function returns a relative path — which `rm -rf` would then resolve against the SCRIPT's cwd,
+	# not the worktree. That is a delete outside the tree entirely.
+	nl_dir="$(printf 'we\nird')"
+	mkdir -p "$wt/$nl_dir/node_modules"
+	if wt_node_modules_dirs "$wt" | grep -qv "^$wt/"; then
+		echo "FAIL - walk: emitted a path that is not under the worktree. Got:" >&2
+		wt_node_modules_dirs "$wt" >&2
+		fails=$((fails + 1))
+	else echo "ok   - walk: a newline in a directory name cannot yield a relative path to rm -rf"; fi
+	rm -rf "${wt:?}/${nl_dir:?}"
+
 	# ── sizing ─────────────────────────────────────────────────────────────────────────────────
 	bytes="$(($(wt_dir_bytes "$wt/node_modules") + $(wt_dir_bytes "$wt/apps/console/node_modules")))"
 	if [ "$bytes" -ge 1048576 ]; then echo "ok   - size: du reports real bytes (two ~512 KiB dirs sum to $(wt_human_bytes "$bytes"))"; else
@@ -585,6 +719,13 @@ wt_dehydrate_self_test() {
 	_a "the worktree directory is gone — run: git worktree prune" \
 		"$(CLAUDE_PID="$me" wt_dehydrate_verdict "$tmp/deleted-by-hand" | cut -f3)" \
 		"verdict: a worktree whose directory is gone says so, not 'the main checkout'"
+	# And the residual of that: a directory git cannot read. `wt_lease_dir` answers "not leasable"
+	# for the shared main checkout AND for a broken .git, and a broken .git is what an abandoned
+	# tree has. The action is the same; the SENTENCE must not be.
+	mkdir -p "$tmp/broken-git"
+	_a "git cannot read this tree (.git missing or broken) — not touching it" \
+		"$(CLAUDE_PID="$me" wt_dehydrate_verdict "$tmp/broken-git" | cut -f3)" \
+		"verdict: a tree git cannot read says so, not 'the shared main checkout'"
 
 	# ── the reap itself ────────────────────────────────────────────────────────────────────────
 	{
@@ -592,19 +733,52 @@ wt_dehydrate_self_test() {
 		echo "procStart: $(wt_procstart 1)"
 		echo "host: $(wt_host)"
 	} >"$ld/owner"
-	if CLAUDE_PID="$me" wt_dehydrate_tree "$wt"; then
-		echo "FAIL - reap: a LIVE foreign lease did NOT stop the reap" >&2
-		fails=$((fails + 1))
-	else echo "ok   - reap: a LIVE foreign lease stops the reap"; fi
-	_exists "node_modules/blob" "reap: … and the held tree's node_modules is still there"
+	# THREE invocation modes, because `wt_lease_acquire` answers 0 ("proceed") without ever looking
+	# at the lease in two of them — no agent marker, and ALETHIA_ALLOW_FOREIGN_WT=1 — and 0 is what
+	# the reap reads as "I own it, delete". Mode B is the maintainer at 94% disk typing
+	# `pnpm wt:dehydrate` in their own terminal, which is the person this command was written for.
+	# `shift` before running: passing the label through to "$@" runs the LABEL as a command, which
+	# exits 127 and so reports "refused" for every mode — three arms passing for the wrong reason.
+	# (Caught by mutating the implementation and watching them stay green.)
+	_held() { # <label> <wrapper-fn>
+		local label="$1"
+		shift
+		if "$@"; then
+			echo "FAIL - reap: a LIVE foreign lease did NOT stop the reap ($label)" >&2
+			fails=$((fails + 1))
+		else echo "ok   - reap: a LIVE foreign lease stops the reap ($label)"; fi
+	}
+	# Wrappers rather than inline env prefixes, so `_held` can take the invocation by NAME and the
+	# label cannot end up in the command. shellcheck cannot see an indirect call.
+	# shellcheck disable=SC2329
+	_mode_a() { CLAUDE_PID="$me" wt_dehydrate_tree "$wt"; }
+	# shellcheck disable=SC2329
+	_mode_b() { CLAUDE_PID="" CODEX_PID="" CODEX_SESSION_ID="" CODEX_THREAD_ID="" wt_dehydrate_tree "$wt"; }
+	# shellcheck disable=SC2329
+	_mode_c() { CLAUDE_PID="$me" ALETHIA_ALLOW_FOREIGN_WT=1 wt_dehydrate_tree "$wt"; }
+	_held "mode A: an agent" _mode_a
+	_exists "node_modules/blob" "reap: … and the held tree's node_modules is still there (mode A)"
+	_held "mode B: a HUMAN, no agent marker" _mode_b
+	_exists "node_modules/blob" "reap: … and the held tree's node_modules is still there (mode B)"
+	_held "mode C: ALETHIA_ALLOW_FOREIGN_WT=1" _mode_c
+	_exists "node_modules/blob" "reap: … and the held tree's node_modules is still there (mode C)"
+	# The hatch must not leave a foreign lease looking reaped-and-released either.
+	_a "live" "$(CLAUDE_PID="$me" wt_lease_state "$wt")" "reap: a refused tree keeps its holder's lease untouched"
 
 	{
 		echo "pid: 999999"
 		echo "procStart: Thu Jan  1 00:00:00 1970"
 		echo "host: $(wt_host)"
 	} >"$ld/owner"
-	if CLAUDE_PID="$me" wt_dehydrate_tree "$wt"; then echo "ok   - reap: a stale lease is reclaimed and the tree reaped"; else
+	# Capture what the reap REPORTS, not what the scan predicted: the printed figure is the tool's
+	# entire justification, and it is derived under the lease from the set actually deleted.
+	reaped_bytes=""
+	if reaped_bytes="$(CLAUDE_PID="$me" wt_dehydrate_tree "$wt")"; then echo "ok   - reap: a stale lease is reclaimed and the tree reaped"; else
 		echo "FAIL - reap: a stale lease blocked the reap" >&2
+		fails=$((fails + 1))
+	fi
+	if [ "${reaped_bytes:-0}" -ge 1048576 ]; then echo "ok   - reap: reports the bytes IT removed ($(wt_human_bytes "$reaped_bytes")), measured under the lease"; else
+		echo "FAIL - reap: reported '${reaped_bytes:-}' for a set holding two ~512 KiB blobs" >&2
 		fails=$((fails + 1))
 	fi
 	_gone "node_modules" "reap: the root node_modules is gone"
