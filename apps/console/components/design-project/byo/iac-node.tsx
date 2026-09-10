@@ -30,6 +30,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@repo/ui/utils";
 import { detachIacSource, type IacSourceState } from "@/app/server/actions/byo-iac";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { useIacSourceCanvas } from "@/components/design-project/byo/iac-source-canvas-context";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import type { IacScanReport } from "@/types/jsonb.types";
@@ -67,6 +68,10 @@ export function IacNode({ source }: { source: IacSourceState }) {
 	const ctx = useIacSourceCanvas();
 	const openCard = useCanvasStore((s) => s.openCard);
 	const [detaching, setDetaching] = useState(false);
+	// Detaching is not undoable from this card — the environment silently reverts to the built-in
+	// template and the module's `external` cards leave the board — so the click OPENS a confirm
+	// rather than firing the server action (#4281).
+	const [confirmDetach, setConfirmDetach] = useState(false);
 
 	const chip = scanChip(source.scanStatus, source.scanReport);
 	const ChipIcon = chip.Icon;
@@ -148,7 +153,7 @@ export function IacNode({ source }: { source: IacSourceState }) {
 						<span className="font-mono text-ui-2xs text-muted-foreground">replace mode</span>
 						<button
 							type="button"
-							onClick={detach}
+							onClick={() => setConfirmDetach(true)}
 							disabled={detaching}
 							title="Detach IaC source"
 							className="ml-auto grid h-6 w-6 place-items-center rounded-none border border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
@@ -158,6 +163,17 @@ export function IacNode({ source }: { source: IacSourceState }) {
 					</div>
 				)}
 			</div>
+
+			<ConfirmDialog
+				open={confirmDetach}
+				onOpenChange={setConfirmDetach}
+				title="Detach this IaC source?"
+				description="This environment falls back to the built-in template and the module's resources leave the board. The module itself is untouched, and nothing already provisioned is destroyed — but the next deploy applies the template, not your module."
+				confirmLabel="Detach source"
+				onConfirm={() => {
+					void detach();
+				}}
+			/>
 		</div>
 	);
 }
