@@ -681,6 +681,12 @@ export function auditShipped(input) {
 	return { ran: true, reason: "", rows, counts, keywordsRead: keywords.length > 0 };
 }
 
+/** A title, cut to fit one report line — with an ellipsis, so a cut title cannot read as a whole one. */
+function short(title, n) {
+	const t = String(title ?? "");
+	return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+}
+
 /** One evidence row's PR clause: which merged PR touched which of the unit's files. */
 function evidenceClause(prs) {
 	return prs
@@ -724,10 +730,10 @@ export function formatShipped(audit) {
 		lines.push(`  ── ${heading} ──`);
 		for (const r of rows) {
 			if (tier === "debt-recorded") {
-				lines.push(`  #${r.n}  debt-recorded  (${r.register})  ${r.title.slice(0, 60)}`);
+				lines.push(`  #${r.n}  debt-recorded  (${r.register})  ${short(r.title, 60)}`);
 				continue;
 			}
-			lines.push(`  #${r.n}  ${r.title.slice(0, 70)}`);
+			lines.push(`  #${r.n}  ${short(r.title, 70)}`);
 			lines.push(`        evidence: ${r.prs.length > 0 ? evidenceClause(r.prs) : `named by merged ${r.prList}`}`);
 			if (r.why) lines.push(`        not comparable: ${r.why}`);
 			lines.push(
