@@ -166,6 +166,7 @@ export function countListed(listed) {
 
 /**
  * @typedef {{project: string, file: string, title: string}} Entry
+ * @typedef {{project: string, file: string, title: string, why: string}} Row a RECORDED_STALE row
  */
 
 /**
@@ -215,16 +216,41 @@ const idOf = (e) => JSON.stringify([e.project, e.file, e.title]);
  * Split findings into the ones RECORDED_STALE covers and the ones it does not, and report every
  * recorded row that is no longer a finding.
  *
+ * THE THIRD BUCKET IS THE POINT, and it exists because the two-bucket version gave the BACKWARDS
+ * instruction. `compare` short-circuits a project the listing does not hold into `missingProjects`
+ * and pushes NONE of its entries into `stale` — so "recorded but not in `stale`" quietly reclassified
+ * every row under a vanished project as `dead`, whose remediation is "delete the row; an exception
+ * that outlives its subject suppresses a real finding forever". The subject had not been outlived.
+ * It had gone FURTHER out of reach: deleting `apps/console/e2e/architecture-canvas.spec.ts` leaves
+ * the `canvas` project defined but collecting zero tests, so it drops out of the listing, and all
+ * three canvas rows below would then have been reported with an instruction that performs exactly
+ * the silent suppression their own docstring warns against. Measured on this branch before the fix:
+ * four error lines, three of them telling the reader to delete rows about titles that were more
+ * stale than when they were written, not less.
+ *
+ * So a row whose project is absent from the LISTING is `suspended`: not a finding of its own, and
+ * never an instruction to delete. The project's own error is the finding, and it is already red.
+ *
+ * `missingProjects` is REQUIRED rather than defaulted. A caller that forgot it would get the
+ * two-bucket answer back — silently, and in the direction that dismisses a review.
+ *
  * @param {Entry[]} stale
- * @param {{project: string, file: string, title: string, why: string}[]} recorded
- * @returns {{unrecorded: Entry[], dead: {project: string, file: string, title: string, why: string}[]}}
+ * @param {Row[]} recorded
+ * @param {{project: string, entries: number}[]} missingProjects `compare`'s vanished projects
+ * @returns {{unrecorded: Entry[], dead: Row[], suspended: Row[]}}
  */
-export function reconcile(stale, recorded) {
+export function reconcile(stale, recorded, missingProjects) {
+	if (!Array.isArray(missingProjects)) {
+		throw new Error("reconcile: `missingProjects` is required — without it a row under a vanished project is misreported as dead, and the printed fix is to DELETE it.");
+	}
 	const found = new Set(stale.map(idOf));
 	const known = new Set(recorded.map(idOf));
+	const vanished = new Set(missingProjects.map((p) => p.project));
+	const notFound = recorded.filter((e) => !found.has(idOf(e)));
 	return {
 		unrecorded: stale.filter((e) => !known.has(idOf(e))),
-		dead: recorded.filter((e) => !found.has(idOf(e))),
+		dead: notFound.filter((e) => !vanished.has(e.project)),
+		suspended: notFound.filter((e) => vanished.has(e.project)),
 	};
 }
 
@@ -306,20 +332,58 @@ export function main(argv) {
 
 	const baselineDoc = JSON.parse(fs.readFileSync(path.join(ROOT, BASELINE), "utf8"));
 	const { stale, missingProjects, baselineCount } = compare(baselineDoc, listed);
-	const { unrecorded, dead } = reconcile(stale, RECORDED_STALE);
+	const { unrecorded, dead, suspended } = reconcile(stale, RECORDED_STALE, missingProjects);
 
 	console.log(
 		`check-gate-baseline-consistency: ${baselineCount} ledger entries against ${listedCount} listed tests ` +
 			`in ${listed.size} projects; ${stale.length} stale (${RECORDED_STALE.length} recorded).`,
 	);
 
-	let problems = 0;
+	const errors = renderFindings({ missingProjects, unrecorded, dead, suspended });
+	for (const line of errors) console.error(line);
+
+	if (errors.length === 0) {
+		console.log("check-gate-baseline-consistency: the ledger names no test the tree has lost.");
+		return 0;
+	}
+	return 1;
+}
+
+/**
+ * Every finding, rendered, as the lines `main` prints.
+ *
+ * Pure, exported and asserted directly by `--self-test`, because THE INSTRUCTION IS THE PRODUCT here
+ * and a bucket count does not carry one. `dead` and `suspended` hold the same shape; what tells a
+ * reader them apart is that one says "delete the row" and the other says do not. A self-test that
+ * only counted the buckets would pass on a render that printed the wrong sentence over the right
+ * bucket, which is the defect this seam already had once.
+ *
+ * @param {object} f
+ * @param {{project: string, entries: number}[]} f.missingProjects
+ * @param {Entry[]} f.unrecorded
+ * @param {Row[]} f.dead
+ * @param {Row[]} f.suspended
+ * @returns {string[]} one `::error::` line per finding; empty means clean
+ */
+export function renderFindings({ missingProjects, unrecorded, dead, suspended }) {
+	/** @type {string[]} */
+	const errors = [];
+	const self = path.relative(ROOT, fileURLToPath(import.meta.url));
 	for (const { project, entries } of missingProjects) {
-		problems++;
-		console.error(
+		errors.push(
 			`::error::${BASELINE} records ${entries} entries under project "${project}", which apps/console/playwright.config.ts ` +
 				"no longer defines. Every one of them is unreachable — rename the slice, or delete it.",
 		);
+		// The rows under it, named HERE and not as a finding of their own. See `reconcile`.
+		const held = suspended.filter((e) => e.project === project);
+		if (held.length > 0) {
+			errors.push(
+				`::error::  · ${held.length} RECORDED_STALE row(s) in ${self} sit under "${project}". They are NOT dead and must NOT ` +
+					"be deleted on their own: their subjects went further out of reach, not back into the tree, so each row still " +
+					"covers a real finding. Deleting them changes nothing this check reports — the line above is already the failure — " +
+					"and loses the only written record of why those titles are stale. Resolve the project; the rows go with the slice.",
+			);
+		}
 	}
 	// Grouped by slice, because the slice is the unit of repair: one `--write --only=<file>` fixes
 	// every line under it, and a flat list of forty titles hides that they are four commands.
@@ -330,9 +394,8 @@ export function main(argv) {
 		bySlice.get(k).push(e.title);
 	}
 	for (const [k, titles] of bySlice) {
-		problems++;
 		const [project, file] = JSON.parse(k);
-		console.error(
+		errors.push(
 			`::error::${BASELINE} names ${titles.length} test(s) that ${file} no longer contains under project "${project}" — ` +
 				"a renamed or deleted test. The gate's `Release gate (" +
 				project +
@@ -340,22 +403,16 @@ export function main(argv) {
 				`Regenerate the slice from a real run: \`gh workflow run "Release gate" --ref <branch> -f legs=${project}\`, then ` +
 				`\`node scripts/e2e-ratchet.mjs --project=${project} --results=<results.json> --write --only=${file}\`.`,
 		);
-		for (const t of titles) console.error(`::error::  · ${t}`);
+		for (const t of titles) errors.push(`::error::  · ${t}`);
 	}
 	for (const e of dead) {
-		problems++;
-		console.error(
-			`::error::RECORDED_STALE in ${path.relative(ROOT, fileURLToPath(import.meta.url))} still records ` +
+		errors.push(
+			`::error::RECORDED_STALE in ${self} still records ` +
 				`"${e.project} › ${e.file} › ${e.title}", which is no longer stale — the slice was regenerated, or the test came back. ` +
 				"Delete the row. An exception that outlives its subject suppresses a real finding forever, silently.",
 		);
 	}
-
-	if (problems === 0) {
-		console.log("check-gate-baseline-consistency: the ledger names no test the tree has lost.");
-		return 0;
-	}
-	return 1;
+	return errors;
 }
 
 // ── self-test ────────────────────────────────────────────────────────────────────────────────
@@ -495,10 +552,60 @@ function selfTest() {
 	// ── the exception ledger, in BOTH directions ───────────────────────────────────────────────
 	const one = [{ project: "qa", file: "flows/alerts.spec.ts", title: "Alerts › a rule can be RENAMED" }];
 	const row = { ...one[0], why: "a reason" };
-	ok("a recorded stale entry is suppressed", reconcile(one, [row]).unrecorded.length === 0);
-	ok("control: with NOTHING recorded, the same finding is reported", reconcile(one, []).unrecorded.length === 1);
-	ok("a recorded entry that is no longer stale is itself a failure", reconcile([], [row]).dead.length === 1);
-	ok("a recorded entry is matched on all three fields, not on the title alone", reconcile(one, [{ ...row, project: "console" }]).unrecorded.length === 1);
+	ok("a recorded stale entry is suppressed", reconcile(one, [row], []).unrecorded.length === 0);
+	ok("control: with NOTHING recorded, the same finding is reported", reconcile(one, [], []).unrecorded.length === 1);
+	ok("a recorded entry that is no longer stale is itself a failure", reconcile([], [row], []).dead.length === 1);
+	ok("a recorded entry is matched on all three fields, not on the title alone", reconcile(one, [{ ...row, project: "console" }], []).unrecorded.length === 1);
+
+	// ── a recorded row under a project the LISTING lost ────────────────────────────────────────
+	// Driven through `compare` rather than hand-assembled, because the defect lived in the SEAM: the
+	// project short-circuits, NOTHING of it reaches `stale`, and it was that emptiness the two-bucket
+	// reconcile read as "no longer a finding" — printing "delete the row" over a subject that had
+	// gone further out of reach. Reachable without renaming anything: delete
+	// apps/console/e2e/architecture-canvas.spec.ts and `canvas` stays defined but collects no tests.
+	const vanishedDoc = structuredClone(clean);
+	vanishedDoc.projects.canvas = { "architecture-canvas.spec.ts": { "Architecture canvas › regions": "passed", "Architecture canvas › sizing": "passed" } };
+	const vanishedRow = { project: "canvas", file: "architecture-canvas.spec.ts", title: "Architecture canvas › regions", why: "#4324, a reason long enough to read as one" };
+	const vc = compare(vanishedDoc, listed);
+	const vr = reconcile(vc.stale, [vanishedRow], vc.missingProjects);
+	ok(
+		"the vanished project short-circuits, so NONE of its entries reach `stale`",
+		vc.stale.length === 0 && vc.missingProjects.length === 1 && vc.missingProjects[0].project === "canvas",
+	);
+	ok("a recorded row under a vanished project is SUSPENDED, not dead", vr.dead.length === 0 && vr.suspended.length === 1 && vr.suspended[0].project === "canvas");
+	ok(
+		"...and nothing rendered about it tells the reader to delete the row",
+		(() => {
+			const lines = renderFindings({ missingProjects: vc.missingProjects, unrecorded: vr.unrecorded, dead: vr.dead, suspended: vr.suspended });
+			return (
+				lines.length === 2 &&
+				/no longer defines/.test(lines[0]) &&
+				/must NOT be deleted on their own/.test(lines[1]) &&
+				!lines.some((l) => /Delete the row/.test(l))
+			);
+		})(),
+	);
+	// THE CONTROL for the pair above. "Never renders `Delete the row`" would also pass on a render
+	// that had lost the sentence altogether, which is the direction that silently stops reporting.
+	ok(
+		"control: a row whose project is still listed and whose subject came back IS dead, and the render does say to delete it",
+		(() => {
+			const r = reconcile([], [row], []);
+			const lines = renderFindings({ missingProjects: [], unrecorded: [], dead: r.dead, suspended: r.suspended });
+			return r.dead.length === 1 && lines.length === 1 && /Delete the row/.test(lines[0]);
+		})(),
+	);
+	ok(
+		"reconcile refuses to answer at all without the vanished-project set",
+		(() => {
+			try {
+				reconcile([], [row]);
+				return false;
+			} catch (err) {
+				return err instanceof Error && /`missingProjects` is required/.test(err.message);
+			}
+		})(),
+	);
 	ok("RECORDED_STALE has no duplicate rows", new Set(RECORDED_STALE.map(idOf)).size === RECORDED_STALE.length);
 	ok(
 		"every RECORDED_STALE row states a reason that names its cause",
