@@ -141,8 +141,8 @@
 				"Alerts — the plan gate (community org) › a Hobby org never reaches the three section headings": "passed",
 				"Alerts — a reduced-permission member › sees the alerting surface, since the org's plan unlocks it": "passed",
 				"Alerts — a reduced-permission member › cannot add a channel or create a policy": "passed",
-				"Alerts — a transport that cannot store its secret › a secret-bearing transport explains the missing key and disables the submit": "passed",
-				"Alerts — a transport that cannot store its secret › an Email channel is still offered, because it stores no secret": "passed"
+				"Alerts — a secret-bearing transport, now that the leg promises a key › a secret-bearing transport carries no missing-key note, and its submit is live": "passed",
+				"Alerts — a secret-bearing transport, now that the leg promises a key › a webhook whose endpoint cannot be verified reports it, and creates nothing": "passed"
 			},
 			"flows/alerts.spec.ts": {
 				"Alerts — the hub › a Pro org gets all three surfaces as section headings": "passed",

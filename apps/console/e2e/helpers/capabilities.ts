@@ -20,26 +20,45 @@
 // fails the leg when a promised capability's variables are absent — an unset repository secret is
 // then a named failure at the top of the job rather than a downgraded run at the bottom.
 
-// ── `encryption`, AND WHY IT IS DECLARED BEFORE IT IS PROMISED (#4456) ─────────────────────────
+// ── `encryption` (#4456) ───────────────────────────────────────────────────────────────────────
 //
-// `ALETHIA_CRED_ENCRYPTION_KEY` is set on NO leg of release-gate.yml, so `isCredEncryptionConfigured()`
-// is false on all of them and every surface that stores a secret is inert: the add-channel sheet
-// shows its "needs an encryption key" note and disables submit, and every connector credential path
-// is unreachable behind the same mechanism.
+// Without `ALETHIA_CRED_ENCRYPTION_KEY` a console's `isCredEncryptionConfigured()` is false and
+// every surface that stores a secret is inert: the add-channel sheet shows its "needs an encryption
+// key" note and disables submit, and every connector credential path is unreachable behind the same
+// mechanism. That was the state of EVERY gate leg, and it could not be DECLARED — a spec could not
+// write `@needs:encryption` and go red on a leg that does not promise it, so the only options were
+// to avoid the surface or to write a test that quietly asserts the disabled state. Both leave the
+// gap invisible, which is the exact outcome this module exists to prevent.
 //
-// Before this, that could not be DECLARED. A spec could not write `@needs:encryption` and go red on
-// a leg that does not promise it — the only options were to avoid the surface or to write a test
-// that quietly asserts the disabled state, and both leave the gap invisible. That is the exact
-// outcome this module exists to prevent, so the capability is added FIRST, on its own: it turns
-// silence into a declarable, failing condition even before any leg promises it.
+// `console`, `qa` and `audit-interaction` now PROMISE it, and release-gate.yml sets the key on
+// exactly the legs that do. The value is not a repository secret and never was one to wait for:
+// `.github/workflows/e2e-nightly.yml` already used a fixed non-secret throwaway literal for this
+// variable, with the same rationale and a `.gitleaks.toml` allowlist anchored to the literal and
+// to this variable name rather than to a file, so the gate reuses it verbatim.
 //
-// NOTHING PROMISES IT YET, and that is a state, not an oversight. Promising it on `qa` is a
-// behaviour change with a cost that belongs to the lane that owns the specs: `e2e/flows/alerts.negative.spec.ts`
-// carries two tests that assert the DISABLED state and say so in their own comment ("If the gate
-// ever promises the key, THIS is the test that goes red and says so"). The key itself is NOT blocked
-// on anyone — `.github/workflows/e2e-nightly.yml` already sets a fixed non-secret throwaway value
-// for exactly this variable, with the same rationale and a `.gitleaks.toml` allowlist anchored to
-// the literal rather than to a file.
+// WHAT PROMISING IT ON `qa` COST, because the accounting is the interesting part.
+// `e2e/flows/alerts.negative.spec.ts` closed with a describe block that existed only because the
+// key was absent, under a comment reading "If the gate ever promises the key, THIS is the test that
+// goes red and says so". Exactly ONE of its two tests did. The other — that Email is still offered
+// "because it stores no secret" — stayed GREEN, having quietly stopped discriminating: its whole
+// meaning was the contrast with the sibling that had just changed. A red test says so; a test that
+// stops measuring does not, and nothing in the gate would have reported it. So both were rewritten
+// into the positive paths they stood in for and tagged `@needs:encryption`, which RENAMED them —
+// and a renamed test is a baseline entry the run no longer contains (`scripts/e2e-ratchet.mjs`
+// rule 4), so two keys moved in `apps/console/e2e/gate-baseline.json`. Their statuses did not.
+
+// ── WHY THE NAMES BELOW MAY NOT OVERLAP ────────────────────────────────────────────────────────
+//
+// release-gate.yml's `env:` block selects a capability's variables with
+// `contains(matrix.capabilities, '<name>')`, because `matrix.capabilities` is a comma-separated SET
+// and the `==` it used before matched nothing the moment a leg promised two things. `contains` is a
+// SUBSTRING test, though, so it agrees with set membership only while no capability name contains
+// another: a future `stripe-connect` would hand every leg promising it the real Stripe keys it
+// never promised — availability without a promise, which is this module's rule read backwards.
+//
+// `--assert-env` therefore refuses the whole set when that stops holding. It is checked there, on
+// every leg, before the build, rather than stated in a comment beside the YAML, because a sentence
+// asserting a property nothing enforces is indistinguishable from one that is still true.
 
 /** Every capability a leg may promise. Adding one means adding what `--assert-env` requires of it. */
 export const CAPABILITIES = ["stripe", "ai-mock", "encryption"] as const;
@@ -142,6 +161,34 @@ export function requireCapability(
 	}
 	opts.skip(`NOT MEASURED: "${capability}" is not configured locally (${PROMISE_VAR} does not promise it)`);
 	return "skipped";
+}
+
+/**
+ * Every ordered pair of capability names where one CONTAINS the other, reported as a problem
+ * string. Empty means `contains(matrix.capabilities, '<name>')` in release-gate.yml is equivalent
+ * to membership of the promised set, which is the only condition under which that expression is
+ * the right one. See the header for what breaks when it is not.
+ *
+ * Static — it reads no environment — and deliberately so: this is a property of the NAMES, and the
+ * leg that would be handed a variable it never promised is not the leg that added the name.
+ */
+export function overlappingCapabilityNames(
+	names: readonly string[] = CAPABILITIES,
+): string[] {
+	const problems: string[] = [];
+	for (const outer of names) {
+		for (const inner of names) {
+			if (outer === inner) continue;
+			if (!outer.includes(inner)) continue;
+			problems.push(
+				`capability "${outer}" contains "${inner}", so release-gate.yml's ` +
+					`contains(matrix.capabilities, '${inner}') is true on a leg that promised only ` +
+					`"${outer}" — it would be handed ${inner}'s variables without promising them. ` +
+					`Rename one of them, or teach the workflow an exact-membership test.`,
+			);
+		}
+	}
+	return problems;
 }
 
 /**
@@ -264,6 +311,22 @@ export function selfTest(): string[] {
 		"a leg may promise encryption alongside stripe",
 		promised({ [PROMISE_VAR]: "stripe,encryption" }).size === 2,
 	);
+
+	// ── the name-overlap invariant, BOTH DIRECTIONS ────────────────────────────────────────────
+	// The negative case is the whole point: a check that only ever sees the passing set is
+	// indistinguishable from `return []`, and this one is asked about a list that is currently
+	// clean. So it is driven over a set that DOES clash, and the clash is named.
+	ok("today's capability names do not overlap", overlappingCapabilityNames().length === 0);
+	ok(
+		"a name that CONTAINS another is reported, naming both",
+		overlappingCapabilityNames(["stripe", "stripe-connect"]).some(
+			(p) => p.includes('"stripe-connect" contains "stripe"'),
+		),
+	);
+	ok(
+		"the overlap check is one-directional per pair, not symmetric noise",
+		overlappingCapabilityNames(["stripe", "stripe-connect"]).length === 1,
+	);
 	return failures;
 }
 
@@ -282,7 +345,11 @@ if (invokedDirectly) {
 		process.exit(failures.length === 0 ? 0 : 1);
 	}
 	if (argv.includes("--assert-env")) {
-		const problems = assertEnvForPromises();
+		// The name-overlap invariant is checked FIRST and on every leg, promise or not: it is what
+		// makes release-gate.yml's `contains(...)` selection equivalent to membership of the set,
+		// and the leg it would silently over-provision is not the leg whose promise introduced the
+		// clash. A leg promising nothing is exactly as good a place to notice it.
+		const problems = [...overlappingCapabilityNames(), ...assertEnvForPromises()];
 		const names = [...promised()];
 		if (problems.length > 0) {
 			for (const p of problems) console.error(`::error::${p}`);
