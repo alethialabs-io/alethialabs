@@ -469,7 +469,10 @@ controls:
     route: /[org]/~/settings/teams
     surface: apps/console/components/settings/teams/manage-team-dialog.tsx
     mutation: removeTeamMember
-    reach: [{ open: "Manage team" }]
+    # TWO steps, because "Manage team" is a DROPDOWN TRIGGER, not the dialog. Its items are
+    # "Manage members" and "Delete team" (teams-list.tsx), so a chain that stopped at the first step
+    # left `ManageTeamDialog` unmounted and looked for the row's "Remove" on a page that has none.
+    reach: [{ menu: "Manage team" }, { open: "Manage members" }]
     control: { role: button, name: "Remove" }
     confirm: confirm-dialog
     confirm_action: "Remove from team"
@@ -511,10 +514,28 @@ controls:
     route: /[org]/~/settings/members
     surface: apps/console/components/settings/members/members-table.tsx
     mutation: authClient.organization.removeMember
-    # "Manage", not "Row actions": the trigger's accessible name is the button's `aria-label` in
-    # members-table.tsx, and a reach step naming something the page does not render withholds the
-    # control's verdict WITHOUT failing — a confirmation nobody ever opened, recorded as fine.
-    reach: [{ menu: "Manage" }]
+    # ── THE FOUR ROW CONTROLS BELOW REACH A ROW KIND, NOT "THE FIRST MANAGE BUTTON" ──────────────
+    #
+    # A reach step naming something the page does not render withholds the control's verdict WITHOUT
+    # failing — a confirmation nobody ever opened, recorded as fine — so "Row actions", a string that
+    # appears nowhere in the console, had to go. But "Manage" alone was not the fix either: every
+    # non-owner row rendered a trigger with that exact `aria-label`, `walkReach` takes `.first()`,
+    # and so all four of these opened ROW 1's menu. Two of the four items only exist on some other
+    # row's menu — `Cancel invitation` on an invitation's, `Reactivate` on a suspended member's — so
+    # those two could never be reached and were withheld while the entry claimed `confirmed`.
+    #
+    # members-table.tsx now names each trigger for its subject — "Manage member <who>", "Manage
+    # suspended member <who>", "Manage invitation <address>" — which is the a11y fix as much as the
+    # measurement one (one "Manage" repeated down a column tells a screen-reader user nothing about
+    # which person it belongs to). The KIND leads, so a chain can select the row it needs without any
+    # fixture having to be named here.
+    #
+    # ⚠ Selecting the right KIND is not the same as the row EXISTING. No project seeds the `fixture:`
+    # rows below — `e2e/audit/context.ts` writes a project, a job and a support case and nothing
+    # else — so on an org holding only its owner these steps still withhold, now with the honest
+    # reason ("not rendered for this persona") rather than by opening the wrong menu. Seeding them,
+    # and the fact that a withheld verdict is currently GREEN, are #4646.
+    reach: [{ menu: "Manage member" }]
     control: { role: menuitem, name: "Remove from organization" }
     confirm: confirm-dialog
     confirm_action: "Remove member"
@@ -528,7 +549,8 @@ controls:
     route: /[org]/~/settings/members
     surface: apps/console/components/settings/members/members-table.tsx
     mutation: authClient.organization.cancelInvitation
-    reach: [{ menu: "Manage" }]
+    # An INVITATION's menu — the only one that carries this item (`r.kind !== "member"`).
+    reach: [{ menu: "Manage invitation" }]
     control: { role: menuitem, name: "Cancel invitation" }
     confirm: confirm-dialog
     # "Revoke invitation" — a THIRD spelling on purpose. The menu item that opens this dialog says
@@ -545,7 +567,7 @@ controls:
     route: /[org]/~/settings/members
     surface: apps/console/components/settings/members/members-table.tsx
     mutation: setMemberSuspended
-    reach: [{ menu: "Manage" }]
+    reach: [{ menu: "Manage member" }]
     control: { role: menuitem, name: "Suspend" }
     confirm: confirm-dialog
     confirm_action: "Suspend member"
@@ -560,7 +582,9 @@ controls:
     route: /[org]/~/settings/members
     surface: apps/console/components/settings/members/members-table.tsx
     mutation: setMemberSuspended
-    reach: [{ menu: "Manage" }]
+    # A SUSPENDED member's menu — `Reactivate` replaces `Suspend` only for `r.status === "suspended"`,
+    # so this is the one row kind on which the item exists at all.
+    reach: [{ menu: "Manage suspended member" }]
     control: { role: menuitem, name: "Reactivate" }
     # Reactivating destroys nothing, and it is registered and confirmed anyway: it is the same
     # `setMemberSuspended` write on the same menu, and a toggle whose two directions disagree about
@@ -578,9 +602,12 @@ controls:
     route: /[org]/~/settings/members
     surface: apps/console/components/settings/members/members-table.tsx
     mutation: authClient.organization.removeMember
-    # `Select` is the per-row checkbox's accessible name — ticking ONE row raises the bulk bar, which
-    # is all this entry needs. The previous step, "select two rows", was a sentence rather than a
-    # control, so it could never be taken.
+    # `Select` is the LEADING WORD of every row checkbox's accessible name ("Select <who>") — the
+    # reach matcher is a substring, so one step ticks the first row, and one ticked row raises the
+    # bulk bar, which is all this entry needs. The previous step, "select two rows", was a sentence
+    # rather than a control, so it could never be taken. Unlike the four row-menu entries above, this
+    # one does NOT depend on a fixture: the checkbox column renders for every row including the
+    # owner's, so an org holding nothing but its owner still raises the bar.
     reach: [{ open: "Select" }]
     control: { role: button, name: "Remove" }
     confirm: confirm-dialog
