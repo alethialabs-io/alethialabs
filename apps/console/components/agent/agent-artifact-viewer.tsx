@@ -40,6 +40,10 @@ export function AgentArtifactViewer({
 	onBack: () => void;
 	onAddToChat: () => Promise<void>;
 	onOpenInNewChat: () => Promise<void>;
+	/**
+	 * REQUESTS the delete — it does not perform one. The gallery owns the confirmation (#4280), so
+	 * this resolves as soon as the dialog is raised and the mutation waits on the answer.
+	 */
 	onDelete: () => Promise<void>;
 }) {
 	const [busy, setBusy] = useState<null | "add" | "new" | "delete">(null);

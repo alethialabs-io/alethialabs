@@ -8,6 +8,7 @@ import { listSharedArtifacts } from "@/app/server/actions/artifact-shares";
 import { deleteArtifact, listArtifacts } from "@/app/server/actions/artifacts";
 import { AgentArtifactViewer } from "@/components/agent/agent-artifact-viewer";
 import { GALLERY_EMPTY } from "@/components/agent/gallery-empty";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import type { AgentArtifact } from "@/lib/db/schema";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
@@ -44,6 +45,12 @@ export function AgentArtifactGallery({
 	const [selected, setSelected] = useState<AgentArtifact | null>(null);
 	// "yours" = artifacts you created; "shared" = ones teammates shared into your org.
 	const [tab, setTab] = useState<GalleryTab>("yours");
+	// The artifact a delete has been REQUESTED for. Deleting is irreversible and the trigger is a
+	// one-click icon that appears on hover, so the click asks before it destroys (#4280). One piece
+	// of state for both triggers — the card's and the viewer's — because there is one answer.
+	const [pendingDelete, setPendingDelete] = useState<AgentArtifact | null>(
+		null,
+	);
 
 	const load = useCallback(() => {
 		setItems(null);
@@ -65,18 +72,42 @@ export function AgentArtifactGallery({
 		}
 	}, []);
 
+	/**
+	 * The one confirmation both delete triggers raise. Rendered in BOTH branches below rather than
+	 * once around them: the viewer replaces the list outright, and a dialog that unmounts with the
+	 * view it was opened from cannot be answered.
+	 */
+	const confirmDelete = (
+		<ConfirmDialog
+			open={pendingDelete !== null}
+			onOpenChange={(o) => {
+				if (!o) setPendingDelete(null);
+			}}
+			title={`Delete ${pendingDelete?.name ?? "artifact"}?`}
+			description="This permanently deletes the saved artifact and every widget in it. Conversations that used it are unaffected. This cannot be undone."
+			confirmLabel="Delete artifact"
+			onConfirm={() => {
+				if (pendingDelete) void remove(pendingDelete.id);
+				setPendingDelete(null);
+			}}
+		/>
+	);
+
 	// A selected artifact takes over the region — read-only, with explicit actions.
 	if (selected) {
 		return (
-			<AgentArtifactViewer
-				artifact={selected}
-				hasActiveChat={hasActiveChat}
-				owned={tab === "yours"}
-				onBack={() => setSelected(null)}
-				onAddToChat={() => onAddToChat(selected.id)}
-				onOpenInNewChat={() => onOpenInNewChat(selected.id, selected.name)}
-				onDelete={() => remove(selected.id)}
-			/>
+			<>
+				<AgentArtifactViewer
+					artifact={selected}
+					hasActiveChat={hasActiveChat}
+					owned={tab === "yours"}
+					onBack={() => setSelected(null)}
+					onAddToChat={() => onAddToChat(selected.id)}
+					onOpenInNewChat={() => onOpenInNewChat(selected.id, selected.name)}
+					onDelete={async () => setPendingDelete(selected)}
+				/>
+				{confirmDelete}
+			</>
 		);
 	}
 
@@ -193,7 +224,7 @@ export function AgentArtifactGallery({
 										<button
 											type="button"
 											aria-label={`Delete ${a.name}`}
-											onClick={() => void remove(a.id)}
+											onClick={() => setPendingDelete(a)}
 											className="text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/card:opacity-100"
 										>
 											<Trash2 className="h-3.5 w-3.5" />
@@ -206,6 +237,8 @@ export function AgentArtifactGallery({
 				)}
 				</div>
 			</ScrollArea>
+
+			{confirmDelete}
 		</div>
 	);
 }
