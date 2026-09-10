@@ -219,6 +219,18 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 				resource_id: PROJ_A3,
 				effect: "deny",
 			}),
+			// G11 + G12: the SAME ruling on the class it was NOT decided on — an unscopable kind
+			// (`job`) carrying an id. The parity fixture's other deny of the pair is `org`-kind,
+			// where OpenFGA already excluded the org; here it excluded NOTHING (the model has no
+			// `job:` object type), so this is the row where BOTH engines widen. Without it, class
+			// 2 has the ruling applied to it and nothing testing it.
+			grantRow({ permission_key: "project:audit", resource_id: null }),
+			grantRow({
+				permission_key: "project:audit",
+				resource_type: "job",
+				resource_id: PROJ_A1,
+				effect: "deny",
+			}),
 		];
 		await db.insert(grants).values(grantRows);
 
@@ -390,6 +402,14 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		{ name: "destroy on PROJ_A3 — the bad-pair DENY names it", action: "destroy", id: PROJ_A3, want: false },
 		{ name: "destroy on PROJ_A1 — and reaches a project it never named", action: "destroy", id: PROJ_A1, want: false },
 		{ name: "destroy on PROJ_A2 — org-wide means org-wide", action: "destroy", id: PROJ_A2, want: false },
+
+		// The unscopable-kind DENY (G12). PROJ_A1 is the resource it names; A2 and A3 are ones it
+		// never names and could reach through the org-wide allow (G11) until this ruling. Both
+		// engines must agree on all three — and on OpenFGA this row produced NO TUPLES AT ALL
+		// before #4584, so this is the pair where the store's answer moves furthest.
+		{ name: "audit on PROJ_A1 — the unscopable-kind DENY names it", action: "audit", id: PROJ_A1, want: false },
+		{ name: "audit on PROJ_A2 — and widens onto one it never named", action: "audit", id: PROJ_A2, want: false },
+		{ name: "audit on PROJ_A3 — org-wide, on the class the ruling did not decide", action: "audit", id: PROJ_A3, want: false },
 	];
 
 	for (const c of cases) {

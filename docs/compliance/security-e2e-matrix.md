@@ -135,6 +135,20 @@ FAIL when the protection is removed; two were proven so by flipping the guard:
   what OpenFGA does for the pair today and what every deployed store's already-written tuples
   still say (`backfill` only writes), so **no deployed store's deny behaviour changes**.
 
+  ⚠ **The deny ruling reaches a second population it was not decided on, and there it REMOVES
+  access on deploy.** `grantTarget` calls two shapes uninterpretable: the `('org', <uuid>)` pair,
+  and any *other* unscopable `resource_type` carrying an id (`job`, `member`, a typo — still
+  writeable, since neither write boundary validates `resource_type` against `ScopableType`). The
+  ruling's justification — OpenFGA already excludes the org, so no deployed store moves — is true
+  of the first and **false of the second**, where OpenFGA produced no tuples at all. For that
+  class the exclusion widens from one resource to the whole org on BOTH engines, with nobody
+  editing anything: `backfill` re-expands raw rows on every boot, so the deploy is the change.
+  No option preserves its current behaviour (a per-id exclusion on a kind with no object type is
+  not expressible in OpenFGA); the alternative — dropping the row — is non-divergent but
+  fail-OPEN, which is the direction the ruling rejects. Measured per row before deploy by
+  `deploy_change` and `also_allowed_anywhere` in `docs/ops/grants-scope-contradictions.sql`,
+  because the remediation verdict beside them answers a different question and cannot see this.
+
   ⚠ A third reading — "excludes only the resource it names", which is what Postgres does today —
   **is not on the menu because OpenFGA cannot express it**, and it looks like the obvious right
   answer until you try to write the tuple: the object would be `org:<project-uuid>`, which does not

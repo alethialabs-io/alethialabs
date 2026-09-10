@@ -63,6 +63,7 @@ const ID = {
 	noPermission: randomUUID(),
 	unscopableLive: randomUUID(),
 	unscopableRedundant: randomUUID(),
+	unscopableDeny: randomUUID(),
 	teamPrincipal: randomUUID(),
 };
 
@@ -75,6 +76,11 @@ type AuditRow = {
 	resource_kind: string;
 	permissions: number;
 	also_org_wide: number;
+	also_allowed_anywhere: number;
+	scope_today_pg: string;
+	scope_today_fga: string;
+	scope_after: string;
+	deploy_change: string;
 	verdict: string;
 	subject: string | null;
 	principal_type: string;
@@ -148,6 +154,11 @@ describeIfDb("the #4583 audit query (docs/ops/grants-scope-contradictions.sql)",
 			row({ id: ID.unscopableLive, effect: "allow", permission_key: "runner:deploy", resource_type: "job", resource_id: PROJECT }),
 			// A plain typo, conferring something the subject already holds org-wide.
 			row({ id: ID.unscopableRedundant, effect: "allow", permission_key: "project:view", resource_type: "prject", resource_id: PROJECT }),
+			// A class-B DENY. This is the row the deny ruling reaches WITHOUT having been decided
+			// on it: today Postgres excludes only PROJECT and OpenFGA excludes nothing; after
+			// #4584 both exclude the whole org. And the subject holds project:deploy org-wide
+			// (the control above), so there IS something for the wider exclusion to bite.
+			row({ id: ID.unscopableDeny, effect: "deny", permission_key: "project:deploy", resource_type: "job", resource_id: PROJECT }),
 		]);
 
 		rows = await db.execute<AuditRow>(sql.raw(QUERY));
@@ -189,7 +200,7 @@ describeIfDb("the #4583 audit query (docs/ops/grants-scope-contradictions.sql)",
 	it("selects the unscopable-kind class, which the first version of this query missed", () => {
 		const classB = rows.filter((r) => r.pair_class === "unscopable-kind");
 		expect(new Set(classB.map((r) => r.id))).toEqual(
-			new Set([ID.unscopableLive, ID.unscopableRedundant]),
+			new Set([ID.unscopableLive, ID.unscopableRedundant, ID.unscopableDeny]),
 		);
 		expect(new Set(classB.map((r) => r.resource_type))).toEqual(new Set(["job", "prject"]));
 		// And the two classes stay distinguishable, which is the whole point of reporting them
@@ -246,6 +257,69 @@ describeIfDb("the #4583 audit query (docs/ops/grants-scope-contradictions.sql)",
 		// LIVE over-reports in the safe direction. The wording has to match what is measured.
 		expect(verdictOf(rows, ID.denyLive)).toContain("ORG-WIDE");
 		expect(verdictOf(rows, ID.denyLive)).not.toContain("nothing else confers");
+	});
+
+	// ── 3b. `deploy_change` — the OTHER question: what shipping #4584 does to this row ──────
+	// `verdict` answers "if I remediate this, does someone lose access?". This answers "when this
+	// DEPLOYS, does the row start meaning something wider or narrower?" — a different question,
+	// and one a clean remediation verdict says nothing about. Nobody edits a row for it to
+	// happen: `backfill` re-expands every raw grant on every boot.
+
+	const rowFor = (id: string): AuditRow => {
+		const found = rows.find((r) => r.id === id);
+		if (!found) throw new Error(`the audit did not return the row ${id}`);
+		return found;
+	};
+
+	it("an ALLOW row NARROWS — and the two classes narrow on different engines", () => {
+		// org-kind: Postgres scoped it to the id, OpenFGA took it as org-wide. Both go to nothing.
+		const a = rowFor(ID.redundant);
+		expect(a.scope_today_pg).toBe("this-resource");
+		expect(a.scope_today_fga).toBe("org-wide");
+		expect(a.scope_after).toBe("nothing");
+		expect(a.deploy_change).toMatch(/^NARROWS ON BOTH ENGINES/);
+
+		// unscopable-kind: OpenFGA already conferred nothing, so only Postgres moves.
+		const b = rowFor(ID.unscopableLive);
+		expect(b.scope_today_fga).toBe("nothing");
+		expect(b.deploy_change).toMatch(/^NARROWS ON POSTGRES/);
+	});
+
+	it("a DENY row WIDENS — and the org-kind one does not move OpenFGA", () => {
+		// The row the ruling WAS decided on: OpenFGA already excluded the org, so it does not
+		// move there — which is the argument the ruling was made on.
+		const d = rowFor(ID.denyLive);
+		expect(d.scope_today_pg).toBe("this-resource");
+		expect(d.scope_today_fga).toBe("org-wide");
+		expect(d.scope_after).toBe("org-wide");
+		expect(d.deploy_change).toMatch(/^WIDENS ON POSTGRES/);
+	});
+
+	it("⚠ a class-B DENY widens on BOTH engines — the case the ruling was NOT decided on", () => {
+		// This is the finding this arm exists for. `('job', <uuid>)` deny: Postgres excludes one
+		// resource today, OpenFGA excludes NOTHING today, and after #4584 both exclude the whole
+		// org. The ruling's own justification — "OpenFGA already does this" — is false here.
+		const d = rowFor(ID.unscopableDeny);
+		expect(d.pair_class).toBe("unscopable-kind");
+		expect(d.effect).toBe("deny");
+		expect(d.scope_today_pg).toBe("this-resource");
+		expect(d.scope_today_fga).toBe("nothing");
+		expect(d.scope_after).toBe("org-wide");
+		expect(d.deploy_change).toMatch(/^WIDENS ON BOTH ENGINES/);
+		expect(d.deploy_change).toContain("Removes access on first boot");
+	});
+
+	it("also_allowed_anywhere says whether a widened exclusion has anything to bite", () => {
+		// The deny-side counterpart of `also_org_wide`. The subject holds project:deploy org-wide
+		// (a control row), so widening this exclusion to the org REMOVES that access. A deny row
+		// widening against a permission nobody holds would change nothing observable, and this is
+		// the column that tells those two apart.
+		const d = rowFor(ID.unscopableDeny);
+		expect(d.permissions).toBe(1);
+		expect(d.also_allowed_anywhere).toBe(1);
+		// …and it is NOT the same number as also_org_wide, which asks the remediation question at
+		// the SAME effect: there is no org-wide DENY of project:deploy for this subject.
+		expect(d.also_org_wide).toBe(0);
 	});
 
 	// ── 4. `resource_kind` is a lookup in five tables, and says so when it misses ───────────
