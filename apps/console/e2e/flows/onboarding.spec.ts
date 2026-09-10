@@ -380,6 +380,11 @@ test.describe("Onboarding — a second organization", () => {
 	});
 
 	test("picking the other organization navigates to it", async ({ member }) => {
+		// An org overview load, a popover, a client-side push and a second org overview load. The
+		// 30s default is not a budget for that — it is less than the navigation wait BELOW on its
+		// own, so the test died on its own deadline before that wait could ever report (measured on
+		// run 34469855618, both attempts `timedOut` with no assertion having failed).
+		test.setTimeout(120_000);
 		await member.page.goto(`/${member.orgSlug}`);
 		const trigger = member.page.getByRole("button", { name: /switch organization/i });
 		// The trigger renders the ACTIVE org's name (components/org-switcher.tsx · SwitcherTrigger),
@@ -398,6 +403,13 @@ test.describe("Onboarding — a second organization", () => {
 		).toBeGreaterThanOrEqual(0);
 
 		await options.nth(other).click();
+		// The popover closing is `handleSelect` having RUN; the URL moving is it having chosen a
+		// target. Separating them is what tells "the click missed" from "the switch went nowhere"
+		// — components/org-switcher.tsx closes and then refuses to navigate for an org with no
+		// slug, and a single timeout on the URL cannot tell those two apart.
+		await expect(member.page.getByPlaceholder(/find organization/i)).toBeHidden({
+			timeout: 15_000,
+		});
 		// The URL segment is what scopes the request, so the switch is only real once it moves.
 		await member.page.waitForURL(
 			(url) => {

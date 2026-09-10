@@ -174,11 +174,18 @@ test.describe("Onboarding negatives — invitation accept", () => {
 		// the word "invitation": this card's heading, body and buttons are all full of that word,
 		// so a text match would be true of a page where nothing happened.
 		//
-		// The exact wording is deliberately not asserted. It is Better Auth's own message for an
-		// address mismatch, falling back to the page's "Couldn't accept this invitation." — pinning
-		// a dependency's copy would make a library bump a red gate, and what matters is that a
-		// refusal was SHOWN.
-		await expect(owner.page.getByRole("alert")).toBeVisible({ timeout: 20_000 });
+		// `p[role="alert"]`, not `getByRole("alert")`: Next mounts its own route announcer as an
+		// always-present, always-empty `<div role="alert" aria-live="assertive">`, so the role on
+		// its own resolves to two elements and the assertion dies in strict mode before it can say
+		// anything about the refusal (measured on run 34469855618).
+		const refusal = owner.page.locator('p[role="alert"]');
+		await expect(refusal).toBeVisible({ timeout: 20_000 });
+		// Non-empty, so an empty live region can never stand in for a message. The exact WORDING is
+		// deliberately not pinned: it is Better Auth's own copy for an address mismatch ("You are
+		// not the recipient of the invitation"), falling back to this page's "Couldn't accept this
+		// invitation." — pinning a dependency's string would make a library bump a red gate, and
+		// what matters here is that a refusal was shown at all.
+		await expect(refusal).toHaveText(/\S/);
 		// A successful accept pushes /dashboard, so staying put is the second half of the same fact.
 		await expect(owner.page).toHaveURL(/\/invites\/accept/);
 
