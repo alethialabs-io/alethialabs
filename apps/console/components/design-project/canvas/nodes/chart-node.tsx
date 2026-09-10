@@ -42,7 +42,7 @@ function scanChip(
 			Icon: ShieldAlert,
 		};
 	}
-	return { label: "Not scanned", cls: "text-muted-foreground/60", Icon: ShieldQuestion };
+	return { label: "Not scanned", cls: "text-text-tertiary", Icon: ShieldQuestion };
 }
 
 type ChartStatus = "synced" | "progressing" | "degraded" | "pending";
@@ -118,10 +118,10 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 				</div>
 				<div className="flex gap-3 font-mono text-ui-2xs text-muted-foreground">
 					<span>
-						path <span className="text-foreground/80">/{c.chartPath.replace(/^\/+/, "")}</span>
+						path <span className="text-foreground">/{c.chartPath.replace(/^\/+/, "")}</span>
 					</span>
 					<span>
-						ref <span className="text-foreground/80">{c.ref}</span>
+						ref <span className="text-foreground">{c.ref}</span>
 					</span>
 				</div>
 				{/* Chart-safety scan chip — opens the findings card on the workspace rail. */}

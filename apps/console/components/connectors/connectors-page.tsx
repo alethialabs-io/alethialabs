@@ -443,7 +443,7 @@ export function ConnectorsPage({
 										target="_blank"
 										rel="noopener noreferrer"
 										title={`Learn about ${group.label.toLowerCase()} connectors`}
-										className="text-muted-foreground/70 transition-colors hover:text-foreground"
+										className="text-text-tertiary transition-colors hover:text-foreground"
 									>
 										<BookOpen className="size-3.5" />
 									</a>

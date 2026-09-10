@@ -84,7 +84,7 @@ RUBRIC.md defines **34 predicates**. This report scores **34** of them —
 | `scripts/check-shared-surface.mjs` | every H-family occurrence, per file |
 | `scripts/check-filter-standard.mjs` | F1–F6 per filter SURFACE, joined to the routes whose closure reaches it |
 | `apps/console/tests/lib/queries/filter-standard-facets.test.ts` | F7 — the behaviour RUBRIC.md says a matcher cannot answer |
-| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 27`) |
+| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 0`) |
 | `apps/console/ui-conformance-live.json` | T5–T7 and R1–R7 as MEASURED, imported from a CI run of the Playwright `audit` project |
 | `apps/console/docs/ui-conformance/RUBRIC.md` | the predicate set itself, read out of its own tables |
 
@@ -248,7 +248,7 @@ the console errors it produces and the time it takes to land are real and are me
 
 ## Where every shared-surface occurrence landed
 
-`check-shared-surface` found **74 occurrences across 42 files**. This section
+`check-shared-surface` found **24 occurrences across 15 files**. This section
 accounts for all of them twice — once by ledger, once by reach — so a rule or a file falling out
 of the scoreboard cannot be quiet.
 
@@ -257,14 +257,14 @@ of the scoreboard cannot be quiet.
 | `data_table` | H4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `empty_state` | H9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `format` | H5 | 6 | 6 | 0 | 0 | 3 | 3 | 0 | 0 |
-| `ink_alpha` | **none** — #4309 | 50 | 0 | 50 | 0 | 43 | 3 | 2 | 2 |
+| `ink_alpha` | **none** — #4309 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `layer_token` | H7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `page_title` | H1 | 17 | 17 | 0 | 0 | 7 | 1 | 0 | 9 |
 | `section_header` | H2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `stat_strip` | H6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `status_badge` | H3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `type_scale` | H8 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
-| **total** | | 74 | 24 | 50 | 0 | 53 | 7 | 2 | 12 |
+| **total** | | 24 | 24 | 0 | 0 | 10 | 4 | 0 | 10 |
 
 **`unlisted` is the column to read first.** A non-zero value means the guard is red — an
 occurrence neither a `reason:` nor a `lifts:` entry accounts for. It is not a defect of this
@@ -278,12 +278,12 @@ subject in a way that is not that row's verdict.
 | --- | --- | --- |
 | `ink_alpha` | #4309 | a static, preventive guard for the contrast R5 measures live — a class-string finding is not a rendered verdict, and scoring one predicate with both would make a route's R5 depend on whether its dead code was linted |
 
-**Reachable only from the shared layout chain** — 5 files. These are real
+**Reachable only from the shared layout chain** — 3 files. These are real
 occurrences in the sidebar, topbar, breadcrumbs and shells that every route renders. They are not
 in any route's H column, because attributing the chrome's drift to all 40 routes would say the
 console is 40 times worse than it is. The full list is in `ui-conformance-baseline.json`.
 
-**In a shared package, where no console closure can see them** — 2 files. These live
+**In a shared package, where no console closure can see them** — 0 files. These live
 outside `apps/console` and are reached through a bare `@repo/*` specifier, which the module closure
 deliberately does not follow. **They are not unimported, and nothing here claims they are** — most
 of them are primitives that many console pages render through. What is true is narrower: the
@@ -291,12 +291,9 @@ closure cannot say WHICH routes reach them, so they are counted here rather than
 route's H column or filed under the table below, whose whole claim is that no page imports the
 file. Fixing one of these is worth more than its occurrence count suggests, not less:
 
-| file | occurrences |
-|---|---:|
-| `packages/ui/src/field-help.tsx` | 1 |
-| `packages/ui/src/funnel-filter.tsx` | 1 |
+_None — every occurrence in this bucket has been lifted._
 
-**Outside every private route's module graph** — 6 files, all under `apps/console`.
+**Outside every private route's module graph** — 4 files, all under `apps/console`.
 Public routes (sign-in, onboarding, OAuth consent, accepting terms) and console modules no private
 page imports. The route manifest is scoped to `app/(private)`, so these are outside the rubric's
 stated subject and are listed here rather than scored. A file reached only through `@repo/*` is
@@ -307,8 +304,6 @@ stated subject and are listed here rather than scored. A file reached only throu
 | `apps/console/components/auth/auth-form.tsx` | 5 |
 | `apps/console/components/auth/onboarding-form.tsx` | 2 |
 | `apps/console/components/forms/oauth-consent-form.tsx` | 2 |
-| `apps/console/components/design-project/container-platform-selector.tsx` | 1 |
-| `apps/console/components/design-project/help-tooltip.tsx` | 1 |
 | `apps/console/components/legal/accept-terms-form.tsx` | 1 |
 
 _Generated by `apps/console/scripts/audit-report.mjs`. Do not edit below the marker — run `pnpm -C apps/console run audit:report --write`._

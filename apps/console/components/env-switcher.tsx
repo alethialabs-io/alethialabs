@@ -140,7 +140,10 @@ export function EnvSwitcher() {
 
 	return (
 		<>
-			<span className="text-border/70 select-none" aria-hidden>
+			{/* `text-border`, not an ink tier: this slash is an `aria-hidden` separator drawn in the
+			    divider colour, so it is chrome rather than ink — but the alpha it used to carry was
+			    still an unnamed fifth value, and the named token is the same colour (#4309). */}
+			<span className="text-border select-none" aria-hidden>
 				/
 			</span>
 			<Popover open={open} onOpenChange={setOpen}>
