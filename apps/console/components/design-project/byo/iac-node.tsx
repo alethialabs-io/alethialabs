@@ -73,6 +73,13 @@ export function IacNode({ source }: { source: IacSourceState }) {
 	// rather than firing the server action (#4281).
 	const [confirmDetach, setConfirmDetach] = useState(false);
 
+	// `detachIacSource` REFUSES a detach that would drop the handle to live BYO infra
+	// (app/server/actions/byo-iac.ts): a source with a deployed commit, or an environment whose
+	// status means template state exists or is in flight. The card can see the first of those —
+	// it already renders it as DEPLOYED — so the trigger is gated on it rather than offering a
+	// confirmation whose only possible outcome is an error toast (#4600 review). The env-status
+	// half is not on this card, so the dialog's copy names the precondition too.
+	const holdsDeployedState = source.deployedCommitSha !== null;
 	const chip = scanChip(source.scanStatus, source.scanReport);
 	const ChipIcon = chip.Icon;
 	const repoLabel = source.repoUrl.replace(/^https?:\/\/(www\.)?/, "").replace(/\.git$/, "");
@@ -149,17 +156,29 @@ export function IacNode({ source }: { source: IacSourceState }) {
 				</button>
 
 				{ctx && (
-					<div className="flex items-center gap-2 border-t border-border/60 pt-2">
-						<span className="font-mono text-ui-2xs text-muted-foreground">replace mode</span>
-						<button
-							type="button"
-							onClick={() => setConfirmDetach(true)}
-							disabled={detaching}
-							title="Detach IaC source"
-							className="ml-auto grid h-6 w-6 place-items-center rounded-none border border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-						>
-							<X className="h-3 w-3" />
-						</button>
+					<div className="flex flex-col gap-1.5 border-t border-border/60 pt-2">
+						<div className="flex items-center gap-2">
+							<span className="font-mono text-ui-2xs text-muted-foreground">replace mode</span>
+							{/* `title` is this button's ACCESSIBLE NAME (the label is an icon), and the
+							    destructive-action registry locates it by that name — so it stays the same
+							    string in both states, and the reason for a disabled X is a visible line
+							    below rather than a swapped title. */}
+							<button
+								type="button"
+								onClick={() => setConfirmDetach(true)}
+								disabled={detaching || holdsDeployedState}
+								title="Detach IaC source"
+								className="ml-auto grid h-6 w-6 place-items-center rounded-none border border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+							>
+								<X className="h-3 w-3" />
+							</button>
+						</div>
+						{holdsDeployedState && (
+							<p className="text-ui-2xs text-muted-foreground">
+								Destroy this environment before detaching — it has infrastructure deployed
+								from this source.
+							</p>
+						)}
 					</div>
 				)}
 			</div>
@@ -168,7 +187,7 @@ export function IacNode({ source }: { source: IacSourceState }) {
 				open={confirmDetach}
 				onOpenChange={setConfirmDetach}
 				title="Detach this IaC source?"
-				description="This environment falls back to the built-in template and the module's resources leave the board. The module itself is untouched, and nothing already provisioned is destroyed — but the next deploy applies the template, not your module."
+				description="This environment falls back to the built-in template and the module's resources leave the board. The module itself is untouched, and the next deploy applies the template rather than your module. Detaching is refused while the environment holds live infrastructure — destroy it first."
 				confirmLabel="Detach source"
 				onConfirm={() => {
 					void detach();
