@@ -89,18 +89,31 @@ test.describe("Activity — retention window gating (Hobby)", () => {
 		// It is read with a CSS locator on purpose. The sheet is a modal, so the page behind it
 		// leaves the accessibility tree and `getByRole` resolves to nothing there — which is why
 		// the ORIGINAL label assertion was recorded `failed` on a page where nothing was wrong.
-		// `locator("button")` + `hasText` is a DOM query, not an a11y one, and `toHaveText` does
-		// not require visibility, so neither is affected by `aria-hidden`.
+		// `locator(...)` + `hasText` is a DOM query, not an a11y one, and `toHaveText` does not
+		// require visibility, so neither is affected by `aria-hidden`.
 		//
-		// The filter is deliberately loose and the ASSERTION is what is exact: `hasText` must
-		// still select the trigger after a regression has relabelled it, or the test would fail
-		// by finding nothing and say the wrong thing about why. `.first()` is the quick-range
-		// trigger — the only other range control in the bar, `DateRangeFilter`, labels itself
-		// with formatted dates (`formatRangeLabel`), never "Last N days".
+		// `button[aria-expanded]` IS THE DISAMBIGUATION, and it is not decoration. This test has
+		// already opened the picker, and base-ui KEEPS THE CLOSED PANEL MOUNTED (2c9911d16, where
+		// a run resolved two buttons for one name) — so three of the five `RANGE_PRESETS`
+		// (packages/ui/src/range.ts) are still in the DOM behind it and every one of "Last 7
+		// days", "Last 14 days" and "Last 30 days" matches the text filter. The trigger is the
+		// only one of the four that is a DISCLOSURE control, and it carries `aria-expanded`
+		// because of what it is, not because of where the panel was portalled: the presets are
+		// plain `<button>`s without the attribute. Nothing else in the bar can collide — the
+		// other disclosure triggers label themselves "User", "Project", "Events", or, for
+		// `DateRangeFilter`, with formatted dates (`formatRangeLabel`).
+		//
+		// So NOT `.first()`, which would be an assertion about DOM ORDER — the same trap
+		// 2c9911d16 declined for the `getByRole` half of this lane. This resolves to exactly one
+		// node, and if it ever stops doing so Playwright's strict mode says so loudly rather
+		// than silently picking whichever the portal happened to put first.
+		//
+		// The text filter stays loose and the ASSERTION is what is exact: it must still select
+		// the trigger after a regression has relabelled it, or the test would fail by finding
+		// nothing and say the wrong thing about why.
 		const rangeTrigger = owner.page
-			.locator("button")
-			.filter({ hasText: /Last \d+ days/ })
-			.first();
+			.locator("button[aria-expanded]")
+			.filter({ hasText: /Last \d+ days/ });
 		await expect(rangeTrigger).toHaveText("Last 7 days");
 
 		// And the URL exactly, as a second, independent half: a rejected pick writes no key and
