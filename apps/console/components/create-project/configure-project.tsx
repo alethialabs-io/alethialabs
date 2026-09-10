@@ -23,7 +23,7 @@ import {
 import { DEFAULT_REGION, type CloudProviderSlug } from "@/lib/cloud-providers";
 import type { EnvironmentSpec } from "@/lib/queries/projects";
 import { globalHref, projectHref } from "@/lib/routing";
-import { slugify } from "@/lib/utils/slugify";
+import { canSlugify, slugify } from "@/lib/utils/slugify";
 import type { ScanProposal } from "@/lib/scanner/schema";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Button } from "@repo/ui/button";
@@ -166,8 +166,24 @@ export function ConfigureProject({
 
 	/** Create the project (DRAFT) from the chosen source + settings, then open its canvas. */
 	const onCreate = async () => {
+		// The two rules `lib/validations/project-form.schema.ts` states for `project_name`, in the
+		// wording that schema states them in — `.min(1, "Project name is required")` and
+		// `.refine(canSlugify, "Enter at least one letter or number")`.
+		//
+		// This screen is the console's ONLY create path since `~/new` was rebuilt, and it applied
+		// NEITHER. "Name your project." covered the first case in different words; the second was
+		// unchecked, so `!!! @@@ ###` created a project whose slug came from `slugify`'s FALLBACK —
+		// `/{org}/project` — with the user's symbols kept as the display name they then have to
+		// address from the CLI. `canSlugify` is the same predicate the schema's refinement calls, so
+		// the two cannot drift; the constant `PROJECT_NAME_MAX_LENGTH` is deliberately NOT read from
+		// the schema module here, because it is a value import and would pull drizzle-zod and the
+		// whole DB schema into this client bundle.
 		if (!name.trim()) {
-			toast.error("Name your project.");
+			toast.error("Project name is required");
+			return;
+		}
+		if (!canSlugify(name)) {
+			toast.error("Enter at least one letter or number");
 			return;
 		}
 		if (requiresCloud && !identityId) {
@@ -286,8 +302,17 @@ export function ConfigureProject({
 					)}
 
 					<Section n="01" title="Project">
+						{/* The section heading above says "Project", not "Project name", and it labels
+						    the SECTION rather than this control — so without a name of its own the
+						    only handle on the console's one project-name field was `#project_name`,
+						    a CSS id. Two e2e files reach for it that way today. `aria-label` gives
+						    the control the name the field has everywhere else in the console
+						    (`settings/general`'s rename field is labelled "Project name"), which is
+						    also what axe's `label` rule wants of a text input. The id is unchanged:
+						    the existing `#project_name` locators keep working. */}
 						<Input
 							id="project_name"
+							aria-label="Project name"
 							value={name}
 							autoComplete="off"
 							placeholder="my-project"

@@ -99,6 +99,14 @@ export function StartFromScratchCards({
 					<button
 						key={card.kind}
 						type="button"
+						// The tile's accessible name is its TITLE, not the whole card (#4269). Without
+						// this it was the title, the two-line description and — on the BYO cards — the
+						// word "New" run together, so "Start from a template" and "Start from scratch"
+						// (the column heading directly above) were the only two ways to tell four
+						// controls apart, and the name changed whenever the marketing copy did.
+						// WCAG 2.5.3 still holds: the visible title is the whole of the name here, so
+						// a voice-control user saying what they can read still hits the control.
+						aria-label={card.title}
 						onClick={() => onSelect(card.kind)}
 						disabled={busy}
 						className="group flex w-full items-start gap-4 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-ring disabled:opacity-60"
