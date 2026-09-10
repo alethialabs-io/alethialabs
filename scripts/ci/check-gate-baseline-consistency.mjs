@@ -81,11 +81,18 @@ export const MIN_LISTED_TESTS = 200;
  * The floor under the LEDGER — the other operand, and the artifact this check exists to protect.
  *
  * The floor above was applied to the listing only, and the argument stated over it ("found-nothing is
- * not nothing-wrong") was never asked of the ledger: `compare({"version":1,"projects":{}}, listed)`
- * returned `baselineCount: 0, stale: []`, `main` printed "0 ledger entries against 578 listed tests
- * … 0 stale", and it EXITED 0. Measured, on this branch, before this floor existed.
+ * not nothing-wrong") was never asked of the ledger. Measured on this branch, against a real
+ * listing, before this floor existed:
  *
- * That is not a hypothetical. A bad merge resolution, or an `e2e-ratchet --write` run against a
+ *   · `projects.audit` dropped — 94 of 571 entries, a whole leg — `main` printed "477 ledger entries
+ *     against 578 listed tests … 0 stale" and EXITED 0. So did `--self-test`.
+ *   · `{"version":1,"projects":{}}` — `compare` returned `baselineCount: 0, stale: []` and `main`
+ *     printed "0 ledger entries against 578 listed tests … 0 stale". It exited 1, but ONLY because
+ *     the three RECORDED_STALE rows below then read as `dead` — an accident of this file's current
+ *     contents, reported with the wrong instruction, and gone the moment the canvas slice is
+ *     regenerated and those rows are deleted. An emptied ledger then reads clean again.
+ *
+ * Neither is a hypothetical. A bad merge resolution, or an `e2e-ratchet --write` run against a
  * results file that held one project, drops a slice from the ledger; the gate itself then reports
  * clean too, because with no baseline for a leg `compareProject` sees only tests it does not know
  * and the "a NEW test must pass" rule passes every one of them. Nothing observes the loss. The
@@ -529,7 +536,7 @@ export function renderFindings({ baselineCount, uncovered, missingProjects, unre
 		errors.push(
 			`::error::${where} holds ${baselineCount} entries, below the floor of ${MIN_BASELINE_ENTRIES}. The ledger, not the tree, ` +
 				"is what collapsed: with no baseline the release gate's rule 2 sees only tests it does not know and passes every one of them, so " +
-				"the gate goes green over a loss nothing else observes. This check used to report exactly that as clean. " +
+				"the gate goes green over a loss nothing else observes — and before this floor existed, so did this check. " +
 				"Restore the ledger from `origin/dev` — a lost slice is a merge resolution or an `e2e-ratchet --write` run against a partial results file, " +
 				"never something to re-baseline over.",
 		);
@@ -935,7 +942,10 @@ function selfTest() {
 	const wideListingArg = `--list-json=${tmpJson("list.json", wideListing)}`;
 	const asBaseline = (doc) => `--baseline=${tmpJson("gate-baseline.json", doc)}`;
 	ok("control: a ledger covering every leg, matching the listing, exits 0", main([wideListingArg, asBaseline(wideLedger)]) === 0);
-	ok("an EMPTIED ledger EXITS 1 — it used to print `0 ledger entries … 0 stale` and exit 0", main([wideListingArg, asBaseline({ version: 1, projects: {} })]) === 1);
+	// NOT "…and it used to exit 0": on the repo's ledger as it stands today the emptied case exited
+	// 1 by accident, because the three canvas rows read as `dead`. That accident dies with those
+	// rows. The case that really did exit 0 is a single dropped leg, asserted next.
+	ok("an EMPTIED ledger EXITS 1 — it used to print `0 ledger entries … 0 stale` over it", main([wideListingArg, asBaseline({ version: 1, projects: {} })]) === 1);
 	ok(
 		"a ledger that lost ONE leg's slice exits 1, even though it stays far above the entry floor",
 		(() => {
