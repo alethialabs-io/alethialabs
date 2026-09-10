@@ -12,6 +12,7 @@ import (
 var (
 	projectPlanProjectRef string
 	projectPlanProjectID  string
+	projectPlanRunnerRef  string
 	projectPlanRunnerID   string
 	projectPlanEnv        string
 	projectPlanWait       bool
@@ -20,14 +21,24 @@ var (
 var projectPlanCmd = &cobra.Command{
 	Use:   "plan",
 	Short: "Queue a plan (dry-run) job for a project",
-	Long:  `Plan runs a Terraform plan with cost analysis without applying changes.`,
+	Long: `Plan runs a Terraform plan with cost analysis without applying changes.
+
+--runner takes a runner's NAME, so nothing has to be copied out of ` + "`alethia runner list`" + `.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
 
-		projectPlanProjectID, err = projectIDForJob(api.NewClient(token), token, projectPlanProjectRef, projectPlanProjectID)
+		apiClient := api.NewClient(token)
+
+		projectPlanProjectID, err = projectIDForJob(apiClient, token, projectPlanProjectRef, projectPlanProjectID)
+		if err != nil {
+			fail(err)
+		}
+
+		projectPlanRunnerID, err = runnerIDFrom(
+			apiClient, projectPlanRunnerRef, projectPlanRunnerID, "--runner", "--runner-id")
 		if err != nil {
 			fail(err)
 		}
@@ -43,8 +54,6 @@ var projectPlanCmd = &cobra.Command{
 				fail(err)
 			}
 		}
-
-		apiClient := api.NewClient(token)
 
 		envID, err := resolveEnvironmentID(apiClient, projectPlanProjectID, projectPlanEnv)
 		if err != nil {
@@ -79,7 +88,14 @@ var projectPlanCmd = &cobra.Command{
 func init() {
 	projectCmd.AddCommand(projectPlanCmd)
 	jobProjectFlags(projectPlanCmd, &projectPlanProjectRef, &projectPlanProjectID, "plan")
-	projectPlanCmd.Flags().StringVar(&projectPlanRunnerID, "runner-id", "", "Assign to a specific runner")
+	// TWO flags for one field, for the reason jobProjectFlags states about --project /
+	// --project-id: `--runner-id` is what scripts already pass and keeps working, `--runner` is
+	// the one a person uses and is the spelling `alethia apply --runner` already had. Passing
+	// both is refused rather than resolved by precedence — see runnerIDFrom.
+	projectPlanCmd.Flags().StringVar(&projectPlanRunnerRef, "runner", "",
+		"Runner to run this job on, by NAME or id (asked for on a terminal when omitted)")
+	projectPlanCmd.Flags().StringVar(&projectPlanRunnerID, "runner-id", "",
+		"Runner id to assign (prefer --runner, which also takes the name)")
 	projectPlanCmd.Flags().StringVar(&projectPlanEnv, "env", "", "Target environment name (default: the project's default environment)")
 	projectPlanCmd.Flags().BoolVarP(&projectPlanWait, "wait", "w", false, "Wait for job completion")
 }
