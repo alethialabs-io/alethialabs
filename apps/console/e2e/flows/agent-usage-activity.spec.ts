@@ -142,19 +142,27 @@ test.describe("Usage — meters + over-time chart", () => {
 				owner.page.getByRole("heading", { name: "Usage over time", level: 2 }),
 			).toBeVisible({ timeout: 30_000 });
 
-			// The picker's trigger carries the CURRENT label, and the popover's preset list
-			// carries every label — including the current one. So the trigger is addressed
-			// through the section's own action area, and the preset through the open popover,
-			// or `Last 7 days` is ambiguous the moment the popover is up.
-			const trigger = owner.page.getByRole("button", { name: /^Last 7 days$/i });
-			await trigger.click();
+			// The picker's trigger carries the CURRENT label and the popover's preset list
+			// carries every label, so from the first open onwards a bare `Last 14 days` is two
+			// nodes. Before that first click only the trigger exists, which is why this one
+			// needs no disambiguation.
+			await owner.page.getByRole("button", { name: /^Last 7 days$/i }).click();
 			await owner.page.getByRole("button", { name: "Last 14 days", exact: true }).click();
 
-			// The popover closes on apply (quick-range-filter.tsx `apply()`), so exactly one
-			// node can carry this name afterwards — which is what makes it an assertion about
-			// the TRIGGER rather than about the list we just clicked in.
+			// `expanded: false` — the DISCLOSURE control, which the preset inside it is not.
+			//
+			// This test was red on a comment that was simply untrue: it said the popover closes
+			// on apply "so exactly one node can carry this name afterwards". `apply()` does call
+			// `setOpen(false)`, but base-ui KEEPS THE CLOSED PANEL MOUNTED — the run resolved two
+			// buttons named "Last 14 days", the trigger (`aria-expanded="false"`) and the preset
+			// still in the tree behind it. Closing is not unmounting, and the second half of that
+			// sentence never followed from the first.
+			//
+			// Matching on `aria-expanded` rather than on DOM order or a `data-slot`: the trigger
+			// is the only one of the two that HAS the attribute, and it has it because of what it
+			// is, not because of where the panel was portalled.
 			await expect(
-				owner.page.getByRole("button", { name: /^Last 14 days$/i }),
+				owner.page.getByRole("button", { name: /^Last 14 days$/i, expanded: false }),
 			).toBeVisible();
 		},
 	);
