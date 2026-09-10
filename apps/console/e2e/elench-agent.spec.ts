@@ -9,6 +9,13 @@
 // The AI JOURNEYS (streaming, tools, grid, artifacts) live in `elench-ai.spec.ts`,
 // which drives the REAL server pipeline against a scripted model (ALETHIA_AI_MOCK=1) —
 // far stronger than the client-side SSE stubs this file used to carry.
+//
+// THIS FILE OWNS THE INSIDE OF THE ASSISTANT. Since `/{org}/~/agent` stopped being a route, the
+// agent is reached only through the topbar "Ask AI" control — which every test below opens, from
+// the org home. `e2e/flows/agent-usage-activity.spec.ts` therefore carries exactly one Ask AI
+// test, and it is the one this file cannot make: that the launcher is a TOPBAR affordance,
+// reachable from an arbitrary authenticated route rather than only from the home page (#4272).
+// Anything about the panel, the modal, the composer or the threads belongs here, once.
 
 import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures/auth";
@@ -56,6 +63,43 @@ test.describe("Elench agent — modal (org)", () => {
 		await expect(
 			page.getByRole("button", { name: "Auto", exact: true }).first(),
 		).toBeVisible();
+	});
+
+	// THE MODE SEGMENTS THEMSELVES SAY NOTHING (#4618). The test above measures the PILL, which
+	// flips its label between "Ask" and "Auto" — so the state is recoverable by closing the
+	// popover and re-reading the trigger. Inside the popover, the two segments are plain
+	// `<button>`s and the only marks of which is current are a `<Check>` glyph with no
+	// accessible name and an `isAsk && "bg-muted"` background (elench-controls.tsx). Neither
+	// reaches the accessibility tree.
+	//
+	// Asserted as the product SHOULD behave (e2e/AUTHORING.md §7) rather than rewritten down to
+	// what it does: `aria-checked` on `role="menuitemradio"`, which is the pattern for
+	// mutually-exclusive options in a menu. NOT `aria-selected` — that belongs to `tab`/`option`,
+	// and `components/settings/usage/usage-primitives.tsx:275-281` already ruled that the tab
+	// role must not be adopted without its keyboard contract.
+	//
+	// `components/agent/**` is out of #4272's scope (the agent-confirms lane owns it), so this
+	// stays a fixme until #4618 lands — at which point DELETE it and its gate-baseline.json entry
+	// rather than leaving a skip behind.
+	test("the Ask-mode segments expose which one is current", async ({ authedPage: page }) => {
+		// INSIDE the body, not beside it: `test.fixme(cond, description)` at describe level
+		// applies to every test in the describe, and the ratchet only records an entry when the
+		// annotation carries a `BUG: … #<issue>` description (scripts/e2e-ratchet.mjs, rule 5).
+		test.fixme(
+			true,
+			"BUG: the Elench Ask/Auto mode segments expose no accessible selected state #4618",
+		);
+		await page.getByRole("button", { name: "Ask", exact: true }).first().click();
+		const ask = page.getByRole("menuitemradio", { name: /ask before editing/i });
+		const auto = page.getByRole("menuitemradio", { name: /automatically edit/i });
+
+		await expect(ask).toHaveAttribute("aria-checked", "true");
+		await expect(auto).toHaveAttribute("aria-checked", "false");
+
+		await auto.click();
+		// Both halves: a control that reports every option checked passes a one-sided assertion.
+		await expect(auto).toHaveAttribute("aria-checked", "true");
+		await expect(ask).toHaveAttribute("aria-checked", "false");
 	});
 
 	test("the @-mention popover opens against real resources", async ({
