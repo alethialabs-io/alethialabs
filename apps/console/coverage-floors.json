@@ -5,150 +5,150 @@
   "env": {
     "os": "Linux",
     "node": "22",
-    "coverage_provider": "@vitest/coverage-v8@2.1.9",
+    "coverage_provider": "@vitest/coverage-v8@3.2.7",
     "ee_dist": true,
     "edition": "unset"
   },
   "directories": {
     "app/server/actions": {
-      "covered": 6722,
-      "total": 11859
+      "covered": 7214,
+      "total": 12374
     },
     "app/server/actions/aws": {
-      "covered": 55,
-      "total": 55
+      "covered": 58,
+      "total": 58
     },
     "app/server/actions/classification": {
       "covered": 0,
-      "total": 334
+      "total": 346
     },
     "app/server/actions/git": {
-      "covered": 332,
-      "total": 355
+      "covered": 334,
+      "total": 357
     },
     "app/server/actions/privacy": {
       "covered": 0,
-      "total": 248
+      "total": 254
     },
     "lib": {
-      "covered": 389,
-      "total": 442
+      "covered": 406,
+      "total": 455
     },
     "lib/addons": {
-      "covered": 1678,
-      "total": 1766
+      "covered": 1813,
+      "total": 1901
     },
     "lib/agent": {
       "covered": 203,
       "total": 208
     },
     "lib/ai": {
-      "covered": 484,
-      "total": 577
+      "covered": 753,
+      "total": 850
     },
     "lib/ai/mcp": {
-      "covered": 40,
-      "total": 40
+      "covered": 41,
+      "total": 41
     },
     "lib/ai/support": {
       "covered": 0,
       "total": 130
     },
     "lib/ai/tools": {
-      "covered": 769,
-      "total": 895
+      "covered": 833,
+      "total": 962
     },
     "lib/alerts": {
       "covered": 404,
       "total": 423
     },
     "lib/alerts/channels": {
-      "covered": 217,
-      "total": 553
+      "covered": 244,
+      "total": 580
     },
     "lib/analytics": {
       "covered": 31,
       "total": 112
     },
     "lib/auth": {
-      "covered": 402,
-      "total": 470
+      "covered": 646,
+      "total": 701
     },
     "lib/authz": {
-      "covered": 572,
-      "total": 711
+      "covered": 794,
+      "total": 934
     },
     "lib/billing": {
-      "covered": 1006,
-      "total": 1804
+      "covered": 1149,
+      "total": 1886
     },
     "lib/breakglass": {
       "covered": 158,
       "total": 723
     },
     "lib/canvas": {
-      "covered": 905,
-      "total": 961
+      "covered": 1024,
+      "total": 1067
     },
     "lib/classification": {
       "covered": 28,
       "total": 28
     },
     "lib/cli": {
-      "covered": 531,
-      "total": 722
+      "covered": 931,
+      "total": 1196
     },
     "lib/cloud-providers": {
-      "covered": 1429,
-      "total": 1603
+      "covered": 1550,
+      "total": 1693
     },
     "lib/cloud-providers/capabilities": {
-      "covered": 1242,
-      "total": 1417
+      "covered": 1303,
+      "total": 1478
     },
     "lib/cloud-providers/capabilities/service-quotas": {
-      "covered": 458,
-      "total": 917
+      "covered": 475,
+      "total": 934
     },
     "lib/cloud-providers/capabilities/services": {
-      "covered": 1669,
-      "total": 2326
+      "covered": 1697,
+      "total": 2354
     },
     "lib/cloud-providers/events": {
       "covered": 0,
-      "total": 172
+      "total": 175
     },
     "lib/cloud-providers/generated": {
       "covered": 3077,
       "total": 3112
     },
     "lib/cloud-providers/health": {
-      "covered": 66,
-      "total": 408
+      "covered": 80,
+      "total": 422
     },
     "lib/cloud-providers/inventory": {
-      "covered": 194,
-      "total": 807
+      "covered": 226,
+      "total": 839
     },
     "lib/cloud-providers/session": {
-      "covered": 112,
-      "total": 160
+      "covered": 138,
+      "total": 178
     },
     "lib/compat": {
-      "covered": 237,
-      "total": 241
+      "covered": 242,
+      "total": 246
     },
     "lib/compat/generated": {
       "covered": 261,
       "total": 261
     },
     "lib/config": {
-      "covered": 457,
-      "total": 491
+      "covered": 483,
+      "total": 510
     },
     "lib/connectors": {
-      "covered": 736,
-      "total": 824
+      "covered": 749,
+      "total": 837
     },
     "lib/connectors/generated": {
       "covered": 11,
@@ -163,40 +163,40 @@
       "total": 129
     },
     "lib/db": {
-      "covered": 214,
-      "total": 318
+      "covered": 222,
+      "total": 326
     },
     "lib/db/schema": {
-      "covered": 3207,
-      "total": 3207
+      "covered": 3306,
+      "total": 3306
     },
     "lib/drift": {
       "covered": 21,
       "total": 107
     },
     "lib/email": {
-      "covered": 76,
-      "total": 539
+      "covered": 102,
+      "total": 573
     },
     "lib/evidence": {
-      "covered": 235,
-      "total": 371
+      "covered": 236,
+      "total": 372
     },
     "lib/fleet": {
-      "covered": 946,
-      "total": 1083
+      "covered": 974,
+      "total": 1111
     },
     "lib/git": {
       "covered": 66,
       "total": 70
     },
     "lib/gitops": {
-      "covered": 136,
-      "total": 262
+      "covered": 140,
+      "total": 266
     },
     "lib/jobs": {
-      "covered": 656,
-      "total": 794
+      "covered": 675,
+      "total": 813
     },
     "lib/members": {
       "covered": 17,
@@ -211,8 +211,8 @@
       "total": 748
     },
     "lib/oidc": {
-      "covered": 79,
-      "total": 85
+      "covered": 274,
+      "total": 290
     },
     "lib/plan": {
       "covered": 334,
@@ -220,7 +220,7 @@
     },
     "lib/platform": {
       "covered": 0,
-      "total": 129
+      "total": 136
     },
     "lib/privacy": {
       "covered": 199,
@@ -235,44 +235,44 @@
       "total": 432
     },
     "lib/queries": {
-      "covered": 1231,
-      "total": 1641
+      "covered": 1290,
+      "total": 1713
     },
     "lib/query": {
-      "covered": 126,
-      "total": 627
+      "covered": 151,
+      "total": 678
     },
     "lib/realtime": {
-      "covered": 107,
-      "total": 141
+      "covered": 109,
+      "total": 143
     },
     "lib/reclaim": {
-      "covered": 160,
-      "total": 257
+      "covered": 168,
+      "total": 267
     },
     "lib/reclaim/providers": {
       "covered": 0,
-      "total": 2106
+      "total": 2133
     },
     "lib/reconcile": {
-      "covered": 134,
-      "total": 136
+      "covered": 144,
+      "total": 146
     },
     "lib/repos": {
       "covered": 1,
       "total": 9
     },
     "lib/retention": {
-      "covered": 109,
-      "total": 155
+      "covered": 111,
+      "total": 157
     },
     "lib/runners": {
-      "covered": 350,
-      "total": 441
+      "covered": 371,
+      "total": 462
     },
     "lib/scanner": {
-      "covered": 285,
-      "total": 371
+      "covered": 295,
+      "total": 381
     },
     "lib/seed": {
       "covered": 36,
@@ -283,20 +283,24 @@
       "total": 17
     },
     "lib/storage": {
-      "covered": 135,
-      "total": 146
+      "covered": 137,
+      "total": 148
     },
     "lib/stores": {
-      "covered": 967,
-      "total": 1453
+      "covered": 1295,
+      "total": 1647
     },
     "lib/support": {
       "covered": 74,
       "total": 102
     },
+    "lib/utils": {
+      "covered": 29,
+      "total": 29
+    },
     "lib/validations": {
-      "covered": 1521,
-      "total": 1732
+      "covered": 1651,
+      "total": 1866
     },
     "lib/widgets": {
       "covered": 53,
