@@ -5,7 +5,7 @@
   "env": {
     "os": "Linux",
     "node": "22",
-    "coverage_provider": "@vitest/coverage-v8@3.2.7",
+    "coverage_provider": "@vitest/coverage-v8@2.1.9",
     "ee_dist": true,
     "edition": "unset"
   },
@@ -20,11 +20,11 @@
     },
     "lib/billing": {
       "covered": 0,
-      "total": 56
+      "total": 54
     },
     "lib/email": {
       "covered": 0,
-      "total": 25
+      "total": 22
     },
     "lib/proof": {
       "covered": 0,
@@ -32,7 +32,7 @@
     },
     "lib/validations": {
       "covered": 0,
-      "total": 43
+      "total": 42
     }
   }
 }
