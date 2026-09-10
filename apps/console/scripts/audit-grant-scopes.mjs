@@ -81,6 +81,11 @@ function renderRow(row, index) {
 		`   scope       resource_type=${row.resource_type} resource_id=${row.resource_id}`,
 		`   the id names ${row.resource_kind}${row.resource_kind === "not-found" ? " (in the five tables this query looks in)" : ""}`,
 		`   org-wide    ${row.also_org_wide}/${row.permissions} of those already held org-wide by this subject`,
+		`   ON DEPLOY   ${row.deploy_change}`,
+		`               today pg=${row.scope_today_pg} fga=${row.scope_today_fga} → after=${row.scope_after}` +
+			(row.effect === "deny"
+				? `; ${row.also_allowed_anywhere}/${row.permissions} allowed elsewhere for the wider exclusion to bite`
+				: ""),
 		`   created     ${row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at}`,
 		`   VERDICT     ${row.verdict}`,
 	];
@@ -159,7 +164,13 @@ async function main() {
 			);
 			for (const [i, row] of rows.entries()) console.log(`${renderRow(row, i)}\n`);
 			console.log(
-				"⚠ NEVER remediate one of these by REVOKING it — not before the #4584 fix and not after.\n" +
+				"⚠ TWO SEPARATE QUESTIONS PER ROW. `VERDICT` is about REMEDIATION (if I clean it up,\n" +
+					"  does someone lose access?). `ON DEPLOY` is about SHIPPING #4584 (does the row start\n" +
+					"  meaning something wider or narrower?) — allow rows NARROW, deny rows WIDEN, and the\n" +
+					"  widening reaches the unscopable-kind class the ruling was not decided on. A clean\n" +
+					"  remediation verdict says nothing about the deploy direction.\n" +
+					"\n" +
+					"⚠ NEVER remediate one of these by REVOKING it — not before the #4584 fix and not after.\n" +
 					"  Before, the delete looked for tuples on an object that does not exist. After, the row\n" +
 					"  expands to no tuples so there is nothing for the delete to read, and the tuples it wrote\n" +
 					"  under the old reading stay on org:<org-uuid> — where they are indistinguishable from a\n" +
