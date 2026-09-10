@@ -19,6 +19,7 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { enforceDecision, recordActivity } from "@/lib/authz/activity";
 import { checksFor, denyChecksFor } from "@/lib/authz/fga-mapping";
 import { buildAuthorizationModel } from "@/lib/authz/fga-model";
+import { grantTarget } from "@/lib/authz/grant-scope";
 import {
   expandGrant,
   hierarchyTuple,
@@ -93,6 +94,14 @@ export interface CoreContext {
   fga: {
     buildModel: typeof buildAuthorizationModel;
     expandGrant: typeof expandGrant;
+    /**
+     * "What does this grant row scope to?" — the ONE predicate both PDP engines answer that
+     * question with. Injected here rather than imported in ee/, on the same seam as
+     * `expandGrant`, because the two must never be able to disagree: ee's tuple writer decides
+     * where a grant's tuples LIVE and `expandGrant` decides what they ARE, and if those two
+     * read the scope separately a revoke deletes from an object the write never touched.
+     */
+    grantTarget: typeof grantTarget;
     hierarchyTuple: typeof hierarchyTuple;
     teamMemberTuple: typeof teamMemberTuple;
     rolePermissionKeys: typeof rolePermissionKeys;
@@ -200,6 +209,7 @@ function loadEnterprise(): void {
       fga: {
         buildModel: buildAuthorizationModel,
         expandGrant,
+        grantTarget,
         hierarchyTuple,
         teamMemberTuple,
         rolePermissionKeys,
