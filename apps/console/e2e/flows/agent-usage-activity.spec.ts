@@ -380,10 +380,12 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 		).toBeVisible({ timeout: 30_000 });
 		await owner.page.getByRole("button", { name: /^Last 7 days$/i }).click();
 
-		// The "yesterday" relative chip, not a preset: every preset shorter than the default is
-		// the default, and the next one up (14 days) predates Hobby's 7-day retention and opens
-		// the upgrade sheet instead of applying — which is the negative spec's test, not this one.
-		await owner.page.getByText("yesterday", { exact: true }).click();
+		// The "yesterday" relative chip, not a preset: the shortest preset IS the default, and the
+		// next one up (14 days) predates Hobby's 7-day retention and opens the upgrade sheet
+		// instead of applying — which is the negative spec's test, not this one. Addressed by
+		// ROLE because the chip is a `<button>` wrapping a `<Badge>`, and the text lives on the
+		// badge while the click has to land on the button.
+		await owner.page.getByRole("button", { name: "yesterday", exact: true }).click();
 
 		await expect(owner.page).toHaveURL(/[?&]rangeLabel=yesterday\b/, { timeout: 15_000 });
 		await expect(owner.page).toHaveURL(/[?&]from=\d{4}-\d{2}-\d{2}T/);
