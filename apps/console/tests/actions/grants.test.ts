@@ -298,6 +298,28 @@ describe("assignGrant validation", () => {
 		).rejects.toThrow(/exactly one/);
 	});
 
+	// `"org"` is the DEFAULT resource kind here and on the CLI route, so a caller who names a
+	// resource and forgets its kind would otherwise get an ORGANIZATION-WIDE grant while the call
+	// reads as scoped to one project — the id persisted beside it and never read again. The wrong
+	// outcome is wider than the intended one, so it is refused rather than collapsed.
+	//
+	// The controls for this live in "assignGrant persistence" below and are deliberately not
+	// duplicated: an org kind with no id still stores org-wide, and a real kind with an id still
+	// keeps that kind. Without them, over-refusing here would pass this test and break both.
+	it("rejects an org-kind grant that also carries a resource id", async () => {
+		mockDb();
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				permissionKey: "project:view",
+				resourceType: "org",
+				resourceId: "11111111-2222-3333-4444-555555555555",
+			}),
+		).rejects.toThrow(/cannot carry a resource id/);
+	});
+
 	it("rejects an unknown permission key", async () => {
 		mockDb();
 		await expect(

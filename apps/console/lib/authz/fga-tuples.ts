@@ -33,6 +33,42 @@ export interface GrantScope {
 	resourceId: string | null;
 }
 
+/**
+ * The one pair `GrantScope` cannot represent honestly: an `"org"` resourceType carrying a
+ * non-null resourceId.
+ *
+ * Both halves above already mean org-wide on their own, so `expandGrant` takes org-wide and
+ * the id is never read again (`orgWide` is computed before any tuple). That is not the
+ * hazard by itself — the hazard is that `"org"` is the DEFAULT resource kind at both write
+ * boundaries, so a caller who names a resource and forgets its kind gets an
+ * ORGANIZATION-WIDE grant while the call reads as scoped to one project, with the id sitting
+ * inert beside it in the row and in the audit trail. **The wrong outcome is wider than the
+ * intended one**, which is why this is refused rather than collapsed: collapsing silently
+ * would be choosing the broader reading of an ambiguous request.
+ *
+ * Refusing at the WRITE boundaries rather than inside `expandGrant` is deliberate. The id is
+ * persisted before any expander runs, and three consumers then disagree about the same row:
+ * `PostgresRbacPDP` never reads `resource_type` and treats any non-null `resource_id` as
+ * scoped (so the row is NARROW in Postgres and org-wide in OpenFGA), ee's `grantObject`
+ * builds `org:<resource-uuid>` — an object that does not exist — so a revoke deletes tuples
+ * it never wrote, and the access UI joins nothing and renders "organization" while still
+ * carrying the id. A guard placed only in the expander would leave every one of those.
+ *
+ * A predicate plus a shared message, rather than a thrower, because the two boundaries report
+ * differently: the server action throws, the CLI route returns a 400.
+ */
+export const ORG_SCOPE_WITH_RESOURCE_ID =
+	'An "org" grant is organization-wide and cannot carry a resource id. ' +
+	"Name the resource's own type (project, runner, cloud_identity) with the id, or drop the id.";
+
+/** Whether a grant names the `"org"` kind while also carrying a resource id. */
+export function orgScopeCarriesResourceId(
+	resourceType: string,
+	resourceId: string | null,
+): boolean {
+	return resourceId !== null && resourceType === "org";
+}
+
 const BY_KEY = new Map<string, (typeof PERMISSIONS)[number]>(
 	PERMISSIONS.map((p) => [p.key, p]),
 );
