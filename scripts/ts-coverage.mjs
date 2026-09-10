@@ -138,8 +138,38 @@ const FINGERPRINT_KEYS = ["os", "node", "coverage_provider", "ee_dist", "edition
 function fingerprintDrift(recorded, cur) {
 	return FINGERPRINT_KEYS.filter((key) => {
 		const was = recorded[key];
-		return was !== undefined && String(was) !== String(cur[key]);
+		if (was === undefined) return false;
+		return axisValue(key, was) !== axisValue(key, cur[key]);
 	});
+}
+
+/**
+ * The comparable form of one fingerprint axis.
+ *
+ * `node` is already recorded as a MAJOR by `currentEnv`, precisely so a patch release does not
+ * read as drift. `coverage_provider` carries the FULL version (`@vitest/coverage-v8@3.2.7`) and
+ * had no such treatment, so a lockfile refresh from 2.1.9 to 2.1.10 counted as a changed
+ * instrument. That was survivable while drift only demoted the comparison (F7); once F11 makes
+ * drift RE-RECORD, the same patch bump silently re-baselines the project.
+ *
+ * So the provider is compared on `name@major.minor`. A major or minor genuinely can change which
+ * statements v8 instruments; a patch is a bug-fix release of the same instrument, and treating it
+ * as a new one is how a baseline gets thrown away by a dependency refresh nobody read.
+ *
+ * `"unknown"` — what `coverageProviderVersion` returns when it cannot resolve the package — is
+ * left alone rather than parsed, so it compares equal only to itself.
+ *
+ * @param {string} key
+ * @param {unknown} value
+ * @returns {string}
+ */
+function axisValue(key, value) {
+	const raw = String(value);
+	if (key !== "coverage_provider" || raw === "unknown") return raw;
+	const at = raw.lastIndexOf("@");
+	if (at <= 0) return raw;
+	const [major, minor] = raw.slice(at + 1).split(".");
+	return minor === undefined ? raw : `${raw.slice(0, at)}@${major}.${minor}`;
 }
 
 /** @returns {string} the installed @vitest/coverage-v8 version, or "unknown". */
@@ -509,6 +539,44 @@ function runCheck(project) {
 	process.exit(1);
 }
 
+/**
+ * What `--update` writes for ONE directory, and what it says about it.
+ *
+ * Extracted as a pure function because the branch that matters here is not reachable any other
+ * way: `runUpdate` needs a project directory, a coverage artefact and a floors file on disk, so
+ * the F11 behaviour shipped in #4632 with five self-test assertions that all still passed when
+ * the F11 branch itself was mutated to a no-op. They tested `fingerprintDrift`, which was never
+ * the defect. This is the decision they should have been testing.
+ *
+ * The four cases:
+ *
+ *   no prior floor            → write the measurement, say nothing (a new directory)
+ *   measurement >= floor      → write the measurement; `raised` when the numbers moved at all
+ *   regressed, allowLower     → `LOWERED`, write the measurement (the operator asked for it)
+ *   regressed, recordFresh    → `RE-RECORDED`, write the measurement (a different instrument)
+ *   regressed, neither        → `NOT LOWERED`, PRESERVE the floor (the ratchet doing its job)
+ *
+ * `recordFresh` and `allowLower` differ in what they claim, which is why they are separate: one
+ * says "this regression is intended", the other says "there is no comparable prior number". Both
+ * write the measurement; only the reported reason differs, and the reason is the part a reader
+ * needs six months later.
+ *
+ * @param {{covered: number, total: number}|undefined} floor
+ * @param {{covered: number, total: number}} now
+ * @param {{allowLower: boolean, recordFresh: boolean}} opts
+ * @returns {{write: {covered: number, total: number}, label: string}} `label` empty when silent
+ */
+function floorDecision(floor, now, { allowLower, recordFresh }) {
+	if (!floor) return { write: now, label: "" };
+	if (regressed(now, floor)) {
+		if (allowLower) return { write: now, label: "LOWERED" };
+		if (recordFresh) return { write: now, label: "RE-RECORDED" };
+		return { write: floor, label: "NOT LOWERED" };
+	}
+	const moved = floor.covered !== now.covered || floor.total !== now.total;
+	return { write: now, label: moved ? "raised " : "" };
+}
+
 /** --update / --accept-regression. */
 function runUpdate(project, { allowLower }) {
 	const projectDir = path.join(ROOT, project);
@@ -522,6 +590,8 @@ function runUpdate(project, { allowLower }) {
 	const fp = floorsPath(projectDir);
 	/** @type {Record<string, {covered: number, total: number}>} */
 	let existing = {};
+	/** Set by F11: compare and report as usual, but do not PRESERVE a floor across a changed instrument. */
+	let recordFresh = false;
 	if (existsSync(fp)) {
 		try {
 			const parsed = JSON.parse(readFileSync(fp, "utf8"));
@@ -565,7 +635,15 @@ function runUpdate(project, { allowLower }) {
 					`  the recorded environment is not this one — recording ${measured.size} directories FRESH ` +
 						`rather than preserving floors it cannot reach\n`,
 				);
-				existing = {};
+				// NOT `existing = {}`. Blanking it silences the only producer of the
+				// `NOT LOWERED` / `LOWERED` / `raised` lines, so a genuine coverage regression
+				// riding in the SAME commit as the instrument change is rewritten into the floors
+				// with nothing naming it — and "lowering is visible in the committed diff", the
+				// contract this file states above, quietly stops holding on exactly the commit
+				// where the numbers move most.
+				//
+				// The comparison still runs and still reports. Only the PRESERVATION is dropped.
+				recordFresh = true;
 			}
 		} catch {
 			process.stderr.write(`  (existing floors unparseable — regenerating from scratch)\n`);
@@ -576,20 +654,9 @@ function runUpdate(project, { allowLower }) {
 	const next = new Map();
 	for (const [dir, now] of measured.entries()) {
 		const floor = existing[dir];
-		if (floor && regressed(now, floor)) {
-			if (allowLower) {
-				process.stdout.write(`  LOWERED ${dir} ${formatPct(floor)} -> ${formatPct(now)}\n`);
-				next.set(dir, now);
-			} else {
-				process.stdout.write(`  NOT LOWERED ${dir} ${formatPct(floor)} -> ${formatPct(now)} (use --accept-regression if intended)\n`);
-				next.set(dir, floor);
-			}
-		} else {
-			if (floor && (floor.covered !== now.covered || floor.total !== now.total)) {
-				process.stdout.write(`  raised  ${dir} ${formatPct(floor)} -> ${formatPct(now)}\n`);
-			}
-			next.set(dir, now);
-		}
+		const { write, label } = floorDecision(floor, now, { allowLower, recordFresh });
+		if (label) process.stdout.write(`  ${label} ${dir} ${formatPct(floor ?? now)} -> ${formatPct(now)}\n`);
+		next.set(dir, write);
 	}
 
 	const env = cur;
@@ -1094,6 +1161,90 @@ function runSelfTest() {
 			"several drifted axes are all reported, in FINGERPRINT_KEYS order",
 			JSON.stringify(fingerprintDrift({ ...cur, os: "Darwin", node: "20" }, cur)) === '["os","node"]',
 			JSON.stringify(fingerprintDrift({ ...cur, os: "Darwin", node: "20" }, cur)),
+		);
+	}
+
+	process.stdout.write("\n what --update writes for one directory\n");
+	{
+		const floor = { covered: 21, total: 107 };
+		const lower = { covered: 21, total: 114 }; // 19.63% -> 18.42%, the #4591 shape
+		const same = { covered: 21, total: 107 };
+		const higher = { covered: 30, total: 107 };
+		const plain = { allowLower: false, recordFresh: false };
+
+		// THE RATCHET. Without this the floors would follow the code down.
+		check(
+			"a regression with neither flag PRESERVES the floor and says NOT LOWERED",
+			JSON.stringify(floorDecision(floor, lower, plain)) === JSON.stringify({ write: floor, label: "NOT LOWERED" }),
+			JSON.stringify(floorDecision(floor, lower, plain)),
+		);
+		// THE #4611 BUG. This is the assertion that would have failed before F11 — and the one the
+		// five fingerprintDrift cases could not make, because they never reached this branch.
+		check(
+			"a regression under a CHANGED FINGERPRINT writes the measurement instead",
+			JSON.stringify(floorDecision(floor, lower, { allowLower: false, recordFresh: true }).write) === JSON.stringify(lower),
+			JSON.stringify(floorDecision(floor, lower, { allowLower: false, recordFresh: true })),
+		);
+		// …and it must still SAY so. Silence here is how a real regression rides in unnamed on the
+		// same commit as an instrument change.
+		check(
+			"...and reports it rather than going silent",
+			floorDecision(floor, lower, { allowLower: false, recordFresh: true }).label === "RE-RECORDED",
+			floorDecision(floor, lower, { allowLower: false, recordFresh: true }).label,
+		);
+		check(
+			"the two write-the-measurement cases give DIFFERENT reasons",
+			floorDecision(floor, lower, { allowLower: true, recordFresh: false }).label === "LOWERED" &&
+				floorDecision(floor, lower, { allowLower: false, recordFresh: true }).label === "RE-RECORDED",
+			`${floorDecision(floor, lower, { allowLower: true, recordFresh: false }).label} / ${floorDecision(floor, lower, { allowLower: false, recordFresh: true }).label}`,
+		);
+		check(
+			"an unchanged directory is written and stays silent",
+			floorDecision(floor, same, plain).label === "" && JSON.stringify(floorDecision(floor, same, plain).write) === JSON.stringify(same),
+			JSON.stringify(floorDecision(floor, same, plain)),
+		);
+		check(
+			"an improvement is written and reported as raised",
+			floorDecision(floor, higher, plain).label.trim() === "raised" && JSON.stringify(floorDecision(floor, higher, plain).write) === JSON.stringify(higher),
+			JSON.stringify(floorDecision(floor, higher, plain)),
+		);
+		check(
+			"a directory with no prior floor is written silently",
+			floorDecision(undefined, higher, plain).label === "" && JSON.stringify(floorDecision(undefined, higher, plain).write) === JSON.stringify(higher),
+			JSON.stringify(floorDecision(undefined, higher, plain)),
+		);
+	}
+
+	process.stdout.write("\n a provider PATCH bump is not a changed instrument\n");
+	{
+		const cur = { os: "Linux", node: "22", coverage_provider: "@vitest/coverage-v8@3.2.7", ee_dist: true, edition: "unset" };
+		// A lockfile refresh must NOT throw a baseline away.
+		check(
+			"a coverage_provider PATCH bump is not drift",
+			fingerprintDrift({ ...cur, coverage_provider: "@vitest/coverage-v8@3.2.4" }, cur).length === 0,
+			JSON.stringify(fingerprintDrift({ ...cur, coverage_provider: "@vitest/coverage-v8@3.2.4" }, cur)),
+		);
+		check(
+			"a MINOR bump still is drift",
+			JSON.stringify(fingerprintDrift({ ...cur, coverage_provider: "@vitest/coverage-v8@3.1.7" }, cur)) === '["coverage_provider"]',
+			JSON.stringify(fingerprintDrift({ ...cur, coverage_provider: "@vitest/coverage-v8@3.1.7" }, cur)),
+		);
+		check(
+			"a MAJOR bump still is drift (the #4591 case)",
+			JSON.stringify(fingerprintDrift({ ...cur, coverage_provider: "@vitest/coverage-v8@2.1.9" }, cur)) === '["coverage_provider"]',
+			JSON.stringify(fingerprintDrift({ ...cur, coverage_provider: "@vitest/coverage-v8@2.1.9" }, cur)),
+		);
+		// "unknown" is what coverageProviderVersion returns when it cannot resolve the package; it
+		// must compare equal to itself and unequal to a real version, without being parsed.
+		check(
+			"an unresolvable provider compares equal to itself",
+			fingerprintDrift({ ...cur, coverage_provider: "unknown" }, { ...cur, coverage_provider: "unknown" }).length === 0,
+			"unknown vs unknown",
+		);
+		check(
+			"...and is drift against a real version",
+			JSON.stringify(fingerprintDrift({ ...cur, coverage_provider: "unknown" }, cur)) === '["coverage_provider"]',
+			JSON.stringify(fingerprintDrift({ ...cur, coverage_provider: "unknown" }, cur)),
 		);
 	}
 
