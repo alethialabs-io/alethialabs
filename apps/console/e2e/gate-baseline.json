@@ -34,7 +34,10 @@
 		},
 		"console": {
 			"account-settings.spec.ts": {
-				"Account settings dialog › opens from the sidebar account menu and shows the user email": "passed"
+				"Account settings dialog › opens from the sidebar account menu and shows the user email": "passed",
+				"Account settings dialog › Save Changes is inert until the display name is edited": "passed",
+				"Account settings dialog › the danger zone offers Delete Account": "passed",
+				"Account settings dialog › Delete Account is INERT — pressing it opens no confirmation and ends no session": "passed"
 			},
 			"activity.spec.ts": {
 				"Activity page › renders the filter bar and gates export on a fresh plan": "passed",
@@ -662,7 +665,7 @@
 				"members.bulk-suspend — declares none (missing)": "passed",
 				"billing.card.remove — declares alert-dialog (confirmed)": "passed",
 				"billing.subscription.cancel — declares none (missing)": "passed",
-				"org.logo.remove — declares none (missing)": "passed",
+				"org.logo.remove — declares confirm-dialog (confirmed)": "passed",
 				"runners.pool.delete — declares alert-dialog (confirmed)": "passed",
 				"runners.destroy — declares popover (confirmed)": "passed",
 				"runners.remove — declares alert-dialog (confirmed)": "passed",
