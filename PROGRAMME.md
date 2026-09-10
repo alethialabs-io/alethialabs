@@ -445,7 +445,7 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 | `infra/offer-exclusions.yaml` | exclusions: 26 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/config-carriage-exclusions.yaml` | exclusions: 31 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/template-parity-exclusions.yaml` | exclusions: 0 · baseline: 301 · uniform: 13 |
-| `apps/console/e2e/gate-baseline.json` | failed: 82 · fixme: 4 · skip: 1 |
+| `apps/console/e2e/gate-baseline.json` | failed: 77 · fixme: 4 · skip: 1 |
 
 ### Provenance
 
