@@ -667,26 +667,55 @@ export function auditShipped(input) {
 		// nothing, and the unit falls into "mention-only" — suppressed on a comparison that was
 		// never complete. So an unusable token withholds the suppression, exactly as an unreadable
 		// file list does.
-		const evidence = refs.map((pr) => ({ number: pr?.number, ...prScopeEvidence(pr, scope.globs) }));
-		const closes = keywords.length > 0 && cited.some((c) => c.closes.has(n));
+		// THE KEYWORD AND THE FILES MUST COME FROM THE SAME PR. `closes` used to be
+		// `cited.some(…)` — a property of the whole citing set — while `hit` was filtered over all
+		// of `evidence`, so the top tier's conjunction could be satisfied by two DIFFERENT merges:
+		// #A writes `Closes #n` and touches nothing in scope, #B touches the scope and claims
+		// nothing. The row then asserted "a merged PR CLOSES this AND touched the unit's files",
+		// printed #B — which never claimed the close — never named #A, and pointed the reader at
+		// `--close-shipped`. Carrying `closes` on each evidence row makes the conjunction per-PR
+		// by construction, which is the only place it can be evaluated honestly.
+		const evidence = cited.map((c) => ({
+			...prScopeEvidence(c.pr, scope.globs),
+			number: c.pr?.number,
+			closes: keywords.length > 0 && c.closes.has(n),
+		}));
 		const hit = evidence.filter((e) => e.hits.length > 0);
 		const blind = evidence.filter((e) => !e.known || e.truncated);
+		const closing = evidence.filter((e) => e.closes);
+		const closingHits = closing.filter((e) => e.hits.length > 0);
+		const closingBlind = closing.filter((e) => !e.known || e.truncated);
 
-		if (closes && hit.length > 0) {
-			rows.push({ n, title, tier: "closes-and-touches", prList, prs: hit, check });
-		} else if (closes) {
+		/** The blind PRs named, so "not comparable" says which measurement is missing. */
+		const noFileList = (list) =>
+			`no changed-file list to compare (${list
+				.map((e) => `#${e.number} ${e.known ? `truncated at ${FILES_PAGE_CAP} files` : "file list absent"}`)
+				.join(", ")})`;
+
+		if (closingHits.length > 0) {
+			rows.push({ n, title, tier: "closes-and-touches", prList, prs: closingHits, check });
+		} else if (closing.length > 0 && (closingBlind.length > 0 || scope.unusable.length > 0)) {
+			// A WITHHELD MEASUREMENT IS NOT AN AFFIRMATIVE FINDING, and this arm is where that rule
+			// was being skipped: `closes` was tested BEFORE the blind check below, so a `Closes #n`
+			// whose changed-file list could not be read — absent, or truncated at the 100-file page
+			// cap — was published as "a merged PR claims to CLOSE this, but changed no file the
+			// unit's `scope:` claims". That is an assertion about a comparison that never ran, and
+			// it sends a reader to audit a `scope:` line nothing was ever held against. The shape is
+			// live: six PRs in today's 300-PR corpus sit exactly at the cap, and #3847 writes
+			// closing keywords for two units. The empty intersection is `closes-only`'s entire
+			// content, so an unreadable half withholds the tier, exactly as it withholds the
+			// suppression below.
+			const why = [];
+			if (closingBlind.length > 0) why.push(`a merged PR claims to CLOSE this, and there is ${noFileList(closingBlind)}`);
+			if (scope.unusable.length > 0) why.push(scopeGapReason(scope));
+			rows.push({ n, title, tier: "cannot-compare", prList, prs: [], check, why: why.join("; ") });
+		} else if (closing.length > 0) {
 			rows.push({ n, title, tier: "closes-only", prList, prs: [], check });
 		} else if (hit.length > 0) {
 			rows.push({ n, title, tier: "touches", prList, prs: hit, check });
 		} else if (blind.length > 0 || scope.unusable.length > 0) {
 			const why = [];
-			if (blind.length > 0) {
-				why.push(
-					`no changed-file list to compare (${blind
-						.map((e) => `#${e.number} ${e.known ? `truncated at ${FILES_PAGE_CAP} files` : "file list absent"}`)
-						.join(", ")})`,
-				);
-			}
+			if (blind.length > 0) why.push(noFileList(blind));
 			if (scope.unusable.length > 0) why.push(scopeGapReason(scope));
 			rows.push({ n, title, tier: "cannot-compare", prList, prs: [], check, why: why.join("; ") });
 		} else {
@@ -793,10 +822,19 @@ const FIXTURES = new URL("./board-body-fixtures.json", import.meta.url);
 
 // ── shipped-advisory fixtures: MEASURED, not composed ─────────────────────────────────────────
 //
-// Every case below is a real board unit, a real merged PR and that PR's real changed-file list,
-// taken from the two hand verifications recorded on #4523 (2026-09-09, 28 units; 2026-09-10, the
-// 14 then live). A guard whose fixtures were written alongside its own fix is tautological; these
-// were written by the defect.
+// TWO PROVENANCES, AND THE DIFFERENCE IS LOAD-BEARING — say which a case is before trusting what
+// it proves. Every case with a four-digit real issue number is CAPTURED: a real board unit, a real
+// merged PR and that PR's real changed-file list, taken from the two hand verifications recorded on
+// #4523 (2026-09-09, 28 units; 2026-09-10, the 14 then live). A guard whose fixtures were written
+// alongside its own fix is tautological; those were written by the defect.
+//
+// The `9xxx` cases are CONSTRUCTED shapes, and are here only where the board carries no live
+// instance of a branch that must not go untested — an absent `files` list, a list at the page cap,
+// a keyword and a scope that disagree. A constructed case can prove a BRANCH is reachable and can
+// never stand as evidence about the corpus; where one substitutes for a shape that was measured but
+// could not be captured whole, it says so on the case (see #4326's). This paragraph replaces a
+// sentence claiming every case below was real, which stopped being true the moment the first `9xxx`
+// case was added — the fixtures were right and the sentence beside them was not.
 //
 // They live here rather than in `scripts/lib/board-body-fixtures.json` for one reason worth stating
 // so the next reader does not take it for a preference: #4523's `scope:` is `scripts/coordinate.sh
@@ -1039,6 +1077,85 @@ const SHIPPED_FIXTURES = Object.freeze({
 				body: "scope: packages/core/git/**",
 			},
 			prs: [{ number: 9103, title: "fix: something", body: "Fixes #9003", files: [{ path: "apps/cli/cmd/links.go" }] }],
+		},
+		// ── the four cases that hold the TIER ORDER, and nothing else here does ────────────────
+		//
+		// The three `cannot-compare` fixtures above carry NO closing keyword, so none of them ever
+		// enters the `closes` arm — and the `closes-and-touches` control is a SINGLE PR, so it
+		// cannot exercise a cross-PR conjunction. With only those, both ordering fixes could be
+		// reverted to a no-op and every fixture stayed green: the fixtures said the tiers were
+		// right while testing neither thing the tiers had got wrong.
+		//
+		// Each case below is the smallest input that goes RED if its fix is reverted. They are
+		// `9xxx` constructed shapes because the branch is what is under test; the corpus evidence
+		// that the shapes are LIVE is recorded on the fixes themselves (six PRs at the page cap;
+		// #3847 writing closing keywords for two units).
+		{
+			name: "ORDERING: a closing keyword whose PR has NO file list — nothing was compared, so nothing is claimed",
+			tier: "cannot-compare",
+			closingKeywords: true,
+			issue: {
+				number: 9005,
+				title: "a scoped unit whose CLOSING PR carries no file list",
+				labels: [{ name: "class:backend" }],
+				body: "scope: apps/console/lib/**",
+			},
+			prs: [{ number: 9106, title: "chore: something", body: "Closes #9005", files: null }],
+		},
+		{
+			name: "ORDERING: a closing keyword whose PR is TRUNCATED at the page cap — an empty intersection proves nothing",
+			tier: "cannot-compare",
+			closingKeywords: true,
+			issue: {
+				number: 9006,
+				title: "a scoped unit whose CLOSING PR is a 100-file merge",
+				labels: [{ name: "class:backend" }],
+				body: "scope: apps/console/lib/**",
+			},
+			prs: [
+				{
+					number: 9107,
+					title: "chore: a very large merge",
+					body: "Fixes #9006",
+					// 100 paths, none in scope: the cap is the point, not the paths.
+					files: Array.from({ length: 100 }, (_, i) => ({ path: `packages/other/file-${i}.ts` })),
+				},
+			],
+		},
+		{
+			// The third sub-condition of the same arm: here the file lists are perfectly readable
+			// and it is the SCOPE half that was not fully read, so the intersection is still
+			// incomplete. Scope line is #4326's, verbatim.
+			name: "ORDERING: a closing keyword against a PARTLY unreadable scope — the comparison is incomplete either way",
+			tier: "cannot-compare",
+			closingKeywords: true,
+			issue: {
+				number: 9007,
+				title: "a unit whose scope is partly prose, named by a closing PR",
+				labels: [{ name: "class:backend" }],
+				body: "scope: (no repository files — a cloud console/CLI action)",
+			},
+			prs: [{ number: 9108, title: "chore: budgets", body: "Closes #9007", files: [{ path: "infra/sandbox/main.tf" }] }],
+		},
+		{
+			// The conjunction control. Neither PR satisfies `closes-and-touches` ALONE: #9109 makes
+			// the claim and lands outside the scope, #9110 lands inside it and claims nothing. Read
+			// across the whole citing set, the two halves combine into a top-tier row that names
+			// #9110 — the PR that never claimed the close — and points at `--close-shipped`.
+			// Evaluated per PR, the honest answer is the closing PR's own empty intersection.
+			name: "CONJUNCTION: the keyword comes from one merged PR and the scope hit from another",
+			tier: "closes-only",
+			closingKeywords: true,
+			issue: {
+				number: 9008,
+				title: "a scoped unit named by two merged PRs, one claiming and one touching",
+				labels: [{ name: "class:backend" }],
+				body: "scope: apps/console/lib/**",
+			},
+			prs: [
+				{ number: 9109, title: "docs: a note", body: "Closes #9008", files: [{ path: "docs/x.md" }] },
+				{ number: 9110, title: "chore: unrelated", body: "Ordered behind #9008.", files: [{ path: "apps/console/lib/y.ts" }] },
+			],
 		},
 		{
 			name: "#3855 — a from:e2e-nightly red closes on a GREEN RUN, not on a merge (exempt)",
