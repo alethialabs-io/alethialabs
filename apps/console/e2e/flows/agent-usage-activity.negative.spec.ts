@@ -4,12 +4,14 @@
 // E2E (negatives / gating / empty-state) for the insights surfaces — the paths that a plan boundary,
 // an unmatched filter, or an invalid input should block or narrow:
 //   • Activity CSV export is Enterprise-only → disabled on Hobby AND Pro (non-enterprise).
-//   • Activity time windows older than the plan's retention prompt an upgrade instead of applying.
+//   • Activity time windows older than the plan's retention prompt an upgrade INSTEAD of applying —
+//     and the filters must be provably untouched, which is a question for the URL, not the screen.
 //   • An unmatched search lands the feed on its empty state.
 //   • The project-scoped feed drops the org-only affordances (Export CSV + the Project facet).
-//   • The account dialog validates the display name (empty → error, no persist).
+//   • The account dialog: Save is inert until something changes, and an over-long name is refused.
 //
-// Personas: `owner` = Hobby (community, 7-day activity retention), `team` = Pro (30-day retention).
+// Personas: `owner` = Hobby (community, 7-day activity retention), `team` = Pro (30-day retention)
+// — `apps/console/lib/billing/plan.ts`, `activityRetentionDays`.
 
 import fs from "node:fs";
 import { seedProject } from "../helpers/seed";
@@ -54,18 +56,27 @@ test.describe("Activity — retention window gating (Hobby)", () => {
 	}) => {
 		await owner.page.goto(activityPath(owner.orgSlug));
 		await expect(
-			owner.page.getByRole("button", { name: /last 7 days/i }),
+			owner.page.getByRole("button", { name: /^Last 7 days$/i }),
 		).toBeVisible({ timeout: 30_000 });
 
-		await owner.page.getByRole("button", { name: /last 7 days/i }).click();
+		await owner.page.getByRole("button", { name: /^Last 7 days$/i }).click();
 		await owner.page.getByRole("button", { name: "Last 30 days", exact: true }).click();
 
-		// The pick predates Hobby's 7-day retention → the upgrade sheet intercepts.
+		// The pick predates Hobby's 7-day retention → `applyRange` opens the upgrade sheet and
+		// returns WITHOUT patching the store (activity-log.tsx).
 		await expect(owner.page.getByRole("dialog")).toBeVisible({ timeout: 15_000 });
-		// The trigger label stays put (the range was NOT applied).
-		await expect(
-			owner.page.getByRole("button", { name: /last 7 days/i }),
-		).toBeVisible();
+
+		// "The range was NOT applied" is asked of the URL, not of the trigger.
+		//
+		// The old assertion re-read the trigger's label — and could not, because the upgrade
+		// sheet is a modal: the rest of the page leaves the accessibility tree, so `getByRole`
+		// resolves to nothing and `toBeVisible()` fails on a page where nothing is wrong. It had
+		// been recorded `failed` for exactly that. The filter store's contract is that a rejected
+		// pick writes no key, and `useFilterUrlSync` deletes every default-valued key — so a
+		// pristine window is a query string with no `rangeLabel`, `from` or `to` in it, whatever
+		// the aria tree is doing.
+		await expect(owner.page).not.toHaveURL(/[?&]rangeLabel=/);
+		await expect(owner.page).not.toHaveURL(/[?&]from=/);
 	});
 });
 
@@ -125,8 +136,35 @@ test.describe("Activity — project scope drops org-only affordances (owner)", (
 });
 
 // ── Account settings — display-name validation ──────────────────────────────────────────────
+//
+// WHAT IS NOT HERE, AND WHY. "Clearing the display name surfaces a validation error" was recorded
+// `failed`, and rewriting it would not have fixed it: `Save Changes` is `disabled={!isDirty}` and
+// the form is built with react-hook-form `values: { name: user?.name ?? "" }`, so for a persona
+// whose display name is ALREADY empty, clearing the field returns the form to its own defaults —
+// not dirty, Save inert, no submit, no error. The `min(1)` branch is unreachable from that
+// starting state, which is correct behaviour, and a test that waits for a disabled button to
+// enable can only time out. Measuring it needs a persona with a display name, which global-setup's
+// OTP signup does not set; that is a seeding change, and this lane does not own `global-setup.ts`.
+// So this describe measures the two rules that ARE reachable from any starting state.
 test.describe("Account settings — validation (owner)", () => {
-	test("clearing the display name surfaces a validation error", async ({ owner }) => {
+	test("Save Changes is inert until the profile actually changes", async ({ owner }) => {
+		await owner.page.goto(usagePath(owner.orgSlug));
+		await owner.page.getByRole("button", { name: /account menu/i }).click();
+		await owner.page.getByRole("button", { name: /account settings/i }).click();
+
+		const dialog = owner.page.getByRole("dialog");
+		const name = dialog.getByLabel(/display name/i);
+		const save = dialog.getByRole("button", { name: /save changes/i });
+		await expect(name).toBeVisible({ timeout: 15_000 });
+
+		await expect(save).toBeDisabled();
+		await name.fill(`QA probe ${Date.now()}`);
+		// Enabling is what the edit uniquely produces — a control that never enables and one that
+		// is always enabled both fail here, which is why both halves are asserted.
+		await expect(save).toBeEnabled();
+	});
+
+	test("a display name past the 120-character limit is refused", async ({ owner }) => {
 		await owner.page.goto(usagePath(owner.orgSlug));
 		await owner.page.getByRole("button", { name: /account menu/i }).click();
 		await owner.page.getByRole("button", { name: /account settings/i }).click();
@@ -134,9 +172,16 @@ test.describe("Account settings — validation (owner)", () => {
 		const dialog = owner.page.getByRole("dialog");
 		const name = dialog.getByLabel(/display name/i);
 		await expect(name).toBeVisible({ timeout: 15_000 });
-		await name.fill(""); // making it empty also marks the form dirty → Save enables
+
+		// 121 characters — one past `profileSchema`'s `.max(120)`. Reachable from ANY starting
+		// value, unlike the empty-name branch: it differs from every default, so the form is
+		// dirty and Save submits.
+		await name.fill("q".repeat(121));
 		await dialog.getByRole("button", { name: /save changes/i }).click();
 
-		await expect(dialog.getByText(/enter a display name/i)).toBeVisible();
+		// The message is zod's own for `max`, and its wording has changed between zod majors, so
+		// the LIMIT is what is asserted — the number the schema states — rather than a sentence
+		// this test would own a copy of.
+		await expect(dialog.getByText(/120/)).toBeVisible();
 	});
 });
