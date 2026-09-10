@@ -177,42 +177,56 @@ test.describe("Activity — project scope drops org-only affordances (owner)", (
 // enable can only time out. Measuring it needs a persona with a display name, which global-setup's
 // OTP signup does not set; that is a seeding change, and this lane does not own `global-setup.ts`.
 // So this describe measures the two rules that ARE reachable from any starting state.
+//
+// BOTH CARRY `@needs:stripe` BECAUSE OF WHERE THEY STAND, NOT WHAT THEY ASSERT (#4619 review).
+// The account dialog needs a shell to open from and these two use `usagePath` for it, so the
+// Stripe-fronted `UsagePanel` renders behind the dialog either way — and the tag is a property
+// of the surface a test puts on screen, not of the assertion it happens to make. The rule and
+// its reason are stated once, in the `Usage —` header of agent-usage-activity.spec.ts.
 test.describe("Account settings — validation (owner)", () => {
-	test("Save Changes is inert until the profile actually changes", async ({ owner }) => {
-		await owner.page.goto(usagePath(owner.orgSlug));
-		await owner.page.getByRole("button", { name: /account menu/i }).click();
-		await owner.page.getByRole("button", { name: /account settings/i }).click();
+	test(
+		"Save Changes is inert until the profile actually changes",
+		{ tag: "@needs:stripe" },
+		async ({ owner }) => {
+			await owner.page.goto(usagePath(owner.orgSlug));
+			await owner.page.getByRole("button", { name: /account menu/i }).click();
+			await owner.page.getByRole("button", { name: /account settings/i }).click();
 
-		const dialog = owner.page.getByRole("dialog");
-		const name = dialog.getByLabel(/display name/i);
-		const save = dialog.getByRole("button", { name: /save changes/i });
-		await expect(name).toBeVisible({ timeout: 15_000 });
+			const dialog = owner.page.getByRole("dialog");
+			const name = dialog.getByLabel(/display name/i);
+			const save = dialog.getByRole("button", { name: /save changes/i });
+			await expect(name).toBeVisible({ timeout: 15_000 });
 
-		await expect(save).toBeDisabled();
-		await name.fill(`QA probe ${Date.now()}`);
-		// Enabling is what the edit uniquely produces — a control that never enables and one that
-		// is always enabled both fail here, which is why both halves are asserted.
-		await expect(save).toBeEnabled();
-	});
+			await expect(save).toBeDisabled();
+			await name.fill(`QA probe ${Date.now()}`);
+			// Enabling is what the edit uniquely produces — a control that never enables and one that
+			// is always enabled both fail here, which is why both halves are asserted.
+			await expect(save).toBeEnabled();
+		},
+	);
 
-	test("a display name past the 120-character limit is refused", async ({ owner }) => {
-		await owner.page.goto(usagePath(owner.orgSlug));
-		await owner.page.getByRole("button", { name: /account menu/i }).click();
-		await owner.page.getByRole("button", { name: /account settings/i }).click();
+	test(
+		"a display name past the 120-character limit is refused",
+		{ tag: "@needs:stripe" },
+		async ({ owner }) => {
+			await owner.page.goto(usagePath(owner.orgSlug));
+			await owner.page.getByRole("button", { name: /account menu/i }).click();
+			await owner.page.getByRole("button", { name: /account settings/i }).click();
 
-		const dialog = owner.page.getByRole("dialog");
-		const name = dialog.getByLabel(/display name/i);
-		await expect(name).toBeVisible({ timeout: 15_000 });
+			const dialog = owner.page.getByRole("dialog");
+			const name = dialog.getByLabel(/display name/i);
+			await expect(name).toBeVisible({ timeout: 15_000 });
 
-		// 121 characters — one past `profileSchema`'s `.max(120)`. Reachable from ANY starting
-		// value, unlike the empty-name branch: it differs from every default, so the form is
-		// dirty and Save submits.
-		await name.fill("q".repeat(121));
-		await dialog.getByRole("button", { name: /save changes/i }).click();
+			// 121 characters — one past `profileSchema`'s `.max(120)`. Reachable from ANY starting
+			// value, unlike the empty-name branch: it differs from every default, so the form is
+			// dirty and Save submits.
+			await name.fill("q".repeat(121));
+			await dialog.getByRole("button", { name: /save changes/i }).click();
 
-		// The message is zod's own for `max`, and its wording has changed between zod majors, so
-		// the LIMIT is what is asserted — the number the schema states — rather than a sentence
-		// this test would own a copy of.
-		await expect(dialog.getByText(/120/)).toBeVisible();
-	});
+			// The message is zod's own for `max`, and its wording has changed between zod majors, so
+			// the LIMIT is what is asserted — the number the schema states — rather than a sentence
+			// this test would own a copy of.
+			await expect(dialog.getByText(/120/)).toBeVisible();
+		},
+	);
 });

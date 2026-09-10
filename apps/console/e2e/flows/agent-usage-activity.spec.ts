@@ -76,13 +76,18 @@ test.describe("Agent — reached from the topbar (owner)", () => {
 // `fixtures/qa.ts` fails the test in CI and skips it locally with a reason that begins NOT
 // MEASURED. Never a `test.skip(!env)`.
 //
-// SO THE TAG FOLLOWS `usagePath`, NOT THIS DESCRIBE (#4619 review). TWELVE tests in this file
-// reach that surface and all twelve carry it: the nine `Usage —` tests below, plus
-// "Ask AI opens the assistant as a docked panel from an arbitrary route" and both
-// "Account settings dialog (owner)" tests, which `goto(usagePath(...))` to get a shell to open
-// their affordance from and so render the Stripe-fronted panel behind it. Tagging only the
-// describes whose assertions mention a plan left three counter-examples in the file, which made
-// the rule above un-checkable by anything but reading it and disagreeing.
+// SO THE TAG FOLLOWS `usagePath`, NOT A DESCRIBE AND NOT A FILE (#4619 review). Every test that
+// navigates there carries it, wherever it lives — the nine `Usage —` tests below; "Ask AI opens
+// the assistant as a docked panel from an arbitrary route" above; both "Account settings dialog
+// (owner)" tests; and both "Account settings — validation (owner)" tests in
+// agent-usage-activity.negative.spec.ts. The last five reach `usagePath` only to get a shell to
+// open an affordance from, which is the point: the Stripe-fronted panel renders behind the
+// dialog either way, so the tag is a property of the surface a test puts on screen and not of
+// the assertion it happens to make. Tagging only the describes whose assertions name a plan left
+// five counter-examples, which made this paragraph un-checkable by anything but reading it and
+// disagreeing — and scoping it to "this file" would only have made it true by the accident of
+// where it sits. The grep that checks it: every `goto(usagePath(` in both files is inside a
+// tagged test.
 test.describe("Usage — meters + over-time chart", () => {
 	test(
 		"authed persona reaches usage (not bounced to /login)",
