@@ -33,8 +33,7 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "../fixtures/qa";
 import type { ConsoleGuard } from "../helpers/console-errors";
-import { scanA11y, type A11yViolation } from "../helpers/a11y";
-import { requireAxe } from "../audit/signals";
+import { requireAxe, scanA11y, type A11yViolation } from "../helpers/a11y";
 import { waitForShell } from "../helpers/shell";
 import {
 	seedCloudIdentity,
@@ -85,9 +84,20 @@ function describeViolations(violations: A11yViolation[]): string[] {
 /**
  * Surfaces with a RECORDED product defect the scan is right to find and this lane cannot fix.
  *
- * Keyed by the route's label, valued with the ratchet's required `BUG: <what> #<issue>` form. A
- * route listed here is `test.fixme`'d — it still carries the assertion, so the day the issue is
- * fixed the entry is deleted and the test goes green rather than being rewritten.
+ * Keyed `org:<label>` / `project:<label>`, valued with the ratchet's required `BUG: <what> #<issue>`
+ * form. A surface listed here is `test.fixme`'d — it still carries the assertion, so the day the
+ * issue is fixed the entry is deleted and the test goes green rather than being rewritten.
+ *
+ * THE SCOPE PREFIX IS LOAD-BEARING, AND SO IS `debtFor` BEING CALLED FROM BOTH LOOPS. Keyed on the
+ * bare label, this map had two silent failures at once, because `ORG_ROUTES` and `PROJECT_ROUTES`
+ * share SIX labels — `jobs`, `clusters`, `usage`, `settings/general`, `settings/access`,
+ * `settings/activity` (`environments` reads like a seventh and is not: it is project-only). First,
+ * only the org loop read the map, so an entry added for a project surface changed nothing at all:
+ * TypeScript accepted it, the project test stayed red, and the ratchet then failed on a `{fixme}`
+ * the run never produced. Second, on any shared label the entry landed on the WRONG test — a
+ * finding on `project settings/access` would have fixme'd the ORG settings/access test, suppressing
+ * a real, unrecorded violation on a page nobody meant to exempt. A prefixed key cannot collide and
+ * cannot be read by the loop it was not written for.
  *
  * AN ENTRY IS DEBT, NEVER AN EXEMPTION: adding one without an issue number is refused by the
  * ratchet (`/^BUG: .+#\d+/`), and leaving one in place after its issue closes turns the ledger's
@@ -95,10 +105,48 @@ function describeViolations(violations: A11yViolation[]): string[] {
  * silently. #4612's own ledger note says to regenerate this file's slice with the fix.
  */
 const A11Y_DEBT: Record<string, string> = {
-	evidence:
+	"org:evidence":
 		"BUG: the evidence table paints non-disabled informational text in the disabled ink tier " +
 		"(--text-disabled on --surface is 1.95:1 against a 4.5:1 bar), 15 nodes #4612",
 };
+
+/** The recorded debt for one surface, or undefined. `scope` is what keeps the two lists apart. */
+function debtFor(scope: "org" | "project", label: string): string | undefined {
+	return A11Y_DEBT[`${scope}:${label}`];
+}
+
+/**
+ * Wait until the surface has stopped fetching, so a scan measures the PAGE and not its skeletons.
+ *
+ * `loadAndAssertShell` returns as soon as the `main` landmark is visible, and every surface in
+ * `ORG_ROUTES`/`PROJECT_ROUTES` fetches its rows client-side through React Query — so `main` is
+ * visible while the page is still `@repo/ui/skeleton` placeholders. Scanning there measures
+ * whichever tree happened to be painted, which is not what the a11y describe below says it
+ * measures ("a populated table, a filter bar carrying facet counts") and makes every verdict in it
+ * timing-dependent: a surface whose populated tree carries a contrast violation records `passed`
+ * in `gate-baseline.json` and then regresses against its own baseline on a slower runner, which
+ * the ratchet reports as a NEW failure — a blocked promotion for a defect that was always there.
+ *
+ * THREE BOUNDED WAITS, NONE OF THEM AN ASSERTION. This is a precondition for a measurement, so a
+ * surface that never reaches one of these signals must still be scanned rather than time the test
+ * out — each step is capped and its rejection swallowed deliberately. `networkidle` is the same
+ * choice `e2e/audit/routes.spec.ts`'s `settle()` makes and for the same stated reason: it is
+ * deprecated for assertions and exactly right for "has stopped fetching", and a polling surface
+ * (the jobs list refetches on a cadence) never reaches it at all, which is why it is a BUDGET.
+ * The skeleton wait is the specific thing axe must not see, named rather than approximated.
+ */
+async function settleSurface(page: Page): Promise<void> {
+	await page.waitForLoadState("load").catch(() => {});
+	await page.waitForLoadState("networkidle", { timeout: 6_000 }).catch(() => {});
+	// `waitForFunction`, not `expect(...).toHaveCount(0)`: a swallowed expect still records a FAILED
+	// step in the trace of a test that passed, which is a false lead in exactly the artifact someone
+	// reads when a scan surprises them. This is a wait, so it is written as one.
+	await page
+		.waitForFunction(() => document.querySelectorAll('[data-slot="skeleton"]').length === 0, undefined, {
+			timeout: 6_000,
+		})
+		.catch(() => {});
+}
 
 /**
  * Loads `url`, asserts the document response isn't a 5xx, the route didn't bounce to /login, and the
@@ -236,7 +284,11 @@ test.describe("Cross-cutting — project page resilience sweep", () => {
 // `requireAxe()` is the precondition and it is not optional: `helpers/a11y.ts` answers `[]` when
 // `@axe-core/playwright` cannot be imported, which is byte-identical to a clean page. Without this,
 // every surface below would report a11y-clean on the strength of the scanner being absent — the
-// helper's own header says any new gate built on it owes itself this check.
+// helper's own header says any new gate built on it owes itself this check. It is imported from
+// `helpers/`, NOT from `audit/signals.ts` where it used to live: release-gate.yml selects legs from
+// changed paths and maps `e2e/audit/**` to the two audit legs alone, so a `flows/ -> audit/` import
+// is a dependency its selector cannot see — this file's 29 a11y tests would be broken by a change
+// that runs the audit legs green and never runs `qa`. `e2e/helpers/` is a declared SEAM there.
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 test.describe("Cross-cutting — a11y per surface", () => {
@@ -246,9 +298,10 @@ test.describe("Cross-cutting — a11y per surface", () => {
 
 	for (const route of ORG_ROUTES) {
 		test(`${route.label} has no serious/critical a11y violations`, async ({ owner }) => {
-			const debt = A11Y_DEBT[route.label];
+			const debt = debtFor("org", route.label);
 			if (debt) test.fixme(true, debt);
 			await loadAndAssertShell(owner.page, route.path(owner.orgSlug));
+			await settleSurface(owner.page);
 			const violations = await scanA11y(owner.page, { include: "main" });
 			expect(describeViolations(violations), `a11y on ${route.label}`).toEqual([]);
 		});
@@ -256,8 +309,11 @@ test.describe("Cross-cutting — a11y per surface", () => {
 
 	for (const route of PROJECT_ROUTES) {
 		test(`project ${route.label} has no serious/critical a11y violations`, async ({ owner }) => {
+			const debt = debtFor("project", route.label);
+			if (debt) test.fixme(true, debt);
 			const proj = await ensureProject(owner);
 			await loadAndAssertShell(owner.page, `/${owner.orgSlug}/${proj.slug}${route.sub}`);
+			await settleSurface(owner.page);
 			const violations = await scanA11y(owner.page, { include: "main" });
 			expect(describeViolations(violations), `a11y on project ${route.label}`).toEqual([]);
 		});
