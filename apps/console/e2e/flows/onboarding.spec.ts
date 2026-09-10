@@ -43,8 +43,19 @@ function ownerHobbyEmail(): string {
 }
 
 /**
+ * How long a signup in THIS file waits for its code to reach the dev-server log.
+ *
+ * The shared default (helpers/otp.ts) is 30s, and it is the constraint that actually binds: it
+ * throws from inside the walk long before the test's own budget is spent, so a `test.setTimeout`
+ * of 240s or 420s cannot rescue a slow code — it only decides how long the test would have been
+ * ALLOWED to run. Every signup here is one leg of a long journey on an env that is also serving
+ * the audit project, so the code can land far later than 30s with nothing wrong with the product.
+ */
+const OTP_WAIT_MS = 150_000;
+
+/**
  * Local email-OTP sign-in, mirroring helpers/personas.emailOtpSignIn but with a longer OTP
- * wait — under a busy dev server the code can land in the log later than the shared 20s default.
+ * wait — under a busy dev server the code can land in the log later than the shared 30s default.
  */
 export async function otpSignIn(page: Page, email: string, mode: "signup" | "login"): Promise<void> {
 	const cursor = await logCursor();
@@ -52,7 +63,7 @@ export async function otpSignIn(page: Page, email: string, mode: "signup" | "log
 	await page.getByRole("button", { name: /continue with email/i }).click();
 	await page.locator("#email").fill(email);
 	await page.getByRole("button", { name: /continue with email/i }).click();
-	const code = await waitForOtp(cursor, { timeoutMs: 150_000 });
+	const code = await waitForOtp(cursor, { timeoutMs: OTP_WAIT_MS });
 	await page.locator("input[data-input-otp]").first().fill(code);
 }
 
@@ -491,7 +502,11 @@ test.describe("Onboarding — invitation accept", () => {
 
 		// 2. The invitee is a real account before it is anybody's member — signup, onboarding and
 		//    the clickwrap, exactly as a person would walk them.
-		await signUpHobby(page, invitee);
+		//
+		//    WITH THIS FILE'S OTP PATIENCE, NOT THE SHARED 30s. `signUpHobby` waits for the code
+		//    through emailOtpSignIn, and the 420s asked for above cannot reach that wait: it gives
+		//    up at 30s and the round-trip this test exists to measure is never walked at all.
+		await signUpHobby(page, invitee, { otpTimeoutMs: OTP_WAIT_MS });
 
 		/**
 		 * Asserts how many organizations this account's switcher offers, waiting for the list.
@@ -577,7 +592,11 @@ test.describe("Onboarding — signing out", () => {
 		// every persona context in the run is restored from ONE storageState holding ONE token —
 		// signing a persona out here would unauthenticate it for every other spec in the suite.
 		test.setTimeout(240_000);
-		const { orgSlug } = await signUpHobby(page, freshEmail("signout"));
+		// Same exposure as the invitation walk: the 240s above is the test's budget, while the OTP
+		// wait inside signUpHobby is what actually gives up first unless it is told to be patient.
+		const { orgSlug } = await signUpHobby(page, freshEmail("signout"), {
+			otpTimeoutMs: OTP_WAIT_MS,
+		});
 
 		await page.getByRole("button", { name: /account menu/i }).click();
 		await page.getByRole("menuitem", { name: /log ?out/i }).click();
