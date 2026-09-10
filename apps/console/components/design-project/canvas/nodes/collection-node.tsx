@@ -153,7 +153,7 @@ export function CollectionNode({
 							</div>
 						))}
 						{count > PREVIEW && (
-							<div className="bg-card px-1.5 py-1 font-mono text-ui-2xs text-muted-foreground/60">
+							<div className="bg-card px-1.5 py-1 font-mono text-ui-2xs text-text-tertiary">
 								+{count - PREVIEW} more
 							</div>
 						)}

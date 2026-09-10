@@ -117,7 +117,7 @@ function buildColumns(
 								className="mt-1 flex"
 							/>
 							{d.last_error && (
-								<div className="mt-1 break-words font-mono text-ui-2xs text-muted-foreground/70">
+								<div className="mt-1 break-words font-mono text-ui-2xs text-text-tertiary">
 									{d.last_error}
 								</div>
 							)}

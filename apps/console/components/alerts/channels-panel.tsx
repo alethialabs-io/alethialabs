@@ -126,11 +126,11 @@ export function ChannelsPanel({
 					{/* master-detail */}
 					<div className="flex flex-wrap items-start gap-4">
 						<div className="min-w-[290px] flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-sm">
-							<div className="px-4 py-3 font-mono text-ui-3xs uppercase tracking-[0.14em] text-muted-foreground/70">
+							<div className="px-4 py-3 font-mono text-ui-3xs uppercase tracking-[0.14em] text-text-tertiary">
 								Configured channels
 							</div>
 							{rows.length === 0 ? (
-								<div className="px-4 py-4 text-muted-foreground/70 text-xs">
+								<div className="px-4 py-4 text-text-tertiary text-xs">
 									No channels match these filters.
 								</div>
 							) : (
@@ -414,7 +414,7 @@ function ChannelDetail({
 			{/* config */}
 			<div className="space-y-4 border-b border-border/60 p-5">
 				<div className="flex items-center gap-1.5">
-					<span className="font-mono text-ui-2xs uppercase tracking-wider text-foreground/70">
+					<span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
 						{meta.credential === "email"
 							? "Recipients"
 							: meta.credential === "routingKey"
@@ -548,7 +548,7 @@ function ChannelDetail({
 			{/* used by */}
 			<div className="space-y-3 border-b border-border/60 p-5">
 				<div className="flex items-center gap-2">
-					<span className="font-mono text-ui-2xs uppercase tracking-wider text-foreground/70">
+					<span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
 						Used by
 					</span>
 					<button

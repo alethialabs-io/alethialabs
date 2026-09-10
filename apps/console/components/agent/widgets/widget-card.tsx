@@ -215,7 +215,7 @@ export function WidgetCard({
                     "flex flex-none items-center gap-1 font-mono text-ui-3xs uppercase transition-colors hover:text-foreground",
                     widget.mode === "live"
                       ? "text-foreground"
-                      : "text-muted-foreground/70",
+                      : "text-text-tertiary",
                   )}
                 >
                   {widget.mode === "live" ? (
@@ -238,7 +238,7 @@ export function WidgetCard({
           </Tooltip>
         ) : (
           widget.mode === "frozen" && (
-            <span className="flex flex-none items-center gap-1 font-mono text-ui-3xs uppercase text-muted-foreground/70">
+            <span className="flex flex-none items-center gap-1 font-mono text-ui-3xs uppercase text-text-tertiary">
               <Snowflake className="h-2.5 w-2.5" />
               Frozen
             </span>
