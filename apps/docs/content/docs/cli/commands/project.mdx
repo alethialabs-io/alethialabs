@@ -185,31 +185,58 @@ than coming back as a `400`. The file's full reference, components included, is 
 Queue a `PLAN`, `DEPLOY` or `DESTROY` job for one environment of a project.
 
 ```bash
-alethia project plan --project boutique --env dev-1
-alethia project apply --project boutique --env dev-1 --wait
+alethia project plan --project boutique --env dev-1 --runner eu-box --wait
+alethia project apply --project boutique --env dev-1 --latest-plan --wait
 alethia project destroy --project boutique --yes
 ```
 
-Omit `--project` on a terminal and you are asked which project; omit `--runner-id` and you are
-asked which runner (or "Any available").
+Omit `--project` on a terminal and you are asked which project; omit the runner and you are
+asked which one (or "Any available"). `destroy` takes the runner by id only, for now.
 
 | Flag | plan | apply | destroy | Description |
 |------|------|-------|---------|-------------|
 | `--project` | ✓ | ✓ | ✓ | Project by **name** or id. Asked for on a terminal when omitted. |
 | `--project-id` | ✓ | ✓ | ✓ | Project id. Prefer `--project`, which also takes the name. |
 | `--env` | ✓ | ✓ | ✓ | Target environment name (default: the project's default environment) |
-| `--runner-id` | ✓ | ✓ | ✓ | Assign to a specific runner |
-| `--plan-job-id` | | ✓ | | Reference a prior `PLAN` job |
+| `--runner` | ✓ | ✓ | | Runner by **name** or id. Asked for on a terminal when omitted. |
+| `--runner-id` | ✓ | ✓ | ✓ | Runner id. Prefer `--runner`, which also takes the name. |
+| `--plan-job-id` | | ✓ | | Apply a specific `PLAN` job, by id |
+| `--latest-plan` | | ✓ | | Apply the project's most recent `PLAN` job |
 | `-w`, `--wait` | ✓ | ✓ | ✓ | Wait for job completion |
 | `-y`, `--yes` | | | ✓ | Skip the confirmation prompt (required with `--no-input`) |
 
 `--project` and `--project-id` name the same thing, so passing **both** is refused rather than
 resolved by precedence. A project name that two projects share is also refused, naming both ids —
 the command queues a `DESTROY`, and picking one of two plausible projects is not a decision the
-CLI should make for you.
+CLI should make for you. `--runner` and `--runner-id` are the same pair, refused the same way, and
+a runner name shared by two runners is refused naming both ids.
 
 `destroy` is destructive: on a terminal it confirms, and with `--no-input` it requires `--yes`
 rather than silently doing nothing.
+
+### Applying the plan you just reviewed
+
+`--latest-plan` resolves the project's own most recent `PLAN` job, so a review-then-apply pass
+never moves a uuid between two commands:
+
+```bash
+alethia project plan --project boutique --env prod --wait
+alethia project apply --project boutique --env prod --latest-plan --wait
+```
+
+It prints which job it chose before it queues anything. Three things it deliberately does **not**
+do:
+
+- It is **opt-in**. Without it (or `--plan-job-id`) the deploy runs its own plan, which is the
+  ordinary path — a plan reference is a mode, not a hint: the Runner refuses a deploy whose plan
+  did not succeed, or whose configuration moved since the plan was taken.
+- It resolves `PLAN` jobs **only**. The project's most recent job is as likely to be the `DEPLOY`
+  that followed the plan.
+- It takes the most recent `PLAN` **whatever its status**, and refuses when that is not `SUCCESS`,
+  naming the job and its status. Skipping past a plan that is still running would apply an older
+  one you never asked for.
+
+`--plan-job-id` is still there for a plan you already hold the id of.
 
 ## `alethia project design apply`
 
