@@ -10,8 +10,13 @@
 //
 // The property asserted here is the one that was violated, stated directly:
 //
-//     grantObject(...) is the object EVERY tuple expandGrant(...) produces sits on,
-//     and null exactly when expandGrant produces none.
+//     every tuple expandGrant(...) produces sits on the object grantObject(...) names.
+//
+// ⚠ ONE DIRECTION ONLY. The converse — "null exactly when expandGrant produces none" — is FALSE,
+// and this file asserted it until a review caught it: `expandGrant` also produces nothing when the
+// scope is fine and every key is org-level (`isOrgLevel` is true for every `create`). The
+// `project:create` row in the table below is that case, and it is here so the gap is pinned rather
+// than absent — the suite used to pass only because every scope was exercised with VIEWER_KEYS.
 //
 // Both halves come from the REAL core helpers (the `@` alias in vitest.config.ts), not from
 // stand-ins. A hand-written expander here would prove this file's model of tuple expansion, which
@@ -86,6 +91,16 @@ const scopes = [
 	},
 ] as const;
 
+/**
+ * The case that breaks the CONVERSE: a perfectly good project scope whose only permission is
+ * `create`, which `isOrgLevel` sends org-wide and a scoped grant therefore never confers. The
+ * expansion is empty and the object is NOT null.
+ */
+const CREATE_ONLY = {
+	scope: { ...principal, resourceType: "project", resourceId: PROJECT },
+	keys: ["project:create"],
+} as const;
+
 describe("grantObject names the object expandGrant actually writes to", () => {
 	for (const { name, scope } of scopes) {
 		it(name, () => {
@@ -103,6 +118,27 @@ describe("grantObject names the object expandGrant actually writes to", () => {
 			expect(new Set(tuples.map((t) => t.object))).toEqual(new Set([object]));
 		});
 	}
+});
+
+describe("the invariant runs one way, and this is the row that proves it", () => {
+	it("an empty expansion does NOT imply a null object — the scope is fine, the KEY is org-level", () => {
+		const tuples = expandGrant(CREATE_ONLY.scope, CREATE_ONLY.keys);
+		const object = grantObject(targetForEffect, CREATE_ONLY.scope);
+		expect(tuples).toEqual([]);
+		expect(object).toBe(`project:${PROJECT}`);
+		// The forward direction still holds vacuously (no tuples to sit anywhere), which is
+		// exactly why the property table above could not see this.
+	});
+
+	it("…and the same scope with a non-create key does expand onto that object", () => {
+		// The control. Without it, the case above would also pass if `project:P` scopes stopped
+		// expanding altogether.
+		const tuples = expandGrant(CREATE_ONLY.scope, ["project:view"]);
+		expect(tuples.length).toBeGreaterThan(0);
+		expect(new Set(tuples.map((t) => t.object))).toEqual(
+			new Set([grantObject(targetForEffect, CREATE_ONLY.scope)]),
+		);
+	});
 });
 
 describe("the specific rows the revoke leak was made of", () => {

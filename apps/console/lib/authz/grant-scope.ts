@@ -40,9 +40,19 @@
 //
 // An UNRECOGNISED `resource_type` lands in the same place, and that closes a second divergence for
 // free: `expandGrant` already produced zero tuples for one (no object type to write on), while the
-// Postgres PDP read it as an ordinary scoped grant on that id. `resource_type` is free `text` in
-// Postgres, so this is reachable from any writer that does not go through the console — raw SQL in
-// lib/authz/grants.ts and lib/authz/seed.ts among them.
+// Postgres PDP read it as an ordinary scoped grant on that id.
+//
+// `resource_type` is free `text` in Postgres, and TWO WRITE BOUNDARIES CAN STILL PRODUCE THIS:
+//   · `app/api/cli/grants/route.ts` — `resource_type: z.string().min(1)`
+//   · `app/server/actions/grants.ts` — `assignGrant` types `resourceType: string`, no enum check
+// #4581's `orgScopeCarriesResourceId` refuses only the `org` pair at both, so any other
+// unrecognised kind plus an id is accepted today.
+//
+// (An earlier version of this comment named `lib/authz/grants.ts` and `lib/authz/seed.ts` as the
+// reachable surface. Both are false: each inserts a hardcoded `resource_type = 'org'` and does not
+// supply the `resource_id` column at all, so neither can write a non-null id, let alone an
+// unrecognised kind. A reader following that sentence would have checked two safe files and never
+// looked at the server action, which is the one with no validation.)
 //
 // ⚠ THAT REASONING IS ABOUT `effect = 'allow'`. THE DENY DIRECTION IS A SEPARATE, RULED QUESTION.
 //

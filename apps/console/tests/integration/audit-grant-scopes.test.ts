@@ -53,6 +53,7 @@ const PROJECT = randomUUID();
 const CONNECTOR = randomUUID(); // a scopable kind, id need not resolve — it is a CONTROL
 const MISSING = randomUUID(); // names nothing in any table this query looks in
 const ROLE = randomUUID(); // a custom role: exactly two permissions, so PARTIAL is 1 of 2
+const EMPTY_ROLE = randomUUID(); // a custom role with NO role_permission rows yet — legal
 
 /** Stable ids so an assertion can name the row it is about. */
 const ID = {
@@ -61,6 +62,7 @@ const ID = {
 	partial: randomUUID(),
 	viaTeam: randomUUID(),
 	noPermission: randomUUID(),
+	emptyRole: randomUUID(),
 	unscopableLive: randomUUID(),
 	unscopableRedundant: randomUUID(),
 	unscopableDeny: randomUUID(),
@@ -84,6 +86,7 @@ type AuditRow = {
 	verdict: string;
 	subject: string | null;
 	principal_type: string;
+	role_name: string | null;
 };
 
 describeIfDb("the #4583 audit query (docs/ops/grants-scope-contradictions.sql)", () => {
@@ -116,6 +119,15 @@ describeIfDb("the #4583 audit query (docs/ops/grants-scope-contradictions.sql)",
 			{ role_id: ROLE, permission_key: "project:view" },
 			{ role_id: ROLE, permission_key: "runner:deploy" },
 		]);
+		// A role authored but not yet populated. `role` rows exist before their `role_permission`
+		// rows, and ee lets an org create a role and fill it in later, so this is an ordinary
+		// intermediate state — not a defect.
+		await db.insert(role).values({
+			id: EMPTY_ROLE,
+			organization_id: ORG,
+			name: `empty-${EMPTY_ROLE.slice(0, 6)}`,
+			is_builtin: false,
+		});
 
 		await db.insert(grants).values([
 			// ── CONTROLS. None of these may ever appear in the audit's output. ────────────────
@@ -144,6 +156,8 @@ describeIfDb("the #4583 audit query (docs/ops/grants-scope-contradictions.sql)",
 			row({ id: ID.viaTeam, effect: "allow", permission_key: "project:edit", resource_type: "org", resource_id: MISSING }),
 			// Neither a role nor a permission key.
 			row({ id: ID.noPermission, effect: "allow", resource_type: "org", resource_id: PROJECT }),
+			// Binds a role that confers nothing TODAY. Same `permissions = 0`, different finding.
+			row({ id: ID.emptyRole, effect: "allow", role_id: EMPTY_ROLE, resource_type: "org", resource_id: PROJECT }),
 			// A TEAM as the principal, covered by the team's own org-wide grant.
 			row({ id: ID.teamPrincipal, principal_type: "team", principal_id: TEAM, effect: "allow", permission_key: "project:edit", resource_type: "org", resource_id: PROJECT }),
 
@@ -205,7 +219,7 @@ describeIfDb("the #4583 audit query (docs/ops/grants-scope-contradictions.sql)",
 		expect(new Set(classB.map((r) => r.resource_type))).toEqual(new Set(["job", "prject"]));
 		// And the two classes stay distinguishable, which is the whole point of reporting them
 		// together rather than merging them.
-		expect(rows.filter((r) => r.pair_class === "org-kind")).toHaveLength(6);
+		expect(rows.filter((r) => r.pair_class === "org-kind")).toHaveLength(7);
 	});
 
 	// ── 3. The verdict — the column a remediation decision is made from ─────────────────────
@@ -250,6 +264,19 @@ describeIfDb("the #4583 audit query (docs/ops/grants-scope-contradictions.sql)",
 	it("NO PERMISSION when the row references neither a role nor a permission key", () => {
 		expect(verdictOf(rows, ID.noPermission)).toMatch(/^NO PERMISSION/);
 		expect(rows.find((r) => r.id === ID.noPermission)?.permissions).toBe(0);
+	});
+
+	it("EMPTY ROLE is a DIFFERENT finding from NO PERMISSION, at the same permissions = 0", () => {
+		// `bad_perm`'s role arm is an inner JOIN, so a role with no permissions yet contributes no
+		// rows and lands on the same count as a grant referencing nothing at all. The advice is
+		// opposite: one can never confer anything without editing the row, the other becomes live
+		// the moment somebody adds a permission to that role. Reading them as one verdict invites
+		// deleting a grant that was about to start working.
+		const r = rows.find((x) => x.id === ID.emptyRole);
+		expect(r?.permissions).toBe(0);
+		expect(r?.role_name).toMatch(/^empty-/);
+		expect(r?.verdict).toMatch(/^EMPTY ROLE/);
+		expect(r?.verdict).not.toMatch(/^NO PERMISSION/);
 	});
 
 	it("says LIVE about ORG-WIDE grants only, and the string says so", () => {
