@@ -56,6 +56,13 @@ esac
 # shellcheck source=scripts/lib/env-owner.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/env-owner.sh"
 
+# The trap that stops a remote suite when this shell stops (#4343). Same reasoning for living in
+# its own file: it is the part with the moving pieces — three traps, an exit-code contract and a
+# remote matcher — and welding it into a command that needs a box would put it out of reach of a
+# test. scripts/lib/env-suite-reap-test.sh drives these functions with a stubbed ssh_box.
+# shellcheck source=scripts/lib/env-suite-reap.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/env-suite-reap.sh"
+
 TF_DIR="$MAIN_CHECKOUT/infra/sandbox"
 SERVER_NAME="alethia-sandbox"
 # The hcloud CLI's "active context" is ONE global value in ~/.config/hcloud/cli.toml,
@@ -248,7 +255,13 @@ forget_stale_host_key() { # <ip>
 
 ssh_box() {
   local ip rc
-  ip="$(require_box)"
+  # `|| exit $?` rather than leaning on `set -e`, because errexit is not always on when this runs.
+  # require_box's own `exit 1` — with the "the box is not up" message that names the remedy — only
+  # ends the `$( )` subshell, so a caller that handles failure (`ssh_box … || rc=$?`, an `if`, a
+  # `&&` chain) suppressed errexit for the assignment too and carried on with an EMPTY ip: `ssh
+  # root@` fails 255, gets treated as a stale host key and retried, and the operator is told about
+  # a host key instead of a down box. Introduced by #4343's `|| rc=$?`, fixed for every caller.
+  ip="$(require_box)" || exit $?
   # shellcheck disable=SC2029  # remote expansion is intended
   ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$ip" "$@" && return 0
   rc=$?
@@ -696,6 +709,25 @@ push_tree() {
     --exclude='apps/*/.env.local' \
     -e "ssh -o StrictHostKeyChecking=accept-new" \
     "$ROOT/" "root@$ip:$REMOTE/envs/$slug_/"
+
+  # PUSHING A TREE IS SOMEONE USING THIS ENV, and until #4343 only `env:up` ever said so. Every
+  # other path — `env:push --watch` for a whole session, a browser run, a console suite — left
+  # `lastSeen` frozen at whenever the env came up, while `env:timer` reaps a box whose most recent
+  # lastSeen is REAP_AFTER_MIN (90m) old. Here rather than in each command because this is the one
+  # place all three already pass through, and the cost is one ssh against an rsync and a build_ee
+  # that the same loop already pays.
+  #
+  # PRECISELY WHAT THIS CLOSES, since an apparent-but-absent fix is worse than none:
+  #   env:test, and env:check/env:push on a slug that HAS an env — covered. idle-minutes is
+  #     `max` over lastSeen, i.e. minutes since the MOST RECENT, so one fresh row holds the whole
+  #     box (another env's stale row cannot pull the answer back).
+  #   env:check on a slug with NO env row — NOT covered, and that is the common case for a check:
+  #     it wants a tree on the box, not an environment. env-registry.sh's touch is
+  #     `if has($s) then … else . end`, so it is a no-op, and nothing in the registry can express
+  #     "a suite is running for a slug that owns no env".
+  #   A run longer than REAP_AFTER_MIN — NOT covered. Nothing re-touches mid-run.
+  # Both residuals are recorded on #4343 rather than left for the next reader to rediscover.
+  ssh_box "$REMOTE/bin/env-registry.sh touch '$slug_'"
 }
 
 # Rebuild @alethia/ee ON THE BOX, from the ee/src that was just pushed (#3732).
@@ -1239,133 +1271,11 @@ vitest_workers() {
            echo "$w avail=${avail}MiB cpus=$cpus"'
 }
 
-# `lastSeen` is what holds the idle reaper off, and until #4343 only `env:up` ever wrote it:
-# a check or a browser run — the two longest things this script does — left the registry
-# looking untouched the whole time they ran. `env:timer` reaps a box idle for REAP_AFTER_MIN
-# (90m) measured from the most recent lastSeen, so a long suite could have the box DELETED
-# under it, which is the same stranded state by another route.
-#
-# A no-op for a slug with no env row (env-registry.sh's touch is `if has($s) … else . end`),
-# which is the common case for env:check — it needs a tree on the box, not an environment.
-# That residual is real and is NOT closed here: nothing in the registry can say "a suite is
-# running for a slug that owns no env".
-touch_env_registry() { # <slug>
-  ssh_box "$REMOTE/bin/env-registry.sh touch '$1'"
-}
-
-# ── A remote run must not outlive the local one ───────────────────────────────────
-#
-# `ssh_box` opens no pty (no `-t`), so nothing on the box is ever signalled: kill or supersede
-# the local `pnpm env:check` and sshd's child chain dies while the vitest workers reparent to
-# PID 1 and keep running at ~30% CPU and ~2.7 GB each, indefinitely. Three per abandoned run.
-# #4343 found one set that had been running 8h40m on this SHARED 15 GB box, which was at load
-# 100 with 0 GB available — and the visible symptom was an UNRELATED lane failing with
-# `[vitest-worker]: Timeout calling "fetch" with ".../config-fields.tsx"`: pure contention,
-# reported as a red test file on a branch that had nothing to do with it.
-#
-# Nothing on the box reaps them, so every abandoned run permanently subtracts capacity. So the
-# local side signals the remote side itself, on the way out.
-#
-# THE SCOPE IS A TAG IN THE ENVIRONMENT, and that choice is the whole safety argument. The box
-# is shared: killing another instance's suite would be a worse defect than the one this fixes.
-# Every process the run spawns inherits ALETHIA_SUITE_TAG — a value unique to THIS invocation —
-# and /proc/<pid>/environ is where the reap reads it back. Nothing else on the box can carry it.
-#
-# NOT `pkill -f "envs/$slug"`, which is the manual remedy the issue names and is the right
-# instrument for a HUMAN who has looked at `ps` first. Unattended it cannot tell this run's
-# vitest from the env's OWN console launcher — both live under `$REMOTE/envs/<slug>` — so a
-# Ctrl-C on a check would take the running environment down with it. The tag can distinguish
-# them: the console is started by env-mode.sh in a tmux session, from a different command,
-# and never carries it.
-#
-# The `export` lands the tag in the environ of the run's CHILDREN, not of the remote bash that
-# drives them, because /proc/<pid>/environ is the copy taken at exec time and an export after
-# that does not rewrite it. That is exactly the right set: the observed orphans are the deep
-# node processes, whose parents DID die with the connection (that is what a ppid of 1 means).
-# In the rarer case where the driver survives too, killing its children breaks the `&&` chain
-# and it exits on its own.
-#
-# WHAT THIS CANNOT COVER: SIGKILL, a dropped link, a closed laptop. A trap cannot run in a
-# process that was never signalled, and no amount of care here changes that. Catching those
-# needs #4343's option (3), a reaper ON the box, which is deliberately not built here.
-_suite_tag=""
-_suite_slug=""
-_suite_live=0
-
-# The reap, as the remote shell runs it. Single-quoted so NOTHING in it expands locally; `tag`
-# and `dir` are supplied as plain assignments in front of it by suite_reap.
-#
-# The failure branch is the interesting one. A tagged reap names only this run, so "nothing
-# matched" is an ordinary outcome — but it is also what a tag that failed to propagate looks
-# like, and the two are indistinguishable from here. So when nothing matched, REPORT what is
-# still running under this env's tree instead of killing it: that is the operator's evidence,
-# in the shape the issue's detection snippet prints, and it is the one case where a human
-# should reach for the scoped pkill themselves.
-# shellcheck disable=SC2016  # the point: this expands on the BOX, not here.
-_SUITE_REAP_SH='
-pids=
-for d in /proc/[0-9]*; do
-  p=${d#/proc/}
-  [ "$p" = "$$" ] && continue
-  tr "\0" "\n" < "$d/environ" 2>/dev/null | grep -Fqx "ALETHIA_SUITE_TAG=$tag" || continue
-  pids="$pids $p"
-done
-if [ -n "$pids" ]; then
-  echo "  signalling:$pids"
-  for p in $pids; do kill -TERM "$p" 2>/dev/null || true; done
-  sleep 2
-  for p in $pids; do kill -KILL "$p" 2>/dev/null || true; done
-  echo "  the box is clear of this run."
-else
-  echo "  nothing carrying this run tag is still running."
-  left=$(pgrep -af "$dir/" 2>/dev/null | grep -v "^$$ " || true)
-  if [ -n "$left" ]; then
-    echo "  ⚠ but these are still running under $dir — NOT killed, because a tagged reap"
-    echo "    names only its own run and one of these may be the environment itself:"
-    echo "$left" | sed "s/^/      /"
-  fi
-fi
-'
-
-# Arm the trap around ONE remote run. The caller must put $_suite_tag into the remote
-# command's environment; nothing else scopes the reap.
-suite_arm() { # <slug>
-  _suite_slug="$1"
-  _suite_tag="alethia-suite-$1-$$-$(date -u +%s)"
-  _suite_live=1
-  # INT and TERM re-raise after reaping, so the shell still dies of the signal it was sent
-  # and the caller sees the conventional 130/143 rather than a status this script invented.
-  # The EXIT trap then finds _suite_live already 0 and does nothing.
-  #
-  # The EXIT trap is not merely the tidy-up case, and this was measured rather than assumed:
-  # bash runs it even when it dies of an UNHANDLED INT or TERM, so it alone would already
-  # reap. The two signal traps are here for the re-raise — a shell that exits 130 and a shell
-  # killed by SIGINT are not the same thing to whatever is watching this one.
-  trap 'suite_reap; trap - INT; kill -INT $$' INT
-  trap 'suite_reap; trap - TERM; kill -TERM $$' TERM
-  trap 'suite_reap' EXIT
-}
-
-# The run ENDED — passed or failed, but on its own terms. Its processes are gone, so a reap
-# now would be a live round-trip that could only find something that is not ours.
-suite_disarm() {
-  _suite_live=0
-  trap - INT TERM EXIT
-}
-
-suite_reap() {
-  local rc=$?
-  [ "$_suite_live" = 1 ] || return "$rc"
-  _suite_live=0
-  echo "" >&2
-  echo "→ stopping this run on the box — a remote suite does NOT die with this shell." >&2
-  # A SUBSHELL, and `|| true`. require_box calls `exit 1` when the box or its state cannot be
-  # read, and `set -e` ends the script on a failed ssh; from inside an EXIT trap either one
-  # would replace the run's real exit code with this cleanup's. Cleanup never speaks for a run.
-  (ssh_box "tag='$_suite_tag' dir='$REMOTE/envs/$_suite_slug'; $_SUITE_REAP_SH") >&2 || true
-  return "$rc"
-}
-
+# The suite-reap trap that keeps a stopped `env:check` from stranding its remote workers on the
+# shared box (#4343) lives in scripts/lib/env-suite-reap.sh, sourced at the top of this file. The
+# short version, because the call sites below depend on it: suite_arm sets $_suite_tag and traps
+# INT/TERM/EXIT; the caller exports that tag into the remote command AFTER any step whose state is
+# box-global (apt, a package install); a run that ENDS — green or red — must reach suite_disarm.
 # Worktrees are de-hydrated (no node_modules), so the checks that used to run locally
 # run here. The box already has the install warm from env:up.
 cmd_check() {
@@ -1395,10 +1305,13 @@ cmd_check() {
   # because the pool's minimum comes from the default (vCPU-derived) while the maximum comes from
   # the flag, and a max below that minimum is rejected. Measured, not reasoned: `--maxWorkers=1`
   # alone fails on this repo's console config; with `--minWorkers=1` the same run passes.
-  touch_env_registry "$slug_"
   suite_arm "$slug_"
-  ssh_box "export ALETHIA_SUITE_TAG='$_suite_tag' && \
-           cd $REMOTE/envs/$slug_ && pnpm install --frozen-lockfile >/dev/null && \
+  # THE TAG STARTS AFTER `pnpm install`, and the ordering is the safety property rather than a
+  # detail: everything after the export inherits it and is in the blast radius of the reap. An
+  # install killed halfway leaves a partial node_modules and a store this box shares with every
+  # other env; the workers this exists to stop are all downstream of it anyway.
+  ssh_box "cd $REMOTE/envs/$slug_ && pnpm install --frozen-lockfile >/dev/null && \
+           export ALETHIA_SUITE_TAG='$_suite_tag' && \
            pnpm -C apps/console run check-types && pnpm -C apps/console run lint && \
            pnpm -C apps/console run test -- --maxWorkers=$workers --minWorkers=$workers" || rc=$?
   # The rc is taken by hand rather than left to `set -e`: a red suite has already ENDED on the
@@ -1492,13 +1405,19 @@ cmd_test() {
   # leaves browsers and workers behind on a box nothing reaps. suite_disarm comes FIRST in
   # the failure branch — that branch ends in `exit 1`, so the EXIT trap would otherwise fire
   # a reap on a run that has already finished, in the middle of pulling its artefacts back.
-  touch_env_registry "$slug_"
+  #
+  # THE TAG STARTS AFTER BOTH INSTALLS, and here that is not a preference. The line above runs
+  # `playwright install --with-deps`, which is apt/dpkg as root — see the comment above about the
+  # ~16 shared libs it pulls. Tagging it would put a Ctrl-C during a first-run browser install one
+  # TERM-then-KILL away from a dpkg database left mid-transaction, needing `dpkg --configure -a`
+  # before ANY other env or engineer on this shared box could install anything. That is this
+  # issue's own failure mode — my process, box-global state — through a different door.
   suite_arm "$slug_"
   ssh_box "set -e
-    export ALETHIA_SUITE_TAG='$_suite_tag'
     cd $REMOTE/envs/$slug_
     pnpm install --frozen-lockfile >/dev/null
     pnpm -F console exec playwright install --with-deps chromium >/dev/null
+    export ALETHIA_SUITE_TAG='$_suite_tag'
     export DEV_CONSOLE_LOG=/var/log/alethia-$slug_.log
     export E2E_BASE_URL=https://$fqdn
     unset CI
