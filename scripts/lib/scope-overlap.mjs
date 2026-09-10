@@ -805,7 +805,7 @@ const SHIPPED_FIXTURES = Object.freeze({
 				number: 3348,
 				title: "AWS and GCP cannot be provisioned in production: the deployed runner runs as `self`",
 				labels: [{ name: "class:backend" }, { name: "needs:human" }],
-				body: "scope: apps/runner/internal/agent/operator_credentials.go apps/runner/internal/agent/runner.go\ncheck: go -C apps/runner test ./internal/agent/...",
+				body: "scope: apps/runner/internal/agent/operator_credentials.go apps/runner/internal/agent/runner.go",
 			},
 			prs: [
 				{
@@ -850,7 +850,7 @@ const SHIPPED_FIXTURES = Object.freeze({
 				number: 4455,
 				title: "cli(mirrors): the eight `Mirrors the Go X` claims with nothing watching them",
 				labels: [{ name: "lane:core" }, { name: "class:backend" }, { name: "wave:cli-first" }],
-				body: "blocked-by: #4448\nscope: apps/console/lib/addons/types.ts apps/console/lib/evidence/receipt-anchor.ts packages/core/jsonbmirror/jsonb_mirror_test.go\ncheck: go -C packages/core test ./jsonbmirror/...",
+				body: "blocked-by: #4448\nscope: apps/console/lib/addons/types.ts apps/console/lib/evidence/receipt-anchor.ts packages/core/jsonbmirror/jsonb_mirror_test.go",
 			},
 			prs: [
 				{
@@ -1310,9 +1310,17 @@ function runSelfTest() {
 				eq(`a not-comparable row carries its reason: ${c.name}`, Boolean(row.why) && text.includes(row.why.slice(0, 24)), true);
 			}
 			// A tier that reports evidence must hand the reader the thing that actually settles it.
+			// …and a unit that declares NO `check:` line must be told so, not left with a row that
+			// looks settled. Three of the four measured scope hits declare none — that absence is
+			// itself the finding, and the reader has to see it to know the issue's done-when is the
+			// only thing left to read.
 			if (c.tier === "touches" || c.tier === "closes-and-touches") {
 				const check = readCheck(c.issue.body);
-				eq(`the row prints the unit's own check: ${c.name}`, check === null || text.includes(check), true);
+				eq(
+					`the row hands over what settles it: ${c.name}`,
+					check === null ? text.includes("declares no `check:` line") : text.includes(check),
+					true,
+				);
 			}
 		}
 	}
