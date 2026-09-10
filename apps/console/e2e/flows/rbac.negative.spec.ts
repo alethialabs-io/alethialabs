@@ -42,20 +42,32 @@
 
 import { test, expect, type PersonaSession } from "../fixtures/qa";
 import type { Locator, Page } from "@playwright/test";
-import { cleanRbacSeed, personaOwner, seedOrgMember, type SeededMember } from "../helpers/seed-rbac";
+import { personaOwner, removeSeededMember, seedOrgMember, type SeededMember } from "../helpers/seed-rbac";
 import type { Owner } from "../helpers/seed";
 
-let owner: Owner;
-let victim: SeededMember;
+// `undefined` until the seed has run, and the teardown below READS that rather than assuming it.
+// `personaOwner` is written to throw — ownerTeam is best-effort in global-setup when Stripe is not
+// promised — and a teardown that dereferences an unassigned binding replaces the diagnostic worth
+// throwing for ("Persona ownerTeam missing from personas.json") with a `TypeError` from the hook,
+// which is the line a reader sees first.
+let victim: SeededMember | undefined;
 
 test.beforeAll(async () => {
-	owner = personaOwner("ownerTeam");
-	await cleanRbacSeed(owner.orgId);
+	const owner: Owner = personaOwner("ownerTeam");
 	victim = await seedOrgMember(owner, { label: "denials", name: "Denial Target", role: "viewer" });
 });
 
+// BY ID, and with no org-wide purge on the way in.
+//
+// Playwright runs `beforeAll`/`afterAll` ONCE PER WORKER, and this project is `fullyParallel` — the
+// release gate runs it with `--workers=3` (release-gate.yml's matrix passes the flag, which
+// overrides `workers: isCI ? 1` in the config), so several workers really do execute the pair
+// against the same org. A purge scoped to (org, prefix) would then delete the victim ANOTHER worker
+// is mid-assertion on: `victimRow` goes to zero and the denial fails naming the row rather than the
+// permission. `helpers/seed-nav.ts` already recorded that rule for the same reason — a seeder's
+// blast radius must be the set it can enumerate, and this worker's own row is that set.
 test.afterAll(async () => {
-	await cleanRbacSeed(owner.orgId);
+	if (victim) await removeSeededMember(victim);
 });
 
 /**
@@ -72,6 +84,29 @@ async function membersReady(session: PersonaSession): Promise<void> {
 }
 
 /**
+ * Two clocks over one sequence, and the retry loop's is deliberately the SMALLER.
+ *
+ * `waitForResponse` has to be armed BEFORE the retried click — otherwise it can miss a request
+ * fired by an attempt it did not wrap — so every retry is spent out of the response's budget as
+ * well as its own. Given both the same 30s, a retry cycle that burns ~29s (a cold CI page with four
+ * in-flight queries is exactly the case the loop exists for) leaves the successful click about a
+ * second to be answered in, and the failure then reads "no response to
+ * /organization/update-member-role": it names the INSTRUMENT rather than the permission, which is
+ * the shape this file's header exists to eliminate.
+ *
+ * The fix SHRINKS the loop rather than inflating the response, because the `qa` project states no
+ * `timeout` and therefore takes Playwright's 30s default for the whole test — a response budget
+ * above that could never be spent, and would only relabel the same failure as an unattributed test
+ * timeout. Twelve seconds is several open-and-activate attempts; what is left is the response's.
+ *
+ * It applies to the ONE loop that shares a clock with an armed response. `openInviteDialog` and
+ * `activateRowMenuItem` both finish before their test arms `orgEndpoint`, so nothing of theirs is
+ * spent out of a response budget and they keep the wider one.
+ */
+const REACH_BUDGET_MS = 12_000;
+const RESPONSE_BUDGET_MS = 30_000;
+
+/**
  * The response to the org endpoint a click reaches — armed BEFORE the click.
  *
  * Better Auth's org plugin answers on `/api/auth/organization/<action>`, so unlike a Next server
@@ -82,7 +117,7 @@ async function membersReady(session: PersonaSession): Promise<void> {
 function orgEndpoint(page: Page, action: string) {
 	return page.waitForResponse(
 		(r) => r.url().includes(`/api/auth/organization/${action}`) && r.request().method() === "POST",
-		{ timeout: 30_000 },
+		{ timeout: RESPONSE_BUDGET_MS },
 	);
 }
 
@@ -108,8 +143,20 @@ async function openInviteDialog(page: Page) {
 	return dialog;
 }
 
+/**
+ * A members row's actions trigger, BY PREFIX.
+ *
+ * The accessible name carries the row's subject now — `Manage member Denial Target` — so that one
+ * "Manage" repeated down a column stops being N indistinguishable controls. A bare
+ * `{ name: "Manage" }` is an EXACT match in Playwright and would find none of them.
+ */
+const ROW_MENU = /^Manage /;
+
 /** The seeded colleague's row in the members table. */
 function victimRow(page: Page) {
+	if (!victim) {
+		throw new Error("the denial seed did not run — this file has no colleague to drive; see the beforeAll failure above for the reason.");
+	}
 	return page.getByRole("row").filter({ hasText: victim.email });
 }
 
@@ -129,7 +176,7 @@ function victimRow(page: Page) {
 async function activateRowMenuItem(page: Page, row: Locator, item: RegExp): Promise<void> {
 	const menuItem = page.getByRole("menuitem", { name: item });
 	await expect(async () => {
-		await row.getByRole("button", { name: "Manage" }).click();
+		await row.getByRole("button", { name: ROW_MENU }).click();
 		await menuItem.click({ timeout: 2_000 });
 		await expect(page.getByRole("alertdialog")).toBeVisible({ timeout: 2_000 });
 	}).toPass({ timeout: 30_000 });
