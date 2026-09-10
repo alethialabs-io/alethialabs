@@ -12,6 +12,7 @@ import {
   shareArtifact,
   unshareArtifact,
 } from "@/app/server/actions/artifact-shares";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { track } from "@/lib/analytics/track";
 import { Button } from "@repo/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
@@ -60,7 +61,16 @@ export function ArtifactSharePopover({ artifactId }: { artifactId: string }) {
       .finally(() => setLoading(false));
   }, [open, artifactId]);
 
-  const toggle = useCallback(
+  // The share target an UNSHARE has been requested for. Turning a target off revokes every
+  // teammate's access to the artifact in one optimistic click with nothing to undo it, so it asks
+  // first (#4280). Turning one ON grants access and is not destructive — it stays a bare click.
+  const [pendingUnshare, setPendingUnshare] = useState<{
+    scopeType: ShareScopeType;
+    scopeId: string | null;
+    label: string;
+  } | null>(null);
+
+  const applyToggle = useCallback(
     async (scopeType: ShareScopeType, scopeId: string | null) => {
       const k = keyOf(scopeType, scopeId);
       const isOn = shared.has(k);
@@ -95,9 +105,22 @@ export function ArtifactSharePopover({ artifactId }: { artifactId: string }) {
     [artifactId, shared],
   );
 
+  /** Grant immediately; ask before revoking. */
+  const toggle = useCallback(
+    (scopeType: ShareScopeType, scopeId: string | null, label: string) => {
+      if (shared.has(keyOf(scopeType, scopeId))) {
+        setPendingUnshare({ scopeType, scopeId, label });
+        return;
+      }
+      void applyToggle(scopeType, scopeId);
+    },
+    [applyToggle, shared],
+  );
+
   if (!access?.canShare) return null;
 
   return (
+    <>
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
@@ -129,7 +152,7 @@ export function ArtifactSharePopover({ artifactId }: { artifactId: string }) {
               sub="All members"
               checked={shared.has(keyOf("org", null))}
               busy={busy === keyOf("org", null)}
-              onClick={() => void toggle("org", null)}
+              onClick={() => toggle("org", null, "everyone in your org")}
             />
             {access.teams.length > 0 && <SectionLabel>Teams</SectionLabel>}
             {access.teams.map((t) => (
@@ -139,7 +162,7 @@ export function ArtifactSharePopover({ artifactId }: { artifactId: string }) {
                 label={t.name}
                 checked={shared.has(keyOf("team", t.id))}
                 busy={busy === keyOf("team", t.id)}
-                onClick={() => void toggle("team", t.id)}
+                onClick={() => toggle("team", t.id, t.name)}
               />
             ))}
             {access.roles.length > 0 && <SectionLabel>Roles</SectionLabel>}
@@ -150,13 +173,31 @@ export function ArtifactSharePopover({ artifactId }: { artifactId: string }) {
                 label={r.name}
                 checked={shared.has(keyOf("role", r.id))}
                 busy={busy === keyOf("role", r.id)}
-                onClick={() => void toggle("role", r.id)}
+                onClick={() => toggle("role", r.id, r.name)}
               />
             ))}
           </div>
         )}
       </PopoverContent>
     </Popover>
+
+    {/* OUTSIDE the popover on purpose: opening the dialog moves focus, which closes the popover,
+        and a confirmation that unmounts with its trigger cannot be answered. */}
+    <ConfirmDialog
+      open={pendingUnshare !== null}
+      onOpenChange={(o) => {
+        if (!o) setPendingUnshare(null);
+      }}
+      title={`Stop sharing with ${pendingUnshare?.label ?? "this target"}?`}
+      description="They lose access to this artifact immediately. Anything they already copied into their own conversations stays with them."
+      confirmLabel="Stop sharing"
+      onConfirm={() => {
+        if (pendingUnshare)
+          void applyToggle(pendingUnshare.scopeType, pendingUnshare.scopeId);
+        setPendingUnshare(null);
+      }}
+    />
+    </>
   );
 }
 
