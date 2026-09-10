@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The #4583 audit runner: which `grants` rows name the `org` resource kind while ALSO carrying a
-// resource id? Each one is a grant somebody believed was scoped and is not — narrow under the
-// community `PostgresRbacPDP`, organization-wide under the OpenFGA engine, and rendered as
-// "organization" in the access UI while still carrying the id.
+// The #4583 audit runner: which `grants` rows carry a `resource_id` alongside a `resource_type`
+// that cannot be scoped to one? Two classes — `org-kind` (refused at the write boundaries since
+// #4581, so legacy only) and `unscopable-kind` (`job`, `member`, a typo… STILL WRITEABLE today).
+// Each is a grant somebody believed was scoped, and the two PDP engines disagree about what it
+// means. See docs/ops/grants-scope-contradictions.sql for what each class does on each engine.
 //
 // Usage:
-//   pnpm -C apps/console run audit:org-scope-grants                # against ALETHIA_DATABASE_URL
-//   pnpm -C apps/console run audit:org-scope-grants -- --json      # machine-readable
-//   pnpm -C apps/console run audit:org-scope-grants -- --print-sql # just emit the query
-//   pnpm -C apps/console run audit:org-scope-grants -- --url postgres://…
+//   pnpm -C apps/console run audit:grant-scopes                # against ALETHIA_DATABASE_URL
+//   pnpm -C apps/console run audit:grant-scopes -- --json      # machine-readable
+//   pnpm -C apps/console run audit:grant-scopes -- --print-sql # just emit the query
+//   pnpm -C apps/console run audit:grant-scopes -- --url postgres://…
 //
 // Exit codes, so a maintainer can act on the answer without reading it:
 //   0 — the audit ran and found NOTHING. That closes #4583.
@@ -18,9 +19,9 @@
 //   1 — the audit could not run (no URL, unreachable, or the session could not be made read-only).
 //
 // ── Why this is a runner around a FILE rather than a query in a string ───────────────────────────
-// The query lives in docs/ops/grants-org-kind-with-resource-id.sql, with the reasoning that makes
-// each column readable, and this tool executes that file verbatim. A maintainer who prefers psql
-// runs the same bytes. A second copy of the SQL here is a second thing to keep true.
+// The query lives in docs/ops/grants-scope-contradictions.sql, with the reasoning that makes each
+// column readable, and this tool executes that file verbatim. A maintainer who prefers psql runs
+// the same bytes. A second copy of the SQL here is a second thing to keep true.
 //
 // ── What "read-only" is and is not ──────────────────────────────────────────────────────────────
 // It cannot refuse a connection string that HAS write privileges — a service-role URL is writable
@@ -38,7 +39,7 @@ import postgres from "postgres";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT_ENV = join(here, "../../../.env");
-const QUERY_FILE = join(here, "../../../docs/ops/grants-org-kind-with-resource-id.sql");
+const QUERY_FILE = join(here, "../../../docs/ops/grants-scope-contradictions.sql");
 
 /** Loads root .env without overriding already-set values (for ALETHIA_DATABASE_URL). */
 function loadRootEnv() {
@@ -71,13 +72,14 @@ function arg(name, fallback) {
 /** One row, rendered as an indented block — wider than any terminal table would be. */
 function renderRow(row, index) {
 	const lines = [
-		`${index + 1}. grant ${row.id}`,
+		`${index + 1}. grant ${row.id}  [${row.pair_class}]`,
 		`   org         ${row.org_name ?? "?"} (${row.org_id})`,
 		`   subject     ${row.principal_type} ${row.subject ?? "?"} (${row.principal_id})`,
 		`   effect      ${row.effect}`,
 		`   confers     ${row.role_name ? `role ${row.role_name}` : (row.permission_key ?? "— nothing —")}` +
 			` (${row.permissions} permission${row.permissions === 1 ? "" : "s"})`,
-		`   resource_id ${row.resource_id}  →  ${row.resource_kind}`,
+		`   scope       resource_type=${row.resource_type} resource_id=${row.resource_id}`,
+		`   the id names ${row.resource_kind}${row.resource_kind === "not-found" ? " (in the five tables this query looks in)" : ""}`,
 		`   org-wide    ${row.also_org_wide}/${row.permissions} of those already held org-wide by this subject`,
 		`   created     ${row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at}`,
 		`   VERDICT     ${row.verdict}`,
@@ -88,8 +90,14 @@ function renderRow(row, index) {
 async function main() {
 	const query = readFileSync(QUERY_FILE, "utf8");
 	if (process.argv.includes("--print-sql")) {
+		// NOT process.exit(): stdout to a pipe is async, and exiting discards whatever has not
+		// flushed — measured at exactly 65536 bytes for a 300 KB write. The whole point of this
+		// flag is that the emitted bytes are IDENTICAL to the file, so a silent truncation at a
+		// buffer boundary is the one failure it must not have. Setting the code and returning
+		// lets node drain the stream and exit on its own.
 		process.stdout.write(query);
-		process.exit(0);
+		process.exitCode = 0;
+		return;
 	}
 
 	loadRootEnv();
@@ -99,7 +107,8 @@ async function main() {
 		console.error(
 			"✗ No database URL. Set ALETHIA_DATABASE_URL (root .env or the environment), or pass --url.",
 		);
-		process.exit(1);
+		process.exitCode = 1;
+		return;
 	}
 
 	const sql = postgres(url, {
@@ -119,7 +128,8 @@ async function main() {
 				"  This audit only ever reads, and it will not run on a connection where that is not enforced by the server.",
 			);
 			await sql.end({ timeout: 1 }).catch(() => {});
-			process.exit(1);
+			process.exitCode = 1;
+			return;
 		}
 
 		const rows = await sql.unsafe(query);
@@ -127,29 +137,50 @@ async function main() {
 			process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
 		} else if (rows.length === 0) {
 			console.log(
-				"✓ No grant rows carry the (resource_type='org', resource_id IS NOT NULL) pair.",
+				"✓ No grant row carries a resource_id alongside an unscopable resource_type —",
 			);
 			console.log(
-				"  That closes #4583: the engine divergences in #4584 are theoretical on this database, not live.",
+				"  neither the 'org-kind' class nor the 'unscopable-kind' class (job/member/typo/…).",
+			);
+			console.log(
+				"  That closes #4583 for BOTH: the engine divergences in #4584 are theoretical on this database, not live.",
 			);
 		} else {
+			const byClass = new Map();
+			for (const row of rows) {
+				byClass.set(row.pair_class, (byClass.get(row.pair_class) ?? 0) + 1);
+			}
+			const summary = [...byClass]
+				.map(([cls, n]) => `${n} ${cls}`)
+				.sort()
+				.join(", ");
 			console.log(
-				`⚠ ${rows.length} grant row${rows.length === 1 ? "" : "s"} name the 'org' kind while carrying a resource id.\n`,
+				`⚠ ${rows.length} grant row${rows.length === 1 ? "" : "s"} carry a resource id under an unscopable resource_type (${summary}).\n`,
 			);
 			for (const [i, row] of rows.entries()) console.log(`${renderRow(row, i)}\n`);
 			console.log(
-				"⚠ Do NOT remediate by revoking on a deployment that has not taken the #4584 fix:\n" +
-					"  the revoke path deleted tuples on an object that never existed, so it removes the ROW\n" +
-					"  and leaves the ACCESS. Read the verdict on each row first.",
+				"⚠ NEVER remediate one of these by REVOKING it — not before the #4584 fix and not after.\n" +
+					"  Before, the delete looked for tuples on an object that does not exist. After, the row\n" +
+					"  expands to no tuples so there is nothing for the delete to read, and the tuples it wrote\n" +
+					"  under the old reading stay on org:<org-uuid> — where they are indistinguishable from a\n" +
+					"  legitimate org-wide grant's, which is why they are not deleted blind. `backfill` only\n" +
+					"  ever writes, so nothing clears them at boot either. Either way: row gone, ACCESS KEPT.\n" +
+					"\n" +
+					"  Safe remediation: write the corrected tuples (or delete the specific stale ones) against\n" +
+					"  the OpenFGA store, or empty the store and re-run backfill() — then deal with the row.\n" +
+					"  Read each row's verdict first: it says whether that subject holds the permission anyway.",
 			);
 		}
 		await sql.end();
-		process.exit(rows.length === 0 ? 0 : 2);
+		// Same reason as --print-sql above, and this is the path where it bites: a production
+		// run prints nine lines PER ROW, and process.exit() would truncate the report at a
+		// buffer boundary with no error. The report IS the deliverable here.
+		process.exitCode = rows.length === 0 ? 0 : 2;
 	} catch (err) {
 		console.error("\n✗ audit-org-scope-grants failed:\n");
 		console.error(err);
 		await sql.end({ timeout: 1 }).catch(() => {});
-		process.exit(1);
+		process.exitCode = 1;
 	}
 }
 
