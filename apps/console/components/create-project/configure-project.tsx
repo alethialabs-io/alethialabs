@@ -24,6 +24,7 @@ import { DEFAULT_REGION, type CloudProviderSlug } from "@/lib/cloud-providers";
 import type { EnvironmentSpec } from "@/lib/queries/projects";
 import { globalHref, projectHref } from "@/lib/routing";
 import { canSlugify, slugify } from "@/lib/utils/slugify";
+import { PROJECT_NAME_MAX_LENGTH } from "@/lib/validations/project-form.schema";
 import type { ScanProposal } from "@/lib/scanner/schema";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Button } from "@repo/ui/button";
@@ -68,26 +69,6 @@ const SCRATCH_META: Record<ScratchKind, { label: string; desc: string }> = {
 	"byo-helm": { label: "BYO Helm chart", desc: "deploy via ArgoCD" },
 	"byo-iac": { label: "BYO IaC module", desc: "plan · verify · apply" },
 };
-
-/**
- * `PROJECT_NAME_MAX_LENGTH`, as a LITERAL — the same 100 that
- * `lib/validations/project-form.schema.ts` states and that `updateProjectName` enforces.
- *
- * It is not imported, and the reason is mechanical: that constant lives in a module whose top
- * level calls `createInsertSchema(projects)`, so a VALUE import of it drags drizzle-zod and the
- * whole DB schema into this client bundle. What that argues for is a leaf module both sides read
- * — not for dropping the rule, which is what happened: this screen applied two of the schema's
- * three `project_name` rules, and the missing one is enforced NOWHERE on the create path
- * (`createProject` never parses its input and `projects.project_name` is unbounded `text()`).
- * A 500-character name was creatable, and then un-saveable under its own name, because
- * `updateProjectName` refuses over 100 — the create/rename asymmetry the schema comment above
- * those lines records as deliberately closed, re-opened in the other direction with no bound.
- *
- * The leaf-module extraction is the real fix and it touches `lib/validations/`, outside this
- * unit's scope. Until then this is a copy, and it is a copy of a value the schema's own unit test
- * pins (`tests/validations/project-form.schema.test.ts` asserts exactly this bound).
- */
-const PROJECT_NAME_MAX = 100;
 
 /** Narrow a verified identity's provider string to a slug (defaults to aws). */
 function toProvider(p: string): CloudProviderSlug {
@@ -186,8 +167,7 @@ export function ConfigureProject({
 
 	/** Create the project (DRAFT) from the chosen source + settings, then open its canvas. */
 	const onCreate = async () => {
-		// ALL THREE rules `lib/validations/project-form.schema.ts` states for `project_name`, in the
-		// wording that schema (or, for the bound, `updateProjectName`) states them in —
+		// ALL THREE rules `lib/validations/project-form.schema.ts` states for `project_name` —
 		// `.min(1, "Project name is required")`, `.max(PROJECT_NAME_MAX_LENGTH)` and
 		// `.refine(canSlugify, "Enter at least one letter or number")`.
 		//
@@ -195,20 +175,28 @@ export function ConfigureProject({
 		// NONE of them. "Name your project." covered the first case in different words; the second
 		// was unchecked, so `!!! @@@ ###` created a project whose slug came from `slugify`'s
 		// FALLBACK — `/{org}/project` — with the user's symbols kept as the display name they then
-		// have to address from the CLI. `canSlugify` is the same predicate the schema's refinement
-		// calls, so that one cannot drift; the other two messages are hand-copied literals and can,
-		// which is why each names the rule it mirrors.
+		// have to address from the CLI.
 		//
-		// The bound's wording is `updateProjectName`'s, not the schema's: the schema passes no
-		// message to `.max()`, so its text is zod's default ("String must contain at most 100
-		// character(s)"), and the console already tells a user this in one sentence on the rename
-		// path. One sentence for one rule, on both paths.
+		// WHY THE BOUND IS HERE AT ALL, since a maximum length reads like a formality: it is the
+		// half of the create/rename asymmetry the create side owes. `updateProjectName` refuses a
+		// name over `PROJECT_NAME_MAX_LENGTH`, so a longer name created here is a project that
+		// cannot be re-saved under its own name — and the schema's comment beside that `.max()`
+		// records the previous round of exactly this bug, when the two paths disagreed at 50 vs
+		// 100. The predicate and the constant are both READ FROM the schema for that reason: they
+		// are the same rule, not two copies of it.
+		//
+		// The bound's wording is `updateProjectName`'s, not the schema's — the schema passes no
+		// message to `.max()`, so its text is zod's default phrasing rather than a sentence
+		// written for a user, and the console already says this one on the rename path. The
+		// NUMBER in it is interpolated, never typed, for the same reason as the check above it.
 		if (!name.trim()) {
 			toast.error("Project name is required");
 			return;
 		}
-		if (name.length > PROJECT_NAME_MAX) {
-			toast.error(`Project name must be ${PROJECT_NAME_MAX} characters or fewer`);
+		if (name.length > PROJECT_NAME_MAX_LENGTH) {
+			toast.error(
+				`Project name must be ${PROJECT_NAME_MAX_LENGTH} characters or fewer`,
+			);
 			return;
 		}
 		if (!canSlugify(name)) {
