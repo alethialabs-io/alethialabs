@@ -177,7 +177,7 @@ async function main() {
 		// buffer boundary with no error. The report IS the deliverable here.
 		process.exitCode = rows.length === 0 ? 0 : 2;
 	} catch (err) {
-		console.error("\n✗ audit-org-scope-grants failed:\n");
+		console.error("\n✗ audit-grant-scopes failed:\n");
 		console.error(err);
 		await sql.end({ timeout: 1 }).catch(() => {});
 		process.exitCode = 1;
