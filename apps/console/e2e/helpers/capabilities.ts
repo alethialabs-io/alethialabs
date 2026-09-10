@@ -30,17 +30,19 @@
 // to avoid the surface or to write a test that quietly asserts the disabled state. Both leave the
 // gap invisible, which is the exact outcome this module exists to prevent.
 //
-// `console`, `qa` and `audit-interaction` now PROMISE it, and release-gate.yml sets the key on
-// exactly those legs. The value is not a repository secret and never was one to wait for:
+// `console` and `audit-interaction` now PROMISE it, and release-gate.yml sets the key on exactly
+// the legs that do. The value is not a repository secret and never was one to wait for:
 // `.github/workflows/e2e-nightly.yml` already used a fixed non-secret throwaway literal for this
 // variable, with the same rationale and a `.gitleaks.toml` allowlist anchored to the literal and
 // to this variable name rather than to a file, so the gate reuses it verbatim.
 //
-// The two tests in `e2e/flows/alerts.negative.spec.ts` that used to assert the DISABLED state —
-// under a comment reading "If the gate ever promises the key, THIS is the test that goes red and
-// says so" — were rewritten in the same change into the positive paths they were standing in for,
-// and tagged `@needs:encryption` so they are red, never quietly skipped, on a leg that stops
-// promising it.
+// `qa` DOES NOT PROMISE IT YET, and the reason is worth stating because it is not the reason it
+// looks like. `e2e/flows/alerts.negative.spec.ts` carries two tests that assert the fail-closed
+// no-key UI, under a comment reading "If the gate ever promises the key, THIS is the test that goes
+// red and says so". Rewriting them into the positive paths they stand in for RENAMES them, and a
+// renamed test is a baseline entry the run no longer contains — `scripts/e2e-ratchet.mjs` rule 4 —
+// so the spec rewrite and an edit to `apps/console/e2e/gate-baseline.json` have to land together.
+// That baseline is held by another lane, so `qa` waits on that one edit and nothing else.
 
 // ── WHY THE NAMES BELOW MAY NOT OVERLAP ────────────────────────────────────────────────────────
 //

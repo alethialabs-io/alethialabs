@@ -166,7 +166,14 @@ jobs:
             { project: "elench-ai", args: "--project=elench-ai", workers: 1, retries: 1, capabilities: "ai-mock",            manifest: false, floor: 1 },
             { project: "console",   args: "--project=console",   workers: 2, retries: 1, capabilities: "stripe,encryption",  manifest: false, floor: 1 },
             { project: "canvas",    args: "--project=canvas",    workers: 1, retries: 1, capabilities: "",                   manifest: false, floor: 1 },
-            { project: "qa",        args: "--project=qa",        workers: 3, retries: 1, capabilities: "stripe,encryption",  manifest: false, floor: 300 },
+            // `qa` does NOT promise `encryption`, and that is a recorded state rather than an
+            // oversight (#4456). Two tests in flows/alerts.negative.spec.ts assert the fail-closed
+            // no-key UI; the key turns them red, and the fix is to RENAME them into the positive
+            // paths they stand in for — which the ratchet's rule 4 (a baseline entry the run lacks)
+            // makes an edit to apps/console/e2e/gate-baseline.json, a file another lane holds. So
+            // this row waits for that one edit, and the two specs' comments say so where a reader
+            // of them will be standing.
+            { project: "qa",        args: "--project=qa",        workers: 3, retries: 1, capabilities: "stripe",             manifest: false, floor: 300 },
             { project: "audit",     args: "--project=audit",     workers: 1, retries: 1, capabilities: "",                   manifest: true,  floor: 1 },
             { project: "audit-interaction", args: "--project=audit-interaction", workers: 1, retries: 0, capabilities: "stripe,encryption", manifest: true, floor: 47 },
           ];

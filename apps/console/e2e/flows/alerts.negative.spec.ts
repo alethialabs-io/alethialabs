@@ -106,12 +106,22 @@ test.describe("Alerts — a reduced-permission member", () => {
 test.describe("Alerts — a transport that cannot store its secret", () => {
 	// FAIL-CLOSED, AND THIS IS A MEASUREMENT OF THE LEG'S CONFIGURATION AS MUCH AS OF THE UI.
 	// Every transport but Email keeps a credential, which needs ALETHIA_CRED_ENCRYPTION_KEY. The
-	// release-gate job (.github/workflows/release-gate.yml) sets no such key, so on this leg the
-	// console correctly refuses to take one: the sheet explains what is missing and the submit is
-	// disabled. That is why no spec in this domain creates a Slack or webhook channel — it is not
-	// an omission, it is the only behaviour reachable here. If the gate ever promises the key,
-	// THIS is the test that goes red and says so, and the webhook URL-validation and
-	// verification-failure paths become writable for the first time.
+	// `qa` leg does not promise the `encryption` capability, so the key is unset for it and the
+	// console correctly refuses to take a credential: the sheet explains what is missing and the
+	// submit is disabled. That is why no spec in this domain creates a Slack or webhook channel —
+	// it is not an omission, it is the only behaviour reachable here.
+	//
+	// ⚠ SAY "THIS LEG", NOT "THE GATE". Since #4456 release-gate.yml DOES set the key — on the
+	// `console` and `audit-interaction` legs, which promise `encryption` — and the capability is
+	// one a leg may promise (helpers/capabilities.ts). What is true here is a fact about the `qa`
+	// row of the leg table, and it stops being true the moment that row promises `encryption`.
+	//
+	// WHEN IT DOES: these two tests are rewritten into the positive paths they stand in for (the
+	// submit is live and the note is absent; the webhook verification failure reaches the user),
+	// tagged `@needs:encryption` so a leg that stops promising it makes them RED rather than
+	// quietly skipped. That rewrite RENAMES them, and a renamed test is a baseline entry the run no
+	// longer contains — `scripts/e2e-ratchet.mjs` rule 4 — so it lands with the matching edit to
+	// `apps/console/e2e/gate-baseline.json`, which is the whole of what `qa` is waiting on.
 	test("a secret-bearing transport explains the missing key and disables the submit", async ({
 		team,
 	}) => {

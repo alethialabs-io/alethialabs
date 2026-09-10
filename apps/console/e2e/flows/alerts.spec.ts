@@ -172,8 +172,11 @@ test.describe("Alerts — the guided add-a-channel sheet", () => {
 
 	// The transport gallery drives which credential field the form renders. Note what this test
 	// does NOT do: submit the webhook form. A secret-bearing transport needs
-	// ALETHIA_CRED_ENCRYPTION_KEY, which the release-gate leg does not set, so its "Add channel"
-	// button is disabled by design — that fail-closed path is asserted in alerts.negative.spec.ts.
+	// ALETHIA_CRED_ENCRYPTION_KEY, and the `qa` leg does not promise the `encryption` capability
+	// (helpers/capabilities.ts), so its "Add channel" button is disabled by design — that
+	// fail-closed path is asserted in alerts.negative.spec.ts, which also records what unblocks it.
+	// Not "the release-gate leg does not set it": since #4456 the workflow sets that key on every
+	// leg that promises `encryption`, and this is a fact about the `qa` row, not about the gate.
 	test("picking a transport swaps the credential field", async ({ team }) => {
 		const sheet = await openSheet(team.page, team.orgSlug!);
 		await sheet.getByRole("button", { name: "Email SES relay" }).click();
