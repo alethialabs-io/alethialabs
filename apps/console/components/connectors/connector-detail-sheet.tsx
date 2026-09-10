@@ -323,7 +323,11 @@ export function ConnectorDetailSheet({
 															</span>
 														</p>
 													)}
-												{/* Classification (Workstream B) — chips + a picker for managers. */}
+												{/* Classification (Workstream B) — chips + a picker for managers. `label`
+												    carries the account into the compact trigger's accessible name for the
+												    same reason the three buttons below do: a cloud can hold several
+												    accounts, and a bare "Classify" repeated down the list would be one
+												    unlabelled command per row (#4490). */}
 												<ClassificationControl
 													kind="cloud_identity"
 													id={acc.identityId}
@@ -331,6 +335,7 @@ export function ConnectorDetailSheet({
 													initialAssignments={classMap[acc.identityId]}
 													className="mt-1.5"
 													compact
+													label={acc.name}
 												/>
 											</div>
 											{canManage && (
