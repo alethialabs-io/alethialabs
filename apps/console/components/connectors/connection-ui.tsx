@@ -221,7 +221,7 @@ export function ConnectSheetShell({
           </Badge>
           <HowItWorks>{howItWorks}</HowItWorks>
         </div>
-        <p className="text-foreground/80 text-sm leading-relaxed">{intro}</p>
+        <p className="text-muted-foreground text-sm leading-relaxed">{intro}</p>
       </div>
       <Separator />
       {children}

@@ -83,7 +83,7 @@ export function ProjectCard({
 				{/* Primary meta — the default env's configured services + add-ons. */}
 				<div className="mt-3 truncate font-mono text-ui-xs text-muted-foreground">
 					{countLabel(project.services_count, "service")}
-					<span className="text-muted-foreground/50"> · </span>
+					<span className="text-text-tertiary"> · </span>
 					{countLabel(project.addons_count, "add-on")}
 				</div>
 
@@ -104,7 +104,7 @@ export function ProjectCard({
 						<span className="truncate font-mono text-ui-2xs">
 							{repo.label}
 							{project.repositories.length > 1 && (
-								<span className="text-muted-foreground/60">
+								<span className="text-text-tertiary">
 									{" "}
 									+{project.repositories.length - 1}
 								</span>

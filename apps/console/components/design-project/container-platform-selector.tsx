@@ -85,7 +85,7 @@ export function ContainerPlatformSelector({
 									key={feature}
 									className="flex items-center gap-1.5 text-ui-xs text-muted-foreground"
 								>
-									<CheckCircle2 className={`w-3 h-3 shrink-0 ${isSelected ? "text-foreground" : "text-muted-foreground/40"}`} />
+									<CheckCircle2 className={`w-3 h-3 shrink-0 ${isSelected ? "text-foreground" : "text-text-tertiary"}`} />
 									{feature}
 								</li>
 							))}

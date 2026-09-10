@@ -230,7 +230,7 @@ export function ConnectorDetailSheet({
 					</Badge>
 				)}
 
-				<p className="text-sm leading-relaxed text-foreground/80">
+				<p className="text-sm leading-relaxed text-muted-foreground">
 					{integration.description}
 				</p>
 

@@ -54,7 +54,7 @@ function scanChip(
 			Icon: ShieldAlert,
 		};
 	}
-	return { label: "Not scanned", cls: "text-muted-foreground/60", Icon: ShieldQuestion };
+	return { label: "Not scanned", cls: "text-text-tertiary", Icon: ShieldQuestion };
 }
 
 /** Short 7-char sha for display (git-style); empty string passes through. */
@@ -111,10 +111,10 @@ export function IacNode({ source }: { source: IacSourceState }) {
 				</div>
 				<div className="flex gap-3 font-mono text-ui-2xs text-muted-foreground">
 					<span>
-						path <span className="text-foreground/80">/{source.path.replace(/^\/+/, "") || ""}</span>
+						path <span className="text-foreground">/{source.path.replace(/^\/+/, "") || ""}</span>
 					</span>
 					<span>
-						ref <span className="text-foreground/80">{source.ref ?? "HEAD"}</span>
+						ref <span className="text-foreground">{source.ref ?? "HEAD"}</span>
 					</span>
 				</div>
 
@@ -122,12 +122,12 @@ export function IacNode({ source }: { source: IacSourceState }) {
 				<div className="flex flex-wrap gap-2 font-mono text-ui-2xs text-muted-foreground">
 					<span className="flex items-center gap-1.5">
 						<GitCommitHorizontal className="h-3 w-3" />
-						pinned <span className="text-foreground/80">{pinned || "—"}</span>
+						pinned <span className="text-foreground">{pinned || "—"}</span>
 					</span>
 					{deployed && (
 						<span className="flex items-center gap-1.5">
 							<Rocket className="h-3 w-3" />
-							deployed <span className="text-foreground/80">{deployed}</span>
+							deployed <span className="text-foreground">{deployed}</span>
 						</span>
 					)}
 				</div>

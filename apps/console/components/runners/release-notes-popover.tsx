@@ -99,7 +99,7 @@ export function ReleaseNotesPopover({
                 {formatRelative(release.released_at)}
               </span>
               {release.commit_sha && (
-                <span className="font-mono text-ui-2xs text-muted-foreground/60">
+                <span className="font-mono text-ui-2xs text-text-tertiary">
                   {release.commit_sha.slice(0, 7)}
                 </span>
               )}

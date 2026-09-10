@@ -364,10 +364,10 @@ export default function JobDetailPage() {
 									key={`${log.id}-${i}`}
 									className="group flex gap-4 rounded px-2 py-0.5 transition-colors hover:bg-muted/40"
 								>
-									<span className="w-8 shrink-0 select-none text-right text-muted-foreground/40">
+									<span className="w-8 shrink-0 select-none text-right text-text-tertiary">
 										{i + 1}
 									</span>
-									<span className="w-[85px] shrink-0 select-none text-muted-foreground/60">
+									<span className="w-[85px] shrink-0 select-none text-text-tertiary">
 										{formatDate(log.created_at || Date.now(), "time")}
 									</span>
 									<span
@@ -375,7 +375,7 @@ export default function JobDetailPage() {
 											"break-all leading-relaxed",
 											log.stream_type === "STDERR" || log.stream_type === "stderr"
 												? "text-destructive"
-												: "text-foreground/80",
+												: "text-muted-foreground",
 										)}
 									>
 										{log.log_chunk}

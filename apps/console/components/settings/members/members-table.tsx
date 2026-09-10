@@ -467,7 +467,7 @@ export function MembersTable() {
               </span>
             ))
           ) : (
-            <span className="rounded-full border border-dashed px-2 py-0.5 font-mono text-ui-2xs text-muted-foreground/60">
+            <span className="rounded-full border border-dashed px-2 py-0.5 font-mono text-ui-2xs text-text-tertiary">
               No team
             </span>
           )}

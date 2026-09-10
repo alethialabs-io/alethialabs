@@ -148,7 +148,7 @@ export function AccordionForm<T extends FieldValues>({
             <AccordionHeader>
               <AccordionTrigger className="group flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-surface-muted">
                 <StatusDot status={status} />
-                <span className="font-mono text-ui-2xs uppercase tracking-wider text-foreground/70">
+                <span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
                   {s.title}
                 </span>
                 <span className="ml-auto min-w-0 truncate font-mono text-ui-2xs text-text-tertiary group-data-[panel-open]:hidden">
