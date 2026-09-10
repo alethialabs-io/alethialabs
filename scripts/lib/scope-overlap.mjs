@@ -54,6 +54,10 @@
 //     | node scripts/lib/scope-overlap.mjs --report      # human report  (coordinate.sh's caller)
 //   … | node scripts/lib/scope-overlap.mjs --json        # the audit model
 //   node scripts/lib/scope-overlap.mjs --self-test       # fixtures + mutation controls, no I/O
+//
+//   echo '{"board":[…],"merged":[…],"closingKeywords":[…],"debt":{…}}' \
+//     | node scripts/lib/scope-overlap.mjs --shipped-report   # the possibly-shipped advisory
+//   … | node scripts/lib/scope-overlap.mjs --shipped-json     # its model
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -433,9 +437,646 @@ export function formatAudit(audit) {
 	return lines;
 }
 
+// ── possibly-shipped: merged-PR evidence, and the exact claim it can carry ────────────────────
+//
+// `coordinate.sh`'s possibly-shipped advisory asked ONE question — "does a merged PR mention
+// `#n`?" — and printed the answer under a heading that told the reader to "close if delivered".
+// That is text proximity. On the board of 2026-09-09 it was wrong 28 times out of 28; on the
+// re-measurement of 2026-09-10 a further 12 of 14 were mention-only and the other 2 were partials.
+// Running total: 40 wrong · 2 partial · 0 right (#4523). The recurring shape is a PR body writing
+// `#n` to say "ordered behind #n", "part of #n" or "unlike #n".
+//
+// It is worse than noise, because the cheapest way to clear a 0-for-40 advisory is to close 40
+// live units — including #3348, a production blocker, and seven `wave:cli-first` units that are
+// the wave's remaining work.
+//
+// ── WHAT THIS ASKS INSTEAD ────────────────────────────────────────────────────────────────────
+//
+// The cheaper, sounder question this module already owns: did the merged PR change a file the
+// unit's own `scope:` claims? That is a fact about two file sets, not about prose, and it uses the
+// SAME `globsOverlap` the anti-tangle invariant is decided with — no second semantics.
+//
+// ── AND WHAT IT STILL CANNOT ANSWER — the reason no heading below says "close if delivered" ────
+//
+// Scope intersection is NECESSARY AND NOT SUFFICIENT, and that is measured, not assumed. Of the 12
+// false positives re-verified on 2026-09-10, gating on intersection would have suppressed 9 — and
+// still reported three, because in each of those the cited PR landed INSIDE the unit's own scope
+// and the defect survived anyway:
+//
+//   · #3348 / #4419 — touched both files the unit names, and only improved an error message;
+//     `runner.go` still calls plain `AssumeRole` on the `self` path. Production blocker, still live.
+//   · #3907 / #4361 — wrote up the very audit document the unit is about; the document still says
+//     "the decision on them remains open". (It also declares no `scope:` at all, so this module
+//     reports it as NOT COMPARABLE rather than inventing a comparison.)
+//   · #4455 / #4545 — the Go-side lock really did land, and the unit's census still reads
+//     `unlocked mirrors: 8`. Substance shipped; the done-when is not met.
+//
+// So the claim made here is exactly this and no more: **a merged PR has already edited files this
+// unit owns.** That is a reason to read the diff and to run the unit's own `check:` line — which
+// every row prints, because the acceptance criterion is the only thing in this report that can
+// settle delivery. Three-valued throughout: a unit whose scope cannot be read, or whose evidence
+// PR's file list cannot be read, is reported as NOT COMPARABLE — never silently dropped, and never
+// counted as shipped.
+
+/**
+ * `gh pr list --json files` pages at 100 files per PR, so a list of exactly that length may be
+ * TRUNCATED. A truncated list can prove an intersection but can never prove its absence, so a
+ * mention backed only by truncated (or absent) file lists is reported as NOT COMPARABLE. An
+ * emptiness check that cannot see a withheld measurement reads "nothing there" for "did not look".
+ */
+const FILES_PAGE_CAP = 100;
+
+/** Units filed by the nightly rollup close on a green RUN, not on a merge — see `--superseded-reds`. */
+const NIGHTLY_LABEL = "from:e2e-nightly";
+
+/**
+ * Is one CONCRETE changed path inside a unit's scope? Returns the glob that claims it, or null.
+ *
+ * A concrete path is a wildcard-free glob, so the decision is `globsOverlap` with a path on one
+ * side — deliberately the same call `check-pr-scope.mjs` makes for the same question, and
+ * deliberately not a second matcher.
+ *
+ * ONE RULE IS ADDED ON TOP, and it is added rather than assumed because the matcher measurably
+ * does not have it: `globsOverlap` subsumes a prefix only through `**`, so the glob
+ * `packages/core/git` does NOT match `packages/core/git/git.go` (its walk runs out of segments on
+ * the right and refuses). Every declared scope on this board reads to a person as "this directory
+ * and what is under it", so a glob is also tried as `<glob>/**`. That delegates the decision back
+ * to the same walk — no second semantics — and it is the safe direction: an over-claimed row costs
+ * the reader one diff, while a missed one silently suppresses real evidence, which is the failure
+ * this whole unit is about. The separator is still respected, so `apps/console/lib/billing` does
+ * not claim `apps/console/lib/billing-legacy/pricing.ts`; the fixtures pin both directions.
+ *
+ * @param {string} path a changed file path from a PR
+ * @param {string[]} globs the unit's declared scope globs
+ */
+export function pathInScope(path, globs) {
+	const p = normalizeGlob(path);
+	if (!p) return null;
+	for (const g of globs ?? []) {
+		const n = normalizeGlob(g);
+		if (globsOverlap(p, n) || globsOverlap(p, `${n}/**`)) return g;
+	}
+	return null;
+}
+
+/**
+ * What one merged PR's changed-file list says about one unit's scope.
+ *
+ * @returns {{known: boolean, truncated: boolean, hits: string[]}} `known: false` when the PR
+ *   carries no `files` array at all (the field was not requested, or gh could not answer). Both
+ *   `known: false` and `truncated: true` mean an empty `hits` proves NOTHING.
+ */
+export function prScopeEvidence(pr, globs) {
+	const files = Array.isArray(pr?.files) ? pr.files : null;
+	if (files === null) return { known: false, truncated: false, hits: [] };
+	const paths = files.map((f) => (typeof f === "string" ? f : f?.path)).filter(Boolean);
+	return {
+		known: true,
+		truncated: paths.length >= FILES_PAGE_CAP,
+		hits: paths.filter((p) => pathInScope(p, globs) !== null),
+	};
+}
+
+/**
+ * The unit's acceptance command — its `check:` line — or null when it declares none or two.
+ *
+ * Same anchor contract as `scope:`: a declaration starts a line (leading whitespace tolerated) and
+ * a `check:` inside a fence is a quotation. Two declarations yield null for the same reason
+ * `scopeGlobs` refuses on two: an ambiguous body must not buy an answer nobody wrote for it.
+ */
+export function readCheck(body) {
+	const decls = [];
+	for (const line of stripFences(body).split("\n")) {
+		const m = line.match(/^[ \t]*check:[ \t]*(.+)$/i);
+		if (m) decls.push(m[1].trim());
+	}
+	return decls.length === 1 ? decls[0] : null;
+}
+
+/**
+ * Issue numbers a text CLOSES, given the keyword vocabulary.
+ *
+ * THE VOCABULARY IS NOT RETYPED HERE. `scripts/lib/board-pr.sh` owns it in `BOARD_PR_CLOSING_KW`,
+ * because there were once two copies and one of them expanded to `fixs`/`fixd` — so "Fixes #n"
+ * matched nothing for as long as nobody looked. The caller passes it in; `coordinate.sh` sources
+ * that file already, and `check-pr-scope.mjs` parses the same assignment for the same reason.
+ * An absent vocabulary is REFUSED (see `auditShipped`), never defaulted to a guess: a guessed
+ * vocabulary that matches no PR reports every one of them as a mere mention.
+ *
+ * `\b` after the digits so `#84` does not match `#842`.
+ *
+ * @param {string} text
+ * @param {string[]} keywords
+ * @returns {Set<number>}
+ */
+export function closingRefsIn(text, keywords) {
+	const out = new Set();
+	if (!keywords?.length) return out;
+	const re = new RegExp(`\\b(?:${keywords.join("|")})\\s+#(\\d+)\\b`, "gi");
+	for (const m of String(text ?? "").matchAll(re)) out.add(Number(m[1]));
+	return out;
+}
+
+/** Does a text MENTION `#n` at all — the old predicate, kept as the input filter it always was. */
+export function mentionsIssue(text, n) {
+	return new RegExp(`#${n}\\b`).test(String(text ?? ""));
+}
+
+/**
+ * Hold every open board unit against the merged-PR corpus and classify the evidence.
+ *
+ * @param {{board: Array, merged: Array, closingKeywords?: string[], debt?: Record<string,string>}} input
+ *   `debt` maps an issue number to the exclusion register that names it — an entry there is a
+ *   reviewed statement that the debt STANDS, which is stronger evidence than any merge and points
+ *   the opposite way.
+ * @returns the audit model. `ran: false` is its own outcome and prints as NOT CHECKED.
+ */
+export function auditShipped(input) {
+	const board = Array.isArray(input?.board) ? input.board : null;
+	const merged = Array.isArray(input?.merged) ? input.merged : null;
+	if (!board || !merged) {
+		return {
+			ran: false,
+			reason: !board
+				? "the board input was not a JSON array"
+				: "the merged-PR corpus was not a JSON array",
+			rows: [],
+			counts: { referenced: 0, mentionOnly: 0, nightly: 0 },
+			keywordsRead: false,
+		};
+	}
+	const keywords = (input?.closingKeywords ?? []).map((k) => String(k).trim()).filter(Boolean);
+	const debt = input?.debt && typeof input.debt === "object" ? input.debt : {};
+
+	const rows = [];
+	const counts = { referenced: 0, mentionOnly: 0, nightly: 0 };
+	for (const issue of board) {
+		const labels = (issue?.labels ?? []).map((l) => (typeof l === "string" ? l : l?.name)).filter(Boolean);
+		// EXACTLY the READY predicate the dashboard's counts publish — not a stricter one. The
+		// hazard is a unit that still LOOKS claimable, so the set to police is the set READY
+		// publishes: a `class:` requirement here once hid #1207, which two merged PRs named in
+		// their TITLES, because the issue happened to carry only `wave:connectors-v2`.
+		if (["claimed", "blocked", "epic"].some((l) => labels.includes(l))) continue;
+
+		const n = issue?.number;
+		if (typeof n !== "number") continue;
+		const refs = merged.filter((pr) => mentionsIssue(`${pr?.title ?? ""} ${pr?.body ?? ""}`, n));
+		if (refs.length === 0) continue;
+		counts.referenced++;
+
+		const title = String(issue?.title ?? "(untitled)");
+		const prList = refs.map((pr) => `#${pr?.number}`).join(",");
+
+		// A merge cannot close this class AT ALL, so a merge-based verifier has nothing to say
+		// about it. Exempt before anything else is computed.
+		if (labels.includes(NIGHTLY_LABEL)) {
+			counts.nightly++;
+			continue;
+		}
+		// A register naming the issue is a committed, reviewed statement that the debt still
+		// stands — the mention IS the deferral, so the inference from it runs BACKWARDS.
+		const register = debt[String(n)];
+		if (register) {
+			rows.push({ n, title, tier: "debt-recorded", register, prList, prs: [], check: null });
+			continue;
+		}
+
+		const scope = readScope(issue?.body);
+		const check = readCheck(issue?.body);
+		if (scope.globs.length === 0) {
+			rows.push({ n, title, tier: "cannot-compare", prList, prs: [], check, why: scopeGapReason(scope) });
+			continue;
+		}
+
+		const evidence = refs.map((pr) => ({ number: pr?.number, ...prScopeEvidence(pr, scope.globs) }));
+		const closes = keywords.length
+			? refs.some((pr) => closingRefsIn(`${pr?.title ?? ""}\n${pr?.body ?? ""}`, keywords).has(n))
+			: false;
+		const hit = evidence.filter((e) => e.hits.length > 0);
+		const blind = evidence.filter((e) => !e.known || e.truncated);
+
+		if (closes && hit.length > 0) {
+			rows.push({ n, title, tier: "closes-and-touches", prList, prs: hit, check });
+		} else if (closes) {
+			rows.push({ n, title, tier: "closes-only", prList, prs: [], check });
+		} else if (hit.length > 0) {
+			rows.push({ n, title, tier: "touches", prList, prs: hit, check });
+		} else if (blind.length > 0) {
+			rows.push({
+				n,
+				title,
+				tier: "cannot-compare",
+				prList,
+				prs: [],
+				check,
+				why: `no changed-file list to compare (${blind
+					.map((e) => `#${e.number} ${e.known ? `truncated at ${FILES_PAGE_CAP} files` : "file list absent"}`)
+					.join(", ")})`,
+			});
+		} else {
+			counts.mentionOnly++;
+		}
+	}
+	rows.sort((a, b) => a.n - b.n);
+	return { ran: true, reason: "", rows, counts, keywordsRead: keywords.length > 0 };
+}
+
+/** One evidence row's PR clause: which merged PR touched which of the unit's files. */
+function evidenceClause(prs) {
+	return prs
+		.map((e) => `merged #${e.number} → ${e.hits.length} file(s) in scope: ${e.hits.slice(0, 3).join(", ")}${e.hits.length > 3 ? ", …" : ""}`)
+		.join("; ");
+}
+
+/**
+ * Render the shipped audit as report lines, two-space indented for `coordinate.sh`'s report.
+ *
+ * EVERY run prints a summary line, including the run that finds nothing. "Examined 14, reported 0"
+ * and "never ran" were the same silence in the version this replaces, and that is the defect
+ * #4115 was filed for one section up.
+ */
+export function formatShipped(audit) {
+	const lines = ["  ── possibly-shipped (merged-PR evidence, held against each unit's own `scope:`) ──"];
+	if (!audit?.ran) {
+		lines.push(`  ⚠ possibly-shipped NOT CHECKED: ${audit?.reason ?? "the audit did not run"}.`);
+		return lines;
+	}
+	const by = (t) => audit.rows.filter((r) => r.tier === t);
+	const c = audit.counts;
+	lines.push(
+		`  ✓ examined ${c.referenced} open unit(s) a merged PR names: ` +
+			`${by("closes-and-touches").length} closing-keyword+scope · ${by("closes-only").length} closing-keyword only · ` +
+			`${by("touches").length} scope-touched · ${by("cannot-compare").length} not comparable · ` +
+			`${by("debt-recorded").length} debt-recorded · ${c.mentionOnly} mention-only (suppressed) · ` +
+			`${c.nightly} from:e2e-nightly (exempt — they close on a green run, not a merge).`,
+	);
+	if (!audit.keywordsRead) {
+		lines.push(
+			"  ⚠ the closing-keyword half was NOT CHECKED: no vocabulary was passed in. " +
+				"scripts/lib/board-pr.sh owns it (BOARD_PR_CLOSING_KW); a unit below may be understated.",
+		);
+	}
+
+	/** One tier's block: a heading, then a row per unit with its evidence and its `check:`. */
+	const block = (tier, heading, footer) => {
+		const rows = by(tier);
+		if (rows.length === 0) return;
+		lines.push(`  ── ${heading} ──`);
+		for (const r of rows) {
+			if (tier === "debt-recorded") {
+				lines.push(`  #${r.n}  debt-recorded  (${r.register})  ${r.title.slice(0, 60)}`);
+				continue;
+			}
+			lines.push(`  #${r.n}  ${r.title.slice(0, 70)}`);
+			lines.push(`        evidence: ${r.prs.length > 0 ? evidenceClause(r.prs) : `named by merged ${r.prList}`}`);
+			if (r.why) lines.push(`        not comparable: ${r.why}`);
+			lines.push(
+				r.check
+					? `        settle it with the unit's own check:  ${r.check}`
+					: "        this unit declares no `check:` line — read the diff and the issue's done-when.",
+			);
+		}
+		if (footer) for (const f of footer) lines.push(`     ${f}`);
+	};
+
+	block("closes-and-touches", "⚠ a merged PR CLOSES this and it is still open (keyword + #n, and it touched the unit's files)", [
+		"This is the stale-open shape the advisory exists for: a keyword the close-on-dev-merge Action never fired on.",
+		"`scripts/coordinate.sh --close-shipped` closes exactly the keyword set — after you have run the check above.",
+	]);
+	block("closes-only", "⚠ a merged PR claims to CLOSE this, but changed no file the unit's `scope:` claims", [
+		"The keyword and the files disagree. Either the scope line is wrong (see scripts/ci/check-pr-scope.mjs) or the",
+		"claim is. Read the PR before acting on either.",
+	]);
+	block("touches", "⚠ scope-touched (a merged PR changed files this unit's `scope:` claims — READ it, do not close it)", [
+		"A scope hit says the ground under the unit MOVED. It does not say the unit is done: measured 2026-09-10,",
+		"THREE OF THREE scope hits — #3348, #3907, #4455 — still had the defect live on origin/dev. The unit's own",
+		"`check:` line is the only thing in this report that can settle delivery.",
+	]);
+	block("cannot-compare", "⚠ named by a merged PR and NOT COMPARABLE (this is not a clean bill, and not a delivery)", [
+		"Nothing here was suppressed and nothing here was verified. Give the unit a `scope:` line at column 0 and it",
+		"joins the comparison above.",
+	]);
+	block("debt-recorded", "debt-recorded (a merged PR named it to RECORD the debt, not to pay it — do NOT close)", [
+		"An exclusion file naming an issue is a reviewed statement that the debt STANDS.",
+	]);
+	return lines;
+}
+
+/** Exit codes for `--shipped-report`: it ran, or it could not. Nothing found is still "it ran". */
+export const SHIPPED_EXIT = { RAN: 0, "NOT-CHECKED": 4 };
+
 // ── self-test ─────────────────────────────────────────────────────────────────────────────────
 
 const FIXTURES = new URL("./board-body-fixtures.json", import.meta.url);
+
+// ── shipped-advisory fixtures: MEASURED, not composed ─────────────────────────────────────────
+//
+// Every case below is a real board unit, a real merged PR and that PR's real changed-file list,
+// taken from the two hand verifications recorded on #4523 (2026-09-09, 28 units; 2026-09-10, the
+// 14 then live). A guard whose fixtures were written alongside its own fix is tautological; these
+// were written by the defect.
+//
+// They live here rather than in `scripts/lib/board-body-fixtures.json` for one reason worth stating
+// so the next reader does not take it for a preference: #4523's `scope:` is `scripts/coordinate.sh
+// scripts/lib/scope-overlap.mjs`, and the fixtures file is not in it. They are still hand-authored
+// DATA — no expected value below is computed by the code under test — which is the property that
+// matters. Converging them into the JSON is a one-line follow-up for whoever owns that file next.
+//
+// The three cases that decide the design are marked ⚑: a merged PR landed INSIDE the unit's own
+// scope and the defect survived anyway. They are why no tier in this report claims delivery.
+const SHIPPED_FIXTURES = Object.freeze({
+	// path-vs-scope decisions, for the mutation controls to disagree with.
+	pathCases: [
+		{ name: "the exact file a scope names", path: "apps/runner/internal/agent/runner.go", globs: ["apps/runner/internal/agent/operator_credentials.go", "apps/runner/internal/agent/runner.go"], inScope: true },
+		{ name: "a file under a `**` scope", path: "apps/console/lib/billing/pricing.ts", globs: ["apps/console/lib/billing/**"], inScope: true },
+		{ name: "a file under a bare DIRECTORY scope", path: "packages/core/git/git.go", globs: ["packages/core/git"], inScope: true },
+		{ name: "a sibling directory sharing a prefix is NOT in scope", path: "apps/console/lib/billing-legacy/pricing.ts", globs: ["apps/console/lib/billing/**"], inScope: false },
+		{ name: "…and a BARE directory scope respects the separator too", path: "apps/console/lib/billing-legacy/pricing.ts", globs: ["apps/console/lib/billing"], inScope: false },
+		{ name: "a longer filename sharing a prefix is NOT in scope", path: "scripts/coordinate.sh.bak", globs: ["scripts/coordinate.sh"], inScope: false },
+		{ name: "#4109's real miss: apps/cli against a packages/core/git scope", path: "apps/cli/cmd/links.go", globs: ["packages/core/git/git.go", "packages/core/git/git_ops_test.go"], inScope: false },
+		{ name: "an intra-path wildcard scope", path: "infra/templates/project/aws/dns.tf", globs: ["infra/templates/*/aws/**"], inScope: true },
+	],
+	// Each unit as the board carries it, with the merged PRs that named it.
+	units: [
+		{
+			name: "⚑ #3348 — #4419 touched BOTH files the unit names, and the production blocker stands",
+			tier: "touches",
+			issue: {
+				number: 3348,
+				title: "AWS and GCP cannot be provisioned in production: the deployed runner runs as `self`",
+				labels: [{ name: "class:backend" }, { name: "needs:human" }],
+				body: "scope: apps/runner/internal/agent/operator_credentials.go apps/runner/internal/agent/runner.go\ncheck: go -C apps/runner test ./internal/agent/...",
+			},
+			prs: [
+				{
+					number: 4419,
+					title: "fix(runner): a `self` runner with no ambient credentials says so, instead of naming EC2 IMDS",
+					body: "Surfaced by #3348. It does NOT restore provisioning: `runner.go` still calls plain `AssumeRole`.",
+					files: [
+						{ path: "apps/runner/internal/agent/operator_credentials.go" },
+						{ path: "apps/runner/internal/agent/operator_credentials_test.go" },
+						{ path: "apps/runner/internal/agent/runner.go" },
+					],
+				},
+			],
+		},
+		{
+			name: "⚑ #4176 — #4208 constrained plan prices; 12 files still carry unitAmountUsd",
+			tier: "touches",
+			issue: {
+				number: 4176,
+				title: "audit(billing): money is modelled as USD and formatted as anything",
+				labels: [{ name: "class:ui" }, { name: "needs:design" }],
+				body: "scope: apps/console/lib/billing/** apps/console/app/server/actions/billing.ts packages/plan-catalog/src/** packages/format/src/minor-units.ts apps/marketing/lib/billing/**",
+			},
+			prs: [
+				{
+					number: 4208,
+					title: "fix(billing): constrain plan prices to supported currencies",
+					body: "Narrows the type. The audit in #4176 stays open.",
+					files: [
+						{ path: "apps/console/lib/billing/pricing.ts" },
+						{ path: "apps/marketing/lib/billing/pricing-display.ts" },
+						{ path: "packages/plan-catalog/src/index.ts" },
+						{ path: "packages/plan-catalog/tests/index.test.ts" },
+					],
+				},
+			],
+		},
+		{
+			name: "⚑ #4455 — #4545 landed the Go-side lock; the census still reads `unlocked mirrors: 8`",
+			tier: "touches",
+			issue: {
+				number: 4455,
+				title: "cli(mirrors): the eight `Mirrors the Go X` claims with nothing watching them",
+				labels: [{ name: "lane:core" }, { name: "class:backend" }, { name: "wave:cli-first" }],
+				body: "blocked-by: #4448\nscope: apps/console/lib/addons/types.ts apps/console/lib/evidence/receipt-anchor.ts packages/core/jsonbmirror/jsonb_mirror_test.go\ncheck: go -C packages/core test ./jsonbmirror/...",
+			},
+			prs: [
+				{
+					number: 4545,
+					title: "test(mirrors): the mirror lock enrols three console files, and a `Type.Field` claim is a claim",
+					body: "Part of #4455.",
+					files: [
+						{ path: "packages/core/jsonbmirror/jsonb_mirror_test.go" },
+						{ path: "packages/core/jsonbmirror/testdata/jsonb/addon_bootstrap.json" },
+						{ path: "packages/core/jsonbmirror/testdata/jsonb/addon_install.json" },
+					],
+				},
+			],
+		},
+		{
+			name: "#4109 — #4308 is apps/cli; the unit's scope is packages/core/git (suppressed)",
+			tier: "mention-only",
+			issue: {
+				number: 4109,
+				title: "chore(core): git.Bootstrap has no caller",
+				labels: [{ name: "wave:hygiene" }, { name: "lane:core" }, { name: "class:backend" }],
+				body: "scope: packages/core/git/git.go packages/core/git/git_ops_test.go\ncheck: go -C packages/core test ./git/...",
+			},
+			prs: [
+				{
+					number: 4308,
+					title: "feat(cli): deep links built over the console's own route tree",
+					body: "Ordered behind #4109; unrelated to it.",
+					files: [
+						{ path: "apps/cli/cmd/links.go" },
+						{ path: "apps/cli/cmd/open.go" },
+						{ path: "apps/console/scripts/gen-go-routes.ts" },
+						{ path: ".github/workflows/ci.yml" },
+					],
+				},
+			],
+		},
+		{
+			name: "#3524 — the guard PR that REQUIRES this tracker stay open (suppressed)",
+			tier: "mention-only",
+			issue: {
+				number: 3524,
+				title: "board: the coverage-exclusion tracker",
+				labels: [{ name: "class:backend" }],
+				body: "scope: apps/console/lib/coverage/**",
+			},
+			prs: [
+				{
+					number: 4139,
+					title: "ci: exclusion issues must be OPEN",
+					body: "The register names #3524 and asserts it is open.",
+					files: [{ path: "scripts/check-exclusion-issues.mjs" }],
+				},
+			],
+		},
+		{
+			name: "⚑ #3907 — #4361 wrote the very audit doc up, and the unit declares NO scope",
+			tier: "cannot-compare",
+			issue: {
+				number: 3907,
+				title: "legal(assets): the nine third-party marks already shipping were never cleared",
+				labels: [{ name: "wave:hygiene" }, { name: "lane:docs" }, { name: "needs:human" }],
+				body: "Recorded durably in `docs/legal/DESIGN_SYSTEM_AUDIT.md:91-97` as an open item for the maintainer.",
+			},
+			prs: [
+				{
+					number: 4361,
+					title: "docs(legal): the nine shipping marks' terms, read mark by mark",
+					body: "Feeds the decision in #3907; the decision on them remains open.",
+					files: [{ path: "docs/legal/DESIGN_SYSTEM_AUDIT.md" }],
+				},
+			],
+		},
+		{
+			name: "#4482's shape: a FENCED scope line is not a declaration, so it cannot be compared",
+			tier: "cannot-compare",
+			issue: {
+				number: 4482,
+				title: "board: a unit whose scope lives inside a code fence",
+				labels: [{ name: "class:backend" }],
+				body: "The lane is declared as:\n\n```\nscope: apps/console/lib/**\n```\n",
+			},
+			prs: [{ number: 4500, title: "chore: unrelated", body: "Ordered behind #4482.", files: [{ path: "apps/console/lib/x.ts" }] }],
+		},
+		{
+			name: "a PR whose changed-file list is ABSENT cannot prove absence",
+			tier: "cannot-compare",
+			issue: {
+				number: 9001,
+				title: "a scoped unit whose only evidence PR carries no file list",
+				labels: [{ name: "class:backend" }],
+				body: "scope: apps/console/lib/**\ncheck: pnpm -F console test",
+			},
+			prs: [{ number: 9101, title: "chore: something", body: "Mentions #9001.", files: null }],
+		},
+		{
+			name: "a file list AT the 100-file page cap is TRUNCATED, so an empty intersection proves nothing",
+			tier: "cannot-compare",
+			issue: {
+				number: 9002,
+				title: "a scoped unit whose only evidence PR is a 100-file merge",
+				labels: [{ name: "class:backend" }],
+				body: "scope: apps/console/lib/**",
+			},
+			prs: [
+				{
+					number: 9102,
+					title: "chore: a very large merge",
+					body: "Mentions #9002.",
+					// 100 paths, none of them in scope: the cap is the point, not the paths.
+					files: Array.from({ length: 100 }, (_, i) => ({ path: `packages/other/file-${i}.ts` })),
+				},
+			],
+		},
+		{
+			name: "the CONTROL: #4275's PR #4436 matches its scope near-exactly, with a closing keyword",
+			tier: "closes-and-touches",
+			closingKeywords: true,
+			issue: {
+				number: 4275,
+				title: "test(release-gate): runners against a seeded self-runner",
+				labels: [{ name: "class:backend" }, { name: "lane:console" }, { name: "wave:release-gate" }],
+				body: "scope: apps/console/e2e/flows/runners.spec.ts apps/console/e2e/helpers/seed-runners.ts apps/console/components/runners/**\ncheck: pnpm -F console exec playwright test --project=qa e2e/flows/runners.spec.ts",
+			},
+			prs: [
+				{
+					number: 4436,
+					title: "test(release-gate): runners against a seeded self-runner",
+					body: "Closes #4275",
+					files: [
+						{ path: "apps/console/components/runners/pool-card.tsx" },
+						{ path: "apps/console/e2e/flows/runners.spec.ts" },
+						{ path: "apps/console/e2e/helpers/seed-runners.ts" },
+					],
+				},
+			],
+		},
+		{
+			name: "a closing keyword whose PR touched nothing the scope claims — the two signals disagree",
+			tier: "closes-only",
+			closingKeywords: true,
+			issue: {
+				number: 9003,
+				title: "a unit whose closing PR landed outside its declared scope",
+				labels: [{ name: "class:backend" }],
+				body: "scope: packages/core/git/**",
+			},
+			prs: [{ number: 9103, title: "fix: something", body: "Fixes #9003", files: [{ path: "apps/cli/cmd/links.go" }] }],
+		},
+		{
+			name: "#3855 — a from:e2e-nightly red closes on a GREEN RUN, not on a merge (exempt)",
+			tier: "nightly-exempt",
+			issue: {
+				number: 3855,
+				title: "e2e nightly: gcp RED (floor)",
+				labels: [{ name: "wave:hygiene" }, { name: "lane:tests" }, { name: "from:e2e-nightly" }],
+				body: "The T2 real-cloud nightly went RED for `gcp` on the floor dimension.",
+			},
+			prs: [{ number: 4090, title: "ci: nightly rollup", body: "Related to #3855.", files: [{ path: ".github/workflows/e2e-nightly.yml" }] }],
+		},
+		{
+			name: "#3290 — the PR that baselined it into a register RECORDED the debt, it did not pay it",
+			tier: "debt-recorded",
+			debt: "infra/tfvars-safety-baseline.json",
+			issue: {
+				number: 3290,
+				title: "infra: the two unsafe tfvars",
+				labels: [{ name: "class:backend" }],
+				body: "scope: infra/templates/**",
+			},
+			prs: [
+				{
+					number: 3298,
+					title: "ci: the tfvars safety ratchet",
+					body: "Filed rather than folded in: #3290.",
+					files: [{ path: "infra/tfvars-safety-baseline.json" }, { path: "infra/templates/project/aws/main.tf" }],
+				},
+			],
+		},
+		{
+			name: "a CLAIMED unit is somebody's live work and is never advised on",
+			tier: "not-considered",
+			issue: {
+				number: 9004,
+				title: "a claimed unit",
+				labels: [{ name: "class:backend" }, { name: "claimed" }],
+				body: "scope: apps/console/lib/**",
+			},
+			prs: [{ number: 9104, title: "chore", body: "Closes #9004", files: [{ path: "apps/console/lib/x.ts" }] }],
+		},
+	],
+});
+
+
+/**
+ * The closing-keyword vocabulary, READ from its owner for the self-test.
+ *
+ * `scripts/lib/board-pr.sh` owns `BOARD_PR_CLOSING_KW`, and `scripts/ci/check-pr-scope.mjs` exports
+ * the production reader of it. This suite reads the same assignment rather than importing that
+ * module (which imports THIS one, so the import would be a cycle) and rather than retyping the
+ * words (which is how `fixs`/`fixd` once shipped). It REFUSES if the assignment cannot be found:
+ * a guessed vocabulary matches no PR and then reports every one of them as a mere mention.
+ */
+const BOARD_PR_SH = new URL("./board-pr.sh", import.meta.url);
+function selfTestClosingKeywords() {
+	let text;
+	try {
+		text = readFileSync(BOARD_PR_SH, "utf8");
+	} catch (error) {
+		console.error(`self-test: could not read ${BOARD_PR_SH.pathname}: ${error.message}`);
+		process.exit(1);
+	}
+	const m = /^BOARD_PR_CLOSING_KW='\(([^)]+)\)/m.exec(text);
+	if (!m) {
+		console.error("self-test: BOARD_PR_CLOSING_KW is not readable from scripts/lib/board-pr.sh.");
+		console.error("  That file owns the closing-keyword vocabulary; if the assignment moved, move this reader with it.");
+		process.exit(1);
+	}
+	const kws = m[1].split("|").map((s) => s.trim().toLowerCase()).filter(Boolean);
+	if (kws.length === 0) {
+		console.error("self-test: BOARD_PR_CLOSING_KW parsed to zero keywords — refusing to test with an empty vocabulary.");
+		process.exit(1);
+	}
+	return kws;
+}
+
 
 /**
  * Fixtures + MUTATION CONTROLS.
@@ -589,6 +1230,160 @@ function runSelfTest() {
 	eq("workable: an epic is not", isWorkableBoardUnit(unit(["class:backend", "epic"])), false);
 	eq("workable: no class: label is not a board unit", isWorkableBoardUnit(unit(["wave:W1"])), false);
 
+	// ── (6) the possibly-shipped advisory, against MEASURED evidence ──────────────────────────
+	//
+	// The property under test is not "does it find things". It is WHAT IT CLAIMS: a mention alone
+	// is suppressed, a scope hit is reported as a scope hit and never as a delivery, and everything
+	// it could not compare is named rather than dropped. Every case is a real unit and a real PR
+	// file list (see SHIPPED_FIXTURES).
+	const kws = selfTestClosingKeywords();
+	eq("closing vocabulary: read from board-pr.sh, and it spells the tenses out", kws.includes("fixes") && kws.includes("resolved"), true);
+
+	for (const c of SHIPPED_FIXTURES.pathCases) {
+		eq(`path in scope: ${c.name}`, pathInScope(c.path, c.globs) !== null, c.inScope);
+	}
+
+	// MUTATION CONTROLS on the path decision. If a broken predicate satisfies the path fixtures,
+	// the fixtures do not discriminate and every green above means nothing.
+	const alwaysIn = () => true;
+	const byteEqual = (p, globs) => globs.some((g) => normalizeGlob(g) === normalizeGlob(p));
+	const separatorlessPrefix = (p, globs) =>
+		globs.some((g) => {
+			const y = normalizeGlob(g).replace(/\*+$/g, "").replace(/\/+$/g, "");
+			return normalizeGlob(p).startsWith(y);
+		});
+	for (const [name, mutant] of [
+		["everything intersects", alwaysIn],
+		["byte equality", byteEqual],
+		["the dashboard's separator-less prefix match", separatorlessPrefix],
+	]) {
+		checks++;
+		const wrong = SHIPPED_FIXTURES.pathCases.filter((c) => mutant(c.path, c.globs) !== c.inScope);
+		if (wrong.length > 0) {
+			console.log(`ok   - mutation control (paths): ${name} fails ${wrong.length} fixture(s)`);
+		} else {
+			fails++;
+			console.error(
+				`FAIL - mutation control (paths): ${name} PASSES every path fixture, so the fixtures do not ` +
+					"discriminate a correct containment test from a broken one.",
+			);
+		}
+	}
+
+	/** One fixture unit as a one-unit board, so a tier can be asserted in isolation. */
+	const auditOne = (c) =>
+		auditShipped({
+			board: [c.issue],
+			merged: c.prs,
+			closingKeywords: kws,
+			debt: c.debt ? { [String(c.issue.number)]: c.debt } : {},
+		});
+
+	for (const c of SHIPPED_FIXTURES.units) {
+		const audit = auditOne(c);
+		const row = audit.rows.find((r) => r.n === c.issue.number);
+		const tier = row?.tier ?? (audit.counts.referenced === 0 ? "not-considered" : audit.counts.nightly > 0 ? "nightly-exempt" : "mention-only");
+		eq(`shipped tier: ${c.name}`, tier, c.tier);
+
+		const text = formatShipped(audit).join("\n");
+		// THE HEADLINE CLAIM. The advisory this replaces printed "verify vs origin/dev, close if
+		// delivered" over a 0-for-40 predicate, and the cheapest way to clear it was to close 40
+		// live units. No tier may invite that, and a scope hit least of all.
+		checks++;
+		if (/close if delivered/i.test(text)) {
+			fails++;
+			console.error(`FAIL - the report invites closing on evidence it does not have: ${c.name}`);
+		} else {
+			console.log(`ok   - no "close if delivered" anywhere in the report: ${c.name}`);
+		}
+
+		// A suppressed mention must be COUNTED and must not be listed. A counted-but-unlisted unit
+		// is the difference between "we looked and it was noise" and "we never looked".
+		if (c.tier === "mention-only" || c.tier === "nightly-exempt") {
+			eq(`suppressed units are not listed: ${c.name}`, text.includes(`#${c.issue.number} `), false);
+			eq(`…but the run still says it examined something: ${c.name}`, /examined \d+ open unit/.test(text), true);
+		}
+		// Everything reported names its unit, and everything that could not be compared says WHY.
+		if (row) {
+			eq(`the row names its unit: ${c.name}`, text.includes(`#${c.issue.number}`), true);
+			if (c.tier === "cannot-compare") {
+				eq(`a not-comparable row carries its reason: ${c.name}`, Boolean(row.why) && text.includes(row.why.slice(0, 24)), true);
+			}
+			// A tier that reports evidence must hand the reader the thing that actually settles it.
+			if (c.tier === "touches" || c.tier === "closes-and-touches") {
+				const check = readCheck(c.issue.body);
+				eq(`the row prints the unit's own check: ${c.name}`, check === null || text.includes(check), true);
+			}
+		}
+	}
+
+	// The whole fixture board at once — the shape coordinate.sh actually runs.
+	const whole = auditShipped({
+		board: SHIPPED_FIXTURES.units.map((c) => c.issue),
+		merged: SHIPPED_FIXTURES.units.flatMap((c) => c.prs),
+		closingKeywords: kws,
+		debt: Object.fromEntries(SHIPPED_FIXTURES.units.filter((c) => c.debt).map((c) => [String(c.issue.number), c.debt])),
+	});
+	const wholeText = formatShipped(whole).join("\n");
+	eq(
+		"whole board: every fixture unit lands in the tier it was measured in",
+		SHIPPED_FIXTURES.units.map((c) => whole.rows.find((r) => r.n === c.issue.number)?.tier ?? null),
+		SHIPPED_FIXTURES.units.map((c) => (["mention-only", "nightly-exempt", "not-considered"].includes(c.tier) ? null : c.tier)),
+	);
+	eq("whole board: the mention-only ones are counted, not dropped", whole.counts.mentionOnly, SHIPPED_FIXTURES.units.filter((c) => c.tier === "mention-only").length);
+	eq("whole board: the nightly ones are exempt, not dropped", whole.counts.nightly, SHIPPED_FIXTURES.units.filter((c) => c.tier === "nightly-exempt").length);
+	eq("whole board: a run that reports nothing still prints its summary", /examined \d+ open unit/.test(wholeText), true);
+
+	// EVERY TIER THE RENDERER KNOWS MUST BE EXERCISED. Without this, deleting the three ⚑ cases
+	// leaves a green suite that no longer tests the thing the unit exists for.
+	for (const tier of ["touches", "closes-and-touches", "closes-only", "cannot-compare", "debt-recorded", "mention-only", "nightly-exempt"]) {
+		checks++;
+		if (SHIPPED_FIXTURES.units.some((c) => c.tier === tier)) {
+			console.log(`ok   - the fixtures exercise the ${tier} tier`);
+		} else {
+			fails++;
+			console.error(`FAIL - no fixture exercises the ${tier} tier — that branch is untested.`);
+		}
+	}
+
+	// MUTATION CONTROLS on the ADVISORY ITSELF, stated as the two wrong predicates this unit exists
+	// to rule out. Each must disagree with the measured expectations; if either can satisfy them,
+	// the fixtures cannot tell the fix from the defect.
+	const tierOf = (c) => (["mention-only", "nightly-exempt", "not-considered"].includes(c.tier) ? null : c.tier);
+	for (const [name, mutant] of [
+		// The predicate being replaced: a mention IS a delivery.
+		["a mention is a delivery (the 40-for-40 predicate)", (c) => (c.tier === "not-considered" ? null : "touches")],
+		// The obvious fix, taken one step too far: intersection PROVES delivery. The three ⚑ cases
+		// are exactly the measurement that refutes it.
+		["a scope hit PROVES delivery", (c) => (tierOf(c) === "touches" ? "closes-and-touches" : tierOf(c))],
+	]) {
+		checks++;
+		const wrong = SHIPPED_FIXTURES.units.filter((c) => mutant(c) !== tierOf(c));
+		if (wrong.length > 0) {
+			console.log(`ok   - mutation control (advisory): "${name}" contradicts ${wrong.length} measured case(s)`);
+		} else {
+			fails++;
+			console.error(`FAIL - mutation control (advisory): "${name}" agrees with every fixture. The suite cannot tell it from the fix.`);
+		}
+	}
+
+	// The two ways this audit can fail to run at all. Both must SAY so rather than render an
+	// all-clear, the same three-valued rule the collision half above is built on.
+	for (const [name, input] of [
+		["a board that is not an array", { board: null, merged: [] }],
+		["a merged corpus that is not an array", { board: [], merged: null }],
+	]) {
+		const a = auditShipped(input);
+		eq(`shipped audit refuses: ${name}`, a.ran, false);
+		eq(`…and says NOT CHECKED: ${name}`, /NOT CHECKED/.test(formatShipped(a).join("\n")), true);
+		eq(`…with a non-zero exit: ${name}`, SHIPPED_EXIT["NOT-CHECKED"], 4);
+	}
+	// A vocabulary that could not be read is a WITHHELD measurement, not a "no keyword" answer.
+	const ctrl = SHIPPED_FIXTURES.units.find((c) => c.tier === "closes-and-touches");
+	const noKw = auditShipped({ board: [ctrl.issue], merged: ctrl.prs, closingKeywords: [] });
+	eq("no keyword vocabulary: the run says the keyword half was NOT CHECKED", /closing-keyword half was NOT CHECKED/.test(formatShipped(noKw).join("\n")), true);
+
+
 	if (fails > 0) {
 		console.error(`self-test: ${fails} of ${checks} check(s) FAILED`);
 		process.exit(1);
@@ -632,8 +1427,30 @@ if (isMain) {
 			for (const line of formatAudit(audit)) console.log(line);
 		}
 		process.exit(VERDICT_EXIT[audit.verdict] ?? 1);
+	} else if (arg === "--shipped-report" || arg === "--shipped-json") {
+		// stdin is ONE object — `{board, merged, closingKeywords, debt}` — not the bare board the
+		// two arms above take. The corpus of merged PRs carries file lists and runs to megabytes,
+		// so it arrives on stdin like everything else here and never as an argv string: that is the
+		// ARG_MAX break coordinate.sh's `fetch_merged_prs` header records, where a jq the kernel
+		// refused to exec read as "found nothing" on every run for weeks.
+		let input;
+		try {
+			input = JSON.parse(readStdin());
+		} catch (error) {
+			console.error(`the shipped-report input on stdin did not parse: ${error.message}`);
+			process.exit(1);
+		}
+		const audit = auditShipped(input);
+		if (arg === "--shipped-json") {
+			console.log(JSON.stringify(audit, null, 2));
+		} else {
+			for (const line of formatShipped(audit)) console.log(line);
+		}
+		process.exit(audit.ran ? SHIPPED_EXIT.RAN : SHIPPED_EXIT["NOT-CHECKED"]);
 	} else {
-		console.error(`unknown arg: ${arg}\nusage: scope-overlap.mjs [--report|--json|--self-test]`);
+		console.error(
+			`unknown arg: ${arg}\nusage: scope-overlap.mjs [--report|--json|--shipped-report|--shipped-json|--self-test]`,
+		);
 		process.exit(2);
 	}
 }
