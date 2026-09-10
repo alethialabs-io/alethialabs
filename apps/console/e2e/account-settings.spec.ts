@@ -93,13 +93,37 @@ test.describe("Account settings dialog", () => {
 		// The confirmation shapes are matched by their PRIMITIVE (`alert-dialog-content` /
 		// role=alertdialog), never by role=dialog: the account-settings dialog is itself a
 		// role=dialog and its own copy contains "permanently deleted", so either of those would
-		// match the surface under test and report a confirmation that does not exist.
-		await expect(
-			page.locator('[data-slot="alert-dialog-content"], [role="alertdialog"]'),
-		).toHaveCount(0, { timeout: 3_000 });
+		// match the surface under test and report a confirmation that does not exist. Both shapes
+		// the console actually ships land on this selector — a raw `AlertDialogContent` carries
+		// `data-slot="alert-dialog-content"` (packages/ui/src/alert-dialog.tsx:62), and the
+		// `ConfirmDialog` every other destructive control uses renders through that same component
+		// (components/alerts/confirm-dialog.tsx:39).
+		const confirmation = page.locator('[data-slot="alert-dialog-content"], [role="alertdialog"]');
+
+		// THE POSITIVE FIRST: the surface under test is still mounted, so the absence below is an
+		// absence ON it rather than the whole dialog having gone away.
 		await expect(
 			dialog.getByRole("heading", { name: /account settings/i }),
 		).toBeVisible();
+
+		// AND THEN AN ABSENCE THAT SPENDS ITS WINDOW. `toHaveCount(0, { timeout: 3_000 })` was the
+		// wrong instrument for it: a count that is already 0 when `click()` returns satisfies the
+		// matcher at t=0 and the 3s is never spent, so a confirmation that mounts one `await` later
+		// — the shape ANY wiring of this button would have, since every candidate path in the call
+		// site's note is a server action — appeared to a green test. `waitFor` inverts it: the wait
+		// resolves early the moment a confirmation is visible and rejects only when the window is
+		// out, so appearing is the observation and the absence is what must survive all 3 seconds.
+		const appeared = await confirmation
+			.first()
+			.waitFor({ state: "visible", timeout: 3_000 })
+			.then(
+				() => true,
+				() => false,
+			);
+		expect(
+			appeared,
+			"pressing Delete Account opened a confirmation — the control has been wired, so destructive-actions.yaml and this spec must move with it (#4273)",
+		).toBe(false);
 		await expect(dialog.locator("#account-email")).toHaveValue(emailBefore);
 
 		// And the ACCOUNT survives — the half a count-zero assertion can never reach. A reload
