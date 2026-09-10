@@ -972,13 +972,17 @@ const SHIPPED_FIXTURES = Object.freeze({
 			prs: [{ number: 9105, title: "chore: budgets", body: "Related to #4326.", files: [{ path: "infra/sandbox/main.tf" }] }],
 		},
 		{
+			// The `check:` line here is INVENTED along with the unit, and it is written in the loud
+			// form on purpose: `pnpm -F <pkg> <script>` exits 0 when the script is missing, which
+			// scripts/ci/check-pnpm-script-refs.mjs refuses wherever it is written — a fixture is
+			// not an exemption from that.
 			name: "a PR whose changed-file list is ABSENT cannot prove absence",
 			tier: "cannot-compare",
 			issue: {
 				number: 9001,
 				title: "a scoped unit whose only evidence PR carries no file list",
 				labels: [{ name: "class:backend" }],
-				body: "scope: apps/console/lib/**\ncheck: pnpm -F console test",
+				body: "scope: apps/console/lib/**\ncheck: pnpm -C apps/console run test",
 			},
 			prs: [{ number: 9101, title: "chore: something", body: "Mentions #9001.", files: null }],
 		},
