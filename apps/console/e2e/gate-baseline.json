@@ -190,7 +190,7 @@
 				"Alerts — the delivery ledger and its activity* filters › an `activityStatus` deep link arrives filtered, chips still unfiltered": "passed"
 			},
 			"flows/billing.negative.spec.ts": {
-				"Billing — empty & entitlement-gated (Hobby) › a Hobby org with no plan changes shows the empty plan-history state": "failed",
+				"Billing — empty & entitlement-gated (Hobby) › a Hobby org's plan history is its creation, not an empty state": "passed",
 				"Usage — entitlement gating & range validation › community org has no hard-cap toggle (spend control is a paid control)": "passed",
 				"Usage — entitlement gating & range validation › community usage header offers upgrade, not Manage billing": "passed",
 				"Usage — entitlement gating & range validation › an unparseable quick-range entry surfaces the inline error": "passed"
@@ -200,12 +200,29 @@
 				"Billing settings — Pro trial (team) › current-plan card shows the Pro plan name and the Trialing status": "passed",
 				"Billing settings — Pro trial (team) › a live (trialing) sub exposes Cancel plan, never an Upgrade CTA": "passed",
 				"Billing settings — Pro trial (team) › plan card surfaces per-seat pricing (seats vs the $20 unit)": "passed",
+				"Billing settings — Pro trial (team) › a trialing sub renews rather than cancels, with a dated period label": "passed",
 				"Billing settings — Pro trial (team) › cloud-spend disclaimer is shown on the plan card": "passed",
-				"Billing settings — Pro trial (team) › a Stripe customer (trial) exposes the manage-billing card": "failed",
+				"Billing settings — Pro trial (team) › a Stripe customer (trial) gets the in-app Payment methods section": "passed",
 				"Billing settings — Pro trial (team) › plan history, transactions and invoices sections render for a customer": "passed",
-				"Billing settings — Hobby → Pro upgrade (owner) › Hobby org shows no live subscription and an Upgrade CTA": "failed",
+				"Billing — Stripe test mode › the /start trial CTA redirects into a TEST-mode Checkout session": {
+					"fixme": "BUG: /start's createCheckoutSession is refused for an undeclared payer capacity and the page swallows it, redirecting to billing #4633"
+				},
+				"Billing — Stripe test mode › the upgrade sheet mounts Stripe.js's own card fields, not a look-alike": {
+					"fixme": "BUG: the upgrade sheet's createSubscriptionIntent is refused for an undeclared payer capacity, so Elements never mounts #4633"
+				},
+				"Billing — Stripe test mode › a card attached to the org's real customer appears in Payment methods": "passed",
+				"Billing — destructive controls ask first › Cancel plan opens a confirmation, and Cancel leaves the subscription renewing": "passed",
+				"Billing — destructive controls ask first › Remove opens the card confirmation, and Cancel leaves the card attached": "passed",
+				"Billing — mirrored invoices (team) › a mirrored invoice reaches the billing page's Invoices section": "passed",
+				"Billing — mirrored invoices (team) › the dedicated invoices page lists mirrored rows with their amount and status": "passed",
+				"Billing — mirrored invoices (team) › an invoice's PDF route resolves for its own org rather than 404ing": "passed",
+				"Billing settings — Hobby → Pro upgrade (owner) › the Hobby card offers an upgrade and no subscription lifecycle at all": "passed",
 				"Billing settings — Hobby → Pro upgrade (owner) › Upgrade to Pro opens the shared upgrade sheet with the checkout form": "failed",
 				"Billing settings — Hobby → Pro upgrade (owner) › the upgrade sheet's order summary reflects the Pro total (no charge)": "failed",
+				"Billing settings — Hobby → Pro upgrade (owner) › the purchase sheet presents the plan's inclusions": "passed",
+				"Billing settings — Hobby → Pro upgrade (owner) › the purchase sheet offers a billing currency once the intent exists": {
+					"fixme": "BUG: the currency toggle stays disabled because createSubscriptionIntent is refused for an undeclared payer capacity #4633"
+				},
 				"Billing settings — Hobby → Pro upgrade (owner) › the upgrade sheet can be dismissed via its Close control": "failed",
 				"Usage — Pro trial (team) › authed persona reaches usage (not bounced to /login)": "passed",
 				"Usage — Pro trial (team) › header shows the Pro plan standing and a Manage billing link": "passed",
@@ -678,7 +695,7 @@
 				"members.bulk-remove — declares none (missing)": "passed",
 				"members.bulk-suspend — declares none (missing)": "passed",
 				"billing.card.remove — declares alert-dialog (confirmed)": "passed",
-				"billing.subscription.cancel — declares none (missing)": "passed",
+				"billing.subscription.cancel — declares confirm-dialog (confirmed)": "passed",
 				"org.logo.remove — declares confirm-dialog (confirmed)": "passed",
 				"runners.pool.delete — declares alert-dialog (confirmed)": "passed",
 				"runners.destroy — declares popover (confirmed)": "passed",
