@@ -47,6 +47,7 @@
     "check:theme-inline": "node scripts/check-theme-inline-overrides.mjs",
     "check:ui-client-boundary": "node scripts/check-ui-client-boundary.mjs",
     "check:workflow-shape": "node scripts/ci/check-workflow-shape.mjs",
+    "check:upload-aggregate": "node scripts/ci/check-upload-aggregate.mjs",
     "check:required-checks": "node scripts/ci/check-required-checks.mjs",
     "check:e2e-ratchet": "node scripts/e2e-ratchet.mjs --self-test",
     "check:pnpm-script-refs": "node scripts/ci/check-pnpm-script-refs.mjs",
