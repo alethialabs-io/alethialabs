@@ -234,7 +234,7 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/[org]` | 284 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/[project]/clusters` | 165 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/clusters` | 164 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
-| `/[org]/~/settings/billing` | 194 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
+| `/[org]/~/settings/billing` | 195 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/support` | 7 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/support/abuse` | 136 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/support/submit` | 146 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
