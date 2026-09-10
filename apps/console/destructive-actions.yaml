@@ -678,11 +678,12 @@ controls:
     surface: apps/console/app/(private)/[org]/~/jobs/[id]/page.tsx
     mutation: cancelJob
     control: { role: button, name: "Cancel" }
-    confirm: none
+    confirm: confirm-dialog
+    confirm_action: "Cancel job"
+    dialog_title: "Cancel this job?"
     fixture: active-job
     persona: owner
-    status: missing
-    issue: "#4288"
+    status: confirmed
     prod-qa: skip
     reason: needs an active job, which needs a running deploy
 
