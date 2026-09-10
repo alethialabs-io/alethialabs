@@ -2,20 +2,32 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type Stripe from "stripe";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // mapStatus / planFromSubscription are pure, but sync.ts pulls in the DB/Stripe write path
 // at import time — stub those so the unit test stays I/O-free (their behavior is covered by
-// integration tests).
+// integration tests). `isBillingActive` and `effectiveAiTier` are left REAL: they are pure, and
+// stubbing the predicate a test is about would let the wrong answer pass.
 vi.mock("@/lib/billing/credit-grants", () => ({ ensureIncludedCredit: vi.fn() }));
-vi.mock("@/lib/billing/queries", () => ({ upsertOrgBilling: vi.fn() }));
+vi.mock("@/lib/billing/queries", () => ({
+	upsertOrgBilling: vi.fn(),
+	upsertOrgAiSubscription: vi.fn(),
+	claimPlanWelcome: vi.fn(async () => false),
+}));
+vi.mock("@/lib/email/billing-email", () => ({ sendPlanWelcomeEmail: vi.fn() }));
 vi.mock("@/lib/billing/config", () => ({
 	planForPriceId: vi.fn(),
 	aiTierForPriceId: vi.fn(),
 }));
 
-import { mapStatus, planFromSubscription, planItem } from "@/lib/billing/sync";
-import { planForPriceId } from "@/lib/billing/config";
+import {
+	mapStatus,
+	planFromSubscription,
+	planItem,
+	syncSubscriptionToBilling,
+} from "@/lib/billing/sync";
+import { aiTierForPriceId, planForPriceId } from "@/lib/billing/config";
+import { upsertOrgAiSubscription, upsertOrgBilling } from "@/lib/billing/queries";
 
 /** A subscription carrying only the fields planFromSubscription reads. */
 function subWithPlan(plan?: string): Stripe.Subscription {
@@ -124,5 +136,138 @@ describe("planFromSubscription", () => {
 	it("returns null when neither metadata nor a resolvable price id is present", () => {
 		vi.mocked(planForPriceId).mockReturnValue(null);
 		expect(planFromSubscription(subWithPlan(), undefined)).toBeNull();
+	});
+});
+
+// ── syncSubscriptionToBilling ─────────────────────────────────────────────────────────────
+//
+// THE POINT OF DRIVING THE WHOLE FUNCTION, rather than only `planItem`: the regression this
+// guards is not "the wrong item was selected", it is "the wrong PLAN was written". Three fields
+// come off that one item — the price the plan is derived from, `seats`, and `currentPeriodEnd` —
+// so an assertion on the selector alone would still pass if a later edit read position 0 for the
+// other two. What is asserted here is the row.
+describe("syncSubscriptionToBilling", () => {
+	const flat = {
+		id: "si_flat",
+		price: { id: "price_team", recurring: { usage_type: "licensed" } },
+		quantity: 4,
+		current_period_end: 1_800_000_000,
+	} as unknown as Stripe.SubscriptionItem;
+	const meter = {
+		id: "si_meter",
+		price: { id: "price_meter_team", recurring: { usage_type: "metered" } },
+		current_period_end: 1_800_000_000,
+	} as unknown as Stripe.SubscriptionItem;
+
+	/** A live subscription for `org_1`, over the items given IN THE ORDER GIVEN. */
+	function sub(
+		items: Stripe.SubscriptionItem[],
+		over: Partial<Stripe.Subscription> = {},
+	): Stripe.Subscription {
+		return {
+			id: "sub_1",
+			status: "trialing",
+			customer: "cus_1",
+			metadata: { organization_id: "org_1" },
+			items: { data: items },
+			...over,
+		} as unknown as Stripe.Subscription;
+	}
+
+	beforeEach(() => {
+		vi.mocked(planForPriceId).mockImplementation((id) => (id === "price_team" ? "team" : null));
+		vi.mocked(aiTierForPriceId).mockReturnValue(null);
+	});
+	afterEach(() => {
+		vi.mocked(upsertOrgBilling).mockClear();
+		vi.mocked(upsertOrgAiSubscription).mockClear();
+	});
+
+	// THE REGRESSION, stated as the row it would have written. With the meter first, the old
+	// `items.data[0]` handed `planForPriceId` the METER price, which resolves to null, and
+	// `plan: live && plan ? plan : "community"` wrote `community` over a live Pro subscription.
+	it("writes the plan off the licensed item even when the meter is listed FIRST", async () => {
+		await syncSubscriptionToBilling(sub([meter, flat]));
+		expect(upsertOrgBilling).toHaveBeenCalledWith(
+			expect.objectContaining({
+				organizationId: "org_1",
+				plan: "team",
+				status: "trialing",
+				seats: 4,
+				currentPeriodEnd: new Date(1_800_000_000 * 1000),
+			}),
+		);
+	});
+
+	it("writes the same row when the meter is listed SECOND", async () => {
+		await syncSubscriptionToBilling(sub([flat, meter]));
+		expect(upsertOrgBilling).toHaveBeenCalledWith(
+			expect.objectContaining({ plan: "team", seats: 4 }),
+		);
+	});
+
+	it("keeps a non-live subscription on community, with no renewal date", async () => {
+		// An `incomplete` upgrade must not light up Pro in the billing panel; the subscription id
+		// is still retained so the panel can clean it up.
+		await syncSubscriptionToBilling(sub([flat], { status: "incomplete" }));
+		expect(upsertOrgBilling).toHaveBeenCalledWith(
+			expect.objectContaining({
+				plan: "community",
+				status: "none",
+				stripeSubscriptionId: "sub_1",
+				currentPeriodEnd: null,
+			}),
+		);
+	});
+
+	it("falls back to metadata.plan, and warns, when every line is metered", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		await syncSubscriptionToBilling(
+			sub([meter], { metadata: { organization_id: "org_1", plan: "enterprise" } }),
+		);
+		expect(upsertOrgBilling).toHaveBeenCalledWith(
+			// No plan line, so no seats and no period either — every one of them came off that item.
+			expect.objectContaining({ plan: "enterprise", seats: null, currentPeriodEnd: null }),
+		);
+		expect(warn).toHaveBeenCalledWith(expect.stringContaining("none is a licensed plan line"));
+		warn.mockRestore();
+	});
+
+	it("routes a standalone AI subscription to the AI columns and leaves the plan alone", async () => {
+		vi.mocked(aiTierForPriceId).mockReturnValue("ai_plus");
+		await syncSubscriptionToBilling(
+			sub([
+				{
+					id: "si_ai",
+					price: { id: "price_ai_plus", recurring: { usage_type: "licensed" } },
+				} as unknown as Stripe.SubscriptionItem,
+			]),
+		);
+		expect(upsertOrgAiSubscription).toHaveBeenCalledWith(
+			expect.objectContaining({
+				organizationId: "org_1",
+				aiTier: "ai_plus",
+				aiSubscriptionStatus: "trialing",
+				aiStripeSubscriptionId: "sub_1",
+			}),
+		);
+		expect(upsertOrgBilling).not.toHaveBeenCalled();
+	});
+
+	it("ignores a subscription with no organization_id rather than guessing a tenant", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		await syncSubscriptionToBilling(sub([flat], { metadata: {} }));
+		expect(upsertOrgBilling).not.toHaveBeenCalled();
+		expect(warn).toHaveBeenCalledWith(expect.stringContaining("no organization_id"));
+		warn.mockRestore();
+	});
+
+	it("resolves an expanded customer object to its id", async () => {
+		await syncSubscriptionToBilling(
+			sub([flat], { customer: { id: "cus_expanded" } as Stripe.Customer }),
+		);
+		expect(upsertOrgBilling).toHaveBeenCalledWith(
+			expect.objectContaining({ stripeCustomerId: "cus_expanded" }),
+		);
 	});
 });
