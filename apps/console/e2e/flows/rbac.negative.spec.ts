@@ -221,11 +221,15 @@ test.describe("RBAC — member permission denials", () => {
 		// it is called, so it cannot miss a request fired by an attempt it did not wrap. The open and
 		// the option click retry together for the same reason `activateRowMenuItem` does — a row that
 		// re-renders detaches the portalled option, and re-clicking a dead node cannot recover.
+		//
+		// The loop is the SMALLER of the two budgets, and that is the whole point: everything it
+		// spends is spent out of `refused`'s clock too, so equal numbers let a slow retry be reported
+		// as a missing denial. See REACH_BUDGET_MS.
 		const refused = orgEndpoint(member.page, "update-member-role");
 		await expect(async () => {
 			await row.getByRole("combobox", { name: "Role" }).click();
 			await member.page.getByRole("option", { name: /^admin$/i }).click({ timeout: 2_000 });
-		}).toPass({ timeout: 30_000 });
+		}).toPass({ timeout: REACH_BUDGET_MS });
 		const response = await refused;
 		expect(response.status(), "a member must not be able to escalate a colleague to admin").toBeGreaterThanOrEqual(400);
 
