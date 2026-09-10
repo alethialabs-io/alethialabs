@@ -210,8 +210,31 @@ wt_human_bytes() { # <bytes> → 1.9G · 12.0M · 4.0K · 0B
 # Both are the same shape: the lease answers "is an AGENT holding this tree", and this command asks
 # it "is anything using these files". Narrowing to `stale` alone would not fix it and would lose
 # the human-created case entirely; the fix is a liveness signal, which is #4609's job.
-wt_dehydrate_verdict() { # <worktree> → verb<TAB>bytes<TAB>why
-	local wt="$1" state dirs bytes=0 n=0 d
+#
+# ONE PREDICATE, OPTIONAL BYTES. `--with-bytes` decides only whether to pay for `du`; it can never
+# change the verb. That split is the whole design: "is this tree reapable, and is it hydrated?" is
+# a lease read plus a directory test, while the `du` exists solely to render a number in a report.
+# A second, cheaper "would this be reaped?" helper would have been the fork this repo keeps getting
+# bitten by — two renderers, one of which never gets the fix. So the expensive half is a parameter,
+# not a copy, and if the hint and the command ever disagree it is a predicate bug that shows in both.
+#
+# WHY IT MATTERS: `--prune` is named in CLAUDE.md §2 as routine hygiene, and it calls this once per
+# kept tree purely to COUNT them. A pause on a command people are supposed to run casually trains
+# them not to run it, which costs more than the hint is worth.
+#
+# MEASURED, and it corrects a wrong attribution rather than confirming one. `--prune --dry-run` over
+# 68 worktrees: 44s on origin/dev with NO hint at all, ~49s with it. The dominant cost is neither du
+# nor this hint — it is `wt_branch_landed`, which spends one `gh` API call per tree (0.47s measured,
+# x68). Over these trees the du component is inside the noise of that. So this parameter is worth
+# having for its SHAPE — the cheap question stays cheap as tree counts grow, and nobody pays for a
+# number they cannot read — but do not credit it with fixing a 48s command. The lever for that is
+# batching or caching the PR lookups, which is older than this file's involvement.
+#
+# The real `--dehydrate` run does not ask for bytes either: it reports what the reap itself measured
+# under the lease, so asking here would have been a second du over the same 2 GB, discarded.
+wt_dehydrate_verdict() { # <worktree> [--with-bytes] → verb<TAB>bytes<TAB>why
+	local wt="$1" want_bytes=0 state dirs bytes=0 n=0 d
+	[ "${2:-}" = "--with-bytes" ] && want_bytes=1
 	# Asked FIRST, because `git worktree list` still names a directory somebody deleted by hand, and
 	# every question below it resolves a missing path to the MAIN-checkout answer — which would
 	# report a deleted tree as "the shared main checkout". A true mechanism under a false label.
@@ -249,12 +272,18 @@ wt_dehydrate_verdict() { # <worktree> → verb<TAB>bytes<TAB>why
 	fi
 	while IFS= read -r d; do
 		[ -n "$d" ] || continue
-		bytes=$((bytes + $(wt_dir_bytes "$d")))
+		if [ "$want_bytes" = 1 ]; then bytes=$((bytes + $(wt_dir_bytes "$d"))); fi
 		n=$((n + 1))
 	done <<NMEOF
 $dirs
 NMEOF
-	printf 'reap\t%s\tup to %s on disk across %s node_modules dir(s), lease %s\n' "$bytes" "$(wt_human_bytes "$bytes")" "$n" "$state"
+	# The two renderings differ only in whether they can honestly name a size. A count-only verdict
+	# must not carry a figure it did not measure — that is how "N trees" quietly becomes "N GB".
+	if [ "$want_bytes" = 1 ]; then
+		printf 'reap\t%s\tup to %s on disk across %s node_modules dir(s), lease %s\n' "$bytes" "$(wt_human_bytes "$bytes")" "$n" "$state"
+	else
+		printf 'reap\t0\t%s node_modules dir(s), lease %s (size not measured)\n' "$n" "$state"
+	fi
 }
 
 # Remove <worktree>'s reapable node_modules and NOTHING else.
@@ -289,6 +318,9 @@ NMEOF
 # Would `wt:dehydrate` actually reach this tree? Used ONLY by --prune's hint line, which must not
 # promise a command that will refuse: counting a live-held hydrated tree there tells the reader to
 # run something that reaches neither it nor, possibly, anything at all.
+#
+# Asks the ONE verdict, with bytes OFF — it needs a count, not a size, and this runs once per kept
+# tree on a routine command. The self-test asserts that this path invokes `du` exactly zero times.
 wt_count_reachable_hydrated() { # <worktree> → 0 if wt:dehydrate would reap it
 	[ "$(wt_dehydrate_verdict "$1" | cut -f1)" = reap ]
 }
@@ -506,7 +538,14 @@ if [ "${1:-}" = "--dehydrate" ]; then
 	while IFS= read -r wt; do
 		[ -n "$wt" ] || continue
 		br="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
-		verdict="$(wt_dehydrate_verdict "$wt")"
+		# Bytes ONLY on a dry run: a ceiling is the dry run's whole product, while the real run
+		# reports what the reap itself measured under the lease — asking here would be a second du
+		# over the same 2 GB, discarded.
+		if [ "$dry" = 1 ]; then
+			verdict="$(wt_dehydrate_verdict "$wt" --with-bytes)"
+		else
+			verdict="$(wt_dehydrate_verdict "$wt")"
+		fi
 		verb="${verdict%%$'\t'*}"
 		rest="${verdict#*$'\t'}"
 		bytes="${rest%%$'\t'*}"
@@ -719,6 +758,50 @@ wt_dehydrate_self_test() {
 	_a "1.0M" "$(wt_human_bytes 1048576)" "human: MiB boundary"
 	_a "1.9G" "$(wt_human_bytes 2040109465)" "human: GiB to one decimal (#4580's 1.9G)"
 	_a "0B" "$(wt_human_bytes not-a-number)" "human: garbage is 0B, never a crash mid-sweep"
+
+	# ── the cost of the ONE predicate, counted rather than timed ───────────────────────────────
+	#
+	# NOT a timing assertion — those are flaky by construction and would be disabled within a month.
+	# What actually regressed `--prune` (48s over 68 trees, on a command CLAUDE.md §2 calls routine
+	# hygiene) was PAYING for du where nobody reads the number. A count of du invocations is the
+	# durable form of that, and it fails for the right reason if someone reintroduces the cost.
+	#
+	# The shim resolves the real du BEFORE it is put on PATH, so it cannot recurse into itself.
+	mkdir -p "$tmp/shim"
+	printf '#!/bin/sh\necho call >>"%s"\nexec %s "$@"\n' "$tmp/du.calls" "$(command -v du)" >"$tmp/shim/du"
+	chmod +x "$tmp/shim/du"
+	_du_calls() { # <label> <expected: 0 | some> <verdict args…>
+		local label="$1" expect="$2"
+		shift 2
+		: >"$tmp/du.calls"
+		PATH="$tmp/shim:$PATH" "$@" >/dev/null 2>&1 || true
+		local n
+		n="$(wc -l <"$tmp/du.calls" | tr -d ' ')"
+		if { [ "$expect" = 0 ] && [ "$n" -eq 0 ]; } || { [ "$expect" = some ] && [ "$n" -gt 0 ]; }; then
+			echo "ok   - $label (du ran $n time(s))"
+		else
+			echo "FAIL - $label: wanted $expect du invocations, got $n" >&2
+			fails=$((fails + 1))
+		fi
+	}
+	# shellcheck disable=SC2329
+	_v_plain() { CLAUDE_PID="$me" wt_dehydrate_verdict "$wt"; }
+	# shellcheck disable=SC2329
+	_v_bytes() { CLAUDE_PID="$me" wt_dehydrate_verdict "$wt" --with-bytes; }
+	# shellcheck disable=SC2329
+	_v_hint() { CLAUDE_PID="$me" wt_count_reachable_hydrated "$wt"; }
+	_du_calls "cost: the default verdict never runs du" 0 _v_plain
+	_du_calls "cost: --prune's hint predicate never runs du" 0 _v_hint
+	_du_calls "cost: --with-bytes does run du — the ceiling is the dry run's product" some _v_bytes
+	# Same predicate either way. If these ever disagree it is a predicate bug, and it shows in both.
+	_a "$(CLAUDE_PID="$me" wt_dehydrate_verdict "$wt" | cut -f1)" \
+		"$(CLAUDE_PID="$me" wt_dehydrate_verdict "$wt" --with-bytes | cut -f1)" \
+		"cost: --with-bytes changes the FIGURE, never the verdict"
+	# A count-only verdict must not carry a size it did not measure.
+	if CLAUDE_PID="$me" wt_dehydrate_verdict "$wt" | cut -f3 | grep -q 'up to'; then
+		echo "FAIL - cost: the byte-less verdict quoted a size it never measured" >&2
+		fails=$((fails + 1))
+	else echo "ok   - cost: the byte-less verdict names a count, never a size"; fi
 
 	# ── the verdict ladder ─────────────────────────────────────────────────────────────────────
 	rm -rf "$ld"
