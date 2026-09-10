@@ -242,8 +242,16 @@ wt_lease_acquire() { # <worktree-path>
 				return 0
 			fi
 			wt_lease_live && return 1
-			# Holder is gone. Drop the lease and re-loop; the mkdir above arbitrates the race, so
-			# two reclaimers can't both believe they won.
+			# Holder is gone. Drop the lease and re-loop.
+			#
+			# The old comment here claimed "the mkdir above arbitrates the race, so two reclaimers
+			# can't both believe they won". That is TRUE for the fresh-lease path and FALSE for this
+			# one: two acquirers can read the SAME stale owner, both fall through to this `rm -rf`,
+			# and both then succeed at `mkdir` — the second one's mkdir arbitrates nothing, because
+			# the first one's directory was already removed. Demonstrated by widening this window
+			# deliberately; at real speed it did not reproduce in 60 attempts, so it is narrow, not
+			# absent. Worth knowing before anything is built on "acquire is a mutex": against a
+			# LIVE holder it is exact, and STALE RECLAIM IS BEST-EFFORT.
 			rm -rf "$ld" 2>/dev/null || true
 		else
 			# Dir exists but owner isn't readable yet — a racer mid-acquire. Give it a moment.

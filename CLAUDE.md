@@ -51,8 +51,11 @@ Nothing used to put one *back* into that state. A tree that is abandoned but who
 landed is invisible to `wt:prune` — which removes only LANDED, clean trees — so it sat there for
 good (#4580). `pnpm wt:dehydrate [--dry-run]` reaps `node_modules` and nothing else from every tree
 whose lease is not live: the tree, its tracked files and its uncommitted work all stay, which is
-why it can touch the trees `wt:prune` must refuse. It never touches a tree a live instance holds —
-*including yours*; `pnpm wt:release` first if you mean it.
+why it can touch the trees `wt:prune` must refuse. The one other thing it clears is the reaped
+tree's own dead lease record, so a tree that read `stale` in `wt:who` reads `free` afterwards. It
+never touches a tree a live instance holds — *including yours*; `pnpm wt:release` first if you mean
+it. While it holds a tree the lock is a live foreign lease to everyone, so `git stash` — whose
+stack is repo-wide — is refused for the duration of the sweep.
 
 **Do not quote its byte figures as savings, and do not quote #4580's "~2 GB per tree" either — both
 are `du`'s numbers.** pnpm here uses APFS clones, so a tree's `node_modules` is mostly references

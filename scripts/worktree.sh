@@ -303,11 +303,18 @@ wt_count_reachable_hydrated() { # <worktree> → 0 if wt:dehydrate would reap it
 	[ "$(wt_dehydrate_verdict "$1" | cut -f1)" = reap ]
 }
 
-# Release the reap's own lock. Set as an EXIT/INT/TERM trap by wt_dehydrate_tree, in the subshell
-# its caller's `$(…)` creates — so it fires the moment that reap ends, however it ends.
+# Release the reap's own lock. Set as an EXIT/INT/TERM trap by wt_dehydrate_tree.
+#
+# The sweep calls that function inside a `$(…)` (it captures the byte figure), so the trap usually
+# belongs to that subshell and fires as the reap ends. It is NOT always a subshell, though — the
+# self-test calls it directly, which is exactly why wt_dehydrate_tree saves and restores the
+# caller's traps. "However it ends" means every signal that CAN be trapped: SIGKILL cannot, and the
+# `$$` keying is what stops that leaving a wedge (the lease reads `stale` once the script dies).
 wt_reap_unlock() {
 	[ -n "${WT_REAP_LOCK:-}" ] || return 0
-	ALETHIA_ALLOW_FOREIGN_WT="" CLAUDE_PID="$$" wt_lease_release "$WT_REAP_LOCK" >/dev/null 2>&1 || true
+	# No ALETHIA_ALLOW_FOREIGN_WT here: wt_lease_release never reads it. Only CLAUDE_PID matters, so
+	# that wt_lease_is_mine() recognises the `$$`-stamped lease as ours and actually drops it.
+	CLAUDE_PID="$$" wt_lease_release "$WT_REAP_LOCK" >/dev/null 2>&1 || true
 	WT_REAP_LOCK=""
 }
 
@@ -331,11 +338,17 @@ wt_reap_unlock() {
 #                                      hatch exists to let a maintainer EDIT someone's worktree; it
 #                                      was never a licence to delete under a live process.
 #
-# The `mkdir` inside wt_lease_acquire is the arbitration point: whoever wins it owns the tree, and
-# every other instance's acquire then returns 1 for the duration — in all three invocation modes,
-# not just when an agent happens to be driving. The state read stays, BEFORE the lock, because it
-# answers a question the lock cannot: it honours neither hatch and so still says "live" for a holder
-# that is already there.
+# The `mkdir` inside wt_lease_acquire is the arbitration point: whoever wins it owns the tree. The
+# three-modes claim is about THE REAPER — this command now takes a lock whichever way it was
+# invoked, where before it took none in two of the three. It is NOT a claim about arrivals, and the
+# difference matters: an arriving instance that carries ALETHIA_ALLOW_FOREIGN_WT=1 gets 0 from its
+# own acquire without ever reading our lease (wt-lease.sh returns early on the hatch), so it is not
+# excluded. Measured: a plain agent arriving gets rc 1, an agent arriving under the hatch gets rc 0.
+# That is the hatch behaving as designed — it is the documented override — and no fixture here can
+# catch it, because `_race` only ever sets the hatch on the reaper.
+#
+# The state read stays, BEFORE the lock, because it answers a question the lock cannot: it honours
+# neither hatch and so still says "live" for a holder that is already there.
 #
 # ORDER MATTERS AND IS NOT INTERCHANGEABLE: state-read first, then lock. Reversed, our own `$$`
 # lease would read back as a foreign `live` — wt_lease_is_mine compares against the CALLER's
@@ -386,10 +399,22 @@ NMEOF
 	# Hand it straight back, and for the RIGHT reason — the previous wording here was measurably
 	# false. It claimed a leftover lease makes a tree "read as LIVE-held by a process that has since
 	# exited — un-reapable for everyone after". It does not: liveness is `ps` on the recorded pid, so
-	# once the holder exits the state is `stale`, which is reapable. What a leftover lease actually
-	# does is block every OTHER instance for as long as THIS script keeps running — a sweep would
-	# lock each tree it touched behind itself for the rest of its own run. That is the cost, and it
-	# is why the release is immediate rather than deferred to the trap.
+	# once the holder exits the state is `stale`, which is reapable.
+	#
+	# WHAT IT ACTUALLY COSTS, and it is wider than a worktree. While the lock is held the tree reads
+	# as a LIVE FOREIGN lease to EVERY instance — including the one that ran this command, because
+	# the pid is `$$` and never any agent's wt_self_pid(). Two consequences worth writing down,
+	# because both are confusing when met cold:
+	#   · `.claude/hooks/guard-worktree.sh` refuses `git stash` REPO-WIDE whenever any other
+	#     worktree carries a live foreign lease — and git's stash stack is repo-wide, so the denial
+	#     lands on every instance, not just on this tree. Measured: no lease → exit 0; the reaper's
+	#     lease → exit 2 "BLOCKED: git stash uses a shared repository stack"; the same lease stamped
+	#     with the caller's own CLAUDE_PID → exit 0.
+	#   · require_free() tells a peer "another LIVE Claude instance is working in it … wt:steal",
+	#     naming a pid that is this script and may already be gone.
+	# Each is per-tree and self-clearing, but a sweep holds SOME tree for essentially its whole run.
+	# The lock is what makes the reap correct, so the behaviour stands — the release is immediate
+	# rather than deferred to the trap precisely to keep that window as short as possible.
 	wt_reap_unlock
 	trap - EXIT INT TERM
 	# Restore ONLY in the caller's own shell. A `$(…)` subshell does NOT inherit-and-run the
@@ -582,7 +607,13 @@ if [ "${1:-}" = "--dehydrate" ]; then
 	for a in "$@"; do [ "$a" = "--dry-run" ] && dry=1; done
 	total=0
 	reaped=0
-	kept=0
+	held=0
+	other=0
+	# HELD and OTHER are counted apart because "skipping N held one(s)" was false: it lumped the
+	# main checkout, a tree git cannot read and a directory that no longer exists in with trees a
+	# live instance is actually working in. In a four-worktree fixture two of the four "held" were
+	# held by nothing at all.
+	#
 	# No `*/wt-*` name filter, unlike --prune: the main checkout is excluded because wt_lease_dir
 	# says it is not leasable, which is the actual question. The harness also creates worktrees at
 	# app/.claude/worktrees/<name>, and those are just as reapable as a sibling wt-*.
@@ -604,7 +635,11 @@ if [ "${1:-}" = "--dehydrate" ]; then
 		case "$verb" in
 			skip)
 				echo "  skip  $wt  ($br) — $why"
-				kept=$((kept + 1))
+				# Only a LIVE lease means "held". The other skips are "not a target".
+				case "$why" in
+					*LIVE\ instance* | *yours\ and\ LIVE*) held=$((held + 1)) ;;
+					*) other=$((other + 1)) ;;
+				esac
 				continue
 				;;
 			clean)
@@ -621,7 +656,7 @@ if [ "${1:-}" = "--dehydrate" ]; then
 			echo "  reap  $wt  ($br) — freed up to $(wt_human_bytes "$bytes") on disk"
 		else
 			echo "  skip  $wt  ($br) — a live instance took it between the scan and the reap"
-			kept=$((kept + 1))
+			held=$((held + 1))
 			continue
 		fi
 		total=$((total + bytes))
@@ -634,12 +669,13 @@ $(git worktree list --porcelain | sed -n 's/^worktree //p')
 EOF
 	echo ""
 	if [ "$dry" = 1 ]; then
-		echo "✓ dry run: would reap $reaped tree(s), up to $(wt_human_bytes "$total") on disk, skipping $kept held one(s). Nothing was touched."
+		echo "✓ dry run: would reap $reaped tree(s), up to $(wt_human_bytes "$total") on disk; $held held by a live instance, $other not a target. Nothing was touched."
 		echo "  \"up to\" is the ceiling, not the estimate: pnpm uses APFS clones, so most of these"
 		echo "  blocks are shared with the pnpm store and expect FAR less back — 38x less, measured."
 	else
-		echo "✓ reaped $reaped tree(s), up to $(wt_human_bytes "$total") on disk, skipped $kept held one(s)."
-		echo "  No worktree, tracked file or uncommitted change was removed."
+		echo "✓ reaped $reaped tree(s), up to $(wt_human_bytes "$total") on disk; $held held by a live instance, $other not a target."
+		echo "  No worktree, tracked file or uncommitted change was removed. A reaped tree's own"
+		echo "  stale lease record goes with it, so it reads 'free' rather than 'stale' afterwards."
 		echo ""
 		echo "  \"up to\" is the honest form, not a hedge. pnpm uses APFS clones, so most of what was"
 		echo "  just deleted was SHARED with the pnpm store, and a block is freed only when its last"
@@ -828,13 +864,26 @@ wt_dehydrate_self_test() {
 	printf '#!/bin/sh\nsleep 1\nexec %s "$@"\n' "$(command -v du)" >"$tmp/shim-slow-du"
 	chmod +x "$tmp/shim-slow-du"
 
-	_race() { # <label> <env…> -- runs a reap in the background, races a holder into it
-		local label="$1"
-		shift
+	# <start> is `free` or `stale`, and testing both is not padding: `stale` is the population this
+	# command exists for, and it takes a DIFFERENT path through wt_lease_acquire — the reclaim
+	# branch, which rm -rf's the old lease before re-mkdir'ing rather than winning a fresh mkdir.
+	# Every arm used to rm -rf the lease first, so all three tested `free` and none tested the one
+	# that matters.
+	_race() { # <label> <free|stale> <env…> — runs a reap in the background, races a holder into it
+		local label="$1" start="$2"
+		shift 2
 		mkdir -p "$wt/node_modules" "$wt/apps/console/node_modules"
 		: >"$wt/node_modules/blob"
 		: >"$wt/apps/console/node_modules/blob"
 		rm -rf "$ld"
+		if [ "$start" = stale ]; then
+			mkdir -p "$ld"
+			{
+				echo "pid: 999999"
+				echo "procStart: Thu Jan  1 00:00:00 1970"
+				echo "host: $(wt_host)"
+			} >"$ld/owner"
+		fi
 		rm -f "$tmp/holder.rc"
 		local slow="$tmp/slowdu"
 		mkdir -p "$slow"
@@ -847,8 +896,8 @@ wt_dehydrate_self_test() {
 		wait "$reap_pid" 2>/dev/null || true
 		local rc
 		rc="$(cat "$tmp/holder.rc" 2>/dev/null || echo "?")"
-		if [ "$rc" = 1 ]; then echo "ok   - lock: an instance arriving mid-reap is refused ($label)"; else
-			echo "FAIL - lock: an instance arriving mid-reap got rc '$rc', not 1 ($label) — both sides think they own the tree" >&2
+		if [ "$rc" = 1 ]; then echo "ok   - lock: an instance arriving mid-reap is refused ($label, from $start)"; else
+			echo "FAIL - lock: an instance arriving mid-reap got rc '$rc', not 1 ($label, from $start) — both sides think they own the tree" >&2
 			fails=$((fails + 1))
 		fi
 	}
@@ -857,9 +906,12 @@ wt_dehydrate_self_test() {
 	printf '. "%s"\n' "$(cd "$(dirname "$0")" && pwd)/lib/wt-lease.sh" | cat - "$tmp/fns.sh" >"$tmp/fns2.sh"
 	mv "$tmp/fns2.sh" "$tmp/fns.sh"
 	if bash -c '. "$0"; type wt_dehydrate_tree >/dev/null 2>&1' "$tmp/fns.sh"; then
-		_race "mode A: an agent" CLAUDE_PID="$me"
-		_race "mode B: a HUMAN, no agent marker" CLAUDE_PID= CODEX_PID= CODEX_SESSION_ID= CODEX_THREAD_ID=
-		_race "mode C: ALETHIA_ALLOW_FOREIGN_WT=1" CLAUDE_PID="$me" ALETHIA_ALLOW_FOREIGN_WT=1
+		_race "mode A: an agent" free CLAUDE_PID="$me"
+		_race "mode B: a HUMAN, no agent marker" free CLAUDE_PID= CODEX_PID= CODEX_SESSION_ID= CODEX_THREAD_ID=
+		_race "mode C: ALETHIA_ALLOW_FOREIGN_WT=1" free CLAUDE_PID="$me" ALETHIA_ALLOW_FOREIGN_WT=1
+		_race "mode A: an agent" stale CLAUDE_PID="$me"
+		_race "mode B: a HUMAN, no agent marker" stale CLAUDE_PID= CODEX_PID= CODEX_SESSION_ID= CODEX_THREAD_ID=
+		_race "mode C: ALETHIA_ALLOW_FOREIGN_WT=1" stale CLAUDE_PID="$me" ALETHIA_ALLOW_FOREIGN_WT=1
 	else
 		echo "FAIL - lock: could not extract the functions for the two-process race" >&2
 		fails=$((fails + 1))
@@ -1057,6 +1109,76 @@ wt_dehydrate_self_test() {
 	_a "wtdehydrate" "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo GONE)" "survives: the worktree itself, on its own branch"
 	_a "free" "$(CLAUDE_PID="$me" wt_lease_state "$wt")" "reap: the lease is handed straight back, not left reading as ours"
 	_a "clean" "$(CLAUDE_PID="$me" wt_dehydrate_verdict "$wt" | cut -f1)" "reap: a second pass reports 'clean' rather than re-reaping"
+
+	# ── THE COMMAND, end to end ────────────────────────────────────────────────────────────────
+	#
+	# Everything above tests FUNCTIONS. The command is a separate artefact — arg parsing, the
+	# verdict→line rendering, the skip/clean/reap dispatch, the running totals, and the byte figure
+	# it prints — and none of it was covered: deleting `bytes="$freed"` left the whole suite green
+	# while the real command reported `up to 0B` instead of `up to 2.0M`. That figure is what this
+	# PR calls the tool's entire justification, so it is now driven rather than asserted about.
+	#
+	# Its own throwaway repo, for the reason the --who fixture has one.
+	local cmd="$tmp/cmdrepo" cout
+	mkdir -p "$cmd/main/scripts/lib"
+	git init -q "$cmd/main"
+	printf 'node_modules\n' >"$cmd/main/.gitignore"
+	git -C "$cmd/main" add .gitignore
+	git -C "$cmd/main" -c user.email=t@t -c user.name=t commit -q -m init
+	cp "$0" "$cmd/main/scripts/worktree.sh"
+	cp "$(cd "$(dirname "$0")" && pwd)/lib/"*.sh "$cmd/main/scripts/lib/"
+	# Three trees: one reapable (stale lease, hydrated), one held by a LIVE instance, one clean.
+	git -C "$cmd/main" worktree add -q -b creap "$cmd/wt-creap"
+	git -C "$cmd/main" worktree add -q -b cheld "$cmd/wt-cheld"
+	git -C "$cmd/main" worktree add -q -b cclean "$cmd/wt-cclean"
+	mkdir -p "$cmd/wt-creap/node_modules" "$cmd/wt-cheld/node_modules"
+	dd if=/dev/zero of="$cmd/wt-creap/node_modules/blob" bs=1024 count=2048 2>/dev/null
+	: >"$cmd/wt-cheld/node_modules/blob"
+	_stamp() { # <worktree> <pid> <procstart>
+		local d
+		d="$(git -C "$1" rev-parse --absolute-git-dir)/alethia-lease"
+		mkdir -p "$d"
+		{
+			echo "pid: $2"
+			echo "procStart: $3"
+			echo "host: $(wt_host)"
+		} >"$d/owner"
+	}
+	_stamp "$cmd/wt-creap" 999999 "Thu Jan  1 00:00:00 1970"
+	_stamp "$cmd/wt-cheld" 1 "$(wt_procstart 1)"
+
+	cout="$(CLAUDE_PID="$me" bash "$cmd/main/scripts/worktree.sh" --dehydrate --dry-run 2>&1)"
+	_has() { if printf '%s' "$2" | grep -qF -- "$1"; then echo "ok   - $3"; else
+		echo "FAIL - $3: not in output. Got:" >&2
+		printf '%s\n' "$2" >&2
+		fails=$((fails + 1))
+	fi; }
+	_has "WOULD reap" "$cout" "cmd: --dry-run names the tree it would reap"
+	_has "up to 2.0M on disk" "$cout" "cmd: --dry-run reports the CEILING it measured, not 0B"
+	_has "held by another LIVE instance" "$cout" "cmd: --dry-run skips the live-held tree"
+	# The VERB as well as the reason: asserting only "already de-hydrated" let a mutant that
+	# rendered the clean tree as a `skip` survive, because the reason text is identical either way.
+	# Matched by PATTERN, not by embedding $cmd: `git worktree list` reports PHYSICAL paths, and on
+	# macOS mktemp hands back /var/... while git prints /private/var/... — the same symlink trap
+	# wt-lease.sh's wt_abs() exists for.
+	_hasre() { if printf '%s' "$2" | grep -qE -- "$1"; then echo "ok   - $3"; else
+		echo "FAIL - $3: no line matching /$1/. Got:" >&2
+		printf '%s\n' "$2" >&2
+		fails=$((fails + 1))
+	fi; }
+	_hasre '^  ok    .*/wt-cclean  \(cclean\)' "$cout" "cmd: the clean tree renders as 'ok', not as a skip"
+	_has "already de-hydrated" "$cout" "cmd: … and says why"
+	_has "1 held by a live instance, 1 not a target" "$cout" "cmd: --dry-run counts HELD apart from not-a-target"
+	_a "yes" "$([ -e "$cmd/wt-creap/node_modules/blob" ] && echo yes || echo no)" "cmd: --dry-run deleted nothing"
+
+	cout="$(CLAUDE_PID="$me" bash "$cmd/main/scripts/worktree.sh" --dehydrate 2>&1)"
+	_has "freed up to 2.0M on disk" "$cout" "cmd: the real run reports the bytes IT removed"
+	_has "reaped 1 tree(s), up to 2.0M on disk" "$cout" "cmd: the total is the sum of what was reaped"
+	_has "1 held by a live instance, 1 not a target" "$cout" "cmd: the real run counts HELD apart too"
+	_a "no" "$([ -e "$cmd/wt-creap/node_modules/blob" ] && echo yes || echo no)" "cmd: the reapable tree WAS reaped"
+	_a "yes" "$([ -e "$cmd/wt-cheld/node_modules/blob" ] && echo yes || echo no)" "cmd: the live-held tree was NOT"
+	_a "free" "$(CLAUDE_PID="$me" wt_lease_state "$cmd/wt-creap")" "cmd: the reaped tree's stale lease record went with it"
+	rm -rf "$cmd"
 
 	git -C "$tmp/main" worktree remove --force "$wt" 2>/dev/null || true
 	if [ "$fails" -eq 0 ]; then echo "worktree dehydrate self-test: all passed"; else
