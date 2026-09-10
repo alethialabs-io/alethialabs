@@ -34,11 +34,15 @@ name: Release gate
 # later on someone else's promotion (#4333 → #4389). So the `legs` job now goes RED when a dev PR
 # changes something the gate BOOTS and carries neither `release-gate:*` label, naming the paths, the
 # legs they imply and the label that is missing. The seven legs still run only on a promotion, a
-# dispatch, or a labelled PR — the price of asking the question is one short job, i.e. ONE runner
-# SLOT (scripts/ci/ci-demand.mjs measures slots, not minutes: 75% of this repo's CI wall-clock is
-# queue wait, so a five-second job that waits twenty minutes costs twenty). That is the whole reason
-# the answer is a red check and not an automatic run: a slot per dev PR, against seven legs and ~76
-# runner-minutes per dev PR, for a verdict nobody asked for.
+# dispatch, or a labelled PR.
+#
+# THE PRICE, STATED IN THE CURRENCY THAT BINDS. `legs` now takes ONE RUNNER SLOT on every non-draft
+# PR into main, staging or dev, on every push to it, and it now also does a checkout of this
+# monorepo — including on a docs-only PR, which is more than "one short job" and is the honest cost.
+# scripts/ci/ci-demand.mjs measures slots rather than minutes because 75% of this repo's CI
+# wall-clock is queue wait: a five-second job that waits twenty minutes holds a slot for twenty. That
+# is also the whole reason the answer is a red check and not an automatic run — one slot per dev PR,
+# against seven legs and ~76 runner-minutes for a verdict nobody asked for.
 #
 # WHICH legs run is a separate question from WHETHER the gate runs, and it is answered once, in the
 # `legs` job. A PR into main or staging runs every leg — that is the gate, and a promotion must not
@@ -58,7 +62,8 @@ name: Release gate
 # Every `pnpm` invocation is `-C <dir> run` or `exec` (scripts/ci/check-pnpm-script-refs.mjs); every
 # step past the checkout that runs on failure carries the #4084 conjunct
 # (scripts/ci/check-workflow-shape.mjs). The `WORKFLOW_HEALTH_SUBSTANTIVE_JOB` line lets
-# scripts/ci/workflow-health.mjs ask whether the leg that matters actually ran.
+# scripts/ci/workflow-health.mjs ask whether the job that carries this workflow's meaning actually
+# ran — see the note above that line for why it is no longer a leg.
 on:
   pull_request:
     branches: [main, staging, dev]
@@ -92,8 +97,24 @@ concurrency:
 permissions:
   contents: read
 
+# THE JOB THAT CARRIES THIS WORKFLOW'S MEANING, for scripts/ci/workflow-health.mjs's vacuity check.
+#
+# It named `Release gate (qa)` until #4466, and that stopped being answerable in the same change.
+# Before it, an unlabelled dev PR skipped EVERY job here, so the run concluded `skipped`, so
+# `classify()` never counted it and the marker was never consulted (measured: 7 of the last 8 runs).
+# Now the `legs` job really runs on those PRs, so the run is DECIDED — and on a green one that
+# narrowed to nothing, no `Release gate (qa)` job exists at all. `substantiveVerdict` reads a job
+# absent from every sampled run as `misdeclared`, which outranks every other state and prints at the
+# top of the report: "the job was probably renamed". It was not. The legs are CONDITIONAL BY DESIGN
+# on the dev path, which is a thing no per-run marker can express.
+#
+# So the marker names the job that runs on every decided run and carries the meaning that is new:
+# does a verdict exist for what this PR changed. WHAT THAT GIVES UP, stated: a promotion run where
+# `qa` silently stops being selected is no longer caught HERE. It is caught somewhere stronger —
+# deploy-console.yml refuses to deploy unless all seven `Release gate (<leg>)` contexts PASSED on the
+# promotion PR's head, which is a stricter question than "did the job appear".
 env:
-  WORKFLOW_HEALTH_SUBSTANTIVE_JOB: "Release gate (qa)"
+  WORKFLOW_HEALTH_SUBSTANTIVE_JOB: "Which legs run, and whether the gate runs at all"
 
 jobs:
   legs:
@@ -110,9 +131,11 @@ jobs:
     # the changed-file list and the leg table, i.e. the only place that can ask whether the diff
     # needed a leg. A question cannot be answered by a job that does not run, so the job runs and the
     # `run` output carries the same conjunct, evaluated where the changed files are in hand. What is
-    # NOT relaxed: `draft == false`, and the rule that a `labeled` event restarts nothing unless the
-    # label added is one of the two — a random label on a promotion PR still cancels and starts
-    # nothing, which is what the concurrency note above is about.
+    # NOT relaxed: `draft == false`, and the rule that a `labeled` event starts nothing unless the
+    # label added is one of the two. Read that second clause together with the `concurrency` note
+    # above and not on its own: a random label cannot CANCEL a running gate either — that is what
+    # `cancel-in-progress: ${{ github.event.action != 'labeled' }}` buys — so an unrelated label on a
+    # promotion PR creates a run whose jobs are skipped and leaves the in-flight one alone.
     if: >-
       github.event_name == 'workflow_dispatch'
       || (github.event.pull_request.draft == false
@@ -134,9 +157,14 @@ jobs:
       # what the build actually consumes. On a `pull_request` this is the MERGE commit, which is the
       # tree the gate would build.
       - uses: actions/checkout@v7
-      # The denominator of the path inference below. It CANNOT fail the job: an API error, a
-      # revoked scope, GitHub's 3000-file cap — each writes an empty list and a `read=` value the
-      # picker turns into "every leg". A file list this step could not read is not an empty diff.
+      # The denominator of the path inference below. THIS STEP cannot fail the job: an API error, a
+      # revoked scope, GitHub's 3000-file cap — each writes an empty list and a `read=no`, and the
+      # question is what the steps below do with it. Both fail SAFE, in the two directions that word
+      # means here: `pick` turns it into EVERY leg (a diff it cannot read must not narrow), and the
+      # label check turns it into a RED (a diff it cannot read cannot show that no leg was needed).
+      # Since #4466 that second one is a job failure on an unlabelled dev PR, cleared by a re-run or
+      # the label — which is a change from when this comment said the value only ever became "every
+      # leg". A file list this step could not read is not an empty diff.
       - id: changed
         name: List the PR's changed files (unreadable or empty selects every leg)
         if: ${{ github.event_name == 'pull_request' }}
@@ -162,6 +190,64 @@ jobs:
           echo "changed files: $count (readable: $read_ok)"
           cat "$CHANGED_FILES"
           echo "read=$read_ok" >> "$GITHUB_OUTPUT"
+      # ── THIS STEP'S `run:` BLOCK HAS A 21,000-CHARACTER CEILING, AND IT IS A LOAD FAILURE ─────
+      #
+      # GitHub renders every `run:` scalar as a template expression before a job starts, and REFUSES
+      # THE WHOLE FILE past 21,000: `(Line: 174, Col: 14): Exceeded max expression length 21000`.
+      # Measured on run 34460914813, where #4466's first draft put this block at 20,917 characters —
+      # UNDER the limit — and 21,119 UTF-8 BYTES, over it. The budget is bytes, so every `—`, `·` and
+      # `→` in a comment down there costs three. The file parsed cleanly under `yaml@2.9.0` and
+      # actionlint was silent; GitHub rejected it anyway.
+      #
+      # WHAT A REJECTED FILE LOOKS LIKE, because nothing in the repo will tell you: a run with ZERO
+      # jobs, named `.github/workflows/release-gate.yml` instead of `Release gate`, on the `push`
+      # event because `on:` was never read — and NOT ONE gate context on the PR. `gh run list
+      # --commit <sha>` shows no release-gate run at all. The message is readable only in that run's
+      # own UI. A workflow that does not load runs no legs, which is strictly worse than the gap this
+      # job exists to close.
+      #
+      # SO PROSE LIVES UP HERE, IN YAML COMMENTS, NOT DOWN THERE IN THE HEREDOC, and the check that
+      # needs its own thousands of bytes is its own step with its own budget. A `#` line here costs
+      # nothing; the same sentence a few columns right, inside the script, is spent out of 21,000.
+      # Measured after the split: `pick` 13.2 KB, `require-label` 7.7 KB. `check-workflow-shape.mjs`
+      # does not measure this, and neither does anything else in the tree.
+      #
+      # ── WHETHER THE GATE RUNS AT ALL, WHICH IS NOW A QUESTION ABOUT THE DIFF (#4466) ──────────
+      #
+      # A promotion PR, a dispatch and a labelled PR run the legs — the conjunct that used to live in
+      # this job's `if:`, unchanged in what it admits. Everything else is a dev PR with no label, and
+      # for those the question stops being "did someone remember" and becomes "does this diff change
+      # something a leg measures". If it does, the step goes RED and names what and why. Measured
+      # cost of not asking: #4333 rewrote the design-project edit buffer unlabelled, the `canvas` leg
+      # never ran, its red first appeared on #4434/#4436/#4439 — none of which touch a canvas file —
+      # and then blocked the dev→staging promotion #4389 two days later.
+      #
+      # WHY A RED CHECK AND NOT AN AUTO-ADDED LABEL. A label added with the default GITHUB_TOKEN
+      # raises a `labeled` event that CANNOT start a workflow run: "events triggered by the
+      # GITHUB_TOKEN will not create a new workflow run, with the following exceptions:
+      # workflow_dispatch and repository_dispatch" (GitHub, "Triggering a workflow"), and `labeled`
+      # is neither. So auto-labelling is not the weaker option, it is broken in the direction that
+      # matters: the PR would carry `release-gate:run`, this workflow would not re-fire, and the gate
+      # would still never run — now wearing a label that reads as the fix. A PAT or App token does
+      # retrigger, at the price of a stored credential that can write to any PR, to save one click.
+      # The red check also spends ZERO gate minutes until a human decides to spend them. There is
+      # deliberately no `release-gate:skip` escape label: a guard whose cheapest escape route is a
+      # second label is a guard nobody ever pays.
+      #
+      # WHERE THE ANSWER IS ASSEMBLED. SEAMS and RULES answer first, here, in the step that owns
+      # them — one mapping, two questions, so "which legs" and "whether any" cannot drift apart. What
+      # this step CANNOT answer is which directories the console is compiled from; that is derived
+      # from the tree in the `require-label` step below, which is also where the failure is raised.
+      #
+      # STATED OMISSIONS, because an unstated one reads as coverage. `pnpm-lock.yaml` and the root
+      # config are NOT on the surface, though a dependency bump can certainly break a flow — every
+      # lockfile PR would otherwise demand an hour of gate for a change no leg has ever caught. Nor
+      # are the devDependencies of a surface package: `@repo/eslint-config` and
+      # `@repo/typescript-config` reach the console only through those, and tooling does not change
+      # what the browser renders. Both are deliberate under-reports; each is one line to change, in
+      # the walk below. What is NOT omitted any more — it was, and the audit of #4466 caught it —
+      # are `scripts/lib/console-routes.mjs` and `scripts/ci/playwright-install.sh`: neither is
+      # reachable from apps/console's dependency graph and both are read by legs, so they are SEAMS.
       - id: pick
         name: Pick the legs for this event
         env:
@@ -231,13 +317,19 @@ jobs:
           // globalSetup so that file runs for every invocation, and every leg's `--reporter=`
           // flag below names `./e2e/reporters/qa-reporter.ts`.
           //
-          // MEASURED, so the next reader is not misled: not one of these paths is matched by any
-          // RULE below TODAY, so deleting this list would change no answer — rule 3 (unmatched
-          // runs everything) already covers every one of them. It is kept, and checked FIRST, for
-          // the case rule 3 stops covering: the day someone widens a rule to a directory — an
-          // `^apps/console/e2e/` catch-all is the obvious one — a seam under it would be swallowed
-          // and the diff would look like a tidy-up. That widening is what this list is for, and it
-          // is the only thing it does.
+          // IT USED TO BE TRUE that deleting this list changed no answer — rule 3 (unmatched runs
+          // everything) already covered every path in it, and it was kept only against the day
+          // someone widens a rule to a directory. #4466 gave it a SECOND reader and that is no
+          // longer true: the label check below asks whether a path is worth a leg, and a seam is
+          // the ONLY way a path outside apps/console and its packages can say yes. Deleting a line
+          // here now turns a red PR green.
+          //
+          // The last two are that second reader's, and they are not under apps/console at all.
+          // `console-routes.mjs` is the audit legs' DENOMINATOR — e2e/audit/manifest.ts calls it
+          // "the ONE definition of the console's private route set", and the gate job runs it as
+          // its own zero-routes guard — so narrowing that glob makes both audit legs measure fewer
+          // routes with no leg having run. `playwright-install.sh` installs the browser every leg
+          // drives. Neither is reachable from a surface derived out of apps/console's dependencies.
           const SEAMS = [
             /^apps\/console\/playwright\.config\.ts$/,
             /^apps\/console\/e2e\/helpers\//,
@@ -247,6 +339,8 @@ jobs:
             /^apps\/console\/e2e\/reporters\//,
             /^scripts\/e2e-ratchet\.mjs$/,
             /^\.github\/workflows\/release-gate\.yml$/,
+            /^scripts\/lib\/console-routes\.mjs$/,
+            /^scripts\/ci\/playwright-install\.sh$/,
           ];
 
           // FIRST MATCH WINS, so the order is load-bearing. Each `when` mirrors a project's
@@ -271,9 +365,15 @@ jobs:
 
           // The two label names that ask for the gate by hand, and the labels this PR actually
           // carries — parsed ONCE, because two questions read them: `decide()` asks WHICH legs run,
-          // and the check under it asks WHETHER any of them run at all.
+          // and the check in the next step asks WHETHER any of them run at all.
+          //
+          // LOWER-CASED, because the job-level `if:` above asks the same question with `contains()`,
+          // and `contains()` IS CASE-INSENSITIVE while `Array.prototype.includes` is not. Both real
+          // labels are lower-case, so this changes no answer today; what it removes is the state
+          // where a `Release-Gate:Run` starts this job (the `if:` says yes) and then fails it (the
+          // picker said no) — two halves of one conjunct disagreeing about the same PR.
           const RUN_LABELS = ["release-gate:run", "release-gate:all"];
-          const prLabels = (() => { try { return JSON.parse(env.PR_LABELS || "[]") || []; } catch { return []; } })();
+          const prLabels = (() => { try { return JSON.parse(env.PR_LABELS || "[]") || []; } catch { return []; } })().map((l) => String(l).toLowerCase());
 
           /** Write one `key=value` job output. */
           const emit = (key, value) => { if (env.GITHUB_OUTPUT) fs.appendFileSync(env.GITHUB_OUTPUT, `${key}=${value}\n`); };
@@ -291,53 +391,6 @@ jobs:
               const files = fs.readFileSync(env.CHANGED_FILES, "utf8").split("\n").map((s) => s.trim()).filter(Boolean);
               return files.length > 0 ? files : null;
             } catch { return null; }
-          }
-
-          /**
-           * The directories the gate COMPILES AND BOOTS: `apps/console` plus every workspace package
-           * it depends on, transitively — read out of the checked-out tree, never typed here.
-           *
-           * `pnpm install --frozen-lockfile` then `pnpm -C apps/console run build` is what each leg
-           * runs, so this walk IS the build's own input list. Add a `@repo/*` dependency to the
-           * console and the surface grows with it; delete one and it shrinks. `optionalDependencies`
-           * is walked because that is how `@alethia/ee` is declared, and the gate builds it by name
-           * for the enterprise scope every org-scoped assertion needs.
-           */
-          function gateSurfaceDirs() {
-            const read = (p) => { try { return fs.readFileSync(p, "utf8"); } catch { return null; } };
-            const json = (p) => { const t = read(p); if (t === null) return null; try { return JSON.parse(t); } catch { return null; } };
-            const ws = read("pnpm-workspace.yaml");
-            const rootPkg = json("apps/console/package.json");
-            if (ws === null || rootPkg === null) {
-              console.error("::error::could not read `pnpm-workspace.yaml` or `apps/console/package.json` out of the checkout, so the gate's surface cannot be derived. A surface this job could not derive is not an empty surface — it must not read as \"nothing the gate measures changed\".");
-              process.exit(1);
-            }
-            const byName = new Map();
-            for (const glob of ws.split("\n").map((l) => /^\s*-\s*"?([^"#]+?)"?\s*$/.exec(l)?.[1]).filter(Boolean)) {
-              const dirs = glob.endsWith("/*")
-                ? (() => { const base = glob.slice(0, -2); try { return fs.readdirSync(base).map((d) => `${base}/${d}`); } catch { return []; } })()
-                : [glob];
-              for (const d of dirs) {
-                const pkg = json(`${d}/package.json`);
-                if (pkg !== null && typeof pkg.name === "string") byName.set(pkg.name, d);
-              }
-            }
-            const surface = new Set(["apps/console"]);
-            const queue = [rootPkg];
-            while (queue.length > 0) {
-              const pkg = queue.shift();
-              for (const field of ["dependencies", "optionalDependencies"]) {
-                for (const [name, spec] of Object.entries(pkg[field] || {})) {
-                  if (!String(spec).startsWith("workspace:")) continue;
-                  const dir = byName.get(name);
-                  if (dir === undefined || surface.has(dir)) continue;
-                  surface.add(dir);
-                  const next = json(`${dir}/package.json`);
-                  if (next !== null) queue.push(next);
-                }
-              }
-            }
-            return [...surface].sort();
           }
 
           /** Decide which legs run, and the one sentence that says why. Rows are per-path detail. */
@@ -411,102 +464,24 @@ jobs:
           console.log(`legs: ${chosen.map((l) => l.project).join(", ")}`);
           console.log(`why: ${decision.rule}`);
 
-          // ── WHETHER THE GATE RUNS AT ALL, WHICH IS NOW A QUESTION ABOUT THE DIFF (#4466) ──────
-          //
-          // A promotion PR, a dispatch and a labelled PR run the legs — that is the conjunct this
-          // job's `if:` used to carry, unchanged in what it admits. Everything else is a dev PR with
-          // no label, and for those the question stops being "did someone remember" and becomes
-          // "does this diff change something a leg measures". If it does, this step goes RED, and
-          // the PR cannot merge unmeasured on a check nobody thought to ask for. Measured cost of
-          // not asking: #4333 rewrote the design-project edit buffer unlabelled, the `canvas` leg
-          // never ran, and its red first appeared on #4434/#4436/#4439 — none of which touch a
-          // canvas file — and then blocked the dev→staging promotion #4389 two days later.
-          //
-          // WHY A RED CHECK AND NOT AN AUTO-ADDED LABEL. A label added with the default
-          // GITHUB_TOKEN raises a `labeled` event that CANNOT start a workflow run: "events
-          // triggered by the GITHUB_TOKEN will not create a new workflow run, with the following
-          // exceptions: workflow_dispatch and repository_dispatch" (GitHub, "Triggering a
-          // workflow"), and `labeled` is not one of the two. So the auto-label variant is not
-          // merely the weaker option, it is broken in the direction that matters: the PR would carry
-          // `release-gate:run`, this workflow would not re-fire for it, and the gate would still
-          // never run. A label asserting a gate that did not run is worse than no label, because it
-          // reads as the fix. (A PAT or GitHub App token does retrigger — at the price of a stored
-          // credential that can write to any PR in the repo, to save one click.) The red check also
-          // spends ZERO gate minutes until a human decides to spend them, which the auto-label
-          // variant cannot say: on a shared, saturated CI that is the difference between a gate and
-          // an outage. There is deliberately NO `release-gate:skip` escape label — a guard whose
-          // cheapest escape route is a second label is a guard nobody ever pays.
-          //
-          // WHAT THE GATE MEASURES IS DERIVED, NOT TYPED. `gateSurfaceDirs()` walks the console's
-          // workspace dependencies out of the checkout. SEAMS and RULES answer first, and they are
-          // the very tables `decide()` narrows with — one mapping, two questions, so the answer to
-          // "which legs" and the answer to "whether any" cannot drift apart. A seam counts because
-          // those files ARE the gate's instrument: changing the baseline or the ratchet without
-          // running a leg is the same defect one level down (#4460).
-          //
-          // STATED OMISSIONS, because an unstated one reads as coverage. `pnpm-lock.yaml` and the
-          // root config are NOT on the surface, though a dependency bump can certainly break a
-          // flow — every lockfile PR would otherwise demand an hour of gate for a change no leg
-          // has ever caught. Nor are the devDependencies of a surface package: `@repo/eslint-config`
-          // and `@repo/typescript-config` reach the console only through those, and tooling does not
-          // change what the browser renders. Both are under-reports, deliberately, and each is one
-          // line below to change.
+          // WHETHER THE GATE RUNS AT ALL (#4466). The reasons live in the YAML comments above this
+          // step, where prose costs the expression budget nothing; the CHECK lives in the next step,
+          // which owns everything this one cannot answer. What crosses between them is one thing:
+          // what SEAMS and RULES — the tables THIS step owns — say about each changed path. That is
+          // what keeps the mapping in one place and the two answers from drifting apart.
           const promotion = env.BASE_REF === "main" || env.BASE_REF === "staging";
           const asked = RUN_LABELS.some((l) => prLabels.includes(l));
-          if (env.EVENT_NAME === "workflow_dispatch" || promotion || asked) {
-            emit("run", "yes");
-          } else {
-            emit("run", "no");
-            const changed = changedPaths();
-            if (changed === null) {
-              console.error("::error::this dev PR carries neither `release-gate:run` nor `release-gate:all`, and the changed-file list could not be read — an API failure, GitHub's 3000-file cap, or a diff of zero files. So this job cannot show that no leg was needed, and a list it could not read is not an empty diff. Re-run this job, or label the PR and let the gate measure it.");
-              summarise([
-                "## Release gate — cannot tell whether a leg is needed",
-                "",
-                "The changed-file list could not be read (see the step above), so the question this job exists to answer has no answer for this PR. Re-run it, or add `release-gate:run`.",
-              ]);
-              process.exit(1);
-            }
-            const surface = gateSurfaceDirs();
-            const rows = [];
-            for (const f of changed) {
-              if (SEAMS.some((re) => re.test(f))) { rows.push({ file: f, legs: "every leg", why: "a shared seam — this file IS the gate's instrument" }); continue; }
+          const gateRuns = env.EVENT_NAME === "workflow_dispatch" || promotion || asked;
+          emit("run", gateRuns ? "yes" : "no");
+          if (!gateRuns) {
+            const implied = [];
+            for (const f of changedPaths() ?? []) {
+              if (SEAMS.some((re) => re.test(f))) { implied.push({ f, l: "every leg", w: "a shared seam — this file IS the gate's instrument" }); continue; }
               const rule = RULES.find((r) => r.when.test(f));
-              if (rule !== undefined) { rows.push({ file: f, legs: rule.legs.join(", "), why: rule.why }); continue; }
-              const dir = surface.find((d) => f.startsWith(`${d}/`));
-              if (dir !== undefined) rows.push({ file: f, legs: "every leg", why: `\`${dir}/\` is compiled into the console every leg boots, and no rule narrows a source path` });
+              if (rule !== undefined) implied.push({ f, l: rule.legs.join(", "), w: rule.why });
             }
-            if (rows.length === 0) {
-              summarise([
-                "## Release gate — not running, and nothing it measures changed",
-                "",
-                `None of the ${changed.length} changed path(s) is a gate seam, a leg's spec, or under one of the ${surface.length} directories the console is built from (\`${surface.join("`, `")}\`), and this PR carries neither \`release-gate:run\` nor \`release-gate:all\`. No leg's verdict is missing.`,
-              ]);
-              console.log(`the gate does not run on this PR: none of its ${changed.length} changed path(s) is on the gate's surface`);
-              process.exit(0);
-            }
-            // A BOOLEAN ABOUT A STRUCTURE MUST PRINT THE STRUCTURE. Every offending path, the legs
-            // it implies and the rule that says so — in the log as file annotations, and in the step
-            // summary as the same table, because the two are read by different people.
-            const SHOWN = 25;
-            console.error(`::error::${rows.length} of this PR's ${changed.length} changed path(s) are on the release gate's surface, and it carries neither \`release-gate:run\` nor \`release-gate:all\` — so NOT ONE leg runs on the change that needs it. A leg's verdict should exist for every PR that changes what it measures.`);
-            for (const r of rows.slice(0, SHOWN)) console.error(`::error file=${r.file}::${r.file} → ${r.legs} (${r.why})`);
-            if (rows.length > SHOWN) console.error(`::error::…and ${rows.length - SHOWN} further path(s) on the surface, listed in the job summary.`);
-            console.error(`::error::Add \`release-gate:run\` to this PR and it runs: ${chosen.map((l) => l.project).join(", ")} (${decision.rule}). \`release-gate:all\` runs all ${ALL.length}.`);
-            summarise([
-              "## Release gate — a leg would never run on what this PR changes",
-              "",
-              `**${rows.length} of ${changed.length} changed path(s)** are on the gate's surface, and this PR carries neither \`release-gate:run\` nor \`release-gate:all\`.`,
-              "",
-              `**Add \`release-gate:run\`** and the gate runs \`${chosen.map((l) => l.project).join("\`, \`")}\` — ${decision.rule}. \`release-gate:all\` runs all ${ALL.length} legs.`,
-              "",
-              "| changed path | would be measured by | because |",
-              "| --- | --- | --- |",
-              ...rows.map((r) => `| \`${r.file}\` | ${r.legs} | ${r.why} |`),
-              "",
-              `The gate's surface is derived from the tree, not typed here: \`${surface.join("`, `")}\` — \`apps/console\` and every workspace package it depends on — plus the gate's own seams and each leg's specs.`,
-            ]);
-            process.exit(1);
+            emit("implied", JSON.stringify(implied));
+            emit("would", `${chosen.map((l) => l.project).join(", ")} — ${decision.rule}`);
           }
 
           // A LEG THAT SILENTLY DOES NOT RUN READS AS A LEG THAT PASSED. So the selection is
@@ -530,6 +505,182 @@ jobs:
             md.push("", "A skipped leg reports no `Release gate (<leg>)` context. `infra/github/main.tf` declares those contexts required on `main` alone — it filters them out of `protect-dev` and `protect-staging`, and `.mergify.yml` names none of them — and a promotion PR never reaches this branch of the rules. (What GitHub enforces is `check-required-checks.mjs --live`'s question, not this one; the narrowing is sound under either answer.)");
           }
           summarise(md);
+          EOF
+      # ── THE CHECK ITSELF: a leg's verdict must exist for every PR that changes what it measures ─
+      #
+      # A SEPARATE STEP, and the separation is not tidiness. Its own `run:` block is its own
+      # 21,000-BYTE expression budget (see the ceiling note above `pick`) — the two halves were one
+      # step in the first draft of #4466 and GitHub refused to load the file at 21,119 bytes. It also
+      # keeps the mapping in ONE place: this step never sees SEAMS or RULES. `pick` hands it the leg
+      # attribution for the paths those tables matched, and this step adds only the half `pick` has
+      # no business knowing — which directories the console is BUILT from — and then formats and
+      # fails.
+      #
+      # WHAT COUNTS AS THE GATE'S SURFACE IS DERIVED, NOT TYPED: `apps/console` plus every workspace
+      # package it depends on, transitively, walked out of the checkout. Add a `@repo/*` dependency
+      # to the console and the surface grows with no edit here.
+      #
+      # AND EVERY STEP OF THAT WALK FAILS CLOSED, because the first draft failed OPEN at four of
+      # them and each one was silent. Measured, by mutating a copy of the tree and re-running this
+      # step: quoting the workspace globs with `'` instead of `"` cut the surface from 14 dirs to 1;
+      # a trailing `# optional` on the `- "ee"` line dropped the enterprise package; a malformed
+      # `packages/ui/package.json` dropped @repo/ui. All three turned a PR that touches those very
+      # directories GREEN, with no warning. A surface derived from a tree this step half-read is not
+      # a smaller surface, it is a broken instrument, and the one thing it must never do is report
+      # "nothing the gate measures changed".
+      #
+      # ONE RECORDED EXEMPTION, and it is a decision rather than an oversight. `release-gate.yml` is
+      # a SEAM — a change to it can move any leg — but it is exempt from DEMANDING the label, because
+      # the PR's own `legs` run already executes the edited file: that is how the 21,119-byte
+      # rejection above was caught, on the PR that wrote it, before any leg would have run. The seven
+      # legs cannot see a YAML change at all, and the leg table's half is checked independently by
+      # `scripts/ci/check-required-checks.mjs` and by deploy-console.yml's promotion receipt. The
+      # bound, stated: an edit to the `gate` job's STEPS is not measured by the PR's own run, and
+      # this exemption does not pretend otherwise — it buys back ~76 runner-minutes on every edit of
+      # the file this wave edits most often, at that cost. The exemption is only from the demand;
+      # the file stays a SEAM, so a labelled PR that touches it still runs every leg.
+      - id: require-label
+        name: A leg's verdict must exist for every PR that changes what it measures
+        env:
+          GATE_RUNS: ${{ steps.pick.outputs.run }}
+          IMPLIED: ${{ steps.pick.outputs.implied }}
+          WOULD_RUN: ${{ steps.pick.outputs.would }}
+          CHANGED_READ: ${{ steps.changed.outputs.read }}
+          CHANGED_FILES: /tmp/release-gate-changed-files.txt
+        run: |
+          node - <<'EOF'
+          const fs = require("node:fs");
+          const env = process.env;
+
+          /** Publish one markdown block to the step summary AND the log — a red job explains itself in both. */
+          const summarise = (md) => {
+            if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `${md.join("\n")}\n`);
+            console.log(md.join("\n"));
+          };
+
+          if (env.GATE_RUNS === "yes") {
+            console.log("the gate runs on this PR — a dispatch, a promotion, or the label. Nothing to demand.");
+            process.exit(0);
+          }
+
+          /** `apps/console` plus every workspace package it depends on. Fails CLOSED at every step. */
+          function surfaceDirs() {
+            const die = (m) => {
+              console.error(`::error::${m} A surface this step could not derive is not an empty surface — reading it as one would pass exactly the PR this check exists to stop.`);
+              process.exit(1);
+            };
+            const read = (p) => { try { return fs.readFileSync(p, "utf8"); } catch { return null; } };
+            const json = (p) => { const t = read(p); if (t === null) return null; try { return JSON.parse(t); } catch { return null; } };
+            const ws = read("pnpm-workspace.yaml");
+            if (ws === null) die("could not read `pnpm-workspace.yaml` out of the checkout.");
+            const root = json("apps/console/package.json");
+            if (root === null) die("could not read `apps/console/package.json` out of the checkout.");
+            const byName = new Map();
+            for (const raw of ws.split("\n")) {
+              // Either quote style, and a trailing `# comment` stripped first: `- 'ee'` and
+              // `- "ee" # optional` are two shapes a stricter reader dropped SILENTLY.
+              const m = /^\s*-\s*(.+?)\s*$/.exec(raw.replace(/\s+#.*$/, ""));
+              if (m === null) continue;
+              const glob = m[1].replace(/^(['"])(.*)\1$/, "$2");
+              let dirs = [glob];
+              if (glob.endsWith("/*")) {
+                const base = glob.slice(0, -2);
+                try { dirs = fs.readdirSync(base).map((d) => `${base}/${d}`); }
+                catch { die(`\`pnpm-workspace.yaml\` globs \`${glob}\`, and \`${base}/\` could not be listed.`); }
+              }
+              for (const d of dirs) {
+                const pkg = json(`${d}/package.json`);
+                if (pkg !== null && typeof pkg.name === "string") byName.set(pkg.name, d);
+              }
+            }
+            const surface = new Set(["apps/console"]);
+            const queue = [["apps/console", root]];
+            while (queue.length > 0) {
+              const [from, pkg] = queue.shift();
+              for (const field of ["dependencies", "optionalDependencies"]) {
+                for (const [name, spec] of Object.entries(pkg[field] || {})) {
+                  if (!String(spec).startsWith("workspace:")) continue;
+                  const dir = byName.get(name);
+                  if (dir === undefined) die(`\`${from}/package.json\` declares the workspace dependency \`${name}\`, which resolved to NO directory in this tree.`);
+                  if (surface.has(dir)) continue;
+                  surface.add(dir);
+                  const next = json(`${dir}/package.json`);
+                  if (next === null) die(`\`${dir}/package.json\` is missing or unparseable, so whatever IT pulls into the console is invisible here.`);
+                  queue.push([dir, next]);
+                }
+              }
+            }
+            // A FLOOR, and its honest bound: NO mutation of the tree reaches it today. Every way of
+            // dropping a package — quoting, an inline comment, a malformed or renamed package.json,
+            // an unlistable glob — leaves a `workspace:` dependency that resolves to nothing, and
+            // the `die` above fires first. It is kept because it asks a different question ("is the
+            // ANSWER plausible") from all of them ("did this step work"), and it is the only one
+            // that survives someone rewriting the resolution above it.
+            if (surface.size < 4) die(`the walk resolved only ${surface.size} director(y/ies) — \`${[...surface].join("`, `")}\`.`);
+            return [...surface].sort();
+          }
+
+          // The recorded exemption. See the YAML comment above this step for the decision and its cost.
+          const EXEMPT = [{ path: ".github/workflows/release-gate.yml", why: "the PR's own `legs` job runs the edited file, and no leg can see a YAML change" }];
+
+          const surface = surfaceDirs();
+          let changed = null;
+          if (env.CHANGED_READ === "yes") {
+            try {
+              const files = fs.readFileSync(env.CHANGED_FILES, "utf8").split("\n").map((s) => s.trim()).filter(Boolean);
+              changed = files.length > 0 ? files : null;
+            } catch { changed = null; }
+          }
+          if (changed === null) {
+            console.error("::error::this dev PR carries neither `release-gate:run` nor `release-gate:all`, and the changed-file list could not be read — an API failure, GitHub's 3000-file cap, or a diff of zero files. So this step cannot show that no leg was needed, and a list it could not read is not an empty diff. Re-run this job, or label the PR and let the gate measure it.");
+            summarise(["## Release gate — cannot tell whether a leg is needed", "", "The changed-file list could not be read (see the `List the PR's changed files` step), so the question this job exists to answer has no answer for this PR. Re-run it, or add `release-gate:run`."]);
+            process.exit(1);
+          }
+
+          const implied = new Map((JSON.parse(env.IMPLIED || "[]") || []).map((r) => [r.f, r]));
+          const rows = [];
+          const exempted = [];
+          for (const f of changed) {
+            const off = EXEMPT.find((e) => e.path === f);
+            if (off !== undefined) { exempted.push(off); continue; }
+            const hit = implied.get(f);
+            if (hit !== undefined) { rows.push({ file: f, legs: hit.l, why: hit.w }); continue; }
+            const dir = surface.find((d) => f.startsWith(`${d}/`));
+            if (dir !== undefined) rows.push({ file: f, legs: "every leg", why: `\`${dir}/\` is compiled into the console every leg boots, and no rule narrows a source path` });
+          }
+
+          if (rows.length === 0) {
+            summarise([
+              "## Release gate — not running, and nothing it measures changed",
+              "",
+              `None of the ${changed.length} changed path(s) is a gate seam, a leg's spec, or under one of the ${surface.length} directories the console is built from (\`${surface.join("`, `")}\`), and this PR carries neither \`release-gate:run\` nor \`release-gate:all\`. No leg's verdict is missing.`,
+              ...(exempted.length > 0 ? ["", `${exempted.length} path(s) matched the recorded exemption: ${exempted.map((e) => e.why).join("; ")}.`] : []),
+            ]);
+            console.log(`no leg's verdict is missing: none of the ${changed.length} changed path(s) is on the gate's surface`);
+            process.exit(0);
+          }
+
+          // A BOOLEAN ABOUT A STRUCTURE MUST PRINT THE STRUCTURE: every path, the legs it implies
+          // and the rule that says so — as annotations in the log AND as a table in the summary.
+          const SHOWN = 25;
+          console.error(`::error::${rows.length} of this PR's ${changed.length} changed path(s) are on the release gate's surface, and it carries neither \`release-gate:run\` nor \`release-gate:all\` — so NOT ONE leg runs on the change that needs it. A leg's verdict should exist for every PR that changes what it measures.`);
+          for (const r of rows.slice(0, SHOWN)) console.error(`::error file=${r.file}::${r.file} → ${r.legs} (${r.why})`);
+          if (rows.length > SHOWN) console.error(`::error::…and ${rows.length - SHOWN} further path(s) on the surface, listed in the job summary.`);
+          console.error(`::error::Add \`release-gate:run\` to this PR and it runs: ${env.WOULD_RUN}. \`release-gate:all\` runs every leg.`);
+          summarise([
+            "## Release gate — a leg would never run on what this PR changes",
+            "",
+            `**${rows.length} of ${changed.length} changed path(s)** are on the gate's surface, and this PR carries neither \`release-gate:run\` nor \`release-gate:all\`.`,
+            "",
+            `**Add \`release-gate:run\`** and the gate runs: ${env.WOULD_RUN}. \`release-gate:all\` runs every leg.`,
+            "",
+            "| changed path | would be measured by | because |",
+            "| --- | --- | --- |",
+            ...rows.map((r) => `| \`${r.file}\` | ${r.legs} | ${r.why} |`),
+            "",
+            `The surface is derived from the tree, not typed into the workflow: \`${surface.join("`, `")}\` — \`apps/console\` and every workspace package it depends on — plus the gate's own seams and each leg's specs.`,
+          ]);
+          process.exit(1);
           EOF
 
   gate:
