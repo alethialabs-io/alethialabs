@@ -607,11 +607,12 @@ controls:
     surface: apps/console/components/settings/billing/billing-panel.tsx
     mutation: cancelSubscription
     control: { role: button, name: "Cancel plan" }
-    confirm: none
+    confirm: confirm-dialog
+    confirm_action: "Confirm cancellation"
+    dialog_title: "Cancel this subscription?"
     fixture: active-subscription
     persona: team
-    status: missing
-    issue: "#4276"
+    status: confirmed
     prod-qa: skip
     reason: cancels the QA org's real subscription
 
