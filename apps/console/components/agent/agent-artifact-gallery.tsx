@@ -51,6 +51,11 @@ export function AgentArtifactGallery({
 	const [pendingDelete, setPendingDelete] = useState<AgentArtifact | null>(
 		null,
 	);
+	// The id whose `deleteArtifact` is IN FLIGHT. The viewer used to gate itself by awaiting
+	// `onDelete`, but `onDelete` now only raises the dialog — it settles on the next microtask, long
+	// before the answer and the mutation. The window belongs to whoever owns the confirmation, so
+	// it is tracked here and handed down.
+	const [removing, setRemoving] = useState<string | null>(null);
 
 	const load = useCallback(() => {
 		setItems(null);
@@ -63,12 +68,15 @@ export function AgentArtifactGallery({
 
 	/** Delete an artifact, then optimistically drop it from the list. */
 	const remove = useCallback(async (id: string) => {
+		setRemoving(id);
 		try {
 			await deleteArtifact(id);
 			setItems((prev) => prev?.filter((a) => a.id !== id) ?? prev);
 			setSelected((s) => (s?.id === id ? null : s));
 		} catch {
 			// Non-fatal — the next load reconciles.
+		} finally {
+			setRemoving(null);
 		}
 	}, []);
 
@@ -104,7 +112,10 @@ export function AgentArtifactGallery({
 					onBack={() => setSelected(null)}
 					onAddToChat={() => onAddToChat(selected.id)}
 					onOpenInNewChat={() => onOpenInNewChat(selected.id, selected.name)}
-					onDelete={async () => setPendingDelete(selected)}
+					onDelete={() => setPendingDelete(selected)}
+					deleting={
+						pendingDelete?.id === selected.id || removing === selected.id
+					}
 				/>
 				{confirmDelete}
 			</>
