@@ -126,6 +126,13 @@ describe("alerts policy: disabling asks first", () => {
 			expect(screen.queryByText(/disable this policy\?/i)).not.toBeInTheDocument(),
 		);
 		expect(togglePolicy).not.toHaveBeenCalled();
+		// The SWITCH too, not just the mutation. The switch reads correctly only because it is
+		// CONTROLLED (`checked={policy.enabled}`); the day someone adds an optimistic local
+		// `enabled` — the obvious fix for the lag between confirm and the `onChanged()` refetch —
+		// cancelling would leave a switch reading OFF for a policy that is still ON, and a test
+		// asserting only `togglePolicy` would stay green through it. Mutated both ways: flipping
+		// this to `.not.toBeChecked()` fails exactly this test and nothing else.
+		expect(screen.getByRole("switch", { name: /enabled/i })).toBeChecked();
 	});
 
 	// The control. Enabling is not destructive and must stay a bare click — a fix that guarded
