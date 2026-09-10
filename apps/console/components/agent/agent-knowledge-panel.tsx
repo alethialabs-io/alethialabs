@@ -20,6 +20,7 @@ import {
 	getProjectKnowledgePreview,
 	upsertAgentContext,
 } from "@/app/server/actions/agent-context";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { KNOWLEDGE_LIMIT } from "@/lib/ai/knowledge-limits";
 import type { KnowledgeDoc } from "@/types/jsonb.types";
 import { Button } from "@repo/ui/button";
@@ -200,6 +201,11 @@ export function AgentKnowledgePanel({
 		[docs, instructions, save],
 	);
 
+	// The document a delete has been REQUESTED for. A knowledge doc is prose somebody wrote and the
+	// delete rewrites the whole context in one write with nothing to undo it, so the click asks
+	// first (#4280).
+	const [pendingDelete, setPendingDelete] = useState<KnowledgeDoc | null>(null);
+
 	const derivedRows = useMemo(() => parseDerived(derived), [derived]);
 
 	return (
@@ -361,7 +367,7 @@ export function AgentKnowledgePanel({
 														<button
 															type="button"
 															aria-label={`Delete ${d.title}`}
-															onClick={() => removeDoc(d.id)}
+															onClick={() => setPendingDelete(d)}
 															className="flex size-7 items-center justify-center text-muted-foreground hover:text-foreground"
 														>
 															<Trash2 className="h-3.5 w-3.5" />
@@ -482,6 +488,20 @@ export function AgentKnowledgePanel({
 					)}
 				</div>
 			</ScrollArea>
+
+			<ConfirmDialog
+				open={pendingDelete !== null}
+				onOpenChange={(o) => {
+					if (!o) setPendingDelete(null);
+				}}
+				title={`Delete ${pendingDelete?.title ?? "this document"}?`}
+				description="Elench stops reading it on the next turn, and its text is not kept anywhere else. This cannot be undone."
+				confirmLabel="Delete document"
+				onConfirm={() => {
+					if (pendingDelete) removeDoc(pendingDelete.id);
+					setPendingDelete(null);
+				}}
+			/>
 		</div>
 	);
 }
