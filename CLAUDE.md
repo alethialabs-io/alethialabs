@@ -64,11 +64,20 @@ pnpm env:down    # RELEASE the slot when you're finished with the branch
 ```
 
 The box is **shared** with every other instance and the maintainer: 2 environments (a
-measured memory ceiling — an env needs 5–7 GB), and `dev` permanently holds one as the
-integration env, leaving **one branch slot**. Take it only when you need a *running* app
-— build, type-check, lint and unit tests do not need one — and release it when you are
+measured memory ceiling — an env needs 5–7 GB). Take a slot only when you need a *running*
+app — build, type-check, lint and unit tests do not need one — and release it when you are
 done. Nothing is reclaimed automatically. If the box is down, **ask the maintainer**;
 restoring it runs `tofu apply`, which agents are refused.
+
+**Ask `pnpm env:status` what is there; do not assume a free slot.** This paragraph used to
+promise that "`dev` permanently holds one as the integration env, leaving one branch slot",
+and on 2026-09-08 that was false in both halves: `dev` held none, `https://dev.alethialabs.io`
+404'd, and BOTH slots were taken by branch envs — one of them a registration with no session
+behind it (#4350). An instance reading the old sentence would reason that one slot was free
+when zero were, and would also treat `dev.alethialabs.io` as somewhere to check something
+against. There is no standing integration env; whether one exists is a question for
+`env:status`, which now distinguishes an env that is merely slow (`?-no-answer`) from a
+registration with nothing running behind it (`?-not-running`).
 
 The box bills by the hour it **exists**, running or idle — deleting it is the only thing
 that stops the meter, so a box left up costs €69.49/mo against €0.72 reaped. Run
@@ -218,6 +227,16 @@ hand-rolled `<h2>` through `<h6>` section heading; on a hardcoded font size (`te
 length unit, variant prefix or not); on a centred one-off empty state (`text-center` with `py-6` or
 more); on a `<Stat` cell and the `Stat` primitive behind it; on a raw stacking level of 40 or more,
 variant prefix or not; and on a `grid-cols-[…]` used as a table.
+
+It also fails on **an alpha applied to a text colour** — `text-muted-foreground/60`, `text-red-500/70`,
+`text-foreground/[0.7]`, variant prefix or not — which is not one of the nine rows: the design system
+has four named ink tiers and an alpha is a fifth that nobody chose, and at α=0.5 over the page
+background the darkest reachable composite is 3.94:1, so the node cannot pass 4.5:1 from any
+foreground (#4197). Use a named tier at full strength. An alpha on a **background** or a **border** is
+ordinary design and is not read, and neither is `text-ui-sm/5` — that is a rung with its line height,
+not an ink tier. This is also the **one rule that reads a file outside `apps/console`**: it runs over
+`packages/ui/src` too, because the primitives every console filter bar renders through carried the
+defect where no console-rooted scope could see it.
 
 Three of those are stated precisely on purpose, because the imprecise version is wrong. **The
 `<h1>` rule inverted in #3733** — it used to say "use `PageHeader`", it now says delete the heading,

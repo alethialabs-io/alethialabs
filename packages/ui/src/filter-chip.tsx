@@ -7,6 +7,7 @@
 // MultiCombobox when the list is long or searchable. Promoted from the runners toolbar —
 // prop names are kept drop-in compatible with its local Chip/ChipGroup.
 
+import { CountFigure } from "./count-pill";
 import { cn } from "./utils";
 
 interface FilterChipProps {
@@ -20,7 +21,9 @@ interface FilterChipProps {
 	 * call site, because every filter bar that re-derived it did so as `opacity-60` over the
 	 * chip's ink — and an alpha over `--muted-foreground` composites to a grey no token can
 	 * rescue (#4197: at α=0.6 over the page background the darkest reachable ink is 2.9:1).
-	 * The count is a real tier, `--text-tertiary`, at full strength.
+	 * The count is a real tier, `--text-tertiary`, at full strength — and since #4309 it is
+	 * the shared {@link CountFigure}, so this chip and the three other filter surfaces that
+	 * render the same figure cannot drift apart again.
 	 */
 	count?: number;
 	className?: string;
@@ -55,25 +58,31 @@ export function FilterChip({
 			{count !== undefined && (
 				// A filled chip is inverted ink end to end, so the count inherits `text-background`
 				// there; only the resting chip has a tertiary tier to step down to. That asymmetry is
-				// a TOKEN GAP, recorded in #4309: `tokens.css` has `--text-on-ink` but does not
-				// expose it as a `--color-*` utility, so there is no on-ink tertiary rung — the old
-				// `opacity-60` supplied the hierarchy and was the banned composite. The space is
-				// for the accessible name ("Healthy 3", not "Healthy3") — a whitespace-only run
-				// between flex items is not laid out, so `gap-1.5` alone sets the visual gap.
+				// a TOKEN GAP, and #4309 CLOSED WITHOUT CLOSING IT: `tokens.css` defines
+				// `--text-on-ink` but the `@theme` block does not expose it as a `--color-*`
+				// utility, so there is no `text-text-on-ink` and no on-ink tertiary rung to step
+				// down to. The old `opacity-60` supplied that hierarchy and was the banned
+				// composite. Exposing the token is a DESIGN decision, not a conformance lane's to
+				// take, so the absence is written here rather than filled — a future reader who
+				// finds a filled chip flat is looking at a missing token, not a missing alpha.
+				// The space is for the accessible name ("Healthy 3", not "Healthy3") — a
+				// whitespace-only run between flex items is not laid out, so `gap-1.5` alone sets
+				// the visual gap.
 				<>
 					{" "}
-					<span
-						className={cn(
-							"font-mono text-ui-2xs",
-							// The two halves of one control brighten together: without the
-							// group-hover rung the label snapped to `--foreground` while the count
-							// stayed tertiary, which the call-site span (no colour class, so it
-							// inherited the parent's) never did.
-							!on && "text-text-tertiary group-hover:text-foreground",
-						)}
+					<CountFigure
+						className={
+							// A resting chip takes CountFigure's own tertiary tier, plus a hover rung
+							// so the two halves of one control brighten together — without it the
+							// label snapped to `--foreground` while the count stayed tertiary. A
+							// FILLED chip is inverted, so the figure gives its tier back and inherits
+							// the chip's `text-background`; `text-inherit` and `text-text-tertiary`
+							// are one tailwind-merge class group, so the later wins outright.
+							on ? "text-inherit" : "group-hover:text-foreground"
+						}
 					>
 						{count}
-					</span>
+					</CountFigure>
 				</>
 			)}
 		</button>

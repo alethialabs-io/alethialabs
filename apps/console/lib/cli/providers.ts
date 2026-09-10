@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { isEnumMember } from "@/lib/coerce";
-import { verifyCliToken } from "@/lib/cli/auth";
+import { type CliTokenPayload, verifyCliToken } from "@/lib/cli/auth";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import type { Action, Resource } from "@/lib/authz/registry";
-import { ensureCliOrgAccess } from "@/lib/authz/guard";
+import {
+	assertMintingProfileStillMember,
+	type CliCredential,
+	ensureCliOrgAccess,
+} from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import type { CloudProvider } from "@/lib/cloud-providers/connections";
 import { NextResponse } from "next/server";
@@ -53,6 +57,81 @@ type Resolved =
 /** 403, in the one shape `authorizeCli` answers with. */
 function forbidden(): Response {
 	return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
+}
+
+/**
+ * What a verified CLI payload IS — the closed {@link CliCredential} union, with the org pin carried
+ * by the one arm that has one.
+ *
+ * The pin and the kind are the same fact, so they are one value: `pinnedOrg` is reachable only
+ * inside the `service_token` arm, and the `session` arm has no org to read. A route can no longer
+ * hold a pin it has not established the kind of, or a kind it derived from a pin it then re-reads.
+ *
+ * WHY A SHAPE AND NOT `typeof payload.service_token_org_id === "string"` AT EACH BRANCH (#4468).
+ * `service_token_org_id` is a VALUE; the credential kind is a TYPE, and inferring one from the
+ * other spends the closed union that {@link CliCredential} exists to be. `guard.ts` gave the
+ * pattern up in #4298 and says why on {@link CliCredential}: a ternary's else-arm is the WIDE one,
+ * so a third credential kind silently inherits "this is a human" at every site at once.
+ * `app/api/jobs/route.ts` branched on it THREE times by itself — which org to scope to, which
+ * membership question to ask, which personal-runner arm to admit — on the route that provisions
+ * and tears down real cloud infrastructure; this file branched on it once more, on the routes that
+ * create and reset cloud identities.
+ *
+ * IT IS A MAPPING OVER {@link CliCredential}, NOT TWO HAND-LISTED MEMBERS, and that is what makes
+ * the paragraph above enforceable rather than merely intended: adding a third kind to the union
+ * adds a third member HERE, which is what the `switch`es over it then have to answer for. A
+ * hand-listed pair would have gone on compiling, and every site would have gone on meaning
+ * "human" — the same silence in a new place.
+ */
+export type CliCaller = {
+	[C in CliCredential]: {
+		readonly credential: C;
+		// A token's pin is a `string`; a session has none. Written as a conditional over `C` rather
+		// than as `string | null` on both arms, so `caller.pinnedOrg` is only an org where an org
+		// exists — the session arm cannot be read for one, and the token arm cannot be missing one.
+		readonly pinnedOrg: C extends "service_token" ? string : null;
+	};
+}[CliCredential];
+
+/**
+ * Derives {@link CliCaller} from a verified payload, ONCE. `null` means the payload is malformed
+ * and the caller must refuse it.
+ *
+ * THE THREE ANSWERS, AND WHY THE THIRD EXISTS. Absent key ⇒ `session`: that is every JWT the
+ * device-login flow signs, and it is the only shape a session ever has. A non-blank string ⇒
+ * `service_token` pinned to it: that is what `verifyCliToken` writes from
+ * `cli_service_tokens.organization_id`, which is `uuid().notNull()`. Anything else — a blank or
+ * whitespace-only string, or a non-string that the `service_token_org_id?: string` declaration
+ * permits at runtime but not at compile time — is a token that claims a pin it does not have, and
+ * is REFUSED rather than read as either kind.
+ *
+ * That third answer is the whole point of the function, because the two files this replaced
+ * disagreed about it and a reader could not tell which defence was the real one: `providers.ts`
+ * turned `""` into `undefined` (⇒ a human, the wide arm), `app/api/jobs/route.ts` kept it as `""`
+ * (⇒ a pin that is not one). On the jobs route the second was the more expensive: `"" ?? header`
+ * does not fall back, because `??` catches only null and undefined, so the header became `""`,
+ * `getActiveScope(userId, "" || undefined)` resolved the MINTER'S DEFAULT ORG, both membership
+ * branches were skipped, and the personal-runner arm took the session side — the pin, the org
+ * check and the executor bound all wrong at once, from one falsy string.
+ *
+ * Neither reading is safe to keep, so neither is kept: a credential that cannot say which org it
+ * is for is not a credential. It is unreachable through today's schema — the column is `NOT NULL`
+ * — and that is exactly why it must fail closed rather than be assumed away: what makes it
+ * unreachable is a constraint two files away, not anything this function can see.
+ */
+export function credentialOf(payload: CliTokenPayload | null | undefined): CliCaller | null {
+	// No payload at all is refused rather than defaulted to `session`. Both callers have already
+	// established one by the time they ask, so this changes no reachable behaviour — it declines
+	// to write down "absent ⇒ human", which is the wide-else shape this function exists to delete.
+	if (!payload) return null;
+	// `unknown`, not the declared `string | undefined`, so the `typeof` below is a real runtime
+	// narrowing rather than a branch TypeScript has already decided cannot be taken. The payload
+	// is JSON we signed, but `CliTokenPayload` extends `jose.JWTPayload`, whose index signature
+	// means the declaration is a claim about the writer and not a check on the reader.
+	const pin: unknown = payload.service_token_org_id;
+	if (pin === undefined) return { credential: "session", pinnedOrg: null };
+	if (typeof pin !== "string" || pin.trim() === "") return null;
+	return { credential: "service_token", pinnedOrg: pin };
 }
 
 /**
@@ -122,75 +201,100 @@ export async function resolveCliProvider(
 	// `verifyCliToken` already does that at the chokepoint (lib/cli/auth.ts), so by the time we are
 	// here a service token's header either matched or never arrived. Re-deriving that refusal a
 	// second time would be a second thing to keep in step, not a second layer of safety.
-	const pinnedOrg =
-		typeof payload?.service_token_org_id === "string" && payload.service_token_org_id
-			? payload.service_token_org_id
-			: undefined;
-	if (pinnedOrg) {
-		// THE MINTING PROFILE'S MEMBERSHIP IS RE-CHECKED ON EVERY REQUEST, and until #4041 it was
-		// not — this branch resolved the pinned scope and returned. `authorizeCli` has always done
-		// the re-check (guard.ts, the `service_token_org_id` branch) and says why: a token acts as
-		// the profile that created it, so it must stop working the moment that profile stops being
-		// a member. These five provider routes deliberately bypass `authorizeCli`, so they
-		// inherited none of it — and they are the routes that CREATE AND RESET CLOUD IDENTITIES.
-		//
-		// The case is offboarding, which is the one a service token most needs to get right: a
-		// token is dropped into CI, its author leaves, nobody revokes it because revoking tokens is
-		// not part of removing a person. Reachable with NO header at all, from every scripted
-		// `connector` call in existence.
-		//
-		// THE ACTOR PASSED IN IS THE DEFAULT SCOPE, NOT THE PINNED ONE, and that is the whole
-		// correctness of it — the same reasoning the header branch below states at length.
-		// `ensureCliOrgAccess` opens with `if (actor.orgId === orgId) return null`, a fast path
-		// sound only when `actor` was resolved from something the caller did not supply. Hand it a
-		// scope resolved FROM `pinnedOrg` and it compares the pin to itself, returns null, and the
-		// membership query never runs: the check would trust exactly the input it exists to verify.
-		//
-		// That fast path cannot mask an offboarded caller here. `getActiveScope(userId)` with no
-		// org resolves the caller's earliest REMAINING membership, else their personal org
-		// (ee/src/scope.ts, case 3) — never an org they have been removed from. So a departed
-		// member's default can never equal the pin, the query always runs for them, and the answer
-		// is a 403. A still-member whose default happens to BE the pin takes the fast path, which
-		// is the correct answer by a cheaper route.
-		//
-		// Absence is not error: `resolveActiveScope` lets a failed lookup propagate rather than
-		// reporting it as a missing membership, so a database blip surfaces as a 500 and never as
-		// a silent refusal or a silent fallback.
-		const defaultScope = await getActiveScope(userId);
-		const denied = await ensureCliOrgAccess(defaultScope, userId, pinnedOrg);
-		if (denied) {
-			return { userId: null, scope: null, provider: null, errorResponse: denied };
-		}
-		return { userId, scope: await getActiveScope(userId, pinnedOrg), provider, errorResponse: null };
+	//
+	// The KIND is derived once, by `credentialOf`, and switched on — not re-inferred from the pin's
+	// truthiness at each branch. See {@link CliCaller}; `null` is a payload that claims a pin it
+	// does not have, and there is no arm to put it in.
+	const caller = credentialOf(payload);
+	if (!caller) {
+		return {
+			userId: null,
+			scope: null,
+			provider: null,
+			errorResponse: NextResponse.json(
+				{ error: "Invalid token payload" },
+				{ status: 401 },
+			),
+		};
 	}
 
-	// An interactive session picks its org with `X-Alethia-Org` — the CLI's `--org` flag. It is safe
-	// only because a human's MEMBERSHIPS bound it, so it is honoured strictly after that check and
-	// refused with a 403 otherwise. The check is the guard's own exported `ensureCliOrgAccess` and
-	// NOT a second copy of the membership query on purpose: a copy would have to be corrected twice,
-	// and #3863 is currently correcting exactly that predicate.
-	const headerOrg = req.headers.get("X-Alethia-Org")?.trim() || undefined;
-	// THE DEFAULT SCOPE IS RESOLVED FIRST AND THAT SECOND RESOLUTION BELOW IS NOT REDUNDANT.
-	//
-	// It looks like one: with a header we resolve a scope here and again three lines down, and the
-	// obvious tightening is to resolve once WITH the header and hand that to `ensureCliOrgAccess`.
-	// That would be a hole. Its first line is `if (actor.orgId === orgId) return null` — a fast path
-	// that is sound only because `actor` is the caller's DEFAULT scope, resolved from a value they
-	// did not supply. Pass it a scope resolved FROM the header and the check compares the header to
-	// itself, returns null, and the membership query never runs: the guard would trust exactly the
-	// input it exists to verify. That is the shape of #3863, one rung lower.
-	//
-	// Calling `isOrgMember` directly instead would skip the extra resolution honestly, but it puts a
-	// second copy of the membership predicate in the tree while #3863 is correcting the first.
-	const defaultScope = await getActiveScope(userId);
-	if (!headerOrg) {
-		return { userId, scope: defaultScope, provider, errorResponse: null };
+	switch (caller.credential) {
+		case "service_token": {
+			// THE MINTING PROFILE'S MEMBERSHIP IS RE-CHECKED ON EVERY REQUEST, and until #4041 it was
+			// not — this branch resolved the pinned scope and returned. `authorizeCli` has always done
+			// the re-check (guard.ts, the `service_token_org_id` branch) and says why: a token acts as
+			// the profile that created it, so it must stop working the moment that profile stops being
+			// a member. These five provider routes deliberately bypass `authorizeCli`, so they
+			// inherited none of it — and they are the routes that CREATE AND RESET CLOUD IDENTITIES.
+			//
+			// The case is offboarding, which is the one a service token most needs to get right: a
+			// token is dropped into CI, its author leaves, nobody revokes it because revoking tokens is
+			// not part of removing a person. Reachable with NO header at all, from every scripted
+			// `connector` call in existence.
+			//
+			// THE ACTOR PASSED IN IS THE DEFAULT SCOPE, NOT THE PINNED ONE, and that is the whole
+			// correctness of it — the same reasoning the header branch below states at length.
+			// `ensureCliOrgAccess` opens with `if (actor.orgId === orgId) return null`, a fast path
+			// sound only when `actor` was resolved from something the caller did not supply. Hand it a
+			// scope resolved FROM `caller.pinnedOrg` and it compares the pin to itself, returns null,
+			// and the membership query never runs: the check would trust exactly the input it exists to verify.
+			//
+			// That fast path cannot mask an offboarded caller here. `getActiveScope(userId)` with no
+			// org resolves the caller's earliest REMAINING membership, else their personal org
+			// (ee/src/scope.ts, case 3) — never an org they have been removed from. So a departed
+			// member's default can never equal the pin, the query always runs for them, and the answer
+			// is a 403. A still-member whose default happens to BE the pin takes the fast path, which
+			// is the correct answer by a cheaper route.
+			//
+			// Absence is not error: `resolveActiveScope` lets a failed lookup propagate rather than
+			// reporting it as a missing membership, so a database blip surfaces as a 500 and never as
+			// a silent refusal or a silent fallback.
+			const defaultScope = await getActiveScope(userId);
+			// `assertMintingProfileStillMember`, not `ensureCliOrgAccess`, since #4298 split them. The
+			// question here is the one the paragraph above describes — is the MINTER still a member — and
+			// the credential-aware guard's token arm is now equality alone, which would refuse every
+			// token whose minter's default org is not the pin, i.e. the normal case.
+			const denied = await assertMintingProfileStillMember(defaultScope, caller.pinnedOrg);
+			if (denied) {
+				return { userId: null, scope: null, provider: null, errorResponse: denied };
+			}
+			return { userId, scope: await getActiveScope(userId, caller.pinnedOrg), provider, errorResponse: null };
+		}
+		case "session": {
+			// An interactive session picks its org with `X-Alethia-Org` — the CLI's `--org` flag. It is safe
+			// only because a human's MEMBERSHIPS bound it, so it is honoured strictly after that check and
+			// refused with a 403 otherwise. The check is the guard's own exported `ensureCliOrgAccess` and
+			// NOT a second copy of the membership query on purpose: a copy would have to be corrected twice,
+			// and #3863 is currently correcting exactly that predicate.
+			const headerOrg = req.headers.get("X-Alethia-Org")?.trim() || undefined;
+			// THE DEFAULT SCOPE IS RESOLVED FIRST AND THAT SECOND RESOLUTION BELOW IS NOT REDUNDANT.
+			//
+			// It looks like one: with a header we resolve a scope here and again three lines down, and the
+			// obvious tightening is to resolve once WITH the header and hand that to `ensureCliOrgAccess`.
+			// That would be a hole. Its first line is `if (actor.orgId === orgId) return null` — a fast path
+			// that is sound only because `actor` is the caller's DEFAULT scope, resolved from a value they
+			// did not supply. Pass it a scope resolved FROM the header and the check compares the header to
+			// itself, returns null, and the membership query never runs: the guard would trust exactly the
+			// input it exists to verify. That is the shape of #3863, one rung lower.
+			//
+			// Calling `isOrgMember` directly instead would skip the extra resolution honestly, but it puts a
+			// second copy of the membership predicate in the tree while #3863 is correcting the first.
+			const defaultScope = await getActiveScope(userId);
+			if (!headerOrg) {
+				return { userId, scope: defaultScope, provider, errorResponse: null };
+			}
+			// A human, so the session arm — `actor.orgId === orgId`, else a membership query. Behaviour
+			// identical to before #4298; what changed is where the kind comes from. It is
+			// `caller.credential` and not the literal `"session"` so the value the guard switches on is
+			// the one this arm was ENTERED on: a literal here would keep saying "human" if the arm
+			// above it ever stopped being the only other one.
+			const denied = await ensureCliOrgAccess(defaultScope, caller.credential, headerOrg);
+			if (denied) {
+				return { userId: null, scope: null, provider: null, errorResponse: denied };
+			}
+			return { userId, scope: await getActiveScope(userId, headerOrg), provider, errorResponse: null };
+		}
 	}
-	const denied = await ensureCliOrgAccess(defaultScope, userId, headerOrg);
-	if (denied) {
-		return { userId: null, scope: null, provider: null, errorResponse: denied };
-	}
-	return { userId, scope: await getActiveScope(userId, headerOrg), provider, errorResponse: null };
 }
 
 /**

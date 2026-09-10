@@ -207,6 +207,42 @@ func TestAllPages_EmptyCollection(t *testing.T) {
 	if len(got) != 0 {
 		t.Errorf("got %d items from an empty collection", len(got))
 	}
+	// EMPTY, NOT NIL, and this is a wire contract rather than a preference. `len()` cannot tell
+	// them apart, which is exactly why the regression got through: before these endpoints were
+	// paged each decoded `{"items": []}` directly and encoding/json allocates a non-nil slice for
+	// a JSON `[]`. A nil one encodes as `null`, so `alethia probes list -o json` on a project with
+	// no environments answered `null` and `jq 'length'` answered "null has no length" where it
+	// used to answer 0.
+	if got == nil {
+		t.Error("an exhausted walk over an empty collection returned nil, which encodes as `null` rather than `[]`")
+	}
+	// The property as a caller meets it, rather than as a nil check: what reaches the terminal.
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(encoded) != "[]" {
+		t.Errorf("an empty collection encodes as %s; a JSON document consumer cannot iterate that", encoded)
+	}
+}
+
+// TestAllPages_AFailedWalkIsNilAndNotEmpty is the other side of the line above, and the reason
+// the empty allocation does not weaken anything.
+//
+// "All or an error" is the walker's contract: a partial walk must never be mistakable for a
+// complete one. Allocating `out` empty could have blurred that — a caller ignoring the error
+// would now see `[]` rather than `nil` — so the error paths are asserted to still return nil,
+// and the two states stay distinguishable to anyone who looks.
+func TestAllPages_AFailedWalkIsNilAndNotEmpty(t *testing.T) {
+	got, err := AllPages(func(string) ([]int, PageInfo, error) {
+		return []int{1, 2, 3}, PageInfo{}, errors.New("upstream exploded")
+	})
+	if err == nil {
+		t.Fatal("a failing fetch must be an error")
+	}
+	if got != nil {
+		t.Errorf("a failed walk returned %v; it must be nil so a partial walk cannot read as a complete one", got)
+	}
 }
 
 // TestAllPages_EmptyPageIsNotExhaustion: emptiness is not the terminator, NextCursor is. A

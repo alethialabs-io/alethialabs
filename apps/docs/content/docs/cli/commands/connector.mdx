@@ -295,7 +295,7 @@ alethia connector aws --manual
 Connect an Azure subscription using federated identity (no client secret).
 
 ```bash
-alethia connector azure --subscription <subscription-id>
+alethia connector azure
 ```
 
 | Flag | Required | Description |
@@ -334,14 +334,14 @@ With `--manual`, the CLI prints a command to run in Azure Cloud Shell and prompt
 IDs the script outputs:
 
 ```bash
-alethia connector azure --subscription <subscription-id> --manual
+alethia connector azure --manual
 ```
 
 1. Open [Azure Cloud Shell](https://shell.azure.com).
-2. Run the printed command:
+2. Run the printed command. It already carries your subscription ID:
    ```bash
    curl -sO https://alethia-connector-assets.s3.eu-west-1.amazonaws.com/alethia-azure-setup.sh \
-     && bash alethia-azure-setup.sh <subscription-id>
+     && bash alethia-azure-setup.sh 00000000-0000-0000-0000-000000000000
    ```
 3. Paste the **Tenant ID**, **Client ID**, and **Subscription ID** it prints at the prompts.
 

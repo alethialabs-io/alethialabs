@@ -41,6 +41,11 @@ interface DateRangeFilterProps {
   defaultTimeZone?: string;
 }
 
+// What the trigger says for the one frame before mount. The control's own name rather than a
+// blank, so the button keeps a sensible width and a reader is never shown a wall-clock computed
+// in a zone that is not theirs.
+const TRIGGER_PLACEHOLDER = "Date range";
+
 /** A bare date/time input pair styled to match the design system. */
 function inputCls() {
   return "h-8 min-w-0 flex-1 rounded-sm border border-input bg-transparent px-2 text-[12px] text-text-primary outline-none focus:border-ring focus:ring-[3px] focus:ring-ring/50";
@@ -55,6 +60,21 @@ export function DateRangeFilter({
   const [tz, setTz] = useState(defaultTimeZone ?? localTimeZone());
   const [from, setFrom] = useState<Date>(value.from);
   const [to, setTo] = useState<Date>(value.to);
+  // THE TRIGGER LABEL IS NOT SERVER-RENDERABLE, so it is not rendered until mount.
+  //
+  // `formatRangeLabel(value, tz)` reads two things the server does not have: the viewer's
+  // timezone (`localTimeZone()` resolves to the SERVER's zone during SSR) and, at every call
+  // site, a `value` whose default end is the wall clock to the minute. Both render into a text
+  // node, so the server's string and the hydrating client's string differ — React #418,
+  // "text content did not match". It is intermittent only because the two halves of a CI run
+  // share a clock and a zone and have to straddle a minute boundary to disagree; against a UTC
+  // server and a real browser it is the common case, not the rare one.
+  //
+  // Gating on mount is the fix rather than `suppressHydrationWarning`, which suppresses the
+  // REPORT and leaves the server's wrong wall-clock on screen. The committed range is unchanged
+  // and the popover is closed during SSR, so nothing else here reaches the server's HTML.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const tzOptions = useMemo(() => timeZoneOptions(), []);
 
@@ -103,7 +123,7 @@ export function DateRangeFilter({
         render={
           <Button variant="outline" size="sm" className="gap-1.5">
             <CalendarDays size={14} />
-            {formatRangeLabel(value, tz)}
+            {mounted ? formatRangeLabel(value, tz) : TRIGGER_PLACEHOLDER}
           </Button>
         }
       />

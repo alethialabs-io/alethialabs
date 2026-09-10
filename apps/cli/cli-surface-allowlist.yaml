@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The CLI's shared-surface exceptions and its census floors — the machine-readable half of the CLI
+# surface census (`scripts/check-cli-surface.mjs`, `pnpm check:cli-surface`).
+#
+# THIS FILE'S PRESENCE IS ITSELF A CONTROL. The census REFUSES to report an allowlist count when
+# this file is absent, and prints the refusal in place of the number rather than beside it. An
+# absent allowlist is not an allowlist with no entries: nothing would be recording what the CLI is
+# excused from, and a count of 0 would read as "the whole CLI conforms" (#4373). Do not delete it
+# to make a number go away; #3664 deletes it, once the numbers are zero for the right reason.
+#
+# ── TWO LEDGERS, AND THE DIFFERENCE IS LOAD-BEARING ─────────────────────────────────────────────
+#
+# The same split `apps/console/shared-surface-allowlist.yaml` carries, for the same reason. They are
+# counted separately and neither can be spent as the other — converting one into the other is a
+# diff, which is the point.
+#
+#   reason:  A DECISION. This command's surface is genuinely a different thing from the one the
+#            shared kit is for. NEVER "we haven't got to it yet": an exclusion says we are not going
+#            to do it, and the census prints it to anyone who trips over it. Counted as `baseline`.
+#
+#   lifts:   DEBT. Measured drift that a named board issue removes, recorded per command so it can
+#            only shrink. The issue is QUOTED, because a bare `#` opens a comment in every YAML
+#            reader that is not the census's own parser. Counted as `debt`.
+#
+# ── WHY BOTH LEDGERS ARE EMPTY TODAY, AND WHY THAT IS NOT A BUG ─────────────────────────────────
+#
+# #3664's table records this number as "whole CLI" today and 0 at the target, which invites seeding
+# every unconverted command here as a row. That would be wrong, and the console's allowlist says
+# why in its own header: a `reason:` that means "we haven't got to it yet" empties the word
+# "decision", and the eleven recorded decisions in the console's file are worth reading precisely
+# because none of them is that.
+#
+# The CLI's unconverted surface is a MEASUREMENT, and the census already measures it — the form
+# coverage counter reports it as a ratio with the command paths behind it, derived from the tree on
+# every run. Copying that measurement in here as ~110 hand-typed rows would produce a second,
+# immediately-stale answer to a question that already has a live one, and #4373's whole finding is
+# that this programme has three different answers to one question because nobody stated a method.
+#
+# So: a row is added here when a real decision is taken about a real command, and #3663's per-group
+# lanes delete rows as they convert their groups. The counters below are hand-maintained for now
+# and the census refuses a file whose counters disagree with its rows — the console's `--write`
+# generator is the shape to copy if this file ever grows enough rows for the arithmetic to matter.
+#
+# Fields, when a row is added:
+#   command — the invocation as a person types it, e.g. `alethia token revoke`.
+#   reason  — one line, in the product's voice: what a USER gets from this surface being different.
+#   lifts   — one quoted line starting `#<issue>`: the board issue that removes this drift.
+
+baseline: 0
+debt: 0
+
+# ── CENSUS FLOORS ───────────────────────────────────────────────────────────────────────────────
+#
+# The fewest files each census scope may read before the run is REFUSED. Bare zero is the floor
+# every counter already carries; these catch the failure bare zero cannot see — a counter that
+# reads 3 of 35 docs pages is broken and is not reporting zero.
+#
+# This ratchet runs the OPPOSITE way to the two ledgers above: the corpora only grow, so these
+# numbers may be raised freely and a DROP is the thing review stops. They sit a few percent under
+# the live counts (measured 2026-09-09: 35 CLI docs pages, 109 non-test files in apps/cli/cmd) so
+# an ordinary edit need not touch them.
+scanned:
+  # apps/docs/content/docs/cli/**/*.mdx — the golden-path docs the handoff counter reads.
+  - scope: cli_docs
+    floor: 30
+  # apps/cli/cmd/*.go, tests excluded — the package the form-coverage counter parses.
+  - scope: cli_cmd
+    floor: 100
+
+# ── THE LEDGERS ─────────────────────────────────────────────────────────────────────────────────
+#
+# Empty. See above — and if you are here to add a row, read the two paragraphs about what `reason:`
+# means first.
+
+decisions: []
+
+drift: []

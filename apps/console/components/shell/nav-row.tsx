@@ -15,7 +15,10 @@ function NavItemBadge({ badge }: { badge: NavBadge }) {
 				"shrink-0 rounded-full px-1.5 py-px font-mono text-ui-3xs uppercase tracking-wide",
 				badge.tone === "beta"
 					? "border text-muted-foreground"
-					: "border border-dashed text-muted-foreground/70",
+					: // The tertiary tier, not an alpha over the secondary one: this badge renders on
+						// every route in the shell, so an unnamed fifth ink here is 40 failing routes
+						// rather than one (#4309).
+						"border border-dashed text-text-tertiary",
 			)}
 		>
 			{badge.text}
@@ -42,6 +45,12 @@ export function NavRow({
 	onClick?: (e: React.MouseEvent) => void;
 }) {
 	const Icon = item.icon;
+	// The active row says so in the accessibility tree, not only in a class. `bg-muted` is how the
+	// row LOOKS; `aria-current="page"` is what it IS, and it is the only half a screen reader — or
+	// a test — can read. The e2e suite used to match `/(^|\s)bg-muted($|\s)/` on the class
+	// attribute, which is a token away from passing on `hover:bg-muted/60` and cannot survive a
+	// restyle (#4267).
+	const current = active ? "page" : undefined;
 	const className = cn(
 		"flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-ui-md transition-colors",
 		active
@@ -57,7 +66,7 @@ export function NavRow({
 			<span className="flex-1 truncate text-left">{item.label}</span>
 			{item.badge && <NavItemBadge badge={item.badge} />}
 			{item.drill && (
-				<ChevronRight className="h-[15px] w-[15px] shrink-0 text-muted-foreground/60" />
+				<ChevronRight className="h-[15px] w-[15px] shrink-0 text-text-tertiary" />
 			)}
 		</>
 	);
@@ -74,7 +83,7 @@ export function NavRow({
 		const drillId = item.drill;
 		if (item.anchor) {
 			return (
-				<Link href={item.anchor} className={className}>
+				<Link href={item.anchor} aria-current={current} className={className}>
 					{inner}
 				</Link>
 			);
@@ -95,7 +104,7 @@ export function NavRow({
 	}
 
 	return (
-		<Link href={item.href} className={className} onClick={onClick}>
+		<Link href={item.href} aria-current={current} className={className} onClick={onClick}>
 			{inner}
 		</Link>
 	);

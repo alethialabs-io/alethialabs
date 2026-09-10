@@ -43,6 +43,7 @@ import type {
 import { isPluggable } from "@/lib/canvas/environment-connector";
 import { carriesOrderedDelivery, variantOptionsFor } from "../graph/node-registry";
 import type { NodeConfigMap, NodeKind } from "../graph/types";
+import { templateKnobFields } from "./template-knobs-section";
 
 /**
  * The field engine is generic over the node kind's config type `C`. Each per-kind
@@ -1069,6 +1070,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 			{
 				id: "capacity",
 				title: "Capacity",
+				tier: "sizing",
 				defaultOpen: true,
 				fields: [
 					{
@@ -1102,6 +1104,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 			{
 				id: "in-cluster-sizing",
 				title: "In-cluster sizing",
+				tier: "sizing",
 				defaultOpen: true,
 				fields: [
 					{
@@ -1252,6 +1255,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 			{
 				id: "sizing",
 				title: "Sizing",
+				tier: "sizing",
 				defaultOpen: true,
 				fields: [
 						// The cloud-INDIFFERENT size. The Go resolver maps it to the nearest cache SKU on any
@@ -1561,6 +1565,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 			{
 				id: "capacity",
 				title: "Capacity",
+				tier: "sizing",
 				defaultOpen: true,
 				fields: [
 					{
@@ -1696,6 +1701,7 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 			{
 				id: "access",
 				title: "Access",
+				tier: "security",
 				defaultOpen: true,
 				fields: [
 					{
@@ -1913,12 +1919,57 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 };
 
 /**
- * Look up a kind's config schema, widened to the generic renderer's
+ * The hand-written schema for a kind, widened to the generic renderer's
  * `Record<string, unknown>` seam. The inspector + config-fields hold a node whose kind
  * is only known at runtime, so they can't narrow to a specific `NodeConfigMap` fragment;
  * this single, documented widening is the erasure boundary of the key-driven engine.
  */
-export function getKindConfig(kind: NodeKind): KindConfig | undefined {
+function baseKindConfig(kind: NodeKind): KindConfig | undefined {
 	// @ts-expect-error KindConfig<C> is contravariant in C (its setter), so the K-specific entry can't widen to KindConfig<AnyConfig>
 	return CONFIG_SCHEMA[kind];
+}
+
+/**
+ * Look up a kind's config schema, plus — when the node's cloud is known — the GENERATED section
+ * carrying every template variable that component can still set on that cloud.
+ *
+ * The two halves are deliberately additive rather than merged. The hand-written Advanced fields stay
+ * exactly as they are: they are the knobs the console models as real columns with real option lists,
+ * and the manifest already marks each of them `typed`, so `knobsFor` excludes them and no value ends
+ * up with two controls writing two different places. (Verified against the database's own pair —
+ * `engine_version` and `instance_class`: every template counterpart, `rds_instance_type`,
+ * `azure_db_engine_version`, `azure_db_sku_name`, `cloud_sql_engine_version`, `cloud_sql_tier`,
+ * `rds_engine_version`, is `typed: true` in the manifest.)
+ *
+ * `provider` is OPTIONAL and defaults to nothing, and with nothing passed this returns the
+ * hand-written object ITSELF, unchanged and identical. That is what keeps every existing caller
+ * working: the inspector, the quick-config popover and the environment settings sheet all ask by
+ * kind alone today and get exactly what they got before. A caller that knows the node's cloud passes
+ * it and gets the generated section too.
+ */
+export function getKindConfig(
+	kind: NodeKind,
+	provider?: CloudProviderSlug | null,
+): KindConfig | undefined {
+	const base = baseKindConfig(kind);
+	if (!base || !provider) return base;
+	const fields = templateKnobFields(provider, kind);
+	// No settable knobs for this cell — return the base object untouched rather than an empty
+	// section. A section header that opens onto nothing is a worse answer than no section.
+	if (fields.length === 0) return base;
+	return {
+		...base,
+		sections: [
+			...base.sections,
+			{
+				id: "template-knobs",
+				title: "Advanced",
+				tier: "advanced",
+				// Scoped to the cloud it was generated for, so a node that changes provider cannot keep
+				// showing the previous cloud's variables while the section is still mounted.
+				providerScope: [provider],
+				fields,
+			},
+		],
+	};
 }

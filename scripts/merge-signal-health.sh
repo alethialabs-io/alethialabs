@@ -45,8 +45,18 @@ ISSUE=""
 
 # Prints a report for the workflow summary and, when configured, records the same verdict on the
 # tracking issue so a failing run cannot leave an older green recommendation as the latest evidence.
+# Set by `gate_section` before the merge_group guards run, and appended by every publish.
+#
+# WHY IT IS A GLOBAL AND NOT INLINE: the release-gate verdict used to be computed at the BOTTOM of
+# this script, below two `exit 1` guards that fire whenever `run_ids` is empty — which this file's
+# own comments establish is permanent, because `merge_group` has not fired since .mergify.yml
+# replaced the native queue on 2026-07-21. So the block could never execute, and the staging→main
+# promotion decision it exists to inform was never printed. The two sources are independent: one
+# being dead must not silence the other.
+GATE_SECTION=""
+
 publish_report() {
-  local summary="$1"
+  local summary="$1${GATE_SECTION}"
   printf '%s\n' "$summary"
   if [ -n "$ISSUE" ]; then
     gh issue comment "$ISSUE" --body "<!-- merge-signal-health -->
@@ -72,6 +82,71 @@ cutoff=$(date -u -d "${MAX_AGE_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
   || date -u -v-"${MAX_AGE_DAYS}"d +%Y-%m-%dT%H:%M:%SZ)
 newest=$(printf '%s' "$runs_json" | jq -r '[.[].createdAt] | max // ""')
 run_ids=$(printf '%s' "$runs_json" | jq -r --arg c "$cutoff" '.[] | select(.createdAt >= $c) | .databaseId')
+
+# ── THE RELEASE GATE — a second signal source, graded the same way ─────────────────────────────
+# release-gate.yml runs on every non-draft PR into main or staging (and on a labelled dev PR). Its
+# legs are REQUIRED on main by infra/github, and observed on staging. This grades the same
+# `Release gate (<leg>)` contexts over the last $RUNS of those runs so the staging→main promotion
+# decision (delete the staging exclusions in infra/github/main.tf) is a data verdict, not a feeling.
+#
+# "No runs yet" is printed as exactly that. Unlike the merge_group source, this workflow is NEW and
+# a zero sample is not a dead event source — but it is also NOT evidence, and no PROMOTE line is
+# ever produced from it.
+#
+# COMPUTED HERE, ABOVE THE merge_group GUARDS, and published by `publish_report` on every exit
+# path. Below them it was unreachable: both guards `exit 1` whenever `run_ids` is empty, which is
+# every invocation since the native merge queue was retired.
+gate_section() {
+  local gate_runs_json gate_ids gate_jobs gate_report gate_count sig total passed rate leg
+  gate_runs_json=$(gh run list --workflow release-gate.yml --event pull_request -L "$RUNS" --json databaseId,createdAt 2>/dev/null || echo '[]')
+  gate_ids=$(printf '%s' "$gate_runs_json" | jq -r --arg c "$cutoff" '.[] | select(.createdAt >= $c) | .databaseId')
+  if [ -z "$gate_ids" ]; then
+    printf '%s' "
+
+Release gate (release-gate.yml, pull_request into main/staging): no runs in the last ${MAX_AGE_DAYS} days — no sample, so no verdict. Not evidence either way."
+    return 0
+  fi
+  gate_jobs="$(for id in $gate_ids; do
+    gh api "repos/{owner}/{repo}/actions/runs/$id/jobs" --jq '.jobs[] | {name, conclusion}'
+  done)"
+  gate_report=""
+  # DERIVED from the leg table, not retyped. This loop was the THIRD hand-written copy of the leg
+  # list (after infra/github's required checks and the workflow's own table); #4266 added a seventh
+  # leg and this one kept measuring six — so the instrument built to notice a leg that never runs
+  # would itself have gone quiet about exactly that leg. Caught in review on #4435.
+  #
+  # The pattern accepts `project: "x"` and `"project": "x"` because the table is a JS array today
+  # and becomes JSON under #4440; matching both means that change does not silently empty this list.
+  gate_legs="$(grep -oE '"?project"?: *"[a-z][a-z-]*"' "$(dirname "$0")/../.github/workflows/release-gate.yml" 2>/dev/null \
+    | sed -E 's/.*"([a-z][a-z-]*)"$/\1/' | sort -u)"
+  # A scan that finds nothing is broken, not a gate with no legs. Refuse rather than report 0%.
+  if [ "$(printf '%s\n' "$gate_legs" | grep -c .)" -lt 2 ]; then
+    printf '%s\n' "Release gate: could not read the leg table out of .github/workflows/release-gate.yml — refusing to report a health signal over an unknown set of legs."
+    return 1
+  fi
+  for leg in $gate_legs; do
+    sig="Release gate ($leg)"
+    total=$(printf '%s\n' "$gate_jobs" | jq -rs --arg n "$sig" '[.[] | select(.name==$n and (.conclusion=="success" or .conclusion=="failure"))] | length')
+    passed=$(printf '%s\n' "$gate_jobs" | jq -rs --arg n "$sig" '[.[] | select(.name==$n and .conclusion=="success")] | length')
+    total=${total:-0}; passed=${passed:-0}
+    if [ "$total" -eq 0 ]; then
+      gate_report+=$(printf "  %-52s  no graded runs yet" "$sig")$'\n'
+    else
+      rate=$(( passed * 100 / total ))
+      gate_report+=$(printf "  %-52s  %3d%%  (%d/%d graded)" "$sig" "$rate" "$passed" "$total")$'\n'
+    fi
+  done
+  gate_count=$(printf '%s' "$gate_ids" | grep -c . || true)
+  printf '%s' "
+
+Release gate (release-gate.yml) — last $gate_count pull_request runs into main/staging:
+
+$gate_report
+The gate is REQUIRED on main and observed on staging. Requiring it on staging too is deleting the
+staging exclusions in infra/github/main.tf, once every leg is green at the bar above."
+}
+
+GATE_SECTION="$(gate_section)"
 
 if [ -n "$newest" ] && [ -z "$run_ids" ]; then
   summary="✗ Every merge_group CI run is older than ${MAX_AGE_DAYS} days (newest: $newest).

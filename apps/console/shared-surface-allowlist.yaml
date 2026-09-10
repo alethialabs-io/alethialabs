@@ -120,7 +120,7 @@
 #                      so an ordinary refactor need not touch them.
 
 baseline: 16
-debt: 3
+debt: 0
 
 scanned:
   - scope: console_code
@@ -129,6 +129,11 @@ scanned:
     floor: 630
   - scope: console_pages
     floor: 400
+  # `packages/ui/src` — the shared components, reached by the ink-alpha rule only. 60 files today;
+  # the floor is the same kind of vacuity control as the three above, so narrowing the root (or
+  # dropping the scope) reds instead of silently reporting a clean package.
+  - scope: shared_ui
+    floor: 50
 
 format:
   - path: apps/console/components/runners/pool-card.tsx
@@ -243,19 +248,40 @@ data_table:
   # --- debt only: three grid-as-table sites in two files, plus the console's one raw <table>.
 
 status_badge:
-  # --- debt only: 7 occurrences in 3 files, measured 2026-09-07 on an unmodified dev by this
-  #     rule's own two matchers — one raw `.vx-status` (three tokens) and two second definitions
-  #     of the vocabulary. The instrument landed apart from its fix on purpose (#3797), so the guard
-  #     is not tautological; #4295 is the lane that removes every row here. The six OTHER files the
-  #     rule's first draft flagged are not rows: they are `Record<Domain, StatusTier>` maps feeding
-  #     `<StatusBadge tier>`, which is the fix, and the rule exempts that shape rather than naming
-  #     the files.
-  - path: apps/console/components/agent/render-tool-parts/project-tool-parts.tsx
-    hits: 3
-    lifts: "#4295 — the one raw `.vx-status` markup left in the console after #3627: the block, its `--active` modifier and its `__dot`, on a project tool card. `<StatusBadge>` writes exactly this."
-  - path: apps/console/components/design-project/canvas/node-inspector.tsx
-    hits: 3
-    lifts: "#4295 — `STATUS_HINT` enumerates the node-state set a second time, apart from `NODE_STATUS_META`, which already resolves every state to a tier and a label; fold the hint in beside them so the set is defined once."
-  - path: apps/console/components/connectors/connection-ui.tsx
-    hits: 1
-    lifts: "#4295 — `VARIANT_ICON` draws `success`/`pending`/`error` as a check, a spinner and a cross: a second rendering of three states the badge already maps, so a pending test is a spinner here and a hollow dot in every table."
+  # --- EMPTY, and that is the finished state. The rule's two matchers found 7 occurrences in 3
+  #     files on an unmodified dev (2026-09-07); #4295 removed all three. The instrument landed
+  #     apart from its fix on purpose (#3797), so the guard is not tautological. The six OTHER
+  #     files the rule's first draft flagged were never rows: they are `Record<Domain, StatusTier>`
+  #     maps feeding `<StatusBadge tier>`, which IS the fix, and the rule exempts that shape rather
+  #     than naming the files. The rule still runs against every file — an empty ledger is what a
+  #     clean rule looks like.
+
+ink_alpha:
+  # --- EMPTY, and that is the finished state. The rule's two matchers found 53 occurrences in 29
+  #     files on an unmodified dev (2026-09-08). #4328 landed the instrument apart from its fix on
+  #     purpose (#3797's pattern, so the guard is not tautological) and took the SHELL's three —
+  #     `shell/nav-row.tsx` and `shell/switcher-trigger.tsx` render on every route, so leaving them
+  #     as debt would have recorded a 40-route failure as a line in a file. #4309 took the
+  #     remaining 50 across 27 files.
+  #
+  #     Every one went to a NAMED TIER at full strength, and the mapping is the arithmetic rather
+  #     than a taste: composite each alpha over `--background` and take the nearest of the four.
+  #     `text-muted-foreground/40…70` all land between `--gray-500` and `--gray-600`, whose nearest
+  #     named tier is `--text-tertiary`; `text-foreground/70…80` lands beside `--gray-700`, which
+  #     IS `--text-secondary` (`text-muted-foreground`). One site was neither: the `aria-hidden`
+  #     slash in `env-switcher.tsx` carried `text-border/70`, chrome rather than ink, and took the
+  #     same colour without the unnamed alpha.
+  #
+  #     `packages/ui` appeared here for the first time and leaves it empty too — see the
+  #     `shared_ui` scope's own comment for why a console-rooted matcher would have reported the
+  #     console clean while the primitive every filter bar renders through kept the defect.
+  #
+  #     ONE THING #4309 DID NOT CLOSE, and it is deliberate: a FILLED `FilterChip` is inverted ink
+  #     end to end, and `tokens.css` defines `--text-on-ink` without exposing it as a `--color-*`
+  #     utility — so there is no on-ink tertiary rung for its count to step down to. Exposing the
+  #     token is a design decision, not a conformance lane's, so the absence is written down at
+  #     `packages/ui/src/filter-chip.tsx` where the next reader meets it. It is NOT a row here:
+  #     nothing in the tree carries the defect, and a ledger entry for a decision nobody has taken
+  #     is exactly the fake `reason:` this file's header refuses.
+  #
+  #     The rule still runs against every file — an empty ledger is what a clean rule looks like.

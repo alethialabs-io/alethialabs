@@ -214,18 +214,67 @@ export async function authorizeInOrg(
 }
 
 /**
- * Tenancy guard for CLI routes whose path carries an `[id]` org segment: allow only
- * when the resolved scope already targets `orgId`, or the caller is a member of it.
- * Returns a 403 Response to return on denial, or null when access is permitted.
+ * Tenancy guard for CLI routes whose path carries an `[id]` org segment: may THIS CREDENTIAL act in
+ * the organization the path names? Returns a 403 Response to return on denial, or null when
+ * permitted.
+ *
+ * WHY IT TAKES THE CREDENTIAL AND NOT A `userId` (#4298). It used to be
+ * `(actor, userId, orgId)` and fall through to `isOrgMember(userId, orgId)`. For a session that is
+ * right: a human may act in any org they belong to, and `X-Alethia-Org` is how they choose. For a
+ * SERVICE TOKEN it is the defect — `userId` is the MINTING profile, so a token pinned to org T
+ * reached every org its minter happened to belong to, and
+ * `GET/POST/DELETE /api/cli/orgs/U/members` succeeded against an org the pin excludes. Nothing on
+ * the `Actor` tells the two apart, which is what {@link CliCredential} exists for.
+ *
+ * A token's arm is equality alone: its org was fixed at mint time, and `authorizeCli` has already
+ * resolved `actor` FROM that pin and re-checked the minting profile's membership. There is nothing
+ * left for a membership query to add here, and everything for it to give away.
+ *
+ * THIS IS NOT THE FUNCTION FOR "IS THE MINTER STILL A MEMBER" — see
+ * {@link assertMintingProfileStillMember}. The two questions were one function until #4298 and the
+ * merge was the bug underneath the bug: this one is handed an actor resolved from the pin, so its
+ * equality fast path is sound; that one is handed the caller's DEFAULT scope precisely so the fast
+ * path cannot fire, because the input under test is the pin itself.
  */
 export async function ensureCliOrgAccess(
 	actor: Actor,
-	userId: string,
+	credential: CliCredential,
 	orgId: string,
 ): Promise<Response | null> {
-	if (actor.orgId === orgId) return null;
-	if (await isOrgMember(userId, orgId)) return null;
-	return forbidden();
+	switch (credential) {
+		case "service_token":
+			// Equality only. A closed union and a `switch` rather than a ternary, so a third
+			// credential kind is a type error here instead of falling into the wide arm.
+			return actor.orgId === orgId ? null : forbidden();
+		case "session":
+			if (actor.orgId === orgId) return null;
+			return (await isOrgMember(actor.userId, orgId)) ? null : forbidden();
+	}
+}
+
+/**
+ * Is the profile that MINTED a service token still a member of the org the token is pinned to?
+ *
+ * The offboarding control, and the reason it is separate from {@link ensureCliOrgAccess}: a token
+ * dropped into CI keeps working after its author leaves, because revoking tokens is not part of
+ * removing a person. `authorizeCli` re-checks this on every request; the five provider routes in
+ * `lib/cli/providers.ts` deliberately bypass `authorizeCli` and so have to ask it themselves.
+ *
+ * `actor` MUST be the caller's DEFAULT scope, never one resolved from `orgId`. `getActiveScope(userId)`
+ * with no org resolves the caller's earliest REMAINING membership, else their personal org — never an
+ * org they have been removed from. So a departed member's default can never equal the pin, the query
+ * always runs for them, and the answer is a 403; a still-member whose default happens to BE the pin
+ * takes the fast path, which is the same answer more cheaply.
+ *
+ * Absence is not error: a failed lookup propagates rather than being reported as a missing
+ * membership, so a database blip surfaces as a 500 and never as a silent refusal.
+ */
+export async function assertMintingProfileStillMember(
+	defaultScope: Actor,
+	orgId: string,
+): Promise<Response | null> {
+	if (defaultScope.orgId === orgId) return null;
+	return (await isOrgMember(defaultScope.userId, orgId)) ? null : forbidden();
 }
 
 /**
@@ -263,6 +312,29 @@ export type CliCredential = "session" | "service_token";
  *   they are the sole member of, and it is where pre-#3942 runner-lifecycle jobs still live.
  */
 export type OrgScope = readonly [string, ...string[]];
+
+/**
+ * Does `actor.userId` identify the CALLER, or is it a minting artefact? (#4298)
+ *
+ * Three CLI reads scope rows on the caller's own `user_id` as well as their org — the org list, and
+ * the two agent-identity reads — because those tables carry a nullable `org_id` and a personal row
+ * has no org. For a session that arm is correct and load-bearing. For a service token `userId` is
+ * the profile that MINTED the credential, so the arm returned that person's personal and other-org
+ * rows through a credential pinned to one org.
+ *
+ * A named predicate with a `switch` rather than `credential === "service_token" ? … : …` at each
+ * site, and the reason is written on {@link OrgScope}: a ternary's else-arm is the WIDE one, so a
+ * third credential kind would silently inherit "this is a human" at three call sites at once. Here
+ * it is one type error in one place.
+ */
+export function userIdIsTheCaller(credential: CliCredential): boolean {
+	switch (credential) {
+		case "session":
+			return true;
+		case "service_token":
+			return false;
+	}
+}
 
 /**
  * The org ids one credential may see. Exported so a route can assert the rule rather than restate

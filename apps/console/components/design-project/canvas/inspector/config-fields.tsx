@@ -2,11 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { toNum, toRecord, toStr, toStrArray } from "@/lib/coerce";
+import { toRecord, toStr, toStrArray } from "@/lib/coerce";
 import { ChevronDown } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useRef, useState } from "react";
+import { useForm } from "react-hook-form";
 import type { NodeKind } from "../graph/types";
+import { useSectionOpen } from "@/lib/stores/use-inspector-prefs-store";
 import { validateNodeConfig } from "./node-validation";
+import { sortSections } from "./section-order";
 import {
 	Collapsible,
 	CollapsibleContent,
@@ -46,6 +49,39 @@ import { RadioCardGroup } from "./radio-card-group";
 import { ConnectorSelect } from "./connector-select";
 
 type Config = Record<string, unknown>;
+
+/**
+ * The card's editing buffer.
+ *
+ * Every control used to write to the canvas store on each keystroke, and the store answers a write
+ * by re-running two whole-graph normalizers, re-deriving the edges and re-serialising the draft to
+ * sessionStorage. Two of the defects that made these cards "hard to make work" were symptoms of
+ * that: a list's Add wrote `""`, which the write path stripped, so the new row vanished as it
+ * appeared; and clearing a required number wrote `0`, so backspacing to retype fought you.
+ *
+ * A half-typed value now lives HERE — a react-hook-form buffer over the node's config — and reaches
+ * the store once, on blur, as one patch. Discrete controls (a switch, a select, a picker) have no
+ * half-typed state, so they commit immediately.
+ */
+export interface FieldBuffer {
+	/** Buffer a value without touching the store — keystroke-level edits. */
+	write: (field: FieldDef, value: unknown) => void;
+	/** Buffer AND commit — for controls whose every change is a whole value. */
+	set: (field: FieldDef, value: unknown) => void;
+	/** Commit a field's buffered value (blur). Lists drop their blank rows here, not on write. */
+	flush: (field: FieldDef) => void;
+	/** Commit a NUMBER field's buffered text: empty means "the default" on an optional field, and
+	 * on a required one means nothing at all — the last committed value is restored, never 0. */
+	flushNumber: (field: FieldDef, isFloat: boolean) => void;
+	/** Commit a patch that spans keys this field model cannot express (the connector picker). */
+	commitPatch: (patch: Config) => void;
+}
+
+/** A number field's display text: the buffer holds raw text while typing, a number once committed. */
+function numberText(raw: unknown): string {
+	if (raw === null || raw === undefined) return "";
+	return typeof raw === "number" ? String(raw) : toStr(raw);
+}
 
 /** Resolve a static-or-derived field attribute against the current context. */
 function resolve<T>(
@@ -288,20 +324,20 @@ export function OptionCombobox({
 function FieldControl({
 	field,
 	ctx,
-	onChange,
+	buffer,
 	id,
 }: {
 	field: FieldDef;
 	ctx: FieldCtx;
-	onChange: (patch: Config) => void;
+	buffer: FieldBuffer;
 	/** Ties the control to its <Label>. Without it the label is decorative and screen readers —
 	 * and every accessible query — can't find the input. */
 	id?: string;
 }) {
 	const { provider, config } = ctx;
 	const raw = field.get ? field.get(config) : config[field.key];
-	const patch = (value: unknown) =>
-		onChange(field.set ? field.set(value, config) : { [field.key]: value });
+	/** A whole value from a discrete control: buffered and committed in one go. */
+	const patch = (value: unknown) => buffer.set(field, value);
 
 	if (field.requiresProvider && !provider) {
 		return (
@@ -329,18 +365,18 @@ function FieldControl({
 					placeholder={resolve(field.placeholder, ctx)}
 					className={cn("h-9 text-sm", field.mono && "font-mono")}
 					onChange={(e) =>
-						patch(
-							field.transform
-								? field.transform(e.target.value)
-								: e.target.value,
+						buffer.write(
+							field,
+							field.transform ? field.transform(e.target.value) : e.target.value,
 						)
 					}
+					onBlur={() => buffer.flush(field)}
 				/>
 			);
 
 		case "number": {
 			const step = resolve(field.step, ctx);
-			const isFloat = field.float || (typeof step === "number" && step < 1);
+			const isFloat = Boolean(field.float || (typeof step === "number" && step < 1));
 			return (
 				<Input
 					id={id}
@@ -349,17 +385,12 @@ function FieldControl({
 					max={resolve(field.max, ctx)}
 					step={step}
 					placeholder={resolve(field.placeholder, ctx)}
-					value={toNum(raw)}
+					value={numberText(raw)}
 					className="h-9 text-sm"
-					onChange={(e) => {
-						const n = isFloat
-							? Number.parseFloat(e.target.value)
-							: Number.parseInt(e.target.value, 10);
-						// Clearing an OPTIONAL number field means "use the default" → patch null
-						// (the columns are nullable; 0 would trip min(1) validation with no way
-						// back). Required numbers keep the legacy 0 so they never go null.
-						patch(Number.isNaN(n) ? (field.optional ? null : 0) : n);
-					}}
+					// The field holds TEXT while you type — including the empty string you pass
+					// through on the way from 20 to 200. Nothing is parsed or written until blur.
+					onChange={(e) => buffer.write(field, e.target.value)}
+					onBlur={() => buffer.flushNumber(field, isFloat)}
 				/>
 			);
 		}
@@ -434,9 +465,11 @@ function FieldControl({
 					value={toStrArray(raw)}
 					placeholder={field.item?.placeholder}
 					mono={field.item?.mono ?? field.mono}
-					// Blank rows are dropped on write: an empty CIDR isn't a value, and letting one
-					// through would fail zod at deploy with a confusing message.
-					onChange={(next) => patch(next.filter((v) => v.trim() !== ""))}
+					// Blank rows are dropped when the value is COMMITTED, not when it is buffered.
+					// Filtering on write made "Add" useless: it appends an empty row, which the same
+					// write then stripped, so the row you asked for never appeared.
+					onChange={(next) => buffer.write(field, next)}
+					onBlur={() => buffer.flush(field)}
 				/>
 			);
 
@@ -471,7 +504,7 @@ function FieldControl({
 					value={toStr(raw) || null}
 					providerConfig={toRecord(config.provider_config)}
 					hiddenKnobs={field.hiddenKnobs}
-					onChange={onChange}
+					onChange={buffer.commitPatch}
 				/>
 			) : null;
 	}
@@ -481,12 +514,12 @@ function FieldControl({
 function FieldRow({
 	field,
 	ctx,
-	onChange,
+	buffer,
 	error,
 }: {
 	field: FieldDef;
 	ctx: FieldCtx;
-	onChange: (patch: Config) => void;
+	buffer: FieldBuffer;
 	/** W4 — the inline zod validation message for this field, if it's currently invalid. */
 	error?: string;
 }) {
@@ -552,7 +585,7 @@ function FieldRow({
 					aria-describedby={note ?? field.description ? `${fieldId}-note` : undefined}
 					checked={off ? false : raw !== false}
 					disabled={off}
-					onCheckedChange={(v) => onChange({ [field.key]: v })}
+					onCheckedChange={(v) => buffer.set(field, v)}
 				/>
 				{error && (
 					<p className="col-span-full text-xs font-medium text-foreground">{error}</p>
@@ -593,7 +626,7 @@ function FieldRow({
 			<FieldControl
 				field={field}
 				ctx={ctx}
-				onChange={onChange}
+				buffer={buffer}
 				id={composite ? undefined : fieldId}
 			/>
 			{error ? (
@@ -654,13 +687,16 @@ function sectionSummary(section: SectionDef, ctx: FieldCtx): string {
 function Section({
 	section,
 	ctx,
-	onChange,
+	buffer,
 	errors,
+	kind,
 }: {
 	section: SectionDef;
 	ctx: FieldCtx;
-	onChange: (patch: Config) => void;
+	buffer: FieldBuffer;
 	errors: Record<string, string>;
+	/** Which kind's card this is — the key the open/closed preference is remembered under. */
+	kind?: NodeKind;
 }) {
 	const advanced = section.tier === "advanced";
 	const fields = section.fields.filter(
@@ -669,9 +705,11 @@ function Section({
 	// A collapsed section hiding an invalid field would hide the error, so open it when one of its
 	// fields is failing (W4).
 	const hasError = fields.some((f) => errors[f.key]);
-	// Advanced = provider-specific knobs. Collapsed by default, so the portable fields stay the
+	// Advanced = provider-specific knobs. Collapsed by DEFAULT, so the portable fields stay the
 	// thing you see first; you have to deliberately open the door to leave cloud-indifferent ground.
-	const [open, setOpen] = useState(section.defaultOpen ?? false);
+	// The user's own choice wins over that default and is remembered per kind — this was local
+	// state, so every section you opened collapsed again the moment the card unmounted.
+	const [open, setOpen] = useSectionOpen(kind, section.id, section.defaultOpen ?? false);
 	const summary = sectionSummary(section, ctx);
 
 	// A section scoped to clouds this project isn't on doesn't exist for it.
@@ -726,7 +764,7 @@ function Section({
 						key={field.key}
 						field={field}
 						ctx={ctx}
-						onChange={onChange}
+						buffer={buffer}
 						error={errors[field.key]}
 					/>
 				))}
@@ -755,22 +793,124 @@ export function ConfigFields({
 	 * existing mount point and test keeps working and simply resolves the static catalog. */
 	capabilities?: CapabilityBag;
 }) {
-	const ctx: FieldCtx = { provider, config, caps: capabilities ?? NO_CAPABILITIES };
+	// The editing buffer. `values: config` re-syncs it whenever the node's config changes for a
+	// reason that is not this card — an accepted AI proposal, a store normalizer, an undo — so the
+	// card can never go stale. Typing does not touch the store, so the prop does not move under
+	// you; the one case it does is an external change landing mid-edit, where showing what the
+	// design now SAYS is the honest answer.
+	//
+	// Deliberately no `resetField`/`reset` bookkeeping: those act on REGISTERED fields, and these
+	// controls are driven by `setValue` + `watch` rather than `register`, so a `resetField` here
+	// silently did nothing — which is how a cleared required number stayed blank instead of
+	// restoring what was stored.
+	const form = useForm<Config>({ values: config });
+	const values = form.watch();
+	// Committed truth, for the one case the buffer cannot answer: restoring a required number field
+	// the user emptied. A ref, because the restore happens inside a blur handler.
+	const committed = useRef(config);
+	committed.current = config;
+
+	const buffer: FieldBuffer = useMemo(() => {
+		/** Buffer a field's value; returns the config keys it wrote (a `set` field spans several). */
+		const write = (field: FieldDef, value: unknown): string[] => {
+			const patch = field.set
+				? field.set(value, form.getValues())
+				: { [field.key]: value };
+			for (const [k, v] of Object.entries(patch)) {
+				form.setValue(k, v, { shouldDirty: true });
+			}
+			return Object.keys(patch);
+		};
+		/** Push buffered keys to the store as ONE patch. The store's answer comes back through
+		 * `values`, so the buffer does not need to be told what it just said. */
+		const commit = (keys: string[]) => {
+			const current = form.getValues();
+			const patch: Config = {};
+			for (const k of keys) patch[k] = current[k];
+			onChange(patch);
+		};
+		/** The buffered value of a field, through its own accessor. A field with `get`/`set` does
+		 * NOT live under its key — the cluster's "vCPU per node" reads and writes `node_size` — so
+		 * reading `values[field.key]` there answers undefined for every one of them. */
+		const read = (field: FieldDef, from: Config) =>
+			field.get ? field.get(from) : from[field.key];
+		/** The config keys a field owns, without inventing a value to ask with. */
+		const keysOf = (field: FieldDef) =>
+			field.set ? Object.keys(field.set(read(field, form.getValues()), form.getValues())) : [field.key];
+		/** Put back what is stored — for a field the user emptied but did not answer. */
+		const restore = (field: FieldDef) => {
+			write(field, read(field, committed.current));
+		};
+		return {
+			write: (field, value) => {
+				write(field, value);
+			},
+			set: (field, value) => {
+				commit(write(field, value));
+			},
+			flush: (field) => {
+				// An empty row is not a value — an empty CIDR fails zod at deploy with a message about
+				// a field the user never typed in. Dropped HERE, on the way to the store, so the row
+				// survives being added.
+				if (field.type === "list") {
+					const rows = read(field, form.getValues());
+					if (Array.isArray(rows)) {
+						commit(write(field, rows.filter((v) => typeof v !== "string" || v.trim() !== "")));
+						return;
+					}
+				}
+				commit(keysOf(field));
+			},
+			flushNumber: (field, isFloat) => {
+				const text = numberText(read(field, form.getValues()));
+				if (text.trim() === "") {
+					// Optional (nullable column) → "use the template's default". Required → nothing was
+					// said, so nothing is written: the last committed value comes back. It used to write
+					// 0, which both trips the `min(1)` bound and fights you the moment you backspace.
+					if (field.optional) commit(write(field, null));
+					else restore(field);
+					return;
+				}
+				const n = isFloat ? Number.parseFloat(text) : Number.parseInt(text, 10);
+				if (Number.isNaN(n)) {
+					restore(field);
+					return;
+				}
+				commit(write(field, n));
+			},
+			commitPatch: (patch) => {
+				for (const [k, v] of Object.entries(patch)) form.setValue(k, v);
+				onChange(patch);
+			},
+		};
+	}, [form, onChange]);
+
+	// Conditionals (`visibleWhen` / `unavailableWhen`) and the option resolvers read the BUFFERED
+	// values, so a section that appears when a toggle flips appears on the flip, not on the commit.
+	const ctx: FieldCtx = {
+		provider,
+		config: values,
+		caps: capabilities ?? NO_CAPABILITIES,
+	};
 	// W4 — validate against the DB-derived per-node schema so what the form accepts conforms to what
-	// the DB stores. Draft→Save is unchanged; this only surfaces per-field errors as you edit.
+	// the DB stores. A pure function of the buffered values, so an error can never lag the input.
 	const errors = useMemo(
-		() => (kind ? validateNodeConfig(kind, config) : {}),
-		[kind, config],
+		() => (kind ? validateNodeConfig(kind, values) : {}),
+		[kind, values],
 	);
+	// Every card reads in the same order — Essentials, Sizing, Security, Advanced — whatever order
+	// its schema happens to be written in. See section-order.ts.
+	const sections = useMemo(() => sortSections(schema.sections), [schema.sections]);
 	return (
 		<div className="space-y-3">
-			{schema.sections.map((section) => (
+			{sections.map((section) => (
 				<Section
 					key={section.id}
 					section={section}
 					ctx={ctx}
-					onChange={onChange}
+					buffer={buffer}
 					errors={errors}
+					kind={kind}
 				/>
 			))}
 		</div>

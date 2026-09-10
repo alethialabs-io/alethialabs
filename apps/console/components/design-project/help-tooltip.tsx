@@ -153,7 +153,7 @@ export function HelpTooltip({ topic, className }: Props) {
         render={
           <button
             type="button"
-            className={`inline-flex items-center justify-center rounded-full text-muted-foreground/50 hover:text-muted-foreground transition-colors ${className ?? ""}`}
+            className={`inline-flex items-center justify-center rounded-full text-text-tertiary hover:text-muted-foreground transition-colors ${className ?? ""}`}
           >
             <HelpCircle className="h-3.5 w-3.5" />
           </button>

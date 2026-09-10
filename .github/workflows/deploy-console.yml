@@ -67,11 +67,107 @@ jobs:
     permissions:
       contents: read
       id-token: write # same read-only vault role the deploy uses; no stored secrets
+      checks: read # the gate receipt reads the PR head's check-runs
+      pull-requests: read # …and has to resolve which PR produced this commit
     env:
       ASM_SECRET_ID: alethia/prod/env
       ASM_REGION: eu-central-1
     steps:
       - uses: actions/checkout@v7
+
+      # THE GATE RECEIPT. Production may only receive a commit whose PR went green through the
+      # browser release gate.
+      #
+      # This is a RECEIPT, not a re-run, and that is deliberate. Re-running the gate here is not
+      # available and would not be wanted: cross-workflow `needs:` does not exist, `workflow_run`
+      # changes what `github.sha` means, and it would spend a second hour on a commit already
+      # validated. What it catches instead is the gap a re-run cannot see — an admin bypass, or a
+      # ruleset that drifted from infra/github and stopped requiring the contexts it declares. That
+      # is the #3180 shape: written-down requirements that nothing enforced, for a month.
+      #
+      # THE EXPECTED LEG LIST IS DERIVED, never typed. release-gate.yml's `const legs` table is the
+      # one place that decides which legs exist; the repo already carries two hand-written copies of
+      # it (infra/github/variables.tf's required contexts, and scripts/merge-signal-health.sh's
+      # `for leg in …` loop), and a third would be the copy that decays. #4266 adds a seventh leg,
+      # and this receipt picks it up with no edit here.
+      #
+      # LATEST RUN PER CONTEXT, not any run. A PR that was a draft has SKIPPED gate check-runs from
+      # that period (release-gate.yml's `legs` job requires `draft == false`), and `ready_for_review`
+      # then fires a real one. Both are in the list under the same name, so "did it pass" must read
+      # the most recent, or an early skip either masks a later failure or a later success is ignored.
+      - name: The commit being deployed went green through the release gate
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          node - <<'EOF'
+          const { execFileSync } = require("node:child_process");
+          const { readFileSync } = require("node:fs");
+          const sh = (a) => execFileSync("gh", a, { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+          const repo = process.env.REPO, sha = process.env.SHA;
+
+          // ── the legs that exist, from the table that owns them ────────────────────────────────
+          const gate = readFileSync(".github/workflows/release-gate.yml", "utf8");
+          const table = gate.slice(gate.indexOf("const legs = ["));
+          const legs = [...table.slice(0, table.indexOf("];")).matchAll(/\{\s*project:\s*"([^"]+)"/g)].map((m) => m[1]);
+          if (legs.length === 0) {
+            console.error("::error::could not read the leg table out of .github/workflows/release-gate.yml — refusing to deploy on an unknown gate. A parse that finds nothing must not read as 'no legs required'.");
+            process.exit(1);
+          }
+          console.log(`gate legs derived from release-gate.yml: ${legs.join(", ")}`);
+
+          // ── which PR produced this commit ─────────────────────────────────────────────────────
+          // ONLY a PR whose base is `main` is a receipt for a commit on main. `commits/<sha>/pulls`
+          // also returns the dev PR that originally authored the change — measured: for a commit on
+          // dev it returns both the merged dev PR and the open dev→staging promotion. Falling back to
+          // "any merged PR" would quietly grade a DEV pr's head, where the gate does not run at all
+          // (release-gate.yml fires on a dev PR only with the `release-gate:run` label), and refuse
+          // the deploy while naming the wrong PR. Fail closed AND say what was found.
+          const pulls = JSON.parse(sh(["api", `repos/${repo}/commits/${sha}/pulls`]));
+          const pr = pulls.find((p) => p.base?.ref === "main" && p.merged_at);
+          if (!pr) {
+            const seen = pulls.length
+              ? pulls.map((p) => `#${p.number} (base ${p.base?.ref}, ${p.merged_at ? "merged" : "open"})`).join(", ")
+              : "none";
+            console.error(`::error::no MERGED pull request into main contains ${sha}, so nothing can show it passed the release gate. PRs containing this commit: ${seen}. A commit that reached main outside a promotion PR is exactly the bypass this receipt exists to refuse — promote through a PR into main, or dispatch this workflow deliberately.`);
+            process.exit(1);
+          }
+          const head = pr.head.sha;
+          console.log(`commit ${sha} came from #${pr.number} (${pr.base.ref} ← ${pr.head.ref}), head ${head}`);
+
+          // ── the latest check-run per context on that head ─────────────────────────────────────
+          const runs = JSON.parse(sh(["api", `repos/${repo}/commits/${head}/check-runs?per_page=100`, "--paginate", "--slurp"]))
+            .flatMap((page) => page.check_runs ?? []);
+          const latest = new Map();
+          for (const r of runs) {
+            const prev = latest.get(r.name);
+            const at = r.completed_at ?? r.started_at ?? "";
+            if (!prev || at >= prev.at) latest.set(r.name, { at, conclusion: r.conclusion, url: r.html_url });
+          }
+
+          let bad = 0;
+          for (const leg of legs) {
+            const name = `Release gate (${leg})`;
+            const got = latest.get(name);
+            if (!got) {
+              console.error(`::error::${name} never reported on #${pr.number} (head ${head}). The gate did not run for this commit, so nothing measured it.`);
+              bad++;
+            } else if (got.conclusion !== "success") {
+              console.error(`::error::${name} is "${got.conclusion}" on #${pr.number}, not success. ${got.url}`);
+              bad++;
+            } else {
+              console.log(`✓ ${name}`);
+            }
+          }
+          if (bad > 0) {
+            console.error(`::error::${bad} of ${legs.length} release-gate leg(s) did not pass for #${pr.number}. Production is not receiving this commit. Fix the leg and re-promote; do not bypass.`);
+            process.exit(1);
+          }
+          console.log(`✓ all ${legs.length} release-gate legs passed for #${pr.number}`);
+          EOF
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -1178,6 +1274,80 @@ jobs:
             exit 1
           fi
 
+  # DID THE DEPLOY ACTUALLY SERVE? A green `deploy` job proves the box accepted the images; it does
+  # not prove the public URL answers, and `retag-unchanged` can report success while shipping a stale
+  # image. So this runs ten checks against https://alethialabs.io itself, including "the served build
+  # id equals the promoted SHA" — the one assertion that separates a deploy from a deploy that
+  # landed.
+  #
+  # A SEPARATE JOB, not extra steps on `deploy`, deliberately: `deploy` holds the SSH key, and
+  # Chromium plus a pnpm install do not belong in the job that holds it. The blast radius of a
+  # compromised browser dependency should not include the production host key.
+  #
+  # `SMOKE_EXPECTED_SHA` is set only when the apps group actually rebuilt. On a runner-only push the
+  # console images are re-tagged rather than rebuilt, so the served build id is the PREVIOUS commit
+  # and asserting equality would red every runner-only deploy. Empty means "do not compare", which
+  # the smoke script reads as a skip with its reason, never as a pass.
+  smoke:
+    name: Post-deploy smoke (the public URL, and the build it serves)
+    needs: [changes, deploy]
+    if: ${{ needs.deploy.result == 'success' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SMOKE_BASE_URL: ${{ vars.PUBLIC_APP_URL || 'https://alethialabs.io' }}
+      SMOKE_EXPECTED_SHA: ${{ needs.changes.outputs.apps == 'true' && github.sha || '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: bash scripts/ci/playwright-install.sh
+
+      # THE FLOOR. `--list` prints the manifest length, and this asserts it — the same shape as the
+      # release gate's per-leg floor. A suite that silently shrank to two checks and passed is the
+      # failure this catches; without it, "smoke green" would be compatible with a smoke that
+      # measured almost nothing.
+      - name: The smoke manifest still holds every check it is supposed to
+        run: |
+          set -euo pipefail
+          out="$(pnpm -C apps/console run smoke:prod -- --list)"
+          printf '%s\n' "$out"
+          printf '%s' "$out" | grep -qE '^post-deploy smoke — 10 checks:$' || {
+            echo "::error::the post-deploy smoke manifest is not 10 checks. If a check was added or removed deliberately, move this number in the same PR; if not, the suite shrank and would have reported green on almost nothing."
+            exit 1
+          }
+
+      - name: Smoke the deployed site
+        id: smoke
+        run: pnpm -C apps/console run smoke:prod
+
+      # #4084: a step that must run after a failure carries the conjunct, or it reports on a run that
+      # never got far enough to produce anything.
+      #
+      # `if-no-files-found: error`, and gated on the smoke step having actually RUN. The script writes
+      # `smoke-report.json` from a `finally`, so once the run started the file exists on the pass and
+      # the fail path alike — an empty artifact would mean the report vanished, which is worth a red.
+      # But if `playwright install` died first the smoke never ran and there is legitimately nothing
+      # to upload, so `outcome != 'skipped'` keeps that from becoming a second, misleading failure.
+      # The path is `smoke-results/`, which is where the script writes — NOT `test-results/`, which is
+      # the Playwright convention this script does not use. #4347 is the standing instance of an
+      # upload that succeeded having captured nothing it exists for.
+      - name: Upload the smoke report
+        if: ${{ !cancelled() && steps.smoke.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-deploy-smoke
+          path: apps/console/smoke-results/
+          if-no-files-found: error
+          retention-days: 14
+
   # A red production deploy must never again be discovered by someone happening to read a buildx log.
   # It has happened three times: #2244 (ten days), #2485 (closed on half the diagnosis), and the
   # TS2307 underneath it that nothing ever named while main shipped nothing for 26 days.
@@ -1191,7 +1361,7 @@ jobs:
   report-failure:
     needs: [changes, build-amd64, runner-base-amd64, runner-base-arm64, merge-runner-base,
             build-runner-amd64, build-runner-arm64, merge-runner-images, runner-amd64,
-            runner-arm64, merge-runner, retag-unchanged, deploy]
+            runner-arm64, merge-runner, retag-unchanged, deploy, smoke]
     if: ${{ (failure() || cancelled()) && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:

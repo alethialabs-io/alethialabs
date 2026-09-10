@@ -97,9 +97,19 @@
 // rubric's own structure, so the count moved 33 → 34 rather than one instrument being reported as
 // another.
 //
-// `RULES_WITHOUT_A_PREDICATE` therefore stands EMPTY. It is kept, not deleted: it is the table a
-// ninth matcher lands in, and `buildView()` still raises on a rule id that is in neither it nor
-// `RULE_PREDICATE`.
+// `RULES_WITHOUT_A_PREDICATE` therefore stood EMPTY, and was kept rather than deleted precisely
+// because it is the table a later matcher lands in. #4309 is that matcher: `ink_alpha` is in it
+// today, and the paragraph above is the argument for why `empty_state` did NOT land there while
+// `ink_alpha` does. The difference is what the two rules measure. `empty_state` asked a question
+// the rubric simply had no row for, so the rubric gained one. `ink_alpha` asks a question the
+// rubric already scores — CONTRAST, which is R5 — but asks it of a class string rather than of a
+// rendered node: it fires whether or not the element ever paints, and R5 only ever sees what
+// painted. Mapping it to R5 would score one predicate with two instruments that disagree by
+// construction, and would make a route's R5 depend on whether its dead code was linted. A static
+// hit is a WARNING that R5 will fail; it is not R5's verdict. The entry itself carries the same
+// reasoning, and so does the scoreboard's table.
+//
+// `buildView()` still raises on a rule id that is in neither this table nor `RULE_PREDICATE`.
 //
 // ── HOW AN H FINDING BECOMES A ROUTE'S VERDICT ───────────────────────────────────────────────
 //
@@ -246,6 +256,13 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CONSOLE_DIR = path.resolve(HERE, "..");
 const REPO_ROOT = path.resolve(CONSOLE_DIR, "..", "..");
 
+/**
+ * The console app, repo-relative and posix-separated — the boundary the module closure can speak
+ * about. A shared-surface finding outside it is reached through a bare `@repo/*` specifier that
+ * `resolveSpecifier` deliberately does not follow, so no closure can say whether a page imports it.
+ */
+const CONSOLE_REL = "apps/console";
+
 const RUBRIC = "apps/console/docs/ui-conformance/RUBRIC.md";
 const SCOREBOARD = "apps/console/docs/ui-conformance/scoreboard.md";
 const BASELINE_JSON = "apps/console/ui-conformance-baseline.json";
@@ -306,12 +323,25 @@ export const RULE_PREDICATE = /** @type {const} */ ({
  * it. A rule id observed in the tree that is in neither this table nor `RULE_PREDICATE` RAISES —
  * a matcher whose findings fall out of the report must not be able to do so quietly.
  *
- * **It is deliberately EMPTY**, and it is kept rather than deleted. `empty_state` was its only
- * entry; #3798 gave the rubric its H9 row and the mapping above absorbed it. A ninth matcher that
- * measures something the rubric has no row for lands here, with its owning issue, rather than
- * falling silently out of the reconciliation — which is the whole reason the table exists.
+ * It stood EMPTY between #3798 and #4309, and was kept rather than deleted for exactly the case it
+ * now holds. `empty_state` was its only earlier entry; #3798 gave the rubric its H9 row and the
+ * mapping above absorbed it. A matcher that measures something the rubric has no row for — or
+ * measures a row's subject in a way that is not that row's verdict — lands here, with its owning
+ * issue, rather than falling silently out of the reconciliation.
  */
-export const RULES_WITHOUT_A_PREDICATE = /** @type {const} */ ({});
+export const RULES_WITHOUT_A_PREDICATE = /** @type {const} */ ({
+	// The ink-alpha rule (#4309) is the first entry this table has had since #3798 emptied it, and
+	// it is here rather than mapped to R5 for a reason worth stating: it measures the SAME thing R5
+	// does — contrast — but statically and preventively, while R5 is a live axe measurement of what
+	// a browser actually painted. Mapping it to R5 would score one predicate with two instruments
+	// that disagree by construction: this rule fires on a class string whether or not the element
+	// renders, and R5 only ever sees what rendered. A static hit here is a WARNING that R5 will
+	// fail; it is not R5's verdict.
+	ink_alpha: {
+		owner: "#4309",
+		why: "a static, preventive guard for the contrast R5 measures live — a class-string finding is not a rendered verdict, and scoring one predicate with both would make a route's R5 depend on whether its dead code was linted",
+	},
+});
 
 /**
  * Every rubric predicate the STATIC half of this file does not score, and where its verdict comes
@@ -1673,11 +1703,11 @@ export function buildView({ run, rubricPredicates, surface, pageClosures, chrome
 	// nothing on this tree — #3717 and #3718 fixed the last of each — and a table built only from
 	// findings would simply not have a row for them. "Found nothing" would then be rendered exactly
 	// like "was not run", in the one section whose whole job is that they never look the same.
-	/** @type {Record<string, {total: number, decision: number, debt: number, unlisted: number, inPageClosure: number, chromeOnly: number, offTree: number, predicate: string|null, owner: string|null}>} */
+	/** @type {Record<string, {total: number, decision: number, debt: number, unlisted: number, inPageClosure: number, chromeOnly: number, sharedPackage: number, offTree: number, predicate: string|null, owner: string|null}>} */
 	const byRule = {};
 	for (const id of [...Object.keys(RULE_PREDICATE), ...Object.keys(RULES_WITHOUT_A_PREDICATE)]) {
 		byRule[id] = {
-			total: 0, decision: 0, debt: 0, unlisted: 0, inPageClosure: 0, chromeOnly: 0, offTree: 0,
+			total: 0, decision: 0, debt: 0, unlisted: 0, inPageClosure: 0, chromeOnly: 0, sharedPackage: 0, offTree: 0,
 			predicate: RULE_PREDICATE[id] ?? null,
 			owner: RULES_WITHOUT_A_PREDICATE[id]?.owner ?? null,
 		};
@@ -1698,10 +1728,12 @@ export function buildView({ run, rubricPredicates, surface, pageClosures, chrome
 	/** @type {Map<string, number>} */
 	const chromeFiles = new Map();
 	/** @type {Map<string, number>} */
+	const sharedPackageFiles = new Map();
+	/** @type {Map<string, number>} */
 	const offTreeFiles = new Map();
 	for (const f of surface.findings) {
 		const row = (byRule[f.rule] ??= {
-			total: 0, decision: 0, debt: 0, unlisted: 0, inPageClosure: 0, chromeOnly: 0, offTree: 0,
+			total: 0, decision: 0, debt: 0, unlisted: 0, inPageClosure: 0, chromeOnly: 0, sharedPackage: 0, offTree: 0,
 			predicate: RULE_PREDICATE[f.rule] ?? null,
 			owner: RULES_WITHOUT_A_PREDICATE[f.rule]?.owner ?? null,
 		});
@@ -1714,7 +1746,28 @@ export function buildView({ run, rubricPredicates, surface, pageClosures, chrome
 		} else {
 			row.unlisted += 1;
 		}
-		if (inSomePage.has(f.file)) row.inPageClosure += 1;
+		// A FINDING OUTSIDE `apps/console` IS ITS OWN BUCKET, AND IT IS TESTED FIRST.
+		//
+		// `offTree` carries a CLAIM — "no private page imports this" — and the closure earns that
+		// claim by resolving every `@/…` and relative specifier from every `page.tsx`.
+		// `resolveSpecifier` follows neither `@repo/*` nor any other bare specifier, by design and
+		// with its own comment saying so, so no `packages/**` path can EVER land in `inSomePage` or
+		// `chromeClosure` — and dropping one into `offTree` would assert unimportedness on evidence
+		// the closure structurally cannot hold. Measured: `packages/ui/src/funnel-filter.tsx` is
+		// imported by `components/evidence/evidence-filter-bar.tsx`, which a private evidence route
+		// renders, and `packages/ui/src/field-help.tsx` by ten console components including every
+		// `connectors/*-connection.tsx`. Both were being printed under "outside every private
+		// route's module graph", alongside two genuinely dead design-project files — so a reader
+		// triaging off that table would de-prioritise exactly the shared primitives the `shared_ui`
+		// scope was added to reach, which is verbatim the outcome that scope exists to prevent.
+		//
+		// The `shared_ui` scope came in with #4309 and is the first time this guard reads a file
+		// outside the console app; the test is the app boundary rather than a `packages/ui` literal,
+		// so a second shared root does not silently re-open the hole.
+		if (!f.file.startsWith(`${CONSOLE_REL}/`)) {
+			row.sharedPackage += 1;
+			sharedPackageFiles.set(f.file, (sharedPackageFiles.get(f.file) ?? 0) + 1);
+		} else if (inSomePage.has(f.file)) row.inPageClosure += 1;
 		else if (chromeClosure.has(f.file)) {
 			row.chromeOnly += 1;
 			chromeFiles.set(f.file, (chromeFiles.get(f.file) ?? 0) + 1);
@@ -1761,6 +1814,7 @@ export function buildView({ run, rubricPredicates, surface, pageClosures, chrome
 		reconciliation: {
 			byRule,
 			chromeOnlyFiles: [...chromeFiles].sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0])).map(([file, hits]) => ({ file, hits })),
+			sharedPackageFiles: [...sharedPackageFiles].sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0])).map(([file, hits]) => ({ file, hits })),
 			offTreeFiles: [...offTreeFiles].sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0])).map(([file, hits]) => ({ file, hits })),
 		},
 	};
@@ -1789,6 +1843,21 @@ const cell = (f) => {
 	}
 	return `${f.pass}/${f.pass + f.fail} · ${pct(f.score)}${f.notMeasured > 0 ? ` · ${f.notMeasured} withheld` : ""}`;
 };
+
+/**
+ * A `| file | occurrences |` table, or the sentence that says the bucket is empty.
+ *
+ * Both reconciliation buckets below are meant to reach zero, and both are introduced by a
+ * paragraph ending in a colon — so a header row with no body under one reads as a rendering
+ * failure rather than as the finished state.
+ *
+ * @param {{file: string, hits: number}[]} files
+ * @returns {string[]} the markdown lines
+ */
+const tableOrNone = (files) =>
+	files.length === 0
+		? ["_None — every occurrence in this bucket has been lifted._"]
+		: ["| file | occurrences |", "|---|---:|", ...files.map((f) => `| \`${f.file}\` | ${f.hits} |`)];
 
 /** The generated region of `scoreboard.md`. No wall clock, no absolute path, no uncommitted input. */
 export function renderScoreboard(view) {
@@ -1990,21 +2059,21 @@ export function renderScoreboard(view) {
 	L.push("accounts for all of them twice — once by ledger, once by reach — so a rule or a file falling out");
 	L.push("of the scoreboard cannot be quiet.");
 	L.push("");
-	L.push("| rule | predicate | total | recorded decision | measured drift | unlisted | in a page's surface | shared chrome only | outside the private tree |");
-	L.push("|---|---|---:|---:|---:|---:|---:|---:|---:|");
+	L.push("| rule | predicate | total | recorded decision | measured drift | unlisted | in a page's surface | shared chrome only | shared package | outside the private tree |");
+	L.push("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|");
 	const ruleIds = Object.keys(view.reconciliation.byRule).sort();
-	const sum = { total: 0, decision: 0, debt: 0, unlisted: 0, inPageClosure: 0, chromeOnly: 0, offTree: 0 };
+	const sum = { total: 0, decision: 0, debt: 0, unlisted: 0, inPageClosure: 0, chromeOnly: 0, sharedPackage: 0, offTree: 0 };
 	for (const id of ruleIds) {
 		const r = view.reconciliation.byRule[id];
 		for (const k of Object.keys(sum)) sum[k] += r[k];
 		L.push(
 			`| \`${id}\` | ${r.predicate ?? `**none** — ${r.owner}`} | ${r.total} | ${r.decision} | ${r.debt} | ` +
-				`${r.unlisted} | ${r.inPageClosure} | ${r.chromeOnly} | ${r.offTree} |`,
+				`${r.unlisted} | ${r.inPageClosure} | ${r.chromeOnly} | ${r.sharedPackage} | ${r.offTree} |`,
 		);
 	}
 	L.push(
 		`| **total** | | ${sum.total} | ${sum.decision} | ${sum.debt} | ${sum.unlisted} | ` +
-			`${sum.inPageClosure} | ${sum.chromeOnly} | ${sum.offTree} |`,
+			`${sum.inPageClosure} | ${sum.chromeOnly} | ${sum.sharedPackage} | ${sum.offTree} |`,
 	);
 	L.push("");
 	L.push("**`unlisted` is the column to read first.** A non-zero value means the guard is red — an");
@@ -2014,14 +2083,20 @@ export function renderScoreboard(view) {
 	// "Every rule maps to a predicate" and "the table was never consulted" must not render the same,
 	// so the empty case is a sentence rather than an absent paragraph.
 	const unmapped = Object.entries(RULES_WITHOUT_A_PREDICATE);
-	if (unmapped.length === 0) {
+	if (unmapped.length > 0) {
+		L.push("**Matchers that map to no rubric predicate**, each with the issue that owns it. A rule here is");
+		L.push("not unscored by accident — it measures something the rubric has no row for, or measures a row's");
+		L.push("subject in a way that is not that row's verdict.");
+		L.push("");
+		L.push("| rule | owner | why it maps to nothing |");
+		L.push("| --- | --- | --- |");
+		for (const [id, e] of unmapped) L.push(`| \`${id}\` | ${e.owner} | ${e.why} |`);
+	} else {
 		L.push("**Every matcher maps to a rubric predicate.** `empty_state` was the one that did not — it guarded");
 		L.push("CLAUDE.md §6's `@repo/ui/empty` row and the rubric's H table had no row for it, so its occurrences");
 		L.push("were counted here and scored nowhere. #3798 gave the rubric **H9**, and it is scored like any other");
 		L.push("H row. The live T5 asks the other half of the question: what the empty region resolved to when a");
 		L.push("browser actually rendered it against an empty org.");
-	} else {
-		for (const [id, meta] of unmapped) L.push(`**\`${id}\` maps to no rubric predicate** (${meta.owner}). ${meta.why}`);
 	}
 	L.push("");
 	L.push(`**Reachable only from the shared layout chain** — ${view.reconciliation.chromeOnlyFiles.length} files. These are real`);
@@ -2029,14 +2104,27 @@ export function renderScoreboard(view) {
 	L.push("in any route's H column, because attributing the chrome's drift to all 40 routes would say the");
 	L.push("console is 40 times worse than it is. The full list is in `ui-conformance-baseline.json`.");
 	L.push("");
-	L.push(`**Outside every private route's module graph** — ${view.reconciliation.offTreeFiles.length} files. Public routes (sign-in,`);
-	L.push("onboarding, OAuth consent, accepting terms) and modules no private page imports. The route manifest");
-	L.push("is scoped to `app/(private)`, so these are outside the rubric's stated subject and are listed here");
-	L.push("rather than scored:");
+	L.push(`**In a shared package, where no console closure can see them** — ${view.reconciliation.sharedPackageFiles.length} files. These live`);
+	L.push("outside `apps/console` and are reached through a bare `@repo/*` specifier, which the module closure");
+	L.push("deliberately does not follow. **They are not unimported, and nothing here claims they are** — most");
+	L.push("of them are primitives that many console pages render through. What is true is narrower: the");
+	L.push("closure cannot say WHICH routes reach them, so they are counted here rather than attributed to a");
+	L.push("route's H column or filed under the table below, whose whole claim is that no page imports the");
+	L.push("file. Fixing one of these is worth more than its occurrence count suggests, not less:");
 	L.push("");
-	L.push("| file | occurrences |");
-	L.push("|---|---:|");
-	for (const f of view.reconciliation.offTreeFiles) L.push(`| \`${f.file}\` | ${f.hits} |`);
+	// A bucket that has been EMPTIED prints its emptiness rather than a header with no rows. Both
+	// paragraphs above end in a colon, so a bare table under one reads as a rendering failure
+	// instead of as the finished state — which is what #4309 made this bucket, by lifting the two
+	// `packages/ui` occurrences that were the only members it ever had.
+	L.push(...tableOrNone(view.reconciliation.sharedPackageFiles));
+	L.push("");
+	L.push(`**Outside every private route's module graph** — ${view.reconciliation.offTreeFiles.length} files, all under \`apps/console\`.`);
+	L.push("Public routes (sign-in, onboarding, OAuth consent, accepting terms) and console modules no private");
+	L.push("page imports. The route manifest is scoped to `app/(private)`, so these are outside the rubric's");
+	L.push("stated subject and are listed here rather than scored. A file reached only through `@repo/*` is");
+	L.push("**not** in this table — see the shared-package section above:");
+	L.push("");
+	L.push(...tableOrNone(view.reconciliation.offTreeFiles));
 	L.push("");
 	L.push(`_Generated by \`apps/console/scripts/audit-report.mjs\`. Do not edit below the marker — run \`pnpm -C apps/console run audit:report --write\`._`);
 	return L.join("\n");
@@ -2422,9 +2510,20 @@ function selfTest() {
 	ok("type_scale → H8", RULE_PREDICATE.type_scale === "H8");
 	ok("status_badge → H3 — #3797, the last H row to get a matcher", RULE_PREDICATE.status_badge === "H3");
 	ok("empty_state → H9 — #3798's decision, not a fold into the live T5", RULE_PREDICATE.empty_state === "H9");
+	// The table stopped being empty with #4309. What is asserted now is the property it was empty
+	// FOR: every entry names an owning issue and a reason, so a rule cannot land here as a way of
+	// disappearing from the reconciliation.
 	ok(
-		"...and RULES_WITHOUT_A_PREDICATE is still empty, and still exists for the next matcher",
-		Object.keys(RULES_WITHOUT_A_PREDICATE).length === 0 && typeof RULES_WITHOUT_A_PREDICATE === "object",
+		"RULES_WITHOUT_A_PREDICATE carries ink_alpha, with an owner and a reason",
+		RULES_WITHOUT_A_PREDICATE.ink_alpha?.owner === "#4309" && (RULES_WITHOUT_A_PREDICATE.ink_alpha?.why ?? "").length > 40,
+	);
+	ok(
+		"...and every entry does, so the table cannot become a place rules go to vanish",
+		Object.values(RULES_WITHOUT_A_PREDICATE).every((e) => typeof e?.owner === "string" && typeof e?.why === "string"),
+	);
+	ok(
+		"...and ink_alpha is NOT also mapped to a predicate, which would score R5 twice",
+		!(("ink_alpha") in RULE_PREDICATE),
 	);
 	ok(
 		"the nine mapped rules are exactly the nine H rows — every one instrumented",
@@ -2548,12 +2647,18 @@ function selfTest() {
 			{ rule: "format", file: "apps/console/components/auth/form.tsx", line: 1, text: ".toFixed(" },
 			// mapped to no predicate: counted, scored nowhere.
 			{ rule: "empty_state", file: "apps/console/components/a.tsx", line: 9, text: "text-center py-8" },
+			// OUTSIDE `apps/console` ENTIRELY (#4309's `shared_ui` scope). It is in NO closure and
+			// can never be — `resolveSpecifier` does not follow `@repo/*` — so filing it as
+			// "outside every private route's module graph" would assert unimportedness the graph
+			// cannot testify to. It gets its own bucket, and the reach assertion below sums it.
+			{ rule: "ink_alpha", file: "packages/ui/src/funnel-filter.tsx", line: 1, text: "text-muted-foreground/70" },
 		],
 		entries: [
 			{ section: "page_title", path: "apps/console/components/b.tsx", hits: 1, kind: "decision" },
 			{ section: "type_scale", path: "apps/console/components/a.tsx", hits: 2, kind: "debt" },
 			{ section: "empty_state", path: "apps/console/components/a.tsx", hits: 1, kind: "debt" },
 			{ section: "status_badge", path: "apps/console/components/a.tsx", hits: 1, kind: "debt" },
+			{ section: "ink_alpha", path: "packages/ui/src/funnel-filter.tsx", hits: 1, kind: "debt" },
 		],
 	};
 	// ── the live half's fixture ──────────────────────────────────────────────────────────────
@@ -2722,18 +2827,38 @@ function selfTest() {
 	const rec = view.reconciliation.byRule;
 	const total = Object.values(rec).reduce((n, r) => n + r.total, 0);
 	const byLedger = Object.values(rec).reduce((n, r) => n + r.decision + r.debt + r.unlisted, 0);
-	const byReach = Object.values(rec).reduce((n, r) => n + r.inPageClosure + r.chromeOnly + r.offTree, 0);
+	const byReach = Object.values(rec).reduce((n, r) => n + r.inPageClosure + r.chromeOnly + r.sharedPackage + r.offTree, 0);
 	ok("every finding is accounted for by ledger", total === fixtureSurface.findings.length && byLedger === total);
 	ok("...and by reach, independently", byReach === total);
 	ok("a chrome-only file is named", view.reconciliation.chromeOnlyFiles.some((f) => f.file.endsWith("shell/side.tsx")));
 	ok("an off-tree file is named", view.reconciliation.offTreeFiles.some((f) => f.file.endsWith("auth/form.tsx")));
+	// A `packages/**` FINDING IS NOT "UNIMPORTED", AND THE REPORT MUST NOT SAY SO. `resolveSpecifier`
+	// follows neither `@repo/*` nor any other bare specifier, so such a file can never enter a page
+	// closure or the chrome closure — and the `else` it used to fall into prints a paragraph whose
+	// whole claim is that no private page imports the file. Both directions are pinned: it lands in
+	// `sharedPackage`, and it is ABSENT from `offTreeFiles`.
+	ok(
+		"a shared-package finding gets its own bucket",
+		rec.ink_alpha.sharedPackage === 1 && rec.ink_alpha.offTree === 0 && rec.ink_alpha.inPageClosure === 0 && rec.ink_alpha.chromeOnly === 0,
+	);
+	ok("...and is named there", view.reconciliation.sharedPackageFiles.some((f) => f.file === "packages/ui/src/funnel-filter.tsx"));
+	ok("...and NOT in the off-tree table, which claims nothing imports its rows", !view.reconciliation.offTreeFiles.some((f) => f.file.startsWith("packages/")));
+	ok(
+		"...and the rendered off-tree paragraph does not carry it",
+		!renderScoreboard(view).split("**Outside every private route's module graph**")[1].split("\n\n")[0].includes("packages/ui/src/funnel-filter.tsx"),
+	);
 	ok("empty_state is counted AND scored, as H9 (#3798)", rec.empty_state.total === 1 && rec.empty_state.predicate === "H9" && rec.empty_state.owner === null);
 	// "Found nothing" and "was not run" must not render the same. The fixture trips seven of the
-	// nine rules; the other two must still have a row, reading 0.
+	// TEN rules; the other three must still have a row, reading 0.
+	//
+	// The count is written out rather than derived from the rule table on purpose: it is the
+	// denominator, and a denominator that updates itself cannot notice a rule that stopped being
+	// reported. It moved 9 → 10 with `ink_alpha` (#4309), which is the change being asserted.
 	ok(
 		"a rule that found NOTHING still gets a row reading 0, rather than no row at all",
-		Object.keys(rec).length === 9 && rec.data_table.total === 0 && rec.stat_strip.total === 0,
+		Object.keys(rec).length === 10 && rec.data_table.total === 0 && rec.stat_strip.total === 0,
 	);
+	ok("ink_alpha is counted, and mapped to NO predicate — it warns about R5, it is not R5's verdict (#4309)", rec.ink_alpha.total === 1 && rec.ink_alpha.predicate === null && rec.ink_alpha.owner === "#4309");
 	ok("status_badge is counted AND scored, as H3 (#3797)", rec.status_badge.total === 1 && rec.status_badge.predicate === "H3" && rec.status_badge.owner === null);
 	ok("...and it is rendered", renderScoreboard(view).includes("| `stat_strip` | H6 | 0 |"));
 	ok(

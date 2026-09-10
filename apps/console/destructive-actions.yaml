@@ -1,0 +1,760 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# THE DESTRUCTIVE-ACTION REGISTRY — every control in the console that deletes, removes, destroys,
+# revokes, cancels, detaches, disconnects, discards or suspends something, and what stands between
+# a click and the mutation.
+#
+# One list, read by three instruments so they cannot disagree about what exists:
+#   · scripts/check-destructive-actions.mjs   — the STATIC census: every call site of a
+#     destructive server action / auth-client method under apps/console must have an entry here,
+#     and every entry's `surface` must contain its `mutation`. (#4266)
+#   · apps/console/e2e/audit/destructive.spec.ts — the LIVE spec: opens each control, asserts the
+#     confirmation it declares, CANCELS, and proves nothing mutated. A `missing` entry whose dialog
+#     now appears FAILS — the lane that adds the dialog flips the entry in the same PR. (#4266)
+#   · .claude/skills/console-prod-qa/SKILL.md   — the production pass reads `prod-qa` to decide
+#     what it may open on alethialabs.io: `open-cancel` (open the dialog, press Cancel),
+#     `own-rows-only` (may confirm, but only on a row the run itself created), `skip` (never
+#     touched on production, with the reason beside it). (#4284)
+#
+# Field contract (version 1):
+#   id              stable dotted name; the census and the spec key on it
+#   route           the manifest route the control lives on (scripts/lib/console-routes.mjs)
+#   surface         the component file — PINNED; read it before asserting anything about the control
+#   mutation        the identifier the click reaches (a server action, an authClient method, a store
+#                   action); "" when the lane that owns the surface has yet to pin it (the census
+#                   refuses an empty mutation — it is a to-do, not an exemption).
+#                   TWO SHAPES, because two kinds of call site exist and the census greps for both:
+#                     · an identifier — `deleteProject`, `authClient.organization.delete`. Matched
+#                       whole, or by its last segment for a dotted path.
+#                     · a bare fetch — `<path> <VERB>`, e.g. `/api/org/logo DELETE`. There is no
+#                       identifier to grep, so the census matches the PATH and reads the verb as
+#                       documentation. Written this way rather than invented as a fake identifier:
+#                       a name that appears in no file is one a reader cannot chase.
+#   mutation_surface  OPTIONAL — the file that actually invokes `mutation`, when that is not
+#                   `surface`. Six controls are presentational: `pool-card.tsx` renders the trigger
+#                   and raises `onDelete`, and the parent (or a store) calls the server action.
+#                   `surface` answers "where does the spec find the control", which is what drives
+#                   it; this answers "where does the mutation live", which is what the census greps.
+#                   Collapsing the two would force a choice between a `surface` the spec cannot
+#                   drive and a census rule that cannot check anything — so they are two fields.
+#                   When absent, the census reads `mutation` from `surface`, which is the ordinary
+#                   case (35 of 41).
+#   reach           optional opener chain the spec walks first: {menu: "<name>"} | {section: "<title>"}
+#                   | {select: "<row>"} | {open: "<control>"}
+#   control         the trigger, by accessible role + name (never a CSS class)
+#   confirm         alert-dialog | confirm-dialog | popover | undo | none
+#   confirm_action  the destructive button's label — the ONE control the spec never clicks
+#   dialog_title    what the dialog says, so a renamed dialog is a finding rather than a pass
+#   fixture         what the spec must seed for the control to render
+#   persona         owner | team | member
+#   status          confirmed (a confirmation exists) | missing (fires on a bare click — `issue`
+#                   REQUIRED) | inert (the control does nothing at all — `issue` REQUIRED)
+#   issue           the board unit that flips a `missing`/`inert` entry
+#   prod-qa         open-cancel | own-rows-only | skip
+#   reason          why prod-qa is `skip`, when it is
+#
+# A `missing` entry is a DEFECT recorded, not a decision. Of the 41 controls read on 2026-09-07,
+# 22 are `confirmed`, 18 are `missing` and 1 is `inert` — so NINETEEN fire on a bare click, and each
+# names the lane that adds the ConfirmDialog. (The count is stated as the three statuses rather than
+# one number because `inert` is not a missing confirmation, it is a control that does nothing at
+# all, and a single figure hid that distinction.)
+
+version: 1
+
+allow:
+  # Call sites the census may see that are NOT a destructive control a person clicks. Each needs a
+  # reason; an empty reason is refused.
+  - mutation: discardChanges
+    surface: apps/console/lib/stores/use-canvas-store.ts
+    reason: the client-side half of canvas.discard-staged; the server half (discardStagedChanges) is the registered mutation
+
+  - mutation: cancelJob
+    surface: apps/console/lib/query/use-jobs-query.ts
+    reason: the query-hook delegate for jobs.cancel; the control is the job page's Cancel button, recorded there
+
+controls:
+  # ── organisation & project ─────────────────────────────────────────────────────────────────
+  - id: org.delete
+    route: /[org]/~/settings/general
+    surface: apps/console/components/settings/general/org-general.tsx
+    mutation: authClient.organization.delete
+    reach: [{ section: "Delete organization" }]
+    control: { role: button, name: "Delete organization" }
+    confirm: alert-dialog
+    confirm_action: "Delete organization"
+    dialog_title: "Delete this organization?"
+    fixture: none
+    persona: owner
+    status: confirmed
+    prod-qa: skip
+    reason: irreversible — deletes the QA org itself
+
+  - id: project.delete
+    route: /[org]/[project]/settings/general
+    surface: apps/console/components/settings/general/project-general.tsx
+    mutation: deleteProject
+    reach: [{ section: "Delete project" }]
+    control: { role: button, name: "Delete project" }
+    confirm: alert-dialog
+    confirm_action: "Delete project"
+    dialog_title: "Delete this project?"
+    fixture: project
+    persona: owner
+    status: confirmed
+    prod-qa: own-rows-only
+
+  - id: env.delete
+    route: /[org]/[project]/environments
+    surface: apps/console/components/environments/environments-view.tsx
+    mutation: deleteEnvironment
+    reach: [{ menu: "Environment actions" }]
+    control: { role: menuitem, name: "Delete" }
+    confirm: confirm-dialog
+    confirm_action: "Delete environment"
+    dialog_title: "Delete <name>?"
+    fixture: project-with-two-environments
+    persona: owner
+    status: confirmed
+    prod-qa: own-rows-only
+
+  - id: promotion.reject
+    route: /[org]/[project]/environments
+    surface: apps/console/components/environments/environments-view.tsx
+    mutation: rejectPromotion
+    control: { role: button, name: "Reject" }
+    confirm: confirm-dialog
+    confirm_action: "Reject promotion"
+    dialog_title: "Reject this promotion?"
+    fixture: pending-promotion
+    persona: owner
+    status: confirmed
+    prod-qa: skip
+    reason: needs a pending promotion, which needs a deployed environment
+
+  - id: promotion.cancel
+    route: /[org]/[project]/environments
+    surface: apps/console/components/environments/environments-view.tsx
+    mutation: cancelPromotion
+    control: { role: button, name: "Cancel" }
+    confirm: confirm-dialog
+    confirm_action: "Cancel promotion"
+    dialog_title: "Cancel this promotion?"
+    fixture: pending-promotion
+    persona: owner
+    status: confirmed
+    prod-qa: skip
+    reason: needs a pending promotion, which needs a deployed environment
+
+  # ── canvas ─────────────────────────────────────────────────────────────────────────────────
+  - id: env.destroy
+    route: /[org]/[project]/architecture
+    surface: apps/console/components/design-project/canvas/node-inspector.tsx
+    mutation_surface: apps/console/components/design-project/canvas/design-project-canvas.tsx
+    mutation: destroyProject
+    reach: [{ select: "the project node" }, { section: "Destroy environment" }]
+    control: { role: button, name: "Destroy" }
+    confirm: confirm-dialog
+    confirm_action: "Destroy environment"
+    dialog_title: "Destroy this environment?"
+    fixture: project
+    persona: owner
+    status: confirmed
+    prod-qa: open-cancel
+
+  - id: canvas.discard-staged
+    route: /[org]/[project]/architecture
+    surface: apps/console/components/design-project/canvas/pending-changes-bar.tsx
+    mutation_surface: apps/console/components/design-project/canvas/design-project-canvas.tsx
+    mutation: discardStagedChanges
+    reach: [{ open: "add a node so the pending-changes bar renders" }]
+    control: { role: button, name: "Discard" }
+    confirm: confirm-dialog
+    confirm_action: "Discard"
+    dialog_title: "Discard staged changes?"
+    fixture: project
+    persona: owner
+    status: confirmed
+    prod-qa: own-rows-only
+
+  - id: canvas.delete-resource
+    route: /[org]/[project]/architecture
+    surface: apps/console/components/design-project/canvas/inspector/danger-zone.tsx
+    mutation: removeNodes
+    reach: [{ select: "a resource node" }, { section: "Delete resource" }]
+    control: { role: button, name: "Delete" }
+    confirm: undo
+    undo: { shortcut: "Meta+Z" }
+    fixture: project-with-a-node
+    persona: owner
+    status: confirmed
+    prod-qa: own-rows-only
+
+  - id: byo.chart.detach
+    route: /[org]/[project]/architecture
+    surface: apps/console/components/design-project/canvas/nodes/chart-node.tsx
+    mutation: detachByoChart
+    control: { role: button, name: "Detach chart" }
+    confirm: none
+    fixture: byo-chart
+    persona: owner
+    status: missing
+    issue: "#4279"
+    prod-qa: skip
+    reason: needs an attached BYO chart
+
+  - id: byo.iac.detach
+    route: /[org]/[project]/architecture
+    surface: apps/console/components/design-project/byo/iac-node.tsx
+    mutation: detachIacSource
+    control: { role: button, name: "Detach IaC source" }
+    confirm: none
+    fixture: byo-iac-source
+    persona: owner
+    status: missing
+    issue: "#4281"
+    prod-qa: skip
+    reason: needs an attached BYO IaC source
+
+  - id: addons.remove
+    route: /[org]/[project]/architecture
+    surface: apps/console/components/addons/addon-config-card.tsx
+    mutation: useDisableAddon
+    reach: [{ open: "an installed add-on's config sheet" }]
+    control: { role: button, name: "Remove" }
+    confirm: none
+    fixture: installed-addon
+    persona: owner
+    status: missing
+    issue: "#4281"
+    prod-qa: skip
+    reason: needs an installed add-on on a provisioned environment
+
+  # ── connectors ─────────────────────────────────────────────────────────────────────────────
+  - id: connectors.disconnect
+    route: /[org]/~/connectors
+    surface: apps/console/components/connectors/connectors-page.tsx
+    mutation: deleteProviderToken
+    reach: [{ menu: "connector actions" }]
+    control: { role: menuitem, name: "Disconnect" }
+    confirm: alert-dialog
+    confirm_action: "Disconnect"
+    dialog_title: "Disconnect <name>?"
+    fixture: connected-cloud-identity
+    persona: owner
+    status: confirmed
+    prod-qa: skip
+    reason: a production connector is a real credential; the dialog also covers git unlink and API-key delete
+
+  # ── alerts ─────────────────────────────────────────────────────────────────────────────────
+
+  # The disconnect dialog is ONE control that dispatches by cloud: `confirmDisconnect`
+  # (connectors-page.tsx) branches to six different mutations behind a single AlertDialog. The
+  # `mutation` field is a scalar, so the entry above could hold one of the six and the other five
+  # went unrecorded — measured by the census on 2026-09-09, not read off the file. They are
+  # siblings rather than a list because the field contract is version 1 and scalar; each is a
+  # distinct mutation reachable from the same trigger, and the live spec drives the dialog once
+  # per seeded connector.
+
+  - id: connectors.disconnect.aws
+    route: /[org]/~/connectors
+    surface: apps/console/components/connectors/connectors-page.tsx
+    mutation: disconnectAwsIdentity
+    reach: [{ menu: "connector actions" }]
+    control: { role: menuitem, name: "Disconnect" }
+    confirm: alert-dialog
+    confirm_action: "Disconnect"
+    dialog_title: "Disconnect <name>?"
+    fixture: connected-cloud-identity
+    persona: owner
+    status: confirmed
+    prod-qa: skip
+    reason: a production connector is a real credential; the dialog also covers git unlink and API-key delete
+
+  # ── alerts ─────────────────────────────────────────────────────────────────────────────────
+
+  - id: connectors.disconnect.gcp
+    route: /[org]/~/connectors
+    surface: apps/console/components/connectors/connectors-page.tsx
+    mutation: disconnectGcpIdentity
+    reach: [{ menu: "connector actions" }]
+    control: { role: menuitem, name: "Disconnect" }
+    confirm: alert-dialog
+    confirm_action: "Disconnect"
+    dialog_title: "Disconnect <name>?"
+    fixture: connected-cloud-identity
+    persona: owner
+    status: confirmed
+    prod-qa: skip
+    reason: a production connector is a real credential; the dialog also covers git unlink and API-key delete
+
+  # ── alerts ─────────────────────────────────────────────────────────────────────────────────
+
+  - id: connectors.disconnect.azure
+    route: /[org]/~/connectors
+    surface: apps/console/components/connectors/connectors-page.tsx
+    mutation: disconnectAzureIdentity
+    reach: [{ menu: "connector actions" }]
+    control: { role: menuitem, name: "Disconnect" }
+    confirm: alert-dialog
+    confirm_action: "Disconnect"
+    dialog_title: "Disconnect <name>?"
+    fixture: connected-cloud-identity
+    persona: owner
+    status: confirmed
+    prod-qa: skip
+    reason: a production connector is a real credential; the dialog also covers git unlink and API-key delete
+
+  # ── alerts ─────────────────────────────────────────────────────────────────────────────────
+
+  - id: connectors.disconnect.extra
+    route: /[org]/~/connectors
+    surface: apps/console/components/connectors/connectors-page.tsx
+    mutation: disconnectExtraCloud
+    reach: [{ menu: "connector actions" }]
+    control: { role: menuitem, name: "Disconnect" }
+    confirm: alert-dialog
+    confirm_action: "Disconnect"
+    dialog_title: "Disconnect <name>?"
+    fixture: connected-cloud-identity
+    persona: owner
+    status: confirmed
+    prod-qa: skip
+    reason: a production connector is a real credential; the dialog also covers git unlink and API-key delete
+
+  # ── alerts ─────────────────────────────────────────────────────────────────────────────────
+
+  - id: connectors.disconnect.api-key
+    route: /[org]/~/connectors
+    surface: apps/console/components/connectors/connectors-page.tsx
+    mutation: deleteConnectorCredential
+    reach: [{ menu: "connector actions" }]
+    control: { role: menuitem, name: "Disconnect" }
+    confirm: alert-dialog
+    confirm_action: "Disconnect"
+    dialog_title: "Disconnect <name>?"
+    fixture: connected-api-key-connector
+    persona: owner
+    status: confirmed
+    prod-qa: skip
+    reason: a production connector is a real credential; the dialog also covers git unlink and API-key delete
+
+  # ── alerts ─────────────────────────────────────────────────────────────────────────────────
+
+  - id: alerts.channel.delete
+    route: /[org]/~/alerts
+    surface: apps/console/components/alerts/channels-panel.tsx
+    mutation: deleteChannel
+    reach: [{ select: "a channel row" }]  # role=option since #4433
+    control: { role: button, name: "Delete channel" }
+    confirm: confirm-dialog
+    confirm_action: "Delete channel"
+    dialog_title: "Delete channel \"<name>\"?"
+    fixture: alert-channel
+    persona: team
+    status: confirmed
+    prod-qa: own-rows-only
+
+  - id: alerts.channel.disable
+    route: /[org]/~/alerts
+    surface: apps/console/components/alerts/channels-panel.tsx
+    mutation: setChannelEnabled
+    reach: [{ select: "a channel row" }]  # role=option since #4433
+    control: { role: switch, name: "Enabled" }
+    confirm: confirm-dialog
+    confirm_action: "Disable"
+    dialog_title: "Disable this channel?"
+    fixture: alert-channel
+    persona: team
+    status: confirmed
+    prod-qa: own-rows-only
+
+  - id: alerts.policy.delete
+    route: /[org]/~/alerts
+    surface: apps/console/components/alerts/policies-panel.tsx
+    mutation: deletePolicy
+    reach: [{ select: "a policy row" }]  # role=option since #4433
+    control: { role: button, name: "Delete policy" }
+    confirm: confirm-dialog
+    confirm_action: "Delete policy"
+    dialog_title: "Delete policy \"<name>\"?"
+    fixture: alert-policy
+    persona: team
+    status: confirmed
+    prod-qa: own-rows-only
+
+  # ── settings ───────────────────────────────────────────────────────────────────────────────
+  - id: alerts.policy.disable
+    route: /[org]/~/alerts
+    surface: apps/console/components/alerts/policies-panel.tsx
+    mutation: togglePolicy
+    reach: [{ select: "a policy row" }]
+    control: { role: switch, name: "Enabled" }
+    confirm: none
+    fixture: alert-policy
+    persona: team
+    status: missing
+    issue: "#4492"
+    prod-qa: skip
+    reason: disabling a live policy silences a class of alerts across every channel routed to it
+
+  - id: classification.dimension.delete
+    route: /[org]/~/settings/classification
+    surface: apps/console/components/classification/classification-manager.tsx
+    mutation: deleteDimension
+    reach: [{ select: "a dimension" }]
+    control: { role: button, name: "Delete dimension" }
+    confirm: alert-dialog
+    confirm_action: "Delete"
+    dialog_title: "Delete “<label>”?"
+    fixture: classification-dimension
+    persona: owner
+    status: confirmed
+    prod-qa: own-rows-only
+
+  - id: classification.value.delete
+    route: /[org]/~/settings/classification
+    surface: apps/console/components/classification/classification-manager.tsx
+    mutation: deleteValue
+    reach: [{ select: "a dimension" }, { select: "a value" }]
+    control: { role: button, name: "Delete value" }
+    confirm: alert-dialog
+    confirm_action: "Delete"
+    dialog_title: "Delete “<label>”?"
+    fixture: classification-value
+    persona: owner
+    status: confirmed
+    prod-qa: own-rows-only
+
+  - id: roles.delete
+    route: /[org]/~/settings/roles
+    surface: apps/console/components/settings/roles/roles-manager.tsx
+    mutation: deleteRole
+    reach: [{ select: "a custom role" }]
+    control: { role: button, name: "Delete role" }
+    confirm: alert-dialog
+    confirm_action: "Delete role"
+    dialog_title: "Delete this role?"
+    fixture: custom-role
+    persona: team
+    status: confirmed
+    prod-qa: own-rows-only
+
+  - id: teams.delete
+    route: /[org]/~/settings/teams
+    surface: apps/console/components/settings/teams/teams-list.tsx
+    mutation: authClient.organization.removeTeam
+    reach: [{ menu: "Manage team" }]
+    control: { role: menuitem, name: "Delete team" }
+    confirm: alert-dialog
+    confirm_action: "Delete team"
+    dialog_title: "Delete this team?"
+    fixture: team
+    persona: team
+    status: confirmed
+    prod-qa: own-rows-only
+
+  - id: teams.member.remove
+    route: /[org]/~/settings/teams
+    surface: apps/console/components/settings/teams/manage-team-dialog.tsx
+    mutation: removeTeamMember
+    reach: [{ open: "Manage team" }]
+    control: { role: button, name: "Remove" }
+    confirm: none
+    fixture: team-with-a-member
+    persona: team
+    status: missing
+    issue: "#4271"
+    prod-qa: own-rows-only
+
+  - id: sso.provider.remove
+    route: /[org]/~/settings/sso
+    surface: apps/console/components/settings/sso/sso-manager.tsx
+    mutation: deleteSsoProvider
+    control: { role: button, name: "Remove provider" }
+    confirm: alert-dialog
+    confirm_action: "Remove provider"
+    dialog_title: "Remove this identity provider?"
+    fixture: sso-provider
+    persona: team
+    status: confirmed
+    prod-qa: skip
+    reason: an identity provider on production is real sign-in configuration
+
+  - id: access.grant.revoke
+    route: /[org]/~/settings/access
+    surface: apps/console/components/settings/access/access-manager.tsx
+    mutation: revokeGrant
+    reach: [{ menu: "Manage grant" }]
+    control: { role: menuitem, name: "Revoke access" }
+    confirm: alert-dialog
+    confirm_action: "Revoke access"
+    dialog_title: "Revoke this grant?"
+    fixture: access-grant
+    persona: team
+    status: confirmed
+    prod-qa: own-rows-only
+
+  - id: members.remove
+    route: /[org]/~/settings/members
+    surface: apps/console/components/settings/members/members-table.tsx
+    mutation: authClient.organization.removeMember
+    reach: [{ menu: "Row actions" }]
+    control: { role: menuitem, name: "Remove from organization" }
+    confirm: none
+    fixture: member-row
+    persona: team
+    status: missing
+    issue: "#4271"
+    prod-qa: own-rows-only
+
+  - id: members.invitation.cancel
+    route: /[org]/~/settings/members
+    surface: apps/console/components/settings/members/members-table.tsx
+    mutation: authClient.organization.cancelInvitation
+    reach: [{ menu: "Row actions" }]
+    control: { role: menuitem, name: "Cancel invitation" }
+    confirm: none
+    fixture: pending-invitation
+    persona: team
+    status: missing
+    issue: "#4271"
+    prod-qa: own-rows-only
+
+  - id: members.suspend
+    route: /[org]/~/settings/members
+    surface: apps/console/components/settings/members/members-table.tsx
+    mutation: setMemberSuspended
+    reach: [{ menu: "Row actions" }]
+    control: { role: menuitem, name: "Suspend" }
+    confirm: none
+    fixture: member-row
+    persona: team
+    status: missing
+    issue: "#4271"
+    prod-qa: skip
+    reason: suspends a real person's access; the QA org's only other member is the founder
+
+  - id: members.reactivate
+    route: /[org]/~/settings/members
+    surface: apps/console/components/settings/members/members-table.tsx
+    mutation: setMemberSuspended
+    reach: [{ menu: "Row actions" }]
+    control: { role: menuitem, name: "Reactivate" }
+    confirm: none
+    fixture: suspended-member-row
+    persona: team
+    status: missing
+    issue: "#4271"
+    prod-qa: skip
+    reason: the inverse of members.suspend, which is skipped
+
+  - id: members.bulk-remove
+    route: /[org]/~/settings/members
+    surface: apps/console/components/settings/members/members-table.tsx
+    mutation: authClient.organization.removeMember
+    reach: [{ open: "select two rows" }]
+    control: { role: button, name: "Remove" }
+    confirm: none
+    fixture: two-member-rows
+    persona: team
+    status: missing
+    issue: "#4271"
+    prod-qa: skip
+    reason: bulk over real people
+
+  - id: members.bulk-suspend
+    route: /[org]/~/settings/members
+    surface: apps/console/components/settings/members/members-table.tsx
+    mutation: setMemberSuspended
+    reach: [{ open: "select two rows" }]
+    control: { role: button, name: "Suspend" }
+    confirm: none
+    fixture: two-member-rows
+    persona: team
+    status: missing
+    issue: "#4271"
+    prod-qa: skip
+    reason: bulk over real people
+
+  - id: billing.card.remove
+    route: /[org]/~/settings/billing
+    surface: apps/console/components/settings/billing/payment-methods-card.tsx
+    mutation: detachPaymentMethod
+    control: { role: button, name: "Remove card" }
+    confirm: alert-dialog
+    confirm_action: "Remove card"
+    dialog_title: "Remove this card?"
+    fixture: backup-payment-method
+    persona: team
+    status: confirmed
+    prod-qa: skip
+    reason: a real payment method on the QA org's real Stripe customer
+
+  - id: billing.subscription.cancel
+    route: /[org]/~/settings/billing
+    surface: apps/console/components/settings/billing/billing-panel.tsx
+    mutation: cancelSubscription
+    control: { role: button, name: "Cancel plan" }
+    confirm: none
+    fixture: active-subscription
+    persona: team
+    status: missing
+    issue: "#4276"
+    prod-qa: skip
+    reason: cancels the QA org's real subscription
+
+  - id: org.logo.remove
+    route: /[org]/~/settings/general
+    surface: apps/console/components/org/org-logo-upload.tsx
+    mutation: "/api/org/logo DELETE"
+    reach: [{ section: "Organization profile" }]
+    control: { role: button, name: "Remove" }
+    confirm: none
+    fixture: org-with-a-logo
+    persona: owner
+    status: missing
+    issue: "#4273"
+    prod-qa: own-rows-only
+
+  # ── runners ────────────────────────────────────────────────────────────────────────────────
+  - id: runners.pool.delete
+    route: /[org]/~/runners
+    surface: apps/console/components/runners/pool-card.tsx
+    mutation_surface: apps/console/lib/query/use-fleet-query.ts
+    mutation: deleteFleetPool
+    reach: [{ menu: "Pool actions" }]
+    control: { role: menuitem, name: "Delete" }
+    confirm: alert-dialog
+    confirm_action: "Delete"
+    dialog_title: "Delete the <label> pool?"
+    fixture: fleet-pool
+    persona: owner
+    status: confirmed
+    prod-qa: own-rows-only
+
+  - id: runners.destroy
+    route: /[org]/~/runners
+    surface: apps/console/components/runners/runner-actions.tsx
+    mutation: destroyRunner
+    mutation_surface: apps/console/lib/query/use-runners-query.ts
+    control: { role: button, name: "Destroy" }
+    confirm: popover
+    confirm_action: "Destroy"
+    fixture: deployed-runner-with-cloud-resources
+    persona: owner
+    status: confirmed
+    prod-qa: skip
+    reason: tears down real cloud resources
+
+  - id: runners.remove
+    route: /[org]/~/runners
+    surface: apps/console/components/runners/runner-actions.tsx
+    mutation_surface: apps/console/lib/query/use-runners-query.ts
+    mutation: removeRunner
+    control: { role: button, name: "Remove" }
+    confirm: alert-dialog
+    confirm_action: "Remove"
+    dialog_title: "Remove runner “<name>”?"
+    fixture: registered-runner
+    persona: owner
+    status: confirmed
+    prod-qa: own-rows-only
+
+  # ── jobs ───────────────────────────────────────────────────────────────────────────────────
+  - id: jobs.cancel
+    route: /[org]/~/jobs/[id]
+    surface: apps/console/app/(private)/[org]/~/jobs/[id]/page.tsx
+    mutation: cancelJob
+    control: { role: button, name: "Cancel" }
+    confirm: none
+    fixture: active-job
+    persona: owner
+    status: missing
+    issue: "#4288"
+    prod-qa: skip
+    reason: needs an active job, which needs a running deploy
+
+  # ── the agent ──────────────────────────────────────────────────────────────────────────────
+  - id: agent.artifact.delete
+    route: /[org]
+    surface: apps/console/components/agent/agent-artifact-gallery.tsx
+    mutation: deleteArtifact
+    reach: [{ open: "Ask AI" }, { open: "Artifacts" }]
+    control: { role: button, name: "Delete <name>" }
+    confirm: none
+    fixture: artifact
+    persona: owner
+    status: missing
+    issue: "#4280"
+    prod-qa: own-rows-only
+
+  - id: agent.artifact.unshare
+    route: /[org]
+    surface: apps/console/components/agent/artifact-share-popover.tsx
+    mutation: unshareArtifact
+    reach: [{ open: "Ask AI" }, { open: "Artifacts" }, { open: "Share" }]
+    control: { role: switch, name: "Shared" }
+    confirm: none
+    fixture: shared-artifact
+    persona: owner
+    status: missing
+    issue: "#4280"
+    prod-qa: skip
+    reason: an optimistic toggle; needs a shared artifact
+
+  - id: agent.thread.delete
+    route: /[org]
+    surface: apps/console/components/agent/thread-rail.tsx
+    mutation_surface: apps/console/components/agent/elench/use-elench-threads.ts
+    mutation: deleteThread
+    reach: [{ open: "Ask AI" }]
+    control: { role: button, name: "Delete chat" }
+    confirm: none
+    fixture: chat-thread
+    persona: owner
+    status: missing
+    issue: "#4280"
+    prod-qa: own-rows-only
+
+  - id: agent.knowledge.delete
+    route: /[org]
+    surface: apps/console/components/agent/agent-knowledge-panel.tsx
+    mutation: upsertAgentContext
+    reach: [{ open: "Ask AI" }, { open: "Knowledge" }]
+    control: { role: button, name: "Delete <title>" }
+    confirm: none
+    fixture: knowledge-doc
+    persona: owner
+    status: missing
+    issue: "#4280"
+    prod-qa: own-rows-only
+
+  - id: agent.widget.remove
+    route: /[org]
+    surface: apps/console/components/agent/widgets/widget-card.tsx
+    mutation_surface: apps/console/lib/stores/use-widget-grid-store.ts
+    mutation: deleteWidget
+    reach: [{ open: "Ask AI" }, { open: "a dashboard turn" }]
+    control: { role: button, name: "Remove <title>" }
+    confirm: none
+    fixture: pinned-widget
+    persona: owner
+    status: missing
+    issue: "#4280"
+    prod-qa: own-rows-only
+
+  # ── the account ────────────────────────────────────────────────────────────────────────────
+  - id: account.delete
+    route: /[org]
+    surface: apps/console/components/shell/account-settings-dialog.tsx
+    mutation: ""
+    reach: [{ menu: "profile" }, { open: "Account settings" }]
+    control: { role: button, name: "Delete Account" }
+    confirm: none
+    fixture: none
+    persona: owner
+    status: inert
+    issue: "#4273"
+    prod-qa: skip
+    reason: the button has no handler at all — the maintainer rules whether it is wired to the erasure flow or removed

@@ -230,7 +230,7 @@ export function ConnectorDetailSheet({
 					</Badge>
 				)}
 
-				<p className="text-sm leading-relaxed text-foreground/80">
+				<p className="text-sm leading-relaxed text-muted-foreground">
 					{integration.description}
 				</p>
 
@@ -248,10 +248,16 @@ export function ConnectorDetailSheet({
 								>
 									{editingId === acc.identityId ? (
 										<>
+											{/* Named, all three: the row's only text input and its two icon-only
+											    buttons had no accessible name at all, so the whole rename
+											    interaction was reachable only by DOM position. Exactly one account
+											    can be editing (`editingId`), so these names are unique on the page
+											    without carrying the account in them. */}
 											<Input
 												value={draft}
 												onChange={(e) => setDraft(e.target.value)}
 												className="h-7 text-xs"
+												aria-label="Account name"
 												autoFocus
 												onKeyDown={(e) => {
 													if (e.key === "Enter") commitRename(acc.identityId);
@@ -262,6 +268,7 @@ export function ConnectorDetailSheet({
 												size="sm"
 												variant="ghost"
 												className="size-7 p-0"
+												title="Save name"
 												disabled={savingId === acc.identityId}
 												onClick={() => commitRename(acc.identityId)}
 											>
@@ -275,6 +282,7 @@ export function ConnectorDetailSheet({
 												size="sm"
 												variant="ghost"
 												className="size-7 p-0"
+												title="Cancel rename"
 												onClick={() => setEditingId(null)}
 											>
 												<X className="size-3.5" />
@@ -325,13 +333,18 @@ export function ConnectorDetailSheet({
 											</div>
 											{canManage && (
 												<>
+													{/* Each account's three icon buttons name THAT ACCOUNT. A cloud can hold
+													    several, and a `title` of "Rename" repeated down the list says which
+													    verb but never which row — the same defect the board's Connect buttons
+													    had, one level down. The verb stays the first word, so the tooltip
+													    still reads as an action. */}
 													{(acc.status === "failed" ||
 														acc.status === "degraded") && (
 														<Button
 															size="sm"
 															variant="ghost"
 															className="size-7 p-0 text-muted-foreground"
-															title="Re-verify with the stored credentials"
+															title={`Re-verify ${acc.name} with the stored credentials`}
 															disabled={reverifyingId === acc.identityId}
 															onClick={async () => {
 																setReverifyingId(acc.identityId);
@@ -353,7 +366,7 @@ export function ConnectorDetailSheet({
 														size="sm"
 														variant="ghost"
 														className="size-7 p-0 text-muted-foreground"
-														title="Rename"
+														title={`Rename ${acc.name}`}
 														onClick={() =>
 															startRename(acc.identityId, acc.name)
 														}
@@ -364,7 +377,7 @@ export function ConnectorDetailSheet({
 														size="sm"
 														variant="ghost"
 														className="size-7 p-0 text-destructive hover:text-destructive"
-														title="Remove this connection"
+														title={`Disconnect ${acc.name}`}
 														onClick={() => onDisconnectAccount(acc.identityId)}
 													>
 														<Unlink className="size-3.5" />

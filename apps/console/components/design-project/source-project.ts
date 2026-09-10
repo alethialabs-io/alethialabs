@@ -7,12 +7,28 @@ import {
 	DEFAULT_K8S_VERSION,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
+import { designRevision } from "@/lib/canvas/design-revision";
 import type { ProjectFormData } from "@/lib/validations/project-form.schema";
 
 /** A project loaded as the canvas source (its config + the cloud it was authored on). */
 export interface SourceProjectData {
 	formData: ProjectFormData;
 	provider: CloudProviderSlug;
+	/**
+	 * The design's content hash (`designRevision(formData)`). A producer that already knows it
+	 * may pass it; when absent, `sourceRevision` derives it from `formData` — so the page that
+	 * hands `getProjectAsFormData`'s result straight through needs no change.
+	 */
+	revision?: string;
+}
+
+/**
+ * The revision the canvas seeds `source` under: the producer's when it gave one, else a hash of
+ * the form data it carries. Two renders of the same design hand the store the same revision, so
+ * a re-render is not a re-seed.
+ */
+export function sourceRevision(source: SourceProjectData): string {
+	return source.revision ?? designRevision(buildDefaultFormValues(source));
 }
 
 /**

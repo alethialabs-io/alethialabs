@@ -12,6 +12,7 @@
 //     of which already existed in the database and, until now, reached nothing.
 
 import { useMemo } from "react";
+import type { StatusTier } from "@repo/ui/status-badge";
 import { graphToForm } from "@/components/design-project/canvas/graph/graph-to-form";
 import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-registry";
 import { configName } from "@/components/design-project/canvas/graph/node-config";
@@ -59,7 +60,12 @@ export type NodeStatusState =
 
 /** A grayscale `vx-status` modifier (dot fill/shape, never hue) + a terse mono label. */
 export interface NodeStatusMeta {
-	vx: "idle" | "active" | "pending" | "failed" | "disabled" | "live";
+	/**
+	 * The shared tier, NOT a local union. This was spelled out as its own literal union that
+	 * happened to have the same six members, so every `tier={meta.vx}` call site typechecked by
+	 * coincidence: `StatusTier` could have gained a member and nothing here would have failed.
+	 */
+	vx: StatusTier;
 	label: string;
 }
 
@@ -83,6 +89,64 @@ export const NODE_STATUS_META: Record<NodeStatusState, NodeStatusMeta> = {
 	failed: { vx: "failed", label: "Failed" },
 	unreachable: { vx: "failed", label: "Unreachable" },
 };
+
+/**
+ * The default line for a state when the server gave us no message of its own.
+ *
+ * It lives HERE, beside the state union it answers for, because it used to be a second
+ * `Partial<Record<NodeStatusState, string>>` in node-inspector.tsx — the node-state vocabulary
+ * enumerated twice, which is what `check-shared-surface`'s `status_badge` rule reads as drift.
+ *
+ * A SWITCH rather than a second map, for two reasons that point the same way. `Partial<Record<>>`
+ * is not exhaustive, so a state added to the union above got silently no hint; the `satisfies never`
+ * arm below makes that a compile error, which is the whole benefit of defining the set once.
+ * And a map keyed on `ready`/`live`/`failed`/… is exactly the shape the guard matches — folding
+ * these strings into `NODE_STATUS_META` instead would have been WORSE than leaving them where they
+ * were: that map is exempt only while its entries hold nothing but a tier and a label (the
+ * exemption is a bounded repeat over `tier|vx` and `label|word`), so a third key would have turned
+ * a clean map into twelve findings. Measured against the matcher, not inferred from its comment.
+ *
+ * `needs-setup` deliberately has no hint: that state always carries the config issue as its
+ * `message`, and a generic line would only ever hide a specific one.
+ */
+export function nodeStatusHint(state: NodeStatusState): string | undefined {
+	switch (state) {
+		case "needs-setup":
+			return undefined;
+		case "gated":
+			return "Cross-cloud core placement — won't provision until colocated.";
+		case "ready":
+			return "Configured and ready to deploy.";
+		case "not-deployed":
+			return "Designed, but never applied.";
+		case "queued":
+			return "Waiting for a runner to claim the job.";
+		case "applying":
+			return "The runner is applying this resource now.";
+		case "updating":
+			return "An apply is changing this resource in place.";
+		case "update-pending":
+			return "The design has moved ahead of what's deployed.";
+		case "live":
+			return "Provisioned and matching the design.";
+		case "destroying":
+			return "Teardown in flight.";
+		case "destroyed":
+			return "Torn down. Remove it from the design to clear it.";
+		case "failed":
+			return "The last apply failed.";
+		case "unreachable":
+			return "The cluster's API server did not answer the last probe.";
+		default:
+			return exhaustive(state);
+	}
+}
+
+/** Compile-time proof that {@link nodeStatusHint} answers for every {@link NodeStatusState}. */
+function exhaustive(state: never): undefined {
+	void state;
+	return undefined;
+}
 
 export interface NodeReadiness {
 	state: NodeStatusState;

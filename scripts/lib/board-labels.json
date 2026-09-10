@@ -34,7 +34,24 @@
 		"name, so the validator would have rejected a decomposition onto any of them. Collapsing two",
 		"lists into one fixed the two consumers agreeing with EACH OTHER; it does not make either agree",
 		"with the board, because `gh label create` still works. This file is the source — mint a wave",
-		"HERE and let `--init-labels` push it, never the other way round."
+		"HERE and let `--init-labels` push it, never the other way round.",
+		"",
+		"It drifted a THIRD time, the same direction, and the sentence above is why: `release-gate:all`",
+		"was created with `gh label create` while building #4440, `release-gate.yml` has read it ever",
+		"since, and this file had never heard of it — so `--init-labels` on a fresh clone would not have",
+		"minted it and the escape hatch would silently not exist (#4537). Added below, description and",
+		"colour copied verbatim from the live label per the paragraph above.",
+		"",
+		"WHY NOTHING RECONCILES THE TWO, and what a check would have to know. Measured 2026-09-09: 68",
+		"labels live on the repo, 41 named here. The other 27 are not drift and must NOT be minted from",
+		"here — GitHub's nine defaults, release-please's `autorelease:*`, dependabot's ecosystem labels,",
+		"Mergify's `queued`/`dequeued`, and the bot-upserted dedup identities (`from:*`, `tracker:*`,",
+		"`security`). So a check that simply diffed this file against `gh label list` would red on 26",
+		"labels it has no business owning, and the first thing anyone would do is silence it. The",
+		"reconciler #4537 asks for therefore needs a stated notion of WHICH labels this file governs,",
+		"and that is a new script and a separate unit — not a line in this one. Left undone deliberately.",
+		"In the direction that CAN be checked cheaply today, the two agree: on 2026-09-09 no entry here",
+		"differed in colour or description from its live label, so `--init-labels` would clobber nothing."
 	],
 	"labels": [
 		{ "name": "wave:W1", "kind": "wave", "color": "1d76db", "description": "north-star wave 1" },
@@ -58,6 +75,7 @@
 		{ "name": "wave:truth", "kind": "wave", "color": "d93f0b", "description": "W0 truth & safety: verify/iacsafety gates tell the truth" },
 		{ "name": "wave:elench-repo", "kind": "wave", "color": "5319e7", "description": "W4 Elench analyzes your repo: repo→plan glue + alethia verify + Action" },
 		{ "name": "wave:hardening", "kind": "wave", "color": "c2e0c6", "description": "W6 tenancy · rate limits · receipts" },
+		{ "name": "wave:release-gate", "kind": "wave", "color": "0e8a16", "description": "program track: the browser release gate — Playwright in Actions on staging→main + prod QA pass" },
 		{ "name": "wave:console-ui", "kind": "wave", "color": "1d76db", "description": "program track: console UI conformance — every private page measured, then lifted" },
 
 		{ "name": "lane:schema", "kind": "lane", "color": "5319e7", "description": "file-ownership lane: schema" },
@@ -79,6 +97,9 @@
 		{ "name": "claimed", "kind": "runtime", "color": "fbca04", "description": "held by an instance (carries a lease comment)" },
 		{ "name": "blocked", "kind": "runtime", "color": "b60205", "description": "a blocked-by dependency is still open (coordinate-maintained)" },
 
+		{ "name": "release-gate:run", "kind": "board", "color": "0e8a16", "description": "run the browser release gate on this dev PR (release-gate.yml); never on a proposed unit" },
+		{ "name": "release-gate:all", "kind": "board", "color": "0e8a16", "description": "run EVERY release-gate leg on this dev PR, overriding path selection; never on a proposed unit" },
+		{ "name": "qa:prod", "kind": "board", "color": "5319e7", "description": "a defect or report from the /console-prod-qa pass on alethialabs.io; never on a proposed unit" },
 		{ "name": "epic", "kind": "board", "color": "8b5cf6", "description": "umbrella/tracking issue — decomposed into sub-issues, never directly built/claimed" }
 	]
 }

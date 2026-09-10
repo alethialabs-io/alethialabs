@@ -22,6 +22,7 @@ import {
   SettingsCardFoot,
   SettingsDangerRow,
   SettingsField,
+  SettingsInput,
   SettingsPanel,
   SettingsSection,
   settingsControl,
@@ -108,7 +109,7 @@ export function ProjectGeneral({
                 label="Project name"
                 hint="Shown across the console and the CLI."
               >
-                <input
+                <SettingsInput
                   className={cn(settingsControl, settingsControlSize)}
                   autoComplete="off"
                   {...form.register("name")}
@@ -159,7 +160,8 @@ export function ProjectGeneral({
             <AlertDialog>
               <AlertDialogTrigger
                 render={
-                  <Button variant="outline" size="sm">
+                  // See org-general.tsx — the trigger agrees with its own dialog (#4462).
+                  <Button variant="outline" size="sm" aria-label="Delete project">
                     Delete
                   </Button>
                 }

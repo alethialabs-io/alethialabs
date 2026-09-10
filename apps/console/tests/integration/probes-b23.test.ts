@@ -6,7 +6,9 @@
 //     dispatch), on the probe cadence; only ACTIVE envs with a successful DEPLOY; never double-
 //     enqueues while a probe is in flight; respects the per-tier cadence.
 //   • recordProbeResult — appends an environment_probes history row and reports true→false only.
-//   • getLatestProbesByEnv — reads the latest row per env (newest-first).
+//   • getLatestProbesByEnv — the bounded latest-state read: a LATERAL that takes ONE probe row
+//     per environment out of the append-only history, org-scoped by the join to `projects`. Its
+//     paging and plan are proven next door in cli-probes-list-route.test.ts (#4202).
 // These prove the real SQL (partial-status filters, ordering, org-join) that mocked units hide.
 
 import { randomUUID } from "node:crypto";

@@ -40,42 +40,43 @@ interface ProjectShape {
  * job anywhere, ~14 specs' worth, and read to every later reader as coverage that did not exist.
  */
 const RUN_POSTURE: Record<string, string | null> = {
-	// A dependency of the two gating projects, never invoked on its own.
-	setup: "ci.yml · dependency of hero/elench-ai",
-	hero: "ci.yml · E2E (browser · Playwright hero path)",
-	"elench-ai": "ci.yml · E2E (browser · Elench AI journeys · scripted model)",
+	// A dependency of the gating projects, never invoked on its own. Named leg by leg, because the
+	// shorthand was wrong in both halves: `hero` signs ITSELF in as step 1 and declares no
+	// dependency, `console` signs up per-spec, and `qa` builds its personas in `global-setup`
+	// behind ALETHIA_QA_E2E=1. Only elench-ai, elench-live, canvas and audit declare
+	// `dependencies: ["setup"]`. This string is what the dead-zone guard prints when it fails, so a
+	// reader debugging a `setup` problem on the `qa` or `hero` leg was being sent to look for a
+	// dependency that is not there.
+	setup: "ci.yml · dependency of elench-ai · release-gate.yml · dependency of elench-ai/canvas/audit",
+	// Twice-homed: the per-PR job on dev (ci.yml) and the promotion gate (release-gate.yml). ci.yml
+	// skips its copy on a PR into main/staging so one merge ref does not boot the same console twice.
+	hero: "ci.yml · E2E (browser · Playwright hero path) · release-gate.yml · Release gate (hero)",
+	"elench-ai":
+		"ci.yml · E2E (browser · Elench AI journeys · scripted model) · release-gate.yml · Release gate (elench-ai)",
 	"elench-live": "e2e-ai-nightly.yml · Elench live-model journeys",
-	// NON-REQUIRED on purpose. It is path-filtered to the console surface on PRs and runs in full
-	// on the nightly cron, and it joins NO required check until its findings have been worked
-	// through: #2417 is what happens when a 320-test suite becomes a merge gate unvalidated.
-	audit: "ci.yml · UI conformance audit (console · non-required, + nightly)",
-	// ── Not gating, and no job runs them. Each needs a workflow job it does not have yet; that
-	// change lives in `.github/workflows/**`, outside #2875's scope. Until it lands, NOTHING here
-	// may be cited as coverage — that is what the entry being `null` records.
-	canvas: null,
-	console: null,
-	qa: null,
+	// Nightly in ci.yml (that run refreshes ui-conformance-live.json) AND a leg of the release gate,
+	// where it is REQUIRED on main by ratchet: it fails on regression against gate-baseline.json,
+	// not on absolute red — which is what lets a suite with recorded findings gate a promotion
+	// without #2417's shape.
+	audit: "ci.yml · UI conformance audit (nightly) · release-gate.yml · Release gate (audit)",
+	// The three that ran NOWHERE until the release gate (#4265). Each is a leg now, by ratchet.
+	canvas: "release-gate.yml · Release gate (canvas)",
+	console: "release-gate.yml · Release gate (console)",
+	qa: "release-gate.yml · Release gate (qa)",
+	// The one audit project that DRIVES the console rather than reading it. Separate leg because it
+	// needs the stripe promise (billing's controls must render to be opened) and 0 retries: a
+	// destructive control that only sometimes confirms is a finding, and a retry would hide it.
+	"audit-interaction": "release-gate.yml · Release gate (audit-interaction)",
 };
 
-/** Reasons for the `null` postures — printed by the guard so the exemption stays argued, not assumed. */
-const LOCAL_ONLY_REASON: Record<string, string> = {
-	canvas:
-		"9 board tests on the shared `setup` persona. Cannot fold into `hero` (that project runs a " +
-		"FRESH context — the hero spec signs itself in — and these need storageState). Needs its own " +
-		"non-required job; est. 5-9 min on top of a console build.",
-	console:
-		"7 per-surface smokes that each drive a FULL email-OTP signup. Better Auth caps OTP issuance " +
-		"at 5/60s per IP (lib/config/auth.ts), so they cannot be poured into a gating job; and at " +
-		"~1 min per signup they would roughly double the hero job. Needs its own non-required job.",
-	qa: "The QA suite (e2e/flows), 346 tests as `--project=qa --list` counts them. Authored " +
-		"2026-07-05; first executed against the current console on 2026-09-02 (#3633), which is " +
-		"when its personas were completed — `e2e/global-setup.ts` now builds `member` through the " +
-		"product's own invite → accept endpoints, so no spec is left throwing on a missing one. " +
-		"It stays NON-GATING: the run is triaged, not clean, and the reds are enumerated per spec " +
-		"in apps/console/docs/qa/findings.md. Promoting it needs those worked through AND a " +
-		"workflow job it does not have — both in one change, or this guard's rule 4 fires. Needs " +
-		"ALETHIA_QA_E2E=1. See apps/console/docs/qa/README.md.",
-};
+/**
+ * Reasons for the `null` postures — printed by the guard so the exemption stays argued, not assumed.
+ *
+ * EMPTY since the release gate (#4265): every project has a job. It stays as a map so the next
+ * project that genuinely runs nowhere has somewhere to write its reason, and rule 2 below still
+ * refuses a project with no posture at all.
+ */
+const LOCAL_ONLY_REASON: Record<string, string> = {};
 
 /**
  * The e2e dead-zone guard. Fails the run — including both gating CI jobs, which is the point —
@@ -271,8 +272,7 @@ const projects = [
 		use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
 	},
 
-	// The Architecture canvas journeys, on the shared `setup` persona.
-	// ⚠ RUNS IN NO CI JOB — see LOCAL_ONLY_REASON.canvas.
+	// The Architecture canvas journeys, on the shared `setup` persona. A leg of release-gate.yml.
 	{
 		name: "canvas",
 		testMatch: /architecture-canvas\.spec\.ts/,
@@ -288,7 +288,8 @@ const projects = [
 	// ever invoked it, every such spec was born dead (#2875). An allowlist plus the guard above
 	// means a new spec that nothing runs fails the config instead of disappearing.
 	//
-	// ⚠ RUNS IN NO CI JOB — see LOCAL_ONLY_REASON.console.
+	// A leg of release-gate.yml, where ALETHIA_AUTH_RATE_LIMIT=0 removes the 5-OTP/60s cap that
+	// was the recorded reason these full-signup smokes could not be poured into a gating job.
 	{
 		name: "console",
 		// `(^|/)` rather than a `/e2e/` anchor: Playwright matches testMatch against the absolute
@@ -317,6 +318,11 @@ const projects = [
 		// path, and a checkout or worktree whose directory name merely contains "audit" must not
 		// pull unrelated specs in. The segment has to be exactly `audit`.
 		testMatch: /(^|\/)audit\/[^/]*\.spec\.ts$/,
+		// `destructive.spec.ts` lives in this directory but not in this project: it is the only
+		// audit spec that ACTIVATES controls rather than reading rendered state, so it runs in
+		// `audit-interaction` with its own leg, its own capability promise and no retries. Without
+		// this ignore the file would be selected by both projects and run twice per gate.
+		testIgnore: /(^|\/)audit\/destructive\.spec\.ts$/,
 		fullyParallel: false,
 		// One route test loads the page at FOUR viewport widths, runs axe, opens every overlay the
 		// page offers and hit-tests each one, then reloads it once more with an injected fault. The
@@ -338,12 +344,29 @@ const projects = [
 		use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE, colorScheme: AUDIT_START_THEME },
 	},
 
-	// The QA suite (e2e/flows). Needs ALETHIA_QA_E2E=1 so global-setup builds its personas.
-	// ⚠ RUNS IN NO CI JOB — see LOCAL_ONLY_REASON.qa.
+	// The QA suite (e2e/flows). Needs ALETHIA_QA_E2E=1 so global-setup builds its personas. A leg
+	// of release-gate.yml, gated by RATCHET (scripts/e2e-ratchet.mjs): its recorded reds are debt
+	// in gate-baseline.json, and a promotion fails only on a regression against them.
 	{
 		name: "qa",
 		testMatch: /flows\/.*\.spec\.ts/,
 		use: { ...devices["Desktop Chrome"] },
+	},
+
+	// The destructive-action spec (#4266). It opens every control the registry records, asserts the
+	// confirmation the ledger declares, presses Cancel and proves nothing moved — so unlike every
+	// other audit project it MUTATES the page rather than reading it. Serial and un-retried on
+	// purpose: the suite takes a database fingerprint around each click, so two workers would read
+	// each other's rows, and a retry would let a control that confirms only sometimes report green.
+	{
+		name: "audit-interaction",
+		testMatch: /(^|\/)audit\/destructive\.spec\.ts$/,
+		fullyParallel: false,
+		workers: 1,
+		retries: 0,
+		timeout: 120_000,
+		dependencies: ["setup"],
+		use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE, colorScheme: AUDIT_START_THEME },
 	},
 ];
 
@@ -359,7 +382,11 @@ export default defineConfig({
 	forbidOnly: isCI,
 	retries: isCI ? 2 : 0,
 	workers: isCI ? 1 : undefined,
-	reporter: isCI ? [["list"], ["html", { open: "never" }]] : "html",
+	// In CI the `json` reporter feeds scripts/e2e-ratchet.mjs — the release gate's verdict is a
+	// comparison of this file with apps/console/e2e/gate-baseline.json, not the exit code.
+	reporter: isCI
+		? [["list"], ["html", { open: "never" }], ["json", { outputFile: "test-results/results.json" }]]
+		: "html",
 	use: {
 		baseURL,
 		trace: "on-first-retry",

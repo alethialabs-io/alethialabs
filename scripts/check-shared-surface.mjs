@@ -237,6 +237,32 @@
 //                  `hits` counts adjacent PAIRS, so a map of n statuses records n−1, and removing
 //                  entries from a map is recorded progress rather than an unchanged 1.
 //
+//   a NAMED INK TIER, at full strength   an ALPHA APPLIED TO A TEXT COLOUR —
+//                  `text-muted-foreground/60`, `text-red-500/70`, `text-foreground/[0.7]`,
+//                  `text-foreground/(--a)`, variant prefix or not — as the `ink_alpha` rule
+//                  (#4309). THIS IS THE FIRST RULE HERE THAT READS A FILE OUTSIDE
+//                  `apps/console`, and it is worth its own sentence for the same reason the
+//                  byte-division matcher's `lib/` exclusion has one. It runs over
+//                  apps/console/{components,app,lib,hooks} AND over `packages/ui/src`, as the
+//                  `shared_ui` scope, because `packages/ui/src/funnel-filter.tsx` carries the
+//                  exact `text-muted-foreground/70` the rule is about and every console filter
+//                  bar renders through it — a matcher that stopped at `apps/console` would report
+//                  the console clean while the primitive kept the defect. That root is used by
+//                  this rule alone; widening the OTHER rules to it is a separate question with a
+//                  separate census and is not answered here.
+//
+//                  The design system has four named ink tiers and an alpha is a fifth that nobody
+//                  chose: #4197 derived the arithmetic, and at α=0.5 over `--background` the
+//                  darkest attainable composite is 3.94:1, so the node cannot reach 4.5:1 from
+//                  ANY foreground. The COLOUR segment admits digits and the ALPHA admits all
+//                  three of its spellings so that neither a palette shade nor a change of
+//                  punctuation is the cheapest way out; Tailwind's `text-<size>/<leading>`
+//                  shorthand — `text-sm/6`, `text-ui-sm/5` — is excluded by name, because it is a
+//                  font size with its line height and this repo mandates those very rungs. Zero
+//                  occurrences on `dev` after the shell's three sites were fixed. The `opacity-*`
+//                  half of the same idea is a STATED OMISSION below; a background or border alpha
+//                  is ordinary design and is not read at all.
+//
 // NOT guarded, and the omission is stated here rather than left for a reader to infer that the
 // whole table is enforced:
 //
@@ -271,6 +297,15 @@
 //                      never the call.
 //   a NEGATIVE `-z-*`  — none exist, and a level below the flow is a different question from
 //                      claiming one above it.
+//   `opacity-*` BESIDE A TEXT COLOUR — the other route to a dimmed ink, and the `ink_alpha` rule
+//                      does not read it. Measured before the rule was written: that population is
+//                      dominated by `disabled:opacity-50` and by `opacity-0 …
+//                      group-hover:opacity-100`, which are a disabled control and a hover reveal —
+//                      legitimate, numerous, and with no fix to offer. `text-<colour>/NN` has no
+//                      such population, because there the alpha is applied to the ink itself. An
+//                      alpha on a BACKGROUND (`bg-foreground/40`) or a BORDER
+//                      (`hover:border-foreground/40`) is likewise not read, and is not a defect:
+//                      only the `text-` prefix separates the three.
 //   an inline `fontSize:` — the other route to a hardcoded size, and it is NOT matched. Measured
 //                      inside the guarded roots: seven sites, and not one of them is a rung. Four
 //                      COMPUTE the value from a geometry the caller passed (`Math.round(size *
@@ -420,9 +455,62 @@ const SCOPES = {
 		exts: [".tsx"],
 		exclude: ["apps/console/app/(public)"],
 	},
+	// The SHARED components, which every console scope above deliberately excludes.
+	//
+	// It exists for one rule (`ink_alpha`) and is not a widening of the others. The reason is
+	// stated where it bites: `packages/ui/src/funnel-filter.tsx` carries the exact
+	// `text-muted-foreground/70` this file's newest rule is about, and the console-rooted scopes
+	// cannot see it — so a matcher that stopped at `apps/console` would report the console clean
+	// while the primitive every console bar renders through kept the defect. Adding the root to
+	// the OTHER rules is a separate question with a separate census, and is not answered here.
+	shared_ui: {
+		roots: ["packages/ui/src"],
+		exts: [".ts", ".tsx"],
+	},
 };
 
 // ── the status vocabulary, derived ────────────────────────────────────────────────────────────
+
+/**
+ * An alpha applied to a TEXT colour: `text-muted-foreground/60`, `before:text-foreground/70`.
+ *
+ * Bounded on both sides. The lookbehind keeps it from matching inside a longer token, and the
+ * trailing `(?![\w-])` keeps `text-foreground/70x` out — a class that does not exist, but a
+ * matcher that would take it is a matcher whose census cannot be trusted.
+ *
+ * THE COLOUR SEGMENT ADMITS DIGITS (`[a-z][a-z0-9-]*`), and the reason is the one this file's
+ * header states three times. A segment of `[a-z][a-z-]*` stops at the first digit, so the whole
+ * NUMERIC-SHADE half of Tailwind's palette — `text-red-500/70`, `text-emerald-600/60` — was
+ * invisible while `text-muted-foreground/60` was a finding. The console does write palette
+ * colours (the sibling `status_badge` matcher's own probe is `text-green-600`/`text-red-600`), so
+ * the cheapest way to clear a flagged `text-muted-foreground/60` was to write `text-zinc-500/60`:
+ * an unnamed colour AND an unnamed alpha, strictly worse than what was flagged and permanently
+ * unmatched. A guard whose cheapest escape route is to deepen the defect is worse than no guard.
+ * The census is unchanged at 0 — the width is deliberate, the way the font-size matcher's
+ * `rem`/`em`/`pt`/`ch`/`%` alternation is wider than anything live.
+ *
+ * THE ALPHA ADMITS ALL THREE OF ITS SPELLINGS for the same reason: `\d{1,3}` (Tailwind's 0–100
+ * opacity scale — four digits is not an alpha), the arbitrary value `text-foreground/[0.7]`, and
+ * the variable shorthand `text-foreground/(--a)`. Each is the same declaration wearing different
+ * punctuation, and matching only the first would make the other two the fix.
+ *
+ * IT DOES NOT MATCH A FONT SIZE AND ITS LINE HEIGHT. Tailwind's `text-<size>/<leading>` shorthand
+ * collides head-on with `text-<colour>/<alpha>` and the token alone cannot separate them, so the
+ * SIZE namespaces are excluded by name: this repo's two type ladders (`text-ui-*`,
+ * `text-display-*`, which `packages/ui/src/utils.ts` teaches tailwind-merge are font sizes and
+ * which CLAUDE.md §6 mandates for every console font size) and Tailwind's own word-scale rungs
+ * (`xs`, `sm`, `base`, `lg`, `xl`). `text-ui-sm/5` is the idiomatic way to set a rung and its
+ * leading together here; reporting it as a fifth ink tier and offering `text-text-tertiary` — a
+ * "fix" that drops the size — is how a rule gets switched off rather than fixed, which is the
+ * outcome this rule's own comment argues against for `opacity-*`. The `2xl`…`9xl` rungs need no
+ * exclusion: the segment must START with a letter, so they never reached the matcher.
+ *
+ * It cannot match a bracketed COLOUR — the segment stops at `[` — so `text-[color:var(--x)]` and
+ * `text-[13px]` are outside it, which matters because the second is the type-scale rule's subject
+ * and a rule that flagged another rule's finding would make both unfixable.
+ */
+const INK_ALPHA_RE =
+	/(?<![\w-])text-(?!(?:ui|display)-)(?!(?:xs|sm|base|lg|xl)\/)[a-z][a-z0-9-]*\/(?:\d{1,3}|\[[^\]\s]+\]|\([^)\s]+\))(?![\w-])/g;
 
 /** The component that owns the status vocabulary, and the only file meant to write `.vx-status`. */
 const STATUS_BADGE = "packages/ui/src/status-badge.tsx";
@@ -906,6 +994,60 @@ const RULES = [
 				say: "defines the status vocabulary a second time — an object keyed on words `@repo/ui/status-badge` already maps, so two surfaces can now disagree about what a status looks like. Render the status through `StatusBadge`; a vocabulary of its own resolves to a `StatusTier` (`Record<YourStatus, StatusTier>`) and hands it to `tier`, which this rule does not read as a finding.",
 				probe: 'const TONE = { active: "text-green-600", failed: "text-red-600" };',
 				antiProbe: 'const MEMBER_STATUS_TIER: Record<MemberStatus, StatusTier> = { active: "active", pending: "pending", suspended: "idle" };',
+			},
+		],
+	},
+	{
+		// AN ALPHA OVER INK IS A FIFTH, UNNAMED TIER (#4309). The design system has four named ink
+		// tiers; `text-muted-foreground/60` is a fifth that nobody chose, nobody measured and no
+		// token can rescue — #4197 derived the arithmetic: at α=0.5 over `--background` the darkest
+		// attainable composite is 3.94:1, so that node cannot reach 4.5:1 from ANY foreground.
+		//
+		// WHY THIS MATCHES THE ALPHA ON A TEXT COLOUR AND NOT `opacity-*`. The issue proposed both.
+		// Measured on the tree before choosing: the `opacity-N`-beside-a-text-colour shape is
+		// dominated by `disabled:opacity-50` and by `opacity-0 … group-hover:opacity-100`, which are
+		// a disabled control and a hover reveal — legitimate, numerous, and with no fix to offer.
+		// A rule that flagged them would be a rule people switch off rather than fix, which is the
+		// failure this file's header argues against twice already. `text-<colour>/NN` has no such
+		// population: every occurrence IS the defect, because the alpha is applied to the ink
+		// itself. The `opacity-*` half is therefore a STATED OMISSION, not an oversight.
+		//
+		// A BACKGROUND OR BORDER ALPHA IS UNTOUCHED, and that is the whole precision of the rule:
+		// `bg-foreground/40` and `hover:border-foreground/40` are ordinary design, and only the
+		// `text-` prefix distinguishes them. A variant prefix is admitted by the word boundary the
+		// same way the type-scale rule admits it (`before:text-muted-foreground/50` is live today),
+		// because excluding the colon is exactly how the layer-token rule taught its own evasion.
+		//
+		// THE TOKEN SHAPE, ITS THREE WIDTHS AND ITS ONE EXCLUSION are on `INK_ALPHA_RE` above,
+		// stated there because they are properties of the matcher rather than of the rule: the
+		// colour segment admits DIGITS so the numeric-shade half of the palette cannot be the
+		// escape route; the alpha admits its arbitrary (`/[0.7]`) and variable (`/(--a)`)
+		// spellings as well as the numeric one; and Tailwind's `text-<size>/<leading>` shorthand
+		// — `text-sm/6`, and this repo's own `text-ui-sm/5` — is EXCLUDED BY NAME, because it is a
+		// font size with a line height and not an ink tier at all.
+		id: "ink_alpha",
+		surface: "a named ink tier from packages/brand/src/tokens.css, at full strength",
+		matchers: [
+			{
+				scope: "console_code",
+				re: INK_ALPHA_RE,
+				say: "dims text with an alpha instead of choosing an ink tier. The design system has four named tiers and an alpha is a fifth, unnamed one that no token can rescue — at α=0.5 over the page background the darkest reachable composite is 3.94:1, so the node cannot pass 4.5:1 from any foreground (#4197). Use `text-text-tertiary` (or the tier the element deserves) at full strength; an alpha on a BACKGROUND or a BORDER is untouched by this rule.",
+				// A NAMED ink and a PALETTE SHADE, because the second is the one a narrower segment
+				// missed and it is the cheaper escape route of the two.
+				probe: 'const a = <span className="text-muted-foreground/60 text-red-500/70">3</span>;',
+				// The FIX, and the near-misses a widening would take: a background alpha and a border
+				// alpha are ordinary design and only the `text-` prefix separates them; and
+				// `text-ui-sm/5` / `text-sm/6` are a font size with its line height, which is the one
+				// shape that shares this token's punctuation without sharing its subject.
+				antiProbe: 'const a = <span className="text-text-tertiary text-ui-sm/5 text-sm/6 bg-foreground/40 hover:border-foreground/40">3</span>;',
+			},
+			{
+				// The primitive every console filter bar renders through. See the `shared_ui` scope.
+				scope: "shared_ui",
+				re: INK_ALPHA_RE,
+				say: "dims text with an alpha inside the shared component package, where the console's own scopes cannot see it — so every console surface that renders through this primitive inherits a tier nobody named. Use a named ink tier at full strength.",
+				probe: 'const a = <span className="font-mono text-muted-foreground/70 tabular-nums">{count}</span>;',
+				antiProbe: 'const a = <span className="font-mono text-text-tertiary text-ui-sm/5 tabular-nums">{count}</span>;',
 			},
 		],
 	},
@@ -1858,6 +2000,49 @@ function selfTest() {
 	ok("...nor the token inside a JSX comment that runs on", !flags("const a = (\n\t<p>\n\t\t{/* 3px centres the rail on the shared `.vx-status__dot` — see\n\t\t    env-ui.tsx */}\n\t\tx\n\t</p>\n);"));
 	ok("...and it reaches lib/, which is where the console's status maps live", run({ ...ballast(), "apps/console/lib/x/a.ts": 'export const C = "vx-status--idle";' }).problems.length > 0);
 
+	// ── the ink alpha (#4309): a fifth, unnamed tier ─────────────────────────────────────────
+	{
+		const inkFlags = (src) => src.match(INK_ALPHA_RE) !== null;
+		ok("an alpha on the muted ink is flagged", inkFlags('<span className="text-muted-foreground/60">3</span>'));
+		ok("...and on the foreground", inkFlags('<p className="text-foreground/70">x</p>'));
+		ok("...behind a variant prefix, which is how it is written live today", inkFlags('<span className="before:text-muted-foreground/50">x</span>'));
+		ok("...and on hover", inkFlags('<a className="hover:text-foreground/80">x</a>'));
+		// THE PALETTE'S NUMERIC HALF. A colour segment of `[a-z][a-z-]*` stops at the first digit,
+		// which made `text-zinc-500/60` — an unnamed colour AND an unnamed alpha — the cheapest way
+		// to clear a flagged `text-muted-foreground/60`. The console writes palette colours today
+		// (the status-map probe above is `text-green-600`), so this is one keystroke away.
+		ok("a palette shade is flagged, so deepening the defect is not the escape route", inkFlags('<span className="text-red-500/70">x</span>'));
+		ok("...at any shade", inkFlags('<span className="text-emerald-600/60">x</span>'));
+		// THE ALPHA'S OTHER TWO SPELLINGS. The same declaration wearing different punctuation;
+		// matching only the numeric one would make these the fix.
+		ok("an arbitrary alpha is flagged", inkFlags('<span className="text-foreground/[0.7]">x</span>'));
+		ok("...and a variable one", inkFlags('<span className="text-foreground/(--a)">x</span>'));
+		// THE PRECISION OF THE RULE. A background or a border alpha is ordinary design, and the
+		// `text-` prefix is the only thing separating them from the defect.
+		ok("a BACKGROUND alpha is not a finding", !inkFlags('<div className="bg-foreground/40" />'));
+		ok("...nor a BORDER alpha", !inkFlags('<button className="hover:border-foreground/40" />'));
+		// The two spellings of the FIX, and the type-scale rule's subject, which this must not take.
+		ok("the fix is not a finding", !inkFlags('<span className="text-text-tertiary">3</span>'));
+		ok("...nor a bracketed colour", !inkFlags('<span className="text-[color:var(--text-primary)]">x</span>'));
+		ok("...nor a hardcoded SIZE, which is another rule's finding", !inkFlags('<span className="text-[13px]">x</span>'));
+		// TAILWIND'S `text-<size>/<leading>` SHORTHAND, which shares this token's punctuation and
+		// none of its subject. `packages/ui/src/utils.ts` teaches tailwind-merge that `text-ui-*`
+		// and `text-display-*` ARE font sizes and CLAUDE.md §6 mandates them, so `text-ui-sm/5` is
+		// the idiomatic spelling here — and the fix this rule would have offered for it
+		// (`text-text-tertiary`) drops the size entirely.
+		ok("this repo's own type rung with a line height is not an ink tier", !inkFlags('<p className="text-ui-sm/5">x</p>'));
+		ok("...nor the display ladder's", !inkFlags('<h2 className="text-display-sm/8">x</h2>'));
+		ok("...nor Tailwind's word scale", !inkFlags('<p className="text-sm/6">x</p>') && !inkFlags('<p className="text-base/7">x</p>') && !inkFlags('<p className="text-xl/8">x</p>'));
+		// The numeric rungs need no exclusion — the segment must START with a letter — and this
+		// pins that, so a later widening to `[a-z0-9]` has to answer for them.
+		ok("...nor its numeric rungs, which never reached the matcher", !inkFlags('<h1 className="text-2xl/9">x</h1>'));
+		// `disabled:opacity-50` is the population this rule deliberately does not read — see the
+		// rule's own comment. Pinned so a later widening to `opacity-*` has to argue with it.
+		ok("a disabled control's opacity is not read", !inkFlags('<button className="text-text-primary disabled:opacity-50" />'));
+		ok("...nor a hover reveal", !inkFlags('<div className="text-text-disabled opacity-0 group-hover/row:opacity-100" />'));
+		ok("a four-digit value is not an alpha", !inkFlags('<span className="text-foreground/1000">x</span>'));
+	}
+
 	// ── StatusBadge (#3797): the positive form — a second definition of the vocabulary ───────
 	ok("a local status → class map is flagged", flags('const TONE = { active: "text-green-600", failed: "text-red-600" };'));
 	ok("...one entry per line, as the formatter writes it", flags('const TONE = {\n\tactive: "bg-green",\n\tfailed: "bg-red",\n};'));
@@ -1876,7 +2061,55 @@ function selfTest() {
 	ok("...nor one entry keyed on a status, which is a property and not a map", !flags('const s = { active: true, name: "x" };'));
 	ok("...nor two statuses that are not consecutive entries of one object", !flags("const a = { active: 1 };\nconst b = { failed: 2 };"));
 	ok("...nor a word that merely contains one", !flags("const c = { activeCount: 1, failedCount: 2 };"));
-	ok("...nor the badge's own STATUS_TIER, which lives under packages/ and is never scanned", !Object.values(SCOPES).flatMap((s) => filesFor(s, fakeTree({ [STATUS_BADGE]: "", "apps/console/components/a.tsx": "" }).listDir).files).includes(STATUS_BADGE));
+	// THE BADGE'S OWN `STATUS_TIER` MUST NOT BE READ AS A SECOND DEFINITION OF ITSELF.
+	//
+	// This used to assert that NO scope reaches `status-badge.tsx`, which was true while every
+	// scope was rooted under `apps/console`. `shared_ui` (added for the ink-alpha rule) reaches
+	// `packages/ui/src`, so that phrasing now fails for a reason that has nothing to do with the
+	// status vocabulary — and loosening it to "except shared_ui" would leave the badge unguarded
+	// against every FUTURE rule that adopts that scope.
+	//
+	// So the assertion is narrowed to the invariant it was always about: the STATUS-MAP matcher
+	// must not scan the file whose map it is derived from. It still fails if somebody roots a
+	// status-badge scope at `packages/`, which is the regression it exists to catch.
+	//
+	// BOTH assertions below resolve the rule's matcher list into a local and REFUSE AN EMPTY ONE
+	// first, because `![].includes(x)` is `true` and `[].every(…)` is `true`: phrased inline, the
+	// assertion whose whole job is to keep a matcher off a file would report green if the rule
+	// were renamed or its `matchers` array emptied — the two edits that make the question
+	// meaningful. "Found nothing" and "looked at nothing" must never share an exit code, which is
+	// what the five vacuity controls below this line are for.
+	/**
+	 * One rule's matchers, refusing to hand back an empty list.
+	 *
+	 * @param {string} id the rule id
+	 * @returns {{scope: string, re: RegExp}[]}
+	 */
+	const matchersOf = (id) => {
+		const ms = RULES.filter((r) => r.id === id).flatMap((r) => r.matchers);
+		if (ms.length === 0) throw new Error(`--self-test: no rule \`${id}\` with any matcher. An assertion over an empty matcher list passes vacuously, so this raises.`);
+		return ms;
+	};
+	const badgeTree = fakeTree({ [STATUS_BADGE]: "", "apps/console/components/a.tsx": "" }).listDir;
+	ok(
+		"...nor the badge's own STATUS_TIER, which the status-map matcher must never scan",
+		!matchersOf("status_badge")
+			.flatMap((m) => filesFor(SCOPES[m.scope], badgeTree).files)
+			.includes(STATUS_BADGE),
+	);
+	// And the other direction, so the narrowing above is a MEASUREMENT rather than an exemption:
+	// the ink-alpha rule genuinely does reach the shared package, including the badge itself — a
+	// primitive that dimmed its own text with an alpha would be a finding like any other.
+	//
+	// It resolves the scope THROUGH THE RULE'S OWN MATCHERS rather than naming `SCOPES.shared_ui`
+	// directly. Named directly, deleting the `shared_ui` matcher from `ink_alpha` leaves this green
+	// while its sentence becomes false — and this sentence is the entire justification for the
+	// narrowing above.
+	const inkTree = fakeTree({ [STATUS_BADGE]: "", "packages/ui/src/funnel-filter.tsx": "" }).listDir;
+	ok(
+		"the ink-alpha rule reaches packages/ui, the badge included",
+		matchersOf("ink_alpha").some((m) => filesFor(SCOPES[m.scope], inkTree).files.includes(STATUS_BADGE)),
+	);
 	// `hits` counts adjacent PAIRS. A three-entry map is two, so that removing entries from a map
 	// is recorded progress rather than an unchanged 1 — asserted through the allowlist, which is
 	// where the number is spent.

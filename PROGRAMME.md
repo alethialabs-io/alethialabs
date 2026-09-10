@@ -321,7 +321,7 @@ Excluded by **cost** — the cloud offers the kind and the product ships it, but
 
 ### Driven from the CLI
 
-**23 steps CLI-driven · 0 CLI gaps (our debt) · 4 cloud ceilings · 1 console by design.**
+**25 steps CLI-driven · 0 CLI gaps (our debt) · 4 cloud ceilings · 1 console by design.**
 
 The CLI debt is **zero** — every remaining blocker is a thing the cloud offers no API for, not a thing Alethia has not built. That distinction is the one worth carrying into a demo.
 
@@ -342,11 +342,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33605830312 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 33605830312 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 33605830312 |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33605830312 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 33605830312 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 34327381509 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 34327381509 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 34327381509 |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 34327381509 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 34327381509 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -361,8 +361,6 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 | CLI-driven | `ALETHIA_E2E_CLI_DEMO_PROVISION` | ✅ by dimension: `ALETHIA_E2E_CLI_DEMO_PROVISION` | a floor-shaped cluster provisioned through the real `alethia` binary rather than a seeded job row — the ACTOR, not the surface area |
 
 ### Open REDs
-
-⚠️ **This snapshot predates the truncation check**, so whether its issue list is complete is unknown — and it is not evidence that it is: the query that wrote it was capped at 500 and reported the same count whether or not it dropped the tail. The next refresh answers it.
 
 | cell | state | issue | issue state |
 |---|---|---|:---:|
@@ -385,14 +383,25 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 
 ### Blocked on a human
 
+- #4395 — chore(promote): the orphan reaper has published nothing in 8 green runs — MVP predicate #6 is unsatisfiable until staging reaches main
+- #4374 — infra(cp-hetzner): adopt the live Cloudflare email routing — import the 11 resources and set the inputs in one change
+- #4326 — cost(sandbox): the alethia-sandbox project has no server and still bills — delete the leftover snapshots and the unassigned IP
+- #4315 — chore: `pnpm format` reformats the whole TypeScript tree — prettier has no config and the repo is tab-indented
+- #4287 — maintainer(release-gate): the first /console-prod-qa run on production, and its report PR
+- #4286 — maintainer(release-gate): Stripe test secrets, the tofu apply that makes the gate required, and three deliberately red dispatches
+- #4177 — ci(mergify): batch_size: 5 is INERT — it lives only on dev, and Mergify reads its config from main
+- #4116 — db: the project component family has no tenant column at all — tenancy is carried only by every caller remembering to reach through projects
+- #4114 — console: the BYO chart dialog offers fictional acme/* repos as its worked example
+- #4113 — templates: no template is announced until it has been deployed once — REAL CLOUD SPEND, not agent-buildable
+- #4112 — templates: create the three public starter repos and set is_template — ORG ADMIN, not agent-buildable
+- #4110 — chore(console): the AI Workloads picker renders nowhere — wire it to the starter templates, or delete it with a recorded ruling
+- #4109 — chore(core): git.Bootstrap has no caller — wire it into the starter-template flow, or delete it with a recorded ruling
+- #3932 — fix(console): the Activity log is not gated on activity:view_activity — only the CLI route is
+- #3907 — legal(assets): the nine third-party marks already shipping were never cleared — and the test that disqualified harbor applies to them
 - #3754 — fix(authz): members stuck ungranted by the toOrgRole gap are not backfilled — and a naive backfill would restore revoked access
 - #3524 — e2e(addons): remove external-dns from addOnExclusions once a paid gcp/azure addons run is green
 - #3438 — release(runner): `release-runner` has never once succeeded — the ECR repo it pushes to does not exist, and nothing creates it
-- #3321 — feat(fleet): Hetzner Robot pools — held against the #3268 NO-GO, with the conditions that would reopen it
 - #3292 — infra: ssh_allowed_cidrs defaults to 0.0.0.0/0 on three boxes, two of which CI applies unattended
-- #3291 — infra(cp-hetzner): 11 email-routing resources are gated on a default CI takes on every push to main
-- #3290 — infra(azure): the state account's network default is Allow when its allowlist is empty — the unset value is the permissive one
-- #3145 — cli: two projects may share a name — silent-oldest is deterministic, but is it the contract?
 - #3038 — feat(e2e): the CLI demo bar proves reachability, not the demo — drive a real provision through the real binary
 - #2759 — ci: workflows red on every recent run
 - #2545 — e2e nightly: alibaba RED (floor)
@@ -414,6 +423,7 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 | `infra/offer-exclusions.yaml` | exclusions: 26 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/config-carriage-exclusions.yaml` | exclusions: 31 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/template-parity-exclusions.yaml` | exclusions: 0 · baseline: 301 · uniform: 13 |
+| `apps/console/e2e/gate-baseline.json` | failed: 94 · fixme: 0 · skip: 0 |
 
 ### Provenance
 
@@ -427,11 +437,11 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-09-02T11:16:57Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-09-09T11:17:02Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
-Gate inventory observed: **2026-08-27T19:15:55Z** — carried forward on every refresh whose token cannot list repo variables or secrets. Past 7 days behind the snapshot it stops being a measurement of today, and every declared gate degrades to `unknown`.
+Gate inventory observed: **2026-09-08T16:35:27Z** — carried forward on every refresh whose token cannot list repo variables or secrets. Past 7 days behind the snapshot it stops being a measurement of today, and every declared gate degrades to `unknown`.
 
 Ledger rows read: **62** · surviving claims: **27** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
 

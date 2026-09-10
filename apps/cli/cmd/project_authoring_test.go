@@ -221,7 +221,7 @@ func TestRunProjectEnvAddError(t *testing.T) {
 
 func TestRunComponentKinds(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runComponentKinds(&buf, "table"); err != nil {
+	if err := runComponentKinds(&kindsSchemaClient{doc: testKindsDocument()}, &buf, "table"); err != nil {
 		t.Fatalf("runComponentKinds: %v", err)
 	}
 	for _, want := range []string{"network", "singleton", "databases", "multi"} {
@@ -229,22 +229,114 @@ func TestRunComponentKinds(t *testing.T) {
 			t.Errorf("kinds missing %q:\n%s", want, buf.String())
 		}
 	}
+	// #4332: the kind the deleted literal omitted must be listed, since this command's whole job is
+	// to name what the server publishes.
+	if !strings.Contains(buf.String(), "helm_registries") {
+		t.Errorf("kinds did not list a published kind:\n%s", buf.String())
+	}
+}
+
+// A FETCH FAILURE IS AN ERROR, NEVER A SHORTER LIST (#4332). The literal this replaced answered
+// offline, which is how it came to omit a kind and say nothing; a partial answer here is worse than
+// none, because a reader cannot tell it from a complete one.
+func TestRunComponentKindsRefusesAnUnreadableRegistry(t *testing.T) {
+	var buf bytes.Buffer
+	err := runComponentKinds(&kindsSchemaClient{err: errBoom}, &buf, "table")
+	if err == nil {
+		t.Fatal("an unreadable registry rendered a table instead of failing")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("output was written for a failed fetch: %q", buf.String())
+	}
 }
 
 func TestKindRowsCardinality(t *testing.T) {
-	rows := kindRows()
-	if len(rows) != len(componentKinds) {
-		t.Fatalf("expected %d rows, got %d", len(componentKinds), len(rows))
+	v := componentVocabulary{doc: testKindsDocument()}
+	rows := kindRows(v)
+	if len(rows) != len(v.kinds()) {
+		t.Fatalf("expected %d rows, got %d", len(v.kinds()), len(rows))
 	}
 	for _, r := range rows {
 		want := "multi"
-		if singletonKinds[r[0]] {
+		if v.isSingleton(r[0]) {
 			want = "singleton"
 		}
 		if r[1] != want {
 			t.Errorf("kind %s: got cardinality %q want %q", r[0], r[1], want)
 		}
 	}
+	// An unresolved vocabulary has no rows — it must not fabricate any.
+	if got := kindRows(componentVocabulary{}); len(got) != 0 {
+		t.Errorf("an unresolved vocabulary produced %d row(s)", len(got))
+	}
+}
+
+// THE UNRESOLVED VOCABULARY, end to end (#4332). Both of these are branches the deleted literal
+// could not have had — it was always present — so they are the ones a coverage floor notices.
+func TestComponentVocabularyUnresolved(t *testing.T) {
+	// `first` is what seeds a picker. Empty rather than a panic on an index into no kinds: the
+	// interactive callers refuse before reaching it, and this pins that the helper does not rely on
+	// their having done so.
+	if got := (componentVocabulary{}).first(); got != "" {
+		t.Errorf("an unresolved vocabulary seeded a picker with %q", got)
+	}
+	if got := (componentVocabulary{doc: &api.ComponentSchemaDocument{}}).first(); got != "" {
+		t.Errorf("a document with no kinds seeded a picker with %q", got)
+	}
+	// And a resolved one answers the document's own first kind, not a sorted or hard-coded one.
+	if got := (componentVocabulary{doc: testKindsDocument()}).first(); got != "network" {
+		t.Errorf("first() = %q, want the document's first kind", got)
+	}
+}
+
+// THE ADVISORY PATH IS A WARNING, NOT A GATE. `remove` with an explicit --kind and --name must still
+// run when the registry cannot be read — the server refuses a nameless multi kind on its own — so
+// this must hand back an EMPTY vocabulary rather than an error. What it must never do is return a
+// stale one, which is the whole reason the literal was deleted.
+func TestAdvisoryComponentVocabularyDegradesRatherThanFailing(t *testing.T) {
+	v := advisoryComponentVocabulary(&kindsSchemaClient{err: errBoom})
+	if v.doc != nil {
+		t.Error("a failed advisory fetch produced a document")
+	}
+	if got := v.kinds(); len(got) != 0 {
+		t.Errorf("a failed advisory fetch offered %d kind(s)", len(got))
+	}
+	// Cardinality is unknown, not guessed: `isSingleton` false means a name is neither required nor
+	// stripped, and the server decides.
+	if v.isSingleton("network") {
+		t.Error("an unresolved vocabulary claimed a kind is a singleton")
+	}
+	if v.known("network") {
+		t.Error("an unresolved vocabulary claimed to know a kind")
+	}
+	// A successful advisory fetch is the ordinary case and must be the real document.
+	if got := advisoryComponentVocabulary(&kindsSchemaClient{doc: testKindsDocument()}); !got.known("helm_registries") {
+		t.Error("a successful advisory fetch lost the document")
+	}
+}
+
+// kindsSchemaClient is the one-method client the kinds command needs.
+type kindsSchemaClient struct {
+	doc *api.ComponentSchemaDocument
+	err error
+}
+
+func (c *kindsSchemaClient) GetComponentSchema() (*api.ComponentSchemaDocument, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	return c.doc, nil
+}
+
+// testKindsDocument is a published registry with both cardinalities and the kind the deleted literal
+// missed. Composed rather than captured on purpose: the subject here is the RENDERING, and the real
+// document's contents are pinned by packages/core/api's own fixture test.
+func testKindsDocument() *api.ComponentSchemaDocument {
+	return &api.ComponentSchemaDocument{Version: "v-test", Kinds: []api.ComponentSchemaKind{
+		{Kind: "network", Singleton: true},
+		{Kind: "databases"},
+		{Kind: "helm_registries"},
+	}}
 }
 
 // --- component list ---
@@ -456,7 +548,7 @@ func TestRunComponentRemoveSingleton(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
 	// A name is passed but must be cleared for a singleton kind.
-	if err := runComponentRemove(f, &buf, "api", "network", "ignored", ""); err != nil {
+	if err := runComponentRemove(f, componentVocabulary{doc: testKindsDocument()}, &buf, "api", "network", "ignored", ""); err != nil {
 		t.Fatalf("runComponentRemove: %v", err)
 	}
 	if f.rmCompName != "" {
@@ -470,7 +562,7 @@ func TestRunComponentRemoveSingleton(t *testing.T) {
 func TestRunComponentRemoveNamed(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runComponentRemove(f, &buf, "api", "databases", "main", ""); err != nil {
+	if err := runComponentRemove(f, componentVocabulary{doc: testKindsDocument()}, &buf, "api", "databases", "main", ""); err != nil {
 		t.Fatalf("runComponentRemove: %v", err)
 	}
 	if f.rmCompName != "main" {
@@ -483,7 +575,7 @@ func TestRunComponentRemoveNamed(t *testing.T) {
 
 func TestRunComponentRemoveError(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runComponentRemove(&fakeClient{err: errBoom}, &buf, "api", "databases", "main", ""); err == nil {
+	if err := runComponentRemove(&fakeClient{err: errBoom}, componentVocabulary{doc: testKindsDocument()}, &buf, "api", "databases", "main", ""); err == nil {
 		t.Error("expected error propagated")
 	}
 }
@@ -531,7 +623,7 @@ func TestComponentEnvIsThreadedThrough(t *testing.T) {
 	t.Run("remove forwards the environment", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
-		if err := runComponentRemove(f, &buf, "api", "cluster", "", "dev"); err != nil {
+		if err := runComponentRemove(f, componentVocabulary{doc: testKindsDocument()}, &buf, "api", "cluster", "", "dev"); err != nil {
 			t.Fatalf("runComponentRemove: %v", err)
 		}
 		if f.rmCompEnv != "dev" {
@@ -572,80 +664,6 @@ func TestComponentEnvIsThreadedThrough(t *testing.T) {
 }
 
 // --- placement (#844 from the terminal) ---
-
-// TestParseEnvMatrix pins the parser that turns `--env name:stage[:mode[:namespace]]` into the
-// environment matrix. The matrix is what makes a two-tier project cost ONE cluster: without it the
-// server keeps the legacy shape and every environment the CLI creates comes out `dedicated`.
-func TestParseEnvMatrix(t *testing.T) {
-	t.Run("no flags means no matrix", func(t *testing.T) {
-		got, err := parseEnvMatrix(nil)
-		if err != nil || got != nil {
-			t.Fatalf("want (nil, nil) so the server keeps its legacy shape, got (%#v, %v)", got, err)
-		}
-	})
-
-	t.Run("the enterprise-demo shape", func(t *testing.T) {
-		got, err := parseEnvMatrix([]string{
-			"prod:production",
-			"dev:development:namespace:boutique-dev",
-			"staging:staging:vcluster",
-		})
-		if err != nil {
-			t.Fatalf("parseEnvMatrix: %v", err)
-		}
-		want := []api.EnvironmentSpec{
-			// First entry OWNS the Fabric, so it defaults to dedicated and is the default env.
-			{Name: "prod", Stage: "production", PlacementMode: "dedicated", IsDefault: true},
-			{Name: "dev", Stage: "development", PlacementMode: "namespace", Namespace: "boutique-dev"},
-			{Name: "staging", Stage: "staging", PlacementMode: "vcluster"},
-		}
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("matrix mismatch:\n got %#v\nwant %#v", got, want)
-		}
-	})
-
-	t.Run("a later entry defaults to the cheap rung", func(t *testing.T) {
-		got, err := parseEnvMatrix([]string{"prod:production", "preview:development"})
-		if err != nil {
-			t.Fatalf("parseEnvMatrix: %v", err)
-		}
-		if got[1].PlacementMode != "namespace" {
-			t.Errorf("second entry should default to namespace, got %q", got[1].PlacementMode)
-		}
-		if got[1].IsDefault {
-			t.Error("only the first entry may be the default")
-		}
-	})
-
-	t.Run("an explicit mode overrides the positional default", func(t *testing.T) {
-		got, err := parseEnvMatrix([]string{"prod:production:namespace"})
-		if err != nil {
-			t.Fatalf("parseEnvMatrix: %v", err)
-		}
-		if got[0].PlacementMode != "namespace" {
-			t.Errorf("explicit mode ignored: %q", got[0].PlacementMode)
-		}
-	})
-
-	for _, bad := range []struct{ name, in string }{
-		{"no stage", "prod"},
-		{"empty name", ":production"},
-		{"empty stage", "prod:"},
-		{"too many segments", "a:b:c:d:e"},
-	} {
-		t.Run("rejects "+bad.name, func(t *testing.T) {
-			if _, err := parseEnvMatrix([]string{bad.in}); err == nil {
-				t.Errorf("parseEnvMatrix(%q) should error", bad.in)
-			}
-		})
-	}
-
-	t.Run("rejects a duplicate name", func(t *testing.T) {
-		if _, err := parseEnvMatrix([]string{"dev:development", "dev:staging"}); err == nil {
-			t.Error("a duplicate environment name must be rejected here, not by a unique violation")
-		}
-	})
-}
 
 func TestEnvSuffix(t *testing.T) {
 	if got := envSuffix(""); got != "" {

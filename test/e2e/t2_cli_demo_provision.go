@@ -39,6 +39,8 @@ package e2e
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -67,8 +69,12 @@ type CLIDemoRun struct {
 	// rather than by name, because two projects may share a name (#2663) and resolving by name
 	// would make the demo depend on which one the server picked.
 	ProjectID string
-	// IdentityID is the cloud identity `connector <cloud>` attached.
-	IdentityID string
+	// IdentityID is the cloud identity `connector <cloud>` attached, and IdentityLabel its label —
+	// the name a person types. The beats address the account by LABEL, because an id copied out
+	// of another command's output is the handoff this dimension exists to prove gone; the id is
+	// kept for the assertions that read the account back.
+	IdentityID    string
+	IdentityLabel string
 	// ApplyJobID is the DEPLOY job `project apply` enqueued — what `jobs logs` follows.
 	ApplyJobID string
 	// Token is the seeded service token the CLI authenticates with (ALETHIA_TOKEN).
@@ -220,13 +226,14 @@ var CLIDemoBeats = []CLIDemoBeat{
 		StepID: "project-create",
 		Phase:  CLIDemoAuthoring,
 		Args: func(r *CLIDemoRun) []string {
-			// --cloud-identity-id is what makes the project PROVISIONABLE. Without it the project
-			// is created with `cloud_identity_id: null` and the deploy has no credential to
-			// provision with — a failure that surfaces during apply, long after the beat that
-			// should have caught it. The id comes from the connector beat's read-back.
+			// --cloud-account is what makes the project PROVISIONABLE. Without it the project is
+			// created with `cloud_identity_id: null` and the deploy has no credential to provision
+			// with — a failure that surfaces during apply, long after the beat that should have
+			// caught it. The account is named by the LABEL the connector beat read back, never by
+			// its id: the id handoff is the thing #3662 deleted from the product.
 			return []string{
 				"project", "create", r.Project, "--region", r.Region, "--stage", "development",
-				"--cloud-identity-id", r.IdentityID, "--output", "json", "--no-input",
+				"--cloud-account", r.IdentityLabel, "--output", "json", "--no-input",
 			}
 		},
 		After: captureProjectID,
@@ -268,6 +275,36 @@ var CLIDemoBeats = []CLIDemoBeat{
 			argv = append(argv, r.ClusterSets...)
 			return append(argv, "--no-input")
 		},
+	},
+	{
+		StepID: "manifest-init",
+		Phase:  CLIDemoAuthoring,
+		Args: func(r *CLIDemoRun) []string {
+			// #3662's golden path, driven through the REAL binary rather than assembled by the
+			// harness. `alethia init` writes the same project the beats above created one command
+			// at a time — same name, same region, same account, addressed by LABEL — and the next
+			// beat plans it. A harness that built the YAML itself would be a second opinion about
+			// the file format, which is the defect this dimension exists to detect.
+			//
+			// `--skip-manifest` is NOT passed: writing the file is the point. The login step is
+			// skipped on its own, because ALETHIA_TOKEN is already a live credential.
+			return []string{
+				"init", "--web-origin", r.APIBase, "--file", cliDemoManifestPath(r),
+				"--project", r.Project, "--region", r.Region,
+				"--cloud-account", r.IdentityLabel, "--no-input",
+			}
+		},
+		Why: "the file a prospect commits, written BY the product rather than by this harness.",
+	},
+	{
+		StepID: "manifest-plan",
+		Phase:  CLIDemoAuthoring,
+		Args: func(r *CLIDemoRun) []string {
+			return []string{"plan", "--file", cliDemoManifestPath(r), "--no-input"}
+		},
+		After: assertManifestPlanIsClean,
+		Why: "`alethia plan` over the file `alethia init` just wrote must find the project ALREADY " +
+			"there — the commands and the file describe one project, or they describe two.",
 	},
 	{
 		StepID: "staged",
@@ -346,6 +383,63 @@ var CLIDemoBeats = []CLIDemoBeat{
 		Timeout: 30 * time.Minute,
 		Why:     "the demo ends where it started — and an un-torn-down demo is a standing bill, which the orphan reaper would otherwise find.",
 	},
+}
+
+// cliDemoManifestPath is where this run's `alethia.yaml` lives.
+//
+// Deterministic from the run rather than stored on it, so the two beats that use it agree without
+// a field to keep in step; the directory is created here because `init` writes a file into it and
+// will not create a parent.
+func cliDemoManifestPath(r *CLIDemoRun) string {
+	dir := filepath.Join(os.TempDir(), "alethia-cli-demo-"+r.Project)
+	_ = os.MkdirAll(dir, 0o755)
+	return filepath.Join(dir, "alethia.yaml")
+}
+
+// assertManifestPlanIsClean is the manifest beats' claim: the file the product wrote names the
+// project the commands built, and the reader agrees with the writer about the file's format.
+//
+// It reads the WHOLE summary line and the header, not a substring of either. `0 projects to create`
+// alone was too weak to fail: `counts()` also reports environments and components, and the summary
+// line BEGINS with the project clause — so the match passed whether the rest said `0 environments`
+// or `9`, and passed for a plan that would re-upsert every component the demo had added. An
+// assertion that cannot distinguish the state it claims from the state it warns about is a step the
+// bar performs and does not check.
+//
+// WHY ALL THREE COUNTS ARE ZERO, and why that is a claim about the server rather than a guess. The
+// `project-create` beat passes `--stage development` and declares no matrix, and the create route
+// names the default environment after the stage (`name: input.environment_stage` in
+// lib/queries/projects.ts) and adds a `preview` namespace beside it. `alethia init` writes one
+// environment named after `--stage`, which defaults to the same `development`, placed `dedicated`
+// because it is first — which is what the route gave the default environment. So the file's one
+// environment is the project's one default environment, and the plan has nothing to create.
+//
+// `preview` is on the server and not in the file, so it is reported as left alone and counted
+// nowhere. That is the reader's promise — what the file does not mention is not touched — and the
+// same promise covers the component the `component-add` beat created, which is why the component
+// count is zero rather than one.
+func assertManifestPlanIsClean(r *CLIDemoRun, out string) error {
+	if strings.Contains(out, "cannot be applied as written") {
+		return fmt.Errorf("`alethia plan` REFUSED the manifest `alethia init` had just written — the "+
+			"writer and the reader disagree about the file's own format:\n%s", out)
+	}
+	// The header proves the file round-tripped the run's OWN identity: `init` was given the project
+	// name and the region on the command line, wrote them, and `plan` read them back. A file
+	// describing some other project would still plan cleanly against itself.
+	for _, want := range []string{r.Project, r.Region} {
+		if want != "" && !strings.Contains(out, want) {
+			return fmt.Errorf("`alethia plan` over the manifest `alethia init` wrote does not name %q — "+
+				"the file does not describe the project the beats built:\n%s", want, out)
+		}
+	}
+	const wantSummary = "0 projects to create · 0 environments · 0 components"
+	if !strings.Contains(out, wantSummary) {
+		return fmt.Errorf("`alethia plan` over the run's own manifest did not summarise as %q. A project "+
+			"count above zero means the file and the commands describe two different projects; a different "+
+			"environment or component count means the writer and the reader disagree about what the file "+
+			"declares:\n%s", wantSummary, out)
+	}
+	return nil
 }
 
 // cliDemoConnectorFlags is the NON-INTERACTIVE invocation of `connector <cloud>`, per cloud.

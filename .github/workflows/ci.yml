@@ -368,10 +368,14 @@ jobs:
     # merge queue is off — so before this, a console change could break the sellable flow and only a
     # post-merge push would notice. That is exactly how the "Org evidence" assertion rotted for weeks.
     # Still runs on the merge queue, pushes, and manual dispatch as before.
+    # NOT on a promotion PR (into main or staging): release-gate.yml boots the same console and
+    # drives this same project there, as one of its legs; running it twice on one merge ref buys
+    # nothing but a runner slot. Dev PRs, pushes and dispatches are unchanged.
     if: >-
-      github.event_name == 'merge_group' || github.event_name == 'push'
+      (github.event_name == 'merge_group' || github.event_name == 'push'
       || github.event_name == 'workflow_dispatch'
-      || needs.detect-changes.outputs.console == 'true'
+      || needs.detect-changes.outputs.console == 'true')
+      && !(github.event_name == 'pull_request' && contains(fromJSON('["main","staging"]'), github.base_ref))
     # Own parallel job, OFF the fast path: builds + boots the real console against a real Postgres
     # and drives the sellable happy-path in a headless browser (sign-in → org → connect-a-cloud
     # surface → design → Deploy/pending-changes → evidence/clusters). Fully hermetic: email-OTP with
@@ -454,7 +458,7 @@ jobs:
       - name: Build the console (production image the browser drives)
         run: pnpm -C apps/console run build
       - name: Install Playwright (Chromium + OS deps)
-        run: pnpm -F console exec playwright install --with-deps chromium
+        run: bash scripts/ci/playwright-install.sh
       # Guard against a vacuous green: if the hero spec is ever renamed without updating the
       # project's testMatch, `playwright test --project=hero` would match 0 tests and could exit 0.
       # Fail loudly instead.
@@ -591,7 +595,7 @@ jobs:
       - name: Build the console (production image the browser drives)
         run: pnpm -C apps/console run build
       - name: Install Playwright (Chromium + OS deps)
-        run: pnpm -F console exec playwright install --with-deps chromium
+        run: bash scripts/ci/playwright-install.sh
       # The route manifest IS the audit's denominator. If the seam raises — a moved route group, a
       # zero-route scan — every route below would be "audited" over nothing, so it is run here on
       # its own where the failure names itself. NOT piped: a pipe would report the pipe's exit code.
@@ -660,10 +664,14 @@ jobs:
     # now RUNS on any PR that touches the agent surface. It is the only test that drives the real
     # composer/rail/grid in a browser, and skipping it on PRs is how a broken Lexical composer
     # shipped green. Still runs on the merge queue, pushes, and manual dispatch as before.
+    # NOT on a promotion PR (into main or staging): release-gate.yml boots the same console and
+    # drives this same project there, as one of its legs; running it twice on one merge ref buys
+    # nothing but a runner slot. Dev PRs, pushes and dispatches are unchanged.
     if: >-
-      github.event_name == 'merge_group' || github.event_name == 'push'
+      (github.event_name == 'merge_group' || github.event_name == 'push'
       || github.event_name == 'workflow_dispatch'
-      || needs.detect-changes.outputs.agent == 'true'
+      || needs.detect-changes.outputs.agent == 'true')
+      && !(github.event_name == 'pull_request' && contains(fromJSON('["main","staging"]'), github.base_ref))
     # The Elench AI journeys end-to-end with a SCRIPTED model (ALETHIA_AI_MOCK=1 → the
     # MockLanguageModelV3 in lib/config/ai-mock). Only the model is deterministic: the agent
     # route, extended thinking, orchestration markers, TOOL EXECUTION (PDP-gated reads against
@@ -744,7 +752,7 @@ jobs:
       - name: Build the console (production image the browser drives)
         run: pnpm -C apps/console run build
       - name: Install Playwright (Chromium + OS deps)
-        run: pnpm -F console exec playwright install --with-deps chromium
+        run: bash scripts/ci/playwright-install.sh
       # Guard against a vacuous green (renamed spec → testMatch drift → 0 tests → exit 0).
       - name: Guard — elench-ai project must match at least one test
         run: |
@@ -873,6 +881,10 @@ jobs:
     permissions:
       contents: read
       issues: read
+      # `pull-requests: read` for check-pr-scope.mjs: the guards job is a SHALLOW checkout, so
+      # `git diff base...head` has no base to reach and the changed-file list has to come from the
+      # API. Read-only, and the check writes nothing anywhere.
+      pull-requests: read
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -910,6 +922,36 @@ jobs:
       # anything — one `numeric` column rendered as `$12.50/mo`, `~$12/mo` and `€12.50`, and
       # in-app page titles rendered at five sizes. apps/console/shared-surface-allowlist.yaml
       # carries the documented exceptions and is shrink-only.
+      # THE CLI SURFACE CENSUS RUNS HERE RATHER THAN IN A JOB OF ITS OWN (#4373), and the placement
+      # is the decision. `ui-audit` was taken OFF the per-PR path in #4173 because runner SLOTS are
+      # the scarce currency — measured 2026-09-03, jobs spend 5,376 minutes waiting against 1,802
+      # executing — so adding a job to report four numbers would have pushed against that.
+      #
+      # This is a pure-Node walk over files. No Postgres, no build, no browser, seconds not minutes.
+      # Folded into a job that already runs, it costs ZERO additional slots, which is why it can
+      # afford to run on every PR rather than nightly.
+      #
+      # IT REPORTS; IT DOES NOT GATE ON ITS FINDINGS. The census exits 0 whatever the four counters
+      # say, and non-zero only when a counter cannot honestly measure — an emptied docs tree, a
+      # missing allowlist, a census below its floor. So being inside a REQUIRED job blocks a broken
+      # INSTRUMENT and never a finding, which is what report mode has to mean if #3664 is ever to
+      # flip on a series of real numbers instead of one hand-run snapshot.
+      - name: CLI surface census (reports four numbers; fails only if it cannot measure)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:cli-surface
+      - name: ...and that census is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-cli-surface.mjs --self-test
+      # The destructive-action registry, censused against the tree in BOTH directions (#4266):
+      # every destructive call site has an entry, and every entry's mutation really occurs in the
+      # file that invokes it. The second direction is the one that matters silently — a stale entry
+      # makes a real site look accounted for. The self-test carries the floor's own argument.
+      - name: Every destructive control is in the registry, and every entry still has its control
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:destructive-actions
+      - name: ...and that census is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-destructive-actions.mjs --self-test
       - name: Console shared surface (@repo/format, @repo/ui/page-header) is not hand-rolled
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:shared-surface
@@ -1010,6 +1052,17 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-filter-standard.mjs --self-test
+      # The release gate (.github/workflows/release-gate.yml) is green-by-RATCHET: every leg fails on
+      # regression against apps/console/e2e/gate-baseline.json, and the rules live in one script. A
+      # ratchet that stopped firing would let every leg pass on an empty ledger, so its self-test
+      # runs here beside the other guards' — and so does the capability promise's, whose CI branch
+      # must THROW on an unmet need rather than skip (the HAVE_MEMBER shape, at the ledger).
+      - name: The release gate's ratchet is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/e2e-ratchet.mjs --self-test
+      - name: ...and the capability promise fails closed in CI
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm -C apps/console exec tsx e2e/helpers/capabilities.ts --self-test
       # The console's published conformance score. #3618 landed apps/console/scripts/audit-report.mjs
       # and the two artifacts it owns — apps/console/docs/ui-conformance/scoreboard.md and
       # apps/console/ui-conformance-baseline.json — with the two-mode contract PROGRAMME.md uses:
@@ -1156,6 +1209,14 @@ jobs:
       - name: Every asymmetric template variable is recorded (template parity)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -C apps/console run check:template-parity
+      # The fourth unit, and the one CUSTOMIZABILITY-PARITY.md said could not exist ("no guard can red
+      # any cell on this page"). Template parity above asks whether the five templates AGREE; this
+      # asks whether a variable one of them declares can be REACHED and is READ. `gke_spot` was
+      # declared, defaulted true, reachable and consumed by nothing — the template advertised Spot
+      # node pools it never provisioned, and every count in the repo credited it as a working knob.
+      - name: Every declared template knob is reachable and read (template knobs)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm -C apps/console run check:template-knobs
       - name: Template-parity board is in sync with the templates
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
@@ -1195,6 +1256,18 @@ jobs:
           pnpm -C apps/console run gen:offer-surface
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/offer-surface.json \
             || { echo "::error::Generated offer-surface.json is stale — run 'pnpm -C apps/console run gen:offer-surface' and commit (source of truth: apps/console/components/design-project/canvas/inspector/config-schema.ts)."; exit 1; }
+      # The template-knob manifest — which template variable a user can actually SET, per cloud, per
+      # component. Derived from the templates' `variables.tf` and the Go providers' passthrough call
+      # sites, and diff-gated for the same reason as the offer surface above: the console's card UI
+      # reads the manifest, so a stale one offers knobs the templates no longer declare. The paired
+      # guard (`check:template-knobs`, in the parity block above) fails on a knob that is
+      # declared, reachable and read by NOTHING — the `gke_spot` shape.
+      - name: Template-knob manifest is in sync with the templates (variables.tf + *_provider.go → template-knobs.json)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          pnpm -C apps/console run gen:template-knobs
+          git diff --exit-code -- apps/console/lib/cloud-providers/generated/template-knobs.json docs/testing/template-knobs.md \
+            || { echo "::error::Generated template-knobs.json / docs/testing/template-knobs.md are stale — run 'pnpm -C apps/console run gen:template-knobs' and commit (source of truth: each template's root variables and packages/core/cloud/*_provider.go)."; exit 1; }
       # Same shape, same reason (#1621). Which secret stores a cluster can actually read is decided by
       # which store hook each provider registers in Go; the canvas greys out the rest. That answer was
       # a hand-written TS list of two slugs, free to drift from the hooks — and in the direction that
@@ -1238,6 +1311,18 @@ jobs:
           pnpm -C apps/console run gen:go-brand
           git diff --exit-code -- packages/core/types/brand_gen.go \
             || { echo "::error::The Go brand projection is stale — run 'pnpm -C apps/console run gen:go-brand' and commit (source of truth: packages/brand/src/tokens.css for the values, apps/console/scripts/lib/brand-projection.ts for the exact/lossy/none decisions)."; exit 1; }
+      # The console's route tree, projected into Go so the CLI can build deep links over it. Same
+      # shape and same reason as the two above: before it, the ONE link the CLI built was
+      # `{origin}/dashboard` — a legacy catch-all that 307s to the org root — so `project get --open`
+      # did not open the project, and nothing could tell, because the URL was a string literal in Go
+      # and the routes are directories in a Next.js app. A route the console renames now removes a
+      # constant, and every Go builder over it stops compiling.
+      - name: The CLI's deep links match the console's route tree (app/(private)/** → routes_gen.go)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          pnpm -C apps/console run gen:go-routes
+          git diff --exit-code -- packages/core/routing/routes_gen.go \
+            || { echo "::error::The Go route table is stale — run 'pnpm -C apps/console run gen:go-routes' and commit (source of truth: apps/console/app/(private)/** through scripts/lib/console-routes.mjs). A route the CLI links to may have moved."; exit 1; }
       # The status vocabulary, on the same shape and for the same reason. The CLI decided a status
       # glyph from nine uppercase words with no case folding while the console decided it from 28
       # lower-cased keys; they disagreed on seven measured cases, and six pgEnums that shout on the
@@ -1487,6 +1572,31 @@ jobs:
       - name: Board scope-overlap matcher (one predicate · three outcomes · mutation controls)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/lib/scope-overlap.mjs --self-test
+      # …and the question that matcher STRUCTURALLY CANNOT ask (#4442). It compares the scopes units
+      # DECLARE; only a PR knows which files a unit actually touched. A wrong `scope:` line is
+      # therefore counted as disjoint and buys a "no overlap" verdict it has not earned — which is
+      # how #4441 came to edit five files #4270 owned and three #4268 owned while the board reported
+      # "compared, no overlap: 26 of 26".
+      #
+      # Hermetic half first. The fixtures include the incident REPLAYED — #4309's scope as declared
+      # against four of the files its PR changed — because the live PR no longer reproduces it: that
+      # scope has since been widened to 35 globs, exactly matching its diff.
+      - name: A PR's files are inside the scope of the unit it closes (no network)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-pr-scope.mjs --self-test
+      # …and the live question, against THIS pull request. Blocking on purpose, unlike the
+      # scheduled-measurement guard beside it: that one reports on the state of ANOTHER ref and is
+      # expected to be red through a promotion window, while this one reports on the diff in front of
+      # it, and the remedy — widen the `scope:` line, or move the file to the unit that owns it — is
+      # in the author's hands. On a non-PR event it prints that it measured nothing and exits 0.
+      - name: ...and no changed file belongs to a different open unit
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node scripts/ci/check-pr-scope.mjs
       # The CLA gate runs from `pull_request_target` — a privileged token, and comment text written
       # by whoever opened the pull request. It is also DORMANT until `pnpm legal:activate-ip` writes
       # cla/ACTIVE, so nothing exercises it until the day it starts gating every external
@@ -1660,6 +1770,29 @@ jobs:
         run: |
           node scripts/check-e2e-spend-guard.mjs --self-test
           node scripts/check-e2e-spend-guard.mjs
+      # `schedule:` fires the DEFAULT BRANCH's copy — the workflow AND, for an unpinned checkout, the
+      # whole tree it executes. So a measurement defined on `dev` can run green for days and publish
+      # nothing, which is #4395: eight successful orphan-reaper runs, zero artifacts, and MVP
+      # predicate 6 unsatisfiable with a green check every morning. Split in three on purpose.
+      - name: Scheduled-measurement guard self-test (no network)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-scheduled-measurements.mjs --self-test
+      - name: Every scheduled measurement declares the tree it runs (no network)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-scheduled-measurements.mjs --scan-only
+      # …and the live question. `continue-on-error` DELIBERATELY: the default branch being behind is
+      # a state change in ANOTHER REF, not in the diff, so this can go red on a PR that touched
+      # nothing — and it is EXPECTED to be red for the whole length of a promotion window. A guard
+      # that blocks unrelated work is a guard people route around. It annotates; the two steps above
+      # are the blocking half. Its findings name the promotion as the remedy, never a culprit.
+      - name: ...and the branch that actually runs it still publishes the evidence
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --depth=1 origin "$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)"
+          node scripts/check-scheduled-measurements.mjs
       # A knob the harness READS that no dispatch can SET is a scenario nobody can run at any price,
       # and it fails silently: the code is written, its unit tests pass, and every run takes the
       # default forever. #2775 found the BYO-IaC custody chain had never executed for exactly that
@@ -1839,6 +1972,12 @@ jobs:
       - name: The chart-fetch retry retries a fetch and refuses a real failure
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/ci/tofu-test-retry-fetch.sh --self-test
+      # The same shape one host over: Playwright's `--with-deps` shells out to apt, and the runner
+      # image carries Google's Chrome channel that Chromium does not need. Both directions pinned —
+      # a transient fetch is retried, a real failure is not (#4499).
+      - name: The playwright-install retry retries a fetch and refuses a real failure
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/ci/playwright-install.sh --self-test
       - name: Guards self-test (runtime · compose · merge)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |

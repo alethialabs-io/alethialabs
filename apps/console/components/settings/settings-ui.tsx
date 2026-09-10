@@ -16,7 +16,7 @@
 
 import { createContext, useContext, useId } from "react";
 import { Search } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ComponentPropsWithRef, ReactNode } from "react";
 import {
 	Select,
 	SelectContent,
@@ -119,7 +119,7 @@ const SettingsFieldLabelContext = createContext<string | null>(null);
  * anyway: those live inside a `Controller` `render` prop, which is called as a function rather
  * than mounted as a component, so a hook there would be a hooks-order violation — and the page
  * component itself sits ABOVE the provider, where the answer is null. Those three write their own
- * `aria-label`. Export it when a second CONTROL component needs it, not before.
+ * `aria-label`. `SettingsInput` below is the second CONTROL component this file said to wait for.
  */
 function useSettingsFieldLabelId(): string | null {
 	return useContext(SettingsFieldLabelContext);
@@ -187,10 +187,22 @@ export function SettingsDangerRow({
 	description: ReactNode;
 	children: ReactNode;
 }) {
+	const titleId = useId();
 	return (
-		<div className="flex items-center justify-between gap-5 border-b border-border px-[22px] py-4 last:border-b-0">
+		// `role="group"` + `aria-labelledby` so the row's title reaches the accessibility tree at
+		// all. It was a bare `<div>`: visible, and associated with nothing — so a control announced
+		// only "Delete" carried no trace of WHAT it deletes. `SettingsFieldRow` above already wires
+		// its label this way; this row simply did not (#4462).
+		//
+		// A group rather than a heading on purpose: these are rows inside a panel, not sections of
+		// the page, and promoting them would put every danger row into the document outline.
+		<div
+			role="group"
+			aria-labelledby={titleId}
+			className="flex items-center justify-between gap-5 border-b border-border px-[22px] py-4 last:border-b-0"
+		>
 			<div className="min-w-0">
-				<div className="mb-[3px] text-ui-md font-medium text-text-primary">
+				<div id={titleId} className="mb-[3px] text-ui-md font-medium text-text-primary">
 					{title}
 				</div>
 				<div className="max-w-[52ch] text-ui-xs leading-[1.45] text-text-tertiary">
@@ -199,6 +211,44 @@ export function SettingsDangerRow({
 			</div>
 			<div className="shrink-0">{children}</div>
 		</div>
+	);
+}
+
+/**
+ * A single-line settings input, NAMED BY THE ROW IT SITS IN.
+ *
+ * This is the second control component the hook above was held back for, and it exists because
+ * the alternative already failed twice. A raw `<input>` written straight into a `SettingsField`
+ * has a visible label and no programmatic one: the row's label is a `<span id>`, not a
+ * `<label for>`, so nothing associates them, and axe scores `label` (critical, WCAG A). The
+ * release gate's audit leg measured exactly that on four inputs across four routes —
+ * `/[org]/~/settings{,/general}` (3 nodes) and `/[org]/[project]/settings{,/general}` (1) — in
+ * both themes. #3756 was the same defect at two other call sites.
+ *
+ * The fix is not four hand-written `aria-label` strings. That is what this file's own comment
+ * predicted would rot ("every call site being asked to retype that text … and half of them
+ * forgetting"), and a retyped label also drifts from the visible one, which is worse than none:
+ * a screen reader then announces a name the sighted user cannot see.
+ *
+ * STYLING IS DELIBERATELY NOT OPINIONATED HERE. Every call site already composes
+ * `cn(settingsControl, settingsControlSize, …)` itself, and one of the four — the org slug field
+ * — is a bare input inside a prefix box that must NOT take the filled border, the focus ring or
+ * `w-full`. Applying a default underneath would have changed how that row looks while claiming to
+ * change only its accessible name. `className` is forwarded untouched.
+ *
+ * An explicit `aria-label` still wins, for a control whose row label is not its whole name.
+ */
+export function SettingsInput({
+	"aria-label": ariaLabel,
+	...props
+}: ComponentPropsWithRef<"input">) {
+	const fieldLabelId = useSettingsFieldLabelId();
+	return (
+		<input
+			aria-label={ariaLabel}
+			aria-labelledby={ariaLabel ? undefined : (fieldLabelId ?? undefined)}
+			{...props}
+		/>
 	);
 }
 

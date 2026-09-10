@@ -81,7 +81,7 @@ export function NodeQuickConfig({
 			>
 				<ArrowLeft className="h-3.5 w-3.5 shrink-0" />
 				<span>Add a service</span>
-				<span className="text-muted-foreground/50">/</span>
+				<span className="text-text-tertiary">/</span>
 				<Icon className="h-3.5 w-3.5 shrink-0" />
 				<span className="font-medium text-foreground">{def.label}</span>
 			</button>

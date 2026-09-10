@@ -28,10 +28,13 @@ committed to a repository:
 
 ```
 Same result, without the questions:
-  alethia project create boutique --region eu-west-1 --cloud-account prod-account --env prod:production:dedicated --env dev-1:development:namespace:boutique-dev-1
+  alethia project create boutique --region eu-west-1 --cloud-account prod-account
 ```
 
-So `--no-input` always works, and so does a pipe.
+The one thing a flag cannot say is a list of environments, so a run that declared an environment
+matrix through the form prints back the `alethia.yaml` its answers add up to — the file
+[`alethia apply`](/cli/commands/plan-and-apply) reads. So `--no-input` always works, and so does a
+pipe.
 
 ## `alethia project list`
 
@@ -101,58 +104,75 @@ printing it.
 Create a new project in the active organization.
 
 ```bash
-alethia project create                   # asks for everything, prints the flags back
+alethia project create                   # asks for everything, prints the file back
 ```
 
 or say it all at once:
 
 ```bash
-alethia project create boutique \
-  --region eu-west-1 --cloud-account prod-account \
-  --env prod:production:dedicated \
-  --env dev-1:development:namespace:boutique-dev-1
+alethia project create boutique --region eu-west-1 --cloud-account prod-account
 ```
+
+or from the manifest in the current directory, which also declares the environment matrix:
+
+```bash
+alethia project create --file alethia.yaml
+```
+
+The file in the current directory is read even when `--file` is not passed, and the command prints
+the line naming it. A script that must not be steered by whatever `alethia.yaml` happens to be in
+the tree passes `--no-manifest`.
 
 | Argument / Flag | Required | Description |
 |------|----------|-------------|
 | `[name]` | Yes* | Project name (positional). *Asked for on a terminal when omitted. |
 | `--region` | Yes* | Cloud region to provision into. *Asked for on a terminal when omitted. |
 | `--cloud-account` | No | Cloud account to link, by its **label** or its id. Asked for on a terminal when omitted; a project may be created with none. |
-| `--cloud-identity-id` | No | Cloud account id to link. Prefer `--cloud-account`, which also takes the label. Passing both is an error. |
 | `--stage` | No | Initial environment stage: `development` (default), `staging`, `production` |
 | `--iac-version` | No | OpenTofu version to pin (defaults server-side) |
 | `--placement-mode` | No | Placement of the default environment: `namespace`, `vcluster`, `dedicated` (default `dedicated`) |
-| `--env` | No | `name:stage[:mode[:namespace]]`, repeatable — the full environment matrix. Asked for, one environment at a time, on a terminal when omitted. |
+| `--file` | No | `alethia.yaml` to take the values and the environment matrix from. The file in the current directory is read when present, and the command says so. |
+| `--no-manifest` | No | Read no manifest, not even the one in this directory. Refused together with `--file`. |
+
+Every value resolves in one order — the flag, then `ALETHIA_REGION` and the other environment
+variables, then the manifest, then the form, then the default — so a checked-in file supplies what
+the command line leaves out, and a flag overrides the file for one run.
 
 The created project prints as a card (or the typed object with `--output json`), followed —
 when anything was asked for — by the `alethia project create` line that would produce the same
 project without the questions. That line names every flag that shaped it, `--stage`,
 `--placement-mode` and `--iac-version` included, so it can be committed as-is.
 
-`--cloud-account` and `--cloud-identity-id` name the same field, so passing **both** is refused
-rather than resolved by precedence — the same rule `--project` and `--project-id` follow on the job
-commands.
-
 ### The environment matrix
 
-`--env` declares every environment and **how each is placed onto a Fabric**, in one command. The
-first entry is the default environment and owns the Fabric it provisions, so it defaults to
-`dedicated`; later entries default to `namespace` and share that Fabric.
+Every environment and **how each is placed onto a Fabric** is declared in `alethia.yaml`, under
+`environments:`. The first entry is the default environment and owns the Fabric it provisions, so
+it defaults to `dedicated`; later entries default to `namespace` and share that Fabric.
 
-```bash
-alethia project create shop --region eu-west-1 --cloud-account prod-account \
-  --env prod:production \
-  --env dev:development:namespace:boutique-dev \
-  --env staging:staging:vcluster
+```yaml
+project: shop
+cloud:
+  account: prod-account
+  region: eu-west-1
+environments:
+  - name: prod
+    stage: production
+  - name: dev
+    stage: development
+    namespace: boutique-dev
+  - name: staging
+    stage: staging
+    placement: vcluster
 ```
 
-That is **one** cluster hosting three environments. Omit `--env` in a script and you get the
-default Production + Preview pair instead; omit it on a terminal and you are asked for each
-environment in turn — name, stage, placement, namespace — and then shown the `--env` line your
-answers add up to.
+That is **one** cluster hosting three environments. With no manifest and no terminal you get the
+default Production + Preview pair instead; on a terminal you are asked for each environment in
+turn — name, stage, placement, namespace — and then shown the file your answers add up to, to
+save as `alethia.yaml`.
 
 A stage or a placement outside the allowed set is refused locally, naming the whole set, rather
-than coming back as a `400`.
+than coming back as a `400`. The file's full reference, components included, is on
+[Plan & Apply](/cli/commands/plan-and-apply#alethiayaml).
 
 <Callout type="warn">
   Placement is the flag with a bill attached. Each `dedicated` environment is a separate cluster with
@@ -165,31 +185,58 @@ than coming back as a `400`.
 Queue a `PLAN`, `DEPLOY` or `DESTROY` job for one environment of a project.
 
 ```bash
-alethia project plan --project boutique --env dev-1
-alethia project apply --project boutique --env dev-1 --wait
+alethia project plan --project boutique --env dev-1 --runner eu-box --wait
+alethia project apply --project boutique --env dev-1 --latest-plan --wait
 alethia project destroy --project boutique --yes
 ```
 
-Omit `--project` on a terminal and you are asked which project; omit `--runner-id` and you are
-asked which runner (or "Any available").
+Omit `--project` on a terminal and you are asked which project; omit the runner and you are
+asked which one (or "Any available"). `destroy` takes the runner by id only, for now.
 
 | Flag | plan | apply | destroy | Description |
 |------|------|-------|---------|-------------|
 | `--project` | ✓ | ✓ | ✓ | Project by **name** or id. Asked for on a terminal when omitted. |
 | `--project-id` | ✓ | ✓ | ✓ | Project id. Prefer `--project`, which also takes the name. |
 | `--env` | ✓ | ✓ | ✓ | Target environment name (default: the project's default environment) |
-| `--runner-id` | ✓ | ✓ | ✓ | Assign to a specific runner |
-| `--plan-job-id` | | ✓ | | Reference a prior `PLAN` job |
+| `--runner` | ✓ | ✓ | | Runner by **name** or id. Asked for on a terminal when omitted. |
+| `--runner-id` | ✓ | ✓ | ✓ | Runner id. Prefer `--runner`, which also takes the name. |
+| `--plan-job-id` | | ✓ | | Apply a specific `PLAN` job, by id |
+| `--latest-plan` | | ✓ | | Apply the project's most recent `PLAN` job |
 | `-w`, `--wait` | ✓ | ✓ | ✓ | Wait for job completion |
 | `-y`, `--yes` | | | ✓ | Skip the confirmation prompt (required with `--no-input`) |
 
 `--project` and `--project-id` name the same thing, so passing **both** is refused rather than
 resolved by precedence. A project name that two projects share is also refused, naming both ids —
 the command queues a `DESTROY`, and picking one of two plausible projects is not a decision the
-CLI should make for you.
+CLI should make for you. `--runner` and `--runner-id` are the same pair, refused the same way, and
+a runner name shared by two runners is refused naming both ids.
 
 `destroy` is destructive: on a terminal it confirms, and with `--no-input` it requires `--yes`
 rather than silently doing nothing.
+
+### Applying the plan you just reviewed
+
+`--latest-plan` resolves the project's own most recent `PLAN` job, so a review-then-apply pass
+never moves a uuid between two commands:
+
+```bash
+alethia project plan --project boutique --env prod --wait
+alethia project apply --project boutique --env prod --latest-plan --wait
+```
+
+It prints which job it chose before it queues anything. Three things it deliberately does **not**
+do:
+
+- It is **opt-in**. Without it (or `--plan-job-id`) the deploy runs its own plan, which is the
+  ordinary path — a plan reference is a mode, not a hint: the Runner refuses a deploy whose plan
+  did not succeed, or whose configuration moved since the plan was taken.
+- It resolves `PLAN` jobs **only**. The project's most recent job is as likely to be the `DEPLOY`
+  that followed the plan.
+- It takes the most recent `PLAN` **whatever its status**, and refuses when that is not `SUCCESS`,
+  naming the job and its status. Skipping past a plan that is still running would apply an older
+  one you never asked for.
+
+`--plan-job-id` is still there for a plan you already hold the id of.
 
 ## `alethia project design apply`
 
@@ -325,10 +372,11 @@ immediately rather than on the next apply.
 One uniform group authors **all** of a project's component resources. The project is named with
 `--project`, and the environment with `--env`.
 
-Supported **kinds** — singletons (one per project *per environment*, name-less): `network`,
-`cluster`, `dns`, `observability`, `repositories`; and multi (named, many per environment):
-`databases`, `caches`, `queues`, `topics`, `nosql_tables`, `container_registries`, `secrets`,
-`storage_buckets`.
+**Which kinds exist is published by the server, and `component kinds` is how you read it.** This
+page used to list them, and that list drifted: it named thirteen while the server accepted fourteen.
+A kind has one of two cardinalities — **singleton** (one per project *per environment*, name-less) or
+**multi** (named, many per environment) — and `kinds` prints each with its own, so the answer to
+"does this one need a `--name`" comes from the same place as the list itself.
 
 ```bash
 # List the supported kinds
@@ -355,7 +403,7 @@ alethia project component remove --project boutique --kind network
 
 | Command | Flags | Description |
 |------|----------|-------------|
-| `component kinds` | — | List the supported component kinds + their cardinality |
+| `component kinds` | — | List the component kinds the server publishes, with each one's cardinality. Needs a session — the answer is the server's, not a built-in list |
 | `component list` | `--project` `--kind` `--env` | List components (all kinds, or one) |
 | `component add` | `--project` `--kind` `--name` `--env` `--set` | Create a component |
 | `component remove` | `--project` `--kind` `--name` `--env` `-y`, `--yes` | Delete a component (confirms) |

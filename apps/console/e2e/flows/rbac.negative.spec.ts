@@ -50,7 +50,7 @@ test.describe("RBAC — member permission denials", () => {
 		await expect(member.page.getByRole("heading", { name: "Danger zone" })).toBeVisible({
 			timeout: 15_000,
 		});
-		await member.page.getByRole("button", { name: /^Delete$/ }).click();
+		await member.page.getByRole("button", { name: /^Delete organization$/ }).click();
 		const dialog = member.page.getByRole("alertdialog");
 		await dialog.getByRole("button", { name: /delete organization/i }).click();
 		// Deletion must fail — the org stays and an error surfaces.

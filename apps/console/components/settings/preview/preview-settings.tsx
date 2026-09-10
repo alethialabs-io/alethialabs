@@ -13,6 +13,7 @@ import { RepositorySelector } from "@/components/repository-selector";
 import {
 	SettingsCardFoot,
 	SettingsField,
+	SettingsInput,
 	SettingsPanel,
 	SettingsSection,
 	settingsControl,
@@ -271,7 +272,8 @@ export function PreviewSettings({
 								}
 							/>
 							<div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_160px]">
-								<input
+								<SettingsInput
+									aria-label="Apps path"
 									className={cn(settingsControl, settingsControlSize, "font-mono text-ui-sm")}
 									autoComplete="off"
 									placeholder="."
@@ -320,7 +322,8 @@ export function PreviewSettings({
 								)}
 							/>
 							<div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-								<input
+								<SettingsInput
+									aria-label="Namespace prefix"
 									className={cn(settingsControl, settingsControlSize, "font-mono text-ui-sm")}
 									autoComplete="off"
 									placeholder="preview"

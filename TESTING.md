@@ -37,7 +37,7 @@ hundred mocked unit tests, so **integration is the widest band**. E2E stays deli
 | **Action (mocked)** | Vitest | `apps/console/tests/actions/**` | DB/Stripe/auth mocked at the module boundary | yes |
 | **Integration (real DB)** | Vitest (`vitest.integration.config.ts`) | `apps/console/tests/integration/**` | real Postgres, nothing else | gated (needs Postgres) |
 | **Shared package** | Vitest | `packages/<pkg>/tests/**` (e.g. `@repo/ui`, `@repo/plan-catalog`) | per-package | yes (turbo fan-out) |
-| **E2E** | Playwright | `apps/console/e2e/**` | real app, dev stack | **two projects** — see below |
+| **E2E** | Playwright | `apps/console/e2e/**` | real app, dev stack | **two projects per PR, seven gate legs on promotion** — see below |
 | **Go** | `go test ./...` | `apps/{cli,runner}`, `packages/core` | `httptest` | yes (matrix) |
 
 ## Running tests
@@ -123,15 +123,29 @@ earned rather than asserted under #2649:
 - The console scope excludes ~7,300 lines of `lib/**` and `app/server/actions/**` on top of the
   `components/**` exclusion above — some of it correctly (real-SQL modules verified by the
   integration tier), some of it under reasons that have since expired.
-- `@repo/ui` counts an **allowlist** of hand-listed files rather than its whole `src/`. An
-  include-allowlist is an exclusion with the sign flipped and no comment.
+- `@repo/ui` counts an **allowlist** of hand-listed files rather than its whole `src/` — 12 of 60.
+  An include-allowlist is an exclusion with the sign flipped; it now has a comment on every one of
+  the 48, and all 180 of their exports (#4104).
 
-`apps/console` is the first project recorded: **`apps/console/coverage-exclusions.yaml`** carries
-one entry per exclusion, and `pnpm check:coverage-exclusions` re-reads it on every PR. The section
+**Every project that hides files is now recorded** — four of the six coverage-emitting projects.
+`apps/console`, `packages/ui`, `apps/marketing` and `ee` each carry a
+**`coverage-exclusions.yaml`** with one entry per exclusion, and `pnpm check:coverage-exclusions`
+re-reads all four on every PR. `packages/format` and `packages/plan-catalog` hide none — no
+`exclude:`, a pure-glob `include: ["src/**"]` — and owe no manifest; the guard fails the moment
+either gains an `exclude:` or a hand-listed `include:`. The run prints both numbers
+(`6 coverage-emitting config(s) · 4 manifest(s)`) so the gap is a readout rather than a thing to
+remember. The section
 is the decision — `infrastructural:` (not product code, and the path must match a declared class),
 `tier_separation:` (proven by a named test suite) or `baseline:` (real debt, with an owning issue
 and a verified `state:`, shrink-only). **Adding an exclusion without a manifest entry fails, and so
 does a manifest entry whose exclusion has gone.**
+
+One qualification on `tier_separation:`, because it is the only section with neither an owning issue
+nor a shrink-only rule. Where the exclusion comes from an include **allowlist** rather than from a
+considered `exclude:` line, the entry must also carry `issue:`. Such a file is measured by a suite
+in its own project and merely uncounted — an allowlist that fell behind its tests, not a tier
+decision — and without the field the section becomes the amnesty `baseline:`'s `issue:` was written
+to prevent. All 17 of `@repo/ui`'s point at #4349, which deletes them by widening the scope.
 
 What the guard checks about a `tier_separation:` claim is a **value import**: it resolves the named
 suite's imports the way vitest resolves them and requires one for the module and for each name in
@@ -144,17 +158,21 @@ is imported and never called satisfies the claim.
 accounted for, in `symbols:` or in `baseline:`. A list of two of a module's seven exports reads
 exactly like a list of all seven.
 
-Three projects are not yet enrolled and are recorded as such rather than left silent — `@repo/ui`
-(48 files hidden behind a hand-listed `include`), `apps/marketing` and `ee` (six `exclude:` entries
-between them, none manifested). Each carries a **`coverage-exclusions.pending`** marker naming the
-issue that will delete it: `issue: #1234`, plus an optional one-line `reason:`. The guard derives
-the pending set from those markers rather than from a list of its own, names and counts them on
-every run, and fails if one is missing, unreadable, or left behind once its project is enrolled.
-Enrolling them is the next unit.
+The last three projects enrolled in #4104 and #4105, and their **`coverage-exclusions.pending`**
+markers are gone with them. The marker mechanism stays: a project that hides files and carries no
+manifest must carry one, naming the issue that will delete it (`issue: #1234`, plus an optional
+one-line `reason:`). The guard derives the pending set from those markers rather than from a list
+of its own, counts them on every run against a **ceiling that is now zero**, and fails in both
+directions — a new marker cannot be added without raising that ceiling in the same diff, and an
+enrolment cannot leave slack behind for the next project to spend.
 
-That first pass already retired one false claim: the console config said
+Two false claims have been retired that way so far. The console config said
 `tests/integration/reconcile-b2c.test.ts` verifies `lib/reconcile/gc.ts`, and that suite never
-imports it (#3262).
+imports it (#3262). And `@repo/ui`'s config described its 48 unlisted files as "presentational
+re-exports covered by e2e" — measured against the package's own suites, that is true of 31 of them
+and false of 17, seven of which have a **dedicated suite of their own** and are excluded anyway
+(#4104). Widening that allowlist is a separate unit — **#4349** — because a scope change moves the
+published number and shipping it with the recording would hide which one moved it.
 
 Until every one of those is recorded as a decision with checkable evidence, read the coverage
 badge as "the measured part of our logic is this well tested", not "our logic is this well
@@ -201,25 +219,46 @@ server actions the component imports. Form components: reuse
 
 ### E2E (Playwright)
 Keep them few and high-value. Auth goes through the real email-OTP flow — the shared fixture
-in `e2e/fixtures/auth.ts` requests a code and reads it from the dev server log. Gate anything
-needing Stripe behind `test.skip(!process.env.STRIPE_SECRET_KEY)`.
+in `e2e/fixtures/auth.ts` requests a code and reads it from the dev server log.
+
+**Never gate a spec on an environment variable it reads itself.** `test.skip(!process.env.STRIPE_SECRET_KEY)`
+was this file's advice and it is now the defect: an unset variable turned every billing assertion
+into a green skip, and a run reporting "35 skipped" read like a run that had measured 35 things.
+Capabilities are **promised by the leg** instead — the workflow sets `ALETHIA_E2E_CAPABILITIES` and
+the spec declares `{ tag: "@needs:stripe" }`. In CI a tagged spec on a leg that did not promise is
+red, never a skip. See `apps/console/e2e/README.md` → *Capabilities*.
 
 **Which projects CI actually runs — check before citing "covered by e2e".**
-`playwright.config.ts` defines eight project entries; `.github/workflows/ci.yml` launches
-**two** of them on every PR:
+`playwright.config.ts` defines nine projects. Two run on every PR into `dev`; seven are the legs of
+the **release gate** on the promotion path; one is nightly-only.
 
-| project | runs in CI | job |
-|---|:---:|---|
-| `setup` | yes (dependency) | both, via `auth.setup.ts` |
-| `hero` | **yes** | `E2E (browser · Playwright hero path)` |
-| `elench-ai` | **yes** | `E2E (browser · Elench AI journeys · scripted model)` |
-| `elench-ux` | **yes** | folded into `E2E (browser · Elench AI journeys · scripted model)` (#2875) |
-| `elench-live` | nightly | `e2e-ai-nightly.yml` |
-| `canvas`, `console`, `qa` | **no** — local only, and now LABELLED as such | — |
+| project | per-PR job (`ci.yml`) | release-gate leg | elsewhere |
+|---|---|---|---|
+| `setup` | dependency | dependency | never invoked alone |
+| `hero` | `E2E (browser · Playwright hero path)` | `Release gate (hero)` | — |
+| `elench-ai` | `E2E (browser · Elench AI journeys · scripted model)` — `elench-ux.spec.ts` folded in (#2875) | `Release gate (elench-ai)` | — |
+| `canvas` | — | `Release gate (canvas)` | — |
+| `console` | — | `Release gate (console)` | — |
+| `qa` | — | `Release gate (qa)` | needs `ALETHIA_QA_E2E=1` |
+| `audit` | — | `Release gate (audit)` | `UI conformance audit (console · non-required)`, nightly |
+| `audit-interaction` | — | `Release gate (audit-interaction)` | the only leg that activates destructive controls |
+| `elench-live` | — | — | `e2e-ai-nightly.yml` — real model, never gating |
 
-`qa` alone matches all 24 `e2e/flows/*.spec.ts` (~320 tests). So "this is covered by e2e" is only
-true of the projects marked yes above — everything else is a local-only suite, and an exclusion
-justified by a project CI never launches is justified by nothing.
+`hero` and `elench-ai` are twice-homed, and their `ci.yml` copies skip themselves on a PR into
+`main` or `staging`, so a promotion does not boot the same console twice. `qa` alone matches all 26
+`e2e/flows/*.spec.ts`.
+
+Nothing runs nowhere any more — `LOCAL_ONLY_REASON` in `playwright.config.ts` is empty, and
+`assertNoDeadZone()` still reads `.github/workflows/**` on every invocation to keep that true. But
+"this is covered by e2e" still needs the **leg** named: six of the seven gate legs run only on the
+promotion path, so they say nothing about the `dev` PR that changed the code, and an exclusion
+justified by a suite nothing launched on that PR is justified by nothing.
+
+**A gate leg passes by ratchet, not by being green.** Each leg fails on regression against
+`apps/console/e2e/gate-baseline.json` — 94 tests are recorded `failed` there today, across the
+`console`, `canvas`, `qa` and `audit` legs. So a green `Release gate (qa)` means "no worse than the
+ledger", never "the QA suite passes". The rules, and how to move the ledger, are in
+`apps/console/e2e/README.md`.
 
 **`chromium` is gone, and it was the mechanism.** It was a DENYLIST over the whole `testDir`, so
 every newly added spec fell into it automatically — and since no workflow ever invoked it, every
@@ -230,7 +269,36 @@ with what the workflows actually invoke — the last two read `.github/workflows
 restating a belief about it. The per-project table now lives in `apps/console/e2e/README.md`.
 
 Both CI jobs also still guard that the project matches at least one test, because a `--project`
-whose `testMatch` selects zero specs exits 0.
+whose `testMatch` selects zero specs exits 0. Each gate leg carries the same guard with a **floor**
+rather than a bare non-zero: `qa` must list at least 300 tests and `audit-interaction` at least 47,
+because a leg listing 40 tests is not a smaller suite, it is the wrong one.
+
+## The production QA pass
+
+Everything above measures a build. Three layers stand between a merged promotion and a production
+console that works, and **each one can measure something the other two cannot**:
+
+| layer | what it is | what it proves | what it cannot measure |
+|---|---|---|---|
+| 1 · **release gate** | `.github/workflows/release-gate.yml` — seven Playwright legs, each on its own ephemeral console (Postgres service, real migrations, `next start`) | the build behaves against a seeded database, with Stripe in test mode | anything about the production *configuration* — real keys, real DNS, real OAuth redirect URIs, real object storage |
+| 2 · **post-deploy smoke** | the `smoke` job in `deploy-console.yml` → `pnpm -C apps/console run smoke:prod` (10 checks, and a `--list` floor asserting there are still 10) | the public URL answers, and **the build id it serves equals the promoted SHA** — the one assertion that separates a deploy from a deploy that landed | anything behind sign-in; it is unauthenticated by design |
+| 3 · **`/console-prod-qa`** | `.claude/skills/console-prod-qa/SKILL.md` — a witnessed pass in the maintainer's own Chrome, one QA organization, reversible mutations only, every destructive dialog opened and **cancelled** | the signed-in production configuration: entitlement resolution, the real Stripe catalog, the real email sender, storage | the signed-out surface (reported `NOT MEASURED by design`, because layers 1 and 2 own it) and layout regressions (the `audit` leg scores those better) |
+
+**All three layers are on `dev` only.** Measured 2026-09-09: `release-gate.yml`,
+`gate-baseline.json`, `scripts/e2e-ratchet.mjs`, `apps/console/scripts/e2e/post-deploy-smoke.ts` and
+the `console-prod-qa` skill are each absent from `origin/staging` and `origin/main`, and the live
+`protect-main` ruleset requires none of the gate legs. Nothing above guards a promotion until this
+wave rides `dev → staging → main`; `CONTRIBUTING.md`'s promotion checklist carries the detail.
+
+Layer 2 replaced a manual `docker buildx imagetools inspect` in the promotion checklist: the stale
+retag it existed to catch is now an assertion in a job, not a step someone has to remember.
+
+Layer 3 is `disable-model-invocation: true` — it mutates production, so the maintainer names it and
+no model reaches for it. Its reports land in `apps/console/docs/qa/prod-runs/`, one dated file per
+run; the schema and the index are in that directory's README.
+
+**What none of the three measure**: a cloud provisioning run against a real provider. That is the
+MVP proof programme's subject (`PROGRAMME.md`), not this one.
 
 ## Test organization — the standard (one rule, no drift)
 

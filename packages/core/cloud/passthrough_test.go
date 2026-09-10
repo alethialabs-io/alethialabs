@@ -4,7 +4,12 @@
 package cloud
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -530,5 +535,910 @@ func TestProviderTfvars_AzureCacheAllowedCidrBlocksWithdrawn(t *testing.T) {
 		if contains(v) {
 			t.Errorf("tfvar %q carries the withdrawn cache CIDR %q — the control is a recorded ceiling on azure and must emit nothing", key, sentinel)
 		}
+	}
+}
+
+// ── the leaf passthrough: 5 clouds × 7 kinds (#4259) ──────────────────────────────────
+//
+// Every leaf component carries a `provider_config` JSONB, and until #4259 only the cluster, the DNS
+// and the database handed theirs to mergeProviderConfig — a cache's, a queue's, a bucket's key was
+// stored by the console and reached no tfvar. These tests pin the plumbing per CELL, because the
+// shape differs: a cache is root-level variables on every cloud, a queue is one entry of a map, a
+// bucket one element of a list, and a Firestore "table" is the project's one database. A test that
+// only checked "the key is somewhere in tfvars" would pass a key that landed on the wrong object.
+
+// leafProbeKey names a knob NO template declares, so nothing but the passthrough can place it.
+const leafProbeKey = "x_probe_knob"
+
+// leafProbeValue is what the probe carries; the tests look for this exact value where it should land.
+const leafProbeValue = "probe"
+
+// leafBogus is the colliding value a provider_config offers for a key the typed code already owns.
+const leafBogus = "bogus"
+
+// leafLocator finds the object a component's provider_config merges into: the root tfvars for a
+// root-level component, or the component's own entry inside a map/list tfvar.
+type leafLocator func(t *testing.T, tf map[string]interface{}) map[string]interface{}
+
+// atRoot locates the root tfvars — cache on every cloud, registry on aws/azure, nosql on gcp.
+func atRoot(t *testing.T, tf map[string]interface{}) map[string]interface{} { return tf }
+
+// entryOfMap locates the named entry of a map(object) tfvar such as `sqs_queues`.
+func entryOfMap(root, name string) leafLocator {
+	return func(t *testing.T, tf map[string]interface{}) map[string]interface{} {
+		t.Helper()
+		m, ok := tf[root].(map[string]interface{})
+		if !ok {
+			t.Fatalf("tfvar %q = %T, want a map of entries", root, tf[root])
+		}
+		entry, ok := m[name].(map[string]interface{})
+		if !ok {
+			t.Fatalf("tfvar %q has no object entry %q (got %T)", root, name, m[name])
+		}
+		return entry
+	}
+}
+
+// firstOfList locates the first element of a list(object) tfvar such as `bucket_configuration`.
+func firstOfList(root string) leafLocator {
+	return func(t *testing.T, tf map[string]interface{}) map[string]interface{} {
+		t.Helper()
+		l, ok := tf[root].([]map[string]interface{})
+		if !ok || len(l) == 0 {
+			t.Fatalf("tfvar %q = %#v, want a non-empty list of objects", root, tf[root])
+		}
+		return l[0]
+	}
+}
+
+// tfvarsMentionKey walks every map nested anywhere inside the tfvars for a key of that name — the
+// question an EXCLUDED cell asks, where the probe must land nowhere rather than somewhere specific.
+func tfvarsMentionKey(v interface{}, key string) bool {
+	switch x := v.(type) {
+	case map[string]interface{}:
+		if _, ok := x[key]; ok {
+			return true
+		}
+		for _, e := range x {
+			if tfvarsMentionKey(e, key) {
+				return true
+			}
+		}
+	case map[string]string:
+		_, ok := x[key]
+		return ok
+	case []map[string]interface{}:
+		for _, e := range x {
+			if tfvarsMentionKey(e, key) {
+				return true
+			}
+		}
+	case []map[string]string:
+		for _, e := range x {
+			if tfvarsMentionKey(e, key) {
+				return true
+			}
+		}
+	case []interface{}:
+		for _, e := range x {
+			if tfvarsMentionKey(e, key) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// leafKinds is the row set of the passthrough table, in the order the issue names them.
+var leafKinds = []string{"cache", "queue", "topic", "nosql", "bucket", "secret", "registry"}
+
+// leafProviders is the column set of the passthrough table.
+var leafProviders = map[string]CloudProvider{
+	"aws":     &awsProvider{},
+	"gcp":     &gcpProvider{},
+	"azure":   &azureProvider{},
+	"alibaba": &alibabaProvider{},
+	"hetzner": &hetznerProvider{},
+}
+
+// leafConfig builds a project holding ONE component of the kind, whose provider_config is pc. The
+// component names are what the locators look entries up by.
+func leafConfig(kind string, pc map[string]any) *types.ProjectConfig {
+	cfg := &types.ProjectConfig{ProjectName: "p"}
+	switch kind {
+	case "database":
+		cfg.Databases = []types.ProjectDatabaseConfig{{Name: "d", ProviderConfig: pc}}
+	case "cache":
+		cfg.Caches = []types.ProjectCacheConfig{{Name: "c", ProviderConfig: pc}}
+	case "queue":
+		cfg.Queues = []types.ProjectQueueConfig{{Name: "q", ProviderConfig: pc}}
+	case "topic":
+		cfg.Topics = []types.ProjectTopicConfig{{Name: "t", ProviderConfig: pc}}
+	case "nosql":
+		cfg.NosqlTables = []types.ProjectNosqlConfig{{
+			Name: "n", PartitionKey: "pk", TableType: types.NosqlTableTypeStandard, ProviderConfig: pc,
+		}}
+	case "bucket":
+		cfg.StorageBuckets = []types.ProjectStorageBucketConfig{{Name: "b", ProviderConfig: pc}}
+	case "secret":
+		cfg.Secrets = []types.ProjectSecretConfig{{Name: "s", Generate: true, Length: 16, ProviderConfig: pc}}
+	case "registry":
+		cfg.ContainerRegistries = []types.ProjectContainerRegistryConfig{{Name: "reg", ProviderConfig: pc}}
+	}
+	return cfg
+}
+
+// TestProviderTfvars_LeafPassthrough pins, per cloud × kind, WHERE a leaf component's
+// provider_config lands: on the root tfvars, or on the component's own entry of the map/list
+// variable the template models it as. A hetzner row with no OpenTofu surface for the kind carries
+// the reason instead, and asserts the probe reaches NOTHING — an in-cluster chart's values are not
+// a tfvar, and inventing a passthrough for one would emit a key tofu silently drops.
+//
+// The table is asserted COMPLETE (every cloud × every kind exactly once) before a row is run, so a
+// deleted row cannot read as a passing one.
+func TestProviderTfvars_LeafPassthrough(t *testing.T) {
+	type leafCase struct {
+		cloud, kind string
+		// locate finds the object the probe must land on; nil for an excluded cell.
+		locate leafLocator
+		// excluded names why the cell has no OpenTofu surface for a passthrough to reach.
+		excluded string
+	}
+	cases := []leafCase{
+		// aws — the cache and the registry (`ecr_*`) are root-level; the rest are items.
+		{cloud: "aws", kind: "cache", locate: atRoot},
+		{cloud: "aws", kind: "queue", locate: entryOfMap("sqs_queues", "q")},
+		{cloud: "aws", kind: "topic", locate: entryOfMap("sns_topics", "t")},
+		{cloud: "aws", kind: "nosql", locate: firstOfList("ddb_table_configuration")},
+		{cloud: "aws", kind: "bucket", locate: firstOfList("bucket_configuration")},
+		{cloud: "aws", kind: "secret", locate: firstOfList("custom_secrets")},
+		{cloud: "aws", kind: "registry", locate: atRoot},
+
+		// gcp — a queue is a Pub/Sub topic with one subscription; Firestore is ONE database per
+		// project, so nosql is root-level; a registry is an entry of `artifact_registry_repos`.
+		{cloud: "gcp", kind: "cache", locate: atRoot},
+		{cloud: "gcp", kind: "queue", locate: entryOfMap("pubsub_topics", "q")},
+		{cloud: "gcp", kind: "topic", locate: entryOfMap("pubsub_topics", "t")},
+		{cloud: "gcp", kind: "nosql", locate: atRoot},
+		{cloud: "gcp", kind: "bucket", locate: firstOfList("cloud_storage_buckets")},
+		{cloud: "gcp", kind: "secret", locate: firstOfList("custom_secrets")},
+		{cloud: "gcp", kind: "registry", locate: entryOfMap("artifact_registry_repos", "reg")},
+
+		// azure — the registry (`acr_sku`) is root-level; secrets share gcp's builder.
+		{cloud: "azure", kind: "cache", locate: atRoot},
+		{cloud: "azure", kind: "queue", locate: entryOfMap("service_bus_queues", "q")},
+		{cloud: "azure", kind: "topic", locate: entryOfMap("service_bus_topics", "t")},
+		{cloud: "azure", kind: "nosql", locate: firstOfList("cosmos_db_collections")},
+		{cloud: "azure", kind: "bucket", locate: firstOfList("storage_containers")},
+		{cloud: "azure", kind: "secret", locate: firstOfList("custom_secrets")},
+		{cloud: "azure", kind: "registry", locate: atRoot},
+
+		// alibaba — a registry is an entry of `cr_repos`, never an instance argument.
+		{cloud: "alibaba", kind: "cache", locate: atRoot},
+		{cloud: "alibaba", kind: "queue", locate: entryOfMap("mns_queues", "q")},
+		{cloud: "alibaba", kind: "topic", locate: entryOfMap("mns_topics", "t")},
+		{cloud: "alibaba", kind: "nosql", locate: firstOfList("ots_tables")},
+		{cloud: "alibaba", kind: "bucket", locate: firstOfList("oss_buckets")},
+		{cloud: "alibaba", kind: "secret", locate: firstOfList("custom_secrets")},
+		{cloud: "alibaba", kind: "registry", locate: entryOfMap("cr_repos", "reg")},
+
+		// hetzner — the bucket is the one leaf the Talos template provisions through OpenTofu.
+		// Everything else is in-cluster, and the reason is recorded here until the exclusions
+		// ledger for template knobs lands in its own lane.
+		{cloud: "hetzner", kind: "bucket", locate: firstOfList("buckets")},
+		{cloud: "hetzner", kind: "cache", excluded: "Valkey runs in-cluster as a Helm release; its knobs are chart values, not OpenTofu variables"},
+		{cloud: "hetzner", kind: "queue", excluded: "RabbitMQ runs in-cluster as a Helm release; its knobs are chart values, not OpenTofu variables"},
+		{cloud: "hetzner", kind: "topic", excluded: "RabbitMQ runs in-cluster as a Helm release; a topic is an exchange declared by the application, not a resource tofu provisions"},
+		{cloud: "hetzner", kind: "nosql", excluded: "ScyllaDB runs in-cluster as a Helm release (#3228); its knobs are chart values, not OpenTofu variables"},
+		{cloud: "hetzner", kind: "secret", excluded: "Vault runs in-cluster as a Helm release; the template declares no `custom_secrets` variable"},
+		{cloud: "hetzner", kind: "registry", excluded: "Harbor runs in-cluster as a Helm release; the template's only registry surface is `incluster_registry_hosts`, a list(string) of mirror hosts with no per-registry object to merge into"},
+	}
+
+	// COMPLETENESS first: every cloud × kind exactly once.
+	seen := map[string]int{}
+	for _, tc := range cases {
+		seen[tc.cloud+"/"+tc.kind]++
+	}
+	for cloud := range leafProviders {
+		for _, kind := range leafKinds {
+			if n := seen[cloud+"/"+kind]; n != 1 {
+				t.Errorf("table has %d row(s) for %s/%s, want exactly 1 — a missing cell reads as a passing one", n, cloud, kind)
+			}
+		}
+	}
+	if len(cases) != len(leafProviders)*len(leafKinds) {
+		t.Fatalf("table has %d rows, want %d (5 clouds × 7 kinds)", len(cases), len(leafProviders)*len(leafKinds))
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.cloud+"/"+tc.kind, func(t *testing.T) {
+			if (tc.locate == nil) == (tc.excluded == "") {
+				t.Fatalf("a row is either located or excluded with a reason, never both or neither")
+			}
+			tf := leafProviders[tc.cloud].ProviderTfvars(leafConfig(tc.kind, map[string]any{leafProbeKey: leafProbeValue}))
+			if tc.excluded != "" {
+				if tfvarsMentionKey(tf, leafProbeKey) {
+					t.Errorf("%s/%s: the probe reached the tfvars, but the cell is excluded — %s", tc.cloud, tc.kind, tc.excluded)
+				}
+				return
+			}
+			if got := tc.locate(t, tf)[leafProbeKey]; got != leafProbeValue {
+				t.Errorf("%s/%s: provider_config[%q] did not reach its tfvars object (got %v) — the component's "+
+					"provider_config is stored by the console and read by nothing", tc.cloud, tc.kind, leafProbeKey, got)
+			}
+		})
+	}
+}
+
+// TestProviderTfvars_LeafPassthrough_TypedWins pins merge-if-absent at every new site: a
+// provider_config key that collides with an attribute the typed code emits is ignored, so the UI's
+// validated value can never be clobbered by a hand-typed one. The second table pins the reserved
+// keys: an attribute the builder OWNS but did not emit this time (a withdrawn offer, a value it
+// consumes under another name, the side of a switch left empty) must stay absent rather than be
+// filled from provider_config — the same rule the database's IAM-auth reservation applies.
+func TestProviderTfvars_LeafPassthrough_TypedWins(t *testing.T) {
+	yes, no := true, false
+	thirty := 30
+	pc := func(key string) map[string]any { return map[string]any{key: leafBogus} }
+
+	type typedCase struct {
+		cloud, kind string
+		cfg         *types.ProjectConfig
+		locate      leafLocator
+		key         string
+		// want is the typed value that must survive; nil asserts only that the bogus one did not land.
+		want interface{}
+	}
+	cases := []typedCase{
+		{"aws", "cache", &types.ProjectConfig{Caches: []types.ProjectCacheConfig{{Name: "c", EngineVersion: "7.0", ProviderConfig: pc("redis_engine_version")}}}, atRoot, "redis_engine_version", "7.0"},
+		{"aws", "queue", &types.ProjectConfig{Queues: []types.ProjectQueueConfig{{Name: "q", Ordered: &yes, ProviderConfig: pc("fifo_queue")}}}, entryOfMap("sqs_queues", "q"), "fifo_queue", true},
+		{"aws", "topic", &types.ProjectConfig{Topics: []types.ProjectTopicConfig{{Name: "t", Subscriptions: []types.TopicSubscription{{Protocol: types.TopicSubscriptionProtocolEmail, Endpoint: "a@b"}}, ProviderConfig: pc("subscriptions")}}}, entryOfMap("sns_topics", "t"), "subscriptions", nil},
+		{"aws", "nosql", &types.ProjectConfig{NosqlTables: []types.ProjectNosqlConfig{{Name: "n", PartitionKey: "pk", TableType: types.NosqlTableTypeStandard, ProviderConfig: pc("hash_key")}}}, firstOfList("ddb_table_configuration"), "hash_key", "pk"},
+		{"aws", "bucket", &types.ProjectConfig{StorageBuckets: []types.ProjectStorageBucketConfig{{Name: "b", Versioning: true, ProviderConfig: pc("versioning_enabled")}}}, firstOfList("bucket_configuration"), "versioning_enabled", true},
+		{"aws", "secret", &types.ProjectConfig{Secrets: []types.ProjectSecretConfig{{Name: "s", Generate: true, Length: 16, ProviderConfig: pc("secret_name")}}}, firstOfList("custom_secrets"), "secret_name", "s"},
+		{"aws", "registry", &types.ProjectConfig{ContainerRegistries: []types.ProjectContainerRegistryConfig{{Name: "reg", ProviderConfig: pc("provision_ecr")}}}, atRoot, "provision_ecr", true},
+
+		{"gcp", "cache", &types.ProjectConfig{Caches: []types.ProjectCacheConfig{{Name: "c", EngineVersion: "7.0", ProviderConfig: pc("memorystore_redis_version")}}}, atRoot, "memorystore_redis_version", "REDIS_7_0"},
+		{"gcp", "queue", &types.ProjectConfig{Queues: []types.ProjectQueueConfig{{Name: "q", MessageRetention: &thirty, ProviderConfig: pc("message_retention_duration")}}}, entryOfMap("pubsub_topics", "q"), "message_retention_duration", "30s"},
+		{"gcp", "topic", &types.ProjectConfig{Topics: []types.ProjectTopicConfig{{Name: "t", ProviderConfig: pc("message_retention_duration")}}}, entryOfMap("pubsub_topics", "t"), "message_retention_duration", "86400s"},
+		{"gcp", "nosql", &types.ProjectConfig{NosqlTables: []types.ProjectNosqlConfig{{Name: "n", PartitionKey: "pk", PointInTimeRecovery: true, ProviderConfig: pc("firestore_point_in_time_recovery")}}}, atRoot, "firestore_point_in_time_recovery", true},
+		{"gcp", "bucket", &types.ProjectConfig{StorageBuckets: []types.ProjectStorageBucketConfig{{Name: "b", Versioning: true, ProviderConfig: pc("versioning")}}}, firstOfList("cloud_storage_buckets"), "versioning", true},
+		{"gcp", "secret", &types.ProjectConfig{Secrets: []types.ProjectSecretConfig{{Name: "s", Generate: true, Length: 16, ProviderConfig: pc("length")}}}, firstOfList("custom_secrets"), "length", 16},
+		{"gcp", "registry", &types.ProjectConfig{ContainerRegistries: []types.ProjectContainerRegistryConfig{{Name: "reg", ImmutableTags: &no, ProviderConfig: pc("immutable_tags")}}}, entryOfMap("artifact_registry_repos", "reg"), "immutable_tags", false},
+
+		{"azure", "cache", &types.ProjectConfig{Caches: []types.ProjectCacheConfig{{Name: "c", MultiAz: &yes, ProviderConfig: pc("azure_cache_multi_az")}}}, atRoot, "azure_cache_multi_az", true},
+		{"azure", "queue", &types.ProjectConfig{Queues: []types.ProjectQueueConfig{{Name: "q", Ordered: &yes, ProviderConfig: pc("requires_session")}}}, entryOfMap("service_bus_queues", "q"), "requires_session", true},
+		{"azure", "topic", &types.ProjectConfig{Topics: []types.ProjectTopicConfig{{Name: "t", ProviderConfig: pc("subscriptions")}}}, entryOfMap("service_bus_topics", "t"), "subscriptions", nil},
+		{"azure", "nosql", &types.ProjectConfig{NosqlTables: []types.ProjectNosqlConfig{{Name: "n", PartitionKey: "/pk", ProviderConfig: pc("partition_key")}}}, firstOfList("cosmos_db_collections"), "partition_key", "/pk"},
+		{"azure", "bucket", &types.ProjectConfig{StorageBuckets: []types.ProjectStorageBucketConfig{{Name: "b", PublicAccess: true, ProviderConfig: pc("access_type")}}}, firstOfList("storage_containers"), "access_type", "blob"},
+		{"azure", "secret", &types.ProjectConfig{Secrets: []types.ProjectSecretConfig{{Name: "s", Generate: true, Length: 16, ProviderConfig: pc("length")}}}, firstOfList("custom_secrets"), "length", 16},
+		{"azure", "registry", &types.ProjectConfig{ContainerRegistries: []types.ProjectContainerRegistryConfig{{Name: "reg", ProviderConfig: pc("provision_acr")}}}, atRoot, "provision_acr", true},
+
+		{"alibaba", "cache", &types.ProjectConfig{Caches: []types.ProjectCacheConfig{{Name: "c", EngineVersion: "7.0", ProviderConfig: pc("kvstore_engine_version")}}}, atRoot, "kvstore_engine_version", "7.0"},
+		{"alibaba", "queue", &types.ProjectConfig{Queues: []types.ProjectQueueConfig{{Name: "q", VisibilityTimeout: &thirty, ProviderConfig: pc("visibility_timeout")}}}, entryOfMap("mns_queues", "q"), "visibility_timeout", 30},
+		{"alibaba", "topic", &types.ProjectConfig{Topics: []types.ProjectTopicConfig{{Name: "t", ProviderConfig: pc("subscriptions")}}}, entryOfMap("mns_topics", "t"), "subscriptions", nil},
+		{"alibaba", "nosql", &types.ProjectConfig{NosqlTables: []types.ProjectNosqlConfig{{Name: "n", PartitionKey: "pk", ProviderConfig: pc("primary_keys")}}}, firstOfList("ots_tables"), "primary_keys", nil},
+		{"alibaba", "bucket", &types.ProjectConfig{StorageBuckets: []types.ProjectStorageBucketConfig{{Name: "b", PublicAccess: true, ProviderConfig: pc("acl")}}}, firstOfList("oss_buckets"), "acl", "public-read"},
+		{"alibaba", "secret", &types.ProjectConfig{Secrets: []types.ProjectSecretConfig{{Name: "s", Generate: true, Length: 16, ProviderConfig: pc("length")}}}, firstOfList("custom_secrets"), "length", 16},
+		{"alibaba", "registry", &types.ProjectConfig{ContainerRegistries: []types.ProjectContainerRegistryConfig{{Name: "reg", ImmutableTags: &no, ProviderConfig: pc("immutable_tags")}}}, entryOfMap("cr_repos", "reg"), "immutable_tags", false},
+
+		{"hetzner", "bucket", &types.ProjectConfig{StorageBuckets: []types.ProjectStorageBucketConfig{{Name: "b", Versioning: true, ProviderConfig: pc("versioning")}}}, firstOfList("buckets"), "versioning", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cloud+"/"+tc.kind+"/"+tc.key, func(t *testing.T) {
+			got := tc.locate(t, leafProviders[tc.cloud].ProviderTfvars(tc.cfg))[tc.key]
+			if got == leafBogus {
+				t.Fatalf("%s/%s: provider_config[%q] overrode the typed emit — the passthrough must be merge-if-absent", tc.cloud, tc.kind, tc.key)
+			}
+			if tc.want != nil && got != tc.want {
+				t.Errorf("%s/%s: %s = %v (%T), want the typed value %v (%T)", tc.cloud, tc.kind, tc.key, got, got, tc.want, tc.want)
+			}
+		})
+	}
+
+	// RESERVED keys: owned by the builder, not emitted this time, and never to be filled from
+	// provider_config. Each row builds the kind with the typed field UNSET and offers the key.
+	reopen := []struct {
+		cloud, kind, key string
+		locate           leafLocator
+		why              string
+	}{
+		{"aws", "cache", "redis_multi_az_enabled", atRoot, "written only when MultiAz is set"},
+		{"aws", "nosql", "replicas", firstOfList("ddb_table_configuration"), "a regional table never carries replicas"},
+		{"aws", "bucket", "encryption_algorithm", firstOfList("bucket_configuration"), "consumed by s3SSEAlgorithm under sse_algorithm"},
+		{"aws", "secret", "manual", firstOfList("custom_secrets"), "the other side of the generate switch"},
+		{"gcp", "cache", "memorystore_tier", atRoot, "written only when the canvas asked for HA"},
+		{"azure", "cache", "azure_cache_sku", atRoot, "the tier flip the node count used to become (#1993)"},
+		{"azure", "cache", "azure_cache_redis_version", atRoot, "the engine-version variable the template deleted (#1993)"},
+		{"azure", "cache", "azure_cache_allowed_cidr_blocks", atRoot, "the allow-list is withdrawn on azure (#2148)"},
+		{"azure", "queue", "delay_seconds", entryOfMap("service_bus_queues", "q"), "withdrawn: a per-message property, not a queue setting (#1994)"},
+		{"azure", "queue", "forward_dead_lettered_messages_to", entryOfMap("service_bus_queues", "q"), "withdrawn: named no queue to forward to (#1994)"},
+		{"alibaba", "cache", "kvstore_shard_count", atRoot, "written only when NumCacheNodes is set"},
+		{"alibaba", "nosql", "primary_key", firstOfList("ots_tables"), "the wrong spelling the module's try swallowed (#1836)"},
+		{"alibaba", "bucket", "encryption_algorithm", firstOfList("oss_buckets"), "consumed by ossSSEAlgorithm under sse_algorithm"},
+	}
+	for _, tc := range reopen {
+		t.Run("reserved/"+tc.cloud+"/"+tc.kind+"/"+tc.key, func(t *testing.T) {
+			obj := tc.locate(t, leafProviders[tc.cloud].ProviderTfvars(leafConfig(tc.kind, pc(tc.key))))
+			if v, present := obj[tc.key]; present {
+				t.Errorf("%s/%s: provider_config re-opened reserved key %q (= %v) — %s", tc.cloud, tc.kind, tc.key, v, tc.why)
+			}
+		})
+	}
+}
+
+// Both halves of the union are read from the AST, not from a list written here.
+//
+// Two questions that cannot go stale: every `xxxReserved` slice a provider declares must be an
+// argument to that file's `unionReserved(...)`, and every root-level `mergeProviderConfig(tfvars,
+// …)` must be passed a `RootReserved` union. A hand-written list of either is what a new component
+// or a new call site is invisible to, which is the original defect surviving by omission.
+//
+// It reads the AST rather than the text, and the earlier version of this comment argued the
+// opposite — that the call site IS the text, since what is checked is which identifier a human
+// typed. That is true and it is not the point. A matcher has to FIND the call before it can read
+// the identifier, and four review passes on the sibling test were all one failure: a regex that
+// stops matching reports the same "nothing wrong" as a file with nothing wrong. A wrapped argument
+// list would have taken these `^\s*mergeProviderConfig\(tfvars,.*$` matches out silently, and none
+// of the checks below would have noticed. The parser cannot be blind to a shape.
+func TestEveryReservedSliceAndRootMergeIsCoveredBySource(t *testing.T) {
+	files := []string{
+		"aws_provider.go", "gcp_provider.go", "azure_provider.go",
+		"alibaba_provider.go", "hetzner_provider.go",
+	}
+	if len(files) != len(leafProviders) {
+		t.Fatalf("%d provider files scanned but %d providers exist — a cloud added without a file "+
+			"here is never asked either question", len(files), len(leafProviders))
+	}
+
+	for _, file := range files {
+		t.Run(file, func(t *testing.T) {
+			fset := token.NewFileSet()
+			f, err := parser.ParseFile(fset, file, nil, 0)
+			if err != nil {
+				t.Fatalf("parsing %s: %v", file, err)
+			}
+
+			// `name = []string{…}` declarations, and the identifiers passed to `unionReserved(…)`.
+			declared := map[string]bool{}
+			unioned := map[string]bool{}
+			ast.Inspect(f, func(n ast.Node) bool {
+				switch node := n.(type) {
+				case *ast.ValueSpec:
+					for i, id := range node.Names {
+						if i < len(node.Values) {
+							if cl, ok := node.Values[i].(*ast.CompositeLit); ok {
+								if at, ok := cl.Type.(*ast.ArrayType); ok {
+									if el, ok := at.Elt.(*ast.Ident); ok && el.Name == "string" {
+										declared[id.Name] = true
+									}
+								}
+							}
+							if call, ok := node.Values[i].(*ast.CallExpr); ok {
+								if fn, ok := call.Fun.(*ast.Ident); ok && fn.Name == "unionReserved" {
+									for _, arg := range call.Args {
+										if a, ok := arg.(*ast.Ident); ok {
+											unioned[a.Name] = true
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				return true
+			})
+
+			for name := range declared {
+				if strings.HasSuffix(name, "RootReserved") {
+					continue // the union itself
+				}
+				if !unioned[name] {
+					t.Errorf("%s declares %s but does not pass it to unionReserved — every root "+
+						"merge on this cloud would leave its keys open to every other component",
+						file, name)
+				}
+			}
+
+			// Every `mergeProviderConfig(tfvars, …)` must end in a `…RootReserved...` spread.
+			//
+			// A count FLOOR cannot tell "found all the call sites" from "found most of them" — if
+			// some moved behind a variable and others did not, the floor is still satisfied and the
+			// converted ones are simply unseen. So the count is reconciled rather than floored:
+			// every mention of the name is an `*ast.Ident`, and using the function as a VALUE (a
+			// variable, a method value, a wrapper, an alias) is exactly what produces an Ident that
+			// is not a call's `Fun` and not the declaration's own name. If mentions exceed calls
+			// plus the declaration, something reaches it by a path this walk does not follow, and
+			// that is a failure rather than a smaller number. Suggested in review.
+			//
+			// Comments are not Idents, so prose naming the function costs nothing.
+			sites, directCalls, idents, decls := 0, 0, 0, 0
+			ast.Inspect(f, func(n ast.Node) bool {
+				if id, ok := n.(*ast.Ident); ok && id.Name == "mergeProviderConfig" {
+					idents++
+				}
+				if fn, ok := n.(*ast.FuncDecl); ok && fn.Name.Name == "mergeProviderConfig" {
+					decls++
+				}
+				if call, ok := n.(*ast.CallExpr); ok {
+					if fn, ok := call.Fun.(*ast.Ident); ok && fn.Name == "mergeProviderConfig" {
+						directCalls++
+					}
+				}
+				return true
+			})
+			if idents != directCalls+decls {
+				t.Errorf("%s: %d mentions of mergeProviderConfig but only %d direct calls (+%d "+
+					"declaration) — it is reached as a VALUE somewhere, so the check below does not "+
+					"see every call site", file, idents, directCalls, decls)
+			}
+
+			ast.Inspect(f, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				fn, ok := call.Fun.(*ast.Ident)
+				if !ok || fn.Name != "mergeProviderConfig" || len(call.Args) == 0 {
+					return true
+				}
+				if first, ok := call.Args[0].(*ast.Ident); !ok || first.Name != "tfvars" {
+					return true // an item-level merge, which correctly takes its own list
+				}
+				sites++
+				last := call.Args[len(call.Args)-1]
+				id, ok := last.(*ast.Ident)
+				if !call.Ellipsis.IsValid() || !ok || !strings.HasSuffix(id.Name, "RootReserved") {
+					t.Errorf("%s:%d: root merge is not passed its cloud's union — one component's "+
+						"provider_config can decide another's variable",
+						file, fset.Position(call.Pos()).Line)
+				}
+				return true
+			})
+			if sites == 0 {
+				t.Fatalf("%s: found no root-level merges at all — every provider has at least one, "+
+					"so the walk is looking for the wrong name and would pass on any defect", file)
+			}
+		})
+	}
+}
+
+// A registry that owns no ECR repository must not reconfigure the ECR module.
+//
+// `buildECRNamesMap` and `buildECRRepoSettings` both skip a row whose name normalises to nothing,
+// so such a row produces no repository and leaves `provision_ecr` false. The passthrough loop was
+// missing that filter, so the phantom row's provider_config still set `ecr_*` on root tfvars —
+// configuring encryption, lifecycle policy and scanning for repositories that OTHER registries and
+// repo-sourced services created. Merge-if-absent makes it worse rather than safer: reached first in
+// slice order, the phantom wins over the real registry's answer.
+func TestProviderTfvars_AWSRegistryWithNoRepositoryCarriesNothing(t *testing.T) {
+	cfg := &types.ProjectConfig{
+		ProjectName: "p",
+		ContainerRegistries: []types.ProjectContainerRegistryConfig{
+			{Name: "--", ProviderConfig: map[string]any{"ecr_encryption_type": "KMS"}},
+			{Name: "real", ProviderConfig: map[string]any{"ecr_encryption_type": "AES256"}},
+		},
+	}
+	tfvars := leafProviders["aws"].ProviderTfvars(cfg)
+	if got := tfvars["ecr_encryption_type"]; got != "AES256" {
+		t.Fatalf("ecr_encryption_type = %v, want AES256 — a registry whose name normalises to "+
+			"nothing owns no repository, so it must not answer for the ones that do", got)
+	}
+}
+
+// A reserved key must be closed to every OTHER root-level component, not only to the one that
+// reserves it.
+//
+// This is the second axis the table above cannot have. There, each reserved key is offered through
+// the provider_config of the very component that reserves it, which is the one path the reservation
+// covers by construction — so that table stays green while a different root merge in the same
+// `ProviderTfvars` leaves the key wide open. It did: every root-level merge writes the same flat
+// tfvars map, so a cache's provider_config could set `rds_iam_auth_enabled` whenever the database's
+// typed mapping had not, an Azure registry's could re-open the whole withdrawn cache SKU family,
+// and a Firestore table's could set `cloud_sql_iam_auth` — keyless database auth on a cloud × engine
+// cell the canvas does not offer and the deploy gate would refuse.
+//
+// So this walks the cloud's whole reserved union against every carrier that is not its owner. It is
+// derived from the same slices the call sites pass, which is what stops it going stale: a key added
+// to a component is tested against every neighbour in the same edit.
+//
+// The probe is a SENTINEL rather than an absence check, because some reserved keys are written
+// unconditionally by typed code — `provision_acr` is emitted for every project with a registry — so
+// "the key is present" is not the question. "The carrier's value won" is.
+func TestProviderTfvars_ReservedKeysAreClosedToEveryOtherComponent(t *testing.T) {
+	const sentinel = "carrier-should-never-win"
+
+	// The subject is the cloud's UNION, which is derived from what the provider emits. It used to be
+	// a hand-written map of the reserved slices, and review showed that made the test's subject and
+	// its oracle the same object: deleting `rds_iam_auth_enabled` from `awsDatabaseReserved` both
+	// reopened the hole AND removed the subtest that would have caught it. Green in both directions,
+	// and removing a reserved key is the single most likely way to reintroduce the defect this fixes.
+	//
+	// There is no owner to skip any more, and nothing is lost by not skipping. Offering a key through
+	// the component that owns it is a valid probe too: the typed mapping runs first and writes the
+	// real value, so the sentinel still must not appear. That is why the probe compares VALUES rather
+	// than presence — keys like `provision_acr` are written unconditionally, so an absence check
+	// would fail on the honest cases.
+	cases := []struct {
+		cloud string
+		keys  []string
+		// The kinds whose provider_config reaches ROOT tfvars on this cloud.
+		carriers []string
+	}{
+		{"aws", awsRootReserved, []string{"database", "cache", "registry"}},
+		{"gcp", gcpRootReserved, []string{"database", "cache", "nosql"}},
+		{"azure", azureRootReserved, []string{"database", "cache", "registry"}},
+		{"alibaba", alibabaRootReserved, []string{"database", "cache"}},
+	}
+
+	for _, tc := range cases {
+		for _, key := range tc.keys {
+			for _, carrier := range tc.carriers {
+				t.Run(tc.cloud+"/"+key+"/from-"+carrier, func(t *testing.T) {
+					cfg := leafConfig(carrier, map[string]any{key: sentinel})
+					tfvars := leafProviders[tc.cloud].ProviderTfvars(cfg)
+					if v, present := tfvars[key]; present && v == sentinel {
+						t.Fatalf("%s: a %s's provider_config set %q — one component's knobs decided "+
+							"a variable the typed mapping owns, walking around both the offer gate "+
+							"(#1508) and the deploy refusal (#1510)", tc.cloud, carrier, key)
+					}
+				})
+			}
+		}
+	}
+}
+
+// rootTfvarKeys returns every key the file writes into the root `tfvars` map, read from the Go AST
+// rather than matched out of the text.
+//
+// This is the fourth version of this question and the first one that cannot have a blind spot, so
+// the three that came before are worth stating. A regex for `tfvars["k"] = …` missed the initial
+// `map[string]interface{}{…}` literal, which carries most of the keys. Adding a second regex for
+// the literal meant bounding its span, and a span has to be FOUND — by brace counting, which cannot
+// tell a brace in code from one in a comment, and `aws_provider.go` already contains "It used to
+// stay {}" inside that literal. Bounding it twice and requiring agreement caught that, and then a
+// raw string containing a line starting with `}` was shown to fool both bounds at once, agreeing
+// and both wrong.
+//
+// Every one of those is the same defect: asking a matcher a question only a parser can answer. The
+// parser enumerates every assignment and every composite literal because it knows what those ARE,
+// so there is no shape to be blind to, no span to bound, no comment to strip and nothing to refuse.
+// It also drops the count floors, which existed only to notice a matcher going silent.
+//
+// The two shapes it collects are the two a provider actually uses, and nothing else can reach root
+// tfvars: the map literal `tfvars` is initialised from, and later `tfvars["k"] = v` assignments.
+// Nested composite literals are NOT collected — a key inside `buildSQSQueues`'s per-item object is
+// not a root variable — and that falls out of reading the literal's own elements rather than from a
+// rule anyone had to write.
+func rootTfvarKeys(t *testing.T, path string) map[string]bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		t.Fatalf("parsing %s: %v", path, err)
+	}
+
+	// Walk ONLY the file's own `ProviderTfvars` body, not the whole file. `mergeProviderConfig` has
+	// a parameter named `tfvars`, so a file-wide walk shadows: it is harmless today because that
+	// body indexes with a variable rather than a string literal, but the day it does not, the key
+	// would be attributed to whichever file the helper happens to live in. Scoping removes the
+	// mis-attribution instead of documenting it. Raised in review.
+	var body ast.Node
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "ProviderTfvars" && fn.Body != nil {
+			body = fn.Body
+		}
+	}
+	if body == nil {
+		t.Fatalf("%s declares no ProviderTfvars — every provider has one, so this is a reader "+
+			"looking for the wrong name rather than a file with no keys", path)
+	}
+
+	// Scoping to one body is a FLOOR, and a floor cannot tell "found all the writes" from "found
+	// most of them": extract half of `ProviderTfvars` into a helper and the scope check is still
+	// satisfied while the extracted keys go unseen. `ProviderTfvars` is 70 literal keys on aws,
+	// which is the size at which somebody extracts one. Measured in review: a helper taking a
+	// `tfvars` parameter and writing an unreserved root key passed the scoped walk and failed the
+	// file-wide one it replaced.
+	//
+	// So the rest of the file is reconciled rather than ignored. `mergeProviderConfig` also takes a
+	// parameter named `tfvars` and is harmless BECAUSE it indexes with the loop variable rather
+	// than a string literal — this tests that reason instead of relying on it, and starts at zero
+	// false positives: every literal-key root write in all five providers lives in ProviderTfvars.
+	//
+	// One case stays out of scope BY CONSTRUCTION and is named here rather than implied: this
+	// reader follows one name (`tfvars`) and one body, so a helper that takes the root map under
+	// any other parameter name can write an unreserved key with the suite green.
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil || fn.Name.Name == "ProviderTfvars" {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			assign, ok := n.(*ast.AssignStmt)
+			if !ok {
+				return true
+			}
+			for _, lhs := range assign.Lhs {
+				idx, ok := lhs.(*ast.IndexExpr)
+				if !ok {
+					continue
+				}
+				id, ok := idx.X.(*ast.Ident)
+				if !ok || id.Name != "tfvars" {
+					continue
+				}
+				if b, ok := idx.Index.(*ast.BasicLit); ok && b.Kind == token.STRING {
+					t.Errorf("%s: %s writes root tfvars key %s outside ProviderTfvars — the key "+
+						"walk does not enter it, so that key reaches a plan unreserved",
+						path, fn.Name.Name, b.Value)
+				}
+			}
+			return true
+		})
+	}
+
+	// REFUSE what the collector cannot enumerate, rather than returning what it happened to see.
+	//
+	// This collector is keyed on the identifier `tfvars`, and a name-keyed collector cannot tell
+	// "no root writes" from "no root writes I can see". Two lines of ordinary Go defeat it:
+	//
+	//	m := tfvars
+	//	m["cluster_name"] = ...   // root key, no union, suite green
+	//
+	// Measured, not argued — that alias passes every guard in this file. Following it would mean
+	// building escape analysis inside a test: more precise, much larger, and a new failure surface
+	// of its own. Refusing is the cheaper sound move, and it is the only branch that cannot be
+	// mistaken for a clean result.
+	//
+	// So `tfvars` may appear ONLY as an index target, as an argument to `mergeProviderConfig`, in
+	// its own declaration, and in the return. Anything else — assigned to a local, stored in a
+	// struct field, handed to another function — is a value the guard would have to follow, and it
+	// says so instead. A write through a non-literal key is refused for the same reason: the keys
+	// are not enumerable, which is exactly the shape `mergeProviderConfig`'s own body has, and that
+	// body is legitimately outside this walk.
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.AssignStmt:
+			for _, lhs := range node.Lhs {
+				if idx, ok := lhs.(*ast.IndexExpr); ok {
+					if id, ok := idx.X.(*ast.Ident); ok && id.Name == "tfvars" {
+						if b, ok := idx.Index.(*ast.BasicLit); !ok || b.Kind != token.STRING {
+							t.Errorf("%s: a root tfvars write with a non-literal key at line %d — "+
+								"the keys are not enumerable, so this reader cannot say what is "+
+								"reserved", path, fset.Position(idx.Pos()).Line)
+						}
+					}
+				}
+			}
+			// `m := tfvars` and `m = tfvars` both hand the map to a name this walk does not follow.
+			for _, rhs := range node.Rhs {
+				if id, ok := rhs.(*ast.Ident); ok && id.Name == "tfvars" {
+					t.Errorf("%s: the root map is aliased at line %d — a write through the alias is "+
+						"invisible to this reader, so inline it or reserve the keys explicitly",
+						path, fset.Position(id.Pos()).Line)
+				}
+			}
+		case *ast.CallExpr:
+			fn, isIdent := node.Fun.(*ast.Ident)
+			for _, arg := range node.Args {
+				id, ok := arg.(*ast.Ident)
+				if !ok || id.Name != "tfvars" {
+					continue
+				}
+				if isIdent && fn.Name == "mergeProviderConfig" {
+					continue // the one function that legitimately receives it
+				}
+				t.Errorf("%s: the root map is passed to another function at line %d — its writes "+
+					"are invisible to this reader", path, fset.Position(id.Pos()).Line)
+			}
+		case *ast.KeyValueExpr:
+			if id, ok := node.Value.(*ast.Ident); ok && id.Name == "tfvars" {
+				t.Errorf("%s: the root map is stored in a composite literal at line %d — a write "+
+					"through that field is invisible to this reader", path,
+					fset.Position(id.Pos()).Line)
+			}
+		}
+		return true
+	})
+
+	keys := map[string]bool{}
+	add := func(lit ast.Expr) {
+		if b, ok := lit.(*ast.BasicLit); ok && b.Kind == token.STRING {
+			if v, err := strconv.Unquote(b.Value); err == nil {
+				keys[v] = true
+			}
+		}
+	}
+
+	ast.Inspect(body, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for i, lhs := range assign.Lhs {
+			switch target := lhs.(type) {
+			// `tfvars["k"] = v`
+			case *ast.IndexExpr:
+				if id, ok := target.X.(*ast.Ident); ok && id.Name == "tfvars" {
+					add(target.Index)
+				}
+			// `tfvars := map[string]interface{}{ "k": v, … }` — only the literal's OWN elements.
+			case *ast.Ident:
+				if target.Name != "tfvars" || i >= len(assign.Rhs) {
+					continue
+				}
+				if cl, ok := assign.Rhs[i].(*ast.CompositeLit); ok {
+					for _, elt := range cl.Elts {
+						if kv, ok := elt.(*ast.KeyValueExpr); ok {
+							add(kv.Key)
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+	return keys
+}
+
+// The union must contain every key the TYPED MAPPING WRITES, and contain nothing it does not.
+//
+// The subject comes from the emitter, via `rootTfvarKeys`. The test it replaced compared each union
+// against a hand-written map of the same component slices the union was built from: the two agreed
+// by construction, so it could only fail if `unionReserved` itself dropped entries. It tested the
+// helper, not the coverage, and while it was green nine keys reached on four clouds — every cloud's
+// cluster node sizing, plus Alibaba's `network_id` and `subnet_ids`, so a DATABASE's provider_config
+// could pick the cluster's disk size and the brownfield VPC.
+//
+// A provider writes root tfvars in two shapes and BOTH are reserved. Nothing reached through the map
+// literal, because it runs before the merge and merge-if-absent covers what is already present — but
+// that is a property of statement order rather than of the reservation. The transition that would
+// break it catches itself: moving a key out of the literal into an `if` is what turns it into an
+// assignment, so at the instant the ordering protection is lost the key is still seen here and the
+// union must grow or this fails.
+//
+// BOTH DIRECTIONS ARE CHECKED, and the second one is load-bearing in a way its wording does not
+// suggest. Over-reserving is safe, so "reserves a key it never writes" reads like tidiness about
+// stale entries — but review demonstrated it catching a truncated span that the coverage direction
+// missed. Anyone pruning tests should know it is holding more than it says.
+func TestUnionCoversEveryKeyTheTypedMappingWrites(t *testing.T) {
+	cases := []struct {
+		cloud, file string
+		union       []string
+		// The list generated from this file's own writes.
+		typed []string
+	}{
+		{"aws", "aws_provider.go", awsRootReserved, awsTypedTfvars},
+		{"gcp", "gcp_provider.go", gcpRootReserved, gcpTypedTfvars},
+		{"azure", "azure_provider.go", azureRootReserved, azureTypedTfvars},
+		{"alibaba", "alibaba_provider.go", alibabaRootReserved, alibabaTypedTfvars},
+		{"hetzner", "hetzner_provider.go", hetznerRootReserved, hetznerRootReserved},
+	}
+	if len(cases) != len(leafProviders) {
+		t.Fatalf("%d clouds checked but %d providers exist — a cloud added without a union here "+
+			"would never be asked the question", len(cases), len(leafProviders))
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.cloud, func(t *testing.T) {
+			written := rootTfvarKeys(t, tc.file)
+			// WHAT THIS CATCHES NOW, which is not what it was added for. It began as a floor
+			// against a text matcher going blind; the matcher is a parser now and cannot hand back
+			// a body that is merely too small, so that threat is gone. What remains is the one a
+			// parser cannot rule out: the local map being RENAMED. This walk keys on the identifier
+			// `tfvars`, so `tfv := map[string]interface{}{…}` finds nothing while the file is
+			// perfectly healthy — verified by mutation, not assumed.
+			//
+			// NOT `ProviderTfvars` being renamed: that one cannot happen quietly, because the
+			// method satisfies an interface and renaming it fails the BUILD. I wrote that into this
+			// message first and the mutation refused to compile, which is the same lesson as
+			// everywhere else in this file — a red for the wrong reason reads exactly like a red
+			// for the right one.
+			//
+			// Written as what it catches rather than why it was added, deliberately: a defence
+			// recorded by a threat that no longer exists reads as redundant, and the next reader
+			// deletes it.
+			if len(written) == 0 {
+				t.Fatalf("%s: the parser found no root tfvars keys — every provider writes some, so "+
+					"the local `tfvars` map has been renamed and this walk is looking for an "+
+					"identifier that no longer exists", tc.file)
+			}
+
+			in := make(map[string]bool, len(tc.union))
+			for _, k := range tc.union {
+				in[k] = true
+			}
+			for k := range written {
+				if !in[k] {
+					t.Errorf("%s writes %q but does not reserve it — a component's provider_config "+
+						"can decide it whenever the typed mapping happens not to, which is exactly "+
+						"when the canvas declined to", tc.cloud, k)
+				}
+			}
+			for _, k := range tc.typed {
+				if !written[k] {
+					t.Errorf("%s reserves %q in its typed list but writes it nowhere — a typo, or an "+
+						"entry outliving the assignment it was generated from", tc.cloud, k)
+				}
+			}
+		})
+	}
+}
+
+// TestProviderTfvars_NetworkAndDNSPassthrough — #4319, the two cells that reached NOTHING.
+//
+// The template-knob manifest measures reachability STATICALLY: it reads the provider files and asks
+// which `(cloud, component)` cells a `provider_config` can land on. That is the right instrument for
+// "is there a passthrough at all", and it is not evidence that a value gets there — a merge call the
+// manifest can see could still be passing the wrong field. This asserts the behaviour.
+//
+// Two gaps, both closed by one field and six merge calls:
+//
+//   - `network` on EVERY cloud. `ProjectNetworkConfig` carried no `ProviderConfig` at all, so every
+//     cloud declared network variables with nothing able to carry a value to them.
+//   - `dns` on hetzner. A real `hcloud_zone` resource, and `hetzner_provider.go` merged only the
+//     cluster's and the bucket's `provider_config`.
+//
+// WHY TWO KINDS OF KEY. Where the template declares a network knob that no typed field owns, the row
+// uses that REAL knob — taken from the generated manifest, not invented — so the case doubles as
+// evidence the cell is genuinely settable. azure and hetzner declare no such knob today (theirs are
+// all typed or provider-owned), so those rows use a probe key: `mergeProviderConfig` merges by NAME
+// and does not consult the template, so what is under test there is the CALL, which is what was
+// missing. Stated rather than left as an inconsistency for the next reader to wonder about.
+func TestProviderTfvars_NetworkAndDNSPassthrough(t *testing.T) {
+	cases := []struct {
+		cloud, component, key string
+		real                  bool
+		cfg                   *types.ProjectConfig
+		want                  interface{}
+	}{
+		{cloud: "aws", component: "network", key: "vpc_private_route_table_ids", real: true,
+			cfg: &types.ProjectConfig{Network: types.ProjectNetworkConfig{ProviderConfig: map[string]any{"vpc_private_route_table_ids": []string{"rtb-1"}}}}},
+		{cloud: "gcp", component: "network", key: "pods_cidr_range", real: true,
+			cfg: &types.ProjectConfig{Network: types.ProjectNetworkConfig{ProviderConfig: map[string]any{"pods_cidr_range": "10.4.0.0/14"}}}, want: "10.4.0.0/14"},
+		{cloud: "alibaba", component: "network", key: "vswitch_count", real: true,
+			cfg: &types.ProjectConfig{Network: types.ProjectNetworkConfig{ProviderConfig: map[string]any{"vswitch_count": 3}}}, want: 3},
+		{cloud: "azure", component: "network", key: "alethia_probe_network_knob",
+			cfg: &types.ProjectConfig{Network: types.ProjectNetworkConfig{ProviderConfig: map[string]any{"alethia_probe_network_knob": "x"}}}, want: "x"},
+		{cloud: "hetzner", component: "network", key: "alethia_probe_network_knob",
+			cfg: &types.ProjectConfig{Network: types.ProjectNetworkConfig{ProviderConfig: map[string]any{"alethia_probe_network_knob": "x"}}}, want: "x"},
+		// The other half of #4319.
+		{cloud: "hetzner", component: "dns", key: "alethia_probe_dns_knob",
+			cfg: &types.ProjectConfig{DNS: types.ProjectDNSConfig{ProviderConfig: map[string]any{"alethia_probe_dns_knob": "x"}}}, want: "x"},
+	}
+
+	if len(cases) == 0 {
+		t.Fatal("no cases — every assertion below would be vacuous")
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.cloud+"/"+tc.component+"/"+tc.key, func(t *testing.T) {
+			p, ok := leafProviders[tc.cloud]
+			if !ok {
+				t.Fatalf("no provider registered for %q — this table names a cloud the suite cannot drive", tc.cloud)
+			}
+			tf := p.ProviderTfvars(tc.cfg)
+			got, present := tf[tc.key]
+			if !present {
+				t.Fatalf("%s/%s: provider_config[%q] never reached tfvars — the merge call for this "+
+					"component is missing, which is exactly the gap #4319 closed", tc.cloud, tc.component, tc.key)
+			}
+			if tc.want != nil && got != tc.want {
+				t.Errorf("%s/%s: %s = %v (%T), want %v (%T)", tc.cloud, tc.component, tc.key, got, got, tc.want, tc.want)
+			}
+		})
+	}
+
+	// AND THE ONE THING A PASSTHROUGH MUST NEVER DO: fill a key the typed mapping owns. The root
+	// reserved lists are consulted at every root-level merge, so adding two more merge sites must not
+	// open a door for a network's provider_config to set another component's reserved key. Asserted on
+	// the database IAM-auth flag, which is the one this repo has already had to close twice.
+	guarded := &types.ProjectConfig{
+		Network: types.ProjectNetworkConfig{ProviderConfig: map[string]any{"rds_iam_auth_enabled": true}},
+	}
+	if got := leafProviders["aws"].ProviderTfvars(guarded)["rds_iam_auth_enabled"]; got == true {
+		t.Error("a network provider_config switched on rds_iam_auth_enabled — the root reserved list " +
+			"must bind every merge site, not only the database's own")
 	}
 }
