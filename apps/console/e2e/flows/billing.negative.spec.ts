@@ -3,12 +3,10 @@
 
 // E2E (negatives / empty states / validation) for Billing + Usage.
 //   • Plan history for an org that has never paid: NOT the empty state — see below.
-//   • Entitlement gating: a Hobby org has no Stripe customer, so `canManage` is false and the
-//     three customer-only sections do not render at all. The POSITIVE half of this pair is in
-//     billing.spec.ts ("plan history, transactions and invoices sections render for a customer");
-//     without it, this file would be asserting an absence that could pass on a broken page.
 //   • Entitlement gating: a community (Hobby) org has no spend-control hard-cap toggle and no
-//     Stripe manage-billing surface.
+//     Stripe manage-billing surface. Both read the org's PLAN, which nothing in the run mutates —
+//     unlike its Stripe customer, which the upgrade sheet creates as a side effect (see the note
+//     in the first describe block).
 //   • Validation: the usage over-time quick-range accepts free-text; a garbage entry shows the
 //     inline "Try …" error and does NOT change the window.
 //
@@ -49,19 +47,15 @@ test.describe("Billing — empty & entitlement-gated (Hobby)", () => {
 		await expect(owner.page.getByText("No plan history yet.")).toHaveCount(0);
 	});
 
-	test("a Hobby org has no Stripe customer, so the customer-only sections do not render", { tag: "@needs:stripe" }, async ({
-		owner,
-	}) => {
-		await owner.page.goto(billingPath(owner.orgSlug));
-		// Wait for a section the page ALWAYS renders before asserting the three absences —
-		// otherwise all three pass instantly against a page that has not finished loading.
-		await expect(owner.page.getByRole("heading", { name: "Plan history" })).toBeVisible({
-			timeout: 30_000,
-		});
-		await expect(owner.page.getByRole("heading", { name: "Payment methods" })).toHaveCount(0);
-		await expect(owner.page.getByRole("heading", { name: "Transaction history" })).toHaveCount(0);
-		await expect(owner.page.getByRole("heading", { name: "Invoices" })).toHaveCount(0);
-	});
+	// THERE IS NO "A HOBBY ORG HAS NO STRIPE CUSTOMER" TEST HERE, and the reason is worth writing
+	// down because it is not obvious from either file. `summary.canManage` is
+	// `Boolean(billing.stripeCustomerId)`, and `createSubscriptionIntent` — which the upgrade
+	// sheet fires the instant it OPENS — calls `ensureCustomer` and persists the id. So the moment
+	// any spec in this run opens the Hobby persona's upgrade sheet, that org has a Stripe customer
+	// and the three customer-only sections appear. The suite is `fullyParallel`, so a test
+	// asserting their absence would pass or fail on worker ordering: a flake wearing an
+	// entitlement assertion's clothes. The gating that IS stable is asserted below, off the usage
+	// page, which reads the PLAN rather than the customer.
 });
 
 test.describe("Usage — entitlement gating & range validation", () => {

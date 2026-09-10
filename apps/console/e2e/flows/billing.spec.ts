@@ -231,20 +231,35 @@ test.describe("Billing settings — Pro trial (team)", () => {
 // ── Stripe TEST MODE — what proves the console actually reached the API ───────────────────
 test.describe("Billing — Stripe test mode", () => {
 	test("the /start trial CTA redirects into a TEST-mode Checkout session", { tag: "@needs:stripe" }, async ({
-		owner,
+		team,
 	}) => {
 		// `app/start/page.tsx` calls `createCheckoutSession("team")` server-side and redirects to
 		// the session URL, falling back to the org's billing page when Stripe is unconfigured or
 		// the call throws. Intercept the external navigation so no browser ever reaches Stripe.
+		//
+		// THE `team` PERSONA, NOT `owner`, and the reason is a side effect rather than a
+		// preference: `createCheckoutSession` calls `ensureCustomer`, which CREATES a Stripe
+		// customer for the org it runs against and persists it. Run against the Hobby persona this
+		// test would hand that org a customer, flipping `summary.canManage` true for every other
+		// spec in the run — the suite is `fullyParallel`, so which ones is a coin toss. `team`
+		// already has a customer, so the call changes nothing about the org's state.
 		const attempts: string[] = [];
-		await owner.page.route(/checkout\.stripe\.com/, async (route) => {
-			attempts.push(route.request().url());
+		// TWO recorders, because they answer different questions and the second is not a spare.
+		// `page.on("request")` fires for every hop of a redirect chain and is what RECORDS the
+		// evidence; `page.route` is what STOPS the browser from actually loading a Stripe page.
+		// Route handlers and redirect hops have a history of disagreeing, and a test whose only
+		// evidence came from the handler would report "no navigation was issued" for a navigation
+		// that was issued and simply not intercepted.
+		team.page.on("request", (req) => {
+			if (req.url().includes("checkout.stripe.com")) attempts.push(req.url());
+		});
+		await team.page.route(/checkout\.stripe\.com/, async (route) => {
 			await route.abort();
 		});
 
 		// The abort rejects the navigation — that rejection IS the success path here, so the
 		// verdict is the recorded URL below, never `goto`'s outcome.
-		await owner.page.goto("/start?plan=team&trial=1").catch(() => undefined);
+		await team.page.goto("/start?plan=team&trial=1").catch(() => undefined);
 
 		await expect
 			.poll(() => attempts.length, {
@@ -271,7 +286,13 @@ test.describe("Billing — Stripe test mode", () => {
 		// own cross-origin iframe served from js.stripe.com. Those frames exist only once Elements
 		// has initialised against a real publishable key, so counting them is a measurement of the
 		// pk_test the leg was handed — a rendered <Label> is not.
-		const stripeFrames = owner.page.locator('iframe[src^="https://js.stripe.com/"]');
+		// Both shapes, because Stripe.js has shipped each: the frame is served from js.stripe.com
+		// and is NAMED `__privateStripeFrame…`. Either one is unforgeable by the console's own
+		// markup; requiring both would make the test fail on a Stripe release rather than on a
+		// defect in this product.
+		const stripeFrames = owner.page.locator(
+			'iframe[src^="https://js.stripe.com/"], iframe[name^="__privateStripeFrame"]',
+		);
 		await expect
 			.poll(() => stripeFrames.count(), {
 				timeout: 30_000,
