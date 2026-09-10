@@ -670,24 +670,48 @@ jobs:
             if (ws === null) die("could not read `pnpm-workspace.yaml` out of the checkout.");
             const root = json("apps/console/package.json");
             if (root === null) die("could not read `apps/console/package.json` out of the checkout.");
+            // ONLY THE `packages:` LIST, AND EXCLUSIONS ARE EXCLUSIONS. The first reader took every
+            // `- item` line in the file, which is wrong twice over on a workspace file pnpm accepts:
+            // `pnpm-workspace.yaml` carries other top-level lists (`onlyBuiltDependencies:`,
+            // `catalog:`, `ignoredBuiltDependencies:`) whose items are package NAMES, and `packages:`
+            // itself may carry `!` exclusions. Measured, both of them: `- "!packages/*/fixtures/*"`
+            // — pnpm's own documented form — and a `vendor/*` entry under another key each made the
+            // walk try to list a directory that does not exist, `die`, and turn EVERY unlabelled dev
+            // PR red. A fail-closed guard that fires on a valid file is an outage, not a guard.
+            const globs = [];
+            {
+              let inside = false;
+              for (const raw of ws.split("\n")) {
+                const line = raw.replace(/\s+#.*$/, "");
+                if (/^\S/.test(line)) { inside = /^packages:\s*$/.test(line); continue; }
+                if (!inside) continue;
+                // Either quote style: `- 'ee'` and `- "ee" # optional` are two shapes a stricter
+                // reader dropped SILENTLY, taking the package with them.
+                const m = /^\s*-\s*(.+?)\s*$/.exec(line);
+                if (m !== null) globs.push(m[1].replace(/^(['"])(.*)\1$/, "$2"));
+              }
+            }
+            const excluded = globs.filter((g) => g.startsWith("!")).map((g) => g.slice(1));
             const byName = new Map();
-            for (const raw of ws.split("\n")) {
-              // Either quote style, and a trailing `# comment` stripped first: `- 'ee'` and
-              // `- "ee" # optional` are two shapes a stricter reader dropped SILENTLY.
-              const m = /^\s*-\s*(.+?)\s*$/.exec(raw.replace(/\s+#.*$/, ""));
-              if (m === null) continue;
-              const glob = m[1].replace(/^(['"])(.*)\1$/, "$2");
+            for (const glob of globs.filter((g) => !g.startsWith("!"))) {
               let dirs = [glob];
               if (glob.endsWith("/*")) {
                 const base = glob.slice(0, -2);
+                // A glob that matches nothing is ORDINARY — pnpm allows one, and a `tools/*` added
+                // before the directory exists must not red every dev PR. It is safe to be quiet here
+                // because the two checks that actually protect the answer still fire: a console
+                // dependency that stops resolving is a refusal below, and an empty `byName` is one
+                // immediately after this loop.
                 try { dirs = fs.readdirSync(base).map((d) => `${base}/${d}`); }
-                catch { die(`\`pnpm-workspace.yaml\` globs \`${glob}\`, and \`${base}/\` could not be listed.`); }
+                catch { console.log(`::warning::pnpm-workspace.yaml globs \`${glob}\`, which matches nothing in this tree`); dirs = []; }
               }
               for (const d of dirs) {
+                if (excluded.some((e) => d === e || (e.endsWith("/*") && d.startsWith(e.slice(0, -1))))) continue;
                 const pkg = json(`${d}/package.json`);
                 if (pkg !== null && typeof pkg.name === "string") byName.set(pkg.name, d);
               }
             }
+            if (byName.size === 0) die("`pnpm-workspace.yaml` resolved to NO workspace packages at all.");
             const surface = new Set(["apps/console"]);
             const queue = [["apps/console", root]];
             while (queue.length > 0) {
@@ -815,6 +839,26 @@ jobs:
     #   · the `labeled` clause is the one that was always about THIS job: `labeled` fires for ANY
     #     label, and a `qa:prod` or a triage label added to a promotion PR must not restart an hour
     #     of browser legs. It is not a second copy — it left the `legs` job when it moved here.
+    #
+    # A SKIP HERE IS NON-REPORTING, AND deploy-console.yml's RECEIPT DEPENDS ON THAT. The receipt
+    # keeps the LATEST check-run per context name and refuses the production deploy unless all seven
+    # are `success`. So if a skipped `gate` reported seven `Release gate (<leg>)` check-runs, an
+    # innocuous label added to an already-green promotion PR would overwrite seven successes with
+    # seven skips and take production off the air.
+    #
+    # It does not, and this was measured on three heads rather than reasoned about, because moving
+    # the clause up here changed WHICH job is skipped and that is exactly the kind of change whose
+    # consequence nobody models. GitHub evaluates a job's `if:` BEFORE expanding its matrix, so a
+    # false `if:` yields ONE check-run under the literal, unexpanded name:
+    #
+    #   · #4572 head 563a6d9c, BEFORE this moved (`legs` itself skipped):
+    #       `Release gate (${{ matrix.project }})` — skipped. The seven never report.
+    #   · this branch, AFTER it moved, run 34480011384 (`legs` SUCCEEDED, `include` carried all
+    #     seven, `if:` false): identical — `Release gate (${{ matrix.project }})`, skipped.
+    #   · run 34351806933, where the gate actually ran: seven expanded names, six green.
+    #
+    # The matrix expands only when the job runs. Both before and after, a label leaves the seven
+    # contexts untouched and the receipt reads the successes that are already there.
     if: >-
       needs.legs.outputs.run == 'yes'
       && (github.event.action != 'labeled'
