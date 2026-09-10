@@ -46,6 +46,7 @@
     "check:one-board": "node scripts/check-one-board.mjs",
     "check:theme-inline": "node scripts/check-theme-inline-overrides.mjs",
     "check:ui-client-boundary": "node scripts/check-ui-client-boundary.mjs",
+    "check:console-surface": "node scripts/ci/check-console-surface.mjs",
     "check:workflow-shape": "node scripts/ci/check-workflow-shape.mjs",
     "check:upload-aggregate": "node scripts/ci/check-upload-aggregate.mjs",
     "check:required-checks": "node scripts/ci/check-required-checks.mjs",

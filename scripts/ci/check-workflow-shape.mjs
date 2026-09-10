@@ -308,9 +308,17 @@ export function scanExpressionBudget(text) {
 	const lines = text.split("\n");
 	const out = [];
 	for (let i = 0; i < lines.length; i++) {
-		// `run: |`, `- run: >-`, `script: |2` … the chomping and indent indicators are all accepted;
-		// what matters is that a BLOCK scalar starts here. An inline `run: pnpm i` is never in range.
-		const head = lines[i].match(/^(\s*)(?:-\s+)?(run|script):\s*[|>][-+]?\d*\s*$/);
+		// `run: |`, `- run: >-`, `script: |2-` … YAML allows the indentation indicator and the chomping
+		// indicator in EITHER order, and the first version of this matched only `[-+]?\d*` — so `|2-`
+		// was not a block scalar to it and the step went UNMEASURED, silently, which is the one
+		// direction a byte guard must not fail in. What matters is that a BLOCK scalar starts here;
+		// an inline `run: pnpm i` is never in range.
+		//
+		// THE BOUND on an explicit indentation indicator: the dedent below uses the observed minimum
+		// indent, so for `|2` whose lines are ALL deeper than two it strips more than YAML would and
+		// under-counts. No workflow here uses one; they are matched so that adding one is measured at
+		// all, which beats being invisible.
+		const head = lines[i].match(/^(\s*)(?:-\s+)?(run|script):\s*[|>](?:\d[-+]?|[-+]\d?)?\s*$/);
 		if (head === null) continue;
 		const indent = head[1].length + (/^\s*-\s/.test(lines[i]) ? 2 : 0);
 		const body = [];
@@ -874,6 +882,11 @@ jobs:
 		`chars=${dashRow.chars} bytes=${dashRow.bytes}`);
 	ok("...and it is reported", budgeted(emdash).length === 1);
 	ok("a `>-` folded block is measured too", scanExpressionBudget(block(300, { indicator: ">-" })).length === 1);
+	// Both orders of the two indicators, because only one of them was matched at first and the miss
+	// was silent: an unmatched block header is not a small measurement, it is no measurement.
+	for (const ind of ["|", "|-", "|+", "|2", "|2-", "|-2", ">", ">-", ">2+"]) {
+		ok(`\`${ind}\` is recognised as a block scalar`, scanExpressionBudget(block(300, { indicator: ind })).length === 1, ind);
+	}
 	ok("...and a bare `- run: |` list item is not missed", scanExpressionBudget(block(300, { item: true })).length === 1);
 	ok("`|` clips exactly one trailing newline, `|-` none",
 		scanExpressionBudget("jobs:\n  a:\n    steps:\n      - run: |\n          ab\n").at(0).bytes === 3 &&

@@ -421,7 +421,12 @@ jobs:
           // "the ONE definition of the console's private route set", and the gate job runs it as
           // its own zero-routes guard — so narrowing that glob makes both audit legs measure fewer
           // routes with no leg having run. `playwright-install.sh` installs the browser every leg
-          // drives. Neither is reachable from a surface derived out of apps/console's dependencies.
+          // drives. `sync-public-assets.mjs` is the FIRST command in `apps/console`'s `build` script:
+          // it copies @repo/assets/static into apps/console/public, whose synced paths are gitignored,
+          // so the package is the only source and that script is the only installer. Change where it
+          // writes and every provider icon the browser legs render is simply absent. None of the
+          // three is reachable from a surface derived out of apps/console's dependencies, which is
+          // why each has to be named here.
           const SEAMS = [
             /^apps\/console\/playwright\.config\.ts$/,
             /^apps\/console\/e2e\/helpers\//,
@@ -433,6 +438,7 @@ jobs:
             /^\.github\/workflows\/release-gate\.yml$/,
             /^scripts\/lib\/console-routes\.mjs$/,
             /^scripts\/ci\/playwright-install\.sh$/,
+            /^scripts\/sync-public-assets\.mjs$/,
           ];
 
           // FIRST MATCH WINS, so the order is load-bearing. Each `when` mirrors a project's
@@ -658,109 +664,27 @@ jobs:
             process.exit(0);
           }
 
-          /** `apps/console` plus every workspace package it depends on. Fails CLOSED at every step. */
+          /**
+           * The directories the console is COMPILED FROM, derived by scripts/ci/check-console-surface.mjs.
+           *
+           * NOT INLINE ANY MORE (#4606, found in review). The walk used to live here, and the LEDGER
+           * that asks "is every scoped package either on this surface or recorded as not" lived with
+           * it — which put a repo invariant inside a per-PR gate. This step returns early whenever
+           * the gate RUNS, so the labelled PR that lands a new `@repo/foo` never evaluated the
+           * ledger, while every unlabelled dev PR afterwards failed for a diff its author never
+           * wrote. The ledger now runs in `Authz / open-core guards` on every PR, and this reads
+           * `--json`, which derives the surface and refuses a broken DERIVATION but never a stale
+           * record — a bookkeeping entry must not be able to fail this job.
+           */
           function surfaceDirs() {
-            const die = (m) => {
-              console.error(`::error::${m} This step must not answer "nothing the gate measures changed" from a surface it cannot vouch for — that would pass exactly the PR it exists to stop.`);
+            const { execFileSync } = require("node:child_process");
+            try {
+              // stderr is inherited so the script's own `::error::` lines reach the log unchanged.
+              return JSON.parse(execFileSync("node", ["scripts/ci/check-console-surface.mjs", "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] }));
+            } catch {
+              console.error("::error::scripts/ci/check-console-surface.mjs could not derive the console's surface (its own error is above). This step must not answer \"nothing the gate measures changed\" from a surface it cannot vouch for — that would pass exactly the PR it exists to stop.");
               process.exit(1);
-            };
-            const read = (p) => { try { return fs.readFileSync(p, "utf8"); } catch { return null; } };
-            const json = (p) => { const t = read(p); if (t === null) return null; try { return JSON.parse(t); } catch { return null; } };
-            const ws = read("pnpm-workspace.yaml");
-            if (ws === null) die("could not read `pnpm-workspace.yaml` out of the checkout.");
-            const root = json("apps/console/package.json");
-            if (root === null) die("could not read `apps/console/package.json` out of the checkout.");
-            // ONLY THE `packages:` LIST, AND EXCLUSIONS ARE EXCLUSIONS. The first reader took every
-            // `- item` line in the file, which is wrong twice over on a workspace file pnpm accepts:
-            // `pnpm-workspace.yaml` carries other top-level lists (`onlyBuiltDependencies:`,
-            // `catalog:`, `ignoredBuiltDependencies:`) whose items are package NAMES, and `packages:`
-            // itself may carry `!` exclusions. Measured, both of them: `- "!packages/*/fixtures/*"`
-            // — pnpm's own documented form — and a `vendor/*` entry under another key each made the
-            // walk try to list a directory that does not exist, `die`, and turn EVERY unlabelled dev
-            // PR red. A fail-closed guard that fires on a valid file is an outage, not a guard.
-            const globs = [];
-            {
-              let inside = false;
-              for (const raw of ws.split("\n")) {
-                const line = raw.replace(/\s+#.*$/, "");
-                if (/^\S/.test(line)) { inside = /^packages:\s*$/.test(line); continue; }
-                if (!inside) continue;
-                // Either quote style: `- 'ee'` and `- "ee" # optional` are two shapes a stricter
-                // reader dropped SILENTLY, taking the package with them.
-                const m = /^\s*-\s*(.+?)\s*$/.exec(line);
-                if (m !== null) globs.push(m[1].replace(/^(['"])(.*)\1$/, "$2"));
-              }
             }
-            const excluded = globs.filter((g) => g.startsWith("!")).map((g) => g.slice(1));
-            const byName = new Map();
-            for (const glob of globs.filter((g) => !g.startsWith("!"))) {
-              let dirs = [glob];
-              if (glob.endsWith("/*")) {
-                const base = glob.slice(0, -2);
-                // A glob that matches nothing is ORDINARY — pnpm allows one, and a `tools/*` added
-                // before the directory exists must not red every dev PR. It is safe to be quiet here
-                // because the two checks that actually protect the answer still fire: a console
-                // dependency that stops resolving is a refusal below, and an empty `byName` is one
-                // immediately after this loop.
-                try { dirs = fs.readdirSync(base).map((d) => `${base}/${d}`); }
-                catch { console.log(`::warning::pnpm-workspace.yaml globs \`${glob}\`, which matches nothing in this tree`); dirs = []; }
-              }
-              for (const d of dirs) {
-                if (excluded.some((e) => d === e || (e.endsWith("/*") && d.startsWith(e.slice(0, -1))))) continue;
-                const pkg = json(`${d}/package.json`);
-                if (pkg !== null && typeof pkg.name === "string") byName.set(pkg.name, d);
-              }
-            }
-            if (byName.size === 0) die("`pnpm-workspace.yaml` resolved to NO workspace packages at all.");
-            const surface = new Set(["apps/console"]);
-            const queue = [["apps/console", root]];
-            while (queue.length > 0) {
-              const [from, pkg] = queue.shift();
-              for (const field of ["dependencies", "optionalDependencies"]) {
-                for (const [name, spec] of Object.entries(pkg[field] || {})) {
-                  if (!String(spec).startsWith("workspace:")) continue;
-                  const dir = byName.get(name);
-                  if (dir === undefined) die(`\`${from}/package.json\` declares the workspace dependency \`${name}\`, which resolved to NO directory in this tree.`);
-                  if (surface.has(dir)) continue;
-                  surface.add(dir);
-                  const next = json(`${dir}/package.json`);
-                  if (next === null) die(`\`${dir}/package.json\` is missing or unparseable, so whatever IT pulls into the console is invisible here.`);
-                  queue.push([dir, next]);
-                }
-              }
-            }
-            // THE INVERSE QUESTION, which is the one a floor cannot ask. Every `die` above catches a
-            // resolution that BROKE. None of them catches a dependency quietly REMOVED: delete
-            // `@alethia/ee` from the console's `optionalDependencies`, or move `@repo/brand` into
-            // `devDependencies`, and the walk completes, resolves everything it was asked to
-            // resolve, and returns a surface with a package missing. Measured, both of them: a PR
-            // whose whole diff was that package went GREEN and no refusal fired. A floor of four
-            // directories was no help — losing ten of fourteen would still clear it — which is what
-            // "no mutation ever reached the threshold" was really telling me.
-            //
-            // So ask it the other way round: every `@repo/*`/`@alethia/*` package this tree carries
-            // is either compiled into the console or RECORDED here as not. Both directions fail — an
-            // unlisted package off the surface, and a listed one that has since joined it, which is
-            // the stale record that would otherwise suppress a real finding forever.
-            //
-            // THE BOUND, because the scope prefix is a real limit and not a formality: this asks
-            // only about SCOPED packages. Six workspace packages have bare names (`console`, `docs`,
-            // `admin`, `blog`, `alethia`, `marketing`), and if the console ever took a dependency on
-            // one, the walk would put it on the surface but its later REMOVAL would pass unnoticed
-            // here — the exact class this check exists to catch, one prefix away. Widen the regex if
-            // that day comes; today none of the six is a console dependency.
-            const NOT_COMPILED_IN = {
-              "@repo/eslint-config": "lint configuration; it reaches the console only through a surface package's devDependencies",
-              "@repo/typescript-config": "tsconfig bases, the same way — neither changes what the browser renders",
-              "@repo/e2e-issuer": "a standalone OIDC issuer the E2E rig runs as its own app; the console never imports it",
-            };
-            for (const [name, dir] of byName) {
-              if (!/^@(repo|alethia)\//.test(name)) continue;
-              const recorded = Object.hasOwn(NOT_COMPILED_IN, name);
-              if (surface.has(dir) && recorded) die(`\`${name}\` (\`${dir}\`) IS on the gate's surface and is ALSO recorded as not compiled into the console — one of the two is stale.`);
-              if (!surface.has(dir) && !recorded) die(`\`${name}\` (\`${dir}\`) is a workspace package in this tree that is neither on the gate's surface nor recorded as not compiled into the console. If the console stopped depending on it, say so in \`NOT_COMPILED_IN\` with the reason; if the dependency was dropped by accident, that is the bug.`);
-            }
-            return [...surface].sort();
           }
 
           // The recorded exemption. See the YAML comment above this step for the decision and its cost.
