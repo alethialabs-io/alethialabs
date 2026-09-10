@@ -116,11 +116,15 @@ test.describe("Alerts — a transport that cannot store its secret", () => {
 	// one a leg may promise (helpers/capabilities.ts). What is true here is a fact about the `qa`
 	// row of the leg table, and it stops being true the moment that row promises `encryption`.
 	//
-	// WHEN IT DOES: these two tests are rewritten into the positive paths they stand in for (the
-	// submit is live and the note is absent; the webhook verification failure reaches the user),
-	// tagged `@needs:encryption` so a leg that stops promising it makes them RED rather than
-	// quietly skipped. That rewrite RENAMES them, and a renamed test is a baseline entry the run no
-	// longer contains — `scripts/e2e-ratchet.mjs` rule 4 — so it lands with the matching edit to
+	// WHEN IT DOES, only the FIRST of the two below goes red — and the second is the one to watch.
+	// "an Email channel is still offered, because it stores no secret" is a CONTRAST with its
+	// sibling: it stays green with the key present, having stopped measuring anything, and nothing
+	// would say so. Both are therefore rewritten into the positive paths they stand in for (the
+	// submit is live and the note is absent; the webhook verification failure reaches the user,
+	// which is only reachable once the secret can be stored), tagged `@needs:encryption` so a leg
+	// that stops promising it makes them RED rather than quietly skipped. That rewrite RENAMES
+	// them, and a renamed test is a baseline entry the run no longer contains —
+	// `scripts/e2e-ratchet.mjs` rule 4 — so it lands with the matching edit to
 	// `apps/console/e2e/gate-baseline.json`, which is the whole of what `qa` is waiting on.
 	test("a secret-bearing transport explains the missing key and disables the submit", async ({
 		team,

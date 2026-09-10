@@ -37,11 +37,14 @@
 // to this variable name rather than to a file, so the gate reuses it verbatim.
 //
 // `qa` DOES NOT PROMISE IT YET, and the reason is worth stating because it is not the reason it
-// looks like. `e2e/flows/alerts.negative.spec.ts` carries two tests that assert the fail-closed
-// no-key UI, under a comment reading "If the gate ever promises the key, THIS is the test that goes
-// red and says so". Rewriting them into the positive paths they stand in for RENAMES them, and a
-// renamed test is a baseline entry the run no longer contains — `scripts/e2e-ratchet.mjs` rule 4 —
-// so the spec rewrite and an edit to `apps/console/e2e/gate-baseline.json` have to land together.
+// looks like. `e2e/flows/alerts.negative.spec.ts` closes with a describe block that exists only
+// because the key is absent, under a comment reading "If the gate ever promises the key, THIS is
+// the test that goes red and says so". Exactly ONE of its two tests does — the one asserting the
+// missing-key note and the disabled submit. The other, that Email is still offered "because it
+// stores no secret", stays GREEN and stops measuring anything, which is the half that would go
+// unnoticed. Both are rewritten into the positive paths they stand in for, which RENAMES them, and
+// a renamed test is a baseline entry the run no longer contains — `scripts/e2e-ratchet.mjs` rule
+// 4 — so the rewrite and an edit to `apps/console/e2e/gate-baseline.json` have to land together.
 // That baseline is held by another lane, so `qa` waits on that one edit and nothing else.
 
 // ── WHY THE NAMES BELOW MAY NOT OVERLAP ────────────────────────────────────────────────────────

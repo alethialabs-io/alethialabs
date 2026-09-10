@@ -158,7 +158,7 @@ jobs:
           // `capabilities` IS A COMMA-SEPARATED SET, and the `env:` block below reads it with
           // `contains(...)`, never `==`. Until #4456 every row held at most one name and the block
           // compared the whole set against one name with `==`, so the first row to promise two things
-          // would have matched NOTHING and blanked all five Stripe variables — a leg that then
+          // would have matched NOTHING and blanked all SIX Stripe variables — a leg that then
           // fails its own `--assert-env` pre-check, or (had that check not existed) runs every
           // billing assertion against an unconfigured console. See the env block for the six sites.
           const legs = [
@@ -167,12 +167,15 @@ jobs:
             { project: "console",   args: "--project=console",   workers: 2, retries: 1, capabilities: "stripe,encryption",  manifest: false, floor: 1 },
             { project: "canvas",    args: "--project=canvas",    workers: 1, retries: 1, capabilities: "",                   manifest: false, floor: 1 },
             // `qa` does NOT promise `encryption`, and that is a recorded state rather than an
-            // oversight (#4456). Two tests in flows/alerts.negative.spec.ts assert the fail-closed
-            // no-key UI; the key turns them red, and the fix is to RENAME them into the positive
-            // paths they stand in for — which the ratchet's rule 4 (a baseline entry the run lacks)
-            // makes an edit to apps/console/e2e/gate-baseline.json, a file another lane holds. So
-            // this row waits for that one edit, and the two specs' comments say so where a reader
-            // of them will be standing.
+            // oversight (#4456). flows/alerts.negative.spec.ts closes with a describe block that
+            // exists only because the key is absent. ONE of its two tests goes red the moment this
+            // row promises it — the one asserting the missing-key note and the disabled submit; the
+            // other, that Email is still offered "because it stores no secret", stays green and
+            // stops measuring anything, which is the worse half. Both are rewritten into the
+            // positive paths they stand in for, which RENAMES them — and a renamed test is a
+            // baseline entry the run no longer contains (scripts/e2e-ratchet.mjs rule 4), so it
+            // takes an edit to apps/console/e2e/gate-baseline.json, a file another lane holds. This
+            // row waits for that one edit; both specs' comments say so where a reader is standing.
             { project: "qa",        args: "--project=qa",        workers: 3, retries: 1, capabilities: "stripe",             manifest: false, floor: 300 },
             { project: "audit",     args: "--project=audit",     workers: 1, retries: 1, capabilities: "",                   manifest: true,  floor: 1 },
             { project: "audit-interaction", args: "--project=audit-interaction", workers: 1, retries: 0, capabilities: "stripe,encryption", manifest: true, floor: 47 },
@@ -388,8 +391,10 @@ jobs:
       # ⚠ EVERY TEST BELOW IS `contains(matrix.capabilities, …)`, NEVER `== '…'`. `capabilities` is
       # a comma-separated SET, and `==` asks whether the set has exactly one member with that name:
       # the moment a leg promises two things (`stripe,encryption`, #4456) every `== 'stripe'` goes
-      # false and hands the leg an EMPTY Stripe key, an empty webhook secret and three empty price
-      # ids. `--assert-env` catches that as a named failure — but the shape it would otherwise
+      # false and hands the leg an EMPTY Stripe key, an empty webhook secret, three empty price ids
+      # and an empty publishable key — six of them, one per line below. Count them against the
+      # sentence: an off-by-one here reads as "the list is complete" and is how one stays behind.
+      # `--assert-env` catches that as a named failure — but the shape it would otherwise
       # produce, billing assertions running green against an unconfigured console, is the exact
       # silent downgrade helpers/capabilities.ts exists to end.
       #
