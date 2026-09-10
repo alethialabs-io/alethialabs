@@ -58,9 +58,13 @@ export async function otpSignIn(page: Page, email: string, mode: "signup" | "log
 
 /** Runs a fresh signup through email-OTP and waits until the /onboarding wizard renders. */
 async function freshSignupToOnboarding(page: Page, email: string): Promise<void> {
-	// The OTP can land in the log late under a busy dev server (helper waits up to 60s) —
-	// give the whole test headroom beyond the 30s default so a slow code doesn't time it out.
-	test.setTimeout(180_000);
+	// A FLOOR, NEVER A CEILING. `test.setTimeout` is LAST CALL WINS, so a bare
+	// `test.setTimeout(180_000)` here silently REDUCES a caller that has already asked for more:
+	// the clickwrap test below asks for 240s on the line immediately before this helper runs, and
+	// got 180s for it. Taking the max keeps the guarantee this line exists for — a code that lands
+	// late (otpSignIn waits up to 150s for it) must not time the test out — without ever spending
+	// budget the journey asked for on its own account.
+	test.setTimeout(Math.max(test.info().timeout, 180_000));
 	await otpSignIn(page, email, "signup");
 	await page.waitForURL(/\/onboarding/, { timeout: 30_000 });
 	await expect(page.getByRole("heading", { name: /create your organization/i })).toBeVisible({
