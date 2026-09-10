@@ -74,8 +74,17 @@ function AcceptInvite() {
 					Accept to join and start collaborating, signed in as{" "}
 					<span className="font-medium text-text-primary">{session.user.email}</span>.
 				</p>
+				{/* `role="alert"`: the refusal appears in place, with no navigation and no focus move —
+				    a sighted user sees a red box arrive under the heading, and without a live region a
+				    screen-reader user was told nothing at all. The same argument components/auth/
+				    auth-form.tsx makes for its own error banner, and the same one that lets the e2e
+				    spec locate the refusal as the REFUSAL rather than as "some element containing the
+				    word invitation", which is text this whole card is full of. */}
 				{error && (
-					<p className="mt-4 border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+					<p
+						role="alert"
+						className="mt-4 border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+					>
 						{error}
 					</p>
 				)}

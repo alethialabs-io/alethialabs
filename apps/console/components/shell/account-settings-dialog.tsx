@@ -47,7 +47,9 @@ interface AccountSettingsDialogProps {
  * The account/profile settings dialog opened from the sidebar account menu's gear. Shows
  * the user's account overview (avatar, name, email, linked auth providers, member-since),
  * lets them edit their display name (persisted via Better Auth `updateUser`), and exposes
- * the account danger zone. Account deletion is a placeholder pending the delete flow.
+ * the account danger zone. The Delete Account button in that zone is INERT and stays inert
+ * until a maintainer rules on which erasure flow it belongs to — the note at the call site
+ * states the open question and #4273 carries it.
  */
 export function AccountSettingsDialog({
 	open,
@@ -204,7 +206,32 @@ export function AccountSettingsDialog({
 
 				<div className="h-px bg-border" />
 
-				{/* Danger zone */}
+				{/* Danger zone.
+
+				    THIS BUTTON IS DELIBERATELY INERT, AND THE DECISION BEHIND IT IS STILL OPEN (#4273).
+				    It has no `onClick`, and `apps/console/destructive-actions.yaml` records it as the
+				    registry's one `status: inert` row for exactly that reason. Do not "finish" it — the
+				    thing that is missing is a ruling, not a handler.
+
+				    What is undecided is which flow the click belongs to, and both candidates already
+				    exist in `app/server/actions/privacy/cases.ts`:
+
+				      · `fulfilErasure` — the destructive one. It REFUSES outright unless the request's
+				        identity has been verified through the privileged verification step: "Identity is
+				        not verified. Nothing is destroyed until we know who asked — an erasure performed
+				        on an unverified request is itself a data breach." Whether an authenticated
+				        console session is that verification is a DATA-PROTECTION question, not a wiring
+				        one; answering it in code answers it for the product.
+
+				      · `openPrivacyCase("erasure")` — the request path. Records the erasure request and
+				        leaves fulfilment to the verified flow. Slower for the operator, and it makes the
+				        button mean something different from what its own copy above promises.
+
+				    Until a maintainer picks one, the honest surface is a control that does nothing over a
+				    control that does the wrong thing to somebody's account. The e2e coverage for this
+				    dialog (`apps/console/e2e/account-settings.spec.ts`) asserts the inertness rather than
+				    working around it, so wiring the button without also moving that spec and the registry
+				    entry is a red gate, by design. */}
 				<div className="rounded-md border border-destructive/20 bg-destructive/5 p-4">
 					<SectionHeading
 						title="Delete Account"
