@@ -32,12 +32,27 @@ function grantSubject(g: { principalType: "user" | "team"; principalId: string }
  * The OpenFGA object a grant's tuples LIVE on — or null when the grant expands to no tuples and
  * there is consequently nothing to read or delete.
  *
- * THE INVARIANT: this must name the object every tuple `expandGrant` produces for the same scope
- * AND EFFECT sits on. It is therefore derived from the very predicate the expander expands
+ * THE INVARIANT: every tuple `expandGrant` produces for the same scope AND EFFECT sits on the
+ * object this returns. It is therefore derived from the very predicate the expander expands
  * through, taken as an argument rather than reached for, so the two cannot be given different
  * ones — and it takes the effect for the same reason the expander does: an allow row is asked
  * what it confers, a deny row what it excludes, and those come apart for a row that scopes to
  * nothing (`EMPTY_SCOPE_DENIES` in apps/console/lib/authz/grant-scope.ts).
+ *
+ * ⚠ THE CONVERSE DOES NOT HOLD, and an earlier version of this docblock claimed it did ("null
+ * exactly when `expandGrant` produces none"). `expandGrant` also produces nothing when the SCOPE
+ * is fine but every permission key is org-level — `isOrgLevel` is true for EVERY `create` action —
+ * so `expandGrant({resourceType:"project", resourceId:P}, ["project:create"])` is `[]` while this
+ * returns `project:P`. That combination is writable today. This returns null when the ROW SCOPES
+ * TO NOTHING, which is what it can answer from the scope alone; it does not and cannot know the
+ * permission keys.
+ *
+ * ⚠ The consequence is real and PRE-EXISTING (the old two-column expression returned `project:P`
+ * for that row too): `clearGrantTuples` will clear the subject's tuples on `project:P` and then
+ * write nothing back. Narrowing that would mean taking the keys here and returning null on an
+ * empty expansion — which trades this wipe for stale tuples when a role's bundle becomes entirely
+ * org-level, so it is a design question rather than a typo, and it is recorded rather than
+ * decided. See the note on `clearGrantTuples`.
  *
  * It used to be `resourceId ? \`${resourceType}:${resourceId}\` : \`org:${orgId}\`` — the two
  * columns read independently of the expander. For an `('org', <resource-uuid>)` row that produced

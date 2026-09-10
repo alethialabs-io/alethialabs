@@ -165,7 +165,15 @@
 --                 re-scope to the id's real kind (`resource_kind` names it where it can), or drop
 --                 the id and accept the grant as genuinely org-wide.
 -- NO PERMISSION — the row references neither a role nor a permission key, so it confers nothing on
---                 either engine. A data defect, not an access one.
+--                 either engine, and nothing can change that without editing the row. A data
+--                 defect, not an access one.
+-- EMPTY ROLE    — it binds a role whose bundle is currently EMPTY, so it confers nothing TODAY and
+--                 will confer whatever that role is later given. ⚠ NOT the same finding as the one
+--                 above, and the difference flips the advice: `role` rows exist before their
+--                 `role_permission` rows, and ee lets an org author a role and populate it later,
+--                 so deleting this row on "it confers nothing" grounds removes a grant that was
+--                 about to become live. `bad_perm`'s role arm is an inner JOIN, which is why both
+--                 land on `permissions = 0`; `role_name` names the role either way.
 --
 -- An EMPTY result closes #4583 for BOTH classes: the divergences in #4584 are then theoretical
 -- rather than live, on this database.
@@ -234,6 +242,7 @@ counted AS (
 	SELECT
 		b.id,
 		b.pair_class,
+		b.role_id,
 		b.org_id,
 		org.name AS org_name,
 		b.principal_type,
@@ -347,7 +356,10 @@ SELECT
 			'NARROWS ON BOTH ENGINES — confers nothing after (today: this resource on Postgres, THE ORG on OpenFGA).'
 	END AS deploy_change,
 	CASE
-		WHEN c.permissions = 0 THEN 'NO PERMISSION — references neither a role nor a permission key'
+		WHEN c.permissions = 0 AND c.role_id IS NULL AND c.permission_key IS NULL
+			THEN 'NO PERMISSION — references neither a role nor a permission key'
+		WHEN c.permissions = 0
+			THEN 'EMPTY ROLE — the role it binds confers nothing TODAY; add one permission and this row is live'
 		WHEN c.also_org_wide = c.permissions THEN 'REDUNDANT — already held org-wide; remediation removes no access'
 		WHEN c.also_org_wide = 0 THEN 'LIVE — no ORG-WIDE grant confers these; remediation may be an access change'
 		ELSE 'PARTIAL — some already held org-wide; the rest need a decision'
