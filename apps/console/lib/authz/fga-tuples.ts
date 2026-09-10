@@ -8,7 +8,7 @@
 
 import { descendantsOf } from "@/lib/authz/fga-hierarchy";
 import { isOrgLevel } from "@/lib/authz/fga-mapping";
-import { grantTarget } from "@/lib/authz/grant-scope";
+import { targetForEffect } from "@/lib/authz/grant-scope";
 import { PERMISSIONS, type Resource } from "@/lib/authz/registry";
 
 /** An OpenFGA relationship tuple: `<user>` has `<relation>` on `<object>`. */
@@ -91,10 +91,14 @@ export function expandGrant(
 	scope: GrantScope,
 	permissionKeys: readonly string[],
 ): FgaTuple[] {
-	const target = grantTarget(scope.resourceType, scope.resourceId);
+	// The EFFECT is part of the question. An allow grant is being expanded into what it confers;
+	// a deny grant into what it excludes, and for a row whose scope resolves to nothing those have
+	// opposite safe answers. `targetForEffect` is the single place that distinction lives, shared
+	// with `PostgresRbacPDP` — see `EMPTY_SCOPE_DENIES` in lib/authz/grant-scope.ts.
+	const target = targetForEffect(scope.effect, scope.resourceType, scope.resourceId);
 	// A self-contradictory row (an "org" kind carrying an id) or an unrecognised kind confers
-	// nothing on either engine. Returning early rather than falling through a scoped branch is
-	// what keeps this from writing tuples on an object type that does not exist.
+	// nothing. Returning early rather than falling through a scoped branch is what keeps this
+	// from writing tuples on an object type that does not exist.
 	if (target.kind === "none") return [];
 
 	const user = principalRef(scope);

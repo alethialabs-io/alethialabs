@@ -99,6 +99,41 @@ FAIL when the protection is removed; two were proven so by flipping the guard:
   `PostgresRbacPDP.listAccessible`; `pdp-parity.test.ts` asserts this on the org-wide `deploy` path
   (PROJ_A3 excluded). So "allow the org except this one project" now behaves identically on both
   tiers across **decide (`can`/`enforce`/`bulkCheck`) AND enumerate (`listAccessible`)**.
+- **PDP engine divergence on a row whose `resource_type` cannot carry a `resource_id` — ALLOW side
+  CLOSED, DENY side an OPEN RULING (#4584).** The same shape as the entry above — one row, two
+  engines, opposite answers — found on a *different* column. `PostgresRbacPDP` did not project
+  `resource_type` at all, so ANY non-null `resource_id` read as scoped to that id, while
+  `expandGrant` computed `orgWide = resourceId === null || resourceType === "org"` and dropped the
+  id. An `('org', <project-uuid>)` row was therefore NARROW on the community tier and
+  ORGANIZATION-WIDE on the paid one, from identical data, with which engine you run decided by an
+  instance-wide env switch (`OPENFGA_API_URL`/`OPENFGA_STORE_ID`), not a license flag.
+
+  **The ruling: a non-null `resource_id` is never org-wide** — `resource_id NULL = org-wide` is the
+  column's own contract — **and `org` is not a kind a grant can be scoped to**, so such a row
+  confers NOTHING on both engines. The same answer covers an *unrecognised* `resource_type`
+  (`resource_type` is free `text`), which used to expand to zero tuples while the Postgres PDP read
+  it as an ordinary scoped grant. Both engines now route through one predicate,
+  `lib/authz/grant-scope.ts`, reaching `ee/` on the existing `CoreContext.fga` seam;
+  `pdp-parity.test.ts` carries the row and DERIVES its OpenFGA half from the rows Postgres holds
+  (it previously composed that half from hand-written literals, which is the second, independent
+  reason this control did not catch the divergence).
+
+  ⚠ **The DENY direction is NOT closed and must not be read as closed.** `grantTarget` answers what
+  a row CONFERS; a deny row is asked what it EXCLUDES, and for a row that scopes to nothing those
+  have opposite safe answers — conferring nothing is fail-closed, excluding nothing is fail-OPEN.
+  Held behind `EMPTY_SCOPE_DENIES` (`lib/authz/grant-scope.ts`) with both expressible options
+  built and every fixture reading the constant; the ruling is the maintainer's. A third reading —
+  "excludes only the resource it names", which is what Postgres does today — is not on offer
+  because OpenFGA cannot express it (no object of that type and id to hang a deny tuple on).
+
+  ⚠ **Two consumers are still unreconciled, and neither is a test gap.** (a) Revoking such a row
+  removes it and leaves the OpenFGA tuples it already wrote — before the fix because the delete
+  looked at an object that does not exist, after it because the row expands to no tuples and the
+  surviving ones are indistinguishable from a legitimate org-wide grant's; `backfill` only ever
+  writes. (b) The access UI (`lib/queries/access-grants.ts`) facets purely on `resource_type`, so
+  such a row still renders under **organization** while both engines say it confers nothing.
+  Whether any of these rows EXIST is `docs/ops/grants-scope-contradictions.sql` (#4583), which
+  gates the whole change and reports both classes.
 - **T0 secret non-leakage over the real deploy spine.** `secret_nonleak_test.go` drives the
   persisted-metadata assembly directly. Routing a real `RunDeployV2` (kind + a SENTINEL
   `HCLOUD_TOKEN`) and asserting the token never reaches the job-log surface end-to-end depends on
