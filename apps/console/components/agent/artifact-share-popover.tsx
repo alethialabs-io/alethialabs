@@ -121,82 +121,82 @@ export function ArtifactSharePopover({ artifactId }: { artifactId: string }) {
 
   return (
     <>
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={
-          <Button size="sm" variant="outline" className="gap-1.5 rounded-none">
-            <Share2 className="h-3.5 w-3.5" />
-            Share
-          </Button>
-        }
-      />
-      <PopoverContent align="end" className="w-72 rounded-none p-0">
-        <div className="border-b border-border px-3 py-2.5">
-          <div className="text-ui-md font-medium text-foreground">
-            Share artifact
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          render={
+            <Button size="sm" variant="outline" className="gap-1.5 rounded-none">
+              <Share2 className="h-3.5 w-3.5" />
+              Share
+            </Button>
+          }
+        />
+        <PopoverContent align="end" className="w-72 rounded-none p-0">
+          <div className="border-b border-border px-3 py-2.5">
+            <div className="text-ui-md font-medium text-foreground">
+              Share artifact
+            </div>
+            <div className="text-ui-xs text-muted-foreground">
+              Choose who in your org can open this. Private to you otherwise.
+            </div>
           </div>
-          <div className="text-ui-xs text-muted-foreground">
-            Choose who in your org can open this. Private to you otherwise.
-          </div>
-        </div>
-        {loading ? (
-          <div className="flex items-center gap-2 px-3 py-4 text-ui-sm text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Loading…
-          </div>
-        ) : (
-          <div className="max-h-[320px] overflow-y-auto py-1">
-            <ShareRow
-              icon={<Building2 className="h-3.5 w-3.5" />}
-              label="Everyone in org"
-              sub="All members"
-              checked={shared.has(keyOf("org", null))}
-              busy={busy === keyOf("org", null)}
-              onClick={() => toggle("org", null, "everyone in your org")}
-            />
-            {access.teams.length > 0 && <SectionLabel>Teams</SectionLabel>}
-            {access.teams.map((t) => (
+          {loading ? (
+            <div className="flex items-center gap-2 px-3 py-4 text-ui-sm text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Loading…
+            </div>
+          ) : (
+            <div className="max-h-[320px] overflow-y-auto py-1">
               <ShareRow
-                key={t.id}
-                icon={<Users className="h-3.5 w-3.5" />}
-                label={t.name}
-                checked={shared.has(keyOf("team", t.id))}
-                busy={busy === keyOf("team", t.id)}
-                onClick={() => toggle("team", t.id, t.name)}
+                icon={<Building2 className="h-3.5 w-3.5" />}
+                label="Everyone in org"
+                sub="All members"
+                checked={shared.has(keyOf("org", null))}
+                busy={busy === keyOf("org", null)}
+                onClick={() => toggle("org", null, "everyone in your org")}
               />
-            ))}
-            {access.roles.length > 0 && <SectionLabel>Roles</SectionLabel>}
-            {access.roles.map((r) => (
-              <ShareRow
-                key={r.id}
-                icon={<Shield className="h-3.5 w-3.5" />}
-                label={r.name}
-                checked={shared.has(keyOf("role", r.id))}
-                busy={busy === keyOf("role", r.id)}
-                onClick={() => toggle("role", r.id, r.name)}
-              />
-            ))}
-          </div>
-        )}
-      </PopoverContent>
-    </Popover>
+              {access.teams.length > 0 && <SectionLabel>Teams</SectionLabel>}
+              {access.teams.map((t) => (
+                <ShareRow
+                  key={t.id}
+                  icon={<Users className="h-3.5 w-3.5" />}
+                  label={t.name}
+                  checked={shared.has(keyOf("team", t.id))}
+                  busy={busy === keyOf("team", t.id)}
+                  onClick={() => toggle("team", t.id, t.name)}
+                />
+              ))}
+              {access.roles.length > 0 && <SectionLabel>Roles</SectionLabel>}
+              {access.roles.map((r) => (
+                <ShareRow
+                  key={r.id}
+                  icon={<Shield className="h-3.5 w-3.5" />}
+                  label={r.name}
+                  checked={shared.has(keyOf("role", r.id))}
+                  busy={busy === keyOf("role", r.id)}
+                  onClick={() => toggle("role", r.id, r.name)}
+                />
+              ))}
+            </div>
+          )}
+        </PopoverContent>
+      </Popover>
 
-    {/* OUTSIDE the popover on purpose: opening the dialog moves focus, which closes the popover,
-        and a confirmation that unmounts with its trigger cannot be answered. */}
-    <ConfirmDialog
-      open={pendingUnshare !== null}
-      onOpenChange={(o) => {
-        if (!o) setPendingUnshare(null);
-      }}
-      title={`Stop sharing with ${pendingUnshare?.label ?? "this target"}?`}
-      description="They lose access to this artifact immediately. Anything they already copied into their own conversations stays with them."
-      confirmLabel="Stop sharing"
-      onConfirm={() => {
-        if (pendingUnshare)
-          void applyToggle(pendingUnshare.scopeType, pendingUnshare.scopeId);
-        setPendingUnshare(null);
-      }}
-    />
+      {/* OUTSIDE the popover on purpose: opening the dialog moves focus, which closes the popover,
+          and a confirmation that unmounts with its trigger cannot be answered. */}
+      <ConfirmDialog
+        open={pendingUnshare !== null}
+        onOpenChange={(o) => {
+          if (!o) setPendingUnshare(null);
+        }}
+        title={`Stop sharing with ${pendingUnshare?.label ?? "this target"}?`}
+        description="They lose access to this artifact immediately. Anything they already copied into their own conversations stays with them."
+        confirmLabel="Stop sharing"
+        onConfirm={() => {
+          if (pendingUnshare)
+            void applyToggle(pendingUnshare.scopeType, pendingUnshare.scopeId);
+          setPendingUnshare(null);
+        }}
+      />
     </>
   );
 }
