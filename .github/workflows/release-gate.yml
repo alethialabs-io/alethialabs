@@ -166,17 +166,14 @@ jobs:
             { project: "elench-ai", args: "--project=elench-ai", workers: 1, retries: 1, capabilities: "ai-mock",            manifest: false, floor: 1 },
             { project: "console",   args: "--project=console",   workers: 2, retries: 1, capabilities: "stripe,encryption",  manifest: false, floor: 1 },
             { project: "canvas",    args: "--project=canvas",    workers: 1, retries: 1, capabilities: "",                   manifest: false, floor: 1 },
-            // `qa` does NOT promise `encryption`, and that is a recorded state rather than an
-            // oversight (#4456). flows/alerts.negative.spec.ts closes with a describe block that
-            // exists only because the key is absent. ONE of its two tests goes red the moment this
-            // row promises it — the one asserting the missing-key note and the disabled submit; the
-            // other, that Email is still offered "because it stores no secret", stays green and
-            // stops measuring anything, which is the worse half. Both are rewritten into the
-            // positive paths they stand in for, which RENAMES them — and a renamed test is a
-            // baseline entry the run no longer contains (scripts/e2e-ratchet.mjs rule 4), so it
-            // takes an edit to apps/console/e2e/gate-baseline.json, a file another lane holds. This
-            // row waits for that one edit; both specs' comments say so where a reader is standing.
-            { project: "qa",        args: "--project=qa",        workers: 3, retries: 1, capabilities: "stripe",             manifest: false, floor: 300 },
+            // `qa` promises `encryption` (#4456), which is what makes every secret-bearing surface
+            // in flows/ reachable at all. It cost the rewrite of the two tests in
+            // flows/alerts.negative.spec.ts that asserted the fail-closed no-key UI — and note that
+            // only ONE of them went red. The other, "an Email channel is still offered, because it
+            // stores no secret", stayed GREEN and stopped discriminating, because its whole meaning
+            // was the contrast with its sibling. Renaming both moved two entries in
+            // apps/console/e2e/gate-baseline.json (ratchet rule 4); their statuses did not.
+            { project: "qa",        args: "--project=qa",        workers: 3, retries: 1, capabilities: "stripe,encryption",  manifest: false, floor: 300 },
             { project: "audit",     args: "--project=audit",     workers: 1, retries: 1, capabilities: "",                   manifest: true,  floor: 1 },
             { project: "audit-interaction", args: "--project=audit-interaction", workers: 1, retries: 0, capabilities: "stripe,encryption", manifest: true, floor: 47 },
           ];

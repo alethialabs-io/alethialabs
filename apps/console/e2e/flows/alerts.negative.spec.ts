@@ -11,6 +11,7 @@
 // Every assertion below therefore holds for an empty universe and a populated one alike.
 
 import { test, expect } from "../fixtures/qa";
+import type { Page } from "@playwright/test";
 
 const ALERTS = (org: string) => `/${org}/~/alerts`;
 
@@ -103,71 +104,106 @@ test.describe("Alerts — a reduced-permission member", () => {
 	});
 });
 
-test.describe("Alerts — a transport that cannot store its secret", () => {
-	// FAIL-CLOSED, AND THIS IS A MEASUREMENT OF THE LEG'S CONFIGURATION AS MUCH AS OF THE UI.
-	// Every transport but Email keeps a credential, which needs ALETHIA_CRED_ENCRYPTION_KEY. The
-	// `qa` leg does not promise the `encryption` capability, so the key is unset for it and the
-	// console correctly refuses to take a credential: the sheet explains what is missing and the
-	// submit is disabled. That is why no spec in this domain creates a Slack or webhook channel —
-	// it is not an omission, it is the only behaviour reachable here.
+test.describe("Alerts — a secret-bearing transport, now that the leg promises a key", () => {
+	// WHAT THIS BLOCK USED TO BE, AND WHY BOTH HALVES HAD TO GO.
 	//
-	// ⚠ SAY "THIS LEG", NOT "THE GATE". Since #4456 release-gate.yml DOES set the key — on the
-	// `console` and `audit-interaction` legs, which promise `encryption` — and the capability is
-	// one a leg may promise (helpers/capabilities.ts). What is true here is a fact about the `qa`
-	// row of the leg table, and it stops being true the moment that row promises `encryption`.
+	// Every transport but Email keeps a credential, which needs ALETHIA_CRED_ENCRYPTION_KEY. No gate
+	// leg set one, so the console correctly refused to take a credential and the two tests here
+	// asserted that refusal — the sheet's "needs an encryption key" note and its disabled submit —
+	// under a comment reading "If the gate ever promises the key, THIS is the test that goes red and
+	// says so". The `qa` leg now promises `encryption` (#4456), so it has.
 	//
-	// WHEN IT DOES, only the FIRST of the two below goes red — and the second is the one to watch.
-	// "an Email channel is still offered, because it stores no secret" is a CONTRAST with its
-	// sibling: it stays green with the key present, having stopped measuring anything, and nothing
-	// would say so. Both are therefore rewritten into the positive paths they stand in for (the
-	// submit is live and the note is absent; the webhook verification failure reaches the user,
-	// which is only reachable once the secret can be stored), tagged `@needs:encryption` so a leg
-	// that stops promising it makes them RED rather than quietly skipped. That rewrite RENAMES
-	// them, and a renamed test is a baseline entry the run no longer contains —
-	// `scripts/e2e-ratchet.mjs` rule 4 — so it lands with the matching edit to
-	// `apps/console/e2e/gate-baseline.json`, which is the whole of what `qa` is waiting on.
-	test("a secret-bearing transport explains the missing key and disables the submit", async ({
-		team,
-	}) => {
-		await team.page.goto(ALERTS(team.orgSlug!));
-		await expect(team.page).not.toHaveURL(/\/login/);
-		await expect(
-			team.page.getByRole("heading", { name: "Channels", exact: true }),
-		).toBeVisible({ timeout: 15_000 });
+	// ⚠ ONLY ONE OF THE TWO WENT RED, and the other is the reason this rewrite is not a one-line
+	// fix. "an Email channel is still offered, because it stores no secret" asserted an ENABLED
+	// submit and an ABSENT note for a transport that never needed the key — both still true with the
+	// key present. It would have stayed GREEN while measuring nothing at all: its whole meaning was
+	// the CONTRAST with its sibling, and the sibling was gone. A test that goes red says so; a test
+	// that quietly stops discriminating is the shape this suite's capability mechanism exists to
+	// end, and nothing in the gate would have reported it.
+	//
+	// So both are replaced by the paths they were standing in for, which are reachable for the first
+	// time: the submit is LIVE for a transport that stores a secret, and a webhook whose endpoint
+	// cannot be verified reports that failure to the user.
+	//
+	// `@needs:encryption` on both: on a leg that stops promising it these are RED, never a green
+	// skip (helpers/capabilities.ts). That is the whole point of the tag — the previous version of
+	// this block was the "write a test that quietly asserts the disabled state" option the module's
+	// header names as the thing it exists to prevent.
+	//
+	// STILL SEEDS AND CLEANS NOTHING, per this file's header: verification runs BEFORE the insert
+	// (app/server/actions/alerts.ts — "a channel never exists unverified"), so the failing path
+	// below writes no row, and the passing assertions read the sheet rather than the rail.
 
-		await team.page
+	/** Opens the Channels add-a-channel sheet and returns it. */
+	async function openSheet(page: Page, org: string) {
+		await page.goto(ALERTS(org));
+		await expect(page).not.toHaveURL(/\/login/);
+		await expect(
+			page.getByRole("heading", { name: "Channels", exact: true }),
+		).toBeVisible({ timeout: 15_000 });
+		await page
 			.locator("#channels")
 			.getByRole("button", { name: "Add channel" })
 			.first()
 			.click();
-		const sheet = team.page.getByRole("dialog", { name: "Add a channel" });
+		const sheet = page.getByRole("dialog", { name: "Add a channel" });
 		await expect(sheet).toBeVisible();
+		return sheet;
+	}
 
-		// Slack is the sheet's default transport, and it stores a URL.
-		await sheet.getByRole("button", { name: "Webhook HTTPS POST" }).click();
-		await expect(
-			sheet.getByText(/This transport stores a secret, which needs an encryption key/),
-		).toBeVisible();
-		await expect(sheet.getByRole("button", { name: "Add channel" })).toBeDisabled();
-	});
+	// BOTH url-credential transports, not one. Slack is the sheet's default and Webhook is the one
+	// with the extra signing-secret field, and `needsKey` is computed per transport
+	// (channel-sheet.tsx: `meta.credential !== "email" && !encryptionConfigured`) — so asserting a
+	// single transport would leave "the key reached the product" true of one shape and untested for
+	// the other.
+	test(
+		"a secret-bearing transport carries no missing-key note, and its submit is live",
+		{ tag: "@needs:encryption" },
+		async ({ team }) => {
+			const sheet = await openSheet(team.page, team.orgSlug!);
+			for (const transport of ["Slack Incoming webhook", "Webhook HTTPS POST"]) {
+				await sheet.getByRole("button", { name: transport }).click();
+				await expect(
+					sheet.getByText(/This transport stores a secret, which needs an encryption key/),
+				).toHaveCount(0);
+				await expect(
+					sheet.getByRole("button", { name: "Add channel" }),
+				).toBeEnabled();
+			}
+		},
+	);
 
-	test("an Email channel is still offered, because it stores no secret", async ({
-		team,
-	}) => {
-		await team.page.goto(ALERTS(team.orgSlug!));
-		await expect(
-			team.page.getByRole("heading", { name: "Channels", exact: true }),
-		).toBeVisible({ timeout: 15_000 });
-		await team.page
-			.locator("#channels")
-			.getByRole("button", { name: "Add channel" })
-			.first()
-			.click();
-		const sheet = team.page.getByRole("dialog", { name: "Add a channel" });
-		await sheet.getByRole("button", { name: "Email SES relay" }).click();
-		await expect(sheet.getByRole("button", { name: "Add channel" })).toBeEnabled();
-		await expect(
-			sheet.getByText(/This transport stores a secret, which needs an encryption key/),
-		).toHaveCount(0);
-	});
+	// THE PATH THE MISSING KEY MADE UNREACHABLE. `addChannel` encrypts the secret and only THEN
+	// verifies the endpoint, so an error that names the endpoint proves the encryption step ran.
+	//
+	// 198.51.100.9 is TEST-NET-2 (RFC 5737, reserved for documentation and guaranteed unroutable).
+	// lib/net/ssrf-guard.ts refuses it at CLASSIFICATION — `dns.lookup` short-circuits an IP
+	// literal, so this test opens no socket, waits on no resolver and cannot flake on either.
+	//
+	// ⚠ THE ASSERTION NAMES THE ADDRESS, and that is not decoration. TWO other failures reach this
+	// same rendering: the missing-key error, and the rate limiter's "Too many attempts". Both would
+	// satisfy a bare "an error appeared" — the first of them VACUOUSLY, since it is exactly the
+	// state this test exists to prove is over. Only the real path can echo back what was typed.
+	test(
+		"a webhook whose endpoint cannot be verified reports it, and creates nothing",
+		{ tag: "@needs:encryption" },
+		async ({ team }) => {
+			const sheet = await openSheet(team.page, team.orgSlug!);
+			await sheet.getByRole("button", { name: "Webhook HTTPS POST" }).click();
+			await sheet.getByLabel("Name", { exact: true }).fill(`e2e-unreachable-${Date.now()}`);
+			await sheet
+				.getByLabel("Payload URL", { exact: true })
+				.fill("https://198.51.100.9/e2e-alerts-webhook");
+			await sheet.getByRole("button", { name: "Add channel" }).click();
+
+			await expect(sheet.getByText(/198\.51\.100\.9/)).toBeVisible({ timeout: 20_000 });
+			await expect(
+				sheet.getByText(/This transport stores a secret, which needs an encryption key/),
+			).toHaveCount(0);
+			await expect(sheet.getByText(/Encryption is not configured/)).toHaveCount(0);
+			// A refused verification persists NOTHING, so the sheet stays open on its error rather
+			// than closing the way a successful create does (`onOpenChange(false)`).
+			await expect(sheet).toBeVisible();
+		},
+	);
 });

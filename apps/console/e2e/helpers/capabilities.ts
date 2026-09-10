@@ -30,22 +30,22 @@
 // to avoid the surface or to write a test that quietly asserts the disabled state. Both leave the
 // gap invisible, which is the exact outcome this module exists to prevent.
 //
-// `console` and `audit-interaction` now PROMISE it, and release-gate.yml sets the key on exactly
-// the legs that do. The value is not a repository secret and never was one to wait for:
+// `console`, `qa` and `audit-interaction` now PROMISE it, and release-gate.yml sets the key on
+// exactly the legs that do. The value is not a repository secret and never was one to wait for:
 // `.github/workflows/e2e-nightly.yml` already used a fixed non-secret throwaway literal for this
 // variable, with the same rationale and a `.gitleaks.toml` allowlist anchored to the literal and
 // to this variable name rather than to a file, so the gate reuses it verbatim.
 //
-// `qa` DOES NOT PROMISE IT YET, and the reason is worth stating because it is not the reason it
-// looks like. `e2e/flows/alerts.negative.spec.ts` closes with a describe block that exists only
-// because the key is absent, under a comment reading "If the gate ever promises the key, THIS is
-// the test that goes red and says so". Exactly ONE of its two tests does — the one asserting the
-// missing-key note and the disabled submit. The other, that Email is still offered "because it
-// stores no secret", stays GREEN and stops measuring anything, which is the half that would go
-// unnoticed. Both are rewritten into the positive paths they stand in for, which RENAMES them, and
-// a renamed test is a baseline entry the run no longer contains — `scripts/e2e-ratchet.mjs` rule
-// 4 — so the rewrite and an edit to `apps/console/e2e/gate-baseline.json` have to land together.
-// That baseline is held by another lane, so `qa` waits on that one edit and nothing else.
+// WHAT PROMISING IT ON `qa` COST, because the accounting is the interesting part.
+// `e2e/flows/alerts.negative.spec.ts` closed with a describe block that existed only because the
+// key was absent, under a comment reading "If the gate ever promises the key, THIS is the test that
+// goes red and says so". Exactly ONE of its two tests did. The other — that Email is still offered
+// "because it stores no secret" — stayed GREEN, having quietly stopped discriminating: its whole
+// meaning was the contrast with the sibling that had just changed. A red test says so; a test that
+// stops measuring does not, and nothing in the gate would have reported it. So both were rewritten
+// into the positive paths they stood in for and tagged `@needs:encryption`, which RENAMED them —
+// and a renamed test is a baseline entry the run no longer contains (`scripts/e2e-ratchet.mjs`
+// rule 4), so two keys moved in `apps/console/e2e/gate-baseline.json`. Their statuses did not.
 
 // ── WHY THE NAMES BELOW MAY NOT OVERLAP ────────────────────────────────────────────────────────
 //
