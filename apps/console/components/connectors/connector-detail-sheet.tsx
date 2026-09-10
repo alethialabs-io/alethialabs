@@ -269,6 +269,7 @@ export function ConnectorDetailSheet({
 												variant="ghost"
 												className="size-7 p-0"
 												title="Save name"
+												aria-label="Save name"
 												disabled={savingId === acc.identityId}
 												onClick={() => commitRename(acc.identityId)}
 											>
@@ -283,6 +284,7 @@ export function ConnectorDetailSheet({
 												variant="ghost"
 												className="size-7 p-0"
 												title="Cancel rename"
+												aria-label="Cancel rename"
 												onClick={() => setEditingId(null)}
 											>
 												<X className="size-3.5" />
@@ -345,6 +347,7 @@ export function ConnectorDetailSheet({
 															variant="ghost"
 															className="size-7 p-0 text-muted-foreground"
 															title={`Re-verify ${acc.name} with the stored credentials`}
+															aria-label={`Re-verify ${acc.name}`}
 															disabled={reverifyingId === acc.identityId}
 															onClick={async () => {
 																setReverifyingId(acc.identityId);
@@ -367,6 +370,7 @@ export function ConnectorDetailSheet({
 														variant="ghost"
 														className="size-7 p-0 text-muted-foreground"
 														title={`Rename ${acc.name}`}
+														aria-label={`Rename ${acc.name}`}
 														onClick={() =>
 															startRename(acc.identityId, acc.name)
 														}
@@ -378,6 +382,7 @@ export function ConnectorDetailSheet({
 														variant="ghost"
 														className="size-7 p-0 text-destructive hover:text-destructive"
 														title={`Disconnect ${acc.name}`}
+														aria-label={`Disconnect ${acc.name}`}
 														onClick={() => onDisconnectAccount(acc.identityId)}
 													>
 														<Unlink className="size-3.5" />
