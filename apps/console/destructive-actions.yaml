@@ -208,11 +208,12 @@ controls:
     surface: apps/console/components/design-project/byo/iac-node.tsx
     mutation: detachIacSource
     control: { role: button, name: "Detach IaC source" }
-    confirm: none
+    confirm: confirm-dialog
+    confirm_action: "Detach source"
+    dialog_title: "Detach this IaC source?"
     fixture: byo-iac-source
     persona: owner
-    status: missing
-    issue: "#4281"
+    status: confirmed
     prod-qa: skip
     reason: needs an attached BYO IaC source
 
@@ -220,13 +221,22 @@ controls:
     route: /[org]/[project]/architecture
     surface: apps/console/components/addons/addon-config-card.tsx
     mutation: useDisableAddon
-    reach: [{ open: "an installed add-on's config sheet" }]
+    # REAL control names, not prose. `walkReach` resolves each step with
+    # getByRole(button|option|menuitem)/getByLabel on the LITERAL string, so the previous step —
+    # `{ open: "an installed add-on's config sheet" }` — could only ever time out and record the
+    # control `not-measured`: unreachable by construction rather than by fixture luck. The two
+    # steps below are the flow a person takes: the canvas toolbar's **Add** button opens the node
+    # palette (design-project-canvas.tsx), and the palette's Add-ons group lists each catalog
+    # add-on as a `role="option"` named after it (node-palette.tsx), which opens this card.
+    # The fixture must install THAT add-on — the Remove button only renders for `item.install`.
+    reach: [{ open: "Add" }, { open: "Prometheus + Grafana" }]
     control: { role: button, name: "Remove" }
-    confirm: none
-    fixture: installed-addon
+    confirm: confirm-dialog
+    confirm_action: "Remove add-on"
+    dialog_title: "Remove this add-on?"
+    fixture: installed-addon (kube-prometheus-stack / Prometheus + Grafana)
     persona: owner
-    status: missing
-    issue: "#4281"
+    status: confirmed
     prod-qa: skip
     reason: needs an installed add-on on a provisioned environment
 
