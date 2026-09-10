@@ -208,11 +208,12 @@ controls:
     surface: apps/console/components/design-project/byo/iac-node.tsx
     mutation: detachIacSource
     control: { role: button, name: "Detach IaC source" }
-    confirm: none
+    confirm: confirm-dialog
+    confirm_action: "Detach source"
+    dialog_title: "Detach this IaC source?"
     fixture: byo-iac-source
     persona: owner
-    status: missing
-    issue: "#4281"
+    status: confirmed
     prod-qa: skip
     reason: needs an attached BYO IaC source
 
@@ -222,11 +223,12 @@ controls:
     mutation: useDisableAddon
     reach: [{ open: "an installed add-on's config sheet" }]
     control: { role: button, name: "Remove" }
-    confirm: none
+    confirm: confirm-dialog
+    confirm_action: "Remove add-on"
+    dialog_title: "Remove this add-on?"
     fixture: installed-addon
     persona: owner
-    status: missing
-    issue: "#4281"
+    status: confirmed
     prod-qa: skip
     reason: needs an installed add-on on a provisioned environment
 
