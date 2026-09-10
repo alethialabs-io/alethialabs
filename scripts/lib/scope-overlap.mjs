@@ -483,6 +483,10 @@ export function formatAudit(audit) {
  * TRUNCATED. A truncated list can prove an intersection but can never prove its absence, so a
  * mention backed only by truncated (or absent) file lists is reported as NOT COMPARABLE. An
  * emptiness check that cannot see a withheld measurement reads "nothing there" for "did not look".
+ *
+ * NOT HYPOTHETICAL: six PRs in the 300-PR corpus of 2026-09-10 sit exactly at the cap, and they are
+ * the promotion PRs (#4389, #3562, #4291, #3534, #3526) — the very merges most likely to name a
+ * board unit in passing, each carrying hundreds of files nobody can see all of from here.
  */
 const FILES_PAGE_CAP = 100;
 
@@ -608,6 +612,14 @@ export function auditShipped(input) {
 	const keywords = (input?.closingKeywords ?? []).map((k) => String(k).trim()).filter(Boolean);
 	const debt = input?.debt && typeof input.debt === "object" ? input.debt : {};
 
+	// Read each PR's text ONCE. The board is ~250 units against a 300-PR corpus whose bodies run to
+	// megabytes, so joining title+body — and compiling a keyword regex — per unit-PR pair is 75,000
+	// of each. The closing refs a PR declares do not depend on which unit is asking.
+	const corpus = merged.map((pr) => {
+		const text = `${pr?.title ?? ""}\n${pr?.body ?? ""}`;
+		return { pr, text, closes: closingRefsIn(text, keywords) };
+	});
+
 	const rows = [];
 	const counts = { referenced: 0, mentionOnly: 0, nightly: 0 };
 	for (const issue of board) {
@@ -620,8 +632,9 @@ export function auditShipped(input) {
 
 		const n = issue?.number;
 		if (typeof n !== "number") continue;
-		const refs = merged.filter((pr) => mentionsIssue(`${pr?.title ?? ""} ${pr?.body ?? ""}`, n));
-		if (refs.length === 0) continue;
+		const cited = corpus.filter((c) => mentionsIssue(c.text, n));
+		if (cited.length === 0) continue;
+		const refs = cited.map((c) => c.pr);
 		counts.referenced++;
 
 		const title = String(issue?.title ?? "(untitled)");
@@ -649,9 +662,7 @@ export function auditShipped(input) {
 		}
 
 		const evidence = refs.map((pr) => ({ number: pr?.number, ...prScopeEvidence(pr, scope.globs) }));
-		const closes = keywords.length
-			? refs.some((pr) => closingRefsIn(`${pr?.title ?? ""}\n${pr?.body ?? ""}`, keywords).has(n))
-			: false;
+		const closes = keywords.length > 0 && cited.some((c) => c.closes.has(n));
 		const hit = evidence.filter((e) => e.hits.length > 0);
 		const blind = evidence.filter((e) => !e.known || e.truncated);
 
