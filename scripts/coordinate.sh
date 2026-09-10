@@ -541,7 +541,15 @@ trap _coordinate_cleanup EXIT
 # see — the very failure the out-parameter exists to remove.
 coordinate_tmpfile() {
   local __coordinate_tmpfile_path
-  __coordinate_tmpfile_path="$(mktemp -t "alethia-$2")"
+  # `.XXXXXX` IS REQUIRED, and its absence is invisible on this laptop. GNU mktemp refuses a `-t`
+  # template with fewer than three X's ("too few X's in template"); BSD/macOS accepts a bare name
+  # and appends its own suffix. This suite's own scope-stub call already carries the X's and says
+  # why — that note was written when the bare form "passed locally and failed only in CI" — but the
+  # two production call sites it did not touch (`alethia-merged-prs`, `alethia-debt-map`) never had
+  # them, so `--report` and `--close-shipped` have been dead on any Linux host since they were
+  # written. Nothing caught it because the self-test used to exit before reaching this function:
+  # the fix that made the registry testable is what finally ran this line on a runner.
+  __coordinate_tmpfile_path="$(mktemp -t "alethia-$2.XXXXXX")"
   COORDINATE_TMPFILES+=("$__coordinate_tmpfile_path")
   printf -v "$1" %s "$__coordinate_tmpfile_path"
 }
@@ -599,6 +607,32 @@ run_tmpfile_self_test() {
     echo "FAIL - tmpfile: _coordinate_cleanup left a registered file behind" >&2
   fi
   rm -f "$first" "$second"
+
+  # THE `-t` TEMPLATE RULE, ASKED OF THE SOURCE — because the runtime cannot be asked here.
+  # GNU mktemp refuses a template with fewer than three X's; BSD/macOS accepts a bare name and
+  # appends its own suffix. So a missing `.XXXXXX` is GREEN on every laptop in this fleet and RED
+  # on every runner, which is precisely how it shipped twice: the note at the scope-stub call above
+  # was written the FIRST time it happened, and the two production templates beside it
+  # (`alethia-merged-prs`, `alethia-debt-map`) were left bare anyway.
+  #
+  # A behavioural check cannot catch that here — this machine's mktemp is the lenient one — so the
+  # question is asked of the text instead. It must therefore match an INVOCATION and not PROSE
+  # ABOUT one: the first version of this check matched its own failure message and reported the
+  # file as broken. So a template ARGUMENT is required — `-t` followed by a space and a non-backtick
+  # — which the `\`mktemp -t\`` written in comments and echo strings does not have. Over-reporting
+  # is the safe direction here: a false hit is loud, and a miss is green on every laptop.
+  local bad
+  bad="$(grep -nE 'mktemp -t +[^ `]' scripts/coordinate.sh | grep -vE '^[0-9]+:[[:space:]]*#' | grep -v 'XXX' || true)"
+  checks=$((checks + 1))
+  if [ -z "$bad" ]; then
+    echo "ok   - tmpfile: every \`mktemp -t\` template in this file carries X's (GNU refuses fewer than three)"
+  else
+    fails=$((fails + 1))
+    echo "FAIL - tmpfile: a \`mktemp -t\` template has no X's. GNU mktemp REFUSES it ('too few X's in" >&2
+    echo "       template'); this machine's BSD mktemp does not, so this is green here and red on" >&2
+    echo "       every runner. Offending line(s):" >&2
+    printf '%s\n' "$bad" | sed 's/^/         /' >&2
+  fi
 
   [ "$checks" -eq 0 ] && { echo "self-test: the tmpfile suite asserted NOTHING — that is a failure, not a pass." >&2; exit 1; }
   [ "$fails" -eq 0 ] || { echo "self-test: $fails of $checks tmpfile check(s) FAILED" >&2; exit 1; }
