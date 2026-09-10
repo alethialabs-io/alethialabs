@@ -98,11 +98,19 @@ test.describe("Projects — the create front door (/~/new)", () => {
 		// its unlinked branch. These are PRESENCE assertions and nothing clicks them: each one calls
 		// `authClient.linkSocial`, which navigates the browser to the provider's OAuth consent screen
 		// — off-origin, unauthenticated, and the end of the run.
-		await expect(owner.page.getByText(/no git accounts linked/i)).toBeVisible();
+		//
+		// The explicit timeouts are not decoration. The heading is server-rendered and paints with
+		// the route; the branch below it does NOT — `RepositorySelector` renders a skeleton until
+		// `getLinkedProviders()` (a server action round-trip) resolves. So the default 5 s
+		// per-assertion budget starts AFTER the heading is already up, against a call that has not
+		// been made yet, and a slow leg would read as "the console stopped offering git import".
+		await expect(owner.page.getByText(/no git accounts linked/i)).toBeVisible({
+			timeout: 30_000,
+		});
 		for (const provider of ["GitHub", "GitLab", "Bitbucket"]) {
 			await expect(
 				owner.page.getByRole("button", { name: `Link ${provider}` }),
-			).toBeVisible();
+			).toBeVisible({ timeout: 30_000 });
 		}
 	});
 
