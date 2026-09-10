@@ -54,7 +54,7 @@
 --
 -- B. `pair_class = 'unscopable-kind'` — any other kind with no per-instance object: `job`,
 --    `member`, `activity`, `billing`, `alert`, `fleet`, `support_case`, or a plain typo. THIS
---    CLASS IS STILL WRITEABLE. `app/api/cli/grants/route.ts` validates `resource_type` as
+--    CLASS IS STILL WRITEABLE. `apps/console/app/api/cli/grants/route.ts` validates `resource_type` as
 --    `z.string().min(1)` and refuses only the org pair, so one of these plus an id is a WORKING
 --    SCOPED GRANT on the community PDP right now.
 --
@@ -70,8 +70,8 @@
 -- ⚠ The scopable list in the `bad` CTE below is the four keys of `PARENTS` in
 -- `apps/console/lib/authz/fga-hierarchy.ts`, which is what the running code derives its union
 -- from. It is spelled out here because this file must be runnable in a bare psql session. It is
--- NOT trusted to stay in step by hand: `tests/integration/audit-grant-scopes.test.ts` reads this
--- list out of this file and asserts it equals `INSTANCE_TYPES`.
+-- NOT trusted to stay in step by hand: `apps/console/tests/integration/audit-grant-scopes.test.ts`
+-- reads this list out of this file and asserts it equals `INSTANCE_TYPES`.
 --
 -- ## What each column answers
 --
@@ -128,7 +128,7 @@ WITH bad AS (
 	FROM grants g
 	WHERE g.resource_id IS NOT NULL
 	  -- The keys of PARENTS in apps/console/lib/authz/fga-hierarchy.ts. Pinned by
-	  -- tests/integration/audit-grant-scopes.test.ts, which reads this literal back out.
+	  -- apps/console/tests/integration/audit-grant-scopes.test.ts, which reads it back out.
 	  AND g.resource_type NOT IN ('project', 'runner', 'cloud_identity', 'connector')
 ),
 -- The permission keys a bad row actually confers. `grants` references EXACTLY one of
