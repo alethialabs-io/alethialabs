@@ -60,10 +60,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { flattenResults } from "../e2e-ratchet.mjs";
+import { parseGateLegTable } from "./check-required-checks.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const BASELINE = "apps/console/e2e/gate-baseline.json";
 const CONSOLE = "apps/console";
+const GATE_WORKFLOW = ".github/workflows/release-gate.yml";
 
 /**
  * The floor under the listing. A `--list` that silently collapses — a config that threw after
@@ -74,6 +76,30 @@ const CONSOLE = "apps/console";
  * (2026-09-10); anything under a third of that is not a tree anyone shipped.
  */
 export const MIN_LISTED_TESTS = 200;
+
+/**
+ * The floor under the LEDGER — the other operand, and the artifact this check exists to protect.
+ *
+ * The floor above was applied to the listing only, and the argument stated over it ("found-nothing is
+ * not nothing-wrong") was never asked of the ledger: `compare({"version":1,"projects":{}}, listed)`
+ * returned `baselineCount: 0, stale: []`, `main` printed "0 ledger entries against 578 listed tests
+ * … 0 stale", and it EXITED 0. Measured, on this branch, before this floor existed.
+ *
+ * That is not a hypothetical. A bad merge resolution, or an `e2e-ratchet --write` run against a
+ * results file that held one project, drops a slice from the ledger; the gate itself then reports
+ * clean too, because with no baseline for a leg `compareProject` sees only tests it does not know
+ * and the "a NEW test must pass" rule passes every one of them. Nothing observes the loss. The
+ * ratchet's own `bootstrap` failure covers the whole FILE being absent, not a project going missing
+ * from inside it.
+ *
+ * This is a FINDING rather than a refusal, and the asymmetry with MIN_LISTED_TESTS is deliberate: a
+ * collapsed LISTING makes every ledger row look stale, so the comparison it feeds is worthless and
+ * must not be run at all. A collapsed LEDGER makes nothing look like anything — the comparison is
+ * perfectly sound and simply has nothing to say. What is broken is the artifact, which is exactly
+ * what a finding is for, and reporting it alongside `legsWithoutBaseline` says far more than a throw
+ * that hides everything under it.
+ */
+export const MIN_BASELINE_ENTRIES = 200;
 
 /**
  * Slices that are ALREADY unregenerated on `dev` when this check first lands, with the reason each
@@ -261,6 +287,62 @@ export function compare(baselineDoc, listed) {
 /** A ledger row and a finding are the same thing when all three fields match. */
 const idOf = (e) => JSON.stringify([e.project, e.file, e.title]);
 
+// ── the ledger against the legs the gate actually runs ────────────────────────────────────────
+
+/**
+ * The projects `release-gate.yml`'s `const legs` table defines, DERIVED — never typed here.
+ *
+ * `parseGateLegTable` is `scripts/ci/check-required-checks.mjs`'s, imported rather than copied: it
+ * already refuses every degenerate parse (no table, two tables, an unclosed table, zero legs, a
+ * duplicated leg) with a stated reason for each, and a second parser of one table is how the copy
+ * that decays gets written. A workflow this cannot read THROWS, which is the right direction — a leg
+ * set that failed to parse must not read as "every leg is covered".
+ *
+ * @returns {string[]}
+ */
+export function gateLegs() {
+	return parseGateLegTable(fs.readFileSync(path.join(ROOT, GATE_WORKFLOW), "utf8")).legs;
+}
+
+/**
+ * Gate legs the ledger holds NO entries for.
+ *
+ * This is the sharp half of the ledger floor, and it needs no threshold at all. An absolute floor
+ * cannot see a project go missing: dropping `audit` today takes the ledger from 571 entries to 477,
+ * which clears any floor low enough to be safe. What makes a leg different from a spec FILE is that
+ * it is DECLARED — release-gate.yml names it, it burns runner-minutes on every promotion, and
+ * `Release gate (<leg>)` is a required context on `main`. A declared leg with no recorded baseline is
+ * a structural hole, not the honest lag of a spec file the gate has not recorded yet.
+ *
+ * Present-but-empty counts as missing, because `{"qa":{}}` is the cheapest way to answer a
+ * presence-only test. The expensive escape is closed by `compare`: a slice filled with invented rows
+ * names tests the listing does not hold, and every one of them comes back as a stale finding.
+ *
+ * ONE OMISSION, STATED. A slice going missing from INSIDE a covered leg is not caught here, and no
+ * absolute floor catches a small one either. It is the direction this check deliberately does not
+ * ask: a spec file is declared nowhere, so "the ledger does not name this file" is indistinguishable
+ * from an honest new spec the gate has not yet recorded, which the header calls out as rule 2's
+ * question and answerable only from a run.
+ *
+ * @param {unknown} baselineDoc parsed ledger, already validated by `compare`
+ * @param {string[]} legs
+ * @returns {{leg: string, reason: "absent" | "empty"}[]}
+ */
+export function legsWithoutBaseline(baselineDoc, legs) {
+	const out = [];
+	for (const leg of legs) {
+		const files = baselineDoc.projects?.[leg];
+		if (files === undefined || files === null) {
+			out.push({ leg, reason: "absent" });
+			continue;
+		}
+		let entries = 0;
+		for (const tests of Object.values(files)) entries += Object.keys(tests).length;
+		if (entries === 0) out.push({ leg, reason: "empty" });
+	}
+	return out;
+}
+
 /**
  * Split findings into the ones RECORDED_STALE covers and the ones it does not, and report every
  * recorded row that is no longer a finding.
@@ -336,10 +418,15 @@ function listFromPlaywright() {
 
 // ── CLI ──────────────────────────────────────────────────────────────────────────────────────
 
+// `--baseline=` is the SELF-TEST's door to the ledger half, and it is the same door `--list-json=`
+// already opens onto the tree half. Without it the ledger's floors are reachable only against the
+// repo's real file, and the finding they answer — "an emptied ledger reported clean and exited 0" —
+// could only be re-asserted by composing the pipeline by hand, which is precisely the wiring a
+// self-test must not assume. CI passes neither flag.
 const USAGE = [
 	"usage:",
 	"  node scripts/ci/check-gate-baseline-consistency.mjs",
-	"  node scripts/ci/check-gate-baseline-consistency.mjs --list-json=<playwright --list json>",
+	"  node scripts/ci/check-gate-baseline-consistency.mjs --list-json=<playwright --list json> [--baseline=<gate-baseline.json>]",
 	"  node scripts/ci/check-gate-baseline-consistency.mjs --self-test",
 ].join("\n");
 
@@ -354,7 +441,8 @@ export function main(argv) {
 		return 0;
 	}
 	const listArg = argv.find((a) => a.startsWith("--list-json="));
-	const unknown = argv.filter((a) => a !== listArg);
+	const baselineArg = argv.find((a) => a.startsWith("--baseline="));
+	const unknown = argv.filter((a) => a !== listArg && a !== baselineArg);
 	if (unknown.length) {
 		console.error(`check-gate-baseline-consistency: unrecognised argument(s): ${unknown.join(", ")}\n${USAGE}`);
 		return 2;
@@ -385,16 +473,24 @@ export function main(argv) {
 		);
 	}
 
-	const baselineDoc = JSON.parse(fs.readFileSync(path.join(ROOT, BASELINE), "utf8"));
+	const baselinePath = baselineArg ? path.resolve(baselineArg.slice("--baseline=".length)) : path.join(ROOT, BASELINE);
+	// Repo-relative when it IS in the repo — which is every real run — and absolute otherwise, so a
+	// `--baseline=` fixture in /tmp does not render as a wall of `../`.
+	const rel = path.relative(ROOT, baselinePath);
+	const where = rel.startsWith("..") ? baselinePath : rel;
+	const baselineDoc = JSON.parse(fs.readFileSync(baselinePath, "utf8"));
 	const { stale, missingProjects, baselineCount } = compare(baselineDoc, listed);
+	const legs = gateLegs();
+	const uncovered = legsWithoutBaseline(baselineDoc, legs);
 	const { unrecorded, dead, suspended } = reconcile(stale, RECORDED_STALE, missingProjects);
 
 	console.log(
 		`check-gate-baseline-consistency: ${baselineCount} ledger entries against ${listedCount} listed tests ` +
-			`in ${listed.size} projects; ${stale.length} stale (${RECORDED_STALE.length} recorded).`,
+			`in ${listed.size} projects, covering ${legs.length - uncovered.length}/${legs.length} gate legs; ` +
+			`${stale.length} stale (${RECORDED_STALE.length} recorded).`,
 	);
 
-	const errors = renderFindings({ missingProjects, unrecorded, dead, suspended });
+	const errors = renderFindings({ where, baselineCount, uncovered, missingProjects, unrecorded, dead, suspended });
 	for (const line of errors) console.error(line);
 
 	if (errors.length === 0) {
@@ -414,19 +510,44 @@ export function main(argv) {
  * bucket, which is the defect this seam already had once.
  *
  * @param {object} f
+ * @param {number} f.baselineCount how many entries the ledger holds
+ * @param {{leg: string, reason: string}[]} f.uncovered gate legs with no baseline
  * @param {{project: string, entries: number}[]} f.missingProjects
  * @param {Entry[]} f.unrecorded
  * @param {Row[]} f.dead
  * @param {Row[]} f.suspended
+ * @param {string} [f.where] the ledger's path, for the messages
  * @returns {string[]} one `::error::` line per finding; empty means clean
  */
-export function renderFindings({ missingProjects, unrecorded, dead, suspended }) {
+export function renderFindings({ baselineCount, uncovered, missingProjects, unrecorded, dead, suspended, where = BASELINE }) {
 	/** @type {string[]} */
 	const errors = [];
 	const self = path.relative(ROOT, fileURLToPath(import.meta.url));
+	// FIRST, because it explains everything under it. An emptied ledger also makes every
+	// RECORDED_STALE row look dead, and this line is what stops that reading as three findings.
+	if (baselineCount < MIN_BASELINE_ENTRIES) {
+		errors.push(
+			`::error::${where} holds ${baselineCount} entries, below the floor of ${MIN_BASELINE_ENTRIES}. The ledger, not the tree, ` +
+				"is what collapsed: with no baseline the release gate's rule 2 sees only tests it does not know and passes every one of them, so " +
+				"the gate goes green over a loss nothing else observes. This check used to report exactly that as clean. " +
+				"Restore the ledger from `origin/dev` — a lost slice is a merge resolution or an `e2e-ratchet --write` run against a partial results file, " +
+				"never something to re-baseline over.",
+		);
+	}
+	for (const { leg, reason } of uncovered) {
+		errors.push(
+			`::error::${where} holds ${reason === "absent" ? "no slice at all" : "an EMPTY slice"} for gate leg "${leg}", which ` +
+				`${GATE_WORKFLOW} defines and every promotion runs. The leg burns its runner-minutes measuring against nothing: with no ` +
+				"recorded baseline, the ratchet's rule 2 passes every test under it and `Release gate (" +
+				leg +
+				")` cannot go red on a regression it was required on `main` to catch. " +
+				"A floor on the total entry count cannot see this — dropping a mid-sized leg leaves the ledger well above any safe floor — " +
+				"which is why the leg set is derived from the workflow rather than counted.",
+		);
+	}
 	for (const { project, entries } of missingProjects) {
 		errors.push(
-			`::error::${BASELINE} records ${entries} entries under project "${project}", which apps/console/playwright.config.ts ` +
+			`::error::${where} records ${entries} entries under project "${project}", which apps/console/playwright.config.ts ` +
 				"no longer defines. Every one of them is unreachable — rename the slice, or delete it.",
 		);
 		// The rows under it, named HERE and not as a finding of their own. See `reconcile`.
@@ -451,7 +572,7 @@ export function renderFindings({ missingProjects, unrecorded, dead, suspended })
 	for (const [k, titles] of bySlice) {
 		const [project, file] = JSON.parse(k);
 		errors.push(
-			`::error::${BASELINE} names ${titles.length} test(s) that ${file} no longer contains under project "${project}" — ` +
+			`::error::${where} names ${titles.length} test(s) that ${file} no longer contains under project "${project}" — ` +
 				"a renamed or deleted test. The gate's `Release gate (" +
 				project +
 				")` leg fails on this (ratchet rule 4), and it fails on the NEXT PR, not on the one that caused it. " +
@@ -639,7 +760,7 @@ function selfTest() {
 	ok(
 		"...and nothing rendered about it tells the reader to delete the row",
 		(() => {
-			const lines = renderFindings({ missingProjects: vc.missingProjects, unrecorded: vr.unrecorded, dead: vr.dead, suspended: vr.suspended });
+			const lines = renderFindings({ baselineCount: MIN_BASELINE_ENTRIES, uncovered: [], missingProjects: vc.missingProjects, unrecorded: vr.unrecorded, dead: vr.dead, suspended: vr.suspended });
 			return (
 				lines.length === 2 &&
 				/no longer defines/.test(lines[0]) &&
@@ -654,7 +775,7 @@ function selfTest() {
 		"control: a row whose project is still listed and whose subject came back IS dead, and the render does say to delete it",
 		(() => {
 			const r = reconcile([], [row], []);
-			const lines = renderFindings({ missingProjects: [], unrecorded: [], dead: r.dead, suspended: r.suspended });
+			const lines = renderFindings({ baselineCount: MIN_BASELINE_ENTRIES, uncovered: [], missingProjects: [], unrecorded: [], dead: r.dead, suspended: r.suspended });
 			return r.dead.length === 1 && lines.length === 1 && /Delete the row/.test(lines[0]);
 		})(),
 	);
@@ -746,13 +867,129 @@ function selfTest() {
 	// Against the REAL ledger, not a literal. A floor typed above the ledger's own size would
 	// refuse every honest tree, and `571` written here as a number goes stale the first time a
 	// lane regenerates a slice — the assertion would then be about a fact nobody re-measured.
+	const realLedger = JSON.parse(fs.readFileSync(path.join(ROOT, BASELINE), "utf8"));
+	const countEntries = (doc) => {
+		let n = 0;
+		for (const files of Object.values(doc.projects)) for (const tests of Object.values(files)) n += Object.keys(tests).length;
+		return n;
+	};
+	ok("the listing floor sits under the ledger it is compared against", MIN_LISTED_TESTS > 0 && MIN_LISTED_TESTS < countEntries(realLedger), `MIN_LISTED_TESTS ${MIN_LISTED_TESTS} vs ${countEntries(realLedger)} ledger entries`);
+	ok("the LEDGER floor sits under the ledger it protects", MIN_BASELINE_ENTRIES > 0 && MIN_BASELINE_ENTRIES < countEntries(realLedger), `MIN_BASELINE_ENTRIES ${MIN_BASELINE_ENTRIES} vs ${countEntries(realLedger)} ledger entries`);
+
+	// ── the legs the gate runs, DERIVED, against the ledger that is supposed to cover them ─────
+	const realLegs = gateLegs();
+	ok("the leg table parses to a non-empty set of legs", realLegs.length > 0, JSON.stringify(realLegs));
+	ok("control: the real ledger covers every real gate leg", legsWithoutBaseline(realLedger, realLegs).length === 0, JSON.stringify(legsWithoutBaseline(realLedger, realLegs)));
 	ok(
-		"the floor sits under the ledger it is meant to protect",
+		"a leg whose slice is GONE is reported by name — the case no total-count floor can see",
 		(() => {
-			const doc = JSON.parse(fs.readFileSync(path.join(ROOT, BASELINE), "utf8"));
-			let entries = 0;
-			for (const files of Object.values(doc.projects)) for (const tests of Object.values(files)) entries += Object.keys(tests).length;
-			return MIN_LISTED_TESTS > 0 && MIN_LISTED_TESTS < entries;
+			const doc = structuredClone(realLedger);
+			delete doc.projects.audit;
+			const missing = legsWithoutBaseline(doc, realLegs);
+			// The second half is the point of the check existing at all: 571 − 94 = 477 entries,
+			// comfortably above MIN_BASELINE_ENTRIES, so the floor alone would call this clean.
+			return missing.length === 1 && missing[0].leg === "audit" && missing[0].reason === "absent" && countEntries(doc) > MIN_BASELINE_ENTRIES;
+		})(),
+	);
+	ok(
+		"a leg present but EMPTY is reported too — `{}` is the cheapest answer to a presence-only test",
+		(() => {
+			const doc = structuredClone(realLedger);
+			doc.projects.audit = {};
+			const missing = legsWithoutBaseline(doc, realLegs);
+			return missing.length === 1 && missing[0].leg === "audit" && missing[0].reason === "empty";
+		})(),
+	);
+	ok(
+		"a ledger project that is NOT a gate leg is not this check's business",
+		(() => {
+			const doc = structuredClone(realLedger);
+			doc.projects["elench-live"] = { "elench-live.spec.ts": { one: "passed" } };
+			return legsWithoutBaseline(doc, realLegs).length === 0 && !realLegs.includes("elench-live");
+		})(),
+	);
+
+	// ── the ledger's floors, END TO END through `main` ─────────────────────────────────────────
+	// `--baseline=` is the door; `--list-json=` is the one already there. The listing below is
+	// synthetic and deliberately oversized — it exists only to clear MIN_LISTED_TESTS so `main`
+	// reaches the ledger at all, and it proves nothing about Playwright's real report shape, which
+	// is pinned separately against `flattenResults` above. What IS under test here is the WIRING:
+	// asserting these by composing compare/legsWithoutBaseline/renderFindings by hand would pass
+	// even if `main` never called them, which is exactly the defect being fixed.
+	const wideTitles = Array.from({ length: MIN_LISTED_TESTS + 1 }, (_, i) => `a synthetic test ${i}`);
+	const wideListing = { suites: [{ title: "wide.spec.ts", file: "wide.spec.ts", specs: wideTitles.map((t) => spec(t, realLegs)) }] };
+	const wideLedger = { version: 1, projects: {} };
+	for (const l of realLegs) wideLedger.projects[l] = { "wide.spec.ts": Object.fromEntries(wideTitles.map((t) => [t, "passed"])) };
+	// The recorded rows have to be IN the clean fixture, or they read as dead and the control is red
+	// for a reason that has nothing to do with the floors.
+	for (const r of RECORDED_STALE) {
+		wideLedger.projects[r.project] ??= {};
+		wideLedger.projects[r.project][r.file] ??= {};
+		wideLedger.projects[r.project][r.file][r.title] = "passed";
+	}
+	const tmpJson = (name, doc) => {
+		const p = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "gbc-selftest-")), name);
+		fs.writeFileSync(p, JSON.stringify(doc));
+		return p;
+	};
+	const wideListingArg = `--list-json=${tmpJson("list.json", wideListing)}`;
+	const asBaseline = (doc) => `--baseline=${tmpJson("gate-baseline.json", doc)}`;
+	ok("control: a ledger covering every leg, matching the listing, exits 0", main([wideListingArg, asBaseline(wideLedger)]) === 0);
+	ok("an EMPTIED ledger EXITS 1 — it used to print `0 ledger entries … 0 stale` and exit 0", main([wideListingArg, asBaseline({ version: 1, projects: {} })]) === 1);
+	ok(
+		"a ledger that lost ONE leg's slice exits 1, even though it stays far above the entry floor",
+		(() => {
+			const doc = structuredClone(wideLedger);
+			delete doc.projects[realLegs[0]];
+			return countEntries(doc) > MIN_BASELINE_ENTRIES && main([wideListingArg, asBaseline(doc)]) === 1;
+		})(),
+	);
+	// THE FLOOR, ISOLATED. The emptied-ledger case above exits 1 for eight reasons at once, so it
+	// cannot tell whether the FLOOR contributed anything: disabling the floor's render left that
+	// assertion green (measured). Seven legs need only seven entries between them to be "covered",
+	// so a ledger can clear the leg check and still be a collapse — which is the case only the floor
+	// sees, exactly as a dropped mid-sized leg is the case only the leg check sees.
+	ok(
+		"a ledger that covers every leg and is still a collapse is caught by the FLOOR alone",
+		(() => {
+			const doc = { version: 1, projects: {} };
+			for (const l of realLegs) doc.projects[l] = { "wide.spec.ts": { [wideTitles[0]]: "passed" } };
+			for (const r of RECORDED_STALE) {
+				doc.projects[r.project] ??= {};
+				doc.projects[r.project][r.file] ??= {};
+				doc.projects[r.project][r.file][r.title] = "passed";
+			}
+			const lines = renderFindings({
+				baselineCount: countEntries(doc),
+				uncovered: legsWithoutBaseline(doc, realLegs),
+				missingProjects: [],
+				unrecorded: [],
+				dead: [],
+				suspended: [],
+			});
+			return (
+				countEntries(doc) < MIN_BASELINE_ENTRIES &&
+				legsWithoutBaseline(doc, realLegs).length === 0 &&
+				lines.length === 1 &&
+				/below the floor of/.test(lines[0]) &&
+				main([wideListingArg, asBaseline(doc)]) === 1
+			);
+		})(),
+	);
+	ok(
+		"...and the leg it lost is what the render names",
+		(() => {
+			const doc = structuredClone(wideLedger);
+			delete doc.projects[realLegs[0]];
+			const lines = renderFindings({
+				baselineCount: countEntries(doc),
+				uncovered: legsWithoutBaseline(doc, realLegs),
+				missingProjects: [],
+				unrecorded: [],
+				dead: [],
+				suspended: [],
+			});
+			return lines.length === 1 && lines[0].includes(`gate leg "${realLegs[0]}"`) && !/below the floor/.test(lines[0]);
 		})(),
 	);
 	ok(
