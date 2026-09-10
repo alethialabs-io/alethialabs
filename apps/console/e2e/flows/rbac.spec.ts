@@ -28,7 +28,6 @@
 import { test, expect } from "../fixtures/qa";
 import { scanA11y } from "../helpers/a11y";
 
-const membersUrl = (slug: string) => `/${slug}/~/settings/members`;
 const teamsUrl = (slug: string) => `/${slug}/~/settings/teams`;
 const rolesUrl = (slug: string) => `/${slug}/~/settings/roles`;
 const accessUrl = (slug: string) => `/${slug}/~/settings/access`;
