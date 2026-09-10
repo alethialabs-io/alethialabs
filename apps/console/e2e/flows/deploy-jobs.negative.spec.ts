@@ -57,7 +57,17 @@ test.describe("Deploy jobs — negative & empty states", () => {
 			owner.page.getByRole("heading", { name: "Job not found." }),
 		).toBeVisible({ timeout: 25_000 });
 		// An empty state with nowhere to go from it is the defect the shared component replaced.
-		await expect(owner.page.getByRole("link", { name: "Back to jobs" })).toBeVisible();
+		//
+		// ROLE `button`, ON AN `<a href>`, AND THAT IS NOT A TYPO. The action is
+		// `<Button nativeButton={false} render={<Link …/>}>`; `@repo/ui/button` is base-ui, whose
+		// `useButton` adds `role: 'button'` to any non-native element it renders through
+		// (`use-button/useButton.js`). So the anchor is announced as a button and `getByRole("link")`
+		// finds nothing — which is what this assertion did on its first run. The href is asserted
+		// alongside it, because the role no longer says where the control goes and this test's whole
+		// claim is that there IS a way back.
+		const back = owner.page.getByRole("button", { name: "Back to jobs" });
+		await expect(back).toBeVisible();
+		await expect(back).toHaveAttribute("href", `/${owner.orgSlug}/~/jobs`);
 	});
 
 	test("an undeployed project shows the clusters empty state", async ({ owner }) => {
@@ -112,9 +122,21 @@ test.describe("Deploy jobs — negative & empty states", () => {
 		await expect(sheet).toBeVisible({ timeout: 15_000 });
 		// The min-count input is hidden until require-approval is on.
 		await expect(sheet.getByText("Approvals required")).toHaveCount(0);
-		// Each gate is a `<label>` wrapping its text and its Switch, so the switch takes its
-		// accessible name from the gate — no structural xpath needed to reach it.
-		await sheet.getByRole("switch", { name: /Require approval/ }).click();
+		// TESTID GAP (AUTHORING.md rule 1) — RECORDED, not worked around silently. The three gates
+		// have NO accessible name between them: `ToggleRow` wraps its text and its `Switch` in a
+		// bare `<label>`, and `@repo/ui/switch` is base-ui, which renders a `<span role="switch">`.
+		// A `<span>` is not a labelable element, so the implicit label association never happens and
+		// the switch is announced as an unnamed switch — three of them, identical, in one drawer.
+		// `getByRole("switch", { name: /Require approval/ })` therefore matches nothing and hangs
+		// until the test timeout, which is what it did on this file's first run.
+		//
+		// Reached through its own `<label>` instead. That is a statement about the DOM, so it is
+		// scoped as narrowly as the gap allows — the label is what carries the gate's identity, and
+		// this locator breaks loudly if `ToggleRow` stops being one. The gap belongs to whoever owns
+		// `components/environments/`, not to this lane; fixing it here would mean editing a surface
+		// outside this unit's scope.
+		const approvalGate = sheet.locator("label").filter({ hasText: "Require approval" });
+		await approvalGate.getByRole("switch").click();
 		await expect(sheet.getByText("Approvals required")).toBeVisible();
 	});
 

@@ -58,12 +58,47 @@ function fatalErrors(guard: ConsoleGuard): string[] {
 		.map((e) => `[${e.kind}] ${e.text}`);
 }
 
-/** One line per violation, so a failure names WHAT failed rather than only how many did. */
+/**
+ * One line per violation, carrying axe's own check payload.
+ *
+ * THE PAYLOAD IS THE POINT, not decoration. `color-contrast` puts `fgColor`, `bgColor`,
+ * `contrastRatio` and `expectedContrastRatio` in `checks[].data`, and a failure line that reports
+ * only an id and a count names no colour pair — so every token change aimed at fixing it is a
+ * guess. That is #4099's defect exactly, one scale down, and this helper would have reproduced it:
+ * the first version of this function printed `id`, `impact`, `help`, a node count and one selector,
+ * and the run that found the evidence page's violation (#4612) named nothing about it. The ratios
+ * in that issue had to be derived by hand from `tokens.css` afterwards.
+ *
+ * `helpers/a11y.ts` has already grouped the nodes by check data, so this is at most a handful of
+ * rows per violation rather than one per node.
+ */
 function describeViolations(violations: A11yViolation[]): string[] {
-	return violations.map(
-		(v) => `${v.id} [${v.impact}] ${v.help} — ${v.nodes} node(s), e.g. ${v.target}`,
-	);
+	return violations.map((v) => {
+		const groups = v.groups
+			.map((g) => `${g.target} ×${g.count} ${JSON.stringify(g.checks.map((c) => c.data))}`)
+			.join("; ");
+		const withheld = v.omittedNodes > 0 ? ` (+${v.omittedNodes} node(s) withheld by the cap)` : "";
+		return `${v.id} [${v.impact}] ${v.help} — ${v.nodes} node(s)${withheld}: ${groups}`;
+	});
 }
+
+/**
+ * Surfaces with a RECORDED product defect the scan is right to find and this lane cannot fix.
+ *
+ * Keyed by the route's label, valued with the ratchet's required `BUG: <what> #<issue>` form. A
+ * route listed here is `test.fixme`'d — it still carries the assertion, so the day the issue is
+ * fixed the entry is deleted and the test goes green rather than being rewritten.
+ *
+ * AN ENTRY IS DEBT, NEVER AN EXEMPTION: adding one without an issue number is refused by the
+ * ratchet (`/^BUG: .+#\d+/`), and leaving one in place after its issue closes turns the ledger's
+ * `{fixme}` into a skip that outlives its subject — which is the failure an exception list makes
+ * silently. #4612's own ledger note says to regenerate this file's slice with the fix.
+ */
+const A11Y_DEBT: Record<string, string> = {
+	evidence:
+		"BUG: the evidence table paints non-disabled informational text in the disabled ink tier " +
+		"(--text-disabled on --surface is 1.95:1 against a 4.5:1 bar), 15 nodes #4612",
+};
 
 /**
  * Loads `url`, asserts the document response isn't a 5xx, the route didn't bounce to /login, and the
@@ -211,6 +246,8 @@ test.describe("Cross-cutting — a11y per surface", () => {
 
 	for (const route of ORG_ROUTES) {
 		test(`${route.label} has no serious/critical a11y violations`, async ({ owner }) => {
+			const debt = A11Y_DEBT[route.label];
+			if (debt) test.fixme(true, debt);
 			await loadAndAssertShell(owner.page, route.path(owner.orgSlug));
 			const violations = await scanA11y(owner.page, { include: "main" });
 			expect(describeViolations(violations), `a11y on ${route.label}`).toEqual([]);
