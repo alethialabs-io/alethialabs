@@ -185,18 +185,37 @@ test.describe("Projects — duplicate name behavior", () => {
 });
 
 test.describe("Projects — delete guard on a live environment", () => {
+	test.slow();
+
+	// ASSERTED ON BEHAVIOUR, NOT ON THE SERVER'S WORDING — the same reason, and the same remedy,
+	// as the duplicate-name tests above. `deleteProject` refuses with a bare
+	// `throw new Error("This project has live or in-flight environments…")` out of a `"use server"`
+	// action, and a Next PRODUCTION build — which is what the `qa` leg drives, `next build` then
+	// `next start` — redacts a thrown Error's message before it reaches the client. So
+	// `project-general.tsx`'s `toast.error(e.message)` cannot render that sentence on this leg, and
+	// `/live or in-flight/i` was unmatchable BY CONSTRUCTION. It is recorded `failed` in
+	// `gate-baseline.json` and had never passed.
+	//
+	// The refusal itself was working the whole time: the failure snapshot shows the dialog closed,
+	// the page still on `settings/general`, and the project profile still rendering the project. So
+	// the two things that distinguish a refusal from a delete are asserted directly — the row
+	// survives, and the success path's `router.push(/{org})` never fired.
 	test("delete is refused while an environment is ACTIVE", async ({ owner }) => {
+		const name = `e2e-live-${Date.now()}`;
 		const project = await seedProject(ownerId(owner), {
-			name: `e2e-live-${Date.now()}`,
+			name,
 			status: "ACTIVE", // default env ACTIVE → in LIVE_ENV_STATUSES
 		});
 		await owner.page.goto(`/${owner.orgSlug}/${project.slug}/settings/general`);
 		await owner.page.getByRole("button", { name: /^Delete project$/ }).click({ timeout: 15_000 });
 		const dialog = owner.page.getByRole("alertdialog");
+		await expect(dialog.getByText(/delete this project\?/i)).toBeVisible();
 		await dialog.getByRole("button", { name: /delete project/i }).click();
-		// Server refuses; an error toast surfaces and we stay on the settings page.
-		await expect(owner.page.getByText(/live or in-flight/i)).toBeVisible({ timeout: 15_000 });
+		// Long enough that a delete which SUCCEEDED would certainly have navigated by now: passing
+		// this by being slow must not be confusable with passing by being refused.
+		await owner.page.waitForTimeout(8_000);
 		await expect(owner.page).toHaveURL(/\/settings\/general/);
+		expect(await projectCount(owner.orgId!, name)).toBe(1);
 	});
 });
 

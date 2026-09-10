@@ -262,6 +262,10 @@ test.describe("Projects — the template path", () => {
 });
 
 test.describe("Projects — org overview grid", () => {
+	// The Create-menu test navigates INTO `~/new` and waits for it to paint — a route first-compile
+	// on top of the overview's own, inside one test budget.
+	test.slow();
+
 	test("empty-filter search on a seeded project narrows the grid", async ({ owner }) => {
 		const project = await seedProject(ownerId(owner), {
 			name: `e2e-grid-${Date.now()}`,
@@ -287,9 +291,13 @@ test.describe("Projects — org overview grid", () => {
 			.click({ timeout: 15_000 });
 		await owner.page.getByRole("menuitem", { name: "Project", exact: true }).click();
 		await owner.page.waitForURL(/\/~\/new(\?|$)/, { timeout: 20_000 });
+		// The URL is not the arrival — a client-side push lands there before `~/new` has compiled,
+		// and this budget is the whole first hit of a route under three parallel workers. At 20 s it
+		// flaked once and passed on the retry, which is a cost the ratchet forgives and a reader
+		// does not: an intermittent red here reads as "the Create menu stopped working".
 		await expect(
 			owner.page.getByRole("heading", { name: /provision the future/i }),
-		).toBeVisible({ timeout: 20_000 });
+		).toBeVisible({ timeout: 60_000 });
 	});
 });
 
