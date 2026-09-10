@@ -147,8 +147,9 @@ func planJobToApply(c jobLister, projectID, id string, latest bool) (jobRef, err
 		return jobRef{ID: id}, nil
 	}
 	if projectID == "" {
-		// Without a project the narrowing below matches by an EMPTY id prefix, which is every
-		// job in the org — so `--latest-plan` would resolve another project's plan and the
+		// Without a project the narrowing below drops the project field entirely — `set()` keeps
+		// only non-empty fields, so `--type PLAN` is the only filter left and the match is every
+		// PLAN job in the org. `--latest-plan` would then resolve another project's plan and the
 		// deploy would fail on a hash mismatch a long way from the cause.
 		return jobRef{}, fmt.Errorf("--latest-plan needs a project: pass --project (by name or id)")
 	}
