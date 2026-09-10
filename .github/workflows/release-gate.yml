@@ -388,8 +388,8 @@ jobs:
       # ⚠ EVERY TEST BELOW IS `contains(matrix.capabilities, …)`, NEVER `== '…'`. `capabilities` is
       # a comma-separated SET, and `==` asks whether the set has exactly one member with that name:
       # the moment a leg promises two things (`stripe,encryption`, #4456) every `== 'stripe'` goes
-      # false and hands the leg an EMPTY Stripe key, an empty webhook secret, three empty price ids
-      # and an empty publishable key — six of them, one per line below. Count them against the
+      # false and hands the leg an EMPTY Stripe key, an empty webhook secret, four empty price ids
+      # and an empty publishable key — seven of them, one per line below. Count them against the
       # sentence: an off-by-one here reads as "the list is complete" and is how one stays behind.
       # `--assert-env` catches that as a named failure — but the shape it would otherwise
       # produce, billing assertions running green against an unconfigured console, is the exact
@@ -422,6 +422,20 @@ jobs:
       STRIPE_SECRET_KEY: ${{ contains(matrix.capabilities, 'stripe') && secrets.STRIPE_TEST_SECRET_KEY || '' }}
       STRIPE_WEBHOOK_SECRET: ${{ contains(matrix.capabilities, 'stripe') && secrets.STRIPE_TEST_WEBHOOK_SECRET || '' }}
       STRIPE_PRICE_TEAM: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PRICE_TEAM || '' }}
+      # The runner-minutes METER price (#4276). `lib/billing/config.ts` reads it as
+      # `meterPrices.team`; without it the metered half of a Pro subscription is unset, so any
+      # usage or overage surface a spec drives measures a console that has no meter — a green
+      # assertion about a product that is not configured.
+      #
+      # IT IS NOT A DISPLAY SETTING, which is what an earlier revision of this comment claimed
+      # while deliberately keeping it out of `REQUIRED_ENV.stripe` (#4631). `planCreateItems`
+      # (app/server/actions/billing.ts) reads it on the CREATION path and pushes the meter as a
+      # SECOND subscription item, so setting it changes what every Stripe leg's subscription is
+      # made of — starting with the one `global-setup` builds through `startProTrial`, before a
+      # single test runs. So it is REQUIRED for the `stripe` promise, and `--assert-env` names it
+      # at the top of the job: a leg that promises `stripe` with this half unset builds a
+      # one-item subscription and measures a persona this suite does not describe.
+      STRIPE_PRICE_METER_TEAM: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PRICE_METER_TEAM || '' }}
       STRIPE_PRICE_AI_PLUS: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PRICE_AI_PLUS || '' }}
       STRIPE_PRICE_AI_MAX: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PRICE_AI_MAX || '' }}
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PUBLISHABLE_KEY || '' }}
