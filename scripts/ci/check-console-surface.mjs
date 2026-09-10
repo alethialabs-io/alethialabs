@@ -53,6 +53,35 @@ const ROOT = "apps/console";
 const SCOPED = /^@(repo|alethia)\//;
 
 /**
+ * One workspace glob as an anchored RegExp: `*` matches within a path segment, `**` across them.
+ *
+ * The first version of the exclusion matcher compared for an exact directory or a literal `/*`
+ * suffix, so `!packages/legacy` and `!packages/l*` gave OPPOSITE verdicts on the same directory —
+ * and the wrong one was the silent direction, a valid exclusion simply not applied. Neither shape is
+ * in this tree, which is exactly why it needed fixing before one arrives rather than after.
+ *
+ * @param {string} glob
+ * @returns {RegExp}
+ */
+export function globToRegExp(glob) {
+	let out = "";
+	for (let i = 0; i < glob.length; i++) {
+		const c = glob[i];
+		if (c === "*") {
+			if (glob[i + 1] === "*") {
+				out += ".*";
+				i += 1;
+				continue;
+			}
+			out += "[^/]*";
+			continue;
+		}
+		out += c.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+	}
+	return new RegExp(`^${out}$`);
+}
+
+/**
  * Every workspace package as `name -> dir`, read out of `pnpm-workspace.yaml`'s `packages:` list.
  *
  * ONLY THAT LIST, AND `!` ENTRIES ARE EXCLUSIONS. A reader that takes every `- item` line in the
@@ -85,10 +114,17 @@ export function workspacePackages(io) {
 		const m = /^\s*-\s*(.+?)\s*$/.exec(line);
 		if (m !== null) globs.push(m[1].replace(/^(['"])(.*)\1$/, "$2"));
 	}
-	const excluded = globs.filter((g) => g.startsWith("!")).map((g) => g.slice(1));
+	const excluded = globs.filter((g) => g.startsWith("!")).map((g) => globToRegExp(g.slice(1)));
 	const byName = new Map();
 	for (const glob of globs.filter((g) => !g.startsWith("!"))) {
 		let dirs = [glob];
+		if (!glob.endsWith("/*") && glob.includes("*")) {
+			// The include side expands exactly one shape, `<dir>/*`, because that is what this
+			// workspace uses. Any other wildcard would be treated as a literal directory name and
+			// quietly match nothing, so it is named instead. It cannot hide a package the console
+			// needs: a dependency that stops resolving is a `derivation` failure below.
+			warnings.push(`pnpm-workspace.yaml globs \`${glob}\`, a shape this reader does not expand — packages under it are not in the map`);
+		}
 		if (glob.endsWith("/*")) {
 			const base = glob.slice(0, -2);
 			// A glob that matches nothing is ORDINARY — pnpm allows one, and a `tools/*` added before
@@ -102,7 +138,7 @@ export function workspacePackages(io) {
 			}
 		}
 		for (const d of dirs) {
-			if (excluded.some((e) => d === e || (e.endsWith("/*") && d.startsWith(e.slice(0, -1))))) continue;
+			if (excluded.some((re) => re.test(d))) continue;
 			let pkg = null;
 			try {
 				pkg = JSON.parse(io.readFile(`${d}/package.json`));
@@ -137,26 +173,30 @@ export function workspacePackages(io) {
  * console dependency.
  *
  * @param {{readFile: (p: string) => string, readdir: (p: string) => string[]}} io
- * @returns {{dirs: string[], failures: string[], warnings: string[]}}
+ * @returns {{dirs: string[], failures: {kind: "derivation"|"ledger", message: string}[], warnings: string[]}}
  */
 export function surfaceReport(io = { readFile: (p) => fs.readFileSync(p, "utf8"), readdir: (p) => fs.readdirSync(p) }) {
+	// FAILURES CARRY THEIR KIND, because `--json` has to tell two of them apart and the first version
+	// did it with `/NOT_COMPILED_IN/.test(message)`. Rewording a sentence would have turned a
+	// bookkeeping entry into a DERIVATION failure, which reds the `legs` job on every unlabelled dev
+	// PR — the exact outage this whole change exists to remove, reachable by editing prose.
 	const failures = [];
-	const fail = (m) => failures.push(m);
+	const fail = (kind, message) => failures.push({ kind, message });
 	let byName;
 	let warnings = [];
 	try {
 		({ byName, warnings } = workspacePackages(io));
 	} catch {
-		return { dirs: [], warnings, failures: ["could not read `pnpm-workspace.yaml`. A surface that could not be derived is not an empty surface."] };
+		return { dirs: [], warnings, failures: [{ kind: "derivation", message: "could not read `pnpm-workspace.yaml`. A surface that could not be derived is not an empty surface." }] };
 	}
 	if (byName.size === 0) {
-		return { dirs: [], warnings, failures: ["`pnpm-workspace.yaml` resolved to NO workspace packages at all — the reader has stopped reading, and an empty map must not read as an empty workspace."] };
+		return { dirs: [], warnings, failures: [{ kind: "derivation", message: "`pnpm-workspace.yaml` resolved to NO workspace packages at all — the reader has stopped reading, and an empty map must not read as an empty workspace." }] };
 	}
 	let rootPkg = null;
 	try {
 		rootPkg = JSON.parse(io.readFile(`${ROOT}/package.json`));
 	} catch {
-		return { dirs: [], warnings, failures: [`could not read \`${ROOT}/package.json\`, so the console's dependency graph cannot be walked.`] };
+		return { dirs: [], warnings, failures: [{ kind: "derivation", message: `could not read \`${ROOT}/package.json\`, so the console's dependency graph cannot be walked.` }] };
 	}
 
 	const dirs = new Set([ROOT]);
@@ -171,7 +211,7 @@ export function surfaceReport(io = { readFile: (p) => fs.readFileSync(p, "utf8")
 				if (!String(spec).startsWith("workspace:")) continue;
 				const dir = byName.get(name);
 				if (dir === undefined) {
-					fail(`\`${from}/package.json\` declares the workspace dependency \`${name}\`, which resolved to NO directory in this tree.`);
+					fail("derivation", `\`${from}/package.json\` declares the workspace dependency \`${name}\`, which resolved to NO directory in this tree.`);
 					continue;
 				}
 				if (dirs.has(dir)) continue;
@@ -180,7 +220,7 @@ export function surfaceReport(io = { readFile: (p) => fs.readFileSync(p, "utf8")
 				try {
 					next = JSON.parse(io.readFile(`${dir}/package.json`));
 				} catch {
-					fail(`\`${dir}/package.json\` is missing or unparseable, so whatever IT pulls into the console is invisible here.`);
+					fail("derivation", `\`${dir}/package.json\` is missing or unparseable, so whatever IT pulls into the console is invisible here.`);
 					continue;
 				}
 				queue.push([dir, next]);
@@ -192,10 +232,11 @@ export function surfaceReport(io = { readFile: (p) => fs.readFileSync(p, "utf8")
 		if (!SCOPED.test(name)) continue;
 		const recorded = Object.hasOwn(NOT_COMPILED_IN, name);
 		if (dirs.has(dir) && recorded) {
-			fail(`\`${name}\` (\`${dir}\`) IS compiled into the console and is ALSO recorded in \`NOT_COMPILED_IN\` — one of the two is stale, and a record that outlives its subject suppresses a real finding forever. Delete the record.`);
+			fail("ledger", `\`${name}\` (\`${dir}\`) IS compiled into the console and is ALSO recorded in \`NOT_COMPILED_IN\` — one of the two is stale, and a record that outlives its subject suppresses a real finding forever. Delete the record.`);
 		}
 		if (!dirs.has(dir) && !recorded) {
 			fail(
+				"ledger",
 				`\`${name}\` (\`${dir}\`) is a workspace package this tree carries that is neither compiled into the console nor recorded in \`NOT_COMPILED_IN\`. ` +
 					"If the console never used it, add it there with the reason. If the console STOPPED using it, that is the bug this asks about: " +
 					"the release gate derives what it measures from this same graph, so a dependency dropped by accident silently shrinks what a leg is asked to cover.",
@@ -256,7 +297,7 @@ function selfTest() {
 	const inline = surfaceReport(fixture({ ...base, ws: WS.replace('- "ee"', '- "ee" # optional') }));
 	ok("an inline comment after an entry is read, not dropped", inline.dirs.includes("ee"), JSON.stringify(inline.dirs));
 	const renamed = surfaceReport(fixture({ ...base, pkgs: { ...base.pkgs, "packages/ui": { name: "@repo/ui-renamed" } } }));
-	ok("a renamed package REFUSES rather than shrinking the surface", renamed.failures.some((f) => /`@repo\/ui`, which resolved to NO directory/.test(f)), JSON.stringify(renamed.failures));
+	ok("a renamed package REFUSES rather than shrinking the surface", renamed.failures.some((f) => /`@repo\/ui`, which resolved to NO directory/.test(f.message)), JSON.stringify(renamed.failures));
 	const noWs = surfaceReport({ readFile: () => { throw new Error("nope"); }, readdir: () => { throw new Error("nope"); } });
 	ok("an unreadable workspace file REFUSES", noWs.failures.length === 1 && noWs.dirs.length === 0);
 
@@ -269,16 +310,39 @@ function selfTest() {
 	ok("a glob matching nothing warns, and does not fail", empty.failures.length === 0 && empty.warnings.length === 1, JSON.stringify(empty));
 	// ...but excluding something the console DEPENDS on is still a refusal, not a quiet shrink.
 	const exclReal = surfaceReport(fixture({ ...base, ws: `${WS}  - "!packages/ui"\n` }));
-	ok("excluding a package the console depends on REFUSES", exclReal.failures.some((f) => /`@repo\/ui`, which resolved to NO directory/.test(f)), JSON.stringify(exclReal.failures));
+	ok("excluding a package the console depends on REFUSES", exclReal.failures.some((f) => /`@repo\/ui`, which resolved to NO directory/.test(f.message)), JSON.stringify(exclReal.failures));
 
 	// ── the ledger, both directions ──
 	const dropped = surfaceReport(fixture({ ...base, pkgs: { ...base.pkgs, "apps/console": { name: "console", dependencies: { "@repo/ui": "workspace:*" } } } }));
-	ok("a dependency quietly REMOVED is caught by the ledger", dropped.failures.some((f) => /`@alethia\/ee`.*neither compiled into the console nor recorded/.test(f)), JSON.stringify(dropped.failures));
+	ok("a dependency quietly REMOVED is caught by the ledger", dropped.failures.some((f) => /`@alethia\/ee`.*neither compiled into the console nor recorded/.test(f.message)), JSON.stringify(dropped.failures));
 	const moved = surfaceReport(fixture({
 		...base,
 		pkgs: { ...base.pkgs, "packages/ui": { name: "@repo/ui", devDependencies: { "@repo/brand": "workspace:*" } } },
 	}));
-	ok("...and so is one moved into devDependencies", moved.failures.some((f) => /`@repo\/brand`.*neither compiled into the console nor recorded/.test(f)), JSON.stringify(moved.failures));
+	ok("...and so is one moved into devDependencies", moved.failures.some((f) => /`@repo\/brand`.*neither compiled into the console nor recorded/.test(f.message)), JSON.stringify(moved.failures));
+
+	// ── the KIND is structural, not a substring of the prose ──
+	// `--json` tells derivation from ledger by this field. It used to test the MESSAGE for
+	// "NOT_COMPILED_IN", so rewording a sentence would have turned a bookkeeping entry into a
+	// derivation failure and reddened the release gate's `legs` job on every unlabelled dev PR —
+	// the outage that whole change exists to remove, reachable by editing prose.
+	ok("a ledger failure is kind:ledger, and nothing else is", dropped.failures.length > 0 && dropped.failures.every((f) => f.kind === "ledger"));
+	ok("a broken walk is kind:derivation", renamed.failures.some((f) => f.kind === "derivation" && /resolved to NO directory/.test(f.message)));
+	ok("...so `--json` refuses the second and not the first",
+		dropped.failures.filter((f) => f.kind === "derivation").length === 0 && renamed.failures.filter((f) => f.kind === "derivation").length === 1);
+	ok("every failure carries one of the two kinds", [...dropped.failures, ...renamed.failures, ...moved.failures].every((f) => f.kind === "ledger" || f.kind === "derivation"));
+
+	// ── exclusion globs: the two shapes that used to disagree about the same directory ──
+	const excludes = (entry) => surfaceReport(fixture({ ...base, ws: `${WS}  - "${entry}"\n` })).dirs;
+	ok("an exact `!` exclusion is applied", !excludes("!packages/brand").includes("packages/brand"));
+	ok("...and a wildcard one is too, which it was not before", !excludes("!packages/b*").includes("packages/brand"), JSON.stringify(excludes("!packages/b*")));
+	ok("...and `**` crosses segments", !excludes("!**/brand").includes("packages/brand"), JSON.stringify(excludes("!**/brand")));
+	ok("...while a non-matching wildcard excludes nothing", excludes("!packages/zzz*").includes("packages/brand"));
+	ok("a `*` does not cross a path separator", globToRegExp("packages/*").test("packages/ui") && !globToRegExp("packages/*").test("packages/ui/sub"));
+	ok("a dot in a glob is a literal dot", globToRegExp("apps/a.b").test("apps/a.b") && !globToRegExp("apps/a.b").test("apps/axb"));
+	// An include shape this reader cannot expand is NAMED rather than silently matching nothing.
+	const oddInclude = surfaceReport(fixture({ ...base, ws: `${WS}  - "apps/**/nested"\n` }));
+	ok("an unexpandable include glob warns", oddInclude.warnings.some((w) => /a shape this reader does not expand/.test(w)), JSON.stringify(oddInclude.warnings));
 	// The reverse direction needs a real ledger entry, so it is asserted against the REAL one.
 	const real = surfaceReport();
 	ok("the real tree is clean", real.failures.length === 0, JSON.stringify(real.failures));
@@ -302,15 +366,15 @@ if (process.argv.includes("--self-test")) {
 	if (process.argv.includes("--json")) {
 		// The gate's half: the surface, and a refusal only if the DERIVATION is broken. A ledger
 		// disagreement must not fail this mode — see the header for what that would cost.
-		const derivation = failures.filter((f) => !/NOT_COMPILED_IN/.test(f));
+		const derivation = failures.filter((f) => f.kind === "derivation");
 		if (derivation.length > 0) {
-			for (const f of derivation) console.error(`::error::console-surface: ${f}`);
+			for (const f of derivation) console.error(`::error::console-surface: ${f.message}`);
 			process.exit(1);
 		}
 		console.log(JSON.stringify(dirs));
 	} else {
 		for (const w of warnings) console.log(`::warning::console-surface: ${w}`);
-		for (const f of failures) console.error(`::error::console-surface: ${f}`);
+		for (const f of failures) console.error(`::error::console-surface: [${f.kind}] ${f.message}`);
 		if (failures.length > 0) process.exit(1);
 		console.log(`console-surface: the console is compiled from ${dirs.length} workspace director(ies) — ${dirs.join(", ")}; every @repo/* and @alethia/* package in the tree is either one of them or recorded in NOT_COMPILED_IN (${Object.keys(NOT_COMPILED_IN).length} record(s)).`);
 	}

@@ -356,8 +356,16 @@ jobs:
           // fewest tests `--list` may report before the leg is called testMatch drift, not a suite.
           // `args` is the LITERAL `--project=<name>` flag, spelled out per row on purpose:
           // playwright.config.ts's dead-zone guard (#2875) reads every workflow for exactly that
-          // string to prove a project runs somewhere, and `--project=${{ matrix.project }}` is a
+          // string to prove a project runs somewhere, and a `--project=<the matrix expression>` is a
           // template it cannot see through. The emitter stays literal so the guard stays honest.
+          //
+          // AND THAT EXPRESSION IS SPELLED IN PROSE HERE, NOT WRITTEN OUT, WHICH IS LOAD-BEARING.
+          // Actions compiles a `run:` scalar as a template only if it CONTAINS a `$`+`{{ … }}`, and
+          // this step is 14 KB. Writing the real expression into this sentence — as it was until
+          // #4466's review — put all 14 KB under the template compiler and inside the 21,000-BYTE
+          // ceiling that refused this whole file once (see the note above the step, and
+          // scripts/ci/check-workflow-shape.mjs, whose error text prescribes exactly this fix).
+          // Prose about an expression IS an expression. Do not restore it for readability.
           //
           // `capabilities` IS A COMMA-SEPARATED SET, and the `env:` block below reads it with
           // `contains(...)`, never `==`. Until #4456 every row held at most one name and the block
