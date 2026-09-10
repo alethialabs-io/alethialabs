@@ -2368,6 +2368,11 @@ jobs:
           MATRIX_RESULT: ${{ needs.provision.result }}
           EVENT_NAME: ${{ github.event_name }}
           RUN_ID: ${{ github.run_id }}
+          # The ATTEMPT, because a teardown receipt is only this run's if it is also THIS attempt's
+          # (#4398). The producer stamps `nightly-<run_id>-<run_attempt>`; without this the rollup
+          # would accept attempt 1's receipt on a re-run — and a re-run is exactly what follows a
+          # flaky teardown, with the stale receipt being the more optimistic one by construction.
+          RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           PROOFS_DIR: proofs
           JOBS_JSON: ${{ runner.temp }}/run-jobs.json

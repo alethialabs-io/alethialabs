@@ -31,6 +31,10 @@
 #
 # Env:
 #   RUN_ID        (required) the workflow run id — scopes which bundles count as this run's.
+#   RUN_ATTEMPT   the workflow run attempt. Required for the teardown-verification axis (#4398):
+#                 a receipt is accepted only when its run_tag names THIS run AND THIS attempt, so
+#                 a re-run cannot be answered by the previous attempt's receipt. Unset ⇒ the axis
+#                 reports UNMEASURED for every leg, loudly.
 #   PROOFS_DIR    (default `proofs`) root of the downloaded artifacts. Layout-agnostic. It also
 #                 holds the post-teardown verification receipts (`teardown-verify.json`, #4398),
 #                 downloaded from their own per-leg artifacts into the same tree.
@@ -123,14 +127,31 @@ scan_teardown_verdicts() {
 # in a directory that sorts early would have silently outranked a `RESIDUAL` that sorts late. This
 # whole file's thesis is that the ambiguous case must never resolve TOWARD clean. RESIDUAL (money
 # is being spent) outranks UNVERIFIABLE (nobody knows) outranks CLEAN (measured empty).
+#
+# ⚠️ THE ATTEMPT IS PART OF THE IDENTITY, NOT DECORATION. The producer stamps
+# `nightly-<run_id>-<run_attempt>`, and matching only `nightly-<run_id>-*` throws the attempt away —
+# so attempt 1's receipt answers for attempt 2. That is not a corner case: a RE-RUN is exactly what
+# happens after a flaky teardown, the stale receipt is the more optimistic one by construction (the
+# first attempt is the one that did not finish), and worst-wins cannot save it because both look
+# like "this run" to a prefix match.
+#
+# RUN_ATTEMPT unset is therefore FAIL-CLOSED and loud: no receipt is accepted and every leg reports
+# UNMEASURED, which is the honest answer to "is this measurement about the run I am reporting on".
+# Defaulting it to 1 would do the opposite — silently accept attempt 1's receipt on every re-run.
 teardown_verdict() {
-	local want="$1" prov tag v best=""
+	local want="$1" prov tag v best="" self_tag
+	if [ -z "${RUN_ATTEMPT:-}" ]; then
+		if [ -z "${TEARDOWN_ATTEMPT_WARNED:-}" ]; then
+			TEARDOWN_ATTEMPT_WARNED=1
+			echo "::warning::RUN_ATTEMPT is unset, so a teardown verification receipt cannot be tied to THIS attempt — on a re-run the previous attempt's receipt would answer for this one. No receipt is accepted; every leg reports UNMEASURED. Pass RUN_ATTEMPT (github.run_attempt) to restore the axis." >&2
+		fi
+		echo none
+		return 0
+	fi
+	self_tag="nightly-${RUN_ID:-}-${RUN_ATTEMPT}"
 	while IFS="$(printf '\t')" read -r prov tag v; do
 		[ "$prov" = "$want" ] || continue
-		case "$tag" in
-		"nightly-${RUN_ID:-}-"*) ;;
-		*) continue ;;
-		esac
+		[ "$tag" = "$self_tag" ] || continue
 		case "$v" in
 		RESIDUAL) best=RESIDUAL ;;
 		UNVERIFIABLE) [ "$best" = "RESIDUAL" ] || best=UNVERIFIABLE ;;
@@ -245,7 +266,7 @@ job_exists() {
 
 # teardown_outcome <provider> — is this leg's cloud actually clean? (#2330, #4398)
 #
-# Echoes one of: done | RESIDUAL | UNVERIFIABLE | UNMEASURED | UNSWEPT | unknown.
+# Echoes one of: done | RESIDUAL | UNVERIFIABLE | UNMEASURED | inert | UNSWEPT | unknown.
 #
 # ⚠️ `done` CHANGED MEANING IN #4398, and the change is the point. It used to mean "the teardown
 # STEP reported a conclusion". It now means "the cloud was re-listed after the sweep and listed
@@ -276,6 +297,9 @@ job_exists() {
 #   3. No receipt → UNMEASURED. NOT `done`. A missing measurement is not an empty account, and this
 #      is the state every leg reports until the verification step has ridden out to the default
 #      branch — so it has to be a word of its own rather than a silent fallback to either side.
+#
+# …and BEFORE any of that, a `skipped` teardown step is `inert`: the gate was off, so the leg
+# provisioned nothing and owes no measurement. See that arm for why it cannot be UNMEASURED.
 #
 # WHY THIS IS A SEPARATE QUESTION FROM PASS/FAIL. The rollup already reports a cancelled leg as
 # FAIL — a job conclusion with no readable bundle is fixture #4's "RAN, NO SUMMARY … FAIL, never
@@ -311,6 +335,22 @@ teardown_outcome() {
 		;;
 	"" | null | cancelled)
 		echo UNSWEPT
+		return
+		;;
+	skipped)
+		# ── A CLOUD THAT NEVER RAN IS NOT A CLOUD THAT WENT UNMEASURED. ──────────────────────────
+		#
+		# `Guaranteed teardown` carries `if: steps.gate.outputs.run == 'true' && always()`, so a
+		# `skipped` conclusion means one thing only: this leg's gate is OFF. It provisioned nothing,
+		# swept nothing, and owes no measurement.
+		#
+		# Without this arm it fell through to UNMEASURED and the banner then asserted, permanently
+		# and about a cloud that has never touched an account, that "the step or its artifact upload
+		# is broken and the money signal is silently off". Keeping "nothing ran" and "nobody
+		# measured" apart is the entire reason UNMEASURED is its own word; collapsing them here
+		# would make the one state that says "this pipeline is broken" fire on the one state that
+		# proves nothing is wrong.
+		echo inert
 		return
 		;;
 	esac
@@ -905,7 +945,8 @@ run_self_test() {
 		rm -rf "$out"
 		(
 			PROOFS_DIR="$d/proofs" OUT_DIR="$out" JOBS_JSON="$d/jobs.json" \
-				RUN_ID="${CASE_RUN_ID:-777}" MATRIX_RESULT="${CASE_MATRIX:-failure}" RUN_URL="http://x" \
+				RUN_ID="${CASE_RUN_ID:-777}" RUN_ATTEMPT="${CASE_RUN_ATTEMPT:-1}" \
+				MATRIX_RESULT="${CASE_MATRIX:-failure}" RUN_URL="http://x" \
 				E2E_DIMENSION="${CASE_DIMENSION:-floor}" \
 				derive >/dev/null 2>&1
 		)
@@ -1131,7 +1172,7 @@ run_self_test() {
 	# receipt, and `done` now means "the cloud was re-listed and listed nothing". The pagination
 	# reader is still what is under test — a payload whose second page was invisible would report
 	# `unknown` (no such step), which is a different value from this one.
-	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
 		"the normalized payload still drives the teardown reader"
 
 	# 12. LEDGER rows come from the same discovery, so the parity ledger cannot lose a run the table
@@ -1336,7 +1377,7 @@ run_self_test() {
 	mkdir -p "$c/proofs"
 	cp "$jobs_real" "$c/jobs.json"
 	write_summary "$c/proofs/e2e-proof-gcp-r/s" gcp "nightly-34453355398-1" failure applied
-	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" \
+	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" \
 		"(V1) a concluded teardown with no cloud measurement is UNMEASURED, never 'done'"
 	# All five legs, because the captured run really did have all five matrix jobs and none of them
 	# carries a receipt: this IS the transitional shape, and it must be reported, not swallowed.
@@ -1354,7 +1395,7 @@ run_self_test() {
 	for p in hetzner aws gcp azure alibaba; do
 		write_verdict "$c/proofs/e2e-teardown-verify-${p}-r" "$p" "nightly-34453355398-1" 0
 	done
-	_a "done" "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" \
+	_a "done" "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" \
 		"(V2) a CLEAN receipt is the ONLY thing that yields 'done'"
 	CASE_RUN_ID=34453355398 CASE_MATRIX=failure _derive "$c" >/dev/null
 	_a "0" "$(grep -c 'RESIDUAL CLOUD RESOURCES\|TEARDOWN UNVERIFIED\|No post-teardown cloud measurement' "$c/out/summary.md")" \
@@ -1366,7 +1407,7 @@ run_self_test() {
 	cp "$jobs_real" "$c/jobs.json"
 	write_summary "$c/proofs/e2e-proof-gcp-r/s" gcp "nightly-34453355398-1" failure applied
 	write_verdict "$c/proofs/e2e-teardown-verify-gcp-r" gcp "nightly-34453355398-1" 1
-	_a "RESIDUAL" "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" \
+	_a "RESIDUAL" "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" \
 		"(V3) a leak found by the post-sweep re-list is RESIDUAL"
 	CASE_RUN_ID=34453355398 CASE_MATRIX=failure _derive "$c" >/dev/null
 	_a "gcp" "$(_state "$c/out" RESIDUAL)" "(V3) it reaches state.env on its own key"
@@ -1383,10 +1424,10 @@ run_self_test() {
 	cp "$jobs_real" "$c/jobs.json"
 	write_summary "$c/proofs/e2e-proof-gcp-r/s" gcp "nightly-34453355398-1" failure applied
 	write_verdict "$c/proofs/e2e-teardown-verify-gcp-r" gcp "nightly-34453355398-1" 4 "cloud-sql:exit 1 — PERMISSION_DENIED"
-	_a "UNVERIFIABLE" "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" \
+	_a "UNVERIFIABLE" "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" \
 		"(V4) a probe that could not answer is UNVERIFIABLE"
-	_a "differ" "$([ "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" != \
-		"$(PROOFS_DIR="$tmp/v2-clean/proofs" RUN_ID=34453355398 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" ] && echo differ || echo COLLAPSED)" \
+	_a "differ" "$([ "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" != \
+		"$(PROOFS_DIR="$tmp/v2-clean/proofs" RUN_ID=34453355398 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" ] && echo differ || echo COLLAPSED)" \
 		"(V4) CLEAN and UNVERIFIABLE do NOT collapse onto one value"
 	CASE_RUN_ID=34453355398 CASE_MATRIX=failure _derive "$c" >/dev/null
 	_a "gcp" "$(_state "$c/out" TEARDOWN_UNVERIFIABLE)" "(V4) it reaches state.env"
@@ -1410,7 +1451,7 @@ run_self_test() {
 	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure applied
 	write_jobs_steps "$c/jobs.json" aws success
 	write_verdict "$c/proofs/e2e-teardown-verify-aws-111" aws "nightly-111-1" 0
-	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
 		"(V6) a CLEAN receipt from another run does not answer for this one"
 
 	# (V7) …nor does another CLOUD's. Five legs write five receipts into one downloaded tree.
@@ -1418,7 +1459,7 @@ run_self_test() {
 	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure applied
 	write_jobs_steps "$c/jobs.json" aws success
 	write_verdict "$c/proofs/e2e-teardown-verify-gcp-777" gcp "nightly-777-1" 0
-	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
 		"(V7) gcp's CLEAN receipt does not make aws clean"
 
 	# (V8) A word this reader does not know is UNMEASURED, not `done`. A verdict vocabulary that
@@ -1429,7 +1470,7 @@ run_self_test() {
 	mkdir -p "$c/proofs/e2e-teardown-verify-aws-777"
 	printf '{"provider":"aws","run_tag":"nightly-777-1","verdict":"PROBABLY_FINE"}\n' \
 		>"$c/proofs/e2e-teardown-verify-aws-777/teardown-verify.json"
-	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
 		"(V8) an unrecognised verdict is UNMEASURED, never 'done'"
 
 	# (V10) TWO RECEIPTS FOR ONE PROVIDER RESOLVE WORST-FIRST, NOT PATH-FIRST.
@@ -1444,14 +1485,14 @@ run_self_test() {
 	write_jobs_steps "$c/jobs.json" aws success
 	write_verdict "$c/proofs/aaa-clean" aws "nightly-777-1" 0
 	write_verdict "$c/proofs/zzz-residual" aws "nightly-777-1" 1
-	_a "RESIDUAL" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+	_a "RESIDUAL" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
 		"(V10) a RESIDUAL receipt outranks a CLEAN one that sorts earlier by path"
 	c="$tmp/v10-unverifiable-over-clean"
 	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure applied
 	write_jobs_steps "$c/jobs.json" aws success
 	write_verdict "$c/proofs/aaa-clean" aws "nightly-777-1" 0
 	write_verdict "$c/proofs/zzz-unver" aws "nightly-777-1" 4 "cloud-sql:exit 1 — PERMISSION_DENIED"
-	_a "UNVERIFIABLE" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+	_a "UNVERIFIABLE" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
 		"(V10) …and 'nobody could look' outranks 'measured empty' too"
 
 	# ⚠️ BOTH ORDERINGS, and the first cut had only one — which made "both orderings tested" a false
@@ -1465,22 +1506,64 @@ run_self_test() {
 	write_jobs_steps "$c/jobs.json" aws success
 	write_verdict "$c/proofs/aaa-residual" aws "nightly-777-1" 1
 	write_verdict "$c/proofs/zzz-clean" aws "nightly-777-1" 0
-	_a "RESIDUAL" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+	_a "RESIDUAL" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
 		"(V10) a CLEAN receipt that sorts LATER cannot overwrite a RESIDUAL one"
 	c="$tmp/v10-residual-first-vs-unver"
 	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure applied
 	write_jobs_steps "$c/jobs.json" aws success
 	write_verdict "$c/proofs/aaa-residual" aws "nightly-777-1" 1
 	write_verdict "$c/proofs/zzz-unver" aws "nightly-777-1" 4 "cloud-sql:exit 1 — PERMISSION_DENIED"
-	_a "RESIDUAL" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+	_a "RESIDUAL" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
 		"(V10) …nor can a later UNVERIFIABLE one — a confirmed leak outranks 'nobody could look'"
 	c="$tmp/v10-unver-first"
 	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure applied
 	write_jobs_steps "$c/jobs.json" aws success
 	write_verdict "$c/proofs/aaa-unver" aws "nightly-777-1" 4 "cloud-sql:exit 1 — PERMISSION_DENIED"
 	write_verdict "$c/proofs/zzz-clean" aws "nightly-777-1" 0
-	_a "UNVERIFIABLE" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+	_a "UNVERIFIABLE" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
 		"(V10) …nor can a later CLEAN one overwrite an UNVERIFIABLE"
+
+	# (V11) A PREVIOUS ATTEMPT'S RECEIPT MUST NOT ANSWER FOR THIS ONE.
+	#
+	#       The producer stamps `nightly-<run_id>-<run_attempt>`; matching only `nightly-<run_id>-*`
+	#       throws the attempt away. A RE-RUN is exactly what follows a flaky teardown, and the
+	#       stale receipt is the more optimistic one by construction — the attempt that did not
+	#       finish is the one whose sweep was killed. Worst-wins cannot save it: to a prefix match
+	#       both receipts are "this run".
+	c="$tmp/v11-stale-attempt"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-2" failure applied
+	write_jobs_steps "$c/jobs.json" aws success
+	write_verdict "$c/proofs/e2e-teardown-verify-aws-777-1" aws "nightly-777-1" 0
+	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 RUN_ATTEMPT=2 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+		"(V11) attempt 1's CLEAN receipt does not answer for attempt 2"
+	# …and the same receipt DOES answer for its own attempt, so the matcher is not simply broken.
+	_a "done" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+		"(V11) …while it still answers for attempt 1"
+	# RUN_ATTEMPT unset is FAIL-CLOSED, not "assume 1". Assuming 1 is precisely what accepts a stale
+	# receipt on every re-run.
+	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws 2>/dev/null)" \
+		"(V11) an unset RUN_ATTEMPT accepts nothing rather than defaulting to attempt 1"
+	_a "1" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws 2>&1 >/dev/null | grep -c 'RUN_ATTEMPT is unset')" \
+		"(V11) …and it says so, once, rather than degrading in silence"
+
+	# (V12) A GATE-OFF LEG IS `inert`, NOT `UNMEASURED`.
+	#
+	#       `Guaranteed teardown` is `if: steps.gate.outputs.run == 'true' && always()`, so an
+	#       unwired cloud's step concludes `skipped`. It fell through to UNMEASURED, and that
+	#       banner asserts the money signal is silently off — permanently, about a cloud that has
+	#       never touched an account. "Nothing ran" and "nobody measured" are different claims and
+	#       UNMEASURED exists to keep them apart.
+	c="$tmp/v12-gate-off"
+	write_gate_off "$c/proofs" alibaba 777 1
+	write_jobs_steps "$c/jobs.json" alibaba skipped success
+	_a "inert" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 RUN_ATTEMPT=1 JOBS_JSON="$c/jobs.json" teardown_outcome alibaba)" \
+		"(V12) a skipped teardown step on a gate-off leg is inert, not UNMEASURED"
+	_a "|hetzner aws gcp azure alibaba|0" "$(CASE_MATRIX=success _derive "$c")" \
+		"(V12) …the leg is still a plain SKIP and no red is filed"
+	_a "" "$(_state "$c/out" TEARDOWN_UNMEASURED)" \
+		"(V12) …and it is NOT accused of a broken measurement pipeline"
+	_a "0" "$(grep -c 'No post-teardown cloud measurement' "$c/out/summary.md")" \
+		"(V12) …so the banner that says this pipeline is broken does not fire on a cloud that never ran"
 
 	# (V9) THE VERDICT'S WEIGHT. A residual finding is loud and does NOT rewrite PASS/FAIL — the
 	#      issue's own preference, and the same orthogonality #2330 established. A cleanup defect

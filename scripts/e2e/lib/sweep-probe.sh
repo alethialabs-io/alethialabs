@@ -114,9 +114,26 @@ PROBE_VERDICT_FILE="${PROBE_VERDICT_FILE:-}"
 # that failed DURING the sweep means this script may have failed to delete something it never saw,
 # and re-listing it later through a different API is not proof that it did. Any probe that could not
 # answer, at any point in the run, leaves the run unverified.
+#
+# ⚠️ IT RETURNS 4, NEVER 1, AND NEVER DIES. Every sweeper runs under `set -euo pipefail` and calls
+# this bare at startup, so ANY failing command in here kills the process with exit 1 — and since
+# #4398 exit 1 is the RESIDUAL verdict, i.e. "we asked the cloud and found something still billing".
+# A full disk, a read-only RUNNER_TEMP or an exhausted inode table would therefore be published as a
+# CONFIRMED LEAKED RESOURCE. That is the precise inversion this file exists to prevent, in the
+# function that defines the verdicts.
+#
+# The `&&` form hid it: `set -e` exempts the non-final commands of an `&&` list, and the redirect is
+# the FINAL one. Measured — `set -e; [ -n "$X" ] && : >/bad/path` exits 1.
+#
+# So every write is guarded and every failure resolves to 4, which probe_verdict_from_rc reads as
+# UNVERIFIABLE: nobody could record anything, so nothing here proves the account is empty. Returning
+# 4 from a bare call under `set -e` exits the sweeper with 4 — no per-cloud edit needed.
 probe_reset() {
 	if [ -z "$PROBE_LEDGER" ]; then
-		PROBE_ERR_DIR="$(mktemp -d "${TMPDIR:-/tmp}/alethia-sweep-probe.XXXXXX")"
+		PROBE_ERR_DIR="$(mktemp -d "${TMPDIR:-/tmp}/alethia-sweep-probe.XXXXXX")" || {
+			echo "::error::could not create the probe scratch directory — refusing to sweep with nowhere to record the result. Exiting 4 (UNVERIFIABLE); exit 1 would be read as a CONFIRMED LEAK." >&2
+			return 4
+		}
 		PROBE_LEDGER="${PROBE_ERR_DIR}/ledger"
 	fi
 	# The scratch dir probe_run writes each attempt's stderr into. It must be set even when
@@ -126,12 +143,18 @@ probe_reset() {
 	# has nothing to do with the cloud: a verification that can only ever say "I could not look".
 	[ -n "$PROBE_ERR_DIR" ] || PROBE_ERR_DIR="$(dirname "$PROBE_LEDGER")"
 	[ -n "$PROBE_UNATTRIB_LEDGER" ] || PROBE_UNATTRIB_LEDGER="${PROBE_LEDGER}.unattributable"
-	: >"$PROBE_LEDGER"
-	: >"$PROBE_UNATTRIB_LEDGER"
+	local reset_rc=0
+	: >"$PROBE_LEDGER" 2>/dev/null || reset_rc=4
+	: >"$PROBE_UNATTRIB_LEDGER" 2>/dev/null || reset_rc=4
 	# A stale attestation is worse than none: it is a positive claim about a cloud this process has
 	# not looked at yet. Truncated with the ledgers, at the one point that starts a run.
-	[ -n "$PROBE_ATTEST_FILE" ] && : >"$PROBE_ATTEST_FILE" 2>/dev/null
-	return 0
+	if [ -n "$PROBE_ATTEST_FILE" ]; then
+		: >"$PROBE_ATTEST_FILE" 2>/dev/null || reset_rc=4
+	fi
+	if [ "$reset_rc" -ne 0 ]; then
+		echo "::error::the probe ledgers could not be created (${PROBE_LEDGER}) — refusing to sweep with nowhere to record the result. Exiting 4 (UNVERIFIABLE); exit 1 would be read as a CONFIRMED LEAK." >&2
+	fi
+	return "$reset_rc"
 }
 
 # probe_note_unverifiable <type> <reason> — record that <type> could NOT be looked at.
@@ -480,7 +503,22 @@ probe_verdict_from_rc() {
 			printf 'UNVERIFIABLE\tthe sweeper exited 0 WITHOUT reaching its verification (no attestation) — an early return, not an empty account\n'
 		fi
 		;;
-	1) printf 'RESIDUAL\tthe cloud was re-listed after the sweep and STILL LISTS billable resources for this run\n' ;;
+	1)
+		# ⚠️ RESIDUAL IS THE ONE VERDICT THAT ACCUSES THE CLOUD, so it gets a precondition. Exit 1
+		# is BOTH "verify_swept listed something still standing" AND the status of every `set -e`
+		# death in these scripts — an unwritable path, a failed builtin, a typo in a new sweep
+		# function. probe_reset TRUNCATES the ledger at startup, so the file EXISTING is a positive
+		# marker that the sweeper got past its own setup; missing means it died before it could
+		# record anything, and a process that died before it started has not seen a leak.
+		#
+		# The same shape as the attestation above, for the opposite verdict, and the same rule: a
+		# state that must never be inferred gets a marker an absence cannot fake.
+		if [ -n "$PROBE_LEDGER" ] && [ -e "$PROBE_LEDGER" ]; then
+			printf 'RESIDUAL\tthe cloud was re-listed after the sweep and STILL LISTS billable resources for this run\n'
+		else
+			printf 'UNVERIFIABLE\tthe sweeper exited 1 with no probe ledger on disk — it died before its verification could run, so this is not a leak finding\n'
+		fi
+		;;
 	4) printf 'UNVERIFIABLE\tat least one probe did not answer, so nothing here proves the account is empty\n' ;;
 	124) printf 'UNVERIFIABLE\tthe verification pass hit its wall-clock budget and was cut off — it did not finish asking\n' ;;
 	# 125 is NOT a timeout. GNU `timeout` returns it when TIMEOUT ITSELF failed and the command
@@ -964,6 +1002,63 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
 	probe_gate aws "run e2e-1-1" >/dev/null 2>&1
 	probe_reset
 	if probe_has_attestation; then bad "probe_reset clears a stale attestation" "the previous run's marker survived"; else ok "probe_reset clears a stale attestation"; fi
+
+	# ── A SETUP FAILURE MUST NOT BE PUBLISHED AS A CONFIRMED LEAK. ──────────────────────────────
+	#
+	# Every sweeper runs `probe_reset` bare under `set -euo pipefail`. A write it cannot perform —
+	# a full disk, a read-only RUNNER_TEMP, an exhausted inode table — used to kill the process with
+	# exit 1, and exit 1 is RESIDUAL: "we asked the cloud and something is still billing". Driven
+	# through a real unwritable path, in a fresh `set -e` shell, because the property IS the
+	# interaction between `set -e` and the return value and neither can be tested without the other.
+	st_ext="$(mktemp -d "${TMPDIR:-/tmp}/alethia-probe-nowrite.XXXXXX")"
+	st_rc=0
+	PROBE_LEDGER="$st_ext/no/such/dir/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/no/such/dir/unattr" \
+		PROBE_ERR_DIR="$st_ext" \
+		bash -c '
+			set -euo pipefail
+			. "$1"
+			probe_reset
+			echo "REACHED"
+		' _ "${BASH_SOURCE[0]}" >"$st_ext/out" 2>/dev/null || st_rc=$?
+	if [ "$st_rc" -eq 4 ]; then
+		ok "a ledger that cannot be written exits 4, not 1 — a full disk is UNVERIFIABLE, not a leak"
+	else
+		bad "a ledger that cannot be written exits 4, not 1" \
+			"got rc=${st_rc}$([ "$st_rc" = "1" ] && echo ' — a disk failure would be published as a CONFIRMED BILLING LEAK')"
+	fi
+	# …and the mapping agrees: 4 is UNVERIFIABLE, which is what that exit code now means end to end.
+	probe_reset
+	st_case "…and that exit code reads as UNVERIFIABLE" 4 UNVERIFIABLE
+
+	# THE ATTEST FILE ON ITS OWN, because it is the line that was reported and because the case
+	# above cannot reach it: with the LEDGER unwritable the first guard already returns 4, so a
+	# regression on the attest line would hide behind it. Ledgers writable, attest path not — the
+	# shape of a receipt directory that vanished, or a per-file permission problem.
+	st_rc=0
+	PROBE_LEDGER="$st_ext/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/unattr" \
+		PROBE_ATTEST_FILE="$st_ext/no/such/dir/attest" PROBE_ERR_DIR="$st_ext" \
+		bash -c '
+			set -euo pipefail
+			. "$1"
+			probe_reset
+			echo "REACHED"
+		' _ "${BASH_SOURCE[0]}" >"$st_ext/out2" 2>/dev/null || st_rc=$?
+	if [ "$st_rc" -eq 4 ]; then
+		ok "an ATTEST file that cannot be written exits 4 too — the AND-list form here died with 1"
+	else
+		bad "an ATTEST file that cannot be written exits 4 too" \
+			"got rc=${st_rc}$([ "$st_rc" = "1" ] && echo ' — an AND-list makes the redirect the FINAL command, so set -e kills the sweeper and 1 reads as RESIDUAL')"
+	fi
+
+	# The BACKSTOP, for every other way a sweeper can die with 1 before it ever verified. The ledger
+	# existing is what separates "verify_swept found a leak" from "the process died at setup".
+	st_prev_ledger="$PROBE_LEDGER"
+	PROBE_LEDGER="$st_ext/never-created"
+	st_case "exit 1 with NO ledger on disk is UNVERIFIABLE, not RESIDUAL" 1 UNVERIFIABLE
+	PROBE_LEDGER="$st_prev_ledger"
+	probe_reset
+	st_case "…while exit 1 WITH one is still RESIDUAL — the leak finding is not weakened" 1 RESIDUAL
+	rm -rf "$st_ext"
 
 	# The leak. RESIDUAL is its own word: it is not "we could not look", and it is not clean.
 	probe_reset
