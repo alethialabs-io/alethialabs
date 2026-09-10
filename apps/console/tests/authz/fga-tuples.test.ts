@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, expect, it } from "vitest";
-import { expandGrant, hierarchyTuple, teamMemberTuple } from "@/lib/authz/fga-tuples";
+import {
+	expandGrant,
+	hierarchyTuple,
+	orgScopeCarriesResourceId,
+	teamMemberTuple,
+} from "@/lib/authz/fga-tuples";
 import { BUILT_IN_ROLES, PERMISSIONS } from "@/lib/authz/registry";
 
 const ALL_KEYS: string[] = PERMISSIONS.map((p) => p.key);
@@ -106,5 +111,43 @@ describe("hierarchy + team tuples", () => {
 	});
 	it("teamMemberTuple links a user into a team", () => {
 		expect(teamMemberTuple("T", "U")).toEqual({ user: "user:U", relation: "member", object: "team:T" });
+	});
+});
+
+// The pair `GrantScope` cannot represent honestly. `"org"` is the DEFAULT resource kind at both
+// write boundaries, so a caller who names a resource and forgets its kind would otherwise get an
+// ORGANIZATION-WIDE grant while the call reads as scoped to one project. Both directions are
+// asserted: over-refusing here would break every legitimate grant, which is the failure a
+// bad-pair-only test cannot see.
+describe("orgScopeCarriesResourceId (the org-kind + resource-id refusal)", () => {
+	it("is true for an org kind carrying a resource id — the silent widening", () => {
+		expect(orgScopeCarriesResourceId("org", "11111111-2222-3333-4444-555555555555")).toBe(true);
+	});
+
+	it("is false for a genuine org-wide grant — org kind, no id", () => {
+		expect(orgScopeCarriesResourceId("org", null)).toBe(false);
+	});
+
+	it("is false for a scoped grant — a real kind carrying its own id", () => {
+		for (const kind of ["project", "runner", "cloud_identity"]) {
+			expect(orgScopeCarriesResourceId(kind, "11111111-2222-3333-4444-555555555555")).toBe(false);
+		}
+	});
+
+	it("is false for a kind with no id — the write boundaries collapse that to org themselves", () => {
+		expect(orgScopeCarriesResourceId("project", null)).toBe(false);
+	});
+
+	// Guards the reason the refusal exists rather than the refusal itself: if `expandGrant` ever
+	// started honouring the id under an org kind, refusing the pair would be over-strict rather
+	// than protective, and this test is what would say so.
+	it("expandGrant does take org-wide for the refused pair, so the id really is dropped", () => {
+		const tuples = expandGrant(
+			{ ...base, effect: "allow", resourceType: "org", resourceId: "S" },
+			viewerKeys,
+		);
+		expect(tuples.length).toBeGreaterThan(0);
+		expect(tuples.every((t) => t.object === "org:O")).toBe(true);
+		expect(tuples.some((t) => t.object.includes("S"))).toBe(false);
 	});
 });
