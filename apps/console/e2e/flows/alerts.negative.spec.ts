@@ -156,13 +156,28 @@ test.describe("Alerts — a secret-bearing transport, now that the leg promises 
 	// (channel-sheet.tsx: `meta.credential !== "email" && !encryptionConfigured`) — so asserting a
 	// single transport would leave "the key reached the product" true of one shape and untested for
 	// the other.
+	//
+	// ⚠ EACH TRANSPORT IS ANCHORED TO ITS OWN URL FIELD BEFORE THE ABSENCE IS ASSERTED, and that
+	// ordering is the test. The note is absent for the whole run once the key is set, so
+	// `toHaveCount(0)` is satisfied the instant it is asked — including on a click that did nothing
+	// at all. A missing-note assertion that cannot tell "this transport is selected and clean" from
+	// "the gallery never switched" is asserting about the wrong thing. Waiting for the field this
+	// transport and no other renders (`channel-sheet.tsx`: "Payload URL" for webhook,
+	// `${name} webhook URL` for the rest) is what makes the absence mean something.
 	test(
 		"a secret-bearing transport carries no missing-key note, and its submit is live",
 		{ tag: "@needs:encryption" },
 		async ({ team }) => {
 			const sheet = await openSheet(team.page, team.orgSlug!);
-			for (const transport of ["Slack Incoming webhook", "Webhook HTTPS POST"]) {
-				await sheet.getByRole("button", { name: transport }).click();
+			const transports = [
+				{ gallery: "Slack Incoming webhook", urlField: "Slack webhook URL" },
+				{ gallery: "Webhook HTTPS POST", urlField: "Payload URL" },
+			];
+			for (const { gallery, urlField } of transports) {
+				await sheet.getByRole("button", { name: gallery }).click();
+				await expect(
+					sheet.getByLabel(urlField, { exact: true }),
+				).toBeVisible({ timeout: 10_000 });
 				await expect(
 					sheet.getByText(/This transport stores a secret, which needs an encryption key/),
 				).toHaveCount(0);
@@ -196,7 +211,9 @@ test.describe("Alerts — a secret-bearing transport, now that the leg promises 
 				.fill("https://198.51.100.9/e2e-alerts-webhook");
 			await sheet.getByRole("button", { name: "Add channel" }).click();
 
-			await expect(sheet.getByText(/198\.51\.100\.9/)).toBeVisible({ timeout: 20_000 });
+			await expect(
+				sheet.getByText(/198\.51\.100\.9/).first(),
+			).toBeVisible({ timeout: 20_000 });
 			await expect(
 				sheet.getByText(/This transport stores a secret, which needs an encryption key/),
 			).toHaveCount(0);
