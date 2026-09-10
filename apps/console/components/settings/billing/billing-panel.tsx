@@ -53,7 +53,16 @@ export function BillingPanel() {
 	// Cancelling asks first (#4276). Resuming does not: it RESTORES the subscription, and a
 	// confirmation in front of an undo is friction with nothing behind it. The registry
 	// (apps/console/destructive-actions.yaml, `billing.subscription.cancel`) records the dialog
-	// this state opens, and e2e/audit/destructive.spec.ts opens it and presses Cancel every gate.
+	// this state opens.
+	//
+	// WHAT ACTUALLY EXERCISES IT is `e2e/flows/billing.spec.ts` ("Cancel plan opens a
+	// confirmation…"), against the `team` persona's real Stripe trial. NOT the audit leg: that
+	// entry's `fixture:` field is documentation, not a seeding directive, and no seeder in `e2e/`
+	// materialises a subscription for the audit org — `audit/context.ts:seedRouteFixtures` writes
+	// one project, one job and one support case and deliberately nothing else. So `hasSub` below
+	// is false there, the trigger is never rendered, and `audit/destructive.spec.ts` records the
+	// control as WITHHELD every gate. Read the other way round: delete the flows spec and this
+	// dialog is measured by nothing at all.
 	const [cancelOpen, setCancelOpen] = useState(false);
 	// Hobby → Pro upgrades open the shared in-place upgrade sheet (no inline plan dialog).
 	const { openUpgrade } = useUpgradeSheet();

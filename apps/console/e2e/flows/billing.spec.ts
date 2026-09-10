@@ -148,20 +148,46 @@ function cardRow(page: import("@playwright/test").Page, last4: string) {
 		.last();
 }
 
-/** Mirrors one paid invoice row for the org, exactly as the `invoice.paid` webhook would. */
+/**
+ * Mirrors one paid invoice row for the org, exactly as the `invoice.paid` webhook would.
+ *
+ * `paidHoursAgo` IS THE ORDERING CONTRACT BETWEEN THE THREE SEEDERS BELOW, not a detail.
+ * `RecentInvoices` renders `listInvoices({ limit: 5 })` and `listOrgInvoices` sorts
+ * `order by paid_at desc` — so the billing page shows the five most recently PAID rows and
+ * nothing else. Three tests seed into the SAME `team` org, `playwright.config.ts` sets
+ * `fullyParallel: true`, the leg runs `--workers=3 --retries=1`, and rows survive the run
+ * (`on conflict (stripe_invoice_id)` only dedupes a replay of the same number). Seeded at
+ * `now()` they compete for those five slots, and which one loses is decided by worker
+ * scheduling: a flake wearing an assertion's clothes.
+ *
+ * The rule that removes the race: ONLY the test asserting against the limit-5 section seeds at
+ * `now()`. Every other seeder backdates far enough that it can never displace that row — and
+ * every earlier run's rows are older still, so the current run's newest is newest, full stop.
+ * The whole row hangs off the one instant, so a backdated invoice's period is backdated with it
+ * rather than claiming to have been paid before the period it covers ended.
+ */
 async function seedMirroredInvoice(
 	orgId: string,
 	customerId: string,
 	number: string,
+	paidHoursAgo: number,
 ): Promise<void> {
+	// `now()` is the DATABASE's clock, evaluated once per statement, so every seeded row is stamped
+	// from one source and they are strictly comparable however the runner's own clock is set. The
+	// offset expression is written out three times rather than bound once, because a plain
+	// `insert … values … on conflict` is the statement shape this seed already executes — only the
+	// instants changed, and a CTE or a query fragment here would be new machinery to be wrong about.
 	await db()`
 		insert into invoice
 			(organization_id, stripe_invoice_id, stripe_customer_id, number, status,
 			 amount_total, currency, period_start, period_end, hosted_invoice_url, paid_at)
 		values
 			(${orgId}, ${`in_e2e_${number}`}, ${customerId}, ${number}, 'paid',
-			 2000, 'usd', now() - interval '30 days', now(),
-			 ${`https://stripe.test/hosted/${number}`}, now())
+			 2000, 'usd',
+			 now() - (${paidHoursAgo}::int * interval '1 hour') - interval '30 days',
+			 now() - (${paidHoursAgo}::int * interval '1 hour'),
+			 ${`https://stripe.test/hosted/${number}`},
+			 now() - (${paidHoursAgo}::int * interval '1 hour'))
 		on conflict (stripe_invoice_id) do update set number = excluded.number`;
 }
 
@@ -399,11 +425,19 @@ test.describe("Billing — destructive controls ask first", () => {
 });
 
 // ── Mirrored invoices ─────────────────────────────────────────────────────────────────────
+//
+// THE THREE SEEDS BELOW ARE ORDERED, and the order is the only thing keeping this describe block
+// deterministic under `--workers=3 --retries=1` against one shared org. See `seedMirroredInvoice`:
+// the billing page's section is `limit: 5` over `paid_at desc`, so exactly one test may seed at
+// `now()` and the other two backdate out of contention. The backdated pair are unaffected by it —
+// one reads the un-limited invoices page and the other fetches its row by id.
 test.describe("Billing — mirrored invoices (team)", () => {
 	test("a mirrored invoice reaches the billing page's Invoices section", { tag: "@needs:stripe" }, async ({ team }) => {
 		const customerId = await stripeCustomerId(team.orgId!);
 		const number = `E2E-RECENT-${Date.now()}`;
-		await seedMirroredInvoice(team.orgId!, customerId, number);
+		// THE ONLY `now()` SEED IN THIS FILE — this is the test that reads the limit-5 section, so
+		// its row has to be the newest the org has. Everything else is backdated behind it.
+		await seedMirroredInvoice(team.orgId!, customerId, number, 0);
 
 		await team.page.goto(billingPath(team.orgSlug));
 		await expect(team.page.getByText(number)).toBeVisible({ timeout: 30_000 });
@@ -417,7 +451,9 @@ test.describe("Billing — mirrored invoices (team)", () => {
 	}) => {
 		const customerId = await stripeCustomerId(team.orgId!);
 		const number = `E2E-PAGE-${Date.now()}`;
-		await seedMirroredInvoice(team.orgId!, customerId, number);
+		// Backdated a day: the dedicated page is not limit-5, so nothing here needs recency, and a
+		// `now()` row would be a third contender for the sibling test's five slots.
+		await seedMirroredInvoice(team.orgId!, customerId, number, 24);
 
 		await team.page.goto(invoicesPath(team.orgSlug));
 		await expect(team.page).not.toHaveURL(/\/login/);
@@ -435,7 +471,9 @@ test.describe("Billing — mirrored invoices (team)", () => {
 	}) => {
 		const customerId = await stripeCustomerId(team.orgId!);
 		const number = `E2E-PDF-${Date.now()}`;
-		await seedMirroredInvoice(team.orgId!, customerId, number);
+		// Backdated two days: this row is fetched by its own id, so its position in any list is
+		// irrelevant to this test and must not be relevant to the sibling one either.
+		await seedMirroredInvoice(team.orgId!, customerId, number, 48);
 		const rows = await db()<{ id: string }[]>`
 			select id from invoice where stripe_invoice_id = ${`in_e2e_${number}`}`;
 		const invoiceId = rows[0]?.id;
