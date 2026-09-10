@@ -1566,7 +1566,7 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"redirectOnly": false,
-			"surfaceFiles": 223,
+			"surfaceFiles": 224,
 			"families": {
 				"S": {
 					"instrumented": 4,
