@@ -40,8 +40,8 @@
 				"Account settings dialog › Delete Account is INERT — pressing it opens no confirmation and ends no session": "passed"
 			},
 			"activity.spec.ts": {
-				"Activity page › renders the filter bar and gates export on a fresh plan": "passed",
-				"Activity page › narrowing to denials drives a server refetch to the empty state": "failed"
+				"Activity page (a brand-new org) › renders the filter bar and gates export on a fresh plan": "passed",
+				"Activity page (a brand-new org) › narrowing to denials drives a server refetch to the empty state": "passed"
 			},
 			"billing.spec.ts": {
 				"Billing — plan-state coherence › a canceled org shows Canceled, no renew/next-charge, and an Upgrade CTA": "failed",
@@ -59,6 +59,9 @@
 			"elench-agent.spec.ts": {
 				"Elench agent — modal (org) › opens as a fullscreen modal with the empty landing": "passed",
 				"Elench agent — modal (org) › Ask-mode popover switches ask ↔ auto": "passed",
+				"Elench agent — modal (org) › the Ask-mode segments expose which one is current": {
+					"fixme": "BUG: the Elench Ask/Auto mode segments expose no accessible selected state #4618"
+				},
 				"Elench agent — modal (org) › the @-mention popover opens against real resources": "passed",
 				"Elench agent — modal (org) › minimize → panel → maximize preserves the conversation": "failed",
 				"Elench agent — modal (org) › the panel closes": "passed",
@@ -70,8 +73,8 @@
 				"Evidence surface › renders the honest zero-environment onboarding state": "passed"
 			},
 			"usage.spec.ts": {
-				"Usage page › renders the usage sections and the range filters": "failed",
-				"Usage page › switching the quick range updates the trigger label": "failed"
+				"Usage page (a brand-new org) › the four taxonomy sections render as the page's outline": "passed",
+				"Usage page (a brand-new org) › picking a quick range re-captions the over-time card": "passed"
 			}
 		},
 		"canvas": {
