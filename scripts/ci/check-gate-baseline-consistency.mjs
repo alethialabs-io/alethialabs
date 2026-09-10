@@ -209,7 +209,7 @@ export function compare(baselineDoc, listed) {
 }
 
 /** A ledger row and a finding are the same thing when all three fields match. */
-const idOf = (e) => `${e.project} ${e.file} ${e.title}`;
+const idOf = (e) => JSON.stringify([e.project, e.file, e.title]);
 
 /**
  * Split findings into the ones RECORDED_STALE covers and the ones it does not, and report every
@@ -325,13 +325,13 @@ export function main(argv) {
 	// every line under it, and a flat list of forty titles hides that they are four commands.
 	const bySlice = new Map();
 	for (const e of unrecorded) {
-		const k = `${e.project} ${e.file}`;
+		const k = JSON.stringify([e.project, e.file]);
 		if (!bySlice.has(k)) bySlice.set(k, []);
 		bySlice.get(k).push(e.title);
 	}
 	for (const [k, titles] of bySlice) {
 		problems++;
-		const [project, file] = k.split(" ");
+		const [project, file] = JSON.parse(k);
 		console.error(
 			`::error::${BASELINE} names ${titles.length} test(s) that ${file} no longer contains under project "${project}" — ` +
 				"a renamed or deleted test. The gate's `Release gate (" +
