@@ -51,6 +51,40 @@ on:
         description: "TS coverage determinism probe: how many runs to compare (default 5)"
         required: false
         default: "5"
+      # RECORD THE FLOORS FROM THE JOB THAT ENFORCES THEM (#4611).
+      #
+      # The `ts-coverage-determinism` job below records floors and asserts they are reachable here
+      # because "this job and the required `typescript` job run the IDENTICAL `pnpm exec turbo run
+      # test`". They do not, and the gap is not cosmetic: the probe runs `turbo run test --force`
+      # with no Turbo cache step, while `typescript` runs the cached form with an app build in the
+      # same job.
+      #
+      # MEASURED on one commit (fa4828e38, the vitest 2 -> 3 bump on #4591):
+      #
+      #   directory              probe recorded   typescript measured
+      #   lib/drift                    21/107            21/114
+      #   lib/observability           587/748           594/765
+      #   lib/support                  74/102            73/105
+      #   lib/crypto                  125/129           124/128
+      #   lib/seed                     36/656            35/661
+      #
+      # Two probe dispatches (5 runs, then 2) reproduced each other to the statement, and two
+      # `typescript` runs agreed with each other. Both jobs are individually DETERMINISTIC and
+      # disagree with one another, so no amount of re-running reconciles them. A denominator is a
+      # statement count; it moves only when the measured FILE SET moves.
+      #
+      # The interaction is what made this invisible: under the previous provider the two happened
+      # to agree closely enough that no directory crossed its floor. Change the provider and ten
+      # cross at once — with the probe reporting success, because it compares its own runs to each
+      # other and cannot see a systematic offset from the enforcer.
+      #
+      # So floors are recorded HERE, by the job that compares against them, which makes them
+      # reachable by construction rather than by a claim about two job definitions staying in sync.
+      # The probe keeps the question its name asks — are the numbers stable run-to-run.
+      record_ts_floors:
+        description: "Record TS coverage floors from the enforcing job (uploads ts-coverage-floors-enforcer)"
+        required: false
+        default: "false"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -281,6 +315,43 @@ jobs:
       - name: Coverage ratchet — packages/format
         if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
         run: node scripts/ts-coverage.mjs --project packages/format
+      # ── Recording the floors, from this job (#4611) ──────────────────────────────────────────
+      #
+      # Dispatch-only and INERT on every pull_request, so the required check is unchanged: the
+      # `if` gates on `workflow_dispatch` AND the opt-in input, and a skipped step reports nothing.
+      #
+      # It runs AFTER the six ratchets deliberately. Those compare the measurement against the
+      # committed floors and are the thing whose reachability is in question; recording from the
+      # same `coverage/coverage-final.json` they just read is what makes the recorded numbers the
+      # ones this job will enforce. Recording first would overwrite the floors the ratchets are
+      # about to compare against, and the step would always pass.
+      #
+      # The project list is read from scripts/ts-coverage-sweep.json rather than typed, for the
+      # reason that file records about itself: a hand-typed list went slack three times, and
+      # `ts-coverage.mjs --self-test` already fails when a coverage-emitting project has no ratchet
+      # step here. One list, one place.
+      - name: Record the floors this job enforces
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.record_ts_floors == 'true' && !cancelled() && steps.unit.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          mkdir -p ts-coverage-floors
+          for project in $(node -e 'process.stdout.write(require("./scripts/ts-coverage-sweep.json").coverage_emitting_projects.join("\n"))'); do
+            echo "::group::record ${project}"
+            node scripts/ts-coverage.mjs --project "${project}" --update
+            install -D "${project}/coverage-floors.json" "ts-coverage-floors/${project}/coverage-floors.json"
+            echo "::endgroup::"
+          done
+      - name: The recorded floors
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.record_ts_floors == 'true' && !cancelled() && steps.unit.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          # A DIFFERENT NAME from the probe's `ts-coverage-floors`, on purpose. The two answer
+          # different questions and disagreed by up to 17 statements on one commit; a shared name
+          # would let whichever ran last silently become "the floors" and put the reader back where
+          # #4611 started.
+          name: ts-coverage-floors-enforcer
+          path: ts-coverage-floors/
+          if-no-files-found: error
       # Build smoke for the split-affected apps — catches transpilePackages /
       # standalone breakage on PRs. Build-only placeholder env so the console's
       # strict zod config modules pass validation (mirrors apps/console/Dockerfile;
