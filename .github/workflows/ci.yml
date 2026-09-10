@@ -1063,6 +1063,24 @@ jobs:
       - name: ...and the capability promise fails closed in CI
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -C apps/console exec tsx e2e/helpers/capabilities.ts --self-test
+      # ...and the LEDGER it ratchets against still describes the tree (#4460). A lane rewrites a
+      # spec, then regenerates its slice from the gate run's own results — and it cannot win that
+      # race: draft means no leg runs at all, non-draft means Mergify merges ~15 minutes before the
+      # `qa` leg finishes. So the only instrument that can catch an unregenerated slice is the
+      # ratchet's rule 4, which lives on a leg that is required on `main` and gates nothing on `dev`.
+      # #4433 lost that race and the next PRs inherited its red; #4324 did the same to the canvas
+      # slice and nothing reported it at all.
+      #
+      # This is the cheap, sound half of that question asked of the TREE: `playwright test --list`
+      # plus a JSON read. No browser, no Postgres, no console — seconds, in a job that already runs
+      # on every PR, which is the whole point (running Playwright on every dev PR is what #4440
+      # exists to avoid). It would have failed #4433 on #4433.
+      - name: The release gate's ledger still describes the tree (no renamed or deleted test)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-gate-baseline-consistency.mjs
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-gate-baseline-consistency.mjs --self-test
       # The console's published conformance score. #3618 landed apps/console/scripts/audit-report.mjs
       # and the two artifacts it owns — apps/console/docs/ui-conformance/scoreboard.md and
       # apps/console/ui-conformance-baseline.json — with the two-mode contract PROGRAMME.md uses:
