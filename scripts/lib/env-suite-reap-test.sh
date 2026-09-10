@@ -222,11 +222,16 @@ PY
 	*"base='/opt/alethia'"*) ok "the path is sent as parts" ;;
 	*) bad "the reap command carries no base to assemble from: $cmd" ;;
 	esac
-	case "$cmd" in
-	*'export tag='* | *'export base='* | *'export slug='*)
-		bad "the prefix is exported — the reap's own helpers would carry the tag"
+	# WHAT PROTECTS THE REAPER IS THE NAMES, not the absence of an `export`. `grep -Fqx` matches a
+	# whole line, so an exported `tag=<value>` could never satisfy `ALETHIA_SUITE_TAG=<value>`; the
+	# edit that would break it is exporting a prefix variable UNDER THAT NAME, after which the
+	# `tr` and `grep` the loop execs carry the tag and the run can never read clear. So the check
+	# is on the prefix — everything before the script — and on the name.
+	case "${cmd%%;*}" in
+	*ALETHIA_SUITE_TAG*)
+		bad "the reap's prefix names ALETHIA_SUITE_TAG: its own tr/grep would match, and it would report itself as a survivor"
 		;;
-	*) ok "the prefix stays unexported, so nothing the reaper execs can carry the tag" ;;
+	*) ok "the prefix names no ALETHIA_SUITE_TAG, so nothing the reaper execs can carry the tag" ;;
 	esac
 
 	# 5. The remote script itself, against a fixture /proc. Selection is the part that must not be
@@ -325,34 +330,67 @@ PY
 	[ "$fails" = 0 ] || echo "probe($lib): $fails failed" >&2
 	exit "$fails"
 fi
-
 # ── mode: the call sites, against ONE env.sh (the real one, or a mutant) ──────────────────────
 # No amount of testing the lib reaches these: arming after the run leaves the whole fix inert, and
 # a tag exported one line early is a correct reap with the wrong blast radius.
+#
+# THIS COMPARES BYTE OFFSETS, not line numbers, and the difference is a defect this guard has now
+# been through twice. Line numbers of MENTIONS say nothing about the order in which the box runs
+# things: hoist the installs into a variable above the export and interpolate it below —
+#
+#     local warm="pnpm install --frozen-lockfile >/dev/null
+#       pnpm -F console exec playwright install --with-deps chromium >/dev/null"
+#     ssh_box "… export ALETHIA_SUITE_TAG=… ; $warm"
+#
+# — and every mention still appears in an order the old checks accepted, while apt runs INSIDE the
+# blast radius. Offsets plus a "mentioned exactly once" count close that: the install anchor has to
+# occur once and that once has to sit after the run's own `ssh_box`.
+#
+# TWO RESIDUALS, stated rather than implied away by "asserts the ordering against env.sh's source":
+#
+#   1. A remote SHELL FUNCTION — `warm() { pnpm install …; }` defined above the export and called
+#      below it — is out of reach of ANY textual guard, because the text and the execution order
+#      genuinely differ and only a shell can say how. Nothing here catches it.
+#   2. This validates ONE run per function, which is why it requires exactly one tag export per
+#      call site: a second tag-exporting `ssh_box` added after `suite_disarm` is unarmed for its
+#      whole life, and counting is what makes it visible. A call site that legitimately needed two
+#      runs would have to be read by something that parses shell, and this guard would refuse it
+#      rather than quietly check the first.
 if [ "${1:-}" = "--callsites" ]; then
 	env_sh="$2"
+	[ -r "$env_sh" ] || {
+		echo "FAIL - $env_sh is not readable" >&2
+		exit 3
+	}
 
 	# COMMENTS STRIPPED BEFORE ANYTHING IS COUNTED. Every anchor below also appears in prose that
 	# explains it — `playwright install --with-deps` three times in cmd_test, twice in comments —
-	# and `head -1` on the un-stripped body takes the first COMMENT. That is not a weak guard, it
-	# is an inverted one: with the install anchor resolving to a comment above the export and the
-	# pnpm-install anchor resolving to real code below it, the only position that passed was the
-	# defect itself.
+	# and the first version of this section took `head -1` of the un-stripped body and landed on a
+	# COMMENT. That is not a weak guard, it is an inverted one: with the apt anchor resolving to a
+	# comment above the export and the pnpm-install anchor resolving to real code below it, the
+	# only export position that passed was the defect itself.
 	body() { sed -n "/^$1() {/,/^}/p" "$env_sh" | grep -v '^[[:space:]]*#'; }
 
-	# A MISSING ANCHOR IS A FAILURE, never a skip. `if [ -n "$x" ] && …` reads like a guard and
-	# behaves like an opt-out: rename the command it looks for and the assertion evaporates
-	# silently, which is the failure mode an exception ledger is supposed to make loud.
-	at() { # <function> <label> <literal anchor> <body>
-		local n
-		n="$(grep -n -F "$3" <<<"$4" | head -1 | cut -d: -f1)"
-		if [ -z "$n" ]; then
-			bad "$1: the '$2' anchor ('$3') is gone — this assertion would have passed vacuously"
-			echo 0
-			return
-		fi
-		echo "$n"
+	# PURE, both of them, and that is not a style preference. They are called inside `$( )`, which
+	# forks — a `fails=$((fails+1))` in there never reaches this shell, so a helper that reported
+	# its own verdicts would be a vacuous-pass detector that could not itself fail the run. Every
+	# verdict below is reached in the parent.
+	off() { # <needle> <blob> → byte offset of the first occurrence, or -1
+		local o
+		o="$(printf '%s' "$2" | grep -boF -- "$1" | head -1 | cut -d: -f1)"
+		echo "${o:--1}"
 	}
+	mentions() { printf '%s' "$2" | grep -coF -- "$1"; }
+	ordered() { # <fn> <what> <lo-offset> <hi-offset>
+		if [ "$3" -ge 0 ] && [ "$4" -ge 0 ] && [ "$3" -lt "$4" ]; then
+			return 0
+		fi
+		bad "$1: $2 (offsets $3 then $4)"
+	}
+
+	# The VALUE, not just the variable: `export ALETHIA_SUITE_TAG=hello` would degrade the reap to
+	# report-only — fail-safe, and completely silent — so the anchor is the whole assignment.
+	TAG_LIT="export ALETHIA_SUITE_TAG='\$_suite_tag'"
 
 	for fn in cmd_check cmd_test; do
 		b="$(body "$fn")"
@@ -360,35 +398,43 @@ if [ "${1:-}" = "--callsites" ]; then
 			bad "$fn is gone from env.sh"
 			continue
 		}
-		arm_at="$(at "$fn" arm 'suite_arm' "$b")"
-		dis_at="$(at "$fn" disarm 'suite_disarm' "$b")"
-		tag_at="$(at "$fn" tag 'export ALETHIA_SUITE_TAG' "$b")"
-		inst_at="$(at "$fn" install 'pnpm install --frozen-lockfile' "$b")"
+
+		n="$(mentions "$TAG_LIT" "$b")"
+		[ "$n" = 1 ] ||
+			bad "$fn carries $n copies of $TAG_LIT (want exactly 1) — a second run this guard never located, or none at all"
+		n="$(mentions 'pnpm install --frozen-lockfile' "$b")"
+		[ "$n" = 1 ] ||
+			bad "$fn mentions 'pnpm install --frozen-lockfile' $n times — the offsets below would describe one occurrence while the box runs another"
+
+		arm_o="$(off 'suite_arm' "$b")"
+		dis_o="$(off 'suite_disarm' "$b")"
+		tag_o="$(off "$TAG_LIT" "$b")"
+		inst_o="$(off 'pnpm install --frozen-lockfile' "$b")"
 		# THE RUN is not "the first ssh_box in this function" — cmd_test opens with two others (the
 		# registry lookup and the edition probe), and anchoring on the first named the wrong one.
-		# It is the ssh_box whose command string carries the tag: the LAST one at or before the
-		# export. Derived from tag_at so the two can never drift apart.
-		run_at="$(grep -n 'ssh_box "' <<<"$b" | cut -d: -f1 |
-			awk -v t="$tag_at" '$1 < t { n = $1 } END { print n + 0 }')"
-		[ "$run_at" != 0 ] ||
-			bad "$fn: no ssh_box invocation carries the tag export — the run cannot be located"
+		# It is the last `ssh_box "` that begins before the export, by byte offset: on a single-line
+		# `&&` chain that is the same line, which a line-number comparison could not express.
+		run_o="$(printf '%s' "$b" | grep -boF 'ssh_box "' | cut -d: -f1 |
+			awk -v t="$tag_o" '$1 < t { n = $1 } END { print (n == "" ? -1 : n) }')"
 
-		[ "$arm_at" != 0 ] && [ "$run_at" != 0 ] && [ "$arm_at" -lt "$run_at" ] ||
-			bad "$fn arms the trap at line $arm_at, AFTER the run at $run_at — nothing is armed for it"
-		[ "$dis_at" != 0 ] && [ "$run_at" != 0 ] && [ "$dis_at" -gt "$run_at" ] ||
-			bad "$fn disarms at $dis_at, before the run at $run_at"
-		[ "$tag_at" != 0 ] && [ "$inst_at" != 0 ] && [ "$tag_at" -gt "$inst_at" ] ||
-			bad "$fn tags its pnpm install (tag $tag_at, install $inst_at) — a Ctrl-C kills it mid-write"
+		[ "$run_o" -ge 0 ] ||
+			bad "$fn: no ssh_box begins before the tag export — the run cannot be located"
+		ordered "$fn" "arms the trap before the run, not after it" "$arm_o" "$run_o"
+		ordered "$fn" "runs its install INSIDE the run's own command, not hoisted above it" "$run_o" "$inst_o"
+		ordered "$fn" "tags AFTER its pnpm install — a Ctrl-C would kill it mid-write" "$inst_o" "$tag_o"
+		ordered "$fn" "disarms after the run" "$tag_o" "$dis_o"
 
 		if [ "$fn" = cmd_test ]; then
-			apt_at="$(at "$fn" apt 'playwright install --with-deps' "$b")"
-			[ "$apt_at" != 0 ] && [ "$tag_at" != 0 ] && [ "$tag_at" -gt "$apt_at" ] ||
-				bad "cmd_test tags 'playwright install --with-deps' (tag $tag_at, apt $apt_at) — that is apt/dpkg as root on a SHARED box"
+			n="$(mentions 'playwright install --with-deps' "$b")"
+			[ "$n" = 1 ] ||
+				bad "cmd_test mentions 'playwright install --with-deps' $n times — one of them is the executed one and the offsets cannot say which"
+			apt_o="$(off 'playwright install --with-deps' "$b")"
+			ordered cmd_test "runs the browser install inside the run's command" "$run_o" "$apt_o"
+			ordered cmd_test "tags AFTER 'playwright install --with-deps', which is apt/dpkg as root on a SHARED box" "$apt_o" "$tag_o"
 			# The failure branch ends in `exit 1`, so disarming after the artefact fetch would fire
 			# the EXIT trap in the middle of it.
-			fetch_at="$(at "$fn" fetch 'fetch_artifacts' "$b")"
-			[ "$fetch_at" != 0 ] && [ "$dis_at" -lt "$fetch_at" ] ||
-				bad "cmd_test disarms at $dis_at, after the failure branch's fetch at $fetch_at"
+			fetch_o="$(off 'fetch_artifacts' "$b")"
+			ordered cmd_test "disarms before its failure branch fetches artefacts" "$dis_o" "$fetch_o"
 		fi
 	done
 	grep -q 'lib/env-suite-reap.sh' "$env_sh" || bad "env.sh does not source the reap lib"
@@ -456,6 +502,7 @@ mutate_lib kill-a-stale-pid-list 's/^  for p in \$(tagged); do kill -KILL/  for 
 mutate_lib no-final-tag-pass 's/^  still=\$(tagged)$/  still=/'
 mutate_lib path-back-in-the-command-line "s/base='\\\$REMOTE' slug='\\\$_suite_slug'/base='\\\$REMOTE' slug='\\\$_suite_slug' d='\\\$REMOTE\\/envs\\/\\\$_suite_slug\\/'/"
 mutate_lib reported-path-without-slash 's|^dir="\$base/envs/\$slug/"$|dir="$base/envs/$slug"|'
+mutate_lib prefix-exported-as-the-tag-name "s/tag='\\\$_suite_tag' base=/export ALETHIA_SUITE_TAG='\\\$_suite_tag'; tag='\\\$_suite_tag' base=/"
 
 # The F4 defect, verbatim: the tag exported between the two installs, so apt/dpkg as root is back
 # inside the blast radius. This is the mutation the comment-anchored guard passed green.
@@ -483,6 +530,44 @@ mutate_env no-disarm-at-all <<'AWK'
 /^ *suite_disarm$/ { next }
 { print }
 AWK
+
+# The variable hoist: every mention still reads in an acceptable order while the box runs the
+# install INSIDE the tagged region. This is what defeated a line-number comparison, and it is the
+# reason the checks above are byte offsets plus a mention count.
+mutate_env installs-hoisted-into-a-variable <<'AWK'
+/^  suite_arm "\$slug_"$/ { print "  local warm=\"pnpm install --frozen-lockfile >/dev/null\"" }
+{ sub(/pnpm install --frozen-lockfile >\/dev\/null/, "$warm"); print }
+AWK
+
+# A SECOND tag-exporting run, added after suite_disarm: unarmed for its whole life, which is
+# exactly the defect this section exists for, and invisible to a guard that locates one run.
+mutate_env a-second-unarmed-run <<'AWK'
+{ print }
+/^  suite_disarm$/ && !seen { seen = 1; print "  ssh_box \"export ALETHIA_SUITE_TAG=\047$_suite_tag\047 && echo late\"" }
+AWK
+
+# The tag exported with a value that is not the run's: fail-safe (the reap matches nothing and
+# degrades to report-only) and completely silent, so the anchor is the whole assignment.
+mutate_env tag-exported-with-the-wrong-value <<'AWK'
+{ sub(/export ALETHIA_SUITE_TAG='\$_suite_tag'/, "export ALETHIA_SUITE_TAG=\047hello\047"); print }
+AWK
+
+# ── 9. and it must NOT fire on a legal reflow ─────────────────────────────────────────────────
+# A guard that reds on correct code is one somebody deletes. Collapsing the backslash
+# continuations puts `ssh_box "`, `pnpm install` and the export on ONE line — same command, same
+# order, no line numbers left to compare — which is precisely the case a line-based check reported
+# as "no ssh_box invocation carries the tag export".
+echo "# 9: a legal reflow must stay green"
+awk '{ if (sub(/\\$/, "")) { printf "%s", $0 } else { print } }' "$ENV_SH" >"$TMP/env-reflowed.sh"
+if ! cmp -s "$ENV_SH" "$TMP/env-reflowed.sh" && bash -n "$TMP/env-reflowed.sh" 2>/dev/null; then
+	if bash "$SELF" --callsites "$TMP/env-reflowed.sh" >/dev/null 2>&1; then
+		ok "a single-line && chain still reads as arm → install → tag → run → disarm"
+	else
+		bad "the call-site guard reds on a legal reflow — it is measuring layout, not order"
+	fi
+else
+	bad "the reflow fixture did not produce a different, parseable env.sh"
+fi
 
 if [ "$fails" = 0 ]; then
 	echo "env suite-reap: all passed"

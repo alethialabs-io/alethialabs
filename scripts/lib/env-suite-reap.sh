@@ -84,11 +84,18 @@ _suite_live=0
 # with it after `< "$d/environ"` the "no such file" for a process that exited between the glob and
 # the read goes to the ORIGINAL stderr and lands in the middle of the report.
 #
-# NO `$$` SKIP in the loop, and its absence is deliberate. /proc/<pid>/environ is the exec-time
-# copy, so an `export tag=…` added to the prefix above could not put the tag in THIS shell's
-# environ at all; what it would tag is the helpers the loop execs — `tr`, `grep`, `sleep` — none of
-# which a `$$` comparison covers. The invariant that actually protects the reaper is that the
-# prefix stays unexported, and that is what the test asserts.
+# NO `$$` SKIP in the loop, and the reason is narrower than "the prefix is unexported". What keeps
+# the reaper out of its own results is that the prefix variables are named `tag`, `base` and
+# `slug` — never ALETHIA_SUITE_TAG — and that ssh forwards no environment, so this shell cannot
+# inherit the suite's. Exporting them would not be enough to break it either: the match is
+# whole-line (`grep -Fqx "ALETHIA_SUITE_TAG=$tag"`), and an exported `tag=<value>` is a different
+# line entirely.
+#
+# The edit that WOULD break it is a NAMED one — export a prefix variable as ALETHIA_SUITE_TAG.
+# Then the `tr` and `grep` this loop execs carry the tag in their own environ, `still=$(tagged)`
+# can never come back empty, and the reap reports as a survivor the reflection of itself. A `$$`
+# comparison never covered that case: those helpers are not this shell. The test asserts the
+# prefix's NAMES instead, which is the thing that actually holds.
 # shellcheck disable=SC2016  # the point: this expands on the BOX, not here.
 _SUITE_REAP_SH='
 dir="$base/envs/$slug/"
@@ -127,7 +134,11 @@ fi
 # environment, after anything whose state is box-global; nothing else scopes the reap.
 suite_arm() { # <slug>
 	_suite_slug="$1"
-	_suite_tag="alethia-suite-$1-$$-$(date -u +%s)"
+	# $$ ALONE IS NOT UNIQUE ENOUGH TO SAY "this invocation". The box is shared between machines,
+	# and pids are per-machine: two laptops running the same branch's check can land on the same
+	# (slug, pid, second) and each reap the other's workers. $RANDOM is per-shell-seeded, so the
+	# triple plus it is what makes the word in the comment above true.
+	_suite_tag="alethia-suite-$1-$$-$(date -u +%s)-$RANDOM$RANDOM"
 	_suite_live=1
 	# THE INT TRAP IS LOAD-BEARING, and the reason is narrower than it looks. Bash does not die
 	# of an unhandled SIGINT delivered to the SCRIPT ALONE while it waits on a foreground child
