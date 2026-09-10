@@ -48,13 +48,19 @@ it") and committed the first instance's **uncommitted** work under its own messa
 Worktrees are **de-hydrated** — no local `node_modules`. Run their checks with `pnpm env:check`.
 
 Nothing used to put one *back* into that state. A tree that is abandoned but whose branch never
-landed is invisible to `wt:prune` — which removes only LANDED, clean trees — so its ~2 GB sat there
-for good; five such trees held 9.7 GB with the laptop at 1.8 GiB free (#4580). `pnpm wt:dehydrate
-[--dry-run]` reaps `node_modules` and nothing else from every tree whose lease is not live: the
-tree, its tracked files and its uncommitted work all stay, which is why it can touch the trees
-`wt:prune` must refuse. It never touches a tree a live instance holds — *including yours*;
-`pnpm wt:release` first if you mean it. Its byte figures are an upper bound (`du` cannot see APFS
-clones or hardlinks); `df -h /` is what actually answers "did that help".
+landed is invisible to `wt:prune` — which removes only LANDED, clean trees — so it sat there for
+good (#4580). `pnpm wt:dehydrate [--dry-run]` reaps `node_modules` and nothing else from every tree
+whose lease is not live: the tree, its tracked files and its uncommitted work all stay, which is
+why it can touch the trees `wt:prune` must refuse. It never touches a tree a live instance holds —
+*including yours*; `pnpm wt:release` first if you mean it.
+
+**Do not quote its byte figures as savings, and do not quote #4580's "~2 GB per tree" either — both
+are `du`'s numbers.** pnpm here uses APFS clones, so a tree's `node_modules` is mostly references
+into the pnpm store and a block is freed only when its **last** reference goes. Measured on one real
+tree: `du` said 1996 MB, `df` moved **52 MB** — 38× out. That is the argument *for* the sweep, not
+against it: dropping the last reference is the only thing that frees the shared blocks, and an
+abandoned, un-prunable tree holds one forever. Run it across the dead trees, then `pnpm store
+prune`, then read `df -h /` — which is the only thing that answers "did that help".
 
 If you do have to install one — a generator such as `gen:go-enums` needs a real `node_modules` —
 pass **`--frozen-lockfile`**. pnpm enables it in CI and leaves it OFF everywhere else, so a bare

@@ -137,16 +137,31 @@ wt_node_modules_dirs() { # <worktree> → absolute paths, one per line
 #
 # WHAT THIS NUMBER IS, AND IS NOT. du counts allocated blocks per inode and is BLIND TO SHARING, so
 # every figure derived from it is an UPPER BOUND on what a reap gives back — not a prediction.
-# Measured on this machine: a 400 MiB APFS clone (`cp -c`) reports 409600 KiB to du and reclaims
-# −100 KiB when deleted, because the blocks belong to the other copy too. That is not a corner case
-# here: every sampled file under `app/node_modules/.pnpm` has nlink=1 with the store on the same
-# volume, i.e. pnpm on this machine is CLONING, not hardlinking. A hardlinked store shares blocks
-# just as invisibly.
 #
-# So every figure this command prints is worded "up to N on disk", and that wording is the point:
-# the tool's whole justification is a disk number, and a maintainer reading "freed 1.9G" at 95%
-# full will believe the problem is solved. `df` is the only thing that can answer what was actually
-# reclaimed, and it is one command away.
+# MEASURED ON A REAL TREE, 2026-09-10, `df` either side of a by-hand reap:
+#
+#     before 9244 MB free · after 9297 MB free · ACTUALLY reclaimed 52 MB
+#     du -sk for the same directories:                              1996 MB
+#     ——————————————————————————————————————————————————————————————————————
+#     overstatement:                                                    38x
+#
+# The mechanism, confirmed on this machine: `pnpm store path` holds 1.7 GB, and a sampled file
+# under `node_modules/.pnpm` has nlink=1 with the store on the same volume — so these are APFS
+# CLONES (copy-on-write), not hardlinks and not copies. A tree's node_modules is mostly references
+# into the store, and a block is freed only when its LAST reference goes. A hardlinked store shares
+# blocks just as invisibly; du cannot see either.
+#
+# So every figure this command prints is worded "up to N on disk", and that wording is not a hedge
+# — it is the only honest form. The tool's whole justification is a disk number, and a maintainer
+# reading "freed 1.9G" at 95% full will believe the problem is solved when 38/39ths of it is still
+# there. `df` is the only thing that can answer what was actually reclaimed.
+#
+# AND THE 38x IS WHY THE COMMAND EXISTS, not an embarrassment to it. Dropping the last reference to
+# a shared block is the ONLY thing that frees it, and nothing else in the harness does that for a
+# tree which is simultaneously abandoned and un-prunable — such a tree pins its share of the store
+# forever. The payoff is therefore in the SWEEP and in `pnpm store prune` after it, not in any one
+# tree: which is exactly why the by-hand pass over FIVE trees plus a store prune moved 3.7 GB while
+# one tree moves 52 MB. Do not restate #4580's "~2 GB per tree" as a saving; it is du's number.
 #
 # Unreadable or missing is 0, never an error: a sweep must not die on one tree. `|| true` for the
 # same measured `set -o pipefail` reason as the walk above, and with the same caveat — du exits 1 on
@@ -464,10 +479,18 @@ fi
 # ends by COUNTING the trees it kept that are still hydrated and naming this command, which is the
 # discoverability half of the proposal and costs no blast radius.
 #
-# MEASURED, 2026-09-10 (#4580): five `stale (holder gone)` trees held 9.7 GB of node_modules on a
-# laptop with 1.8 GiB free. Deleting only their node_modules took it to 5.5 GiB without removing a
-# worktree or a line of source — and one of the five had uncommitted work, which survived. That is
-# the whole design: the regenerable half goes, the irreplaceable half stays.
+# MEASURED, 2026-09-10 (#4580): five `stale (holder gone)` trees held 9.7 GB of node_modules by du
+# on a laptop with 1.8 GiB free. Sweeping them — plus a `pnpm store prune` — took it to 5.5 GiB
+# without removing a worktree or a line of source, and one of the five had uncommitted work, which
+# survived. That is the whole design: the regenerable half goes, the irreplaceable half stays.
+#
+# READ THAT AGGREGATE CORRECTLY, because the per-tree version of it is false. 9.7 GB is du's figure
+# and du cannot see APFS clones; one real tree reaped by hand the same day returned 52 MB against
+# du's 1996 MB (see wt_dir_bytes). The gain is not "2 GB per tree" — it is that a block shared with
+# the pnpm store is freed only when its LAST reference goes, and an abandoned-but-unlanded tree
+# holds one of those references FOREVER because nothing else can reach it. This command exists to
+# drop the last reference; `pnpm store prune` then collects what that released. Anyone told to
+# expect ~2 GB back per tree will run it at 95% disk and be disappointed by a working tool.
 #
 # Re-hydrate with `pnpm install --frozen-lockfile` (CLAUDE.md §2 — a bare install in a worktree can
 # rewrite pnpm-lock.yaml and ride the diff into an unrelated PR).
@@ -522,11 +545,19 @@ EOF
 	echo ""
 	if [ "$dry" = 1 ]; then
 		echo "✓ dry run: would reap $reaped tree(s), up to $(wt_human_bytes "$total") on disk, skipping $kept held one(s). Nothing was touched."
+		echo "  \"up to\" is the ceiling, not the estimate: pnpm uses APFS clones, so most of these"
+		echo "  blocks are shared with the pnpm store and expect FAR less back — 38x less, measured."
 	else
 		echo "✓ reaped $reaped tree(s), up to $(wt_human_bytes "$total") on disk, skipped $kept held one(s)."
 		echo "  No worktree, tracked file or uncommitted change was removed."
-		echo "  \"up to\" is not hedging: du cannot see APFS clones or hardlinks, so it over-reports"
-		echo "  what a delete gives back. For what was actually reclaimed:  df -h /"
+		echo ""
+		echo "  \"up to\" is the honest form, not a hedge. pnpm uses APFS clones, so most of what was"
+		echo "  just deleted was SHARED with the pnpm store, and a block is freed only when its last"
+		echo "  reference goes. Measured on one real tree: du said 1996 MB, df moved 52 MB — 38x."
+		echo "  That is the point of the sweep rather than an argument against it: dropping the last"
+		echo "  reference is the only thing that frees the shared blocks, and an abandoned tree holds"
+		echo "  one forever. Collect what this released:   pnpm store prune"
+		echo "  What you actually got back:                df -h /"
 		echo "  Re-hydrate one when a generator needs it:  pnpm install --frozen-lockfile"
 	fi
 	exit 0
