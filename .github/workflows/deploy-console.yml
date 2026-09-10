@@ -107,17 +107,29 @@ jobs:
       #   FLOORED BY  — the leg table in the CHECKED-OUT tree, at `github.sha` on `main`. Read from
       #                 disk, and it may only ADD to the requirement, never remove one.
       #
-      # This used to read the local tree ALONE, and claimed it "picks up a new leg with no edit
-      # here". That was true of the FILE and false of the TIMING: main's tree is the promotion
-      # BEFORE the one that introduced the leg, so a newly added leg went ungraded for exactly one
-      # promotion — silently, and in the lenient direction. Grading the head's table closes that.
-      # Keeping main's table as a floor keeps the other direction loud: a leg `main` declares that
-      # the head never ran is still a refusal, and the graded ref cannot shrink the requirement
-      # below what the tree being deployed asks for.
+      # WHY NOT THE LOCAL TREE ALONE — and NOT because it lags. An earlier draft of this block
+      # claimed a one-promotion lag ("main's tree is the promotion BEFORE the one that introduced
+      # the leg, so a newly added leg goes ungraded for exactly one promotion"). That is FALSE and
+      # is recorded here so nobody re-derives it: this workflow runs on `push: branches: [main]` and
+      # `actions/checkout` carries no `ref:`, so it checks out `github.sha` — the commit the
+      # promotion CREATED, not the one it replaced. A path modified only on the `staging` side
+      # resolves to `staging`'s content in that tree, so the checkout already carries the head's
+      # table. Walk #4266's seventh leg through it: the local-tree read required 7, not 6. The lag
+      # exists only for a read of `main` WHILE the promotion PR is open, which is not this step.
       #
-      # Normally the two refs are ONE tree — a promotion merges the head into `main`, so main's
-      # release-gate.yml IS the head's — and the run says so. They can differ only inside a
-      # promotion window, and requiring the union is the fail-closed reading of that window.
+      # The gap that IS real is which commit the local tree is a statement about. `graded ≡ deployed`
+      # holds only while `main` has not moved release-gate.yml itself since the fork point, and the
+      # route that does exactly that is the emergency cherry-pick straight onto the promotion branch
+      # (CONTRIBUTING.md sanctions it). Then the deployed tree names legs the head never ran; and a
+      # conflict on that file resolved toward `main`'s side can DROP a leg the head did run, which
+      # is the lenient direction and is invisible to a local-tree-only read. So the expectation is
+      # read at the ref that produced the answers, and the deployed tree is kept as a floor that may
+      # only ADD: a leg `main` declares that the head never ran is still a refusal, and the graded
+      # ref cannot shrink the requirement below what the tree being deployed asks for. Both
+      # directions are loud, instead of assuming the two trees are one.
+      #
+      # Normally they ARE one tree, and the run says so; requiring the union is the fail-closed
+      # reading of the window in which they are not.
       #
       # LATEST RUN PER CONTEXT, not any run. A PR that was a draft has SKIPPED gate check-runs from
       # that period (release-gate.yml's `legs` job requires `draft == false`), and `ready_for_review`
@@ -142,7 +154,25 @@ jobs:
           const receipt = async () => {
           // The parser, not a copy of it. See the header: every one of its failure modes is a THROW,
           // and each is caught below and turned into a refusal that names the ref it was reading.
-          const { parseGateLegTable } = await import(pathToFileURL(resolve("scripts/ci/check-required-checks.mjs")).href);
+          //
+          // ASSERT THE SYMBOL RATHER THAN ASSUME IT. A dynamic `import()` does not link-check named
+          // bindings, so a module that stopped exporting `parseGateLegTable` is not an import error:
+          // the binding is `undefined` and the first call throws a TypeError inside `legsAt`, where
+          // it renders as "could not read the leg table out of release-gate.yml at the graded head".
+          // That verdict is right and every noun in it is wrong — release-gate.yml is intact at both
+          // refs and the missing thing is in THIS tree — so the reader goes and inspects a healthy
+          // file. Nothing in CI can catch the rename that causes it: check-pnpm-script-refs.mjs
+          // models `pnpm` invocations and check-docs-contract.mjs models docs, neither reads an
+          // `import()` written inside a workflow heredoc, and this workflow only ever runs from
+          // `main` — so such a rename lands green on dev and staging and first speaks as a refused
+          // production deploy. This check is the only thing that can name what actually happened.
+          const PARSER = "scripts/ci/check-required-checks.mjs";
+          const mod = await import(pathToFileURL(resolve(PARSER)).href);
+          if (typeof mod.parseGateLegTable !== "function") {
+            console.error(`::error::${PARSER} in the deployed tree ${sha} does not export \`parseGateLegTable\` (it is ${typeof mod.parseGateLegTable}). This receipt's PARSER is missing from the tree being deployed; that is NOT a statement about ${GATE}, and not a statement about the release gate at all. Land the parser alongside this workflow — a deploy-console.yml-only cherry-pick has to carry ${PARSER} too.`);
+            process.exit(1);
+          }
+          const { parseGateLegTable } = mod;
 
           // ── which PR produced this commit ─────────────────────────────────────────────────────
           // ONLY a PR whose base is `main` is a receipt for a commit on main. `commits/<sha>/pulls`
@@ -168,6 +198,11 @@ jobs:
           // ── the leg table, named at each of the two refs ──────────────────────────────────────
           // Both reads fail CLOSED and say which ref they were reading, because "could not see the
           // gate definition" and "the gate requires nothing" are the same silence otherwise.
+          //
+          // The second `catch` may say "the leg table did not parse at <ref>" only because the
+          // parser's existence was asserted above. Without that assertion an `undefined` callee
+          // throws a TypeError here too, and this message would blame a healthy release-gate.yml at
+          // the other ref for a symbol missing from the deployed tree.
           const legsAt = (where, read) => {
             let text;
             try {
@@ -222,11 +257,19 @@ jobs:
             const name = `Release gate (${leg})`;
             const got = latest.get(name);
             if (!got) {
-              // Say WHICH ref asked for it. A leg named only by the deployed tree never had a run to
-              // find; a leg named at the graded head and still missing means the gate did not run.
+              // Say WHICH ref asked for it, and name a remedy that CLEARS the state it is printed
+              // for. A leg named at the graded head and still missing means the gate did not run.
+              //
+              // A leg named ONLY by the deployed tree never had a run to find, and "promote again"
+              // is the one instruction that cannot fix it: `deployed` is the post-promotion tree, so
+              // a leg only it names reached `main` outside the promotion being graded (a cherry-
+              // picked hotfix, the emergency route CONTRIBUTING.md sanctions). The next promotion's
+              // head is the same `staging`, which still does not name the leg, so re-promoting
+              // REPRODUCES this refusal — one full promotion cycle spent to learn that. The action
+              // that actually clears it moves the leg onto the head.
               const from = graded.includes(leg)
                 ? `${GATE} at the graded head ${head} names this leg`
-                : `${GATE} names this leg only in the deployed tree ${sha}, not at the graded head ${head}, so the gate could not have produced it — promote again now that both refs carry the leg`;
+                : `${GATE} names this leg only in the deployed tree ${sha}, not at the graded head ${head}, so the gate could not have produced it. It reached \`main\` outside the promotion this receipt grades, which means PROMOTING AGAIN REPRODUCES THIS — the next head is that same \`staging\`, still without the leg. Back-merge \`main\` into \`staging\` (or land the leg on \`dev\` and promote it forward) so the head carries the leg and the gate reports it`;
               console.error(`::error::${name} never reported on #${pr.number} (head ${head}). ${from}. Nothing measured it.`);
               bad++;
             } else if (got.conclusion !== "success") {
@@ -237,7 +280,10 @@ jobs:
             }
           }
           if (bad > 0) {
-            console.error(`::error::${bad} of ${legs.length} release-gate leg(s) did not pass for #${pr.number}. Production is not receiving this commit. Fix the leg and re-promote; do not bypass.`);
+            // No blanket "re-promote" here either: for a leg the deployed tree alone names, that is
+            // the instruction that reproduces the refusal. Each line above carries the remedy for
+            // ITS leg, and they are not the same remedy.
+            console.error(`::error::${bad} of ${legs.length} release-gate leg(s) did not pass for #${pr.number}. Production is not receiving this commit. Each ::error:: above names the remedy for its own leg — they differ, and none of them is a bypass.`);
             process.exit(1);
           }
           console.log(`✓ all ${legs.length} release-gate legs passed for #${pr.number} — expectation read at ${head}, measured at ${head}, floored by the deployed tree ${sha}`);
