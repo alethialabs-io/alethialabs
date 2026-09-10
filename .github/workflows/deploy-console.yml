@@ -117,16 +117,21 @@ jobs:
       # table. Walk #4266's seventh leg through it: the local-tree read required 7, not 6. The lag
       # exists only for a read of `main` WHILE the promotion PR is open, which is not this step.
       #
-      # The gap that IS real is which commit the local tree is a statement about. `graded ≡ deployed`
-      # holds only while `main` has not moved release-gate.yml itself since the fork point, and the
-      # route that does exactly that is the emergency cherry-pick straight onto the promotion branch
-      # (CONTRIBUTING.md sanctions it). Then the deployed tree names legs the head never ran; and a
-      # conflict on that file resolved toward `main`'s side can DROP a leg the head did run, which
-      # is the lenient direction and is invisible to a local-tree-only read. So the expectation is
-      # read at the ref that produced the answers, and the deployed tree is kept as a floor that may
-      # only ADD: a leg `main` declares that the head never ran is still a refusal, and the graded
-      # ref cannot shrink the requirement below what the tree being deployed asks for. Both
-      # directions are loud, instead of assuming the two trees are one.
+      # The gap that IS real is which commit the local tree is a statement about. The merge takes
+      # `staging`'s copy of any path only `staging` touched, so the two trees separate exactly when
+      # `main` ALSO moved release-gate.yml since the fork point — a change that reached `main`
+      # outside this promotion, e.g. a hotfix merged straight into it. Then the deployed tree can
+      # name a leg the head never ran; and a conflict on that file resolved toward `main`'s side can
+      # DROP a leg the head did run, which is the lenient direction and is invisible to a
+      # local-tree-only read. So the expectation is read at the ref that produced the answers, and
+      # the deployed tree is kept as a floor that may only ADD: a leg `main` declares that the head
+      # never ran is still a refusal, and the graded ref cannot shrink the requirement below what
+      # the tree being deployed asks for. Both directions are loud, instead of assuming the two
+      # trees are one.
+      #
+      # NOT the route, though it reads like one: the emergency cherry-pick CONTRIBUTING.md sanctions
+      # targets `staging` — the head itself — so the merge carries it to `main` intact and the two
+      # trees still agree. Naming it here would be a plausible-sounding cause that nothing produces.
       #
       # Normally they ARE one tree, and the run says so; requiring the union is the fail-closed
       # reading of the window in which they are not.
@@ -262,11 +267,11 @@ jobs:
               //
               // A leg named ONLY by the deployed tree never had a run to find, and "promote again"
               // is the one instruction that cannot fix it: `deployed` is the post-promotion tree, so
-              // a leg only it names reached `main` outside the promotion being graded (a cherry-
-              // picked hotfix, the emergency route CONTRIBUTING.md sanctions). The next promotion's
-              // head is the same `staging`, which still does not name the leg, so re-promoting
-              // REPRODUCES this refusal — one full promotion cycle spent to learn that. The action
-              // that actually clears it moves the leg onto the head.
+              // a leg only it names reached `main` outside the promotion being graded — a hotfix
+              // merged straight into `main`, say. The next promotion's head is the same `staging`,
+              // which still does not name the leg, so re-promoting REPRODUCES this refusal — one
+              // full promotion cycle spent to learn that. The action that actually clears it moves
+              // the leg onto the head.
               const from = graded.includes(leg)
                 ? `${GATE} at the graded head ${head} names this leg`
                 : `${GATE} names this leg only in the deployed tree ${sha}, not at the graded head ${head}, so the gate could not have produced it. It reached \`main\` outside the promotion this receipt grades, which means PROMOTING AGAIN REPRODUCES THIS — the next head is that same \`staging\`, still without the leg. Back-merge \`main\` into \`staging\` (or land the leg on \`dev\` and promote it forward) so the head carries the leg and the gate reports it`;
