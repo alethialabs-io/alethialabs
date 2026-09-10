@@ -678,7 +678,7 @@
 				"members.bulk-remove — declares none (missing)": "passed",
 				"members.bulk-suspend — declares none (missing)": "passed",
 				"billing.card.remove — declares alert-dialog (confirmed)": "passed",
-				"billing.subscription.cancel — declares none (missing)": "passed",
+				"billing.subscription.cancel — declares confirm-dialog (confirmed)": "passed",
 				"org.logo.remove — declares confirm-dialog (confirmed)": "passed",
 				"runners.pool.delete — declares alert-dialog (confirmed)": "passed",
 				"runners.destroy — declares popover (confirmed)": "passed",

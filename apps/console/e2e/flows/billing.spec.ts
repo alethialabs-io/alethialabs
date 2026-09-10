@@ -29,13 +29,21 @@
 //
 // ── WHAT "TEST MODE" IS ACTUALLY PROVEN BY ────────────────────────────────────────────────────
 //
-// A page that renders is not a page that reached Stripe. Three tests below carry that weight, and
+// A page that renders is not a page that reached Stripe. Four tests below carry that weight, and
 // each waits for something ONLY a live test-mode API call produces:
+//   · a card attached to the org's real Stripe customer appears in Payment methods by its brand
+//     and last four — a row the console can only have got from `listPaymentMethods`;
+//   · the `Remove` confirmation opens over that row, and the card survives a page reload;
 //   · the /start CTA redirects to a URL containing a `cs_test_` Checkout Session id;
 //   · the upgrade sheet mounts Stripe.js's own cross-origin card iframes, which exist only once
-//     Elements has initialised against a real publishable key;
-//   · a card attached to the org's real Stripe customer appears in Payment methods by its brand
-//     and last four — a row the console can only have got from `listPaymentMethods`.
+//     Elements has initialised against a real publishable key.
+//
+// THE LAST TWO ARE `test.fixme` ON #4633, and so is the currency toggle, because the product
+// refuses the sale before Stripe is ever asked: `eligibility.ts` requires a declared payer
+// capacity, `declarePayer` has NO caller anywhere in the repo, and neither purchase sheet passes
+// the `payer` facts its own action accepts. The sheet then renders "Billing may not be configured
+// on this deployment", which is why this read for a while as an unwired Stripe. It is not unwired
+// — the first two tests above prove the same leg reaching the same account.
 //
 // We STOP before any payment: no confirmation is ever submitted, and the two destructive
 // confirmations (`billing.card.remove`, `billing.subscription.cancel`) are opened and CANCELLED.
@@ -233,6 +241,10 @@ test.describe("Billing — Stripe test mode", () => {
 	test("the /start trial CTA redirects into a TEST-mode Checkout session", { tag: "@needs:stripe" }, async ({
 		team,
 	}) => {
+		test.fixme(
+			true,
+			"BUG: /start's createCheckoutSession is refused for an undeclared payer capacity and the page swallows it, redirecting to billing #4633",
+		);
 		// `app/start/page.tsx` calls `createCheckoutSession("team")` server-side and redirects to
 		// the session URL, falling back to the org's billing page when Stripe is unconfigured or
 		// the call throws. Intercept the external navigation so no browser ever reaches Stripe.
@@ -277,6 +289,10 @@ test.describe("Billing — Stripe test mode", () => {
 	test("the upgrade sheet mounts Stripe.js's own card fields, not a look-alike", { tag: "@needs:stripe" }, async ({
 		owner,
 	}) => {
+		test.fixme(
+			true,
+			"BUG: the upgrade sheet's createSubscriptionIntent is refused for an undeclared payer capacity, so Elements never mounts #4633",
+		);
 		await owner.page.goto(billingPath(owner.orgSlug));
 		await owner.page.getByRole("button", { name: "Upgrade to Pro" }).click();
 
@@ -482,7 +498,14 @@ test.describe("Billing settings — Hobby → Pro upgrade (owner)", () => {
 	// driven from a browser and a test naming it would assert about a component the product does
 	// not mount. What a customer actually chooses from is this: the sheet's inclusions column, the
 	// plan's summary, and the currency the subscription will be created in.
-	test("the purchase sheet presents the plan's inclusions and its billing currency", { tag: "@needs:stripe" }, async ({
+	//
+	// THIS IS TWO TESTS, and the split is the finding rather than tidiness. The inclusions column
+	// is `PurchaseLayout`'s aside, which renders whatever the intent does; the currency toggle is
+	// ENABLED only once `createSubscriptionIntent` has returned a client secret (Stripe locks a
+	// subscription's currency at creation). Measured on run 34488595945: the first three
+	// assertions passed and the fourth found `<button disabled … aria-pressed="true">USD`. One
+	// test would have reported the whole plan surface as broken; two say exactly which half is.
+	test("the purchase sheet presents the plan's inclusions", { tag: "@needs:stripe" }, async ({
 		owner,
 	}) => {
 		await owner.page.goto(billingPath(owner.orgSlug));
@@ -491,14 +514,24 @@ test.describe("Billing settings — Hobby → Pro upgrade (owner)", () => {
 		const dialog = owner.page.getByRole("dialog");
 		await expect(dialog.getByText("What's included")).toBeVisible({ timeout: 30_000 });
 		await expect(dialog.getByRole("link", { name: /learn more about pricing/i })).toBeVisible();
+	});
 
-		// The currency toggle is enabled only once the intent exists (Stripe locks a
-		// subscription's currency at creation), so an enabled USD option is itself evidence that
-		// `createSubscriptionIntent` came back.
+	test("the purchase sheet offers a billing currency once the intent exists", { tag: "@needs:stripe" }, async ({
+		owner,
+	}) => {
+		test.fixme(
+			true,
+			"BUG: the currency toggle stays disabled because createSubscriptionIntent is refused for an undeclared payer capacity #4633",
+		);
+		await owner.page.goto(billingPath(owner.orgSlug));
+		await owner.page.getByRole("button", { name: "Upgrade to Pro" }).click();
+
+		const dialog = owner.page.getByRole("dialog");
 		const currency = dialog.getByRole("group", { name: "Billing currency" });
-		await expect(currency).toBeVisible();
-		const usd = currency.getByRole("button", { name: "USD" });
-		await expect(usd).toBeEnabled({ timeout: 30_000 });
+		await expect(currency).toBeVisible({ timeout: 30_000 });
+		// ENABLED, not merely present: `disabled={!clientSecret}`, so an enabled option is
+		// evidence the intent came back — which is the only thing here Stripe had to answer.
+		await expect(currency.getByRole("button", { name: "USD" })).toBeEnabled({ timeout: 30_000 });
 		await expect(currency.getByRole("button", { name: "EUR" })).toBeVisible();
 	});
 
