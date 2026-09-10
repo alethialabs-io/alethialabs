@@ -62,7 +62,9 @@ test.describe("Usage page (a brand-new org)", () => {
 		// assertion that proves the new window reached the thing being captioned rather than
 		// only the control that was clicked — the flows spec asserts the trigger, and asserting
 		// it twice would buy a second copy of one measurement.
-		await expect(page.getByText(/runner time · last 14 days/i)).toBeVisible({
+		// Anchored: the caption's PARENT also holds the window total, so its text contains this
+		// string too, and an unanchored regex would be two nodes and a strict-mode failure.
+		await expect(page.getByText(/^runner time · last 14 days$/i)).toBeVisible({
 			timeout: 30_000,
 		});
 	});
