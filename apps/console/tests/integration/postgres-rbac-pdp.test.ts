@@ -220,12 +220,14 @@ describeIfDb("PostgresRbacPDP (community RBAC over Postgres)", () => {
 		expect(await pdp.listAccessible(actor, "view", "project")).toEqual([]);
 	});
 
-	// ⚠ THE DENY DIRECTION IS UNDECIDED (#4584) and this is the case that shows why it matters:
-	// dropping a deny row that scopes to nothing is fail-OPEN. It hands the subject a permission
-	// that BOTH engines refuse today. The expectation reads `EMPTY_SCOPE_DENIES` rather than a
-	// hardcoded boolean, so the maintainer's ruling is a one-line change and this test moves with
-	// it instead of having to be rewritten.
-	it("a DENY row that scopes to nothing follows EMPTY_SCOPE_DENIES (open ruling)", async () => {
+	// RULED (#4584): a DENY row whose scope resolves to nothing EXCLUDES THE WHOLE ORG. This is
+	// the case the ruling was about — dropping such a row instead would be fail-OPEN, handing the
+	// subject a permission BOTH engines refuse today, from a row nobody edited.
+	//
+	// Asserted as literals. While the question was open these expectations read
+	// `EMPTY_SCOPE_DENIES`, which is what made the switch one line; keeping them derived now would
+	// mean the decision had nothing behind it and could be reverted silently green.
+	it("RULED: a DENY row that scopes to nothing excludes the WHOLE ORG", async () => {
 		await seedGrant({
 			principal_type: "user",
 			principal_id: USER,
@@ -243,13 +245,12 @@ describeIfDb("PostgresRbacPDP (community RBAC over Postgres)", () => {
 			resource_id: PROJ_A, // …minus PROJ_A, said with the contradictory pair
 		});
 
-		const denied = EMPTY_SCOPE_DENIES === "the_whole_org";
-		// Under "the_whole_org" the exclusion applies to the org, so BOTH projects lose it.
-		// Under "nothing" the row excludes nothing and the org-wide allow stands everywhere —
-		// which is a widening of live access and exactly what the ruling has to settle.
-		expect((await pdp.can(actor, "deploy", { type: "project", id: PROJ_A })).allowed).toBe(!denied);
-		expect((await pdp.can(actor, "deploy", { type: "project", id: PROJ_B })).allowed).toBe(!denied);
-		expect(await pdp.listAccessible(actor, "deploy", "project")).toHaveLength(denied ? 0 : 2);
+		expect(EMPTY_SCOPE_DENIES).toBe("the_whole_org");
+		// The exclusion applies to the org, so the named project AND one it never named both
+		// lose the permission — and the enumerate path agrees with the decide path.
+		expect((await pdp.can(actor, "deploy", { type: "project", id: PROJ_A })).allowed).toBe(false);
+		expect((await pdp.can(actor, "deploy", { type: "project", id: PROJ_B })).allowed).toBe(false);
+		expect(await pdp.listAccessible(actor, "deploy", "project")).toEqual([]);
 	});
 
 	it("a scoped DENY is untouched by that ruling — it names a real resource", async () => {
