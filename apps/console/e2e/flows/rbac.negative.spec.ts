@@ -86,6 +86,28 @@ function orgEndpoint(page: Page, action: string) {
 	);
 }
 
+/**
+ * Open the REAL invite dialog, retrying the open.
+ *
+ * The "Invite member" trigger is remounted when `canInvite` resolves async — the UpgradeDialog
+ * trigger is swapped for the InviteMemberDialog one — and a click that lands mid-swap is dropped.
+ * The same helper exists in rbac.spec.ts for the same reason; a denial that flakes on the OPEN
+ * reports nothing about the permission it exists to measure.
+ */
+async function openInviteDialog(page: Page) {
+	const dialog = page.getByRole("dialog");
+	const heading = dialog.getByRole("heading", { name: "Invite members" });
+	await expect(async () => {
+		if (await dialog.isVisible().catch(() => false)) {
+			await page.keyboard.press("Escape");
+			await expect(dialog).toBeHidden({ timeout: 2_000 });
+		}
+		await page.getByRole("button", { name: /invite member/i }).click();
+		await expect(heading).toBeVisible({ timeout: 2_000 });
+	}).toPass({ timeout: 30_000 });
+	return dialog;
+}
+
 /** The seeded colleague's row in the members table. */
 function victimRow(page: Page) {
 	return page.getByRole("row").filter({ hasText: victim.email });
@@ -102,9 +124,7 @@ test.describe("RBAC — member permission denials", () => {
 		// so the member gets the REAL invite dialog, not the Pro upsell. The gate it fails is the
 		// PDP's, one layer down, which is the whole point of asserting here rather than on the
 		// presence of a button.
-		await member.page.getByRole("button", { name: /invite member/i }).click();
-		const dialog = member.page.getByRole("dialog");
-		await expect(dialog.getByRole("heading", { name: "Invite members" })).toBeVisible({ timeout: 30_000 });
+		const dialog = await openInviteDialog(member.page);
 
 		const target = `e2e-denied-${Date.now()}@alethia.test`;
 		await dialog.getByPlaceholder("teammate@company.com").fill(target);
