@@ -265,21 +265,33 @@ export const EXPRESSION_BUDGET = 18000;
  *   1. IT IS BYTES, NOT CHARACTERS. The rejected scalar was 20,917 characters — UNDER the limit —
  *      and 21,119 UTF-8 bytes. Every `—`, `·` and `→` in a comment inside a `run:` block costs
  *      three. A character-counting version of this check would have called that file fine.
- *   2. IT BINDS PER SCALAR, not per file or per job. The same repository head is 59,864 bytes
- *      (2.85× the limit) and loads; the `legs` job carries 22,339 bytes of `run:` across its steps
- *      and loads; the two scalars that replaced the rejected one sum to 21,599 and load.
+ *   2. IT BINDS PER SCALAR, not per file and not per job. `release-gate.yml` is over three times
+ *      the limit as a file and loads, and its `legs` job carries more than the limit in `run:`
+ *      bytes across its steps and loads. Those two facts are stated without their figures on
+ *      purpose: every attempt to write the current sizes into that file went stale inside the
+ *      commit that wrote them, twice. The live numbers are the summary line below, which prints
+ *      them on a green run — that is the whole job of this check.
  *   3. IT BINDS ONLY ON A TEMPLATED SCALAR — one containing at least one `${{ … }}`. That is what
  *      makes GitHub compile the whole scalar as an expression. `deploy-console.yml`'s
  *      `Assemble .env from the vault and deploy` is 22,422 bytes, over the ceiling, contains no
- *      expression, and has deployed production repeatedly. The rejected release-gate scalar
+ *      expression, and loads. The EVIDENCE for "untemplated and over the ceiling still runs" is
+ *      that same step at 21,500 bytes, which deployed production on 09e09542c, 59ecb03d8 and
+ *      4848b736a; it grew to 22,422 after 2026-08-31 and has not run since, so today's figure is
+ *      the claim and those three runs are the proof. The rejected release-gate scalar
  *      contained exactly ONE — `${{ matrix.project }}`, written inside a JavaScript COMMENT
  *      explaining a different job's flag. Prose about an expression is an expression, and it put
  *      21 KB of shell script under a template compiler.
  *
- * Held against every `run:`/`with.script` scalar in this repo (407 of them) and against the one
- * observed rejection: exactly one exceeds the ceiling and it is the untemplated one. That is one
- * positive and one negative, not a documented rule — so this fails on the TEMPLATED ones only, and
- * says the size of the largest either way.
+ * Held against every step-level `run:`/`with.script` scalar in this repo — the summary line counts
+ * them, ~180 of them block scalars, and ZERO are `with.script`, so that arm is written for the shape
+ * and exercised only by the self-test —
+ * and against the one observed rejection: exactly one exceeds the ceiling and it is the untemplated
+ * one. That is one positive and one negative, not a documented rule — so this fails on the TEMPLATED
+ * ones only, and the summary prints the largest of BOTH kinds.
+ *
+ * SCOPE, stated: BLOCK scalars under `run:`/`script:` only. An `if:`, an `env:` value and a `with:`
+ * input are template expressions under the same ceiling; the largest of those in this repo today is
+ * 325 bytes, two orders off, so they are left unmeasured deliberately rather than by oversight.
  *
  * THE MARGIN IS A LANDING LIGHT, NOT A GUARDRAIL, and saying so is the point. The commit that broke
  * the file grew one scalar from 10,574 to 21,119 bytes — a single edit larger than the whole 3,000
@@ -464,8 +476,10 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 	let unreadable = 0;
 	let permissionEntries = 0;
 	let serviceJobs = 0;
-	// The largest scalar seen, templated or not — printed on a GREEN run, because the whole lesson of
-	// the incident this guards is that nobody was taking the measurement at all.
+	// The largest scalar seen, templated or not. NOT printed from here — `check()` returns problems
+	// and nothing else; the green line is built in `main()` below and takes its own measurement.
+	// This copy exists for one thing: the blindness test at the bottom, which refuses a tree in which
+	// no block scalar was found at all.
 	let biggestScalar = { bytes: 0, chars: 0, templated: false, file: "", line: 0, key: "" };
 	for (const f of files.sort()) {
 		const text = readFile(path.join(dir, f));
@@ -528,7 +542,7 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 					"(`Exceeded max expression length 21000`, run 34460914813). " +
 					"Move prose OUT of the block into YAML `#` comments, which cost nothing, or split the step — each `run:` has its own budget. " +
 					"If the block needs no interpolation at all, deleting the last `${{ … }}` takes it out of the limit entirely: an untemplated scalar is never measured, " +
-					"which is why deploy-console.yml carries one of 22,422 bytes and loads.",
+					"which is how deploy-console.yml has deployed production carrying an untemplated block of 21,500 bytes.",
 			);
 		}
 		const guards = scanServiceGuards(text);
@@ -639,6 +653,9 @@ jobs:
 			// The step carries a BLOCK scalar, not `run: true`: `check()` refuses a tree in which it finds
 			// no block scalar at all, on the same grounds as the three blindness guards beside it, and a
 			// fixture that trips a guard unrelated to its subject tests the guard rather than the subject.
+			// Revert this one line and five permission assertions go red, NONE of them mentioning block
+			// scalars — the failure misattributes, which is the cost of a shared fixture and the reason
+			// this comment names the coupling instead of leaving the next reader to find it.
 			() => `name: x\n${body}jobs:\n  a:\n    runs-on: ubuntu-latest\n    services:\n      postgres:\n        image: postgres:17-alpine\n    steps:\n      - run: |\n          true\n`,
 		);
 
@@ -902,6 +919,10 @@ if (process.argv.includes("--self-test")) {
 	let svcJobs = 0;
 	let scalars = 0;
 	let biggest = { bytes: 0, chars: 0, file: "", line: 0, key: "" };
+	// The largest scalar of ANY kind, printed beside it. The templated one is what the limit BINDS
+	// on; this one is what would breach it the day somebody writes `${{` into it, and leaving it out
+	// of the green line is this file's own lesson failing on the number most worth having.
+	let overall = { bytes: 0, chars: 0, templated: false, file: "", line: 0, key: "" };
 	for (const f of files) {
 		const text = fs.readFileSync(path.join(DIR, f), "utf8");
 		steps += scanWorkflow(text).steps;
@@ -910,6 +931,7 @@ if (process.argv.includes("--self-test")) {
 		for (const b of scanExpressionBudget(text)) {
 			scalars += 1;
 			if (b.templated && b.bytes > biggest.bytes) biggest = { ...b, file: f };
+			if (b.bytes > overall.bytes) overall = { ...b, file: f };
 		}
 	}
 	// The counts are printed because a green line that names no quantity is indistinguishable from a
@@ -920,6 +942,8 @@ if (process.argv.includes("--self-test")) {
 			`${svcJobs} job(s) with \`services:\`, none of them running a step past a failed \`Initialize containers\`; ` +
 			"no `name:` losing text to an unquoted `#`; " +
 			`largest TEMPLATED block scalar ${biggest.bytes} bytes of ${EXPRESSION_BUDGET} budgeted (${EXPRESSION_LIMIT} is where Actions refuses the file) ` +
-			`— ${biggest.file}:${biggest.line}, of ${scalars} block scalar(s) measured`,
+			`— ${biggest.file}:${biggest.line}, of ${scalars} block scalar(s) measured; ` +
+			`largest of ANY kind ${overall.bytes} bytes — ${overall.file}:${overall.line}` +
+			`${overall.templated ? "" : ", untemplated"}${overall.bytes > EXPRESSION_LIMIT ? ` — OVER the ${EXPRESSION_LIMIT} ceiling, and one \`\${{\` away from taking that workflow off the air` : ""}`,
 	);
 }

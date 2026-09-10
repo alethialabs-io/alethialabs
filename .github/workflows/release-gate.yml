@@ -42,9 +42,13 @@ name: Release gate
 # decides whether this check should be binding.
 #
 #   · ASKING costs one runner SLOT on every non-draft PR into main, staging or dev, on every push,
-#     plus a checkout of this monorepo — including on a docs-only PR. scripts/ci/ci-demand.mjs counts
-#     slots rather than minutes because 75% of this repo's CI wall-clock is queue wait: a five-second
-#     job that waits twenty minutes holds a slot for twenty.
+#     plus a checkout of this monorepo — including on a docs-only PR. AND ON EVERY LABEL EVENT: `on:`
+#     lists `labeled`, and the clause that used to skip this job for an unrelated label moved to the
+#     `gate` job, so a triage label, a `claimed`, or anything the queue-babysitting instance and the
+#     board automation add now starts a run and a checkout too. That is the cost of the context
+#     always reporting, which is what makes it registerable at all; it is not free.
+#     scripts/ci/ci-demand.mjs counts slots rather than minutes because 75% of this repo's CI
+#     wall-clock is queue wait: a five-second job that waits twenty minutes holds a slot for twenty.
 #   · ANSWERING costs the gate. Replaying the last 80 `dev` merges through this exact logic:
 #     41 OF 80 (51%) GO RED unlabelled. 39 of those 41 would run all seven legs — a console source
 #     path matches no rule, and rule 3 sends it everywhere — for 275 leg-runs, about 3,000 RUNNER-
@@ -164,23 +168,45 @@ jobs:
     # note above rather than on its own — a label event cannot CANCEL a running gate either, which is
     # what `cancel-in-progress: ${{ github.event.action != 'labeled' }}` buys.
     #
-    # ── BEFORE ANYONE REQUIRES THIS CHECK, which is what would make its red BINDING ───────────────
+    # ── REQUIRING THIS CHECK IS AVAILABLE, AND IT IS A COST DECISION, NOT A MECHANISM ONE ────────
     #
-    # It is not in `.mergify.yml` or `infra/github`, so today it is advisory: a dev PR can be
-    # squash-merged with it red. Making it binding is `check-success=Which legs run, and whether the
-    # gate runs at all` in BOTH `.mergify.yml` blocks plus a `mergify_leads` record in
-    # infra/github/required-checks-divergence.json — the documented order, Mergify first. Two of the
-    # three conditions that makes safe are now met: the job always reports on a non-draft PR event
-    # (above), and its failure is a real check rather than an annotation.
+    # It is in neither `.mergify.yml` nor `infra/github`, so today it is advisory: a dev PR can be
+    # squash-merged with it red. An earlier version of this note said the route was BLOCKED by
+    # Mergify's speculative draft. That was wrong about which layer, and the correction matters
+    # because "impossible" is an instruction the next reader acts on.
     #
-    # THE THIRD IS NOT MET AND IS THE DECIDING ONE. Mergify validates a batch on a SPECULATIVE
-    # DRAFT PR authored by `mergify[bot]` (`.mergify.yml` says so, in the `contribution-legal`
-    # note). A draft skips this job by the clause above, so `check-success=` on this context would
-    # never be satisfied on the temporary branch and the dev queue would stop merging — the #1653
-    # shape that file records. Admitting mergify[bot] drafts is not the fix either: `merge_conditions`
-    # are evaluated on that temporary PR, which carries none of the real PR's LABELS, so every batch
-    # containing a labelled console PR would then fail this check instead. Whoever registers it
-    # answers that first; it is a merge-policy change, not a workflow one.
+    # THE WEDGE IS REAL FOR THE TWO LAYERS THAT NOTE NAMED, AND ONLY THOSE. `merge_conditions` and
+    # `success_conditions` are evaluated against Mergify's TEMPORARY MERGE — a speculative DRAFT
+    # authored by `mergify[bot]`, carrying none of the real PR's labels. This job skips a draft, so
+    # a `check-success=` there would never be satisfied: the queue stops, the #1653 shape.
+    #
+    # `queue_conditions` IS A DIFFERENT LAYER and it is the right one. `check-required-checks.mjs`
+    # states the distinction, and `.mergify.yml` states it again: `queue_conditions` /
+    # `auto_merge_conditions` are evaluated against the REAL pull request and re-evaluated
+    # continuously. `-draft` is already one of them, so on the real PR this job RUNS and the context
+    # reports `success` or `failure` — never `skipped`. A PR that fails it is EVICTED from the queue
+    # rather than held at the head of the train, and an un-queued PR holds no train slot, so it
+    # cannot stall anyone else. That is the #1653 shape AVOIDED. The precedent is three lines above
+    # where the condition would go: `#review-threads-unresolved = 0` is installed in
+    # `queue_conditions` for exactly this reason (#3498, #3444).
+    #
+    # SO THE ROUTE IS: `- "check-success=Which legs run, and whether the gate runs at all"` in
+    # `queue_conditions` and in `auto_merge_conditions` (the enqueue half), plus a `mergify_leads`
+    # record in infra/github/required-checks-divergence.json. #4510's precondition — a context must
+    # have been observed green once before anything may require it — is met: run 34480011384.
+    #
+    # ONE ACCOMPANYING EDIT, MEASURED RATHER THAN GUESSED. `parseMergifyCheckBlocks` collects EVERY
+    # `*conditions:` block naming a `check-success=` and requires them to name the same set, so
+    # adding it to `queue_conditions` alone reds `check-required-checks.mjs` — and worse than one
+    # error: `queue_conditions` becomes the canonical list and all eleven other contexts are then
+    # reported missing from it. The fix is local and is what that file's own docstring already says
+    # semantically — exempt `queue_conditions` from the identity comparison, leaving
+    # `merge_conditions` and `success_conditions` as the pair that must agree.
+    #
+    # WHAT IS ACTUALLY BEING DECIDED, then, is the price in the header: ~3,000 runner-minutes per 80
+    # dev merges, against a leg's verdict existing for every PR that changes what it measures. That
+    # is the maintainer's call. It is not this file's to assert either way, and it must not assert
+    # that the mechanism forbids it.
     if: >-
       github.event_name == 'workflow_dispatch'
       || github.event.pull_request.draft == false
@@ -252,18 +278,31 @@ jobs:
       # SO PROSE LIVES UP HERE, IN YAML COMMENTS, NOT DOWN THERE IN THE HEREDOC, and the check that
       # needs its own thousands of bytes is its own step with its own budget. A `#` line here costs
       # nothing; the same sentence a few columns right, inside the script, is spent out of 21,000.
-      # Measured after the split, in the one unit that binds: `pick` 13,721 bytes, `require-label`
-      # 7,878 — and the two together are 21,599, which is over the ceiling and loads, because the
-      # ceiling is per SCALAR. `scripts/ci/check-workflow-shape.mjs` now takes this measurement on
-      # every workflow and prints it on a green run; before #4466 nothing in the tree did.
+      # THE CURRENT SIZES ARE NOT WRITTEN DOWN HERE, and that is the third correction to this
+      # paragraph rather than a gap in it. Two attempts to record them went stale inside the commit
+      # that wrote them — the second recorded its PARENT's numbers, while the step it was describing
+      # grew 1,473 bytes in that same diff. A number that drifts inside its own commit is not a
+      # record. `node scripts/ci/check-workflow-shape.mjs` prints the live figure for every workflow
+      # on a GREEN run, and that is where to read it; what belongs here is only what does not move.
       #
-      # AND THE CHEAPEST FIX IS NOT ALWAYS THE SPLIT. Actions compiles a `run:` scalar as a template
-      # only if it CONTAINS an expression. The 21,119-byte block that was refused contained exactly
-      # one — `${{ matrix.project }}`, inside a JavaScript COMMENT explaining a flag in another job.
-      # Prose about an expression IS an expression, and that one mention put 21 KB of script under a
-      # template compiler. deploy-console.yml carries an untemplated 22,422-byte block that has
-      # deployed production repeatedly. The split is kept because it does not depend on nobody ever
-      # writing `${{` in a comment again.
+      # WHAT DOES NOT MOVE. The ceiling is 21,000 bytes and it binds PER SCALAR, not per file and not
+      # per job: this file is over three times the ceiling and loads, and the `legs` job's `run:`
+      # bytes exceed it across its steps and load. And the rejected scalar was 21,119 bytes /
+      # 20,917 characters — the pair that shows the unit.
+      #
+      # WHAT IS NOT EVIDENCE IS ADDING THE TWO STEPS TOGETHER. Actions compiles a `run:` scalar as a
+      # template only if it CONTAINS an expression, and `require-label` contains none — it is not
+      # under the limit by some margin, it is not under the limit at all, so "the two sum to more
+      # than the ceiling and load" argues from a scalar the ceiling never touched.
+      #
+      # THAT RULE IS ALSO THE CHEAPEST FIX, when it applies. The 21,119-byte block that was refused
+      # contained exactly one expression — `${{ matrix.project }}`, inside a JavaScript COMMENT
+      # explaining a flag in another job. Prose about an expression IS an expression, and that one
+      # mention put 21 KB of script under a template compiler. deploy-console.yml has carried an
+      # untemplated block OVER the ceiling and deployed production repeatedly — at 21,500 bytes,
+      # which is the number that carries the evidence; it is 22,422 today and has not run since,
+      # so today's figure proves nothing. The split is kept anyway, because it does not depend on
+      # nobody ever writing `${{` into a comment again.
       #
       # ── WHETHER THE GATE RUNS AT ALL, WHICH IS NOW A QUESTION ABOUT THE DIFF (#4466) ──────────
       #
@@ -679,6 +718,13 @@ jobs:
             // is either compiled into the console or RECORDED here as not. Both directions fail — an
             // unlisted package off the surface, and a listed one that has since joined it, which is
             // the stale record that would otherwise suppress a real finding forever.
+            //
+            // THE BOUND, because the scope prefix is a real limit and not a formality: this asks
+            // only about SCOPED packages. Six workspace packages have bare names (`console`, `docs`,
+            // `admin`, `blog`, `alethia`, `marketing`), and if the console ever took a dependency on
+            // one, the walk would put it on the surface but its later REMOVAL would pass unnoticed
+            // here — the exact class this check exists to catch, one prefix away. Widen the regex if
+            // that day comes; today none of the six is a console dependency.
             const NOT_COMPILED_IN = {
               "@repo/eslint-config": "lint configuration; it reaches the console only through a surface package's devDependencies",
               "@repo/typescript-config": "tsconfig bases, the same way — neither changes what the browser renders",
@@ -694,7 +740,7 @@ jobs:
           }
 
           // The recorded exemption. See the YAML comment above this step for the decision and its cost.
-          const EXEMPT = [{ path: ".github/workflows/release-gate.yml", why: "the PR's own `legs` job runs the edited file, and no leg can see a YAML change" }];
+          const EXEMPT = [{ path: ".github/workflows/release-gate.yml", why: "no leg can see a YAML change — a leg boots a console that is byte-identical either side of an edit to this file, and CI reads the edited file in two stronger ways (see the comment above this step)" }];
 
           const surface = surfaceDirs();
           let changed = null;
