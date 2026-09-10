@@ -36,17 +36,29 @@
 //
 //   node scripts/ci/check-upload-aggregate.mjs
 //   node scripts/ci/check-upload-aggregate.mjs --self-test
+//   node scripts/ci/check-upload-aggregate.mutations.mjs   ← proves the self-test can FAIL
+//
+// That third command is the one that makes the second mean anything: it reverts each fix below in
+// turn and requires the self-test to go red and name the case that fix exists for. A guard shipped
+// alongside its own fix passes trivially, so the evidence is not that the test passes — it is that
+// it fails when the implementation is broken, and that evidence has to stay re-runnable.
 //
 // THE RULE, stated as a shape rather than as a text pattern: an `actions/upload-artifact` step
 // whose `with.path` RESOLVES to two or more inclusion entries, and whose `with.if-no-files-found`
 // resolves to `error`. Resolves, not "is written as": a first pass of this check tested the written
-// form and an adversarial read found five valid-YAML spellings of the identical defective step that
+// form and an adversarial read found SIX valid-YAML spellings of the identical defective step that
 // all walked past it — a double-quoted `"a\nb"`, a single-quoted scalar folded over a blank line,
 // `with:` children indented by four, extra spaces after the sequence dash, a quoted `uses:`, and a
 // value on the line below its key. None is exotic; each is one edit from the shape it evades, and
 // the worst of them also zeroed the repo-wide floor that was supposed to notice. So the values are
 // RESOLVED — folding, quoting and block indicators and all — and a value that cannot be resolved is
 // REFUSED rather than scored as one path.
+//
+// A SECOND read of the fix found a seventh, and it is the one worth remembering: closing the
+// folded-block false positive by trimming every line introduced a MISS on a folded block whose
+// lines are not uniformly indented, which YAML keeps unfolded. Fixing an over-report by
+// under-reporting is the worse direction, and it took a second adversarial pass to see it —
+// `foldBlock` is that fix, and the two directions are asserted separately in the self-test.
 //
 // The fix is one step per artefact, each keeping its own `if-no-files-found: error` — the shape
 // `go-floors-rerecord.yml` and `deploy-console.yml` already use — or an explicit pre-upload
@@ -72,13 +84,27 @@
 //     entry, because its multiplicity is not in the file.
 //   * An entry beginning with `!` is an EXCLUSION, not another way to satisfy the guard, so it is
 //     counted and then discounted. A step whose only extra entries are exclusions is fine.
-//   * A `#` line inside a `path: |` literal block is CONTENT, not a comment — YAML says so — and
-//     is counted as an entry. Commenting a path out in there does not remove it; it renames it.
-//   * A FOLDED block (`>`) joins its lines with SPACES, so it is ONE pattern, not several. Reading
-//     it as several would red a file that is not defective, which is how a check gets routed
-//     around. Blank lines inside one do yield newlines, and that IS read.
+//   * A `#` line inside a `path: |` block is DISCOUNTED. YAML is right that it is content — but
+//     the CONSUMER is what decides, and `@actions/glob`'s `internal-globber.ts` splits the string
+//     on newlines, trims, and `continue`s on any line that `startsWith('#')`. So it is a comment
+//     where it matters. An earlier draft of this file asserted the opposite and red a correct
+//     workflow for it, at the exact moment somebody was looking for a way around the rule.
+//   * A FOLDED block (`>`) folds a break to a SPACE only between two lines at the block's OWN
+//     indentation. A MORE-INDENTED line keeps the breaks on both sides of it, so a `>` block can
+//     be several patterns; `foldBlock` reads that, and reading it as one was a false negative on
+//     the very shape this refuses. Blank lines yield newlines in both cases.
 //   * A trailing `\` inside a double-quoted scalar suppresses the line fold. Not modelled; such a
 //     value is folded with a space, which can only ever UNDER-count entries by joining two.
+//   * An escape inside a double-quoted scalar that `unquote` does not model makes the value
+//     UNREADABLE, not itself. `\x0a` is E1 with two more characters, and identity-mapping an
+//     unknown escape would resolve it to one path. `\xNN`, `\uNNNN` and `\UNNNNNNNN` ARE decoded.
+//   * A TAG (`!!str error`, `!Ref x`) is refused rather than resolved, for the same reason.
+//   * A quoted KEY (`"path":`) is read — not stripping the quotes turned a valid workflow into a
+//     refusal, which is the same red-on-a-correct-file direction as the `#` case above.
+//   * CRLF line endings are normalised here because there is no `*.yml text eol=lf` in
+//     `.gitattributes`; without that, one CRLF file scans to zero uploads and no floor notices,
+//     since the floors are repo-wide. Adding the `.gitattributes` line is the better fix and is
+//     outside this change's scope.
 //   * A flow sequence (`path: [a, b]`) is not read, because `actionlint` rejects it outright: the
 //     action's input is a string. A second refusal here would be a rule with no reachable subject.
 //   * YAML anchors and aliases are not read. Actions does not support them; a workflow using one
@@ -199,15 +225,105 @@ export function gatherQuoted(inline, cont) {
 }
 
 /**
+ * Folding for a FOLDED BLOCK (`>`), which is NOT the flow folding above.
+ *
+ * A more-indented line inside a folded block is not folded: it keeps the breaks on BOTH sides of
+ * it, and keeps its extra indentation. So
+ *
+ *     path: >
+ *       dist/a
+ *         dist/b
+ *       dist/c
+ *
+ * is three patterns, not one — and a `fold` that trimmed every line first turned it into one, which
+ * is a FALSE NEGATIVE on the exact shape this check exists to refuse. That regression is why this
+ * function exists separately: the first attempt at the folded case fixed a false positive by
+ * introducing a miss, which is the worse of the two directions.
+ *
+ * @param {string[]} raw the block's lines, untrimmed, "" for a blank one
+ * @returns {string}
+ */
+export function foldBlock(raw) {
+	const content = raw.filter((l) => l.trim() !== "");
+	if (content.length === 0) return "";
+	const blockIndent = Math.min(...content.map(indentOf));
+	let out = "";
+	let blanks = 0;
+	let started = false;
+	let prevMore = false;
+	for (const l of raw) {
+		if (l.trim() === "") {
+			if (started) blanks += 1;
+			continue;
+		}
+		const more = indentOf(l) > blockIndent;
+		const text = l.slice(blockIndent);
+		if (!started) {
+			out = text;
+			started = true;
+			prevMore = more;
+			blanks = 0;
+			continue;
+		}
+		// A break is folded to a space ONLY between two lines that both sit at the block's own
+		// indentation. If either side is more-indented, the break survives.
+		out += blanks > 0 ? "\n".repeat(blanks) : more || prevMore ? "\n" : " ";
+		out += text;
+		prevMore = more;
+		blanks = 0;
+	}
+	return out;
+}
+
+/**
+ * Strip a trailing `#` comment from a PLAIN scalar. Never from a quoted or block one, where a `#`
+ * is content.
+ *
+ * This is not a nicety: `if-no-files-found: error # aggregate, see #4347` resolves to `error`, and
+ * a reader that compared the written value against `"error"` scored the step as UNGUARDED — so the
+ * step fell out of the reported set AND out of the guarded count, eroding the floor instead of
+ * tripping it. This PR annotates precisely those lines, which makes it the likeliest edit of all.
+ *
+ * @param {string} s
+ */
+const stripComment = (s) => s.replace(/(?:^|\s)#.*$/, "").trimEnd();
+
+/**
  * Undo one level of quoting, AFTER folding — the order matters, because a `\n` escape inside a
  * double-quoted scalar is a newline the fold must not have already turned into a space.
  *
+ * An escape this does not model makes the value UNREADABLE rather than being passed through as
+ * itself: identity-mapping an unknown escape is how `\x0a` — E1 with two more characters — would
+ * resolve to one path instead of two.
+ *
  * @param {string} s folded body
  * @param {string} quote `'` or `"`
+ * @returns {{value: string, ok: boolean}}
  */
-function unquote(s, quote) {
-	if (quote === "'") return s.replace(/''/g, "'");
-	return s.replace(/\\(.)/g, (_, c) => (c === "n" ? "\n" : c === "t" ? "\t" : c === "r" ? "\r" : c === "0" ? "\0" : c));
+export function unquote(s, quote) {
+	if (quote === "'") return { value: s.replace(/''/g, "'"), ok: true };
+	const SIMPLE = { n: "\n", t: "\t", r: "\r", 0: "\0", "\\": "\\", '"': '"', "/": "/", b: "\b", f: "\f", a: "\x07", v: "\v", e: "\x1b", " ": " ", N: "", _: " ", L: " ", P: " " };
+	let out = "";
+	for (let i = 0; i < s.length; i++) {
+		if (s[i] !== "\\") {
+			out += s[i];
+			continue;
+		}
+		const c = s[i + 1];
+		if (c === undefined) return { value: out, ok: false };
+		i += 1;
+		if (c === "x" || c === "u" || c === "U") {
+			const n = c === "x" ? 2 : c === "u" ? 4 : 8;
+			const hex = s.slice(i + 1, i + 1 + n);
+			if (!new RegExp(`^[0-9a-fA-F]{${n}}$`).test(hex)) return { value: out, ok: false };
+			out += String.fromCodePoint(Number.parseInt(hex, 16));
+			i += n;
+			continue;
+		}
+		if (!(c in SIMPLE)) return { value: out, ok: false };
+		out += SIMPLE[c];
+	}
+	return { value: out, ok: true };
 }
 
 /**
@@ -221,27 +337,38 @@ function unquote(s, quote) {
  */
 export function resolveValue(lines, raw, inline) {
 	const keyCol = indentOf(lines[raw]);
-	/** every continuation line, trimmed; blanks kept, trailing blanks dropped */
-	const cont = [];
+	/** every continuation line, UNTRIMMED — the folded case needs the indentation */
+	const contRaw = [];
 	for (let r = raw + 1; r < lines.length; r++) {
 		if (lines[r].trim() === "") {
-			cont.push("");
+			contRaw.push("");
 			continue;
 		}
 		if (indentOf(lines[r]) <= keyCol) break;
-		cont.push(lines[r].trim());
+		contRaw.push(lines[r]);
 	}
-	while (cont.length > 0 && cont[cont.length - 1] === "") cont.pop();
+	while (contRaw.length > 0 && contRaw[contRaw.length - 1] === "") contRaw.pop();
+	const cont = contRaw.map((l) => l.trim());
 
-	if (LITERAL_BLOCK.test(inline)) return { value: cont.filter((l) => l !== "").join("\n"), kind: "literal", readable: true };
-	if (FOLDED_BLOCK.test(inline)) return { value: fold(cont), kind: "folded", readable: true };
-	if (inline === "") return { value: fold(cont), kind: "plain", readable: true };
-	if (inline[0] === "'" || inline[0] === '"') {
+	const quoted = inline[0] === "'" || inline[0] === '"';
+	// A quoted scalar's trailing comment is discarded by `gatherQuoted` stopping at the closing
+	// quote; everything else has to have it taken off before the indicator is read, or
+	// `path: | # note` would not read as a block at all.
+	const head = quoted ? inline : stripComment(inline);
+
+	// A tag (`!!str error`, `!Ref x`) is a shape this does not model, and an unmodelled shape that
+	// resolves to something plausible is an evasion. Refused, not guessed at.
+	if (head.startsWith("!")) return { value: "", kind: "tag", readable: false };
+	if (LITERAL_BLOCK.test(head)) return { value: cont.filter((l) => l !== "").join("\n"), kind: "literal", readable: true };
+	if (FOLDED_BLOCK.test(head)) return { value: foldBlock(contRaw), kind: "folded", readable: true };
+	if (head === "") return { value: fold(cont.map(stripComment)), kind: "plain", readable: true };
+	if (quoted) {
 		const { parts, closed, quote } = gatherQuoted(inline, cont);
-		return { value: unquote(fold(parts), quote), kind: `quoted(${quote})`, readable: closed };
+		const { value, ok } = unquote(fold(parts), quote);
+		return { value, kind: `quoted(${quote})`, readable: closed && ok };
 	}
 	// A plain scalar may still continue onto more-indented lines, folding with spaces.
-	return { value: fold([inline, ...cont]), kind: "plain", readable: true };
+	return { value: fold([head, ...cont.map(stripComment)]), kind: "plain", readable: true };
 }
 
 /**
@@ -261,8 +388,13 @@ export function resolveValue(lines, raw, inline) {
  * @returns {{uploads: number, pathKeys: number, guarded: number, multi: number, problems: {line: number, name: string, artifact: string, entries: string[], excludes: string[], kind: string}[], unreadable: {line: number, name: string, artifact: string, why: string}[]}}
  */
 export function scanUploads(text) {
-	const lines = text.split("\n");
-	const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+	// `\r` is stripped because a CRLF file otherwise scans to ZERO uploads — JS's `.` and `\s*$`
+	// anchors do not treat `\r` as a line ending, and one blinded file among forty never trips a
+	// repo-wide floor. There is no `*.yml text eol=lf` in `.gitattributes` to prevent it upstream.
+	const lines = text.split("\n").map((l) => l.replace(/\r$/, ""));
+	// `jobs: # …` is a legal top-level key with a comment, and an anchor that refused it would blind
+	// the whole file — the same silent-whole-file class as the CRLF case above.
+	const jobsAt = lines.findIndex((l) => /^jobs:\s*(#.*)?$/.test(l));
 	if (jobsAt === -1) return { uploads: 0, pathKeys: 0, guarded: 0, multi: 0, problems: [], unreadable: [] };
 
 	let uploads = 0;
@@ -306,14 +438,22 @@ export function scanUploads(text) {
 			own.push({ text: lines[j].slice(childCol), line: j + 1, raw: j });
 		}
 
-		const usesAt = own.find((o) => /^uses:\s*\S/.test(o.text));
+		// `uses:` goes through the SAME resolver as everything else. It is the earlier gate — a
+		// `uses:` this cannot read makes the whole step invisible rather than merely unresolved —
+		// and reading it from its own line only is precisely the defect E6 closed one key later.
+		// A next-line value, a folded `uses: >-`, and a quoted one are all just read.
+		const usesAt = own.find((o) => /^uses:/.test(o.text));
 		if (usesAt === undefined) continue;
-		// The quotes come off BEFORE the anchored test: `uses: "actions/upload-artifact@v7"` is the
-		// same step, and an anchored match against a leading `"` is a one-character evasion.
-		if (!UPLOAD.test(usesAt.text.replace(/^uses:\s*/, "").trim().replace(/^['"]|['"]$/g, ""))) continue;
-		uploads += 1;
-
+		const usesVal = resolveValue(lines, usesAt.raw, usesAt.text.replace(/^uses:\s*/, "").trim());
 		const name = own.find((o) => /^name:\s*\S/.test(o.text))?.text.replace(/^name:\s*/, "").trim() ?? usesAt.text.trim();
+		if (!usesVal.readable) {
+			// Not counted as an upload, because it may not be one — but not skipped either, which is
+			// the whole doctrine of this file applied to the gate that decides what it looks at.
+			unreadable.push({ line: usesAt.line, name, artifact: "(unknown)", why: `its \`uses:\` value could not be resolved (${usesVal.kind})` });
+			continue;
+		}
+		if (!UPLOAD.test(usesVal.value.trim())) continue;
+		uploads += 1;
 
 		// The direct children of the step's `with:`: the block's OWN indent, whatever it is, taken
 		// from its first key rather than assumed to be two. Four-space `with:` children are ordinary
@@ -331,8 +471,11 @@ export function scanUploads(text) {
 				const ind = indentOf(t);
 				if (childIndent === null) childIndent = ind;
 				if (ind !== childIndent) continue;
-				const m = t.match(/^\s+([A-Za-z0-9_-]+):\s*(.*)$/);
-				if (m !== null) withKeys.push({ key: m[1], inline: m[2].trim(), line: own[k].line, raw: own[k].raw });
+				// The key may be quoted (`"path":`). Not stripping the quotes turned a valid workflow
+				// into a REFUSAL, which is a red on a correct file — the direction that gets a check
+				// routed around rather than fixed.
+				const m = t.match(/^\s+(?:"([A-Za-z0-9_-]+)"|'([A-Za-z0-9_-]+)'|([A-Za-z0-9_-]+)):\s*(.*)$/);
+				if (m !== null) withKeys.push({ key: m[1] ?? m[2] ?? m[3], inline: m[4].trim(), line: own[k].line, raw: own[k].raw });
 			}
 		}
 
@@ -358,7 +501,7 @@ export function scanUploads(text) {
 
 		const resolvedPath = resolveValue(lines, pathKey.raw, pathKey.inline);
 		if (!resolvedPath.readable) {
-			unreadable.push({ line: pathKey.line, name, artifact, why: `its \`path:\` is a quoted scalar this parser could not close` });
+			unreadable.push({ line: pathKey.line, name, artifact, why: `its \`path:\` value could not be resolved (${resolvedPath.kind})` });
 			continue;
 		}
 		const entries = resolvedPath.value
@@ -366,13 +509,42 @@ export function scanUploads(text) {
 			.map((e) => e.trim())
 			.filter((e) => e !== "");
 
-		const excludes = entries.filter((e) => e.startsWith("!"));
-		const includes = entries.filter((e) => !e.startsWith("!"));
+		// `@actions/glob`'s own parser, verbatim from internal-globber.ts:
+		//
+		//     const lines = patterns.split('\n').map(x => x.trim())
+		//     for (const line of lines) { if (!line || line.startsWith('#')) { continue } … }
+		//
+		// So a `#` line inside `path: |` IS a comment — to the CONSUMER, even though YAML calls it
+		// content. Discounting it is not politeness: commenting a path out inside the block is the
+		// most obvious way somebody reacts to this guard, and reporting it would be a red on a
+		// correct file at the exact moment they are looking for a way around the rule.
+		const commented = entries.filter((e) => e.startsWith("#"));
+		const patterns = entries.filter((e) => !e.startsWith("#"));
+		const excludes = patterns.filter((e) => e.startsWith("!"));
+		const includes = patterns.filter((e) => !e.startsWith("!"));
 		if (includes.length > 1) multi += 1;
 
-		const inff = inffKey === undefined ? undefined : resolveValue(lines, inffKey.raw, inffKey.inline).value.trim();
-		if (inff === "error") guarded += 1;
-		if (inff !== "error" || includes.length < 2) continue;
+		// `path` is required, so a value that resolves to no inclusion pattern at all — empty, or
+		// nothing but exclusions and comments — declares an unusable input while satisfying the
+		// "read a path key" floor. Refused for the same reason as the rest.
+		if (includes.length === 0) {
+			unreadable.push({
+				line: pathKey.line,
+				name,
+				artifact,
+				why: `its \`path:\` resolves to no inclusion pattern (${excludes.length} exclusion(s), ${commented.length} commented-out line(s))`,
+			});
+			continue;
+		}
+
+		const inff = inffKey === undefined ? undefined : resolveValue(lines, inffKey.raw, inffKey.inline);
+		if (inffKey !== undefined && !inff.readable) {
+			unreadable.push({ line: inffKey.line, name, artifact, why: `its \`if-no-files-found:\` value could not be resolved (${inff.kind})` });
+			continue;
+		}
+		const inffValue = inff === undefined ? undefined : inff.value.trim();
+		if (inffValue === "error") guarded += 1;
+		if (inffValue !== "error" || includes.length < 2) continue;
 
 		problems.push({ line: pathKey.line, name, artifact, entries: includes, excludes, kind: resolvedPath.kind });
 	}
@@ -650,6 +822,94 @@ function selfTest() {
 	ok("E6 a next-line scalar value is read", scan(E6).problems.length === 1, JSON.stringify(scan(E6)));
 	ok("...and counted as guarded", scan(E6).guarded === 1, JSON.stringify(scan(E6)));
 
+	// ── THE SECOND ADVERSARIAL PASS (#4595 re-review) ────────────────────────────────────────────
+
+	// N1 — the one that matters most, because it was a NARROWING regression introduced BY the fix
+	// for the folded-block false positive. A more-indented line inside a `>` block is not folded:
+	// it keeps the breaks on both sides. Psych reads this as "dist/a\n  dist/b\ndist/c" — THREE
+	// patterns — and the trim-everything version read it as one and said nothing.
+	const N1 =
+		"      - uses: actions/upload-artifact@v7\n" +
+		"        with:\n" +
+		"          name: compliance\n" +
+		"          path: >\n" +
+		"            dist/a\n" +
+		"              dist/b\n" +
+		"            dist/c\n" +
+		"          if-no-files-found: error\n";
+	ok("N1 a folded block with a more-indented line is NOT one pattern", scan(N1).problems.length === 1, JSON.stringify(scan(N1)));
+	ok("...and all three are printed", scan(N1).problems[0]?.entries.join(",") === "dist/a,dist/b,dist/c", JSON.stringify(scan(N1).problems[0]?.entries));
+	// The other direction, in the same shape: uniformly indented, so genuinely one pattern.
+	const N1_FLAT = N1.replace("              dist/b\n", "            dist/b\n");
+	ok("...while the uniformly-indented one folds to ONE and stays clean", scan(N1_FLAT).problems.length === 0, JSON.stringify(scan(N1_FLAT)));
+	ok("...and that is not an accident of counting", scan(N1_FLAT).multi === 0 && scan(N1_FLAT).guarded === 1, JSON.stringify(scan(N1_FLAT)));
+
+	// P1 — a `#` line inside `path: |` is a comment to `@actions/glob`, whatever YAML calls it.
+	// Reporting it would be a red on a CORRECT file, at the moment somebody is looking for a way
+	// around this very rule.
+	const P1 =
+		"      - uses: actions/upload-artifact@v7\n" +
+		"        with:\n" +
+		"          name: compliance\n" +
+		"          path: |\n" +
+		"            dist/compliance\n" +
+		"            # dist/community-source (temporarily disabled)\n" +
+		"          if-no-files-found: error\n";
+	ok("P1 a commented-out path inside the block is NOT a second path", scan(P1).problems.length === 0, JSON.stringify(scan(P1)));
+	ok("...and the step is still read, not refused", scan(P1).pathKeys === 1 && scan(P1).unreadable.length === 0, JSON.stringify(scan(P1)));
+	const P1_LIVE = P1.replace("            # dist/community-source (temporarily disabled)\n", "            dist/community-source\n");
+	ok("...and un-commenting it reports again", scan(P1_LIVE).problems.length === 1, JSON.stringify(scan(P1_LIVE)));
+
+	// P2 — a trailing comment on a plain scalar. The value is still `error`, and the version that
+	// compared the written text scored the step as UNGUARDED: out of the reported set AND out of
+	// the `guarded` count, so it eroded the floor rather than tripping it.
+	const P2 = SITE1.replace("if-no-files-found: error", "if-no-files-found: error # aggregate — see #4347");
+	ok("the P2 fixture really appended a comment", P2 !== SITE1);
+	ok("P2 a trailing comment does not un-guard the step", scan(P2).problems.length === 1, JSON.stringify(scan(P2)));
+	ok("...and it still counts as guarded", scan(P2).guarded === 1, JSON.stringify(scan(P2)));
+	// The same on `path:`, and the negative direction: a `#` with no space before it is content.
+	ok("a trailing comment comes off a plain `path:` too", scan(SINGLE.replace("path: apps/console/smoke-results/", "path: apps/console/smoke-results/ # the script's own dir")).guarded === 1);
+	ok("...but `a#b` is not a comment", resolveValue(["path: dist/a#b"], 0, "dist/a#b").value === "dist/a#b");
+
+	// P3 — `uses:` goes through the resolver, so the E6 shape one key earlier is closed too. This
+	// is the EARLIER gate: an unread `uses:` makes the whole step invisible.
+	const P3 = SITE1.replace("        uses: actions/upload-artifact@v7\n", "        uses:\n          actions/upload-artifact@v7\n");
+	ok("the P3 fixture really moved the value", P3 !== SITE1);
+	ok("P3 a next-line `uses:` value is read", scan(P3).uploads === 1 && scan(P3).problems.length === 1, JSON.stringify(scan(P3)));
+	const P3B = SITE1.replace("uses: actions/upload-artifact@v7", "uses: >-\n          actions/upload-artifact@v7");
+	ok("...and a folded `uses: >-` too", scan(P3B).uploads === 1 && scan(P3B).problems.length === 1, JSON.stringify(scan(P3B)));
+	const P3C = SITE1.replace("uses: actions/upload-artifact@v7", "uses: 'actions/upload-artifact@v7");
+	ok("...and an unresolvable one is REFUSED, not silently skipped", scanUploads(wf(P3C)).unreadable.length === 1, JSON.stringify(scanUploads(wf(P3C))));
+
+	// N2 — a quoted key. Not stripping the quotes turned a valid workflow into a refusal.
+	const N2 = SITE1.replace("          path: |", '          "path": |').replace("          if-no-files-found: error", "          'if-no-files-found': error");
+	ok("the N2 fixture really quoted the keys", N2 !== SITE1);
+	ok("N2 quoted `with:` keys are read, not refused", scan(N2).unreadable.length === 0 && scan(N2).problems.length === 1, JSON.stringify(scan(N2)));
+
+	// P4 — an unmodelled escape must not identity-map to itself, or `\x0a` is E1 with two more
+	// characters. The modelled hex forms ARE decoded.
+	const P4 = '      - uses: actions/upload-artifact@v7\n        with:\n          name: x\n          path: "dist/compliance\\x0adist/community-source"\n          if-no-files-found: error\n';
+	const P4U = P4.replace("\\x0a", "\\u000a");
+	const P4B = P4.replace("\\x0a", "\\q");
+	// Both derived by replacement, so both are asserted to have APPLIED — an un-applied mutation is
+	// a second copy of the passing case, and the first draft of these three lines was exactly that.
+	ok("the P4 fixtures really differ", P4U !== P4 && P4B !== P4 && P4U !== P4B);
+	ok("P4 `\\x0a` is a newline, so it is two paths", scan(P4).problems[0]?.entries.length === 2, JSON.stringify(scan(P4)));
+	ok("...and `\\u000a` likewise", scan(P4U).problems[0]?.entries.length === 2, JSON.stringify(scan(P4U)));
+	ok("...while an escape this does not model is REFUSED, not passed through", scanUploads(wf(P4B)).unreadable.length === 1, JSON.stringify(scanUploads(wf(P4B))));
+	const TAG = SITE1.replace("if-no-files-found: error", "if-no-files-found: !!str error");
+	ok("a TAG is refused rather than resolved", scanUploads(wf(TAG)).unreadable.length === 1, JSON.stringify(scanUploads(wf(TAG))));
+
+	// P5/P6 — two ways to blind a WHOLE FILE, which no repo-wide floor can see when the other
+	// thirty-nine files are fine.
+	ok("P5 `jobs: # …` does not blind the file", scanUploads(`name: x\njobs: # the work\n  a:\n    steps:\n${SITE1}`).uploads === 1);
+	ok("P6 a CRLF file does not scan to zero uploads", scanUploads(wf(SITE1).replace(/\n/g, "\r\n")).problems.length === 1, JSON.stringify(scanUploads(wf(SITE1).replace(/\n/g, "\r\n"))));
+
+	// An empty or pattern-less `path:` declares an unusable required input while satisfying the
+	// "a path key was read" floor.
+	const EMPTYPATH = "      - uses: actions/upload-artifact@v7\n        with:\n          name: x\n          path:\n          if-no-files-found: error\n";
+	ok("an empty `path:` is REFUSED, not scored as a step with no problem", scanUploads(wf(EMPTYPATH)).unreadable.length === 1, JSON.stringify(scanUploads(wf(EMPTYPATH))));
+
 	// The resolver, directly — the six above go through `scanUploads`, so a resolver regression
 	// could hide behind a walk regression and vice versa.
 	const rv = (src) => resolveValue(src.split("\n"), 0, src.split("\n")[0].replace(/^\s*path:\s*/, ""));
@@ -746,7 +1006,13 @@ function selfTest() {
 }
 
 // ── entry ─────────────────────────────────────────────────────────────────────────────────────
-if (process.argv.includes("--self-test")) {
+//
+// Guarded on being the process's OWN entry point. Without that, `import`ing any export of this file
+// — which the mutation harness beside it does — runs the CLI as a side effect and can `process.exit(1)`
+// inside the importer. Same idiom as check-pr-scope.mjs.
+if (import.meta.url !== `file://${process.argv[1]}`) {
+	// imported as a module: export only
+} else if (process.argv.includes("--self-test")) {
 	selfTest();
 } else {
 	const problems = check();
