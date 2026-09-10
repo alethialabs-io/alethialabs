@@ -117,6 +117,31 @@ const BANNER =
  */
 const FINGERPRINT_KEYS = ["os", "node", "coverage_provider", "ee_dist", "edition"];
 
+/**
+ * Which fingerprint axes the recorded floors disagree with the current environment on.
+ *
+ * ONE function with TWO callers, deliberately. F7 asks it whether the floors may be COMPARED
+ * against (drift demotes the verdict); F11 asks it whether they may be PRESERVED when recording
+ * (drift means there is no comparable prior number, so "never lower" has nothing to hold). Those
+ * are the same question about the same five keys, and they were about to be two hand-written
+ * loops — which is how the two halves drift apart and one of them starts tolerating what the
+ * other refuses.
+ *
+ * A key absent from `recorded` is an older floors file predating that key. It is NOT drift:
+ * treating it as drift would let an old file silently trigger a full re-record (F11) or disarm
+ * the gate (F7), which is the failure each is written to prevent.
+ *
+ * @param {Record<string, unknown>} recorded the `env` block of a floors file
+ * @param {Record<string, string|boolean>} cur the environment measuring right now
+ * @returns {string[]} the drifted keys, in FINGERPRINT_KEYS order; empty when comparable
+ */
+function fingerprintDrift(recorded, cur) {
+	return FINGERPRINT_KEYS.filter((key) => {
+		const was = recorded[key];
+		return was !== undefined && String(was) !== String(cur[key]);
+	});
+}
+
 /** @returns {string} the installed @vitest/coverage-v8 version, or "unknown". */
 function coverageProviderVersion(projectDir) {
 	for (const base of [projectDir, ROOT]) {
@@ -361,15 +386,9 @@ function runCheck(project) {
 	// F7 — FINGERPRINT DRIFT, checked before any comparison.
 	const cur = currentEnv(projectDir);
 	const recordedEnv = typeof floors.env === "object" && floors.env !== null ? floors.env : {};
-	/** @type {string[]} */
-	const drift = [];
-	for (const key of FINGERPRINT_KEYS) {
-		const was = recordedEnv[key];
-		// "unknown" (an older floors file predating the key) must NOT demote — otherwise an old
-		// file silently disarms the gate.
-		if (was === undefined) continue;
-		if (String(was) !== String(cur[key])) drift.push(`${key}: recorded ${String(was)}, now ${String(cur[key])}`);
-	}
+	const drift = fingerprintDrift(recordedEnv, cur).map(
+		(key) => `${key}: recorded ${String(recordedEnv[key])}, now ${String(cur[key])}`,
+	);
 	// Track WHY we demote, not merely THAT we do. A demote message naming the wrong cause sends
 	// the reader to look at the wrong thing — the F8 (truncated artefact) case reported "the
 	// environment differs" until this was split.
@@ -496,12 +515,58 @@ function runUpdate(project, { allowLower }) {
 	const measured = measureOrFailOpen(projectDir, project);
 	if (measured.size === 0) failOpen("F5", `${project}: coverage parsed to zero directories — refusing to write floors`);
 
+	// Computed BEFORE the existing floors are read: F11 below compares the recorded fingerprint
+	// against this, and the same value is what gets written back at the end.
+	const cur = currentEnv(projectDir);
+
 	const fp = floorsPath(projectDir);
 	/** @type {Record<string, {covered: number, total: number}>} */
 	let existing = {};
 	if (existsSync(fp)) {
 		try {
-			existing = JSON.parse(readFileSync(fp, "utf8")).directories ?? {};
+			const parsed = JSON.parse(readFileSync(fp, "utf8"));
+			existing = parsed.directories ?? {};
+
+			// F11 — FLOORS FROM A DIFFERENT ENVIRONMENT ARE NOT A FLOOR (#4611).
+			//
+			// "Never lower" is the whole point of a ratchet, and it is meaningless ACROSS a change
+			// of instrument. The loop below preserves the OLD number for any directory that
+			// regressed; when the fingerprint has moved, that writes a floor the new environment
+			// cannot reach, and it does it silently — the file still looks freshly recorded.
+			//
+			// MEASURED on the vitest 2 -> 3 bump (#4591). Re-recording `apps/console` produced:
+			//
+			//     unchanged                     25
+			//     changed                       48
+			//       …of which went DOWN          0
+			//       …of which went UP or equal  48
+			//
+			// Zero exceptions: every directory the new provider measured LOWER kept its old value
+			// byte-for-byte, and the enforcing run then failed against numbers no run can produce.
+			// This was misread once as two jobs measuring different trees — two recordings agreed
+			// with each other, which under this bug is what a STUCK value looks like, not what a
+			// reproducible measurement looks like.
+			//
+			// F7 already treats fingerprint drift as a reason not to COMPARE (it demotes). This is
+			// the same judgement applied to RECORDING: the drift F7 tolerates is exactly the drift
+			// that makes preservation wrong.
+			//
+			// Deliberately NOT `--accept-regression`. That flag says "this regression is intended"
+			// and applies to every directory including ones measured in the SAME environment. This
+			// says something narrower and checkable: the recorded environment is not this one, so
+			// there is no comparable prior number to preserve.
+			const recordedEnv = typeof parsed.env === "object" && parsed.env !== null ? parsed.env : {};
+			const drift = fingerprintDrift(recordedEnv, cur);
+			if (drift.length > 0) {
+				for (const key of drift) {
+					process.stdout.write(`  F11 ${project} ${key}: recorded ${String(recordedEnv[key])}, now ${String(cur[key])}\n`);
+				}
+				process.stdout.write(
+					`  the recorded environment is not this one — recording ${measured.size} directories FRESH ` +
+						`rather than preserving floors it cannot reach\n`,
+				);
+				existing = {};
+			}
 		} catch {
 			process.stderr.write(`  (existing floors unparseable — regenerating from scratch)\n`);
 		}
@@ -527,7 +592,7 @@ function runUpdate(project, { allowLower }) {
 		}
 	}
 
-	const env = currentEnv(projectDir);
+	const env = cur;
 	if (env.os !== "Linux") {
 		annotate("warning", null, null, `ts-coverage: recording floors on ${String(env.os)}, not Linux. CI records Linux — these floors will make CI DEMOTE its own failures rather than fail them. Record from the determinism probe instead.`);
 	}
@@ -993,6 +1058,43 @@ function runSelfTest() {
 		check("every literal coverage exclusion still names a real file", stale.length === 0, stale.join(", "));
 	} catch (err) {
 		check("scope check could run", false, err.message);
+	}
+
+	process.stdout.write("\n fingerprint drift — the one function F7 and F11 both ask\n");
+	{
+		const cur = { os: "Linux", node: "22", coverage_provider: "@vitest/coverage-v8@3.2.7", ee_dist: true, edition: "unset" };
+		check(
+			"an identical environment reports no drift",
+			fingerprintDrift({ ...cur }, cur).length === 0,
+			JSON.stringify(fingerprintDrift({ ...cur }, cur)),
+		);
+		// THE #4611 CASE. A provider bump is drift, and it is what made `--update` preserve floors
+		// the new provider could not reach.
+		check(
+			"a changed coverage provider is drift, and names that key",
+			JSON.stringify(fingerprintDrift({ ...cur, coverage_provider: "@vitest/coverage-v8@2.1.9" }, cur)) === '["coverage_provider"]',
+			JSON.stringify(fingerprintDrift({ ...cur, coverage_provider: "@vitest/coverage-v8@2.1.9" }, cur)),
+		);
+		// An OLDER floors file predating a key must not read as drift — otherwise F7 disarms the
+		// gate and F11 silently re-records from scratch, each on a file that is merely old.
+		const { edition: _dropped, ...withoutEdition } = cur;
+		check(
+			"a key absent from an older floors file is NOT drift",
+			fingerprintDrift(withoutEdition, cur).length === 0,
+			JSON.stringify(fingerprintDrift(withoutEdition, cur)),
+		);
+		// ee_dist is a boolean in the file and compared as a string; false must not read as equal
+		// to true through some coercion.
+		check(
+			"a boolean axis compares by value, not by truthiness",
+			JSON.stringify(fingerprintDrift({ ...cur, ee_dist: false }, cur)) === '["ee_dist"]',
+			JSON.stringify(fingerprintDrift({ ...cur, ee_dist: false }, cur)),
+		);
+		check(
+			"several drifted axes are all reported, in FINGERPRINT_KEYS order",
+			JSON.stringify(fingerprintDrift({ ...cur, os: "Darwin", node: "20" }, cur)) === '["os","node"]',
+			JSON.stringify(fingerprintDrift({ ...cur, os: "Darwin", node: "20" }, cur)),
+		);
 	}
 
 	process.stdout.write("\n the entry-point gate — a SYMLINKED invocation must still run\n");
