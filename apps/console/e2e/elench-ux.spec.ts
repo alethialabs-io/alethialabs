@@ -269,8 +269,9 @@ test.describe("Elench knowledge base", () => {
 		await page.getByRole("button", { name: "Knowledge", exact: true }).click();
 		await expect(page.getByTestId("knowledge-doc")).toContainText(title);
 
-		// And it can be removed again.
+		// And it can be removed again — behind a confirmation (#4280), so the delete is two steps.
 		await page.getByRole("button", { name: `Delete ${title}` }).click();
+		await page.getByRole("button", { name: "Delete document" }).click();
 		await expect(page.getByTestId("knowledge-doc")).toHaveCount(0);
 	});
 });
