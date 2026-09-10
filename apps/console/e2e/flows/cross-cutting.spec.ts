@@ -163,8 +163,12 @@ test.describe("Cross-cutting — project page resilience sweep", () => {
 test.describe("Cross-cutting — landmark & title sanity", () => {
 	test("the org overview renders the sidebar Overview link", async ({ owner }) => {
 		await owner.page.goto(`/${owner.orgSlug}`);
-		// `waitForShell` owns the scoped locator — the breadcrumb also exposes an "Overview"
-		// role=link with aria-current, so a bare getByRole would be ambiguous in strict mode.
+		// `waitForShell` owns the scoped locator, and `helpers/shell.ts` owns the reason it is
+		// scoped — read it there rather than here. This comment used to restate one: that the
+		// breadcrumb exposed a second "Overview" as a `role=link`. #4434 removed that role
+		// (`BreadcrumbPage` is a bare `<span aria-current="page">` now), so the cause named here
+		// was false while the scoping it justified was still right — for a different reason, which
+		// is exactly the sentence a reader deciding whether to simplify the wait needs to find.
 		await waitForShell(owner.page, 25_000);
 		await expect(owner.page).not.toHaveURL(/\/login/);
 	});
