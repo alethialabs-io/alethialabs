@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { getMembers, type MemberRow } from "@/app/server/actions/members";
 import { Combobox } from "@/components/settings/access/combobox";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { Button } from "@repo/ui/button";
 import {
 	Dialog,
@@ -34,6 +35,10 @@ export function ManageTeamDialog({
 	const [members, setMembers] = useState<MemberRow[]>([]);
 	const [teamUserIds, setTeamUserIds] = useState<string[]>([]);
 	const [selected, setSelected] = useState<string>("");
+	// The user whose removal from this team has been asked for but not yet confirmed. Removing a
+	// team member drops every team-scoped grant that reached them through it, so the row’s X opens
+	// a confirmation rather than the mutation (registry: `teams.member.remove`).
+	const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
 
 	const load = useCallback(async () => {
 		const [orgMembers, res] = await Promise.all([
@@ -84,6 +89,7 @@ export function ManageTeamDialog({
 		.map((m) => ({ value: m.userId, label: m.name ?? m.email }));
 
 	return (
+		<>
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
@@ -123,7 +129,7 @@ export function ManageTeamDialog({
 										variant="ghost"
 										size="icon"
 										className="h-7 w-7 text-destructive"
-										onClick={() => void remove(uid)}
+										onClick={() => setPendingRemoval(uid)}
 									>
 										<X className="h-4 w-4" />
 										<span className="sr-only">Remove</span>
@@ -135,5 +141,25 @@ export function ManageTeamDialog({
 				</div>
 			</DialogContent>
 		</Dialog>
+		{/* A SIBLING of the team dialog, not a child of it — mounted only while a removal is pending,
+		    so the pending user id IS the open state and the two cannot disagree. `confirmLabel` is
+		    "Remove from team", not "Remove": the row’s own button is already called that, and a
+		    confirm button repeating its trigger’s label leaves the destructive-action spec with two
+		    matches on one page and therefore no attributable verdict. */}
+		{pendingRemoval && (
+			<ConfirmDialog
+				open
+				onOpenChange={(next) => {
+					if (!next) setPendingRemoval(null);
+				}}
+				title="Remove this team member?"
+				description={`${nameFor(pendingRemoval)} leaves ${teamName}. Every grant that reached them through this team stops applying; their organization membership and role are untouched.`}
+				confirmLabel="Remove from team"
+				onConfirm={() => {
+					void remove(pendingRemoval);
+				}}
+			/>
+		)}
+		</>
 	);
 }

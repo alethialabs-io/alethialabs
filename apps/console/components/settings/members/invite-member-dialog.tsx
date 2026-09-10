@@ -253,7 +253,15 @@ export function InviteMemberDialog({
                       <FormItem className="w-32 shrink-0">
                         <Select value={f.value} onValueChange={f.onChange}>
                           <FormControl>
-                            <SelectTrigger className="h-9 w-full">
+                            {/* The picker carries its own accessible name. Without one the only way
+                                to reach it is by position among the dialog's comboboxes, and a
+                                spec that says `.first()` is asserting about whichever control
+                                happens to be first — a test that keeps passing when the row it
+                                meant to read has moved. */}
+                            <SelectTrigger
+                              aria-label={`Role for invite ${i + 1}`}
+                              className="h-9 w-full"
+                            >
                               <SelectValue />
                             </SelectTrigger>
                           </FormControl>

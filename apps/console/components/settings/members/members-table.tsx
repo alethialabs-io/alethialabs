@@ -20,6 +20,7 @@ import {
   setMemberSuspended,
 } from "@/app/server/actions/members";
 import { getCollaborationAccess } from "@/app/server/actions/billing";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { DataTable } from "@/components/data-table";
@@ -90,6 +91,81 @@ function MemberStatusBadge({ status }: { status: MemberRowView["status"] }) {
 }
 
 /**
+ * A destructive members action a person has asked for but not yet confirmed.
+ *
+ * FIVE of this table's controls reached the mutation on a bare click — removing a member,
+ * cancelling an invitation, suspending, reactivating, and the two bulk actions. Each is recorded in
+ * `apps/console/destructive-actions.yaml` (`members.*`), and each now opens the console's ONE
+ * confirmation, `ConfirmDialog`. Held as a single discriminated union rather than six booleans: the
+ * dialog is one component, so its copy has to be derived from one value, and six independent flags
+ * make "two dialogs open at once" representable.
+ */
+type PendingMemberAction =
+  | { kind: "remove"; memberId: string; who: string }
+  | { kind: "cancel-invite"; invitationId: string; who: string }
+  | { kind: "suspend"; memberId: string; who: string }
+  | { kind: "reactivate"; memberId: string; who: string }
+  | { kind: "bulk-remove"; count: number }
+  | { kind: "bulk-suspend"; count: number };
+
+interface ConfirmCopy {
+  title: string;
+  description: string;
+  confirmLabel: string;
+}
+
+/**
+ * The confirmation copy for one pending action.
+ *
+ * Every `confirmLabel` is distinct from the dialog's own "Cancel" escape AND from the trigger that
+ * opened it. Two buttons reading "Cancel" is the one confirmation that means nothing, and a confirm
+ * label identical to the trigger gives the destructive-action spec's locator two matches on one
+ * page — an ambiguity it reports as a withheld verdict rather than a pass. Cancelling an invitation
+ * is therefore confirmed with "Revoke invitation": the menu item says "Cancel invitation" and the
+ * way out says "Cancel", so a third spelling is what keeps all three legible.
+ */
+function confirmCopy(pending: PendingMemberAction): ConfirmCopy {
+  switch (pending.kind) {
+    case "remove":
+      return {
+        title: "Remove this member?",
+        description: `${pending.who} loses access to this organization immediately, along with every grant their membership carried. Re-adding them means a fresh invitation they have to accept.`,
+        confirmLabel: "Remove member",
+      };
+    case "cancel-invite":
+      return {
+        title: "Cancel this invitation?",
+        description: `The pending invitation for ${pending.who} stops working. If they have not accepted yet, the link in their email dies with it and they need a new invitation.`,
+        confirmLabel: "Revoke invitation",
+      };
+    case "suspend":
+      return {
+        title: "Suspend this member?",
+        description: `${pending.who} keeps their membership and role but loses every access grant until they are reactivated. Anything they have running is unaffected; they simply cannot reach it.`,
+        confirmLabel: "Suspend member",
+      };
+    case "reactivate":
+      return {
+        title: "Reactivate this member?",
+        description: `${pending.who} regains the access grants their role carries and can reach this organization again.`,
+        confirmLabel: "Reactivate member",
+      };
+    case "bulk-remove":
+      return {
+        title: "Remove the selected people?",
+        description: `${pending.count} selected ${pending.count === 1 ? "row" : "rows"} — members lose access to this organization and pending invitations are revoked. Owners in the selection are skipped. This runs row by row and is not undone by closing the page.`,
+        confirmLabel: "Remove selected",
+      };
+    case "bulk-suspend":
+      return {
+        title: "Suspend the selected members?",
+        description: `Every active, non-owner member in the ${pending.count} selected ${pending.count === 1 ? "row" : "rows"} loses their access grants until they are reactivated one at a time.`,
+        confirmLabel: "Suspend selected",
+      };
+  }
+}
+
+/**
  * A compact, borderless Select for a member's role.
  *
  * This is a FORM control that performs a mutation, not a filter — the console filter
@@ -146,6 +222,9 @@ export function MembersTable() {
   );
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Nothing in this table mutates on a bare click any more; the click records what was asked for
+  // and the ConfirmDialog at the bottom of the render decides whether it happens.
+  const [pending, setPending] = useState<PendingMemberAction | null>(null);
 
   const membersQuery = useQuery({
     queryKey: qk.members(org),
@@ -345,20 +424,38 @@ export function MembersTable() {
                       <>
                         {r.status === "suspended" ? (
                           <DropdownMenuItem
-                            onClick={() => void suspend(r.refId, false)}
+                            onClick={() =>
+                              setPending({
+                                kind: "reactivate",
+                                memberId: r.refId,
+                                who: r.name,
+                              })
+                            }
                           >
                             Reactivate
                           </DropdownMenuItem>
                         ) : (
                           <DropdownMenuItem
-                            onClick={() => void suspend(r.refId, true)}
+                            onClick={() =>
+                              setPending({
+                                kind: "suspend",
+                                memberId: r.refId,
+                                who: r.name,
+                              })
+                            }
                           >
                             Suspend
                           </DropdownMenuItem>
                         )}
                         <DropdownMenuItem
                           className="text-destructive focus:text-destructive"
-                          onClick={() => void removeMember(r.refId)}
+                          onClick={() =>
+                            setPending({
+                              kind: "remove",
+                              memberId: r.refId,
+                              who: r.name,
+                            })
+                          }
                         >
                           Remove from organization
                         </DropdownMenuItem>
@@ -366,7 +463,13 @@ export function MembersTable() {
                     ) : (
                       <DropdownMenuItem
                         className="text-destructive focus:text-destructive"
-                        onClick={() => void cancelInvite(r.refId)}
+                        onClick={() =>
+                          setPending({
+                            kind: "cancel-invite",
+                            invitationId: r.refId,
+                            who: r.name,
+                          })
+                        }
                       >
                         Cancel invitation
                       </DropdownMenuItem>
@@ -608,11 +711,19 @@ export function MembersTable() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void bulkSuspend()}
+              onClick={() =>
+                setPending({ kind: "bulk-suspend", count: selected.size })
+              }
             >
               Suspend
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => void bulkRemove()}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                setPending({ kind: "bulk-remove", count: selected.size })
+              }
+            >
               Remove
             </Button>
           </div>
@@ -639,6 +750,45 @@ export function MembersTable() {
         />
       ) : (
         <DataTable columns={columns} data={filtered} pageSize={20} />
+      )}
+
+      {/* The one confirmation every destructive control on this table passes through. It is mounted
+          only while something is pending, because the pending action IS the open state — a separate
+          boolean would let the two disagree, and a dialog whose copy is derived from a value that
+          has already been cleared renders the wrong question. `ConfirmDialog` closes itself before
+          calling `onConfirm`, so the handler below still reads the action it was opened for. */}
+      {pending && (
+        <ConfirmDialog
+          open
+          onOpenChange={(next) => {
+            if (!next) setPending(null);
+          }}
+          title={confirmCopy(pending).title}
+          description={confirmCopy(pending).description}
+          confirmLabel={confirmCopy(pending).confirmLabel}
+          onConfirm={() => {
+            switch (pending.kind) {
+              case "remove":
+                void removeMember(pending.memberId);
+                break;
+              case "cancel-invite":
+                void cancelInvite(pending.invitationId);
+                break;
+              case "suspend":
+                void suspend(pending.memberId, true);
+                break;
+              case "reactivate":
+                void suspend(pending.memberId, false);
+                break;
+              case "bulk-remove":
+                void bulkRemove();
+                break;
+              case "bulk-suspend":
+                void bulkSuspend();
+                break;
+            }
+          }}
+        />
       )}
     </div>
   );
