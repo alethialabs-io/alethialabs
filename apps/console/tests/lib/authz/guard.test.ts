@@ -19,7 +19,9 @@ vi.mock("@/lib/cli/auth", () => ({ verifyCliToken: vi.fn() }));
 // request. vi.hoisted because the factory is hoisted above every const in this file.
 const { dbLimit } = vi.hoisted(() => ({ dbLimit: vi.fn() }));
 vi.mock("@/lib/db", () => ({
-	getServiceDb: () => ({ select: () => ({ from: () => ({ where: () => ({ limit: dbLimit }) }) }) }),
+	getServiceDb: () => ({
+		select: () => ({ from: () => ({ where: () => ({ limit: dbLimit }) }) }),
+	}),
 }));
 
 import { getOwnerScope } from "@/lib/auth/owner";
@@ -30,8 +32,12 @@ import { verifyCliToken } from "@/lib/cli/auth";
 import { ForbiddenError, type Actor } from "@/lib/authz/types";
 
 import {
+	assertMintingProfileStillMember,
 	authorize,
 	authorizeCli,
+	ensureCliOrgAccess,
+	orgScopeFor,
+	userIdIsTheCaller,
 	authorizeQuiet,
 	authorizeUserId,
 	currentActor,
@@ -101,7 +107,10 @@ describe("currentActor", () => {
 
 describe("authorize", () => {
 	it("resolves the actor, enforces the verb with the exact ResourceRef, and returns the actor", async () => {
-		const actor = await authorize("manage_connectors", { type: "connector", id: "c-1" });
+		const actor = await authorize("manage_connectors", {
+			type: "connector",
+			id: "c-1",
+		});
 
 		expect(actor).toBe(SESSION_ACTOR);
 		expect(enforce).toHaveBeenCalledWith(SESSION_ACTOR, "manage_connectors", {
@@ -121,16 +130,25 @@ describe("authorize", () => {
 	});
 
 	it("propagates ForbiddenError from the PDP", async () => {
-		const denial = new ForbiddenError("manage_connectors", { type: "connector" }, "no_grant");
+		const denial = new ForbiddenError(
+			"manage_connectors",
+			{ type: "connector" },
+			"no_grant",
+		);
 		enforce.mockRejectedValueOnce(denial);
 
-		await expect(authorize("manage_connectors", { type: "connector" })).rejects.toBe(denial);
+		await expect(
+			authorize("manage_connectors", { type: "connector" }),
+		).rejects.toBe(denial);
 	});
 });
 
 describe("authorizeQuiet", () => {
 	it("uses can() (never enforce) and returns the actor when allowed", async () => {
-		const actor = await authorizeQuiet("manage_connectors", { type: "connector", id: "c-2" });
+		const actor = await authorizeQuiet("manage_connectors", {
+			type: "connector",
+			id: "c-2",
+		});
 
 		expect(actor).toBe(SESSION_ACTOR);
 		expect(can).toHaveBeenCalledWith(SESSION_ACTOR, "manage_connectors", {
@@ -143,9 +161,10 @@ describe("authorizeQuiet", () => {
 	it("throws ForbiddenError (carrying the decision reason) when denied", async () => {
 		can.mockResolvedValueOnce({ allowed: false, reason: "no_grant" });
 
-		const err = await authorizeQuiet("manage_connectors", { type: "connector", id: "c-3" }).catch(
-			(e) => e,
-		);
+		const err = await authorizeQuiet("manage_connectors", {
+			type: "connector",
+			id: "c-3",
+		}).catch((e) => e);
 
 		expect(err).toBeInstanceOf(ForbiddenError);
 		expect(err.reason).toBe("no_grant");
@@ -154,14 +173,181 @@ describe("authorizeQuiet", () => {
 	});
 });
 
+// The tenancy boundary, as one table rather than one ternary per route. #4154 was not a defect in
+// the SHAPE of a predicate — it was which values were in the list — so the values get a test.
+describe("orgScopeFor", () => {
+	it("pins a service token to its org and nothing else", () => {
+		expect(
+			orgScopeFor({ userId: "u-minter", orgId: "org-t" }, "service_token"),
+		).toEqual(["org-t"]);
+	});
+
+	it("lets a session see its own personal org, where pre-#3942 runner jobs still live", () => {
+		expect(
+			orgScopeFor({ userId: "u-cli", orgId: "org-team" }, "session"),
+		).toEqual(["org-team", "u-cli"]);
+	});
+
+	it("does not list one org twice when the session's scope IS the personal org", () => {
+		expect(orgScopeFor({ userId: "u-cli", orgId: "u-cli" }, "session")).toEqual(
+			["u-cli"],
+		);
+	});
+
+	// The reason it is a non-empty tuple: drizzle renders `inArray(col, [])` as `false`, so an
+	// empty scope is a boundary that matches nothing — as wrong as one that matches too much, and
+	// the only one of the two that no test would notice.
+	it("is never empty, for either credential", () => {
+		for (const credential of ["session", "service_token"] as const) {
+			expect(
+				orgScopeFor({ userId: "u", orgId: "o" }, credential).length,
+			).toBeGreaterThan(0);
+		}
+	});
+
+	// The minter's personal org is the value #4154 was about: a token must never carry it.
+	it("never gives a token the minter's personal org", () => {
+		expect(
+			orgScopeFor({ userId: "u-minter", orgId: "org-t" }, "service_token"),
+		).not.toContain("u-minter");
+	});
+});
+
+// #4298. `ensureCliOrgAccess` and `assertMintingProfileStillMember` were ONE function, and the merge
+// was the defect underneath the defect: the two callers ask different questions of the same
+// arguments. These describes pin both answers, and — the part that matters — pin that splitting them
+// did not delete the offboarding control.
+//
+// `dbLimit` is the mocked `isOrgMember` read: `[{ id: … }]` is "a member", `[]` is "not".
+// #4298. The three reads that scope on the caller's own `user_id` as well as their org — the org
+// list and the two agent-identity reads — ask this ONE question, and it is a named predicate rather
+// than `credential === "service_token"` at each site for the reason `orgScopeFor`'s own doc gives: a
+// ternary's else-arm is the WIDE one, so a third credential kind would inherit "this is a human" at
+// three call sites at once.
+describe("userIdIsTheCaller", () => {
+	it("is true for a session — the id IS the human asking", () => {
+		expect(userIdIsTheCaller("session")).toBe(true);
+	});
+
+	it("is false for a service token — the id is the minting profile", () => {
+		expect(userIdIsTheCaller("service_token")).toBe(false);
+	});
+
+	// The predicate has to SEPARATE the two, or every call site collapses to one arm and the reads
+	// are back to where #4154 found them.
+	it("separates the two credentials", () => {
+		expect(userIdIsTheCaller("session")).not.toBe(
+			userIdIsTheCaller("service_token"),
+		);
+	});
+});
+
+describe("ensureCliOrgAccess", () => {
+	it("admits a service token to the org it is pinned to", async () => {
+		expect(
+			await ensureCliOrgAccess(
+				{ userId: "u-minter", orgId: "org-t" },
+				"service_token",
+				"org-t",
+			),
+		).toBeNull();
+		expect(dbLimit).not.toHaveBeenCalled();
+	});
+
+	// THE DEFECT. A token pinned to org T, minted by someone who is also in org U, used to reach
+	// org U because the membership fall-through asked about the MINTER.
+	it("refuses a service token an org its minter belongs to but its pin does not name", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-minter-in-org-u" }]);
+		const denied = await ensureCliOrgAccess(
+			{ userId: "u-minter", orgId: "org-t" },
+			"service_token",
+			"org-u",
+		);
+		expect(denied?.status).toBe(403);
+	});
+
+	// …and it must not even ASK. A membership query whose answer is ignored is a query that the
+	// next edit will start trusting.
+	it("does not consult membership at all for a service token", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-minter-in-org-u" }]);
+		await ensureCliOrgAccess(
+			{ userId: "u-minter", orgId: "org-t" },
+			"service_token",
+			"org-u",
+		);
+		expect(dbLimit).not.toHaveBeenCalled();
+	});
+
+	it("admits a session to its own resolved org without a query", async () => {
+		expect(
+			await ensureCliOrgAccess(CLI_ACTOR, "session", "org-cli"),
+		).toBeNull();
+		expect(dbLimit).not.toHaveBeenCalled();
+	});
+
+	it("admits a session to another org it is a member of", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-1" }]);
+		expect(await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other")).toBeNull();
+		expect(dbLimit).toHaveBeenCalled();
+	});
+
+	it("refuses a session an org it is not a member of", async () => {
+		dbLimit.mockResolvedValue([]);
+		const denied = await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other");
+		expect(denied?.status).toBe(403);
+	});
+});
+
+describe("assertMintingProfileStillMember", () => {
+	// The offboarding case, and the whole reason this is a separate function: the token keeps
+	// working after its author leaves, because revoking tokens is not part of removing a person.
+	it("refuses a pinned org whose minting profile has been removed", async () => {
+		dbLimit.mockResolvedValue([]);
+		const denied = await assertMintingProfileStillMember(
+			{ userId: "u-departed", orgId: "org-their-remaining" },
+			"org-t",
+		);
+		expect(denied?.status).toBe(403);
+		expect(dbLimit).toHaveBeenCalled();
+	});
+
+	// THE REGRESSION THE SPLIT EXISTS TO AVOID. This is the normal, overwhelming case for a service
+	// token: still a member, but the default scope is some OTHER org. `ensureCliOrgAccess`'s token
+	// arm — equality alone — would 403 it, which would have broken every scripted `connector` call.
+	it("admits a still-member whose default scope is a different org", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-still" }]);
+		expect(
+			await assertMintingProfileStillMember(
+				{ userId: "u-minter", orgId: "org-default" },
+				"org-t",
+			),
+		).toBeNull();
+	});
+
+	it("takes the fast path when the default scope already IS the pin", async () => {
+		expect(
+			await assertMintingProfileStillMember(
+				{ userId: "u-minter", orgId: "org-t" },
+				"org-t",
+			),
+		).toBeNull();
+		expect(dbLimit).not.toHaveBeenCalled();
+	});
+});
+
 describe("authorizeCli", () => {
 	const req = new Request("https://example.test/api/cli");
 
 	it("returns the verifier's error Response when the token is invalid", async () => {
 		const errorResponse = new Response("nope", { status: 401 });
-		vi.mocked(verifyCliToken).mockResolvedValue({ payload: null, error: errorResponse } as never);
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: null,
+			error: errorResponse,
+		} as never);
 
-		const result = await authorizeCli(req, "manage_connectors", { type: "connector" });
+		const result = await authorizeCli(req, "manage_connectors", {
+			type: "connector",
+		});
 
 		expect(result).toEqual({ error: errorResponse });
 		expect("actor" in result).toBe(false);
@@ -169,14 +355,21 @@ describe("authorizeCli", () => {
 	});
 
 	it("returns a 400 Response when the token payload has no subject", async () => {
-		vi.mocked(verifyCliToken).mockResolvedValue({ payload: {}, error: undefined } as never);
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: {},
+			error: undefined,
+		} as never);
 
-		const result = await authorizeCli(req, "manage_connectors", { type: "connector" });
+		const result = await authorizeCli(req, "manage_connectors", {
+			type: "connector",
+		});
 
 		expect("error" in result).toBe(true);
 		const { error } = result as { error: Response };
 		expect(error.status).toBe(400);
-		await expect(error.json()).resolves.toEqual({ error: "Invalid token payload" });
+		await expect(error.json()).resolves.toEqual({
+			error: "Invalid token payload",
+		});
 	});
 
 	it("resolves the actor from the token sub, enforces, and returns the actor", async () => {
@@ -186,14 +379,21 @@ describe("authorizeCli", () => {
 		} as never);
 		vi.mocked(getActiveScope).mockResolvedValue(CLI_ACTOR);
 
-		const result = await authorizeCli(req, "manage_connectors", { type: "connector", id: "c-9" });
+		const result = await authorizeCli(req, "manage_connectors", {
+			type: "connector",
+			id: "c-9",
+		});
 
 		expect(getActiveScope).toHaveBeenCalledWith("u-cli");
 		expect(enforce).toHaveBeenCalledWith(CLI_ACTOR, "manage_connectors", {
 			type: "connector",
 			id: "c-9",
 		});
-		expect(result).toEqual({ actor: CLI_ACTOR });
+		expect(result).toEqual({
+			actor: CLI_ACTOR,
+			credential: "session",
+			orgScope: orgScopeFor(CLI_ACTOR, "session"),
+		});
 	});
 
 	it("maps a ForbiddenError to a 403 Response", async () => {
@@ -203,10 +403,16 @@ describe("authorizeCli", () => {
 		} as never);
 		vi.mocked(getActiveScope).mockResolvedValue(CLI_ACTOR);
 		enforce.mockRejectedValueOnce(
-			new ForbiddenError("manage_connectors", { type: "connector" }, "no_grant"),
+			new ForbiddenError(
+				"manage_connectors",
+				{ type: "connector" },
+				"no_grant",
+			),
 		);
 
-		const result = await authorizeCli(req, "manage_connectors", { type: "connector" });
+		const result = await authorizeCli(req, "manage_connectors", {
+			type: "connector",
+		});
 
 		expect("error" in result).toBe(true);
 		const { error } = result as { error: Response };
@@ -223,7 +429,176 @@ describe("authorizeCli", () => {
 		const boom = new Error("pdp down");
 		enforce.mockRejectedValueOnce(boom);
 
-		await expect(authorizeCli(req, "manage_connectors", { type: "connector" })).rejects.toBe(boom);
+		await expect(
+			authorizeCli(req, "manage_connectors", { type: "connector" }),
+		).rejects.toBe(boom);
+	});
+});
+
+// ── X-Alethia-Org: THE SCOPE SERVED IS THE SCOPE NAMED (#3863). ──
+//
+// `isOrgMember` returns true when orgId === userId — a personal org's id IS the user id, so it
+// has no `member` row and needs none. That made the header check pass for a value every caller
+// can supply about themselves; the scope resolver then found no member row for it and fell back
+// to the caller's EARLIEST membership, so `X-Alethia-Org: <own user id>` was answered with a TEAM
+// org's rows. Not an escalation — the fallback lands on an org they belong to — but the request
+// was answered from a scope it never named, and `jobs cancel --latest` resolves through the same
+// list.
+//
+// Two halves close it, and this file owns the second: ee/src/scope.ts resolves a personal org to
+// itself (ee/src/scope.test.ts), and authorizeCli refuses ANY scope that is not the org the header
+// named, rather than serving the substitute.
+describe("authorizeCli with an X-Alethia-Org header", () => {
+	/** A request from an ordinary (non-service) CLI token, carrying an org header. */
+	function headerReq(headerOrg: string): Request {
+		const headers = new Headers({ "X-Alethia-Org": headerOrg });
+		return new Request("https://example.test/api/cli", { headers });
+	}
+
+	beforeEach(() => {
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: { sub: "u-cli", type: "access" },
+			error: undefined,
+		} as never);
+	});
+
+	// THE ONE THAT MATTERS. The header names the caller's own user id — the personal org — and
+	// resolution comes back pointing at a team org. That is exactly the #3863 sequence, and the
+	// answer is a refusal.
+	it("REFUSES when resolution lands on an org other than the one the header named", async () => {
+		// The member check passes on the personal-org branch without touching the database: if
+		// this ever needs a row, the branch under test has moved.
+		vi.mocked(getActiveScope).mockResolvedValue({
+			userId: "u-cli",
+			orgId: "org-team",
+		});
+
+		const result = await authorizeCli(headerReq("u-cli"), "manage_connectors", {
+			type: "connector",
+		});
+
+		expect("error" in result).toBe(true);
+		expect((result as { error: Response }).error.status).toBe(403);
+		// The 403 came from the scope check and from NOTHING ELSE. Without this the same status
+		// would be produced by a PDP denial, an invalid token or a missing member row, and the
+		// test would pass while measuring a mechanism it is not about.
+		expect(getActiveScope).toHaveBeenCalledWith("u-cli", "u-cli");
+		expect(enforce).not.toHaveBeenCalled();
+		expect(dbLimit).not.toHaveBeenCalled();
+	});
+
+	// The other side of the same branch: the header IS honoured when resolution agrees with it,
+	// so the refusal above is not simply "personal-org headers are rejected".
+	it("scopes to the caller's PERSONAL org when the header names it and resolution agrees", async () => {
+		vi.mocked(getActiveScope).mockResolvedValue({
+			userId: "u-cli",
+			orgId: "u-cli",
+		});
+
+		const result = await authorizeCli(headerReq("u-cli"), "manage_connectors", {
+			type: "connector",
+		});
+
+		expect(result).toEqual({
+			actor: { userId: "u-cli", orgId: "u-cli" },
+			credential: "session",
+			orgScope: ["u-cli"],
+		});
+		// The literal, not `actor.userId`: the team org the old fallback served was "org-team".
+		expect((result as { actor: Actor }).actor.orgId).toBe("u-cli");
+		expect(enforce).toHaveBeenCalledWith(
+			{ userId: "u-cli", orgId: "u-cli" },
+			"manage_connectors",
+			{
+				type: "connector",
+				id: undefined,
+			},
+		);
+	});
+
+	it("honours a header naming a team org the caller is a member of", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-1" }]);
+		vi.mocked(getActiveScope).mockResolvedValue({
+			userId: "u-cli",
+			orgId: "org-team",
+		});
+
+		const result = await authorizeCli(
+			headerReq("org-team"),
+			"manage_connectors",
+			{
+				type: "connector",
+			},
+		);
+
+		expect(result).toEqual({
+			actor: { userId: "u-cli", orgId: "org-team" },
+			credential: "session",
+			orgScope: ["org-team", "u-cli"],
+		});
+		expect(getActiveScope).toHaveBeenCalledWith("u-cli", "org-team");
+	});
+
+	it("REFUSES a header naming an org with no member row, resolving no scope at all", async () => {
+		dbLimit.mockResolvedValue([]);
+
+		const result = await authorizeCli(
+			headerReq("org-stranger"),
+			"manage_connectors",
+			{
+				type: "connector",
+			},
+		);
+
+		expect("error" in result).toBe(true);
+		expect((result as { error: Response }).error.status).toBe(403);
+		expect(getActiveScope).not.toHaveBeenCalled();
+		expect(enforce).not.toHaveBeenCalled();
+	});
+
+	// AN ERROR IS NOT AN ABSENCE. A failed membership read must not render as "not a member" —
+	// that is one blip away from a 403 storm indistinguishable from a real denial, and one
+	// inverted branch away from the silent wrong scope this whole describe block is about.
+	it("propagates a member-lookup failure instead of turning it into a denial", async () => {
+		const boom = new Error("connection terminated");
+		dbLimit.mockRejectedValue(boom);
+
+		await expect(
+			authorizeCli(headerReq("org-team"), "manage_connectors", {
+				type: "connector",
+			}),
+		).rejects.toBe(boom);
+	});
+
+	it("propagates a scope-resolution failure instead of turning it into a denial", async () => {
+		const boom = new Error("connection terminated");
+		dbLimit.mockResolvedValue([{ id: "m-1" }]);
+		vi.mocked(getActiveScope).mockRejectedValue(boom);
+
+		await expect(
+			authorizeCli(headerReq("org-team"), "manage_connectors", {
+				type: "connector",
+			}),
+		).rejects.toBe(boom);
+	});
+
+	// The no-header path has no named org to compare against — resolving the caller's default
+	// scope IS the intent there, so it must not acquire a refusal it never asked for.
+	it("leaves the header-less path resolving the default scope", async () => {
+		vi.mocked(getActiveScope).mockResolvedValue(CLI_ACTOR);
+
+		const result = await authorizeCli(
+			new Request("https://example.test/api/cli"),
+			"manage_connectors",
+			{ type: "connector" },
+		);
+
+		expect(result).toEqual({
+			actor: CLI_ACTOR,
+			credential: "session",
+			orgScope: orgScopeFor(CLI_ACTOR, "session"),
+		});
+		expect(getActiveScope).toHaveBeenCalledWith("u-cli");
 	});
 });
 
@@ -250,7 +625,12 @@ describe("authorizeCli with a service-account token", () => {
 
 	beforeEach(() => {
 		vi.mocked(verifyCliToken).mockResolvedValue({
-			payload: { sub: "u-minter", type: "access", service_token_org_id: "org-A", service_token_id: "tok-1" },
+			payload: {
+				sub: "u-minter",
+				type: "access",
+				service_token_org_id: "org-A",
+				service_token_id: "tok-1",
+			},
 			error: undefined,
 		} as never);
 		vi.mocked(getActiveScope).mockResolvedValue(SERVICE_ACTOR);
@@ -259,25 +639,39 @@ describe("authorizeCli with a service-account token", () => {
 	});
 
 	it("scopes to the token's own org when no header is sent", async () => {
-		const result = await authorizeCli(serviceReq(), "manage_tokens", { type: "org" });
+		const result = await authorizeCli(serviceReq(), "manage_tokens", {
+			type: "org",
+		});
 
 		// The PINNED org, not `getActiveScope(userId)` — which would resolve whichever org that
 		// PERSON last had active, i.e. somebody's session state standing in for a machine's scope.
 		expect(getActiveScope).toHaveBeenCalledWith("u-minter", "org-A");
-		expect(result).toEqual({ actor: SERVICE_ACTOR });
+		expect(result).toEqual({
+			actor: SERVICE_ACTOR,
+			credential: "service_token",
+			orgScope: [SERVICE_ACTOR.orgId],
+		});
 	});
 
 	it("accepts a header that AGREES with the token's org", async () => {
-		const result = await authorizeCli(serviceReq("org-A"), "manage_tokens", { type: "org" });
+		const result = await authorizeCli(serviceReq("org-A"), "manage_tokens", {
+			type: "org",
+		});
 
 		expect(getActiveScope).toHaveBeenCalledWith("u-minter", "org-A");
-		expect(result).toEqual({ actor: SERVICE_ACTOR });
+		expect(result).toEqual({
+			actor: SERVICE_ACTOR,
+			credential: "service_token",
+			orgScope: [SERVICE_ACTOR.orgId],
+		});
 	});
 
 	// THE ONE THAT MATTERS. Refused, never ignored: ignoring it would let a pipeline believe it is
 	// writing to org B while every write lands in org A — a wrong answer that looks like a right one.
 	it("REFUSES a header naming a different org, and resolves no scope at all", async () => {
-		const result = await authorizeCli(serviceReq("org-B"), "manage_tokens", { type: "org" });
+		const result = await authorizeCli(serviceReq("org-B"), "manage_tokens", {
+			type: "org",
+		});
 
 		expect("error" in result).toBe(true);
 		expect((result as { error: Response }).error.status).toBe(403);
@@ -291,10 +685,35 @@ describe("authorizeCli with a service-account token", () => {
 	it("REFUSES when the minting profile is no longer a member of the token's org", async () => {
 		dbLimit.mockResolvedValue([]);
 
-		const result = await authorizeCli(serviceReq(), "manage_tokens", { type: "org" });
+		const result = await authorizeCli(serviceReq(), "manage_tokens", {
+			type: "org",
+		});
 
 		expect("error" in result).toBe(true);
 		expect((result as { error: Response }).error.status).toBe(403);
+		expect(enforce).not.toHaveBeenCalled();
+	});
+
+	// The pin is a NAMED org exactly as a header is, so it gets the same #3863 treatment: the scope
+	// served must BE the pinned org. A token pinned to its minter's personal org would otherwise
+	// resolve through the same missing-member-row fallback and drive a pipeline against a team org
+	// nobody named — the "writing to org B while every write lands in org A" failure this block
+	// already refuses in its header form.
+	it("REFUSES when the pinned org resolves to a different scope", async () => {
+		vi.mocked(getActiveScope).mockResolvedValue({
+			userId: "u-minter",
+			orgId: "org-B",
+		});
+
+		const result = await authorizeCli(serviceReq(), "manage_tokens", {
+			type: "org",
+		});
+
+		expect("error" in result).toBe(true);
+		expect((result as { error: Response }).error.status).toBe(403);
+		// From the scope check, not from the PDP or the membership re-check.
+		expect(dbLimit).toHaveBeenCalled();
+		expect(getActiveScope).toHaveBeenCalledWith("u-minter", "org-A");
 		expect(enforce).not.toHaveBeenCalled();
 	});
 
@@ -305,7 +724,9 @@ describe("authorizeCli with a service-account token", () => {
 			new ForbiddenError("manage_tokens", { type: "org" }, "no_grant"),
 		);
 
-		const result = await authorizeCli(serviceReq(), "manage_tokens", { type: "org" });
+		const result = await authorizeCli(serviceReq(), "manage_tokens", {
+			type: "org",
+		});
 
 		expect("error" in result).toBe(true);
 		expect((result as { error: Response }).error.status).toBe(403);
@@ -315,7 +736,9 @@ describe("authorizeCli with a service-account token", () => {
 		const boom = new Error("pdp down");
 		enforce.mockRejectedValueOnce(boom);
 
-		await expect(authorizeCli(serviceReq(), "manage_tokens", { type: "org" })).rejects.toBe(boom);
+		await expect(
+			authorizeCli(serviceReq(), "manage_tokens", { type: "org" }),
+		).rejects.toBe(boom);
 	});
 });
 
@@ -339,10 +762,16 @@ describe("authorizeUserId", () => {
 	it("returns a 403 Response on ForbiddenError", async () => {
 		vi.mocked(getActiveScope).mockResolvedValue(CLI_ACTOR);
 		enforce.mockRejectedValueOnce(
-			new ForbiddenError("manage_connectors", { type: "connector" }, "no_grant"),
+			new ForbiddenError(
+				"manage_connectors",
+				{ type: "connector" },
+				"no_grant",
+			),
 		);
 
-		const result = await authorizeUserId("u-cli", "manage_connectors", { type: "connector" });
+		const result = await authorizeUserId("u-cli", "manage_connectors", {
+			type: "connector",
+		});
 
 		expect(result).not.toBeNull();
 		expect(result?.status).toBe(403);

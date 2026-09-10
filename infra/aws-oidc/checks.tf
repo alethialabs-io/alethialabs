@@ -1,9 +1,16 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# BYOC A1.1 — loud invariant assertions on the e2e-nightly role. A `check` block fails the
-# plan/apply (loudly) if any security property of the role regresses — so a mis-scoped trust,
-# a detached boundary, a lost region lock, or a runaway budget can never ship silently.
+# BYOC A1.1 — loud invariant assertions on the e2e-nightly role: a mis-scoped trust, a detached
+# boundary, a lost region lock, or a runaway budget is reported on every plan.
+#
+# A `check` block WARNS; it does not fail the plan or the apply — `tofu plan` still exits 0 with the
+# assertion's message printed above it. So these are a LOUD REPORT, not a gate: they are how a
+# regression announces itself to somebody reading the plan, and they cannot stop one being applied.
+# `infra/status/main.tf` and the two chart-template checks say the same thing; this header used to
+# claim the opposite, which mattered because a reader concluded a wildcarded subject was UNAPPLIABLE
+# (#4394). If a property here must be un-appliable rather than merely noisy, it needs a real
+# mechanism — a `precondition` on the resource, or a plan-JSON assertion in CI.
 
 # ── Trust is ref-bound, never wildcarded ─────────────────────────────────────
 check "e2e_trust_is_ref_bound" {
@@ -120,5 +127,55 @@ check "e2e_budget_publishes_to_sns" {
   assert {
     condition     = strcontains(data.aws_iam_policy_document.e2e_budget_topic.json, "budgets.amazonaws.com")
     error_message = "the e2e budget SNS topic policy must allow budgets.amazonaws.com to publish."
+  }
+}
+
+# ── The deploy reader's trust: exact subjects, and the CLI one is actually there ──
+# `alethia-deploy-reader` is the only role whose trust diverges from the shared `deployer_trust`,
+# and the reason it diverges (the `cli-release` environment) is a subject reachable from a TAG
+# push. Two ways that can rot silently: the exact sub could be relaxed into a `refs/tags/cli-v*`
+# wildcard, or the grant could be dropped and every CLI release would go back to publishing no
+# metadata with nothing red. Assert both directions.
+check "deploy_reader_trust_is_exact_and_unwildcarded" {
+  assert {
+    condition = alltrue([
+      for s in local.deploy_reader_subs :
+      can(regex("^repo:[^:*]+/[^:*]+:(ref:refs/heads/[^:*]+|environment:[^:*]+)$", s))
+    ])
+    error_message = "alethia-deploy-reader OIDC subjects must be EXACT repo:<owner>/<repo>:ref:refs/heads/<branch> or :environment:<env> with no '*' wildcard - a tag ref is trusted through the cli-release ENVIRONMENT, never through a ref pattern - got ${jsonencode(local.deploy_reader_subs)}."
+  }
+}
+
+check "deploy_reader_trust_uses_string_equals_and_aud" {
+  assert {
+    condition = alltrue([
+      strcontains(data.aws_iam_policy_document.deploy_reader_trust.json, "sts.amazonaws.com"),
+      strcontains(data.aws_iam_policy_document.deploy_reader_trust.json, "token.actions.githubusercontent.com:sub"),
+      !strcontains(data.aws_iam_policy_document.deploy_reader_trust.json, "StringLike"),
+    ])
+    error_message = "alethia-deploy-reader trust must pin aud=sts.amazonaws.com and match the sub with StringEquals (no StringLike)."
+  }
+}
+
+check "deploy_reader_trusts_the_cli_release_environment" {
+  assert {
+    condition = alltrue([
+      # Non-vacuity: strcontains(x, "") is always true, so an empty environment name would pass
+      # this AND produce a sub no release job can ever present.
+      var.cli_release_environment != "",
+      strcontains(data.aws_iam_policy_document.deploy_reader_trust.json, local.cli_release_sub),
+    ])
+    error_message = "alethia-deploy-reader must trust ${local.cli_release_sub} - without it the cli-v* release job cannot read RELEASE_API_SECRET and the console silently stops learning about new CLI versions."
+  }
+}
+
+# ── The tag-reachable subject reaches the READER only ─────────────────────────
+# The state/ECR/ECS roles share `deployer_trust`. If the cli-release sub ever lands in the SHARED
+# document, "can push a cli-v* tag" becomes "can write prod tofu state, push the runner image and
+# roll the fleet service" - the exact widening this design was chosen to avoid.
+check "cli_release_sub_does_not_reach_the_write_roles" {
+  assert {
+    condition     = !strcontains(data.aws_iam_policy_document.deployer_trust.json, local.cli_release_sub)
+    error_message = "the ${local.cli_release_sub} subject must NOT be in the shared deployer_trust - it would widen alethia-cp-deployer (state + secret write) and alethia-runner-release-deployer (ECR + ECS) to anyone who can push a cli-v* tag."
   }
 }

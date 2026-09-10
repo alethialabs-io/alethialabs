@@ -25,6 +25,7 @@ import type { Page } from "@playwright/test";
 import { test, expect } from "../fixtures/qa";
 import type { ConsoleGuard } from "../helpers/console-errors";
 import { scanA11y } from "../helpers/a11y";
+import { waitForShell } from "../helpers/shell";
 import {
 	seedCloudIdentity,
 	seedDrift,
@@ -162,12 +163,9 @@ test.describe("Cross-cutting — project page resilience sweep", () => {
 test.describe("Cross-cutting — landmark & title sanity", () => {
 	test("the org overview renders the sidebar Overview link", async ({ owner }) => {
 		await owner.page.goto(`/${owner.orgSlug}`);
-		// Scope to the sidebar (complementary) landmark — the breadcrumb also exposes an "Overview"
-		// role=link with aria-current, so a bare getByRole would be ambiguous.
-		const sidebarOverview = owner.page
-			.getByRole("complementary")
-			.getByRole("link", { name: "Overview", exact: true });
-		await expect(sidebarOverview).toBeVisible({ timeout: 25_000 });
+		// `waitForShell` owns the scoped locator — the breadcrumb also exposes an "Overview"
+		// role=link with aria-current, so a bare getByRole would be ambiguous in strict mode.
+		await waitForShell(owner.page, 25_000);
 		await expect(owner.page).not.toHaveURL(/\/login/);
 	});
 

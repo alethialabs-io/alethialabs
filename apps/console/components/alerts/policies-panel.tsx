@@ -44,6 +44,7 @@ import type { PolicyInput } from "@/lib/validations/alerts";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { Input } from "@repo/ui/input";
+import { Label } from "@repo/ui/label";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { Switch } from "@repo/ui/switch";
 import { Textarea } from "@repo/ui/textarea";
@@ -207,6 +208,10 @@ export function PoliciesPanel({
 			{policies.length === 0 ? (
 				<EmptyState
 					icon={<Bell />}
+					// `level={3}` under the section's own `h2` — see the twin in channels-panel.tsx:
+					// EmptyState's title is a `<div>` unless a level is passed, and this state heads
+					// the whole Policies region.
+					level={3}
 					title="No policies yet"
 					description={`A policy watches a set of events and routes matches to your channels.${canManage ? " Create one to start." : ""}`}
 					action={canManage ? newPolicyBtn : undefined}
@@ -218,66 +223,79 @@ export function PoliciesPanel({
 					{/* master-detail */}
 					<div className="flex flex-wrap items-start gap-4">
 						<div className="min-w-[290px] flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-sm">
-							<div className="px-4 py-3 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground/70">
+							<div className="px-4 py-3 font-mono text-ui-3xs uppercase tracking-[0.14em] text-text-tertiary">
 								Policies
 							</div>
 							{rows.length === 0 ? (
-								<div className="px-4 py-4 text-muted-foreground/70 text-xs">
+								<div className="px-4 py-4 text-text-tertiary text-xs">
 									No policies match these filters.
 								</div>
 							) : (
-								rows.map((p) => (
-									<button
-										key={p.id}
-										type="button"
-										onClick={() => {
-											setEditing(false);
-											setDraft(null);
-											setSelectedId(p.id);
-										}}
-										className={cn(
-											"flex w-full items-center gap-3 border-b border-l-2 border-border/60 px-3.5 py-3 text-left transition-colors hover:bg-muted/40",
-											selected?.id === p.id
-												? "border-l-foreground bg-muted/40"
-												: "border-l-transparent",
-										)}
-									>
-										<StatusBadge {...policyBadge(p)} showLabel={false} />
-										<span className="min-w-0 flex-1">
-											<span className="block truncate font-medium text-[13px]">
-												{p.name}
+								/*
+								 * A single-select rail: a listbox of options, not a stack of buttons.
+								 * Besides what a screen reader gets out of it, the role is what tells a
+								 * policy's RAIL ROW apart from the "Used by" pill in the Channels panel
+								 * that carries the same policy name — two buttons with one accessible
+								 * name on one page is a strict-mode collision for anything driving the
+								 * page by role. The caption above stays outside the listbox: a
+								 * listbox's children must all be options.
+								 */
+								<div role="listbox" aria-label="Policies">
+									{rows.map((p) => (
+										<button
+											key={p.id}
+											type="button"
+											role="option"
+											aria-selected={selected?.id === p.id}
+											onClick={() => {
+												setEditing(false);
+												setDraft(null);
+												setSelectedId(p.id);
+											}}
+											className={cn(
+												"flex w-full items-center gap-3 border-b border-l-2 border-border/60 px-3.5 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/40",
+												selected?.id === p.id
+													? "border-l-foreground bg-muted/40"
+													: "border-l-transparent",
+											)}
+										>
+											<StatusBadge {...policyBadge(p)} showLabel={false} />
+											<span className="min-w-0 flex-1">
+												<span className="block truncate font-medium text-ui-md">
+													{p.name}
+												</span>
+												<span className="font-mono text-ui-2xs text-muted-foreground">
+													{p.event_patterns.length} events ·{" "}
+													{p.enabled ? "enabled" : "off"}
+												</span>
+												<ClassificationChips
+													kind="alert_rule"
+													id={p.id}
+													initialAssignments={classMap[p.id]}
+													className="mt-1 flex"
+												/>
 											</span>
-											<span className="font-mono text-[10px] text-muted-foreground">
-												{p.event_patterns.length} events ·{" "}
-												{p.enabled ? "enabled" : "off"}
+											<span className="flex gap-1">
+												{p.channelIds.slice(0, 4).map((cid) => {
+													const ch = channels.find((c) => c.id === cid);
+													if (!ch) return null;
+													return (
+														<span
+															key={cid}
+															className="flex size-[18px] items-center justify-center rounded border border-border/60"
+														>
+															<ChannelIcon
+																type={ch.type}
+																active={ch.is_verified}
+																size={11}
+															/>
+														</span>
+													);
+												})}
 											</span>
-											<ClassificationChips
-												kind="alert_rule"
-												id={p.id}
-												initialAssignments={classMap[p.id]}
-												className="mt-1 flex"
-											/>
-										</span>
-										<span className="flex gap-1">
-											{p.channelIds.slice(0, 4).map((cid) => {
-												const ch = channels.find((c) => c.id === cid);
-												if (!ch) return null;
-												return (
-													<span
-														key={cid}
-														className="flex size-[18px] items-center justify-center rounded border border-border/60"
-													>
-														<ChannelIcon
-															type={ch.type}
-															active={ch.is_verified}
-															size={11}
-														/>
-													</span>
-												);
-											})}
-										</span>
-									</button>
-								))
+										</button>
+									))}
+								</div>
 							)}
 						</div>
 
@@ -414,19 +432,28 @@ function PolicyDetail({
 					<div className="min-w-0 space-y-1.5">
 						<div className="flex flex-wrap items-center gap-2.5">
 							{ed ? (
-								<Input
-									value={name}
-									onChange={(e) => patch({ name: e.target.value })}
-									placeholder="Policy name"
-									className="h-8 w-64 font-semibold"
-								/>
+								<>
+									{/* Visually hidden for the same reason as the channel detail's twin:
+									    the field's own text is this panel's heading, and a placeholder
+									    is not a label. */}
+									<Label htmlFor={`policy-name-${policy.id}`} className="sr-only">
+										Policy name
+									</Label>
+									<Input
+										id={`policy-name-${policy.id}`}
+										value={name}
+										onChange={(e) => patch({ name: e.target.value })}
+										placeholder="Policy name"
+										className="h-8 w-64 font-semibold"
+									/>
+								</>
 							) : (
 								<span className="font-display font-semibold text-lg tracking-tight">
 									{name}
 								</span>
 							)}
 							{policy.is_security && (
-								<span className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+								<span className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground">
 									security
 								</span>
 							)}
@@ -456,8 +483,10 @@ function PolicyDetail({
 					</div>
 				</div>
 				<div className="flex flex-none items-center gap-2">
-					<StatusBadge {...policyBadge(policy)} className="text-[10px]" />
+					<StatusBadge {...policyBadge(policy)} className="text-ui-2xs" />
+					{/* Named in both states — the name is the control, the state is `aria-checked`. */}
 					<Switch
+						aria-label="Enabled"
 						checked={policy.enabled}
 						disabled={!canManage || ed}
 						onCheckedChange={(c) => onToggleEnabled(policy, c)}
@@ -498,10 +527,10 @@ function PolicyDetail({
 			{/* events */}
 			<div className="space-y-3 border-b border-border/60 p-5">
 				<div className="flex items-center gap-2">
-					<span className="font-mono text-[10px] uppercase tracking-wider text-foreground/70">
+					<span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
 						Trigger · events
 					</span>
-					<span className="ml-auto font-mono text-[10px] text-muted-foreground">
+					<span className="ml-auto font-mono text-ui-2xs text-muted-foreground">
 						{events.length} selected
 					</span>
 				</div>
@@ -517,7 +546,7 @@ function PolicyDetail({
 			{/* routing */}
 			<div className="space-y-3 border-b border-border/60 p-5">
 				<div className="flex items-center gap-2">
-					<span className="font-mono text-[10px] uppercase tracking-wider text-foreground/70">
+					<span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
 						Routing · channels
 					</span>
 					<button
@@ -539,7 +568,7 @@ function PolicyDetail({
 
 			{/* conditions */}
 			<div className="space-y-3 border-b border-border/60 p-5">
-				<span className="font-mono text-[10px] uppercase tracking-wider text-foreground/70">
+				<span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
 					Conditions
 				</span>
 				<PolicyConditions
@@ -561,7 +590,7 @@ function PolicyDetail({
 			{/* throttle */}
 			<div className="space-y-2 p-5">
 				<div className="flex items-center gap-1.5">
-					<span className="font-mono text-[10px] uppercase tracking-wider text-foreground/70">
+					<span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
 						Notify at most once per
 					</span>
 				</div>
@@ -595,10 +624,10 @@ function PolicyDetail({
 function MetaCell({ k, v }: { k: string; v: string }) {
 	return (
 		<div className="min-w-[120px] flex-1 border-r border-border/60 px-5 py-3 last:border-r-0">
-			<div className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+			<div className="font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground">
 				{k}
 			</div>
-			<div className="mt-1.5 truncate text-[13px]">{v}</div>
+			<div className="mt-1.5 truncate text-ui-md">{v}</div>
 		</div>
 	);
 }

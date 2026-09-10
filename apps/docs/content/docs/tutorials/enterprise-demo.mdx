@@ -55,32 +55,78 @@ Pick your cloud now, follow its page for the connector step, then come back here
   the product rather than to test a specific cloud, use it.
 </Callout>
 
-## Step 1 — Create the project and both environments
+## Step 1 — Declare the whole shape in one file
 
-One command declares the whole shape: a project, and two environments with their placements.
+One file declares everything: a project, three environments with their placements, the cluster's
+shape, and which overlay each tier deploys. Save it as `alethia.yaml`:
 
-```bash
-alethia project create boutique \
-  --region <your-region> \
-  --cloud-identity-id <your-identity-id> \
-  --env prod:production:dedicated \
-  --env dev-1:development:namespace:boutique-dev-1 \
-  --env staging:staging:vcluster:boutique-staging
+```yaml
+project: boutique
+cloud:
+  account: prod-account          # your connector's label, from `alethia connector list`
+  region: nbg1                    # your region
+environments:
+  - name: prod
+    stage: production
+    placement: dedicated
+    components:
+      cluster:
+        cluster_version: "1.31"
+        node_desired_size: 2
+        node_min_size: 2
+        node_max_size: 3
+  - name: dev-1
+    stage: development
+    placement: namespace
+    namespace: boutique-dev-1
+    components:
+      repositories:
+        apps_destination_repo: https://github.com/alethialabs-io/alethia-examples
+        apps_path: examples/online-boutique/overlays/dev-1
+  - name: staging
+    stage: staging
+    placement: vcluster
+    namespace: boutique-staging
+    components:
+      repositories:
+        apps_destination_repo: https://github.com/alethialabs-io/alethia-examples
+        apps_path: examples/online-boutique/overlays/staging
 ```
-
-Each `--env` is `name:stage:placement:namespace`.
 
 **At least one environment must be `dedicated`.** A `dedicated` environment owns a Fabric and is what
 brings a cluster into being; `namespace` and `vcluster` environments are placed onto a cluster that
-already exists. Here `prod` provisions the Fabric, and `dev` and `staging` join it — three
-environments, one cluster. A matrix with no `dedicated` entry is refused at creation, because nothing
-in it would ever provision anything.
+already exists. Here `prod` provisions the Fabric, and `dev-1` and `staging` join it — three
+environments, one cluster. A file with no `dedicated` entry is refused before anything is sent,
+because nothing in it would ever provision anything.
+
+The cluster is a property of the **Fabric**, so it is configured on `prod` — the environment that
+owns it. The tiers placed onto that Fabric do not each get a cluster; that is the whole point. Two
+nodes is the floor for this demo: twelve services land three times over (once per namespace tier,
+and once more inside the vcluster, whose pods schedule on the host), which is roughly 5 vCPU and
+4 GiB of requests before the platform's own workloads.
+
+The `repositories` component is what makes the two tiers different: same repository, different
+path. Each overlay stamps its own namespace — `overlays/dev-1` renders into `boutique-dev-1`,
+`overlays/staging` into `boutique-staging` — which must match the `namespace` you gave that
+environment. A mismatch is refused by the tenant AppProject rather than deployed into the wrong
+place.
 
 <Callout type="warn">
-  Without `--env` you get the default Production + Preview pair, and any environment you add later
-  with no `--placement-mode` becomes `dedicated` — a **separate cluster** with its own state. That is
-  the mistake this flag exists to prevent.
+  Placement is the key with a bill attached. Leave it out of a later environment and it defaults to
+  `namespace`, which is what you want here; write `dedicated` on every entry and you have bought
+  three clusters.
 </Callout>
+
+## Step 2 — Apply it
+
+```bash
+alethia apply
+```
+
+The CLI reads the file, shows what it is about to create — one project, three environments, three
+components — and asks before doing it. Then it deploys `prod` (the Fabric and its cluster) and
+places `dev-1` and `staging` onto it, waiting for each job. Add `--yes` for an unattended run, and
+`--runner my-box` if more than one runner is online.
 
 Check what you got:
 
@@ -90,51 +136,14 @@ alethia project env list --project boutique
 
 Three environments, one Fabric.
 
-## Step 2 — Give the cluster a shape
-
-```bash
-alethia project component add --project boutique --env prod --kind cluster \
-  --set cluster_version=1.31 \
-  --set node_desired_size=2 \
-  --set node_min_size=2 \
-  --set node_max_size=3
-```
-
-The cluster is a property of the **Fabric**, so it is configured on `prod` — the environment that
-owns it. The tiers placed onto that Fabric do not each get a cluster; that is the whole point.
-
-Two nodes is the floor for this demo: twelve services land three times over (once per namespace
-tier, and once more inside the vcluster, whose pods schedule on the host), which is roughly 5 vCPU
-and 4 GiB of requests before the platform's own workloads.
-
-## Step 3 — Point each environment at its overlay
-
-This is the step that makes the two tiers different, and the reason `--env` matters on
-`component add`:
-
-```bash
-alethia project component add --project boutique --env dev-1 --kind repositories \
-  --set apps_destination_repo=https://github.com/alethialabs-io/alethia-examples \
-  --set apps_path=examples/online-boutique/overlays/dev-1
-
-alethia project component add --project boutique --env staging --kind repositories \
-  --set apps_destination_repo=https://github.com/alethialabs-io/alethia-examples \
-  --set apps_path=examples/online-boutique/overlays/staging
-```
-
-Same repository, different path. Each overlay stamps its own namespace — `overlays/dev-1` renders
-into `boutique-dev-1`, `overlays/staging` into `boutique-staging` — which must match the namespace
-you gave that environment in step 1. A mismatch is refused by the tenant AppProject rather than deployed into
-the wrong place.
-
 Confirm each tier separately:
 
 ```bash
-alethia project component list --project boutique --env dev
+alethia project component list --project boutique --env dev-1
 alethia project component list --project boutique --env staging
 ```
 
-## Step 4 — Plan, read the receipt, apply
+## Step 3 — Plan, read the receipt, apply
 
 ```bash
 alethia project plan --project-id boutique --wait
@@ -160,7 +169,7 @@ alethia jobs logs <job-id> --follow
 This is the long part. The cluster is created, the CNI installed, reachability probed, ArgoCD
 installed, and the platform add-ons synced.
 
-## Step 5 — Prove it
+## Step 4 — Prove it
 
 ```bash
 alethia cluster get boutique
@@ -183,7 +192,7 @@ what stops one tier's manifests from touching the other's namespace.
   (`test/e2e/t2_fabric_demo.go`). If this page and that test ever disagree, the test is right.
 </Callout>
 
-## Step 6 — The part worth noticing
+## Step 5 — The part worth noticing
 
 Look at the bill, and at `alethia cluster list`.
 
@@ -201,7 +210,7 @@ alethia project env add qa --project boutique --stage development \
 
 No new cluster.
 
-## Step 7 — Tear it down
+## Step 6 — Tear it down
 
 Not optional. This is real infrastructure and it bills by the hour.
 

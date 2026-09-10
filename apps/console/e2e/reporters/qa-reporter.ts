@@ -19,6 +19,7 @@ interface TestEntry {
 	perf: PerfRecord[];
 	consoleErrors: (CapturedError & { persona?: string })[];
 	errorMessage?: string;
+	annotations: { type: string; description?: string }[];
 }
 
 function readAttachment<T>(result: TestResult, name: string): T | null {
@@ -59,6 +60,10 @@ export default class QaReporter implements Reporter {
 			perf,
 			consoleErrors,
 			errorMessage: result.error?.message,
+			// A skip's REASON is the difference between recorded debt (`fixme`, "BUG: … #n") and a
+			// silent skip; the ratchet reads the json reporter for the verdict, this keeps the human
+			// report able to say the same thing.
+			annotations: [...test.annotations, ...result.annotations].map((a) => ({ type: a.type, description: a.description })),
 		});
 	}
 
@@ -105,6 +110,7 @@ export default class QaReporter implements Reporter {
 				status: e.status,
 				durationMs: e.durationMs,
 				errorMessage: e.errorMessage,
+				annotations: e.annotations,
 				requestCount: e.perf.length,
 				consoleErrorCount: e.consoleErrors.length,
 			})),

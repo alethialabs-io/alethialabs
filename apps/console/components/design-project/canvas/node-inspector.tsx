@@ -2,21 +2,21 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ArrowLeft, TriangleAlert, X } from "lucide-react";
+import { ArrowLeft, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { formatMonthlyRate } from "@repo/format";
 import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { CopyButton } from "@repo/ui/copy-button";
-import { Input } from "@repo/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
+import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import {
 	NODE_STATUS_META,
+	nodeStatusHint,
 	useNodeStatus,
 	type NodeStatusMeta,
-	type NodeStatusState,
 } from "@/lib/canvas/node-status";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { ago, JOB_LABEL, JOB_STATUS } from "@/lib/canvas/job-display";
@@ -24,7 +24,12 @@ import type {
 	EnvironmentInfo,
 	EnvironmentJob,
 } from "@/lib/canvas/component-status";
-import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { selectInspectorNodeId, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import {
+	type InspectorTab,
+	isInspectorTab,
+	useInspectorPrefsStore,
+} from "@/lib/stores/use-inspector-prefs-store";
 import {
 	collectionNodeId,
 	isCollectionKind,
@@ -38,6 +43,7 @@ import { NODE_REGISTRY } from "./graph/node-registry";
 import type { CanvasNode } from "./graph/types";
 import { configName } from "./graph/node-config";
 import { getKindConfig, type KindConfig } from "./inspector/config-schema";
+import { CardHeader } from "./inspector/card-header";
 import { ConfigFields } from "./inspector/config-fields";
 import { DangerZone } from "./inspector/danger-zone";
 import { useNodeCapabilities } from "./inspector/use-node-capabilities";
@@ -61,7 +67,7 @@ interface InspectorPanelProps {
  * summary), just never edited on the board.
  */
 export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
-	const inspectorNodeId = useCanvasStore((s) => s.inspectorNodeId);
+	const inspectorNodeId = useCanvasStore(selectInspectorNodeId);
 	const node = useCanvasStore((s) =>
 		inspectorNodeId ? s.nodes.find((n) => n.id === inspectorNodeId) : undefined,
 	);
@@ -71,6 +77,12 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 
 	const env = useEnvironmentStatus();
 	const core = useCanvasStore((s) => s.getCoreIdentity());
+	// Which tab this KIND was last left on. A card that always reopens on Overview makes a second
+	// visit to the same database's settings a two-click errand, every time.
+	const setTab = useInspectorPrefsStore((s) => s.setTab);
+	const storedTab = useInspectorPrefsStore((s) =>
+		node ? s.tab[node.data.kind] : undefined,
+	);
 	const provider = node ? getEffectiveProvider(node.id) : null;
 	// Account-scoped picker options for THIS node's effective identity.
 	const capabilities = useNodeCapabilities(node?.id ?? null);
@@ -128,6 +140,11 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 	// riding the already-polled EnvironmentStatus — no per-node fetch.
 	const showDeploy = node.data.kind === "cluster";
 
+	// A remembered tab can name one this card does not have (Deploy is cluster-only), so it falls
+	// back rather than rendering an empty body.
+	const tab: InspectorTab =
+		storedTab && (storedTab !== "deploy" || showDeploy) ? storedTab : "overview";
+
 	// A member of a collapsed kind has no card of its own on the board, so without a way back up
 	// you'd be stranded in a secret with no route to the vault it belongs to.
 	const parentCollection = isCollectionKind(node.data.kind) ? node.data.kind : null;
@@ -144,64 +161,40 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 					{NODE_REGISTRY[parentCollection].collection?.title}
 				</button>
 			)}
-			<div className="flex items-start gap-3 border-b border-border p-4">
-				{Icon && (
-					<span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-none border text-muted-foreground">
-						<Icon className="h-4 w-4" />
-					</span>
-				)}
-				<div className="min-w-0 flex-1 space-y-1">
-					<div className="flex flex-wrap items-center gap-2">
-						{nameKey ? (
-							<Input
-								value={configName(node.data) ?? ""}
-								maxLength={nameKey === "project_name" ? 50 : undefined}
-								placeholder={nameKey === "project_name" ? "My Project" : "name"}
-								onChange={(e) =>
-									updateNodeConfig(node.id, {
-										[nameKey]:
-											nameKey === "project_name"
-												? e.target.value
-												: e.target.value.toLowerCase(),
-									})
-								}
-								className={cn(
-									"h-8 max-w-[16rem] border-0 bg-transparent px-0 text-base font-semibold shadow-none focus-visible:ring-0",
-									nameKey === "name" && "font-mono",
-								)}
-							/>
-						) : (
-							<span className="text-base font-semibold">{def.label}</span>
-						)}
-						<span className="vx-eyebrow rounded-none border border-border px-1.5 py-0.5">
-							{def.eyebrow}
-						</span>
-					</div>
-					<p className="truncate text-xs text-muted-foreground">
-						{summary ||
-							(def.classification === "root"
-								? "Project basics and the stack's core cloud account."
-								: def.classification === "core"
-									? "Core resource — must run on the stack's cloud."
-									: "Periphery — may run on any connected cloud.")}
-					</p>
-				</div>
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					className="h-7 w-7 shrink-0"
-					onClick={() => openInspector(null)}
-					aria-label="Close"
-				>
-					<X className="h-4 w-4" />
-				</Button>
-			</div>
+			<CardHeader
+				icon={Icon ? <Icon className="h-4 w-4" /> : undefined}
+				eyebrow={def.eyebrow}
+				title={def.label}
+				name={nameKey ? (configName(node.data) ?? "") : undefined}
+				onNameChange={
+					nameKey
+						? (next) =>
+								updateNodeConfig(node.id, {
+									[nameKey]: nameKey === "project_name" ? next : next.toLowerCase(),
+								})
+						: undefined
+				}
+				nameMono={nameKey === "name"}
+				nameMaxLength={nameKey === "project_name" ? 50 : undefined}
+				namePlaceholder={nameKey === "project_name" ? "My Project" : "name"}
+				summary={
+					summary ||
+					(def.classification === "root"
+						? "Project basics and the stack's core cloud account."
+						: def.classification === "core"
+							? "Core resource — must run on the stack's cloud."
+							: "Periphery — may run on any connected cloud.")
+				}
+				onClose={() => openInspector(null)}
+			/>
 
 			<StatusHeader nodeId={node.id} />
 
 			<Tabs
-				defaultValue="overview"
+				value={tab}
+				onValueChange={(next) => {
+					if (isInspectorTab(next)) setTab(node.data.kind, next);
+				}}
 				className="flex min-h-0 flex-1 flex-col gap-0"
 			>
 				<TabsList
@@ -318,10 +311,12 @@ function EnvironmentBlock({ env }: { env: EnvironmentInfo }) {
 		<div className="border border-border bg-surface-sunken">
 			<div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
 				<span className="vx-eyebrow">Environment</span>
-				<span className={cn("vx-status shrink-0", `vx-status--${vx}`)}>
-					<span className="vx-status__dot" />
-					{env.status.charAt(0) + env.status.slice(1).toLowerCase()}
-				</span>
+				<StatusBadge
+					status={env.status}
+					tier={vx}
+					label={env.status.charAt(0) + env.status.slice(1).toLowerCase()}
+					className="shrink-0"
+				/>
 			</div>
 			<dl className="grid grid-cols-[5rem_1fr] gap-y-1.5 px-3 py-2.5 text-xs">
 				<dt className="text-muted-foreground">Name</dt>
@@ -370,22 +365,6 @@ function DestroyEnvironmentZone({ onDestroy }: { onDestroy: () => void }) {
 	);
 }
 
-/** The default line for a state when the server gave us no message of its own. */
-const STATUS_HINT: Partial<Record<NodeStatusState, string>> = {
-	gated: "Cross-cloud core placement — won't provision until colocated.",
-	ready: "Configured and ready to deploy.",
-	live: "Provisioned and matching the design.",
-	"not-deployed": "Designed, but never applied.",
-	queued: "Waiting for a runner to claim the job.",
-	applying: "The runner is applying this resource now.",
-	updating: "An apply is changing this resource in place.",
-	"update-pending": "The design has moved ahead of what's deployed.",
-	destroying: "Teardown in flight.",
-	destroyed: "Torn down. Remove it from the design to clear it.",
-	failed: "The last apply failed.",
-	unreachable: "The cluster's API server did not answer the last probe.",
-};
-
 /**
  * A compact status strip under the inspector header: the node's RESOLVED status (design readiness
  * merged with the environment's server truth) and the most actionable line — the server's own
@@ -398,16 +377,13 @@ function StatusHeader({ nodeId }: { nodeId: string }) {
 	const drifted = status.drift.length;
 	return (
 		<div className="flex items-center gap-2.5 border-b border-border bg-surface-sunken/60 px-4 py-2.5">
-			<span className={cn("vx-status shrink-0", `vx-status--${meta.vx}`)}>
-				<span className="vx-status__dot" />
-				{meta.label}
-			</span>
+			<StatusBadge status={meta.label} tier={meta.vx} className="shrink-0" />
 			<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-				{status.message ?? STATUS_HINT[status.state] ?? ""}
+				{status.message ?? nodeStatusHint(status.state) ?? ""}
 			</span>
 			{drifted > 0 && (
 				<span
-					className="shrink-0 border border-border-strong px-1.5 py-0.5 font-mono text-[10px] text-foreground"
+					className="shrink-0 border border-border-strong px-1.5 py-0.5 font-mono text-ui-2xs text-foreground"
 					title={status.drift.map((d) => d.address).join("\n")}
 				>
 					{drifted} drifted
@@ -456,10 +432,10 @@ function Overview({ node }: { node: CanvasNode }) {
 								key={o.label}
 								className="flex items-center gap-2 border border-border bg-surface-sunken px-2 py-1.5"
 							>
-								<dt className="shrink-0 text-[11px] text-muted-foreground">
+								<dt className="shrink-0 text-ui-xs text-muted-foreground">
 									{o.label}
 								</dt>
-								<dd className="min-w-0 flex-1 truncate text-right font-mono text-[11px]">
+								<dd className="min-w-0 flex-1 truncate text-right font-mono text-ui-xs">
 									{o.value}
 								</dd>
 								<CopyButton text={o.value} className="h-6 w-6 shrink-0" />
@@ -504,10 +480,10 @@ function Overview({ node }: { node: CanvasNode }) {
 						{status.drift.map((d) => (
 							<li
 								key={d.address}
-								className="flex items-center gap-2 border border-border bg-surface-sunken px-2 py-1 font-mono text-[10px]"
+								className="flex items-center gap-2 border border-border bg-surface-sunken px-2 py-1 font-mono text-ui-2xs"
 							>
 								<span className="min-w-0 flex-1 truncate">{d.address}</span>
-								<span className="vx-eyebrow shrink-0 text-[9px]">{d.kind}</span>
+								<span className="vx-eyebrow shrink-0 text-ui-3xs">{d.kind}</span>
 							</li>
 						))}
 					</ul>
@@ -564,7 +540,7 @@ function CostTab({ node }: { node: CanvasNode }) {
 				</span>
 			</div>
 			{env.costCapturedAt && (
-				<p className="text-[11px] text-muted-foreground">
+				<p className="text-ui-xs text-muted-foreground">
 					As of the last plan · {ago(env.costCapturedAt)} ago
 				</p>
 			)}
@@ -575,7 +551,7 @@ function CostTab({ node }: { node: CanvasNode }) {
 						{lines.map((l) => (
 							<li
 								key={l.address}
-								className="flex items-center gap-2 border border-border bg-surface-sunken px-2 py-1.5 font-mono text-[10px]"
+								className="flex items-center gap-2 border border-border bg-surface-sunken px-2 py-1.5 font-mono text-ui-2xs"
 							>
 								<span className="min-w-0 flex-1 truncate">{l.address}</span>
 								<span className="shrink-0">{formatMonthlyRate(l.monthlyCost, "exact")}</span>
@@ -620,16 +596,17 @@ function JobList({ jobs }: { jobs: EnvironmentJob[] }) {
 						key={job.id}
 						className="flex items-center gap-2 border border-border bg-surface-sunken px-2.5 py-1.5"
 					>
-						<span
-							className={cn("vx-status shrink-0", `vx-status--${vx}`)}
+						<StatusBadge
+							status={job.status}
+							tier={vx}
+							showLabel={false}
+							className="shrink-0"
 							suppressHydrationWarning
-						>
-							<span className="vx-status__dot" />
-						</span>
-						<span className="min-w-0 flex-1 truncate font-mono text-[10px] uppercase tracking-wide">
+						/>
+						<span className="min-w-0 flex-1 truncate font-mono text-ui-2xs uppercase tracking-wide">
 							{JOB_LABEL[job.type] ?? job.type}
 						</span>
-						<span className="shrink-0 font-mono text-[9px] text-muted-foreground">
+						<span className="shrink-0 font-mono text-ui-3xs text-muted-foreground">
 							{ago(job.createdAt)}
 						</span>
 					</li>

@@ -1,0 +1,57 @@
+name: Publish CLI release metadata
+
+# THE REPAIR PATH, not the release path.
+#
+# The automatic publish happens inside release-cli.yml's `publish-metadata` job, on the cli-v* tag
+# itself, using the `cli-release` environment to present a trusted OIDC sub (#2482). This workflow
+# exists for the case that job did not run or did not converge: a version whose binaries shipped but
+# whose metadata the console never learned. Run it against `main`; it re-verifies both release tags
+# before it publishes anything, so it cannot announce a version that was never actually released.
+#
+# It deliberately does NOT set `environment:`. Dispatched from `main` its sub is the already-trusted
+# `...:ref:refs/heads/main`; the `cli-release` environment is tag-scoped and would refuse a branch.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Stable CLI version to publish or repair (for example 0.6.1)"
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ASM_REGION: eu-central-1
+    steps:
+      # The vault role trusts refs/heads/main. Dispatching this from any other ref fails at
+      # federation with a message about an OIDC subject, which names the mechanism rather than the
+      # mistake — so say the actual thing first.
+      - name: Require the main ref
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF" = "refs/heads/main" ] || {
+            echo "::error::release metadata must be dispatched against refs/heads/main (got $GITHUB_REF)"
+            exit 1
+          }
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials (main-bound read-only vault role)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.DEPLOY_READER_ROLE_ARN }}
+          aws-region: ${{ env.ASM_REGION }}
+
+      - name: Publish canonical release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALETHIA_URL: ${{ vars.PUBLIC_APP_URL }}
+          VERSION: ${{ inputs.version }}
+        run: bash .github/scripts/publish-cli-release-metadata.sh

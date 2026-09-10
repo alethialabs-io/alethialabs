@@ -21,6 +21,37 @@ locals {
   }
 
   env_domain = "${var.env_subdomain}.${var.domain}"
+
+  # ── The Go toolchain the box installs ───────────────────────────────────────────
+  #
+  # READ from go.work, never typed. cloud-init used to carry the literal `go1.24.5`
+  # under a comment claiming it was "kept in sync with the toolchain the repo's
+  # go.work targets"; it was stale from birth (#1535 wrote 1.24.5 while #1491 raised
+  # go.work to 1.26.5 the same day) and three minors adrift by #4241.
+  #
+  # Nothing on the box sets GOTOOLCHAIN, so Go's default `auto` quietly downloads the
+  # real toolchain on the first `go build` and the drift never surfaces. A box with no
+  # egress to proxy.golang.org, or an operator following Go's hardening advice with
+  # GOTOOLCHAIN=local, instead gets `go.work requires go >= 1.27.1 (running go 1.24.5)`
+  # and cannot build a runner natively — which is exactly what `pnpm env:runner`
+  # (native mode) does.
+  #
+  # THE PATTERN MUST CONTAIN NO BACKSLASH. packages/core/compat/go_toolchain_test.go
+  # lifts this regex out of this file verbatim, compiles it with Go's regexp (the same
+  # engine tofu's `regex()` uses) and runs it against go.work, so the extraction is
+  # measured rather than asserted in a comment. Lifting a *quoted* HCL literal means
+  # re-implementing HCL's escaping, so the test refuses a backslash rather than guess —
+  # `[0-9]` and `[.]` say everything `\d` and `\.` would.
+  go_directive = regex("(?m)^go +([0-9]+[.][0-9]+(?:[.][0-9]+)?)", file("${path.module}/../../go.work"))[0]
+
+  # A MINOR-ONLY DIRECTIVE IS DEFAULTED, NOT REFUSED. `go 1.28` is legal Go and means
+  # 1.28.0; go.dev/dl publishes no minor-only tarball, so the URL needs the patch. An
+  # earlier version of this asserted the patch was present and FAILED THE PLAN without
+  # it — which stops `hcloud_server.sandbox` and `pnpm env:box` over a go.work line that
+  # is not broken. Refuse what is known broken; this is known FIXABLE, and `go1.NN.0` has
+  # existed for every release since 1.21, so appending it serves the case that a refusal
+  # would only have blocked.
+  go_version = length(split(".", local.go_directive)) == 3 ? local.go_directive : "${local.go_directive}.0"
 }
 
 resource "hcloud_ssh_key" "sandbox" {
@@ -78,6 +109,7 @@ resource "hcloud_server" "sandbox" {
   user_data = templatefile("${path.module}/templates/cloud-init.yaml.tftpl", {
     env_domain = local.env_domain
     env_cap    = var.env_cap
+    go_version = local.go_version
   })
 
   lifecycle {

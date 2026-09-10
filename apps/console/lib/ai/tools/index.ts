@@ -17,22 +17,35 @@ import { widgetTools } from "./widgets";
 export type AgentMode = "ask" | "act";
 
 /**
+ * The environment a project conversation is scoped to. Threaded into the tools that act on
+ * or read one environment (`propose_operation`, `list_jobs`) so the model targets the
+ * environment the user is looking at, not the project's default.
+ */
+export interface EnvironmentScope {
+	environmentId?: string | null;
+}
+
+/**
  * The PROJECT-PAGE assistant's tool SSOT — the full surface for driving the MVP "A"
  * loop on a single project: catalog lookups + the read surface + repo scanning +
  * canvas-bound design proposals (compose) + HITL plan/deploy proposals (operations).
  * Every tool is PDP-gated; all mutations are proposals (apply on the canvas / approve
  * to run). `ctx` is the live canvas snapshot when the canvas is active, else undefined
- * (compose tools degrade gracefully).
+ * (compose tools degrade gracefully). `opts.environmentId` is the resolved environment
+ * the conversation is scoped to; the operation tool names it so every proposal carries it.
  */
-export function buildProjectAgentTools(ctx: CanvasContext | undefined) {
+export function buildProjectAgentTools(
+	ctx: CanvasContext | undefined,
+	opts?: EnvironmentScope,
+) {
 	return {
 		...catalogTools(),
-		...readTools(),
+		...readTools(opts),
 		...docsTools(),
 		...connectTools(),
 		...scannerTools(),
 		...composeTools(ctx),
-		...operationTools(),
+		...operationTools(opts),
 		...visualizeTools(),
 		...widgetTools(),
 		...artifactTools(),

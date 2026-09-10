@@ -1,15 +1,33 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Integration: getCliConfig resolves DETERMINISTICALLY when two projects share a name (#2663).
+// Integration: getCliConfig resolves DETERMINISTICALLY when two projects share a name
+// (#2663, then #3145).
 //
 // This suite exists for two reasons, and the second is the reason it is an integration test and
 // not a mocked unit test.
 //
-// 1. `project_name` has no uniqueness constraint — the only unique on `projects` is
-//    (org_id, slug) — and duplicates are the DESIGNED behaviour of the create path, which
-//    de-duplicates the SLUG and inserts the name verbatim. `getCliConfig` took `.limit(1)` with no
-//    ORDER BY, so which project the CLI resolved was undefined.
+// 1. `getCliConfig` took `.limit(1)` with no ORDER BY over a non-unique filter, so which project
+//    the CLI resolved was undefined. #2663 imposed a total order; #3145 then made project names
+//    UNIQUE per org (`projects_org_id_project_name_key`, on (org_id, lower(project_name))).
+//
+//    #4298 THEN THREADED THE ORG THROUGH, and that RETIRES the ordering question at this door —
+//    said plainly, because the paragraph this replaces asserted the opposite and a stale "still
+//    load-bearing" reads as coverage nobody has. `getCliConfig` now filters on `org_id`, so
+//    `projects_org_id_project_name_key` makes (org, name) unique and the `.limit(1)` single-row by
+//    construction. The ORDER BY is UNREACHABLE from here and this file no longer tests it.
+//
+//    What the fixture tests instead is STRICTLY STRONGER, and it is why the two projects were kept:
+//    one user, two orgs, one name. Before #4298 the resolver saw BOTH rows and a tie-break chose;
+//    now the org scope must choose, and the assertions below pin that each org gets ITS OWN project
+//    rather than whichever the order happened to favour. That is the tenancy boundary, not a
+//    preference — for a service token `actor.userId` is the MINTING profile, so the old `user_id`
+//    filter handed back a project (its cluster endpoint, DNS zone and cloud identity id) from an
+//    org the token was never pinned to.
+//
+//    The ORDER BY is still load-bearing in `lib/cli/resolve-project.ts`, whose `or()` spans id, slug
+//    and name and so can still match two DISTINCT rows inside one org. That door is not this file's
+//    subject and is not covered here.
 //
 // 2. `lib/queries/**` is excluded from the unit coverage scope under the claim that each file is
 //    "verified by the integration tier". For `lib/queries/cli-config.ts` that claim was FALSE — no
@@ -26,9 +44,13 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb } from "@/lib/db";
 import { projectEnvironments, projects } from "@/lib/db/schema";
 import { getCliConfig } from "@/lib/queries/cli-config";
-import { describeIfDb } from "./db";
+import { isProjectNameTaken, ProjectNameTakenError } from "@/lib/queries/projects";
+import { describeIfDb, refusalText } from "./db";
 
-const ORG = randomUUID();
+// Two orgs, one user — see the header. Same-org duplicates are refused by the database now, and
+// that refusal is asserted in its own test rather than assumed.
+const ORG_OLDER = randomUUID();
+const ORG_NEWER = randomUUID();
 const USER = randomUUID();
 
 // The rows are inserted in the OPPOSITE order to the one they must resolve in, so a result that
@@ -51,7 +73,7 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 		// NEWER first, so insertion order is the OPPOSITE of the expected resolution order.
 		await db.insert(projects).values({
 			id: NEWER,
-			org_id: ORG,
+			org_id: ORG_NEWER,
 			user_id: USER,
 			project_name: SHARED_NAME,
 			region: "westeurope",
@@ -61,7 +83,7 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 		});
 		await db.insert(projects).values({
 			id: OLDER,
-			org_id: ORG,
+			org_id: ORG_OLDER,
 			user_id: USER,
 			project_name: SHARED_NAME,
 			region: "eu-central-1",
@@ -95,16 +117,81 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 		await db.delete(projects).where(inArray(projects.id, [OLDER, NEWER]));
 	});
 
-	it("resolves the OLDEST project, not an arbitrary one", async () => {
-		const cfg = await getCliConfig(getServiceDb(), {
-			userId: USER,
+	// Asserts through isProjectNameTaken — the predicate BOTH write paths use to turn a violation
+	// into ProjectNameTakenError — rather than against the thrown message. That is deliberate and
+	// it earned its keep: drizzle wraps the driver error, so the thrown object's message is
+	// "Failed query: insert into ..." and `code` / `constraint_name` live on its `cause`. A test
+	// matching the message text passed for the wrong reason (any failure looked like a clash) while
+	// the production mapping silently never fired. Asserting the mapping tests the DB and the code
+	// that reads it, together.
+	async function nameClash(project_name: string, slug: string): Promise<boolean> {
+		try {
+			await getServiceDb().insert(projects).values({
+				id: randomUUID(),
+				org_id: ORG_OLDER,
+				user_id: USER,
+				project_name,
+				region: "eu-central-1",
+				iac_version: "1.0",
+				slug,
+			});
+			return false; // inserted — the constraint did NOT fire
+		} catch (err) {
+			return isProjectNameTaken(err);
+		}
+	}
+
+	it("REFUSES a second project of the same name in the same org", async () => {
+		// The guarantee #3145 added, asserted against the real index rather than inferred from
+		// the schema file. Without this the suite would silently become a test of two orgs only,
+		// and the constraint that made that necessary would be covered by nothing.
+		expect(await nameClash(SHARED_NAME, `${SHARED_NAME}-clash`)).toBe(true);
+	});
+
+	// The predicate is half the mapping; this is the other half. `isProjectNameTaken` says a
+	// violation happened, and `ProjectNameTakenError` is what both write paths raise in its
+	// place — the thing a caller actually catches, and the only reason the driver error is
+	// mapped at all. Asserting it here keeps the two ends of that mapping in one suite: a
+	// predicate that fires and an error nobody constructs is a fix that surfaces as a 500.
+	it("...and the error a caller sees names the project, not the query that failed", () => {
+		const err = new ProjectNameTakenError(SHARED_NAME);
+		expect(err).toBeInstanceOf(Error);
+		expect(err.name).toBe("ProjectNameTakenError");
+		expect(err.message).toContain(SHARED_NAME);
+		// The message drizzle would otherwise surface. It is the one this class exists to replace.
+		expect(err.message).not.toMatch(/Failed query|insert into/i);
+	});
+
+	it("REFUSES a same-org name that differs only in CASE", async () => {
+		// The index is on lower(project_name), so this must fail for the same reason. Asserted
+		// separately because a plain unique on the bare column would pass the test above and fail
+		// this one — which is exactly the difference the migration chose deliberately.
+		expect(await nameClash(SHARED_NAME.toUpperCase(), `${SHARED_NAME}-case`)).toBe(true);
+	});
+
+	// #4298. One user, two orgs, one project name — and each org resolves to ITS OWN project. Before
+	// the org scope this pair was decided by the ORDER BY, so `ORG_NEWER` could not have been asked
+	// for at all: both calls returned OLDER.
+	it("resolves each org to ITS OWN project of the shared name", async () => {
+		const older = await getCliConfig(getServiceDb(), {
+			orgId: ORG_OLDER,
 			projectName: SHARED_NAME,
 		});
-		expect(cfg).not.toBeNull();
-		expect(cfg?.id).toBe(OLDER);
+		expect(older?.id).toBe(OLDER);
 		// The region is what a user would actually notice resolving to the wrong project: it is the
 		// field the CLI hands onward.
-		expect(cfg?.region).toBe("eu-central-1");
+		expect(older?.region).toBe("eu-central-1");
+
+		const newer = await getCliConfig(getServiceDb(), {
+			orgId: ORG_NEWER,
+			projectName: SHARED_NAME,
+		});
+		expect(newer?.id).toBe(NEWER);
+
+		// Stated as an inequality too: two calls that both returned the same row would satisfy the
+		// two assertions above only if the ids differ, and saying so is what makes a future change
+		// that collapses the scope fail HERE rather than somewhere downstream.
+		expect(older?.id).not.toBe(newer?.id);
 	});
 
 	it("returns the same project on repeated calls (no per-call variation)", async () => {
@@ -119,10 +206,15 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 		//
 		// This case earns its place for a narrower reason: it catches per-call VARIATION — a cache
 		// or memoisation between calls returning a different row on a later invocation.
+		//
+		// NARROWER STILL SINCE #4298. With the filter on `org_id` the unique constraint makes this
+		// query single-row, so ordering cannot vary the answer even in principle. Memoisation across
+		// calls is the only failure left that this loop can see, and it is kept for that alone —
+		// not as evidence the resolution order is covered, which here it is not.
 		const ids = new Set<string>();
 		for (let i = 0; i < 5; i += 1) {
 			const cfg = await getCliConfig(getServiceDb(), {
-				userId: USER,
+				orgId: ORG_OLDER,
 				projectName: SHARED_NAME,
 			});
 			if (cfg) ids.add(cfg.id);
@@ -132,7 +224,7 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 
 	it("still honours an explicit envId, and refuses one from another project", async () => {
 		const mine = await getCliConfig(getServiceDb(), {
-			userId: USER,
+			orgId: ORG_OLDER,
 			projectName: SHARED_NAME,
 			envId: ENV_OLDER,
 		});
@@ -142,55 +234,55 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 		// project, so this must miss rather than cross the boundary — asserted so a future
 		// refactor that "helpfully" widens the environment lookup is caught here.
 		const crossed = await getCliConfig(getServiceDb(), {
-			userId: USER,
+			orgId: ORG_OLDER,
 			projectName: SHARED_NAME,
 			envId: ENV_NEWER,
 		});
 		expect(crossed).toBeNull();
 	});
 
-	it("returns null for another user's project of the same name", async () => {
+	// The boundary from the outside: an org with no project of this name gets null, never a row
+	// belonging to the user's OTHER org. This is the assertion a service token depends on.
+	it("returns null for an org that has no project of that name", async () => {
 		const other = await getCliConfig(getServiceDb(), {
-			userId: randomUUID(),
+			orgId: randomUUID(),
 			projectName: SHARED_NAME,
 		});
 		expect(other).toBeNull();
 	});
 
-	it("falls back deterministically when no environment is flagged default", async () => {
+	// This test used to assert the OPPOSITE, and the inversion is the point of #4127.
+	//
+	// It cleared `is_default` on the resolved project's only environment, added an older one, and
+	// then asserted that `getCliConfig` fell back to the earliest row *deterministically* — the
+	// half-measure #2663 could offer while the schema still permitted zero defaults. A deterministic
+	// arbitrary pick is still an arbitrary pick: the CLI, the project header and the deploy target
+	// each ran their own version of it, and nothing said they had to agree.
+	//
+	// `project_environments_one_default_check` (lib/db/programmables.sql) now refuses to COMMIT that
+	// state, so the fallback has no reachable input and was deleted. What is asserted instead is
+	// that the state cannot be created — which is the guarantee the deleted fallback was standing in
+	// for. It runs through the SERVICE connection (BYPASSRLS): the check is a trigger, and triggers
+	// are not bypassed by BYPASSRLS, so this also pins that the invariant binds the most privileged
+	// caller the app has.
+	it("the database refuses to leave a project's environments without a default", async () => {
 		const db = getServiceDb();
-		// The `envs[0]` fallback path: clear is_default on the resolved project's only env and add
-		// a second, older one. Without an ORDER BY this pick was arbitrary too.
-		const EXTRA = randomUUID();
-		await db.insert(projectEnvironments).values({
-			id: EXTRA,
-			project_id: OLDER,
-			user_id: USER,
-			name: "oldest-non-default",
-			stage: "staging",
-			is_default: false,
-			created_at: new Date("2025-01-01T00:00:00.000Z"),
+		// `rejects.toThrow` would read drizzle's WRAPPER message ("Failed query: update …") and match
+		// any failure of this statement at all; refusalText walks the cause chain to the Postgres text.
+		expect(
+			await refusalText(() =>
+				db
+					.update(projectEnvironments)
+					.set({ is_default: false })
+					.where(eq(projectEnvironments.id, ENV_OLDER)),
+			),
+		).toMatch(/exactly one must have is_default/);
+
+		// And the row is untouched — the failed statement rolled back, so the resolver still answers.
+		const cfg = await getCliConfig(getServiceDb(), {
+			orgId: ORG_OLDER,
+			projectName: SHARED_NAME,
 		});
-		await db
-			.update(projectEnvironments)
-			.set({ is_default: false })
-			.where(eq(projectEnvironments.id, ENV_OLDER));
-		try {
-			const seen = new Set<string>();
-			for (let i = 0; i < 5; i += 1) {
-				const cfg = await getCliConfig(getServiceDb(), {
-					userId: USER,
-					projectName: SHARED_NAME,
-				});
-				if (cfg) seen.add(cfg.environment_stage);
-			}
-			expect([...seen]).toEqual(["oldest-non-default"]);
-		} finally {
-			await db
-				.update(projectEnvironments)
-				.set({ is_default: true })
-				.where(eq(projectEnvironments.id, ENV_OLDER));
-			await db.delete(projectEnvironments).where(eq(projectEnvironments.id, EXTRA));
-		}
+		expect(cfg?.environment_stage).toBe("older-default");
 	});
 });

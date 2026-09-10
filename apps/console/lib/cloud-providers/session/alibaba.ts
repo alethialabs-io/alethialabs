@@ -8,7 +8,11 @@
 // stored). `AssumeRoleWithOIDC` is an anonymous STS action — authenticated by the OIDC token itself,
 // so there is no AccessKey and no request signature. A successful assume is the proof of access.
 
-import { mintWorkloadToken, oidcIssuerConfigured } from "@/lib/oidc/issuer";
+import { providerAudience } from "@repo/workload-identity";
+import {
+	assertionSourceForProvider,
+	workloadAssertionSourceConfigured,
+} from "@/lib/oidc/assertion-source";
 import { toStr } from "@/lib/coerce";
 import { asRecord } from "@/lib/records";
 import type { CloudIdentity } from "@/lib/db/schema";
@@ -20,7 +24,7 @@ const TIMEOUT_MS = 12_000;
  * The audience the minted assertion carries. It must match a client-id (`aud`) configured on the
  * customer's RAM OIDC provider — the customer setup (Phase 3 Bit E) pins the provider to this value.
  */
-export const ALIBABA_TOKEN_AUDIENCE = "sts.aliyuncs.com";
+export const ALIBABA_TOKEN_AUDIENCE = providerAudience("alibaba");
 
 /**
  * The fixed name of the RAM OIDC provider the customer setup (`infra/connector/alibaba`) creates.
@@ -73,7 +77,7 @@ export async function assumeAlibabaRole(
 	identity: Pick<CloudIdentity, "credentials">,
 	opts?: { purpose?: string },
 ): Promise<AlibabaSession> {
-	if (!oidcIssuerConfigured()) {
+	if (!workloadAssertionSourceConfigured()) {
 		throw new Error("The workload-identity issuer is not configured (ALETHIA_OIDC_SIGNING_KEY).");
 	}
 	const roleArn = identity.credentials.role_arn ?? null;
@@ -83,7 +87,9 @@ export async function assumeAlibabaRole(
 		throw new Error("This Alibaba connection has no OIDC provider ARN.");
 	}
 
-	const oidcToken = await mintWorkloadToken({ audience: ALIBABA_TOKEN_AUDIENCE });
+	const oidcToken = await assertionSourceForProvider("alibaba").getAssertion({
+		audience: ALIBABA_TOKEN_AUDIENCE,
+	});
 
 	// AssumeRoleWithOIDC is anonymous — the OIDC token authenticates the call, so there is no
 	// AccessKeyId / SignatureMethod / Signature. We deliberately send NO SignatureNonce/Timestamp

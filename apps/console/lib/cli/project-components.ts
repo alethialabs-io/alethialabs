@@ -9,12 +9,28 @@
 // table's drizzle-zod insert schema (picked down to the user-settable columns) so an
 // unknown or mistyped field is a clear 400 — code and DB never drift.
 
+import { createHash } from "node:crypto";
 import { createInsertSchema } from "drizzle-zod";
 import { and, eq, getTableColumns } from "drizzle-orm";
-import type { AnyColumn } from "drizzle-orm";
+import type { AnyColumn, SQL } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { z } from "zod";
+import {
+	DEFAULT_COUNT_CAP,
+	afterCursor,
+	countScoped,
+	cursorKey,
+	decodeCursor,
+	encodeCursor,
+	pageFetchLimit,
+	pageOrder,
+	parsePageOpts,
+	type CursorPosition,
+	type CursorScope,
+	type PageInfo,
+} from "@/lib/cli/paging";
 import { getServiceDb } from "@/lib/db";
+import { asRecord } from "@/lib/records";
 import {
 	projectCaches,
 	projectCluster,
@@ -73,6 +89,7 @@ const WIRE_EXCLUDE = new Set<string>([
 	"provider_outputs",
 	"repository_url",
 	"secret_ref",
+	"cursor_key",
 ]);
 
 /** The component-kind registry. The pick-lists are the columns a CLI caller may `--set`;
@@ -306,16 +323,157 @@ export function isSingletonKind(kind: string): boolean {
 	return def ? def.singleton : false;
 }
 
-/** Converts a row/value into a plain key/value record without an unsafe cast. */
-function toRecord(row: unknown): Record<string, unknown> {
-	return row && typeof row === "object"
-		? Object.fromEntries(Object.entries(row))
-		: {};
+// ─────────────────────────────────────────────────────────────────────────────
+// The PUBLISHED schema (#3671)
+//
+// Everything above this line is the server's private opinion of what a component kind is. The
+// CLI holds a SECOND opinion — `componentKinds` and `singletonKinds`, two literals in
+// apps/cli/cmd/project_component.go — and the two have already drifted: `helm_registries` is in
+// this registry and is not in that list, so `alethia project component kinds` does not name a
+// kind the server will happily author.
+//
+// A wire projection of THIS registry is what turns that literal into a cache. It carries the
+// three things the CLI reads a registry for:
+//
+//   • which kinds exist, in a stable order   (`componentKinds`)
+//   • which of them are 1:1 per environment  (`singletonKinds`)
+//   • what `--set key=value` may assign, and AT WHAT TYPE
+//
+// The third closes the `--set` split-brain. Today coercion lives in Go — `coerceSetValue` JSON-
+// decodes the raw text with no idea what the field is — and validation lives here, so
+// `--set cluster_version=1.35` becomes the NUMBER 1.35 and this registry refuses it against a
+// `text()` column, with the documented workaround being to quote it. A client that has read
+// `{"cluster_version": {"type": "string"}}` can coerce per field instead of per literal, and it
+// can refuse a bad value before spending a round trip.
+//
+// The document is deliberately never STRICTER than the server. Some of this registry's rules are
+// not expressible in JSON Schema at all — apps_path's mirrored grammar is a `.refine`, so it
+// publishes as plain `string` — so what ships is a SUPERSET of what the server accepts. That is
+// the safe direction, and it is the epic's invariant: a client validating against this document
+// can only ever refuse a value the server would also refuse, never one it would have taken.
+
+/** One published component kind. */
+export interface PublishedComponentKind {
+	kind: string;
+	/** 1:1 per (project, environment) — the CLI's `singletonKinds`, no longer hand-typed. */
+	singleton: boolean;
+	/** Settable field names, in registry order. DERIVED from `schema.properties` — never
+	 *  written out separately, so the list and the schema cannot disagree. */
+	fields: string[];
+	/** JSON Schema (draft-7) of the `fields` object of an add / `--set` request. */
+	schema: Record<string, unknown>;
+}
+
+/** The published component-kind registry as it goes over the wire. */
+export interface ComponentSchemaDocument {
+	/** sha256 over the serialized `kinds` — the CLI's cache key and the route's ETag, so a cached
+	 *  copy can be revalidated for free and changes when the published registry does. */
+	version: string;
+	kinds: PublishedComponentKind[];
+}
+
+/** The wire contract for {@link ComponentSchemaDocument}, so `cliJson` validates the bytes that
+ *  actually ship. `kinds` is bounded below on purpose: an empty document is not a small answer,
+ *  it is a client that will refuse every `--kind`, and it must be a 500 rather than a 200. */
+export const componentSchemaWire = z.object({
+	version: z.string().min(1),
+	kinds: z
+		.array(
+			z.object({
+				kind: z.string().min(1),
+				singleton: z.boolean(),
+				fields: z.array(z.string().min(1)),
+				schema: z.record(z.string(), z.unknown()),
+			}),
+		)
+		.min(1),
+});
+
+/**
+ * Fails loudly on a VACUOUS published registry — zero kinds, or a kind that publishes zero
+ * settable fields.
+ *
+ * Both are silent-wrong-answer shapes rather than errors: a client caching an empty `kinds`
+ * array refuses every `--kind` the server would have accepted, and a kind whose `properties`
+ * came back empty tells the client "nothing is settable here" when in fact everything is. Both
+ * render as a working CLI that has quietly lost a capability, so the census is asserted rather
+ * than assumed.
+ *
+ * Exported so the zero census can be driven directly — a guard whose failure branch has never
+ * run is a comment.
+ */
+export function assertComponentSchemaPublishable(
+	kinds: readonly PublishedComponentKind[],
+): void {
+	if (kinds.length === 0) {
+		throw new Error(
+			"component schema: the kind registry published ZERO kinds — a client caching this document would refuse every --kind",
+		);
+	}
+	const empty = kinds.filter((k) => k.fields.length === 0).map((k) => k.kind);
+	if (empty.length > 0) {
+		throw new Error(
+			`component schema: kind(s) published no settable fields: ${empty.join(", ")} — a client caching this document would refuse every --set for them`,
+		);
+	}
+}
+
+/** Projects the private registry into the published document. */
+function buildComponentSchemaDocument(): ComponentSchemaDocument {
+	const kinds = COMPONENT_KINDS.map((kind) => {
+		const def = KINDS[kind];
+		// `io: "input"` because this document describes what a caller may SEND, and draft-7 to
+		// match the target the Go contract fixtures are already generated at
+		// (apps/console/scripts/gen-cli-fixtures.ts).
+		//
+		// `unrepresentable` is left at its default (THROW) rather than "any", because `{}` is a
+		// node that accepts everything and that is the one answer a client must never cache.
+		//
+		// The throw is NOT a build failure, and it would be wrong to describe it as one. This
+		// builder is reachable only through the memoized componentSchemaDocument(), so on its own
+		// the first symptom of an inexpressible field would be a 500 on the first REQUEST in
+		// production. What catches it before a deploy is a named unit test — "expresses every
+		// published kind as JSON Schema" in tests/lib/cli/component-schema.test.ts drives this
+		// function directly.
+		//
+		// The reachable case is a TIMESTAMP column: drizzle-zod infers `z.date()` for one, and
+		// `created_at` / `updated_at` sit one line away in every pick-list below. Adding
+		// `created_at: true` to a pick is green under `tsc --noEmit`, `eslint` and `next build`,
+		// and red in the unit suite with "Date cannot be represented in JSON Schema" — measured,
+		// not assumed. (A jsonb column is NOT this case: `provider_config` publishes an explicit
+		// any-JSON-value union rather than an empty node.) The test is the guard.
+		const schema = asRecord(
+			z.toJSONSchema(def.fields, { target: "draft-7", io: "input" }),
+		);
+		return {
+			kind,
+			singleton: def.singleton,
+			fields: Object.keys(asRecord(schema.properties)),
+			schema,
+		};
+	});
+	assertComponentSchemaPublishable(kinds);
+	const version = createHash("sha256")
+		.update(JSON.stringify(kinds))
+		.digest("hex");
+	return { version, kinds };
+}
+
+let schemaDocument: ComponentSchemaDocument | null = null;
+
+/**
+ * The published component-kind schema. Memoized: it is a pure projection of module-level
+ * constants, so it is identical for every caller and every tenant, and its `version` must be
+ * stable across requests for the ETag to mean anything.
+ */
+export function componentSchemaDocument(): ComponentSchemaDocument {
+	if (!schemaDocument) schemaDocument = buildComponentSchemaDocument();
+	return schemaDocument;
 }
 
 /** Maps a component row to its uniform CLI wire shape. */
 export function rowToComponentWire(kind: string, row: unknown): ComponentWire {
-	const rec = toRecord(row);
+	const rec = asRecord(row);
 	const name =
 		typeof rec.name === "string" && rec.name.length > 0 ? rec.name : kind;
 	const status = typeof rec.status === "string" ? rec.status : "";
@@ -366,35 +524,234 @@ export function validateComponentFields(
 		const path = first?.path.join(".") || "fields";
 		return { ok: false, error: `Invalid value for ${path}: ${first?.message ?? "invalid"}` };
 	}
-	return { ok: true, values: toRecord(parsed.data) };
+	return { ok: true, values: asRecord(parsed.data) };
 }
 
-/** Lists a project's components — all kinds, or a single kind when `kindFilter` is set —
- * flattened into the uniform wire shape.
+/** The tenancy and filter identity of one component collection. */
+export interface ComponentListScope {
+	readonly orgId: string;
+	readonly projectId: string;
+	readonly kindFilter?: string;
+	readonly environmentId?: string;
+}
+
+/** A heterogeneous component cursor: registry kind plus that table's immutable row position. */
+interface ComponentCursorPosition extends CursorPosition {
+	readonly kind: string;
+}
+
+/** Parsed paging inputs for the heterogeneous component collection. */
+export interface ComponentPageOpts {
+	readonly limit: number;
+	readonly after: ComponentCursorPosition | null;
+}
+
+/** The result returned by the paged component query. */
+export interface ComponentsPage {
+	readonly components: ComponentWire[];
+	readonly page: PageInfo;
+}
+
+/** An internal row coupled to the position from which its next cursor is minted. */
+interface PagedComponent {
+	readonly component: ComponentWire;
+	readonly position: ComponentCursorPosition;
+}
+
+/** Returns the registry slice selected by the optional kind filter. */
+function selectedComponentKinds(scope: ComponentListScope): string[] {
+	return scope.kindFilter ? [scope.kindFilter] : COMPONENT_KINDS;
+}
+
+/**
+ * Builds the shared codec scope for one position in the heterogeneous collection.
  *
- * `environmentId` scopes the result to one environment. Without it a two-environment project lists
- * every row from every environment, flattened, with the same `kind` and `name` appearing twice and
- * nothing in the table to tell them apart — the `environment_id` is only visible inside `config`.
- * Every caller that can name an environment should pass one. */
-export async function listProjectComponents(
-	projectId: string,
-	kindFilter?: string,
-	environmentId?: string,
-): Promise<ComponentWire[]> {
-	const db = getServiceDb();
-	const kinds = kindFilter ? [kindFilter] : COMPONENT_KINDS;
-	const out: ComponentWire[] = [];
+ * The route has already established the project tenancy boundary before it calls this module,
+ * but the cursor binds that same org and project plus both filters. Replaying a cursor after any
+ * of them changes is therefore a 400 rather than an unrelated page. The registry kind is part of
+ * the opaque scope because component UUIDs are unique only within their own physical table.
+ */
+function componentCursorScope(
+	scope: ComponentListScope,
+	positionKind: string,
+): CursorScope {
+	return {
+		orgId: scope.orgId,
+		list: JSON.stringify([
+			"project-components",
+			scope.projectId,
+			scope.kindFilter ?? null,
+			scope.environmentId ?? null,
+			positionKind,
+		]),
+	};
+}
+
+/**
+ * Parses the standard `limit` plus a cursor whose kind position is hidden inside its scope.
+ *
+ * The shared cursor envelope deliberately knows only `(created_at, id)`. Trying the finite
+ * registry scopes recovers the one kind that minted it without inventing a second codec, while
+ * preserving the shared malformed/foreign-scope error vocabulary.
+ */
+export function parseComponentPageOpts(
+	params: URLSearchParams,
+	scope: ComponentListScope,
+):
+	| { readonly ok: true; readonly opts: ComponentPageOpts }
+	| { readonly ok: false; readonly error: string } {
+	const kinds = selectedComponentKinds(scope);
+	const limitParams = new URLSearchParams();
+	const rawLimit = params.get("limit");
+	if (rawLimit !== null) limitParams.set("limit", rawLimit);
+	const parsedLimit = parsePageOpts(
+		limitParams,
+		componentCursorScope(scope, kinds[0] ?? "none"),
+	);
+	if (!parsedLimit.ok) return parsedLimit;
+
+	const rawCursor = params.get("cursor");
+	if (rawCursor === null || rawCursor === "") {
+		return {
+			ok: true,
+			opts: { limit: parsedLimit.opts.limit, after: null },
+		};
+	}
+
+	let syntacticallyValid = false;
 	for (const kind of kinds) {
+		const decoded = decodeCursor(componentCursorScope(scope, kind), rawCursor);
+		if (decoded.ok) {
+			return {
+				ok: true,
+				opts: {
+					limit: parsedLimit.opts.limit,
+					after: { kind, ...decoded.position },
+				},
+			};
+		}
+		if (decoded.reason === "foreign-scope") syntacticallyValid = true;
+	}
+	return {
+		ok: false,
+		error: syntacticallyValid
+			? "cursor was issued for a different component collection"
+			: "cursor is malformed",
+	};
+}
+
+/** Counts the filtered collection to the shared aggregate ceiling, never once per page row. */
+async function countProjectComponents(
+	scope: ComponentListScope,
+): Promise<{ readonly total: number; readonly mode: PageInfo["mode"] }> {
+	const db = getServiceDb();
+	let total = 0;
+	for (const kind of selectedComponentKinds(scope)) {
 		const def = getKindDef(kind);
 		if (!def) continue;
 		const cols = getTableColumns(def.table);
-		const rows = await db
-			.select()
-			.from(def.table)
-			.where(componentScope(cols, projectId, environmentId));
-		for (const row of rows) out.push(rowToComponentWire(kind, row));
+		const remaining = DEFAULT_COUNT_CAP - total;
+		const counted = await countScoped(
+			db,
+			def.table,
+			[componentScope(cols, scope.projectId, scope.environmentId)],
+			remaining,
+		);
+		total += counted.total;
+		if (counted.mode === "capped") {
+			return { total: DEFAULT_COUNT_CAP, mode: "capped" };
+		}
 	}
-	return out;
+	return { total, mode: "exact" };
+}
+
+/**
+ * Lists one deterministic page of a project's heterogeneous components.
+ *
+ * Kinds are grouped in the published registry order. Within each kind rows use the shared,
+ * immutable `(created_at DESC, id DESC)` order. Each physical table is queried for only the
+ * remaining `limit + 1` rows, so neither page construction nor next-page detection materializes
+ * a whole component table in JavaScript.
+ */
+export async function listProjectComponents(
+	scope: ComponentListScope,
+	opts: ComponentPageOpts,
+): Promise<ComponentsPage> {
+	if (opts.limit < 1) {
+		throw new Error(
+			`component page size must be at least 1, got ${opts.limit}`,
+		);
+	}
+	const db = getServiceDb();
+	const kinds = selectedComponentKinds(scope);
+	const start = opts.after ? kinds.indexOf(opts.after.kind) : 0;
+	if (start < 0)
+		throw new Error("component cursor kind is outside the selected registry");
+	const fetched: PagedComponent[] = [];
+	const fetchLimit = pageFetchLimit({ limit: opts.limit, after: null });
+
+	const countPromise = countProjectComponents(scope);
+	for (
+		let index = start;
+		index < kinds.length && fetched.length < fetchLimit;
+		index++
+	) {
+		const kind = kinds[index];
+		if (!kind) continue;
+		const def = getKindDef(kind);
+		if (!def) continue;
+		const cols = getTableColumns(def.table);
+		const after = opts.after?.kind === kind ? opts.after : null;
+		const where = and(
+			componentScope(cols, scope.projectId, scope.environmentId),
+			after ? afterCursor(after, cols.created_at, cols.id) : undefined,
+		);
+		const rows = await db
+			.select({
+				...cols,
+				cursor_key: cursorKey(cols.created_at),
+			})
+			.from(def.table)
+			.where(where)
+			.orderBy(...pageOrder(cols.created_at, cols.id))
+			.limit(fetchLimit - fetched.length);
+		for (const row of rows) {
+			const record = asRecord(row);
+			if (
+				typeof record.cursor_key !== "string" ||
+				typeof record.id !== "string"
+			) {
+				throw new Error(`component ${kind} row is missing its cursor position`);
+			}
+			fetched.push({
+				component: rowToComponentWire(kind, row),
+				position: {
+					kind,
+					createdAt: record.cursor_key,
+					id: record.id,
+				},
+			});
+		}
+	}
+
+	const counted = await countPromise;
+	const hasMore = fetched.length > opts.limit;
+	const served = hasMore ? fetched.slice(0, opts.limit) : fetched;
+	const last = served[served.length - 1];
+	return {
+		components: served.map((row) => row.component),
+		page: {
+			...counted,
+			limit: opts.limit,
+			next_cursor:
+				hasMore && last
+					? encodeCursor(
+							componentCursorScope(scope, last.position.kind),
+							last.position,
+						)
+					: null,
+		},
+	};
 }
 
 /** `project_id` AND, when given, `environment_id`. One helper so a caller cannot scope a read one
@@ -403,10 +760,10 @@ function componentScope(
 	cols: Record<string, AnyColumn>,
 	projectId: string,
 	environmentId?: string,
-) {
+): SQL {
 	const scope = eq(cols.project_id, projectId);
 	if (!environmentId || !cols.environment_id) return scope;
-	return and(scope, eq(cols.environment_id, environmentId));
+	return and(scope, eq(cols.environment_id, environmentId)) ?? scope;
 }
 
 /** Inserts a component of `kind` on a project, scoped to `environmentId`. Singletons upsert on the
@@ -434,8 +791,8 @@ export async function insertProjectComponent(
 	};
 	if (!def.singleton) insertValues.name = name;
 
-	// A table that carries `fabric_id` attaches at the FABRIC, not the environment, and the
-	// linkage has to be made HERE because nothing else makes it at runtime. `project_cluster`
+	// A dedicated environment's cluster carries the Fabric linkage, and that linkage has to be
+	// made HERE because nothing else makes it at runtime. `project_cluster`
 	// was written env-keyed with a null `fabric_id`, and the only thing that ever filled it was
 	// a migration-time backfill in programmables.sql — which by definition cannot reach a project
 	// created after it ran, i.e. every real project.
@@ -447,23 +804,29 @@ export async function insertProjectComponent(
 	// config snapshot — the Fabric's cluster must be provisioned", against a cluster that was
 	// provisioned, ACTIVE and serving. Every shared placement was unreachable.
 	const fabricLinked = "fabric_id" in cols;
-	if (fabricLinked && insertValues.fabric_id === undefined) {
+	if (fabricLinked) {
 		const [env] = await db
-			.select({ fabric_id: projectEnvironments.fabric_id })
+			.select({
+				fabric_id: projectEnvironments.fabric_id,
+				placement_mode: projectEnvironments.placement_mode,
+			})
 			.from(projectEnvironments)
 			.where(eq(projectEnvironments.id, environmentId))
 			.limit(1);
-		if (env?.fabric_id) insertValues.fabric_id = env.fabric_id;
+		if (env?.placement_mode === "dedicated") {
+			insertValues.fabric_id = env.fabric_id;
+		} else {
+			delete insertValues.fabric_id;
+		}
 	}
 
 	if (def.singleton) {
 		// The conflict branch must carry the linkage too. `add` upserts, so the row a caller is
 		// amending is very often one written before this fix — repairing it on write is what makes
 		// the fix reach existing projects without a data migration.
-		const updateValues =
-			fabricLinked && insertValues.fabric_id !== undefined
-				? { ...values, fabric_id: insertValues.fabric_id }
-				: values;
+		const updateValues = fabricLinked
+			? { ...values, fabric_id: insertValues.fabric_id ?? null }
+			: values;
 		const [row] = await db
 			.insert(def.table)
 			.values(insertValues)

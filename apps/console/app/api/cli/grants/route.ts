@@ -14,6 +14,10 @@ import {
 	type PermissionKey,
 	PERMISSIONS,
 } from "@/lib/authz/registry";
+import {
+	orgScopeCarriesResourceId,
+	ORG_SCOPE_WITH_RESOURCE_ID,
+} from "@/lib/authz/fga-tuples";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import type { Actor } from "@/lib/authz/types";
@@ -164,6 +168,12 @@ export async function POST(req: Request) {
 	}
 	if (input.permission_key && !VALID_KEYS.has(input.permission_key)) {
 		return NextResponse.json({ error: "Unknown permission." }, { status: 400 });
+	}
+	if (orgScopeCarriesResourceId(input.resource_type, input.resource_id ?? null)) {
+		return NextResponse.json(
+			{ error: ORG_SCOPE_WITH_RESOURCE_ID },
+			{ status: 400 },
+		);
 	}
 	// Privilege ceiling: an allow-grant may not exceed the caller's own effective permissions
 	// (a deny only removes access, so it can't escalate the grantee — skip it).

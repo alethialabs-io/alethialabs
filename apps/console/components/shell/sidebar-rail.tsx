@@ -11,6 +11,7 @@ import { PanelLeftOpen } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
+import { SHELL_HEADER } from "@/components/shell/shell-metrics";
 import { authClient } from "@/lib/auth/client";
 import { orgHref } from "@/lib/routing";
 import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
@@ -59,6 +60,11 @@ function RailLink({
           <Link
             href={`${target}${envQuery}`}
             aria-label={item.label}
+            // Same statement the full sidebar's rows make (`nav-row.tsx`): the rail is the same
+            // navigation at 56px, so the active view must be readable from the accessibility tree
+            // here too — otherwise a project workspace, where the rail IS the sidebar, has an
+            // active route that only a class attribute knows about.
+            aria-current={active ? "page" : undefined}
             aria-disabled={item.disabled}
             className={cn(
               ICON_BUTTON,
@@ -93,7 +99,7 @@ function RailAccount() {
             >
               <Avatar className="h-7 w-7">
                 <AvatarImage src={user?.image ?? undefined} alt="" />
-                <AvatarFallback className="bg-muted text-[10px] font-medium text-muted-foreground">
+                <AvatarFallback className="bg-muted text-ui-2xs font-medium text-muted-foreground">
                   {userInitials(user)}
                 </AvatarFallback>
               </Avatar>
@@ -137,7 +143,7 @@ export function SidebarRail({
     <TooltipProvider delayDuration={0}>
       <div className="flex h-full w-full flex-col items-center bg-background">
         {/* Brand mark → org home */}
-        <div className="flex h-[53px] w-full shrink-0 items-center justify-center border-b">
+        <div className={cn("flex w-full shrink-0 items-center justify-center border-b", SHELL_HEADER)}>
           <Link
             href={orgHref(orgSlug)}
             aria-label="Home"

@@ -180,7 +180,7 @@ export function DataTable<TData extends { id?: string }, TValue>({
 												) : header.column.getIsSorted() === "desc" ? (
 													<ArrowDown className="h-3.5 w-3.5" />
 												) : (
-													<ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground/50" />
+													<ArrowUpDown className="h-3.5 w-3.5 text-text-tertiary" />
 												)}
 											</span>
 										)}

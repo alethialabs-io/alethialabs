@@ -4,16 +4,19 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/format"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/dustin/go-humanize"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -45,10 +48,122 @@ var jobTypeLabels = map[string]string{
 	string(types.JobTypeBuild):         "Build",
 }
 
+// jobsListEveryStatusLabel is how the picker spells "do not filter".
+//
+// Its VALUE is the empty string — the same value `--status` carries when nobody set it — so the
+// answered form and the skipped one converge on ONE code path instead of two that have to agree
+// about what "no filter" means.
+const jobsListEveryStatusLabel = "Every status"
+
+// jobsListStatusOptions is the picker's option list: every status first, then the lifecycle.
+//
+// The vocabulary is jobStatusValues() — the generated provision_job_status enum — and not a list
+// typed here, for the same reason `--status`'s help text reads it: a hand-typed copy of a
+// generated set is a copy that stops covering it silently. It is a function, and separate from
+// the form, because a huh.Group answers no question about the options it was handed: this is the
+// only shape of the picker a test can read.
+func jobsListStatusOptions() []huh.Option[string] {
+	values := jobStatusValues()
+	opts := make([]huh.Option[string], 0, len(values)+1)
+	opts = append(opts, huh.NewOption(jobsListEveryStatusLabel, ""))
+	for _, s := range values {
+		opts = append(opts, huh.NewOption(s, s))
+	}
+	return opts
+}
+
+// promptJobsListStatus asks which slice of the lifecycle to list.
+//
+// It is a package variable for the reason config.go's promptConfigSet records: stubbing
+// runHuhForm stops the prompt blocking, but no stub can answer THROUGH the pointer the huh group
+// owns, so the answered branch is otherwise unreachable from a test.
+//
+// The seed is what the caller already holds, and "Every status" is FIRST, so a reader who only
+// wants the list presses Enter and gets exactly what `alethia jobs list` printed before this form
+// existed. A form that cannot be completed returns the seed with its error; the caller decides.
+var promptJobsListStatus = func(current string) (string, error) {
+	chosen := current
+	if err := runHuhForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Which jobs?").
+			Description("The closed set the --status flag takes, from the schema's job-status enum").
+			Options(jobsListStatusOptions()...).
+			Value(&chosen),
+	)); err != nil {
+		return current, err
+	}
+	return chosen, nil
+}
+
+// jobsListStatusFor answers "which status is this run filtered by" from the flag or the picker.
+//
+// Three conditions, and each removes a way the question would be wrong to ask:
+//
+//   - a `--status` already given is the answer. Asking again would let a form overwrite what the
+//     operator typed, which is the one thing a picker must never do.
+//   - `interactiveTable(cmd)` — a reader about to BROWSE the list on screen. `-o json`, a pipe and
+//     `--no-input` have already said what they want, and a document that will not appear until a
+//     question is answered is `jobs list -o json > jobs.json` with the spinner in it one level up.
+//   - `canPromptForm()` — the gate every other prompt in this package reads, and the one that
+//     knows a form draws on STDERR. It is the predicate and not requireInteractiveForm because
+//     this field has a working answer when nobody types one: listing every job is what the command
+//     did before, so a caller that cannot be asked must be SERVED, never refused. `jobs list` takes
+//     no required input, so refuseNoForm's arm — the one `config set` needs, because a key and a
+//     value have no default — has nothing here to refuse.
+//
+// The flag contract stays complete: anything the picker can choose, `--status` can set.
+//
+// A form that FAILED is not a form that was answered "no", and the two get different answers. An
+// ABORT — the reader pressed Esc or Ctrl-C at the picker — is an instruction and is returned, so
+// the command stops. Any other error means the picker could not be SHOWN, and a filter that could
+// not be offered must not take the list away: `canPromptForm` is a TTY question and huh needs a
+// /dev/tty it can open, so the gate can say yes to a form that then cannot draw. That is the whole
+// reason this field uses the predicate rather than requireInteractiveForm — falling back is the
+// contract, not an accident — and the fallback SAYS so on stderr rather than being silent, because
+// an unfiltered list nobody asked for should be explicable.
+func jobsListStatusFor(cmd *cobra.Command, flag string) (string, error) {
+	if flag != "" || !interactiveTable(cmd) || !canPromptForm() {
+		return flag, nil
+	}
+	chosen, err := promptJobsListStatus(flag)
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return flag, err
+		}
+		// STDERR, for announceResolvedJob's reason: the table is the document and a line about a
+		// choice the CLI made for the reader is a diagnostic. ui.Muted would put it on stdout.
+		fmt.Fprintln(os.Stderr, ui.MutedStyle.Render(
+			fmt.Sprintf("%s Listing every status — the picker could not be shown (%v).", ui.SymbolPoint, err)))
+		return flag, nil
+	}
+	return chosen, nil
+}
+
 var jobsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all provisioning jobs",
 	Run: func(cmd *cobra.Command, args []string) {
+		// Validated against the generated enum before the request. The server answers a
+		// misspelled status with an empty page, which reads as "you have no jobs" rather than
+		// "you typed PROCESSNG" — and no job can carry a status outside the enum, so refusing
+		// one here can never hide a job that exists.
+		if jobsListStatus != "" && !containsFold(jobStatusValues(), jobsListStatus) {
+			failf("invalid --status %q (want one of: %s)", jobsListStatus, strings.Join(jobStatusValues(), ", "))
+		}
+
+		// Asked before the fetch, because the answer is what gets fetched. A local and not the
+		// flag variable: jobsListStatus is a package global bound by cobra, and a form answer
+		// written back into it would outlive this run.
+		statusFilter, err := jobsListStatusFor(cmd, jobsListStatus)
+		if err != nil {
+			fail(err)
+		}
+
+		// Upper-cased for the wire. The column is a Postgres enum compared as text, so `success`
+		// would match no row — accepting a spelling and then sending it verbatim would turn a
+		// friendly flag into a silent empty page.
+		status := strings.ToUpper(statusFilter)
+
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
@@ -62,8 +177,8 @@ var jobsListCmd = &cobra.Command{
 
 		var page *api.JobsPage
 
-		ui.RunSpinner("Fetching jobs...", func() {
-			page, err = apiClient.GetJobs(jobsListStatus, pageSize, 0)
+		runSpinner("Fetching jobs...", func() {
+			page, err = apiClient.GetJobs(status, pageSize, 0)
 		})
 
 		if err != nil {
@@ -91,7 +206,7 @@ var jobsListCmd = &cobra.Command{
 			PaginatedTableModel: m,
 			apiClient:           apiClient,
 			pageSize:            pageSize,
-			status:              jobsListStatus,
+			status:              status,
 		})
 		if _, err := p.Run(); err != nil {
 			failf("Table error: %v", err)
@@ -101,19 +216,19 @@ var jobsListCmd = &cobra.Command{
 
 // renderJobs writes a page of jobs to out in the requested format. Pagination is
 // interactive-only; non-interactive output returns up to --limit jobs.
-func renderJobs(out io.Writer, format string, jobs []api.ProvisionJob) error {
-	if len(jobs) == 0 && format == ui.FormatTable {
+func renderJobs(out io.Writer, outFormat string, jobs []api.ProvisionJob) error {
+	if len(jobs) == 0 && outFormat == ui.FormatTable {
 		fmt.Fprintln(out, ui.MutedStyle.Render("No jobs found."))
 		return nil
 	}
-	return ui.Render(out, format, ui.TableSpec{
+	return ui.Render(out, outFormat, ui.TableSpec{
 		Columns: jobListColumns,
-		Rows:    jobRowsPlain(jobs),
+		Rows:    jobRowsPlain(jobs, outFormat),
 	}, jobs)
 }
 
 // jobRowsPlain projects each job into a plain table row.
-func jobRowsPlain(jobs []api.ProvisionJob) [][]string {
+func jobRowsPlain(jobs []api.ProvisionJob, outFmt string) [][]string {
 	rows := make([][]string, len(jobs))
 	for i, j := range jobs {
 		typeLabel := jobTypeLabels[j.JobType]
@@ -123,7 +238,7 @@ func jobRowsPlain(jobs []api.ProvisionJob) [][]string {
 
 		project := j.ProjectName
 		if project == "" && j.ProjectID != "" {
-			project = truncID(j.ProjectID)
+			project = ui.TruncID(j.ProjectID)
 		}
 		if project == "" {
 			project = ui.SymbolDash
@@ -131,7 +246,7 @@ func jobRowsPlain(jobs []api.ProvisionJob) [][]string {
 
 		runner := j.RunnerName
 		if runner == "" && j.RunnerID != "" {
-			runner = truncID(j.RunnerID)
+			runner = ui.TruncID(j.RunnerID)
 		}
 		if runner == "" {
 			runner = ui.SymbolDash
@@ -142,20 +257,22 @@ func jobRowsPlain(jobs []api.ProvisionJob) [][]string {
 			j.Status,
 			project,
 			runner,
-			humanize.Time(j.CreatedAt),
+			ui.Cell(outFmt, wireTime(j.CreatedAt), ui.SmartTime(j.CreatedAt)),
 			formatDuration(j.StartedAt, j.CompletedAt),
 		}
 	}
 	return rows
 }
 
-func truncID(id string) string {
-	if len(id) > 8 {
-		return id[:8] + "…"
-	}
-	return id
-}
-
+// formatDuration renders how long a job ran, with "…" while it is still running.
+//
+// The elapsed rule itself is `packages/core/format.Duration` and no longer lives here. It was
+// the last hand-written copy of it in the CLI, and it is the rule the epic ruled ON: a job that
+// takes two hours reads `2h 5m`, not `125m 5s`, on BOTH surfaces. What stays local is the part
+// that is genuinely this command's — the dash for a job that never started, and the ellipsis
+// that says the number is still climbing. `apps/cli/pkg/utils/ui/render.go` records why this
+// function was left out of the render hoist: its rule was about to be replaced wholesale, and
+// this is that replacement.
 func formatDuration(started, completed *time.Time) string {
 	if started == nil {
 		return ui.SymbolDash
@@ -166,18 +283,15 @@ func formatDuration(started, completed *time.Time) string {
 		end = *completed
 		suffix = ""
 	}
-	d := end.Sub(*started)
-	if d < time.Minute {
-		return fmt.Sprintf("%ds%s", int(d.Seconds()), suffix)
-	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm %ds%s", int(d.Minutes()), int(d.Seconds())%60, suffix)
-	}
-	return fmt.Sprintf("%dh %dm%s", int(d.Hours()), int(d.Minutes())%60, suffix)
+	return format.Duration(end.Sub(*started)) + suffix
 }
 
 func init() {
 	jobsCmd.AddCommand(jobsListCmd)
-	jobsListCmd.Flags().StringVar(&jobsListStatus, "status", "", "Filter by status (QUEUED, CLAIMED, PROCESSING, SUCCESS, FAILED, CANCELLED)")
+	// The status vocabulary is read from the generated enum, not typed here. The literal list
+	// this replaced was already a hand-maintained copy of provision_job_status, and a hand-typed
+	// list of a generated set is a list that stops covering it silently.
+	jobsListCmd.Flags().StringVar(&jobsListStatus, "status", "",
+		"Filter by status ("+strings.Join(jobStatusValues(), ", ")+")")
 	jobsListCmd.Flags().IntVarP(&jobsListLimit, "limit", "n", 20, "Jobs per page")
 }

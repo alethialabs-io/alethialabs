@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -32,9 +34,12 @@ var repoListCmd = &cobra.Command{
 			fail(err)
 		}
 		client := api.NewClient(token)
+		if provider, err = promptRepoProvider(cmd, provider); err != nil {
+			fail(err)
+		}
 		if interactiveTable(cmd) {
 			var repos []api.Repository
-			ui.RunSpinner("Fetching repositories...", func() {
+			runSpinner("Fetching repositories...", func() {
 				repos, err = client.GetRepositories(provider)
 			})
 			if err != nil {
@@ -44,7 +49,7 @@ var repoListCmd = &cobra.Command{
 				ui.Muted(fmt.Sprintf("No %s repositories found.", provider))
 				return
 			}
-			_ = ui.ShowTable(repoColumns, repoRows(repos), "repositories")
+			_ = ui.ShowTable(repoColumns, repoRows(repos, ui.FormatTable), "repositories")
 			return
 		}
 		if err := runRepoList(client, os.Stdout, outputFormat(cmd), provider); err != nil {
@@ -53,10 +58,48 @@ var repoListCmd = &cobra.Command{
 	},
 }
 
+// promptRepoProvider asks which connected git provider to browse.
+//
+// The provider HAS a default, so this reads canPromptForm rather than requireInteractiveForm — the
+// rule output.go states for every defaulted field: a scripted caller is never REFUSED for omitting
+// `--provider`, and a person at a terminal is still asked, because a default is rarely what they
+// meant. `alethia repo list --no-input` therefore lists exactly what it listed before.
+//
+// It asks the SAME question promptRepoURL asks in front of the repository picker (byo_prompt.go),
+// from the same gitProviders list and under the same field spec, so the two are one question about
+// one thing rather than two that can come to disagree about which providers exist. The list is an
+// OFFER and not a validation set: an unknown `--provider` still reaches the server, which is the
+// only side that knows.
+//
+// The flag's own value seeds the select, so the cursor opens on the answer `--provider` would have
+// given and a bare Enter changes nothing. It is appended when gitProviders does not carry it,
+// because a picker that cannot offer the current value turns Enter into a silent change of it.
+func promptRepoProvider(cmd *cobra.Command, provider string) (string, error) {
+	if cmd.Flags().Changed("provider") || !canPromptForm() {
+		return provider, nil
+	}
+	f := mustByoField("alethia repo list", byoKeyProvider)
+	offered := append([]string{}, gitProviders...)
+	if !slices.Contains(offered, provider) {
+		offered = append(offered, provider)
+	}
+	options := make([]huh.Option[string], len(offered))
+	for i, p := range offered {
+		options[i] = huh.NewOption(p, p)
+	}
+	chosen := provider
+	if err := runHuhForm(huh.NewGroup(
+		huh.NewSelect[string]().Title(f.Title).Description(f.Description).Options(options...).Value(&chosen),
+	)); err != nil {
+		return provider, err
+	}
+	return chosen, nil
+}
+
 var repoColumns = []string{"Name", "Visibility", "Default branch", "URL"}
 
 // repoRows projects repositories into table cells.
-func repoRows(repos []api.Repository) [][]string {
+func repoRows(repos []api.Repository, outFmt string) [][]string {
 	rows := make([][]string, len(repos))
 	for i, r := range repos {
 		visibility := "public"
@@ -67,7 +110,7 @@ func repoRows(repos []api.Repository) [][]string {
 		if name == "" {
 			name = r.Name
 		}
-		rows[i] = []string{name, visibility, orDash(r.DefaultBranch), r.URL}
+		rows[i] = []string{name, visibility, ui.Cell(outFmt, r.DefaultBranch, ui.OrDash(r.DefaultBranch)), r.URL}
 	}
 	return rows
 }
@@ -85,12 +128,12 @@ func runRepoList(c apiClient, out io.Writer, format, provider string) error {
 	}
 	return ui.Render(out, format, ui.TableSpec{
 		Columns: repoColumns,
-		Rows:    repoRows(repos),
+		Rows:    repoRows(repos, format),
 	}, repos)
 }
 
 func init() {
-	repoListCmd.Flags().String("provider", "github", "Git provider (github, gitlab, bitbucket)")
+	repoListCmd.Flags().String("provider", gitProviders[0], byoFlagUsage("alethia repo list", byoKeyProvider)+" ("+gitProvidersLabel()+")")
 	repoCmd.AddCommand(repoListCmd)
 	rootCmd.AddCommand(repoCmd)
 }

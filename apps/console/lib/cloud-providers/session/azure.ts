@@ -8,11 +8,15 @@
 // client id is stored per-connection (credentials.client_id), so a self-hosted console needs only the
 // issuer configured (parity with AWS/GCP), not an `ALETHIA_AZURE_CLIENT_ID`.
 
+import { providerAudience } from "@repo/workload-identity";
 import { ClientAssertionCredential } from "@azure/identity";
-import { mintWorkloadToken, oidcIssuerConfigured } from "@/lib/oidc/issuer";
+import {
+	assertionSourceForProvider,
+	workloadAssertionSourceConfigured,
+} from "@/lib/oidc/assertion-source";
 
 /** The audience Azure AD expects for a federated-credential token exchange. */
-export const AZURE_TOKEN_AUDIENCE = "api://AzureADTokenExchange";
+export const AZURE_TOKEN_AUDIENCE = providerAudience("azure");
 
 /**
  * Builds a keyless credential for the customer tenant: the customer identity's client id + a minted
@@ -27,10 +31,12 @@ export function assumeAzureIdentity(
 	if (!clientId) {
 		throw new Error("This Azure connection has no client id (managed-identity application id).");
 	}
-	if (!oidcIssuerConfigured()) {
+	if (!workloadAssertionSourceConfigured()) {
 		throw new Error("The workload-identity issuer is not configured (ALETHIA_OIDC_SIGNING_KEY).");
 	}
 	return new ClientAssertionCredential(tenantId, clientId, () =>
-		mintWorkloadToken({ audience: AZURE_TOKEN_AUDIENCE }),
+		assertionSourceForProvider("azure").getAssertion({
+			audience: AZURE_TOKEN_AUDIENCE,
+		}),
 	);
 }

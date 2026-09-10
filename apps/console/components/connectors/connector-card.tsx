@@ -63,6 +63,14 @@ export function ConnectorCard({
 	// lack provisioning templates) yet still have a live account from before — that account must keep
 	// its Manage → disconnect path, so a connected one is treated as a normal connection everywhere.
 	const isComingSoon = state.health === "coming_soon";
+	// A coming-soon card steps its description down one ink tier and keeps its name at full
+	// strength; its state label already says "Coming soon" in words. It is NOT a blanket
+	// `opacity-50` on the card — that dimmed the `text-foreground` name to 3.6:1 and the
+	// `--muted-foreground` copy to 2.3:1, and at α=0.5 over the page background not even pure
+	// black reaches 4.5:1 (#4197). The same step-down as `connector-row.tsx`'s `secondaryInk`,
+	// because THIS is the view `/[org]/~/connectors` renders by default (`connectors-page.tsx`
+	// opens on `card`), so it is the one the audit scores.
+	const secondaryInk = isComingSoon ? "text-text-tertiary" : "text-muted-foreground";
 	const isGit = integration.category === "git";
 	const isCloud = integration.category === "cloud";
 	// A managed cloud missing platform creds, or a git provider with no registered OAuth app: a
@@ -90,7 +98,7 @@ export function ConnectorCard({
 			className={cn(
 				"flex flex-col gap-3 rounded-xl border bg-background p-4 shadow-sm transition-colors",
 				isComingSoon
-					? "opacity-50 border-border/50"
+					? "border-border/50"
 					: selected
 						? "border-foreground ring-1 ring-foreground"
 						: "border-border/60 hover:border-border",
@@ -131,7 +139,7 @@ export function ConnectorCard({
 							{integration.name}
 						</TooltipContent>
 					</Tooltip>
-					<p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground">
+					<p className={cn("mt-0.5 line-clamp-2 text-xs leading-snug", secondaryInk)}>
 						{integration.description}
 					</p>
 				</div>
@@ -151,7 +159,7 @@ export function ConnectorCard({
 				{/* Wraps rather than truncates. "Verification failed" used to render as
 				    "Verification…" on a Hetzner tile — a clipped status is worse than a taller
 				    card, because the clipped half is the part that says what went wrong. */}
-				<div className="flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-[10px] leading-tight text-muted-foreground">
+				<div className="flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-ui-2xs leading-tight text-muted-foreground">
 					{isCloud && isConnected && (
 						<span className="rounded-full border border-border/60 px-1.5 py-0.5">
 							{accountCount} {accountCount === 1 ? "account" : "accounts"}
@@ -174,7 +182,7 @@ export function ConnectorCard({
 								? "This git provider has no OAuth app configured on this instance. See the docs to enable it."
 								: "This cloud needs Alethia platform credentials, which aren't configured on this instance. See the docs to enable managed cloud connections."
 						}
-						className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+						className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground"
 					>
 						Unavailable
 					</span>
@@ -195,6 +203,15 @@ export function ConnectorCard({
 					<Button
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						// The board renders one of these per connector and the visible word is the
+						// same on every one of them — 29 buttons reading "Connect", one "Manage" per
+						// connected connector. That is not only a Playwright strict-mode problem: a
+						// screen-reader user tabbing the grid hears "Connect, button" 29 times with
+						// nothing to tell them apart, because the name sits in the CARD, not in the
+						// control. `aria-label` puts the connector's name INTO the control's
+						// accessible name; the visible word is unchanged and stays a prefix of it,
+						// so WCAG 2.5.3 (Label in Name) still holds for voice control.
+						aria-label={`Reconnect ${integration.name}`}
 						disabled={isConnecting}
 						onClick={onConnect}
 					>
@@ -210,6 +227,7 @@ export function ConnectorCard({
 						variant="ghost"
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						aria-label={`Manage ${integration.name}`}
 						onClick={onManage}
 					>
 						Manage
@@ -225,6 +243,7 @@ export function ConnectorCard({
 							variant="ghost"
 							size="sm"
 							className="h-7 px-2.5 text-xs"
+							aria-label={`Manage ${integration.name}`}
 							onClick={onManage}
 						>
 							Manage
@@ -232,6 +251,7 @@ export function ConnectorCard({
 						<Button
 							size="sm"
 							className="h-7 px-2.5 text-xs"
+							aria-label={`Re-verify ${integration.name}`}
 							disabled={isConnecting}
 							onClick={onReverify}
 						>
@@ -247,6 +267,7 @@ export function ConnectorCard({
 					<Button
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						aria-label={`Connect ${integration.name}`}
 						disabled={isConnecting}
 						onClick={onConnect}
 					>

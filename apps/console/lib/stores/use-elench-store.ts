@@ -13,7 +13,31 @@ import { AI_MODELS } from "@/lib/config/ai";
  * persistence, and the tool-render lanes — captured at open time and fixed until
  * the surface is reopened in a different context.
  */
-export type ElenchCtx = { kind: "org" } | { kind: "project"; projectId: string };
+export type ElenchCtx =
+	| { kind: "org" }
+	| {
+			kind: "project";
+			projectId: string;
+			/**
+			 * The slug for the project the CONVERSATION is anchored to, captured when the panel was
+			 * opened. The scope chip used to read the slug out of the current pathname, so navigating
+			 * to another project relabelled a conversation that was still anchored to the first one —
+			 * a confidently wrong scope in the component whose job is to state the scope.
+			 */
+			projectSlug?: string;
+			/**
+			 * The environment the user is looking at (`?environment_id=`), or null for the project's
+			 * DEFAULT. The assistant's plan/deploy proposals and its Environment knowledge block are
+			 * scoped to THIS — before it existed the project route planned and deployed the default
+			 * environment whatever the topbar switcher said. Re-scoped in place by `syncEnvironment`;
+			 * never part of the conversation lineage (threads are project-scoped).
+			 *
+			 * `null` is an ANSWER, not an absence, and the difference is what `ElenchCtxRequest`
+			 * exists to carry: a caller that reads the URL and finds no `?environment_id=` is saying
+			 * "the default", and the panel must re-scope to it.
+			 */
+			environmentId: string | null;
+	  };
 
 /** Pure presentation: fullscreen dialog vs docked drawer. Orthogonal to `ctx`. */
 export type ElenchView = "modal" | "panel";
@@ -21,8 +45,49 @@ export type ElenchView = "modal" | "panel";
 /** Which surface the modal's main region is showing (mutually exclusive). */
 export type ElenchMainView = "chat" | "artifacts" | "knowledge";
 
-/** True when two contexts address the same conversation lineage. */
-function sameCtx(a: ElenchCtx, b: ElenchCtx): boolean {
+/**
+ * The context to open with, given what the caller knows.
+ *
+ * A caller that cannot see the environment passes `null`, and that must not silently re-scope a
+ * conversation that IS scoped: the topbar's Ask AI button knows the project from the route but not
+ * always the environment, so toggling the panel closed and open again would have dropped the
+ * environment the user had switched to and sent the next turn against the project default.
+ * `null` means "I don't know"; only a real id re-scopes.
+ */
+/**
+ * What an OPENER asks for. It differs from `ElenchCtx` in one place and that place was a defect:
+ * `environmentId` may be omitted, meaning "I cannot see one from here".
+ *
+ * `null` and `undefined` were the same value before, and they are opposite answers. A caller that
+ * read the URL and found no `?environment_id=` is saying THE DEFAULT; a caller with no way to know
+ * — the create form, an org route — is saying nothing. Collapsing them meant the panel could never
+ * be scoped back to the default: switch to prod, open Ask AI, click Jobs (which drops the query
+ * string), open Ask AI again, and the assistant kept planning against production while the topbar
+ * said otherwise. Reopening never fixed it. Found in review.
+ */
+export type ElenchCtxRequest =
+	| { kind: "org" }
+	| { kind: "project"; projectId: string; projectSlug?: string; environmentId?: string | null };
+
+/** Fill in an environment only when the caller had no view of one. See `ElenchCtxRequest`. */
+function withKnownEnvironment(next: ElenchCtxRequest, current: ElenchCtx): ElenchCtx {
+	if (next.kind !== "project") return next;
+	const asked = "environmentId" in next ? (next.environmentId ?? null) : undefined;
+	if (asked !== undefined) return { ...next, environmentId: asked };
+	if (current.kind === "project" && current.projectId === next.projectId) {
+		return { ...next, environmentId: current.environmentId };
+	}
+	return { ...next, environmentId: null };
+}
+
+/**
+ * True when two contexts address the same conversation lineage. The second side is a REQUEST,
+ * because `togglePanel` asks this before the request has been resolved into a context — and it can
+ * answer from `kind` and `projectId` alone, which both carry. The environment is deliberately not
+ * part of it: threads are project-scoped, so switching environment re-scopes in place rather than
+ * starting a new conversation.
+ */
+function sameCtx(a: ElenchCtx, b: ElenchCtxRequest): boolean {
 	if (a.kind !== b.kind) return false;
 	if (a.kind === "project" && b.kind === "project")
 		return a.projectId === b.projectId;
@@ -73,9 +138,9 @@ interface ElenchState {
 	mainView: ElenchMainView;
 
 	/** Open as a docked panel in the given context. */
-	openPanel: (ctx: ElenchCtx) => void;
+	openPanel: (ctx: ElenchCtxRequest) => void;
 	/** Open as a fullscreen modal in the given context. */
-	openModal: (ctx: ElenchCtx) => void;
+	openModal: (ctx: ElenchCtxRequest) => void;
 	/** Modal → panel (same conversation). */
 	minimize: () => void;
 	/** Panel → modal (same conversation). */
@@ -83,7 +148,14 @@ interface ElenchState {
 	/** Hide the surface (keeps ctx/thread cached for the next open). */
 	close: () => void;
 	/** Toggle the panel in the given context (used by the canvas AI button / ⌘K). */
-	togglePanel: (ctx: ElenchCtx) => void;
+	togglePanel: (ctx: ElenchCtxRequest) => void;
+	/**
+	 * Re-scope an OPEN project conversation to another environment of the same project — the
+	 * topbar switcher, Shift+Tab and a deep link all land here. Keeps the thread and the epoch:
+	 * the environment is request context (the prompt is rebuilt per turn), not a new lineage.
+	 * A no-op when the surface is closed, anchored to the org, or on another project.
+	 */
+	syncEnvironment: (projectId: string, environmentId: string | null) => void;
 
 	setMode: (mode: AgentMode) => void;
 	setModel: (model: string) => void;
@@ -134,8 +206,9 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	railOpen: true,
 	mainView: "chat",
 
-	openPanel: (ctx) => {
+	openPanel: (raw) => {
 		const cur = get();
+		const ctx = withKnownEnvironment(raw, cur.ctx);
 		// Switching context starts a fresh conversation (org tools must not bleed
 		// into a project conversation and vice-versa).
 		const fresh = !sameCtx(cur.ctx, ctx);
@@ -149,8 +222,9 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 		});
 	},
 
-	openModal: (ctx) => {
+	openModal: (raw) => {
 		const cur = get();
+		const ctx = withKnownEnvironment(raw, cur.ctx);
 		const fresh = !sameCtx(cur.ctx, ctx);
 		track("elench_chat_opened", { context: ctx.kind, view: "modal" });
 		set({
@@ -171,6 +245,14 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 		const cur = get();
 		if (cur.open && sameCtx(cur.ctx, ctx)) set({ open: false });
 		else get().openPanel(ctx);
+	},
+
+	syncEnvironment: (projectId, environmentId) => {
+		const cur = get();
+		if (!cur.open || cur.ctx.kind !== "project" || cur.ctx.projectId !== projectId)
+			return;
+		if (cur.ctx.environmentId === environmentId) return;
+		set({ ctx: { ...cur.ctx, environmentId } });
 	},
 
 	setMode: (mode) => set({ mode }),

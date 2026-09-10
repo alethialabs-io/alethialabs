@@ -88,10 +88,19 @@ export function InvoicesPanel() {
 
 	// A null window means "no date constraint"; the pickers still need a concrete value to
 	// render, so they fall back to the default preset without that becoming a filter.
-	const range: DateRange =
-		filters.from && filters.to
-			? { from: new Date(filters.from), to: new Date(filters.to) }
-			: presetRange(DEFAULT_PRESET);
+	//
+	// Resolved ONCE, as every other page carrying this filter bar does (activity-log.tsx:95,
+	// usage-panel.tsx:95, jobs-client.tsx:103). Called in the render body it re-read the clock
+	// on every paint, so the window the picker opened on was never the one the trigger had just
+	// shown, and each render produced a new `to`.
+	const [defaultRange] = useState<DateRange>(() => presetRange(DEFAULT_PRESET));
+	const range: DateRange = useMemo(
+		() =>
+			filters.from && filters.to
+				? { from: new Date(filters.from), to: new Date(filters.to) }
+				: defaultRange,
+		[filters.from, filters.to, defaultRange],
+	);
 
 	/** Apply a picked time window as the paid-date filter. */
 	function applyRange(next: DateRange, label: string) {

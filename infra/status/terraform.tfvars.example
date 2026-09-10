@@ -8,6 +8,14 @@ acme_email   = "you@alethialabs.io"
 # Public half of the deploy key.
 ssh_public_key = "ssh-ed25519 AAAA... deploy@alethia"
 
+# REQUIRED, with no default (#3292). This IS the source_ips of the port-22 firewall rule. It used to
+# default to ["0.0.0.0/0", "::/0"] with nothing narrowing it and no reason written down; it has no
+# default now so the open value cannot be reached by omitting this line. Nothing in CI SSHes to this
+# box (cloud-init builds it at first boot), so put the address you actually reach it from here.
+# The apply workflow reads the STATUS_SSH_ALLOWED_CIDRS repository variable into
+# TF_VAR_ssh_allowed_cidrs, in the same HCL list form.
+ssh_allowed_cidrs = ["203.0.113.4/32"]
+
 # Cheapest viable footprint — this box runs only Gatus + Caddy.
 server_type = "cax11" # Ampere ARM64, 2 vCPU / 4 GB (~EUR 4/mo)
 location    = "fsn1"

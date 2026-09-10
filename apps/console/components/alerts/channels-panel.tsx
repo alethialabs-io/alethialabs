@@ -109,6 +109,12 @@ export function ChannelsPanel({
 			{channels.length === 0 ? (
 				<EmptyState
 					icon={<Send />}
+					// `level={3}` under the section's own `h2`. EmptyState renders its title as a
+					// plain `<div>` by default (correct inside a card or a table cell), and this
+					// state heads the whole Channels region — so without the level the heading the
+					// hand-rolled empty state used to carry is silently dropped from the outline,
+					// which is the regression EmptyState's own docstring warns about.
+					level={3}
 					title="No channels yet"
 					description={`Channels are where alerts get delivered — Slack, email, Rocket.Chat or a signed webhook.${canManage ? " Add one to start." : ""}`}
 					action={canManage ? addBtn : undefined}
@@ -120,23 +126,34 @@ export function ChannelsPanel({
 					{/* master-detail */}
 					<div className="flex flex-wrap items-start gap-4">
 						<div className="min-w-[290px] flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-sm">
-							<div className="px-4 py-3 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground/70">
+							<div className="px-4 py-3 font-mono text-ui-3xs uppercase tracking-[0.14em] text-text-tertiary">
 								Configured channels
 							</div>
 							{rows.length === 0 ? (
-								<div className="px-4 py-4 text-muted-foreground/70 text-xs">
+								<div className="px-4 py-4 text-text-tertiary text-xs">
 									No channels match these filters.
 								</div>
 							) : (
-								rows.map((c) => (
-									<ChannelRow
-										key={c.id}
-										channel={c}
-										selected={selected?.id === c.id}
-										onSelect={() => setSelectedId(c.id)}
-										assignments={classMap[c.id]}
-									/>
-								))
+								/*
+								 * A single-select rail, so it is a listbox of options — not a stack of
+								 * buttons. Two things turn on that: a screen reader gets "3 of 7,
+								 * selected" instead of seven unrelated buttons, and the rail row for a
+								 * channel stops COLLIDING by role with the "Used by" pill that names the
+								 * same resource in the detail beside it. The listbox wraps only the rows
+								 * (the "Configured channels" caption stays outside it) because a
+								 * listbox's children must all be options.
+								 */
+								<div role="listbox" aria-label="Configured channels">
+									{rows.map((c) => (
+										<ChannelRow
+											key={c.id}
+											channel={c}
+											selected={selected?.id === c.id}
+											onSelect={() => setSelectedId(c.id)}
+											assignments={classMap[c.id]}
+										/>
+									))}
+								</div>
 							)}
 						</div>
 
@@ -204,6 +221,8 @@ function ChannelRow({
 	return (
 		<button
 			type="button"
+			role="option"
+			aria-selected={selected}
 			onClick={onSelect}
 			className={cn(
 				"flex w-full items-center gap-3 border-b border-l-2 border-border/60 px-3.5 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/40",
@@ -212,10 +231,10 @@ function ChannelRow({
 		>
 			<ChannelTile type={channel.type} active={channel.is_verified} />
 			<span className="min-w-0 flex-1">
-				<span className="block truncate font-medium text-[13px]">
+				<span className="block truncate font-medium text-ui-md">
 					{channel.name}
 				</span>
-				<span className="truncate font-mono text-[10px] text-muted-foreground">
+				<span className="truncate font-mono text-ui-2xs text-muted-foreground">
 					{targetOf(channel)}
 				</span>
 				<ClassificationChips
@@ -342,12 +361,26 @@ function ChannelDetail({
 					<ChannelTile type={channel.type} active={channel.is_verified} size="lg" />
 					<div className="min-w-0 space-y-1.5">
 						{canManage ? (
-							<Input
-								value={name}
-								onChange={(e) => setName(e.target.value)}
-								placeholder="Channel name"
-								className="h-8 w-64 font-display font-semibold text-lg"
-							/>
+							<>
+								{/*
+								 * The detail header's name field is a real, editable input and was
+								 * reachable only through its placeholder — which is not a label: it
+								 * disappears the moment the field has a value, which for this field is
+								 * always. The label is visually hidden because the field's own text IS
+								 * the heading of the panel, so painting "Channel name" above it would
+								 * say the same thing twice.
+								 */}
+								<Label htmlFor={`channel-name-${channel.id}`} className="sr-only">
+									Channel name
+								</Label>
+								<Input
+									id={`channel-name-${channel.id}`}
+									value={name}
+									onChange={(e) => setName(e.target.value)}
+									placeholder="Channel name"
+									className="h-8 w-64 font-display font-semibold text-lg"
+								/>
+							</>
 						) : (
 							<span className="font-display font-semibold text-lg tracking-tight">
 								{channel.name}
@@ -365,7 +398,7 @@ function ChannelDetail({
 						/>
 					</div>
 				</div>
-				<StatusBadge {...channelBadge(channel)} className="flex-none text-[10px]" />
+				<StatusBadge {...channelBadge(channel)} className="flex-none text-ui-2xs" />
 			</div>
 
 			{/* meta */}
@@ -381,7 +414,7 @@ function ChannelDetail({
 			{/* config */}
 			<div className="space-y-4 border-b border-border/60 p-5">
 				<div className="flex items-center gap-1.5">
-					<span className="font-mono text-[10px] uppercase tracking-wider text-foreground/70">
+					<span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
 						{meta.credential === "email"
 							? "Recipients"
 							: meta.credential === "routingKey"
@@ -485,7 +518,15 @@ function ChannelDetail({
 								: "Paused — policies routed here won't deliver."}
 						</div>
 					</div>
+					{/*
+					 * The name is "Enabled" in BOTH states — it names the control, not the state,
+					 * which `aria-checked` already carries. It is also the name
+					 * `apps/console/destructive-actions.yaml` records for `alerts.channel.disable`
+					 * (`control: { role: switch, name: "Enabled" }`), which until now was a claim
+					 * about a switch that announced nothing at all.
+					 */}
 					<Switch
+						aria-label="Enabled"
 						checked={channel.enabled}
 						disabled={togglePending}
 						onCheckedChange={onToggle}
@@ -507,7 +548,7 @@ function ChannelDetail({
 			{/* used by */}
 			<div className="space-y-3 border-b border-border/60 p-5">
 				<div className="flex items-center gap-2">
-					<span className="font-mono text-[10px] uppercase tracking-wider text-foreground/70">
+					<span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
 						Used by
 					</span>
 					<button
@@ -628,11 +669,11 @@ function ChannelTile({
 function MetaCell({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 	return (
 		<div className="min-w-[120px] flex-1 border-r border-border/60 px-5 py-3 last:border-r-0">
-			<div className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+			<div className="font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground">
 				{k}
 			</div>
 			<div
-				className={cn("mt-1.5 truncate text-[13px]", mono && "font-mono text-[11.5px]")}
+				className={cn("mt-1.5 truncate text-ui-md", mono && "font-mono text-ui-xs")}
 			>
 				{v}
 			</div>

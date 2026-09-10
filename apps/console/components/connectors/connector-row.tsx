@@ -60,9 +60,14 @@ export function ConnectorRow({
 	const cloudFailed = integration.cloud_health === "failed";
 	const cloudTesting = integration.cloud_health === "testing";
 	const accountCount = integration.accounts?.length ?? 0;
+	// A coming-soon row steps its description and status down one ink tier, and its state
+	// label already says "Coming soon" in words. It is NOT a blanket `opacity-50` on the row:
+	// that dimmed the `text-foreground` name to 3.6:1 and the `--muted-foreground` copy to
+	// 2.3:1 — and at α=0.5 over the page background not even pure black reaches 4.5:1 (#4197).
+	const secondaryInk = isComingSoon ? "text-text-tertiary" : "text-muted-foreground";
 
 	return (
-		<TableRow className={cn(isComingSoon && "opacity-50")}>
+		<TableRow>
 			<TableCell className="py-3">
 				<div className="flex items-center gap-3">
 					<div className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-muted/40 p-1.5">
@@ -95,7 +100,7 @@ export function ConnectorRow({
 							{integration.name}
 						</div>
 						<div
-							className="truncate text-xs text-muted-foreground"
+							className={cn("truncate text-xs", secondaryInk)}
 							title={integration.description}
 						>
 							{integration.description}
@@ -119,7 +124,8 @@ export function ConnectorRow({
 					/>
 					<span
 						className={cn(
-							"text-xs text-muted-foreground",
+							"text-xs",
+							secondaryInk,
 							state.destructive && "text-destructive",
 						)}
 					>
@@ -128,7 +134,7 @@ export function ConnectorRow({
 				</div>
 			</TableCell>
 
-			<TableCell className="font-mono text-[10px] text-muted-foreground">
+			<TableCell className="font-mono text-ui-2xs text-muted-foreground">
 				{isCloud && isConnected ? (
 					<span className="rounded-full border border-border/60 px-1.5 py-0.5">
 						{accountCount} {accountCount === 1 ? "account" : "accounts"}
@@ -138,7 +144,7 @@ export function ConnectorRow({
 						Org
 					</span>
 				) : (
-					<span className="text-muted-foreground/50">—</span>
+					<span className="text-text-tertiary">—</span>
 				)}
 			</TableCell>
 
@@ -150,7 +156,7 @@ export function ConnectorRow({
 								? "This git provider has no OAuth app configured on this instance. See the docs to enable it."
 								: "This cloud needs Alethia platform credentials, which aren't configured on this instance. See the docs to enable managed cloud connections."
 						}
-						className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+						className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground"
 					>
 						Unavailable
 					</span>
@@ -158,6 +164,10 @@ export function ConnectorRow({
 					<Button
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						// Same accessible naming as `connector-card.tsx` — the two views are one
+						// affordance rendered twice, so a name added to one and not the other would
+						// make the board's addressability depend on which layout you happen to be in.
+						aria-label={`Reconnect ${integration.name}`}
 						disabled={isConnecting}
 						onClick={onConnect}
 					>
@@ -173,6 +183,7 @@ export function ConnectorRow({
 						variant="ghost"
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						aria-label={`Manage ${integration.name}`}
 						onClick={onManage}
 					>
 						Manage
@@ -187,6 +198,7 @@ export function ConnectorRow({
 							variant="ghost"
 							size="sm"
 							className="h-7 px-2.5 text-xs"
+							aria-label={`Manage ${integration.name}`}
 							onClick={onManage}
 						>
 							Manage
@@ -194,6 +206,7 @@ export function ConnectorRow({
 						<Button
 							size="sm"
 							className="h-7 px-2.5 text-xs"
+							aria-label={`Re-verify ${integration.name}`}
 							disabled={isConnecting}
 							onClick={onReverify}
 						>
@@ -209,6 +222,7 @@ export function ConnectorRow({
 					<Button
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						aria-label={`Connect ${integration.name}`}
 						disabled={isConnecting}
 						onClick={onConnect}
 					>

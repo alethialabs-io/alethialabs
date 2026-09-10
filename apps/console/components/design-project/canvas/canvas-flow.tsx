@@ -14,7 +14,12 @@ import {
 import { typedKeys } from "@/lib/typed-object";
 import "@xyflow/react/dist/style.css";
 import { cn } from "@repo/ui/utils";
-import { createContext, useContext, useMemo } from "react";
+import {
+	createContext,
+	useContext,
+	useMemo,
+	type MouseEvent as ReactMouseEvent,
+} from "react";
 import {
 	buildRenderNodes,
 	collectionNodeId,
@@ -76,6 +81,25 @@ export const CanvasInteractionContext = createContext<CanvasInteraction>({
 	spaceHeld: false,
 });
 
+export interface CanvasFlowProps {
+	/**
+	 * Right-click on empty board. React Flow 12 does NOT hand this to you from the DOM
+	 * `contextmenu` event while `panOnDrag` is the array below: `Pane`'s own handler sees a
+	 * `panOnDrag` containing button 2, calls `preventDefault()` and returns. What calls this
+	 * instead is d3-zoom's pan-END, with the native **mouseup** of a right-press that did not move
+	 * — so a right-DRAG pans and opens nothing, which is the behaviour the hand-tool board needs.
+	 * With `panOnDrag === true` (hand tool / Space held) that array test fails and the pane's DOM
+	 * `contextmenu` reaches you as a React event with no `preventDefault()` applied. Hence the
+	 * `ReactMouseEvent | MouseEvent` union — React Flow's own type for this prop.
+	 */
+	onPaneContextMenu?: (event: ReactMouseEvent | MouseEvent) => void;
+	/** Right-click on a card. A real React `contextmenu` from the node's wrapper; nothing has
+	 * suppressed the browser menu, so the handler must. */
+	onNodeContextMenu?: (event: ReactMouseEvent, node: BoardNode) => void;
+	/** Right-click on the marquee selection rect. A real React `contextmenu`, same caveat. */
+	onSelectionContextMenu?: (event: ReactMouseEvent, nodes: BoardNode[]) => void;
+}
+
 /**
  * The React Flow surface, controlled by the canvas store.
  *
@@ -86,7 +110,11 @@ export const CanvasInteractionContext = createContext<CanvasInteraction>({
  * explain a substrate that is now implicit. Edges are the derived service→resource bindings (the
  * cluster→leaf dependency spine went with the cluster node).
  */
-export function CanvasFlow() {
+export function CanvasFlow({
+	onPaneContextMenu,
+	onNodeContextMenu,
+	onSelectionContextMenu,
+}: CanvasFlowProps = {}) {
 	const nodes = useCanvasStore((s) => s.nodes);
 	const edges = useCanvasStore((s) => s.edges);
 	const onNodesChange = useCanvasStore((s) => s.onNodesChange);
@@ -171,7 +199,13 @@ export function CanvasFlow() {
 			edgeTypes={edgeTypes}
 			onNodeClick={(_, node) => openInspector(node.id)}
 			onPaneClick={() => openInspector(null)}
-			deleteKeyCode={["Backspace", "Delete"]}
+			onPaneContextMenu={onPaneContextMenu}
+			onNodeContextMenu={onNodeContextMenu}
+			onSelectionContextMenu={onSelectionContextMenu}
+			// Keyboard delete is the canvas key handler's (design-project-canvas.tsx), routed through the
+			// store's `removeNodes` so it respects `deletable: false` and commits an undo step. React
+			// Flow's own delete path applied the removal straight to the node array and left no history.
+			deleteKeyCode={null}
 			// ── Excalidraw/Miro traversal ─────────────────────────────────────────────────────────
 			// Left-drag marquee-selects (better click-state handling); Space or the hand tool turns
 			// left-drag into a pan. Middle + right mouse always pan. Scroll pans (trackpad-native);
