@@ -177,6 +177,65 @@ describeIfDb("PostgresRbacPDP (community RBAC over Postgres)", () => {
 		expect(noEdge.reason).toBe("out_of_scope");
 	});
 
+	// ── The #4584 ruling, on the Postgres side ────────────────────────────────────────────────
+	// This engine used not to project `resource_type` at all, so it read ANY non-null
+	// `resource_id` as scoped to that id. An `('org', <project-uuid>)` row was therefore NARROW
+	// here and ORGANIZATION-WIDE in OpenFGA — one row, opposite answers, decided by which engine
+	// an installation runs. Both engines now route the question through `grantTarget`, and the
+	// answer for a row that names a kind it cannot be scoped to is: nothing at all.
+	//
+	// The three cases below are the three directions this can go wrong in, and the third is the
+	// one a bad-pair-only test cannot see: over-refusing would break every genuine org-wide grant
+	// in the product, which is a far larger outage than the bug being fixed.
+
+	it("an 'org' kind carrying a resource id confers NOTHING — not org-wide, not scoped", async () => {
+		await seedGrant({
+			principal_type: "user",
+			principal_id: USER,
+			permission_key: "project:view",
+			resource_type: "org",
+			resource_id: PROJ_A, // the pair #4581 now refuses at both write boundaries
+		});
+		// Not scoped to PROJ_A (what this engine used to answer)…
+		const named = await pdp.can(actor, "view", { type: "project", id: PROJ_A });
+		expect(named.allowed).toBe(false);
+		expect(named.reason).toBe("no_grant");
+		// …and not org-wide either (what the OpenFGA engine used to answer).
+		expect((await pdp.can(actor, "view", { type: "project", id: PROJ_B })).allowed).toBe(false);
+		expect(await pdp.listAccessible(actor, "view", "project")).toEqual([]);
+	});
+
+	it("an unrecognised resource kind confers NOTHING (resource_type is free text)", async () => {
+		await seedGrant({
+			principal_type: "user",
+			principal_id: USER,
+			permission_key: "project:view",
+			resource_type: "banana",
+			resource_id: PROJ_A,
+		});
+		const d = await pdp.can(actor, "view", { type: "project", id: PROJ_A });
+		expect(d.allowed).toBe(false);
+		expect(d.reason).toBe("no_grant");
+		expect(await pdp.listAccessible(actor, "view", "project")).toEqual([]);
+	});
+
+	it("a genuine org-wide grant written with the 'org' kind still covers everything", async () => {
+		// `ensureMemberGrant` writes exactly this shape — resource_type 'org', resource_id NULL.
+		// Reading `resource_type` must not make the engine stricter about it.
+		await seedGrant({
+			principal_type: "user",
+			principal_id: USER,
+			permission_key: "project:view",
+			resource_type: "org",
+			resource_id: null,
+		});
+		expect((await pdp.can(actor, "view", { type: "project", id: PROJ_A })).allowed).toBe(true);
+		expect((await pdp.can(actor, "view", { type: "project", id: PROJ_B })).allowed).toBe(true);
+		expect(new Set(await pdp.listAccessible(actor, "view", "project"))).toEqual(
+			new Set([PROJ_A, PROJ_B]),
+		);
+	});
+
 	it("explicit deny overrides an org-wide allow (IAM semantics)", async () => {
 		await seedGrant({
 			principal_type: "user",
