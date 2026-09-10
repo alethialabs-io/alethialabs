@@ -59,6 +59,10 @@ test.describe("Activity — retention window gating (Hobby)", () => {
 			owner.page.getByRole("button", { name: /^Last 7 days$/i }),
 		).toBeVisible({ timeout: 30_000 });
 
+		// Captured while the filters are provably pristine, so the assertion at the end can be
+		// an EQUALITY rather than a list of keys someone has to remember to extend.
+		const pristineUrl = owner.page.url();
+
 		await owner.page.getByRole("button", { name: /^Last 7 days$/i }).click();
 		await owner.page.getByRole("button", { name: "Last 30 days", exact: true }).click();
 
@@ -66,17 +70,44 @@ test.describe("Activity — retention window gating (Hobby)", () => {
 		// returns WITHOUT patching the store (activity-log.tsx).
 		await expect(owner.page.getByRole("dialog")).toBeVisible({ timeout: 15_000 });
 
-		// "The range was NOT applied" is asked of the URL, not of the trigger.
+		// WHY THE ASSERTION IS THE TRIGGER'S LABEL AND NOT A NEGATED `toHaveURL` (#4619 review).
 		//
-		// The old assertion re-read the trigger's label — and could not, because the upgrade
-		// sheet is a modal: the rest of the page leaves the accessibility tree, so `getByRole`
-		// resolves to nothing and `toBeVisible()` fails on a page where nothing is wrong. It had
-		// been recorded `failed` for exactly that. The filter store's contract is that a rejected
-		// pick writes no key, and `useFilterUrlSync` deletes every default-valued key — so a
-		// pristine window is a query string with no `rangeLabel`, `from` or `to` in it, whatever
-		// the aria tree is doing.
-		await expect(owner.page).not.toHaveURL(/[?&]rangeLabel=/);
-		await expect(owner.page).not.toHaveURL(/[?&]from=/);
+		// A web assertion — negated or not — retries until it holds and RETURNS ON THE FIRST
+		// PASSING POLL. The window starts with no `rangeLabel`/`from` in it, so
+		// `not.toHaveURL(/rangeLabel=/)` passed on its first evaluation whether or not the range
+		// was applied: had `applyRange` regressed to `patch({…}); setUpgradeOpen(true)`, the URL
+		// would only change AFTERWARDS, through `useFilterUrlSync`'s effect → `router.replace()`
+		// → a soft navigation, a few frames past the assertion that had already returned. The
+		// pair could not fail, which is the whole of what it was for.
+		//
+		// The trigger's label has no such window. It is rendered straight from the filter
+		// store's `rangeLabel`, and `patch` + `setUpgradeOpen(true)` would be batched into ONE
+		// React commit — so the sheet BEING VISIBLE, asserted above, already proves the label has
+		// been re-rendered from whatever the store now holds. There is no "not yet" state to be
+		// satisfied by.
+		//
+		// It is read with a CSS locator on purpose. The sheet is a modal, so the page behind it
+		// leaves the accessibility tree and `getByRole` resolves to nothing there — which is why
+		// the ORIGINAL label assertion was recorded `failed` on a page where nothing was wrong.
+		// `locator("button")` + `hasText` is a DOM query, not an a11y one, and `toHaveText` does
+		// not require visibility, so neither is affected by `aria-hidden`.
+		//
+		// The filter is deliberately loose and the ASSERTION is what is exact: `hasText` must
+		// still select the trigger after a regression has relabelled it, or the test would fail
+		// by finding nothing and say the wrong thing about why. `.first()` is the quick-range
+		// trigger — the only other range control in the bar, `DateRangeFilter`, labels itself
+		// with formatted dates (`formatRangeLabel`), never "Last N days".
+		const rangeTrigger = owner.page
+			.locator("button")
+			.filter({ hasText: /Last \d+ days/ })
+			.first();
+		await expect(rangeTrigger).toHaveText("Last 7 days");
+
+		// And the URL exactly, as a second, independent half: a rejected pick writes no key and
+		// `useFilterUrlSync` deletes every default-valued one, so a pristine window is the path
+		// with no query string at all. Equality fails on ANY key a regression might add, not only
+		// the two this test happened to name.
+		await expect(owner.page).toHaveURL(pristineUrl);
 	});
 });
 
