@@ -310,6 +310,25 @@ wt_count_reachable_hydrated() { # <worktree> → 0 if wt:dehydrate would reap it
 # self-test calls it directly, which is exactly why wt_dehydrate_tree saves and restores the
 # caller's traps. "However it ends" means every signal that CAN be trapped: SIGKILL cannot, and the
 # `$$` keying is what stops that leaving a wedge (the lease reads `stale` once the script dies).
+# INT/TERM handler. Releases the lock AND ENDS THE REAP — the two must happen together.
+#
+# A bare `trap wt_reap_unlock … INT TERM` was measurably worse than no trap at all: bash runs the
+# handler and then RESUMES the interrupted command, so the lease was released while the `rm -rf`
+# loop carried on. Measured with `kill -TERM` and a shimmed slow du: lease FREE at t+2s with 24 of
+# 30 node_modules still being deleted over the following ~8s. That is a tree which is unlocked and
+# being destroyed at the same time — the same shape as the mode-B/C defect, arriving through the
+# signal path instead of the scan path, and an instance acquiring in that window would believe it
+# owned a tree mid-delete.
+#
+# `exit` is what makes the difference; unlocking without it is the defect. The in-flight `rm -rf`
+# still completes — bash defers a trap until the current foreground command returns — so this
+# bounds the damage at one directory rather than at the whole set.
+wt_reap_signal() { # <signal-number>
+	wt_reap_unlock
+	trap - EXIT INT TERM
+	exit $((128 + ${1:-15}))
+}
+
 wt_reap_unlock() {
 	[ -n "${WT_REAP_LOCK:-}" ] || return 0
 	# No ALETHIA_ALLOW_FOREIGN_WT here: wt_lease_release never reads it. Only CLAUDE_PID matters, so
@@ -383,7 +402,11 @@ wt_dehydrate_tree() { # <worktree> → prints the bytes it removed, on stdout
 	# deletes it outright. That leaks only when a direct call gets PAST this line, which today none
 	# do, so it would have sat here until the arrangement changed and then leaked quietly.
 	prev_traps="$(trap -p EXIT INT TERM)"
-	trap wt_reap_unlock EXIT INT TERM
+	# EXIT releases; INT/TERM release AND STOP. See wt_reap_signal — a handler that only unlocks
+	# hands the next instance a tree that is unlocked and still being deleted.
+	trap wt_reap_unlock EXIT
+	trap 'wt_reap_signal 2' INT
+	trap 'wt_reap_signal 15' TERM
 	# Derive the set ONCE, under the lock, and measure THE SET WE ARE ABOUT TO DELETE. Reporting
 	# the verdict's figure instead was measurably wrong: that one is taken before the lock, and
 	# the set is re-derived after it — observed drift of 716800 B against a set that had shrunk in
@@ -443,7 +466,20 @@ if [ "${1:-}" = "--who" ]; then
 		# LIVE lines print. The read is a renderer's detail; the verdict above is already decided.
 		[ -n "$ld" ] && wt_lease_read "$ld" 2>/dev/null || true
 		case "$state" in
-			main) wt_is_readable_repo "$w" && who="— (main checkout, shared)" || who="✗ git cannot read this tree (.git missing or broken)" ;;
+			# Asked in the same order, and for the same reason, as wt_dehydrate_verdict: a
+			# hand-deleted worktree that git still lists resolves to the MAIN-checkout answer
+			# otherwise, so `--who` called a missing directory "the main checkout, shared" while
+			# the verdict named it. Unifying these two ladders is what this hunk is for, and this
+			# was the sibling of the broken-.git case, left behind.
+			main)
+				if [ ! -d "$w" ]; then
+					who="✗ directory is gone — run: git worktree prune"
+				elif wt_is_readable_repo "$w"; then
+					who="— (main checkout, shared)"
+				else
+					who="✗ git cannot read this tree (.git missing or broken)"
+				fi
+				;;
 			free) who="free" ;;
 			stale) who="stale (holder gone) — reclaimed on next use" ;;
 			mine) who="LIVE pid $WT_L_PID on $WT_L_HOST · idle $(wt_lease_idle "$ld") ← you" ;;
@@ -554,6 +590,16 @@ if [ "${1:-}" = "--prune" ]; then
 		else
 			echo "  skip  $wt  ($br) — git refused to remove it"
 			kept=$((kept + 1))
+			# Counted here too. This is a tree `wt:dehydrate` CAN reach — the two skips above are
+			# not the only ones that leave a hydrated tree behind, and leaving this one out made
+			# the hint under-report the very trees it advertises. (The two live-held skips are
+			# deliberately NOT counted: dehydrate would refuse those.)
+			#
+			# UNFIXTURED, and not for want of trying: reaching this branch needs wt_branch_landed
+			# to answer "landed", which needs `gh`. Without it the function fails safe to "not
+			# landed" and the tree takes the skip above instead, so no hermetic fixture can get
+			# here. The self-test cannot cover this line; #4622's batching work will have to.
+			wt_count_reachable_hydrated "$wt" && hydrated=$((hydrated + 1)) || true
 		fi
 	done <<EOF
 $(git worktree list --porcelain | sed -n 's/^worktree //p')
@@ -604,7 +650,22 @@ fi
 # rewrite pnpm-lock.yaml and ride the diff into an unrelated PR).
 if [ "${1:-}" = "--dehydrate" ]; then
 	dry=0
-	for a in "$@"; do [ "$a" = "--dry-run" ] && dry=1; done
+	# REFUSE an argument we do not understand, rather than ignoring it. The old loop only ever SET
+	# `dry`, so `--dry-runn` and `-n` both fell through to the REAL reap — a typo in the safety flag
+	# performing the destructive run is the worst available default for a command that deletes.
+	for a in "$@"; do
+		case "$a" in
+			--dehydrate) ;; # our own verb
+			--dry-run) dry=1 ;;
+			*)
+				echo "✗ wt:dehydrate: unknown argument '$a'" >&2
+				echo "  usage: pnpm wt:dehydrate [--dry-run]" >&2
+				echo "  Refusing rather than guessing: this command deletes, and the only flag it" >&2
+				echo "  takes is the one that stops it doing so." >&2
+				exit 2
+				;;
+		esac
+	done
 	total=0
 	reaped=0
 	held=0
@@ -891,7 +952,21 @@ wt_dehydrate_self_test() {
 		# shellcheck disable=SC2016  # $0/$1 are the CHILD's positional args, passed after the -c.
 		( PATH="$slow:$PATH" env "$@" bash -c '. "$0"; wt_dehydrate_tree "$1" >/dev/null 2>&1' "$tmp/fns.sh" "$wt" ) &
 		local reap_pid=$!
-		sleep 1.2 # inside the reap: past the lock, during the shimmed du
+		# HANDSHAKE, not a sleep. The assertion needs the holder to arrive strictly inside the
+		# reap's lock window, and that window opens only after the child has spawned bash and
+		# sourced two files — a hard-coded delay is a flake in a required check. Poll the observable
+		# state instead, and FAIL LOUDLY if the window never opened rather than testing nothing.
+		local waited=0
+		while [ "$(CLAUDE_PID="$me" wt_lease_state "$wt")" != live ] && [ "$waited" -lt 200 ]; do
+			sleep 0.05
+			waited=$((waited + 1))
+		done
+		if [ "$waited" -ge 200 ]; then
+			echo "FAIL - lock: never observed the reaper's lock ($label, from $start) — the rig did not open the window, so this arm asserted nothing" >&2
+			fails=$((fails + 1))
+			wait "$reap_pid" 2>/dev/null || true
+			return 0
+		fi
 		"$tmp/holder.sh" "$wt" "$tmp/holder.rc"
 		wait "$reap_pid" 2>/dev/null || true
 		local rc
@@ -923,6 +998,57 @@ wt_dehydrate_self_test() {
 	dd if=/dev/zero of="$wt/node_modules/blob" bs=1024 count=512 2>/dev/null
 	dd if=/dev/zero of="$wt/apps/console/node_modules/blob" bs=1024 count=512 2>/dev/null
 	: >"$wt/node_modules/.pnpm/pkg/node_modules/nested"
+
+	# ── a signal must STOP the reap, not merely unlock it ──────────────────────────────────────
+	#
+	# A handler that only released the lock left the tree UNLOCKED AND STILL BEING DELETED: bash
+	# runs a trap and then resumes the interrupted command. Measured at 24 of 30 node_modules still
+	# going after the lease read free. Both halves are asserted, because either alone passes on the
+	# defect — "lease released" was already true of the broken version.
+	# Its OWN repo, for the third time in this file and for the third same reason: run against the
+	# shared fixture, the reap's SORTED walk reached that tree's real node_modules first and ate
+	# them, and two later assertions failed naming something else entirely.
+	local sig="$tmp/sigrepo"
+	mkdir -p "$sig/main"
+	git init -q "$sig/main"
+	printf 'node_modules\n' >"$sig/main/.gitignore"
+	git -C "$sig/main" add .gitignore
+	git -C "$sig/main" -c user.email=t@t -c user.name=t commit -q -m init
+	git -C "$sig/main" worktree add -q -b sigwt "$sig/wt-sig"
+	local i
+	for i in 1 2 3 4 5 6; do
+		mkdir -p "$sig/wt-sig/p$i/node_modules"
+		: >"$sig/wt-sig/p$i/node_modules/blob"
+	done
+	mkdir -p "$tmp/slowdu2"
+	cp "$tmp/shim-slow-du" "$tmp/slowdu2/du" # 1s per node_modules, so the loop is interruptible
+	( PATH="$tmp/slowdu2:$PATH" CLAUDE_PID="$me" bash -c '. "$0"; wt_dehydrate_tree "$1" >/dev/null 2>&1' "$tmp/fns.sh" "$sig/wt-sig" ) &
+	local sig_pid=$! sig_waited=0
+	while [ "$(CLAUDE_PID="$me" wt_lease_state "$sig/wt-sig")" != live ] && [ "$sig_waited" -lt 200 ]; do
+		sleep 0.05
+		sig_waited=$((sig_waited + 1))
+	done
+	if [ "$sig_waited" -ge 200 ]; then
+		echo "FAIL - signal: never observed the lock, so this arm asserted nothing" >&2
+		fails=$((fails + 1))
+		kill "$sig_pid" 2>/dev/null || true
+	else
+		sleep 2.5 # let it delete a couple, so "stopped early" is distinguishable from "never ran"
+		kill -TERM "$sig_pid" 2>/dev/null || true
+		wait "$sig_pid" 2>/dev/null || true
+		local left
+		left="$(find "$sig/wt-sig" -type d -name node_modules 2>/dev/null | wc -l | tr -d ' ')"
+		# BOTH bounds. `left > 0` is the fix; `left < 6` proves the reap was actually running, so
+		# the arm cannot pass by the loop never having started.
+		if [ "$left" -gt 0 ] && [ "$left" -lt 6 ]; then
+			echo "ok   - signal: SIGTERM stopped the delete loop mid-way ($left of 6 node_modules never touched)"
+		else
+			echo "FAIL - signal: $left of 6 node_modules left — wanted some deleted and some spared" >&2
+			fails=$((fails + 1))
+		fi
+		_a "free" "$(CLAUDE_PID="$me" wt_lease_state "$sig/wt-sig")" "signal: … and the lock was released on the way out"
+	fi
+	rm -rf "$sig" "$tmp/slowdu2"
 
 	# ── the cost of the ONE predicate, counted rather than timed ───────────────────────────────
 	#
@@ -1026,7 +1152,19 @@ wt_dehydrate_self_test() {
 	cp "$(cd "$(dirname "$0")" && pwd)/lib/"*.sh "$who/main/scripts/lib/"
 	git -C "$who/main" worktree add -q -b whobroken "$who/wt-broken"
 	printf 'gitdir: /nonexistent/broken\n' >"$who/wt-broken/.git"
+	# …and the sibling case: a worktree git still LISTS whose directory somebody deleted by hand.
+	# The verdict asks `[ ! -d ]` before anything else precisely so this is named; --who resolved it
+	# to the main-checkout answer instead. Unifying the two ladders is what that hunk is for.
+	git -C "$who/main" worktree add -q -b whogone "$who/wt-gone"
+	rm -rf "$who/wt-gone"
 	out="$(bash "$who/main/scripts/worktree.sh" --who 2>/dev/null || true)"
+	if printf '%s' "$out" | grep -F 'wt-gone' | grep -q 'directory is gone'; then
+		echo "ok   - who: a worktree whose directory is gone is named, not called 'the main checkout'"
+	else
+		echo "FAIL - who: a gone directory rendered as:" >&2
+		printf '%s\n' "$out" | grep -F 'wt-gone' >&2 || echo "  (no wt-gone line at all)" >&2
+		fails=$((fails + 1))
+	fi
 	if printf '%s' "$out" | grep -F 'wt-broken' | grep -q 'git cannot read'; then
 		echo "ok   - who: a broken .git is named, not called 'the main checkout'"
 	else
@@ -1168,8 +1306,28 @@ wt_dehydrate_self_test() {
 	fi; }
 	_hasre '^  ok    .*/wt-cclean  \(cclean\)' "$cout" "cmd: the clean tree renders as 'ok', not as a skip"
 	_has "already de-hydrated" "$cout" "cmd: … and says why"
+
 	_has "1 held by a live instance, 1 not a target" "$cout" "cmd: --dry-run counts HELD apart from not-a-target"
 	_a "yes" "$([ -e "$cmd/wt-creap/node_modules/blob" ] && echo yes || echo no)" "cmd: --dry-run deleted nothing"
+
+	# ── an unknown argument must REFUSE, not fall through to the destructive run ────────────────
+	# `--dry-runn` and `-n` both used to perform the real reap, because the parse only ever SET the
+	# flag and never rejected anything. A typo in the safety flag doing the dangerous thing is the
+	# worst available default, so the exit code, the message AND the tree are all asserted.
+	# `bout`, not `cout`: reusing the outer variable clobbered the dry run's output and made a
+	# LATER assertion fail naming something it had nothing to do with.
+	local bout brc
+	for badflag in --dry-runn -n --force; do
+		brc=0
+		bout="$(CLAUDE_PID="$me" bash "$cmd/main/scripts/worktree.sh" --dehydrate "$badflag" 2>&1)" || brc=$?
+		if [ "$brc" -ne 0 ] && printf '%s' "$bout" | grep -q "unknown argument"; then
+			echo "ok   - cmd: '$badflag' is refused, not ignored (exit $brc)"
+		else
+			echo "FAIL - cmd: '$badflag' was accepted (exit $brc) — a mistyped safety flag ran the real reap" >&2
+			fails=$((fails + 1))
+		fi
+	done
+	_a "yes" "$([ -e "$cmd/wt-creap/node_modules/blob" ] && echo yes || echo no)" "cmd: … and nothing was deleted while refusing"
 
 	cout="$(CLAUDE_PID="$me" bash "$cmd/main/scripts/worktree.sh" --dehydrate 2>&1)"
 	_has "freed up to 2.0M on disk" "$cout" "cmd: the real run reports the bytes IT removed"
