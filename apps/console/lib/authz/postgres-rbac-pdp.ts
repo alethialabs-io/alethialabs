@@ -42,6 +42,14 @@ type GrantRow = {
  * and EXCLUDES THE WHOLE ORG. Two different values, both failing closed; see
  * `EMPTY_SCOPE_DENIES` in lib/authz/grant-scope.ts for the decision and the option it rejected.
  *
+ * ⚠ THIS ENGINE IS WHERE THE RULING CHANGES LIVE ACCESS. It never projected `resource_type`, so
+ * EVERY row with a non-null `resource_id` was scoped to that id here regardless of kind — which
+ * means an allow row NARROWS to nothing and a deny row WIDENS to the whole org, on both classes,
+ * with nobody editing anything. `backfill` re-expands raw rows on every boot, so the deploy is
+ * what changes what they mean. Measured before deploy per row by `deploy_change` in
+ * docs/ops/grants-scope-contradictions.sql; see `denyTarget` for which class widens on which
+ * engine and why the ruling is uniform anyway.
+ *
  * Before #4584 this engine did not project `resource_type` at all, so an `('org', <uuid>)` row
  * read as a scoped grant on that uuid while the OpenFGA engine read the same row as
  * organization-wide — one row, two opposite answers, decided by which engine an installation

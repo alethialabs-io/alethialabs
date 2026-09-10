@@ -253,6 +253,38 @@ describeIfDb("PostgresRbacPDP (community RBAC over Postgres)", () => {
 		expect(await pdp.listAccessible(actor, "deploy", "project")).toEqual([]);
 	});
 
+	// ⚠ THE SAME RULING, ON THE CLASS IT WAS NOT DECIDED ON. `('job', <uuid>)` is an unscopable
+	// kind carrying an id — still writeable today, since neither write boundary validates
+	// `resource_type` against `ScopableType`. This engine used to scope such a deny to the id it
+	// names, because it never projected `resource_type`. It now excludes the WHOLE ORG.
+	//
+	// The assertion that carries the finding is PROJ_B: a project the row never names, which was
+	// reachable before and is not now. That is the widening, and it happens with nobody editing
+	// anything — `backfill` re-expands raw rows on every boot, so the deploy is the change.
+	it("RULED, applied to an UNSCOPABLE KIND: the deny widens off the resource it names", async () => {
+		await seedGrant({
+			principal_type: "user",
+			principal_id: USER,
+			effect: "allow",
+			permission_key: "project:deploy",
+			resource_type: "org",
+			resource_id: null, // org-wide allow
+		});
+		await seedGrant({
+			principal_type: "user",
+			principal_id: USER,
+			effect: "deny",
+			permission_key: "project:deploy",
+			resource_type: "job", // an unscopable kind — NOT the org pair
+			resource_id: PROJ_A,
+		});
+		// The resource the row names: denied before this ruling and after it.
+		expect((await pdp.can(actor, "deploy", { type: "project", id: PROJ_A })).allowed).toBe(false);
+		// THE WIDENING: a resource the row never names. Before, the org-wide allow reached it.
+		expect((await pdp.can(actor, "deploy", { type: "project", id: PROJ_B })).allowed).toBe(false);
+		expect(await pdp.listAccessible(actor, "deploy", "project")).toEqual([]);
+	});
+
 	it("a scoped DENY is untouched by that ruling — it names a real resource", async () => {
 		// The guard on the guard: the deny split may only affect rows that scope to NOTHING.
 		await seedGrant({

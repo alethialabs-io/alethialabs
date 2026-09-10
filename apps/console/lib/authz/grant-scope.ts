@@ -137,6 +137,35 @@ export const EMPTY_SCOPE_DENIES: "nothing" | "the_whole_org" = "the_whole_org";
  * "excludes" come apart: an uninterpretable scope confers nothing and excludes the whole org
  * (#4584). Both engines call THIS for a deny row and `grantTarget` for an allow row, so the two
  * cannot drift.
+ *
+ * ⚠ FOR A DENY ROW THIS IS A WIDENING — IT REMOVES ACCESS, ON ROWS NOBODY EDITED. `grantTarget`
+ * calls TWO populations `none`, and this treats them alike:
+ *
+ *   `org_kind_with_resource_id`  — the contradictory pair. Postgres excluded the named resource,
+ *     OpenFGA already excluded the org. Only Postgres moves. This is the row the ruling was
+ *     decided on, and "no deployed store's deny behaviour changes" is true OF THIS ROW.
+ *   `unscopable_resource_kind`   — `('job', <uuid>)`, `('member', <uuid>)`, a typo. Postgres
+ *     excluded the named resource; OpenFGA excluded NOTHING (there is no `job:` object type in
+ *     the model to hang a tuple on). BOTH engines widen to the whole org. The ruling reaches this
+ *     class but was not decided on it, and the justification above is FALSE here.
+ *
+ * ⚠ NO OPTION PRESERVES THE SECOND POPULATION'S CURRENT BEHAVIOUR. Keeping the per-id exclusion
+ * Postgres does today is not expressible in OpenFGA — there is no `job:` or `member:` object type
+ * in the model — so the choice is between widening to the org (fail-CLOSED, removes access) and
+ * dropping the row (fail-OPEN, the exclusion disappears). Both are expressible and BOTH ARE
+ * NON-DIVERGENT: restricting this widening to `org_kind_with_resource_id` was run against both
+ * real engines and the parity suite's `ENGINE DIVERGENCE` assertion fired ZERO times. An earlier
+ * version of this comment claimed otherwise — that scoping the ruling would re-open the
+ * divergence — and that was measured to be false.
+ *
+ * So the uniform ruling is the one consistent with "an ambiguous exclusion is not a licence"; it
+ * is not forced by expressibility. What it costs is a live behaviour change on deploy, MEASURED
+ * rather than assumed: `deploy_change` in docs/ops/grants-scope-contradictions.sql reports it per
+ * row, and `also_allowed_anywhere` says whether the wider exclusion has anything to bite.
+ *
+ * These rows are still writeable: neither `app/api/cli/grants/route.ts` (`z.string().min(1)`) nor
+ * `app/server/actions/grants.ts` (a bare `string`) validates `resource_type` against
+ * `ScopableType`. #4581 refuses only the org pair.
  */
 export function denyTarget(
 	resourceType: string,
