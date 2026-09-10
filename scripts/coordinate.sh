@@ -511,11 +511,106 @@ stamped_at: not-a-timestamp
   echo "self-test: all $checks lease-read checks passed"
 }
 
+# ── temp files: ONE registry, ONE EXIT trap, and the registry must reach the PARENT ──────────
+#
+# One EXIT trap for every temp file this script makes. A second `trap … EXIT` REPLACES the first
+# rather than adding to it, and that is what used to happen here: the debt-register map installed
+# its own trap further down and the merged-PR corpus — the biggest file this script writes —
+# stopped being cleaned up at all.
+#
+# THE HELPER RETURNS ITS PATH THROUGH A NAMED VARIABLE, NOT ON STDOUT. The first version of this
+# printed the path, so every caller was `X="$(coordinate_tmpfile …)"` — and command substitution is
+# a SUBSHELL. `COORDINATE_TMPFILES+=("$f")` ran in that subshell and never reached the parent, so
+# the trap fired against an empty array and removed NOTHING: ~4.8 MB of `alethia-*` left in $TMPDIR
+# per pass, on a script whose header offers it as a `/loop` candidate. That is strictly worse than
+# the trap-overwrite bug the paragraph above describes, under which the second trap at least
+# cleaned one file. `printf -v` writes into the caller's own shell, which is the whole point.
+#
+# It is the same class as the counter that never left a `( … )` in run_lease_read_self_test below,
+# and it is defended the same way: by a test that reads the registry IN THE PARENT.
+#
+# DEFINED ABOVE THE SELF-TEST DISPATCH, deliberately — the reason scripts/lib/board-pr.sh is
+# sourced above it too. Left where it used to live, past the `exit 0` below, the self-test could
+# not reach this function at all and the registry's one load-bearing property was untestable.
+COORDINATE_TMPFILES=()
+_coordinate_cleanup() { [ ${#COORDINATE_TMPFILES[@]} -gt 0 ] && rm -f "${COORDINATE_TMPFILES[@]}"; return 0; }
+trap _coordinate_cleanup EXIT
+# <varname> <name> — set <varname> to a fresh temp path and register it for cleanup.
+# The local is named defensively: `printf -v` resolves <varname> in this function's scope first, so
+# a caller passing a name this function also uses locally would be handed a path the parent cannot
+# see — the very failure the out-parameter exists to remove.
+coordinate_tmpfile() {
+  local __coordinate_tmpfile_path
+  __coordinate_tmpfile_path="$(mktemp -t "alethia-$2")"
+  COORDINATE_TMPFILES+=("$__coordinate_tmpfile_path")
+  printf -v "$1" %s "$__coordinate_tmpfile_path"
+}
+
+# The registry's ONE load-bearing property: a registration made by the helper is visible to the
+# EXIT trap, which runs in the parent shell. The bug this replaces satisfied every other property
+# — the path was valid, the file existed, callers worked — and failed only this one, silently.
+#
+# So the assertion is made IN THE PARENT, never inside `( … )`: a subshell is precisely the thing
+# under test, and a suite that measured the registry from inside one would agree with the defect.
+# Mutate `COORDINATE_TMPFILES+=(…)` above (delete it, or wrap it in a subshell) and confirm the RUN
+# exits non-zero before believing this: the exit code is the test, the text is only a report.
+run_tmpfile_self_test() {
+  local fails=0 checks=0 before after first second
+  before=${#COORDINATE_TMPFILES[@]}
+  coordinate_tmpfile first tmpfile-selftest-a
+  coordinate_tmpfile second tmpfile-selftest-b
+
+  checks=$((checks + 1))
+  if [ -n "$first" ] && [ -n "$second" ] && [ "$first" != "$second" ]; then
+    echo "ok   - tmpfile: the out-parameter carries two distinct paths back to the caller"
+  else
+    fails=$((fails + 1))
+    echo "FAIL - tmpfile: the caller's variables were not set (first='$first' second='$second')" >&2
+  fi
+
+  checks=$((checks + 1))
+  if [ -f "$first" ] && [ -f "$second" ]; then
+    echo "ok   - tmpfile: both files exist"
+  else
+    fails=$((fails + 1))
+    echo "FAIL - tmpfile: mktemp did not produce readable files" >&2
+  fi
+
+  # THE REGRESSION. Read in the PARENT: under the printing version this reads 0 however many
+  # times the helper is called, and nothing is ever cleaned up.
+  after=${#COORDINATE_TMPFILES[@]}
+  checks=$((checks + 1))
+  if [ "$((after - before))" -eq 2 ]; then
+    echo "ok   - tmpfile: both registrations reached the PARENT shell's registry"
+  else
+    fails=$((fails + 1))
+    echo "FAIL - tmpfile: the registry grew by $((after - before)), not 2 — registration is not reaching" >&2
+    echo "       the shell the EXIT trap runs in, so the trap will remove nothing." >&2
+  fi
+
+  # …and the registry is what the trap actually acts on. Registered-but-not-removed would be a
+  # second, quieter way to leak.
+  _coordinate_cleanup
+  checks=$((checks + 1))
+  if [ ! -e "$first" ] && [ ! -e "$second" ]; then
+    echo "ok   - tmpfile: the cleanup the EXIT trap runs removes every registered file"
+  else
+    fails=$((fails + 1))
+    echo "FAIL - tmpfile: _coordinate_cleanup left a registered file behind" >&2
+  fi
+  rm -f "$first" "$second"
+
+  [ "$checks" -eq 0 ] && { echo "self-test: the tmpfile suite asserted NOTHING — that is a failure, not a pass." >&2; exit 1; }
+  [ "$fails" -eq 0 ] || { echo "self-test: $fails of $checks tmpfile check(s) FAILED" >&2; exit 1; }
+  echo "self-test: all $checks tmpfile checks passed"
+}
+
 if [ "$MODE" = "self-test" ]; then
   run_board_body_self_test
   run_scope_wiring_self_test
   run_shipped_wiring_self_test
   run_lease_read_self_test
+  run_tmpfile_self_test
   exit 0
 fi
 
@@ -577,21 +672,8 @@ have() { echo "$board" | jq -e --arg n "$1" --arg l "$2" '.[]|select(.number==($
 # a truncated list can prove a hit and can never prove its absence.
 MERGED_PRS=""
 MERGED_PRS_OK=0
-# One EXIT trap for every temp file this script makes. A second `trap … EXIT` REPLACES the first
-# rather than adding to it, and that is what used to happen here: the debt-register map installed
-# its own trap further down and the merged-PR corpus — now the biggest file this script writes —
-# stopped being cleaned up at all.
-COORDINATE_TMPFILES=()
-_coordinate_cleanup() { [ ${#COORDINATE_TMPFILES[@]} -gt 0 ] && rm -f "${COORDINATE_TMPFILES[@]}"; return 0; }
-trap _coordinate_cleanup EXIT
-coordinate_tmpfile() { # <name> -> prints the path, and registers it for cleanup
-  local f
-  f="$(mktemp -t "alethia-$1")"
-  COORDINATE_TMPFILES+=("$f")
-  printf '%s' "$f"
-}
 fetch_merged_prs() {
-  MERGED_PRS="$(coordinate_tmpfile merged-prs)"
+  coordinate_tmpfile MERGED_PRS merged-prs
   # NOT `2>/dev/null || echo '[]'` and nothing else. An empty corpus and a corpus we could not
   # fetch produce the same silence downstream — "no unit is possibly shipped" — and that silent
   # -empty is the exact shape the ARG_MAX break above hid behind for weeks. Say which it is.
@@ -615,6 +697,18 @@ fetch_merged_prs() {
 # units are in `board`). See .claude/COORDINATION.md.
 if [ "$MODE" = "close-shipped" ]; then
   fetch_merged_prs
+  # AN UNFETCHED CORPUS IS NOT AN EMPTY ONE, and this path is the one that MUTATES the board.
+  # `fetch_merged_prs` falls back to `[]` and warns on STDERR; the jq below then evaluates that
+  # empty corpus perfectly happily, matches nothing, and prints "Nothing to close." on STDOUT with
+  # exit 0. Any caller capturing stdout — or any log that separates the two streams — reads that
+  # as a measured all-clear over a corpus that was never fetched. That is the degradation the
+  # comment below forbids, arriving through the door the report path already closed: the signal
+  # existed and only the reporting half consulted it.
+  [ "$MERGED_PRS_OK" -eq 1 ] || {
+    echo "✗ close-shipped: the merged-PR corpus could not be fetched, so the board is UNMEASURED," >&2
+    echo "  not clean. Closing NOTHING." >&2
+    exit 1
+  }
   # Emit "<issue> <pr-list>" pairs for every claimable unit a merged PR CLOSES (keyword + #n in
   # title or body — the same signal GitHub honours and the Action parses).
   #
@@ -822,7 +916,7 @@ infra/template-parity-exclusions.yaml
 scripts/addons/render-nondeterministic.txt
 scripts/addons/published-defaults-allowed.txt
 "
-DEBT_MAP="$(coordinate_tmpfile debt-map)"
+coordinate_tmpfile DEBT_MAP debt-map
 debt_registers_read=0
 : >"$DEBT_MAP"
 for _reg in $DEBT_REGISTERS; do
@@ -859,8 +953,13 @@ fi
 # #4176 and #4455 each had their cited PR land inside the unit's own subject matter with the defect
 # still live — so every reported row prints the unit's own `check:` line, and no heading here invites
 # anyone to close anything.
-shipped_input="$(coordinate_tmpfile shipped-input)"
-board_file="$(coordinate_tmpfile board)"
+# Declared before the call: `coordinate_tmpfile` assigns them through `printf -v`, an indirection
+# the linter cannot trace, so without this it reads both as referenced-but-never-assigned (SC2154).
+# (Keep "shellcheck" off the start of a comment line here — that is read as a directive, not prose.)
+shipped_input=""
+board_file=""
+coordinate_tmpfile shipped_input shipped-input
+coordinate_tmpfile board_file board
 printf '%s' "$board" >"$board_file"
 if [ "$MERGED_PRS_OK" -ne 1 ]; then
   # An EMPTY corpus and a corpus we could not fetch produce the same "nothing is possibly shipped".
