@@ -7,6 +7,7 @@ import { GripVertical, RefreshCw, Snowflake, Trash2, Zap } from "lucide-react";
 import { useState } from "react";
 import { formatRelative } from "@repo/format";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { cn } from "@repo/ui/utils";
 import type { ThreadWidget } from "@/lib/db/schema";
 import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
@@ -75,6 +76,10 @@ export function WidgetCard({
   const setMode = useWidgetGridStore((s) => s.setMode);
   const widgets = useWidgetGridStore((s) => s.widgets);
   const [kb, setKb] = useState<{ mode: DragMode; rect: GridRect } | null>(null);
+  // Whether a remove has been REQUESTED. The trash sits two icons from Refresh in a hover-revealed
+  // strip, and removing a widget deletes its row — there is no undo — so the click asks first
+  // (#4280).
+  const [confirmRemove, setConfirmRemove] = useState(false);
   // Pointer move is handled by dnd-kit: the grip is the drag handle and a DragOverlay
   // (owned by the grid) follows the cursor, so the source card just dims while active.
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({
@@ -265,7 +270,7 @@ export function WidgetCard({
             type="button"
             aria-label={`Remove ${widget.title}`}
             className="flex h-5 w-5 items-center justify-center text-muted-foreground hover:text-foreground"
-            onClick={() => remove(widget.id)}
+            onClick={() => setConfirmRemove(true)}
           >
             <Trash2 className="h-3 w-3" />
           </button>
@@ -280,6 +285,15 @@ export function WidgetCard({
         aria-label={`Resize ${widget.title}`}
         className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize border-l border-t border-border bg-background opacity-0 transition-opacity group-hover/widget:opacity-100"
         onPointerDown={(e) => onDragStart(e, widget.id, "resize")}
+      />
+
+      <ConfirmDialog
+        open={confirmRemove}
+        onOpenChange={setConfirmRemove}
+        title={`Remove ${widget.title}?`}
+        description="This takes the widget off this conversation's grid and deletes it. Artifacts you already saved keep their own copy. This cannot be undone."
+        confirmLabel="Remove widget"
+        onConfirm={() => remove(widget.id)}
       />
     </div>
   );

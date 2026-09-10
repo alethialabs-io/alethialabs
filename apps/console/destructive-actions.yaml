@@ -694,27 +694,59 @@ controls:
     surface: apps/console/components/agent/agent-artifact-gallery.tsx
     mutation: deleteArtifact
     reach: [{ open: "Ask AI" }, { open: "Artifacts" }]
-    control: { role: button, name: "Delete <name>" }
-    confirm: none
+    # The noun is IN the accessible name, and the spec is why. `triggerFor` matches a templated name
+    # by its literal prefix, so "Delete <name>" is `/Delete/i` — and the thread rail is mounted
+    # BEFORE <main> and stays mounted over the Artifacts and Knowledge views, so `.first()` resolved
+    # this entry and `agent.knowledge.delete` to the rail's chat trash. The three controls now name
+    # what they destroy ("Delete artifact …", "Delete document …", "Delete chat …"), which separates
+    # the prefixes and tells a screen reader the same thing.
+    control: { role: button, name: "Delete artifact <name>" }
+    confirm: confirm-dialog
+    confirm_action: "Delete artifact"
+    dialog_title: "Delete <name>?"
     fixture: artifact
     persona: owner
-    status: missing
-    issue: "#4280"
+    status: confirmed
     prod-qa: own-rows-only
+    # The gallery card and the VIEWER's trash are two triggers on one control: the viewer raises
+    # `onDelete`, the gallery owns the state and the dialog, and both carry the same accessible
+    # name. One entry, because there is one confirmation and one mutation.
 
   - id: agent.artifact.unshare
     route: /[org]
     surface: apps/console/components/agent/artifact-share-popover.tsx
     mutation: unshareArtifact
-    reach: [{ open: "Ask AI" }, { open: "Artifacts" }, { open: "Share" }]
-    control: { role: switch, name: "Shared" }
-    confirm: none
+    # FOUR steps, because `ArtifactSharePopover` is rendered in exactly one place —
+    # `agent-artifact-viewer.tsx`, i.e. INSIDE an opened artifact. A chain that went straight from
+    # the gallery to `{ open: "Share" }` never opened one, and worse, it did not sit still: `/Share/i`
+    # matched the gallery's "Shared with you" TAB, so the audit switched to the shared tab — where no
+    # owned artifact and no Share button exist — and then withheld blaming the trigger. The gallery
+    # card now names itself "Open artifact <name>" so a step can predict it.
+    reach: [{ open: "Ask AI" }, { open: "Artifacts" }, { open: "Open artifact" }, { open: "Share" }]
+    # NOT a switch named "Shared" — no such control has ever existed here. The popover lists one
+    # BUTTON per share target ("Everyone in org", then a row per team and per role), each with a
+    # check box drawn inside it.
+    #
+    # The name is the ACT, not the target, and that is what makes this entry safe to run. `toggle()`
+    # is destructive in ONE direction: it raises the dialog only when the target is already shared,
+    # and on an unshared one the same click PERFORMS a `shareArtifact` mutation. Naming the row
+    # "Everyone in org" made both directions equally locatable, so a run against an unshared fixture
+    # would have mutated and then failed "no confirmation appeared" — from a suite whose contract is
+    # to open, assert, cancel and prove nothing changed. The row now answers to "Stop sharing with …"
+    # only while it is ON, so an unshared fixture withholds rather than mutating.
+    control: { role: button, name: "Stop sharing with <target>" }
+    # Granting is a bare click — it is not destructive. REVOKING asks, per #4280's default; the
+    # dialog is rendered outside the Popover, because opening it moves focus and closes the popover.
+    confirm: confirm-dialog
+    confirm_action: "Stop sharing"
+    dialog_title: "Stop sharing with <target>?"
     fixture: shared-artifact
     persona: owner
-    status: missing
-    issue: "#4280"
+    status: confirmed
     prod-qa: skip
-    reason: an optimistic toggle; needs a shared artifact
+    # The chain reaches the control now; what is left is the FIXTURE — the popover self-gates on
+    # `canShare` (paid org, more than one member) and the row is only nameable while it is ON.
+    reason: needs a collaborating org holding an artifact already shared with a target
 
   - id: agent.thread.delete
     route: /[org]
@@ -722,12 +754,16 @@ controls:
     mutation_surface: apps/console/components/agent/elench/use-elench-threads.ts
     mutation: deleteThread
     reach: [{ open: "Ask AI" }]
-    control: { role: button, name: "Delete chat" }
-    confirm: none
+    # Templated because the rail's trash IS templated — every row carries its own title. The literal
+    # prefix `/Delete chat/i` is what this entry resolves on, and no other agent surface starts with
+    # those two words.
+    control: { role: button, name: "Delete chat <title>" }
+    confirm: confirm-dialog
+    confirm_action: "Delete chat"
+    dialog_title: "Delete <title>?"
     fixture: chat-thread
     persona: owner
-    status: missing
-    issue: "#4280"
+    status: confirmed
     prod-qa: own-rows-only
 
   - id: agent.knowledge.delete
@@ -735,12 +771,14 @@ controls:
     surface: apps/console/components/agent/agent-knowledge-panel.tsx
     mutation: upsertAgentContext
     reach: [{ open: "Ask AI" }, { open: "Knowledge" }]
-    control: { role: button, name: "Delete <title>" }
-    confirm: none
+    # See `agent.artifact.delete` — the noun separates this from the rail's "Delete chat …".
+    control: { role: button, name: "Delete document <title>" }
+    confirm: confirm-dialog
+    confirm_action: "Delete document"
+    dialog_title: "Delete <title>?"
     fixture: knowledge-doc
     persona: owner
-    status: missing
-    issue: "#4280"
+    status: confirmed
     prod-qa: own-rows-only
 
   - id: agent.widget.remove
@@ -750,11 +788,12 @@ controls:
     mutation: deleteWidget
     reach: [{ open: "Ask AI" }, { open: "a dashboard turn" }]
     control: { role: button, name: "Remove <title>" }
-    confirm: none
+    confirm: confirm-dialog
+    confirm_action: "Remove widget"
+    dialog_title: "Remove <title>?"
     fixture: pinned-widget
     persona: owner
-    status: missing
-    issue: "#4280"
+    status: confirmed
     prod-qa: own-rows-only
 
   # ── the account ────────────────────────────────────────────────────────────────────────────

@@ -684,11 +684,11 @@
 				"runners.destroy — declares popover (confirmed)": "passed",
 				"runners.remove — declares alert-dialog (confirmed)": "passed",
 				"jobs.cancel — declares confirm-dialog (confirmed)": "passed",
-				"agent.artifact.delete — declares none (missing)": "passed",
-				"agent.artifact.unshare — declares none (missing)": "passed",
-				"agent.thread.delete — declares none (missing)": "passed",
-				"agent.knowledge.delete — declares none (missing)": "passed",
-				"agent.widget.remove — declares none (missing)": "passed",
+				"agent.artifact.delete — declares confirm-dialog (confirmed)": "passed",
+				"agent.artifact.unshare — declares confirm-dialog (confirmed)": "passed",
+				"agent.thread.delete — declares confirm-dialog (confirmed)": "passed",
+				"agent.knowledge.delete — declares confirm-dialog (confirmed)": "passed",
+				"agent.widget.remove — declares confirm-dialog (confirmed)": "passed",
 				"account.delete — declares none (inert)": "passed",
 				"the run measured something — a withheld verdict is not a pass": "passed"
 			}
