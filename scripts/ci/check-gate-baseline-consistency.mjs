@@ -84,6 +84,17 @@ export const MIN_LISTED_TESTS = 200;
  * direction that would otherwise rot: once the slice is regenerated, this row would go on
  * suppressing a finding about a title nobody records any more, forever and silently.
  *
+ * GROWTH is the third direction, and it is the one this sentence used to assert without enforcing.
+ * With only the two above mechanised, the cheapest way out of a red on this check was to ADD a row
+ * — the `why` assertions do not stop it, because "over 40 characters and naming an issue number" is
+ * satisfied by any plausible-looking sentence. That is the #4460 outcome exactly: the ledger stays
+ * stale, `Release gate (<leg>)` stays red on every promotion, and this check reports green over it.
+ * `RECORDED_STALE_COUNT` below is the committed size, checked by `main` before it reads anything, so
+ * a row cannot arrive without an edit a reviewer sees. It is a ratchet, not a proof: a lane that
+ * means to add a row can still bump the number, and only a counter DERIVED across commits — the
+ * shape `shared-surface-allowlist.yaml` uses, which needs the ledger moved to a data file — makes
+ * that impossible rather than merely visible. #4460 carries that as the follow-up.
+ *
  * Every row must be repaired the same way, and it is not a repair this or any other checkout can
  * make — the replacement entries have to come from a real run:
  *
@@ -116,6 +127,44 @@ export const RECORDED_STALE = [
 		why: "#4324, as above. The sizing assertion moved into the service-card test; the ledger still records it under its old title.",
 	},
 ];
+
+/**
+ * How many rows RECORDED_STALE is committed to hold. SHRINK-ONLY: this number goes down, never up.
+ *
+ * Committed as a literal, and compared for EQUALITY rather than as a ceiling. A `<=` would let the
+ * number rot upward the moment a row is removed — the good direction would silently re-open the
+ * headroom the bad direction needs, and the next row would arrive for free.
+ */
+export const RECORDED_STALE_COUNT = 3;
+
+/**
+ * The exception ledger against its committed size.
+ *
+ * The arguments exist so `--self-test` can ask both directions without re-implementing the
+ * comparison; `main` calls it with neither, on the real pair.
+ *
+ * @param {Row[]} rows
+ * @param {number} committed
+ * @returns {string|null} the disagreement, or null when they agree
+ */
+export function checkRecordedStaleCount(rows = RECORDED_STALE, committed = RECORDED_STALE_COUNT) {
+	if (rows.length === committed) return null;
+	const self = path.relative(ROOT, fileURLToPath(import.meta.url));
+	const preamble = `RECORDED_STALE in ${self} holds ${rows.length} row(s) against a committed RECORDED_STALE_COUNT of ${committed}. `;
+	if (rows.length > committed) {
+		return (
+			`${preamble}A row was ADDED, and that is the cheapest escape route from a red on this check — the one this number exists to close. ` +
+			"A new row suppresses the finding, the ledger stays stale, `Release gate (<leg>)` stays red on every promotion, and this check reports green over it: " +
+			"the #4460 outcome, reached by the instrument meant to prevent it. The repair is a regenerated slice, not a row — " +
+			'`gh workflow run "Release gate" --ref <branch> -f legs=<leg>`, then `node scripts/e2e-ratchet.mjs --project=<leg> --results=<results.json> --write --only=<file>`. ' +
+			"If a row really is the right answer, raise this number in the SAME commit and say why in the review: it is a revert of a safety decision and has to be read as one."
+		);
+	}
+	return (
+		`${preamble}A row was REMOVED — the good direction — but the number did not come down with it. Left standing it is ` +
+		`${committed - rows.length} row(s) of free headroom, and the next row could then be added with no edit a reviewer would see. Set RECORDED_STALE_COUNT to ${rows.length}.`
+	);
+}
 
 // ── the tree's own (project, file, title) triples ─────────────────────────────────────────────
 
@@ -311,6 +360,12 @@ export function main(argv) {
 		return 2;
 	}
 
+	// BEFORE the tree is read, because this is a question about the exception ledger's own integrity
+	// and its answer does not depend on anything a listing could say. A check whose exceptions were
+	// widened without a decision must not go on to report on what they suppress.
+	const grew = checkRecordedStaleCount();
+	if (grew !== null) throw new Error(grew);
+
 	const report = listArg ? JSON.parse(fs.readFileSync(path.resolve(listArg.slice("--list-json=".length)), "utf8")) : listFromPlaywright();
 	if (Array.isArray(report.errors) && report.errors.length > 0) {
 		// A spec file that throws on import contributes ZERO tests and no exit code of its own in
@@ -424,9 +479,17 @@ export function renderFindings({ missingProjects, unrecorded, dead, suspended })
  */
 function selfTest() {
 	let failures = 0;
-	const ok = (label, cond) => {
+	// `detail` is printed ONLY on a failure, and is worth the parameter: a boolean assertion about a
+	// structure that fails with nothing but its own label leaves the reader re-deriving the structure
+	// by hand. Every counted `failures++` happens in this function, in this scope — a `failures` bumped
+	// inside a subshell or a callback that the summary never sees is how a suite reports "all passed"
+	// under a line that printed FAIL.
+	const ok = (label, cond, detail) => {
 		console.log(`${cond ? "ok  " : "FAIL"} - ${label}`);
-		if (!cond) failures++;
+		if (!cond) {
+			if (detail !== undefined) console.log(`       ${typeof detail === "string" ? detail : JSON.stringify(detail)}`);
+			failures++;
+		}
 	};
 
 	/** One spec node in the JSON reporter's shape, in `projects`. */
@@ -611,6 +674,73 @@ function selfTest() {
 		"every RECORDED_STALE row states a reason that names its cause",
 		RECORDED_STALE.every((e) => typeof e.why === "string" && e.why.trim().length > 40 && /#\d+/.test(e.why)),
 	);
+
+	// ── SHRINK-ONLY, mechanised ────────────────────────────────────────────────────────────────
+	// The escape row below satisfies BOTH assertions above — over 40 characters, names an issue —
+	// which is the point: they were the only thing standing between a red and a new exception.
+	const escapeRow = {
+		project: "qa",
+		file: "flows/alerts.spec.ts",
+		title: "Alerts › a rule can be RENAMED",
+		why: "#4460, and a sentence long enough to look like a considered reason rather than a way out of a red.",
+	};
+	ok("control: the ledger as committed agrees with RECORDED_STALE_COUNT", checkRecordedStaleCount() === null, `${RECORDED_STALE.length} rows vs RECORDED_STALE_COUNT ${RECORDED_STALE_COUNT}`);
+	ok(
+		"a row ADDED is a disagreement, and the message says the repair is a regenerated slice",
+		(() => {
+			const m = checkRecordedStaleCount([...RECORDED_STALE, escapeRow], RECORDED_STALE_COUNT);
+			return typeof m === "string" && /A row was ADDED/.test(m) && /e2e-ratchet\.mjs/.test(m);
+		})(),
+	);
+	ok(
+		"a row REMOVED without ratcheting the number down is a disagreement too, in its own words",
+		(() => {
+			const m = checkRecordedStaleCount(RECORDED_STALE.slice(1), RECORDED_STALE_COUNT);
+			return typeof m === "string" && /A row was REMOVED/.test(m) && /free headroom/.test(m);
+		})(),
+	);
+	ok(
+		"...and the escape row would have passed the two assertions that used to be the only ones",
+		escapeRow.why.trim().length > 40 && /#\d+/.test(escapeRow.why),
+	);
+	// WIRED, and wired FIRST. It mutates the REAL RECORDED_STALE rather than passing a fixture,
+	// because the argument-taking form above cannot prove `main` calls it with no arguments at all.
+	//
+	// The listing it hands `main` DOES NOT EXIST, and that is the ordering probe: reading it throws
+	// ENOENT, so which error comes back says which of the two ran first. A merely COLLAPSED fixture
+	// would not pin this — the floor is applied several statements after the listing is read, so a
+	// growth check moved to just above the floor would still answer first and the assertion would
+	// pass on the very reordering it exists to refuse. Measured: that mutation passed the first
+	// version of this assertion, and reds this one.
+	const noSuchListing = path.join(os.tmpdir(), "gbc-selftest-no-such-listing", "list.json");
+	ok(
+		"a row pushed onto the REAL RECORDED_STALE refuses the whole check, before ANY listing is read",
+		(() => {
+			RECORDED_STALE.push(escapeRow);
+			try {
+				main([`--list-json=${noSuchListing}`]);
+				return false;
+			} catch (err) {
+				return err instanceof Error && /RECORDED_STALE_COUNT/.test(err.message) && !/ENOENT/.test(err.message);
+			} finally {
+				RECORDED_STALE.pop();
+			}
+		})(),
+	);
+	// THE CONTROL for that probe. Without it, "the error is the count's, not ENOENT" would also pass
+	// if `main` never touched the path at all, and the assertion above would be about nothing.
+	ok(
+		"control: with the ledger as committed, the same call gets as far as reading that listing",
+		(() => {
+			try {
+				main([`--list-json=${noSuchListing}`]);
+				return false;
+			} catch (err) {
+				return err instanceof Error && /ENOENT/.test(err.message);
+			}
+		})(),
+	);
+	ok("...and the real RECORDED_STALE is left exactly as it was found", RECORDED_STALE.length === RECORDED_STALE_COUNT && checkRecordedStaleCount() === null);
 
 	// ── the floors ─────────────────────────────────────────────────────────────────────────────
 	// Against the REAL ledger, not a literal. A floor typed above the ledger's own size would
