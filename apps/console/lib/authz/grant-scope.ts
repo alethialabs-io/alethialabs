@@ -44,25 +44,32 @@
 // Postgres, so this is reachable from any writer that does not go through the console — raw SQL in
 // lib/authz/grants.ts and lib/authz/seed.ts among them.
 //
-// ⚠ THAT REASONING HOLDS FOR `effect = 'allow'` ONLY, AND THE DENY DIRECTION IS UNDECIDED.
+// ⚠ THAT REASONING IS ABOUT `effect = 'allow'`. THE DENY DIRECTION IS A SEPARATE, RULED QUESTION.
 //
-// An earlier version of this comment said "both `none` cases fail CLOSED, which is the only
-// direction a disagreement may be resolved in". That is FALSE for a deny row, and it is exactly
-// the sentence someone would later quote to justify widening this predicate.
+// THE RULING (#4584, the maintainer's, and made knowingly — the option chosen stated this
+// asymmetry explicitly):
 //
-// `grantTarget` answers ONE question: what does this row CONFER? `PostgresRbacPDP` asks it twice —
-// once of the allow rows and once of the deny rows — and for the deny rows the question is what
-// does this row EXCLUDE. Those are different questions, and a `none` answer means opposite things:
-// conferring nothing is fail-CLOSED, excluding nothing is fail-OPEN. Concretely, for
+//     allow  → confers NOTHING       (fail-closed: an ambiguous request is not a grant)
+//     deny   → excludes ORG-WIDE     (fail-closed: an ambiguous exclusion is not a licence)
+//
+// ⚠ THE TWO ANSWERS ARE DIFFERENT VALUES AND THAT IS THE POINT — DO NOT "SIMPLIFY" IT AWAY.
+// What is symmetric here is the DIRECTION (both fail closed), not the value. An earlier version of
+// this comment said "both `none` cases fail CLOSED, which is the only direction a disagreement may
+// be resolved in" while the code dropped BOTH — which is fail-closed for allow and fail-OPEN for
+// deny. That sentence was false, and it is exactly the sentence a future reader would quote to
+// collapse these two answers back into one.
+//
+// They cannot be one answer because they are not one question. `grantTarget` answers "what does
+// this row CONFER?"; a deny row is asked "what does it EXCLUDE?", and `targetForEffect` is the
+// seam where the second question gets its own answer. Concretely, for
 //
 //     (user U, effect='deny', permission_key='project:deploy', resource_type='org', resource_id=P)
 //     + an org-wide ALLOW of project:deploy for U
 //
-// dropping the deny row hands U a `deploy` on P that BOTH engines refuse today — and, because the
-// tuples that deny row already wrote are still in the store and `backfill` never deletes them, it
-// also opens a divergence in the opposite direction on precisely the rows this work exists to fix.
-//
-// So the deny side is held behind `EMPTY_SCOPE_DENIES` below, and the ruling is the maintainer's.
+// dropping the deny row would hand U a `deploy` on P that BOTH engines refuse today — and, because
+// the tuples that deny row already wrote are still in the store and `backfill` never deletes them,
+// it would also open a divergence in the opposite direction on precisely the rows this work exists
+// to fix. `EMPTY_SCOPE_DENIES` below records the decision and the alternative it rejected.
 //
 // ── WHAT THIS DELIBERATELY DOES NOT DO ──────────────────────────────────────────────────────────
 // It does not remove OpenFGA tuples an ALREADY-EXISTING bad row wrote under the old reading. Those
@@ -94,40 +101,42 @@ export type GrantTarget =
 	  };
 
 /**
- * ⚠ UNDECIDED — AWAITING THE MAINTAINER'S RULING (#4584, the deny direction).
+ * What a DENY row whose scope resolves to nothing EXCLUDES. **RULED: the whole org** (#4584).
  *
- * What a DENY row that scopes to nothing EXCLUDES. `grantTarget` cannot answer this: it answers
- * what a row CONFERS, and a deny row is asked the opposite question (see the note at the top of
- * this file). Flip this one constant when the ruling lands — `denyTarget` below, both PDP engines
- * and every fixture that exercises them read it, so nothing else has to move.
+ * A named constant rather than an inlined `{ kind: "org" }` on purpose. The decision stays
+ * greppable, and the option that was REJECTED stays visible next to the one that was taken —
+ * `"nothing"` is not dead weight in this union, it is the record of a choice.
  *
- * `"nothing"` — CURRENT, and it is FAIL-OPEN. A deny row that scopes to nothing excludes nothing,
- *   so a subject who is denied a permission on one resource today gets it back. It is symmetric
- *   with the allow side and it is the reading that makes the row simply not exist.
+ * `"the_whole_org"` — TAKEN. The exclusion applies org-wide. Fail-closed: a row that cannot say
+ *   what it excludes has not licensed anything. It is also what OpenFGA does for the `org`-kind
+ *   pair TODAY (pre-#4584) and what the tuples every deployed store has ALREADY WRITTEN still say
+ *   — `backfill` only ever writes — so NO DEPLOYED STORE'S DENY BEHAVIOUR CHANGES.
  *
- * `"the_whole_org"` — the exclusion applies org-wide. Fail-CLOSED. It is also what OpenFGA does
- *   for the `org`-kind pair TODAY (pre-#4584), and what the tuples an existing bad row has
- *   ALREADY WRITTEN still say — `backfill` never deletes them — so it is the only option under
- *   which no deployed store's deny behaviour changes at all.
+ * `"nothing"` — REJECTED. Symmetric with the allow side by VALUE, and fail-OPEN: a subject denied
+ *   a permission today gets it back, on both engines, from a row nobody edited.
  *
- * A third reading — "excludes only the resource it names", i.e. what `PostgresRbacPDP` does today
- * — is deliberately ABSENT, and the reason is a finding rather than a preference: OpenFGA cannot
- * express it. There is no object of that type and id to hang a deny tuple on, which is why
- * `GrantTarget`'s `resource` arm is typed `ScopableType` and cannot hold one. Choosing it would
- * re-open the divergence in a new place rather than close it, so the two options above are the
- * two that are expressible on BOTH engines.
+ * ⚠ A third reading — "excludes only the resource it names", i.e. what `PostgresRbacPDP` does
+ * today — IS NOT ON THE MENU, and the reason is a finding rather than a preference: **OpenFGA
+ * cannot express it.** It looks like the obvious right answer until you try to write the tuple.
+ * The object would have to be `<resource_type>:<resource_id>`, which for the bad pair is
+ * `org:<project-uuid>` — an object that does not exist; and writing `project:<uuid>` instead would
+ * require KNOWING the id names a project, which is precisely what the row never says. (This is
+ * also why `GrantTarget`'s `resource` arm is typed `ScopableType` and cannot hold one.) Choosing
+ * it would move the divergence to a new place rather than close it. That collapsed a three-way
+ * choice to two, and is what the ruling was made on.
  *
- * The annotation is the full union on purpose: it keeps every branch below type-checking, so
- * changing the value is genuinely a one-line edit and not a compile error hunt.
+ * The annotation is the full union on purpose: it keeps `denyTarget`'s branches type-checking, so
+ * the rejected option stays a real, compilable alternative rather than a comment about one.
  */
-export const EMPTY_SCOPE_DENIES: "nothing" | "the_whole_org" = "nothing";
+export const EMPTY_SCOPE_DENIES: "nothing" | "the_whole_org" = "the_whole_org";
 
 /**
  * What a row resolves to for the engine that is asking about EXCLUSIONS.
  *
  * Identical to `grantTarget` except for the `none` case, which is the one where "confers" and
- * "excludes" come apart. Both engines call THIS for a deny row and `grantTarget` for an allow row,
- * so whichever way the ruling goes they move together.
+ * "excludes" come apart: an uninterpretable scope confers nothing and excludes the whole org
+ * (#4584). Both engines call THIS for a deny row and `grantTarget` for an allow row, so the two
+ * cannot drift.
  */
 export function denyTarget(
 	resourceType: string,
