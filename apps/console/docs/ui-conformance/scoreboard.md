@@ -218,7 +218,7 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/dashboard/[[...rest]]` · | 127 | all N/A | 2/3 · 0.67 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **0.94** |
 | `/[org]/[project]/settings/access` | 214 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 6/7 · 0.86 | **0.94** |
 | `/[org]/[project]/settings/activity` | 279 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 6/7 · 0.86 | **0.94** |
-| `/[org]/~/jobs/[id]` | 223 | 3/4 · 0.75 | 4/4 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **0.96** |
+| `/[org]/~/jobs/[id]` | 224 | 3/4 · 0.75 | 4/4 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **0.96** |
 | `/[org]/~/new` | 360 | 3/4 · 0.75 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **0.96** |
 | `/[org]/~/settings/classification` | 147 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/7 · 0.86 | **0.96** |
 | `/[org]/~/settings/general` | 135 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/7 · 0.86 | **0.96** |
