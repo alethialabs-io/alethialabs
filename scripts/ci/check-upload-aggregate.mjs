@@ -117,8 +117,11 @@
 //   * `if-no-files-found: warn`, or the key left unset, is not read as a defect. See the note
 //     above; the escape it leaves open is real and named in #4347's follow-up.
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DIR = ".github/workflows";
 
@@ -456,8 +459,14 @@ export function scanUploads(text) {
 		let childCol;
 		const own = [];
 		if (bare !== null) {
+			// COMMENT lines are skipped as well as blank ones. Taking the column from a comment
+			// re-bases every following line by the wrong amount, so `uses:` never matches and the
+			// step is invisible — and a comment shallower than the dash trips the `<= indent`
+			// bail-out instead, which is the same silence by a different route. The half of F2 that
+			// was missed, and missed because the fixture for it put the comment on the DASH LINE,
+			// which the `bare` pattern already absorbs: a case that looks like it covers this.
 			let k = i + 1;
-			while (k < lines.length && lines[k].trim() === "") k += 1;
+			while (k < lines.length && (lines[k].trim() === "" || /^\s*#/.test(lines[k]))) k += 1;
 			if (k >= lines.length) continue;
 			childCol = indentOf(lines[k]);
 			if (childCol <= indent) continue;
@@ -470,9 +479,16 @@ export function scanUploads(text) {
 		// item's own column. `<=` and not `<` because YAML lets a sequence sit at the SAME
 		// indentation as the key that owns it — every workflow here indents `steps:` items by two,
 		// but a file that did not would otherwise scan to zero uploads and read as clean.
+		//
+		// The key may carry a trailing comment. `jobs:` was widened for exactly this and the owner
+		// rule one line later was not, which made `steps: # the work` walk PAST the steps key to the
+		// job key above it — so `owner` came back as the job's name and every step of that job was
+		// skipped before `uploads` could increment. No report, no refusal, and no floor: one blinded
+		// job among forty files that are fine. A key WITH a value is still not a bare key, because
+		// the optional group must start at `#`.
 		let owner = null;
 		for (let b = i - 1; b > jobsAt; b--) {
-			const key = lines[b].match(/^(\s*)([A-Za-z0-9_-]+):\s*$/);
+			const key = lines[b].match(/^(\s*)([A-Za-z0-9_-]+):\s*(#.*)?$/);
 			if (key === null) continue;
 			if (key[1].length <= indent) {
 				owner = key[2];
@@ -1041,6 +1057,68 @@ function selfTest() {
 	ok("F7 a matrix entry that looks like an upload step is NOT a step", scanUploads(F7).uploads === 0, JSON.stringify(scanUploads(F7)));
 	ok("...and is not reported", scanUploads(F7).problems.length === 0 && scanUploads(F7).unreadable.length === 0, JSON.stringify(scanUploads(F7)));
 
+	// ── THE FOURTH PASS (#4595 peer review) — three more silent passes ───────────────────────────
+
+	// R1 — `steps:` with a trailing comment blinded a WHOLE JOB. `jobs:` had been widened for this
+	// and the owner rule one line later had not, so the backward walk went past `steps:` to the job
+	// key and every step was skipped before `uploads` could increment.
+	const R1 = `name: x\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: # the work\n${SITE1}`;
+	ok("R1 `steps: # comment` does not blind the job", scanUploads(R1).uploads === 1, JSON.stringify(scanUploads(R1)));
+	ok("...and its upload is still caught", scanUploads(R1).problems.length === 1, JSON.stringify(scanUploads(R1)));
+	ok("...and trailing whitespace after `steps:` likewise", scanUploads(`name: x\njobs:\n  a:\n    steps:   \n${SITE1}`).problems.length === 1);
+	// The widening must not turn a key WITH A VALUE into a bare key, or the owner walk would stop
+	// at the wrong place entirely.
+	ok("...while a key with a value is still not a bare key", scanUploads(`name: x\njobs:\n  a:\n    steps:\n      - name: n # c\n        uses: actions/upload-artifact@v7\n        with:\n          path: dist/a\n          if-no-files-found: error\n`).uploads === 1);
+
+	// R2 — the other half of F2. The bare-dash column must be taken from the first KEY, not from a
+	// comment sitting between the dash and the mapping.
+	//
+	// The fixture that was supposed to cover this put the comment on the DASH LINE, which the
+	// `bare` pattern already absorbs — a case that looked like it covered the shape and did not.
+	// Both directions are asserted here: a comment deeper than the dash (wrong column) and one
+	// shallower (which trips the bail-out instead — the same silence by another route).
+	// THE COMMENT'S COLUMN MUST DIFFER FROM THE KEYS'. A comment at the same column as the mapping
+	// yields the right `childCol` by accident, so it passes with or without the fix — which is a
+	// second fixture that looks like it covers the shape and does not. These three put the comment
+	// DEEPER, SHALLOWER, and at the key column, and only the first two are evidence.
+	const R2 = SITE1.replace("      - name: Upload compliance evidence\n        ", "      -\n          # the compliance half of the split\n        name: Upload compliance evidence\n        ");
+	ok("the R2 fixture really inserted a following-line comment at its own column", R2 !== SITE1 && R2.split("\n")[1] === "          # the compliance half of the split");
+	ok("R2 a DEEPER comment between a bare dash and its mapping does not hide the step", scan(R2).uploads === 1, JSON.stringify(scan(R2)));
+	ok("R2 ...and it is caught", scan(R2).problems.length === 1, JSON.stringify(scan(R2)));
+	const R2_SHALLOW = R2.replace("          # the compliance half of the split\n", "  # the compliance half of the split\n");
+	ok("the R2_SHALLOW fixture really re-indented the comment", R2_SHALLOW !== R2);
+	ok("R2 ...and a SHALLOWER comment does not either", scan(R2_SHALLOW).problems.length === 1, JSON.stringify(scan(R2_SHALLOW)));
+	const R2_LEVEL = R2.replace("          # the compliance half of the split\n", "        # the compliance half of the split\n");
+	ok("R2 ...and one at the key column (which passes either way) is still fine", scan(R2_LEVEL).problems.length === 1, JSON.stringify(scan(R2_LEVEL)));
+	ok("R2 ...and several comment lines, blank-separated, are fine", scan(R2.replace("          # the compliance half of the split\n", "          # one\n\n            # two\n")).problems.length === 1);
+
+	// R3 — THE ENTRY POINT ITSELF, which no in-process assertion can reach.
+	//
+	// `import.meta.url === `file://${process.argv[1]}`` compares a percent-encoded, symlink-resolved
+	// URL against a raw argv string, so a checkout path with a SPACE or a non-ASCII character makes
+	// them differ and the script takes the "imported" branch: prints nothing, exits 0. A guard that
+	// never ran reporting green is the failure this whole file argues against, so it is pinned by
+	// actually invoking the script through such a path.
+	{
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "upload aggregate ünïcode "));
+		const copy = path.join(dir, "check-upload-aggregate.mjs");
+		let out = "";
+		let rc = 0;
+		try {
+			fs.copyFileSync(fileURLToPath(import.meta.url), copy);
+			// cwd stays the repo root so the check has its `.github/workflows` to read; only the
+			// SCRIPT path is awkward, which is the thing under test.
+			out = execFileSync(process.execPath, [copy], { encoding: "utf8" });
+		} catch (e) {
+			rc = e.status ?? 1;
+			out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+		ok("R3 the script RUNS when its path contains a space and non-ASCII characters", /upload-aggregate: \d+ workflow\(s\)/.test(out), `rc=${rc} out=${JSON.stringify(out.slice(0, 200))}`);
+		ok("...rather than exiting 0 having printed nothing", out.trim() !== "");
+	}
+
 	// The resolver, directly — the six above go through `scanUploads`, so a resolver regression
 	// could hide behind a walk regression and vice versa.
 	const rv = (src) => resolveValue(src.split("\n"), 0, src.split("\n")[0].replace(/^\s*path:\s*/, ""));
@@ -1142,8 +1220,38 @@ function selfTest() {
 // runs the CLI as a side effect and can `process.exit(1)` inside the importer. Nothing in the repo
 // imports it today — the mutation harness beside it shells out rather than importing — so this is
 // a guard on the exports being usable at all, which is what a differential test against a real YAML
-// parser needs. Same idiom as check-pr-scope.mjs.
-if (import.meta.url !== `file://${process.argv[1]}`) {
+// parser needs.
+//
+// `import.meta.url` differs from `process.argv[1]` in TWO ways, and both have to be undone or this
+// file silently does nothing. It is percent-ENCODED — a checkout path with a space or a non-ASCII
+// character diverges — and it is symlink-RESOLVED, which argv is not. The original
+// `import.meta.url === \`file://${process.argv[1]}\`` handled neither.
+//
+// `path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)` — the form seven other scripts
+// here use — closes the ENCODING half only. It still returns false whenever any path component is a
+// symlink, which on macOS includes every temp directory (`/var` → `/private/var`). Measured, not
+// assumed: the R3 self-test case below was written to pin the encoding fix and FAILED on that form,
+// which is how the second half was found. So both sides go through `realpathSync`.
+//
+// The unknown case RUNS rather than staying silent. A spurious run is loud and gets fixed; a
+// spurious silence is a guard reporting green having never executed, which is the precise shape
+// this file's first page argues against.
+//
+// `check-pr-scope.mjs` carries the original fragile idiom and seven scripts carry the half-fix;
+// both are follow-ups, not this change.
+function invokedDirectly() {
+	if (process.argv[1] === undefined) return false;
+	const here = fileURLToPath(import.meta.url);
+	const argv = path.resolve(process.argv[1]);
+	if (argv === here) return true;
+	try {
+		return fs.realpathSync(argv) === fs.realpathSync(here);
+	} catch {
+		return true;
+	}
+}
+
+if (!invokedDirectly()) {
 	// imported as a module: export only
 } else if (process.argv.includes("--self-test")) {
 	selfTest();

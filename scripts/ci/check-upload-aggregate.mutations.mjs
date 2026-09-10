@@ -142,6 +142,40 @@ const MUTATIONS = [
 		expect: /F7/,
 	},
 	{
+		name: "M18 the owner rule refusing a trailing comment (R1 — `steps: # …`)",
+		from: "const key = lines[b].match(/^(\\s*)([A-Za-z0-9_-]+):\\s*(#.*)?$/);",
+		to: "const key = lines[b].match(/^(\\s*)([A-Za-z0-9_-]+):\\s*$/);",
+		expect: /R1/,
+	},
+	{
+		name: "M19 a bare dash taking its column from a comment (R2)",
+		from: 'while (k < lines.length && (lines[k].trim() === "" || /^\\s*#/.test(lines[k]))) k += 1;',
+		to: 'while (k < lines.length && lines[k].trim() === "") k += 1;',
+		expect: /R2/,
+	},
+	{
+		name: "M20 the entry point compared without realpath (R3 — the half-fix)",
+		from: "\t\treturn fs.realpathSync(argv) === fs.realpathSync(here);",
+		to: "\t\treturn false;",
+		expect: /R3/,
+	},
+	// The whole function body, because reverting one line of it leaves the other two still correct
+	// and the mutation reverts nothing — which is what the first attempt at this did.
+	{
+		name: "M21 the entry point compared as a raw URL string (R3 — the original)",
+		from: `	if (process.argv[1] === undefined) return false;
+	const here = fileURLToPath(import.meta.url);
+	const argv = path.resolve(process.argv[1]);
+	if (argv === here) return true;
+	try {
+		return fs.realpathSync(argv) === fs.realpathSync(here);
+	} catch {
+		return true;
+	}`,
+		to: "	return import.meta.url === `file://${process.argv[1]}`;",
+		expect: /R3/,
+	},
+	{
 		name: "M12 the rule itself — stop reporting entirely",
 		from: 'if (inffValue !== "error" || includes.length < 2) continue;',
 		to: "if (true) continue;",
