@@ -69,6 +69,26 @@ const SCRATCH_META: Record<ScratchKind, { label: string; desc: string }> = {
 	"byo-iac": { label: "BYO IaC module", desc: "plan · verify · apply" },
 };
 
+/**
+ * `PROJECT_NAME_MAX_LENGTH`, as a LITERAL — the same 100 that
+ * `lib/validations/project-form.schema.ts` states and that `updateProjectName` enforces.
+ *
+ * It is not imported, and the reason is mechanical: that constant lives in a module whose top
+ * level calls `createInsertSchema(projects)`, so a VALUE import of it drags drizzle-zod and the
+ * whole DB schema into this client bundle. What that argues for is a leaf module both sides read
+ * — not for dropping the rule, which is what happened: this screen applied two of the schema's
+ * three `project_name` rules, and the missing one is enforced NOWHERE on the create path
+ * (`createProject` never parses its input and `projects.project_name` is unbounded `text()`).
+ * A 500-character name was creatable, and then un-saveable under its own name, because
+ * `updateProjectName` refuses over 100 — the create/rename asymmetry the schema comment above
+ * those lines records as deliberately closed, re-opened in the other direction with no bound.
+ *
+ * The leaf-module extraction is the real fix and it touches `lib/validations/`, outside this
+ * unit's scope. Until then this is a copy, and it is a copy of a value the schema's own unit test
+ * pins (`tests/validations/project-form.schema.test.ts` asserts exactly this bound).
+ */
+const PROJECT_NAME_MAX = 100;
+
 /** Narrow a verified identity's provider string to a slug (defaults to aws). */
 function toProvider(p: string): CloudProviderSlug {
 	return p === "gcp" || p === "azure" || p === "alibaba" || p === "hetzner"
@@ -166,20 +186,29 @@ export function ConfigureProject({
 
 	/** Create the project (DRAFT) from the chosen source + settings, then open its canvas. */
 	const onCreate = async () => {
-		// The two rules `lib/validations/project-form.schema.ts` states for `project_name`, in the
-		// wording that schema states them in — `.min(1, "Project name is required")` and
+		// ALL THREE rules `lib/validations/project-form.schema.ts` states for `project_name`, in the
+		// wording that schema (or, for the bound, `updateProjectName`) states them in —
+		// `.min(1, "Project name is required")`, `.max(PROJECT_NAME_MAX_LENGTH)` and
 		// `.refine(canSlugify, "Enter at least one letter or number")`.
 		//
 		// This screen is the console's ONLY create path since `~/new` was rebuilt, and it applied
-		// NEITHER. "Name your project." covered the first case in different words; the second was
-		// unchecked, so `!!! @@@ ###` created a project whose slug came from `slugify`'s FALLBACK —
-		// `/{org}/project` — with the user's symbols kept as the display name they then have to
-		// address from the CLI. `canSlugify` is the same predicate the schema's refinement calls, so
-		// the two cannot drift; the constant `PROJECT_NAME_MAX_LENGTH` is deliberately NOT read from
-		// the schema module here, because it is a value import and would pull drizzle-zod and the
-		// whole DB schema into this client bundle.
+		// NONE of them. "Name your project." covered the first case in different words; the second
+		// was unchecked, so `!!! @@@ ###` created a project whose slug came from `slugify`'s
+		// FALLBACK — `/{org}/project` — with the user's symbols kept as the display name they then
+		// have to address from the CLI. `canSlugify` is the same predicate the schema's refinement
+		// calls, so that one cannot drift; the other two messages are hand-copied literals and can,
+		// which is why each names the rule it mirrors.
+		//
+		// The bound's wording is `updateProjectName`'s, not the schema's: the schema passes no
+		// message to `.max()`, so its text is zod's default ("String must contain at most 100
+		// character(s)"), and the console already tells a user this in one sentence on the rename
+		// path. One sentence for one rule, on both paths.
 		if (!name.trim()) {
 			toast.error("Project name is required");
+			return;
+		}
+		if (name.length > PROJECT_NAME_MAX) {
+			toast.error(`Project name must be ${PROJECT_NAME_MAX} characters or fewer`);
 			return;
 		}
 		if (!canSlugify(name)) {

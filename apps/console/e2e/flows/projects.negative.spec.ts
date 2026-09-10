@@ -17,6 +17,8 @@
 
 import { randomUUID } from "node:crypto";
 
+import { type Page } from "@playwright/test";
+
 import { test, expect } from "../fixtures/qa";
 import { db } from "../helpers/db";
 import { seedProject, type Owner } from "../helpers/seed";
@@ -24,6 +26,28 @@ import { seedProject, type Owner } from "../helpers/seed";
 /** The persona's Owner id tuple for seeding. */
 function ownerId(s: { userId?: string; orgId?: string }): Owner {
 	return { userId: s.userId!, orgId: s.orgId! };
+}
+
+/**
+ * THAT THE USER IS TOLD — which is a different question from WHAT they are told, and the only
+ * half of it this leg can ask.
+ *
+ * Every refusal below reaches the user through `toast.error(...)` on a message thrown by a
+ * `"use server"` action, and the `qa` leg is a PRODUCTION build (`next build` + `next start`),
+ * where Next redacts a thrown Error's message and substitutes a digest. So the sentence the
+ * action wrote is genuinely unmatchable here — but "an error toast appeared" is not, and it is
+ * exactly what separates a working refusal from a SILENT one: a regression that closed the dialog
+ * and said nothing would otherwise pass every remaining assertion in these tests, because
+ * "stayed put, row count unchanged" is true of a silent failure too.
+ *
+ * `[data-sonner-toast]` is sonner's own attribute on each toast `<li>` and `data-type` carries the
+ * variant, so this asserts the ERROR toast specifically. It is asserted BEFORE the long waits
+ * below: sonner dismisses a toast after ~4s.
+ */
+async function expectErrorToast(page: Page): Promise<void> {
+	await expect(
+		page.locator('[data-sonner-toast][data-type="error"]'),
+	).toBeVisible({ timeout: 15_000 });
 }
 
 /** How many projects the org holds under exactly this display name (case-insensitively). */
@@ -143,6 +167,13 @@ test.describe("Projects — duplicate name behavior", () => {
 	// configure-project.tsx surfaces the failure as `toast.error(err.message)`, but a Next server
 	// action can redact a thrown Error's message in a production build, so the wording is not a
 	// safe thing for an e2e run to key on. Staying put is the refusal, however it is worded.
+	//
+	// It is NOT, however, the same as being told — see `expectErrorToast` above. Dropping the
+	// message assertion made a silent refusal indistinguishable from a correct one, so the
+	// existence of the error toast is asserted even though its sentence is out of reach.
+	// The sentence itself needs a structured `{ ok: false, reason }` out of these actions — a
+	// cross-cutting change to the server-action boundary, which does not belong in a test PR and
+	// is being filed alongside the two findings this PR already records.
 	test("a duplicate display name is refused, and no second project is created", async ({
 		owner,
 	}) => {
@@ -153,6 +184,8 @@ test.describe("Projects — duplicate name behavior", () => {
 		await expect(field).toBeVisible({ timeout: 45_000 });
 		await field.fill(name);
 		await owner.page.getByRole("button", { name: /create project/i }).click();
+		// Before the wait below: the toast is gone in ~4s.
+		await expectErrorToast(owner.page);
 
 		// It must NOT navigate to a project. Given a generous window: passing this by being slow
 		// would be indistinguishable from passing by being correct, so the wait is long enough
@@ -178,6 +211,7 @@ test.describe("Projects — duplicate name behavior", () => {
 		await expect(field).toBeVisible({ timeout: 45_000 });
 		await field.fill(name.toUpperCase());
 		await owner.page.getByRole("button", { name: /create project/i }).click();
+		await expectErrorToast(owner.page);
 		await owner.page.waitForTimeout(5_000);
 		await expect(owner.page).toHaveURL(/\/~\/new/);
 		expect(await projectCount(owner.orgId!, name)).toBe(1);
@@ -200,6 +234,11 @@ test.describe("Projects — delete guard on a live environment", () => {
 	// the page still on `settings/general`, and the project profile still rendering the project. So
 	// the two things that distinguish a refusal from a delete are asserted directly — the row
 	// survives, and the success path's `router.push(/{org})` never fired.
+	//
+	// Plus the third thing, which those two cannot see: that the user was TOLD. "Dialog closed,
+	// still on the page, project still there" is equally true of a refusal that says nothing at
+	// all, so without `expectErrorToast` a regression to a silent failure reads as correct
+	// behaviour. See that helper for why only the toast's EXISTENCE is in reach on this leg.
 	test("delete is refused while an environment is ACTIVE", async ({ owner }) => {
 		const name = `e2e-live-${Date.now()}`;
 		const project = await seedProject(ownerId(owner), {
@@ -211,6 +250,8 @@ test.describe("Projects — delete guard on a live environment", () => {
 		const dialog = owner.page.getByRole("alertdialog");
 		await expect(dialog.getByText(/delete this project\?/i)).toBeVisible();
 		await dialog.getByRole("button", { name: /delete project/i }).click();
+		// Before the wait below: the toast is gone in ~4s.
+		await expectErrorToast(owner.page);
 		// Long enough that a delete which SUCCEEDED would certainly have navigated by now: passing
 		// this by being slow must not be confusable with passing by being refused.
 		await owner.page.waitForTimeout(8_000);

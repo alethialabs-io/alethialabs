@@ -33,6 +33,7 @@
 
 import { test, expect } from "../fixtures/qa";
 import { scanA11y } from "../helpers/a11y";
+import { db } from "../helpers/db";
 import {
 	seedCloudIdentity,
 	seedProject,
@@ -46,10 +47,28 @@ function ownerId(s: { userId?: string; orgId?: string }): Owner {
 }
 
 /**
- * The connector NAME the cloud picker renders, which is the catalog's display name and not the
- * slug — the tiles read "Amazon Web Services", never "aws". `seedCloudIdentity` takes the slug.
+ * The connector NAMES the cloud picker renders, which are the catalog's display names and not the
+ * slugs — the tiles read "Amazon Web Services" and "Google Cloud", never "aws" / "gcp".
+ * `seedCloudIdentity` takes the slug. Both come from `lib/db/seed/connectors.generated.sql`.
  */
 const AWS_CONNECTOR = "Amazon Web Services";
+const GCP_CONNECTOR = "Google Cloud";
+
+/**
+ * The cloud identity a project was created against, by display name. The pick's OUTCOME: the
+ * screen's selection is only meaningful if it reaches the row.
+ */
+async function projectCloudIdentity(
+	orgId: string,
+	name: string,
+): Promise<string | null> {
+	const rows = await db()<{ cloud_identity_id: string | null }[]>`
+		select cloud_identity_id from projects
+		where org_id = ${orgId} and lower(project_name) = lower(${name})
+		limit 1
+	`;
+	return rows[0]?.cloud_identity_id ?? null;
+}
 
 test.describe("Projects — the create front door (/~/new)", () => {
 	test("opens on the composer and both on-ramps, with none of the retired manual form", async ({
@@ -214,12 +233,25 @@ test.describe("Projects — the template path", () => {
 		await expect(
 			owner.page.getByRole("heading", { name: "Configure your project" }),
 		).toBeVisible({ timeout: 45_000 });
+		// THE ASSERTIONS ARE THE TEMPLATE PATH'S OWN, and this is a correction: the pair of them
+		// used to be "Standard template" plus the "Cloud & region" heading, described as "the step
+		// the template path adds over the blank one". It is not a step it adds — `configure-project`
+		// renders `<Section n="02" title="Cloud & region">` UNCONDITIONALLY, for blank, byo-helm,
+		// byo-iac and import alike; only `requiresCloud` differs between the paths, and it gates the
+		// Notice and the Create button's label, not that heading. Swapping `?scratch=template` for
+		// `?scratch=blank` on the click above left the test green, so it could not tell the
+		// hand-off it names from the one the sibling test covers.
+		//
+		// `SCRATCH_META` is what actually differs, and the left rail renders it: the blank test
+		// keys on "an empty canvas", so this one keys on the template's label AND one-liner and
+		// asserts the blank marker ABSENT. The cloud REQUIREMENT is the other real difference, but
+		// its only visible forms — the "Connect a cloud account…" notice and the disabled "Connect
+		// a cloud to continue" button — appear only on an org with no connected cloud, and this
+		// file's persona org is shared with sibling QA workers that seed cloud identities into it
+		// and never clean up. It is not a precondition this spec can establish.
 		await expect(owner.page.getByText("Standard template")).toBeVisible();
-		// The step the template path adds over the blank one: it is placed on a cloud, because its
-		// cluster preset is per-provider.
-		await expect(
-			owner.page.getByRole("heading", { name: "Cloud & region" }),
-		).toBeVisible();
+		await expect(owner.page.getByText("start from a template")).toBeVisible();
+		await expect(owner.page.getByText("an empty canvas")).toHaveCount(0);
 	});
 
 	test("each cloud tile is a named group, and a seeded account reads Connected", async ({
@@ -241,15 +273,35 @@ test.describe("Projects — the template path", () => {
 	test("a template create on a connected cloud opens the new project's canvas", async ({
 		owner,
 	}) => {
-		// A verified AWS identity makes the AWS tile connected and therefore selectable; Configure
-		// pre-selects the first connected cloud, and clicking the tile is what pins it here.
-		await seedCloudIdentity(ownerId(owner), { provider: "aws" });
+		// TWO CLOUDS, AND THE PICK IS MEASURED — this test used to seed one AWS identity, click the
+		// AWS tile and assert the Create button was enabled. `deriveInitial()` pre-selects the FIRST
+		// connected cloud identity, so `identityId` was already non-null on first render: the button
+		// was enabled and the create succeeded whatever the click did. Regressing `CloudPicker`'s
+		// `onSelect` to a no-op, or dropping `ConnectorCard`'s `onClick={isPick ? onSelect : …}`,
+		// left it green. Nothing measured the pick path at all.
+		//
+		// So: seed AWS *and* GCP, click each tile in turn, and assert the REGION follows — `onCloud`
+		// sets `DEFAULT_REGION[provider]`, so the region row reads eu-west-1 after the AWS tile and
+		// europe-west1 after the GCP one. Whichever of the two the form pre-selected, one of those
+		// two assertions is a real state change, and a click that does nothing fails it. The create
+		// then lands on GCP, and the created ROW is checked: `cloud_identity_id` must be the GCP
+		// identity, not the AWS one the form opened on.
+		const aws = await seedCloudIdentity(ownerId(owner), { provider: "aws" });
+		const gcp = await seedCloudIdentity(ownerId(owner), { provider: "gcp" });
 		await owner.page.goto(`/${owner.orgSlug}/~/new?scratch=template`);
 		const uniq = `e2e-template-${Date.now()}`;
 		const name = owner.page.getByLabel(/project name/i);
 		await expect(name).toBeVisible({ timeout: 45_000 });
 		await name.fill(uniq);
-		await owner.page.getByRole("group", { name: AWS_CONNECTOR }).click();
+
+		await owner.page
+			.getByRole("group", { name: AWS_CONNECTOR })
+			.click({ timeout: 30_000 });
+		await expect(owner.page.getByText("eu-west-1")).toBeVisible({ timeout: 15_000 });
+		await owner.page.getByRole("group", { name: GCP_CONNECTOR }).click();
+		await expect(owner.page.getByText("europe-west1")).toBeVisible({ timeout: 15_000 });
+		await expect(owner.page.getByText("eu-west-1")).toHaveCount(0);
+
 		const create = owner.page.getByRole("button", { name: /create project/i });
 		await expect(create).toBeEnabled();
 		await create.click();
@@ -258,6 +310,10 @@ test.describe("Projects — the template path", () => {
 			{ timeout: 60_000 },
 		);
 		await expect(owner.page).not.toHaveURL(/\/~\/new/);
+		// The outcome the pick is FOR. A create that quietly kept the pre-selected identity would
+		// pass every assertion above the fold and put the project on the wrong cloud.
+		expect(await projectCloudIdentity(owner.orgId!, uniq)).toBe(gcp.id);
+		expect(await projectCloudIdentity(owner.orgId!, uniq)).not.toBe(aws.id);
 	});
 });
 
