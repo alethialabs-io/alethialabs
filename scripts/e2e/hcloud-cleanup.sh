@@ -89,6 +89,16 @@ DELETE_RETRIES="${DELETE_RETRIES:-5}"   # per-resource delete attempts (exponent
 # Bounded like the other four sweepers (#2257): an unbounded best-effort sweep can consume its
 # caller's job budget, which is how run 31459117502 was cancelled at its cap and leaked a stack.
 PREFLIGHT="${PREFLIGHT:-0}"
+# ── VERIFY_ONLY (#4398) — ask the cloud, change nothing. The same scope-locked verification the
+# normal path ends with, with every purge skipped: the only cloud calls it makes are the listings
+# verify_swept already makes. Refused alongside DRY_RUN/PREFLIGHT because both exit 0 WITHOUT
+# verifying, and this script's exit status is read as a cloud verdict by
+# `sweep-probe.sh --record-verdict`. The reasoning in full is in aws-cleanup.sh.
+VERIFY_ONLY="${VERIFY_ONLY:-0}"
+if [ "$VERIFY_ONLY" = "1" ] && { [ "$DRY_RUN" = "1" ] || [ "$PREFLIGHT" = "1" ]; }; then
+	echo "::error::VERIFY_ONLY=1 with DRY_RUN=1 or PREFLIGHT=1 — both exit 0 WITHOUT verifying, and this exit status is read as a cloud verdict. Refusing." >&2
+	exit 2
+fi
 # ── CAPTURE MODE (#3481). Writes THIS run's Load Balancer ids to a file while the private network
 # still exists, so the teardown sweep has a run-scoped binding afterwards.
 #
@@ -203,6 +213,7 @@ S3_ENDPOINT="${HETZNER_S3_ENDPOINT:-${S3_REGION}.your-objectstorage.com}"
 # `exit 0`. (The dispatch itself stays below, where capture_run_lbs and the helpers it calls are
 # actually defined.)
 [ -n "$CAPTURE_LBS" ] || [ "$SELF_TEST" = "1" ] || echo "→ hcloud belt-and-suspenders cleanup for label ${SELECTOR}"
+[ "$VERIFY_ONLY" = "1" ] && echo "  (VERIFY_ONLY=1 — re-listing the cloud, sweeping nothing, deleting nothing)"
 [ -z "$CAPTURE_LBS" ] && [ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 
 # ── Does this hcloud CLI know about DNS zones? `hcloud zone` is recent (the template gained
@@ -1509,19 +1520,28 @@ if [ "$SELF_TEST" = "1" ]; then
 	exit 0
 fi
 
-purge server "servers"
-purge load-balancer "load balancers"
-sweep_unlabelled_lbs
-wait_for_volumes_detached
-purge volume "volumes"
-purge firewall "firewalls"
-purge network "networks"
-purge primary-ip "primary IPs"
-purge image "images (talos snapshots)"
-report_image_cache
-[ "$ZONE_SUPPORTED" = "1" ] && purge zone "dns zones"
-sweep_object_storage
-report_imager_helpers
+# VERIFY_ONLY (#4398) skips every purge and drops straight to the verification below. The two
+# REPORTERS stay: neither deletes anything — report_imager_helpers is the file's canonical
+# "report, never delete" case — and dropping them would strip the UNATTRIBUTABLE finding out of
+# the receipt, which is the one state that must never be silently absent.
+if [ "$VERIFY_ONLY" != "1" ]; then
+	purge server "servers"
+	purge load-balancer "load balancers"
+	sweep_unlabelled_lbs
+	wait_for_volumes_detached
+	purge volume "volumes"
+	purge firewall "firewalls"
+	purge network "networks"
+	purge primary-ip "primary IPs"
+	purge image "images (talos snapshots)"
+	report_image_cache
+	[ "$ZONE_SUPPORTED" = "1" ] && purge zone "dns zones"
+	sweep_object_storage
+	report_imager_helpers
+else
+	report_image_cache
+	report_imager_helpers
+fi
 
 
 if [ "$DRY_RUN" = "1" ]; then

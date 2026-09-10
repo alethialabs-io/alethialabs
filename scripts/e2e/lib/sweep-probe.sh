@@ -92,6 +92,22 @@ PROBE_ERR_DIR="${PROBE_ERR_DIR:-}"
 # regression this file now tests for in both directions.
 PROBE_UNATTRIB_LEDGER="${PROBE_UNATTRIB_LEDGER:-}"
 
+# ── THE ATTESTATION AND THE RECEIPT (#4398). Both empty by default, so every existing caller —
+#    the always() teardown, the out-of-band reaper's PREFLIGHT, a hand-run sweep — behaves exactly
+#    as it did. They exist so a SEPARATE PROCESS can read what this one measured. ──
+#
+# PROBE_ATTEST_FILE is the POSITIVE marker that the cloud was asked and answered nothing. Same
+# argument as probe_report_discovery's, applied to the exit code rather than to the log: a sweeper
+# that exits 0 having never reached its verification is byte-identical, to its PARENT, to one that
+# verified a genuinely empty account. `0` is what a DRY_RUN prints "nothing deleted, nothing
+# verified" and exits with; it is also what a script exits with if someone adds an early return
+# above finalize_verification. Only probe_gate writes this line, and only on the path where every
+# probe answered, so its presence is a claim no absence can fake.
+PROBE_ATTEST_FILE="${PROBE_ATTEST_FILE:-}"
+# PROBE_VERDICT_FILE is where --record-verdict writes the JSON receipt. Written by the PARENT of a
+# sweeper run, never by the sweeper itself — see the `--record-verdict` block at the bottom.
+PROBE_VERDICT_FILE="${PROBE_VERDICT_FILE:-}"
+
 # probe_reset — begin (or restart) the verification ledgers. Idempotent.
 #
 # Called once at startup. It is deliberately NOT called again before verify_swept: a discovery call
@@ -103,9 +119,19 @@ probe_reset() {
 		PROBE_ERR_DIR="$(mktemp -d "${TMPDIR:-/tmp}/alethia-sweep-probe.XXXXXX")"
 		PROBE_LEDGER="${PROBE_ERR_DIR}/ledger"
 	fi
+	# The scratch dir probe_run writes each attempt's stderr into. It must be set even when
+	# PROBE_LEDGER arrived from the ENVIRONMENT — which is how the post-teardown verification hands
+	# a sweeper somewhere durable to write (#4398). Left empty, probe_run's `errf` resolves to
+	# `/err.<pid>`, the redirect fails, and EVERY probe records itself UNVERIFIABLE for a reason that
+	# has nothing to do with the cloud: a verification that can only ever say "I could not look".
+	[ -n "$PROBE_ERR_DIR" ] || PROBE_ERR_DIR="$(dirname "$PROBE_LEDGER")"
 	[ -n "$PROBE_UNATTRIB_LEDGER" ] || PROBE_UNATTRIB_LEDGER="${PROBE_LEDGER}.unattributable"
 	: >"$PROBE_LEDGER"
 	: >"$PROBE_UNATTRIB_LEDGER"
+	# A stale attestation is worse than none: it is a positive claim about a cloud this process has
+	# not looked at yet. Truncated with the ledgers, at the one point that starts a run.
+	[ -n "$PROBE_ATTEST_FILE" ] && : >"$PROBE_ATTEST_FILE" 2>/dev/null
+	return 0
 }
 
 # probe_note_unverifiable <type> <reason> — record that <type> could NOT be looked at.
@@ -341,7 +367,13 @@ probe_confirm_re() {
 probe_gate() {
 	local cloud="$1" scope="$2"
 	probe_report_unattributable "$cloud" "$scope"
-	probe_has_unverifiable || return 0
+	if ! probe_has_unverifiable; then
+		# The one place that may attest. Reached only when verify_swept already returned clean
+		# (finalize_verification calls it first and returns 1 without ever getting here on a leak)
+		# AND every probe answered. That conjunction is exactly "CLEAN" in this file's taxonomy.
+		probe_attest "$cloud" "$scope"
+		return 0
+	fi
 	echo "  ✗ verification INCOMPLETE — these probes could not answer:" >&2
 	probe_unverifiable_detail >&2
 	echo "::error::${cloud} cleanup UNVERIFIED for ${scope} — $(probe_unverifiable_types)could not be checked, so nothing here proves the account is empty. A failed probe and an empty account look identical; treat this as a possible leak and confirm by hand." >&2
@@ -393,6 +425,131 @@ probe_report_discovery() {
 	probe_warn_unverifiable "$1" "$2"
 	printf '✓ preflight discovery reported for %s: %s\n' "$1" "$2"
 }
+
+# ── THE VERDICT RECEIPT (#4398) — carrying a CLOUD MEASUREMENT out of the job that took it. ──────
+#
+# scripts/e2e/nightly-rollup.sh's teardown_outcome() asked the GitHub Actions jobs API whether the
+# `Guaranteed teardown` STEP reported a conclusion, and mapped every non-empty conclusion to `done`.
+# That is not a measurement of the cloud, and it cannot become one: a step conclusion is a boolean
+# with a fourth state (missing), and this file's whole thesis is that
+#
+#     CLEAN (we asked, nothing is there)  and  UNVERIFIABLE (we could not ask)
+#
+# must never be the same value. Collapsed into `success`/`failure` they are, in BOTH directions —
+# a sweeper that exits 4 because a credential expired reads `failure`, exactly like a leak, and the
+# rollup called both of them `done`, i.e. "swept".
+#
+# So the verdict travels as DATA. The exit status of a sweeper's `finalize_verification` is already
+# three-valued and already tested (0 clean · 1 leak · 4 unverifiable); the receipt is that status
+# plus the two ledgers plus the attestation, written as JSON that another job can download and read.
+#
+# ⚠️ THE DEFAULT DIRECTION IS UNVERIFIABLE, AND THAT IS THE WHOLE DESIGN. Only the literal exit 0
+# WITH an attestation is CLEAN. A timeout (124), a kill (137/143), a scope refusal (2), a missing
+# interpreter (126/127), an exit 0 from some path that never verified — every one of them is
+# "nothing here proves the account is empty", which is UNVERIFIABLE, never clean. An error reported
+# as absence is precisely how this repo has been bitten before.
+
+# probe_attest <cloud> <scope> — record the positive marker. No-op when PROBE_ATTEST_FILE is unset,
+# which is every caller that does not want a receipt. Never fails the caller: an unwritable path
+# yields no marker, which resolves to UNVERIFIABLE — the safe direction.
+probe_attest() {
+	[ -n "$PROBE_ATTEST_FILE" ] || return 0
+	printf 'CLEAN\t%s\t%s\t%s\n' "$1" "$2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		>>"$PROBE_ATTEST_FILE" 2>/dev/null || true
+	return 0
+}
+
+# probe_has_attestation — did the sweep this receipt is about reach probe_gate's clean path?
+probe_has_attestation() {
+	[ -n "$PROBE_ATTEST_FILE" ] && [ -s "$PROBE_ATTEST_FILE" ]
+}
+
+# probe_verdict_from_rc <rc> — the sweeper's exit status as one of the three reportable states.
+#
+# Echoes `<verdict>\t<reason>`. Separated from probe_write_verdict so the mapping — the part a
+# mutation must be able to red — is testable on its own, with no filesystem and no jq.
+probe_verdict_from_rc() {
+	case "${1:-}" in
+	0)
+		if probe_has_attestation; then
+			printf 'CLEAN\tthe cloud was re-listed after the sweep and listed nothing for this run\n'
+		else
+			# Exit 0 is the ONE status a caller is tempted to read as "fine". It is not, on its own:
+			# every early return in these sweepers (DRY_RUN, PREFLIGHT with nothing to do, a guard
+			# that decided there was nothing to do) also exits 0 without ever asking the cloud.
+			printf 'UNVERIFIABLE\tthe sweeper exited 0 WITHOUT reaching its verification (no attestation) — an early return, not an empty account\n'
+		fi
+		;;
+	1) printf 'RESIDUAL\tthe cloud was re-listed after the sweep and STILL LISTS billable resources for this run\n' ;;
+	4) printf 'UNVERIFIABLE\tat least one probe did not answer, so nothing here proves the account is empty\n' ;;
+	124 | 125) printf 'UNVERIFIABLE\tthe verification pass hit its wall-clock budget and was cut off — it did not finish asking\n' ;;
+	130 | 137 | 143) printf 'UNVERIFIABLE\tthe verification pass was KILLED (exit %s) before it could answer\n' "$1" ;;
+	*) printf 'UNVERIFIABLE\tthe sweeper exited %s, which is not a verification verdict — it did not get to ask\n' "${1:-<none>}" ;;
+	esac
+}
+
+# probe_write_verdict <cloud> <run-tag> <scope> <rc> — render the receipt to $PROBE_VERDICT_FILE.
+#
+# `run_tag` is carried IN THE PAYLOAD and not in the path, for the reason nightly-rollup.sh's header
+# gives at length (#1613): the rollup keys on what a bundle SAYS it is, never on where the artifact
+# downloader happened to put it.
+probe_write_verdict() {
+	local cloud="$1" run_tag="$2" scope="$3" rc="$4" verdict reason pair rc_json
+	[ -n "$PROBE_VERDICT_FILE" ] || {
+		echo "probe_write_verdict: PROBE_VERDICT_FILE is unset — refusing to write a receipt nowhere" >&2
+		return 2
+	}
+	pair="$(probe_verdict_from_rc "$rc")"
+	# `cut` with its default TAB delimiter, not a literal tab inside a parameter expansion: an editor
+	# that retabs this file would silently turn that into a no-op split, and a silently wrong split
+	# is the class of defect this whole file exists to remove.
+	verdict="$(printf '%s' "$pair" | cut -f1)"
+	reason="$(printf '%s' "$pair" | cut -f2-)"
+	# A non-numeric status cannot enter the JSON as a number. `null` is honest — the verdict above
+	# has already read it as "not a verification verdict" — and it keeps jq from failing the receipt.
+	case "$rc" in
+	'' | *[!0-9]*) rc_json=null ;;
+	*) rc_json="$rc" ;;
+	esac
+	mkdir -p "$(dirname "$PROBE_VERDICT_FILE")" 2>/dev/null || true
+	jq -n \
+		--arg cloud "$cloud" --arg run_tag "$run_tag" --arg scope "$scope" \
+		--arg verdict "$verdict" --arg reason "$reason" \
+		--argjson exit_code "$rc_json" \
+		--arg unver "$(probe_unverifiable_types)" --arg unattr "$(probe_unattributable_types)" \
+		--arg detail "$(probe_unverifiable_detail | sed -E 's/^ *· //')" \
+		--arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		'{schema: "alethia.e2e.teardown-verify/1",
+		  provider: $cloud, run_tag: $run_tag, scope: $scope,
+		  verdict: $verdict, reason: $reason, exit_code: $exit_code,
+		  unverifiable: ($unver | split(" ") | map(select(length > 0))),
+		  unattributable: ($unattr | split(" ") | map(select(length > 0))),
+		  unverifiable_detail: ($detail | split("\n") | map(select(length > 0))),
+		  measured_at: $at}' >"$PROBE_VERDICT_FILE" || return 1
+	printf '✓ teardown verification receipt for %s: %s (exit %s) → %s\n' \
+		"$cloud" "$verdict" "$rc" "$PROBE_VERDICT_FILE"
+}
+
+# ── `--record-verdict` — the PARENT-side entry point (#4398). ───────────────────────────────────
+#
+#   PROBE_LEDGER=… PROBE_UNATTRIB_LEDGER=… PROBE_ATTEST_FILE=… PROBE_VERDICT_FILE=… \
+#     bash scripts/e2e/lib/sweep-probe.sh --record-verdict <cloud> <run-tag> <scope> <exit-code>
+#
+# It runs in the process that INVOKED a sweeper, after that sweeper exited, and reads the three
+# files the sweeper wrote through the env paths the parent handed it. That indirection is the whole
+# reason the ledgers were files in the first place (see the header): a sweeper's shell variables die
+# with it, and every one of its probes runs in a subshell anyway.
+#
+# It deliberately does NOT call probe_reset — that truncates the very evidence it is here to read.
+if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--record-verdict" ]; then
+	set -uo pipefail
+	if [ "$#" -ne 5 ]; then
+		echo "usage: sweep-probe.sh --record-verdict <cloud> <run-tag> <scope> <exit-code>" >&2
+		exit 2
+	fi
+	probe_write_verdict "$2" "$3" "$4" "$5"
+	exit "$?"
+fi
 
 # ── Self-test. Runs only when this file is EXECUTED, never when it is sourced. ──
 if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
@@ -639,6 +796,126 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
 	*) bad "…and the unverifiable warning travels with it" "got '${st_out}'" ;;
 	esac
 	if [ "$st_rc" -eq 0 ]; then ok "reporting discovery never gates — preflight does not block its caller"; else bad "reporting discovery never gates" "got rc=${st_rc}"; fi
+
+	# ── THE VERDICT RECEIPT (#4398). ────────────────────────────────────────────────────────────
+	#
+	# The property under test is one sentence: an exit status that is not a verification verdict
+	# must never render as CLEAN. Every case below is a way of NOT having asked the cloud, and every
+	# one of them has to come out UNVERIFIABLE — because the consumer of this receipt is a rollup
+	# that will otherwise publish "nothing is standing" about an account nobody looked at.
+	PROBE_ATTEST_FILE="${PROBE_ERR_DIR}/attest"
+	PROBE_VERDICT_FILE="${PROBE_ERR_DIR}/verdict.json"
+
+	st_verdict() { printf '%s' "$(probe_verdict_from_rc "$1")" | cut -f1; }
+	st_case() { # <name> <rc> <expected verdict>
+		local got
+		got="$(st_verdict "$2")"
+		if [ "$got" = "$3" ]; then ok "$1"; else bad "$1" "expected $3, got ${got}"; fi
+	}
+
+	# An exit 0 with NO attestation. This is the DRY_RUN shape — "nothing deleted, nothing verified",
+	# exit 0 — and every other early return above finalize_verification. It is the single most
+	# dangerous input this function takes, because 0 is what a caller reads as "fine".
+	probe_reset
+	st_case "exit 0 with NO attestation is UNVERIFIABLE, never CLEAN" 0 UNVERIFIABLE
+
+	# …and with one, from the ONLY thing allowed to write it.
+	probe_reset
+	probe_gate aws "run e2e-1-1" >/dev/null 2>&1
+	if probe_has_attestation; then ok "probe_gate's clean path writes the attestation"; else bad "probe_gate's clean path writes the attestation" "no marker in $PROBE_ATTEST_FILE"; fi
+	st_case "exit 0 WITH an attestation is CLEAN" 0 CLEAN
+
+	# The gating state must also withhold the attestation — otherwise a run with a dead credential
+	# could exit 0 from somewhere and still read clean. Both halves, or neither means anything.
+	probe_reset
+	probe_note_unverifiable ec2-instance "exit 255 — ExpiredToken"
+	probe_gate aws "run e2e-1-1" >/dev/null 2>&1 || true
+	if probe_has_attestation; then bad "an unverifiable probe withholds the attestation" "probe_gate attested over a failed probe"; else ok "an unverifiable probe withholds the attestation"; fi
+	st_case "…so its exit 4 is UNVERIFIABLE" 4 UNVERIFIABLE
+
+	# A stale marker is a positive claim about a cloud this process has not looked at.
+	probe_reset
+	probe_gate aws "run e2e-1-1" >/dev/null 2>&1
+	probe_reset
+	if probe_has_attestation; then bad "probe_reset clears a stale attestation" "the previous run's marker survived"; else ok "probe_reset clears a stale attestation"; fi
+
+	# The leak. RESIDUAL is its own word: it is not "we could not look", and it is not clean.
+	probe_reset
+	probe_gate aws "run e2e-1-1" >/dev/null 2>&1
+	st_case "exit 1 is RESIDUAL — the API answered and something is still standing" 1 RESIDUAL
+	# ⚠️ and it must NOT be reachable from the attestation. A leak returns before probe_gate.
+	st_case "a timeout (124) is UNVERIFIABLE even with an attestation present" 124 UNVERIFIABLE
+	st_case "a kill (137) is UNVERIFIABLE" 137 UNVERIFIABLE
+	st_case "a scope refusal (2) is UNVERIFIABLE" 2 UNVERIFIABLE
+	st_case "a missing interpreter (127) is UNVERIFIABLE" 127 UNVERIFIABLE
+
+	# The rendered receipt. The consumer is nightly-rollup.sh in another JOB, so what is asserted is
+	# the PAYLOAD, not a log line: provider and run_tag are what it keys on (never the path, #1613),
+	# and the ledger has to survive into the receipt or the detail is lost at the job boundary.
+	probe_reset
+	probe_note_unverifiable ec2-instance "exit 255 — ExpiredToken"
+	probe_note_unattributable imager-upload-helpers "unlabelled, cannot attribute"
+	probe_write_verdict aws "nightly-777-1" "run 777-1" 4 >/dev/null 2>&1
+	st_out="$(jq -r '[.provider, .run_tag, .verdict, (.exit_code|tostring), (.unverifiable|join(",")), (.unattributable|join(","))] | join("|")' "$PROBE_VERDICT_FILE" 2>/dev/null || echo BROKEN)"
+	if [ "$st_out" = "aws|nightly-777-1|UNVERIFIABLE|4|ec2-instance|imager-upload-helpers" ]; then
+		ok "the receipt carries provider, run_tag, verdict, exit code and BOTH ledgers"
+	else
+		bad "the receipt carries provider, run_tag, verdict, exit code and BOTH ledgers" "got '${st_out}'"
+	fi
+	case "$(jq -r '.unverifiable_detail | join(" ")' "$PROBE_VERDICT_FILE" 2>/dev/null)" in
+	*ExpiredToken*) ok "…and the REASON, so the next reader does not have to open the run's logs" ;;
+	*) bad "…and the REASON" "got '$(jq -r '.unverifiable_detail|join(" ")' "$PROBE_VERDICT_FILE" 2>/dev/null)'" ;;
+	esac
+
+	# THE DISTINCTION, end to end, from two runs that differ in NOTHING a log could show: same
+	# empty resource list, same silence, different verdict.
+	probe_reset
+	probe_gate aws "run e2e-1-1" >/dev/null 2>&1
+	probe_write_verdict aws "nightly-777-1" "run 777-1" 0 >/dev/null 2>&1
+	st_out="$(jq -r .verdict "$PROBE_VERDICT_FILE" 2>/dev/null)"
+	probe_reset
+	probe_note_unverifiable orphan-scan "exit 255 — ExpiredToken"
+	probe_gate aws "run e2e-1-1" >/dev/null 2>&1 || true
+	probe_write_verdict aws "nightly-777-1" "run 777-1" 4 >/dev/null 2>&1
+	st_out2="$(jq -r .verdict "$PROBE_VERDICT_FILE" 2>/dev/null)"
+	if [ "$st_out" = "CLEAN" ] && [ "$st_out2" = "UNVERIFIABLE" ]; then
+		ok "an empty account and an unaskable one produce DIFFERENT receipts"
+	else
+		bad "an empty account and an unaskable one produce DIFFERENT receipts" "got '${st_out}' and '${st_out2}'"
+	fi
+
+	# AN EXTERNALLY-SUPPLIED LEDGER PATH MUST STILL LEAVE THE PROBES ABLE TO RUN. The verification
+	# step hands these paths in through the environment so the receipt survives the sweeper's exit;
+	# before #4398 that left PROBE_ERR_DIR empty, probe_run's stderr redirect resolved to
+	# `/err.<pid>`, and every probe failed to execute at all — reporting UNVERIFIABLE about a cloud
+	# it never called. A probe that cannot run is the loudest possible false negative.
+	# Run in a FRESH bash, not a subshell: the condition under test is PROBE_ERR_DIR being genuinely
+	# absent from the environment, which is how the workflow invokes a sweeper. Unsetting it in a
+	# subshell of this script would also be a local modification shellcheck rightly complains about,
+	# and it would leave the assertion depending on this file's own state rather than on the env.
+	st_ext="$(mktemp -d "${TMPDIR:-/tmp}/alethia-probe-ext.XXXXXX")"
+	if PROBE_LEDGER="$st_ext/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/unattr" \
+		bash -c '
+			. "$1"
+			probe_reset
+			ext_stub() { printf "i-0abc\n"; }
+			out="$(probe_run widget ext_stub)" || exit 9
+			[ "$out" = "i-0abc" ] || exit 9
+			probe_has_unverifiable && exit 9
+			exit 0
+		' _ "${BASH_SOURCE[0]}" 2>/dev/null; then
+		ok "an env-supplied PROBE_LEDGER still leaves probes runnable (PROBE_ERR_DIR derived)"
+	else
+		bad "an env-supplied PROBE_LEDGER still leaves probes runnable" "probe_run could not execute, or recorded a false UNVERIFIABLE"
+	fi
+	rm -rf "$st_ext"
+
+	# A receipt with nowhere to go is refused rather than silently skipped: the caller asked for a
+	# measurement to be carried and it would not have been.
+	probe_reset
+	st_rc=0
+	PROBE_VERDICT_FILE="" probe_write_verdict aws "nightly-777-1" "run 777-1" 0 >/dev/null 2>&1 || st_rc=$?
+	if [ "$st_rc" -ne 0 ]; then ok "an unset PROBE_VERDICT_FILE is an error, not a quiet no-op"; else bad "an unset PROBE_VERDICT_FILE is an error" "returned 0"; fi
 
 	rm -rf "$PROBE_ERR_DIR"
 	if [ "$st_fails" -ne 0 ]; then

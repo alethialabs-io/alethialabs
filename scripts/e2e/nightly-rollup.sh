@@ -31,7 +31,9 @@
 #
 # Env:
 #   RUN_ID        (required) the workflow run id — scopes which bundles count as this run's.
-#   PROOFS_DIR    (default `proofs`) root of the downloaded artifacts. Layout-agnostic.
+#   PROOFS_DIR    (default `proofs`) root of the downloaded artifacts. Layout-agnostic. It also
+#                 holds the post-teardown verification receipts (`teardown-verify.json`, #4398),
+#                 downloaded from their own per-leg artifacts into the same tree.
 #   JOBS_JSON     path to the run's `actions/runs/<id>/jobs` payload. Absent/unreadable ⇒ the
 #                 existence cross-check degrades to summary-presence, LOUDLY (::warning::).
 #   OUT_DIR       (default `$RUNNER_TEMP` or a temp dir) where the rendered artifacts land.
@@ -45,6 +47,7 @@
 # Writes into OUT_DIR:
 #   summary.md              the step-summary block (table + coverage)
 #   state.env               REDS / SKIPS / JOB_NO_SUMMARY / DIED_EARLY / POST_CAPTURE / UNSWEPT /
+#                           RESIDUAL / TEARDOWN_UNVERIFIABLE / TEARDOWN_UNMEASURED /
 #                           ENABLED_N / SKIP_N / TOTAL / COV_TITLE / COV_LABEL / DIMENSION /
 #                           DIMENSION_LABEL
 #   failed-steps-<p>.txt    the failing step names for a POST_CAPTURE leg — written only for those
@@ -84,6 +87,50 @@ scan_summaries() {
 			'[$path, (.provider // ""), (.run_tag // ""), (.outcome // "unknown"), (.verdict // "")] | @tsv' \
 			"$f" 2>/dev/null || true
 	done
+}
+
+# ── The post-teardown CLOUD MEASUREMENT (#4398). ────────────────────────────────────────────────
+#
+# Written by `sweep-probe.sh --record-verdict` in the provision job, immediately after the
+# scope-locked `VERIFY_ONLY=1` re-list that runs below `Guaranteed teardown`, and uploaded as its
+# own artifact. Same contract as a proof bundle and for the same reason (#1613): keyed on what the
+# payload SAYS it is — `.provider` plus a `.run_tag` naming THIS run — never on where the artifact
+# downloader put it.
+TEARDOWN_VERIFY_FILE="${TEARDOWN_VERIFY_FILE:-teardown-verify.json}"
+
+# scan_teardown_verdicts: every receipt under $PROOFS_DIR as provider<TAB>run_tag<TAB>verdict.
+scan_teardown_verdicts() {
+	local dir="$1" f
+	[ -d "$dir" ] || return 0
+	find "$dir" -type f -name "$TEARDOWN_VERIFY_FILE" 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do
+		jq -r '[(.provider // ""), (.run_tag // ""), (.verdict // "")] | @tsv' "$f" 2>/dev/null || true
+	done
+}
+
+# teardown_verdict <provider> — the receipt's verdict for this run, or `none`.
+#
+# `none` is NOT a fourth cloud state: it means no measurement was attached at all (the verification
+# step never ran, its artifact never uploaded, or this run predates the step). The caller must not
+# read it as CLEAN — that is the whole failure this change exists to remove — and must not read it
+# as UNSWEPT either, which is a different, specific claim about the sweep being killed.
+#
+# A verdict this script does not recognise is also `none`. An unknown word is not evidence of an
+# empty account.
+teardown_verdict() {
+	local want="$1" prov tag v
+	while IFS="$(printf '\t')" read -r prov tag v; do
+		[ "$prov" = "$want" ] || continue
+		case "$tag" in
+		"nightly-${RUN_ID:-}-"*) ;;
+		*) continue ;;
+		esac
+		case "$v" in
+		CLEAN | RESIDUAL | UNVERIFIABLE) printf '%s\n' "$v"; return 0 ;;
+		esac
+	done <<-EOF
+		$(scan_teardown_verdicts "${PROOFS_DIR:-proofs}")
+	EOF
+	echo none
 }
 
 # summary_for <provider> <run_id> — the first bundle claiming this provider AND this run.
@@ -187,9 +234,39 @@ job_exists() {
 	fi
 }
 
-# teardown_outcome <provider> — did this leg's cloud sweep reach a conclusion? (#2330)
+# teardown_outcome <provider> — is this leg's cloud actually clean? (#2330, #4398)
 #
-# Echoes one of: done | UNSWEPT | unknown.
+# Echoes one of: done | RESIDUAL | UNVERIFIABLE | UNMEASURED | UNSWEPT | unknown.
+#
+# ⚠️ `done` CHANGED MEANING IN #4398, and the change is the point. It used to mean "the teardown
+# STEP reported a conclusion". It now means "the cloud was re-listed after the sweep and listed
+# nothing for this run". The old meaning was an inference and could not be anything else: the step
+# conclusion is a boolean, and the sweeper's own verdict is three-valued —
+#
+#     exit 0  the API answered and nothing survives      → CLEAN
+#     exit 1  the API answered and something survives    → a LEAK
+#     exit 4  the API did not answer                     → UNVERIFIABLE
+#
+# — of which Actions renders 1 and 4 as the same `failure`, and the old `*) echo "done"` then read
+# BOTH of them as "swept". A leg that ended with an EKS control plane still billing, and a leg whose
+# credential expired before it could look, were reported here as accounts that had been cleaned.
+#
+# Worse, these sweepers run under `set -e`: a sweep function that dies takes the process with it and
+# finalize_verification never runs at all. The step goes red, nothing has looked at the cloud, and
+# `done` was still the answer. So the measurement now comes from a SEPARATE, read-only pass
+# (`VERIFY_ONLY=1`, below `Guaranteed teardown`) whose only job is to ask, and it travels as data —
+# a receipt — not as a step conclusion.
+#
+# THE ORDER OF THE QUESTIONS IS LOAD-BEARING:
+#
+#   1. Did the sweep step reach a conclusion at all? An empty or `cancelled` conclusion is the
+#      run-31459117502 fingerprint of a worker killed mid-sweep. That outranks everything, because
+#      it means the sweep itself did not finish — #2330's UNSWEPT, unchanged.
+#   2. Only then, what did the cloud say? CLEAN → `done`, a leak → RESIDUAL, could not ask →
+#      UNVERIFIABLE.
+#   3. No receipt → UNMEASURED. NOT `done`. A missing measurement is not an empty account, and this
+#      is the state every leg reports until the verification step has ridden out to the default
+#      branch — so it has to be a word of its own rather than a silent fallback to either side.
 #
 # WHY THIS IS A SEPARATE QUESTION FROM PASS/FAIL. The rollup already reports a cancelled leg as
 # FAIL — a job conclusion with no readable bundle is fixture #4's "RAN, NO SUMMARY … FAIL, never
@@ -219,10 +296,21 @@ teardown_outcome() {
 		] | first | if . == null then "missing" else (.conclusion // "") end
 	' 2>/dev/null || echo missing)"
 	case "$concl" in
-	missing) echo unknown ;;
-	"" | null | cancelled) echo UNSWEPT ;;
+	missing)
+		echo unknown
+		return
+		;;
+	"" | null | cancelled)
+		echo UNSWEPT
+		return
+		;;
+	esac
+	case "$(teardown_verdict "$want")" in
 	# Quoted: bare `done` is a shell keyword and shellcheck reads it as a stray loop terminator.
-	*) echo "done" ;;
+	CLEAN) echo "done" ;;
+	RESIDUAL) echo RESIDUAL ;;
+	UNVERIFIABLE) echo UNVERIFIABLE ;;
+	*) echo UNMEASURED ;;
 	esac
 }
 
@@ -314,6 +402,12 @@ derive() {
 	local reds="" skips="" job_no_summary="" died_early="" p hit path outcome verdict detail status exists stage
 	# Legs whose cloud sweep never reached a conclusion — resources may still be BILLING (#2330).
 	local unswept=""
+	# The post-teardown cloud measurement (#4398), one accumulator per state. THREE lists and not
+	# one flag, because they are three different asks: RESIDUAL is "somebody has to go and delete
+	# something today", td_unverifiable is "somebody has to go and LOOK, because nobody could",
+	# and td_unmeasured is "the instrument did not report" — a defect in this pipeline, not in the
+	# cloud. Collapsing any pair of them is how a real finding gets read as the other one's noise.
+	local residual="" td_unverifiable="" td_unmeasured=""
 	# Legs whose bundle says PASS. Kept because the matrix fallback below MUST be able to tell
 	# "nothing produced a bundle" from "everything did and they all passed" — those two states had
 	# one issue body between them, and it asserted the first (#2512).
@@ -413,6 +507,26 @@ derive() {
 				unswept="$unswept $p"
 				detail="${detail} — ⚠️ TEARDOWN DID NOT COMPLETE, resources may still be billing"
 				;;
+			RESIDUAL)
+				# The verdict is DELIBERATELY not the leg's PASS/FAIL (#4398). "Did provisioning
+				# work" and "is the account clean" are two claims about two different things, which
+				# is why this axis has been orthogonal since #2330; a residual finding that flipped a
+				# green leg red would put a cleanup defect in a provisioning issue's title. It is
+				# loud instead: this row, its own banner below, and its own state.env key.
+				residual="$residual $p"
+				detail="${detail} — 💸 RESIDUAL: the cloud was re-listed AFTER the sweep and still lists resources for this run"
+				;;
+			UNVERIFIABLE)
+				td_unverifiable="$td_unverifiable $p"
+				detail="${detail} — ⚠️ teardown UNVERIFIED: the post-sweep re-list could not answer, so nothing proves this account is empty"
+				;;
+			UNMEASURED)
+				# No per-row suffix: until the verification step has ridden dev → staging → main
+				# this is EVERY leg, and a warning on every row is a warning nobody reads. One
+				# collective line below instead — but never silence, because "the instrument did not
+				# report" and "the cloud is clean" are exactly the two things #4398 exists to split.
+				td_unmeasured="$td_unmeasured $p"
+				;;
 			esac
 		fi
 		detail="${detail//|/\\|}"
@@ -484,6 +598,36 @@ derive() {
 			echo "> \`e2e-orphan-reaper.yml\` reclaims these out-of-band on its next scheduled run — but it only"
 			echo "> fires from the DEFAULT BRANCH, so confirm it is live before assuming it has been handled."
 			echo "> To sweep now: \`ALETHIA_E2E_ENV=<run_id>-<attempt> ALETHIA_E2E_REGION=<region> ./scripts/e2e/<cloud>-cleanup.sh\`"
+		fi
+		# ── The three post-teardown measurement states (#4398). Separate blocks, separate asks. ──
+		if [ -n "${residual// /}" ]; then
+			echo
+			echo "> 💸 **RESIDUAL CLOUD RESOURCES:${residual}** — the sweep RAN and reached a conclusion, and the"
+			echo "> scope-locked re-list that followed it STILL LISTED resources for this run. This is a measurement,"
+			echo "> not an inference: the cloud was asked after the teardown and answered that something is there."
+			echo ">"
+			echo "> It deliberately does NOT change the PASS/FAIL verdict above. Provisioning working and the account"
+			echo "> being clean are two different claims — the same reason the teardown axis has been orthogonal"
+			echo "> since #2330 — and a cleanup defect filed under a provisioning title gets read as a provisioning"
+			echo "> defect. Verification LISTS and REPORTS; reclaiming stays \`e2e-orphan-reaper.yml\`'s job, because"
+			echo "> two things that both delete are two things that can disagree."
+			echo ">"
+			echo "> To sweep now: \`ALETHIA_E2E_ENV=<run_id>-<attempt> ALETHIA_E2E_REGION=<region> ./scripts/e2e/<cloud>-cleanup.sh\`"
+		fi
+		if [ -n "${td_unverifiable// /}" ]; then
+			echo
+			echo "> ⚠️ **TEARDOWN UNVERIFIED:${td_unverifiable}** — the post-sweep re-list could not answer. A probe"
+			echo "> that failed and an empty account look identical, so this is NOT a clean result: treat it as a"
+			echo "> possible leak and confirm by hand. The receipt in the leg's \`e2e-teardown-verify-<cloud>-<run>\`"
+			echo "> artifact names which resource types could not be checked, and why."
+		fi
+		if [ -n "${td_unmeasured// /}" ]; then
+			echo
+			echo "> ℹ️ **No post-teardown cloud measurement:${td_unmeasured}** — the sweep reached a conclusion, but"
+			echo "> no verification receipt was attached, so nothing here says the account is empty. That is a gap in"
+			echo "> THIS pipeline, not a finding about the cloud. Expected on any run whose provision job predates"
+			echo "> the \`VERIFY_ONLY=1\` step (#4398); if it persists after that step is live on the default branch,"
+			echo "> the step or its artifact upload is broken and the money signal is silently off."
 		fi
 	} >>"$out/summary.md"
 
@@ -626,6 +770,11 @@ derive() {
 		# red one can be clean (it never provisioned). Exported so the notification step can say
 		# "go and look" without re-deriving it.
 		echo "UNSWEPT='${unswept# }'"
+		# The post-teardown cloud measurement (#4398), three keys because they are three asks. None
+		# of them feeds REDS: a residual finding is loud, and it is not a provisioning verdict.
+		echo "RESIDUAL='${residual# }'"
+		echo "TEARDOWN_UNVERIFIABLE='${td_unverifiable# }'"
+		echo "TEARDOWN_UNMEASURED='${td_unmeasured# }'"
 		echo "ENABLED_N='${enabled_n}'"
 		echo "SKIP_N='${skip_n}'"
 		echo "TOTAL='${TOTAL}'"
@@ -969,7 +1118,11 @@ run_self_test() {
 		"a slurped two-page jobs payload is normalized for every reader"
 	_a "success" "$(JOBS_JSON="$c/jobs.json" job_conclusion aws)" \
 		"the normalized payload still drives the job-conclusion reader"
-	_a "done" "$(JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+	# UNMEASURED and not `done` since #4398: this fixture has a teardown step but no verification
+	# receipt, and `done` now means "the cloud was re-listed and listed nothing". The pagination
+	# reader is still what is under test — a payload whose second page was invisible would report
+	# `unknown` (no such step), which is a different value from this one.
+	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
 		"the normalized payload still drives the teardown reader"
 
 	# 12. LEDGER rows come from the same discovery, so the parity ledger cannot lose a run the table
@@ -1115,6 +1268,172 @@ run_self_test() {
 		"(T5) the leg still PASSES — teardown outcome does not rewrite the verdict"
 	_a "aws" "$(_state "$c/out" UNSWEPT)" \
 		"(T5) a PASSING leg whose teardown was killed is still reported as possibly billing"
+
+	# ── The post-teardown CLOUD MEASUREMENT (#4398) ─────────────────────────────────────────────
+	#
+	# T1–T5 above pin "did the sweep finish". These pin "and is the account actually empty" — the
+	# question the old `*) echo "done"` answered by inference and could not answer any other way.
+	#
+	# THE FIXTURES ARE NOT COMPOSED, in both halves, and each half has its own reason.
+	#
+	#   · The JOBS PAYLOAD is CAPTURED: testdata/nightly-jobs-34453355398.json is the real
+	#     `gh api runs/34453355398/jobs --paginate --slurp` response, projected to the four fields
+	#     this script reads (`jq '[.[] | {jobs: [.jobs[] | {name, conclusion,
+	#     steps: [.steps[] | {name, conclusion}]}]}]'`) and otherwise untouched. It carries the exact
+	#     defect: the gcp leg's JOB is `failure`, its `Guaranteed teardown` step is `success`, and
+	#     the old reader called that `done` — a swept account — having asked nothing.
+	#   · The RECEIPTS are PRODUCED BY THE REAL PRODUCER: write_verdict below drives probe_gate and
+	#     `sweep-probe.sh --record-verdict`, the same two functions the workflow drives. A payload
+	#     that is merely receipt-SHAPED would prove this reader parses the fixture, not the receipt,
+	#     and would let the two files' idea of the contract drift silently apart.
+	local jobs_real verdict_lib
+	jobs_real="$(dirname "${BASH_SOURCE[0]}")/testdata/nightly-jobs-34453355398.json"
+	verdict_lib="$(dirname "${BASH_SOURCE[0]}")/lib/sweep-probe.sh"
+
+	# NON-VACUITY FIRST. Every assertion below is about a job and a step inside that captured file;
+	# if the projection ever loses either, the cases would pass by finding nothing.
+	_a "yes" "$(jq -e '[.[].jobs[] | select(.name | endswith("(gcp)")) | .steps[] | select(.name | startswith("Guaranteed teardown"))] | length == 1' "$jobs_real" >/dev/null 2>&1 && echo yes || echo no)" \
+		"(V0) the captured payload really contains the gcp leg's teardown step"
+	_a "success" "$(jq -r '[.[].jobs[] | select(.name | endswith("(gcp)")) | .steps[] | select(.name | startswith("Guaranteed teardown"))][0].conclusion' "$jobs_real")" \
+		"(V0) …and that step concluded SUCCESS on a job that went RED — the shape the old reader called done"
+
+	# write_verdict <dir> <provider> <run-tag> <exit-code> [type:reason]
+	#
+	# Mirrors finalize_verification's own control flow, which is what makes the fixture faithful: a
+	# LEAK (exit 1) returns before probe_gate is ever reached, so it leaves no attestation; exit 0
+	# and exit 4 both reach probe_gate, and only the first of those attests.
+	write_verdict() {
+		local dir="$1" prov="$2" tag="$3" rc="$4" unver="${5:-}" work
+		work="$(mktemp -d)"
+		mkdir -p "$dir"
+		(
+			export PROBE_LEDGER="$work/ledger" PROBE_UNATTRIB_LEDGER="$work/unattrib" \
+				PROBE_ATTEST_FILE="$work/attest" PROBE_VERDICT_FILE="${dir}/teardown-verify.json"
+			# shellcheck source=scripts/e2e/lib/sweep-probe.sh
+			. "$verdict_lib"
+			probe_reset
+			[ -n "$unver" ] && probe_note_unverifiable "${unver%%:*}" "${unver#*:}"
+			[ "$rc" = "1" ] || probe_gate "$prov" "run ${tag}" >/dev/null 2>&1 || true
+			probe_write_verdict "$prov" "$tag" "run ${tag}" "$rc" >/dev/null
+		)
+		rm -rf "$work"
+	}
+
+	# (V1) THE DEFECT, on the captured payload. A concluded teardown step with NO measurement
+	#      attached is UNMEASURED — never `done`. This is also the transitional state of every leg
+	#      until the verification step reaches the default branch, so it has to be a word, not a
+	#      silent fallback to either neighbour.
+	c="$tmp/v1-no-receipt"
+	mkdir -p "$c/proofs"
+	cp "$jobs_real" "$c/jobs.json"
+	write_summary "$c/proofs/e2e-proof-gcp-r/s" gcp "nightly-34453355398-1" failure applied
+	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" \
+		"(V1) a concluded teardown with no cloud measurement is UNMEASURED, never 'done'"
+	# All five legs, because the captured run really did have all five matrix jobs and none of them
+	# carries a receipt: this IS the transitional shape, and it must be reported, not swallowed.
+	_a "hetzner aws gcp azure alibaba" "$(CASE_RUN_ID=34453355398 CASE_MATRIX=failure _derive "$c" >/dev/null; _state "$c/out" TEARDOWN_UNMEASURED)" \
+		"(V1) …and it is reported as such rather than swallowed"
+	_a "" "$(_state "$c/out" RESIDUAL)" "(V1) an absent measurement is NOT a residual finding"
+
+	# (V2) The same payload, with a CLEAN receipt: the cloud was re-listed and listed nothing.
+	c="$tmp/v2-clean"
+	mkdir -p "$c/proofs"
+	cp "$jobs_real" "$c/jobs.json"
+	write_summary "$c/proofs/e2e-proof-gcp-r/s" gcp "nightly-34453355398-1" failure applied
+	# All five, so the "quiet summary" assertion below is about a fully measured night rather than
+	# about gcp drowned out by four unmeasured neighbours.
+	for p in hetzner aws gcp azure alibaba; do
+		write_verdict "$c/proofs/e2e-teardown-verify-${p}-r" "$p" "nightly-34453355398-1" 0
+	done
+	_a "done" "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" \
+		"(V2) a CLEAN receipt is the ONLY thing that yields 'done'"
+	CASE_RUN_ID=34453355398 CASE_MATRIX=failure _derive "$c" >/dev/null
+	_a "0" "$(grep -c 'RESIDUAL CLOUD RESOURCES\|TEARDOWN UNVERIFIED\|No post-teardown cloud measurement' "$c/out/summary.md")" \
+		"(V2) …and a measured-clean leg leaves the summary quiet"
+
+	# (V3) A RESIDUAL receipt. The cloud answered, after the sweep, that something is still there.
+	c="$tmp/v3-residual"
+	mkdir -p "$c/proofs"
+	cp "$jobs_real" "$c/jobs.json"
+	write_summary "$c/proofs/e2e-proof-gcp-r/s" gcp "nightly-34453355398-1" failure applied
+	write_verdict "$c/proofs/e2e-teardown-verify-gcp-r" gcp "nightly-34453355398-1" 1
+	_a "RESIDUAL" "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" \
+		"(V3) a leak found by the post-sweep re-list is RESIDUAL"
+	CASE_RUN_ID=34453355398 CASE_MATRIX=failure _derive "$c" >/dev/null
+	_a "gcp" "$(_state "$c/out" RESIDUAL)" "(V3) it reaches state.env on its own key"
+	_a "1" "$(grep -c '^| gcp |.*RESIDUAL' "$c/out/summary.md")" "(V3) the leg's OWN row carries it"
+	_a "1" "$(grep -c 'RESIDUAL CLOUD RESOURCES' "$c/out/summary.md")" \
+		"(V3) and a standalone block tells the reader what to do"
+	_a "" "$(_state "$c/out" TEARDOWN_UNVERIFIABLE)" "(V3) a LEAK is not a failure to look"
+
+	# (V4) THE DISTINCTION THIS WHOLE CHANGE TURNS ON. `we asked and it was empty` and `we could not
+	#      ask` must never be one value. The two fixtures differ in the sweeper's exit status alone —
+	#      0 vs 4 — and every visible byte of a sweep log could be identical.
+	c="$tmp/v4-unverifiable"
+	mkdir -p "$c/proofs"
+	cp "$jobs_real" "$c/jobs.json"
+	write_summary "$c/proofs/e2e-proof-gcp-r/s" gcp "nightly-34453355398-1" failure applied
+	write_verdict "$c/proofs/e2e-teardown-verify-gcp-r" gcp "nightly-34453355398-1" 4 "cloud-sql:exit 1 — PERMISSION_DENIED"
+	_a "UNVERIFIABLE" "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" \
+		"(V4) a probe that could not answer is UNVERIFIABLE"
+	_a "differ" "$([ "$(PROOFS_DIR="$c/proofs" RUN_ID=34453355398 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" != \
+		"$(PROOFS_DIR="$tmp/v2-clean/proofs" RUN_ID=34453355398 JOBS_JSON="$c/jobs.json" teardown_outcome gcp)" ] && echo differ || echo COLLAPSED)" \
+		"(V4) CLEAN and UNVERIFIABLE do NOT collapse onto one value"
+	CASE_RUN_ID=34453355398 CASE_MATRIX=failure _derive "$c" >/dev/null
+	_a "gcp" "$(_state "$c/out" TEARDOWN_UNVERIFIABLE)" "(V4) it reaches state.env"
+	_a "" "$(_state "$c/out" RESIDUAL)" "(V4) …and is NOT reported as a confirmed leak"
+	_a "1" "$(grep -c 'TEARDOWN UNVERIFIED' "$c/out/summary.md")" "(V4) the block says nothing proves the account is empty"
+
+	# (V5) THE STEP CONCLUSION STILL OUTRANKS THE RECEIPT. A worker killed mid-sweep is a different
+	#      claim from any verdict about the cloud: the sweep did not finish. UNSWEPT wins, and a
+	#      stale-looking CLEAN receipt cannot talk over it.
+	c="$tmp/v5-killed-with-receipt"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure applied
+	write_jobs_steps "$c/jobs.json" aws null
+	write_verdict "$c/proofs/e2e-teardown-verify-aws-777" aws "nightly-777-1" 0
+	_a "aws" "$(CASE_MATRIX=failure _derive "$c" >/dev/null; _state "$c/out" UNSWEPT)" \
+		"(V5) an empty teardown conclusion is still UNSWEPT even with a CLEAN receipt present"
+
+	# (V6) A receipt naming ANOTHER run must be invisible — the #1613 rule, applied to this payload.
+	#      `demos/proofs/<provider>/` is checked in and rides the artifact, so a stale receipt is not
+	#      hypothetical.
+	c="$tmp/v6-stale-receipt"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure applied
+	write_jobs_steps "$c/jobs.json" aws success
+	write_verdict "$c/proofs/e2e-teardown-verify-aws-111" aws "nightly-111-1" 0
+	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+		"(V6) a CLEAN receipt from another run does not answer for this one"
+
+	# (V7) …nor does another CLOUD's. Five legs write five receipts into one downloaded tree.
+	c="$tmp/v7-other-cloud"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure applied
+	write_jobs_steps "$c/jobs.json" aws success
+	write_verdict "$c/proofs/e2e-teardown-verify-gcp-777" gcp "nightly-777-1" 0
+	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+		"(V7) gcp's CLEAN receipt does not make aws clean"
+
+	# (V8) A word this reader does not know is UNMEASURED, not `done`. A verdict vocabulary that
+	#      grows on the producer's side must not silently become "clean" on the consumer's.
+	c="$tmp/v8-unknown-verdict"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure applied
+	write_jobs_steps "$c/jobs.json" aws success
+	mkdir -p "$c/proofs/e2e-teardown-verify-aws-777"
+	printf '{"provider":"aws","run_tag":"nightly-777-1","verdict":"PROBABLY_FINE"}\n' \
+		>"$c/proofs/e2e-teardown-verify-aws-777/teardown-verify.json"
+	_a "UNMEASURED" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+		"(V8) an unrecognised verdict is UNMEASURED, never 'done'"
+
+	# (V9) THE VERDICT'S WEIGHT. A residual finding is loud and does NOT rewrite PASS/FAIL — the
+	#      issue's own preference, and the same orthogonality #2330 established. A cleanup defect
+	#      filed under a provisioning title is read as a provisioning defect.
+	c="$tmp/v9-green-but-residual"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" success applied
+	write_jobs_steps "$c/jobs.json" aws success success
+	write_verdict "$c/proofs/e2e-teardown-verify-aws-777" aws "nightly-777-1" 1
+	_a "|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" \
+		"(V9) the leg still PASSES — a residual finding is a separate axis, not a verdict"
+	_a "aws" "$(_state "$c/out" RESIDUAL)" \
+		"(V9) …and the money finding is still reported on a green night"
 
 	# ── A PASS bundle is not a PASS leg (#2512 · #2631 · #2640 · #2657) ─────────────────────────────
 	# `Capture proof` is step 33 of the provision job; `Guaranteed teardown` is 38 and the `CLI-only
