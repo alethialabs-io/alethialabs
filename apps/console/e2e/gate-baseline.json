@@ -59,7 +59,7 @@
 			"elench-agent.spec.ts": {
 				"Elench agent — modal (org) › opens as a fullscreen modal with the empty landing": "passed",
 				"Elench agent — modal (org) › Ask-mode popover switches ask ↔ auto": "passed",
-				"Elench agent — modal (org) › the Ask-mode segments expose which one is current": {
+				"Elench agent — Ask-mode segments (org) › the Ask-mode segments expose which one is current": {
 					"fixme": "BUG: the Elench Ask/Auto mode segments expose no accessible selected state #4618"
 				},
 				"Elench agent — modal (org) › the @-mention popover opens against real resources": "passed",
