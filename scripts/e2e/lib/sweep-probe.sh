@@ -555,45 +555,101 @@ probe_write_verdict() {
 
 # probe_withhold_detail <why> — rewrite the receipt with its CLI-derived text removed. Everything
 # else survives: the type names are this file's own vocabulary, and `reason` is our own sentence.
+#
+# ⚠️ IT REPORTS WHAT ACTUALLY HAPPENED. The first cut printed "WITHHELD" unconditionally, including
+# on the path where its own `jq … && mv` had failed — a success message over a failed action, which
+# is the same defect class as everything else in this file. The caller reads the return status.
 probe_withhold_detail() {
 	local tmp
 	tmp="${PROBE_VERDICT_FILE}.withheld"
-	jq --arg why "$1" '.unverifiable_detail = [] | .detail_withheld = $why' \
-		"$PROBE_VERDICT_FILE" >"$tmp" 2>/dev/null && mv "$tmp" "$PROBE_VERDICT_FILE"
+	if jq --arg why "$1" '.unverifiable_detail = [] | .detail_withheld = $why' \
+		"$PROBE_VERDICT_FILE" >"$tmp" 2>/dev/null && mv "$tmp" "$PROBE_VERDICT_FILE"; then
+		echo "::warning::the teardown verification receipt's detail was WITHHELD (${1}) — the verdict stands; open the run's log for the probe reasons." >&2
+		return 0
+	fi
 	rm -f "$tmp"
-	echo "::warning::the teardown verification receipt's detail was WITHHELD (${1}) — the verdict stands; open the run's log for the probe reasons." >&2
+	echo "::warning::could NOT withhold the teardown receipt's detail (${1}) — the rewrite failed, so nothing was removed. The caller must re-render or delete it." >&2
+	return 1
 }
 
 # probe_scrub_verdict — scrub the published receipt, then re-grep it, fail closed. Returns non-zero
 # only when the receipt had to be DELETED, which the rollup then reads as UNMEASURED.
-probe_scrub_verdict() {
-	local dir scrub
+probe_scrub_verdict() { # <cloud> <run-tag> <scope> <exit-code>
+	local cloud="$1" tag="$2" scope="$3" rc="$4" dir scrub
 	dir="$(dirname "$PROBE_VERDICT_FILE")"
+
+	# ── THE RECEIPT MUST NOT SHARE A DIRECTORY WITH THE LEDGERS. ────────────────────────────────
+	#
+	# assert_grep_clean greps a DIRECTORY, and the ledgers hold RAW provider-CLI stderr — so a
+	# caller that points PROBE_VERDICT_FILE beside them makes the tripwire fire on text nobody
+	# publishes, and every receipt is deleted on any run where a probe failed. The invariant used to
+	# live only in a workflow comment; refused here instead, where it is enforceable.
+	local led_dir="" un_dir=""
+	[ -n "$PROBE_LEDGER" ] && led_dir="$(dirname "$PROBE_LEDGER")"
+	[ -n "$PROBE_UNATTRIB_LEDGER" ] && un_dir="$(dirname "$PROBE_UNATTRIB_LEDGER")"
+	if [ "$dir" = "$led_dir" ] || [ "$dir" = "$un_dir" ]; then
+		echo "::error::PROBE_VERDICT_FILE is in the same directory as the probe ledgers (${dir}). The published receipt is scrubbed and re-grepped by directory, and the ledgers carry raw CLI stderr — sharing one would delete every receipt on any run where a probe failed. Give the receipt its own directory." >&2
+		return 2
+	fi
+
 	scrub="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/demos/proofs/scrub.sh"
 	if [ ! -r "$scrub" ]; then
-		probe_withhold_detail "demos/proofs/scrub.sh could not be read — nothing verified the text"
+		probe_withhold_detail "demos/proofs/scrub.sh could not be read — nothing verified the text" || true
 		return 0
 	fi
 	# shellcheck source=demos/proofs/scrub.sh
 	if ! . "$scrub" 2>/dev/null; then
-		probe_withhold_detail "demos/proofs/scrub.sh could not be sourced"
+		probe_withhold_detail "demos/proofs/scrub.sh could not be sourced" || true
 		return 0
 	fi
 	scrub_literals_from_env
 	scrub_file "$PROBE_VERDICT_FILE"
+
+	# ⚠️ THE SCRUB CAN CORRUPT THE RECEIPT, AND THE TRIPWIRE CANNOT SEE THAT.
+	#
+	# scrub_stream is a TEXT rewriter over log lines, not a JSON transform. Two of its rules
+	# routinely run past the end of a JSON string: rule 5's value class does not stop at `)` or `"`,
+	# so a reason ending in a denylisted `key=value` — routine, because probe_run truncates stderr
+	# at 200 characters and lands mid-value — eats the string's own closing `)",`; and the PEM rule
+	# replaces a BEGIN line wholesale and swallows everything up to an END marker.
+	#
+	# In BOTH cases the secret really is gone, so assert_grep_clean passes and every check below
+	# reports success — over a file that is no longer JSON. The rollup's reader then swallows the
+	# parse error (`jq … 2>/dev/null || true`) and the leg reads UNMEASURED: a RESIDUAL silently
+	# downgraded to "nobody measured", which is exactly the conversion this whole change exists to
+	# prevent, arriving through its own safety mechanism. So VALIDITY is checked directly, and the
+	# recovery re-renders from the ledger WITHOUT the CLI-derived text that caused it.
+	if ! jq -e . "$PROBE_VERDICT_FILE" >/dev/null 2>&1; then
+		echo "::warning::the scrub rewrote the teardown receipt into invalid JSON — re-rendering it without the CLI-derived detail, which is what it was rewriting." >&2
+		probe_write_verdict "$cloud" "$tag" "$scope" "$rc" >/dev/null 2>&1
+		probe_withhold_detail "the scrub rewrote the receipt into invalid JSON" >/dev/null 2>&1 || true
+		scrub_file "$PROBE_VERDICT_FILE"
+		if ! jq -e . "$PROBE_VERDICT_FILE" >/dev/null 2>&1; then
+			rm -f "$PROBE_VERDICT_FILE"
+			echo "::error::the teardown verification receipt is still invalid JSON with its detail removed — DELETED rather than published. The rollup will report this leg UNMEASURED." >&2
+			return 1
+		fi
+	fi
+
 	# The tripwire is a SECOND pair of eyes over the finished file — deliberately independent of the
-	# scrubber, exactly as capture-proof.sh uses it. `dir` holds only the receipt: the raw ledgers
-	# live one level up, unpublished, so this greps what is actually uploaded and nothing else.
-	if assert_grep_clean "$dir" >/dev/null 2>&1; then
-		return 0
+	# scrubber, exactly as capture-proof.sh uses it. `dir` holds only the receipt (enforced above),
+	# so this greps what is actually uploaded and nothing else.
+	if ! assert_grep_clean "$dir" >/dev/null 2>&1; then
+		probe_withhold_detail "a secret shape survived the scrub" >/dev/null 2>&1 || true
+		if ! assert_grep_clean "$dir" >/dev/null 2>&1 || ! jq -e . "$PROBE_VERDICT_FILE" >/dev/null 2>&1; then
+			rm -f "$PROBE_VERDICT_FILE"
+			echo "::error::the teardown verification receipt STILL carried a secret shape after its detail was withheld — DELETED rather than published. The rollup will report this leg UNMEASURED, which is the honest answer: the measurement exists but could not be shipped safely." >&2
+			return 1
+		fi
 	fi
-	probe_withhold_detail "a secret shape survived the scrub"
-	if assert_grep_clean "$dir" >/dev/null 2>&1; then
-		return 0
+	# Last word: whatever path got here, what is about to be uploaded must parse. A receipt the
+	# reader cannot read is a measurement that did not survive, however clean its text is.
+	if ! jq -e . "$PROBE_VERDICT_FILE" >/dev/null 2>&1; then
+		rm -f "$PROBE_VERDICT_FILE"
+		echo "::error::the teardown verification receipt is not valid JSON — DELETED rather than published." >&2
+		return 1
 	fi
-	rm -f "$PROBE_VERDICT_FILE"
-	echo "::error::the teardown verification receipt STILL carried a secret shape after its detail was withheld — DELETED rather than published. The rollup will report this leg UNMEASURED, which is the honest answer: the measurement exists but could not be shipped safely." >&2
-	return 1
+	return 0
 }
 
 # ── `--record-verdict` — the PARENT-side entry point (#4398). ───────────────────────────────────
@@ -614,8 +670,10 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--record-verdict" ]; then
 		exit 2
 	fi
 	probe_write_verdict "$2" "$3" "$4" "$5" || exit "$?"
-	# Written, then made publishable. Never the other way round: the scrub reads the finished file.
-	probe_scrub_verdict
+	# Written, then made publishable. Never the other way round: the scrub reads the finished file,
+	# and it takes the same four arguments because its recovery path RE-RENDERS the receipt from the
+	# ledger when the text rewrite has left it unparseable.
+	probe_scrub_verdict "$2" "$3" "$4" "$5"
 	exit "$?"
 fi
 
@@ -1022,7 +1080,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
 	PROBE_LEDGER="$st_ext/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/unattr" \
 		PROBE_ATTEST_FILE="$st_ext/attest" PROBE_VERDICT_FILE="$st_ext/out/teardown-verify.json" \
 		HCLOUD_TOKEN="$st_fake_token" \
-		bash "${BASH_SOURCE[0]}" --record-verdict hetzner "nightly-777-1" "run 777-1" 4 >/dev/null 2>&1
+		bash "${BASH_SOURCE[0]}" --record-verdict hetzner "nightly-777-1" "run 777-1" 4 >/dev/null 2>&1 || true
 	if grep -qF "$st_fake_token" "$st_ext/ledger" 2>/dev/null; then
 		ok "the fixture is real: the raw ledger DOES carry the credential"
 	else
@@ -1038,6 +1096,70 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
 	else
 		bad "…and the VERDICT survives the scrub" "got '$(jq -r .verdict "$st_ext/out/teardown-verify.json" 2>/dev/null)'"
 	fi
+	# ── THE SCRUB CAN CORRUPT THE RECEIPT, AND THAT MUST NOT SILENTLY LOSE THE VERDICT. ─────────
+	#
+	# scrub_stream is a TEXT rewriter, not a JSON transform. Its bare-key rule's value class
+	# (`[^\s,}\]]+`) does not stop at `)` or `"`, so a reason ending in a denylisted `key=value`
+	# eats the JSON string's own closing `)",`. That is a ROUTINE input, not a contrived one:
+	# probe_run truncates CLI stderr at 200 characters and lands mid-value all the time.
+	#
+	# The secret really is gone afterwards, so assert_grep_clean passes and every check reports
+	# success over a file that is no longer JSON. The rollup's reader swallows the parse error and
+	# calls the leg UNMEASURED — a RESIDUAL silently downgraded to "nobody measured", which is the
+	# exact conversion this change exists to prevent, arriving through its own safety mechanism.
+	#
+	# Fixture is the real shape, produced by the real producer, and BOTH halves are asserted: the
+	# published file PARSES, and it still carries the verdict.
+	st_ext="$(mktemp -d "${TMPDIR:-/tmp}/alethia-probe-corrupt.XXXXXX")"
+	mkdir -p "$st_ext/out"
+	st_prev_ledger="$PROBE_LEDGER"
+	st_prev_unattr="$PROBE_UNATTRIB_LEDGER"
+	PROBE_LEDGER="$st_ext/ledger"
+	PROBE_UNATTRIB_LEDGER="$st_ext/unattr"
+	probe_reset
+	probe_note_unverifiable load-balancer "exit 255 — RequestError: send request failed access_key_id=AKIAXXXXEXAMPLE"
+	PROBE_LEDGER="$st_prev_ledger"
+	PROBE_UNATTRIB_LEDGER="$st_prev_unattr"
+	PROBE_LEDGER="$st_ext/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/unattr" \
+		PROBE_ATTEST_FILE="$st_ext/attest" PROBE_VERDICT_FILE="$st_ext/out/teardown-verify.json" \
+		bash "${BASH_SOURCE[0]}" --record-verdict aws "nightly-777-1" "run 777-1" 4 >/dev/null 2>&1 || true
+	# ⚠️ `|| true`, and it is load-bearing: this block runs under `set -e`, and --record-verdict
+	# returns NON-ZERO on exactly the failure being tested (it deletes a receipt it cannot make
+	# safe). Without it the harness DIES here instead of reporting — the run stops mid-list, prints
+	# no ✗, and a reader scanning for failures sees none. A test that cannot fail out loud is the
+	# defect this file exists to remove, arriving inside its own tests.
+	if [ -s "$st_ext/out/teardown-verify.json" ] && jq -e . "$st_ext/out/teardown-verify.json" >/dev/null 2>&1; then
+		ok "a receipt the scrub rewrote is still valid JSON when it is published"
+	else
+		bad "a receipt the scrub rewrote is still valid JSON when it is published" \
+			"got '$(head -c 200 "$st_ext/out/teardown-verify.json" 2>/dev/null)' — the rollup would read this leg as UNMEASURED"
+	fi
+	if [ "$(jq -r .verdict "$st_ext/out/teardown-verify.json" 2>/dev/null)" = "UNVERIFIABLE" ]; then
+		ok "…and the VERDICT survived the rewrite — a corrupt receipt must not become 'nobody measured'"
+	else
+		bad "…and the VERDICT survived the rewrite" "got '$(jq -r .verdict "$st_ext/out/teardown-verify.json" 2>/dev/null)'"
+	fi
+	if grep -qF "AKIAXXXXEXAMPLE" "$st_ext/out/teardown-verify.json" 2>/dev/null; then
+		bad "…and the credential-shaped value is gone" "it survived into the published receipt"
+	else
+		ok "…and the credential-shaped value is gone"
+	fi
+	rm -rf "$st_ext"
+
+	# A receipt sharing a directory with the ledgers is REFUSED, not silently deleted on the first
+	# failed probe. assert_grep_clean greps a directory, and the ledgers hold raw CLI stderr.
+	st_ext="$(mktemp -d "${TMPDIR:-/tmp}/alethia-probe-samedir.XXXXXX")"
+	st_rc=0
+	PROBE_LEDGER="$st_ext/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/unattr" \
+		PROBE_ATTEST_FILE="$st_ext/attest" PROBE_VERDICT_FILE="$st_ext/teardown-verify.json" \
+		bash "${BASH_SOURCE[0]}" --record-verdict aws "nightly-777-1" "run 777-1" 0 >/dev/null 2>&1 || st_rc=$?
+	if [ "$st_rc" -eq 2 ]; then
+		ok "a receipt written BESIDE the ledgers is refused — the tripwire greps a directory"
+	else
+		bad "a receipt written beside the ledgers is refused" "got rc=${st_rc}; every receipt would be deleted on any run with a failed probe"
+	fi
+	rm -rf "$st_ext"
+
 	# The WITHHOLDING path itself, driven directly — the happy path above never reaches it, so
 	# without this the fail-closed branch is code nothing runs. What it must do is narrow: remove
 	# the CLI-derived text, say so, and KEEP the verdict.

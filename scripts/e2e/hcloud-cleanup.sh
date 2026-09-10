@@ -403,9 +403,14 @@ capture_is_ours() {
 #
 # ⚠️ WHY THIS EXISTS, AND WHY OMITTING IT WAS THE BUG IT NOW FIXES.
 #
-# sweep_unlabelled_lbs is not only a sweeper. It is the ONLY place in this file that records the
-# CCM ingress load balancer as UNVERIFIABLE — eight probe_note_unverifiable sites, including
-# `network-already-destroyed`. verify_swept's own re-check goes through unlabelled_lb_ids, which
+# BEFORE THIS FUNCTION EXISTED, sweep_unlabelled_lbs was not only a sweeper: it was the only place
+# in this file that recorded the CCM ingress load balancer as UNVERIFIABLE — eight
+# probe_note_unverifiable sites, including `network-already-destroyed`. (There are three places
+# now: that function, this one, and verify_swept's `no jq` branch. The sentence is in the PAST
+# tense on purpose — it describes the tree this function was added to, not the tree it ships in,
+# and a present-tense version of it would be false the moment you read it.)
+#
+# verify_swept's own re-check goes through unlabelled_lb_ids, which
 # `return 0`s SILENTLY when the private-network binding cannot be resolved. And after a teardown
 # that network is gone BY CONSTRUCTION: `tofu destroy` deletes hcloud_network.this FIRST, which is
 # what the long comment inside sweep_unlabelled_lbs says at length.
@@ -418,8 +423,15 @@ capture_is_ours() {
 #
 # THE CONTRACT. It echoes, on stdout, the ids of load balancers BOUND TO THIS RUN that are still
 # alive — a leak, which verify_swept counts — and records probe_note_unverifiable for every way of
-# not being able to answer. Silence means MEASURED-NONE and nothing else; every unmeasured path
-# above leaves a ledger entry behind it.
+# not being able to answer. Every unmeasured path THIS FUNCTION takes leaves a ledger entry behind
+# it, so silence from those paths means measured-none.
+#
+# ⚠️ ONE PATH IT DOES NOT COVER, stated because the absolute version of that sentence is false:
+# when the network is still alive this delegates to unlabelled_lb_ids, whose `jq … 2>/dev/null`
+# swallows an unparseable body and returns silence with NO ledger entry. Benign today — that branch
+# only runs when the teardown has not removed the network, i.e. when something else has already
+# failed loudly — but it is a real gap in the "silence is a measurement" claim and it belongs to
+# unlabelled_lb_ids, not here.
 report_unlabelled_lbs() {
 	assert_selector
 	if ! command -v jq >/dev/null 2>&1; then
@@ -1071,14 +1083,42 @@ verify_swept() {
 	# The CCM's ingress LB carries no label, so the labelled loop above cannot see it — re-check it
 	# through the same private-network binding the sweep used.
 	#
-	# THREE BRANCHES, and the third one used to be an empty `fi` (#4398). `jq` is what binds an
-	# unlabelled LB to this run; without it this check cannot run AT ALL, and skipping it silently
-	# is a verification that reports clean over a question nobody asked — the same shape as the
-	# `no jq` case sweep_unlabelled_lbs has always recorded. It is recorded here too now, so the
-	# gate holds even on a runner where the sweep never ran.
+	# THREE BRANCHES, and before #4398 there were ONE and no `else` at all — the check was simply
+	# `if command -v jq; then … fi`. Each branch answers a different question:
+	#
+	#   VERIFY_ONLY   report_unlabelled_lbs already asked, read-only, above. Re-asking here is not
+	#                 just wasteful — see the comment on that branch; it LOSES the answer.
+	#   jq present    the live run-scoped binding, which is what the sweep itself uses.
+	#   jq absent     `jq` is what binds an unlabelled LB to this run, so without it this check
+	#                 cannot run AT ALL. That was the missing `else`: skipping it silently is a
+	#                 verification reporting clean over a question nobody asked.
+	#
+	# ⚠️ THE `no jq` ENTRY HERE IS A BACKSTOP, AND NO BLACK-BOX TEST CAN PIN IT AS THE SOLE SOURCE.
+	# Measured, both ways, with verify-only-readonly-test.sh's assertion G:
+	#
+	#   delete this line alone                     → G stays GREEN; sweep_unlabelled_lbs (sweeping
+	#                                                path) and report_unlabelled_lbs (read-only one)
+	#                                                have already recorded the same entry.
+	#   delete those two and keep this one         → G reds on VERIFY_ONLY=1 and stays green on
+	#                                                VERIFY_ONLY=0 — i.e. THIS line is what holds
+	#                                                the sweeping path up.
+	#
+	# So it is not dead code, and it is not independently testable either. It stays because
+	# verify_swept is the GATE, and a gate that depends on an earlier function having run is a gate
+	# with a precondition nobody checks. Do not read a coverage claim into it.
 	if [ "$VERIFY_ONLY" = "1" ]; then
-		# report_unlabelled_lbs already asked, read-only, before this ran; re-asking would double
-		# every API call in a pass that exists to be cheap.
+		# ⚠️ THIS IS NOT AN OPTIMISATION, AND READING IT AS ONE COSTS A BILLING LOAD BALANCER.
+		#
+		# report_unlabelled_lbs already asked, read-only, above — and it is the ONLY thing that CAN
+		# answer here. Re-asking through unlabelled_lb_ids would return SILENTLY, because in this
+		# mode the teardown has already removed the private network that is the only binding a
+		# CCM-created LB has. The leak that report_unlabelled_lbs found would be dropped and the run
+		# would print "✓ cleanup verified complete" over a load balancer that is still billing.
+		#
+		# Deleting this branch is therefore H1's exact defect, inside H1's own fix.
+		# verify-only-readonly-test.sh's F2 case is what holds it in place: it drives the #3481
+		# capture fixture and asserts this mode exits 1 and names the id. (Saving API calls is a
+		# real but incidental benefit; it is not the reason.)
 		ids="$VERIFY_ONLY_UNLABELLED_LBS"
 	elif command -v jq >/dev/null 2>&1; then
 		ids="$(unlabelled_lb_ids)"
@@ -1633,8 +1673,14 @@ fi
 #                             it made a post-teardown pass — where the private network is gone BY
 #                             CONSTRUCTION — publish CLEAN over a question nobody had asked.
 #
-# The rule is not "keep the reporters": it is that EVERY state this file can report must still be
-# reachable in this mode, and UNVERIFIABLE is the one it exists to keep from going silently absent.
+# The rule is not "keep the reporters". It is that every state this file can report ABOUT A
+# RESOURCE IT HAS NOT TOUCHED must still be reachable in this mode — and UNVERIFIABLE is the one it
+# exists to keep from going silently absent.
+#
+# The qualifier is not hedging. Some ledger entries presuppose a delete that this mode never
+# performs — `(delete-failed: …)` and `(list-failed-after-delete)` are structurally unreachable
+# here, and correctly so. "EVERY state" without that carve-out is a rule nobody can satisfy, and a
+# rule nobody can satisfy is one the next reader ignores wholesale.
 if [ "$VERIFY_ONLY" != "1" ]; then
 	purge server "servers"
 	purge load-balancer "load balancers"

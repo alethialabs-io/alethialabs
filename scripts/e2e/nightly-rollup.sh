@@ -1454,6 +1454,34 @@ run_self_test() {
 	_a "UNVERIFIABLE" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
 		"(V10) …and 'nobody could look' outranks 'measured empty' too"
 
+	# ⚠️ BOTH ORDERINGS, and the first cut had only one — which made "both orderings tested" a false
+	#    sentence in a PR body. With the worse verdict always in the LATER-sorting directory, a
+	#    last-write-wins accumulator passes every case above: dropping `[ -n "$best" ] ||` from the
+	#    CLEAN arm, and dropping the RESIDUAL guard from the UNVERIFIABLE arm, both SURVIVED. The
+	#    direction the comment on teardown_verdict says must never happen — the worse finding
+	#    arriving FIRST and being overwritten by a cleaner one — was the direction never exercised.
+	c="$tmp/v10-residual-first"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure applied
+	write_jobs_steps "$c/jobs.json" aws success
+	write_verdict "$c/proofs/aaa-residual" aws "nightly-777-1" 1
+	write_verdict "$c/proofs/zzz-clean" aws "nightly-777-1" 0
+	_a "RESIDUAL" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+		"(V10) a CLEAN receipt that sorts LATER cannot overwrite a RESIDUAL one"
+	c="$tmp/v10-residual-first-vs-unver"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure applied
+	write_jobs_steps "$c/jobs.json" aws success
+	write_verdict "$c/proofs/aaa-residual" aws "nightly-777-1" 1
+	write_verdict "$c/proofs/zzz-unver" aws "nightly-777-1" 4 "cloud-sql:exit 1 — PERMISSION_DENIED"
+	_a "RESIDUAL" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+		"(V10) …nor can a later UNVERIFIABLE one — a confirmed leak outranks 'nobody could look'"
+	c="$tmp/v10-unver-first"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure applied
+	write_jobs_steps "$c/jobs.json" aws success
+	write_verdict "$c/proofs/aaa-unver" aws "nightly-777-1" 4 "cloud-sql:exit 1 — PERMISSION_DENIED"
+	write_verdict "$c/proofs/zzz-clean" aws "nightly-777-1" 0
+	_a "UNVERIFIABLE" "$(PROOFS_DIR="$c/proofs" RUN_ID=777 JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+		"(V10) …nor can a later CLEAN one overwrite an UNVERIFIABLE"
+
 	# (V9) THE VERDICT'S WEIGHT. A residual finding is loud and does NOT rewrite PASS/FAIL — the
 	#      issue's own preference, and the same orthogonality #2330 established. A cleanup defect
 	#      filed under a provisioning title is read as a provisioning defect.

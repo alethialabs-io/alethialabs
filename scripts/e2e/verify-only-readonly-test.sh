@@ -37,7 +37,11 @@
 #      sweeps into deleting, so C means "the guard stopped them" rather than "nothing was there".
 #   E  THE REFUSAL HOLDS. `VERIFY_ONLY=1` with `DRY_RUN=1` or `PREFLIGHT=1` exits 2 — both of those
 #      exit 0 WITHOUT verifying, and that exit status is read as a cloud verdict. Kills mutant 4.
-#   F  hetzner's CCM ingress load balancer is still ASKED ABOUT in this mode. See its own block.
+#   F  hetzner's CCM ingress load balancer is still ASKED ABOUT in this mode, and both modes reach
+#      the same unverifiable ledger. See its own block.
+#   F2 …and a leak that pass finds reaches the EXIT CODE, not just the ledger. F alone is green
+#      through a mutation that drops the leak on the floor and prints "verified complete".
+#   G  without `jq` the same question is RECORDED AS UNASKED rather than skipped in silence.
 #
 # ⚠️ WHAT THIS DOES NOT PROVE. The stubs answer a fixture, not a cloud. This file proves the guard
 # skips the mutating passes and that the verification still queries; it does not prove any
@@ -58,8 +62,20 @@ bad() {
 
 # ── The mutating-verb matcher. ──────────────────────────────────────────────────────────────────
 #
-# Deliberately GENEROUS on the stem list. The load-bearing assertion (C) is that the count is ZERO,
-# so over-matching on stems can only make this file stricter.
+# ⚠️ THE DANGEROUS DIRECTION IS UNDER-MATCHING, AND THE FIRST CUT OF THIS FILE HAD IT.
+#
+# The header used to argue "deliberately generous … over-matching can only make this file stricter".
+# That sentence is true and it is about the wrong failure. A stem this list omits is a mutating call
+# classified as a READ, and assertion C — this file's central property — then passes over it. Three
+# such calls were in the VERIFY_ONLY=0 logs THIS FILE ALREADY WRITES:
+#
+#   aws      s3 rm s3://<bucket> --recursive               emptying a bucket
+#   gcp      storage rm -r gs://<bucket> --quiet            emptying a bucket
+#   alibaba  vpc UnassociateEipAddress --AllocationId …     detaching an EIP
+#
+# `rm` was not a stem, and the CamelCase list had `Disassociate` but not `Unassociate`. So the list
+# below is long on purpose, and the standard for adding to it is "could any of these five CLIs ever
+# spell a mutation this way", not "do we call it today".
 #
 # ⚠️ IT IS *NOT* GENEROUS ON THE BOUNDARIES, and that is not tidiness — a matcher with no trailing
 # boundary reads `gcloud compute addresses list` as a mutating call (`add` + "resses"), and a
@@ -74,8 +90,13 @@ bad() {
 # Three alternations rather than one case-insensitive pass, because `grep -i` would fold `[A-Z]`
 # too and hand back exactly the `addresses` false positive the boundary exists to stop. The third
 # covers the all-caps HTTP verbs alibaba's `cs` product takes (`aliyun cs DELETE /clusters/<id>`).
-MUTATING_STEMS='delete|remove|destroy|terminate|purge|detach|deregister|disassociate|revoke|release|create|modify|update|put|add|attach|stop|reboot|disable|enable'
-MUTATING_CAMEL='Delete|Remove|Destroy|Terminate|Purge|Detach|Deregister|Disassociate|Revoke|Release|Create|Modify|Update|Put|Add|Attach|Stop|Reboot|Disable|Enable'
+MUTATING_STEMS='delete|remove|destroy|terminate|purge|detach|deregister|disassociate|unassociate|revoke|release'
+MUTATING_STEMS="${MUTATING_STEMS}|create|modify|update|patch|replace|set|put|add|attach|join|tag|untag"
+MUTATING_STEMS="${MUTATING_STEMS}|rm|rb|mb|mv|cp|sync|move|rename|import|restore|rollback|apply"
+MUTATING_STEMS="${MUTATING_STEMS}|start|run|stop|reboot|reset|restart|resize|scale|upgrade|disable|enable|abort|cancel|invoke"
+MUTATING_CAMEL='Delete|Remove|Destroy|Terminate|Purge|Detach|Deregister|Disassociate|Unassociate|Revoke|Release'
+MUTATING_CAMEL="${MUTATING_CAMEL}|Create|Modify|Update|Set|Put|Add|Attach|Join|Move|Rename|Import|Restore"
+MUTATING_CAMEL="${MUTATING_CAMEL}|Start|Run|Stop|Reboot|Reset|Restart|Resize|Scale|Upgrade|Disable|Enable|Abort|Cancel|Invoke"
 MUTATING_RE="(^|[ /])((${MUTATING_STEMS})([- ]|\$)|(${MUTATING_CAMEL})[A-Z]|(DELETE|PUT|POST|PATCH)([ /]|\$))"
 
 mutating_calls() { grep -Ec "$MUTATING_RE" "$1" 2>/dev/null || true; }
@@ -154,6 +175,43 @@ if [ "$(mutating_calls "$ST_CALLS")" = "1" ]; then
 	ok "the mutating-verb matcher fires on a delete and NOT on a describe"
 else
 	bad "the mutating-verb matcher fires on a delete and NOT on a describe" "matched $(mutating_calls "$ST_CALLS") of 1"
+fi
+
+# THE THREE CALLS THE FIRST MATCHER MISSED, pinned as their own fixture. They are real invocations
+# these sweepers make — lifted from the VERIFY_ONLY=0 logs this file writes — and each was
+# classified as a READ, so assertion C would have passed over a run that recursively emptied an S3
+# bucket. A narrowing of the stem list must red HERE, loudly, and not by silently going quiet.
+: >"$WORK/missed"
+cat >"$WORK/missed" <<'MISSED'
+s3 rm s3://stub-4242 --recursive
+--project stub-project storage rm -r gs://stub-4242 --quiet
+vpc UnassociateEipAddress --AllocationId eip-stub --region us-east-1
+MISSED
+if [ "$(mutating_calls "$WORK/missed")" = "3" ]; then
+	ok "…and on the three real mutations the first cut of this matcher classified as READS"
+else
+	bad "…and on the three real mutations the first cut classified as READS" \
+		"matched $(mutating_calls "$WORK/missed") of 3 — a stem was narrowed and assertion C has gone blind to it"
+fi
+
+# The other direction, on the READS most likely to be caught by a careless stem. `starts_with(` is
+# the one that actually bit: a matcher with no trailing boundary reads `addresses` as `add`.
+: >"$WORK/reads"
+cat >"$WORK/reads" <<'READS'
+ec2 describe-addresses --region us-east-1
+--project stub-project compute addresses list --format=value(name,region.basename())
+group list --query [?starts_with(name,'rg-')].name -o tsv
+keyvault list-deleted --query [].name -o tsv
+resourcegroupstaggingapi get-resources --tag-filters Key=alethia:project-id
+vpc DescribeVpcs --PageSize 100 --Tag.1.Key alethia:project-id
+s3api head-bucket --bucket stub-4242
+load-balancer list -o noheader -o columns=id
+READS
+if [ "$(mutating_calls "$WORK/reads")" = "0" ]; then
+	ok "…and on NONE of eight real read-only calls, including the ones a careless stem catches"
+else
+	bad "…and on NONE of eight real read-only calls" \
+		"matched $(mutating_calls "$WORK/reads"): $(grep -E "$MUTATING_RE" "$WORK/reads" | head -2 | tr '\n' ' ') — a false positive here reds this suite forever"
 fi
 
 # ── The runner. Re-enters the real sweeper as a subprocess so the REAL orchestration is exercised;
@@ -235,8 +293,11 @@ done
 
 # ── F. hetzner's CCM ingress load balancer (#4398, the regression this file was extended for). ──
 #
-# sweep_unlabelled_lbs is not only a sweeper: it is the ONLY place that records the CCM ingress load
-# balancer as UNVERIFIABLE, and verify_swept's own re-check goes through unlabelled_lb_ids, which
+# Before the fix, sweep_unlabelled_lbs was not only a sweeper: it was the only place that recorded
+# the CCM ingress load balancer as UNVERIFIABLE. (Three places now — that function,
+# `report_unlabelled_lbs`, and verify_swept's `no jq` branch. Past tense on purpose: it describes
+# the tree the bug lived in, not the one this test ships in.) verify_swept's own re-check goes
+# through unlabelled_lb_ids, which
 # returns SILENTLY when the private-network binding cannot be resolved. After a teardown that
 # network is gone BY CONSTRUCTION. The first cut of VERIFY_ONLY skipped the sweeper, so on the one
 # cloud that runs every night — into a shared account where "the project holds a load balancer" is
@@ -274,6 +335,117 @@ if diff -q <(sed -E 's/\(.*//' "$WORK/hz-1.ledger" | sort -u) \
 else
 	bad "F · the two modes reach the same set of unverifiable types" \
 		"verify='$(sed -E 's/\(.*//' "$WORK/hz-1.ledger" | sort -u | tr '\n' ' ')' sweep='$(sed -E 's/\(.*//' "$WORK/hz-0.ledger" | sort -u | tr '\n' ' ')'"
+fi
+
+# ── F2. THE LEAK, not just the ledger. ─────────────────────────────────────────────────────────
+#
+# F above compares the two modes' UNVERIFIABLE ledgers, and that is not enough: `report_unlabelled_lbs`
+# also echoes, on STDOUT, the ids of load balancers BOUND TO THIS RUN that are still alive — a
+# confirmed LEAK, which only verify_swept can count. Mutating the branch that reads it
+# (`if [ "$VERIFY_ONLY" = "1" ]` in verify_swept → `if false`) sends the check back through
+# `unlabelled_lb_ids`, which returns SILENTLY once the network is gone, and the run reports
+#
+#     ✓ hcloud cleanup verified complete … no labelled resources remain
+#
+# over a live billing load balancer. That is H1's exact class, inside H1's own fix, and F alone is
+# green through it.
+#
+# The fixture is the #3481 shape: a pre-destroy CAPTURE names this run's load balancer, the network
+# is gone, and the project listing still returns the id.
+echo "→ hetzner · a leak found by the read-only pass must reach the EXIT CODE, not just the ledger"
+printf '# cluster=cl-selftest-4177-1\n9911\n' >"$WORK/lb-capture.txt"
+write_stub hcloud '
+for a in "$@"; do [ "$a" = "--selector" ] && exit 0; done
+case " $* " in
+  *" load-balancer list "*) echo 9911 ;;
+esac'
+for mode in 1 0; do
+	out="$WORK/hz2-${mode}.out"
+	rc=0
+	PATH="$WORK/bin:$PATH" ST_CALLS="$WORK/hz2-${mode}.calls" \
+		PROBE_LEDGER="$WORK/hz2-${mode}.ledger" PROBE_UNATTRIB_LEDGER="$WORK/hz2-${mode}.un" \
+		PROBE_ATTEST_FILE="$WORK/hz2-${mode}.at" \
+		ALETHIA_E2E_HCLOUD_LB_IDS="$WORK/lb-capture.txt" \
+		VERIFY_ONLY="$mode" PROBE_RETRIES=1 PROBE_RETRY_DELAY=0 HCLOUD_TOKEN=stub \
+		ALETHIA_E2E_ENV=selftest-4177-1 \
+		timeout 60 bash scripts/e2e/hcloud-cleanup.sh cl-selftest-4177-1 >"$out" 2>&1 || rc=$?
+	echo "$rc" >"$WORK/hz2-${mode}.rc"
+done
+# The read-only pass never deletes, so a live captured LB is a LEAK to it: exit 1, named.
+if [ "$(cat "$WORK/hz2-1.rc")" = "1" ] && grep -q '9911' "$WORK/hz2-1.out"; then
+	ok "F2 · VERIFY_ONLY=1 reports the captured load balancer as a LEAK — exit 1, id named"
+else
+	bad "F2 · VERIFY_ONLY=1 reports the captured load balancer as a LEAK" \
+		"exit $(cat "$WORK/hz2-1.rc"), $(grep -c '9911' "$WORK/hz2-1.out") mention(s) of the id — a live billing LB just verified as clean"
+fi
+# The sweeping pass DELETES it and then re-reads; the stub is static, so the delete "fails" and it
+# lands on UNVERIFIABLE (exit 4). Different code, same refusal to pass: the codes differ because
+# only one of the two modes was allowed to try, which is the whole point of the split.
+if [ "$(cat "$WORK/hz2-0.rc")" != "0" ] && grep -q '9911' "$WORK/hz2-0.out"; then
+	ok "F2 · VERIFY_ONLY=0 also refuses to pass and names the id (exit $(cat "$WORK/hz2-0.rc"))"
+else
+	bad "F2 · VERIFY_ONLY=0 also refuses to pass and names the id" \
+		"exit $(cat "$WORK/hz2-0.rc"), $(grep -c '9911' "$WORK/hz2-0.out") mention(s)"
+fi
+
+# ── G. WITHOUT `jq`, THE QUESTION IS RECORDED AS UNASKED. ───────────────────────────────────────
+#
+# `jq` is what binds an unlabelled CCM load balancer to this run — its only binding is a
+# private-network attachment that has to be read out of JSON. Without it the check cannot run at
+# ALL, and `verify_swept` used to guard it with `if command -v jq` and no `else`: a silent skip, on
+# a verification path, over the resource this cloud most often leaks. That `else` now records
+# `ccm-load-balancers "no jq"`, and deleting it left this suite green — a correct fix with nothing
+# holding it in place.
+#
+# The only way to test it is to genuinely take `jq` off $PATH, so the mirror below is a symlink farm
+# over the system directories with that one name skipped. It is built here and nowhere else because
+# it costs a second; every other case runs with the real environment.
+echo "→ hetzner · without jq, the CCM load balancer is recorded as UNASKED, not skipped"
+mkdir -p "$WORK/nojq"
+for d in /usr/bin /bin /usr/sbin /sbin; do
+	[ -d "$d" ] || continue
+	for f in "$d"/*; do
+		b="${f##*/}"
+		[ "$b" = "jq" ] && continue
+		[ -e "$WORK/nojq/$b" ] || ln -s "$f" "$WORK/nojq/$b" 2>/dev/null
+	done
+done
+# THE INSTRUMENT, again: a mirror that still finds jq proves nothing, and one that lost `grep`
+# would fail the sweeper for a reason that has nothing to do with the assertion.
+if PATH="$WORK/nojq" command -v jq >/dev/null 2>&1; then
+	bad "G · the jq-less PATH really lacks jq" "jq is still resolvable, so the assertion below is vacuous"
+elif ! PATH="$WORK/nojq" command -v grep >/dev/null 2>&1; then
+	bad "G · the jq-less PATH still has the core utilities" "grep is missing — the sweeper would fail for the wrong reason"
+else
+	ok "G · the jq-less PATH lacks jq and keeps the core utilities"
+	# BOTH modes. The question "is the CCM load balancer accounted for" has to survive a jq-less
+	# runner on the sweeping path as well as the read-only one, and the two reach it through
+	# different functions.
+	for mode in 1 0; do
+		: >"$WORK/nojq-${mode}.ledger"
+		PATH="$WORK/bin:$WORK/nojq" ST_CALLS="$WORK/nojq-${mode}.calls" \
+			PROBE_LEDGER="$WORK/nojq-${mode}.ledger" PROBE_UNATTRIB_LEDGER="$WORK/nojq-${mode}.un" \
+			PROBE_ATTEST_FILE="$WORK/nojq-${mode}.at" \
+			VERIFY_ONLY="$mode" PROBE_RETRIES=1 PROBE_RETRY_DELAY=0 HCLOUD_TOKEN=stub \
+			ALETHIA_E2E_ENV=selftest-4177-1 \
+			bash scripts/e2e/hcloud-cleanup.sh cl-selftest-4177-1 >"$WORK/nojq-${mode}.out" 2>&1
+		if grep -q 'ccm-load-balancers(no jq)' "$WORK/nojq-${mode}.ledger" 2>/dev/null; then
+			ok "G · VERIFY_ONLY=${mode} on a jq-less runner records the CCM load balancer as UNVERIFIABLE"
+		else
+			bad "G · VERIFY_ONLY=${mode} on a jq-less runner records the CCM load balancer as UNVERIFIABLE" \
+				"the ledger is '$(tr '\n' ' ' <"$WORK/nojq-${mode}.ledger")' — the check was skipped in silence"
+		fi
+	done
+	# ⚠️ WHAT G PROVES AND WHAT IT DOES NOT, both measured rather than assumed. hcloud-cleanup.sh has
+	# THREE `no jq` recorders — sweep_unlabelled_lbs, report_unlabelled_lbs, and verify_swept's
+	# `else` — and G asserts the BEHAVIOUR, so it cannot attribute the entry to one of them:
+	#
+	#   delete verify_swept's entry alone            → this suite stays GREEN (the other two mask it)
+	#   delete the other two, keep verify_swept's    → VERIFY_ONLY=1 REDS, VERIFY_ONLY=0 stays green
+	#
+	# The second row is the useful one: it shows verify_swept's `else` really is the backstop on the
+	# sweeping path, not dead code. What no black-box test here can do is pin it as the SOLE source,
+	# because no front-door path reaches the gate without one of the other two having run first.
 fi
 
 if [ "$FAILS" -ne 0 ]; then
