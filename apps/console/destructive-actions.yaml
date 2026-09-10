@@ -693,7 +693,13 @@ controls:
     surface: apps/console/components/agent/agent-artifact-gallery.tsx
     mutation: deleteArtifact
     reach: [{ open: "Ask AI" }, { open: "Artifacts" }]
-    control: { role: button, name: "Delete <name>" }
+    # The noun is IN the accessible name, and the spec is why. `triggerFor` matches a templated name
+    # by its literal prefix, so "Delete <name>" is `/Delete/i` — and the thread rail is mounted
+    # BEFORE <main> and stays mounted over the Artifacts and Knowledge views, so `.first()` resolved
+    # this entry and `agent.knowledge.delete` to the rail's chat trash. The three controls now name
+    # what they destroy ("Delete artifact …", "Delete document …", "Delete chat …"), which separates
+    # the prefixes and tells a screen reader the same thing.
+    control: { role: button, name: "Delete artifact <name>" }
     confirm: confirm-dialog
     confirm_action: "Delete artifact"
     dialog_title: "Delete <name>?"
@@ -732,7 +738,10 @@ controls:
     mutation_surface: apps/console/components/agent/elench/use-elench-threads.ts
     mutation: deleteThread
     reach: [{ open: "Ask AI" }]
-    control: { role: button, name: "Delete chat" }
+    # Templated because the rail's trash IS templated — every row carries its own title. The literal
+    # prefix `/Delete chat/i` is what this entry resolves on, and no other agent surface starts with
+    # those two words.
+    control: { role: button, name: "Delete chat <title>" }
     confirm: confirm-dialog
     confirm_action: "Delete chat"
     dialog_title: "Delete <title>?"
@@ -746,7 +755,8 @@ controls:
     surface: apps/console/components/agent/agent-knowledge-panel.tsx
     mutation: upsertAgentContext
     reach: [{ open: "Ask AI" }, { open: "Knowledge" }]
-    control: { role: button, name: "Delete <title>" }
+    # See `agent.artifact.delete` — the noun separates this from the rail's "Delete chat …".
+    control: { role: button, name: "Delete document <title>" }
     confirm: confirm-dialog
     confirm_action: "Delete document"
     dialog_title: "Delete <title>?"

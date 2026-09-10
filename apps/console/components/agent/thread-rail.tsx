@@ -194,9 +194,18 @@ export function ThreadRail({
 											{relTime(new Date(t.updated_at))}
 										</span>
 									</button>
+									{/* The name carries the TITLE, and the noun is not decoration. N rows
+									    all named "Delete chat" are N indistinguishable buttons to a
+									    screen reader, and — now that this is a real <button> with a
+									    role — the destructive-action audit's `/Delete/i` prefix match
+									    resolved the Artifacts and Knowledge entries to THIS control,
+									    because the rail is mounted before <main> and `.first()` takes
+									    document order. The three surfaces now say which thing they
+									    delete: "Delete chat …", "Delete artifact …", "Delete
+									    document …". */}
 									<button
 										type="button"
-										aria-label="Delete chat"
+										aria-label={`Delete chat ${t.title}`}
 										onClick={() => setPendingDelete(t)}
 										className="absolute right-2 top-2 flex size-4 items-center justify-center text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
 									>

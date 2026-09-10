@@ -223,7 +223,7 @@ export function AgentArtifactGallery({
 									{tab === "yours" && (
 										<button
 											type="button"
-											aria-label={`Delete ${a.name}`}
+											aria-label={`Delete artifact ${a.name}`}
 											onClick={() => setPendingDelete(a)}
 											className="text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/card:opacity-100"
 										>

@@ -126,7 +126,7 @@ export function AgentArtifactViewer({
 							<ArtifactSharePopover artifactId={artifact.id} />
 							<button
 								type="button"
-								aria-label={`Delete ${artifact.name}`}
+								aria-label={`Delete artifact ${artifact.name}`}
 								disabled={busy !== null}
 								onClick={() => void run("delete", onDelete)}
 								className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"

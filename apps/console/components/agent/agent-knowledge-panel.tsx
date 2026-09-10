@@ -366,7 +366,7 @@ export function AgentKnowledgePanel({
 														</button>
 														<button
 															type="button"
-															aria-label={`Delete ${d.title}`}
+															aria-label={`Delete document ${d.title}`}
 															onClick={() => setPendingDelete(d)}
 															className="flex size-7 items-center justify-center text-muted-foreground hover:text-foreground"
 														>
