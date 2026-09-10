@@ -80,12 +80,25 @@ export class FgaTupleSync implements TupleSync {
 	 * The idempotent "replace this grant's tuples" delete: clear whatever the subject already has
 	 * on the object this grant writes to. A no-op when the grant expands to nothing.
 	 *
-	 * ⚠ It does NOT clear tuples an already-existing bad-pair row wrote under the PRE-#4584
-	 * reading. Those are on `org:<orgId>`, where they are indistinguishable from the tuples of a
-	 * legitimate org-wide grant conferring the same permission on the same subject, so deleting
-	 * them here would revoke real access. Whether any exist, and whether removing them takes
-	 * access from anyone, is what the #4583 audit answers per row
-	 * (docs/ops/grants-scope-contradictions.sql).
+	 * ⚠ THIS IS COARSE, AND IT HAS ALWAYS BEEN. `existingFor` reads EVERY tuple the subject has on
+	 * that object and deletes all of them — not only the ones this grant contributed, which the
+	 * store cannot attribute anyway. For an org-wide grant that means clearing the subject's whole
+	 * org-object capability set. Pre-existing behaviour for every `resource_id IS NULL` row; noted
+	 * because the #4584 ruling extends WHICH rows land on the org object (below), and it fails
+	 * closed and is re-asserted from Postgres by `backfill` at the next boot.
+	 *
+	 * ⚠ AND THE TWO EFFECTS NOW BEHAVE DIFFERENTLY FOR A ROW THAT SCOPES TO NOTHING (#4584):
+	 *
+	 *   allow — `grantObject` returns null, so this is a no-op. It does NOT clear the tuples such
+	 *     a row wrote under the PRE-#4584 reading: those sit on `org:<orgId>`, indistinguishable
+	 *     from a legitimate org-wide grant's, and deleting them blind would revoke real access.
+	 *   deny — the ruling is that it excludes ORG-WIDE, so its tuples genuinely DO live on
+	 *     `org:<orgId>` and this clears them — together with everything else the subject has
+	 *     there, per the coarseness above.
+	 *
+	 * Which is one more reason the audit says NEVER remediate one of these by revoking. Whether
+	 * any exist, and whether removing them takes access from anyone, is what the #4583 audit
+	 * answers per row (docs/ops/grants-scope-contradictions.sql).
 	 */
 	private async clearGrantTuples(
 		subject: string,
