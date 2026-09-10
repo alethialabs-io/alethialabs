@@ -1130,14 +1130,28 @@ jobs:
         run: |
           pnpm compliance:release
           pnpm source:community
+      # ONE ARTEFACT PER STEP, because `if-no-files-found` is AGGREGATE (#4347). The action runs a
+      # single combined glob over every `path:` entry and tests `filesToUpload.length === 0` once,
+      # so `error` fires only when NOTHING AT ALL matched. These two directories come from two
+      # different commands in the step above — `pnpm compliance:release` and `pnpm source:community`
+      # — and while they shared a step, either one producing its tree covered for the other
+      # producing nothing. Do not merge them back, and do not add a third path to either: every
+      # entry added widens the set of ways the guard is satisfied by something other than the thing
+      # it is guarding. `pnpm check:upload-aggregate` refuses the merged shape.
       - name: Upload compliance evidence
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: compliance-${{ github.sha }}
-          path: |
-            dist/compliance
-            dist/community-source
+          path: dist/compliance
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload community-source evidence
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: community-source-${{ github.sha }}
+          path: dist/community-source
           if-no-files-found: error
           retention-days: 30
       - name: No Supabase
@@ -1937,6 +1951,18 @@ jobs:
       - name: ...and that check's own parser is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:workflow-shape -- --self-test
+      # `if-no-files-found: error` is AGGREGATE — the action globs every `path:` entry together and
+      # asks `filesToUpload.length === 0` ONCE — so a step listing several paths under it succeeds
+      # if ANY ONE matched, having captured nothing it exists for. Two steps here were that shape,
+      # and in both the path that always matches was the one riding along (#4347). The edit alone
+      # fixes today: the instinct on a missing file is to ADD ITS PATH to the existing step, which
+      # is one invisible line and puts the repo straight back.
+      - name: No upload step's if-no-files-found error is satisfiable by a path it does not guard
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:upload-aggregate
+      - name: ...and that check's own parser is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:upload-aggregate -- --self-test
       # Three lists of required checks have to agree and nothing compared them (#3180). The
       # dangerous direction is a check the protect-dev ruleset requires that .mergify.yml does not
       # wait for: the queue decides the PR is ready, GitHub refuses the merge, and nothing is red.
@@ -2296,20 +2322,30 @@ jobs:
         env:
           ALETHIA_TS_PROBE_RUNS: ${{ inputs.ts_probe_runs || '5' }}
         run: scripts/ci/ts-coverage-probe.sh
+      # ONE staged directory, written by the probe from the sweep record. The explicit list that
+      # used to live here named the same three projects as the loops did, so even with the loops
+      # fixed, marketing's and ee's floors would never have left the runner — and arming them is
+      # the whole reason anybody dispatches this job.
       - uses: actions/upload-artifact@v7
         with:
           name: ts-coverage-floors
-          # ONE staged directory, written by the probe from the sweep record. The explicit list
-          # that used to live here named the same three projects as the loops did, so even with
-          # the loops fixed, marketing's and ee's floors would never have left the runner — and
-          # arming them is the whole reason anybody dispatches this job.
-          #
-          # plan-catalog's raw artefact rides along deliberately: it is the smallest project, so a
-          # verbatim copy is a committable size, and it is how the --self-test fixture gets
-          # captured from a REAL vitest run with real CI absolute paths rather than hand-written.
-          path: |
-            ts-coverage-floors/
-            packages/plan-catalog/coverage/coverage-final.json
+          path: ts-coverage-floors/
+          if-no-files-found: error
+      # plan-catalog's raw artefact rides along deliberately: it is the smallest project, so a
+      # verbatim copy is a committable size, and it is how the --self-test fixture gets captured
+      # from a REAL vitest run with real CI absolute paths rather than hand-written.
+      #
+      # IT GETS ITS OWN STEP, and that is the whole of #4347. `if-no-files-found` is AGGREGATE —
+      # the action globs every `path:` entry together and asks `filesToUpload.length === 0` once —
+      # so while this fixture shared a step with `ts-coverage-floors/`, the fixture alone satisfied
+      # the guard and an EMPTY staged directory uploaded happily. The dispatch would report success
+      # having armed nothing, which is the one outcome the `error` is there to prevent. Split, an
+      # empty `ts-coverage-floors/` fails the step above on its own. `pnpm check:upload-aggregate`
+      # refuses any re-merge.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ts-coverage-plan-catalog-fixture
+          path: packages/plan-catalog/coverage/coverage-final.json
           if-no-files-found: error
 
   runner-image-arch:
