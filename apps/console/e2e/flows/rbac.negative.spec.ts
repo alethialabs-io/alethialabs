@@ -41,7 +41,7 @@
 // throwaway member instead; a regression now costs a row this file created.
 
 import { test, expect, type PersonaSession } from "../fixtures/qa";
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { cleanRbacSeed, personaOwner, seedOrgMember, type SeededMember } from "../helpers/seed-rbac";
 import type { Owner } from "../helpers/seed";
 
@@ -113,6 +113,28 @@ function victimRow(page: Page) {
 	return page.getByRole("row").filter({ hasText: victim.email });
 }
 
+/**
+ * Open a row's Manage menu and activate one item, RETRYING THE WHOLE PAIR.
+ *
+ * Measured on run 34462370367: `element was detached from the DOM, retrying` on the menu item, in
+ * both the remove and the role tests. The members table hydrates from four independent queries —
+ * members, invitations, collaboration access and the batched classification map — and a row that
+ * re-renders while its dropdown is open tears the portalled item out from under a click that
+ * Playwright had already resolved. Retrying the CLICK alone cannot recover: the menu it belonged to
+ * is gone. Re-opening is what recovers, so the open and the activation retry together.
+ *
+ * Re-clicking an item is safe here on purpose — every use below opens a CONFIRMATION, which mutates
+ * nothing, and the mutations these tests drive are the ones being denied.
+ */
+async function activateRowMenuItem(page: Page, row: Locator, item: RegExp): Promise<void> {
+	const menuItem = page.getByRole("menuitem", { name: item });
+	await expect(async () => {
+		await row.getByRole("button", { name: "Manage" }).click();
+		await menuItem.click({ timeout: 2_000 });
+		await expect(page.getByRole("alertdialog")).toBeVisible({ timeout: 2_000 });
+	}).toPass({ timeout: 30_000 });
+}
+
 test.describe("RBAC — member permission denials", () => {
 	test("a member can view the members list but cannot invite", async ({ member }) => {
 		await membersReady(member);
@@ -147,9 +169,16 @@ test.describe("RBAC — member permission denials", () => {
 
 		// The picker RENDERS for a member — `canManage` is the org's `organizations` entitlement, not
 		// a permission — which is exactly why the denial has to be measured server-side.
-		await row.getByRole("combobox", { name: "Role" }).click();
+		//
+		// Armed BEFORE the retry loop, not inside it: `waitForResponse` starts listening the moment
+		// it is called, so it cannot miss a request fired by an attempt it did not wrap. The open and
+		// the option click retry together for the same reason `activateRowMenuItem` does — a row that
+		// re-renders detaches the portalled option, and re-clicking a dead node cannot recover.
 		const refused = orgEndpoint(member.page, "update-member-role");
-		await member.page.getByRole("option", { name: /^admin$/i }).click();
+		await expect(async () => {
+			await row.getByRole("combobox", { name: "Role" }).click();
+			await member.page.getByRole("option", { name: /^admin$/i }).click({ timeout: 2_000 });
+		}).toPass({ timeout: 30_000 });
 		const response = await refused;
 		expect(response.status(), "a member must not be able to escalate a colleague to admin").toBeGreaterThanOrEqual(400);
 
@@ -164,10 +193,9 @@ test.describe("RBAC — member permission denials", () => {
 		const row = victimRow(member.page);
 		await expect(row).toBeVisible({ timeout: 30_000 });
 
-		await row.getByRole("button", { name: "Manage" }).click();
-		await member.page.getByRole("menuitem", { name: /remove from organization/i }).click();
 		// Removing now ASKS FIRST (#4271) — the confirmation is part of the path to the mutation, so
 		// a denial spec that clicked once and asserted immediately would be measuring the dialog.
+		await activateRowMenuItem(member.page, row, /remove from organization/i);
 		const confirm = member.page.getByRole("alertdialog");
 		await expect(confirm.getByText("Remove this member?")).toBeVisible();
 		const refused = orgEndpoint(member.page, "remove-member");
@@ -184,8 +212,7 @@ test.describe("RBAC — member permission denials", () => {
 		const row = victimRow(member.page);
 		await expect(row).toBeVisible({ timeout: 30_000 });
 
-		await row.getByRole("button", { name: "Manage" }).click();
-		await member.page.getByRole("menuitem", { name: /^Suspend$/ }).click();
+		await activateRowMenuItem(member.page, row, /^Suspend$/);
 		const confirm = member.page.getByRole("alertdialog");
 		await expect(confirm.getByText("Suspend this member?")).toBeVisible();
 		await confirm.getByRole("button", { name: "Suspend member" }).click();
