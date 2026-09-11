@@ -342,11 +342,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 34453355398 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 34453355398 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 34453355398 |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 34453355398 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 34453355398 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 34577154260 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 34577154260 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 34577154260 |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 34577154260 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 34577154260 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -397,6 +397,7 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 
 ### Blocked on a human
 
+- #4642 — infra(github): the live rulesets enforce 10 of the 19 contexts protect-main declares — all seven release-gate legs are unenforced
 - #4583 — audit(grants): find existing rows with an org kind and a resource id — grants someone believed were scoped, and are not
 - #4547 — infra(e2e-issuer): the assertion issuer has never deployed — CLOUDFLARE_API_TOKEN is unset in the e2e-issuer environment
 - #4483 — harness: CLAUDE.md §3 and `env.sh` disagree about whether an agent may restore the box, and `cmd_box` has no guard either way
@@ -458,7 +459,7 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-09-10T11:06:56Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-09-11T11:05:14Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
