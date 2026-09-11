@@ -91,6 +91,7 @@
     "wt": "bash scripts/worktree.sh",
     "wt:ls": "git worktree list",
     "wt:prune": "bash scripts/worktree.sh --prune",
+    "wt:dehydrate": "bash scripts/worktree.sh --dehydrate",
     "wt:who": "bash scripts/worktree.sh --who",
     "wt:rm": "bash scripts/worktree.sh --remove",
     "wt:release": "bash scripts/worktree.sh --release",

@@ -1476,12 +1476,23 @@ jobs:
       # wt-lease-hook-test.sh replays incident #1247 (one instance committing another's
       # uncommitted work) against a real throwaway leased worktree; it is the only proof
       # the lease actually holds, and it was never executed by CI.
-      - name: Worktree lease protocol (13 properties, incl. pid-reuse + nested worktrees)
+      # The count used to be written into this name by hand and went stale the first time the suite
+      # grew (13 → 19 in #4599). The suite prints its own tally; the step no longer asserts one.
+      - name: Worktree lease protocol (pid-reuse, nested worktrees, the ownership ladder)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-lease.sh --self-test
       - name: 'Worktree lease guard — replays incident #1247'
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-lease-hook-test.sh
+      # `wt:dehydrate` runs `rm -rf` over directories it selects itself. This suite is the only
+      # thing that checks WHAT SURVIVES a reap — uncommitted work, untracked files, tracked files
+      # inside an ignored node_modules, a symlinked one, and the worktree itself — and the only
+      # thing that pins the three-mode refusal of a live-held tree (an agent, a HUMAN with no agent
+      # marker, and ALETHIA_ALLOW_FOREIGN_WT=1; the last two deleted a held tree until #4599).
+      # "Tested only when someone remembers" is not a steady state for a destructive command.
+      - name: 'Worktree dehydrate — what survives an rm -rf, and who is refused'
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/worktree.sh --self-test
       # The env registry used to key ownership on `user@host`, which every agent, worktree and shell
       # on one machine shares — so env:reap's "someone else is working on this box" could not fire
       # locally, and a finished lane deleted the box out from under a live one (#3841). The identity
