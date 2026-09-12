@@ -1894,6 +1894,7 @@ jobs:
           PROVIDER: ${{ matrix.provider }}
           ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
           ALETHIA_E2E_PROJECT: ${{ env.E2E_PROJECT }}
+          ALETHIA_E2E_HCLOUD_LB_IDS: ${{ runner.temp }}/hcloud-lb-ids.txt
         run: |
           if [ -z "${E2E_CLUSTER:-}" ] || [ -z "${E2E_ENV:-}" ]; then
             echo "::warning::E2E_CLUSTER/E2E_ENV unset at cancellation — nothing was provisioned yet, nothing to sweep."
@@ -2100,6 +2101,135 @@ jobs:
           # harmless for the managed scripts (they ignore positional args).
           "$SCRIPT" "$E2E_CLUSTER"
 
+      # ── POST-TEARDOWN RESIDUAL VERIFICATION (#4398) — ASK THE CLOUD, CHANGE NOTHING. ─────────
+      #
+      #    WHAT WAS WRONG. Teardown success was INFERRED and never measured. The nightly rollup
+      #    (scripts/e2e/nightly-rollup.sh, teardown_outcome) read the JOBS API for whether the step
+      #    above reported a conclusion, and called any non-empty conclusion `done` — "swept". But a
+      #    step conclusion is a boolean and the sweeper's verdict is three-valued: exit 0 (the API
+      #    answered, nothing survives), exit 1 (the API answered, something is STILL BILLING), exit 4
+      #    (the API did not answer). Actions renders 1 and 4 as the same `failure`, and the rollup
+      #    read both as a clean account. Worse: the sweepers run under `set -e`, so a sweep function
+      #    that dies takes the process with it and the verification NEVER RUNS — red step, `done` on
+      #    the board, nothing has looked at the cloud at all.
+      #
+      #    Nothing else closed that window. `e2e-orphan-reaper.yml` re-lists out of band on its own
+      #    schedule roughly four hours later, so between a run finishing and the next morning there
+      #    was no moment at which anything asked. PROGRAMME.md §0 predicate 6 is "Nothing is
+      #    standing"; that predicate had one instrument and it was asynchronous.
+      #
+      #    WHAT THIS DOES. Re-runs the SAME scope-locked sweeper with `VERIFY_ONLY=1`: every sweep
+      #    skipped, only the LIST/DESCRIBE calls `verify_swept` already makes. It DELETES NOTHING —
+      #    verification lists and reports; reclaiming stays the reaper's job, because two things that
+      #    both delete are two things that can disagree. The scope is this run's handle and nothing
+      #    wider, guarded exactly as the step above guards it.
+      #
+      #    IT CANNOT RED THE LEG, and that is deliberate rather than timid. "Provisioning worked" and
+      #    "the account is clean" are two claims about two different things — the reason the teardown
+      #    axis has been orthogonal since #2330 — and a cleanup finding that flipped a green leg red
+      #    would file a cleanup defect under a provisioning title, where every reader would start at
+      #    the deploy spine. So this step always exits 0 and its PRODUCT IS THE RECEIPT: a JSON
+      #    verdict the rollup reads, which renders as its own loud `RESIDUAL` row and banner. A leak
+      #    that the step above finds still reds that step, exactly as before; nothing is softened.
+      #
+      #    TIME BUDGET. `VERIFY_BUDGET_SECONDS` (180s) is a hard wall-clock bound enforced by
+      #    `timeout`, with `timeout-minutes: 4` above it as the GitHub-level backstop. It is spent
+      #    from the 15 minutes between T2_STEP_CAP_MINUTES and T2_JOB_CAP_MINUTES (t2JobMargin in
+      #    test/e2e/t2_budget.go) — the window that already pays for the capture, the scrub, the two
+      #    uploads and the sweep above. The ladder is NOT moved for it: that pair is an outer
+      #    backstop which only binds once every finer timeout has already failed, and inflating every
+      #    leg's cap on every cloud to reserve for a step that cannot exceed four minutes would size
+      #    the backstop for the wrong thing. The retries are cut to 2×2s for this pass alone — the
+      #    sweep above has already paid full retries against the same APIs, and a probe that cannot
+      #    answer twice inside a bounded window is UNVERIFIABLE, which is a truthful answer.
+      #
+      #    ⚠️ EVERY WAY OF NOT HAVING ASKED RESOLVES TO `UNVERIFIABLE`, NEVER TO CLEAN. The timeout
+      #    (124), a kill (137/143), the scope refusal (2), a missing sweeper (126), and an exit 0
+      #    with no attestation from probe_gate are all "nothing here proves the account is empty".
+      #    Only exit 0 WITH that attestation is CLEAN. An error reported as absence is the defect
+      #    class this whole verification exists to remove, so it must not be reintroduced by its own
+      #    failure path.
+      - name: Post-teardown residual verification (re-list the cloud, read-only)
+        if: steps.gate.outputs.run == 'true' && always()
+        timeout-minutes: 4
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
+          ALETHIA_E2E_PROJECT: ${{ env.E2E_PROJECT }}
+          # The same run_tag demos/proofs/capture-proof.sh stamps on a bundle. The rollup keys on it
+          # to accept a receipt as THIS run's, never on the artifact's path (#1613).
+          RUN_TAG: nightly-${{ github.run_id }}-${{ github.run_attempt }}
+          VERIFY_BUDGET_SECONDS: "180"
+        run: |
+          set -uo pipefail
+          VDIR="${RUNNER_TEMP}/teardown-verify"
+          mkdir -p "$VDIR"
+          # The ledgers are FILES because every probe runs in a subshell, and they are handed in
+          # from HERE because the receipt has to outlive the sweeper process that fills them.
+          export PROBE_LEDGER="${VDIR}/ledger"
+          export PROBE_UNATTRIB_LEDGER="${VDIR}/ledger.unattributable"
+          export PROBE_ATTEST_FILE="${VDIR}/attest"
+          # The receipt lives in its OWN directory, one level below the ledgers, and only that
+          # directory is uploaded. The ledgers hold RAW provider-CLI stderr; the receipt is scrubbed
+          # and then re-grepped by demos/proofs/scrub.sh's tripwire, which greps a DIRECTORY — so
+          # the two must not share one, or the tripwire would fire on text nobody publishes.
+          mkdir -p "${VDIR}/out"
+          export PROBE_VERDICT_FILE="${VDIR}/out/teardown-verify.json"
+          rc=0
+          if [ -z "${E2E_CLUSTER:-}" ] || [ -z "${E2E_ENV:-}" ]; then
+            echo "::error::E2E_CLUSTER/E2E_ENV is unset — refusing to run an unscoped verification."
+            rc=2
+          else
+            case "$PROVIDER" in
+              hetzner) SCRIPT="./scripts/e2e/hcloud-cleanup.sh" ;;
+              aws)     SCRIPT="./scripts/e2e/aws-cleanup.sh" ;;
+              gcp)     SCRIPT="./scripts/e2e/gcp-cleanup.sh" ;;
+              azure)   SCRIPT="./scripts/e2e/azure-cleanup.sh" ;;
+              alibaba) SCRIPT="./scripts/e2e/alibaba-cleanup.sh" ;;
+              *) echo "::error::unknown provider '$PROVIDER'"; SCRIPT="" ;;
+            esac
+            if [ -z "$SCRIPT" ] || [ ! -x "$SCRIPT" ]; then
+              echo "::error::$PROVIDER has no executable sweeper — the account cannot be re-listed."
+              rc=126
+            else
+              VERIFY_ONLY=1 PROBE_RETRIES=2 PROBE_RETRY_DELAY=2 \
+                timeout -k 15 "$VERIFY_BUDGET_SECONDS" "$SCRIPT" "$E2E_CLUSTER" || rc=$?
+            fi
+          fi
+          # ONE translation, in the library that owns the four-state taxonomy — never a `case` here.
+          # A verdict decided in a workflow is a verdict with no test. The same call SCRUBS the
+          # receipt through demos/proofs/scrub.sh and re-greps it fail-closed before it can be
+          # uploaded or summarised: it carries verbatim provider-CLI stderr, this repo is public,
+          # and the neighbour four steps up exists because exactly that published a live token
+          # (#1854). A receipt it cannot make safe is DELETED, and the rollup reads the absence as
+          # UNMEASURED — which is why the summary below prints the FILE and never the raw ledgers.
+          bash scripts/e2e/lib/sweep-probe.sh --record-verdict \
+            "$PROVIDER" "$RUN_TAG" "run ${E2E_ENV:-<unscoped>}" "$rc" || true
+          {
+            echo "### Post-teardown cloud verification — ${PROVIDER}"
+            echo
+            echo '```json'
+            cat "$PROBE_VERDICT_FILE" 2>/dev/null || echo '{"verdict":"UNVERIFIABLE","reason":"no receipt survived the scrub, or none was written"}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Always 0: this step reports, it does not judge. See the header.
+          exit 0
+
+      # The receipt travels as its OWN artifact rather than joining the proof bundle: the proof
+      # artifact was uploaded several steps ago, before the sweep this measures had even run.
+      # `if-no-files-found: warn` and not `ignore` — a missing receipt makes the rollup report
+      # UNMEASURED for this leg, which is correct but silent about the cause, and the cause is here.
+      - name: Upload the post-teardown verification receipt
+        if: always() && steps.gate.outputs.run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-teardown-verify-${{ matrix.provider }}-${{ github.run_id }}
+          # The `out/` subdirectory ONLY — the raw probe ledgers sit beside it and are never
+          # published. A glob for the one filename, so this cannot widen by accident.
+          path: ${{ runner.temp }}/teardown-verify/out/teardown-verify.json
+          if-no-files-found: warn
+          retention-days: 30
+
       # ── WHY THIS RUNS LAST, and not before the apply (where it used to sit). ──
       #
       # It was placed early so a STALE TABLE would red in seconds rather than after a 50-minute
@@ -2207,6 +2337,18 @@ jobs:
           pattern: e2e-proof-*-${{ github.run_id }}
           path: proofs
           merge-multiple: false
+      # The post-teardown verification receipts (#4398), into the SAME tree. nightly-rollup.sh scans
+      # for them by filename and accepts one only when its own payload names this provider and this
+      # run, so the two artifact families can share a directory without either shadowing the other.
+      # `continue-on-error` for the same reason as above: a missing receipt degrades the teardown
+      # axis to UNMEASURED — which is the honest answer — rather than failing the rollup.
+      - name: Download the post-teardown verification receipts
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: e2e-teardown-verify-*-${{ github.run_id }}
+          path: proofs
+          merge-multiple: false
       # The run's own job conclusions — the independent fallback for a missing explicit summary.
       # Fetched into a file so the derivation stays pure and offline-testable. A failure here is NOT
       # fatal: the script degrades to proof-presence and says so loudly.
@@ -2226,6 +2368,11 @@ jobs:
           MATRIX_RESULT: ${{ needs.provision.result }}
           EVENT_NAME: ${{ github.event_name }}
           RUN_ID: ${{ github.run_id }}
+          # The ATTEMPT, because a teardown receipt is only this run's if it is also THIS attempt's
+          # (#4398). The producer stamps `nightly-<run_id>-<run_attempt>`; without this the rollup
+          # would accept attempt 1's receipt on a re-run — and a re-run is exactly what follows a
+          # flaky teardown, with the stale receipt being the more optimistic one by construction.
+          RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           PROOFS_DIR: proofs
           JOBS_JSON: ${{ runner.temp }}/run-jobs.json

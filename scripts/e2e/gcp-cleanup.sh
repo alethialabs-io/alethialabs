@@ -111,6 +111,16 @@ PROJECT_NAME="${ALETHIA_E2E_PROJECT:-}"
 GCP_PROJECT="${ALETHIA_E2E_GCP_PROJECT_ID:-${CLOUDSDK_CORE_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
 DRY_RUN="${DRY_RUN:-0}"
 PREFLIGHT="${PREFLIGHT:-0}"
+# ── VERIFY_ONLY (#4398) — ask the cloud, change nothing. The same scope-locked verification the
+# normal path ends with, with every sweep skipped: the only cloud calls it makes are the
+# LIST/DESCRIBE calls verify_swept already makes. Refused alongside DRY_RUN/PREFLIGHT because both
+# exit 0 WITHOUT verifying, and this script's exit status is read as a cloud verdict by
+# `sweep-probe.sh --record-verdict`. The reasoning in full is in aws-cleanup.sh.
+VERIFY_ONLY="${VERIFY_ONLY:-0}"
+if [ "$VERIFY_ONLY" = "1" ] && { [ "$DRY_RUN" = "1" ] || [ "$PREFLIGHT" = "1" ]; }; then
+	echo "::error::VERIFY_ONLY=1 with DRY_RUN=1 or PREFLIGHT=1 — both exit 0 WITHOUT verifying, and this exit status is read as a cloud verdict. Refusing." >&2
+	exit 2
+fi
 DELETE_RETRIES="${DELETE_RETRIES:-5}"
 # ── PREFLIGHT budget (#2257, ported from aws-cleanup.sh by #2330). The preflight's "never blocks
 # the caller" promise is carried by `exit 0` at the end of its loop — which is only reached if the
@@ -172,6 +182,7 @@ NETWORK=""         # the run's VPC name (vpc-<short>-<ENV>-<project>) — second
 # The per-run banner is for the normal (belt-and-suspenders) path; PREFLIGHT prints its own below.
 if [ "$PREFLIGHT" != "1" ] && [ "$SELF_TEST" != "1" ]; then
 	echo "→ gcp belt-and-suspenders cleanup in ${REGION}, scope alethia_project-id=${PID_LABEL}"
+	[ "$VERIFY_ONLY" = "1" ] && echo "  (VERIFY_ONLY=1 — re-listing the cloud, sweeping nothing, deleting nothing)"
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 fi
 
@@ -914,12 +925,16 @@ fi
 
 # ── Orchestrate, in strict dependency order. ──
 discover_cluster
-sweep_load_balancers
-sweep_gke
-sweep_instances
-sweep_pvc_disks
-sweep_managed_services
-sweep_network
+# VERIFY_ONLY (#4398) skips every mutating pass and drops straight to the verification below.
+# discover_cluster stays: it resolves the handle the scoped probes read, and it only describes.
+if [ "$VERIFY_ONLY" != "1" ]; then
+	sweep_load_balancers
+	sweep_gke
+	sweep_instances
+	sweep_pvc_disks
+	sweep_managed_services
+	sweep_network
+fi
 
 if [ "$DRY_RUN" = "1" ]; then
 	echo "✓ gcp DRY RUN complete for alethia_project-id=${PID_LABEL} (nothing deleted, nothing verified)"
