@@ -2156,7 +2156,7 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"redirectOnly": false,
-			"surfaceFiles": 221,
+			"surfaceFiles": 222,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2333,7 +2333,7 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"redirectOnly": false,
-			"surfaceFiles": 214,
+			"surfaceFiles": 215,
 			"families": {
 				"S": {
 					"instrumented": 4,
