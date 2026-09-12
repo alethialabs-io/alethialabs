@@ -8,39 +8,18 @@
 // `helpers/perf.ts`) rather than growing a second copy. Where a helper's behaviour is wrong for a
 // GATE — as opposed to wrong for the QA report it was written for — this file says so out loud and
 // closes the gap here, because those helpers are shared with suites that are not gates.
+//
+// R5'S PRECONDITION (`requireAxe`) IS THE ONE THING THAT MOVED BACK OUT, to `helpers/a11y.ts`. It
+// was written here while the audit was the only gate built on `scanA11y`; `flows/cross-cutting.spec.ts`
+// is now the second, and release-gate.yml's leg selector maps `e2e/audit/**` to the two audit legs
+// alone — so a `qa` spec importing from this directory could be broken by a change that never runs
+// `qa`. `e2e/helpers/` is a declared seam, so the shared precondition belongs there. `routes.spec.ts`
+// imports it from the helper directly; nothing re-exports it from here.
 
 import type { Page } from "@playwright/test";
 import { scanA11y, type A11yTheme, type ThemedA11yViolation } from "../helpers/a11y";
 import { attachConsoleGuard, type CapturedError, type ConsoleGuard } from "../helpers/console-errors";
 import { attachPerf, type PerfCollector, type PerfRecord } from "../helpers/perf";
-
-/**
- * R5's precondition: axe must actually be there.
- *
- * `helpers/a11y.ts` returns `[]` when `@axe-core/playwright` cannot be imported — deliberately, so
- * the QA suite still runs without it. For a GATE that is the worst possible behaviour: a silent
- * empty result is indistinguishable from a clean page, so every route would score R5 PASS on the
- * strength of the scanner being absent. The helper is outside this unit's scope, so the raise lives
- * here: the audit refuses to start unless the import resolves.
- *
- * Called once per run, from the audit's `beforeAll`, so the run dies at the top rather than 40
- * routes later.
- */
-export async function requireAxe(): Promise<void> {
-	try {
-		const mod = await import("@axe-core/playwright");
-		if (typeof mod.default !== "function") {
-			throw new Error("@axe-core/playwright resolved but exports no default AxeBuilder");
-		}
-	} catch (err) {
-		throw new Error(
-			"R5 cannot be measured: @axe-core/playwright did not import, so `scanA11y()` would return " +
-				"[] and EVERY route would score a clean a11y pass on the strength of the scanner being " +
-				"missing. Install it (apps/console devDependency) before running the audit.\n  cause: " +
-				String(err),
-		);
-	}
-}
 
 /**
  * The two paints R5 scores. BOTH, every route, every run (#4195).
