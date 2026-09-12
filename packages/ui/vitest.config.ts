@@ -75,7 +75,22 @@ export default defineConfig({
 				// "nothing found" and "nothing wrong" branches are one branch.
 				"src/context-menu.tsx",
 			],
-			exclude: ["src/**/*.d.ts"],
+			// These shadcn/Radix wrappers are deliberately proved through the composed-component
+			// suites that mount them, rather than counted in the authored-logic unit badge. Naming
+			// them here makes that a durable tier decision instead of an allowlist omission.
+			exclude: [
+				"src/**/*.d.ts",
+				"src/avatar.tsx",
+				"src/badge.tsx",
+				"src/button.tsx",
+				"src/calendar.tsx",
+				"src/collapsible.tsx",
+				"src/command.tsx",
+				"src/dialog.tsx",
+				"src/input.tsx",
+				"src/label.tsx",
+				"src/sheet.tsx",
+			],
 		},
 	},
 });
