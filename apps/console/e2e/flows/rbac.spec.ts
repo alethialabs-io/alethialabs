@@ -13,16 +13,55 @@
 // Negative *permission* paths (a reduced-perm member being denied) live in rbac.negative.spec.ts.
 // They run unconditionally as of #3633 — the `member` persona is built by e2e/global-setup.ts
 // through the real invite → accept flow, so a missing one is a failure, not a skip.
+//
+// ── THE MEMBERS SURFACE THIS FILE USED TO DESCRIBE IS GONE (#4271) ──────────────────────────────
+//
+// Every members test opened on `getByText("Seats")`, the stat-card strip's first figure. That strip
+// was deleted under CLAUDE.md §6 ("no stat-card strips") and its four figures — seats, active,
+// pending, suspended — became the STATUS FACET'S option counts, computed over the same unfiltered
+// rows. The tabs went the same way: "Pending" and "Suspended" are facet options now, not buttons.
+// So did the role <select>, which the console filter standard bans from a filter bar; it is a facet
+// too. And the table's empty state is `EmptyState` ("No matching members"), not DataTable's bare
+// "No results." — the assertions below name what the page renders today, and `membersReady` is the
+// one precondition every members test shares so a fifth rename cannot half-land again.
 
 import { test, expect } from "../fixtures/qa";
 import { scanA11y } from "../helpers/a11y";
 
-const membersUrl = (slug: string) => `/${slug}/~/settings/members`;
+/**
+ * A members row's actions trigger and its select checkbox, BY PREFIX.
+ *
+ * Both accessible names carry the row's subject now (`Manage member Ada Lovelace`,
+ * `Manage invitation ada@…`, `Select Ada Lovelace`): one "Manage" repeated down a column named
+ * nothing to a screen reader and gave any locator N matches to choose between, which is the
+ * ambiguity `e2e/audit/destructive.spec.ts` refuses to guess past. A bare `{ name: "Manage" }` is
+ * an EXACT match in Playwright, so these have to be regexes — and the anchor is what keeps
+ * "Manage member …" from also being reached as "Manage billing".
+ */
+const ROW_MENU = /^Manage /;
+const ROW_SELECT = /^Select /;
+
 const teamsUrl = (slug: string) => `/${slug}/~/settings/teams`;
 const rolesUrl = (slug: string) => `/${slug}/~/settings/roles`;
 const accessUrl = (slug: string) => `/${slug}/~/settings/access`;
 const ssoUrl = (slug: string) => `/${slug}/~/settings/sso`;
 const generalUrl = (slug: string) => `/${slug}/~/settings/general`;
+
+/**
+ * The members surface has finished rendering, for any persona.
+ *
+ * Gated on the STATUS FACET, which is where the deleted stat strip's figures live now. A
+ * precondition naming a control that no longer exists fails before the test reaches its subject,
+ * and reads as "the members page is broken" rather than "this spec is stale".
+ */
+async function membersReady(session: {
+	page: import("@playwright/test").Page;
+	orgSlug: string;
+}): Promise<void> {
+	await session.page.goto(`/${session.orgSlug}/~/settings/members`);
+	await expect(session.page).not.toHaveURL(/\/login/);
+	await expect(session.page.getByRole("button", { name: /^Status/ })).toBeVisible({ timeout: 30_000 });
+}
 
 // On a Pro org the "Invite member" button is remounted when `canInvite` resolves async
 // (getCollaborationAccess): the UpgradeDialog trigger is swapped for the real InviteMemberDialog
@@ -47,36 +86,38 @@ async function openInviteDialog(page: import("@playwright/test").Page) {
 // ---------------------------------------------------------------------------
 test.describe("RBAC — Members (Hobby owner)", () => {
 	test("members page loads authenticated (not bounced to /login)", async ({ owner }) => {
-		await owner.page.goto(membersUrl(owner.orgSlug));
-		await expect(owner.page).not.toHaveURL(/\/login/);
-		await expect(owner.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
+		await membersReady(owner);
 	});
 
-	test("stat strip + toolbar render (Seats / Active / Pending / Suspended)", async ({ owner }) => {
-		await owner.page.goto(membersUrl(owner.orgSlug));
-		await expect(owner.page.getByText("Seats")).toBeVisible({ timeout: 30_000 });
-		await expect(owner.page.getByText("Pending invites")).toBeVisible();
+	test("the toolbar and filter bar render — and NO stat strip does", async ({ owner }) => {
+		await membersReady(owner);
+		// What the strip used to say, said once: the toolbar carries the description and the count,
+		// and the figures are the Status facet's option counts.
+		await expect(owner.page.getByText("Organization members and pending invitations.")).toBeVisible();
 		await expect(owner.page.getByPlaceholder("Search name or email")).toBeVisible();
-		await expect(owner.page.getByRole("combobox", { name: "Filter by role" })).toBeVisible();
+		await expect(owner.page.getByRole("button", { name: /^Role/ })).toBeVisible();
+		// The deleted strip, asserted as deleted. Its headings were the only "Seats" / "Pending
+		// invites" text on the page, so their absence is what says the strip did not come back.
+		await expect(owner.page.getByText("Seats")).toHaveCount(0);
+		await expect(owner.page.getByText("Pending invites")).toHaveCount(0);
 	});
 
 	test("the owner appears as an Owner member row tagged 'You'", async ({ owner }) => {
-		await owner.page.goto(membersUrl(owner.orgSlug));
+		await membersReady(owner);
 		const ownerRow = owner.page.getByRole("row").filter({ hasText: "You" }).first();
 		await expect(ownerRow).toBeVisible({ timeout: 30_000 });
 		await expect(ownerRow).toContainText("Owner");
 	});
 
 	test("Hobby has NO manage controls (no per-row select checkbox)", async ({ owner }) => {
-		await owner.page.goto(membersUrl(owner.orgSlug));
 		// canManage = entitlement("organizations") is false on Hobby → the select column is absent.
-		await expect(owner.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
-		await expect(owner.page.getByRole("checkbox", { name: "Select" })).toHaveCount(0);
-		await expect(owner.page.getByRole("button", { name: "Manage" })).toHaveCount(0);
+		await membersReady(owner);
+		await expect(owner.page.getByRole("checkbox", { name: ROW_SELECT })).toHaveCount(0);
+		await expect(owner.page.getByRole("button", { name: ROW_MENU })).toHaveCount(0);
 	});
 
 	test("Invite member is gated → opens the Pro upgrade dialog", async ({ owner }) => {
-		await owner.page.goto(membersUrl(owner.orgSlug));
+		await membersReady(owner);
 		await owner.page.getByRole("button", { name: /invite member/i }).click();
 		const dialog = owner.page.getByRole("dialog");
 		await expect(dialog).toBeVisible();
@@ -84,39 +125,46 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 		await expect(dialog.getByRole("button", { name: /upgrade to pro/i })).toBeVisible();
 	});
 
-	test("Pending tab with no invitations shows the empty 'No results.' state", async ({ owner }) => {
-		await owner.page.goto(membersUrl(owner.orgSlug));
-		await expect(owner.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
-		await owner.page.getByRole("button", { name: /^Pending/ }).click();
-		await expect(owner.page.getByText("No results.")).toBeVisible();
+	test("the Status facet carries the figures the stat strip used to (Pending = 0)", async ({
+		owner,
+	}) => {
+		await membersReady(owner);
+		// The strip's "Pending invites" figure is this option's hint. A fresh Hobby org has none,
+		// and selecting the option clears the table — which is the same statement the old
+		// "Pending tab is empty" test made, against the control that exists.
+		await owner.page.getByRole("button", { name: /^Status/ }).click();
+		await expect(owner.page.getByRole("option", { name: /Pending/ })).toBeVisible();
+		await owner.page.getByRole("option", { name: /Pending/ }).click();
+		await owner.page.keyboard.press("Escape");
+		await expect(owner.page.getByText("No matching members")).toBeVisible();
 	});
 
 	test("search that matches nothing shows the empty state", async ({ owner }) => {
-		await owner.page.goto(membersUrl(owner.orgSlug));
-		await expect(owner.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
+		await membersReady(owner);
 		await owner.page.getByPlaceholder("Search name or email").fill(`zzz-none-${Date.now()}`);
-		await expect(owner.page.getByText("No results.")).toBeVisible();
+		await expect(owner.page.getByText("No matching members")).toBeVisible();
 	});
 
 	test("filtering by a role nobody holds (Viewer) shows the empty state", async ({ owner }) => {
-		await owner.page.goto(membersUrl(owner.orgSlug));
-		await expect(owner.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
-		// The lone member is the Owner — filtering to Viewer clears the table.
-		await owner.page.getByRole("combobox", { name: "Filter by role" }).click();
-		await owner.page.getByRole("option", { name: "Viewer" }).click();
-		await expect(owner.page.getByText("No results.")).toBeVisible();
+		await membersReady(owner);
+		// The lone member is the Owner — filtering to Viewer clears the table. The role filter is a
+		// FACET now, not the Radix Select the console filter standard bans from a filter bar.
+		await owner.page.getByRole("button", { name: /^Role/ }).click();
+		await owner.page.getByRole("option", { name: /Viewer/ }).click();
+		await owner.page.keyboard.press("Escape");
+		await expect(owner.page.getByText("No matching members")).toBeVisible();
 	});
 
-	test("the Suspended tab is empty on a fresh org", async ({ owner }) => {
-		await owner.page.goto(membersUrl(owner.orgSlug));
-		await expect(owner.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
-		await owner.page.getByRole("button", { name: /^Suspended/ }).click();
-		await expect(owner.page.getByText("No results.")).toBeVisible();
+	test("the Suspended facet option is empty on a fresh org", async ({ owner }) => {
+		await membersReady(owner);
+		await owner.page.getByRole("button", { name: /^Status/ }).click();
+		await owner.page.getByRole("option", { name: /Suspended/ }).click();
+		await owner.page.keyboard.press("Escape");
+		await expect(owner.page.getByText("No matching members")).toBeVisible();
 	});
 
 	test("a11y: members page has no critical axe violations", async ({ owner }) => {
-		await owner.page.goto(membersUrl(owner.orgSlug));
-		await expect(owner.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
+		await membersReady(owner);
 		const violations = await scanA11y(owner.page);
 		expect(violations.filter((v) => v.impact === "critical")).toEqual([]);
 	});
@@ -127,33 +175,31 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 // ---------------------------------------------------------------------------
 test.describe("RBAC — Members (Pro owner)", () => {
 	test("Pro org exposes manage controls (per-row select checkbox)", async ({ team }) => {
-		await team.page.goto(membersUrl(team.orgSlug));
-		await expect(team.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
+		await membersReady(team);
 		// canManage true on Pro → the select column renders a checkbox for every row.
-		await expect(team.page.getByRole("checkbox", { name: "Select" }).first()).toBeVisible();
+		await expect(team.page.getByRole("checkbox", { name: ROW_SELECT }).first()).toBeVisible();
 	});
 
 	test("Invite member opens the real invite dialog (not the upsell)", async ({ team }) => {
-		await team.page.goto(membersUrl(team.orgSlug));
-		await expect(team.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
+		await membersReady(team);
 		const dialog = await openInviteDialog(team.page);
 		await expect(dialog.getByRole("heading", { name: "Invite members" })).toBeVisible();
 		await expect(dialog.getByPlaceholder("teammate@company.com")).toBeVisible();
 	});
 
 	test("invite dialog — the role picker defaults to Viewer", async ({ team }) => {
-		await team.page.goto(membersUrl(team.orgSlug));
-		await expect(team.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
+		await membersReady(team);
 		const dialog = await openInviteDialog(team.page);
-		// Every new invite row starts at the least-privileged role.
-		await expect(dialog.getByRole("combobox").first()).toContainText("Viewer");
+		// Every new invite row starts at the least-privileged role. Reached BY ITS LABEL — a picker
+		// found by position among the dialog's comboboxes keeps passing when the row it meant to
+		// read has moved.
+		await expect(dialog.getByRole("combobox", { name: "Role for invite 1" })).toContainText("Viewer");
 	});
 
 	test("invite dialog — Add another appends a second row; Send label pluralizes", async ({
 		team,
 	}) => {
-		await team.page.goto(membersUrl(team.orgSlug));
-		await expect(team.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
+		await membersReady(team);
 		const dialog = await openInviteDialog(team.page);
 		await expect(dialog.getByPlaceholder("teammate@company.com")).toHaveCount(1);
 		await dialog.getByRole("button", { name: /add another/i }).click();
@@ -162,16 +208,14 @@ test.describe("RBAC — Members (Pro owner)", () => {
 	});
 
 	test("invite validation — a malformed email is rejected inline", async ({ team }) => {
-		await team.page.goto(membersUrl(team.orgSlug));
-		await expect(team.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
+		await membersReady(team);
 		const dialog = await openInviteDialog(team.page);
 		await dialog.getByPlaceholder("teammate@company.com").fill("not-an-email");
 		await expect(dialog.getByText("Enter a valid email")).toBeVisible();
 	});
 
 	test("invite validation — the same email twice is a duplicate", async ({ team }) => {
-		await team.page.goto(membersUrl(team.orgSlug));
-		await expect(team.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
+		await membersReady(team);
 		const dialog = await openInviteDialog(team.page);
 		const dup = `dup-${Date.now()}@alethia.test`;
 		await dialog.getByPlaceholder("teammate@company.com").first().fill(dup);
@@ -181,8 +225,7 @@ test.describe("RBAC — Members (Pro owner)", () => {
 	});
 
 	test("invite validation — inviting an existing member is rejected", async ({ team }) => {
-		await team.page.goto(membersUrl(team.orgSlug));
-		await expect(team.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
+		await membersReady(team);
 		const dialog = await openInviteDialog(team.page);
 		const input = dialog.getByPlaceholder("teammate@company.com").first();
 		await input.fill(team.email);
@@ -212,8 +255,7 @@ test.describe("RBAC — Members (Pro owner)", () => {
 		// the client-side duplicate guards. The server still rejects (400) — no security impact —
 		// but the inline UX is dead. When fixed, typing the owner's own email should flag it inline.
 		// FIXED: getInviteContext no longer projects the unjoined invitation.email (members.ts).
-		await team.page.goto(membersUrl(team.orgSlug));
-		await expect(team.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
+		await membersReady(team);
 		const dialog = await openInviteDialog(team.page);
 		const emailField = dialog.getByPlaceholder("teammate@company.com").first();
 		// getInviteContext loads async after the dialog opens; re-enter the email until the
@@ -228,8 +270,7 @@ test.describe("RBAC — Members (Pro owner)", () => {
 	test("invite lifecycle — send a real invitation, see it pending, then cancel it", async ({
 		team,
 	}) => {
-		await team.page.goto(membersUrl(team.orgSlug));
-		await expect(team.page.getByText("Seats").first()).toBeVisible({ timeout: 30_000 });
+		await membersReady(team);
 		const email = `e2e-invite-${Date.now()}@alethia.test`;
 
 		const dialog = await openInviteDialog(team.page);
@@ -241,9 +282,47 @@ test.describe("RBAC — Members (Pro owner)", () => {
 		await expect(inviteRow).toBeVisible({ timeout: 30_000 });
 		await expect(inviteRow.getByText("Pending")).toBeVisible();
 
-		// Clean up: cancel the invitation so seeded rows don't accumulate.
-		await inviteRow.getByRole("button", { name: "Manage" }).click();
+		// Clean up: cancel the invitation so seeded rows don't accumulate. Cancelling ASKS FIRST as
+		// of #4271, and the confirm button is "Revoke invitation" — a third spelling, because the
+		// menu item that opened it says "Cancel invitation" and the way out says "Cancel".
+		await inviteRow.getByRole("button", { name: ROW_MENU }).click();
 		await team.page.getByRole("menuitem", { name: /cancel invitation/i }).click();
+		const confirm = team.page.getByRole("alertdialog");
+		await expect(confirm.getByText("Cancel this invitation?")).toBeVisible();
+		await confirm.getByRole("button", { name: "Revoke invitation" }).click();
+		await expect(team.page.getByRole("row").filter({ hasText: email })).toHaveCount(0, {
+			timeout: 30_000,
+		});
+	});
+
+	test("cancelling an invitation asks first — and Cancel leaves it pending", async ({ team }) => {
+		// The other half of a confirmation: that the WAY OUT works. A dialog whose Cancel still
+		// mutates is worse than no dialog, and only this direction can tell the two apart.
+		await membersReady(team);
+		const email = `e2e-keep-${Date.now()}@alethia.test`;
+
+		const dialog = await openInviteDialog(team.page);
+		await dialog.getByPlaceholder("teammate@company.com").fill(email);
+		await dialog.getByRole("button", { name: /^Send invite$/ }).click();
+		const inviteRow = team.page.getByRole("row").filter({ hasText: email });
+		await expect(inviteRow).toBeVisible({ timeout: 30_000 });
+
+		await inviteRow.getByRole("button", { name: ROW_MENU }).click();
+		await team.page.getByRole("menuitem", { name: /cancel invitation/i }).click();
+		const confirm = team.page.getByRole("alertdialog");
+		await expect(confirm.getByText("Cancel this invitation?")).toBeVisible();
+		await confirm.getByRole("button", { name: /^Cancel$/ }).click();
+		await expect(confirm).toBeHidden();
+		// Still pending — Cancel aborted the removal.
+		await team.page.reload();
+		await expect(team.page.getByRole("row").filter({ hasText: email })).toBeVisible({
+			timeout: 30_000,
+		});
+
+		// Now really revoke it, so the org does not accumulate a pending row per run.
+		await team.page.getByRole("row").filter({ hasText: email }).getByRole("button", { name: ROW_MENU }).click();
+		await team.page.getByRole("menuitem", { name: /cancel invitation/i }).click();
+		await team.page.getByRole("alertdialog").getByRole("button", { name: "Revoke invitation" }).click();
 		await expect(team.page.getByRole("row").filter({ hasText: email })).toHaveCount(0, {
 			timeout: 30_000,
 		});
