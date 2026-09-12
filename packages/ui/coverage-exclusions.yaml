@@ -6,11 +6,11 @@
 # what the guard re-reads; this header records only what is true HERE.
 #
 # THE EXCLUSION IS AN `include:` ALLOWLIST, AND THAT IS WHY THIS FILE IS LONG. vitest.config.ts
-# hand-lists TWENTY files as the coverage scope while `src/` holds SIXTY. An `include` allowlist is
-# an exclusion with the sign flipped: the other 40 files are excluded exactly as surely as a named
+# hand-lists TWENTY files as the coverage scope while `src/` holds SIXTY-ONE. An `include` allowlist
+# is an exclusion with the sign flipped: the other 41 files are excluded exactly as surely as a named
 # `exclude:` entry, and the `exclude:` sweep — which walks `coverage.exclude` — sees none of them.
 # The ratchet remains armed at the last CI-measured floor until this scope change is re-probed.
-# Every one of the 40 excluded files is recorded below, with every runtime export accounted for in
+# Every excluded file is recorded below, with every runtime export accounted for in
 # `symbols:` or in `baseline:`.
 #
 # WHAT "EVERY ONE OF THE 48" IS A CLAIM ABOUT, and it is not the future. D3's peer sweep CLASSIFIES
@@ -39,11 +39,12 @@
 #   31 files (115 exports) are named by NOTHING in tests/ — no import, not even a mock.
 #   22 further exports of the 17 are hidden behind a module a suite does execute.
 #
-# The seven files with dedicated suites are now in the coverage scope. The ten remaining entries
-# below are vendored primitives reached only through composed-component suites; their weaker
-# tier-separation claim remains explicit and machine-checked.
+# The seven files with dedicated suites are now in the coverage scope. The eleven remaining
+# entries below are ten vendored primitives reached through composed-component suites plus the
+# count helper those suites render; their weaker tier-separation claim remains explicit and
+# machine-checked.
 #
-# THAT FOLLOW-UP IS #4349. The ten remaining `tier_separation:` entries below carry
+# THAT FOLLOW-UP IS #4349. The eleven remaining `tier_separation:` entries below carry
 # `issue: "#4349"`, and the guard REQUIRES that field on
 # any `tier_separation:` entry D3 reports as allowlist-hidden. The reason is that this section has
 # neither an owning issue nor a shrink-only rule — both of which `baseline:` has — so 43 exports
