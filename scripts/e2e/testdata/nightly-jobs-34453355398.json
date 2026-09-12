@@ -1,0 +1,1121 @@
+[
+  {
+    "jobs": [
+      {
+        "name": "Resolve dimension",
+        "conclusion": "success",
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/checkout@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run dim=\"$(bash scripts/e2e/resolve-dimension.sh)\"",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Run actions/checkout@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success"
+          }
+        ]
+      },
+      {
+        "name": "Provision + verify + teardown (real cloud) (gcp)",
+        "conclusion": "failure",
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success"
+          },
+          {
+            "name": "Initialize containers",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/checkout@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Proof-scrub self-test (denylist non-vacuity)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Gate on the provider secret",
+            "conclusion": "success"
+          },
+          {
+            "name": "Record gate-off proof",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Compute unique cluster name + region",
+            "conclusion": "success"
+          },
+          {
+            "name": "Resolve full-bar dimension",
+            "conclusion": "success"
+          },
+          {
+            "name": "Compute cluster shape",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run pnpm/action-setup@v6",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/setup-node@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/setup-go@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run opentofu/setup-opentofu@v2",
+            "conclusion": "success"
+          },
+          {
+            "name": "Cache OpenTofu provider plugins",
+            "conclusion": "success"
+          },
+          {
+            "name": "Point OpenTofu at the plugin cache",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run azure/setup-helm@v5",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run azure/setup-kubectl@v5",
+            "conclusion": "success"
+          },
+          {
+            "name": "Install hcloud CLI (belt-and-suspenders teardown)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Install workspace deps",
+            "conclusion": "success"
+          },
+          {
+            "name": "Migrate the control-plane database (schema + programmables/RLS + app role)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Configure AWS credentials (OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Export AWS_ACCOUNT_ID for the T2 harness",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Mark AWS ready for the T2 harness",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Configure GCP credentials (WIF / OIDC)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Install gcloud CLI",
+            "conclusion": "success"
+          },
+          {
+            "name": "Configure Azure credentials (OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Export ARM_* for the azurerm OpenTofu provider (federated OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Export AZURE_* + start the federated-token refresher",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Configure Alibaba credentials (RAM OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Stale-cluster preflight (sweep prior-run e2e orphans)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — build @alethia/ee, then the console",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — seed the org and mint a service token",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — start the console and wait for it to answer",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — build the `alethia` binary under test",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "T2 — real runner provisions a real cloud cluster",
+            "conclusion": "failure"
+          },
+          {
+            "name": "Teardown on cancellation (first in the 4m45s window)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Capture proof (scrubbed bundle + step-summary verdict)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload proof artifact",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload capture-abort marker",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Scrub the runner log before upload",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload runner log (scrubbed)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Guaranteed teardown (scope-locked cloud sweep)",
+            "conclusion": "success"
+          },
+          {
+            "name": "CLI-only demo bar (reachability — no cloud, no spend)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Configure GCP credentials (WIF / OIDC)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Cache OpenTofu provider plugins",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Post Run actions/setup-go@v7",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Post Run actions/setup-node@v7",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Post Run pnpm/action-setup@v6",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Run actions/checkout@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Stop containers",
+            "conclusion": "success"
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success"
+          }
+        ]
+      },
+      {
+        "name": "Provision + verify + teardown (real cloud) (aws)",
+        "conclusion": "failure",
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success"
+          },
+          {
+            "name": "Initialize containers",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/checkout@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Proof-scrub self-test (denylist non-vacuity)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Gate on the provider secret",
+            "conclusion": "success"
+          },
+          {
+            "name": "Record gate-off proof",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Compute unique cluster name + region",
+            "conclusion": "success"
+          },
+          {
+            "name": "Resolve full-bar dimension",
+            "conclusion": "success"
+          },
+          {
+            "name": "Compute cluster shape",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run pnpm/action-setup@v6",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/setup-node@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/setup-go@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run opentofu/setup-opentofu@v2",
+            "conclusion": "success"
+          },
+          {
+            "name": "Cache OpenTofu provider plugins",
+            "conclusion": "success"
+          },
+          {
+            "name": "Point OpenTofu at the plugin cache",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run azure/setup-helm@v5",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run azure/setup-kubectl@v5",
+            "conclusion": "success"
+          },
+          {
+            "name": "Install hcloud CLI (belt-and-suspenders teardown)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Install workspace deps",
+            "conclusion": "success"
+          },
+          {
+            "name": "Migrate the control-plane database (schema + programmables/RLS + app role)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Configure AWS credentials (OIDC)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Export AWS_ACCOUNT_ID for the T2 harness",
+            "conclusion": "success"
+          },
+          {
+            "name": "Mark AWS ready for the T2 harness",
+            "conclusion": "success"
+          },
+          {
+            "name": "Configure GCP credentials (WIF / OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Install gcloud CLI",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Configure Azure credentials (OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Export ARM_* for the azurerm OpenTofu provider (federated OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Export AZURE_* + start the federated-token refresher",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Configure Alibaba credentials (RAM OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Stale-cluster preflight (sweep prior-run e2e orphans)",
+            "conclusion": "success"
+          },
+          {
+            "name": "cli-demo — build @alethia/ee, then the console",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — seed the org and mint a service token",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — start the console and wait for it to answer",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — build the `alethia` binary under test",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "T2 — real runner provisions a real cloud cluster",
+            "conclusion": "success"
+          },
+          {
+            "name": "Teardown on cancellation (first in the 4m45s window)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Capture proof (scrubbed bundle + step-summary verdict)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload proof artifact",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload capture-abort marker",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Scrub the runner log before upload",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload runner log (scrubbed)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Guaranteed teardown (scope-locked cloud sweep)",
+            "conclusion": "failure"
+          },
+          {
+            "name": "CLI-only demo bar (reachability — no cloud, no spend)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Configure AWS credentials (OIDC)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Cache OpenTofu provider plugins",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Post Run actions/setup-go@v7",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Post Run actions/setup-node@v7",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Post Run pnpm/action-setup@v6",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Run actions/checkout@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Stop containers",
+            "conclusion": "success"
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success"
+          }
+        ]
+      },
+      {
+        "name": "Publish the runner image the bootstrap Jobs run",
+        "conclusion": "skipped",
+        "steps": []
+      },
+      {
+        "name": "Provision + verify + teardown (real cloud) (hetzner)",
+        "conclusion": "success",
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success"
+          },
+          {
+            "name": "Initialize containers",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/checkout@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Proof-scrub self-test (denylist non-vacuity)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Gate on the provider secret",
+            "conclusion": "success"
+          },
+          {
+            "name": "Record gate-off proof",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Compute unique cluster name + region",
+            "conclusion": "success"
+          },
+          {
+            "name": "Resolve full-bar dimension",
+            "conclusion": "success"
+          },
+          {
+            "name": "Compute cluster shape",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run pnpm/action-setup@v6",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/setup-node@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/setup-go@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run opentofu/setup-opentofu@v2",
+            "conclusion": "success"
+          },
+          {
+            "name": "Cache OpenTofu provider plugins",
+            "conclusion": "success"
+          },
+          {
+            "name": "Point OpenTofu at the plugin cache",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run azure/setup-helm@v5",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run azure/setup-kubectl@v5",
+            "conclusion": "success"
+          },
+          {
+            "name": "Install hcloud CLI (belt-and-suspenders teardown)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Install workspace deps",
+            "conclusion": "success"
+          },
+          {
+            "name": "Migrate the control-plane database (schema + programmables/RLS + app role)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Configure AWS credentials (OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Export AWS_ACCOUNT_ID for the T2 harness",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Mark AWS ready for the T2 harness",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Configure GCP credentials (WIF / OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Install gcloud CLI",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Configure Azure credentials (OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Export ARM_* for the azurerm OpenTofu provider (federated OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Export AZURE_* + start the federated-token refresher",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Configure Alibaba credentials (RAM OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Stale-cluster preflight (sweep prior-run e2e orphans)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — build @alethia/ee, then the console",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — seed the org and mint a service token",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — start the console and wait for it to answer",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — build the `alethia` binary under test",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "T2 — real runner provisions a real cloud cluster",
+            "conclusion": "success"
+          },
+          {
+            "name": "Teardown on cancellation (first in the 4m45s window)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Capture proof (scrubbed bundle + step-summary verdict)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload proof artifact",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload capture-abort marker",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Scrub the runner log before upload",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload runner log (scrubbed)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Guaranteed teardown (scope-locked cloud sweep)",
+            "conclusion": "success"
+          },
+          {
+            "name": "CLI-only demo bar (reachability — no cloud, no spend)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Cache OpenTofu provider plugins",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Run actions/setup-go@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Run actions/setup-node@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Run pnpm/action-setup@v6",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Run actions/checkout@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Stop containers",
+            "conclusion": "success"
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success"
+          }
+        ]
+      },
+      {
+        "name": "Provision + verify + teardown (real cloud) (azure)",
+        "conclusion": "success",
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success"
+          },
+          {
+            "name": "Initialize containers",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/checkout@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Proof-scrub self-test (denylist non-vacuity)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Gate on the provider secret",
+            "conclusion": "success"
+          },
+          {
+            "name": "Record gate-off proof",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Compute unique cluster name + region",
+            "conclusion": "success"
+          },
+          {
+            "name": "Resolve full-bar dimension",
+            "conclusion": "success"
+          },
+          {
+            "name": "Compute cluster shape",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run pnpm/action-setup@v6",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/setup-node@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/setup-go@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run opentofu/setup-opentofu@v2",
+            "conclusion": "success"
+          },
+          {
+            "name": "Cache OpenTofu provider plugins",
+            "conclusion": "success"
+          },
+          {
+            "name": "Point OpenTofu at the plugin cache",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run azure/setup-helm@v5",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run azure/setup-kubectl@v5",
+            "conclusion": "success"
+          },
+          {
+            "name": "Install hcloud CLI (belt-and-suspenders teardown)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Install workspace deps",
+            "conclusion": "success"
+          },
+          {
+            "name": "Migrate the control-plane database (schema + programmables/RLS + app role)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Configure AWS credentials (OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Export AWS_ACCOUNT_ID for the T2 harness",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Mark AWS ready for the T2 harness",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Configure GCP credentials (WIF / OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Install gcloud CLI",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Configure Azure credentials (OIDC)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Export ARM_* for the azurerm OpenTofu provider (federated OIDC)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Export AZURE_* + start the federated-token refresher",
+            "conclusion": "success"
+          },
+          {
+            "name": "Configure Alibaba credentials (RAM OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Stale-cluster preflight (sweep prior-run e2e orphans)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — build @alethia/ee, then the console",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — seed the org and mint a service token",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — start the console and wait for it to answer",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — build the `alethia` binary under test",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "T2 — real runner provisions a real cloud cluster",
+            "conclusion": "success"
+          },
+          {
+            "name": "Teardown on cancellation (first in the 4m45s window)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Capture proof (scrubbed bundle + step-summary verdict)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload proof artifact",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload capture-abort marker",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Scrub the runner log before upload",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload runner log (scrubbed)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Guaranteed teardown (scope-locked cloud sweep)",
+            "conclusion": "success"
+          },
+          {
+            "name": "CLI-only demo bar (reachability — no cloud, no spend)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Configure Azure credentials (OIDC)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Cache OpenTofu provider plugins",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Run actions/setup-go@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Run actions/setup-node@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Run pnpm/action-setup@v6",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Run actions/checkout@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Stop containers",
+            "conclusion": "success"
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success"
+          }
+        ]
+      },
+      {
+        "name": "Provision + verify + teardown (real cloud) (alibaba)",
+        "conclusion": "failure",
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success"
+          },
+          {
+            "name": "Initialize containers",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/checkout@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Proof-scrub self-test (denylist non-vacuity)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Gate on the provider secret",
+            "conclusion": "success"
+          },
+          {
+            "name": "Record gate-off proof",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Compute unique cluster name + region",
+            "conclusion": "success"
+          },
+          {
+            "name": "Resolve full-bar dimension",
+            "conclusion": "success"
+          },
+          {
+            "name": "Compute cluster shape",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run pnpm/action-setup@v6",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/setup-node@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/setup-go@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run opentofu/setup-opentofu@v2",
+            "conclusion": "success"
+          },
+          {
+            "name": "Cache OpenTofu provider plugins",
+            "conclusion": "success"
+          },
+          {
+            "name": "Point OpenTofu at the plugin cache",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run azure/setup-helm@v5",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run azure/setup-kubectl@v5",
+            "conclusion": "success"
+          },
+          {
+            "name": "Install hcloud CLI (belt-and-suspenders teardown)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Install workspace deps",
+            "conclusion": "success"
+          },
+          {
+            "name": "Migrate the control-plane database (schema + programmables/RLS + app role)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Configure AWS credentials (OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Export AWS_ACCOUNT_ID for the T2 harness",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Mark AWS ready for the T2 harness",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Configure GCP credentials (WIF / OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Install gcloud CLI",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Configure Azure credentials (OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Export ARM_* for the azurerm OpenTofu provider (federated OIDC)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Export AZURE_* + start the federated-token refresher",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Configure Alibaba credentials (RAM OIDC)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Stale-cluster preflight (sweep prior-run e2e orphans)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — build @alethia/ee, then the console",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — seed the org and mint a service token",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — start the console and wait for it to answer",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "cli-demo — build the `alethia` binary under test",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "T2 — real runner provisions a real cloud cluster",
+            "conclusion": "failure"
+          },
+          {
+            "name": "Teardown on cancellation (first in the 4m45s window)",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Capture proof (scrubbed bundle + step-summary verdict)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload proof artifact",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload capture-abort marker",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Scrub the runner log before upload",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload runner log (scrubbed)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Guaranteed teardown (scope-locked cloud sweep)",
+            "conclusion": "failure"
+          },
+          {
+            "name": "CLI-only demo bar (reachability — no cloud, no spend)",
+            "conclusion": "failure"
+          },
+          {
+            "name": "Post Cache OpenTofu provider plugins",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Post Run actions/setup-go@v7",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Post Run actions/setup-node@v7",
+            "conclusion": "skipped"
+          },
+          {
+            "name": "Post Run pnpm/action-setup@v6",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Run actions/checkout@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Stop containers",
+            "conclusion": "success"
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success"
+          }
+        ]
+      },
+      {
+        "name": "Nightly verdict rollup (5-cloud table + dedup issue)",
+        "conclusion": "success",
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success"
+          },
+          {
+            "name": "Run actions/checkout@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Download all per-provider proof artifacts",
+            "conclusion": "success"
+          },
+          {
+            "name": "Fetch this run's job conclusions (existence cross-check)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Roll up per-provider verdicts (+ dedup issue on red)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Append provisioning-e2e ledger rows (RECORD_ONLY)",
+            "conclusion": "success"
+          },
+          {
+            "name": "Upload updated provisioning-e2e ledger",
+            "conclusion": "success"
+          },
+          {
+            "name": "Post Run actions/checkout@v7",
+            "conclusion": "success"
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success"
+          }
+        ]
+      }
+    ]
+  }
+]
