@@ -676,7 +676,7 @@
 				"pass 1 · every route that needs only [org], against an EMPTY org › /[org]/~/settings/billing": "passed",
 				"pass 1 · every route that needs only [org], against an EMPTY org › /[org]/~/settings/classification": "passed",
 				"pass 1 · every route that needs only [org], against an EMPTY org › /[org]/~/settings/general": "passed",
-				"pass 1 · every route that needs only [org], against an EMPTY org › /[org]/~/settings/members": "failed",
+				"pass 1 · every route that needs only [org], against an EMPTY org › /[org]/~/settings/members": "passed",
 				"pass 1 · every route that needs only [org], against an EMPTY org › /[org]/~/settings": "passed",
 				"pass 1 · every route that needs only [org], against an EMPTY org › /[org]/~/settings/roles": "passed",
 				"pass 1 · every route that needs only [org], against an EMPTY org › /[org]/~/settings/sso": "passed",
