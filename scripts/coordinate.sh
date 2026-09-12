@@ -1048,7 +1048,7 @@ fi
 if [ -n "$stalled_units" ]; then
   echo "  ── ⚠ stalled (claimed, lease dead, and the PR holding it is stuck — needs a human) ──"
   printf '%s' "$stalled_units"
-  echo "     take one over with:  scripts/claim-work.sh --issue <n>   (then rebase or close its PR)"
+  echo "     take one over with:  scripts/claim-work.sh --issue <n> --takeover   (then rebase or close its PR)"
 fi
 
 # `if`, not `[ … ] && echo` — as the script's LAST command, a short-circuited `&&` becomes the exit
