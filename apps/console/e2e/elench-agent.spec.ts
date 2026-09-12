@@ -9,6 +9,13 @@
 // The AI JOURNEYS (streaming, tools, grid, artifacts) live in `elench-ai.spec.ts`,
 // which drives the REAL server pipeline against a scripted model (ALETHIA_AI_MOCK=1) —
 // far stronger than the client-side SSE stubs this file used to carry.
+//
+// THIS FILE OWNS THE INSIDE OF THE ASSISTANT. Since `/{org}/~/agent` stopped being a route, the
+// agent is reached only through the topbar "Ask AI" control — which every test below opens, from
+// the org home. `e2e/flows/agent-usage-activity.spec.ts` therefore carries exactly one Ask AI
+// test, and it is the one this file cannot make: that the launcher is a TOPBAR affordance,
+// reachable from an arbitrary authenticated route rather than only from the home page (#4272).
+// Anything about the panel, the modal, the composer or the threads belongs here, once.
 
 import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures/auth";
@@ -97,6 +104,58 @@ test.describe("Elench agent — modal (org)", () => {
 		await expect(panel).toBeVisible();
 		await page.getByRole("button", { name: /close assistant/i }).click();
 		await expect(panel).toBeHidden();
+	});
+});
+
+// THE MODE SEGMENTS THEMSELVES SAY NOTHING (#4618). "Ask-mode popover switches ask ↔ auto" above
+// measures the PILL, which flips its label between "Ask" and "Auto" — so the state is recoverable
+// by closing the popover and re-reading the trigger. Inside the popover, the two segments are
+// plain `<button>`s and the only marks of which is current are a `<Check>` glyph with no
+// accessible name and an `isAsk && "bg-muted"` background (elench-controls.tsx). Neither reaches
+// the accessibility tree.
+//
+// Asserted as the product SHOULD behave (e2e/AUTHORING.md §7) rather than rewritten down to
+// what it does: `aria-checked` on `role="menuitemradio"`, which is the pattern for
+// mutually-exclusive options in a menu. NOT `aria-selected` — that belongs to `tab`/`option`,
+// and `components/settings/usage/usage-primitives.tsx:275-281` already ruled that the tab
+// role must not be adopted without its keyboard contract.
+//
+// `components/agent/**` is out of #4272's scope (the agent-confirms lane owns it), so this
+// stays a fixme until #4618 lands — at which point DELETE this describe and its
+// gate-baseline.json entry rather than leaving a skip behind.
+//
+// IT HAS ITS OWN DESCRIBE, AND THE MODIFIER SITS AT DECLARATION, BECAUSE A FIXME MUST BE INERT.
+// `test.fixme()` called in the test BODY skips the body only — Playwright has already built the
+// fixtures and run every `beforeEach` by then. Under the "modal (org)" describe above that meant
+// this placeholder ran the whole `openElenchPanel` → maximize walk on every gate run; when that
+// walk fails — and `minimize → panel → maximize` in that describe is recorded `failed` today —
+// the result is `unexpected` against a `{fixme}` entry, which the ratchet reads as a regression
+// in a component this test does not measure (#4619 review). Measured with playwright 1.62.1: a
+// body-level fixme runs the hooks AND builds the fixtures; a describe-level one runs neither and
+// still carries the `BUG: … #<issue>` description into `annotations`, which is all
+// scripts/e2e-ratchet.mjs rule 5 reads. The describe holds exactly this one test, so applying the
+// modifier to all of it is applying it to this test.
+test.describe("Elench agent — Ask-mode segments (org)", () => {
+	test.fixme(
+		true,
+		"BUG: the Elench Ask/Auto mode segments expose no accessible selected state #4618",
+	);
+
+	test("the Ask-mode segments expose which one is current", async ({ authedPage: page }) => {
+		// Opened here rather than in a `beforeEach`: a hook is exactly what must not run while the
+		// fixme stands. When #4618 lands and the modifier goes, this line is the walk the test needs.
+		await openElenchModal(page);
+		await page.getByRole("button", { name: "Ask", exact: true }).first().click();
+		const ask = page.getByRole("menuitemradio", { name: /ask before editing/i });
+		const auto = page.getByRole("menuitemradio", { name: /automatically edit/i });
+
+		await expect(ask).toHaveAttribute("aria-checked", "true");
+		await expect(auto).toHaveAttribute("aria-checked", "false");
+
+		await auto.click();
+		// Both halves: a control that reports every option checked passes a one-sided assertion.
+		await expect(auto).toHaveAttribute("aria-checked", "true");
+		await expect(ask).toHaveAttribute("aria-checked", "false");
 	});
 });
 
