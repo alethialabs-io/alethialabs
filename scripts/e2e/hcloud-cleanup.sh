@@ -1691,18 +1691,20 @@ if [ "$VERIFY_ONLY" != "1" ]; then
 	purge network "networks"
 	purge primary-ip "primary IPs"
 	purge image "images (talos snapshots)"
-	report_image_cache
 	[ "$ZONE_SUPPORTED" = "1" ] && purge zone "dns zones"
 	sweep_object_storage
 	report_imager_helpers
 else
-	report_image_cache
 	report_imager_helpers
 	# Captured into a variable rather than re-asked inside verify_swept: the ids it echoes are a
 	# LEAK (bound to this run, still alive) and the ledger entries it leaves are the unmeasurable
 	# cases. verify_swept reads both.
 	VERIFY_ONLY_UNLABELLED_LBS="$(report_unlabelled_lbs)"
 fi
+
+# The cache deliberately survives both modes, so report it once outside their branch. Keeping the
+# call at top level also lets check-hetzner-image-cache prove the reporter is not merely defined.
+report_image_cache
 
 
 if [ "$DRY_RUN" = "1" ]; then

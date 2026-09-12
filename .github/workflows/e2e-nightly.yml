@@ -1894,6 +1894,7 @@ jobs:
           PROVIDER: ${{ matrix.provider }}
           ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
           ALETHIA_E2E_PROJECT: ${{ env.E2E_PROJECT }}
+          ALETHIA_E2E_HCLOUD_LB_IDS: ${{ runner.temp }}/hcloud-lb-ids.txt
         run: |
           if [ -z "${E2E_CLUSTER:-}" ] || [ -z "${E2E_ENV:-}" ]; then
             echo "::warning::E2E_CLUSTER/E2E_ENV unset at cancellation — nothing was provisioned yet, nothing to sweep."
@@ -2179,7 +2180,6 @@ jobs:
             echo "::error::E2E_CLUSTER/E2E_ENV is unset — refusing to run an unscoped verification."
             rc=2
           else
-            export ALETHIA_E2E_HCLOUD_LB_IDS="${RUNNER_TEMP}/hcloud-lb-ids.txt"
             case "$PROVIDER" in
               hetzner) SCRIPT="./scripts/e2e/hcloud-cleanup.sh" ;;
               aws)     SCRIPT="./scripts/e2e/aws-cleanup.sh" ;;
