@@ -138,16 +138,44 @@ describe("orgScopeCarriesResourceId (the org-kind + resource-id refusal)", () =>
 		expect(orgScopeCarriesResourceId("project", null)).toBe(false);
 	});
 
-	// Guards the reason the refusal exists rather than the refusal itself: if `expandGrant` ever
-	// started honouring the id under an org kind, refusing the pair would be over-strict rather
-	// than protective, and this test is what would say so.
-	it("expandGrant does take org-wide for the refused pair, so the id really is dropped", () => {
+	// Guards the reason the refusal exists rather than the refusal itself. Until #4584 this
+	// asserted that `expandGrant` took ORG-WIDE for the refused pair and dropped the id — which
+	// is exactly what made such a row organization-wide in OpenFGA while the Postgres PDP read
+	// the same row as scoped to that id. The ruling is that a non-null `resource_id` is never
+	// org-wide, and `"org"` is not a kind a grant can be scoped to, so the pair now confers
+	// nothing at all. Both engines answer that from `grantTarget`.
+	it("expandGrant confers NOTHING for the refused pair — neither org-wide nor scoped", () => {
+		expect(
+			expandGrant(
+				{ ...base, effect: "allow", resourceType: "org", resourceId: "S" },
+				viewerKeys,
+			),
+		).toEqual([]);
+	});
+
+	// The same fail-closed answer for a resource_type nothing recognises. `resource_type` is free
+	// `text` in Postgres and two writers insert it with raw SQL, so this is reachable without
+	// going through any TypeScript construction site. It used to produce zero tuples HERE while
+	// the Postgres PDP treated the row as an ordinary scoped grant — the same divergence in a
+	// second costume.
+	it("expandGrant confers NOTHING for an unrecognised resource kind", () => {
+		expect(
+			expandGrant(
+				{ ...base, effect: "allow", resourceType: "banana", resourceId: "S" },
+				viewerKeys,
+			),
+		).toEqual([]);
+	});
+
+	// The union of scopable kinds is derived from the hierarchy table (`PARENTS`), NOT from the
+	// read-side `GRANT_SCOPES` facet list, which omits `connector`. Taking the facet list would
+	// have made this working case confer nothing.
+	it("a connector-scoped grant still expands — the scopable set is PARENTS, not GRANT_SCOPES", () => {
 		const tuples = expandGrant(
-			{ ...base, effect: "allow", resourceType: "org", resourceId: "S" },
-			viewerKeys,
+			{ ...base, effect: "allow", resourceType: "connector", resourceId: "C" },
+			ALL_KEYS,
 		);
 		expect(tuples.length).toBeGreaterThan(0);
-		expect(tuples.every((t) => t.object === "org:O")).toBe(true);
-		expect(tuples.some((t) => t.object.includes("S"))).toBe(false);
+		expect(tuples.every((t) => t.object === "connector:C")).toBe(true);
 	});
 });

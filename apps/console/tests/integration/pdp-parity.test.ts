@@ -22,7 +22,8 @@ import { z } from "zod";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { checksFor, denyChecksFor } from "@/lib/authz/fga-mapping";
 import { buildAuthorizationModel } from "@/lib/authz/fga-model";
-import { expandGrant, hierarchyTuple, type FgaTuple } from "@/lib/authz/fga-tuples";
+import { expandGrant, hierarchyTuple, teamMemberTuple, type FgaTuple } from "@/lib/authz/fga-tuples";
+import { EMPTY_SCOPE_DENIES } from "@/lib/authz/grant-scope";
 import { PostgresRbacPDP } from "@/lib/authz/postgres-rbac-pdp";
 import type { Action, Resource } from "@/lib/authz/registry";
 import { listOrgResourceIds } from "@/lib/authz/resource-tables";
@@ -34,6 +35,8 @@ import {
 	organization,
 	projects,
 	resourceHierarchy,
+	team,
+	teamMember,
 	user,
 } from "@/lib/db/schema";
 import { DB_UP } from "./db";
@@ -120,6 +123,7 @@ const PROJ_A1 = randomUUID(); // in ORG_A, USER_A has a scoped view grant on it
 const PROJ_A2 = randomUUID(); // in ORG_A, no scoped grant (org-wide deploy reaches it)
 const PROJ_A3 = randomUUID(); // in ORG_A, org-wide deploy ALLOW + a per-instance deploy DENY
 const PROJ_B1 = randomUUID(); // in ORG_B — the cross-tenant target
+const TEAM_A = randomUUID(); // in ORG_A, USER_A is a member — the team-principal path
 
 const pg = new PostgresRbacPDP();
 const actor: Actor = { userId: USER_A, orgId: ORG_A };
@@ -137,6 +141,8 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 			{ id: ORG_A, name: `A-${ORG_A.slice(0, 8)}` },
 			{ id: ORG_B, name: `B-${ORG_B.slice(0, 8)}` },
 		]);
+		await db.insert(team).values({ id: TEAM_A, name: "platform", organizationId: ORG_A });
+		await db.insert(teamMember).values({ teamId: TEAM_A, userId: USER_A });
 		await db.insert(projects).values([
 			mkProject(PROJ_A1, ORG_A),
 			mkProject(PROJ_A2, ORG_A),
@@ -166,7 +172,7 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		// PROJ_A3) — the deny-wins case that used to diverge: `checksFor` ORs the raw org-wide
 		// capability, so the OpenFGA engine must ALSO evaluate `denyChecksFor` and veto on the
 		// per-instance deny to match the Postgres deny-wins engine (see the matrix, now CLOSED).
-		await db.insert(grants).values([
+		const grantRows = [
 			// G1: scoped view allow on PROJ_A1.
 			grantRow({ permission_key: "project:view", resource_id: PROJ_A1 }),
 			// G2 + G3: scoped view allow AND deny on PROJ_A2 → explicit-deny-wins (no org-wide view).
@@ -177,33 +183,109 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 			// G5: per-instance deploy DENY on PROJ_A3 → org-wide ALLOW (G4) + instance DENY of the
 			// SAME action ⇒ explicit-deny-wins. THE regression case both engines must now DENY.
 			grantRow({ permission_key: "project:deploy", resource_id: PROJ_A3, effect: "deny" }),
-		]);
+			// G6: THE BAD PAIR (#4584) — the `org` kind carrying a project's id. It reads as a
+			// scoped grant on PROJ_A1 and is not one. Until #4584 the Postgres engine took it as
+			// exactly that (it never projected `resource_type`) while `expandGrant` took it as
+			// ORGANIZATION-WIDE and dropped the id — one row, opposite answers, decided by which
+			// engine an installation runs. It now confers NOTHING on both.
+			grantRow({
+				permission_key: "project:edit",
+				resource_type: "org",
+				resource_id: PROJ_A1,
+			}),
+			// G7: the same permission, granted PROPERLY, scoped to PROJ_A2. Non-vacuity for G6:
+			// without it, "edit is denied everywhere" would also be the answer for a permission
+			// nobody holds, and the G6 cases would pass while asserting nothing.
+			grantRow({ permission_key: "project:edit", resource_id: PROJ_A2 }),
+			// G8: a TEAM principal, scoped to PROJ_A1. USER_A is a member, so both engines must
+			// reach it — Postgres through `team_member`, OpenFGA through the `team:T#member`
+			// userset. Nothing else in this fixture is granted to a team, so `expandGrant`'s
+			// team branch and the membership tuple were both unexercised here.
+			grantRow({
+				principal_type: "team",
+				principal_id: TEAM_A,
+				permission_key: "project:plan",
+				resource_id: PROJ_A1,
+			}),
+			// G9 + G10: the DENY half of the pair (#4584). An org-wide destroy ALLOW, minus a
+			// destroy DENY written with the CONTRADICTORY PAIR — `resource_type = 'org'` carrying
+			// a project id. RULED: such a row excludes the WHOLE ORG, so G10 removes destroy from
+			// every project in ORG_A, not just the one it names. Both engines must agree on that,
+			// and the OpenFGA half only sees this row at all because it is DERIVED from the table.
+			grantRow({ permission_key: "project:destroy", resource_id: null }),
+			grantRow({
+				permission_key: "project:destroy",
+				resource_type: "org",
+				resource_id: PROJ_A3,
+				effect: "deny",
+			}),
+			// G11 + G12: the SAME ruling on the class it was NOT decided on — an unscopable kind
+			// (`job`) carrying an id. The parity fixture's other deny of the pair is `org`-kind,
+			// where OpenFGA already excluded the org; here it excluded NOTHING (the model has no
+			// `job:` object type), so this is the row where BOTH engines widen. Without it, class
+			// 2 has the ruling applied to it and nothing testing it.
+			grantRow({ permission_key: "project:audit", resource_id: null }),
+			grantRow({
+				permission_key: "project:audit",
+				resource_type: "job",
+				resource_id: PROJ_A1,
+				effect: "deny",
+			}),
+		];
+		await db.insert(grants).values(grantRows);
 
-		// The SAME grants + edges, expanded to OpenFGA tuples via the production helpers.
+		// ── The OpenFGA half, DERIVED FROM THE ROWS POSTGRES NOW HOLDS ───────────────────────
+		// This used to hand-write the `resourceType`/`resourceId` literals for each grant, which
+		// is the SECOND reason this suite could not see #4584 and the more dangerous one: the FGA
+		// side was fed whatever the test author typed, not what the database contained, so adding
+		// a bad-pair row to the DB fixture alone would still have passed. Two fixtures that drift
+		// silently is exactly the divergence this file exists to detect.
+		//
+		// So: read the grants back out and expand each one through the same production
+		// `expandGrant` the ee/ dual-write calls. Nothing between the table and the store is
+		// re-typed by hand.
 		storeId = await createStore(`parity-${ORG_A.slice(0, 8)}`);
 		modelId = await writeModel(storeId);
-		const scopedAllow = (resourceId: string, key: string) =>
-			expandGrant(
-				{ orgId: ORG_A, principalType: "user", principalId: USER_A, effect: "allow", resourceType: "project", resourceId },
-				[key],
+		const seeded = await db
+			.select({
+				org_id: grants.org_id,
+				principal_type: grants.principal_type,
+				principal_id: grants.principal_id,
+				effect: grants.effect,
+				permission_key: grants.permission_key,
+				resource_type: grants.resource_type,
+				resource_id: grants.resource_id,
+			})
+			.from(grants)
+			.where(eq(grants.org_id, ORG_A));
+		// Counted against the fixture itself, not against a number typed here — a hand-written
+		// count decays the moment someone adds a case. A short read would write too few tuples
+		// and make every OpenFGA answer a silent `false`, which agrees with a Postgres `false`
+		// for all the wrong reasons; a `beforeAll` that throws says so loudly.
+		if (seeded.length !== grantRows.length) {
+			throw new Error(
+				`fixture: inserted ${grantRows.length} grants for ORG_A but read back ${seeded.length} — the OpenFGA half is DERIVED from these rows, so it would be expanded from an incomplete fixture.`,
 			);
+		}
 		const tuples: FgaTuple[] = [
-			...scopedAllow(PROJ_A1, "project:view"),
-			...scopedAllow(PROJ_A2, "project:view"),
-			...expandGrant(
-				{ orgId: ORG_A, principalType: "user", principalId: USER_A, effect: "deny", resourceType: "project", resourceId: PROJ_A2 },
-				["project:view"],
-			),
-			...expandGrant(
-				{ orgId: ORG_A, principalType: "user", principalId: USER_A, effect: "allow", resourceType: "org", resourceId: null },
-				["project:deploy"],
-			),
-			// G5: per-instance deploy DENY on PROJ_A3 (the same grant, expanded to a tuple).
-			...expandGrant(
-				{ orgId: ORG_A, principalType: "user", principalId: USER_A, effect: "deny", resourceType: "project", resourceId: PROJ_A3 },
-				["project:deploy"],
+			...seeded.flatMap((row) =>
+				expandGrant(
+					{
+						orgId: row.org_id,
+						principalType: principalTypeOf(row.principal_type),
+						principalId: row.principal_id,
+						effect: effectOf(row.effect),
+						resourceType: row.resource_type,
+						resourceId: row.resource_id,
+					},
+					permissionKeysOf(row.permission_key),
+				),
 			),
 			...edges.map((e) => hierarchyTuple(e)),
+			// Team membership is a fact about the org, not about a grant, so it is not something
+			// `expandGrant` can derive from a `grants` row — the dual-write mirrors it separately
+			// (`syncTeamMember`). Without it G8 reaches nobody and its cases would pass vacuously.
+			teamMemberTuple(TEAM_A, USER_A),
 		];
 		await writeTuples(storeId, tuples);
 	});
@@ -216,6 +298,8 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 			.where(inArray(resourceHierarchy.parent_id, [ORG_A, ORG_B]));
 		await db.delete(projects).where(inArray(projects.org_id, [ORG_A, ORG_B]));
 		await db.delete(organization).where(inArray(organization.id, [ORG_A, ORG_B]));
+		await db.delete(teamMember).where(eq(teamMember.teamId, TEAM_A));
+		await db.delete(team).where(eq(team.id, TEAM_A));
 		await db.delete(user).where(eq(user.id, USER_A));
 		if (storeId) {
 			await fetch(`${FGA_URL}/stores/${storeId}`, { method: "DELETE" }).catch(() => {});
@@ -288,6 +372,44 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		// The previously-avoided divergence: org-wide ALLOW + per-instance DENY of the SAME
 		// action. Postgres denies (deny-wins); OpenFGA must now ALSO deny (denyChecksFor veto).
 		{ name: "org-wide deploy ALLOW + per-instance DENY on PROJ_A3 (deny wins)", action: "deploy", id: PROJ_A3, want: false },
+
+		// ── #4584: the bad pair (G6), read on three projects ─────────────────────────────────
+		// G6 is `('org', PROJ_A1)` allow project:edit; G7 is a proper `('project', PROJ_A2)`
+		// allow of the same permission. The third row is where the old divergence SHOWS: under
+		// the pre-#4584 readings Postgres scoped G6 to PROJ_A1 (so `edit` on PROJ_A3 was false)
+		// while OpenFGA took G6 as org-wide (so `edit` on PROJ_A3 was TRUE). That is the
+		// `ENGINE DIVERGENCE` assertion firing, and it fires only because the OpenFGA half is
+		// now derived from the row rather than composed from literals.
+		{ name: "edit on PROJ_A1 — the bad pair names it and confers nothing", action: "edit", id: PROJ_A1, want: false },
+		{ name: "edit on PROJ_A2 — the PROPERLY scoped grant does confer it (non-vacuity for the two false cases)", action: "edit", id: PROJ_A2, want: true },
+		{ name: "edit on PROJ_A3 — the bad pair is NOT org-wide either", action: "edit", id: PROJ_A3, want: false },
+
+		// A grant to a TEAM the actor belongs to. Postgres resolves it through `team_member`,
+		// OpenFGA through the `team:T#member` userset — two entirely different mechanisms that
+		// must agree, and neither was exercised by this fixture before.
+		{ name: "plan on PROJ_A1 via a TEAM grant (member of TEAM_A)", action: "plan", id: PROJ_A1, want: true },
+		{ name: "plan on PROJ_A2 — the team grant is scoped to A1", action: "plan", id: PROJ_A2, want: false },
+
+		// ── #4584, the DENY half — RULED: an uninterpretable exclusion applies org-wide ──────
+		// Org-wide destroy ALLOW (G9) + a destroy DENY written with the contradictory pair on A3
+		// (G10). Literals, not derived from `EMPTY_SCOPE_DENIES`: while the question was open
+		// these read the constant so the ruling would be one line, but a ruled decision with a
+		// derived expectation is a decision nothing pins. Reverting it must red this suite.
+		//
+		// A3 is the project the row names; A1 and A2 are ones it does not. All three lose
+		// `destroy`, which is what "excludes the whole org" MEANS — and the alternative reading
+		// ("nothing") would have left all three ALLOWED via G9, from a row nobody edited.
+		{ name: "destroy on PROJ_A3 — the bad-pair DENY names it", action: "destroy", id: PROJ_A3, want: false },
+		{ name: "destroy on PROJ_A1 — and reaches a project it never named", action: "destroy", id: PROJ_A1, want: false },
+		{ name: "destroy on PROJ_A2 — org-wide means org-wide", action: "destroy", id: PROJ_A2, want: false },
+
+		// The unscopable-kind DENY (G12). PROJ_A1 is the resource it names; A2 and A3 are ones it
+		// never names and could reach through the org-wide allow (G11) until this ruling. Both
+		// engines must agree on all three — and on OpenFGA this row produced NO TUPLES AT ALL
+		// before #4584, so this is the pair where the store's answer moves furthest.
+		{ name: "audit on PROJ_A1 — the unscopable-kind DENY names it", action: "audit", id: PROJ_A1, want: false },
+		{ name: "audit on PROJ_A2 — and widens onto one it never named", action: "audit", id: PROJ_A2, want: false },
+		{ name: "audit on PROJ_A3 — org-wide, on the class the ruling did not decide", action: "audit", id: PROJ_A3, want: false },
 	];
 
 	for (const c of cases) {
@@ -354,6 +476,35 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		// And never leaks a cross-tenant project.
 		expect(fgaIds).not.toContain(PROJ_B1);
 	});
+
+	it("RULED: the bad-pair DENY empties the destroy list on BOTH engines", async () => {
+		// The enumerate half of the ruling. Postgres sees an org-wide deny (`denyIds` carries
+		// null) and returns []; OpenFGA takes its org-wide branch, finds `project_deny_destroy`
+		// on `org:<ORG_A>` and returns [] too. Under the rejected reading both would have
+		// returned all three projects — a silent widening on the enumerate path, which is the
+		// same shape as the already-closed divergence recorded in the compliance matrix.
+		expect(EMPTY_SCOPE_DENIES).toBe("the_whole_org");
+		const pgIds = await pg.listAccessible(actor, "destroy", "project");
+		const fgaIds = await fgaListAccessible("destroy", "project");
+		expect(pgIds).toEqual([]);
+		expect(new Set(fgaIds)).toEqual(new Set(pgIds));
+	});
+
+	it("listAccessible agrees on the bad pair: it widens NEITHER engine's list", async () => {
+		// `edit` is held by exactly one grant that confers anything — G7, scoped to PROJ_A2.
+		// G6, the `('org', PROJ_A1)` row, must not add PROJ_A1 (the id it names) and must not
+		// turn this into the org-wide branch. Before #4584 the OpenFGA engine took precisely
+		// that org-wide branch here and returned every project in ORG_A minus the denies, while
+		// Postgres returned [A1, A2] — the listing form of the same divergence.
+		const pgIds = await pg.listAccessible(actor, "edit", "project");
+		const fgaIds = await fgaListAccessible("edit", "project");
+
+		expect(new Set(pgIds)).toEqual(new Set([PROJ_A2]));
+		expect(new Set(fgaIds)).toEqual(new Set(pgIds));
+		expect(fgaIds).not.toContain(PROJ_A1);
+		expect(fgaIds).not.toContain(PROJ_A3);
+		expect(fgaIds).not.toContain(PROJ_B1);
+	});
 });
 
 /** A projects row for the fixture (minimal required columns). */
@@ -368,19 +519,54 @@ function mkProject(id: string, orgId: string) {
 	};
 }
 
-/** A grant row for USER_A in ORG_A. */
+/**
+ * A grant row for USER_A in ORG_A.
+ *
+ * `resource_type` is a PARAMETER, not a constant. It used to be hardcoded to `"project"`, which
+ * is why this suite could not see #4584 at all: the row shape at the centre of that divergence —
+ * an `'org'` kind carrying a resource id — was unconstructible from the fixture.
+ */
 function grantRow(v: {
 	permission_key: string;
 	resource_id: string | null;
 	effect?: "allow" | "deny";
+	resource_type?: string;
+	principal_type?: "user" | "team";
+	principal_id?: string;
 }) {
 	return {
 		org_id: ORG_A,
-		principal_type: "user" as const,
-		principal_id: USER_A,
+		principal_type: v.principal_type ?? ("user" as const),
+		principal_id: v.principal_id ?? USER_A,
 		effect: v.effect ?? ("allow" as const),
 		permission_key: v.permission_key,
-		resource_type: "project",
+		resource_type: v.resource_type ?? "project",
 		resource_id: v.resource_id,
 	};
+}
+
+// ── Narrowing the rows read back from Postgres ───────────────────────────────────────────────
+// `grants.principal_type`, `.effect` and `.permission_key` are `text`/nullable in the schema, and
+// `GrantScope` wants unions. These narrow rather than cast (CLAUDE.md §6), and they THROW on
+// anything unexpected: every row came from this file's own fixture, so an unexpected value means
+// the fixture is broken and the run must say so — not quietly expand a grant it misread.
+
+/** The principal kind, narrowed. */
+function principalTypeOf(value: string): "user" | "team" {
+	if (value === "user" || value === "team") return value;
+	throw new Error(`fixture: unexpected grants.principal_type ${JSON.stringify(value)}`);
+}
+
+/** The effect, narrowed. */
+function effectOf(value: string): "allow" | "deny" {
+	if (value === "allow" || value === "deny") return value;
+	throw new Error(`fixture: unexpected grants.effect ${JSON.stringify(value)}`);
+}
+
+/** The permission keys a fixture row confers. Every row here is a direct single-permission grant. */
+function permissionKeysOf(value: string | null): string[] {
+	if (value === null) {
+		throw new Error("fixture: a grant row with no permission_key (roles are not used here)");
+	}
+	return [value];
 }
