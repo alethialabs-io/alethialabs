@@ -60,6 +60,13 @@ export default defineConfig({
 				"src/provider-icon.tsx",
 				"src/copy-button.tsx",
 				"src/status-badge.tsx",
+				"src/filter-bar.tsx",
+				"src/filter-chip.tsx",
+				"src/filter-search.tsx",
+				"src/multi-combobox.tsx",
+				"src/popover.tsx",
+				"src/select.tsx",
+				"src/utils.ts",
 				// Authored behaviour, not a vendored re-export: it drives base-ui's Menu from a
 				// VIRTUAL anchor because React Flow swallows the pane's `contextmenu` when
 				// `panOnDrag` includes button 2. `check-coverage-exclusions` is right that an
