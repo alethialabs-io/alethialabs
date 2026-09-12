@@ -30,11 +30,11 @@
 # filter-chip.tsx, filter-search.tsx, multi-combobox.tsx, popover.tsx, select.tsx and utils.ts.
 # They are now in the coverage scope. The eleven remaining tier entries are ten vendored
 # primitives reached through composed-component suites plus the count helper those suites render;
-# their weaker tier-separation claim remains explicit and machine-checked.
+# their weaker tier-separation claim remains explicit and machine-checked. The primitives are
+# named by considered `exclude:` lines, so that decision survives independently of this prose.
 #
-# The ten vendored entries are owned by #4407; the count helper remains coverage-epic debt under
-# #2649. The guard REQUIRES an `issue:` field on any `tier_separation:` entry D3 reports as
-# allowlist-hidden. The reason is that this section has
+# The count helper remains coverage-epic debt under #2649. The guard REQUIRES an `issue:` field on
+# any `tier_separation:` entry D3 reports as allowlist-hidden. The reason is that this section has
 # neither an owning issue nor a shrink-only rule — both of which `baseline:` has — so exports
 # recorded here under a heading this header has just argued they do not belong to
 # would have been an amnesty nothing came back to collect, with the only record being prose whose
@@ -45,11 +45,9 @@
 # config, `pnpm test:integration`. Here it is the composed-component suites in this same package
 # (and, for the primitives, the console's browser tier, which this guard cannot read). What the
 # entries below claim is only the checkable half: a named `*.test.tsx` value-imports the module and
-# these exports, and jsdom mounts them. They are kept out of the unit badge's denominator by the
-# allowlist, not by a considered separation — which is the finding, and the reason the seven
-# dedicated-suite entries are called out by name above rather than left to look ordinary, and the
-# reason every entry in the section carries `issue:` where a tier separation elsewhere in the tree
-# carries none.
+# these exports, and jsdom mounts them. The ten vendored wrappers are kept out of the unit badge's
+# denominator by considered `exclude:` lines. The authored count helper remains allowlist-hidden
+# and therefore carries `issue:` where a permanent tier separation carries none.
 #
 # `state:` in `baseline:` is one of `mock-only`, `no-test` and `untested-export`, verified PER
 # SYMBOL by the guard. Only two occur here — nothing in this package mocks a sibling module.
@@ -82,61 +80,51 @@ tier_separation:
   - path: src/button.tsx
     suite: [tests/date-range-filter.test.tsx]
     symbols: [Button, buttonVariants]
-    issue: "#4407"
     reason: Every filter control renders a real Button; the date-range suite mounts it and its variant table in jsdom.
 
   - path: src/dialog.tsx
     suite: [tests/country-select.test.tsx]
     symbols: [Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle]
-    issue: "#4407"
     reason: The country-select and facet-filter suites open a real dialog, mounting the root, content, header, title and description.
 
   - path: src/command.tsx
     suite: [tests/country-select.test.tsx]
     symbols: [Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList]
-    issue: "#4407"
     reason: The searchable command list inside country-select, facet-filter and phone-input — root, input, list, group, item and the empty branch.
 
   - path: src/sheet.tsx
     suite: [tests/grouped-filter-sheet.test.tsx]
     symbols: [Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle]
-    issue: "#4407"
     reason: The grouped-filter sheet suite opens a real sheet, mounting the root, content, header, title and description.
 
   - path: src/collapsible.tsx
     suite: [tests/grouped-filter-sheet.test.tsx]
     symbols: [Collapsible, CollapsibleContent, CollapsibleTrigger]
-    issue: "#4407"
     reason: Each group inside the grouped filter sheet is a real collapsible, expanded and collapsed by that suite.
 
   - path: src/calendar.tsx
     suite: [tests/date-range-filter.test.tsx]
     symbols: [Calendar]
-    issue: "#4407"
     reason: The date-range filter mounts a real calendar and picks days through it.
 
   - path: src/avatar.tsx
     suite: [tests/multi-combobox.test.tsx]
     symbols: [Avatar, AvatarFallback, AvatarImage]
-    issue: "#4407"
     reason: The multi-combobox option rows render a real avatar, exercising the image and its fallback.
 
   - path: src/badge.tsx
     suite: [tests/facet-filter.test.tsx]
     symbols: [Badge]
-    issue: "#4407"
     reason: Facet counts and applied-filter markers render a real Badge in the facet, grouped-sheet and quick-range suites.
 
   - path: src/input.tsx
     suite: [tests/phone-input.test.tsx]
     symbols: [Input]
-    issue: "#4407"
     reason: The phone-input and quick-range suites type into a real Input.
 
   - path: src/label.tsx
     suite: [tests/date-range-filter.test.tsx]
     symbols: [Label]
-    issue: "#4407"
     reason: The date-range and quick-range filters label their controls with a real Label.
 
 baseline:
