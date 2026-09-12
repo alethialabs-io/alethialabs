@@ -30,7 +30,7 @@
 // Exactly one line in this file may carry the marker, and a second one — in prose, say — is itself
 // a failure rather than a tie-break, because two censuses are no census.
 //
-// LEDGER-CENSUS: 639 tests across 7 projects — 573 passed, 61 failed, 4 fixme, 1 data-skip; failing: canvas 5, console 8, qa 48
+// LEDGER-CENSUS: 644 tests across 7 projects — 594 passed, 45 failed, 4 fixme, 1 data-skip; failing: canvas 5, console 8, qa 32
 //
 //   node scripts/e2e-ratchet.mjs --project=<name> --results=<playwright json> [--baseline=<file>]
 //   node scripts/e2e-ratchet.mjs --project=<name> --results=<json> --write [--only=<spec file>]...
