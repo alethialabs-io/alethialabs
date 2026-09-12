@@ -1803,6 +1803,16 @@ jobs:
       - name: Alibaba sweeper four-state verification
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/alibaba-cleanup.sh --self-test
+      # `VERIFY_ONLY=1` is a READ-ONLY mode added to five scripts whose day job is deleting cloud
+      # resources (#4398), and its whole licence is that it is safe to point at a live account
+      # right after a teardown. That property was asserted only in prose at first: four mutations
+      # of the guard — one per structural shape, plus the DRY_RUN/PREFLIGHT refusal — SURVIVED
+      # every check in this file. This is the test that kills them, and it also pins the regression
+      # where the mode skipped hetzner's CCM-load-balancer reporter and published CLEAN over a
+      # question nobody had asked. Hermetic — every CLI is stubbed, no credentials, no cloud.
+      - name: VERIFY_ONLY deletes nothing (all five sweepers)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/e2e/verify-only-readonly-test.sh
       # Which workflows are red, and have been red for a while. The classifier is the load-bearing
       # part: `skipped` must never read as a failure (a gate-off leg is not a broken pipeline), and
       # three runs is the minimum that can distinguish "dead" from "flaked once". Both are asserted.
