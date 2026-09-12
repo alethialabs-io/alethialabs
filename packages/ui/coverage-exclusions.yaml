@@ -9,16 +9,16 @@
 # hand-lists TWENTY files as the coverage scope while `src/` holds SIXTY-ONE. An `include` allowlist
 # is an exclusion with the sign flipped: the other 41 files are excluded exactly as surely as a named
 # `exclude:` entry, and the `exclude:` sweep — which walks `coverage.exclude` — sees none of them.
-# The ratchet remains armed at the last CI-measured floor until this scope change is re-probed.
+# The ratchet is armed at the widened scope's Linux CI measurement: 1642/1795 statements.
 # Every excluded file is recorded below, with every runtime export accounted for in
 # `symbols:` or in `baseline:`.
 #
-# WHAT "EVERY ONE OF THE 48" IS A CLAIM ABOUT, and it is not the future. D3's peer sweep CLASSIFIES
+# WHAT "EVERY EXCLUDED FILE" IS A CLAIM ABOUT, and it is not the future. D3's peer sweep CLASSIFIES
 # a project non-recursively — recursing there reclassifies apps/marketing as an allowlist over 42
 # files under `app/**`, which is the one thing that rule exists to avoid — but once the verdict is
 # in it ENUMERATES recursively, so a file added under `src/chart/` next month is hidden, named, and
 # owed an entry here exactly as a flat one is. That second pass is what makes this sentence hold
-# past today's layout rather than only while `src/` happens to be flat (60 files, 0 nested); before
+# past today's layout rather than only while `src/` happens to be flat; before
 # it, such a file was outside `coverage.include`, no peer of any literal, owed nothing, and let the
 # guard print ✓ over a floor armed at 98.83% across a scope that had silently shrunk.
 #
@@ -26,32 +26,19 @@
 # (scripts/check-coverage-exclusions.mjs), which resolves each named suite's imports the way vitest
 # resolves them and requires a VALUE import of the module and of each listed symbol.
 #
-# WHAT THE MEASUREMENT SAID, and it is not what the config's comment says. That comment describes
-# the 48 as "vendored shadcn/Radix primitives … presentational re-exports covered by e2e". Read
-# against the package's own suites:
+# #4104 found seven excluded files with their own dedicated suites: filter-bar.tsx,
+# filter-chip.tsx, filter-search.tsx, multi-combobox.tsx, popover.tsx, select.tsx and utils.ts.
+# They are now in the coverage scope. The eleven remaining tier entries are ten vendored
+# primitives reached through composed-component suites plus the count helper those suites render;
+# their weaker tier-separation claim remains explicit and machine-checked.
 #
-#   17 files (43 exports) are EXECUTED by a named suite in tests/ — the composed filters mount real
-#      primitives, so Button, Dialog, Command, Popover, Select and Sheet all run for real.
-#   SEVEN of those 17 have their OWN DEDICATED SUITE and are excluded anyway:
-#      filter-bar.tsx, filter-chip.tsx, filter-search.tsx, multi-combobox.tsx, popover.tsx,
-#      select.tsx and utils.ts. Four of them are not vendored primitives at all — they are this
-#      package's composed filter surface, tested here, and absent from the include list.
-#   31 files (115 exports) are named by NOTHING in tests/ — no import, not even a mock.
-#   22 further exports of the 17 are hidden behind a module a suite does execute.
-#
-# The seven files with dedicated suites are now in the coverage scope. The eleven remaining
-# entries below are ten vendored primitives reached through composed-component suites plus the
-# count helper those suites render; their weaker tier-separation claim remains explicit and
-# machine-checked.
-#
-# THAT FOLLOW-UP IS #4349. The eleven remaining `tier_separation:` entries below carry
-# `issue: "#4349"`, and the guard REQUIRES that field on
-# any `tier_separation:` entry D3 reports as allowlist-hidden. The reason is that this section has
-# neither an owning issue nor a shrink-only rule — both of which `baseline:` has — so 43 exports
-# across 17 files recorded here under a heading this header has just argued they do not belong to
+# The ten vendored entries are owned by #4407; the count helper remains coverage-epic debt under
+# #2649. The guard REQUIRES an `issue:` field on any `tier_separation:` entry D3 reports as
+# allowlist-hidden. The reason is that this section has
+# neither an owning issue nor a shrink-only rule — both of which `baseline:` has — so exports
+# recorded here under a heading this header has just argued they do not belong to
 # would have been an amnesty nothing came back to collect, with the only record being prose whose
-# deletion fails no check. #4104 and #4105 both close with this file, so pointing at them would
-# have been worse than pointing nowhere.
+# deletion fails no check.
 #
 # ON `tier_separation:` IN THIS PACKAGE, stated plainly because the word is doing less work here
 # than it does in the console. There the other tier is a different RUNNER — real Postgres, its own
@@ -84,7 +71,7 @@ tier_separation:
   - path: src/count-pill.tsx
     suite: [tests/filter-chip.test.tsx, tests/facet-filter.test.tsx, tests/multi-combobox.test.tsx]
     symbols: [CountFigure]
-    issue: "#4349"
+    issue: "#2649"
     reason: The mono count figure, executed for real by the composed filter suites — filter-chip, facet-filter and multi-combobox each render it as their count. It has no dedicated suite of its own, being a span with a class.
 
   # ── vendored primitives the composed-filter suites mount for real ─────────────────────────────
@@ -95,61 +82,61 @@ tier_separation:
   - path: src/button.tsx
     suite: [tests/date-range-filter.test.tsx]
     symbols: [Button, buttonVariants]
-    issue: "#4349"
+    issue: "#4407"
     reason: Every filter control renders a real Button; the date-range suite mounts it and its variant table in jsdom.
 
   - path: src/dialog.tsx
     suite: [tests/country-select.test.tsx]
     symbols: [Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle]
-    issue: "#4349"
+    issue: "#4407"
     reason: The country-select and facet-filter suites open a real dialog, mounting the root, content, header, title and description.
 
   - path: src/command.tsx
     suite: [tests/country-select.test.tsx]
     symbols: [Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList]
-    issue: "#4349"
+    issue: "#4407"
     reason: The searchable command list inside country-select, facet-filter and phone-input — root, input, list, group, item and the empty branch.
 
   - path: src/sheet.tsx
     suite: [tests/grouped-filter-sheet.test.tsx]
     symbols: [Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle]
-    issue: "#4349"
+    issue: "#4407"
     reason: The grouped-filter sheet suite opens a real sheet, mounting the root, content, header, title and description.
 
   - path: src/collapsible.tsx
     suite: [tests/grouped-filter-sheet.test.tsx]
     symbols: [Collapsible, CollapsibleContent, CollapsibleTrigger]
-    issue: "#4349"
+    issue: "#4407"
     reason: Each group inside the grouped filter sheet is a real collapsible, expanded and collapsed by that suite.
 
   - path: src/calendar.tsx
     suite: [tests/date-range-filter.test.tsx]
     symbols: [Calendar]
-    issue: "#4349"
+    issue: "#4407"
     reason: The date-range filter mounts a real calendar and picks days through it.
 
   - path: src/avatar.tsx
     suite: [tests/multi-combobox.test.tsx]
     symbols: [Avatar, AvatarFallback, AvatarImage]
-    issue: "#4349"
+    issue: "#4407"
     reason: The multi-combobox option rows render a real avatar, exercising the image and its fallback.
 
   - path: src/badge.tsx
     suite: [tests/facet-filter.test.tsx]
     symbols: [Badge]
-    issue: "#4349"
+    issue: "#4407"
     reason: Facet counts and applied-filter markers render a real Badge in the facet, grouped-sheet and quick-range suites.
 
   - path: src/input.tsx
     suite: [tests/phone-input.test.tsx]
     symbols: [Input]
-    issue: "#4349"
+    issue: "#4407"
     reason: The phone-input and quick-range suites type into a real Input.
 
   - path: src/label.tsx
     suite: [tests/date-range-filter.test.tsx]
     symbols: [Label]
-    issue: "#4349"
+    issue: "#4407"
     reason: The date-range and quick-range filters label their controls with a real Label.
 
 baseline:
