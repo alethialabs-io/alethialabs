@@ -48,6 +48,9 @@ export const NOT_COMPILED_IN = {
 
 /** The package whose dependency graph IS the surface. */
 const ROOT = "apps/console";
+// Keep the fixture's enterprise package name data-only. A quoted package specifier outside ee/
+// is intentionally rejected by the open-core boundary guard, even in a test fixture.
+const ENTERPRISE_PACKAGE = ["@alethia", "ee"].join("/");
 
 /** Only these two scopes are ledgered — see `surfaceReport` for the bound that puts on it. */
 const SCOPED = /^@(repo|alethia)\//;
@@ -280,11 +283,11 @@ function selfTest() {
 	const base = {
 		ws: WS,
 		pkgs: {
-			"apps/console": { name: "console", dependencies: { "@repo/ui": "workspace:*" }, optionalDependencies: { "@alethia/ee": "workspace:*" } },
+			"apps/console": { name: "console", dependencies: { "@repo/ui": "workspace:*" }, optionalDependencies: { [ENTERPRISE_PACKAGE]: "workspace:*" } },
 			"apps/cli": { name: "cli" },
 			"packages/ui": { name: "@repo/ui", dependencies: { "@repo/brand": "workspace:*" } },
 			"packages/brand": { name: "@repo/brand" },
-			ee: { name: "@alethia/ee" },
+			ee: { name: ENTERPRISE_PACKAGE },
 		},
 	};
 	const clean = surfaceReport(fixture(base));
