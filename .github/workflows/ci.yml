@@ -1992,6 +1992,19 @@ jobs:
       # of the nine required checks then reports, so the PR does not go red — it sits BLOCKED with an
       # EMPTY rollup, which reads like "CI hasn't started". `yaml.parse()` passes on that input,
       # which is exactly why parsing is not validation (#2670).
+      # The console's compiled-from set is DERIVED from the workspace, and the release gate reads it
+      # to decide whether a changed path is something a leg measures. This asks the inverse: is every
+      # `@repo/*`/`@alethia/*` package in the tree either compiled into the console or recorded as
+      # not. It lives HERE rather than in release-gate.yml because it is a repo invariant, and a repo
+      # invariant checked inside a per-PR gate reds the wrong PR: the gate's check is skipped
+      # whenever the gate RUNS, so the labelled PR that lands a new package never evaluated it, while
+      # every unlabelled dev PR afterwards failed for a diff its author never wrote (#4606).
+      - name: The console's surface is derivable, and every scoped package is on it or recorded
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:console-surface
+      - name: ...and that walk is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-console-surface.mjs --self-test
       - name: Every workflow step has a run or a uses (Actions rejects the file otherwise)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:workflow-shape
