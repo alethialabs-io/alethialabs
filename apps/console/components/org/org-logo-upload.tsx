@@ -5,6 +5,10 @@
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@repo/ui/button";
+// The console's one destructive-confirmation dialog. It lives under `components/alerts/` for
+// historical reasons and is already consumed across features (environments-view.tsx, the canvas
+// inspector) — a second copy here would be the drift CLAUDE.md §6 is about, not a fix for it.
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { OrgAvatar } from "@/components/org/org-avatar";
 
 const ACCEPT = "image/png,image/jpeg,image/webp,image/gif,image/svg+xml";
@@ -26,6 +30,10 @@ interface OrgLogoUploadProps {
 export function OrgLogoUpload({ name, logo, onChange, size = 56 }: OrgLogoUploadProps) {
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [busy, setBusy] = useState(false);
+	// `Remove` used to fire the DELETE on a bare click — one of the nineteen controls
+	// `apps/console/destructive-actions.yaml` recorded as `status: missing`. There is no undo: the
+	// stored object is gone and the only way back is to find the original file and upload it again.
+	const [confirmOpen, setConfirmOpen] = useState(false);
 
 	async function upload(file: File) {
 		setBusy(true);
@@ -90,12 +98,23 @@ export function OrgLogoUpload({ name, logo, onChange, size = 56 }: OrgLogoUpload
 						variant="ghost"
 						size="sm"
 						disabled={busy}
-						onClick={() => void remove()}
+						onClick={() => setConfirmOpen(true)}
 					>
 						Remove
 					</Button>
 				)}
 			</div>
+			{/* The dialog is rendered unconditionally rather than behind `logo &&`: unmounting it in
+			    the same commit that `onChange(null)` triggers is how a confirmation ends up leaking
+			    its overlay. `AlertDialog` handles its own closed state. */}
+			<ConfirmDialog
+				open={confirmOpen}
+				onOpenChange={setConfirmOpen}
+				title="Remove the organization logo?"
+				description={`${name} will fall back to its initials everywhere it is shown. This cannot be undone — you would need the original image file to put it back.`}
+				confirmLabel="Remove logo"
+				onConfirm={() => void remove()}
+			/>
 		</div>
 	);
 }

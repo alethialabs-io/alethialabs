@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Onboarding domain — negatives: login of an unknown email, invalid email format, a wrong
-// OTP code, a reserved / blank org slug, and blank-name validation in both the onboarding
-// wizard and the create-org sheet. Real fresh signups where a code/onboarding is needed.
+// OTP code, a reserved / blank org slug, blank-name validation in both the onboarding wizard
+// and the create-org sheet, an invitation accepted from the WRONG account, and a malformed
+// CLI login link. Real fresh signups where a code/onboarding is needed.
 
 import { test, expect } from "../fixtures/qa";
+import { pendingInvitationId } from "../helpers/db";
 import { logCursor, waitForOtp } from "../helpers/otp";
+import { organizationApi } from "../helpers/personas";
 import type { Page } from "@playwright/test";
 
 /** Email-OTP sign-in with a longer OTP wait (busy dev server logs the code late). */
@@ -132,5 +135,88 @@ test.describe("Onboarding negatives — create-org sheet", () => {
 		// Leave the name blank and submit the name step.
 		await owner.page.getByRole("button", { name: /^continue$/i }).click();
 		await expect(owner.page.getByText(/give your team a name/i)).toBeVisible({ timeout: 15_000 });
+	});
+});
+
+// ── Invitation accept, refused ─────────────────────────────────────────────────────
+
+test.describe("Onboarding negatives — invitation accept", () => {
+	test("an invitation addressed to somebody else is refused for the wrong account", async ({
+		team,
+		owner,
+	}) => {
+		test.setTimeout(120_000);
+		const orgId = team.orgId;
+		expect(orgId, "the ownerTeam persona has no resolved org id — global-setup did not finish").toBeTruthy();
+		if (!orgId) return;
+
+		// A real, pending invitation addressed to a THIRD party — not to the account that will try
+		// to accept it. Sent through the same endpoint the console's invite dialog calls; landing on
+		// the org first re-syncs the session's active organization, which `invite-member` reads.
+		const invitee = `e2e-neg-wrongacct-${Date.now()}-${Math.floor(Math.random() * 1e4)}@alethia.test`;
+		await team.page.goto(`/${team.orgSlug}`, { waitUntil: "domcontentloaded" });
+		const invited = await organizationApi(team.page, "invite-member", {
+			email: invitee,
+			role: "member",
+			organizationId: orgId,
+		});
+		expect(invited.status, `invite-member answered ${invited.status}: ${invited.text}`).toBeLessThan(400);
+		const token = await pendingInvitationId(orgId, invitee);
+		expect(token, `no pending invitation row for ${invitee} after a ${invited.status}`).toBeTruthy();
+
+		// ownerHobby is a real, signed-in account — and NOT the invitee. The screen renders (the
+		// token exists), so the refusal has to come from the accept itself.
+		await owner.page.goto(`/invites/accept?token=${token}`);
+		await owner.page.getByRole("button", { name: /accept invitation/i }).click();
+
+		// The inline error is what the accept UNIQUELY produces here — an absence assertion would
+		// be equally true of a button that never fired. Located as the live region, NOT by matching
+		// the word "invitation": this card's heading, body and buttons are all full of that word,
+		// so a text match would be true of a page where nothing happened.
+		//
+		// `p[role="alert"]`, not `getByRole("alert")`: Next mounts its own route announcer as an
+		// always-present, always-empty `<div role="alert" aria-live="assertive">`, so the role on
+		// its own resolves to two elements and the assertion dies in strict mode before it can say
+		// anything about the refusal (measured on run 34469855618).
+		const refusal = owner.page.locator('p[role="alert"]');
+		await expect(refusal).toBeVisible({ timeout: 20_000 });
+		// Non-empty, so an empty live region can never stand in for a message. The exact WORDING is
+		// deliberately not pinned: it is Better Auth's own copy for an address mismatch ("You are
+		// not the recipient of the invitation"), falling back to this page's "Couldn't accept this
+		// invitation." — pinning a dependency's string would make a library bump a red gate, and
+		// what matters here is that a refusal was shown at all.
+		await expect(refusal).toHaveText(/\S/);
+		// A successful accept pushes /dashboard, so staying put is the second half of the same fact.
+		await expect(owner.page).toHaveURL(/\/invites\/accept/);
+
+		// And the invitation is untouched: still pending, so the real invitee can still use it.
+		expect(
+			await pendingInvitationId(orgId, invitee),
+			"a refused accept must leave the invitation pending for the address it was sent to",
+		).toBe(token);
+	});
+});
+
+// ── The CLI hand-off, refused ──────────────────────────────────────────────────────
+
+test.describe("Onboarding negatives — the CLI hand-off", () => {
+	test("a malformed CLI login link errors and offers no Approve", async ({ owner }) => {
+		// Neither code parses (lib/auth/cli-device-code.ts: a UUID device_code, a CONSONANT-only
+		// XXXX-XXXX user_code), so the page must never put an unreadable string in front of the
+		// operator as "the code to compare".
+		await owner.page.goto("/cli/login?device_code=not-a-uuid&user_code=nope");
+		await expect(owner.page.getByText(/authentication failed/i)).toBeVisible({ timeout: 20_000 });
+		await expect(
+			owner.page.getByText(/not a valid CLI login request/i),
+		).toBeVisible();
+		// The approval gesture is the whole security boundary (#2213), so it is ABSENT rather than
+		// disabled on a request the screen could not describe.
+		await expect(owner.page.getByRole("button", { name: /^approve$/i })).toHaveCount(0);
+	});
+
+	test("a CLI login link with no codes at all errors the same way", async ({ owner }) => {
+		await owner.page.goto("/cli/login");
+		await expect(owner.page.getByText(/authentication failed/i)).toBeVisible({ timeout: 20_000 });
+		await expect(owner.page.getByRole("button", { name: /^approve$/i })).toHaveCount(0);
 	});
 });

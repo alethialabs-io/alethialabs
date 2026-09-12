@@ -23,7 +23,8 @@ import {
 import { DEFAULT_REGION, type CloudProviderSlug } from "@/lib/cloud-providers";
 import type { EnvironmentSpec } from "@/lib/queries/projects";
 import { globalHref, projectHref } from "@/lib/routing";
-import { slugify } from "@/lib/utils/slugify";
+import { canSlugify, slugify } from "@/lib/utils/slugify";
+import { PROJECT_NAME_MAX_LENGTH } from "@/lib/validations/project-form.schema";
 import type { ScanProposal } from "@/lib/scanner/schema";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Button } from "@repo/ui/button";
@@ -166,8 +167,40 @@ export function ConfigureProject({
 
 	/** Create the project (DRAFT) from the chosen source + settings, then open its canvas. */
 	const onCreate = async () => {
+		// ALL THREE rules `lib/validations/project-form.schema.ts` states for `project_name` —
+		// `.min(1, "Project name is required")`, `.max(PROJECT_NAME_MAX_LENGTH)` and
+		// `.refine(canSlugify, "Enter at least one letter or number")`.
+		//
+		// This screen is the console's ONLY create path since `~/new` was rebuilt, and it applied
+		// NONE of them. "Name your project." covered the first case in different words; the second
+		// was unchecked, so `!!! @@@ ###` created a project whose slug came from `slugify`'s
+		// FALLBACK — `/{org}/project` — with the user's symbols kept as the display name they then
+		// have to address from the CLI.
+		//
+		// WHY THE BOUND IS HERE AT ALL, since a maximum length reads like a formality: it is the
+		// half of the create/rename asymmetry the create side owes. `updateProjectName` refuses a
+		// name over `PROJECT_NAME_MAX_LENGTH`, so a longer name created here is a project that
+		// cannot be re-saved under its own name — and the schema's comment beside that `.max()`
+		// records the previous round of exactly this bug, when the two paths disagreed at 50 vs
+		// 100. The predicate and the constant are both READ FROM the schema for that reason: they
+		// are the same rule, not two copies of it.
+		//
+		// The bound's wording is `updateProjectName`'s, not the schema's — the schema passes no
+		// message to `.max()`, so its text is zod's default phrasing rather than a sentence
+		// written for a user, and the console already says this one on the rename path. The
+		// NUMBER in it is interpolated, never typed, for the same reason as the check above it.
 		if (!name.trim()) {
-			toast.error("Name your project.");
+			toast.error("Project name is required");
+			return;
+		}
+		if (name.length > PROJECT_NAME_MAX_LENGTH) {
+			toast.error(
+				`Project name must be ${PROJECT_NAME_MAX_LENGTH} characters or fewer`,
+			);
+			return;
+		}
+		if (!canSlugify(name)) {
+			toast.error("Enter at least one letter or number");
 			return;
 		}
 		if (requiresCloud && !identityId) {
@@ -286,8 +319,17 @@ export function ConfigureProject({
 					)}
 
 					<Section n="01" title="Project">
+						{/* The section heading above says "Project", not "Project name", and it labels
+						    the SECTION rather than this control — so without a name of its own the
+						    only handle on the console's one project-name field was `#project_name`,
+						    a CSS id. Two e2e files reach for it that way today. `aria-label` gives
+						    the control the name the field has everywhere else in the console
+						    (`settings/general`'s rename field is labelled "Project name"), which is
+						    also what axe's `label` rule wants of a text input. The id is unchanged:
+						    the existing `#project_name` locators keep working. */}
 						<Input
 							id="project_name"
+							aria-label="Project name"
 							value={name}
 							autoComplete="off"
 							placeholder="my-project"

@@ -4,6 +4,7 @@
 
 import { ArrowRight, Boxes, Cpu, GitBranch, Loader2, Square } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { useId } from "react";
 
 import { cn } from "@repo/ui/utils";
 
@@ -50,6 +51,10 @@ export function StartFromScratchCards({
 	pending,
 	onSelect,
 }: StartFromScratchCardsProps) {
+	// One render-stable prefix for the title/description ids the tiles point their names and
+	// descriptions at. `useId` rather than a bare `${card.kind}-title`, because these ids are
+	// document-global and `template`/`blank` are the kind of words another surface will pick.
+	const uid = useId();
 	const cards: ScratchCard[] = [
 		{
 			kind: "template",
@@ -99,6 +104,25 @@ export function StartFromScratchCards({
 					<button
 						key={card.kind}
 						type="button"
+						// The tile's accessible name is its TITLE, not the whole card (#4269). Without
+						// this it was the title, the two-line description and — on the BYO cards — the
+						// word "New" run together, so "Start from a template" and "Start from scratch"
+						// (the column heading directly above) were the only two ways to tell four
+						// controls apart, and the name changed whenever the marketing copy did.
+						// WCAG 2.5.3 still holds: the visible title is the whole of the name here, so
+						// a voice-control user saying what they can read still hits the control.
+						//
+						// REFERENCED, NOT COPIED, and that is the load-bearing part. `role="button"`
+						// is CHILDREN-PRESENTATIONAL in ARIA: a button's descendant content reaches
+						// assistive tech only through name-from-content, so an `aria-label` here does
+						// not merely REPLACE the name — it suppresses name-from-content and takes the
+						// two-line description out of the accessibility tree with it. A screen-reader
+						// user heard "Start from a template, button" and nothing about what the tile
+						// does. Pointing the name at the title node and the description at the
+						// description node keeps the same accessible name and gives the description
+						// back as a description.
+						aria-labelledby={`${uid}-${card.kind}-title`}
+						aria-describedby={`${uid}-${card.kind}-desc`}
 						onClick={() => onSelect(card.kind)}
 						disabled={busy}
 						className="group flex w-full items-start gap-4 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-ring disabled:opacity-60"
@@ -112,14 +136,20 @@ export function StartFromScratchCards({
 						</span>
 						<span className="min-w-0 flex-1">
 							<span className="flex items-center gap-2 text-ui-lg font-medium text-foreground">
-								{card.title}
+								{/* The id is on the TITLE ALONE, not on this row: the row also holds the
+								    "New" pill, and naming the tile from it would put "New" back into
+								    the accessible name — the copy-dependent name #4269 removed. */}
+								<span id={`${uid}-${card.kind}-title`}>{card.title}</span>
 								{card.isNew && (
 									<span className="rounded-full border border-border px-1.5 py-0.5 font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground">
 										New
 									</span>
 								)}
 							</span>
-							<span className="mt-0.5 block text-ui-sm text-muted-foreground">
+							<span
+								id={`${uid}-${card.kind}-desc`}
+								className="mt-0.5 block text-ui-sm text-muted-foreground"
+							>
 								{card.description}
 							</span>
 						</span>
