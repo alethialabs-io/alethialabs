@@ -32,6 +32,9 @@ doctor() {
 		}
 	done
 	jq empty "$ROOT/.codex/hooks.json"
+	grep -Fq 'approval_policy = "on-request"' "$ROOT/.codex/config.toml"
+	grep -Fq 'approvals_reviewer = "auto_review"' "$ROOT/.codex/config.toml"
+	grep -Fq 'prefix_rule(pattern=["git", "pull"], decision="allow")' "$ROOT/.codex/rules/default.rules"
 	git -C "$ROOT" diff --check
 	echo "✓ Codex project configuration is present and valid"
 	echo "  project  $ROOT"
