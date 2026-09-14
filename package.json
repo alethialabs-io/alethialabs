@@ -118,7 +118,7 @@
       "react-dom": "19.2.8",
       "@types/react": "19.2.8",
       "@types/react-dom": "19.2.3",
-      "zod": "4.4.3",
+      "zod": "4.5.4",
       "kysely": "0.29.4"
     }
   }

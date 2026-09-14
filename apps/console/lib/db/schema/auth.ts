@@ -16,7 +16,6 @@ import {
 	pgTable,
 	text,
 	timestamp,
-	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
 
@@ -60,20 +59,17 @@ export const session = pgTable("session", {
 // One row per linked social account; carries the provider OAuth tokens that the
 // dedicated provider_tokens table used to hold (Phase D full consolidation).
 //
-// `issuer` + the unique index below are Better Auth 1.7's account-identity model: an external
-// account is now recognised by the trusted (issuer, accountId) pair rather than by
-// (providerId, accountId). Note the uniqueness is GLOBAL, not per-user — two users may not hold
-// the same provider account. `providerId` is unchanged and still names the local provider
-// configuration; `accountId` is still the provider-side identifier.
-export const account = pgTable(
-	"account",
-	{
+// `issuer` was briefly required by Better Auth 1.7.2. Better Auth 1.7.3 reverted that identity
+// model, so it remains nullable for compatibility with rows created during the transition.
+// `providerId` still names the local provider configuration and `accountId` remains the
+// provider-side identifier.
+export const account = pgTable("account", {
 	id: uuid().primaryKey().defaultRandom(),
 	userId: uuid()
 		.notNull()
 		.references(() => user.id, { onDelete: "cascade" }),
 	accountId: text().notNull(),
-	issuer: text().notNull(),
+	issuer: text(),
 	providerId: text().notNull(),
 	accessToken: text(),
 	refreshToken: text(),
@@ -84,14 +80,7 @@ export const account = pgTable(
 	password: text(),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
-	},
-	(t) => [
-		// Name is not cosmetic: Better Auth derives `account_issuer_accountId_uidx` from the
-		// model and looks for exactly that, so a drizzle-default name would leave it believing
-		// the index is absent.
-		uniqueIndex("account_issuer_accountId_uidx").on(t.issuer, t.accountId),
-	],
-);
+});
 
 // Email-OTP codes + other short-lived verification values live here.
 export const verification = pgTable("verification", {
