@@ -52,6 +52,8 @@ export const session = pgTable("session", {
 	userAgent: text(),
 	// Set by the enterprise organization plugin on org-switch; null in community.
 	activeOrganizationId: uuid(),
+	// Set by Better Auth's teams support when a member switches their active team.
+	activeTeamId: uuid(),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });
