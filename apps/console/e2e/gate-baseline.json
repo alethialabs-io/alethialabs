@@ -40,8 +40,8 @@
 				"Account settings dialog › Delete Account is INERT — pressing it opens no confirmation and ends no session": "passed"
 			},
 			"activity.spec.ts": {
-				"Activity page › renders the filter bar and gates export on a fresh plan": "passed",
-				"Activity page › narrowing to denials drives a server refetch to the empty state": "failed"
+				"Activity page (a brand-new org) › renders the filter bar and gates export on a fresh plan": "passed",
+				"Activity page (a brand-new org) › narrowing to denials drives a server refetch to the empty state": "passed"
 			},
 			"billing.spec.ts": {
 				"Billing — plan-state coherence › a canceled org shows Canceled, no renew/next-charge, and an Upgrade CTA": "failed",
@@ -59,6 +59,9 @@
 			"elench-agent.spec.ts": {
 				"Elench agent — modal (org) › opens as a fullscreen modal with the empty landing": "passed",
 				"Elench agent — modal (org) › Ask-mode popover switches ask ↔ auto": "passed",
+				"Elench agent — Ask-mode segments (org) › the Ask-mode segments expose which one is current": {
+					"fixme": "BUG: the Elench Ask/Auto mode segments expose no accessible selected state #4618"
+				},
 				"Elench agent — modal (org) › the @-mention popover opens against real resources": "passed",
 				"Elench agent — modal (org) › minimize → panel → maximize preserves the conversation": "failed",
 				"Elench agent — modal (org) › the panel closes": "passed",
@@ -70,8 +73,8 @@
 				"Evidence surface › renders the honest zero-environment onboarding state": "passed"
 			},
 			"usage.spec.ts": {
-				"Usage page › renders the usage sections and the range filters": "failed",
-				"Usage page › switching the quick range updates the trigger label": "failed"
+				"Usage page (a brand-new org) › the four taxonomy sections render as the page's outline": "passed",
+				"Usage page (a brand-new org) › picking a quick range re-captions the over-time card": "passed"
 			}
 		},
 		"canvas": {
@@ -108,32 +111,33 @@
 				"Activity — CSV export gating › Hobby org sees the Export CSV control disabled": "passed",
 				"Activity — CSV export gating › Hobby Export CSV carries the Enterprise-upgrade hint": "passed",
 				"Activity — CSV export gating › Pro (non-Enterprise) org also sees Export CSV disabled": "passed",
-				"Activity — retention window gating (Hobby) › picking a range older than 7-day retention opens the upgrade sheet, not the range": "failed",
+				"Activity — retention window gating (Hobby) › picking a range older than 7-day retention opens the upgrade sheet, not the range": "passed",
 				"Activity — empty state (owner) › an unmatched search narrows the feed to its empty state": "passed",
 				"Activity — project scope drops org-only affordances (owner) › the pinned feed hides Export CSV and the Project facet": "passed",
 				"Activity — project scope drops org-only affordances (owner) › the pinned feed labels the project scope": "passed",
-				"Account settings — validation (owner) › clearing the display name surfaces a validation error": "failed"
+				"Account settings — validation (owner) › Save Changes is inert until the profile actually changes": "passed",
+				"Account settings — validation (owner) › a display name past the 120-character limit is refused": "passed"
 			},
 			"flows/agent-usage-activity.spec.ts": {
-				"Agent — chat surface (owner) › authed persona reaches the agent (not bounced to /login)": "failed",
-				"Agent — chat surface (owner) › chat top bar exposes the Ask/Act segment and the default model": "failed",
-				"Agent — chat surface (owner) › switching to Act marks the Act segment active": "failed",
-				"Agent — chat surface (owner) › model picker switches from Sonnet to Opus": "failed",
-				"Agent — chat surface (owner) › a fresh chat shows the suggestion prompts and the composer": "failed",
-				"Agent — chat surface (owner) › thread rail exposes a chat search box": "failed",
+				"Agent — reached from the topbar (owner) › Ask AI opens the assistant as a docked panel from an arbitrary route": "passed",
 				"Usage — meters + over-time chart › authed persona reaches usage (not bounced to /login)": "passed",
-				"Usage — meters + over-time chart › the taxonomy sections all render": "failed",
+				"Usage — meters + over-time chart › the four taxonomy sections all render, as the page's outline": "passed",
 				"Usage — meters + over-time chart › plan & limits shows the three point-in-time meters": "passed",
 				"Usage — meters + over-time chart › the cloud-spend disclaimer is surfaced": "passed",
-				"Usage — meters + over-time chart › switching the quick range updates the over-time trigger label": "failed",
-				"Usage — meters + over-time chart › the over-time metric tabs switch the active series": "passed",
+				"Usage — meters + over-time chart › switching the quick range updates the over-time trigger label": "passed",
+				"Usage — meters + over-time chart › the over-time metric tabs say WHICH series is showing, accessibly": "passed",
 				"Usage — meters + over-time chart › Hobby usage exposes the inline Upgrade to Pro CTA": "passed",
 				"Usage — Pro trial (team) › Pro usage shows the plan name and Manage billing (no upgrade CTA)": "passed",
 				"Usage — Pro trial (team) › Pro usage exposes the spend-control hard-cap toggle": "passed",
 				"Activity — org feed (owner) › authed persona reaches activity (not bounced to /login)": "passed",
 				"Activity — org feed (owner) › the reusable filter bar renders all facets": "passed",
-				"Activity — org feed (owner) › the Events sheet opens with the event taxonomy + result group": "failed",
+				"Activity — org feed (owner) › the Events sheet's groups EXPAND to their options": "passed",
 				"Activity — org feed (owner) › the quick-range filter is present on the feed": "passed",
+				"Activity — the seven filter keys round-trip through the URL (owner) › a pasted link hydrates search and the three facet selections": "passed",
+				"Activity — the seven filter keys round-trip through the URL (owner) › a pasted link hydrates the window and its label": "passed",
+				"Activity — the seven filter keys round-trip through the URL (owner) › typing a search writes `search` to the URL": "passed",
+				"Activity — the seven filter keys round-trip through the URL (owner) › picking an event writes `eventTokens` to the URL": "passed",
+				"Activity — the seven filter keys round-trip through the URL (owner) › picking a window writes `from`, `to` and `rangeLabel` to the URL": "passed",
 				"Account settings dialog (owner) › opens from the account menu and shows the user email": "passed",
 				"Account settings dialog (owner) › the dialog exposes the profile fields, auth badge and danger zone": "passed"
 			},
