@@ -1,5 +1,5 @@
 {
-  "id": "499e4164-16a6-43d7-9053-beea361b2b6b",
+  "id": "6f33995b-25ae-4bc3-a2bc-e7cbd7dde568",
   "prevId": "65a0bba5-de2a-4a5d-a861-a87616956e13",
   "version": "7",
   "dialect": "postgresql",
@@ -11963,6 +11963,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "active_team_id": {
+          "name": "active_team_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -15274,6 +15280,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "member_count": {
+          "name": "member_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "organization_id": {
           "name": "organization_id",
           "type": "uuid",
@@ -15339,6 +15352,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "membership_key": {
+          "name": "membership_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -15377,7 +15396,15 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "team_member_membershipKey_unique": {
+          "name": "team_member_membershipKey_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "membership_key"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
