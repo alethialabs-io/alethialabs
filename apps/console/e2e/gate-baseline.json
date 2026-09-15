@@ -554,7 +554,7 @@
 				"RBAC — Members (Pro owner) › invite validation — a malformed email is rejected inline": "passed",
 				"RBAC — Members (Pro owner) › invite validation — the same email twice is a duplicate": "passed",
 				"RBAC — Members (Pro owner) › invite validation — inviting an existing member is rejected": "passed",
-				"RBAC — Members (Pro owner) › invite dialog — client-side 'Already a member' guard fires inline (no submit)": "failed",
+				"RBAC — Members (Pro owner) › invite dialog — client-side 'Already a member' guard fires inline (no submit)": "passed",
 				"RBAC — Members (Pro owner) › invite lifecycle — send a real invitation, see it pending, then cancel it": "passed",
 				"RBAC — Members (Pro owner) › cancelling an invitation asks first — and Cancel leaves it pending": "passed",
 				"RBAC — Teams (Enterprise gate) › Hobby: empty teams surface shows the Enterprise upsell": "passed",
