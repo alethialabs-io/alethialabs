@@ -14,6 +14,7 @@ import { NodePalette } from "@/components/design-project/canvas/node-palette";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { selectInspectorNodeId, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useInspectorPrefsStore } from "@/lib/stores/use-inspector-prefs-store";
 
 /** Builds a minimal project-root node whose `provider` drives the palette's kind filter. */
 function projectRoot(provider: CloudProviderSlug | null): CanvasNode<"project"> {
@@ -47,7 +48,11 @@ function renderPalette() {
 }
 
 beforeEach(() => {
-	useCanvasStore.setState({ nodes: [] });
+	useCanvasStore.setState({ nodes: [], card: null });
+	// The remembered tab is a persisted, per-kind preference, so a test that asserts the add RECORDED
+	// it has to start from a state where it was not already recorded — otherwise it passes on the
+	// previous test's write.
+	useInspectorPrefsStore.setState({ tab: {} });
 });
 
 describe("NodePalette — per-provider kind filtering", () => {
@@ -154,9 +159,15 @@ describe("NodePalette — per-provider variant filtering", () => {
 	});
 });
 
-// W5 — after a service is added the palette stays open and swaps to an inline config step (breadcrumb
-// + essentials + "Full settings →"), so adding and configuring are one flow.
-describe("NodePalette — W5 inline config step", () => {
+// #4589 — picking a service CLOSES the palette and hands off to that node's card on the workspace
+// rail. It used to stay open on an inline "Configure service" step (W5) with `Done` / `Full settings
+// →`, which is the modal this describe block used to pin: a `CommandDialog` parked over the board,
+// a second editor for a config the rail's Settings tab already owns, and — because that step has no
+// search box — a `toBeHidden()` in the gate spec that passed on the STEP CHANGE while the dialog
+// went on intercepting every click. What replaced it is not a new mechanism: `addNode` already put
+// the node's card on the rail, so the palette's whole remaining job after a pick is to get out of
+// the way and say which tab that card opens on.
+describe("NodePalette — handing off to the rail", () => {
 	/** The bucket node just added by the flow under test. */
 	function addedBucketId(): string | undefined {
 		return useCanvasStore
@@ -164,7 +175,7 @@ describe("NodePalette — W5 inline config step", () => {
 			.nodes.find((n) => n.data.kind === "bucket")?.id;
 	}
 
-	it("adds the node and swaps to its config step without closing", async () => {
+	it("adds the node, opens its card on the rail, and closes", async () => {
 		seedCanvas("aws");
 		const onOpenChange = vi.fn();
 		render(<NodePalette open onOpenChange={onOpenChange} identities={[]} />);
@@ -172,64 +183,52 @@ describe("NodePalette — W5 inline config step", () => {
 		await userEvent.click(screen.getByText("Bucket"));
 
 		// The node was added to the store...
-		expect(addedBucketId()).toBeDefined();
-		// ...the palette stayed open (never asked to close)...
-		expect(onOpenChange).not.toHaveBeenCalledWith(false);
-		// ...and it now shows the config step: breadcrumb, name field, and the two footer actions.
-		expect(screen.getByText("Full settings")).toBeInTheDocument();
-		expect(screen.getByText("Done")).toBeInTheDocument();
-		// The name field for an array kind (targeted by its unique placeholder).
-		expect(screen.getByPlaceholderText("name")).toBeInTheDocument();
+		const id = addedBucketId();
+		expect(id).toBeDefined();
+		// ...its card is what the rail is showing...
+		expect(selectInspectorNodeId(useCanvasStore.getState())).toBe(id);
+		// ...and the palette asked to close rather than swapping to a step of its own.
+		expect(onOpenChange).toHaveBeenCalledWith(false);
 	});
 
-	it("reaches the config step through the variant picker", async () => {
+	it("leaves no inline config step behind — no Done, no Full settings", async () => {
 		seedCanvas("aws");
 		render(<NodePalette open onOpenChange={vi.fn()} identities={[]} />);
 
+		await userEvent.click(screen.getByText("Bucket"));
+
+		// The negative form of the claim, and the one worth asserting: these two buttons ARE the
+		// second step. `open` is still true here (the parent owns it), so if the step were still
+		// rendered this would find it.
+		expect(screen.queryByText("Done")).not.toBeInTheDocument();
+		expect(screen.queryByText("Full settings")).not.toBeInTheDocument();
+	});
+
+	it("lands the card on Settings, where the inline step's fields already live", async () => {
+		seedCanvas("aws");
+		render(<NodePalette open onOpenChange={vi.fn()} identities={[]} />);
+
+		await userEvent.click(screen.getByText("Bucket"));
+
+		// The inline step showed the kind's essentials. Those are the rail card's Settings tab, so
+		// the add records that tab for the kind rather than reproducing the form.
+		expect(useInspectorPrefsStore.getState().tab.bucket).toBe("settings");
+	});
+
+	it("hands off through the variant picker too", async () => {
+		seedCanvas("aws");
+		const onOpenChange = vi.fn();
+		render(<NodePalette open onOpenChange={onOpenChange} identities={[]} />);
+
+		// The variant step is the one nested step left: it names WHICH service is being added, so it
+		// still precedes the add. Everything after the add happens on the rail.
 		await userEvent.click(screen.getByText("Database"));
 		await userEvent.click(screen.getByText("PostgreSQL"));
 
-		expect(screen.getByText("Full settings")).toBeInTheDocument();
-		expect(
-			useCanvasStore.getState().nodes.some((n) => n.data.kind === "database"),
-		).toBe(true);
-	});
-
-	it("'Full settings' opens the inspector on the new node and closes the palette", async () => {
-		seedCanvas("aws");
-		const onOpenChange = vi.fn();
-		render(<NodePalette open onOpenChange={onOpenChange} identities={[]} />);
-
-		await userEvent.click(screen.getByText("Bucket"));
-		const id = addedBucketId();
-		await userEvent.click(screen.getByText("Full settings"));
-
-		expect(selectInspectorNodeId(useCanvasStore.getState())).toBe(id);
+		const db = useCanvasStore.getState().nodes.find((n) => n.data.kind === "database");
+		expect(db).toBeDefined();
+		expect(selectInspectorNodeId(useCanvasStore.getState())).toBe(db?.id);
 		expect(onOpenChange).toHaveBeenCalledWith(false);
-	});
-
-	it("'Done' closes the palette and keeps the node", async () => {
-		seedCanvas("aws");
-		const onOpenChange = vi.fn();
-		render(<NodePalette open onOpenChange={onOpenChange} identities={[]} />);
-
-		await userEvent.click(screen.getByText("Bucket"));
-		await userEvent.click(screen.getByText("Done"));
-
-		expect(onOpenChange).toHaveBeenCalledWith(false);
-		expect(addedBucketId()).toBeDefined();
-	});
-
-	it("the breadcrumb returns to the catalog with the node kept", async () => {
-		seedCanvas("aws");
-		render(<NodePalette open onOpenChange={vi.fn()} identities={[]} />);
-
-		await userEvent.click(screen.getByText("Bucket"));
-		// Back via the breadcrumb.
-		await userEvent.click(screen.getByText("Add a service"));
-
-		// The catalog is shown again (a sibling service is back), and the added node persists.
-		expect(screen.getByText("Database")).toBeInTheDocument();
-		expect(addedBucketId()).toBeDefined();
+		expect(useInspectorPrefsStore.getState().tab.database).toBe("settings");
 	});
 });
