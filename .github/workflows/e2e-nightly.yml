@@ -2482,6 +2482,89 @@ jobs:
             fi
           fi
 
+          # ── RESIDUAL FILER (#4620): A MEASURED BILLING LEAK FILES AN ISSUE. ────────────────────
+          #
+          #    #4398 delivered the measurement and the orthogonality but not the filing. Its own
+          #    design note asked for a verdict that is "loud and files an issue rather than redding
+          #    the proof"; only the first half was built. `grep -rn 'RESIDUAL' .github/` returned two
+          #    hits and both were comments — the rollup step sourced state.env and read REDS and
+          #    COV_LABEL out of it and nothing else. So a CONFIRMED, MEASURED billing leak surfaced
+          #    in exactly one block of one step summary, on a run nobody necessarily opens. That is
+          #    the shape UNSWEPT had on run 31459117502: correctly reported RED, ~$105/mo of EKS +
+          #    NAT left standing, and the board had no way to say the second thing.
+          #
+          #    ⚠️ IT RUNS BEFORE THE RED FILER, AND THAT PLACEMENT IS THE WHOLE THING. The red block
+          #    below opens with `if [ -z "$REDS" ]; then … exit 0; fi` — it EXITS THE STEP on an
+          #    all-green night. A residual filer placed after it would therefore be unreachable in
+          #    precisely the case that matters most: every leg green, the accounts not empty, which
+          #    is the state this axis was made orthogonal in order to be able to report (#2330).
+          #
+          #    Schedule AND dispatch, like the red filer and unlike the coverage one. A dispatch runs
+          #    one cloud, and "this cloud left resources standing" is a TRUE statement about that
+          #    cloud — the coverage filer is schedule-only because only the 5-cloud AGGREGATE is
+          #    unknowable from a single-provider run, which does not apply here.
+          #
+          #    Deduped on the TITLE across EVERY open issue, the #1755 key, not on a label: the
+          #    residual title is stable per cloud, and one label cannot tell an `aws` residual from a
+          #    `gcp` one while this filer must keep one issue PER CLOUD. `gh issue list` is served
+          #    live rather than from the lagging search index, so it cannot miss an issue filed
+          #    minutes ago, and no amount of re-labelling during triage can hide a candidate from it
+          #    (the #2257 regression). `from:e2e-residual` is this filer's IDENTITY — nothing else
+          #    applies it — and it is deliberately NOT `from:e2e-nightly`: a residual issue that
+          #    deduped or reported as a provisioning red would be the exact reading error the
+          #    orthogonality exists to prevent.
+          #
+          #    IT NEVER TOUCHES THE LEG'S VERDICT. REDS is not read here and not written anywhere.
+          if [ -n "${RESIDUAL// /}" ]; then
+            if [ "$EVENT_NAME" != "schedule" ] && [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+              echo "::warning::residual cloud resources (${RESIDUAL}) but event=${EVENT_NAME} — skipping issue creation (schedule/dispatch only). The step summary still carries the finding."
+            else
+              open_any="${RUNNER_TEMP}/open-issues-residual.json"
+              gh issue list --state open --limit 200 \
+                --json title >"$open_any" 2>/dev/null || echo '[]' >"$open_any"
+              for cloud in $RESIDUAL; do
+                r_title="$(cat "${OUT_DIR}/issue-residual-${cloud}.title" 2>/dev/null || echo "")"
+                if [ -z "$r_title" ] || [ ! -s "${OUT_DIR}/issue-residual-${cloud}.md" ]; then
+                  echo "::warning::the rollup rendered no residual issue body for '${cloud}' — a MEASURED leak is going unfiled. Check scripts/e2e/nightly-rollup.sh."
+                  continue
+                fi
+                r_existing="$(jq --arg t "$r_title" '[.[] | select(.title == $t)] | length' "$open_any" 2>/dev/null || echo 0)"
+                if [ "${r_existing:-0}" -gt 0 ]; then
+                  echo "::notice::an open issue titled '${r_title}' already exists — skipping create (deduped)."
+                  continue
+                fi
+                # `wave:hygiene` matches both existing filers: a resource left billing is hygiene
+                # work, not part of making the e2e matrix green. `class:`/`lane:` are what make the
+                # unit visible to scripts/claim-work.sh at all — #1259 sat unclaimable for nine
+                # nights for want of them.
+                gh issue create --title "$r_title" --body-file "${OUT_DIR}/issue-residual-${cloud}.md" \
+                  --label class:backend --label lane:tests --label wave:hygiene --label "$RESIDUAL_LABEL" \
+                  && echo "::notice::filed residual issue: ${r_title}" \
+                  || echo "::warning::could not create issue '${r_title}' (continuing) — the leak is REAL and now unfiled; sweep it by hand from the step summary."
+              done
+            fi
+          fi
+
+          # TEARDOWN_UNVERIFIABLE is ANNOTATED, not filed, and TEARDOWN_UNMEASURED is neither.
+          #
+          #   UNVERIFIABLE means nobody could LOOK. That is a real ask — go and check by hand — but a
+          #   noisier one: a systematically timing-out probe would file every single night, which is
+          #   the always-red mode scripts/e2e/lib/sweep-probe.sh's own header warns turns a signal
+          #   into noise ("a signal that is always red carries exactly as much information as one
+          #   that is always green"). An annotation is loud, costs nothing, and can be promoted to a
+          #   filer once the first nightlies show the rate.
+          #
+          #   UNMEASURED stays SILENT here on purpose: until the `VERIFY_ONLY=1` verification step is
+          #   live on the DEFAULT BRANCH it is the state of every leg by construction, so filing or
+          #   annotating on it would produce five findings a night that say nothing about any cloud.
+          #   It is already rendered as its own step-summary banner, which is where a transitional
+          #   state belongs. Once the step is live, a persistent UNMEASURED means the step or its
+          #   artifact upload is broken and the money signal is silently off — worth filing then,
+          #   precisely because it is invisible.
+          if [ -n "${TEARDOWN_UNVERIFIABLE// /}" ]; then
+            echo "::warning::post-teardown verification could NOT answer for:${TEARDOWN_UNVERIFIABLE}. A probe that failed and an empty account look identical, so this is NOT a clean result — treat it as a possible leak and confirm by hand. Each leg's e2e-teardown-verify-<cloud>-<run> artifact names which resource types could not be checked, and why."
+          fi
+
           # Dedup tracking issue on ANY red — schedule/dispatch runs only.
           if [ -z "${REDS// /}" ]; then
             echo "::notice::nightly rollup all-green (no FAIL legs) — no issue filed."

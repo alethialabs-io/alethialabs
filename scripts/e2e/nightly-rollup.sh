@@ -52,11 +52,14 @@
 #   summary.md              the step-summary block (table + coverage)
 #   state.env               REDS / SKIPS / JOB_NO_SUMMARY / DIED_EARLY / POST_CAPTURE / UNSWEPT /
 #                           RESIDUAL / TEARDOWN_UNVERIFIABLE / TEARDOWN_UNMEASURED /
-#                           ENABLED_N / SKIP_N / TOTAL / COV_TITLE / COV_LABEL / DIMENSION /
-#                           DIMENSION_LABEL
+#                           ENABLED_N / SKIP_N / TOTAL / COV_TITLE / COV_LABEL / RESIDUAL_LABEL /
+#                           DIMENSION / DIMENSION_LABEL
 #   failed-steps-<p>.txt    the failing step names for a POST_CAPTURE leg — written only for those
 #   issue-red-<id>.md       one body per red leg, with its title on the first `title:` line
 #   issue-body-coverage.md  the standing coverage-issue body
+#   issue-residual-<p>.md   one body per cloud on the RESIDUAL list, with its title in the matching
+#                           `.title` file — a MEASURED billing leak, filed separately from the reds
+#                           because it is a separate claim (#4620)
 #   ledger.tsv              provider<TAB>verdict<TAB>detail<TAB>bundle — one row per PASS/FAIL leg;
 #                           only PROVABLY gate-off SKIPs are omitted. The ledger step reuses this
 #                           discovery instead of repeating the join that just lost a whole run.
@@ -161,6 +164,49 @@ teardown_verdict() {
 		$(scan_teardown_verdicts "${PROOFS_DIR:-proofs}")
 	EOF
 	printf '%s\n' "${best:-none}"
+}
+
+# teardown_receipt_path <provider> <verdict> — the path of THIS run's receipt for <provider>
+# carrying <verdict>, or nothing. (#4620)
+#
+# teardown_verdict answers WHAT the cloud said. The issue filer has to quote the receipt's OWN words
+# back — `.reason` and `.unverifiable[]` — so that whoever picks the issue up reads the measurement
+# rather than this script's paraphrase of it, and it needs the file for that.
+#
+# Deliberately a SECOND reader over the same find rather than a fourth field on
+# scan_teardown_verdicts: that function's tab-separated contract already has consumers whose
+# `read -r prov tag v` would start swallowing a path into `$v`, silently, on the day someone widened
+# it. One extra pass over a handful of receipts is cheaper than that.
+#
+# Both identity conditions from teardown_verdict apply here and are not optional: a receipt whose
+# run_tag names a DIFFERENT ATTEMPT would put another run's reason into this run's issue, and the
+# stale one is the more optimistic by construction. RUN_ATTEMPT unset ⇒ nothing is accepted, which
+# matches teardown_verdict reporting UNMEASURED — so this can never be reached with a residual.
+# cleanup_script_for <provider> — the sweeper file name for a provider. hetzner's is the one that
+# does NOT follow the pattern (`hcloud-cleanup.sh`), and a sweep command naming a script that does
+# not exist is worse than no command: it reads as authoritative and fails at the prompt.
+cleanup_script_for() {
+	case "$1" in
+	hetzner) echo "hcloud-cleanup.sh" ;;
+	*) echo "$1-cleanup.sh" ;;
+	esac
+}
+
+teardown_receipt_path() {
+	local want="$1" want_v="$2" f self_tag
+	[ -n "${RUN_ATTEMPT:-}" ] || return 0
+	self_tag="nightly-${RUN_ID:-}-${RUN_ATTEMPT}"
+	while IFS= read -r f; do
+		[ -n "$f" ] || continue
+		jq -e --arg p "$want" --arg t "$self_tag" --arg v "$want_v" \
+			'(.provider // "") == $p and (.run_tag // "") == $t and (.verdict // "") == $v' \
+			"$f" >/dev/null 2>&1 || continue
+		printf '%s\n' "$f"
+		return 0
+	done <<-EOF
+		$(find "${PROOFS_DIR:-proofs}" -type f -name "$TEARDOWN_VERIFY_FILE" 2>/dev/null | LC_ALL=C sort)
+	EOF
+	return 0
 }
 
 # summary_for <provider> <run_id> — the first bundle claiming this provider AND this run.
@@ -710,6 +756,12 @@ derive() {
 	# served live rather than from the (lagging) search index — the two properties #1755 established
 	# for the red filer. Declared here so the workflow reads ONE answer instead of retyping it.
 	local cov_label="from:e2e-coverage"
+	# The residual filer's IDENTITY label (#4620), declared beside the other one for the same reason:
+	# the workflow reads ONE answer instead of retyping it. Unlike `cov_label` it is NOT the dedup
+	# key — the residual title is stable per cloud, so the title is the key, exactly as on the red
+	# path. A LABEL cannot be the key here anyway: one label cannot tell `aws` residual from `gcp`
+	# residual, and this filer is required to keep one issue PER CLOUD.
+	local residual_label="from:e2e-residual"
 	{
 		printf '%s\n\n' "Only **${enabled_n} of ${TOTAL}** nightly legs provision anything. The rest green-skip at the gate, so the run reports success while proving nothing for them."
 		printf '%s\n\n' "Run: ${RUN_URL:-}"
@@ -800,6 +852,76 @@ derive() {
 		} >"$out/issue-red-${cloud}.md"
 	done
 
+	# ── RESIDUAL issue bodies (#4620). ONE PER CLOUD, and only on RESIDUAL. ──────────────────────
+	#
+	# #4398 delivered the MEASUREMENT and the orthogonality but not the filing: a confirmed billing
+	# leak surfaced in exactly one block of one step summary, on a run nobody necessarily opens.
+	# `grep -rn RESIDUAL .github/` returned two hits and both were comments. The producer was right;
+	# the consumer did not exist.
+	#
+	# THE TITLE IS THE DEDUP KEY, and it must not be able to collide with the red filer's
+	# `e2e nightly: <cloud> RED (<dimension>)`. A residual finding is NOT a provisioning red — that
+	# is the whole orthogonality #2330 established and #4398 kept — so deduping the two onto one
+	# issue would file a cleanup defect under a provisioning title, which is the exact reading error
+	# this axis exists to prevent. Hence a distinct, unmistakable stem.
+	#
+	# It carries NO DIMENSION, unlike the red title, and that is the deliberate opposite choice from
+	# #1755. The dimension belongs in a red title because the floor and the full bar fail at
+	# different stages and want different first moves. Money does not have a dimension: a disk left
+	# standing by the floor run and one left by the full bar are the same disk, costing the same, and
+	# want the same action. Suffixing it would file two issues about one account.
+	#
+	# WHY ONLY RESIDUAL. The other two keys are deliberately NOT filed here, and each for its own
+	# reason rather than one blanket rule:
+	#   · TEARDOWN_UNVERIFIABLE means nobody could LOOK. Real, but noisier by construction — a
+	#     systematically timing-out probe files every night, which is the always-red mode
+	#     scripts/e2e/lib/sweep-probe.sh's own header warns turns a signal into noise. It is
+	#     annotated loudly in the workflow instead, until the first nightlies show the rate.
+	#   · TEARDOWN_UNMEASURED is the transitional state of EVERY leg until the verification step is
+	#     live on the default branch, so filing on it today files five issues a night that say
+	#     nothing about any cloud.
+	# Both stay visible in the step summary, which already renders them as their own banners.
+	local residual_title receipt reason unver scope measured_at env_handle
+	env_handle="${RUN_ID:-<run_id>}-${RUN_ATTEMPT:-<attempt>}"
+	for cloud in $residual; do
+		residual_title="e2e nightly: ${cloud} RESIDUAL — cloud resources still billing after teardown"
+		printf '%s\n' "$residual_title" >"$out/issue-residual-${cloud}.title"
+		# Only `.reason` and `.unverifiable[]` are quoted. `.unverifiable_detail[]` carries up to 200
+		# characters of VERBATIM provider-CLI stderr per type and is the field probe_withhold_detail
+		# exists to be able to drop — an issue body is even more public than the artifact, and #1854
+		# is what a verbatim republish from this workflow costs.
+		receipt="$(teardown_receipt_path "$cloud" RESIDUAL)"
+		reason="" unver="" scope="" measured_at=""
+		if [ -n "$receipt" ]; then
+			reason="$(jq -r '.reason // ""' "$receipt" 2>/dev/null || echo "")"
+			unver="$(jq -r '(.unverifiable // []) | join(", ")' "$receipt" 2>/dev/null || echo "")"
+			scope="$(jq -r '.scope // ""' "$receipt" 2>/dev/null || echo "")"
+			measured_at="$(jq -r '.measured_at // ""' "$receipt" 2>/dev/null || echo "")"
+		fi
+		{
+			printf '%s\n\n' "The scope-locked re-list that ran **after** \`${cloud}\`'s teardown STILL LISTED resources for this run. This is a measurement, not an inference: the cloud was asked once the sweep had finished and answered that something is there. **It is billing now.**"
+			printf '%s\n\n' "Run: ${RUN_URL:-}"
+			printf '%s\n' "**The receipt's own words** — \`teardown-verify.json\`, in the \`e2e-teardown-verify-${cloud}-${run_id}\` artifact:"
+			printf '\n%s\n' "| field | value |"
+			printf '%s\n' "|---|---|"
+			printf '%s\n' "| verdict | \`RESIDUAL\` |"
+			printf '%s\n' "| scope | ${scope:+\`}${scope:-_the receipt could not be read_}${scope:+\`} |"
+			printf '%s\n' "| reason | ${reason:-_the receipt could not be read_} |"
+			printf '%s\n' "| probes that could not answer | ${unver:+\`}${unver:-_none — every probe answered_}${unver:+\`} |"
+			printf '%s\n\n' "| measured at | ${measured_at:-_unknown_} |"
+			if [ -z "$receipt" ]; then
+				printf '%s\n\n' "_No receipt file was readable in this rollup's proof tree, so the fields above are blank. The verdict itself is not in doubt — it is what put this leg on the RESIDUAL list — but open the artifact for the detail._"
+			fi
+			printf '%s\n\n' "**To sweep now.** Stay scope-locked; never widen it to an account-wide purge:"
+			printf '%s\n' '```'
+			printf '%s\n' "ALETHIA_E2E_ENV=${env_handle} ALETHIA_E2E_PROJECT=alethia-nl ALETHIA_E2E_REGION=<region> ./scripts/e2e/$(cleanup_script_for "$cloud")"
+			printf '%s\n\n' '```'
+			printf '%s\n\n' "\`<region>\` is this run's region — the leg's own \`T2 cluster for this run: …\` notice names it. Reclaiming otherwise stays \`e2e-orphan-reaper.yml\`'s job, out of band: two things that both delete are two things that can disagree."
+			printf '%s\n\n' "**This is NOT a provisioning red, and the leg's verdict is untouched.** \"Provisioning worked\" and \"the account is clean\" are two claims about two different things — the reason the teardown axis has been orthogonal since #2330 — so this issue exists precisely so a cleanup defect is never read as a provisioning one. The leg may well be green; that says nothing about this."
+			printf '%s\n' "_Auto-created by the e2e-nightly rollup, deduped by title, and carrying \`${residual_label}\` as this filer's identity. Close it once the account is confirmed empty._"
+		} >"$out/issue-residual-${cloud}.md"
+	done
+
 	# Shell-quoted so the workflow can `.` this file: every value here is a space-separated list or
 	# a sentence, and an unquoted `SKIPS=hetzner aws gcp …` sources as a COMMAND (it ran the real
 	# aws CLI the first time this was written).
@@ -824,6 +946,8 @@ derive() {
 		echo "RESIDUAL='${residual# }'"
 		echo "TEARDOWN_UNVERIFIABLE='${td_unverifiable# }'"
 		echo "TEARDOWN_UNMEASURED='${td_unmeasured# }'"
+		# The residual filer's identity label (#4620) — read by the workflow, never retyped there.
+		echo "RESIDUAL_LABEL='${residual_label}'"
 		echo "ENABLED_N='${enabled_n}'"
 		echo "SKIP_N='${skip_n}'"
 		echo "TOTAL='${TOTAL}'"
@@ -1384,6 +1508,11 @@ run_self_test() {
 	_a "hetzner aws gcp azure alibaba" "$(CASE_RUN_ID=34453355398 CASE_MATRIX=failure _derive "$c" >/dev/null; _state "$c/out" TEARDOWN_UNMEASURED)" \
 		"(V1) …and it is reported as such rather than swallowed"
 	_a "" "$(_state "$c/out" RESIDUAL)" "(V1) an absent measurement is NOT a residual finding"
+	# …and files nothing. UNMEASURED is the transitional state of EVERY leg until the verification
+	# step is live on the default branch, so a filer here would post five issues a night that say
+	# nothing about any cloud (#4620).
+	_a "0" "$(find "$c/out" -name 'issue-residual-*' 2>/dev/null | grep -c . || true)" \
+		"(V1) …and files no issue: a missing measurement is not a finding about a cloud"
 
 	# (V2) The same payload, with a CLEAN receipt: the cloud was re-listed and listed nothing.
 	c="$tmp/v2-clean"
@@ -1416,6 +1545,80 @@ run_self_test() {
 		"(V3) and a standalone block tells the reader what to do"
 	_a "" "$(_state "$c/out" TEARDOWN_UNVERIFIABLE)" "(V3) a LEAK is not a failure to look"
 
+	# ── (V3 · #4620) THE FILING, not just the measurement. ───────────────────────────────────────
+	#
+	# Before this, `grep -rn 'RESIDUAL' .github/` returned two hits and both were comments: the
+	# rollup step sourced state.env and read REDS and COV_LABEL out of it and nothing else. A
+	# MEASURED billing leak therefore existed in exactly one block of one step summary. These
+	# assertions are about the ARTEFACTS the workflow posts, which is the half that was missing.
+	_a "e2e nightly: gcp RESIDUAL — cloud resources still billing after teardown" \
+		"$(cat "$c/out/issue-residual-gcp.title")" \
+		"(V3) a residual finding renders an issue title of its own"
+	# The collision this title exists to avoid is not hypothetical: deduping a cleanup defect onto
+	# `e2e nightly: <cloud> RED (<dimension>)` files it under a provisioning title, where every
+	# reader starts at the deploy spine. Tested as a PROPERTY of the string, not as a second literal.
+	_a "distinct" "$(case "$(cat "$c/out/issue-residual-gcp.title")" in *" RED ("*) echo COLLIDES ;; *) echo distinct ;; esac)" \
+		"(V3) …whose stem cannot dedup onto the red filer's title"
+	_a "from:e2e-residual" "$(_state "$c/out" RESIDUAL_LABEL)" \
+		"(V3) …and the filer's identity label reaches the workflow as data, not as a retyped literal"
+	_a "1" "$(grep -c 'the cloud was re-listed after the sweep and STILL LISTS billable resources' "$c/out/issue-residual-gcp.md")" \
+		"(V3) the body quotes the RECEIPT'S OWN reason, not this script's paraphrase of it"
+	_a "1" "$(grep -c 'ALETHIA_E2E_ENV=34453355398-1 .*\./scripts/e2e/gcp-cleanup\.sh' "$c/out/issue-residual-gcp.md")" \
+		"(V3) …and the scope-locked sweep command, with THIS run's handle filled in"
+
+	# (V3b) A RESIDUAL receipt that ALSO could not check one resource type. Two things at once, and
+	#       the body has to carry the first without republishing the second: `unverifiable[]` is this
+	#       repo's own vocabulary, `unverifiable_detail[]` is up to 200 characters of VERBATIM
+	#       provider CLI stderr. #1854 is what a verbatim republish from this workflow costs, and an
+	#       issue body is more public than the artifact probe_withhold_detail already guards.
+	c="$tmp/v3b-residual-partial"
+	mkdir -p "$c/proofs"
+	cp "$jobs_real" "$c/jobs.json"
+	write_summary "$c/proofs/e2e-proof-gcp-r/s" gcp "nightly-34453355398-1" failure applied
+	write_verdict "$c/proofs/e2e-teardown-verify-gcp-r" gcp "nightly-34453355398-1" 1 "cloud-sql:exit 1 — PERMISSION_DENIED sekrit-token"
+	CASE_RUN_ID=34453355398 CASE_MATRIX=failure _derive "$c" >/dev/null
+	_a "1" "$(grep -c 'cloud-sql' "$c/out/issue-residual-gcp.md")" \
+		"(V3b) the body names the resource types that could not be checked"
+	_a "0" "$(grep -c 'PERMISSION_DENIED\|sekrit-token' "$c/out/issue-residual-gcp.md")" \
+		"(V3b) …and NEVER the receipt's verbatim CLI stderr"
+
+	# (V3c) THE ATTEMPT IS PART OF THE RECEIPT'S IDENTITY HERE TOO. A receipt stamped attempt 1
+	#       must not supply the reason for an issue filed about attempt 2 — the stale one is the
+	#       more optimistic by construction, and this filer's whole product is a quotation.
+	_a "" "$(RUN_ID=34453355398 RUN_ATTEMPT=2 PROOFS_DIR="$c/proofs" teardown_receipt_path gcp RESIDUAL)" \
+		"(V3c) another attempt's receipt is not this attempt's evidence"
+	_a "" "$(RUN_ID=34453355398 RUN_ATTEMPT=1 PROOFS_DIR="$c/proofs" teardown_receipt_path aws RESIDUAL)" \
+		"(V3c) …and neither is another cloud's"
+	_a "found" "$(RUN_ID=34453355398 RUN_ATTEMPT=1 PROOFS_DIR="$c/proofs" teardown_receipt_path gcp RESIDUAL >/dev/null && [ -n "$(RUN_ID=34453355398 RUN_ATTEMPT=1 PROOFS_DIR="$c/proofs" teardown_receipt_path gcp RESIDUAL)" ] && echo found || echo MISSING)" \
+		"(V3c) …but this run's own receipt IS found, so the two above are not vacuous"
+
+	# ── (V3d · #4620) THE CONSUMER EXISTS, AND IT IS REACHABLE. ──────────────────────────────────
+	#
+	# The ONLY assertion in this file that reads the workflow, and it is here because the defect it
+	# guards is invisible to every other test in it. The PRODUCER was correct the whole time: #4398
+	# wrote RESIDUAL into state.env and rendered its banner, and every V-case above passed — while
+	# `grep -rn 'RESIDUAL' .github/` returned two hits and both were comments. A measured billing
+	# leak with no consumer satisfies every test of the measurement.
+	#
+	# TWO conditions, because either alone is satisfiable by the state this issue was filed about.
+	# The key must be READ outside a comment — a comment naming it is exactly what was there — and
+	# it must be read BEFORE the red filer's all-green `exit 0`, which ENDS THE STEP. A filer below
+	# that line is unreachable in precisely the case it exists for: every leg green and the accounts
+	# not empty, which is the state the teardown axis was made orthogonal in order to report.
+	local wf red_exit use_line green_line
+	wf="$(dirname "${BASH_SOURCE[0]}")/../../.github/workflows/e2e-nightly.yml"
+	if [ -f "$wf" ]; then
+		use_line="$(grep -nE '\$\{RESIDUAL[^_]|\$RESIDUAL([^_A-Za-z0-9]|$)' "$wf" | grep -vE ':[[:space:]]*#' | head -n1 | cut -d: -f1)"
+		green_line="$(grep -n 'nightly rollup all-green' "$wf" | head -n1 | cut -d: -f1)"
+		red_exit="${green_line:-}"
+		_a "yes" "$([ -n "$use_line" ] && echo yes || echo no)" \
+			"(V3d) e2e-nightly.yml READS the RESIDUAL key outside a comment — the consumer exists"
+		_a "reachable" "$([ -n "$use_line" ] && [ -n "$red_exit" ] && [ "$use_line" -lt "$red_exit" ] && echo reachable || echo UNREACHABLE-BELOW-THE-ALL-GREEN-EXIT)" \
+			"(V3d) …and reads it BEFORE the red filer's all-green exit, which ends the step"
+	else
+		_a "readable" "MISSING" "(V3d) the workflow this script feeds is readable from the self-test"
+	fi
+
 	# (V4) THE DISTINCTION THIS WHOLE CHANGE TURNS ON. `we asked and it was empty` and `we could not
 	#      ask` must never be one value. The two fixtures differ in the sweeper's exit status alone —
 	#      0 vs 4 — and every visible byte of a sweep log could be identical.
@@ -1433,6 +1636,10 @@ run_self_test() {
 	_a "gcp" "$(_state "$c/out" TEARDOWN_UNVERIFIABLE)" "(V4) it reaches state.env"
 	_a "" "$(_state "$c/out" RESIDUAL)" "(V4) …and is NOT reported as a confirmed leak"
 	_a "1" "$(grep -c 'TEARDOWN UNVERIFIED' "$c/out/summary.md")" "(V4) the block says nothing proves the account is empty"
+	# ANNOTATED, NOT FILED (#4620). A systematically timing-out probe would otherwise file every
+	# night, which is the always-red mode sweep-probe.sh's own header warns turns a signal into noise.
+	_a "0" "$(find "$c/out" -name 'issue-residual-*' 2>/dev/null | grep -c . || true)" \
+		"(V4) …and files no issue: 'nobody could look' is a different, noisier ask than a measured leak"
 
 	# (V5) THE STEP CONCLUSION STILL OUTRANKS THE RECEIPT. A worker killed mid-sweep is a different
 	#      claim from any verdict about the cloud: the sweep did not finish. UNSWEPT wins, and a
