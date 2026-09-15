@@ -175,13 +175,49 @@ export function groupNodes(nodes: readonly unknown[]): { groups: A11yNodeGroup[]
 }
 
 /**
+ * The precondition every GATE built on `scanA11y` owes itself: axe must actually be there.
+ *
+ * `scanA11y` returns `[]` when `@axe-core/playwright` cannot be imported — deliberately, so the QA
+ * suite still runs without it. For a gate that is the worst possible behaviour: a silent empty
+ * result is indistinguishable from a clean page, so every surface would score a11y PASS on the
+ * strength of the scanner being absent.
+ *
+ * IT LIVES BESIDE THE NO-OP IT COMPENSATES FOR, and that placement is the point rather than tidiness.
+ * It used to live in `e2e/audit/signals.ts`, which was right while the conformance audit was the
+ * only gate — and wrong the moment `flows/cross-cutting.spec.ts` became the second, because
+ * `.github/workflows/release-gate.yml` selects legs from changed paths and `e2e/audit/**` maps to
+ * the two audit legs ONLY. A `flows/ -> audit/` import is therefore invisible to that selector:
+ * renaming or re-signaturing this function would run the audit legs green and never run `qa`, and
+ * the 29 a11y tests in the flows sweep would die in `beforeAll` on the next promotion PR — the
+ * branch you least want red, far from the change that broke it. `e2e/helpers/` is a declared SEAM
+ * (`SEAMS` in that workflow), so editing this file runs EVERY leg, which is the only correct answer
+ * for a function two projects import.
+ *
+ * Called once per run from a `beforeAll`, so the run dies at the top rather than 40 routes later.
+ */
+export async function requireAxe(): Promise<void> {
+	try {
+		const mod = await import("@axe-core/playwright");
+		if (typeof mod.default !== "function") {
+			throw new Error("@axe-core/playwright resolved but exports no default AxeBuilder");
+		}
+	} catch (err) {
+		throw new Error(
+			"a11y cannot be measured: @axe-core/playwright did not import, so `scanA11y()` would return " +
+				"[] and EVERY surface would score a clean a11y pass on the strength of the scanner being " +
+				"missing. Install it (apps/console devDependency) before running this gate.\n  cause: " +
+				String(err),
+		);
+	}
+}
+
+/**
  * Runs axe-core against the current page (optionally scoped to a selector). Returns serious/critical
  * violations. No-ops to [] if @axe-core/playwright is unavailable.
  *
  * ⚠ THAT NO-OP IS INDISTINGUISHABLE FROM A CLEAN PAGE, deliberately, so the QA suite still runs
- * without the package — and it is why the conformance audit refuses to start until the import
- * resolves (`e2e/audit/signals.ts` → `requireAxe()`). Any NEW gate built on this helper owes itself
- * the same precondition; the empty array will not tell it.
+ * without the package — and it is why every GATE built on this helper calls `requireAxe()` first
+ * (just above). The empty array will not tell it.
  */
 export async function scanA11y(
 	page: Page,

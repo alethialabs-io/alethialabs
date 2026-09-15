@@ -24,12 +24,12 @@
     "samlify": "^2.0.0"
   },
   "devDependencies": {
-		"@vitest/coverage-v8": "^2.1.9",
+		"@vitest/coverage-v8": "^3.2.6",
     "@alethia/enterprise-api": "workspace:*",
     "@types/node": "^20",
     "esbuild": "^0.28.2",
     "jose": "^6.2.10",
     "typescript": "^5",
-    "vitest": "^2.1.9"
+    "vitest": "^3.2.6"
   }
 }

@@ -48,7 +48,10 @@ describe("AgentKnowledgePanel — editor (canEdit true)", () => {
 		// Add-knowledge CTA + per-doc edit/delete are present; instructions are editable.
 		expect(await screen.findByTestId("knowledge-add")).toBeInTheDocument();
 		expect(screen.getByLabelText("Edit Runbook")).toBeInTheDocument();
-		expect(screen.getByLabelText("Delete Runbook")).toBeInTheDocument();
+		// "Delete document <title>", not "Delete <title>": the rail, the gallery and this panel
+		// each name the THING they destroy, because the destructive-action audit resolves a
+		// templated `control.name` by its literal prefix and `/Delete/i` matched all three.
+		expect(screen.getByLabelText("Delete document Runbook")).toBeInTheDocument();
 		expect(screen.getByTestId("knowledge-instructions")).not.toHaveAttribute("readonly");
 		expect(screen.queryByTestId("knowledge-readonly-notice")).not.toBeInTheDocument();
 	});
@@ -65,7 +68,12 @@ describe("AgentKnowledgePanel — non-editor (canEdit false)", () => {
 		// Every write affordance is gone…
 		expect(screen.queryByTestId("knowledge-add")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Edit Runbook")).not.toBeInTheDocument();
-		expect(screen.queryByLabelText("Delete Runbook")).not.toBeInTheDocument();
+		// The name MUST track the component. A `queryBy…` that names a label nothing renders any
+		// more passes in both branches — it would still be green here while the panel handed a
+		// reader the delete button, which is the one thing this test exists to catch.
+		expect(
+			screen.queryByLabelText("Delete document Runbook"),
+		).not.toBeInTheDocument();
 		// …instructions are read-only, and the doc's content is still shown (read).
 		expect(screen.getByTestId("knowledge-instructions")).toHaveAttribute("readonly");
 		expect(screen.getByText("Runbook")).toBeInTheDocument();

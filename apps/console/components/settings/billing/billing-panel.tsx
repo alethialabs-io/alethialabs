@@ -19,6 +19,7 @@ import {
 	getBillingSummary,
 	resumeSubscription,
 } from "@/app/server/actions/billing";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
@@ -49,6 +50,20 @@ export function BillingPanel() {
 	const [summary, setSummary] = useState<BillingSummary | null>(null);
 	const [pending, startTransition] = useTransition();
 	const [createOpen, setCreateOpen] = useState(false);
+	// Cancelling asks first (#4276). Resuming does not: it RESTORES the subscription, and a
+	// confirmation in front of an undo is friction with nothing behind it. The registry
+	// (apps/console/destructive-actions.yaml, `billing.subscription.cancel`) records the dialog
+	// this state opens.
+	//
+	// WHAT ACTUALLY EXERCISES IT is `e2e/flows/billing.spec.ts` ("Cancel plan opens a
+	// confirmation…"), against the `team` persona's real Stripe trial. NOT the audit leg: that
+	// entry's `fixture:` field is documentation, not a seeding directive, and no seeder in `e2e/`
+	// materialises a subscription for the audit org — `audit/context.ts:seedRouteFixtures` writes
+	// one project, one job and one support case and deliberately nothing else. So `hasSub` below
+	// is false there, the trigger is never rendered, and `audit/destructive.spec.ts` records the
+	// control as WITHHELD every gate. Read the other way round: delete the flows spec and this
+	// dialog is measured by nothing at all.
+	const [cancelOpen, setCancelOpen] = useState(false);
 	// Hobby → Pro upgrades open the shared in-place upgrade sheet (no inline plan dialog).
 	const { openUpgrade } = useUpgradeSheet();
 
@@ -69,16 +84,25 @@ export function BillingPanel() {
 		summary?.state === "canceling" ||
 		summary?.state === "past_due";
 
-	function toggleCancel() {
+	/** Resume a subscription already scheduled to cancel. Not destructive — no confirmation. */
+	function resumePlan() {
 		startTransition(async () => {
 			try {
-				if (summary?.cancelAtPeriodEnd) {
-					await resumeSubscription();
-					toast.success("Subscription resumed.");
-				} else {
-					await cancelSubscription();
-					toast.success("Subscription will cancel at the period end.");
-				}
+				await resumeSubscription();
+				toast.success("Subscription resumed.");
+				refresh();
+			} catch (e) {
+				toast.error(e instanceof Error ? e.message : "Something went wrong.");
+			}
+		});
+	}
+
+	/** Schedule the subscription to end at the period end. Only ever reached from the dialog. */
+	function confirmCancelPlan() {
+		startTransition(async () => {
+			try {
+				await cancelSubscription();
+				toast.success("Subscription will cancel at the period end.");
 				refresh();
 			} catch (e) {
 				toast.error(e instanceof Error ? e.message : "Something went wrong.");
@@ -239,7 +263,17 @@ export function BillingPanel() {
 									variant="ghost"
 									size="sm"
 									disabled={pending}
-									onClick={toggleCancel}
+									onClick={
+										// The BRANCH is `cancelAtPeriodEnd`, not `state === "canceling"`,
+										// because that is what the single `toggleCancel` handler this
+										// replaced tested. The two disagree only for a `past_due`
+										// subscription already set to cancel — where the label reads
+										// "Cancel plan" and the click resumes — and that contradiction
+										// is #4276's to record, not to change behind a rename.
+										summary.cancelAtPeriodEnd
+											? resumePlan
+											: () => setCancelOpen(true)
+									}
 								>
 									{state === "canceling" ? "Resume plan" : "Cancel plan"}
 								</Button>
@@ -270,6 +304,20 @@ export function BillingPanel() {
 				</>
 			)}
 
+			{/* Cancelling asks first. The copy states the two facts a person needs to decide:
+			    entitlement runs to the period end, and the decision is reversible until then. */}
+			<ConfirmDialog
+				open={cancelOpen}
+				onOpenChange={setCancelOpen}
+				title="Cancel this subscription?"
+				description={
+					summary.currentPeriodEnd
+						? `${meta.name} stays active until ${formatDate(summary.currentPeriodEnd)}, then this organization drops to the free plan. You can resume any time before then.`
+						: `${meta.name} stays active until the end of the current billing period, then this organization drops to the free plan. You can resume any time before then.`
+				}
+				confirmLabel="Confirm cancellation"
+				onConfirm={confirmCancelPlan}
+			/>
 		</div>
 	);
 }

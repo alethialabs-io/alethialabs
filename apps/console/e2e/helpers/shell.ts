@@ -11,7 +11,7 @@
 // same locator to the complementary landmark and passed. Two files disagreeing about one wait is
 // the shape this module exists to end: one definition, imported by both.
 //
-// THE SECOND "Overview" IS GONE AS OF #4267 — `packages/ui/src/breadcrumb.tsx`'s current page is a
+// THE SECOND "Overview" IS GONE AS OF #4434 — `packages/ui/src/breadcrumb.tsx`'s current page is a
 // `<span aria-current="page">` now, with no role at all, because it is not a link and never was.
 // THE SCOPE STAYS ANYWAY, and not out of habit: below `lg` the sidebar is re-mounted inside the
 // slide-in Sheet, so a drawer opened over a route that still has its own "Overview" is a second

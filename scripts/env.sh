@@ -56,6 +56,13 @@ esac
 # shellcheck source=scripts/lib/env-owner.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/env-owner.sh"
 
+# The trap that stops a remote suite when this shell stops (#4343). Same reasoning for living in
+# its own file: it is the part with the moving pieces — three traps, an exit-code contract and a
+# remote matcher — and welding it into a command that needs a box would put it out of reach of a
+# test. scripts/lib/env-suite-reap-test.sh drives these functions with a stubbed ssh_box.
+# shellcheck source=scripts/lib/env-suite-reap.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/env-suite-reap.sh"
+
 TF_DIR="$MAIN_CHECKOUT/infra/sandbox"
 SERVER_NAME="alethia-sandbox"
 # The hcloud CLI's "active context" is ONE global value in ~/.config/hcloud/cli.toml,
@@ -248,7 +255,27 @@ forget_stale_host_key() { # <ip>
 
 ssh_box() {
   local ip rc
-  ip="$(require_box)"
+  # `|| return $?` rather than leaning on `set -e`, because errexit is not always on when this
+  # runs. require_box's own `exit 1` — with the "the box is not up" message that names the remedy
+  # — only ends the `$( )` subshell, so a caller that handles failure (`ssh_box … || rc=$?`, an
+  # `if`, a `&&` chain) suppressed errexit for the assignment too and carried on with an EMPTY ip:
+  # `ssh root@` fails 255, gets treated as a stale host key and retried, and the operator is told
+  # about a host key instead of a down box.
+  #
+  # NOT introduced by #4343 — `|| restore_rc=$?`, `|| mode_rc=$?`, `|| up_rc=$?` and two `|| true`s
+  # were already doing it. #4343's suite call is simply the first on a path long enough for the box
+  # to go away underneath it. Fixed here, for every caller, rather than at the new one.
+  #
+  # RETURN, NOT EXIT, and the difference is a regression this shipped once. `exit` inside a
+  # function ends the SHELL, so `|| true` cannot catch it — it never returns to be caught. Inside a
+  # command substitution the exit is confined to the subshell, which sounds safe and is the wrong
+  # half of the story: the ASSIGNMENT then carries status 1, and under `set -e` that aborts the
+  # caller. read_registry is `ssh_box … 2>/dev/null || true` and documents itself as failing CLOSED
+  # — "an empty answer means assume someone is there" — and `reg="$(read_registry)"` in
+  # cmd_reap_dry_run turned that into a mute abort with require_box's message swallowed by the
+  # 2>/dev/null. env_scopes did the same to `env:status`, one line after it printed "box: up".
+  # `return` gives the property without ending anyone's shell.
+  ip="$(require_box)" || return $?
   # shellcheck disable=SC2029  # remote expansion is intended
   ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$ip" "$@" && return 0
   rc=$?
@@ -661,7 +688,7 @@ provision_box() {
 # have in front of you, not what you have pushed. node_modules/.next/.git are excluded:
 # they are platform-specific or huge, and the box builds its own.
 push_tree() {
-  local ip slug_
+  local ip slug_ rsync_rc=0
   ip="$(require_box)"
   slug_="$(slug)"
   # --delete keeps the box honest about renames and deletions, which makes these two
@@ -695,7 +722,46 @@ push_tree() {
     --exclude=/.env --exclude='.env.local' --exclude='.env.*.local' \
     --exclude='apps/*/.env.local' \
     -e "ssh -o StrictHostKeyChecking=accept-new" \
-    "$ROOT/" "root@$ip:$REMOTE/envs/$slug_/"
+    "$ROOT/" "root@$ip:$REMOTE/envs/$slug_/" || rsync_rc=$?
+
+  # PUSHING A TREE IS SOMEONE USING THIS ENV, and until #4343 only `env:up` ever said so. Every
+  # other path — `env:push --watch` for a whole session, a browser run, a console suite — left
+  # `lastSeen` frozen at whenever the env came up, while `env:timer` reaps a box whose most recent
+  # lastSeen is REAP_AFTER_MIN (90m) old. Here rather than in each command because this is the one
+  # place all three already pass through, and the cost is one ssh against an rsync and a build_ee
+  # that the same loop already pays.
+  #
+  # PRECISELY WHAT THIS CLOSES, since an apparent-but-absent fix is worse than none:
+  #   env:test, and env:check/env:push on a slug that HAS an env — covered. idle-minutes is
+  #     `max` over lastSeen, i.e. minutes since the MOST RECENT, so one fresh row holds the whole
+  #     box (another env's stale row cannot pull the answer back).
+  #   env:check on a slug with NO env row — NOT covered, and that is the common case for a check:
+  #     it wants a tree on the box, not an environment. env-registry.sh's touch is
+  #     `if has($s) then … else . end`, so it is a no-op, and nothing in the registry can express
+  #     "a suite is running for a slug that owns no env".
+  #   A run longer than REAP_AFTER_MIN — NOT covered. Nothing re-touches mid-run.
+  # Both residuals are recorded on #4343 rather than left for the next reader to rediscover.
+  #
+  # WARNS, and must never be the status push_tree returns. A touch is advisory — the rsync is the
+  # thing that was asked for. Letting this line decide the function's exit code would make a
+  # registry hiccup fail `env:push` after a good push, and in `--watch` (`push_tree && build_ee`)
+  # silently skip the ee build for the rest of the session while every push still printed as if it
+  # had worked.
+  #
+  # BUT "not the touch's status" IS NOT "no status", and the first attempt at this shipped the
+  # second. `ssh_box … || echo …` as the LAST command of the function always returns 0, which took
+  # the rsync's status out with the touch's — and as the left operand of `&&`, push_tree runs with
+  # errexit suspended for its whole body, so a failing rsync no longer aborted it either. Net:
+  # `--watch` fed build_ee a stale tree and printed "pushed" for the rest of the session. The
+  # non-watch path kept working, which is exactly why it was easy to miss.
+  #
+  # So the rsync's status is captured above and returned below, and it is the ONLY thing that
+  # decides. Driven in scripts/lib/env-suite-reap-test.sh with rsync stubbed to fail.
+  if [ "$rsync_rc" = 0 ]; then
+    ssh_box "$REMOTE/bin/env-registry.sh touch '$slug_'" ||
+      echo "⚠ could not record activity for '$slug_' — the idle reaper cannot see this session." >&2
+  fi
+  return "$rsync_rc"
 }
 
 # Rebuild @alethia/ee ON THE BOX, from the ee/src that was just pushed (#3732).
@@ -821,6 +887,10 @@ cmd_up() {
   # empty env with nothing anywhere saying the flag was dropped. Ask the SHIPPED script
   # whether it understands the argument before promising it.
   local mode_rc=0
+  # `= 1` below means "grep found nothing", and ssh_box now has a SECOND way to return 1: an
+  # unreachable box (require_box). That cannot be confused here only because the `alloc` above
+  # exits first on exactly that condition — checked, not assumed. Anything moved ahead of this
+  # probe must keep that property, or a down box starts reporting a stale box script.
   ssh_box "grep -q SEED_REQUEST $REMOTE/bin/env-mode.sh" >/dev/null 2>&1 || mode_rc=$?
   # ONLY rc 1 — grep's own "not found" — means the shipped script is stale. Anything else
   # (2 = no such file, 255 = ssh transport) is a broken box, and reading a failure as an
@@ -1239,10 +1309,15 @@ vitest_workers() {
            echo "$w avail=${avail}MiB cpus=$cpus"'
 }
 
+# The suite-reap trap that keeps a stopped `env:check` from stranding its remote workers on the
+# shared box (#4343) lives in scripts/lib/env-suite-reap.sh, sourced at the top of this file. The
+# short version, because the call sites below depend on it: suite_arm sets $_suite_tag and traps
+# INT/TERM/EXIT; the caller exports that tag into the remote command AFTER any step whose state is
+# box-global (apt, a package install); a run that ENDS — green or red — must reach suite_disarm.
 # Worktrees are de-hydrated (no node_modules), so the checks that used to run locally
 # run here. The box already has the install warm from env:up.
 cmd_check() {
-  local slug_ sizing workers
+  local slug_ sizing workers rc=0
   slug_="$(slug)"
   push_tree
   # push_tree's --delete does not remove ee/dist any more, but it is still only ever a build
@@ -1268,9 +1343,20 @@ cmd_check() {
   # because the pool's minimum comes from the default (vCPU-derived) while the maximum comes from
   # the flag, and a max below that minimum is rejected. Measured, not reasoned: `--maxWorkers=1`
   # alone fails on this repo's console config; with `--minWorkers=1` the same run passes.
+  suite_arm "$slug_"
+  # THE TAG STARTS AFTER `pnpm install`, and the ordering is the safety property rather than a
+  # detail: everything after the export inherits it and is in the blast radius of the reap. An
+  # install killed halfway leaves a partial node_modules and a store this box shares with every
+  # other env; the workers this exists to stop are all downstream of it anyway.
   ssh_box "cd $REMOTE/envs/$slug_ && pnpm install --frozen-lockfile >/dev/null && \
+           export ALETHIA_SUITE_TAG='$_suite_tag' && \
            pnpm -C apps/console run check-types && pnpm -C apps/console run lint && \
-           pnpm -C apps/console run test -- --maxWorkers=$workers --minWorkers=$workers"
+           pnpm -C apps/console run test -- --maxWorkers=$workers --minWorkers=$workers" || rc=$?
+  # The rc is taken by hand rather than left to `set -e`: a red suite has already ENDED on the
+  # box, so it must reach suite_disarm and not the reap. Only a run that never got here — a
+  # Ctrl-C, a TERM, a supersede — is one with something left to stop.
+  suite_disarm
+  return "$rc"
 }
 
 # Browser tests, on the box. This is what the box is FOR — the Mac cannot run them.
@@ -1353,10 +1439,23 @@ cmd_test() {
   #
   # The --list guard is CI's: a testMatch drift that matches zero tests otherwise "passes".
   echo "→ browser tests for '$slug_' on the box  ($proj → https://$fqdn)"
+  # Same shape, same defect, same fix as cmd_check: a Playwright run abandoned mid-flight
+  # leaves browsers and workers behind on a box nothing reaps. suite_disarm comes FIRST in
+  # the failure branch — that branch ends in `exit 1`, so the EXIT trap would otherwise fire
+  # a reap on a run that has already finished, in the middle of pulling its artefacts back.
+  #
+  # THE TAG STARTS AFTER BOTH INSTALLS, and here that is not a preference. The line above runs
+  # `playwright install --with-deps`, which is apt/dpkg as root — see the comment above about the
+  # ~16 shared libs it pulls. Tagging it would put a Ctrl-C during a first-run browser install one
+  # TERM-then-KILL away from a dpkg database left mid-transaction, needing `dpkg --configure -a`
+  # before ANY other env or engineer on this shared box could install anything. That is this
+  # issue's own failure mode — my process, box-global state — through a different door.
+  suite_arm "$slug_"
   ssh_box "set -e
     cd $REMOTE/envs/$slug_
     pnpm install --frozen-lockfile >/dev/null
     pnpm -F console exec playwright install --with-deps chromium >/dev/null
+    export ALETHIA_SUITE_TAG='$_suite_tag'
     export DEV_CONSOLE_LOG=/var/log/alethia-$slug_.log
     export E2E_BASE_URL=https://$fqdn
     unset CI
@@ -1364,12 +1463,14 @@ cmd_test() {
     echo \"\$list\" | grep -qE 'Total: [1-9][0-9]* test' || {
       echo '✗ that project matched 0 tests — testMatch drift, not a pass.' >&2; exit 1; }
     pnpm -F console exec playwright test $proj" || {
+    suite_disarm
     echo "" >&2
     echo "✗ tests failed — pulling the report and traces back anyway." >&2
     fetch_artifacts "$slug_"
     restart_env_console "$slug_"
     exit 1
   }
+  suite_disarm
 
   fetch_artifacts "$slug_"
   restart_env_console "$slug_"

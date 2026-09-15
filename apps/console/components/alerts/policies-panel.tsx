@@ -105,6 +105,7 @@ export function PoliciesPanel({
 	const [saving, setSaving] = useState(false);
 	const [sheetOpen, setSheetOpen] = useState(false);
 	const [deleteTarget, setDeleteTarget] = useState<PolicyDTO | null>(null);
+	const [disableTarget, setDisableTarget] = useState<PolicyDTO | null>(null);
 
 	const selected =
 		policies.find((p) => p.id === selectedId) ?? policies[0] ?? null;
@@ -178,13 +179,23 @@ export function PoliciesPanel({
 		}
 	};
 
-	const onToggleEnabled = async (p: PolicyDTO, next: boolean) => {
+	// The mutation itself, split from the click handler so the confirm path can reach it.
+	const applyEnabled = async (p: PolicyDTO, next: boolean) => {
 		try {
 			await togglePolicy(p.id, next);
 			onChanged();
 		} catch {
 			toast.error("Failed to update");
 		}
+	};
+	// Confirm only when DISABLING — enabling stays a bare click, exactly as it does for channels
+	// (`onToggle` in channels-panel.tsx). Both surfaces stop alert delivery, and the product had
+	// already decided that warrants an ask; it was applied to one of the two. A policy is the
+	// wider of them: disabling one silences a class of alerts across every channel routed to it,
+	// and nothing on the rail says so afterwards beyond the switch's own state.
+	const onToggleEnabled = (p: PolicyDTO, next: boolean) => {
+		if (!next) setDisableTarget(p);
+		else void applyEnabled(p, true);
 	};
 	const doDelete = async (p: PolicyDTO) => {
 		try {
@@ -337,6 +348,18 @@ export function PoliciesPanel({
 					onGoChannels={() => onOpenChannel()}
 				/>
 			)}
+
+			<ConfirmDialog
+				open={disableTarget !== null}
+				onOpenChange={(o) => !o && setDisableTarget(null)}
+				title="Disable this policy?"
+				description="This policy stops watching its events until you re-enable it, across every channel it routes to. You can re-enable any time."
+				confirmLabel="Disable"
+				onConfirm={() => {
+					if (disableTarget) void applyEnabled(disableTarget, false);
+					setDisableTarget(null);
+				}}
+			/>
 
 			<ConfirmDialog
 				open={deleteTarget !== null}

@@ -1063,6 +1063,24 @@ jobs:
       - name: ...and the capability promise fails closed in CI
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -C apps/console exec tsx e2e/helpers/capabilities.ts --self-test
+      # ...and the LEDGER it ratchets against still describes the tree (#4460). A lane rewrites a
+      # spec, then regenerates its slice from the gate run's own results — and it cannot win that
+      # race: draft means no leg runs at all, non-draft means Mergify merges ~15 minutes before the
+      # `qa` leg finishes. So the only instrument that can catch an unregenerated slice is the
+      # ratchet's rule 4, which lives on a leg that is required on `main` and gates nothing on `dev`.
+      # #4433 lost that race and the next PRs inherited its red; #4324 did the same to the canvas
+      # slice and nothing reported it at all.
+      #
+      # This is the cheap, sound half of that question asked of the TREE: `playwright test --list`
+      # plus a JSON read. No browser, no Postgres, no console — seconds, in a job that already runs
+      # on every PR, which is the whole point (running Playwright on every dev PR is what #4440
+      # exists to avoid). It would have failed #4433 on #4433.
+      - name: The release gate's ledger still describes the tree (no renamed or deleted test)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-gate-baseline-consistency.mjs
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-gate-baseline-consistency.mjs --self-test
       # The console's published conformance score. #3618 landed apps/console/scripts/audit-report.mjs
       # and the two artifacts it owns — apps/console/docs/ui-conformance/scoreboard.md and
       # apps/console/ui-conformance-baseline.json — with the two-mode contract PROGRAMME.md uses:
@@ -1130,14 +1148,34 @@ jobs:
         run: |
           pnpm compliance:release
           pnpm source:community
+      # ONE ARTEFACT PER STEP, because `if-no-files-found` is AGGREGATE (#4347). The action runs a
+      # single combined glob over every `path:` entry and tests `filesToUpload.length === 0` once,
+      # so `error` fires only when NOTHING AT ALL matched. These two directories come from two
+      # different commands in the step above — `pnpm compliance:release` and `pnpm source:community`
+      # — and while they shared a step, either one producing its tree covered for the other
+      # producing nothing. Do not merge them back, and do not add a third path to either: every
+      # entry added widens the set of ways the guard is satisfied by something other than the thing
+      # it is guarding. `pnpm check:upload-aggregate` refuses the merged shape.
+      #
+      # Splitting a step makes the second half skippable when the first fails, which would trade one
+      # silent gap for another. Here the `guards` job's own independence rule already covers it:
+      # every step carries `steps.setup.outcome == 'success'`, so the community-source upload still
+      # runs when the compliance upload has just gone red. The floors dispatch below has no such
+      # rule and needed an explicit `if:`.
       - name: Upload compliance evidence
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: compliance-${{ github.sha }}
-          path: |
-            dist/compliance
-            dist/community-source
+          path: dist/compliance
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload community-source evidence
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: community-source-${{ github.sha }}
+          path: dist/community-source
           if-no-files-found: error
           retention-days: 30
       - name: No Supabase
@@ -1438,12 +1476,23 @@ jobs:
       # wt-lease-hook-test.sh replays incident #1247 (one instance committing another's
       # uncommitted work) against a real throwaway leased worktree; it is the only proof
       # the lease actually holds, and it was never executed by CI.
-      - name: Worktree lease protocol (13 properties, incl. pid-reuse + nested worktrees)
+      # The count used to be written into this name by hand and went stale the first time the suite
+      # grew (13 → 19 in #4599). The suite prints its own tally; the step no longer asserts one.
+      - name: Worktree lease protocol (pid-reuse, nested worktrees, the ownership ladder)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-lease.sh --self-test
       - name: 'Worktree lease guard — replays incident #1247'
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-lease-hook-test.sh
+      # `wt:dehydrate` runs `rm -rf` over directories it selects itself. This suite is the only
+      # thing that checks WHAT SURVIVES a reap — uncommitted work, untracked files, tracked files
+      # inside an ignored node_modules, a symlinked one, and the worktree itself — and the only
+      # thing that pins the three-mode refusal of a live-held tree (an agent, a HUMAN with no agent
+      # marker, and ALETHIA_ALLOW_FOREIGN_WT=1; the last two deleted a held tree until #4599).
+      # "Tested only when someone remembers" is not a steady state for a destructive command.
+      - name: 'Worktree dehydrate — what survives an rm -rf, and who is refused'
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/worktree.sh --self-test
       # The env registry used to key ownership on `user@host`, which every agent, worktree and shell
       # on one machine shares — so env:reap's "someone else is working on this box" could not fire
       # locally, and a finished lane deleted the box out from under a live one (#3841). The identity
@@ -1458,6 +1507,18 @@ jobs:
       - name: "env:reap refusal — replays incident #3841 against env.sh"
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/env-reap-test.sh
+      # A stopped `env:check` used to leave its vitest workers running on the SHARED box — three
+      # per abandoned run, one set measured at 8h40m, and nothing on the box reaps them (#4343).
+      # The fix is three traps, an exit-code contract and a matcher that decides what dies on a
+      # machine other people are working on; `bash -n` two hundred lines below parses every line of
+      # it and calls none. This step also pins the CALL SITES — a tag exported one line too early
+      # puts `playwright install --with-deps`, apt/dpkg as root, inside the blast radius — and five
+      # of its mutants edit env.sh rather than the lib, because the first version of that guard
+      # anchored on a COMMENT mentioning the command and passed the exact defect it was written
+      # for. An assertion nothing has ever made fail is a claim, not a check.
+      - name: "Suite-reap trap + scope — replays incident #4343 (15 mutations, 5 on the call sites)"
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/lib/env-suite-reap-test.sh
       - name: Worktree landed-detection (squash merges; merged-PR-plus-new-commit is NOT landed)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-landed-test.sh
@@ -1742,6 +1803,16 @@ jobs:
       - name: Alibaba sweeper four-state verification
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/alibaba-cleanup.sh --self-test
+      # `VERIFY_ONLY=1` is a READ-ONLY mode added to five scripts whose day job is deleting cloud
+      # resources (#4398), and its whole licence is that it is safe to point at a live account
+      # right after a teardown. That property was asserted only in prose at first: four mutations
+      # of the guard — one per structural shape, plus the DRY_RUN/PREFLIGHT refusal — SURVIVED
+      # every check in this file. This is the test that kills them, and it also pins the regression
+      # where the mode skipped hetzner's CCM-load-balancer reporter and published CLEAN over a
+      # question nobody had asked. Hermetic — every CLI is stubbed, no credentials, no cloud.
+      - name: VERIFY_ONLY deletes nothing (all five sweepers)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/e2e/verify-only-readonly-test.sh
       # Which workflows are red, and have been red for a while. The classifier is the load-bearing
       # part: `skipped` must never read as a failure (a gate-off leg is not a broken pipeline), and
       # three runs is the minimum that can distinguish "dead" from "flaked once". Both are asserted.
@@ -1931,12 +2002,37 @@ jobs:
       # of the nine required checks then reports, so the PR does not go red — it sits BLOCKED with an
       # EMPTY rollup, which reads like "CI hasn't started". `yaml.parse()` passes on that input,
       # which is exactly why parsing is not validation (#2670).
+      # The console's compiled-from set is DERIVED from the workspace, and the release gate reads it
+      # to decide whether a changed path is something a leg measures. This asks the inverse: is every
+      # `@repo/*`/`@alethia/*` package in the tree either compiled into the console or recorded as
+      # not. It lives HERE rather than in release-gate.yml because it is a repo invariant, and a repo
+      # invariant checked inside a per-PR gate reds the wrong PR: the gate's check is skipped
+      # whenever the gate RUNS, so the labelled PR that lands a new package never evaluated it, while
+      # every unlabelled dev PR afterwards failed for a diff its author never wrote (#4606).
+      - name: The console's surface is derivable, and every scoped package is on it or recorded
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:console-surface
+      - name: ...and that walk is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-console-surface.mjs --self-test
       - name: Every workflow step has a run or a uses (Actions rejects the file otherwise)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:workflow-shape
       - name: ...and that check's own parser is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:workflow-shape -- --self-test
+      # `if-no-files-found: error` is AGGREGATE — the action globs every `path:` entry together and
+      # asks `filesToUpload.length === 0` ONCE — so a step listing several paths under it succeeds
+      # if ANY ONE matched, having captured nothing it exists for. Two steps here were that shape,
+      # and in both the path that always matches was the one riding along (#4347). The edit alone
+      # fixes today: the instinct on a missing file is to ADD ITS PATH to the existing step, which
+      # is one invisible line and puts the repo straight back.
+      - name: No upload step's if-no-files-found error is satisfiable by a path it does not guard
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:upload-aggregate
+      - name: ...and that check's own parser is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:upload-aggregate -- --self-test
       # Three lists of required checks have to agree and nothing compared them (#3180). The
       # dangerous direction is a check the protect-dev ruleset requires that .mergify.yml does not
       # wait for: the queue decides the PR is ready, GitHub refuses the merge, and nothing is red.
@@ -2293,23 +2389,43 @@ jobs:
       # rejects anything below 2; this comment records why the rejection is there rather than
       # leaving it to look like fussiness.
       - name: N runs, compared — then the floors those numbers produce
+        id: probe
         env:
           ALETHIA_TS_PROBE_RUNS: ${{ inputs.ts_probe_runs || '5' }}
         run: scripts/ci/ts-coverage-probe.sh
+      # ONE staged directory, written by the probe from the sweep record. The explicit list that
+      # used to live here named the same three projects as the loops did, so even with the loops
+      # fixed, marketing's and ee's floors would never have left the runner — and arming them is
+      # the whole reason anybody dispatches this job.
       - uses: actions/upload-artifact@v7
         with:
           name: ts-coverage-floors
-          # ONE staged directory, written by the probe from the sweep record. The explicit list
-          # that used to live here named the same three projects as the loops did, so even with
-          # the loops fixed, marketing's and ee's floors would never have left the runner — and
-          # arming them is the whole reason anybody dispatches this job.
-          #
-          # plan-catalog's raw artefact rides along deliberately: it is the smallest project, so a
-          # verbatim copy is a committable size, and it is how the --self-test fixture gets
-          # captured from a REAL vitest run with real CI absolute paths rather than hand-written.
-          path: |
-            ts-coverage-floors/
-            packages/plan-catalog/coverage/coverage-final.json
+          path: ts-coverage-floors/
+          if-no-files-found: error
+      # plan-catalog's raw artefact rides along deliberately: it is the smallest project, so a
+      # verbatim copy is a committable size, and it is how the --self-test fixture gets captured
+      # from a REAL vitest run with real CI absolute paths rather than hand-written.
+      #
+      # IT GETS ITS OWN STEP, and that is the whole of #4347. `if-no-files-found` is AGGREGATE —
+      # the action globs every `path:` entry together and asks `filesToUpload.length === 0` once —
+      # so while this fixture shared a step with `ts-coverage-floors/`, the fixture alone satisfied
+      # the guard and an EMPTY staged directory uploaded happily. The dispatch would report success
+      # having armed nothing, which is the one outcome the `error` is there to prevent. Split, an
+      # empty `ts-coverage-floors/` fails the step above on its own. `pnpm check:upload-aggregate`
+      # refuses any re-merge.
+      #
+      # THE `if:` IS PART OF THE SPLIT, not decoration. Actions stops a job at its first failing
+      # step, so once the step above can fail — which is the entire point — an empty floors
+      # directory would ALSO skip this one, and a dispatch that used to yield the fixture would
+      # start yielding nothing at all. Splitting a step to make one artefact's absence loud must not
+      # make the other artefact's presence conditional on it. Gated on the probe rather than left
+      # bare: if the probe itself died there is legitimately nothing to upload, and a second red
+      # step accusing the fixture of being missing would name the wrong cause.
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && steps.probe.outcome == 'success' }}
+        with:
+          name: ts-coverage-plan-catalog-fixture
+          path: packages/plan-catalog/coverage/coverage-final.json
           if-no-files-found: error
 
   runner-image-arch:

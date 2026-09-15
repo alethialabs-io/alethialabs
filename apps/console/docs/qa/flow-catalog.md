@@ -238,7 +238,7 @@ permission-denied paths are unwritten for this domain — the persona exists, th
 - Channel detail: transport/target/Verified meta; search filter no-match ("No channels match."); rename → dirty save bar → save; disable → confirm dialog ("Disable this channel?"); delete → confirm → row removed.
 - Channel verification: re-verify email succeeds ("Verified — a sample event reached the endpoint.").
 - Policies: New-policy sheet opens ("New alert policy"); required name + ≥1 event validation; security (PDP) events locked without advancedAlerting; happy path create watching one event routed to a channel.
-- Policy detail: events/routes/throttle meta; enable-switch toggle off; edit name → save; delete → confirm → removed.
+- Policy detail: events/routes/throttle meta; disable → confirm dialog ("Disable this policy?") → Cancel leaves it on; enabling a paused policy is a bare click; edit name → save; delete → confirm → removed.
 - Deliveries (Activity): lists seeded sent+failed rows with a count; failed filter narrows; delivered filter narrows.
 
 **Negatives/empty (alerts.negative.spec.ts):**

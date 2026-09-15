@@ -106,6 +106,12 @@ claim_winner() { # <window_start_epoch>  (comments JSON on stdin)
     | sort_by(.c, .i) | (.[0].i // "")'
 }
 
+# Return success when a closing PR must block this candidate. Only a named issue whose stalled
+# predicate was already validated may pass through; all ordinary claims remain fail-closed.
+closing_pr_blocks_candidate() { # <named-issue-or-empty> <validated-stalled-or-empty>
+  [ -z "$1" ] || [ -z "$2" ]
+}
+
 # run_self_test: exercise claim_winner against fixtures (no board / no gh). Server timestamps are
 # the trust anchor, so these lock the winner-selection contract.
 run_self_test() {
@@ -141,6 +147,24 @@ run_self_test() {
   _n "closes #842"                                  84   "$BOARD_PR_CLOSING_KW" "closing: word boundary — #842 is not #84"
   _n "Part of #1389"                                1389 "$BOARD_PR_CLOSING_KW" "closing: 'Part of #n' is NOT a closing match (the original bug)"
   _n "fixing #84"                                   84   "$BOARD_PR_CLOSING_KW" "closing: 'fixing' is not a GitHub keyword"
+
+  # Pin the second closing-PR gate as a pure decision. The network-backed predicate is exercised
+  # separately above; these cases prove that --takeover cannot be re-blocked after validation.
+  if closing_pr_blocks_candidate "" ""; then
+    echo "ok   - closing PR blocks an autonomous candidate"
+  else
+    echo "FAIL - closing PR did not block an autonomous candidate" >&2; fails=$((fails+1))
+  fi
+  if closing_pr_blocks_candidate "84" ""; then
+    echo "ok   - closing PR blocks an ordinary named candidate"
+  else
+    echo "FAIL - closing PR did not block an ordinary named candidate" >&2; fails=$((fails+1))
+  fi
+  if closing_pr_blocks_candidate "84" "1"; then
+    echo "FAIL - closing PR re-blocked a validated stalled takeover" >&2; fails=$((fails+1))
+  else
+    echo "ok   - validated stalled takeover passes the candidate-loop guard"
+  fi
 
   # board_pr_is_stalled — the "is the PR holding this unit actually dead?" predicate behind
   # coordinate.sh's stalled report. Pinned offline like the rest, and the two directions matter
@@ -337,7 +361,7 @@ while [ "$i" -lt "$count" ]; do
   if [ "$has_mig" = "1" ] && [ "$mig_held" != "0" ]; then continue; fi
 
   # Guard 1 — skip a unit that already has an open/merged PR closing it.
-  if has_closing_pr "$cand"; then
+  if has_closing_pr "$cand" && closing_pr_blocks_candidate "$ONLY_ISSUE" "$STALLED"; then
     echo "↷ skip #$cand — a PR already closes it (in flight or merged-but-stale-open)." >&2
     continue
   fi

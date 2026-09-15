@@ -20,6 +20,7 @@ import {
   setMemberSuspended,
 } from "@/app/server/actions/members";
 import { getCollaborationAccess } from "@/app/server/actions/billing";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { DataTable } from "@/components/data-table";
@@ -90,6 +91,120 @@ function MemberStatusBadge({ status }: { status: MemberRowView["status"] }) {
 }
 
 /**
+ * What one row's actions menu is a menu FOR — the second half of its accessible name.
+ *
+ * Every row's trigger used to be called just "Manage", which is the defect
+ * `e2e/audit/destructive.spec.ts` names in its own header: N identically-named controls, so a
+ * locator resolves one of them and records the verdict against whichever it happened to be. Two
+ * readers are hurt by it and both are served here:
+ *
+ *   · a screen-reader user, who hears "Manage" N times down a column and cannot tell which person
+ *     each button belongs to;
+ *   · anything that has to REACH a specific row — `destructive-actions.yaml` carries one entry per
+ *     control, and `Cancel invitation` exists only on an invitation's menu while `Reactivate` exists
+ *     only on a suspended member's, so a chain that opens "the first Manage" opens the wrong menu
+ *     for two of the four row controls and withholds their verdict.
+ *
+ * The KIND comes before the name so the prefix is selectable on its own ("Manage member …",
+ * "Manage suspended member …", "Manage invitation …") without any fixture having to be named.
+ */
+function rowMenuSubject(r: MemberRowView): string {
+  if (r.kind !== "member") return `invitation ${r.name}`;
+  return r.status === "suspended"
+    ? `suspended member ${r.name}`
+    : `member ${r.name}`;
+}
+
+/**
+ * A destructive members action a person has asked for but not yet confirmed.
+ *
+ * SIX of this table's controls reached the mutation on a bare click — removing a member (1),
+ * cancelling an invitation (2), suspending (3), reactivating (4), and the two bulk actions (5, 6) —
+ * which is why the union below has six variants. Each is recorded in
+ * `apps/console/destructive-actions.yaml` (`members.*`), and each now opens the console's ONE
+ * confirmation, `ConfirmDialog`. Held as a single discriminated union rather than six booleans: the
+ * dialog is one component, so its copy has to be derived from one value, and six independent flags
+ * make "two dialogs open at once" representable.
+ */
+type PendingMemberAction =
+  | { kind: "remove"; memberId: string; who: string }
+  | { kind: "cancel-invite"; invitationId: string; who: string }
+  | { kind: "suspend"; memberId: string; who: string }
+  | { kind: "reactivate"; memberId: string; who: string }
+  | { kind: "bulk-remove"; count: number }
+  | { kind: "bulk-suspend"; count: number };
+
+interface ConfirmCopy {
+  title: string;
+  description: string;
+  confirmLabel: string;
+}
+
+/**
+ * What the confirmation holds before anything has been asked for.
+ *
+ * Never painted — a closed `AlertDialog` renders no content at all — but the dialog is mounted from
+ * the first render, so the fields have to hold something, and an empty title on an
+ * `AlertDialogTitle` is a nameless dialog rather than an unused one.
+ */
+const CLOSED_COPY: ConfirmCopy = {
+  title: "Confirm this change?",
+  description: "",
+  confirmLabel: "Confirm",
+};
+
+/**
+ * The confirmation copy for one pending action.
+ *
+ * Every `confirmLabel` is distinct from the dialog's own "Cancel" escape AND from the trigger that
+ * opened it. Two buttons reading "Cancel" is the one confirmation that means nothing, and a confirm
+ * label identical to the trigger gives the destructive-action spec's locator two matches on one
+ * page — an ambiguity it reports as a withheld verdict rather than a pass. Cancelling an invitation
+ * is therefore confirmed with "Revoke invitation": the menu item says "Cancel invitation" and the
+ * way out says "Cancel", so a third spelling is what keeps all three legible.
+ */
+function confirmCopy(pending: PendingMemberAction): ConfirmCopy {
+  switch (pending.kind) {
+    case "remove":
+      return {
+        title: "Remove this member?",
+        description: `${pending.who} loses access to this organization immediately, along with every grant their membership carried. Re-adding them means a fresh invitation they have to accept.`,
+        confirmLabel: "Remove member",
+      };
+    case "cancel-invite":
+      return {
+        title: "Cancel this invitation?",
+        description: `The pending invitation for ${pending.who} stops working. If they have not accepted yet, the link in their email dies with it and they need a new invitation.`,
+        confirmLabel: "Revoke invitation",
+      };
+    case "suspend":
+      return {
+        title: "Suspend this member?",
+        description: `${pending.who} keeps their membership and role but loses every access grant until they are reactivated. Anything they have running is unaffected; they simply cannot reach it.`,
+        confirmLabel: "Suspend member",
+      };
+    case "reactivate":
+      return {
+        title: "Reactivate this member?",
+        description: `${pending.who} regains the access grants their role carries and can reach this organization again.`,
+        confirmLabel: "Reactivate member",
+      };
+    case "bulk-remove":
+      return {
+        title: "Remove the selected people?",
+        description: `${pending.count} selected ${pending.count === 1 ? "row" : "rows"} — members lose access to this organization and pending invitations are revoked. Owners in the selection are skipped. This runs row by row and is not undone by closing the page.`,
+        confirmLabel: "Remove selected",
+      };
+    case "bulk-suspend":
+      return {
+        title: "Suspend the selected members?",
+        description: `Every active, non-owner member in the ${pending.count} selected ${pending.count === 1 ? "row" : "rows"} loses their access grants until they are reactivated one at a time.`,
+        confirmLabel: "Suspend selected",
+      };
+  }
+}
+
+/**
  * A compact, borderless Select for a member's role.
  *
  * This is a FORM control that performs a mutation, not a filter — the console filter
@@ -146,6 +261,24 @@ export function MembersTable() {
   );
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Nothing in this table mutates on a bare click any more; the click records what was asked for
+  // and the ConfirmDialog at the bottom of the render decides whether it happens.
+  const [pending, setPending] = useState<PendingMemberAction | null>(null);
+  // The copy the confirmation is RENDERING, which outlives `pending` by exactly one close.
+  //
+  // The dialog is mounted for the life of the table and driven by `open` (the other six
+  // `ConfirmDialog` call sites in the console all do this; unmounting a base-ui `AlertDialog.Root`
+  // mid-close kills the exit transition and drops focus to `<body>` instead of returning it to the
+  // row). That makes `pending === null` a state the dialog still RENDERS in for the length of the
+  // close, so the question cannot be derived from `pending` alone without blanking out as it fades.
+  // This is presentation only — `pending` remains the single source of truth for what happens and
+  // for whether the dialog is open — and `askFor` is the only writer of either, so the two cannot
+  // drift apart.
+  const [copy, setCopy] = useState<ConfirmCopy>(CLOSED_COPY);
+  const askFor = useCallback((action: PendingMemberAction) => {
+    setCopy(confirmCopy(action));
+    setPending(action);
+  }, []);
 
   const membersQuery = useQuery({
     queryKey: qk.members(org),
@@ -307,7 +440,7 @@ export function MembersTable() {
           cell: ({ row }) => (
             <input
               type="checkbox"
-              aria-label="Select"
+              aria-label={`Select ${row.original.name}`}
               className="size-4 cursor-pointer accent-ink align-middle"
               checked={selected.has(row.original.key)}
               onChange={() => toggle(row.original.key)}
@@ -334,7 +467,7 @@ export function MembersTable() {
                         variant="ghost"
                         size="icon"
                         className="size-7"
-                        aria-label="Manage"
+                        aria-label={`Manage ${rowMenuSubject(r)}`}
                       >
                         <MoreHorizontal size={16} />
                       </Button>
@@ -345,20 +478,38 @@ export function MembersTable() {
                       <>
                         {r.status === "suspended" ? (
                           <DropdownMenuItem
-                            onClick={() => void suspend(r.refId, false)}
+                            onClick={() =>
+                              askFor({
+                                kind: "reactivate",
+                                memberId: r.refId,
+                                who: r.name,
+                              })
+                            }
                           >
                             Reactivate
                           </DropdownMenuItem>
                         ) : (
                           <DropdownMenuItem
-                            onClick={() => void suspend(r.refId, true)}
+                            onClick={() =>
+                              askFor({
+                                kind: "suspend",
+                                memberId: r.refId,
+                                who: r.name,
+                              })
+                            }
                           >
                             Suspend
                           </DropdownMenuItem>
                         )}
                         <DropdownMenuItem
                           className="text-destructive focus:text-destructive"
-                          onClick={() => void removeMember(r.refId)}
+                          onClick={() =>
+                            askFor({
+                              kind: "remove",
+                              memberId: r.refId,
+                              who: r.name,
+                            })
+                          }
                         >
                           Remove from organization
                         </DropdownMenuItem>
@@ -366,7 +517,13 @@ export function MembersTable() {
                     ) : (
                       <DropdownMenuItem
                         className="text-destructive focus:text-destructive"
-                        onClick={() => void cancelInvite(r.refId)}
+                        onClick={() =>
+                          askFor({
+                            kind: "cancel-invite",
+                            invitationId: r.refId,
+                            who: r.name,
+                          })
+                        }
                       >
                         Cancel invitation
                       </DropdownMenuItem>
@@ -608,11 +765,19 @@ export function MembersTable() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void bulkSuspend()}
+              onClick={() =>
+                askFor({ kind: "bulk-suspend", count: selected.size })
+              }
             >
               Suspend
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => void bulkRemove()}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                askFor({ kind: "bulk-remove", count: selected.size })
+              }
+            >
               Remove
             </Button>
           </div>
@@ -640,6 +805,51 @@ export function MembersTable() {
       ) : (
         <DataTable columns={columns} data={filtered} pageSize={20} />
       )}
+
+      {/* The one confirmation every destructive control on this table passes through. It stays
+          MOUNTED and is driven by `open` — the shape the console's other six `ConfirmDialog` call
+          sites already use (environments-view, policies-panel, channels-panel, node-inspector,
+          pending-changes-bar). The pending action is still the single source of open state, so the
+          two cannot disagree; what conditional mounting cost was the close itself. `onOpenChange`
+          clears `pending` in the same tick, so an unmounted Root was torn out while still `open`:
+          base-ui's exit transition never ran, and focus had nothing to return to — the
+          `DropdownMenuItem` that opened the dialog is gone by then, so the keyboard landed on
+          `<body>` instead of the row. `copy` is what survives that close (see its declaration).
+          `ConfirmDialog` closes itself before calling `onConfirm`, so the handler below still reads
+          the action it was opened for. */}
+      <ConfirmDialog
+        open={pending !== null}
+        onOpenChange={(next) => {
+          if (!next) setPending(null);
+        }}
+        title={copy.title}
+        description={copy.description}
+        confirmLabel={copy.confirmLabel}
+        onConfirm={() => {
+          if (!pending) return;
+          switch (pending.kind) {
+            case "remove":
+              void removeMember(pending.memberId);
+              break;
+            case "cancel-invite":
+              void cancelInvite(pending.invitationId);
+              break;
+            case "suspend":
+              void suspend(pending.memberId, true);
+              break;
+            case "reactivate":
+              void suspend(pending.memberId, false);
+              break;
+            case "bulk-remove":
+              void bulkRemove();
+              break;
+            case "bulk-suspend":
+              void bulkSuspend();
+              break;
+          }
+        }}
+      />
+
     </div>
   );
 }

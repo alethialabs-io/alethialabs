@@ -238,6 +238,116 @@ export function scanWorkflow(text) {
 	return { jobs, steps, problems, readable: true };
 }
 
+/** GitHub's hard ceiling on one template expression, in BYTES. Over it, the whole FILE is refused. */
+export const EXPRESSION_LIMIT = 21000;
+
+/** Where this check fails instead — see the note below for why the margin is a landing light, not safety. */
+export const EXPRESSION_BUDGET = 18000;
+
+/**
+ * Block scalars big enough to hit GitHub's expression-length ceiling, in the unit that ceiling uses.
+ *
+ * WHY THIS IS WORTH A CHECK, and it is the only one here with a same-repo incident three commits old.
+ * On 2026-09-10 `.github/workflows/release-gate.yml` was REFUSED BY GITHUB. Run 34460914813:
+ * `event=push`, `conclusion=failure`, `jobs: []`, and the run named `.github/workflows/release-gate.yml`
+ * instead of `Release gate` — because `on:` was never read. `gh run list --commit <sha>` returned
+ * nothing, no context reported on the PR, and the reason was legible ONLY inside that run's own UI:
+ *
+ *     (Line: 174, Col: 14): Exceeded max expression length 21000
+ *
+ * A workflow that does not load runs nothing at all, which is the worst failure in this file's
+ * catalogue: no red step, no annotation, no check. `yaml` parsed it; actionlint was silent; nothing
+ * in this repository measured it. That sentence was the finding.
+ *
+ * THREE THINGS ABOUT THE RULE, each measured rather than assumed, because a guard with the wrong
+ * one of them is worse than none:
+ *
+ *   1. IT IS BYTES, NOT CHARACTERS. The rejected scalar was 20,917 characters — UNDER the limit —
+ *      and 21,119 UTF-8 bytes. Every `—`, `·` and `→` in a comment inside a `run:` block costs
+ *      three. A character-counting version of this check would have called that file fine.
+ *   2. IT BINDS PER SCALAR, not per file and not per job. `release-gate.yml` is over three times
+ *      the limit as a file and loads, and its `legs` job carries more than the limit in `run:`
+ *      bytes across its steps and loads. Those two facts are stated without their figures on
+ *      purpose: every attempt to write the current sizes into that file went stale inside the
+ *      commit that wrote them, twice. The live numbers are the summary line below, which prints
+ *      them on a green run — that is the whole job of this check.
+ *   3. IT BINDS ONLY ON A TEMPLATED SCALAR — one containing at least one `${{ … }}`. That is what
+ *      makes GitHub compile the whole scalar as an expression. `deploy-console.yml`'s
+ *      `Assemble .env from the vault and deploy` is 22,422 bytes, over the ceiling, contains no
+ *      expression, and loads. The EVIDENCE for "untemplated and over the ceiling still runs" is
+ *      that same step at 21,500 bytes, which deployed production on 09e09542c, 59ecb03d8 and
+ *      4848b736a; it grew to 22,422 after 2026-08-31 and has not run since, so today's figure is
+ *      the claim and those three runs are the proof. The rejected release-gate scalar
+ *      contained exactly ONE — `${{ matrix.project }}`, written inside a JavaScript COMMENT
+ *      explaining a different job's flag. Prose about an expression is an expression, and it put
+ *      21 KB of shell script under a template compiler.
+ *
+ * Held against every step-level `run:`/`with.script` scalar in this repo — the summary line counts
+ * them, ~180 of them block scalars, and ZERO are `with.script`, so that arm is written for the shape
+ * and exercised only by the self-test —
+ * and against the one observed rejection: exactly one exceeds the ceiling and it is the untemplated
+ * one. That is one positive and one negative, not a documented rule — so this fails on the TEMPLATED
+ * ones only, and the summary prints the largest of BOTH kinds.
+ *
+ * SCOPE, stated: BLOCK scalars under `run:`/`script:` only. An `if:`, an `env:` value and a `with:`
+ * input are template expressions under the same ceiling; the largest of those in this repo today is
+ * 325 bytes, two orders off, so they are left unmeasured deliberately rather than by oversight.
+ *
+ * THE MARGIN IS A LANDING LIGHT, NOT A GUARDRAIL, and saying so is the point. The commit that broke
+ * the file grew one scalar from 10,574 to 21,119 bytes — a single edit larger than the whole 3,000
+ * bytes this check holds back. What it actually buys is that the measurement is TAKEN, and printed
+ * in the summary on a green run, in a file whose entire lesson was that nobody was taking it.
+ *
+ * Line-scanned like everything else here: `yaml` is not a root dependency. Verified against
+ * `yaml@2.9.0`'s own parse of all 40 workflows — same scalars, same byte counts.
+ *
+ * @param {string} text
+ * @returns {{line: number, key: string, bytes: number, chars: number, templated: boolean}[]}
+ */
+export function scanExpressionBudget(text) {
+	const lines = text.split("\n");
+	const out = [];
+	for (let i = 0; i < lines.length; i++) {
+		// `run: |`, `- run: >-`, `script: |2-` … YAML allows the indentation indicator and the chomping
+		// indicator in EITHER order, and the first version of this matched only `[-+]?\d*` — so `|2-`
+		// was not a block scalar to it and the step went UNMEASURED, silently, which is the one
+		// direction a byte guard must not fail in. What matters is that a BLOCK scalar starts here;
+		// an inline `run: pnpm i` is never in range.
+		//
+		// THE BOUND on an explicit indentation indicator: the dedent below uses the observed minimum
+		// indent, so for `|2` whose lines are ALL deeper than two it strips more than YAML would and
+		// under-counts. No workflow here uses one; they are matched so that adding one is measured at
+		// all, which beats being invisible.
+		const head = lines[i].match(/^(\s*)(?:-\s+)?(run|script):\s*[|>](?:\d[-+]?|[-+]\d?)?\s*$/);
+		if (head === null) continue;
+		const indent = head[1].length + (/^\s*-\s/.test(lines[i]) ? 2 : 0);
+		const body = [];
+		let j = i + 1;
+		for (; j < lines.length; j++) {
+			const blank = lines[j].trim() === "";
+			const deeper = (lines[j].match(/^(\s*)/)?.[1].length ?? 0) > indent;
+			if (!blank && !deeper) break;
+			body.push(lines[j]);
+		}
+		while (body.length > 0 && body[body.length - 1].trim() === "") body.pop();
+		if (body.length === 0) continue;
+		const base = Math.min(...body.filter((l) => l.trim() !== "").map((l) => l.match(/^(\s*)/)?.[1].length ?? 0));
+		// `|` and `>` clip to exactly one trailing newline; `-` strips it. Getting this wrong is one
+		// byte, but a check that is one byte wrong about a byte limit has not understood the limit.
+		const clip = /[|>]-/.test(lines[i]) ? "" : "\n";
+		const value = `${body.map((l) => (l.length > base ? l.slice(base) : "")).join("\n")}${clip}`;
+		out.push({
+			line: i + 1,
+			key: head[2],
+			bytes: Buffer.byteLength(value, "utf8"),
+			chars: value.length,
+			templated: value.includes("${{"),
+		});
+		i = j - 1;
+	}
+	return out;
+}
+
 /**
  * Steps in a SERVICE-BEARING job whose `if:` survives a **setup** failure without also asking
  * whether anything was ever set up.
@@ -374,6 +484,11 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 	let unreadable = 0;
 	let permissionEntries = 0;
 	let serviceJobs = 0;
+	// The largest scalar seen, templated or not. NOT printed from here — `check()` returns problems
+	// and nothing else; the green line is built in `main()` below and takes its own measurement.
+	// This copy exists for one thing: the blindness test at the bottom, which refuses a tree in which
+	// no block scalar was found at all.
+	let biggestScalar = { bytes: 0, chars: 0, templated: false, file: "", line: 0, key: "" };
 	for (const f of files.sort()) {
 		const text = readFile(path.join(dir, f));
 		const { jobs, steps, problems, readable } = scanWorkflow(text);
@@ -422,6 +537,20 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 					`parsed \`${t.parsed}\`. An unquoted \`#\` preceded by whitespace opens a comment, so the ` +
 					"Actions UI drops everything after it — including the issue reference the name exists to carry. " +
 					`Quote it: \`name: '${t.written}'\`.`,
+			);
+		}
+		for (const b of scanExpressionBudget(text)) {
+			if (b.bytes > biggestScalar.bytes) biggestScalar = { ...b, file: f };
+			if (!b.templated || b.bytes <= EXPRESSION_BUDGET) continue;
+			out.push(
+				`${dir}/${f}:${b.line}: this \`${b.key}:\` block is ${b.bytes} BYTES (${b.chars} characters) and contains a \`\${{ … }}\`, ` +
+					`which makes Actions compile the whole scalar as one template expression — ceiling ${EXPRESSION_LIMIT}, budget here ${EXPRESSION_BUDGET}. ` +
+					"Over the ceiling the WHOLE FILE is refused: a run with zero jobs, named after the file's PATH instead of its `name:`, on the `push` event " +
+					"because `on:` was never read, no context reported on the PR, and the reason legible only inside that run's own UI " +
+					"(`Exceeded max expression length 21000`, run 34460914813). " +
+					"Move prose OUT of the block into YAML `#` comments, which cost nothing, or split the step — each `run:` has its own budget. " +
+					"If the block needs no interpolation at all, deleting the last `${{ … }}` takes it out of the limit entirely: an untemplated scalar is never measured, " +
+					"which is how deploy-console.yml has deployed production carrying an untemplated block of 21,500 bytes.",
 			);
 		}
 		const guards = scanServiceGuards(text);
@@ -473,6 +602,15 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 				"service container in several jobs, so the setup-failure scanner has stopped matching — fix it rather than trusting the green.",
 		);
 	}
+	// And for the byte-budget scanner. Its subject is EVERY block scalar in the directory — 180 of
+	// them — so zero means the block-scalar matcher stopped matching, and the one number this check
+	// exists to take would silently become "nothing to report".
+	if (biggestScalar.bytes === 0) {
+		out.push(
+			`parsed ${files.length} workflow file(s) and found ZERO \`run:\`/\`script:\` BLOCK scalars. There are ~180, so the ` +
+				"expression-budget scanner has stopped matching — and a byte limit nobody measures is how release-gate.yml was refused by GitHub with no red anywhere.",
+		);
+	}
 	if (unreadable === files.length) {
 		out.push(`none of the ${files.length} workflow files had a \`jobs:\` block this parser could find.`);
 	}
@@ -520,7 +658,13 @@ jobs:
 		check(
 			"wf",
 			() => ["w.yml"],
-			() => `name: x\n${body}jobs:\n  a:\n    runs-on: ubuntu-latest\n    services:\n      postgres:\n        image: postgres:17-alpine\n    steps:\n      - run: true\n`,
+			// The step carries a BLOCK scalar, not `run: true`: `check()` refuses a tree in which it finds
+			// no block scalar at all, on the same grounds as the three blindness guards beside it, and a
+			// fixture that trips a guard unrelated to its subject tests the guard rather than the subject.
+			// Revert this one line and five permission assertions go red, NONE of them mentioning block
+			// scalars — the failure misattributes, which is the cost of a shared fixture and the reason
+			// this comment names the coupling instead of leaving the next reader to find it.
+			() => `name: x\n${body}jobs:\n  a:\n    runs-on: ubuntu-latest\n    services:\n      postgres:\n        image: postgres:17-alpine\n    steps:\n      - run: |\n          true\n`,
 		);
 
 	const REAL = "permissions:\n  contents: read\n  administration: read # the #3229 regression\n  issues: write\n";
@@ -710,6 +854,50 @@ jobs:
 
 	// Blindness. Each of these would otherwise be a clean report.
 	ok("a file with no jobs: block is unreadable, not clean", scanWorkflow("name: x\non: push\n").readable === false);
+
+	// ── the expression byte budget (the release-gate.yml rejection, 2026-09-10) ──────────────────
+	//
+	// Every case here is a shape MEASURED on the real files, not invented: the rejected scalar, the
+	// 22 KB untemplated one that deploys production, and the character/byte gap that made the first
+	// look safe. The oracle for the whole matcher is that it reports the rejected file at the line
+	// GitHub named, 174, with the byte count GitHub compared against 21000.
+	const block = (bytes, { expr = false, indicator = "|", item = false } = {}) => {
+		const filler = "x".repeat(Math.max(0, bytes - (expr ? 22 : 0)));
+		const body = `          ${filler}${expr ? "  # ${{ matrix.project }}" : ""}\n`;
+		return `jobs:\n  a:\n    steps:\n      ${item ? "- " : "- name: n\n        "}run: ${indicator}\n${body}`;
+	};
+	const budgeted = (text) => scanExpressionBudget(text).filter((b) => b.templated && b.bytes > EXPRESSION_BUDGET);
+	ok("a 22 KB block with NO expression is not measured against the limit",
+		budgeted(block(22000)).length === 0 && scanExpressionBudget(block(22000))[0].bytes > EXPRESSION_LIMIT,
+		JSON.stringify(scanExpressionBudget(block(22000))));
+	ok("...and the same block with ONE `${{ … }}` in a comment is over budget",
+		budgeted(block(22000, { expr: true })).length === 1);
+	ok("a small templated block is fine", budgeted(block(500, { expr: true })).length === 0);
+	// THE UNIT. A block of em dashes is 3 bytes per character: under budget counted wrongly, over
+	// counted rightly. This is the case that decides whether the check would have caught #4466's
+	// first commit at all — it was 20,917 characters and 21,119 bytes.
+	const emdash = `jobs:\n  a:\n    steps:\n      - run: |\n          ${"—".repeat(6400)} # \${{ matrix.project }}\n`;
+	const dashRow = scanExpressionBudget(emdash)[0];
+	ok("the budget is BYTES, not characters", dashRow.chars < EXPRESSION_BUDGET && dashRow.bytes > EXPRESSION_BUDGET,
+		`chars=${dashRow.chars} bytes=${dashRow.bytes}`);
+	ok("...and it is reported", budgeted(emdash).length === 1);
+	ok("a `>-` folded block is measured too", scanExpressionBudget(block(300, { indicator: ">-" })).length === 1);
+	// Both orders of the two indicators, because only one of them was matched at first and the miss
+	// was silent: an unmatched block header is not a small measurement, it is no measurement.
+	for (const ind of ["|", "|-", "|+", "|2", "|2-", "|-2", ">", ">-", ">2+"]) {
+		ok(`\`${ind}\` is recognised as a block scalar`, scanExpressionBudget(block(300, { indicator: ind })).length === 1, ind);
+	}
+	ok("...and a bare `- run: |` list item is not missed", scanExpressionBudget(block(300, { item: true })).length === 1);
+	ok("`|` clips exactly one trailing newline, `|-` none",
+		scanExpressionBudget("jobs:\n  a:\n    steps:\n      - run: |\n          ab\n").at(0).bytes === 3 &&
+			scanExpressionBudget("jobs:\n  a:\n    steps:\n      - run: |-\n          ab\n").at(0).bytes === 2);
+	ok("an inline `run: pnpm i` is not a block scalar", scanExpressionBudget("jobs:\n  a:\n    steps:\n      - run: pnpm i\n").length === 0);
+	ok("two adjacent blocks are two measurements, not one",
+		scanExpressionBudget("jobs:\n  a:\n    steps:\n      - run: |\n          one\n      - run: |\n          two\n      - run: |\n          three\n").length === 3);
+	// The blindness direction: a matcher that stops matching must not read as "nothing to report".
+	ok("finding zero block scalars is a problem, not a pass",
+		check("d", () => ["w.yml"], () => "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v7\n")
+			.some((p) => /ZERO `run:`\/`script:` BLOCK scalars/.test(p)));
 	const noDir = check("nope", () => { throw new Error("ENOENT"); });
 	ok("an unreadable directory fails", /cannot run, which is not the same as passing/.test(noDir[0] ?? ""), JSON.stringify(noDir));
 	const empty = check("d", () => []);
@@ -742,11 +930,22 @@ if (process.argv.includes("--self-test")) {
 	let steps = 0;
 	let perms = 0;
 	let svcJobs = 0;
+	let scalars = 0;
+	let biggest = { bytes: 0, chars: 0, file: "", line: 0, key: "" };
+	// The largest scalar of ANY kind, printed beside it. The templated one is what the limit BINDS
+	// on; this one is what would breach it the day somebody writes `${{` into it, and leaving it out
+	// of the green line is this file's own lesson failing on the number most worth having.
+	let overall = { bytes: 0, chars: 0, templated: false, file: "", line: 0, key: "" };
 	for (const f of files) {
 		const text = fs.readFileSync(path.join(DIR, f), "utf8");
 		steps += scanWorkflow(text).steps;
 		perms += scanPermissions(text).length;
 		svcJobs += scanServiceGuards(text).serviceJobs;
+		for (const b of scanExpressionBudget(text)) {
+			scalars += 1;
+			if (b.templated && b.bytes > biggest.bytes) biggest = { ...b, file: f };
+			if (b.bytes > overall.bytes) overall = { ...b, file: f };
+		}
 	}
 	// The counts are printed because a green line that names no quantity is indistinguishable from a
 	// green line produced by a scanner that matched nothing.
@@ -754,6 +953,10 @@ if (process.argv.includes("--self-test")) {
 		`workflow-shape: ${files.length} workflow(s), ${steps} steps, every one carrying a \`run:\` or \`uses:\`; ` +
 			`${perms} permission entr(ies), every scope and level one Actions accepts; ` +
 			`${svcJobs} job(s) with \`services:\`, none of them running a step past a failed \`Initialize containers\`; ` +
-			"no `name:` losing text to an unquoted `#`",
+			"no `name:` losing text to an unquoted `#`; " +
+			`largest TEMPLATED block scalar ${biggest.bytes} bytes of ${EXPRESSION_BUDGET} budgeted (${EXPRESSION_LIMIT} is where Actions refuses the file) ` +
+			`— ${biggest.file}:${biggest.line}, of ${scalars} block scalar(s) measured; ` +
+			`largest of ANY kind ${overall.bytes} bytes — ${overall.file}:${overall.line}` +
+			`${overall.templated ? "" : ", untemplated"}${overall.bytes > EXPRESSION_LIMIT ? ` — OVER the ${EXPRESSION_LIMIT} ceiling, and one \`\${{\` away from taking that workflow off the air` : ""}`,
 	);
 }

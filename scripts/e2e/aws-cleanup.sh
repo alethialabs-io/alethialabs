@@ -51,6 +51,8 @@
 #   ALETHIA_E2E_ENV=<run_id>-<attempt> ALETHIA_E2E_REGION=us-east-1 ./scripts/e2e/aws-cleanup.sh
 #   (positional $1 accepted for call-site symmetry with hcloud-cleanup.sh but IGNORED.)
 #   DRY_RUN=1 ...     # list what WOULD be deleted, delete + verify nothing
+#   VERIFY_ONLY=1 ... # AFTER a teardown: re-list the cloud for this run and report, sweeping and
+#                     #   deleting nothing. Exits with the verification contract below (#4398).
 #
 # Exit codes (the verification contract — see finalize_verification):
 #   0  every probe answered, and nothing billable for this run survived
@@ -100,6 +102,29 @@ ENV="${ALETHIA_E2E_ENV:-}"
 REGION="${ALETHIA_E2E_REGION:-}"
 DRY_RUN="${DRY_RUN:-0}"
 PREFLIGHT="${PREFLIGHT:-0}"
+# ── VERIFY_ONLY (#4398) — ask the cloud, change nothing. ────────────────────────────────────────
+#
+# The same scope-locked verification the normal path ends with (finalize_verification), with every
+# sweep skipped. It DELETES NOTHING: the only cloud calls it makes are the LIST/DESCRIBE calls
+# verify_swept already makes, through the same probe_run that keeps CLEAN and UNVERIFIABLE apart.
+#
+# WHY IT IS A MODE HERE AND NOT A NEW SCRIPT. Teardown success was INFERRED, never measured: the
+# rollup read whether the `Guaranteed teardown` STEP reported a conclusion and called any non-empty
+# conclusion `done`. A step conclusion cannot answer "is the account clean" — the sweeper exits 0,
+# 1 or 4 for three different reasons and Actions renders two of them as the same `failure`. Worse,
+# these scripts run under `set -e`, so a sweep function that dies takes the process with it and
+# finalize_verification NEVER RUNS: the step goes red, the rollup reads `done`, and nothing has
+# looked at the cloud at all. A second, independent pass whose ONLY job is to look closes both.
+#
+# It must never be combined with a mode that exits 0 without verifying, because the receipt written
+# from this script's exit status would then read that 0 as "the account is empty". Refused, loudly,
+# rather than silently ignored — a silently ignored flag is how a verification pass becomes a
+# verification-shaped no-op.
+VERIFY_ONLY="${VERIFY_ONLY:-0}"
+if [ "$VERIFY_ONLY" = "1" ] && { [ "$DRY_RUN" = "1" ] || [ "$PREFLIGHT" = "1" ]; }; then
+	echo "::error::VERIFY_ONLY=1 with DRY_RUN=1 or PREFLIGHT=1 — both exit 0 WITHOUT verifying, and this exit status is read as a cloud verdict. Refusing." >&2
+	exit 2
+fi
 DELETE_RETRIES="${DELETE_RETRIES:-5}"
 DETACH_TIMEOUT="${DETACH_TIMEOUT:-180}"
 # ── PREFLIGHT budget (#2257). The preflight's "never blocks the provisioning run" promise is
@@ -167,8 +192,13 @@ export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION" AWS_PAGER=""
 
 # The per-run banner is for the normal (belt-and-suspenders) path; PREFLIGHT prints its own below.
 if [ "$PREFLIGHT" != "1" ] && [ "$SELF_TEST" != "1" ]; then
-	echo "→ aws belt-and-suspenders cleanup in ${REGION}, scope alethia:project-id=${PROJECT_ID_TAG}"
-	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
+	if [ "$VERIFY_ONLY" = "1" ]; then
+		echo "→ aws POST-TEARDOWN VERIFICATION in ${REGION}, scope alethia:project-id=${PROJECT_ID_TAG}"
+		echo "  (VERIFY_ONLY=1 — re-listing the cloud, sweeping nothing, deleting nothing)"
+	else
+		echo "→ aws belt-and-suspenders cleanup in ${REGION}, scope alethia:project-id=${PROJECT_ID_TAG}"
+		[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
+	fi
 fi
 
 # assert_scope — a STRING check on the tag handle, and nothing more. It makes no cloud call, so it
@@ -2132,19 +2162,23 @@ fi
 #    because RDS and ElastiCache hold ENIs in the private subnets; sweep_managed_services sits after
 #    it because nothing it touches does. ──
 discover_cluster
-sweep_instances
-sweep_load_balancers
-sweep_eks
-sweep_data_services
-sweep_nat_and_eips
-sweep_volumes
-sweep_network
-sweep_managed_services
-sweep_acm
-sweep_route53
-# Last: the free leftovers. Nothing depends on them, and removing them is what stops a finished
-# run being rediscovered as an orphan for the rest of the account's life.
-sweep_litter
+# VERIFY_ONLY skips every mutating pass and drops straight to the verification below. discover_cluster
+# stays: it resolves the CLUSTER handle the scoped probes read, and it only describes.
+if [ "$VERIFY_ONLY" != "1" ]; then
+	sweep_instances
+	sweep_load_balancers
+	sweep_eks
+	sweep_data_services
+	sweep_nat_and_eips
+	sweep_volumes
+	sweep_network
+	sweep_managed_services
+	sweep_acm
+	sweep_route53
+	# Last: the free leftovers. Nothing depends on them, and removing them is what stops a finished
+	# run being rediscovered as an orphan for the rest of the account's life.
+	sweep_litter
+fi
 
 if [ "$DRY_RUN" = "1" ]; then
 	echo "✓ aws DRY RUN complete for alethia:project-id=${PROJECT_ID_TAG} (nothing deleted, nothing verified)"

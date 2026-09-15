@@ -6,6 +6,7 @@
 // mutation hooks are mocked so the test never touches the server actions.
 
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type {
 	AddonInstallState,
@@ -203,6 +204,55 @@ describe("AddonConfigForm", () => {
 		expect(screen.getByText("Set")).toBeInTheDocument();
 		expect(input).toHaveValue("");
 		expect(screen.queryByText(/data/)).not.toBeInTheDocument();
+	});
+
+	// ── the confirmation (#4281), observed rather than claimed (#4600 review).
+	//
+	// `destructive-actions.yaml` records `addons.remove: confirmed`, and NOTHING else in the repo
+	// can see that: the live spec needs an installed add-on it has no fixture for, `prod-qa: skip`
+	// keeps it out of the production sweep, and the static census only proves `useDisableAddon`
+	// OCCURS in this file — true however the click is wired. These two are what a later refactor
+	// restoring `onClick={onRemove}` has to get past.
+
+	it("does NOT remove on a bare click — Remove opens the confirmation", async () => {
+		const user = userEvent.setup();
+		disableMut.mutateAsync.mockClear();
+		render(
+			<AddonConfigForm
+				item={{ ...BASE_ITEM, install: INSTALL }}
+				projectId="p1"
+				environmentId="e1"
+				hasAppsRepo
+				provider={null}
+				onDone={vi.fn()}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: /^remove$/i }));
+		expect(disableMut.mutateAsync).not.toHaveBeenCalled();
+		expect(screen.getByText("Remove this add-on?")).toBeInTheDocument();
+	});
+
+	it("removes only from the dialog's confirm", async () => {
+		const user = userEvent.setup();
+		disableMut.mutateAsync.mockClear();
+		disableMut.mutateAsync.mockResolvedValue(undefined);
+		render(
+			<AddonConfigForm
+				item={{ ...BASE_ITEM, install: INSTALL }}
+				projectId="p1"
+				environmentId="e1"
+				hasAppsRepo
+				provider={null}
+				onDone={vi.fn()}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: /^remove$/i }));
+		await user.click(screen.getByRole("button", { name: /remove add-on/i }));
+		expect(disableMut.mutateAsync).toHaveBeenCalledWith({
+			projectId: "p1",
+			environmentId: "e1",
+			addonId: BASE_ITEM.id,
+		});
 	});
 
 	it("renders a nested field as a one-level group of its children", () => {

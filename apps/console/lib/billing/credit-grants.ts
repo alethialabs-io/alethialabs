@@ -16,7 +16,7 @@
 import type Stripe from "stripe";
 import { isStripeConfigured } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
-import { planFromSubscription } from "@/lib/billing/sync";
+import { planFromSubscription, planItem } from "@/lib/billing/sync";
 import { planMeta } from "@repo/plan-catalog";
 
 /**
@@ -33,7 +33,21 @@ export async function ensureIncludedCredit(sub: Stripe.Subscription): Promise<vo
 		const orgId = sub.metadata?.organization_id;
 		if (!orgId) return;
 
-		const item = sub.items.data[0];
+		// `planItem`, NOT `items.data[0]` (#4655). This function exists BECAUSE the runner-minutes
+		// meter is enabled (see the ops note above), so the subscription it is handed carries two
+		// items — and the Stripe API does not promise `items.data` in creation order. Off position 0
+		// the meter price resolves to no plan, so the org silently gets zero included credit, and
+		// the grant's expiry and period key come off the meter's period rather than the plan's.
+		const item = planItem(sub);
+		if (!item && sub.items.data.length > 0) {
+			// Loud rather than silent, as syncSubscriptionToBilling is: everything below now resolves
+			// from metadata.plan alone, and the grant loses its expiry and its period key. Guessing
+			// the plan from a meter price instead is the same defect wearing a different name.
+			console.warn(
+				`[billing] subscription ${sub.id} carries ${sub.items.data.length} item(s) and none is a ` +
+					"licensed plan line — resolving the included credit from metadata.plan only",
+			);
+		}
 		// Resolve from metadata.plan first (like syncSubscriptionToBilling): an Enterprise
 		// subscription is on a CUSTOM negotiated price whose id isn't in the STRIPE_PRICE_* map,
 		// so planForPriceId alone returns null and the org would silently get zero included credit.

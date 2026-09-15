@@ -32,7 +32,8 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
 
 `pnpm wt <name>` creates `../wt-<name>` on `feat/<name>` off `dev`. Commit there, push, open a
 PR into `dev`. `pnpm wt:ls` lists them · `pnpm wt:who` shows holders · `pnpm wt:rm <name>` ·
-`pnpm wt:prune` sweeps landed ones (`--dry-run` previews) · `pnpm wt:release` · `pnpm wt:steal <name>`.
+`pnpm wt:prune` sweeps landed ones (`--dry-run` previews) · `pnpm wt:dehydrate` gives back the
+`node_modules` of the ones nobody holds · `pnpm wt:release` · `pnpm wt:steal <name>`.
 `pnpm branch:prune` does the same for the *branches* they leave behind (also `--dry-run`); plain
 `git branch -d` cannot, because it asks an ancestry question that a squash merge always answers "no".
 
@@ -45,6 +46,24 @@ reuse, remove, edit, or commit from it — it is told who holds it. Reads stay a
 it") and committed the first instance's **uncommitted** work under its own message (#1247).
 
 Worktrees are **de-hydrated** — no local `node_modules`. Run their checks with `pnpm env:check`.
+
+Nothing used to put one *back* into that state. A tree that is abandoned but whose branch never
+landed is invisible to `wt:prune` — which removes only LANDED, clean trees — so it sat there for
+good (#4580). `pnpm wt:dehydrate [--dry-run]` reaps `node_modules` and nothing else from every tree
+whose lease is not live: the tree, its tracked files and its uncommitted work all stay, which is
+why it can touch the trees `wt:prune` must refuse. The one other thing it clears is the reaped
+tree's own dead lease record, so a tree that read `stale` in `wt:who` reads `free` afterwards. It
+never touches a tree a live instance holds — *including yours*; `pnpm wt:release` first if you mean
+it. While it holds a tree the lock is a live foreign lease to everyone, so `git stash` — whose
+stack is repo-wide — is refused for the duration of the sweep.
+
+**Do not quote its byte figures as savings, and do not quote #4580's "~2 GB per tree" either — both
+are `du`'s numbers.** pnpm here uses APFS clones, so a tree's `node_modules` is mostly references
+into the pnpm store and a block is freed only when its **last** reference goes. Measured on one real
+tree: `du` said 1996 MB, `df` moved **52 MB** — 38× out. That is the argument *for* the sweep, not
+against it: dropping the last reference is the only thing that frees the shared blocks, and an
+abandoned, un-prunable tree holds one forever. Run it across the dead trees, then `pnpm store
+prune`, then read `df -h /` — which is the only thing that answers "did that help".
 
 If you do have to install one — a generator such as `gen:go-enums` needs a real `node_modules` —
 pass **`--frozen-lockfile`**. pnpm enables it in CI and leaves it OFF everywhere else, so a bare
@@ -277,7 +296,8 @@ on a server action that escapes its boundary.
 
 ## 7. The harness itself
 
-Four hooks gate every session (`.claude/settings.json`):
+Eight hooks run around every session (`.claude/settings.json`) — five of them gate a tool call,
+one reports after an edit, and two run at the session boundary:
 
 | Hook | Event | What it does |
 |---|---|---|
@@ -288,6 +308,22 @@ Four hooks gate every session (`.claude/settings.json`):
 | `.claude/hooks/guard-iac.sh` | PreToolUse · Bash | Refuses `tofu`/`terraform` apply, destroy and `plan -destroy` — including the flag-first forms a permission rule cannot match |
 | `.claude/hooks/check-migration-chain.sh` | PostToolUse · edits | Reports a forked drizzle snapshot chain at edit time, not at commit time |
 | `.claude/hooks/session-runtime.sh` | SessionStart | Runtime banner, and warns when the harness you are running is stale |
+| `.claude/hooks/session-cleanup.sh` | SessionStart · SessionEnd | Fast-forwards the main checkout, then sweeps landed worktrees and branches |
+
+`session-cleanup.sh` is the hook that *acts* on what `session-runtime.sh` only warns about. It is
+**async on both events** — the worktree sweep is ~65s and the branch sweep runs into minutes, and a
+session that will not start because a prune is walking 200 branches is worse than a tree swept one
+session later. It adds no opinion about what is safe to delete: `worktree.sh --prune` and
+`branch-prune.sh` make every such judgement, and both already refuse uncommitted work, unlanded
+branches and trees a live instance holds. What it adds is a **census of what they refused** — those
+trees are never reclaimed by any sweep, so a count is the only thing that keeps them visible.
+
+At SessionEnd it runs `--quick`: the worktree sweep only. The branch sweep is skipped there because
+nothing is waiting on the result and an async hook whose process is being torn down may not finish —
+and a prune killed mid-flight can leave behind the lease it took. Two consequences worth knowing:
+**Ctrl+C that interrupts a turn fires nothing** (no hook event exists for it; Ctrl+C that *exits* is
+SessionEnd), and this must never be registered on `Stop`, which fires at the end of **every turn** —
+that would prune worktrees out from under lanes that are still building in them.
 
 Beyond the hooks, `.claude/settings.json` carries a **permission policy**. `deny` is absolute
 — it beats any allow rule and any hook — and covers the things that cannot be undone:

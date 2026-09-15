@@ -14,10 +14,9 @@ import { planMeta } from "@repo/plan-catalog";
 import { getEmailConfig } from "@repo/email/config";
 import type { EmailAttachment } from "@repo/email/send";
 import { and, asc, eq } from "drizzle-orm";
-import { planForPriceId } from "@/lib/billing/config";
 import { issueFactura } from "@/lib/billing/odoo-invoice";
 import { getStripe } from "@/lib/billing/stripe";
-import { planFromSubscription } from "@/lib/billing/sync";
+import { planFromSubscription, planItem } from "@/lib/billing/sync";
 import type { BillingPlan } from "@/lib/db/schema/enums";
 import { getServiceDb } from "@/lib/db";
 import { member, organization, user } from "@/lib/db/schema";
@@ -67,11 +66,48 @@ function fmtPeriod(startSec?: number | null, endSec?: number | null): string | u
 	return `${fmtDate(startSec)} – ${fmtDate(endSec)}`;
 }
 
-/** Display plan name ("Pro"/"Enterprise"/…) from a subscription's price. */
+// ── Subscription-item resolution ────────────────────────────────────────────
+
+/**
+ * The subscription's PLAN-bearing (licensed) line, warning when a subscription that HAS items
+ * carries none — everything the emails read off it then falls back to `metadata.plan`.
+ *
+ * Wraps `planItem` (lib/billing/sync.ts) so every email asks the one question in the one place.
+ * NOT `items.data[0]` (#4655): a subscription created while `STRIPE_PRICE_METER_TEAM` is set
+ * carries a flat plan line AND a metered runner-minutes line, and the Stripe API does not promise
+ * `items.data` in creation order. Read position 0 and, whenever the meter is listed first, the
+ * receipt names the wrong plan and the cancellation email quotes the meter's period end as the
+ * date the customer loses access.
+ *
+ * The `undefined` case deliberately has NO positional fallback: a meter price is not a plan
+ * price, and naming a plan from one is the defect restated. `planFromSubscription` resolves from
+ * `metadata.plan` instead, which is also what carries Enterprise (sold on a custom negotiated
+ * price that no `STRIPE_PRICE_*` entry maps).
+ *
+ * The warning can appear twice for one email — the cancellation email asks once for the plan name
+ * and once for the period end. Both lines name the subscription, so the repeat is noise rather
+ * than a second finding; de-duplicating it is not worth threading the item through the senders.
+ */
+function emailPlanItem(sub: Stripe.Subscription): Stripe.SubscriptionItem | undefined {
+	const item = planItem(sub);
+	if (!item && sub.items.data.length > 0) {
+		console.warn(
+			`[billing-email] subscription ${sub.id} carries ${sub.items.data.length} item(s) and ` +
+				"none is a licensed plan line — naming the plan from metadata.plan only",
+		);
+	}
+	return item;
+}
+
+/**
+ * Display plan name ("Pro"/"Enterprise"/…) for a subscription.
+ *
+ * Through `planFromSubscription` rather than `planForPriceId` alone: that is the resolution every
+ * other billing surface uses, it honours `metadata.plan`, and it is what `sendPlanWelcomeEmail`
+ * below already did — so two emails about one subscription can no longer name two different plans.
+ */
 function planLabelFromSub(sub: Stripe.Subscription): string {
-	const priceId = sub.items.data[0]?.price.id;
-	const plan = priceId ? planForPriceId(priceId) : null;
-	return planMeta(plan ?? "team").name;
+	return planMeta(planFromSubscription(sub, emailPlanItem(sub)?.price.id) ?? "team").name;
 }
 
 // ── Resolution helpers ──────────────────────────────────────────────────────
@@ -223,7 +259,7 @@ export async function sendSubscriptionCanceledEmail(
 ): Promise<void> {
 	const to = await recipient(sub.customer);
 	if (!to) return;
-	const periodEnd = sub.items.data[0]?.current_period_end;
+	const periodEnd = emailPlanItem(sub)?.current_period_end;
 	const config = getEmailConfig();
 	await sendGuardedEmail({
 		from: config.from.general,
@@ -280,7 +316,7 @@ export async function sendPlanWelcomeEmailForOrg(args: {
 export async function sendPlanWelcomeEmail(sub: Stripe.Subscription): Promise<void> {
 	await sendPlanWelcomeEmailForOrg({
 		orgId: sub.metadata?.organization_id,
-		plan: planFromSubscription(sub, sub.items.data[0]?.price.id),
+		plan: planFromSubscription(sub, emailPlanItem(sub)?.price.id),
 		isTrial: sub.status === "trialing",
 		to: await recipient(sub.customer),
 	});

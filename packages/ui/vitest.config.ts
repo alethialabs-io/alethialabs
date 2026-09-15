@@ -60,6 +60,13 @@ export default defineConfig({
 				"src/provider-icon.tsx",
 				"src/copy-button.tsx",
 				"src/status-badge.tsx",
+				"src/filter-bar.tsx",
+				"src/filter-chip.tsx",
+				"src/filter-search.tsx",
+				"src/multi-combobox.tsx",
+				"src/popover.tsx",
+				"src/select.tsx",
+				"src/utils.ts",
 				// Authored behaviour, not a vendored re-export: it drives base-ui's Menu from a
 				// VIRTUAL anchor because React Flow swallows the pane's `contextmenu` when
 				// `panOnDrag` includes button 2. `check-coverage-exclusions` is right that an
@@ -68,7 +75,22 @@ export default defineConfig({
 				// "nothing found" and "nothing wrong" branches are one branch.
 				"src/context-menu.tsx",
 			],
-			exclude: ["src/**/*.d.ts"],
+			// These shadcn/Radix wrappers are deliberately proved through the composed-component
+			// suites that mount them, rather than counted in the authored-logic unit badge. Naming
+			// them here makes that a durable tier decision instead of an allowlist omission.
+			exclude: [
+				"src/**/*.d.ts",
+				"src/avatar.tsx",
+				"src/badge.tsx",
+				"src/button.tsx",
+				"src/calendar.tsx",
+				"src/collapsible.tsx",
+				"src/command.tsx",
+				"src/dialog.tsx",
+				"src/input.tsx",
+				"src/label.tsx",
+				"src/sheet.tsx",
+			],
 		},
 	},
 });

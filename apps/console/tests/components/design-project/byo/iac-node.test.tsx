@@ -7,13 +7,13 @@
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IacNode } from "@/components/design-project/byo/iac-node";
 import {
 	IacSourceCanvasProvider,
 	type IacSourceCanvasContextValue,
 } from "@/components/design-project/byo/iac-source-canvas-context";
-import type { IacSourceState } from "@/app/server/actions/byo-iac";
+import { detachIacSource, type IacSourceState } from "@/app/server/actions/byo-iac";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 vi.mock("@/app/server/actions/byo-iac", () => ({
@@ -61,6 +61,10 @@ function renderNode(source: IacSourceState) {
 }
 
 describe("IacNode", () => {
+	beforeEach(() => {
+		vi.mocked(detachIacSource).mockClear();
+	});
+
 	it("renders repo, ref, path and the pinned + deployed short-shas", () => {
 		renderNode(makeSource());
 		expect(screen.getByText("github.com/acme/infra-tofu")).toBeInTheDocument();
@@ -104,5 +108,44 @@ describe("IacNode", () => {
 		renderNode(makeSource());
 		await user.click(screen.getByTitle("IaC safety scan"));
 		expect(useCanvasStore.getState().card).toEqual({ kind: "iac-scan" });
+	});
+
+	// ── the confirmation (#4281), and the state in which it is not offered at all (#4600 review).
+	//
+	// These two assert what `destructive-actions.yaml`'s `byo.iac.detach: confirmed` CLAIMS. The
+	// live spec cannot observe it — it needs an attached BYO source it has no fixture for — and the
+	// static census only proves `detachIacSource` OCCURS in this file, which stays true however the
+	// click is wired. Without them, restoring `onClick={() => void detach()}` in a later refactor
+	// leaves the ledger saying `confirmed` with nothing red anywhere.
+
+	it("does NOT detach on a bare click — the X opens the confirmation", async () => {
+		const user = userEvent.setup();
+		renderNode(makeSource({ deployedCommitSha: null }));
+		await user.click(screen.getByTitle("Detach IaC source"));
+		expect(detachIacSource).not.toHaveBeenCalled();
+		expect(screen.getByText("Detach this IaC source?")).toBeInTheDocument();
+	});
+
+	it("detaches only from the dialog's confirm", async () => {
+		const user = userEvent.setup();
+		renderNode(makeSource({ deployedCommitSha: null }));
+		await user.click(screen.getByTitle("Detach IaC source"));
+		await user.click(screen.getByRole("button", { name: "Detach source" }));
+		expect(detachIacSource).toHaveBeenCalledWith({
+			projectId: "proj-1",
+			environmentId: "env-1",
+		});
+	});
+
+	// `detachIacSource` throws — and deletes nothing — once a deploy has applied the module. Offering
+	// the confirmation there would state an outcome the server refuses and end in an error toast, so
+	// the trigger is disabled and the card says why. The accessible NAME stays "Detach IaC source"
+	// in both states: it is what the registry locates the control by.
+	it("disables the X, with the reason, while a commit is deployed from the source", () => {
+		renderNode(makeSource({ deployedCommitSha: "0123456789abcdef" }));
+		expect(screen.getByTitle("Detach IaC source")).toBeDisabled();
+		expect(
+			screen.getByText(/destroy this environment before detaching/i),
+		).toBeInTheDocument();
 	});
 });

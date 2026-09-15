@@ -94,6 +94,20 @@ ENV="${ALETHIA_E2E_ENV:-}"
 REGION="${ALETHIA_E2E_REGION:-}"
 DRY_RUN="${DRY_RUN:-0}"
 PREFLIGHT="${PREFLIGHT:-0}"
+# ── VERIFY_ONLY (#4398) — ask the cloud, change nothing. The same scope-locked verification the
+# normal path ends with, with every sweep skipped: the only cloud calls it makes are the
+# LIST/DESCRIBE calls verify_swept already makes. Refused alongside DRY_RUN/PREFLIGHT because both
+# exit 0 WITHOUT verifying, and this script's exit status is read as a cloud verdict by
+# `sweep-probe.sh --record-verdict`. The reasoning in full is in aws-cleanup.sh.
+#
+# Azure is the one sweeper whose finalize_verification calls sweep_env (its delete is a single
+# cascading resource-group delete, so there is no separate sweep phase to skip); the branch is
+# THERE rather than here.
+VERIFY_ONLY="${VERIFY_ONLY:-0}"
+if [ "$VERIFY_ONLY" = "1" ] && { [ "$DRY_RUN" = "1" ] || [ "$PREFLIGHT" = "1" ]; }; then
+	echo "::error::VERIFY_ONLY=1 with DRY_RUN=1 or PREFLIGHT=1 — both exit 0 WITHOUT verifying, and this exit status is read as a cloud verdict. Refusing." >&2
+	exit 2
+fi
 DELETE_RETRIES="${DELETE_RETRIES:-5}"
 # `az group delete --no-wait` returns immediately; an RG lingers in "Deleting" for minutes (an AKS
 # teardown is ~10-15m). We fire all deletes async, then WAIT (bounded) for them to complete so
@@ -159,6 +173,7 @@ export AZURE_CORE_ONLY_SHOW_ERRORS="${AZURE_CORE_ONLY_SHOW_ERRORS:-true}"
 # The per-run banner is for the normal (belt-and-suspenders) path; PREFLIGHT prints its own below.
 if [ "$PREFLIGHT" != "1" ] && [ "$SELF_TEST" != "1" ]; then
 	echo "→ azure belt-and-suspenders cleanup in ${REGION}, scope ${TAG_KEY}=${PROJECT_ID_TAG}"
+	[ "$VERIFY_ONLY" = "1" ] && echo "  (VERIFY_ONLY=1 — re-listing the cloud, sweeping nothing, deleting nothing)"
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 fi
 
@@ -455,7 +470,13 @@ sweep_env() {
 #
 # A confirmed leak outranks "could not check", so the sweep + verify runs first.
 finalize_verification() {
-	if ! sweep_env "$ENV"; then
+	if [ "$VERIFY_ONLY" = "1" ]; then
+		# Ask, do not sweep (#4398). verify_swept is the re-list sweep_env would have ended with,
+		# and it calls assert_scope itself, so the scope lock is unchanged.
+		if ! verify_swept; then
+			return 1
+		fi
+	elif ! sweep_env "$ENV"; then
 		return 1
 	fi
 	probe_gate azure "run ${ENV}" || return 4
