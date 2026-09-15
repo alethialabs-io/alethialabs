@@ -63,7 +63,18 @@ test.describe("Architecture canvas", () => {
 		).toBeVisible({ timeout: 60_000 });
 	});
 
-	/** Open the Add palette and drop a service (only kinds with no variant step). */
+	/**
+	 * Open the Add palette and drop a service (only kinds with no variant step).
+	 *
+	 * The two assertions after the pick are the contract of #4589, and they are two rather than one
+	 * for a measured reason. `toBeHidden()` on the search box alone was satisfied by a STEP CHANGE:
+	 * the palette used to swap to an inline "Configure service" view, which has no search input, so
+	 * this helper returned while the dialog was still mounted and its overlay intercepted every later
+	 * click on the board — six tests in this file timing out at their full 180s budget rather than
+	 * failing on an assertion. The dialog OVERLAY is the thing that actually swallowed the clicks, so
+	 * it is what is asserted, in the same negative form `[data-slot=sheet-overlay]` is asserted below.
+	 * The rail assertion is the positive half: picking a service is what opens that node's card.
+	 */
 	async function addService(page: Page, name: string) {
 		// The palette's Add button lives on the board's toolbar; list fields in the card also have an
 		// "Add", so scope to the toolbar's exact one.
@@ -73,6 +84,8 @@ test.describe("Architecture canvas", () => {
 		await search.fill(name);
 		await page.getByRole("option", { name: new RegExp(name, "i") }).first().click();
 		await expect(search).toBeHidden();
+		await expect(page.locator("[data-slot=dialog-overlay]")).toHaveCount(0);
+		await expect(rail(page)).toHaveAttribute("data-open", "true");
 	}
 
 	/** Open the board's ⋯ menu and choose one of its items. */
@@ -107,6 +120,12 @@ test.describe("Architecture canvas", () => {
 
 		// Clear the partition key — the schema requires one. Readiness is derived from the EXACT
 		// validation the deploy uses, so the card must flip immediately, with no round-trip.
+		//
+		// `fill("")` types without blurring, and that is the point rather than an accident of the API:
+		// the card's editing buffer (#4256) holds keystrokes back from the store, readiness reads the
+		// store, and for a while that let a card go on saying "deployable" while holding a value the
+		// deploy would reject (#4445). The buffer may defer the WRITE; it may not defer the truth, so
+		// a text edit that flips the field between valid and invalid commits with it.
 		await page.getByLabel("Partition key").fill("");
 
 		await expect(card.getByText("Needs setup", { exact: true })).toBeVisible();
@@ -155,9 +174,11 @@ test.describe("Architecture canvas", () => {
 	}) => {
 		await addService(page, "Topic");
 
-		// Adding a node opens its card. `subscriptions` is a TopicSubscription[] column that has
-		// existed since the baseline migration with NO editor — you could name a topic and nothing else.
-		await page.getByRole("button", { name: /add a subscription/i }).click();
+		// Adding a node opens its card — on the RAIL, on the tab that holds its config, which is what
+		// the Add palette's inline "Configure service" step used to be (#4589). `subscriptions` is a
+		// TopicSubscription[] column that has existed since the baseline migration with NO editor —
+		// you could name a topic and nothing else.
+		await rail(page).getByRole("button", { name: /add a subscription/i }).click();
 
 		// A row appears carrying the fields the column actually holds.
 		await expect(page.getByLabel("Endpoint")).toBeVisible();
@@ -171,6 +192,11 @@ test.describe("Architecture canvas", () => {
 	// board is usable" stopped being mutually exclusive. `[data-slot=sheet-overlay]` is the negative
 	// form of that claim — a Sheet's overlay is what used to swallow the board's clicks — and it is
 	// asserted directly rather than inferred from the rail's presence.
+	//
+	// The ADD flow was the last thing that made the claim untrue (#4589): the palette is a
+	// `CommandDialog`, and it used to stay open on an inline config step after a pick, so every test
+	// below was clicking through a live modal. It now closes on the pick and the node's card opens on
+	// the rail instead — `addService` asserts both halves, which is why these tests can click at all.
 
 	test("a card and the Add palette are open at once — the rail docks, it does not block", async ({
 		page,
