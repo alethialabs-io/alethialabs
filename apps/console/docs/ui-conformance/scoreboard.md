@@ -109,7 +109,7 @@ Every predicate has an instrument; nothing below is rendered `—` for want of o
 ## The live half — two artifacts, two personas, two organisations
 
 T5–T7 and R1–R7 are measured in a browser, not read off the tree. The records below were
-imported from **https://github.com/alethialabs-io/alethialabs/actions/runs/33623272631** at commit `1a3bdeb73a36d488a238dfe2d2e4235b35105832` and committed to
+imported from **https://github.com/alethialabs-io/alethialabs/actions/runs/34851361970** at commit `e48ff5213e9b5b4fca3452031d28907ee61942b6` and committed to
 `apps/console/ui-conformance-live.json`; refresh them with `--import-live`. They come from **two files, joined and never
 pooled** — `e2e/audit/report.ts` records what pooling them cost, and the split is checked here:
 each section declares the predicates it may carry, and a record in the wrong one refuses to parse.
@@ -136,10 +136,7 @@ loudly as a missing one:
 
 | predicate | FAIL | owner | what is failing |
 |---|---:|---|---|
-| **R3** | 2 | #3885 | two nested scroll containers that are not the shell's — a chip `ScrollArea` on `~/support/ask` and a `@repo/ui/table` wrapper on `[project]/environments` — each overflowing by 3px at all four widths. Trustworthy for the first time now that #3804 has made R3's own positive control green. |
-| **R4** | 7 | #3805 | ONE shell defect, not N page defects: `components/shell/topbar.tsx` centres the breadcrumb out of flow (`absolute left-1/2`) beside an `ml-auto` action cluster that nothing reserves space for, so the two collide from `md:` up. #3805 keeps it deliberately rather than folding it into #3619 — the fix is a layout decision, and only R4's geometry can prove either answer. |
-| **R5** | 12 | #3805 | the axe residue. `color-contrast` fails EVERY failing route on its own, so R5 cannot move at all until that clears — `button-name` went 3 → 0 in #3756 and the score did not budge. The console is dark-first and grayscale by design, so each node is a judgement between a token fix in `packages/brand/src/tokens.css` and a recorded decision. |
-| **R6** | 2 | #3805 | two routes. `~/connectors` fires 400s from `/_next/image` for connector icons that do not exist (#3802, fixed by #3876); `[project]/…/support/cases/[id]` 404s the parent list route's RSC prefetch ~70 times in one visit, which is a prefetch storm as well as a 404. |
+| — | 0 | — | no live predicate fails on any route |
 
 ## Per predicate
 
@@ -157,9 +154,9 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **T2** | T | `check-route-states` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **T3** | T | `check-route-states` | 10 | 0 | 30 | 0 | 1.00 | `does-not-call-not-found` 30 |
 | **T4** | T | `check-route-states` | 36 | 4 | 0 | 0 | 0.90 | — |
-| **T5** | T | live — `routes` | 14 | 0 | 26 | 0 | 1.00 | `no-empty-state` 26 |
+| **T5** | T | live — `routes` | 15 | 0 | 25 | 0 | 1.00 | `no-empty-state` 25 |
 | **T6** | T | live — `routes` | 36 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
-| **T7** | T | live — `permissions` | 0 | 0 | 27 | 13 | — | `no-restricted-surface` 27 |
+| **T7** | T | live — `permissions` | 2 | 0 | 25 | 13 | 1.00 | `no-restricted-surface` 25 |
 | **H1** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H2** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H3** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
@@ -178,10 +175,10 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **F7** | F | `check-filter-standard` | 12 | 3 | 24 | 1 | 0.80 | `not-a-list-page` 24 |
 | **R1** | R | live — `routes` | 36 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
 | **R2** | R | live — `routes` | 39 | 0 | 1 | 0 | 1.00 | `opens-no-overlay` 1 |
-| **R3** | R | live — `routes` | 34 | 2 | 4 | 0 | 0.94 | `redirect-only` 4 |
-| **R4** | R | live — `routes` | 29 | 7 | 4 | 0 | 0.81 | `redirect-only` 4 |
-| **R5** | R | live — `routes` | 28 | 12 | 0 | 0 | 0.70 | — |
-| **R6** | R | live — `routes` | 38 | 2 | 0 | 0 | 0.95 | — |
+| **R3** | R | live — `routes` | 36 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
+| **R4** | R | live — `routes` | 36 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
+| **R5** | R | live — `routes` | 40 | 0 | 0 | 0 | 1.00 | — |
+| **R6** | R | live — `routes` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **R7** | R | live — `routes` | 40 | 0 | 0 | 0 | 1.00 | — |
 
 The static H half emits **no N/A at all**, which is why those rows are empty rather than
@@ -200,43 +197,43 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 
 | route | surface | S | T | H | F | R | overall |
 |---|---:|---|---|---|---|---|---|
-| `/[org]/[project]/environments` | 237 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/7 · 0.57 | **0.84** |
 | `/[org]/~/alerts` | 291 | 2/4 · 0.50 | 5/5 · 1.00 | 9/9 · 1.00 | 4/7 · 0.57 | 7/7 · 1.00 | **0.84** |
-| `/[org]/[project]/settings` · | 1 | all N/A | 1/2 · 0.50 · 1 withheld | 9/9 · 1.00 | all N/A | 3/4 · 0.75 | **0.87** |
-| `/[org]/~/settings` · | 1 | all N/A | 1/2 · 0.50 | 9/9 · 1.00 | all N/A | 3/4 · 0.75 | **0.87** |
-| `/[org]/~/connectors` | 211 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 5/7 · 0.71 | **0.90** |
 | `/[org]/~/runners` | 272 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 3/6 · 0.50 · 1 withheld | 7/7 · 1.00 | **0.90** |
-| `/[org]/~/settings/members` | 222 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 5/7 · 0.71 | 6/7 · 0.86 | **0.90** |
-| `/[org]/[project]/settings/general` | 216 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 5/7 · 0.71 | **0.92** |
-| `/[org]/[project]/settings/preview` | 143 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 5/7 · 0.71 | **0.92** |
-| `/[org]/~/support/cases/[id]` | 157 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 5/7 · 0.71 | **0.92** |
 | `/[org]/[project]` · | 1 | all N/A | 1/2 · 0.50 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **0.93** |
-| `/[org]/~/settings/activity` | 278 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 6/7 · 0.86 | **0.94** |
-| `/[org]/~/settings/roles` | 224 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 6/7 · 0.86 | **0.94** |
+| `/[org]/[project]/settings` · | 1 | all N/A | 1/2 · 0.50 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **0.93** |
+| `/[org]/~/settings` · | 1 | all N/A | 1/2 · 0.50 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **0.93** |
+| `/[org]/~/settings/members` | 222 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 5/7 · 0.71 | 7/7 · 1.00 | **0.94** |
 | `/[org]/~/settings/teams` | 215 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 5/7 · 0.71 | 7/7 · 1.00 | **0.94** |
 | `/[org]/~/support/my-cases` | 149 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 5/7 · 0.71 | 7/7 · 1.00 | **0.94** |
 | `/dashboard/[[...rest]]` · | 127 | all N/A | 2/3 · 0.67 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **0.94** |
-| `/[org]/[project]/settings/access` | 214 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 6/7 · 0.86 | **0.94** |
-| `/[org]/[project]/settings/activity` | 279 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 6/7 · 0.86 | **0.94** |
-| `/[org]/~/jobs/[id]` | 224 | 3/4 · 0.75 | 4/4 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **0.96** |
 | `/[org]/~/new` | 360 | 3/4 · 0.75 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **0.96** |
-| `/[org]/~/settings/classification` | 147 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/7 · 0.86 | **0.96** |
-| `/[org]/~/settings/general` | 136 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/7 · 0.86 | **0.96** |
-| `/[org]/~/support/ask` | 200 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/7 · 0.86 | **0.96** |
-| `/[org]/[project]/architecture` | 397 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 6/7 · 0.86 | **0.96** |
-| `/[org]/[project]/usage` | 148 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 6/7 · 0.86 | **0.96** |
+| `/[org]/[project]/environments` | 237 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **0.96** |
+| `/[org]/~/jobs/[id]` | 224 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **0.96** |
+| `/[org]/~/connectors` | 211 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
+| `/[org]/~/settings/activity` | 278 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
 | `/[org]/~/settings/billing/invoices` | 194 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
 | `/[org]/[project]/jobs` | 221 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
 | `/[org]/~/evidence` | 151 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
 | `/[org]/~/jobs` | 220 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
 | `/[org]/~/settings/access` | 213 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
-| `/[org]/~/settings/sso` | 213 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
+| `/[org]/~/settings/roles` | 224 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
+| `/[org]/[project]/settings/access` | 214 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
+| `/[org]/[project]/settings/activity` | 279 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
+| `/[org]/~/settings/sso` | 213 | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
 | `/[org]` | 284 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
+| `/[org]/[project]/architecture` | 397 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/[project]/clusters` | 165 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
+| `/[org]/[project]/settings/general` | 216 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
+| `/[org]/[project]/settings/preview` | 143 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
+| `/[org]/[project]/usage` | 148 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/clusters` | 164 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/settings/billing` | 195 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
+| `/[org]/~/settings/classification` | 147 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
+| `/[org]/~/settings/general` | 136 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/support` | 7 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/support/abuse` | 136 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
+| `/[org]/~/support/ask` | 200 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
+| `/[org]/~/support/cases/[id]` | 157 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/support/submit` | 146 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/~/usage` | 185 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/cli/login` | 5 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/6 · 1.00 | **1.00** |
