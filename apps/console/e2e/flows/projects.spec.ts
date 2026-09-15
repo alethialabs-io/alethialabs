@@ -296,13 +296,11 @@ test.describe("Projects — the template path", () => {
 
 		await owner.page
 			.getByRole("group", { name: AWS_CONNECTOR })
-			.getByText(AWS_CONNECTOR, { exact: true })
-			.click({ timeout: 30_000 });
+			.click({ position: { x: 12, y: 12 }, timeout: 30_000 });
 		await expect(owner.page.getByText("eu-west-1")).toBeVisible({ timeout: 15_000 });
 		await owner.page
 			.getByRole("group", { name: GCP_CONNECTOR })
-			.getByText(GCP_CONNECTOR, { exact: true })
-			.click();
+			.click({ position: { x: 12, y: 12 } });
 		await expect(owner.page.getByText("europe-west1")).toBeVisible({ timeout: 15_000 });
 		await expect(owner.page.getByText("eu-west-1")).toHaveCount(0);
 
