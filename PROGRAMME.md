@@ -243,7 +243,7 @@ Work is claimed from the board, never hand-picked: `scripts/coordinate.sh --repo
 
 ## Where the programme actually is
 
-**22 of 35 proof cells are proven.** 1 failing · 1 contested (the ledger and the board disagree) · 0 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
+**23 of 35 proof cells are proven.** 1 failing · 0 contested (the ledger and the board disagree) · 0 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -251,7 +251,7 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 
 | cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 | CLI-driven |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **aws** | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
+| **aws** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
 | **gcp** | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
 | **azure** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
 | **alibaba** | · | · | · | · | · | · | · |
@@ -261,7 +261,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 <details><summary>Every cell that has any evidence at all</summary>
 
-- `aws/floor` **contested** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T125612Z` — but #4603 was filed 2026-09-10, AFTER the 2026-08-28 run that proved it, and CLOSED 2026-09-14 inside this refresh window, so no derivation ever saw it open
+- `aws/floor` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T125612Z`
 - `aws/maxconfig` **proven** — ledger 2026-08-26, bundle `demos/proofs/aws/20260826T114712Z`
 - `aws/addons` **proven** — ledger 2026-08-30, bundle `demos/proofs/aws/20260830T100243Z`
 - `aws/gitops` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T142417Z`
@@ -290,13 +290,12 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 ### The mechanical next
 
-**`aws/floor`** — contested. ledger 2026-08-28, bundle `demos/proofs/aws/20260828T125612Z` — but #4603 was filed 2026-09-10, AFTER the 2026-08-28 run that proved it, and CLOSED 2026-09-14 inside this refresh window, so no derivation ever saw it open
+**`gcp/floor`** — failing. ledger 2026-09-02
 
 Failing cells rank above never-run ones: a red cell already has a diagnosed cause and costs nothing new to re-drive, where a never-run cell needs its gate enabled first. This RANKS; it never claims — `scripts/claim-work.sh` claims.
 
 <details><summary>The next 10</summary>
 
-1. `aws/floor` — contested
 1. `gcp/floor` — failing
 1. `alibaba/floor` — never_run
 1. `alibaba/maxconfig` — never_run
@@ -306,6 +305,7 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 1. `alibaba/day2` — never_run
 1. `aws/cli-demo` — never_run
 1. `gcp/cli-demo` — never_run
+1. `azure/cli-demo` — never_run
 
 </details>
 
@@ -342,11 +342,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 34948130535 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 34948130535 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 34948130535 |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 34948130535 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 34948130535 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 35074442209 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 35074442209 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 35074442209 |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 35074442209 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 35074442209 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -355,30 +355,18 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 | floor | `(the cloud gate alone)` | n/a | real apply → cluster_ready → ArgoCD Healthy+Synced over the derived app set |
 | all kinds | `ALETHIA_E2E_MAX_CONFIG` | ✅ by dimension: `ALETHIA_E2E_MAX_CONFIG` | every kind this cloud offers lands in tofu state (or converges as its named Application) |
 | 18 add-ons | `ALETHIA_E2E_ALL_ADDONS` | ✅ by dimension: `ALETHIA_E2E_ALL_ADDONS` | all 18 marketplace add-ons Healthy+Synced |
-| GitOps repos | `E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN` | ✅ wired: `E2E_ARGO_APPS_REPO`<br>✅ wired: `E2E_GIT_TOKEN` | a customer apps-destination repo and a BYO Helm chart converge, and each manages at least one real resource |
+| GitOps repos | `E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN` | ? unknown: `E2E_ARGO_APPS_REPO`<br>? unknown: `E2E_GIT_TOKEN` | a customer apps-destination repo and a BYO Helm chart converge, and each manages at least one real resource |
 | BYO-IaC | `ALETHIA_E2E_BYO_IAC` | ✅ by dimension: `ALETHIA_E2E_BYO_IAC` | a customer OpenTofu root module is refused when unsafe, applied through the state proxy, drifts, heals and destroys — with state cleared |
-| day-2 | `ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS` | ✅ by dimension: `ALETHIA_E2E_SOAK`<br>✅ wired: `E2E_DAY2_ACCESS` | a real access path beyond the soak — kubeconfig / ArgoCD surface |
+| day-2 | `ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS` | ✅ by dimension: `ALETHIA_E2E_SOAK`<br>? unknown: `E2E_DAY2_ACCESS` | a real access path beyond the soak — kubeconfig / ArgoCD surface |
 | CLI-driven | `ALETHIA_E2E_CLI_DEMO_PROVISION` | ✅ by dimension: `ALETHIA_E2E_CLI_DEMO_PROVISION` | a floor-shaped cluster provisioned through the real `alethia` binary rather than a seeded job row — the ACTOR, not the surface area |
+
+⚠️ **The gate inventory is stale.** It was observed **2026-09-08T16:35:27Z**, more than 7 days before this snapshot was derived, so every **declared** gate above reads `unknown` rather than asserting a variable that may since have been deleted. An **observed** gate — a leg that actually got past it — still wins in both directions. The nightly's token cannot list repo variables or secrets at all, so the inventory only refreshes on a run carrying a PAT.
 
 ### Open REDs
 
 | cell | state | issue | issue state |
 |---|---|---|:---:|
 | `gcp/floor` | failing | #3855 | open |
-
-### ⚠️ Contested — proven by the ledger, contradicted by a red
-
-A nightly that goes red files an **issue** and writes **no ledger row**. So from the ledger's point of view that failure never happened, and a cell proven earlier stays ✅ forever: PASS is durable, a later FAIL is invisible. That makes the grid a **high-water mark** presented as current state, in the one direction that overstates — which is the thing this whole file exists to prevent.
-
-| cell | proven by a run dated | red | filed | red's state |
-|---|:---:|---|:---:|---|
-| `aws/floor` | 2026-08-28 | #4603 | 2026-09-10 | closed 2026-09-14, inside this refresh window |
-
-`contested` takes **no side**. Whether a later red is a flake or a regression needs someone to read the run, and guessing either way is worse than naming the contradiction. It claims only what is derivable — the two sources disagree, so the ✅ is not trustworthy right now.
-
-**Two human acts clear it, and either one is fine:** close the issue if that run was a flake, or append a `FAIL` row for it if it was not. The next derivation picks the answer up.
-
-A row marked **closed … inside this refresh window** is a red that was filed and closed between two snapshots, so it was never in anybody's `open_issues` and no derivation ever saw it. It is shown once, here, and clears on the next refresh — the closing act has already happened. That is the whole of it: a red is evidence whether or not its issue is still open, and `0 failing` is a claim about **today**.
 
 
 ### Orphan reaper — nothing standing
@@ -459,7 +447,7 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-09-15T11:34:49Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-09-16T11:21:41Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
