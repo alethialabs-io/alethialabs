@@ -104,13 +104,11 @@ wt_is_readable_repo() { # <path>
 # from being listed a second time under a parent that is about to take them anyway.
 # `-type d` does not follow symlinks, so a symlinked node_modules is skipped: the safe direction.
 #
-# KNOWN GAP — tracked as #4609. There is no "stop at another worktree" prune here, so if one
-# worktree were nested inside another, a `stale` outer tree's walk would list a LIVE inner tree's
-# node_modules and the reap would take them: the inner tree's own lease is never consulted, because
-# the lease is read per SWEPT tree, not per found path. Not reachable today — the harness nests only
-# under `app/.claude/worktrees/`, whose parent is the main checkout and always skipped — but
-# wt-lease.sh's longest-prefix root matching exists precisely because nested worktrees are a thing
-# this harness creates.
+# CLOSED by #4609: the walk now drops any found path that lies inside ANOTHER worktree root, so a
+# `stale` outer tree's sweep can no longer take a LIVE inner tree's node_modules. It is a filter on
+# the RESULT rather than a `-prune` on the walk, deliberately — the two are identical for what gets
+# deleted, and the filter is the half that can be asserted without a fixture that depends on find's
+# traversal order. See wt_nested_worktree_roots for why the comparison is physical on both sides.
 #
 # The trailing `|| true` is precautionary, and the precise reason matters more than the guard does.
 # This script runs under `set -o pipefail`, and ONE unreadable directory in one abandoned tree makes
@@ -128,13 +126,31 @@ wt_is_readable_repo() { # <path>
 # Either way the failure DIRECTION is chosen: an unreadable subtree costs a false "already
 # de-hydrated" for that one tree, which deletes nothing.
 wt_node_modules_dirs() { # <worktree> → absolute paths, one per line
-	local wt="$1" d rel
+	local wt="$1" d rel wtp nested r skip
 	[ -d "$wt" ] || return 0
+	# Derived ONCE, outside the pipeline: inside it these would be recomputed per found path, and
+	# `git worktree list` is not free. Both are read-only in the loop, which a subshell inherits.
+	wtp="$(wt_abs "$wt")"
+	nested="$(wt_nested_worktree_roots "$wt" 2>/dev/null || true)"
 	find "$wt" -name .git -prune -o -type d -name node_modules -prune -print 2>/dev/null |
 		sort |
 		while IFS= read -r d; do
 			rel="${d#"$wt"/}"
 			[ "$rel" != "$d" ] || continue # not under $wt at all — never guess
+			# Another worktree's node_modules is ITS lease's business, not this sweep's. Compared as
+			# "$wtp/$rel", never as "$d": $d carries whatever spelling the caller passed, while the
+			# roots are physical, and a logical-vs-physical prefix comparison silently matches
+			# nothing. #4609 §3.
+			if [ -n "$nested" ]; then
+				skip=""
+				while IFS= read -r r; do
+					[ -n "$r" ] || continue
+					case "$wtp/$rel/" in "$r"/*) skip=1 ;; esac
+				done <<NESTEOF
+$nested
+NESTEOF
+				[ -z "$skip" ] || continue
+			fi
 			git -C "$wt" check-ignore --no-index -q -- "$rel" 2>/dev/null || continue
 			[ -z "$(git -C "$wt" ls-files -- "$rel" 2>/dev/null | head -n 1)" ] || continue
 			printf '%s\n' "$d"
@@ -199,26 +215,221 @@ wt_human_bytes() { # <bytes> → 1.9G · 12.0M · 4.0K · 0B
 	fi
 }
 
+wt_human_age() { # <seconds> → 45s · 12m · 3h · 5d
+	local s="${1:-0}"
+	case "$s" in '' | *[!0-9]*) s=0 ;; esac
+	if [ "$s" -ge 86400 ]; then
+		printf '%dd' $((s / 86400))
+	elif [ "$s" -ge 3600 ]; then
+		printf '%dh' $((s / 3600))
+	elif [ "$s" -ge 60 ]; then
+		printf '%dm' $((s / 60))
+	else
+		printf '%ds' "$s"
+	fi
+}
+
+# ── "is anything USING these files?" — the recency floor (#4609) ─────────────────────────────────
+#
+# The lease answers "is an AGENT holding this tree". The verdict below used to treat that as the
+# whole question and reaped every `free` and `stale` tree, which is wrong in two ways that are not
+# hypothetical:
+#
+#   · `free` means NO LEASE WAS EVER TAKEN — not "nobody is here". wt-lease.sh takes no lease
+#     outside Claude/Codex by design ("Humans and CI are not gated by this file"), so a developer
+#     working a worktree by hand all afternoon is byte-for-byte indistinguishable from a tree
+#     abandoned in July. `wt:dehydrate` exists BECAUSE people hydrate worktrees legitimately.
+#   · `stale` means the AGENT process is gone, not that nothing is running. An agent that exits
+#     over a `pnpm install` IT STARTED leaves a stale lease above a live install, and the reap then
+#     rm -rf's node_modules out from under it.
+#
+# Same shape both times, so one signal closes both: stop asking about the process and ask about the
+# FILES. The corroborating case from the other end is `wt:who` on 2026-09-16 reporting a dozen trees
+# as `LIVE pid 54145` — a real claude process, 8 days old, idle 100-138 hours. The liveness test was
+# CORRECT and the answer was still useless, because the question was about a process.
+#
+# WHY A RECENCY FLOOR AND NOT `lsof`. `lsof +D <tree>` is the accurate answer and it is the one that
+# cannot be afforded here: `+D` is a full recursive walk, and node_modules is the largest directory
+# on the disk — the very thing this command exists to delete. It is also not installed everywhere
+# this script runs. A guard that adds minutes to a command CLAUDE.md §2 calls routine hygiene is a
+# guard people route around, and a routed-around guard protects nothing.
+#
+# WHY NOT A TTY CONFIRMATION. `.claude/hooks/session-runtime.sh` already calls this script with no
+# terminal attached, so a prompt is unanswerable on exactly the path that must keep working. It
+# would also be silent for the `stale`-over-live-install case, which has no human to ask.
+#
+# WHAT THE FLOOR COSTS, stated rather than implied. mtime answers "was this WRITTEN to", so the
+# residue is a tree somebody is READING and not writing — a `tsc --watch` or a dev server pointed at
+# an unleased tree that nothing has written to for longer than the floor. That case survives this
+# fix. It is strictly smaller than the one being closed, and it is why the floor for an unleased
+# tree is a DAY rather than an hour.
+#
+# TWO FLOORS, because the two states have already ruled out different things:
+#
+#   stale — `ps` has PROVEN the agent is gone. The only writer that can still exist is a process it
+#           left behind, and the one that matters (`pnpm install`) writes continuously. An hour of
+#           total silence is orders of magnitude more than any install goes quiet for.
+#   free  — nothing has been ruled out. This is the human case, and a human takes lunch.
+#
+# ONE number for both would have to be the stricter one, 24h — and a 24h floor on `stale` is what
+# makes a maintainer at 94% disk reach for `--min-idle-hours=0`, after which the guard protects
+# nothing at all. The cheapest escape route must not be the one that deepens the defect. Measured
+# against the real population this command was built for: the five trees swept on 2026-09-16 were
+# idle 100-138 hours, so neither floor costs the tool a single tree it was meant to reach.
+WT_MIN_IDLE_STALE=3600  # 1h  — the agent is provably gone; this only has to outlast an install's quietest moment
+WT_MIN_IDLE_FREE=86400  # 24h — nothing has ruled out a person
+
+wt_mtime() { # <path> → epoch seconds, or nothing when it cannot be read
+	local t
+	[ -e "$1" ] || return 0
+	# BSD first, GNU second: `stat -f` on GNU means "file system" and fails, `stat -c` is unknown to
+	# BSD. Trying both in this order is the only form that answers on macOS and on the Linux box.
+	t="$(stat -f %m -- "$1" 2>/dev/null || stat -c %Y -- "$1" 2>/dev/null || true)"
+	case "${t:-}" in '' | *[!0-9]*) return 0 ;; esac
+	printf '%s' "$t"
+}
+
+# Seconds since the most recent write this can observe under <worktree>. Prints NOTHING when it
+# cannot tell, and every caller reads that as "refuse" — this function is the last thing between a
+# tree and `rm -rf`, so an unreadable clock must not read as an idle tree.
+#
+# THE PROBE SET IS BOUNDED AND SHALLOW — one stat per entry, no walk, so --prune's per-tree hint
+# does not grow a recursive scan:
+#   · the worktree root, which moves when anything is created or deleted at the top level;
+#   · the worktree's git INDEX and HEAD, which every `git status`, `add`, `commit` and `checkout`
+#     rewrites — including the ones an editor's file-watcher runs on its own while somebody types;
+#   · each node_modules ABOUT TO BE DELETED, plus its `.pnpm` and `.modules.yaml`, all of which a
+#     running pnpm install rewrites continuously.
+#
+# NOT the git admin DIRECTORY itself, and that exclusion is load-bearing rather than tidy:
+# wt_dehydrate_tree creates its own lease dir INSIDE that directory before it re-checks, so probing
+# the directory would make every tree read "written to 0s ago" and the reaper would refuse itself
+# forever, with a message that looks entirely sensible. `index` and `HEAD` are siblings of the lease
+# dir and are not touched by creating it.
+wt_tree_idle_seconds() { # <worktree> <newline-separated node_modules dirs> → seconds, or nothing
+	local wt="$1" dirs="${2:-}" now newest="" probes p t gd
+	now="$(date +%s 2>/dev/null || true)"
+	case "${now:-}" in '' | *[!0-9]*) return 0 ;; esac
+	gd="$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null || true)"
+	probes="$wt"
+	[ -n "$gd" ] && probes="$probes
+$gd/index
+$gd/HEAD"
+	while IFS= read -r p; do
+		[ -n "$p" ] || continue
+		probes="$probes
+$p
+$p/.pnpm
+$p/.modules.yaml"
+	done <<PROBEEOF
+$dirs
+PROBEEOF
+	# A here-doc, never a pipeline: `newest` assigned inside `… | while` lands in a subshell and the
+	# loop then reports the initial value. That is the shape that makes a harness print FAIL and
+	# summarise "all passed", and it would make this one report "unknown" for every tree.
+	while IFS= read -r p; do
+		[ -n "$p" ] || continue
+		t="$(wt_mtime "$p")"
+		[ -n "$t" ] || continue
+		if [ -z "$newest" ] || [ "$t" -gt "$newest" ]; then newest="$t"; fi
+	done <<PROBEEOF
+$probes
+PROBEEOF
+	[ -n "$newest" ] || return 0
+	# A clock skew or a file stamped in the future reads as "written just now", which is the safe
+	# direction: it refuses rather than deletes.
+	if [ "$newest" -ge "$now" ]; then printf '0'; else printf '%s' $((now - newest)); fi
+}
+
+# The floor that applies to a tree in <state>. `--min-idle-hours=N` and ALETHIA_WT_MIN_IDLE_SECONDS
+# replace BOTH defaults with one number; 0 disables the floor entirely and is the documented
+# operator override, named on the command line so it shows up in whatever ran it.
+wt_min_idle_for() { # <free|stale> → seconds
+	if [ -n "${ALETHIA_WT_MIN_IDLE_SECONDS:-}" ]; then
+		case "$ALETHIA_WT_MIN_IDLE_SECONDS" in
+			'' | *[!0-9]*) ;;
+			*)
+				printf '%s' "$ALETHIA_WT_MIN_IDLE_SECONDS"
+				return 0
+				;;
+		esac
+	fi
+	case "$1" in
+		stale) printf '%s' "$WT_MIN_IDLE_STALE" ;;
+		*) printf '%s' "$WT_MIN_IDLE_FREE" ;;
+	esac
+}
+
+# "May this tree's node_modules be deleted, as far as the FILES are concerned?"
+#   0 = yes, it has been quiet for longer than its floor
+#   1 = no; prints the reason on stdout
+#
+# ONE implementation, two callers — the verdict (before the lease) and the reap (after it). The
+# second renderer is the thing this repo keeps getting bitten by, and here the two would disagree
+# about which tree is abandoned while one of them deletes.
+wt_recency_refusal() { # <worktree> <state> <dirs> → 1 + reason when it must not be reaped
+	local wt="$1" state="$2" dirs="$3" idle floor
+	floor="$(wt_min_idle_for "$state")"
+	[ "$floor" -gt 0 ] || return 0
+	idle="$(wt_tree_idle_seconds "$wt" "$dirs")"
+	if [ -z "$idle" ]; then
+		printf 'no modification time could be read here — refusing rather than guessing (needs stat(1))'
+		return 1
+	fi
+	if [ "$idle" -lt "$floor" ]; then
+		printf 'written to %s ago, inside the %s quiet floor for a %s tree — something may still be using these files' \
+			"$(wt_human_age "$idle")" "$(wt_human_age "$floor")" "$state"
+		return 1
+	fi
+	return 0
+}
+
+# The physical roots of any worktree NESTED INSIDE <worktree>, excluding <worktree> itself.
+#
+# #4609 §3: the walk below prunes at `.git` and at each node_modules, but not at another worktree
+# root, so sweeping a `stale` outer tree would list a LIVE inner tree's node_modules and delete
+# them — the inner tree's own lease is never consulted, because the lease is read per SWEPT tree and
+# not per found path. Not reachable today (measured: 0 nested pairs, and the harness nests only
+# under app/.claude/worktrees/, whose parent is the main checkout and always skipped), but
+# wt_lease_dir's longest-prefix root matching exists precisely BECAUSE nested worktrees are a thing
+# this harness creates, so the assumption is one harness change away from being false in silence.
+#
+# `wt_abs`, not the raw path, on both sides: `git worktree list` reports PHYSICAL paths and on macOS
+# mktemp hands back /var/… while git prints /private/var/…. Comparing a logical prefix against a
+# physical root never matches, which disables the whole filter without failing anything.
+wt_nested_worktree_roots() { # <worktree> → absolute roots, one per line
+	local wt="$1" wtp w wp
+	wtp="$(wt_abs "$wt")"
+	git -C "$wt" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' |
+		while IFS= read -r w; do
+			[ -n "$w" ] || continue
+			wp="$(wt_abs "$w")"
+			[ "$wp" != "$wtp" ] || continue
+			case "$wp/" in "$wtp"/*) printf '%s\n' "$wp" ;; esac
+		done
+}
+
 # The per-tree verdict, as one TAB-separated line: "<verb>\t<bytes>\t<why>".
 #
 #   skip  — a LIVE lease (another instance's OR MINE), or the shared main checkout
+#   busy  — nobody is HOLDING it, but its FILES were written to inside its quiet floor (#4609)
 #   clean — nothing hydrated here
-#   reap  — free or stale lease, and there is something to give back
+#   reap  — free or stale lease, quiet for longer than the floor, and something to give back
+#
+# `busy` is a VERB and not a `skip` with a distinctive sentence, because the caller has to count it
+# apart and matching on the reason text would make that count a property of the wording. The two
+# existing skip counters do read the text; this one does not, and the next reason added should not
+# either.
 #
 # MY OWN live lease is skipped alongside a foreign one, and that is deliberate rather than an
 # oversight: the rule is "never touch a tree with a live lease", and the tree I am sitting in is the
 # one most likely to have a `pnpm install` or a `tsc` reading node_modules right now. `wt:steal` or
 # `wt:release` is how you make your own tree reapable, and both already exist.
 #
-# KNOWN, AND WIDER THAN #4580's PREDICATE — tracked as #4609, read it before narrowing this:
-#   · `free` is reaped as well as `stale`, and `free` means no lease was EVER taken. wt-lease.sh
-#     says plainly that "Humans and CI are not gated by this file", so a worktree a HUMAN created
-#     and hydrated has no lease and therefore no protection here.
-#   · `stale` is not proof that nothing is running. An agent that exits while a `pnpm install` it
-#     started keeps going leaves a stale lease over a live install, and this will reap under it.
-# Both are the same shape: the lease answers "is an AGENT holding this tree", and this command asks
-# it "is anything using these files". Narrowing to `stale` alone would not fix it and would lose
-# the human-created case entirely; the fix is a liveness signal, which is #4609's job.
+# THE LEASE IS ONLY HALF THE GATE, and #4609 is the other half. `free` and `stale` are both still
+# reaped — narrowing to `stale` alone was never the fix, because it keeps the live-install case and
+# loses the human-created case that motivated the tool — but each must now ALSO be quiet for longer
+# than its floor. See wt_recency_refusal above for the two floors and what they each cost.
 #
 # ONE PREDICATE, OPTIONAL BYTES. `--with-bytes` decides only whether to pay for `du`; it can never
 # change the verb. That split is the whole design: "is this tree reapable, and is it hydrated?" is
@@ -242,7 +453,7 @@ wt_human_bytes() { # <bytes> → 1.9G · 12.0M · 4.0K · 0B
 # The real `--dehydrate` run does not ask for bytes either: it reports what the reap itself measured
 # under the lease, so asking here would have been a second du over the same 2 GB, discarded.
 wt_dehydrate_verdict() { # <worktree> [--with-bytes] → verb<TAB>bytes<TAB>why
-	local wt="$1" want_bytes=0 state dirs bytes=0 n=0 d
+	local wt="$1" want_bytes=0 state dirs bytes=0 n=0 d why
 	[ "${2:-}" = "--with-bytes" ] && want_bytes=1
 	# Asked FIRST, because `git worktree list` still names a directory somebody deleted by hand, and
 	# every question below it resolves a missing path to the MAIN-checkout answer — which would
@@ -275,6 +486,14 @@ wt_dehydrate_verdict() { # <worktree> [--with-bytes] → verb<TAB>bytes<TAB>why
 	dirs="$(wt_node_modules_dirs "$wt")"
 	if [ -z "$dirs" ]; then
 		printf 'clean\t0\talready de-hydrated (lease %s)\n' "$state"
+		return 0
+	fi
+	# AFTER the "nothing here" early-out, not before it: a tree with no node_modules is `clean`
+	# whatever its mtimes say, and putting the stats first would make --prune's per-tree hint pay
+	# for them on every already-de-hydrated worktree — which, this being the steady state, is most
+	# of them.
+	if ! why="$(wt_recency_refusal "$wt" "$state" "$dirs")"; then
+		printf 'busy\t0\t%s\n' "$why"
 		return 0
 	fi
 	while IFS= read -r d; do
@@ -339,7 +558,12 @@ wt_reap_unlock() {
 
 # Remove <worktree>'s reapable node_modules and NOTHING else.
 #   0 = reaped
-#   1 = REFUSED, and nothing was touched
+#   1 = REFUSED because a live instance holds it, and nothing was touched
+#   3 = REFUSED because the FILES are in use, and nothing was touched
+#
+# Two refusal codes rather than one, because the caller renders them and the two sentences are not
+# interchangeable: "a live instance took it between the scan and the reap" told a maintainer to go
+# find an instance that does not exist, for a tree whose real problem was an install writing to it.
 #
 # THE LOCK IS KEYED ON THIS SCRIPT'S OWN PID, not on an agent marker, and that is the whole point.
 # `wt_lease_acquire` is agent-scoped BY DESIGN: it returns 0 without ever reading the lease when
@@ -379,15 +603,26 @@ wt_reap_unlock() {
 # it costs one `ps` and fails closed before any mkdir on a path whose next statement is `rm -rf`.
 # Do not read its presence as evidence that the acquire alone would be unsafe.
 #
-# NOT CLOSED, and the residue is named: a holder that takes no lease at all (a human at a terminal,
-# per wt-lease.sh's own design) is invisible to both the read and the lock. That is #4609, not this.
+# A holder that takes no lease at all (a human at a terminal, per wt-lease.sh's own design) is
+# invisible to BOTH the read and the lock — neither can see it, because both ask about a process.
+# #4609 closes that by asking a second question, about the files, and it is asked twice: once in the
+# verdict, before the lease, and once HERE, after the lock and against the set re-derived under it.
+# The second call is not belt-and-braces. The case it exists for is a `pnpm install` that starts
+# between the scan and the reap — the scan's answer is already stale by the time the lock is taken,
+# and the re-derived set is the one about to be deleted, so the freshness of THAT set is the only
+# reading that can be acted on.
+#
+# The residue that remains after all of it: a tree somebody is READING and not writing, with no
+# lease, for longer than its floor. mtime cannot see a reader. Named here so the next person does
+# not read "closed" as "nothing can go wrong".
 #
 # (require_free() is the acquire with an exit() on top, which is wrong for a sweep — one held tree
 # must not end the run. --prune calls wt_lease_acquire directly for exactly that reason.)
 wt_dehydrate_tree() { # <worktree> → prints the bytes it removed, on stdout
-	local wt="$1" d dirs bytes=0 prev_traps
+	local wt="$1" d dirs bytes=0 prev_traps state
 	# 1. Already held? Honours neither hatch, so it answers for a human's tree too.
-	case "$(wt_lease_state "$wt")" in live) return 1 ;; esac
+	state="$(wt_lease_state "$wt")"
+	case "$state" in live) return 1 ;; esac
 	# 2. TAKE it, as this script rather than as an agent. Everything expensive happens after this
 	#    line and is therefore covered; before this line nothing has been touched.
 	ALETHIA_ALLOW_FOREIGN_WT="" CLAUDE_PID="$$" wt_lease_acquire "$wt" >/dev/null 2>&1 || return 1
@@ -412,6 +647,17 @@ wt_dehydrate_tree() { # <worktree> → prints the bytes it removed, on stdout
 	# the set is re-derived after it — observed drift of 716800 B against a set that had shrunk in
 	# between, printed as though it were what the reap gave back.
 	dirs="$(wt_node_modules_dirs "$wt")"
+	# 3. And is anything USING that set? Asked here, under the lock and against the re-derived set,
+	#    for the same reason the byte figure is taken here: the verdict's answer was computed before
+	#    the lock and describes a set that may no longer be the one about to be deleted. An install
+	#    that started in that window is exactly the case #4609 §2 is about, and it is visible only
+	#    from this side of the lock.
+	if ! wt_recency_refusal "$wt" "$state" "$dirs" >/dev/null; then
+		wt_reap_unlock
+		trap - EXIT INT TERM
+		if [ "${BASHPID:-$$}" = "$$" ]; then eval "${prev_traps:-}"; fi
+		return 3
+	fi
 	while IFS= read -r d; do
 		[ -n "$d" ] || continue
 		bytes=$((bytes + $(wt_dir_bytes "$d")))
@@ -657,11 +903,30 @@ if [ "${1:-}" = "--dehydrate" ]; then
 		case "$a" in
 			--dehydrate) ;; # our own verb
 			--dry-run) dry=1 ;;
+			# The quiet-floor override (#4609). `=N` rather than a second token on purpose: this
+			# parser is a `for a in "$@"` loop, and teaching it to consume a following argument is
+			# how `--min-idle-hours --dry-run` becomes "floor --dry-run, then the REAL reap".
+			--min-idle-hours=*)
+				mih="${a#--min-idle-hours=}"
+				case "$mih" in
+					'' | *[!0-9]*)
+						echo "✗ wt:dehydrate: --min-idle-hours needs a whole number of hours, got '$mih'" >&2
+						exit 2
+						;;
+				esac
+				ALETHIA_WT_MIN_IDLE_SECONDS=$((mih * 3600))
+				export ALETHIA_WT_MIN_IDLE_SECONDS
+				;;
+			--min-idle-hours)
+				echo "✗ wt:dehydrate: --min-idle-hours needs a value, as --min-idle-hours=N" >&2
+				exit 2
+				;;
 			*)
 				echo "✗ wt:dehydrate: unknown argument '$a'" >&2
-				echo "  usage: pnpm wt:dehydrate [--dry-run]" >&2
-				echo "  Refusing rather than guessing: this command deletes, and the only flag it" >&2
-				echo "  takes is the one that stops it doing so." >&2
+				echo "  usage: pnpm wt:dehydrate [--dry-run] [--min-idle-hours=N]" >&2
+				echo "  Refusing rather than guessing: this command deletes, and the only flags it" >&2
+				echo "  takes are the one that stops it doing so and the one that sets how long a" >&2
+				echo "  tree must have been quiet before it counts as abandoned (0 disables that)." >&2
 				exit 2
 				;;
 		esac
@@ -670,6 +935,7 @@ if [ "${1:-}" = "--dehydrate" ]; then
 	reaped=0
 	held=0
 	other=0
+	busy=0
 	# HELD and OTHER are counted apart because "skipping N held one(s)" was false: it lumped the
 	# main checkout, a tree git cannot read and a directory that no longer exists in with trees a
 	# live instance is actually working in. In a four-worktree fixture two of the four "held" were
@@ -703,6 +969,11 @@ if [ "${1:-}" = "--dehydrate" ]; then
 				esac
 				continue
 				;;
+			busy)
+				echo "  busy  $wt  ($br) — $why"
+				busy=$((busy + 1))
+				continue
+				;;
 			clean)
 				echo "  ok    $wt  ($br) — $why"
 				continue
@@ -710,15 +981,26 @@ if [ "${1:-}" = "--dehydrate" ]; then
 		esac
 		if [ "$dry" = 1 ]; then
 			echo "  WOULD reap  $wt  ($br) — $why"
-		elif freed="$(wt_dehydrate_tree "$wt")"; then
-			# The REAP's own figure, not the verdict's: the verdict measured before the lease was
-			# taken and the set was re-derived after it.
-			bytes="$freed"
-			echo "  reap  $wt  ($br) — freed up to $(wt_human_bytes "$bytes") on disk"
 		else
-			echo "  skip  $wt  ($br) — a live instance took it between the scan and the reap"
-			held=$((held + 1))
-			continue
+			# The exit CODE, read unpiped, because the two refusals need different sentences: rc 1
+			# is an instance that arrived, rc 3 is something writing to the files. Reporting the
+			# second as the first sent a reader looking for a process that does not exist.
+			rc=0
+			freed="$(wt_dehydrate_tree "$wt")" || rc=$?
+			if [ "$rc" = 0 ]; then
+				# The REAP's own figure, not the verdict's: the verdict measured before the lease
+				# was taken and the set was re-derived after it.
+				bytes="$freed"
+				echo "  reap  $wt  ($br) — freed up to $(wt_human_bytes "$bytes") on disk"
+			elif [ "$rc" = 3 ]; then
+				echo "  busy  $wt  ($br) — written to between the scan and the reap — nothing was touched"
+				busy=$((busy + 1))
+				continue
+			else
+				echo "  skip  $wt  ($br) — a live instance took it between the scan and the reap"
+				held=$((held + 1))
+				continue
+			fi
 		fi
 		total=$((total + bytes))
 		reaped=$((reaped + 1))
@@ -730,11 +1012,11 @@ $(git worktree list --porcelain | sed -n 's/^worktree //p')
 EOF
 	echo ""
 	if [ "$dry" = 1 ]; then
-		echo "✓ dry run: would reap $reaped tree(s), up to $(wt_human_bytes "$total") on disk; $held held by a live instance, $other not a target. Nothing was touched."
+		echo "✓ dry run: would reap $reaped tree(s), up to $(wt_human_bytes "$total") on disk; $held held by a live instance, $busy recently written to, $other not a target. Nothing was touched."
 		echo "  \"up to\" is the ceiling, not the estimate: pnpm uses APFS clones, so most of these"
 		echo "  blocks are shared with the pnpm store and expect FAR less back — 38x less, measured."
 	else
-		echo "✓ reaped $reaped tree(s), up to $(wt_human_bytes "$total") on disk; $held held by a live instance, $other not a target."
+		echo "✓ reaped $reaped tree(s), up to $(wt_human_bytes "$total") on disk; $held held by a live instance, $busy recently written to, $other not a target."
 		echo "  No worktree, tracked file or uncommitted change was removed. A reaped tree's own"
 		echo "  stale lease record goes with it, so it reads 'free' rather than 'stale' afterwards."
 		echo ""
@@ -765,6 +1047,25 @@ fi
 # "all passed", which is a report, not a test. Mutate something and watch the EXIT CODE.
 wt_dehydrate_self_test() {
 	local fails=0 tmp wt ld me out bytes nl_dir reaped_bytes
+
+	# THE FLOOR IS OFF FOR THE CASES BELOW, AND THAT IS A STATEMENT ABOUT WHAT THEY TEST.
+	#
+	# Every case from here to the recency block at the end is about REAP MECHANICS — which paths the
+	# walk finds, whether the lease arbitrates, what the byte accounting reports. They build their
+	# fixtures with `mkdir -p`, so every `node_modules` they create has an mtime of NOW, and the
+	# recency floor #4609 added correctly refuses all of them. Nineteen of them failed with `busy`
+	# the moment the floor landed.
+	#
+	# Backdating each fixture with `touch -t` would work and would be wrong: it makes every one of
+	# these cases depend on a detail none of them is about, so a future change to the floor's units
+	# or its clock handling breaks nineteen unrelated assertions and buries its own signal. Pinning
+	# the override to 0 says the true thing instead — these cases do not exercise the floor.
+	#
+	# The floor is then tested on its own terms, in both directions, by the dedicated block at the
+	# end of this function. That block UNSETS this, which is what stops "the floor is off" from
+	# silently becoming "the floor is never measured".
+	ALETHIA_WT_MIN_IDLE_SECONDS=0
+	export ALETHIA_WT_MIN_IDLE_SECONDS
 	_a() { if [ "$1" = "$2" ]; then echo "ok   - $3"; else
 		echo "FAIL - $3: want '$1' got '$2'" >&2
 		fails=$((fails + 1))
@@ -1307,7 +1608,12 @@ wt_dehydrate_self_test() {
 	_hasre '^  ok    .*/wt-cclean  \(cclean\)' "$cout" "cmd: the clean tree renders as 'ok', not as a skip"
 	_has "already de-hydrated" "$cout" "cmd: … and says why"
 
-	_has "1 held by a live instance, 1 not a target" "$cout" "cmd: --dry-run counts HELD apart from not-a-target"
+	# The summary now carries THREE refusal counts, not two: #4609 inserted `recently written to`
+	# between them. Asserted as the whole triple rather than as the old contiguous pair, because a
+	# substring match that happens to still pass across an inserted field is a test that stopped
+	# reading the thing it names. The `0 recently written to` is load-bearing here: these fixtures
+	# run with the floor pinned off, so a non-zero count would mean the override leaked.
+	_has "1 held by a live instance, 0 recently written to, 1 not a target" "$cout" "cmd: --dry-run counts HELD, BUSY and not-a-target apart"
 	_a "yes" "$([ -e "$cmd/wt-creap/node_modules/blob" ] && echo yes || echo no)" "cmd: --dry-run deleted nothing"
 
 	# ── an unknown argument must REFUSE, not fall through to the destructive run ────────────────
@@ -1332,13 +1638,96 @@ wt_dehydrate_self_test() {
 	cout="$(CLAUDE_PID="$me" bash "$cmd/main/scripts/worktree.sh" --dehydrate 2>&1)"
 	_has "freed up to 2.0M on disk" "$cout" "cmd: the real run reports the bytes IT removed"
 	_has "reaped 1 tree(s), up to 2.0M on disk" "$cout" "cmd: the total is the sum of what was reaped"
-	_has "1 held by a live instance, 1 not a target" "$cout" "cmd: the real run counts HELD apart too"
+	_has "1 held by a live instance, 0 recently written to, 1 not a target" "$cout" "cmd: the real run counts all three apart too"
 	_a "no" "$([ -e "$cmd/wt-creap/node_modules/blob" ] && echo yes || echo no)" "cmd: the reapable tree WAS reaped"
 	_a "yes" "$([ -e "$cmd/wt-cheld/node_modules/blob" ] && echo yes || echo no)" "cmd: the live-held tree was NOT"
 	_a "free" "$(CLAUDE_PID="$me" wt_lease_state "$cmd/wt-creap")" "cmd: the reaped tree's stale lease record went with it"
 	rm -rf "$cmd"
 
 	git -C "$tmp/main" worktree remove --force "$wt" 2>/dev/null || true
+
+	# ── THE RECENCY FLOOR, ON ITS OWN TERMS (#4609) ────────────────────────────────────────────
+	#
+	# Everything above ran with ALETHIA_WT_MIN_IDLE_SECONDS=0, because those cases are about reap
+	# mechanics and their `mkdir -p` fixtures are always seconds old. This block is the reason that
+	# pin is honest rather than a way of not measuring the floor: it UNSETS the override and drives
+	# the real defaults.
+	#
+	# The two floors must be asserted SEPARATELY, and the middle case is the one that earns its
+	# keep: a tree idle two hours is past the `stale` floor (1h) and nowhere near the `free` one
+	# (24h). One number for both states would pass every other case here and fail only that one.
+	unset ALETHIA_WT_MIN_IDLE_SECONDS
+	local rt rld
+	rt="$tmp/wt-recency"
+	# A REAL linked worktree, not a mkdir. `wt_dehydrate_verdict` answers `skip` for anything that
+	# is not one, and a fixture that is merely a directory makes every assertion below pass or fail
+	# for a reason that has nothing to do with the floor — which is exactly what it did on the
+	# first attempt: six cases returned `skip` and said nothing about recency at all.
+	git -C "$tmp/main" worktree add -q -b wtrecency "$rt" 2>/dev/null
+	rld="$(wt_lease_dir "$rt")"
+	mkdir -p "$rt/node_modules/pkg"
+	: >"$rt/node_modules/pkg/blob"
+
+	# Stamp EVERY path wt_tree_idle_seconds probes, not just node_modules: it also reads the
+	# worktree ROOT and the git dir's `index` and `HEAD`, all three of which `git worktree add`
+	# writes seconds before this runs. Backdating only node_modules left the root reading "now",
+	# the probe took the newest of the set, and two cases failed while the fixture looked complete.
+	# That is the function being right and the fixture being partial — the same shape as a composed
+	# fixture that never matched the real thing.
+	_backdate() { # <hours>
+		local when rgd
+		when="$(date -u -v-"$1"H +%Y%m%d%H%M 2>/dev/null || date -u -d "$1 hours ago" +%Y%m%d%H%M)"
+		rgd="$(git -C "$rt" rev-parse --absolute-git-dir 2>/dev/null || true)"
+		find "$rt/node_modules" -exec touch -t "$when" {} + 2>/dev/null || true
+		touch -t "$when" "$rt" 2>/dev/null || true
+		[ -n "$rgd" ] && touch -t "$when" "$rgd/index" "$rgd/HEAD" 2>/dev/null || true
+	}
+	# The inverse, for the cases that want "written just now" — same path set, so the two are
+	# symmetric and neither can drift into touching less than the other.
+	_freshen() {
+		local rgd
+		rgd="$(git -C "$rt" rev-parse --absolute-git-dir 2>/dev/null || true)"
+		find "$rt/node_modules" -exec touch {} + 2>/dev/null || true
+		touch "$rt" 2>/dev/null || true
+		[ -n "$rgd" ] && touch "$rgd/index" "$rgd/HEAD" 2>/dev/null || true
+	}
+	_stale_lease() { rm -rf "$rld"; mkdir -p "$rld"; {
+		echo "pid: 999999"; echo "procStart: Thu Jan  1 00:00:00 1970"; echo "host: $(wt_host)"
+	} >"$rld/owner"; }
+
+	# 1. written just now, no lease → refused. This is the case that broke nineteen assertions
+	#    above, and refusing here is the whole point of the change.
+	rm -rf "$rld"
+	_a "busy" "$(CLAUDE_PID="$me" wt_dehydrate_verdict "$rt" | cut -f1)" \
+		"recency: an unleased tree written seconds ago is NOT reaped"
+
+	# 2. idle 2h, no lease (`free`, floor 24h) → still refused. A person is not ruled out.
+	_backdate 2
+	_a "busy" "$(CLAUDE_PID="$me" wt_dehydrate_verdict "$rt" | cut -f1)" \
+		"recency: an unleased tree idle 2h is still NOT reaped — free's floor is 24h"
+
+	# 3. the SAME tree, same mtime, with a STALE lease (floor 1h) → reaped. Only the state differs,
+	#    which is what proves the floor is chosen per state rather than applied as one number.
+	_stale_lease
+	_a "reap" "$(CLAUDE_PID="$me" wt_dehydrate_verdict "$rt" | cut -f1)" \
+		"recency: a STALE-leased tree idle 2h IS reaped — stale's floor is 1h"
+
+	# 4. stale lease, written just now → refused. The agent is gone; an install it started is not.
+	_freshen
+	_a "busy" "$(CLAUDE_PID="$me" wt_dehydrate_verdict "$rt" | cut -f1)" \
+		"recency: a STALE lease over a tree written seconds ago is NOT reaped — the live install case"
+
+	# 5. an unleased tree past 24h → reaped. Without this the floor could be refusing everything.
+	rm -rf "$rld"
+	_backdate 25
+	_a "reap" "$(CLAUDE_PID="$me" wt_dehydrate_verdict "$rt" | cut -f1)" \
+		"recency: an unleased tree idle 25h IS reaped — the floor is a floor, not a wall"
+
+	# 6. the documented override still disables it, on the tree case 1 refused.
+	_freshen
+	_a "reap" "$(ALETHIA_WT_MIN_IDLE_SECONDS=0 CLAUDE_PID="$me" wt_dehydrate_verdict "$rt" | cut -f1)" \
+		"recency: ALETHIA_WT_MIN_IDLE_SECONDS=0 disables the floor, as documented"
+
 	if [ "$fails" -eq 0 ]; then echo "worktree dehydrate self-test: all passed"; else
 		echo "worktree dehydrate self-test: $fails check(s) FAILED" >&2
 	fi
