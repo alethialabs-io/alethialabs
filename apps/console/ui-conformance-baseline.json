@@ -538,7 +538,7 @@
 		{
 			"route": "/[org]",
 			"redirectOnly": false,
-			"surfaceFiles": 284,
+			"surfaceFiles": 285,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -656,7 +656,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"redirectOnly": false,
-			"surfaceFiles": 397,
+			"surfaceFiles": 398,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1364,7 +1364,7 @@
 		{
 			"route": "/[org]/~/connectors",
 			"redirectOnly": false,
-			"surfaceFiles": 211,
+			"surfaceFiles": 212,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1600,7 +1600,7 @@
 		{
 			"route": "/[org]/~/new",
 			"redirectOnly": false,
-			"surfaceFiles": 360,
+			"surfaceFiles": 361,
 			"families": {
 				"S": {
 					"instrumented": 4,

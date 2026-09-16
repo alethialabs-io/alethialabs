@@ -12,7 +12,9 @@
 // aws|azure|gcp|alibaba|digitalocean|hetzner|civo; cloud_identity_status = pending|testing|connected|
 // degraded|disconnected|failed.
 
+import { cloudProvider } from "@/lib/db/schema/enums";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
+import type { CloudCredentials } from "@/types/jsonb.types";
 
 import { db } from "./db";
 
@@ -22,10 +24,108 @@ export interface Owner {
 	orgId: string;
 }
 
+/** Every provider `cloud_identities.provider` admits — read from the enum, never retyped. */
+export const SEED_PROVIDERS = cloudProvider.enumValues;
+
+/** One of the providers a seeded cloud identity can carry. */
+export type SeedProvider = (typeof SEED_PROVIDERS)[number];
+
+/** The AWS account number every AWS-shaped fixture in this file already used. Unchanged on purpose. */
+const AWS_ACCOUNT_ID = "123456789012";
+const ALIBABA_ACCOUNT_ID = "5123456789012345";
+const GCP_PROJECT_ID = "e2e-gcp-project";
+const AZURE_SUBSCRIPTION_ID = "00000000-0000-4000-8000-00000000e2e0";
+
+/**
+ * The credential a seeded identity carries, SHAPED FOR ITS PROVIDER.
+ *
+ * WHY THIS IS NOT ONE CONSTANT (#4708). It was: `{role_arn: "arn:aws:iam::…"}`, for every provider.
+ * `identityWasConfigured()` (`lib/cloud-providers/identity-configured.ts`) is provider-aware — it
+ * demands a project or service account for gcp, and a subscription or tenant for azure — so a
+ * seeded GCP or Azure identity was filtered out of the connectors board as a never-configured
+ * placeholder. Nothing errored: the row inserted, the read succeeded, the predicate answered
+ * `false`. The tile read "Not enabled on this instance", `ConnectorCard`'s `isPick` went false with
+ * it, and a Playwright click on that tile did NOTHING — silently, for 120 seconds.
+ *
+ * `tests/e2e-helpers/seed-credentials.test.ts` holds every one of these against that predicate, in
+ * both directions, so this cannot drift back.
+ *
+ * `satisfies Record<SeedProvider, CloudCredentials>` is doing two jobs. It type-checks each entry
+ * against the real JSONB shape, and it makes the KEY SET exhaustive — a cloud added to the
+ * `cloud_provider` enum with no credential here fails at tsc rather than inheriting a neighbour's,
+ * which is the whole defect. It is `satisfies` and not an annotation because the entries must keep
+ * their literal types: postgres.js's `sql.json` takes a `JSONValue`, and TypeScript grants an
+ * implicit index signature to an inferred object type but never to a named interface, so an
+ * entry typed as `CloudCredentials` would not be insertable.
+ *
+ * The token clouds get `self_managed: true` rather than a token: `CloudCredentials.token` holds an
+ * `EncryptedSecret`, not a string, and self-managed is a REAL supported mode (the runner supplies
+ * the token from its own environment) whose stored credential is genuinely absent. A hand-built
+ * fake ciphertext would be a fixture invented rather than captured.
+ */
+const SEED_CREDENTIALS = {
+	aws: { role_arn: `arn:aws:iam::${AWS_ACCOUNT_ID}:role/e2e` },
+	// Alibaba is the other role cloud, but its ARNs are `acs:ram:`, not `arn:aws:iam:`. The
+	// predicate only asks that one be present; a fixture that lies about the namespace is the next
+	// reader's wrong answer.
+	alibaba: {
+		role_arn: `acs:ram::${ALIBABA_ACCOUNT_ID}:role/e2e`,
+		oidc_provider_arn: `acs:ram::${ALIBABA_ACCOUNT_ID}:oidc-provider/e2e`,
+	},
+	gcp: {
+		project_id: GCP_PROJECT_ID,
+		service_account_email: `e2e@${GCP_PROJECT_ID}.iam.gserviceaccount.com`,
+	},
+	azure: {
+		subscription_id: AZURE_SUBSCRIPTION_ID,
+		tenant_id: "00000000-0000-4000-8000-00000000e2e1",
+	},
+	digitalocean: { self_managed: true },
+	hetzner: { self_managed: true },
+	civo: { self_managed: true },
+} satisfies Record<SeedProvider, CloudCredentials>;
+
+/** The credential `seedCloudIdentity` writes for a provider. See {@link SEED_CREDENTIALS}. */
+export function seedCredentials(provider: SeedProvider) {
+	return SEED_CREDENTIALS[provider];
+}
+
+/**
+ * The account the seeded identity's probe "authenticated as" (`verified_account_id`).
+ *
+ * ONE VALUE FOR SEVEN PROVIDERS WAS A COLLISION STANDING IN THE FIXTURES. That column is how
+ * `app/api/cloud-events/[provider]/route.ts` resolves an inbound cloud event back to an identity,
+ * and `lib/cloud-providers/events/ingest.ts` names a cross-provider collision on it as a hazard.
+ * The token clouds return null: their account id is the token's owner, which self-managed mode
+ * never learns.
+ */
+export function seedAccountId(provider: SeedProvider): string | null {
+	switch (provider) {
+		case "aws":
+			return AWS_ACCOUNT_ID;
+		case "alibaba":
+			return ALIBABA_ACCOUNT_ID;
+		case "gcp":
+			return GCP_PROJECT_ID;
+		case "azure":
+			return AZURE_SUBSCRIPTION_ID;
+		case "digitalocean":
+		case "hetzner":
+		case "civo":
+			// No account id: a self-managed token cloud stores no credential, so nothing was ever
+			// authenticated as anything. `verified_account_id` is nullable and this is the honest null.
+			return null;
+		default: {
+			const _exhaustive: never = provider;
+			return _exhaustive;
+		}
+	}
+}
+
 /** Inserts a verified/connected cloud identity so a project can link it and Connectors shows it. */
 export async function seedCloudIdentity(
 	owner: Owner,
-	opts: { provider?: string; name?: string; verified?: boolean } = {},
+	opts: { provider?: SeedProvider; name?: string; verified?: boolean } = {},
 ): Promise<{ id: string }> {
 	const sql = db();
 	const provider = opts.provider ?? "aws";
@@ -37,10 +137,10 @@ export async function seedCloudIdentity(
 			scope: "org",
 			provider,
 			name: opts.name ?? `E2E ${provider.toUpperCase()} account`,
-			credentials: sql.json({ role_arn: "arn:aws:iam::123456789012:role/e2e" }),
+			credentials: sql.json(seedCredentials(provider)),
 			is_verified: verified,
 			status: verified ? "connected" : "pending",
-			verified_account_id: verified ? "123456789012" : null,
+			verified_account_id: verified ? seedAccountId(provider) : null,
 		})}
 		returning id`;
 	return row;
