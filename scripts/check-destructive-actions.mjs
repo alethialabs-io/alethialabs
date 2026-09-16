@@ -160,6 +160,16 @@ export const AUTH_CLIENT_DESTRUCTIVE = new Set([
 /** Statuses the registry's field contract defines. */
 const STATUSES = new Set(["confirmed", "missing", "inert"]);
 
+/** The production-sweep classifications `.claude/skills/console-prod-qa/SKILL.md` knows how to act on. */
+const PROD_QA = new Set(["open-cancel", "own-rows-only", "skip"]);
+
+/**
+ * The one line in the registry's header that states its own size. Matched at the start of a comment
+ * line so the header's PROSE uses of the word — "the STATIC census: every call site…" — are not
+ * mistaken for it; those have text between the `#` and the word, this has only whitespace.
+ */
+const CENSUS_LINE = /^[ \t]*#[ \t]*census:[ \t]*(.*?)[ \t]*$/;
+
 // ── the reader ──────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -507,6 +517,27 @@ export function census({ registry, sites, refusals = [], floor = SITE_FLOOR, rea
 		}
 		if (!String(c.surface ?? "").trim()) problems.push(`${id}: no \`surface\` — the spec has nowhere to look for the control`);
 
+		// `prod-qa` is the field the THIRD reader acts on, and it was the one field nothing here
+		// checked. The skill refuses an unclassified entry — but it does so during a production
+		// run, which is far too late to be the only place the question is asked.
+		const prodQa = String(c["prod-qa"] ?? "").trim();
+		if (!PROD_QA.has(prodQa)) {
+			problems.push(
+				`${id}: prod-qa "${prodQa}" is not one of ${[...PROD_QA].join(" | ")}. ` +
+					"The production sweep reads this field to decide what it may open on alethialabs.io; an entry it cannot classify is one it has no ruling for.",
+			);
+		}
+		// Only `skip` requires a reason, and the asymmetry is deliberate — see the field contract.
+		// `skip` is the value that REMOVES a control from the sweep, so it is the one whose argument
+		// has to survive; requiring one on the other two would make deleting an argument the
+		// cheapest way to go green, which is the opposite of what this ledger is for.
+		if (prodQa === "skip" && !String(c.reason ?? "").trim()) {
+			problems.push(
+				`${id}: prod-qa \`skip\` with no \`reason\`. The sweep repeats the reason beside the entry rather than re-deciding it, ` +
+					"so an empty one reads to the next person as a decision already made — and `own-rows-only` on a subject with no own row is how that happens (#4517).",
+			);
+		}
+
 		const mutation = String(c.mutation ?? "");
 		if (!mutation.trim()) {
 			// An `inert` control genuinely HAS no mutation — that emptiness IS the recorded
@@ -612,6 +643,80 @@ export function census({ registry, sites, refusals = [], floor = SITE_FLOOR, rea
 	}
 
 	return problems;
+}
+
+/**
+ * The header's census, DERIVED rather than read.
+ *
+ * The registry opens with a sentence stating how many controls it holds and how they split by
+ * status. That sentence is what people quote when they are deciding how much of the destructive
+ * surface is covered, and it is the one claim in the file that nothing measured: the parser skips
+ * `#` lines as prose, so the counts could — and did — drift away from the list directly beneath
+ * them. #4517 found THREE disagreeing counts of one list, in the header, in the issue body, and in
+ * the parse, none of which could be told apart by any gate. "Update it" had already been chosen
+ * once, and is what produced that.
+ *
+ * So the counts stop being typed. This recounts them and compares, and it fails in BOTH directions
+ * for the same reason `SITE_FLOOR` exists three screens up:
+ *
+ *   · DISAGREES — the loud one. The line says something the entries do not.
+ *   · ABSENT — the silent one, and the one that matters. A rule of the form "if the line says X,
+ *     check X" is satisfied by deleting the line, which would make the cheapest way to go green the
+ *     one that destroys the claim. So no line is a failure, exactly as no call sites is.
+ *
+ * The status SET is compared too, not only the numbers: a status the line names that the entries do
+ * not have (a category emptied and never struck out) and a status the entries have that the line
+ * does not name (a category added and never counted) are both findings. A total that happens to
+ * match while the split is wrong is precisely the arithmetic the old header got right by accident.
+ *
+ * @param {string} source raw registry YAML — the COMMENTS matter here, which is why this takes the
+ *   text rather than the parsed document
+ * @param {Record<string, any>[]} controls the parsed entries
+ * @returns {string[]} problems; empty is a pass
+ */
+export function headerCensus(source, controls) {
+	/** @type {Map<string, number>} */
+	const counts = new Map();
+	for (const c of controls) {
+		const s = String(c.status ?? "?");
+		counts.set(s, (counts.get(s) ?? 0) + 1);
+	}
+	// STATUSES order first, so the rendered line is deterministic and a re-run never produces a
+	// different-but-equivalent string. A status outside the contract is reported by `census()`; it
+	// is rendered here too, because an expected line that omitted it would be a lie about the file.
+	const parts = [...STATUSES].filter((s) => counts.get(s)).map((s) => `${counts.get(s)} ${s}`);
+	for (const [s, n] of counts) if (!STATUSES.has(s)) parts.push(`${n} ${s}`);
+	const expected = `census: ${controls.length} controls — ${parts.join(", ")}`;
+
+	/** @type {{n: number, value: string}[]} */
+	const found = [];
+	source.split("\n").forEach((line, i) => {
+		const m = CENSUS_LINE.exec(line);
+		if (m) found.push({ n: i + 1, value: `census: ${m[1]}` });
+	});
+
+	if (found.length === 0) {
+		return [
+			`${REGISTRY_PATH}: the header states no census. It is DERIVED, not optional — a rule that only checks a line that is present ` +
+				`is one whose cheapest pass is deletion. Put this line back in the header comment:\n      #   ${expected}`,
+		];
+	}
+	if (found.length > 1) {
+		return [
+			`${REGISTRY_PATH}: ${found.length} census lines (${found.map((f) => f.n).join(", ")}). One list has one size; two lines are two claims ` +
+				"and a reader cannot tell which is the file's.",
+		];
+	}
+	const [only] = found;
+	if (only.value !== expected) {
+		return [
+			`${REGISTRY_PATH}:${only.n}: the header's census disagrees with the entries below it.\n` +
+				`      header says: ${only.value}\n` +
+				`      entries say: ${expected}\n` +
+				"      Paste the second line over the first. Do not retype it — a hand-count is what rotted three times (#4517).",
+		];
+	}
+	return [];
 }
 
 /**
@@ -959,6 +1064,80 @@ function selfTest() {
 	);
 	check("…and the ledger matches it on the path", mutationOccursIn("/api/org/logo DELETE", 'fetch("/api/org/logo", { method: "DELETE" })'));
 
+	// ── prod-qa, the field the third reader acts on
+	check(
+		"an entry with no `prod-qa` FAILS",
+		shapeProblems("version: 1\ncontrols:\n  - id: a\n    surface: s.tsx\n    mutation: x\n    status: confirmed\n").some((p) => p.includes("is not one of open-cancel")),
+	);
+	check(
+		"an unknown `prod-qa` FAILS",
+		shapeProblems("version: 1\ncontrols:\n  - id: a\n    surface: s.tsx\n    mutation: x\n    status: confirmed\n    prod-qa: probably-fine\n").some((p) => p.includes("is not one of open-cancel")),
+	);
+	check(
+		"a `skip` with no `reason` FAILS",
+		shapeProblems("version: 1\ncontrols:\n  - id: a\n    surface: s.tsx\n    mutation: x\n    status: confirmed\n    prod-qa: skip\n").some((p) => p.includes("with no `reason`")),
+	);
+	check(
+		"…but `own-rows-only` with no `reason` is legitimate",
+		!shapeProblems("version: 1\ncontrols:\n  - id: a\n    surface: s.tsx\n    mutation: x\n    status: confirmed\n    prod-qa: own-rows-only\n").some((p) => p.includes("with no `reason`")),
+	);
+
+	// ── the header's census, DERIVED. Every fixture header below is hand-typed on purpose: it is
+	// the ORACLE, and one generated by the same code it checks would move with it and prove nothing.
+	const censusBody = [
+		"",
+		"version: 1",
+		"",
+		"controls:",
+		"  - id: a",
+		"    surface: s.tsx",
+		"    mutation: x",
+		"    status: confirmed",
+		"    prod-qa: own-rows-only",
+		"  - id: b",
+		"    surface: t.tsx",
+		"    mutation: y",
+		"    status: missing",
+		'    issue: "#1"',
+		"    prod-qa: own-rows-only",
+	].join("\n");
+	/** @param {string[]} header */
+	const censusProblems = (header) => {
+		const yaml = header.join("\n") + censusBody;
+		return headerCensus(yaml, parseRegistry(yaml).controls);
+	};
+	const truthful = ["#   census: 2 controls — 1 confirmed, 1 missing"];
+
+	check("a census line that agrees with the entries PASSES", censusProblems(truthful).length === 0);
+	check(
+		"a census line whose TOTAL is wrong FAILS",
+		censusProblems(["#   census: 41 controls — 1 confirmed, 1 missing"]).some((p) => p.includes("disagrees with the entries")),
+	);
+	check(
+		"a census line whose total is right but whose SPLIT is wrong FAILS",
+		censusProblems(["#   census: 2 controls — 2 confirmed"]).some((p) => p.includes("disagrees with the entries")),
+	);
+	check(
+		"a census line naming a status the entries no longer have FAILS",
+		censusProblems(["#   census: 2 controls — 1 confirmed, 1 missing, 0 inert"]).some((p) => p.includes("disagrees with the entries")),
+	);
+	check(
+		"an ABSENT census line FAILS rather than passing vacuously",
+		censusProblems(["# no census here, only prose"]).some((p) => p.includes("states no census")),
+	);
+	check(
+		"the header's PROSE use of the word is not mistaken for the census line",
+		censusProblems(["#   · check-destructive-actions.mjs — the STATIC census: every call site has an entry"]).some((p) => p.includes("states no census")),
+	);
+	check(
+		"TWO census lines FAIL — one list has one size",
+		censusProblems([...truthful, ...truthful]).some((p) => p.includes("2 census lines")),
+	);
+	check(
+		"the failure NAMES the line to paste, so the fix is not another hand-count",
+		censusProblems(["#   census: 41 controls — 22 confirmed"]).some((p) => p.includes("census: 2 controls — 1 confirmed, 1 missing")),
+	);
+
 	const failed = results.filter((r) => !r.ok);
 	for (const r of results) {
 		if (r.ok) console.log(`ok   - ${r.name}`);
@@ -1042,7 +1221,9 @@ function main() {
 		return 0;
 	}
 
-	const problems = census({ registry, sites, refusals, read: readRepo });
+	// The header's census reads the raw TEXT, so it is asked here rather than inside `census()`,
+	// which is pure over the parsed document and knows nothing about the file's comments.
+	const problems = [...census({ registry, sites, refusals, read: readRepo }), ...headerCensus(source, registry.controls)];
 	const statuses = registry.controls.reduce((acc, c) => {
 		const s = String(c.status ?? "?");
 		acc[s] = (acc[s] ?? 0) + 1;

@@ -51,14 +51,33 @@
 #   status          confirmed (a confirmation exists) | missing (fires on a bare click — `issue`
 #                   REQUIRED) | inert (the control does nothing at all — `issue` REQUIRED)
 #   issue           the board unit that flips a `missing`/`inert` entry
-#   prod-qa         open-cancel | own-rows-only | skip
-#   reason          why prod-qa is `skip`, when it is
+#   prod-qa         open-cancel | own-rows-only | skip — REQUIRED on every entry; the census
+#                   refuses an absent or unknown value, because an unclassified control is one the
+#                   production sweep has no ruling for
+#   reason          why prod-qa is what it is. REQUIRED when `skip` — that value is the one that
+#                   removes a control from the production sweep, and a removal with no argument
+#                   beside it reads to the next person as one already made. Permitted, never
+#                   required, on the other two: `env.destroy` is `open-cancel` by decision and a
+#                   guard whose cheapest escape is deleting that argument would be worse than none.
 #
-# A `missing` entry is a DEFECT recorded, not a decision. Of the 41 controls read on 2026-09-07,
-# 22 are `confirmed`, 18 are `missing` and 1 is `inert` — so NINETEEN fire on a bare click, and each
-# names the lane that adds the ConfirmDialog. (The count is stated as the three statuses rather than
-# one number because `inert` is not a missing confirmation, it is a control that does nothing at
-# all, and a single figure hid that distinction.)
+# A `missing` entry is a DEFECT recorded, not a decision. The count is stated as the three statuses
+# rather than one number because `inert` is not a missing confirmation, it is a control that does
+# nothing at all, and a single figure hid that distinction.
+#
+# ── THE CENSUS LINE BELOW IS DERIVED. DO NOT HAND-EDIT IT. ──────────────────────────────────────
+#
+# `scripts/check-destructive-actions.mjs` recounts it from the `controls:` entries on every run and
+# FAILS if this line disagrees with them — and fails if the line is missing altogether, so it cannot
+# be made to pass by deletion. When it fails it prints the line to paste. Run the check; do not
+# retype it from memory.
+#
+# It is derived because the hand-typed version rotted, and rotted in triplicate: this header said
+# 41 controls / 22 confirmed / 18 missing / 1 inert (read on 2026-09-07), #4517's body said 47 / 27 /
+# 19 / 1, and the parser said something different from both. Three disagreeing counts of one list
+# that a script could count all along. Nothing compared them, which is exactly why it went unnoticed
+# — it is prose, and prose is not measured. Now it is.
+#
+#   census: 47 controls — 45 confirmed, 1 missing, 1 inert
 
 version: 1
 
@@ -674,7 +693,8 @@ controls:
     fixture: org-with-a-logo
     persona: owner
     status: confirmed
-    prod-qa: own-rows-only
+    prod-qa: skip
+    reason: the subject is the QA org's own logo, not a qa-<run-id> row the run created, so own-rows-only granted a confirm no row could satisfy; confirming clears standing org state Phase 5 teardown cannot restore, and the dialog is already proven by the LIVE spec on a fixture production cannot seed
 
   # ── runners ────────────────────────────────────────────────────────────────────────────────
   - id: runners.pool.delete
