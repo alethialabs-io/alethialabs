@@ -31,8 +31,8 @@
 	},
 	"live": {
 		"source": {
-			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/33623272631",
-			"commit": "1a3bdeb73a36d488a238dfe2d2e4235b35105832"
+			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/34851361970",
+			"commit": "e48ff5213e9b5b4fca3452031d28907ee61942b6"
 		},
 		"sections": {
 			"routes": {
@@ -68,28 +68,7 @@
 				"routes": 27
 			}
 		},
-		"debt": {
-			"R3": {
-				"owner": "#3885",
-				"why": "two nested scroll containers that are not the shell's — a chip `ScrollArea` on `~/support/ask` and a `@repo/ui/table` wrapper on `[project]/environments` — each overflowing by 3px at all four widths. Trustworthy for the first time now that #3804 has made R3's own positive control green.",
-				"fail": 2
-			},
-			"R4": {
-				"owner": "#3805",
-				"why": "ONE shell defect, not N page defects: `components/shell/topbar.tsx` centres the breadcrumb out of flow (`absolute left-1/2`) beside an `ml-auto` action cluster that nothing reserves space for, so the two collide from `md:` up. #3805 keeps it deliberately rather than folding it into #3619 — the fix is a layout decision, and only R4's geometry can prove either answer.",
-				"fail": 7
-			},
-			"R5": {
-				"owner": "#3805",
-				"why": "the axe residue. `color-contrast` fails EVERY failing route on its own, so R5 cannot move at all until that clears — `button-name` went 3 → 0 in #3756 and the score did not budge. The console is dark-first and grayscale by design, so each node is a judgement between a token fix in `packages/brand/src/tokens.css` and a recorded decision.",
-				"fail": 12
-			},
-			"R6": {
-				"owner": "#3805",
-				"why": "two routes. `~/connectors` fires 400s from `/_next/image` for connector icons that do not exist (#3802, fixed by #3876); `[project]/…/support/cases/[id]` 404s the parent list route's RSC prefetch ~70 times in one visit, which is a prefetch storm as well as a 404.",
-				"fail": 2
-			}
-		}
+		"debt": {}
 	},
 	"predicates": {
 		"S1": {
@@ -205,12 +184,12 @@
 			"instrument": "live",
 			"section": "routes",
 			"owner": null,
-			"pass": 14,
+			"pass": 15,
 			"fail": 0,
-			"na": 26,
+			"na": 25,
 			"notMeasured": 0,
 			"naReasons": {
-				"no-empty-state": 26
+				"no-empty-state": 25
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -235,17 +214,17 @@
 			"instrument": "live",
 			"section": "permissions",
 			"owner": null,
-			"pass": 0,
+			"pass": 2,
 			"fail": 0,
-			"na": 27,
+			"na": 25,
 			"notMeasured": 13,
 			"naReasons": {
-				"no-restricted-surface": 27
+				"no-restricted-surface": 25
 			},
 			"notMeasuredReasons": {
 				"the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given": 13
 			},
-			"score": null
+			"score": 1
 		},
 		"H1": {
 			"family": "H",
@@ -490,60 +469,56 @@
 			"instrument": "live",
 			"section": "routes",
 			"owner": null,
-			"debt": "#3885",
-			"pass": 34,
-			"fail": 2,
+			"pass": 36,
+			"fail": 0,
 			"na": 4,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
-			"score": 0.9444
+			"score": 1
 		},
 		"R4": {
 			"family": "R",
 			"instrument": "live",
 			"section": "routes",
 			"owner": null,
-			"debt": "#3805",
-			"pass": 29,
-			"fail": 7,
+			"pass": 36,
+			"fail": 0,
 			"na": 4,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
-			"score": 0.8056
+			"score": 1
 		},
 		"R5": {
 			"family": "R",
 			"instrument": "live",
 			"section": "routes",
 			"owner": null,
-			"debt": "#3805",
-			"pass": 28,
-			"fail": 12,
+			"pass": 40,
+			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
 			"naReasons": {},
 			"notMeasuredReasons": {},
-			"score": 0.7
+			"score": 1
 		},
 		"R6": {
 			"family": "R",
 			"instrument": "live",
 			"section": "routes",
 			"owner": null,
-			"debt": "#3805",
-			"pass": 38,
-			"fail": 2,
+			"pass": 40,
+			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
 			"naReasons": {},
 			"notMeasuredReasons": {},
-			"score": 0.95
+			"score": 1
 		},
 		"R7": {
 			"family": "R",
@@ -722,19 +697,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
-				"fail": 1,
+				"pass": 25,
+				"fail": 0,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.96
+				"score": 1
 			}
 		},
 		{
@@ -840,19 +815,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 4,
-					"fail": 3,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.5714
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 21,
-				"fail": 4,
+				"pass": 24,
+				"fail": 1,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.84
+				"score": 0.96
 			}
 		},
 		{
@@ -958,19 +933,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 0.75
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 13,
-				"fail": 2,
+				"pass": 14,
+				"fail": 1,
 				"na": 18,
 				"notMeasured": 1,
-				"score": 0.8667
+				"score": 0.9333
 			}
 		},
 		{
@@ -1017,19 +992,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 31,
-				"fail": 2,
+				"pass": 32,
+				"fail": 1,
 				"na": 0,
 				"notMeasured": 1,
-				"score": 0.9394
+				"score": 0.9697
 			}
 		},
 		{
@@ -1076,19 +1051,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 31,
-				"fail": 2,
+				"pass": 32,
+				"fail": 1,
 				"na": 0,
 				"notMeasured": 1,
-				"score": 0.9394
+				"score": 0.9697
 			}
 		},
 		{
@@ -1135,19 +1110,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 5,
-					"fail": 2,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.7143
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 2,
+				"pass": 25,
+				"fail": 0,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.92
+				"score": 1
 			}
 		},
 		{
@@ -1194,19 +1169,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 5,
-					"fail": 2,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.7143
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 2,
+				"pass": 25,
+				"fail": 0,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.92
+				"score": 1
 			}
 		},
 		{
@@ -1253,19 +1228,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
-				"fail": 1,
+				"pass": 25,
+				"fail": 0,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.96
+				"score": 1
 			}
 		},
 		{
@@ -1430,19 +1405,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 5,
-					"fail": 2,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.7143
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 28,
-				"fail": 3,
+				"pass": 30,
+				"fail": 1,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 0.9032
+				"score": 0.9677
 			}
 		},
 		{
@@ -1580,9 +1555,9 @@
 				"T": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 4,
+					"pass": 5,
 					"fail": 0,
-					"na": 2,
+					"na": 1,
 					"notMeasured": 1,
 					"score": 1
 				},
@@ -1615,11 +1590,11 @@
 				}
 			},
 			"overall": {
-				"pass": 23,
+				"pass": 24,
 				"fail": 1,
-				"na": 9,
+				"na": 8,
 				"notMeasured": 1,
-				"score": 0.9583
+				"score": 0.96
 			}
 		},
 		{
@@ -1784,19 +1759,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 0.75
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 13,
-				"fail": 2,
+				"pass": 14,
+				"fail": 1,
 				"na": 19,
 				"notMeasured": 0,
-				"score": 0.8667
+				"score": 0.9333
 			}
 		},
 		{
@@ -1902,19 +1877,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 29,
-				"fail": 2,
+				"pass": 30,
+				"fail": 1,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 0.9355
+				"score": 0.9677
 			}
 		},
 		{
@@ -2079,19 +2054,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 1,
+				"pass": 24,
+				"fail": 0,
 				"na": 10,
 				"notMeasured": 0,
-				"score": 0.9583
+				"score": 1
 			}
 		},
 		{
@@ -2138,19 +2113,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 1,
+				"pass": 24,
+				"fail": 0,
 				"na": 10,
 				"notMeasured": 0,
-				"score": 0.9583
+				"score": 1
 			}
 		},
 		{
@@ -2197,70 +2172,11 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8571
-				}
-			},
-			"overall": {
-				"pass": 28,
-				"fail": 3,
-				"na": 3,
-				"notMeasured": 0,
-				"score": 0.9032
-			}
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"redirectOnly": false,
-			"surfaceFiles": 224,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 4,
+					"pass": 7,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
 					"score": 1
-				},
-				"T": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 4,
-					"fail": 0,
-					"na": 3,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"H": {
-					"instrumented": 9,
-					"of": 9,
-					"pass": 9,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"F": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8571
-				},
-				"R": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 6,
-					"fail": 1,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8571
 				}
 			},
 			"overall": {
@@ -2272,9 +2188,9 @@
 			}
 		},
 		{
-			"route": "/[org]/~/settings/sso",
+			"route": "/[org]/~/settings/roles",
 			"redirectOnly": false,
-			"surfaceFiles": 213,
+			"surfaceFiles": 224,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2328,6 +2244,65 @@
 				"na": 2,
 				"notMeasured": 0,
 				"score": 0.9688
+			}
+		},
+		{
+			"route": "/[org]/~/settings/sso",
+			"redirectOnly": false,
+			"surfaceFiles": 213,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 6,
+					"fail": 0,
+					"na": 1,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 6,
+					"fail": 1,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 0.8571
+				},
+				"R": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 7,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				}
+			},
+			"overall": {
+				"pass": 32,
+				"fail": 1,
+				"na": 1,
+				"notMeasured": 0,
+				"score": 0.9697
 			}
 		},
 		{
@@ -2551,19 +2526,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 1,
+				"pass": 24,
+				"fail": 0,
 				"na": 10,
 				"notMeasured": 0,
-				"score": 0.9583
+				"score": 1
 			}
 		},
 		{
@@ -2610,19 +2585,19 @@
 				"R": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 5,
-					"fail": 2,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.7143
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 2,
+				"pass": 25,
+				"fail": 0,
 				"na": 8,
 				"notMeasured": 1,
-				"score": 0.92
+				"score": 1
 			}
 		},
 		{
@@ -3032,7 +3007,8 @@
 		{
 			"route": "/[org]",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]",
@@ -3214,7 +3190,8 @@
 		{
 			"route": "/[org]/[project]",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/[project]",
@@ -3396,13 +3373,13 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "R4",
-			"verdict": "FAIL",
-			"detail": "1 overlapping pair of interactive elements at 768w"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -3581,7 +3558,8 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -3749,20 +3727,18 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "R3",
-			"verdict": "FAIL",
-			"detail": "1 scroll container that is not the shell's at 768w, 1280w, 1440w, 1920w"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "R4",
-			"verdict": "FAIL",
-			"detail": "1 overlapping pair of interactive elements at 768w"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "R5",
-			"verdict": "FAIL",
-			"detail": "color-contrast (serious) ×1"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -3937,7 +3913,8 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -4119,8 +4096,8 @@
 		{
 			"route": "/[org]/[project]/settings",
 			"predicate": "R5",
-			"verdict": "FAIL",
-			"detail": "color-contrast (serious) ×2, label (critical) ×1"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/[project]/settings",
@@ -4297,13 +4274,13 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "R4",
-			"verdict": "FAIL",
-			"detail": "1 overlapping pair of interactive elements at 768w"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -4471,13 +4448,13 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "R4",
-			"verdict": "FAIL",
-			"detail": "1 overlapping pair of interactive elements at 768w"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -4650,14 +4627,13 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "R4",
-			"verdict": "FAIL",
-			"detail": "1 overlapping pair of interactive elements at 768w"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "R5",
-			"verdict": "FAIL",
-			"detail": "color-contrast (serious) ×2, label (critical) ×1"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
@@ -4711,192 +4687,191 @@
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
-			"predicate": "T5",
-			"verdict": "N/A",
-			"reason": "no-empty-state"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "T6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/general",
-			"predicate": "T7",
-			"verdict": "NOT MEASURED",
-			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F1",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F2",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F3",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F4",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F5",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F6",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "F7",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R4",
-			"verdict": "FAIL",
-			"detail": "1 overlapping pair of interactive elements at 768w"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R5",
-			"verdict": "FAIL",
-			"detail": "color-contrast (serious) ×4"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "R7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "T3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/[project]/settings/preview",
 			"predicate": "T5",
 			"verdict": "N/A",
 			"reason": "no-empty-state"
 		},
 		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "T6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/general",
+			"predicate": "T7",
+			"verdict": "NOT MEASURED",
+			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R5",
+			"verdict": "PASS",
+			"detail": "themes dark, light"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "R7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/[project]/settings/preview",
+			"predicate": "T5",
+			"verdict": "N/A",
+			"reason": "no-empty-state"
+		},
+		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "T6",
 			"verdict": "PASS"
@@ -5017,8 +4992,8 @@
 		{
 			"route": "/[org]/[project]/usage",
 			"predicate": "R5",
-			"verdict": "FAIL",
-			"detail": "color-contrast (serious) ×1, link-in-text-block (serious) ×1"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/[project]/usage",
@@ -5194,7 +5169,8 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -5375,7 +5351,8 @@
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -5548,14 +5525,13 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "R5",
-			"verdict": "FAIL",
-			"detail": "color-contrast (serious) ×9"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "R6",
-			"verdict": "FAIL",
-			"detail": "5 console errors, 5 failed requests (400), of the first 10 recorded"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -5724,7 +5700,8 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -5898,7 +5875,8 @@
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -6077,7 +6055,8 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -6134,8 +6113,7 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "T5",
-			"verdict": "N/A",
-			"reason": "no-empty-state"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -6258,7 +6236,8 @@
 		{
 			"route": "/[org]/~/new",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -6436,7 +6415,8 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -6618,8 +6598,8 @@
 		{
 			"route": "/[org]/~/settings",
 			"predicate": "R5",
-			"verdict": "FAIL",
-			"detail": "color-contrast (serious) ×3, label (critical) ×3"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/settings",
@@ -6801,7 +6781,8 @@
 		{
 			"route": "/[org]/~/settings/access",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -6975,8 +6956,8 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "R5",
-			"verdict": "FAIL",
-			"detail": "color-contrast (serious) ×1"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -7156,7 +7137,8 @@
 		{
 			"route": "/[org]/~/settings/billing",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
@@ -7331,7 +7313,8 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -7511,8 +7494,8 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "R5",
-			"verdict": "FAIL",
-			"detail": "color-contrast (serious) ×12"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
@@ -7692,8 +7675,8 @@
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "R5",
-			"verdict": "FAIL",
-			"detail": "color-contrast (serious) ×3, label (critical) ×3"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/settings/general",
@@ -7869,8 +7852,8 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "R5",
-			"verdict": "FAIL",
-			"detail": "color-contrast (serious) ×1"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -8045,8 +8028,8 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "R5",
-			"verdict": "FAIL",
-			"detail": "aria-toggle-field-name (serious) ×39, color-contrast (serious) ×1"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -8113,8 +8096,7 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "T7",
-			"verdict": "N/A",
-			"reason": "no-restricted-surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -8221,7 +8203,8 @@
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -8287,8 +8270,7 @@
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "T7",
-			"verdict": "N/A",
-			"reason": "no-restricted-surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -8396,7 +8378,8 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -8575,7 +8558,8 @@
 		{
 			"route": "/[org]/~/support",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/support",
@@ -8630,191 +8614,192 @@
 		},
 		{
 			"route": "/[org]/~/support",
-			"predicate": "T5",
-			"verdict": "N/A",
-			"reason": "no-empty-state"
-		},
-		{
-			"route": "/[org]/~/support",
-			"predicate": "T6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support",
-			"predicate": "T7",
-			"verdict": "N/A",
-			"reason": "no-restricted-surface"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F1",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F2",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F3",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F4",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F5",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F6",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F7",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T3",
-			"verdict": "N/A",
-			"reason": "does-not-call-not-found"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
 			"predicate": "T5",
 			"verdict": "N/A",
 			"reason": "no-empty-state"
 		},
 		{
+			"route": "/[org]/~/support",
+			"predicate": "T6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "T7",
+			"verdict": "N/A",
+			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R5",
+			"verdict": "PASS",
+			"detail": "themes dark, light"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T5",
+			"verdict": "N/A",
+			"reason": "no-empty-state"
+		},
+		{
 			"route": "/[org]/~/support/abuse",
 			"predicate": "T6",
 			"verdict": "PASS"
@@ -8925,8 +8910,7 @@
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "R3",
-			"verdict": "FAIL",
-			"detail": "1 scroll container that is not the shell's at 768w, 1280w, 1440w, 1920w"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/ask",
@@ -8936,7 +8920,8 @@
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/support/ask",
@@ -9111,19 +9096,18 @@
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "R4",
-			"verdict": "FAIL",
-			"detail": "1 overlapping pair of interactive elements at 768w"
-		},
-		{
-			"route": "/[org]/~/support/cases/[id]",
-			"predicate": "R5",
 			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
+			"predicate": "R5",
+			"verdict": "PASS",
+			"detail": "themes dark, light"
+		},
+		{
+			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "R6",
-			"verdict": "FAIL",
-			"detail": "4 console errors, 4 failed requests (404), of the first 10 recorded"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
@@ -9292,7 +9276,8 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
@@ -9471,7 +9456,8 @@
 		{
 			"route": "/[org]/~/support/submit",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/support/submit",
@@ -9651,7 +9637,8 @@
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/[org]/~/usage",
@@ -9832,7 +9819,8 @@
 		{
 			"route": "/cli/login",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/cli/login",
@@ -10015,7 +10003,8 @@
 		{
 			"route": "/dashboard/[[...rest]]",
 			"predicate": "R5",
-			"verdict": "PASS"
+			"verdict": "PASS",
+			"detail": "themes dark, light"
 		},
 		{
 			"route": "/dashboard/[[...rest]]",

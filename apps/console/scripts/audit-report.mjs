@@ -433,42 +433,21 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
  * directions — a live predicate with a FAIL and no row here raises, and a row here for a predicate
  * that no longer fails raises too. The second direction is the one that matters over time: a debt
  * ledger nobody is forced to shrink is a ledger that stops being true.
+ *
+ * IT IS EMPTY, AND EMPTY IS A MEASUREMENT — not a table nobody has filled in yet. Run
+ * 34851361970 @ `e48ff5213` measured all 387 live records with ZERO failures, and the four rows
+ * that used to live here (R3 #3885 · R4, R5, R6 #3805) were deleted in the same commit as the
+ * import that cleared them, which is what the second direction of the check forces. The evidence
+ * that this is not an emptiness artefact is in the import itself: the artifact carries the same
+ * key set as the file it replaced — 360 route records over 40 routes, 27 permission records over
+ * 27 routes, no key added and none dropped — so a withheld measurement would have arrived as
+ * `NOT MEASURED`, which is never a pass, rather than as silence.
+ *
+ * Do NOT read an empty table as "the live half is finished". It means every predicate the last
+ * imported run measured passed on every route it reached; the next import can refill it, and a
+ * FAIL with no row here still raises.
  */
-export const LIVE_DEBT = /** @type {const} */ ({
-	R3: {
-		owner: "#3885",
-		why:
-			"two nested scroll containers that are not the shell's — a chip `ScrollArea` on " +
-			"`~/support/ask` and a `@repo/ui/table` wrapper on `[project]/environments` — each " +
-			"overflowing by 3px at all four widths. Trustworthy for the first time now that #3804 " +
-			"has made R3's own positive control green.",
-	},
-	R4: {
-		owner: "#3805",
-		why:
-			"ONE shell defect, not N page defects: `components/shell/topbar.tsx` centres the " +
-			"breadcrumb out of flow (`absolute left-1/2`) beside an `ml-auto` action cluster that " +
-			"nothing reserves space for, so the two collide from `md:` up. #3805 keeps it " +
-			"deliberately rather than folding it into #3619 — the fix is a layout decision, and only " +
-			"R4's geometry can prove either answer.",
-	},
-	R5: {
-		owner: "#3805",
-		why:
-			"the axe residue. `color-contrast` fails EVERY failing route on its own, so R5 cannot " +
-			"move at all until that clears — `button-name` went 3 → 0 in #3756 and the score did not " +
-			"budge. The console is dark-first and grayscale by design, so each node is a judgement " +
-			"between a token fix in `packages/brand/src/tokens.css` and a recorded decision.",
-	},
-	R6: {
-		owner: "#3805",
-		why:
-			"two routes. `~/connectors` fires 400s from `/_next/image` for connector icons that do " +
-			"not exist (#3802, fixed by #3876); `[project]/…/support/cases/[id]` 404s the parent " +
-			"list route's RSC prefetch ~70 times in one visit, which is a prefetch storm as well as " +
-			"a 404.",
-	},
-});
+export const LIVE_DEBT = /** @type {const} */ ({});
 
 /**
  * Which section owns which live predicate, checked in both directions.
@@ -2432,6 +2411,31 @@ function selfTest() {
 			() => renderStepSummary(run(base), run([])),
 			"the committed baseline",
 		);
+
+		// ── THE FOOTER IS DERIVED FROM `LIVE_DEBT`, NOT WRITTEN IN PROSE ─────────────────────
+		// It used to be the literal sentence "R3, R5 and R6 carry debt `LIVE_DEBT` owns", which was
+		// true when it was written and would have kept printing into every run summary after the
+		// import that cleared all four rows. Nothing tests a sentence, so the sentence is gone and
+		// both directions are pinned here: which ids it names, and what it says when there are none.
+		ok(
+			"the footer names the predicates the debt table actually carries",
+			renderStepSummary(run(base), run(base), { R4: { owner: "#1", why: "x" }, R3: { owner: "#2", why: "y" } }).includes(
+				"honestly red: **R3**, **R4** carry debt `LIVE_DEBT` owns.",
+			),
+			renderStepSummary(run(base), run(base), { R4: { owner: "#1", why: "x" }, R3: { owner: "#2", why: "y" } }),
+		);
+		ok(
+			"...agreeing with itself for a single row",
+			renderStepSummary(run(base), run(base), { R4: { owner: "#1", why: "x" } }).includes("**R4** carries debt"),
+		);
+		ok(
+			"...and an EMPTY table says a FAIL would be a regression, not that the job is fine",
+			renderStepSummary(run(base), run(base), {}).includes("`LIVE_DEBT` is empty — no live predicate carries recorded debt. A FAIL here is a REGRESSION"),
+		);
+		ok(
+			"...naming no predicate at all when none carries debt",
+			!/carry debt|carries debt/.test(renderStepSummary(run(base), run(base), {})),
+		);
 	}
 
 	// ── the rubric is the predicate universe ─────────────────────────────────────────────────
@@ -3599,17 +3603,24 @@ function selfTest() {
 /**
  * The per-predicate line the `ui-audit` job prints to its own run summary.
  *
- * WHY THIS EXISTS. The job is legitimately, permanently RED — R3, R5 and R6 carry real debt that
- * `LIVE_DEBT` owns and that this wave has not paid yet — so "did the check go green" answers
- * nothing about any single lane. #3893 is the case that made it concrete: it removed the topbar
- * overlap, its check was red before and red after, and the only way to see that it had worked was
- * to break the run down by predicate BY HAND. `R4 7 → 0, nothing else moved` is a clean, strong
- * result the check itself did not surface, and nobody does that arithmetic per lane.
+ * WHY THIS EXISTS. The job was legitimately, permanently RED for as long as `LIVE_DEBT` carried
+ * rows — so "did the check go green" answered nothing about any single lane. #3893 is the case
+ * that made it concrete: it removed the topbar overlap, its check was red before and red after,
+ * and the only way to see that it had worked was to break the run down by predicate BY HAND.
+ * `R4 7 → 0, nothing else moved` is a clean, strong result the check itself did not surface, and
+ * nobody does that arithmetic per lane.
  *
- * So this is a RENDERING of numbers that already exist, not a new measurement. It is NOT a case
- * for making the job required: it cannot be, while it is honestly red, and forcing it green by
- * suppressing the debt is the failure this whole wave exists to prevent. The point is to make an
- * honest red READABLE.
+ * `LIVE_DEBT` is EMPTY as of the import at run 34851361970 @ `e48ff5213`, so the footer below is
+ * derived from it rather than naming predicates in prose. The sentence it used to carry was
+ * "R3, R5 and R6 carry debt `LIVE_DEBT` owns" — and the table it claimed to summarise held FOUR
+ * rows, R3, R4, R5 and R6, so it was already out of step with its own subject before this import
+ * emptied the table under it. Nothing tests a sentence; the check in `buildView()` that forces
+ * this table to shrink cannot reach a string literal in a different function.
+ *
+ * So this is a RENDERING of numbers that already exist, not a new measurement. It is not on its
+ * own a case for making the job required: an empty debt table is one run's measurement, not a
+ * standing guarantee, and forcing the job green by suppressing debt is the failure this whole
+ * wave exists to prevent. The point is to make the result READABLE either way.
  *
  * COUNTS COME FROM THE ARTIFACT, and this function's signature is how that is enforced: it takes
  * parsed records and has no access to a log. Grepping the job's console output over-counts —
@@ -3618,9 +3629,10 @@ function selfTest() {
  *
  * @param {Record<string, {records: {predicate: string, verdict: string}[]}>} fresh  this run
  * @param {Record<string, {records: {predicate: string, verdict: string}[]}>} baseline  committed
+ * @param {typeof LIVE_DEBT} [liveDebt]  injectable for the same reason `buildView()` takes it
  * @returns {string} markdown
  */
-export function renderStepSummary(fresh, baseline) {
+export function renderStepSummary(fresh, baseline, liveDebt = LIVE_DEBT) {
 	// A MISSING OR EMPTY `records` ARRAY RAISES — it is never treated as "no failures". This is the
 	// same refusal `importLive` makes, for the same reason, and it is the whole defect class this
 	// summary exists to fix: a truncated artifact rendering as a clean board is worse than no
@@ -3722,6 +3734,13 @@ export function renderStepSummary(fresh, baseline) {
 			]
 		: [];
 
+	// DERIVED FROM THE TABLE, never written in prose. The predicates that carry debt change; a
+	// sentence naming them does not, and this one is printed into every run summary.
+	const debtIds = Object.keys(liveDebt ?? {}).sort();
+	const footer = debtIds.length
+		? `This job is **not required** and is honestly red: ${debtIds.map((id) => `**${id}**`).join(", ")} ${debtIds.length === 1 ? "carries" : "carry"} debt \`LIVE_DEBT\` owns.`
+		: "This job is **not required**, and `LIVE_DEBT` is empty — no live predicate carries recorded debt. A FAIL here is a REGRESSION, not a known one.";
+
 	return [
 		"### UI conformance audit — failures per predicate",
 		"",
@@ -3732,7 +3751,7 @@ export function renderStepSummary(fresh, baseline) {
 		"|---|---:|---:|---|",
 		...rows,
 		"",
-		"This job is **not required** and is honestly red: R3, R5 and R6 carry debt `LIVE_DEBT` owns.",
+		footer,
 		"A red total says nothing about one lane; the column that moved does.",
 	].join("\n");
 }
