@@ -141,24 +141,16 @@ export const MIN_BASELINE_ENTRIES = 200;
  * @type {{project: string, file: string, title: string, why: string}[]}
  */
 export const RECORDED_STALE = [
-	{
-		project: "canvas",
-		file: "architecture-canvas.spec.ts",
-		title: "Architecture canvas › the board draws the VPC and cluster regions",
-		why: "#4324 (merged 2026-09-09 17:36Z) rewrote this spec against the post-wave board and did not regenerate the canvas slice — the same race #4460 records. Needs a `Release gate (canvas)` run; the next canvas lane to land (#4279, #4445) regenerates it, and this row is then deleted.",
-	},
-	{
-		project: "canvas",
-		file: "architecture-canvas.spec.ts",
-		title: "Architecture canvas › a region is a real container — drag it and its members follow; resize it and they don't",
-		why: "#4324, as above. Regions left the board with the canvas wave; the ledger still records the test that drove them.",
-	},
-	{
-		project: "canvas",
-		file: "architecture-canvas.spec.ts",
-		title: "Architecture canvas › the cluster can be sized portably (vCPU / memory), not just by a cloud SKU",
-		why: "#4324, as above. The sizing assertion moved into the service-card test; the ledger still records it under its old title.",
-	},
+	// EMPTIED 2026-09-16 by the lane the rows themselves named. Each `why` said the repair was
+	// "a `Release gate (canvas)` run; the next canvas lane to land (#4279, #4445) regenerates it,
+	// and this row is then deleted." #4589/#4445 is that lane: the gate ran on its head, all 11
+	// tests passed (expected 12, unexpected 0, skipped 0, flaky 0 — a complete run, not a partial
+	// one), and the slice was regenerated with `--write --only=architecture-canvas.spec.ts`.
+	//
+	// The three titles are gone from the ledger because #4324 renamed or absorbed them, which is
+	// what made them stale in the first place. Keeping the rows now would be the failure this
+	// ledger's own guard describes: an exception that outlives its subject suppresses a real
+	// finding forever, silently.
 ];
 
 /**
@@ -168,7 +160,7 @@ export const RECORDED_STALE = [
  * number rot upward the moment a row is removed — the good direction would silently re-open the
  * headroom the bad direction needs, and the next row would arrive for free.
  */
-export const RECORDED_STALE_COUNT = 3;
+export const RECORDED_STALE_COUNT = 0;
 
 /**
  * The exception ledger against its committed size.
@@ -823,7 +815,14 @@ function selfTest() {
 	ok(
 		"a row REMOVED without ratcheting the number down is a disagreement too, in its own words",
 		(() => {
-			const m = checkRecordedStaleCount(RECORDED_STALE.slice(1), RECORDED_STALE_COUNT);
+			// Compare the ledger against a count ONE HIGHER, rather than a ledger with its first
+			// row sliced off. The slice form derived its fixture from the value under test: once
+			// RECORDED_STALE reached zero rows — which is the whole point of a shrink-only ledger,
+			// and happened on #4589/#4445 — `[].slice(1)` is `[]`, `0 === 0`, no disagreement, and
+			// this case passed by testing nothing. The ADD case above is already synthetic (it
+			// appends `escapeRow`); this is the same move in the other direction, and it holds at
+			// every size including empty.
+			const m = checkRecordedStaleCount(RECORDED_STALE, RECORDED_STALE_COUNT + 1);
 			return typeof m === "string" && /A row was REMOVED/.test(m) && /free headroom/.test(m);
 		})(),
 	);
