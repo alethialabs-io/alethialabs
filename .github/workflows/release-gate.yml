@@ -4,8 +4,36 @@ name: Release gate
 # THE BROWSER GATE IN FRONT OF EVERY PRODUCTION DEPLOY.
 #
 # Production deploys on a push to `main` (deploy-console.yml), and `main` only ever takes a PR from
-# `staging` (branch-flow-guard.yml). So a required check on PRs into `main` IS "before every
-# production deployment". Each leg below boots its own ephemeral console — postgres service, the real
+# `staging` (branch-flow-guard.yml).
+#
+# ⚠️ BUT WHAT MAKES THAT A GATE IS NOT A REQUIRED CHECK, AND THIS HEADER USED TO SAY IT WAS. The
+# sentence here read: "So a required check on PRs into `main` IS 'before every production
+# deployment'." The mechanism was real; the premise was false. NO `Release gate (<leg>)` context is
+# required anywhere. Measured 2026-09-15 by enumerating the live rulesets directly —
+# `gh api repos/alethialabs-io/alethialabs/rulesets/18465988` (protect-main) and `/18465989`
+# (protect-staging) each require exactly TEN contexts, protect-dev (`/18583159`) nine, and not one
+# of those twenty-nine is a gate leg. `.mergify.yml` names none of them either, in any of its
+# condition blocks. `infra/github/variables.tf` DOES declare all seven required on `main` — but that
+# is a DECLARATION, and that stack has never been applied (#4642 measures the drift, #3549 tracks
+# it). Applying it is #4286's work item 3 and is the MAINTAINER's, not this file's; it is also
+# blocked on `Release gate (canvas)`, which has never gone green (#4445, #4589), so applying today
+# would make `main` require a context nothing satisfies.
+#
+# SO, FOR THE MERGE, EVERY LEG IS ADVISORY: a promotion PR that is red on a leg is `UNSTABLE`, not
+# `BLOCKED`, and can be merged. Read a green promotion as "nothing required was red", never as "the
+# gate passed".
+#
+# WHAT DOES STAND BETWEEN A RED LEG AND PRODUCTION is a step in a different workflow.
+# deploy-console.yml's `preflight` job re-derives the leg table below and refuses to deploy unless
+# every leg PASSED on the promotion PR's head; `changes` needs `preflight` and every build job needs
+# `changes`, so that one edge sits in front of the whole deploy graph. A red leg therefore does stop
+# production — but it stops it AFTER the merge, at the deploy, not at the merge button. Two bounds
+# on that, because they are what a promoter is actually deciding against: the receipt carries
+# `if: github.event_name != 'workflow_dispatch'`, so a deliberate manual dispatch skips it entirely;
+# and promoting past a red leg fails nothing at promotion time — it lands the commit on `main` and
+# leaves production silently not updating until someone reads the deploy run.
+#
+# Each leg below boots its own ephemeral console — postgres service, the real
 # migrations, the enterprise scope, `next start` — and drives one Playwright project against it, in
 # the exact shape ci.yml's `e2e-browser` job proved. The repo is public, so the runner minutes are
 # free; nothing here needs a sandbox environment, a staging server, or a cloud credential.
@@ -102,12 +130,14 @@ on:
 # promotion PR (`qa:prod`, a triage label) 40 minutes into the `qa` leg creates a new run, cancels
 # the in-flight one, and is then skipped by the label guard below — which requires the added label
 # to be one of the two `release-gate:*` ones. (That guard was on the `legs` job when this was
-# written and is on `gate` since #4466; the mechanism is unchanged.) The SEVEN required
-# `Release gate (<leg>)` contexts on
-# a promotion PR never report, and the
-# PR sits permanently pending with nothing red to explain it, recovering only on a new push or
-# `ready_for_review`. The header above anticipated a random label RESTARTING the hour; the guard
-# turns that into cancel-and-never-restart, which is worse.
+# written and is on `gate` since #4466; the mechanism is unchanged.) The SEVEN
+# `Release gate (<leg>)` contexts on a promotion PR then never report. They are NOT required checks
+# — see the header; nothing in any ruleset or in `.mergify.yml` names them — so this does not block
+# the merge, and that is exactly what makes it dangerous rather than safe: the PR shows no red to
+# explain the missing legs, merges normally, and deploy-console.yml's receipt is the thing that then
+# refuses the deploy, because a leg that never reported cannot have passed. The state recovers only
+# on a new push or `ready_for_review`. The header above anticipated a random label RESTARTING the
+# hour; the guard turns that into cancel-and-never-restart, which is worse.
 #
 # Keying the cancellation on the event action fixes it at the source: a push supersedes its
 # predecessor as before, and a label event cannot cancel anything. A label that IS one of the
