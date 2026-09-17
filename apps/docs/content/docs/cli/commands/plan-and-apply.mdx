@@ -187,8 +187,8 @@ implement the Plan-Review-Apply workflow from the terminal, one environment at a
 Queue an [OpenTofu](/concepts/glossary) plan job — the Runner runs `tofu plan`.
 
 ```bash
-alethia project plan                                        # asks which project, then which runner
-alethia project plan --project boutique --env prod --wait   # scripted: names both, blocks on the job
+alethia project plan                                                        # asks which project, then which runner
+alethia project plan --project boutique --env prod --runner eu-box --wait   # scripted: names all three, blocks on the job
 ```
 
 | Flag | Required | Description |
@@ -196,7 +196,8 @@ alethia project plan --project boutique --env prod --wait   # scripted: names bo
 | `--project` | No | Project to plan, by **name** or id. Omitted on a terminal, a picker asks. |
 | `--project-id` | No | Project id. Prefer `--project`, which also takes the id. Passing both is refused. |
 | `--env` | No | Environment name to plan. Omitted, the project's default environment. |
-| `--runner-id` | No | Runner to execute the job, by id. Omitted, a picker asks on a terminal; under `--no-input` the server places the job. |
+| `--runner` | No | Runner to execute the job, by **name** or id. Omitted, a picker asks on a terminal; under `--no-input` the server places the job. |
+| `--runner-id` | No | Runner id. Prefer `--runner`, which also takes the name. Passing both is refused. |
 | `-w`, `--wait` | No | Block until the job completes |
 
 On success, prints the job ID. Stream the plan output with
@@ -209,8 +210,8 @@ takes the most recent job **the organization** has, which may be somebody else's
 Queue a deployment (apply) job.
 
 ```bash
-alethia project apply                                        # asks which project, then which runner
-alethia project apply --project boutique --env prod --wait   # scripted: names both, blocks on the job
+alethia project apply                                                      # asks which project, then which runner
+alethia project apply --project boutique --env prod --latest-plan --wait   # scripted: applies the plan just reviewed
 ```
 
 | Flag | Required | Description |
@@ -218,23 +219,33 @@ alethia project apply --project boutique --env prod --wait   # scripted: names b
 | `--project` | No | Project to deploy, by **name** or id. Omitted on a terminal, a picker asks. |
 | `--project-id` | No | Project id. Prefer `--project`, which also takes the id. Passing both is refused. |
 | `--env` | No | Environment name to deploy. Omitted, the project's default environment. |
-| `--runner-id` | No | Runner to execute the job, by id. Omitted, a picker asks on a terminal; under `--no-input` the server places the job. |
+| `--runner` | No | Runner to execute the job, by **name** or id. Omitted, a picker asks on a terminal; under `--no-input` the server places the job. |
+| `--runner-id` | No | Runner id. Prefer `--runner`, which also takes the name. Passing both is refused. |
+| `--latest-plan` | No | Apply the project's most recent `PLAN` job. Prefer this to `--plan-job-id`. |
 | `--plan-job-id` | No | Bind the apply to the plan a prior PLAN job produced, by that job's id. |
 | `-w`, `--wait` | No | Block until the job completes |
 
-`--plan-job-id` makes the apply use the exact plan you reviewed. If the project's configuration
+Either flag makes the apply use the exact plan you reviewed. If the project's configuration
 changed since that plan was generated, the job fails with a
 [config hash mismatch](/console/jobs/plan-and-apply).
 
-It takes an id and only an id — no name, no picker — so this is the one value in these three
-commands that still comes out of another command's output. Read it with
-`alethia jobs get --latest --project boutique --type PLAN` rather than out of your scrollback — see
-[Scripting Examples](#scripting-examples) for the whole three-command recipe.
+`--latest-plan` resolves that plan from the project itself, so no id moves between two commands:
+plan, review, then apply. It prints the job it chose before it queues anything. It resolves `PLAN`
+jobs only — the project's most recent job is as likely to be the `DEPLOY` that followed the plan —
+and it needs `--project`, because without one the match is every `PLAN` job in the organization.
 
-**Narrow that lookup to the project and the type.** `alethia jobs get --latest` resolves over every
-job the organization has, not over the ones you queued, so an unnarrowed lookup can hand you
-another project's plan. The apply then fails on the config hash mismatch above — caught, but as a
-confusing failure rather than avoided.
+It takes the most recent `PLAN` **whatever its status** and refuses when that is not `SUCCESS`,
+naming the job and its status. Skipping past a plan that is still running would apply an older one
+you never asked for, which is the reviewed-plan guarantee inverted.
+
+`--plan-job-id` stays for a plan you already hold the id of. Passing both is refused rather than
+resolved by precedence: they name the same thing.
+
+**Narrow any `alethia jobs get --latest` you read the plan back with.** That command resolves over
+every job the organization has, not over the ones you queued, so an unnarrowed lookup can show you
+another project's plan. Write it as
+`alethia jobs get --latest --project boutique --type PLAN`, as
+[Scripting Examples](#scripting-examples) does.
 
 <Callout type="info">
 A DEPLOY job is `tofu plan` → **[verify](/concepts/glossary) gate** → `tofu apply` → ArgoCD scaffold.
@@ -258,7 +269,7 @@ alethia project destroy --project boutique --env prod --wait --yes       # scrip
 | `--project` | No | Project to destroy, by **name** or id. Omitted on a terminal, a picker asks. |
 | `--project-id` | No | Project id. Prefer `--project`, which also takes the id. Passing both is refused. |
 | `--env` | No | Environment name to destroy. Omitted, the project's default environment. |
-| `--runner-id` | No | Runner to execute the job, by id. Omitted, a picker asks on a terminal; under `--no-input` the server places the job. |
+| `--runner-id` | No | Runner to execute the job, **by id only** — `destroy` has no `--runner` sibling yet. Omitted, a picker asks on a terminal; under `--no-input` the server places the job. |
 | `-y`, `--yes` | No | Skip the confirmation prompt. Required with `--no-input`. |
 | `-w`, `--wait` | No | Block until the job completes |
 
@@ -267,6 +278,11 @@ Queues a DESTROY job. The Runner runs `tofu destroy` to tear down all resources.
 `--project` and `--project-id` name the same field, so passing both is an error rather than a
 precedence rule. The command they are being passed to is `destroy`: quietly preferring one of them
 would let a wrong belief about which project is being torn down survive until it had been.
+
+`plan` and `apply` take the runner by **name** as well, through `--runner`. `destroy` does not, for
+now — it takes `--runner-id` alone, so this is the one place in the three commands where a runner
+still has to be named by id. Read it out of `alethia runner list`, or leave it unset and choose from
+the picker.
 
 <Callout type="info">
 To tear down a deployed **Runner** (not a Project), use [`alethia runner destroy`](/cli/commands/runners).
@@ -278,13 +294,15 @@ To tear down a deployed **Runner** (not a Project), use [`alethia runner destroy
 typed at it:
 
 1. With neither `--project` nor `--project-id`, a picker lists the projects and you choose one.
-2. With no `--runner-id`, a second picker lists your runners, marking each one online, draining or
+2. With the runner unnamed, a second picker lists your runners, marking each one online, draining or
    offline. **Any available** is its first option, so pressing Enter leaves the job for the server
    to place.
 
 Neither picker is shown under `--no-input` or when stdin is not a terminal. There, name the project
-with `--project` — it takes the name, so a script never has to hold an id — and leave the runner
-unset for the server to place.
+with `--project` and the runner with `--runner` — both take the name, so a script never has to hold
+an id — or leave the runner unset for the server to place. A name no runner has is refused locally,
+listing the names that do exist; a name two runners share is refused naming both ids, rather than
+picking one for you.
 
 See [TUI Components](/cli/tui) for details on the interactive selectors.
 
@@ -297,11 +315,11 @@ alethia up --project boutique --region nbg1 --cloud-account prod-account --yes -
 # The whole project from its file, unattended
 alethia apply --yes --no-input
 
-# Plan one environment, review, apply that exact plan.
-# --latest is resolved over the whole org, so narrow it to this project and this job type.
-alethia project plan --project boutique --env prod --wait
+# Plan one environment, review, apply that exact plan. No id moves between the commands.
+# --latest is resolved over the whole org, so narrow the review step to this project and job type.
+alethia project plan --project boutique --env prod --runner eu-box --wait
 alethia jobs get --latest --project boutique --type PLAN
-alethia project apply --project boutique --env prod --plan-job-id "$(alethia jobs get --latest --project boutique --type PLAN --output json | jq -r .id)" --wait
+alethia project apply --project boutique --env prod --latest-plan --wait
 
 # Destroy with wait
 alethia project destroy --project boutique --env prod --wait
