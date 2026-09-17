@@ -99,6 +99,73 @@ FAIL when the protection is removed; two were proven so by flipping the guard:
   `PostgresRbacPDP.listAccessible`; `pdp-parity.test.ts` asserts this on the org-wide `deploy` path
   (PROJ_A3 excluded). So "allow the org except this one project" now behaves identically on both
   tiers across **decide (`can`/`enforce`/`bulkCheck`) AND enumerate (`listAccessible`)**.
+- **PDP engine divergence on a row whose `resource_type` cannot carry a `resource_id` — ALLOW side
+  CLOSED, DENY side an OPEN RULING (#4584).** The same shape as the entry above — one row, two
+  engines, opposite answers — found on a *different* column. `PostgresRbacPDP` did not project
+  `resource_type` at all, so ANY non-null `resource_id` read as scoped to that id, while
+  `expandGrant` computed `orgWide = resourceId === null || resourceType === "org"` and dropped the
+  id. An `('org', <project-uuid>)` row was therefore NARROW on the community tier and
+  ORGANIZATION-WIDE on the paid one, from identical data, with which engine you run decided by an
+  instance-wide env switch (`OPENFGA_API_URL`/`OPENFGA_STORE_ID`), not a license flag.
+
+  **The ruling: a non-null `resource_id` is never org-wide** — `resource_id NULL = org-wide` is the
+  column's own contract — **and `org` is not a kind a grant can be scoped to**, so such a row
+  confers NOTHING on both engines. The same answer covers an *unrecognised* `resource_type`
+  (`resource_type` is free `text`), which used to expand to zero tuples while the Postgres PDP read
+  it as an ordinary scoped grant. Both engines now route through one predicate,
+  `lib/authz/grant-scope.ts`, reaching `ee/` on the existing `CoreContext.fga` seam;
+  `pdp-parity.test.ts` carries the row and DERIVES its OpenFGA half from the rows Postgres holds
+  (it previously composed that half from hand-written literals, which is the second, independent
+  reason this control did not catch the divergence).
+
+  **The DENY direction is CLOSED too, and it resolves to a DIFFERENT VALUE — deliberately.**
+  `grantTarget` answers what a row CONFERS; a deny row is asked what it EXCLUDES, and treating one
+  answer as both is fail-OPEN on the deny side (dropping the row hands back a permission both
+  engines refuse). The maintainer's ruling, made knowingly:
+
+  | effect | an uninterpretable scope… | direction |
+  |---|---|---|
+  | `allow` | confers **nothing** | fail-closed — an ambiguous request is not a grant |
+  | `deny` | excludes the **whole org** | fail-closed — an ambiguous exclusion is not a licence |
+
+  What is symmetric is the DIRECTION, not the value, and that is the part a future reader will try
+  to simplify away. `targetForEffect` (`lib/authz/grant-scope.ts`) is the seam where the second
+  question gets its own answer; `EMPTY_SCOPE_DENIES` records the decision as a named constant so
+  it stays greppable and the rejected option stays visible beside it. `"the_whole_org"` is also
+  what OpenFGA does for the pair today and what every deployed store's already-written tuples
+  still say (`backfill` only writes), so **no deployed store's deny behaviour changes**.
+
+  ⚠ **The deny ruling reaches a second population it was not decided on, and there it REMOVES
+  access on deploy.** `grantTarget` calls two shapes uninterpretable: the `('org', <uuid>)` pair,
+  and any *other* unscopable `resource_type` carrying an id (`job`, `member`, a typo — still
+  writeable, since neither write boundary validates `resource_type` against `ScopableType`). The
+  ruling's justification — OpenFGA already excludes the org, so no deployed store moves — is true
+  of the first and **false of the second**, where OpenFGA produced no tuples at all. For that
+  class the exclusion widens from one resource to the whole org on BOTH engines, with nobody
+  editing anything: `backfill` re-expands raw rows on every boot, so the deploy is the change.
+  No option preserves its current behaviour (a per-id exclusion on a kind with no object type is
+  not expressible in OpenFGA); the alternative — dropping the row — is non-divergent but
+  fail-OPEN, which is the direction the ruling rejects. Measured per row before deploy by
+  `deploy_change` and `also_allowed_anywhere` in `docs/ops/grants-scope-contradictions.sql`,
+  because the remediation verdict beside them answers a different question and cannot see this.
+
+  ⚠ A third reading — "excludes only the resource it names", which is what Postgres does today —
+  **is not on the menu because OpenFGA cannot express it**, and it looks like the obvious right
+  answer until you try to write the tuple: the object would be `org:<project-uuid>`, which does not
+  exist, and writing `project:<uuid>` instead would require KNOWING the id names a project, which
+  is exactly what the row never says. That collapsed a three-way choice to two and is what the
+  ruling was made on. Pinned by `pdp-parity.test.ts` (decide AND enumerate, on a project the row
+  names and two it does not), `postgres-rbac-pdp.test.ts`, `ee/src/fga-tuple-sync.test.ts` and
+  `tests/authz/grant-scope.test.ts` — as literals, so reverting the constant reds all four.
+
+  ⚠ **Two consumers are still unreconciled, and neither is a test gap.** (a) Revoking such a row
+  removes it and leaves the OpenFGA tuples it already wrote — before the fix because the delete
+  looked at an object that does not exist, after it because the row expands to no tuples and the
+  surviving ones are indistinguishable from a legitimate org-wide grant's; `backfill` only ever
+  writes. (b) The access UI (`lib/queries/access-grants.ts`) facets purely on `resource_type`, so
+  such a row still renders under **organization** while both engines say it confers nothing.
+  Whether any of these rows EXIST is `docs/ops/grants-scope-contradictions.sql` (#4583), which
+  gates the whole change and reports both classes.
 - **T0 secret non-leakage over the real deploy spine.** `secret_nonleak_test.go` drives the
   persisted-metadata assembly directly. Routing a real `RunDeployV2` (kind + a SENTINEL
   `HCLOUD_TOKEN`) and asserting the token never reaches the job-log surface end-to-end depends on

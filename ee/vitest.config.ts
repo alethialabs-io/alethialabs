@@ -1,12 +1,23 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: LicenseRef-Alethia-Commercial
 
+import path from "node:path";
 import { defineConfig } from "vitest/config";
 
-// Unit tests for the enterprise package. Scoped to self-contained modules (e.g. license
-// verification) that don't need the core `@/...` runtime — those are exercised via the console
+// Unit tests for the enterprise package. Mostly self-contained modules (e.g. license
+// verification); the ones that need a live OpenFGA store are exercised via the console
 // integration suite / the PDP-parity job.
+//
+// The `@` alias resolves core the way ee's own tsconfig `paths` already does, so a test can
+// exercise a PURE core helper (`expandGrant`, `grantTarget`) as the real thing rather than a
+// hand-written stand-in. That distinction is load-bearing for fga-tuple-sync.test.ts: the
+// property under test is "the delete looks where the write wrote", and a stubbed expander would
+// only prove the test author's model of it. Pure helpers only — nothing here may pull in core's
+// runtime (no `getServiceDb`, no `server-only`), which is the same rule the source file follows.
 export default defineConfig({
+	resolve: {
+		alias: { "@": path.resolve(__dirname, "../apps/console") },
+	},
 	test: {
 		environment: "node",
 		include: ["src/**/*.test.ts"],
