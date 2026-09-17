@@ -134,21 +134,20 @@ test.describe("Deploy jobs — negative & empty states", () => {
 		await expect(sheet).toBeVisible({ timeout: 15_000 });
 		// The min-count input is hidden until require-approval is on.
 		await expect(sheet.getByText("Approvals required")).toHaveCount(0);
-		// TESTID GAP (AUTHORING.md rule 1) — RECORDED, not worked around silently. The three gates
-		// have NO accessible name between them: `ToggleRow` wraps its text and its `Switch` in a
-		// bare `<label>`, and `@repo/ui/switch` is base-ui, which renders a `<span role="switch">`.
-		// A `<span>` is not a labelable element, so the implicit label association never happens and
-		// the switch is announced as an unnamed switch — three of them, identical, in one drawer.
-		// `getByRole("switch", { name: /Require approval/ })` therefore matches nothing and hangs
-		// until the test timeout, which is what it did on this file's first run.
+		// THE TESTID GAP RECORDED HERE IS CLOSED (#4630), so this is rule 1's first choice again.
 		//
-		// Reached through its own `<label>` instead. That is a statement about the DOM, so it is
-		// scoped as narrowly as the gap allows — the label is what carries the gate's identity, and
-		// this locator breaks loudly if `ToggleRow` stops being one. The gap belongs to whoever owns
-		// `components/environments/`, not to this lane; fixing it here would mean editing a surface
-		// outside this unit's scope.
-		const approvalGate = sheet.locator("label").filter({ hasText: "Require approval" });
-		await approvalGate.getByRole("switch").click();
+		// It used to reach the gate through `sheet.locator("label").filter({ hasText: … })`,
+		// because the three gates had no accessible name between them: `ToggleRow` wrapped its text
+		// and its `Switch` in a bare `<label>` and `@repo/ui/switch` is base-ui, which renders a
+		// `<span role="switch">` — not a labelable element, so the implicit association never
+		// happened and `getByRole("switch", { name: … })` hung to the timeout on this file's first
+		// run. That is what found the defect.
+		//
+		// `ToggleRow` now names its switch with `aria-labelledby` pointing at the visible title, and
+		// the row is a `<div>` — so the old locator would match nothing, exactly as its comment
+		// promised it would if `ToggleRow` stopped being a `<label>`. The role query below is both
+		// the correct selector and the assertion that the name is really there.
+		await sheet.getByRole("switch", { name: "Require approval" }).click();
 		await expect(sheet.getByText("Approvals required")).toBeVisible();
 	});
 
