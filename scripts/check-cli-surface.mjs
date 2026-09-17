@@ -1274,8 +1274,13 @@ const MIRROR_ROOTS = [
  * The Go types a source file CLAIMS to mirror.
  *
  * The regex is the mechanism's own (`mirrorClaimRe`), including its comment-continuation join, so
- * a claim wrapped across two comment lines is one claim here too. Reduced to the last dotted
- * segment, because a claim writes `verify.Report` or bare `RepoDigest` depending on who wrote it.
+ * a claim wrapped across two comment lines is one claim here too.
+ *
+ * The claim is returned WHOLE — `verify.Report`, `AddOnInstall.Source`, bare `RepoDigest` — and is
+ * reduced only where it is answered. It used to be reduced to its last dotted segment here, which
+ * silently conflated the two readings of a dotted claim: `pkg.Type` names the type in its last
+ * segment, `Type.Field` names it in its FIRST. Five of the eight claims #4455 counted were field
+ * claims reduced to "Source", "Workloads", "Bootstrap" — names nothing locks, or ever could.
  *
  * A `Mirrors the Go` phrase with NO backticked type — "Mirrors the Go pattern in …/s3.go" — names
  * nothing a fixture could lock and is NOT returned here. It comes back through `prose` instead:
@@ -1287,38 +1292,133 @@ function mirrorClaims(raw) {
 	const flat = raw.replace(/\n[ \t]*(?:\*\/?|\/\/)[ \t]*/g, " ");
 	/** @type {string[]} */
 	const claims = [];
-	for (const m of flat.matchAll(/mirrors the go `([^`]+)`/gi)) {
-		const name = m[1];
-		const i = name.lastIndexOf(".");
-		claims.push(i >= 0 ? name.slice(i + 1) : name);
-	}
+	for (const m of flat.matchAll(/mirrors the go `([^`]+)`/gi)) claims.push(m[1]);
 	const all = [...flat.matchAll(/mirrors the go\b/gi)].length;
 	return { claims, prose: all - claims.length };
 }
 
 /**
+ * The last dotted segment of a claim or a Go type name. `verify.Report` → `Report`.
+ * @param {string} name
+ * @returns {string}
+ */
+function lastSegment(name) {
+	const i = name.lastIndexOf(".");
+	return i >= 0 ? name.slice(i + 1) : name;
+}
+
+/**
+ * Is one claim answered by the mechanism's covered set?
+ *
+ * This resolves a dotted claim BOTH ways, as `claimCoverage` in the mechanism does:
+ *
+ *   pkg.Type    — the last segment names the locked type            (verify.Report)
+ *   Type.Field  — the OWNER is the locked type                      (AddOnInstall.Source)
+ *
+ * It is deliberately the WEAKER of the two questions, and the difference is stated rather than
+ * implied: the mechanism checks by reflection that the Go struct really declares that exported
+ * field, so a renamed field turns `go test` red. A text census cannot see a Go field set, so it
+ * asks only whether the owner is locked. The enforcing answer is the Go test; this is a counter.
+ * @param {Set<string>} covered
+ * @param {string} claim
+ * @returns {boolean}
+ */
+function claimIsAnswered(covered, claim) {
+	if (covered.has(lastSegment(claim))) return true;
+	const i = claim.lastIndexOf(".");
+	return i >= 0 && covered.has(lastSegment(claim.slice(0, i)));
+}
+
+/**
+ * Could a fixture pair EVER answer this claim — i.e. does it name an exported Go identifier?
+ *
+ * A lock constructs the Go type from another package (`new(verify.Report)`), which an unexported
+ * name makes impossible; "mirrors the Go `valid` table" is a claim nothing could ever answer, and
+ * the census reports it as UNLOCKABLE rather than counting it, or #3664 inherits a ratchet with a
+ * floor it cannot reach.
+ *
+ * The test is run against BOTH readings of a dotted claim, for the same reason `claimIsAnswered`
+ * resolves both. A single `/^[A-Z]/` against the whole claim — which is what this was while claims
+ * were reduced to one segment — reads `types.RepoFile` as unexported, because the string starts at
+ * the PACKAGE name. Measured on this tree: 21 of the 27 locked claim occurrences would move into
+ * the "unlockable" bucket and out of the count, quietly making the census smaller and
+ * cleaner-looking than the truth.
+ * @param {string} claim
+ * @returns {boolean}
+ */
+function claimNamesExported(claim) {
+	if (/^[A-Z]/.test(lastSegment(claim))) return true;
+	const i = claim.lastIndexOf(".");
+	return i >= 0 && /^[A-Z]/.test(lastSegment(claim.slice(0, i)));
+}
+
+/**
  * What the mechanism answers: every Go type named by a fixture pair (`GoName:`), a value
- * vocabulary (`GoType:`) or a named `unlockableClaims` entry, reduced to its last segment.
+ * vocabulary (`GoType:`) or a SYMBOL CLAIM (`Claim:`), plus every named `unlockableClaims` entry,
+ * each reduced to its last segment — and the SET of console files it enrols.
  *
  * Read out of the mechanism rather than restated, so this census cannot claim a lock the test does
  * not have. An unreadable mechanism is a REFUSAL at the caller, never an empty covered-set — an
  * empty one would mark every claim in the repo unlocked and print a large, confident, wrong number.
+ *
+ * `Claim:` is the symbol lock, and omitting it was half of #4455's eighth finding: a claim whose Go
+ * side is a FUNCTION carries no `GoName:`, so `verify.VerifyAnchor` read as answered-by-nothing
+ * however many files were enrolled.
+ *
+ * ENROLMENT IS DERIVED, NOT RESTATED. `tsMirrorFiles()`'s return list is read and each identifier
+ * in it resolved against the mechanism's own `ident = "path"` const block, so enrolling a fourth
+ * file in the Go test is all it takes for this census to see it. A literal list of paths here
+ * would be a hand-written answer wearing a derivation — correct on the day it was typed and wrong
+ * the next time someone enrols a file, which is exactly the shape of the defect being fixed.
  * @param {string} raw the mechanism's source
- * @returns {{covered: Set<string>, enrolled: string|null}}
+ * @returns {{covered: Set<string>, enrolled: Set<string>, unresolved: string[]}}
  */
 function mirrorMechanism(raw) {
 	/** @type {Set<string>} */
 	const covered = new Set();
-	for (const m of raw.matchAll(/\b(?:GoName|GoType):\s*"([^"]+)"/g)) {
-		const i = m[1].lastIndexOf(".");
-		covered.add(i >= 0 ? m[1].slice(i + 1) : m[1]);
-	}
-	const unlockable = /unlockableClaims\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(raw);
+	for (const m of raw.matchAll(/\b(?:GoName|GoType|Claim):\s*"([^"]+)"/g)) covered.add(lastSegment(m[1]));
+	// The map body, and the EMPTY map is the case that matters. `map[string]string{}` on one line
+	// has no `\n}` of its own, so a body matcher that only knows the multi-line form runs past the
+	// literal and swallows whatever precedes the next column-0 `}` — today a comment block, which
+	// happens to contain no `"key":` pair, so it adds nothing and nobody finds out. The direction
+	// of that failure is the bad one: a spurious key makes `covered` too LARGE, which marks a real
+	// unlocked claim as locked and suppresses a finding silently, forever. So the empty form is
+	// matched first and explicitly, and the multi-line form requires the newline that follows `{`.
+	const unlockable = /unlockableClaims\s*=\s*map\[string\]string\{[ \t]*\}/.test(raw)
+		? null
+		: /unlockableClaims\s*=\s*map\[string\]string\{\n([\s\S]*?)\n\}/.exec(raw);
 	if (unlockable !== null) {
 		for (const m of unlockable[1].matchAll(/"([^"]+)"\s*:/g)) covered.add(m[1]);
 	}
-	const enrolled = /tsMirrorFile\s*=\s*"([^"]+)"/.exec(raw);
-	return { covered, enrolled: enrolled === null ? null : enrolled[1] };
+
+	/** @type {Map<string, string>} every `ident = "literal"` the mechanism declares. */
+	const consts = new Map();
+	for (const m of raw.matchAll(/^\s*(\w+)\s*=\s*"([^"]+)"/gm)) consts.set(m[1], m[2]);
+
+	/** @type {Set<string>} */
+	const enrolled = new Set();
+	/** @type {string[]} */
+	const unresolved = [];
+	const list = /func\s+tsMirrorFiles\(\)\s*\[\]string\s*\{[\s\S]*?return\s*\[\]string\{([^}]*)\}/.exec(raw);
+	if (list !== null) {
+		for (const token of list[1].split(",")) {
+			const id = token.trim();
+			if (id === "") continue;
+			const literal = /^"([^"]+)"$/.exec(id);
+			if (literal !== null) {
+				enrolled.add(literal[1]);
+				continue;
+			}
+			const value = consts.get(id);
+			// An entry that resolves to nothing is REPORTED, never dropped quietly. Dropping it
+			// would shrink the enrolled set, which makes locked claims read unlocked — the census
+			// would then over-report, loudly, rather than under-report; but a silent shrink is how
+			// nobody finds out the reader stopped understanding the mechanism.
+			if (value === undefined) unresolved.push(id);
+			else enrolled.add(value);
+		}
+	}
+	return { covered, enrolled, unresolved };
 }
 
 /**
@@ -1330,9 +1430,11 @@ function censusMirrors(io) {
 	const name = "unlocked mirrors";
 	const method =
 		`backticked \`Mirrors the Go \\\`Type\\\`\` claims across apps/console, apps/cli and packages, ` +
-		`matched with ${MIRROR_MECHANISM}'s own regex; a claim is LOCKED when it sits in that ` +
-		`mechanism's enrolled file AND its type is answered by a fixture pair, a value vocabulary or ` +
-		`a named unlockableClaims entry`;
+		`matched with ${MIRROR_MECHANISM}'s own regex; a claim is LOCKED when it sits in one of that ` +
+		`mechanism's ENROLLED FILES (read from its tsMirrorFiles() list, not restated here) AND its ` +
+		`type is answered by a fixture pair, a value vocabulary, a symbol claim or a named ` +
+		`unlockableClaims entry — resolving \`Type.Field\` to its owner the way the mechanism's own ` +
+		`claimCoverage does`;
 
 	if (!io.exists(MIRROR_MECHANISM)) {
 		return refused(
@@ -1343,13 +1445,14 @@ function censusMirrors(io) {
 				`every claim as unlocked would be a large confident wrong number.`,
 		);
 	}
-	const { covered, enrolled } = mirrorMechanism(io.read(MIRROR_MECHANISM));
-	if (enrolled === null || covered.size === 0) {
+	const { covered, enrolled, unresolved } = mirrorMechanism(io.read(MIRROR_MECHANISM));
+	if (enrolled.size === 0 || covered.size === 0) {
 		return refused(
 			name,
 			method,
-			`read ${MIRROR_MECHANISM} but found ${enrolled === null ? "no enrolled file (tsMirrorFile)" : "no covered types"}. ` +
-				`Its shape changed; a census that believes the mechanism covers nothing marks every claim ` +
+			`read ${MIRROR_MECHANISM} but found ${
+				enrolled.size === 0 ? "no enrolled files (its tsMirrorFiles() list did not resolve)" : "no covered types"
+			}. Its shape changed; a census that believes the mechanism covers nothing marks every claim ` +
 				`in the repository unlocked.`,
 		);
 	}
@@ -1378,7 +1481,7 @@ function censusMirrors(io) {
 		proseCount += prose;
 		for (const claim of claims) {
 			claimCount++;
-			if (file === enrolled && covered.has(claim)) {
+			if (enrolled.has(file) && claimIsAnswered(covered, claim)) {
 				locked++;
 				continue;
 			}
@@ -1388,16 +1491,16 @@ function censusMirrors(io) {
 			// "mirrors the Go `valid` table" is a claim no fixture pair could ever answer, however
 			// much anyone wanted to. Reported, never counted: putting it in the finding list would
 			// give #3664 a ratchet with a floor it can never reach.
-			if (!/^[A-Z]/.test(claim)) {
+			if (!claimNamesExported(claim)) {
 				unexportedCount++;
 				unexportedFindings.push(`${file}: \`${claim}\` names an unexported Go identifier`);
 				continue;
 			}
 			findings.push(
 				`${file}: \`${claim}\` is ${
-					file === enrolled
-						? `in the enrolled file but no fixture pair, vocabulary or unlockableClaims entry answers it`
-						: `outside ${MIRROR_MECHANISM}'s enrolled file (${enrolled}) — nothing is watching it`
+					enrolled.has(file)
+						? `in an enrolled file but no fixture pair, vocabulary, symbol claim or unlockableClaims entry answers it`
+						: `outside ${MIRROR_MECHANISM}'s ${enrolled.size} enrolled file(s) — nothing is watching it`
 				}`,
 			);
 		}
@@ -1417,7 +1520,17 @@ function censusMirrors(io) {
 	const notes = [
 		`${claimCount} backticked claims: ${locked} locked by ${MIRROR_MECHANISM}, ${unexportedCount} ` +
 			`naming an unexported identifier no fixture pair can construct, ${unlocked} UNLOCKED.`,
-		`enrolled file: ${enrolled}; the mechanism answers ${covered.size} distinct Go types.`,
+		`enrolled files (${enrolled.size}), read from the mechanism's tsMirrorFiles() list rather than ` +
+			`restated here: ${[...enrolled].sort().join(", ")}; the mechanism answers ${covered.size} ` +
+			`distinct Go types.`,
+		...(unresolved.length > 0
+			? [
+					`CAVEAT: ${unresolved.length} entr(y/ies) in that list did not resolve to a path ` +
+						`(${unresolved.join(", ")}). They are NOT silently dropped — an enrolled file this ` +
+						`reader cannot see makes locked claims read unlocked, so the number below is an ` +
+						`OVER-count until the mechanism's const block is readable again.`,
+				]
+			: []),
 		`three states, and only ONE is a finding — this is #4373's requirement for this counter made ` +
 			`mechanical. ABSENT: ${proseCount} further "Mirrors the Go …" phrases name no backticked ` +
 			`type ("Mirrors the Go pattern in …/s3.go"), and a file with no phrase at all is not read ` +
@@ -1523,10 +1636,29 @@ function fixtureAllowlist(baseline = 0, debt = 0, rows = "") {
 	return `# fixture\nbaseline: ${baseline}\ndebt: ${debt}\n\nscanned:\n  - scope: cli_docs\n    floor: 1\n  - scope: cli_cmd\n    floor: 1\n\nformat:\n${rows}`;
 }
 
-/** A minimal mirror mechanism fixture. @returns {string} */
+/**
+ * A minimal mirror mechanism fixture, SHAPED LIKE THE REAL FILE.
+ *
+ * The enrolled paths sit in a `const (…)` block and the enrolled SET is a `tsMirrorFiles()`
+ * function returning the identifiers — which is how `packages/core/jsonbmirror/jsonb_mirror_test.go`
+ * writes them, because that is how gofmt writes them. This fixture used to say
+ * `const tsMirrorFile = "…"` on one line, a spelling the real file has never had; the reader's
+ * const matcher is anchored on the indented form, so a fixture written the other way exercised a
+ * shape no mechanism produces. A fixture must be CAPTURED from the thing under test, not composed
+ * to look plausible.
+ *
+ * One enrolled file on purpose: the tests below need a file that is OUTSIDE the enrolled set, and
+ * a fixture that enrols everything cannot supply one.
+ * @returns {string}
+ */
 function fixtureMechanism() {
 	return [
-		"const tsMirrorFile = \"apps/console/types/jsonb.types.ts\"",
+		"const (",
+		'\ttsMirrorFile = "apps/console/types/jsonb.types.ts"',
+		")",
+		"func tsMirrorFiles() []string {",
+		"\treturn []string{tsMirrorFile}",
+		"}",
 		"func mirrorPairs() []mirrorPair {",
 		'\treturn []mirrorPair{{TSName: "A", GoName: "verify.Report", Fixture: "a.json"}}',
 		"}",
@@ -2137,7 +2269,212 @@ function selfTest() {
 			"a wrapped claim is joined, not lost",
 			mirrorClaims("/**\n * Mirrors the Go\n * `verify.Receipt`.\n */").claims.length === 1,
 		);
-		ok("a claim is reduced to its last dotted segment", mirrorClaims("// Mirrors the Go `verify.Report`").claims[0] === "Report");
+		ok("a claim keeps its dotted text", mirrorClaims("// Mirrors the Go `verify.Report`").claims[0] === "verify.Report");
+
+		// ── the enrolled SET (#4455) ──────────────────────────────────────────────────────────
+		//
+		// The mechanism enrols a LIST of console files, and this census used to read a single
+		// path out of it with /tsMirrorFile\s*=\s*"…"/ and compare `file === enrolled`. Every
+		// claim in the second and third enrolled file was therefore counted UNLOCKED while
+		// `go test ./packages/core/jsonbmirror` locked it — a counter reporting eight findings
+		// that the mechanism it names had already answered.
+		//
+		// The set is DERIVED from the mechanism, never restated: tsMirrorFiles()'s return list
+		// is read, and each identifier in it is resolved against the mechanism's own const
+		// block. A hand-typed list of three paths here would be a hand-written answer wearing a
+		// derivation, and would go stale the next time a file is enrolled.
+		{
+			const multi = [
+				'\ttsMirrorFile = "apps/console/types/jsonb.types.ts"',
+				'\ttsFileAddons = "apps/console/lib/addons/types.ts"',
+				"func tsMirrorFiles() []string {",
+				"\treturn []string{tsMirrorFile, tsFileAddons}",
+				"}",
+				"func mirrorPairs() []mirrorPair {",
+				'\treturn []mirrorPair{{TSName: "A", GoName: "verify.Report", Fixture: "a.json"},',
+				'\t\t{TSName: "B", GoName: "types.AddOnInstall", Fixture: "b.json"}}',
+				"}",
+				"var unlockableClaims = map[string]string{",
+				"}",
+			].join("\n");
+			const m = mirrorMechanism(multi);
+			ok("the enrolled set is read as a LIST, not a single path", m.enrolled.size === 2);
+			ok(
+				"...resolved through the mechanism's own const block",
+				m.enrolled.has("apps/console/types/jsonb.types.ts") && m.enrolled.has("apps/console/lib/addons/types.ts"),
+			);
+			const secondFileIo = memoryIo({
+				[MIRROR_MECHANISM]: multi,
+				[enrolled]: "// Mirrors the Go `verify.Report`.\n",
+				"apps/console/lib/addons/types.ts": "// Mirrors the Go `types.AddOnInstall`.\n",
+			});
+			ok("a claim in the SECOND enrolled file is locked", censusMirrors(secondFileIo).value === 0);
+			const strayInSecond = memoryIo({
+				[MIRROR_MECHANISM]: multi,
+				[enrolled]: "// Mirrors the Go `verify.Report`.\n",
+				"apps/console/lib/addons/types.ts": "// Mirrors the Go `types.NothingAnswersThis`.\n",
+			});
+			ok(
+				"...and enrolment is not a wave-through: an unanswered claim there is still unlocked",
+				censusMirrors(strayInSecond).value === 1,
+			);
+			ok(
+				"a file OUTSIDE the enrolled set is still unlocked",
+				censusMirrors(
+					memoryIo({
+						[MIRROR_MECHANISM]: multi,
+						[enrolled]: "// Mirrors the Go `verify.Report`.\n",
+						"apps/console/lib/evidence/receipt-anchor.ts": "// Mirrors the Go `verify.VerifyAnchor`.\n",
+					}),
+				).value === 1,
+			);
+			// ENROLMENT, ISOLATED. Every case above varies the file AND the claim together, so a
+			// reader that dropped the enrolment test entirely still passed them — the claim was
+			// unanswered anyway. This one holds the claim fixed at one the mechanism DOES answer
+			// and varies only the file, which is the only shape that can tell the two apart.
+			ok(
+				"an ANSWERED claim in a NON-enrolled file is unlocked — enrolment is a real condition",
+				censusMirrors(
+					memoryIo({
+						[MIRROR_MECHANISM]: multi,
+						[enrolled]: "// Mirrors the Go `verify.Report`.\n",
+						"apps/console/lib/somewhere-else.ts": "// Mirrors the Go `verify.Report`.\n",
+					}),
+				).value === 1,
+			);
+		}
+
+		// ── an enrolled entry that does not resolve is REPORTED (#4455) ───────────────────────
+		//
+		// The enrolled set is derived by resolving each identifier in tsMirrorFiles() against the
+		// mechanism's const block. An identifier that resolves to nothing must not be dropped: a
+		// silently smaller enrolled set marks locked claims unlocked, and the census then argues
+		// for work that is already done — which is the exact failure this unit was opened over.
+		{
+			const dangling = [
+				"const (",
+				'\ttsMirrorFile = "apps/console/types/jsonb.types.ts"',
+				")",
+				"func tsMirrorFiles() []string {",
+				"\treturn []string{tsMirrorFile, tsFileMovedAway}",
+				"}",
+				"func mirrorPairs() []mirrorPair {",
+				'\treturn []mirrorPair{{TSName: "A", GoName: "verify.Report", Fixture: "a.json"}}',
+				"}",
+				"var unlockableClaims = map[string]string{",
+				"}",
+			].join("\n");
+			const m = mirrorMechanism(dangling);
+			ok("an unresolved enrolment entry is captured, not dropped", m.unresolved.includes("tsFileMovedAway"));
+			ok("...and the entries that DO resolve are still enrolled", m.enrolled.size === 1);
+			ok(
+				"...and the census says so out loud, because its number is an OVER-count",
+				censusMirrors(
+					memoryIo({ [MIRROR_MECHANISM]: dangling, [enrolled]: "// Mirrors the Go `verify.Report`.\n" }),
+				).notes.some((n) => n.includes("did not resolve") && n.includes("tsFileMovedAway")),
+			);
+		}
+
+		// ── the UNLOCKABLE bucket reads the right SEGMENT (#4455) ─────────────────────────────
+		//
+		// Claims are carried whole now, so `/^[A-Z]/` against the claim STRING asks whether the
+		// PACKAGE name is exported and answers "no" for every `pkg.Type` in the repository. That
+		// would have moved 23 locked claims out of the count and into "unlockable, reported not
+		// counted" — a smaller, cleaner-looking census that had quietly stopped counting. The
+		// direction matters: this bucket is excluded from the total, so anything misfiled into it
+		// is suppressed rather than reported.
+		{
+			const pkgIo = memoryIo({
+				[MIRROR_MECHANISM]: fixtureMechanism(),
+				[enrolled]: "// Mirrors the Go `verify.Report`.\n",
+				"apps/console/lib/x.ts": "// Mirrors the Go `types.RepoFile`.\n",
+			});
+			const pk = censusMirrors(pkgIo);
+			ok("a `pkg.Type` claim is NOT filed as unexported", pk.value === 1);
+			ok(
+				"...so it is counted, not silently excused",
+				!pk.notes.some((n) => n.startsWith("unlockable, reported not counted")),
+			);
+			// Both readings unexported is the real unlockable shape.
+			const lowerIo = memoryIo({
+				[MIRROR_MECHANISM]: fixtureMechanism(),
+				[enrolled]: "// Mirrors the Go `verify.Report`.\n",
+				"apps/console/lib/y.ts": "// Mirrors the Go `verify.valid`.\n",
+			});
+			ok("a `pkg.unexported` claim IS unlockable", censusMirrors(lowerIo).value === 0);
+		}
+
+		// ── an EMPTY unlockableClaims map must not swallow the file (#4455) ───────────────────
+		//
+		// `map[string]string{}` on one line has no `\n}` of its own, so a body matcher that knows
+		// only the multi-line form runs past the literal to the next column-0 `}`. Any `"key":`
+		// caught in between joins `covered` — making it too LARGE, which marks a genuinely
+		// unlocked claim as locked. That failure is silent and permanent, which is why the empty
+		// form is matched explicitly rather than left to a non-greedy scan.
+		{
+			const emptyMap = [
+				"const (",
+				'\ttsMirrorFile = "apps/console/types/jsonb.types.ts"',
+				")",
+				"func tsMirrorFiles() []string {",
+				"\treturn []string{tsMirrorFile}",
+				"}",
+				"func mirrorPairs() []mirrorPair {",
+				'\treturn []mirrorPair{{TSName: "A", GoName: "verify.Report", Fixture: "a.json"}}',
+				"}",
+				"var unlockableClaims = map[string]string{}",
+				"func somethingElse() map[string]string {",
+				'\treturn map[string]string{"Posture": "not an exemption — a value in unrelated code"}',
+				"}",
+			].join("\n");
+			const m = mirrorMechanism(emptyMap);
+			ok("an EMPTY unlockableClaims contributes nothing to covered", !m.covered.has("Posture"));
+			ok(
+				"...so a claim it does not exempt is still UNLOCKED",
+				censusMirrors(
+					memoryIo({
+						[MIRROR_MECHANISM]: emptyMap,
+						[enrolled]: "// Mirrors the Go `verify.Report`.\n// Mirrors the Go `drift.Posture`.\n",
+					}),
+				).value === 1,
+			);
+		}
+
+		// ── `Type.Field` is a claim about its OWNER (#4455) ───────────────────────────────────
+		//
+		// Five of the eight findings this counter reported were field claims. Reducing them to
+		// the last segment asks `covered.has("Source")`, which nothing answers and nothing ever
+		// will — the mechanism locks `AddOnInstall`, and `claimCoverage` there resolves the
+		// owner. This census resolves it the same way, and the note below states the one place
+		// the two DIVERGE: the mechanism checks by reflection that the Go field exists, which a
+		// text census cannot do, so this is the weaker of the two questions.
+		{
+			const fieldIo = memoryIo({
+				[MIRROR_MECHANISM]: fixtureMechanism(),
+				[enrolled]: "// Mirrors the Go `verify.Report`.\n// Mirrors the Go `Report.Findings`.\n",
+			});
+			ok("a `Type.Field` claim is locked by its OWNER", censusMirrors(fieldIo).value === 0);
+			ok(
+				"...but only when the owner is locked",
+				censusMirrors(
+					memoryIo({
+						[MIRROR_MECHANISM]: fixtureMechanism(),
+						[enrolled]: "// Mirrors the Go `verify.Report`.\n// Mirrors the Go `Unlocked.Field`.\n",
+					}),
+				).value === 1,
+			);
+		}
+
+		// A symbol claim is a lock. The mechanism answers `verify.VerifyAnchor` with a
+		// symbolClaim rather than a fixture pair, and a census that reads only GoName/GoType
+		// counts the one claim the anchor file makes as unwatched forever.
+		{
+			const symIo = memoryIo({
+				[MIRROR_MECHANISM]: `${fixtureMechanism()}\nfunc symbolClaims() []symbolClaim {\n\treturn []symbolClaim{{Claim: "verify.VerifyAnchor"}}\n}\n`,
+				[enrolled]: "// Mirrors the Go `verify.VerifyAnchor`.\n",
+			});
+			ok("a claim answered by a symbolClaim is locked", censusMirrors(symIo).value === 0);
+		}
 
 		// The zero-census refusals.
 		ok("ZERO claims anywhere is a refusal", censusMirrors(memoryIo({ [MIRROR_MECHANISM]: fixtureMechanism() })).refusal !== null);
