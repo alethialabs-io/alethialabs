@@ -53,7 +53,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
+import { expect, test, type Browser, type Locator, type Page, type Request } from "@playwright/test";
 
 import { db, closeDb } from "../helpers/db";
 import { restoreContext, materialize, resolveOrgSlug, resolveOwner, saveContext, seedRouteFixtures, type AuditContext } from "./context";
@@ -304,8 +304,18 @@ function asControlRole(role: string | undefined): ControlRole | null {
 	return CONTROL_ROLES.find((r): r is ControlRole => r === role) ?? null;
 }
 
-/** The trigger, by accessible role + name — never a CSS class, per the field contract. */
-function triggerFor(page: Page, entry: ControlEntry): { locator: Locator } | { problem: string } {
+/**
+ * The candidate set for the trigger, by accessible role + name — never a CSS class, per the field
+ * contract.
+ *
+ * It returns the locator UNNARROWED. That is the whole point: a `.first()` here would make
+ * `resolveTrigger`'s ambiguity check structurally unable to fire, because a `.first()` locator
+ * resolves to at most one element and `count()` can then only be 0 or 1. It was written that way,
+ * under a comment describing the hazard it caused (#4639), and the audit resolved every collision
+ * by document order for as long as it stood. Narrowing is a DECISION, and it belongs where the
+ * decision is made.
+ */
+function triggerCandidates(page: Page, entry: ControlEntry): { locator: Locator } | { problem: string } {
 	const role = asControlRole(entry.control?.role);
 	const name = entry.control?.name;
 	if (!entry.control?.role || !name) return { problem: "the entry declares no `control` role+name, so there is nothing to activate" };
@@ -317,31 +327,124 @@ function triggerFor(page: Page, entry: ControlEntry): { locator: Locator } | { p
 	// A name carrying a `<placeholder>` is a template; match its literal prefix.
 	const literal = name.split("<")[0].trim();
 	const matcher = literal ? new RegExp(escapeRe(literal), "i") : new RegExp(escapeRe(name), "i");
-	return { locator: page.getByRole(role, { name: matcher }).first() };
+	return { locator: page.getByRole(role, { name: matcher }) };
+}
+
+/** The single control to drive, or the reason no verdict can be attributed to any of them. */
+type Resolution = { locator: Locator } | { withhold: string };
+
+/**
+ * Turn the candidate set into ONE control, or into a withheld verdict with its reason.
+ *
+ * AMBIGUITY IS A FINDING, NOT A COIN FLIP.
+ *
+ * `.first()` picks one of N identically-named controls and records the verdict against whichever it
+ * happened to be — a true assertion about the wrong control, which is worse than no assertion
+ * because it reads as measured. The settings pages make this concrete: `SettingsDangerRow` names
+ * every destructive button just "Delete" and puts the thing being deleted in an unassociated
+ * `<div>`, so two danger rows on one page are two identical buttons.
+ *
+ * After `reach` has run, more than one match means the entry's reach did not narrow to a single
+ * control — that is a defect in the registry entry, or in the product's naming, and either way it
+ * must be reported rather than guessed past. So `.first()` is applied HERE and only once
+ * `matches === 1` has been established, which makes it a no-op on a set of one rather than a choice
+ * between N.
+ *
+ * ⚠ WHAT IS COUNTED IS THE ACCESSIBILITY TREE, AND THE COUNT COMES BEFORE THE VISIBILITY GATE.
+ * Both halves are measured rather than assumed, because the first draft of this comment asserted the
+ * opposite of the first half and passed every test and linter — which is the defect class this unit
+ * exists to close, committed inside the fix for it.
+ *
+ *  · `getByRole` defaults to `includeHidden: false`, so a duplicate hidden by `hidden`,
+ *    `display:none`, `visibility:hidden` or `aria-hidden` is NOT a candidate (measured: 2 in the DOM,
+ *    `count()` 1). That is the behaviour to want. The persona cannot activate such a control, so no
+ *    verdict could be mis-attributed to it, and counting it would withhold a perfectly measurable
+ *    control on every page carrying a closed menu with a "Delete" item in it — mass false ambiguity,
+ *    which costs exactly what #4646 is about.
+ *  · A match that IS in the tree but that `isVisible()` rejects — a zero-box control — is counted
+ *    (measured: `count()` 2, `first().isVisible()` false). Hence the order: gate on visibility first
+ *    and that duplicate silently drops out, leaving `.first()` to pick the survivor and report a
+ *    verdict as though the name were unambiguous. Counting first names the collision instead.
+ *
+ * Driven in all five directions by the self-tests at the foot of this file: 0 matches, 1 match, 2
+ * identically-named controls, a hidden duplicate (not ambiguity), and a zero-box duplicate
+ * (ambiguity). The ⚠ above is a claim about behaviour, and an unasserted claim is what #4639 is.
+ */
+async function resolveTrigger(page: Page, entry: ControlEntry, where: string): Promise<Resolution> {
+	const candidates = triggerCandidates(page, entry);
+	if ("problem" in candidates) return { withhold: candidates.problem };
+	const matches = await candidates.locator.count();
+	const named = `the trigger {${entry.control?.role}: "${entry.control?.name}"}`;
+	if (matches === 0) return { withhold: `${named} is not rendered at ${where} for this persona` };
+	if (matches > 1) {
+		return {
+			withhold:
+				`${named} matches ${matches} controls at ${where} after its reach chain — ` +
+				"ambiguous, so no verdict can be attributed. Narrow the entry's `reach`, or give the control an accessible name that distinguishes it.",
+		};
+	}
+	const locator = candidates.locator.first();
+	if (!(await locator.isVisible().catch(() => false))) {
+		return { withhold: `${named} is not rendered at ${where} for this persona` };
+	}
+	return { locator };
 }
 
 // ── the suite ───────────────────────────────────────────────────────────────────────────────────
 
-let ctx: AuditContext;
+let contextOnce: Promise<AuditContext> | null = null;
 
-test.beforeAll(async ({ browser }) => {
-	const page = await browser.newPage();
-	const orgSlug = await resolveOrgSlug(page);
-	ctx = { orgSlug, owner: await resolveOwner(orgSlug) };
-	await seedRouteFixtures(ctx);
-	saveContext(ctx);
-	await page.close();
-});
-
-test.beforeEach(async () => {
-	restoreContext(ctx);
-});
+/**
+ * The audit context — the org, its owner, and the rows the parameterised routes need.
+ *
+ * Established LAZILY, on the first control test that needs it, rather than in a file-level
+ * `beforeAll`. Two reasons, and the second is why it changed:
+ *
+ *  1. A `beforeAll` that throws makes every test in the file fail with the hook's error, which says
+ *     nothing about any individual control. Reached from the test body, the same failure is recorded
+ *     as a withheld verdict WITH ITS REASON on each control — the distinction this file's header
+ *     calls the repo's most expensive recurring defect.
+ *  2. A file-level hook runs for EVERY test in the file, including the self-tests at the foot of
+ *     this one. Those drive `resolveTrigger` against `page.setContent()` markup and need no app, no
+ *     database and no seeded org; a hook that reaches for all three would make the instrument's own
+ *     test depend on the environment it exists to keep honest.
+ *
+ * It restores before it seeds, so a WORKER RESTART reuses the previous worker's rows instead of
+ * writing a second set (see `context.ts` — a single timeout discards the worker, and `beforeAll`
+ * ran again in the fresh one).
+ */
+function auditContext(browser: Browser): Promise<AuditContext> {
+	contextOnce ??= (async () => {
+		const page = await browser.newPage();
+		try {
+			const orgSlug = await resolveOrgSlug(page);
+			const ctx: AuditContext = { orgSlug, owner: await resolveOwner(orgSlug) };
+			restoreContext(ctx);
+			if (!ctx.projectSlug) {
+				await seedRouteFixtures(ctx);
+				saveContext(ctx);
+			}
+			return ctx;
+		} finally {
+			await page.close();
+		}
+	})();
+	return contextOnce;
+}
 
 for (const entry of CONTROLS) {
-	test(`${entry.id} — declares ${entry.confirm ?? "none"} (${entry.status})`, async ({ page }) => {
+	test(`${entry.id} — declares ${entry.confirm ?? "none"} (${entry.status})`, async ({ page, browser }) => {
 		const routeRecord = consoleRoutes().routes.find((r) => r.route === entry.route);
 		if (!routeRecord) {
 			withhold(entry, `the manifest has no route ${entry.route} — the control's page moved or was removed`);
+			return;
+		}
+
+		let ctx: AuditContext;
+		try {
+			ctx = await auditContext(browser);
+		} catch (err) {
+			withhold(entry, `the audit context could not be established: ${err instanceof Error ? err.message : String(err)}`);
 			return;
 		}
 
@@ -361,37 +464,12 @@ for (const entry of CONTROLS) {
 			return;
 		}
 
-		const resolved_trigger = triggerFor(page, entry);
-		if ("problem" in resolved_trigger) {
-			withhold(entry, resolved_trigger.problem);
+		const resolved = await resolveTrigger(page, entry, url);
+		if ("withhold" in resolved) {
+			withhold(entry, resolved.withhold);
 			return;
 		}
-		const trigger = resolved_trigger.locator;
-		const matches = await trigger.count();
-		if (matches === 0 || !(await trigger.isVisible().catch(() => false))) {
-			withhold(entry, `the trigger {${entry.control?.role}: "${entry.control?.name}"} is not rendered at ${url} for this persona`);
-			return;
-		}
-		// AMBIGUITY IS A FINDING, NOT A COIN FLIP.
-		//
-		// `.first()` would pick one of N identically-named controls and record the verdict against
-		// whichever it happened to be — a true assertion about the wrong control, which is worse
-		// than no assertion because it reads as measured. The settings pages make this concrete:
-		// `SettingsDangerRow` names every destructive button just "Delete" and puts the thing being
-		// deleted in an unassociated `<div>`, so two danger rows on one page are two identical
-		// buttons.
-		//
-		// After `reach` has run, more than one match means the entry's reach did not narrow to a
-		// single control — that is a defect in the registry entry, or in the product's naming, and
-		// either way it must be reported rather than guessed past.
-		if (matches > 1) {
-			withhold(
-				entry,
-				`the trigger {${entry.control?.role}: "${entry.control?.name}"} matches ${matches} controls at ${url} after its reach chain — ` +
-					"ambiguous, so no verdict can be attributed. Narrow the entry's `reach`, or give the control an accessible name that distinguishes it.",
-			);
-			return;
-		}
+		const trigger = resolved.locator;
 
 		// ── both observations start BEFORE the click.
 		const before = await fingerprint();
@@ -565,4 +643,115 @@ test("the run measured something — a withheld verdict is not a pass", async ()
 		measured,
 		`only ${measured} of ${CONTROLS.length} controls were actually driven. A suite whose fixtures all stopped seeding reports green while asserting nothing, so this floor exists to make that loud.\n${summary}`,
 	).toBeGreaterThanOrEqual(MIN_MEASURED);
+});
+
+// ── the instrument's own test ───────────────────────────────────────────────────────────────────
+//
+// `resolveTrigger` is the step that decides whether a control was MEASURED or WITHHELD, so a defect
+// in it is invisible by construction: it does not make the suite red, it makes the suite report a
+// verdict about the wrong element, or a reason that names the wrong cause. #4639 is exactly that —
+// the ambiguity branch stood for as long as the file existed and could not fire, because the locator
+// it counted had already been narrowed with `.first()`.
+//
+// So the decision is driven here against markup this file builds, in ALL FIVE directions: no match,
+// one match, two identically-named controls, a visible control beside an A11Y-HIDDEN duplicate (NOT
+// ambiguity), and a visible control beside a ZERO-BOX duplicate (ambiguity). Each drives the REAL
+// function, not a restatement of it — a self-test that re-implements the rule verifies a copy.
+//
+// The last two are not decoration. They are the only assertions on the ⚠ in `resolveTrigger`'s
+// doc comment, which states what is counted and in what order; the count and the order are each a
+// separate decision, and each has its own mutation here. Keep this number in step with the tests
+// below — a comment that says FOUR beside five tests is the same defect class as the one this unit
+// closes, and nothing but a reader catches it.
+//
+// Their BODIES reach for no app, no database and no seeded org: `page.setContent` is the entire
+// fixture, and nothing here calls `auditContext`, `materialize` or `record`. That is a property of
+// the tests, NOT of the leg they ride in — `audit-interaction` declares `dependencies: ["setup"]`
+// and the config's `webServer` boots the console for the controls above, so in CI these five start
+// after it like everything else in the file. What the property buys is that they can be driven
+// against a bare chromium with a config that declares neither, which is how #4639's fix was
+// mutation-tested in both directions before it was written.
+
+/** A registry-shaped entry for the self-tests. Never recorded: `record()` is not reached from here. */
+function selfTestEntry(name: string): ControlEntry {
+	return {
+		id: "self-test.trigger",
+		route: "/self-test",
+		surface: "apps/console/e2e/audit/destructive.spec.ts",
+		mutation: "",
+		control: { role: "button", name },
+	};
+}
+
+test("self-test — `resolveTrigger` withholds on AMBIGUITY rather than picking one of N", async ({ page }) => {
+	// Two danger rows, both named "Delete" — the `SettingsDangerRow` shape the comment on
+	// `resolveTrigger` names. A `.first()` anywhere upstream of the count makes this case
+	// indistinguishable from the single-control one.
+	await page.setContent(`
+		<main>
+			<div><span>Production</span><button>Delete</button></div>
+			<div><span>Staging</span><button>Delete</button></div>
+		</main>`);
+	const resolved = await resolveTrigger(page, selfTestEntry("Delete <environment>"), "about:self-test");
+	expect("withhold" in resolved, "two identically-named controls must NOT resolve to a locator — that is the mis-attribution #4639 records").toBe(true);
+	if (!("withhold" in resolved)) return;
+	expect(resolved.withhold).toContain("matches 2 controls");
+	expect(resolved.withhold).toContain("ambiguous, so no verdict can be attributed");
+});
+
+test("self-test — `resolveTrigger` resolves a SINGLE match, and the template's prefix is what matches", async ({ page }) => {
+	await page.setContent(`
+		<main>
+			<div><span>Production</span><button>Delete</button></div>
+			<div><span>Staging</span><button>Keep</button></div>
+		</main>`);
+	const resolved = await resolveTrigger(page, selfTestEntry("Delete <environment>"), "about:self-test");
+	expect("locator" in resolved, "one match is not ambiguous and must be driven").toBe(true);
+	if (!("locator" in resolved)) return;
+	await expect(resolved.locator).toHaveText("Delete");
+});
+
+test("self-test — an A11Y-HIDDEN duplicate is NOT a candidate, so one visible control still resolves", async ({ page }) => {
+	// First half of the ⚠ on `resolveTrigger`. `getByRole` defaults to `includeHidden: false`, so the
+	// duplicate behind `hidden` is not in the candidate set at all and the visible control is driven.
+	// Flip that default and every page carrying a closed menu with a "Delete" item in it starts
+	// withholding for ambiguity — a measurable control lost to a control nobody can press.
+	await page.setContent(`
+		<main>
+			<div hidden><span>Production</span><button>Delete</button></div>
+			<div><span>Staging</span><button>Delete</button></div>
+		</main>`);
+	const resolved = await resolveTrigger(page, selfTestEntry("Delete <environment>"), "about:self-test");
+	expect("locator" in resolved, "a control the persona cannot activate is not a control the verdict could be mis-attributed to").toBe(true);
+	if (!("locator" in resolved)) return;
+	await expect(resolved.locator).toBeVisible();
+});
+
+test("self-test — a ZERO-BOX duplicate IS counted, so it reports ambiguity rather than `not rendered`", async ({ page }) => {
+	// Second half of the ⚠: the count runs BEFORE the visibility gate. This markup is the case that
+	// separates the two orders — both buttons are in the accessibility tree, and the first has no
+	// box. Gate on visibility first and the zero-box one drops out silently, leaving `.first()` to
+	// report a verdict as though the name were unambiguous.
+	await page.setContent(`
+		<main>
+			<button style="width:0;height:0;padding:0;border:0;overflow:hidden">Delete</button>
+			<button>Delete</button>
+		</main>`);
+	const resolved = await resolveTrigger(page, selfTestEntry("Delete <environment>"), "about:self-test");
+	expect("withhold" in resolved, "two in-tree controls with one accessible name is a collision, whatever their boxes").toBe(true);
+	if (!("withhold" in resolved)) return;
+	expect(resolved.withhold).toContain("matches 2 controls");
+	expect(resolved.withhold).not.toContain("is not rendered");
+});
+
+test("self-test — `resolveTrigger` withholds `not rendered` when NOTHING matches", async ({ page }) => {
+	await page.setContent(`<main><button>Keep</button></main>`);
+	const resolved = await resolveTrigger(page, selfTestEntry("Delete <environment>"), "about:self-test");
+	expect("withhold" in resolved).toBe(true);
+	if (!("withhold" in resolved)) return;
+	expect(resolved.withhold).toContain("is not rendered at about:self-test");
+	// The two withholding branches must stay DISTINGUISHABLE: "not rendered" and "ambiguous" are
+	// different findings with different fixes, and a shared reason is how #4639's collisions were
+	// reported as a missing fixture for as long as they were.
+	expect(resolved.withhold).not.toContain("ambiguous");
 });
