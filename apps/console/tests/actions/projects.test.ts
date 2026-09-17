@@ -53,6 +53,7 @@ import {
 	getProjectsList,
 	planProject,
 	provisionProject,
+	tryCreateProject,
 	updateProjectName,
 } from "@/app/server/actions/projects";
 import { requireOwner } from "@/lib/auth/owner";
@@ -518,6 +519,188 @@ describe("createProject", () => {
 			/forbidden/,
 		);
 		expect(withActorScope).not.toHaveBeenCalled();
+	});
+
+	// ── #4644: the action parses its input, and does it AFTER the guard ──
+	//
+	// Before this, `createProject` re-parsed NOTHING. `projects.project_name` is an unbounded
+	// `text()` column and the three `project_name` rules lived only in the Configure form, so the
+	// action id was reachable with a name no schema had seen.
+
+	it.each([
+		["", "A project name is required"],
+		["   ", "A project name is required"],
+		["!!!", "Enter at least one letter or number"],
+		["x".repeat(101), "Project name must be 100 characters or fewer"],
+	])(
+		"refuses %j server-side with the sentence the form shows, writing nothing",
+		async (project_name, message) => {
+			const { insertSpy } = setupDb({});
+			await expect(
+				createProject({
+					...baseInput,
+					project: { ...baseInput.project, project_name },
+				} as never),
+			).rejects.toThrow(message);
+			// The refusal is decided before any write — `withScope` runs the transaction body.
+			expect(insertSpy).not.toHaveBeenCalled();
+		},
+	);
+
+	// THE ORDERING IS THE SECURITY PROPERTY. `authorize` must answer first, or the action becomes an
+	// input oracle: POST a name with no session and learn from the reply whether it is too long,
+	// unslugifiable or empty. Asserted by giving it BOTH problems at once — a forbidden caller and a
+	// name that breaks a rule — and requiring the GUARD's error, not the validator's.
+	it("asks the guard BEFORE the validator, so a refused caller never gets the rule's answer", async () => {
+		vi.mocked(authorize).mockRejectedValue(new Error("forbidden"));
+		setupDb({});
+		// ONE call, both assertions off the SAME error — `mockRejectedValueOnce` is spent by the
+		// first invocation, so a second `createProject(...)` here would run under a RESOLVED guard
+		// and reach the validator legitimately. That is the shape this test exists to detect, so it
+		// must not be the shape the test itself has.
+		const err = await createProject({
+			...baseInput,
+			project: { ...baseInput.project, project_name: "x".repeat(400) },
+		} as never).catch((e: unknown) => e);
+		if (!(err instanceof Error))
+			throw new Error(`expected a rejection, got ${String(err)}`);
+		expect(err.message).toMatch(/forbidden/);
+		// Not merely "some error": the validator's sentence must be ABSENT. Flip the two lines in
+		// `createProject` and this is the assertion that goes red.
+		expect(err.message).not.toMatch(/characters or fewer/);
+	});
+
+	it("stores the name TRIMMED, so ' api' and 'api' cannot both exist under the case-insensitive index", async () => {
+		const { valuesSpy } = setupDb({
+			select: new Map([[projects, []]]),
+			insert: new Map<unknown, RowsResolver>([
+				[projects, [{ id: "p1", org_id: "org-1" }]],
+				[projectFabrics, [{ id: "fabric-1" }]],
+				[projectEnvironments, [{ id: "env-1" }, { id: "env-preview" }]],
+			]),
+		});
+		await createProject({
+			...baseInput,
+			project: { ...baseInput.project, project_name: "  Padded  " },
+			databases: [],
+			secrets: [],
+		} as never);
+		expect(valuesFor(valuesSpy, projects).project_name).toBe("Padded");
+		// The audit row records what was STORED, not what was typed.
+		expect(valuesFor(valuesSpy, auditLog)).toMatchObject({
+			changes: { project_name: "Padded" },
+		});
+	});
+});
+
+// ============================================================
+// tryCreateProject — #4644's user-facing half
+// ============================================================
+//
+// A `throw` out of a `"use server"` export is redacted to a `digest` in a production build, so the
+// sentence `createProject` writes never reaches the screen. This wrapper returns it instead.
+
+describe("tryCreateProject", () => {
+	const baseInput = {
+		project: {
+			project_name: "My App",
+			environment_stage: "production",
+			region: "us-east-1",
+			cloud_identity_id: "ci-1",
+			iac_version: "1.9.5",
+		},
+		network: { provision_network: true, cidr_block: "10.0.0.0/16" },
+		cluster: {
+			cluster_version: "1.31",
+			instance_types: ["m5.large"],
+			node_min_size: 2,
+			node_max_size: 5,
+			node_desired_size: 2,
+			cluster_admins: [],
+			provider_config: {},
+		},
+		dns: { enabled: false },
+		repositories: { apps_destination_repo: "git@x" },
+		databases: [],
+		secrets: [],
+	};
+
+	it("returns the project on the happy path", async () => {
+		setupDb({
+			select: new Map([[projects, []]]),
+			insert: new Map<unknown, RowsResolver>([
+				[projects, [{ id: "p1", org_id: "org-1", slug: "my-app" }]],
+				[projectFabrics, [{ id: "fabric-1" }]],
+				[projectEnvironments, [{ id: "env-1" }, { id: "env-preview" }]],
+			]),
+		});
+		const res = await tryCreateProject(baseInput as never);
+		expect(res).toEqual({
+			ok: true,
+			project: { id: "p1", org_id: "org-1", slug: "my-app" },
+		});
+	});
+
+	it("RETURNS the name-rule refusal as a readable sentence instead of throwing", async () => {
+		setupDb({});
+		const res = await tryCreateProject({
+			...baseInput,
+			project: { ...baseInput.project, project_name: "x".repeat(101) },
+		} as never);
+		expect(res).toEqual({
+			ok: false,
+			error: "Project name must be 100 characters or fewer",
+		});
+	});
+
+	// The defect #4644 names, end to end: the user typed a name a teammate already holds.
+	it("RETURNS the duplicate-name refusal, naming the name", async () => {
+		setupDb({
+			select: new Map([
+				[projects, [{ slug: "other", project_name: "My App" }]],
+			]),
+		});
+		const res = await tryCreateProject(baseInput as never);
+		expect(res.ok).toBe(false);
+		if (res.ok) throw new Error("unreachable");
+		expect(res.error).toMatch(/A project named "My App" already exists/);
+		expect(res.error).toMatch(/without regard to case/);
+	});
+
+	// THE WRAPPER MUST NOT ASK ANYTHING BEFORE `createProject` DOES. A validation run here would sit
+	// above `authorize` — this wrapper is its own POST-addressable action id — and answer a caller
+	// who never cleared the guard. Same construction as the `createProject` ordering test: both
+	// problems at once, and the GUARD must be the one that answers.
+	it("makes no statement about the input before the guard has run", async () => {
+		// `mockRejectedValue`, not `…Once`: the top-level `beforeEach` uses `vi.clearAllMocks()`,
+		// which clears CALLS but not a queued one-shot. A wrapper that answers before the guard
+		// never consumes a `…Once`, so it would leak a rejection into the NEXT test and report the
+		// regression somewhere other than here. A persistent implementation is replaced by the next
+		// `beforeEach`'s `mockResolvedValue`.
+		vi.mocked(authorize).mockRejectedValue(new Error("forbidden"));
+		setupDb({});
+		await expect(
+			tryCreateProject({
+				...baseInput,
+				project: { ...baseInput.project, project_name: "" },
+			} as never),
+		).rejects.toThrow(/forbidden/);
+		// The guard was REACHED. Without this, a wrapper that pre-validated and returned
+		// `{ ok: false }` would fail only on the `rejects` line, which reads as "it didn't throw"
+		// rather than "it answered a caller who never cleared authz".
+		expect(authorize).toHaveBeenCalledWith("create", { type: "project" });
+	});
+
+	// An unexpected failure is a DEFECT, not advice. Turning it into `{ ok: false, error }` would
+	// render a stack-shaped sentence as though the user could act on it — worse than the digest.
+	it("RETHROWS anything that is not a refusal", async () => {
+		setupDb({
+			select: new Map([[projects, []]]),
+			insert: new Map([[projects, []]]), // insert returns nothing → "Failed to create project"
+		});
+		await expect(tryCreateProject(baseInput as never)).rejects.toThrow(
+			/Failed to create project/,
+		);
 	});
 });
 
@@ -2067,7 +2250,26 @@ describe("deleteProject", () => {
 			id: "p1",
 		});
 		expect(deleteSpy).toHaveBeenCalledWith(projects);
-		expect(r).toEqual({ success: true });
+		// `{ ok: true }`, not `{ success: true }` — one discriminant across all three actions, so a
+		// form narrows the same way everywhere (#4644).
+		expect(r).toEqual({ ok: true });
+	});
+
+	// #4644: this refusal used to be a `throw new Error(...)`, redacted to a digest in a production
+	// build. The Danger Zone then closed its dialog and said nothing the user could act on.
+	it("RETURNS the live-environment refusal instead of throwing, and deletes nothing", async () => {
+		const { deleteSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projectEnvironments, [{ status: "ACTIVE" }]],
+			]),
+		});
+		const r = await deleteProject("p1");
+		expect(r).toEqual({
+			ok: false,
+			error:
+				"This project has live or in-flight environments. Destroy them before deleting the project.",
+		});
+		expect(deleteSpy).not.toHaveBeenCalled();
 	});
 });
 
@@ -2087,7 +2289,13 @@ describe("updateProjectName", () => {
 				[projects, (() => { let n = 0; return () => (n++ === 0 ? [{ org_id: "org-1" }] : [{ id: "other" }]); })()],
 			]),
 		});
-		await expect(updateProjectName("p1", "Taken")).rejects.toThrow(ProjectNameTakenError);
+		// RETURNED, not thrown (#4644) — but it must still be the SAME sentence
+		// `ProjectNameTakenError` writes, or create and rename start disagreeing again.
+		const r = await updateProjectName("p1", "Taken");
+		expect(r).toEqual({
+			ok: false,
+			error: new ProjectNameTakenError("Taken").message,
+		});
 	});
 
 	it("...and allows a name only this project holds — re-saving must not collide with itself", async () => {
@@ -2098,7 +2306,7 @@ describe("updateProjectName", () => {
 			]),
 			default: [{ project_name: "Renamed" }],
 		});
-		await updateProjectName("p1", "Renamed");
+		expect(await updateProjectName("p1", "Renamed")).toEqual({ ok: true, project_name: "Renamed" });
 		expect(setSpy).toHaveBeenCalledWith(projects, expect.objectContaining({ project_name: "Renamed" }));
 	});
 
@@ -2116,7 +2324,35 @@ describe("updateProjectName", () => {
 			]),
 			update: new Map<unknown, RowsResolver>([[projects, () => { throw violation; }]]),
 		});
-		await expect(updateProjectName("p1", "Racy")).rejects.toThrow(ProjectNameTakenError);
+		const r = await updateProjectName("p1", "Racy");
+		expect(r).toEqual({
+			ok: false,
+			error: new ProjectNameTakenError("Racy").message,
+		});
+	});
+
+	// #4644's second half on this path: the rename field applied two of the three `project_name`
+	// rules and the create path applied none, so `!!!` was refusable on one screen and storable on
+	// the other. Both now ask `projectNameProblem`, which reads the schema.
+	it.each([
+		["", "A project name is required"],
+		["   ", "A project name is required"],
+		["!!!", "Enter at least one letter or number"],
+		["x".repeat(101), "Project name must be 100 characters or fewer"],
+	])("REFUSES %j with the same sentence the create path gives", async (name, error) => {
+		const { setSpy } = setupDb({});
+		expect(await updateProjectName("p1", name)).toEqual({ ok: false, error });
+		expect(setSpy).not.toHaveBeenCalled();
+	});
+
+	it("asks the guard before the name rule, so a refused caller gets the guard's answer", async () => {
+		vi.mocked(authorize).mockRejectedValue(new Error("forbidden"));
+		setupDb({});
+		await expect(updateProjectName("p1", "")).rejects.toThrow(/forbidden/);
+		expect(authorize).toHaveBeenCalledWith("edit", {
+			type: "project",
+			id: "p1",
+		});
 	});
 
 	// The null-org branch mirrors the INDEX rather than being tidier than it: a btree unique treats
@@ -2127,7 +2363,7 @@ describe("updateProjectName", () => {
 			select: new Map<unknown, RowsResolver>([[projects, () => [{ org_id: null }]]]),
 			default: [{ project_name: "Orphan" }],
 		});
-		await updateProjectName("p1", "Orphan");
+		expect(await updateProjectName("p1", "Orphan")).toEqual({ ok: true, project_name: "Orphan" });
 		expect(setSpy).toHaveBeenCalledWith(projects, expect.objectContaining({ project_name: "Orphan" }));
 	});
 });
