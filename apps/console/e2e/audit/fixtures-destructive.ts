@@ -78,11 +78,13 @@ export interface FixtureScope {
 	owner: Owner;
 	orgSlug: string;
 	project?: FixtureProject;
+	/** The job `/[org]/~/jobs/[id]` will be materialised with — the ONLY job that route ever visits. */
+	jobId?: string;
 }
 
 /** Resolve the scope a seeder writes into, from the audit context the spec already established. */
 export async function resolveFixtureScope(ctx: AuditContext): Promise<FixtureScope> {
-	const scope: FixtureScope = { owner: ctx.owner, orgSlug: ctx.orgSlug };
+	const scope: FixtureScope = { owner: ctx.owner, orgSlug: ctx.orgSlug, jobId: ctx.jobId };
 	if (!ctx.projectSlug) return scope;
 	const sql = db();
 	const rows = await sql<{ id: string; env_id: string | null }[]>`
@@ -412,6 +414,141 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 		},
 	],
 
+	// ── project, environments and promotions ───────────────────────────────────────────────────
+	[
+		"project-with-a-node",
+		{
+			// ⚠ ALREADY SATISFIED, and that is a finding rather than a convenience. #4458 counts
+			// this among the 33 fixtures nobody wrote; the tree disagrees. `seedProject` writes a
+			// `project_network` AND a `project_cluster` row (`e2e/helpers/seed.ts`); `formToGraph`
+			// makes a node for each; `makeNode` sets `deletable: kind !== "project"`; and
+			// `DangerZone` renders "Delete resource" for any node that is deletable and not in
+			// `OUT_OF_BAND` (chart, chart_workload, addon, external). Neither `network` nor
+			// `cluster` is in that set.
+			//
+			// So the seeder writes nothing and ASSERTS the project is there. A second component row
+			// would add a second "Delete" with the same accessible name, which `resolveTrigger`
+			// correctly refuses to attribute a verdict to — the fixture would make the control LESS
+			// measurable, not more.
+			writes: "nothing — seedProject's project_network and project_cluster rows already render deletable canvas nodes",
+			seed: async (scope) => {
+				requireProject(scope);
+			},
+		},
+	],
+	[
+		"project-with-two-environments",
+		{
+			writes: "a second, NON-DEFAULT `project_environments` row — Delete renders on exactly `!env.is_default`",
+			seed: async (scope) => {
+				await ensureSecondEnvironment(scope);
+			},
+		},
+	],
+	[
+		"pending-promotion",
+		{
+			writes: "an `environment_promotions` row in PENDING_APPROVAL plus one PENDING `promotion_approvals` row",
+			seed: async (scope) => {
+				const project = requireProject(scope);
+				const sourceEnvId = await ensureSecondEnvironment(scope);
+				const sql = db();
+				// BOTH controls, or neither. `Cancel` renders for PENDING_PLAN/PENDING_APPROVAL/
+				// DEPLOYING; `Reject` renders only for `PENDING_APPROVAL && approved < required`,
+				// and `required` is the COUNT OF APPROVAL ROWS — so with no `promotion_approvals`
+				// row `required` is 0, `0 < 0` is false, and Reject can never appear. One status
+				// satisfies both, and it needs the approval row to do it.
+				const active = await sql<{ id: string }[]>`
+					select id from environment_promotions
+					where target_environment_id = ${project.envId}
+					  and status in ('PENDING_PLAN', 'PENDING_APPROVAL', 'APPROVED', 'DEPLOYING')
+					limit 1`;
+				// `env_promotions_one_active_per_target` is a partial UNIQUE index over exactly that
+				// status set, so a second in-flight promotion for this target is a 23505, not a row.
+				if (active.length > 0) return;
+				const [promotion] = await sql<{ id: string }[]>`
+					insert into environment_promotions ${sql({
+						project_id: project.projectId,
+						user_id: scope.owner.userId,
+						org_id: scope.owner.orgId,
+						source_environment_id: sourceEnvId,
+						target_environment_id: project.envId,
+						status: "PENDING_APPROVAL",
+						candidate_hash: "audit-candidate-hash",
+					})}
+					returning id`;
+				if (!promotion) throw new Error("insert into environment_promotions returned no row");
+				await sql`
+					insert into promotion_approvals ${sql({
+						promotion_id: promotion.id,
+						project_id: project.projectId,
+						org_id: scope.owner.orgId,
+						status: "pending",
+					})}`;
+			},
+		},
+	],
+	[
+		"installed-addon (kube-prometheus-stack / Prometheus + Grafana)",
+		{
+			writes: "one `project_addons` row for `kube-prometheus-stack` against the project's DEFAULT environment",
+			seed: async (scope) => {
+				const project = requireProject(scope);
+				const sql = db();
+				// `environment_id` must be NON-NULL and the DEFAULT env: `listProjectAddons` filters
+				// on the id `resolveActiveEnvironmentId` returns, and a null there matches nothing.
+				//
+				// `addon_id` must be a catalog id — `kube-prometheus-stack`, whose catalog `name` is
+				// "Prometheus + Grafana", which is what the entry's second reach step opens. An id
+				// the catalog does not know produces no market item at all and is silently invisible.
+				//
+				// `"values"` is quoted because it is a reserved word; the other columns are not.
+				await sql`
+					insert into project_addons ${sql({
+						project_id: project.projectId,
+						environment_id: project.envId,
+						addon_id: "kube-prometheus-stack",
+						enabled: true,
+						mode: "managed",
+						version: "61.9.0",
+						values: sql.json({}),
+						namespace: "monitoring",
+						status: "PENDING",
+					})}
+					on conflict do nothing`;
+			},
+		},
+	],
+	[
+		"active-job",
+		{
+			// IT UPDATES THE AUDIT'S JOB RATHER THAN INSERTING A SECOND ONE, and that is forced.
+			// `/[org]/~/jobs/[id]` is materialised with `ctx.jobId` and nothing else
+			// (`e2e/audit/context.ts` → `valueFor`), so a freshly-inserted QUEUED job would sit in a
+			// database no route this suite visits can reach — a fixture written and a control still
+			// withheld, which is the shape this whole unit exists to end.
+			//
+			// `seedRouteFixtures` calls `seedJob` with no status, and `seedJob` defaults to
+			// `SUCCESS` — a finished deploy, which renders Re-run, not Cancel. The three statuses
+			// that render Cancel are QUEUED, CLAIMED and PROCESSING (`isActive` on the job page, and
+			// `cancellable` in `cancelJob` — the two agree). QUEUED is the cheapest: its `runner_id`
+			// is null, so `cancelJob` skips `notifyRunnerCancel` and no runner is needed.
+			//
+			// `completed_at` is cleared with it. A row that is QUEUED and completed is a state the
+			// product cannot produce, and a fixture that invents one teaches the next reader a lie.
+			writes: "flips the audit's own `jobs` row to QUEUED (completed_at cleared) — the only job id this suite's route resolves",
+			seed: async (scope) => {
+				if (!scope.jobId) {
+					throw new Error("the audit has no seeded job (e2e/audit/context.ts → seedRouteFixtures), so /[org]/~/jobs/[id] has nothing to visit");
+				}
+				const sql = db();
+				await sql`
+					update jobs set status = 'QUEUED', completed_at = null, updated_at = now()
+					where id = ${scope.jobId}`;
+			},
+		},
+	],
+
 	// ── org ────────────────────────────────────────────────────────────────────────────────────
 	[
 		"org-with-a-logo",
@@ -437,6 +574,44 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
  * `{select: "a dimension"}` ambiguous, which `resolveTrigger` correctly refuses to guess past. So
  * this is idempotent on the dimension's `key`.
  */
+/**
+ * The project's SECOND environment, written once however many fixtures ask for it.
+ *
+ * `project-with-two-environments` needs it to have something deletable; `pending-promotion` needs it
+ * as a promotion SOURCE, because a promotion's source and target are different environments. Two
+ * seeders writing one each would give the environments page two identical Delete buttons, which
+ * `resolveTrigger` refuses to attribute a verdict to — so this is idempotent on the name.
+ *
+ * `is_default: false` is not a style choice. `spec_environments_one_default` is a partial UNIQUE
+ * index on `project_id WHERE is_default`, and `project_environments_one_default_check` is a deferred
+ * constraint trigger demanding EXACTLY ONE default per project — a second default fails both.
+ * The name must also differ from the first: `UNIQUE(project_id, name)`.
+ */
+async function ensureSecondEnvironment(scope: FixtureScope): Promise<string> {
+	const project = requireProject(scope);
+	const sql = db();
+	const NAME = "audit-staging";
+	const existing = await sql<{ id: string }[]>`
+		select id from project_environments where project_id = ${project.projectId} and name = ${NAME} limit 1`;
+	if (existing[0]) return existing[0].id;
+	const [row] = await sql<{ id: string }[]>`
+		insert into project_environments ${sql({
+			project_id: project.projectId,
+			user_id: scope.owner.userId,
+			org_id: scope.owner.orgId,
+			name: NAME,
+			// One of the three stages `STAGE_ORDER` groups by — an environment outside them falls
+			// into no rendered group and its card is never drawn.
+			stage: "staging",
+			status: "DRAFT",
+			is_default: false,
+			region: "eu-central-1",
+		})}
+		returning id`;
+	if (!row) throw new Error("insert into project_environments returned no row");
+	return row.id;
+}
+
 async function seedClassification(owner: Owner): Promise<void> {
 	const sql = db();
 	const KEY = "audit-sensitivity";
@@ -483,6 +658,15 @@ export const UNSEEDABLE: ReadonlyMap<string, string> = new Map([
 		"byo-chart",
 		"the registry records `byo.chart.detach` as `missing` — there is no confirmation to measure, so seeding the chart would " +
 			"establish nothing. The fixture becomes worth writing when the control gains a confirmation, and not before.",
+	],
+	[
+		"byo-iac-source",
+		"the BYO-IaC surface is behind a PROCESS FLAG, not a row. `lib/addons/byo-iac-flag.ts` reads " +
+			"`ALETHIA_BYO_IAC_ENABLED === \"true\"`, the architecture page passes that down, and " +
+			"`design-project-canvas.tsx` short-circuits the fetch on it — so with the flag unset the IaC card " +
+			"never loads however many `project_iac_sources` rows exist. NOTHING in `.github/workflows/` or " +
+			"`scripts/` sets that variable, so no gate leg can render this control. ⚠ The registry records " +
+			"`byo.iac.detach` as `confirmed`; that claim rests on no run this gate can perform.",
 	],
 	[
 		"active-subscription",
