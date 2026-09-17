@@ -1081,6 +1081,37 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/ci/check-gate-baseline-consistency.mjs --self-test
+      # ...and the slice this PR moved is one it OWNS (#4615). The check above asks whether the
+      # ledger still describes the tree; this asks whether the PR earned the part of it that moved.
+      # Four `wave:release-gate` lanes declare gate-baseline.json in their `scope:`, correctly, and
+      # the only thing keeping them apart is `--only`. Read scripts/e2e-ratchet.mjs: with `--only`
+      # the writer MERGES (`{ ...current, ...toBaseline(scoped) }`); without it, it REPLACES the
+      # whole `projects[<p>]` object with one run. A sibling lane's pending slice is then discarded
+      # on merge, and nothing says so — the consistency check above agrees with the branch, the
+      # ratchet agrees with the ledger it just rewrote, and check-pr-scope agrees the file is
+      # declared. Three green gates. Measured on 2026-09-17: the JSON itself MERGES CLEANLY
+      # (it partitions by project → file → title), so there is not even a conflict marker.
+      #
+      # A diff read: two `gh api` blob fetches and a JSON compare, seconds. It reads BOTH sides from
+      # the API rather than the checkout, because on a `pull_request` the checkout is
+      # `refs/pull/N/merge` — head merged into the CURRENT base tip — and diffing that against the
+      # merge base attributes `dev`'s own landed slices to the PR. On a `push` there is no PR, so it
+      # says so and exits 0: a required check that does not always report wedges the queue.
+      #
+      # Verified against dev's whole history before it shipped: all 18 ledger-moving commits with a
+      # parent that carries the file PASS, and a reconstructed bare `--write` over today's baseline
+      # REDS on both the loosened and the deleted entry. #4615's own suggested rule — "a slice
+      # touched for a spec file the PR does not modify is a finding" — fires on NINE of those 18,
+      # every one of them legitimate; the five exemptions in the script's header are what the corpus
+      # says the rule actually is.
+      - name: ...and the ledger slice this PR moved is one it owns (no bare `--write`)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-gate-baseline-slice-ownership.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: ...and THAT check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-gate-baseline-slice-ownership.mjs --self-test
       # The console's published conformance score. #3618 landed apps/console/scripts/audit-report.mjs
       # and the two artifacts it owns — apps/console/docs/ui-conformance/scoreboard.md and
       # apps/console/ui-conformance-baseline.json — with the two-mode contract PROGRAMME.md uses:
