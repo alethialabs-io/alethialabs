@@ -60,6 +60,13 @@ export const NA_REASONS = {
 	R5: [],
 	R6: [],
 	R7: [],
+	// R8 is N/A for exactly two shapes of page, and NEITHER of them is "the audit could not do it".
+	// A redirect-only route renders no controls because it renders nothing; a page that renders and
+	// offers no enabled control has no claim to answer. Everything else — a control budget blown, a
+	// route that threw, a fixture that never produced the subtree — is a claim about the INSTRUMENT
+	// and goes through `notMeasured()` below. The two must not share a column: an N/A is counted as
+	// "asked and does not apply", and a predicate escaped into it scores higher with nothing red.
+	R8: ["redirect-only", "no-enabled-controls"],
 	T5: ["no-empty-state"],
 	T6: ["redirect-only"],
 	T7: ["no-restricted-surface"],
@@ -96,6 +103,21 @@ export interface Report {
 	 * on a PASS/FAIL carrying one — the three ways the rubric says a rubric goes wrong.
 	 */
 	record(entry: VerdictRecord): VerdictRecord;
+	/**
+	 * Withhold ONE CELL — this (route, predicate) was not measured, and here is what stopped it.
+	 *
+	 * `withhold()` below is run-scoped and answers "this instrument is broken, score nothing with
+	 * it". This is the other half, and the two are not interchangeable: a control budget blown on
+	 * one route, a route whose fixture never rendered the subtree, a test that threw — each is a
+	 * gap in ONE cell, and withholding the whole predicate for it would throw away every route the
+	 * instrument did answer. R8 is the predicate that made the gap unavoidable: it walks a route's
+	 * rendered controls, and "this route had 140 of them, over the budget of 60" is neither a PASS
+	 * (nothing was activated), nor a FAIL (nothing was found), nor an N/A (an N/A is a claim about
+	 * the PAGE, and this is a claim about the run).
+	 *
+	 * A reason is REQUIRED. "Not measured" with no cause is the shape that reads as a pass.
+	 */
+	notMeasured(entry: Omit<VerdictRecord, "verdict"> & { reason: string }): VerdictRecord;
 	/**
 	 * Refuse to score `predicates` for the rest of the run: every later `record()` for one of them
 	 * is rewritten to `NOT MEASURED` carrying `why`, whatever verdict the caller computed.
@@ -192,6 +214,27 @@ export function createReport(): Report {
 			}
 			records.push(entry);
 			return entry;
+		},
+		notMeasured(entry) {
+			if (!entry.reason.trim()) {
+				throw new Error(
+					`${entry.predicate} on ${entry.route}: NOT MEASURED with no reason says nothing about the ` +
+						`instrument, and reads exactly like a page with nothing to report.`,
+				);
+			}
+			// A run-scoped withhold still wins: if the predicate's own positive control is red, the
+			// cell-scoped reason this caller computed was computed by the broken instrument too.
+			const why = withheldPredicates.get(entry.predicate);
+			const record: VerdictRecord = {
+				route: entry.route,
+				url: entry.url,
+				predicate: entry.predicate,
+				verdict: "NOT MEASURED",
+				reason: why ?? entry.reason,
+				evidence: entry.evidence,
+			};
+			records.push(record);
+			return record;
 		},
 		withhold(predicates, why) {
 			if (!why.trim()) {

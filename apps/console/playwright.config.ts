@@ -322,7 +322,7 @@ const projects = [
 		// audit spec that ACTIVATES controls rather than reading rendered state, so it runs in
 		// `audit-interaction` with its own leg, its own capability promise and no retries. Without
 		// this ignore the file would be selected by both projects and run twice per gate.
-		testIgnore: /(^|\/)audit\/destructive\.spec\.ts$/,
+		testIgnore: /(^|\/)audit\/(destructive|inert)\.spec\.ts$/,
 		fullyParallel: false,
 		// One route test loads the page at FOUR viewport widths, runs axe, opens every overlay the
 		// page offers and hit-tests each one, then reloads it once more with an injected fault. The
@@ -360,7 +360,7 @@ const projects = [
 	// each other's rows, and a retry would let a control that confirms only sometimes report green.
 	{
 		name: "audit-interaction",
-		testMatch: /(^|\/)audit\/destructive\.spec\.ts$/,
+		testMatch: /(^|\/)audit\/(destructive|inert)\.spec\.ts$/,
 		fullyParallel: false,
 		workers: 1,
 		retries: 0,

@@ -417,7 +417,24 @@ jobs:
             // apps/console/e2e/gate-baseline.json (ratchet rule 4); their statuses did not.
             { project: "qa",        args: "--project=qa",        workers: 3, retries: 1, capabilities: "stripe,encryption",  manifest: false, floor: 300 },
             { project: "audit",     args: "--project=audit",     workers: 1, retries: 1, capabilities: "",                   manifest: true,  floor: 1 },
-            { project: "audit-interaction", args: "--project=audit-interaction", workers: 1, retries: 0, capabilities: "stripe,encryption", manifest: true, floor: 47 },
+            // `floor: 70` is MEASURED, not a round number, and the measurement is `--list` — the
+            // same number the guard below greps out of `Total:`, taken on this tree:
+            //
+            //   destructive.spec.ts  60   (one per ledger control, 47, plus 13 standalone)
+            //   inert.spec.ts        41   (one per manifest route, 40, plus the emptiness floor)
+            //   fixtures/auth.setup   1   (the `dependencies: ["setup"]` project — it IS counted)
+            //   ────────────────────────
+            //   Total:              102
+            //
+            // R8 added the second file, so the leg went 61 → 102 and the old floor of 47 no longer
+            // asks anything: it sits UNDER destructive.spec.ts on its own, so inert.spec.ts could
+            // stop matching entirely and the gate would still be green. The floor therefore has to
+            // clear the larger file PLUS setup — 61 — which is what makes "one of the two files
+            // dropped out" red; and it has to stay far enough under 102 that retiring a ledger
+            // entry or deleting a route is not a red gate. 70 is 9 above the first bound and 32
+            // below the second. Re-derive it from `--list` when either file changes shape; do not
+            // raise it to hug 102, which would make every routine deletion a gate failure.
+            { project: "audit-interaction", args: "--project=audit-interaction", workers: 1, retries: 0, capabilities: "stripe,encryption", manifest: true, floor: 70 },
           ];
           const ALL = legs.map((l) => l.project);
 
@@ -484,8 +501,8 @@ jobs:
           // it — that file is where these regexes come from and where they must be kept true.
           const RULES = [
             { when: /^apps\/console\/e2e\/flows\//, legs: ["qa"], why: "e2e/flows/** is the qa project's testMatch" },
-            { when: /^apps\/console\/e2e\/audit\/destructive\.spec\.ts$/, legs: ["audit-interaction"], why: "the audit-interaction project's whole testMatch" },
-            { when: /^apps\/console\/e2e\/audit\/[^/]*\.spec\.ts$/, legs: ["audit"], why: "an audit spec (destructive.spec.ts is testIgnored out of this project)" },
+            { when: /^apps\/console\/e2e\/audit\/(destructive|inert)\.spec\.ts$/, legs: ["audit-interaction"], why: "the audit-interaction project's whole testMatch" },
+            { when: /^apps\/console\/e2e\/audit\/[^/]*\.spec\.ts$/, legs: ["audit"], why: "an audit spec (destructive.spec.ts and inert.spec.ts are testIgnored out of this project)" },
             // NOT "other e2e/audit/** -> audit". destructive.spec.ts imports ./context and
             // ./manifest, so a shared audit module moves BOTH audit legs; sending it to `audit`
             // alone would be a silent under-selection.
