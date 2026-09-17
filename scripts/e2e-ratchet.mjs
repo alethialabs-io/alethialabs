@@ -7,8 +7,9 @@
 // The browser suites were 39% green when the gate was built. That figure is ONE DATED RUN OF ONE
 // PROJECT — `--project=qa`, 346 tests, 2026-09-02, 136 passed / 192 failed / 1 skipped / 17 never
 // ran, written up in apps/console/docs/qa/findings.md — and it is NOT this ratchet's ledger, which
-// today spans six projects. Those two numbers sat adjacent here with nothing to tell them apart,
-// and were read as one (#4536); "17 never ran" in particular describes that run and no state the
+// today spans every browser leg — `--census` says how many, and is now the only thing that says
+// so. Those two numbers sat adjacent here with nothing to tell them apart, and were read as one
+// (#4536); "17 never ran" in particular describes that run and no state the
 // ledger has ever had. So the ledger's own census is derived on demand rather than typed, and the
 // sentence you are reading is history that cannot go stale because it is dated.
 //
@@ -25,14 +26,16 @@
 //
 // recounts apps/console/e2e/gate-baseline.json and prints one line — tests, projects,
 // passed/failed/fixme/data-skip, and which projects are failing. No run, no network, no results
-// file: it reads the committed ledger and nothing else. `--self-test` prints the same line last,
-// so the required `Authz / open-core guards` job carries today's census in its log on every PR.
+// file: it reads the committed ledger and nothing else. `--self-test` prints the same line at the
+// end of its own run, so the required `Authz / open-core guards` job — which runs `--self-test` on
+// every PR — carries today's census in its log.
 //
 // THAT LINE USED TO BE COMMITTED IN THIS HEADER, AND A COMMITTED SUM OVER A PARTITIONED LEDGER
 // CANNOT MERGE (#4648). The ledger partitions by project → file → title, so two lanes regenerating
 // different slices merge; a repo-wide sum over it partitions not at all, so every lane rewrote the
-// same line and they were mutually exclusive by construction. Six open PRs went DIRTY on this one
-// line within minutes of two merges, and again on the next merge, four for four.
+// same line and they were mutually exclusive by construction. On 2026-09-10 six open PRs went
+// DIRTY on this one line within minutes of two merges, and four for four on the next merge — two
+// of them queued and conflict-free seconds earlier, dequeued by a merge unrelated to their content.
 //
 // The resolution was the worse half. The value is a SUM, so neither side of the conflict is true
 // once both land: measured on 2026-09-17, `dev` said `647 tests / 40 failed`, the branch said
@@ -48,11 +51,15 @@
 // deriving it becomes absolute rather than checked: there is no typed figure left here to be
 // misread as the ledger's state.
 //
-// What that gives up is the totals moving visibly inside a PR diff. What still stops the ledger
-// shrinking is unchanged, and all of it runs in the same required job: this file's rules 3, 4 and
-// 6 on every gate leg; `scripts/ci/check-gate-baseline-consistency.mjs` (tree ↔ ledger identity,
-// and a floor under the ledger's size); `scripts/ci/check-gate-baseline-slice-ownership.mjs` (a
-// slice a PR did not earn the right to rewrite). None of the three ever read the census line.
+// What that gives up is the totals moving visibly inside a PR diff — and that is ALL it gave. The
+// line was only ever checked for AGREEMENT with the ledger, never for a direction, so a PR that
+// deleted entries and pasted the new line was green either way. What actually stops the ledger
+// shrinking is unchanged: rule 2 below reds a deleted `failed` entry at the next gate run (the
+// test returns as one the baseline does not know, and it does not pass), and in the very job that
+// runs this self-test, `scripts/ci/check-gate-baseline-slice-ownership.mjs` reds a slice the PR
+// did not earn the right to rewrite while `scripts/ci/check-gate-baseline-consistency.mjs` reds a
+// lost leg, a stale row, and a ledger that has fallen under its floor. None of the three ever read
+// the census line.
 //
 //   node scripts/e2e-ratchet.mjs --project=<name> --results=<playwright json> [--baseline=<file>]
 //   node scripts/e2e-ratchet.mjs --project=<name> --results=<json> --write [--only=<spec file>]...
