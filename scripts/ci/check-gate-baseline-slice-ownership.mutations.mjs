@@ -156,6 +156,12 @@ const MUTATIONS = [
 		expect: /L7|malformed key/,
 	},
 	{
+		name: "M17 a USAGE error annotated again — two red annotations under a step that passed",
+		from: "\t\tconsole.error(`check-gate-baseline-slice-ownership: unrecognised argument(s): ${unknown.join(\" \")}`);",
+		to: "\t\tconsole.error(`::error::check-gate-baseline-slice-ownership: unrecognised argument(s): ${unknown.join(\" \")}`);",
+		expect: /annotation|render red/,
+	},
+	{
 		name: "M16 the ledger no longer checked against the REAL tree (fixtures only)",
 		from: "\tok(\"the SHIPPED TITLE_SOURCES is current against the real tree\", real.length === 0, JSON.stringify(real));",
 		to: "\tok(\"the SHIPPED TITLE_SOURCES is current against the real tree\", true);",

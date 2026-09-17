@@ -433,7 +433,12 @@ export function main(argv) {
 	const head = argv.find((a) => a.startsWith("--head="))?.slice("--head=".length);
 	const unknown = argv.filter((a) => !/^--(base|head)=/.test(a));
 	if (unknown.length > 0) {
-		console.error(`::error::check-gate-baseline-slice-ownership: unrecognised argument(s): ${unknown.join(" ")}`);
+		// USAGE, NOT A FINDING — and deliberately NOT a `::error::` annotation. The self-test asserts
+		// both usage paths by calling `main()`, so annotating them paints two red annotations onto a
+		// step that PASSED, and the next person reading the guards job sees a green check with errors
+		// under it. That is the same confusion in mirror image as a `continue-on-error` step reporting
+		// `success` with `##[error]` lines in its log. A genuine finding below still annotates.
+		console.error(`check-gate-baseline-slice-ownership: unrecognised argument(s): ${unknown.join(" ")}`);
 		return 2;
 	}
 
@@ -451,7 +456,7 @@ export function main(argv) {
 	let inputs;
 	if (base !== undefined || head !== undefined) {
 		if (base === undefined || head === undefined) {
-			console.error("::error::check-gate-baseline-slice-ownership: --base and --head are given together or not at all.");
+			console.error("check-gate-baseline-slice-ownership: --base and --head are given together or not at all."); // usage — see above
 			return 2;
 		}
 		inputs = fromGit(base, head);
@@ -655,6 +660,22 @@ function selfTest() {
 	// ── argument handling.
 	ok("an unrecognised argument exits 2 rather than checking something else", main(["--all-of-them"]) === 2);
 	ok("--base without --head exits 2", main(["--base=dev"]) === 2);
+	// …and a USAGE error must not paint a workflow annotation. Asserted through a real subprocess
+	// because the thing under test is what reaches the runner's stderr, which an in-process call
+	// cannot show: `::error::` on stdout/stderr is how GitHub renders a red annotation, and the two
+	// assertions above CALL `main`, so annotating usage puts two red annotations under a step that
+	// passed. The first CI run of this file did exactly that.
+	const usage = (() => {
+		try {
+			execFileSync(process.execPath, [fileURLToPath(import.meta.url), "--all-of-them"], { encoding: "utf8", stdio: "pipe" });
+			return { rc: 0, err: "" };
+		} catch (e) {
+			return { rc: e.status ?? 1, err: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+		}
+	})();
+	ok("a usage error exits 2 from a real process", usage.rc === 2, JSON.stringify(usage));
+	ok("…and prints NO `::error::` annotation, so a passing step cannot render red", !usage.err.includes("::error::"), JSON.stringify(usage.err));
+	ok("…while still saying what was wrong", /unrecognised argument\(s\): --all-of-them/.test(usage.err), JSON.stringify(usage.err));
 
 	if (fails > 0) {
 		console.error(`\ncheck-gate-baseline-slice-ownership self-test: ${fails} failure(s)`);
