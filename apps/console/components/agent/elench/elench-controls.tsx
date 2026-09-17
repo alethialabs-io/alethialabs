@@ -24,6 +24,26 @@ import { useAiTier } from "./use-ai-tier";
  * (review & approve each change); "Automatically edit" → `mode: "act"` (allow edits
  * for this conversation). Drives the shared store's mode (the org agent route reads
  * it to gate the mutation tools).
+ *
+ * The two segments are a `role="group"` of `aria-pressed` toggle buttons — the house pattern,
+ * stated in `packages/ui/src/segmented-control.tsx`: "`aria-pressed` rather than a radiogroup:
+ * these are toggle buttons that act immediately, not a form input that gets submitted." The
+ * closest precedent is `components/overview/overview-toolbar.tsx`'s `SortRow`, which is the same
+ * shape — a right-checked `aria-pressed` button inside a `@repo/ui/popover` — and calls itself
+ * "the console picker convention". `SegmentedControl` itself cannot serve: its `label` is a short
+ * string ("Kept short"), and each of these segments is an icon, a title, a description and a
+ * check. So the pattern is applied, not the component. #4618.
+ *
+ * NOT `role="menuitemradio"` + `aria-checked`, which #4618 prescribes. That role's required
+ * context is a `menu` (or a `group` owned by one), and this popover cannot provide it: it is
+ * base-ui's, whose `PopoverRoot` calls floating-ui's `useRole(floatingRootContext)` with no
+ * options, and that hook defaults to `role = 'dialog'` — verified in
+ * `@base-ui-components/react@1.0.0-rc.0` and `@floating-ui/react@0.27.20`. A `menuitemradio`
+ * inside a dialog is in an invalid context, where assistive tech forms no radio set and the
+ * `aria-checked` the issue asks for may not be exposed at all — a fix that tests green and
+ * announces nothing. Overriding the popup to `role="menu"` instead would trade this defect for
+ * the loss of the dialog semantics base-ui's own focus management assumes. `aria-pressed` needs
+ * neither, and the console already speaks it in 15 files against 1 radiogroup and 0 menuitemradio.
  */
 export function ElenchAskMode() {
   const mode = useElenchStore((s) => s.mode);
@@ -52,48 +72,52 @@ export function ElenchAskMode() {
         side="top"
         className="w-[270px] rounded-none p-1.5"
       >
-        <button
-          type="button"
-          onClick={() => setMode("ask")}
-          className={cn(
-            "flex w-full items-start gap-2.5 rounded-none px-2.5 py-2 text-left transition-colors hover:bg-muted",
-            isAsk && "bg-muted",
-          )}
-        >
-          <Pencil className="mt-0.5 h-4 w-4 flex-none text-muted-foreground" />
-          <span className="flex-1">
-            <span className="block text-ui-md font-medium text-foreground">
-              Ask before editing
+        <div role="group" aria-label="Editing mode">
+          <button
+            type="button"
+            aria-pressed={isAsk}
+            onClick={() => setMode("ask")}
+            className={cn(
+              "flex w-full items-start gap-2.5 rounded-none px-2.5 py-2 text-left transition-colors hover:bg-muted",
+              isAsk && "bg-muted",
+            )}
+          >
+            <Pencil className="mt-0.5 h-4 w-4 flex-none text-muted-foreground" />
+            <span className="flex-1">
+              <span className="block text-ui-md font-medium text-foreground">
+                Ask before editing
+              </span>
+              <span className="block text-xs text-muted-foreground">
+                Review and approve each change
+              </span>
             </span>
-            <span className="block text-xs text-muted-foreground">
-              Review and approve each change
+            {isAsk && (
+              <Check className="mt-0.5 h-3.5 w-3.5 flex-none text-foreground" />
+            )}
+          </button>
+          <button
+            type="button"
+            aria-pressed={!isAsk}
+            onClick={() => setMode("act")}
+            className={cn(
+              "flex w-full items-start gap-2.5 rounded-none px-2.5 py-2 text-left transition-colors hover:bg-muted",
+              !isAsk && "bg-muted",
+            )}
+          >
+            <ChevronsRight className="mt-0.5 h-4 w-4 flex-none text-muted-foreground" />
+            <span className="flex-1">
+              <span className="block text-ui-md font-medium text-foreground">
+                Automatically edit
+              </span>
+              <span className="block text-xs text-muted-foreground">
+                Always allow edits for this conversation
+              </span>
             </span>
-          </span>
-          {isAsk && (
-            <Check className="mt-0.5 h-3.5 w-3.5 flex-none text-foreground" />
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("act")}
-          className={cn(
-            "flex w-full items-start gap-2.5 rounded-none px-2.5 py-2 text-left transition-colors hover:bg-muted",
-            !isAsk && "bg-muted",
-          )}
-        >
-          <ChevronsRight className="mt-0.5 h-4 w-4 flex-none text-muted-foreground" />
-          <span className="flex-1">
-            <span className="block text-ui-md font-medium text-foreground">
-              Automatically edit
-            </span>
-            <span className="block text-xs text-muted-foreground">
-              Always allow edits for this conversation
-            </span>
-          </span>
-          {!isAsk && (
-            <Check className="mt-0.5 h-3.5 w-3.5 flex-none text-foreground" />
-          )}
-        </button>
+            {!isAsk && (
+              <Check className="mt-0.5 h-3.5 w-3.5 flex-none text-foreground" />
+            )}
+          </button>
+        </div>
       </PopoverContent>
     </Popover>
   );
@@ -158,6 +182,13 @@ const MODEL_ICON: Record<string, LucideIcon> = {
  * ("Fast" / "Thinking"). It deliberately shows only the INTENT, never the underlying model
  * name/provider; the store still holds (and the request still sends) the real
  * `provider/native-id` key. Org context only (the project route has no user-selectable model).
+ *
+ * Its entries carry the SAME defect #4618 reports against the Ask-mode segments, and the issue
+ * does not mention them: exactly one is current, and the only marks of which were an
+ * `active && "bg-muted"` background and an unnamed `<Check>`, neither of which reaches the
+ * accessibility tree. It is the same control shape in the same file behind the same primitive,
+ * so it takes the same `role="group"` + `aria-pressed` treatment rather than being left as a
+ * second instance of a defect this PR is closing.
  */
 export function ElenchModelButton() {
   const model = useElenchStore((s) => s.model);
@@ -176,34 +207,37 @@ export function ElenchModelButton() {
         side="top"
         className="w-[270px] rounded-none p-1.5"
       >
-        {AI_MODELS.map((m) => {
-          const Icon = MODEL_ICON[m.label] ?? Zap;
-          const active = m.id === model;
-          return (
-            <button
-              key={m.id}
-              type="button"
-              onClick={() => setModel(m.id)}
-              className={cn(
-                "flex w-full items-start gap-2.5 rounded-none px-2.5 py-2 text-left transition-colors hover:bg-muted",
-                active && "bg-muted",
-              )}
-            >
-              <Icon className="mt-0.5 h-4 w-4 flex-none text-muted-foreground" />
-              <span className="flex-1">
-                <span className="block text-ui-md font-medium text-foreground">
-                  {m.label}
+        <div role="group" aria-label="Response style">
+          {AI_MODELS.map((m) => {
+            const Icon = MODEL_ICON[m.label] ?? Zap;
+            const active = m.id === model;
+            return (
+              <button
+                key={m.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setModel(m.id)}
+                className={cn(
+                  "flex w-full items-start gap-2.5 rounded-none px-2.5 py-2 text-left transition-colors hover:bg-muted",
+                  active && "bg-muted",
+                )}
+              >
+                <Icon className="mt-0.5 h-4 w-4 flex-none text-muted-foreground" />
+                <span className="flex-1">
+                  <span className="block text-ui-md font-medium text-foreground">
+                    {m.label}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">
+                    {m.blurb}
+                  </span>
                 </span>
-                <span className="block text-xs text-muted-foreground">
-                  {m.blurb}
-                </span>
-              </span>
-              {active && (
-                <Check className="mt-0.5 h-3.5 w-3.5 flex-none text-foreground" />
-              )}
-            </button>
-          );
-        })}
+                {active && (
+                  <Check className="mt-0.5 h-3.5 w-3.5 flex-none text-foreground" />
+                )}
+              </button>
+            );
+          })}
+        </div>
       </PopoverContent>
     </Popover>
   );

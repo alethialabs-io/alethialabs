@@ -65,6 +65,23 @@ test.describe("Elench agent — modal (org)", () => {
 		).toBeVisible();
 	});
 
+	// The model picker carries the same defect and #4618 does not name it: same file, same
+	// primitive, same `active && "bg-muted"` + unnamed `<Check>` as its only marks of which is
+	// current. Fixed and measured with the segments rather than left as a second instance.
+	test("the response-style segments expose which one is current", async ({ authedPage: page }) => {
+		await page.getByRole("button", { name: "Response style" }).first().click();
+		const group = page.getByRole("group", { name: "Response style" });
+		const fast = group.getByRole("button", { name: /fast/i });
+		const thinking = group.getByRole("button", { name: /thinking/i });
+
+		await expect(fast).toHaveAttribute("aria-pressed", "true");
+		await expect(thinking).toHaveAttribute("aria-pressed", "false");
+
+		await thinking.click();
+		await expect(thinking).toHaveAttribute("aria-pressed", "true");
+		await expect(fast).toHaveAttribute("aria-pressed", "false");
+	});
+
 	test("the @-mention popover opens against real resources", async ({
 		authedPage: page,
 	}) => {
@@ -107,55 +124,49 @@ test.describe("Elench agent — modal (org)", () => {
 	});
 });
 
-// THE MODE SEGMENTS THEMSELVES SAY NOTHING (#4618). "Ask-mode popover switches ask ↔ auto" above
-// measures the PILL, which flips its label between "Ask" and "Auto" — so the state is recoverable
-// by closing the popover and re-reading the trigger. Inside the popover, the two segments are
-// plain `<button>`s and the only marks of which is current are a `<Check>` glyph with no
-// accessible name and an `isAsk && "bg-muted"` background (elench-controls.tsx). Neither reaches
-// the accessibility tree.
+// THE MODE SEGMENTS THEMSELVES SAY NOTHING (#4618) — until this change they said it only with a
+// `<Check>` glyph carrying no accessible name and an `isAsk && "bg-muted"` background, neither of
+// which reaches the accessibility tree. "Ask-mode popover switches ask ↔ auto" above measures the
+// PILL, so the mode was recoverable by closing the popover and re-reading the trigger; this test
+// measures the SEGMENTS, which is the control's own state.
 //
-// Asserted as the product SHOULD behave (e2e/AUTHORING.md §7) rather than rewritten down to
-// what it does: `aria-checked` on `role="menuitemradio"`, which is the pattern for
-// mutually-exclusive options in a menu. NOT `aria-selected` — that belongs to `tab`/`option`,
-// and `components/settings/usage/usage-primitives.tsx:275-281` already ruled that the tab
-// role must not be adopted without its keyboard contract.
+// `aria-pressed` on a `role="group"`, NOT the `role="menuitemradio"` + `aria-checked` the issue
+// prescribed. That role's required context is a `menu`, and this popover cannot provide one:
+// `@repo/ui/popover` is base-ui, whose `PopoverRoot` calls floating-ui's `useRole(ctx)` with no
+// options, and that hook defaults to `role = 'dialog'`. A `menuitemradio` in a dialog is in an
+// invalid context — assistive tech forms no radio set there — so the original assertion could have
+// gone green over a tree that announces nothing. The house pattern is stated in
+// `packages/ui/src/segmented-control.tsx`, and the closest precedent is the same shape behind the
+// same primitive: `components/overview/overview-toolbar.tsx`'s `SortRow`.
 //
-// `components/agent/**` is out of #4272's scope (the agent-confirms lane owns it), so this
-// stays a fixme until #4618 lands — at which point DELETE this describe and its
-// gate-baseline.json entry rather than leaving a skip behind.
+// THE DESCRIBE AND THE TITLE ARE UNCHANGED ON PURPOSE. They are the `gate-baseline.json` key, and
+// that file is owned by another open unit (#4633, #4273 — `scripts/ci/check-pr-scope.mjs` fails a
+// PR that carries it), so this PR cannot move the ledger. Renaming the test here would leave the
+// baseline naming a test the run no longer contains, which the ratchet refuses. What this PR does
+// change is the `test.fixme`, which is gone: the test RUNS now. Its entry still reads `{fixme}`,
+// so the (non-required) gate will report "baseline says fixme, the run says passed — now move the
+// ledger", which is the correct prompt for whoever owns that file next.
 //
-// IT HAS ITS OWN DESCRIBE, AND THE MODIFIER SITS AT DECLARATION, BECAUSE A FIXME MUST BE INERT.
-// `test.fixme()` called in the test BODY skips the body only — Playwright has already built the
-// fixtures and run every `beforeEach` by then. Under the "modal (org)" describe above that meant
-// this placeholder ran the whole `openElenchPanel` → maximize walk on every gate run; when that
-// walk fails — and `minimize → panel → maximize` in that describe is recorded `failed` today —
-// the result is `unexpected` against a `{fixme}` entry, which the ratchet reads as a regression
-// in a component this test does not measure (#4619 review). Measured with playwright 1.62.1: a
-// body-level fixme runs the hooks AND builds the fixtures; a describe-level one runs neither and
-// still carries the `BUG: … #<issue>` description into `annotations`, which is all
-// scripts/e2e-ratchet.mjs rule 5 reads. The describe holds exactly this one test, so applying the
-// modifier to all of it is applying it to this test.
+// EACH ASSERTION READS THE ATTRIBUTE, NOT ONLY THE ROLE AND NAME. `getByRole("button", {name})`
+// alone still resolves on the unfixed tree — these were already `<button>`s with those exact
+// visible names — so a role-and-name-only test passes on the defect it exists to catch. And both
+// sides are asserted: a control that reports every option pressed passes a one-sided assertion.
 test.describe("Elench agent — Ask-mode segments (org)", () => {
-	test.fixme(
-		true,
-		"BUG: the Elench Ask/Auto mode segments expose no accessible selected state #4618",
-	);
-
 	test("the Ask-mode segments expose which one is current", async ({ authedPage: page }) => {
-		// Opened here rather than in a `beforeEach`: a hook is exactly what must not run while the
-		// fixme stands. When #4618 lands and the modifier goes, this line is the walk the test needs.
+		// Opened here rather than in a `beforeEach`, as when this was a fixme: the describe holds
+		// exactly this test, so the walk is the test's own.
 		await openElenchModal(page);
 		await page.getByRole("button", { name: "Ask", exact: true }).first().click();
-		const ask = page.getByRole("menuitemradio", { name: /ask before editing/i });
-		const auto = page.getByRole("menuitemradio", { name: /automatically edit/i });
+		const group = page.getByRole("group", { name: "Editing mode" });
+		const ask = group.getByRole("button", { name: /ask before editing/i });
+		const auto = group.getByRole("button", { name: /automatically edit/i });
 
-		await expect(ask).toHaveAttribute("aria-checked", "true");
-		await expect(auto).toHaveAttribute("aria-checked", "false");
+		await expect(ask).toHaveAttribute("aria-pressed", "true");
+		await expect(auto).toHaveAttribute("aria-pressed", "false");
 
 		await auto.click();
-		// Both halves: a control that reports every option checked passes a one-sided assertion.
-		await expect(auto).toHaveAttribute("aria-checked", "true");
-		await expect(ask).toHaveAttribute("aria-checked", "false");
+		await expect(auto).toHaveAttribute("aria-pressed", "true");
+		await expect(ask).toHaveAttribute("aria-pressed", "false");
 	});
 });
 
