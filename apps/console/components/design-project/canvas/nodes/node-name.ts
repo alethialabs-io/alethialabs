@@ -16,7 +16,14 @@
  * The kind comes first because it is the stable half: a board always has a "Bucket …" even before
  * anything has been typed into it, so `getByRole("group", { name: /^Bucket/ })` is a usable query
  * on a freshly-added node. An empty name yields the kind alone rather than a trailing space — a
- * trailing space is invisible in a diff and turns an exact-name query into a silent miss.
+ * trailing space is invisible in a diff, and `getByRole`'s name matching normalises whitespace, so
+ * an exact-name query against a stale `"Bucket "` would miss with nothing on screen to explain it.
+ *
+ * The one case that is NOT a concatenation: a card whose title has fallen back to its kind. The
+ * card's own title is `configName(node.data) || def.label`, so an unnamed bucket is titled "Bucket"
+ * and the naive join reads "Bucket Bucket" — measured, not imagined, the first time this ran. Same
+ * word twice is not a name, and a user who genuinely types "Bucket" gets the same single word,
+ * which is what the card shows them anyway.
  *
  * @param kind The card's kind word, exactly as the card's eyebrow prints it ("Bucket", "Database").
  * @param name The resource's own name, or "" when it has not been given one.
@@ -25,5 +32,6 @@
 export function nodeAccessibleName(kind: string, name: string): string {
 	const k = kind.trim();
 	const n = name.trim();
-	return n ? `${k} ${n}` : k;
+	if (!n || n === k) return k;
+	return `${k} ${n}`;
 }
