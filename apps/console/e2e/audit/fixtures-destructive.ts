@@ -554,20 +554,7 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 		{
 			writes: "one non-builtin `role` row — the roles rail lists `is_builtin = false` and nothing else",
 			seed: async (scope) => {
-				const sql = db();
-				// `role_permission` rows are NOT required: `listRoles` left-joins them separately and
-				// the rail renders `permissionKeys.length`, so a role with none is a role with a
-				// zero. Writing permission rows would be inventing a policy nobody chose.
-				const existing = await sql<{ id: string }[]>`
-					select id from role where organization_id = ${scope.owner.orgId} and is_builtin = false limit 1`;
-				if (existing.length > 0) return;
-				await sql`
-					insert into role ${sql({
-						organization_id: scope.owner.orgId,
-						name: "Audit role",
-						description: "Seeded by the destructive-action audit so its Delete control has a row to act on.",
-						is_builtin: false,
-					})}`;
+				await ensureAuditRole(scope);
 			},
 		},
 	],
@@ -579,17 +566,23 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 			// practice. It is written anyway rather than assumed: a fixture that depends on another
 			// subsystem's side effect is a fixture that disappears the day that subsystem changes,
 			// and the failure would read as a missing control.
-			writes: "one org-scoped `grants` row binding the owner to the built-in viewer role",
+			writes: "one org-scoped `grants` row binding the owner to the audit's own custom role",
 			seed: async (scope) => {
+				// IT BINDS TO THE AUDIT'S OWN ROLE, NOT TO A BUILT-IN ID. `grants.role_id` is a FK
+				// into `role`, and the built-in rows (`BUILTIN_ROLE_IDS`) are written by
+				// `lib/authz/seed.ts`, which `scripts/migrate.mjs` does NOT call. So on a freshly
+				// migrated gate database a built-in id is a 23503 waiting to happen, and the
+				// withheld reason would read as a foreign-key error rather than as a missing
+				// fixture. The role this file creates is the one row it can be sure of.
+				const roleId = await ensureAuditRole(scope);
 				const sql = db();
-				const VIEWER_ROLE_ID = "00000000-0000-4000-8000-000000000004";
 				await sql`
 					insert into grants ${sql({
 						org_id: scope.owner.orgId,
 						principal_type: "user",
 						principal_id: scope.owner.userId,
 						effect: "allow",
-						role_id: VIEWER_ROLE_ID,
+						role_id: roleId,
 						resource_type: "org",
 					})}
 					on conflict do nothing`;
@@ -836,6 +829,35 @@ async function ensureSecondEnvironment(scope: FixtureScope): Promise<string> {
 		})}
 		returning id`;
 	if (!row) throw new Error("insert into project_environments returned no row");
+	return row.id;
+}
+
+/**
+ * The audit's custom role, written once however many fixtures hang off it.
+ *
+ * `custom-role` needs it for `roles.delete`; `access-grant` needs a `role` row its FK can point at.
+ * Two would also make `{select: "a custom role"}` ambiguous, which `resolveTrigger` refuses to
+ * attribute a verdict to.
+ *
+ * `role_permission` rows are deliberately NOT written: `listRoles` left-joins them separately and
+ * the rail renders `permissionKeys.length`, so a role with none renders a zero rather than nothing.
+ * Writing permission rows would be this fixture inventing a policy nobody chose.
+ */
+async function ensureAuditRole(scope: FixtureScope): Promise<string> {
+	const sql = db();
+	const NAME = "Audit role";
+	const existing = await sql<{ id: string }[]>`
+		select id from role where organization_id = ${scope.owner.orgId} and name = ${NAME} limit 1`;
+	if (existing[0]) return existing[0].id;
+	const [row] = await sql<{ id: string }[]>`
+		insert into role ${sql({
+			organization_id: scope.owner.orgId,
+			name: NAME,
+			description: "Seeded by the destructive-action audit so its Delete control has a row to act on.",
+			is_builtin: false,
+		})}
+		returning id`;
+	if (!row) throw new Error("insert into role returned no row");
 	return row.id;
 }
 
