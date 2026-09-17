@@ -34,7 +34,7 @@ test.describe("capabilities — the enforcement fires in both directions", () =>
 
 	test("a misspelt promise promises nothing — loudly", () => {
 		expect(() => promised({ [PROMISE_VAR]: "stripe-test" })).toThrow(/not a capability/);
-		expect(assertEnvForPromises({ [PROMISE_VAR]: "stripe" })).toHaveLength(4);
+		expect(assertEnvForPromises({ [PROMISE_VAR]: "stripe" })).toHaveLength(5);
 		expect(assertEnvForPromises({})).toEqual([]);
 	});
 });
