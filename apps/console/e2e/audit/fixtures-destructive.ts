@@ -50,7 +50,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { db } from "../helpers/db";
-import { grantOrganizationsEntitlement } from "../helpers/personas";
 import { seedCloudIdentity, type Owner } from "../helpers/seed";
 import { seedChannel, seedRule } from "../helpers/seed-alerts";
 import { seedOrgMember } from "../helpers/seed-rbac";
@@ -549,6 +548,234 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 		},
 	],
 
+	// ── roles, access and SSO ──────────────────────────────────────────────────────────────────
+	[
+		"custom-role",
+		{
+			writes: "one non-builtin `role` row — the roles rail lists `is_builtin = false` and nothing else",
+			seed: async (scope) => {
+				const sql = db();
+				// `role_permission` rows are NOT required: `listRoles` left-joins them separately and
+				// the rail renders `permissionKeys.length`, so a role with none is a role with a
+				// zero. Writing permission rows would be inventing a policy nobody chose.
+				const existing = await sql<{ id: string }[]>`
+					select id from role where organization_id = ${scope.owner.orgId} and is_builtin = false limit 1`;
+				if (existing.length > 0) return;
+				await sql`
+					insert into role ${sql({
+						organization_id: scope.owner.orgId,
+						name: "Audit role",
+						description: "Seeded by the destructive-action audit so its Delete control has a row to act on.",
+						is_builtin: false,
+					})}`;
+			},
+		},
+	],
+	[
+		"access-grant",
+		{
+			// ⚠ The org very likely HAS grants already: `lib/authz/grants.ts` → `ensureMemberGrant`
+			// writes exactly this row shape for every member, so this fixture may be redundant in
+			// practice. It is written anyway rather than assumed: a fixture that depends on another
+			// subsystem's side effect is a fixture that disappears the day that subsystem changes,
+			// and the failure would read as a missing control.
+			writes: "one org-scoped `grants` row binding the owner to the built-in viewer role",
+			seed: async (scope) => {
+				const sql = db();
+				const VIEWER_ROLE_ID = "00000000-0000-4000-8000-000000000004";
+				await sql`
+					insert into grants ${sql({
+						org_id: scope.owner.orgId,
+						principal_type: "user",
+						principal_id: scope.owner.userId,
+						effect: "allow",
+						role_id: VIEWER_ROLE_ID,
+						resource_type: "org",
+					})}
+					on conflict do nothing`;
+			},
+		},
+	],
+	[
+		"sso-provider",
+		{
+			writes: "one `sso_provider` row scoped to the org",
+			seed: async (scope) => {
+				const sql = db();
+				const existing = await sql<{ id: string }[]>`
+					select id from sso_provider where organization_id = ${scope.owner.orgId} limit 1`;
+				if (existing.length > 0) return;
+				// `oidc_config` is `text`, and the read path parses it DEFENSIVELY — `parseJson`
+				// returns null on a throw and the row then renders as "misconfigured" rather than
+				// disappearing. Valid JSON is written anyway: a fixture that relies on the error
+				// path is asserting the error path.
+				await sql`
+					insert into sso_provider ${sql({
+						issuer: "https://idp.audit.test",
+						domain: "audit.test",
+						provider_id: `audit-idp-${unique()}`,
+						oidc_config: JSON.stringify({ clientId: "audit-client" }),
+						saml_config: null,
+						user_id: scope.owner.userId,
+						organization_id: scope.owner.orgId,
+						domain_verified: true,
+					})}`;
+			},
+		},
+	],
+
+	// ── the agent surfaces ─────────────────────────────────────────────────────────────────────
+	//
+	// ⚠ THESE FIVE TABLES ARE SCOPED TO THE USER, NOT THE ORG, and getting it backwards writes a
+	// row nothing can read. They are read through `withOwnerScope`, which pins BOTH
+	// `app.current_owner` AND `app.current_org` to the USER id (`lib/db/index.ts` says so in its own
+	// ⚠), against an `owner_all` policy that admits `user_id = current_owner OR org_id =
+	// current_org`. So every row below carries `org_id = userId` — which is exactly what the product
+	// writes for itself. `agent_artifact_shares` is the one exception and takes the REAL org id: it
+	// is read with `getServiceDb()`, RLS bypassed, filtered on `actor.orgId`.
+	[
+		"chat-thread",
+		{
+			writes: "one `agent_threads` row: kind `agent`, project_id NULL, and a NON-EMPTY `messages` array",
+			seed: async (scope) => {
+				await ensureAuditThread(scope);
+			},
+		},
+	],
+	[
+		"artifact",
+		{
+			writes: "one `agent_artifacts` row whose `spec` carries a `widgets` ARRAY",
+			seed: async (scope) => {
+				await ensureAuditArtifact(scope);
+			},
+		},
+	],
+	[
+		"shared-artifact",
+		{
+			writes: "an `agent_artifact_shares` row over the audit artifact, scoped `org` — plus the two members and the billing row the share popover demands",
+			seed: async (scope) => {
+				const artifactId = await ensureAuditArtifact(scope);
+				const sql = db();
+				// THE SHARE ROW ALONE RENDERS NOTHING. `artifact-share-popover.tsx` returns null
+				// unless `canShareArtifacts`, which is three separate facts: the actor's org is a
+				// REAL org (not the personal `orgId === userId` fallback), its billing status is
+				// active or trialing, and the org has MORE THAN ONE member row. The entitlement
+				// grant and the `member-row` seeders above supply the second and third; the first is
+				// a property of the audit persona's org.
+				//
+				// `org_id` here is the REAL org id, unlike every other row in this block:
+				// `listArtifactShares` reads through `getServiceDb()` with RLS bypassed and filters
+				// on `actor.orgId`.
+				await sql`
+					insert into agent_artifact_shares ${sql({
+						artifact_id: artifactId,
+						org_id: scope.owner.orgId,
+						scope_type: "org",
+						scope_id: null,
+						created_by: scope.owner.userId,
+					})}
+					on conflict do nothing`;
+			},
+		},
+	],
+	[
+		"knowledge-doc",
+		{
+			writes: "one `KnowledgeDoc` entry in `agent_context.documents` — a JSONB entry, NOT a row of its own",
+			seed: async (scope) => {
+				const sql = db();
+				// The shape is `types/jsonb.types.ts` → `KnowledgeDoc`, and the write path's zod
+				// (`app/server/actions/agent-context.ts`) enforces exactly these four keys with a
+				// non-empty id and title. `updated_at` is an ISO STRING, deliberately — the
+				// interface says so, "stored as a string so the JSONB round-trips without a Date
+				// revival step" — so a Date here would round-trip into something the reader does not
+				// expect.
+				//
+				// `project_id` must be NULL: the org-level Knowledge panel calls
+				// `getAgentContext(undefined)`. The unique index is (org_id, project_id) NULLS NOT
+				// DISTINCT, which is what makes the upsert below reach the right row.
+				const doc = {
+					id: `audit-doc-${unique()}`,
+					title: "Audit document",
+					content: "Seeded by the destructive-action audit so its Delete control has a document to act on.",
+					updated_at: new Date().toISOString(),
+				};
+				await sql`
+					insert into agent_context ${sql({
+						user_id: scope.owner.userId,
+						org_id: scope.owner.userId,
+						project_id: null,
+						instructions: "",
+						notes: "",
+						documents: sql.json([doc]),
+					})}
+					on conflict (org_id, project_id) do update set documents = excluded.documents, updated_at = now()`;
+			},
+		},
+	],
+	[
+		"pinned-widget",
+		{
+			writes: "one `thread_widgets` row hanging off the audit thread",
+			seed: async (scope) => {
+				const threadId = await ensureAuditThread(scope);
+				const sql = db();
+				const existing = await sql<{ id: string }[]>`
+					select id from thread_widgets where thread_id = ${threadId} limit 1`;
+				if (existing.length > 0) return;
+				// `data.block` is what `WidgetCard` renders when there is no `source` — a
+				// `DashboardBlock`, and the `stat` shape is the smallest one the tool schema admits.
+				// The Remove control renders either way; a widget whose body reads "No renderer for
+				// this widget" would still be measurable, and would still be a fixture that lies.
+				await sql`
+					insert into thread_widgets ${sql({
+						thread_id: threadId,
+						user_id: scope.owner.userId,
+						org_id: scope.owner.userId,
+						kind: "stat",
+						title: "Audit widget",
+						source: null,
+						data: sql.json({ block: { kind: "stat", title: "Audit widget", value: 42 } }),
+						pos_x: 0,
+						pos_y: 0,
+						colspan: 1,
+						rowspan: 1,
+						mode: "frozen",
+					})}`;
+			},
+		},
+	],
+
+	// ── billing ────────────────────────────────────────────────────────────────────────────────
+	[
+		"active-subscription",
+		{
+			// ⚠ THIS WAS DECLARED UNSEEDABLE IN THIS FILE'S FIRST DRAFT, ON A REASON THAT WAS HALF
+			// WRONG — and the wrong half is the one a reader acts on. The line said a seeded row
+			// "would render a control whose mutation targets nothing". The mutation half is right:
+			// `cancelSubscription` calls `requireSubscriptionId` and throws without a live Stripe
+			// subscription. The RENDER half was false. `getBillingSummary` enters Stripe ONLY when
+			// `stripe_subscription_id` is non-null; with it NULL the panel's state comes purely from
+			// `organization_billing.status`, and `hasSub` is true for `active`, so "Cancel plan"
+			// renders.
+			//
+			// And the render half is the only half this suite needs: it opens the control, asserts
+			// the confirmation and presses **Cancel**. It never activates the mutation — that is
+			// enforced by `assertNeverPressed`, not promised. So the fixture is seedable, and
+			// leaving `stripe_subscription_id` NULL is what keeps the seeding offline.
+			writes: "`organization_billing` at plan enterprise / status active with a period end and NO stripe_subscription_id",
+			seed: async (scope) => {
+				const sql = db();
+				await sql`
+					update organization_billing
+					   set current_period_end = now() + interval '30 days'
+					 where organization_id = ${scope.owner.orgId}`;
+			},
+		},
+	],
+
 	// ── org ────────────────────────────────────────────────────────────────────────────────────
 	[
 		"org-with-a-logo",
@@ -612,6 +839,89 @@ async function ensureSecondEnvironment(scope: FixtureScope): Promise<string> {
 	return row.id;
 }
 
+/**
+ * The audit's agent thread, written once however many fixtures hang off it.
+ *
+ * `chat-thread` needs it for `agent.thread.delete`; `pinned-widget` needs it because a
+ * `thread_widgets` row is a child of a thread. Two seeders writing one each would put two rows in a
+ * rail whose Delete buttons are named `Delete chat <title>` — distinguishable only if the titles
+ * differ, and identical if they do not.
+ *
+ * ⚠ `messages` MUST BE NON-EMPTY, and this is not a display nicety. `listThreads` runs a DELETE
+ * first — every `kind='agent'` thread with `jsonb_array_length(messages) = 0` older than an hour is
+ * removed — and then filters the SELECT on `jsonb_array_length(messages) > 0`. An empty thread is
+ * therefore invisible immediately and gone within the hour, which would read as a fixture that
+ * stopped working rather than one that was never valid.
+ */
+async function ensureAuditThread(scope: FixtureScope): Promise<string> {
+	const sql = db();
+	const TITLE = "Audit chat";
+	const existing = await sql<{ id: string }[]>`
+		select id from agent_threads
+		where user_id = ${scope.owner.userId} and title = ${TITLE} and project_id is null
+		limit 1`;
+	if (existing[0]) return existing[0].id;
+	const [row] = await sql<{ id: string }[]>`
+		insert into agent_threads ${sql({
+			user_id: scope.owner.userId,
+			// The USER id, not the org id — see the ⚠ on the agent block above.
+			org_id: scope.owner.userId,
+			// NULL: the org rail lists `project_id IS NULL` only.
+			project_id: null,
+			title: TITLE,
+			status: "active",
+			kind: "agent",
+			messages: sql.json([
+				{ id: "audit-m1", role: "user", parts: [{ type: "text", text: "seeded by the destructive-action audit" }] },
+				{ id: "audit-m2", role: "assistant", parts: [{ type: "text", text: "acknowledged" }] },
+			]),
+		})}
+		returning id`;
+	if (!row) throw new Error("insert into agent_threads returned no row");
+	return row.id;
+}
+
+/**
+ * The audit's artifact, written once however many fixtures hang off it.
+ *
+ * `artifact` needs it for `agent.artifact.delete`; `shared-artifact` needs something to share. Two
+ * would also collide on `uq_agent_artifacts_org_name`.
+ *
+ * ⚠ `spec.widgets` must be an ARRAY. The gallery card renders `a.spec.widgets.length` unguarded, so
+ * a spec without it does not render an empty card — it throws in render, and the control is then
+ * withheld for a reason that names the trigger rather than the fixture.
+ */
+async function ensureAuditArtifact(scope: FixtureScope): Promise<string> {
+	const sql = db();
+	const NAME = "Audit artifact";
+	const existing = await sql<{ id: string }[]>`
+		select id from agent_artifacts where org_id = ${scope.owner.userId} and name = ${NAME} limit 1`;
+	if (existing[0]) return existing[0].id;
+	const [row] = await sql<{ id: string }[]>`
+		insert into agent_artifacts ${sql({
+			user_id: scope.owner.userId,
+			org_id: scope.owner.userId,
+			name: NAME,
+			kind: "dashboard",
+			spec: sql.json({
+				widgets: [
+					{
+						kind: "stat",
+						title: "Audit stat",
+						source: null,
+						data: { block: { kind: "stat", title: "Audit stat", value: 1 } },
+						mode: "frozen",
+						position: { x: 0, y: 0 },
+						size: { colspan: 1, rowspan: 1 },
+					},
+				],
+			}),
+		})}
+		returning id`;
+	if (!row) throw new Error("insert into agent_artifacts returned no row");
+	return row.id;
+}
+
 async function seedClassification(owner: Owner): Promise<void> {
 	const sql = db();
 	const KEY = "audit-sensitivity";
@@ -667,12 +977,6 @@ export const UNSEEDABLE: ReadonlyMap<string, string> = new Map([
 			"never loads however many `project_iac_sources` rows exist. NOTHING in `.github/workflows/` or " +
 			"`scripts/` sets that variable, so no gate leg can render this control. ⚠ The registry records " +
 			"`byo.iac.detach` as `confirmed`; that claim rests on no run this gate can perform.",
-	],
-	[
-		"active-subscription",
-		"a subscription is a STRIPE object, not a row. `organization_billing` records the plan the console resolved; the billing " +
-			"page's Cancel control acts on the Stripe subscription itself, so a seeded row would render a control whose mutation " +
-			"targets nothing — a measurement of a fixture nobody could have created.",
 	],
 	[
 		"backup-payment-method",
@@ -822,17 +1126,13 @@ export interface FixtureSeedReport {
  *
  * ── THE ENTITLEMENT IS PART OF THE FIXTURE, NOT A BYPASS ────────────────────────────────────────
  *
- * 17 of the 47 entries record `persona: team`, and the pages they live on — members, teams, roles,
- * SSO, access, alerts — are gated on the `organizations` entitlement. The audit persona is a plain
- * signup (`e2e/fixtures/auth.setup.ts` → `signUpWithOtp`), so its org resolves COMMUNITY and those
- * pages refuse before any seeded row is read. Seeding the rows without the grant would leave every
- * one of those controls withheld for a reason that has nothing to do with the fixture — which is
- * precisely the mis-attribution this whole wave exists to end.
+ * 17 of the 47 entries record `persona: team`, and the pages they live on are gated on plan
+ * entitlements. The audit persona is a plain signup (`e2e/fixtures/auth.setup.ts` → `signUpWithOtp`),
+ * so its org resolves COMMUNITY and those pages refuse before any seeded row is read. Seeding the
+ * rows without the grant would leave every one of those controls withheld for a reason that has
+ * nothing to do with the fixture — precisely the mis-attribution this whole wave exists to end.
  *
- * `grantOrganizationsEntitlement` is the fixture `personas.ts` already provides for this, and its
- * own doc states the bound: the gate itself stays exercised, because `ownerHobby`'s org is left
- * untouched and `rbac.spec.ts` still reads the real refusal there. This grants it to the AUDIT's
- * org only.
+ * See {@link grantEntitlements} for which plan, and why it is not `team`.
  *
  * It is reported rather than asserted: if the grant fails, the run says so and the `persona: team`
  * controls withhold naming it, instead of 17 controls each blaming a fixture that was written.
@@ -843,7 +1143,7 @@ export async function seedDestructiveFixtures(
 ): Promise<FixtureSeedReport> {
 	const report: FixtureSeedReport = { seeded: [], failed: new Map(), entitlement: "granted" };
 	try {
-		await grantOrganizationsEntitlement(ctx.owner.orgId);
+		await grantEntitlements(ctx.owner.orgId);
 	} catch (err) {
 		report.entitlement = err instanceof Error ? err.message : String(err);
 	}
@@ -864,6 +1164,44 @@ export async function seedDestructiveFixtures(
 	}
 	writeSeededMarker(ctx.orgSlug, already);
 	return report;
+}
+
+/**
+ * Put the audit's org on the ENTERPRISE plan, active.
+ *
+ * ⚠ NOT `team`, and the difference decides four fixtures. `lib/billing/plan.ts`'s ladder gives
+ * `team` the `organizations`, `alerting` and `byoRunners` entitlements — enough for members,
+ * invitations and alerts — but `teams`, `customRoles` and `sso` are ENTERPRISE-ONLY. On a `team`
+ * plan the Teams page disables the `Manage team` menu that BOTH team controls reach through, the
+ * Access page replaces its table with an upsell, and the SSO page replaces its whole surface with
+ * one. Four seeded fixtures would then sit in a database behind a paywall, and four controls would
+ * withhold saying their trigger is not rendered — which is the exact sentence this unit exists to
+ * stop being the only thing a reader is told.
+ *
+ * `personas.ts` → `grantOrganizationsEntitlement` writes `team`, and is left alone: it is the
+ * fixture for the INVITE flow, several specs depend on that value, and it is not this unit's to
+ * change. This writes the same row one rung up for the audit's org only.
+ *
+ * It is a fixture, not a bypass, on the same argument that one makes: the gate itself stays
+ * exercised, because `ownerHobby`'s org is untouched and `rbac.spec.ts` still reads the real
+ * refusal there. And `stripe_subscription_id` is deliberately NOT written — `getBillingSummary`
+ * calls Stripe only when it is non-null, so leaving it NULL is what keeps the seeding offline while
+ * still rendering the billing panel's Cancel control (see the `active-subscription` seeder).
+ */
+async function grantEntitlements(orgId: string): Promise<void> {
+	const sql = db();
+	await sql`
+		insert into organization_billing (organization_id, plan, status)
+		values (${orgId}, 'enterprise', 'active')
+		on conflict (organization_id) do update set plan = 'enterprise', status = 'active'`;
+	const rows = await sql<{ plan: string; status: string }[]>`
+		select plan, status from organization_billing where organization_id = ${orgId}`;
+	const row = rows[0];
+	// READ IT BACK. A grant that inserted nothing and a grant that worked are the same colour
+	// otherwise, and the 17 controls downstream would each blame their own fixture.
+	if (!row || row.plan !== "enterprise" || row.status !== "active") {
+		throw new Error(`organization_billing for ${orgId} reads ${JSON.stringify(row)} after the grant, not enterprise/active`);
+	}
 }
 
 /**
