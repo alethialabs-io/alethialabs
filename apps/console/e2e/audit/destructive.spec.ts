@@ -1298,18 +1298,36 @@ test("self-test — a fixture claimed by BOTH ledgers is a PROBLEM, and is count
 	expect(coverage.declaredUnseedable).toEqual([]);
 });
 
-test("self-test — the control counts are over CONTROLS, so one fixture serving five is counted five times", async () => {
+test("self-test — the control counts are over CONTROLS, so one fixture serving three is counted three times", async () => {
 	// `connected-cloud-identity` is one fixture and five controls. A report in fixtures understates
-	// the gap by a factor of five on that row alone, which is why this is the number printed.
+	// the gap by a factor of five on that row alone, which is why the control count is what is
+	// printed.
+	//
+	// ⚠ EVERY CLASS CARRIES A SHARED FIXTURE, and that is the whole test. The first version of it
+	// put all four controls in ONE class, and a mutation that made `controlsByCoverage` count
+	// distinct fixtures instead of controls SURVIVED it — the assertion was true and was about the
+	// wrong thing. A class whose fixtures are all distinct cannot tell the two counts apart.
 	const controls = [
-		fixtureEntry("a", "shared"),
-		fixtureEntry("b", "shared"),
-		fixtureEntry("c", "shared"),
-		fixtureEntry("d", "lonely"),
+		fixtureEntry("a", "seeded-shared"),
+		fixtureEntry("b", "seeded-shared"),
+		fixtureEntry("c", "seeded-shared"),
+		fixtureEntry("d", "declined-shared"),
+		fixtureEntry("e", "declined-shared"),
+		fixtureEntry("f", "missing-shared"),
+		fixtureEntry("g", "missing-shared"),
+		fixtureEntry("h"),
 	];
-	const coverage = fixtureCoverage(controls, new Map(), new Map());
-	expect(coverage.unaccounted).toEqual(["shared", "lonely"]);
-	expect(controlsByCoverage(controls, coverage)).toEqual({ seedable: 0, declaredUnseedable: 0, unaccounted: 4 });
+	const coverage = fixtureCoverage(
+		controls,
+		new Map([["seeded-shared", NO_OP_SEEDER]]),
+		new Map([["declined-shared", "a reason"]]),
+	);
+	expect(coverage.seedable).toEqual(["seeded-shared"]);
+	expect(coverage.declaredUnseedable).toEqual(["declined-shared"]);
+	expect(coverage.unaccounted).toEqual(["missing-shared"]);
+	// Three fixtures, SEVEN controls. Counting fixtures would give 1/1/1 in every class, and the
+	// entry with no fixture at all contributes to none of them.
+	expect(controlsByCoverage(controls, coverage)).toEqual({ seedable: 3, declaredUnseedable: 2, unaccounted: 2 });
 });
 
 test("self-test — `fixtureSeedFailureReason` tells the three fixture failures apart", async () => {
