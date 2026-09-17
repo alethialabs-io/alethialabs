@@ -181,6 +181,49 @@ const MUTATIONS = [
 		to: "if (true) continue;",
 		expect: /caught|reported|refused/i,
 	},
+
+	// ── THE LEDGERS (#4605). Six mutations, and they are deliberately split across the TWO
+	//    directions each ledger is checked in. M22/M24/M25/M26 revert the loud direction: a defect
+	//    stops being reported. M23 reverts the SILENT one: an entry outlives its upload and nothing
+	//    says so. Only reverting the loud direction would leave the half that fails quietly
+	//    untested — which is the exact failure the ledgers exist to prevent, re-created in the
+	//    harness that is supposed to prove they don't have it.
+	{
+		name: "M22 every non-asserting upload treated as declared (the ledger does nothing)",
+		from: "const entry = decisions[key] ?? debt[key];",
+		to: 'const entry = { setting: u.setting, issue: 1, reason: "x".repeat(400) };',
+		expect: /downgrade with no recorded entry|deleting `if-no-files-found` entirely/,
+	},
+	{
+		name: "M23 THE SILENT DIRECTION — an entry that outlives its upload is no longer reported",
+		from: "if (!seenNonAsserting.has(key)) {",
+		to: "if (false) {",
+		expect: /outlives its upload/,
+	},
+	{
+		name: "M24 the pinned setting no longer compared (`warn` → `ignore` rides in unread)",
+		from: "} else if (entry.setting !== u.setting) {",
+		to: "} else if (false) {",
+		expect: /drifts from its recorded pin/,
+	},
+	{
+		name: "M25 debt no longer has to name a board issue",
+		from: 'if (label === "ASSERTION_DEBT" && !(Number.isInteger(entry.issue) && entry.issue > 0)) {',
+		to: "if (false) {",
+		expect: /board issue|non-numeric issue/,
+	},
+	{
+		name: "M26 the reason floor removed (`reason: \"optional\"` becomes a decision)",
+		from: 'if (typeof entry.reason !== "string" || entry.reason.trim().length < REASON_FLOOR) {',
+		to: "if (false) {",
+		expect: /under the floor/,
+	},
+	{
+		name: "M27 a subject may sit in both ledgers at once",
+		from: "if (decisions[key] !== undefined) {",
+		to: "if (false) {",
+		expect: /both ledgers/,
+	},
 ];
 
 const ORIGINAL = fs.readFileSync(GUARD, "utf8");

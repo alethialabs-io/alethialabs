@@ -2326,10 +2326,16 @@ jobs:
             --profile ${{ matrix.module }}/cover.1.out --update
           echo "── ${{ matrix.module }}/coverage-floors.json ──"
           cat ${{ matrix.module }}/coverage-floors.json
+      # The artifact IS the job (#4605): this probe exists to hand a maintainer the floors to paste
+      # into the A4 PR, so a run that publishes nothing has produced nothing, and it used to say so
+      # only by being an empty download. The step before it writes the file with `--update` and
+      # fails the job if it cannot, so `error` cannot fire on any path where the job is otherwise
+      # green — it turns "silently empty" into "red", and adds no new way to fail.
       - uses: actions/upload-artifact@v7
         with:
           name: coverage-floors-${{ strategy.job-index }}
           path: ${{ matrix.module }}/coverage-floors.json
+          if-no-files-found: error
 
   ts-coverage-determinism:
     name: TS coverage determinism probe (manual)
