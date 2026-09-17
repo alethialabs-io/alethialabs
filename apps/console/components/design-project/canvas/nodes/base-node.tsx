@@ -10,6 +10,7 @@ import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { NODE_REGISTRY, type NodeFact } from "../graph/node-registry";
 import { configName } from "../graph/node-config";
 import type { NodeConfig } from "../graph/types";
+import { nodeAccessibleName } from "./node-name";
 import { NODE_STATUS_META, gitopsBadge, useNodeStatus } from "@/lib/canvas/node-status";
 import { useCanvasLod } from "@/lib/canvas/use-canvas-lod";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
@@ -86,6 +87,14 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	const title = external
 		? external.module || "root module"
 		: configName(node.data) || def.label;
+	// Every tier below carries this. A card is a GROUP — a labelled region holding the status, the
+	// facts and the handles — not a button and not an image, and `group` is the one role that says
+	// that without promising an interaction the card does not implement. The label is the card's own
+	// two visible identifiers, so what a screen reader announces and what the eye reads are the same
+	// string. `eyebrow` rather than `def.label`: for an EXTERNAL card both the eyebrow and the title
+	// already speak for the kind the BYO module maps to, and reading the wrapper's own kind there
+	// would announce "External" over a card that says CLUSTER.
+	const accessibleName = nodeAccessibleName(eyebrow, title);
 	// The canvas stays calm when everything is fine: the two nominal states show only their dot;
 	// every state that wants attention carries a label.
 	const showLabel = resolved.state !== "ready" && resolved.state !== "live";
@@ -145,7 +154,11 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	// ── glyph tier — far out, a node is an icon, a name, and a pulse ────────
 	if (lod === "glyph") {
 		return (
-			<div className="flex w-[76px] flex-col items-center gap-1.5">
+			<div
+				role="group"
+				aria-label={accessibleName}
+				className="flex w-[76px] flex-col items-center gap-1.5"
+			>
 				{handles.target && (
 					<Handle type="target" position={Position.Top} className={HANDLE_CLASS} />
 				)}
@@ -183,6 +196,8 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	if (dense) {
 		return (
 			<div
+				role="group"
+				aria-label={accessibleName}
 				className={cn(
 					"relative w-[158px] cursor-pointer rounded-none border bg-card text-card-foreground transition-colors",
 					"before:absolute before:-inset-x-px before:-top-px before:h-0.5 before:content-['']",
@@ -272,6 +287,8 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	// ── full tier — the anatomy: plate, name, the whole fact grid, cost footer ──
 	return (
 		<div
+			role="group"
+			aria-label={accessibleName}
 			className={cn(
 				"relative w-[248px] cursor-pointer rounded-none border bg-card text-card-foreground transition-colors",
 				// the classification rule — a 2px band across the card's top edge

@@ -17,8 +17,34 @@
 // Assertions are scoped to the BOARD (`.react-flow`) or the RAIL (`[data-testid=workspace-rail]`),
 // never the whole page: the same words legitimately appear in both (a bucket's "Access" fact and
 // the card's "Access" section), and an unscoped query can't tell them apart.
+//
+// ── THE DEPLOY BOUNDARY IS A CONTROL NOW, NOT A SENTENCE ──────────────────────────────────────
+//
+// The paragraph above used to be the whole of it: "nothing here can Save or Deploy" was a claim
+// about a fixture, restated in prose, and a journey added later that clicks one button too many
+// would have broken it silently — on real infrastructure, on someone else's account. Two things
+// enforce it now, and `e2e/helpers/deploy-guard.ts` states exactly what each one can prove:
+//
+//   · `deployControl()` hands back a locator whose click / press / tap THROW. On this fixture that
+//     is the layer that matters: `handleDeploy` parses `graphToForm` through `projectFormSchema`
+//     FIRST, this project has no cloud identity, the parse fails, and the handler returns having
+//     issued ZERO requests — so a network-only guard is vacuous against the very click it is
+//     named after.
+//   · the `afterEach` below fails any test whose page put the board's DESIGN on the wire. It keys
+//     on the payload rather than on "a POST happened", because a Next server action's name is
+//     nowhere in its request and the Activity card on this route reads through one.
+//
+// Neither reaches the Run menu's four job actions, which queue real work through small-bodied
+// server actions. Those are opened and never clicked, and that one remains a convention — stated
+// here rather than left to be assumed.
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
+import {
+	breachMessage,
+	neverActivated,
+	watchPage,
+	type DesignPayloadWatch,
+} from "./helpers/deploy-guard";
 
 test.describe("Architecture canvas", () => {
 	// Runs on the `canvas` project: ONE shared persona from the `setup` project, not a signup per
@@ -34,6 +60,39 @@ test.describe("Architecture canvas", () => {
 
 	/** Every card currently drawn on the board (React Flow renders one element per card). */
 	const cards = (page: Page) => board(page).locator(".react-flow__node");
+
+	/**
+	 * A card, by the name it carries — `"<kind> <name>"`, or the kind alone before it is named.
+	 *
+	 * This is the handle `.react-flow__node-<kind>` could never be: that class is React Flow's
+	 * renderer, not the product, and it cannot tell one bucket from another.
+	 */
+	const card = (page: Page, name: string | RegExp) =>
+		board(page).getByRole("group", { name });
+
+	/** The staged-changes bar — Deploy, Save and Discard all live on it. */
+	const pendingBar = (page: Page) => page.getByTestId("pending-changes-bar");
+
+	/**
+	 * The Deploy button, wrapped so that activating it throws.
+	 *
+	 * Every reference to Deploy in this file goes through here. The control is still located and
+	 * still asserted on — its presence and its label are the evidence that the boundary exists —
+	 * it simply cannot fire.
+	 */
+	const deployControl = (page: Page): Locator =>
+		neverActivated(
+			pendingBar(page).getByRole("button", { name: "Deploy", exact: true }),
+			"Deploy",
+		);
+
+	/**
+	 * The request watch for the test in flight.
+	 *
+	 * A plain `let` is enough: Playwright runs one test at a time per worker and re-imports this
+	 * file per worker, so two tests can never share it.
+	 */
+	let boundary: DesignPayloadWatch | null = null;
 
 	test.beforeEach(async ({ page }, testInfo) => {
 		// The stored session lands on the org; read the slug off the URL rather than signing up again.
@@ -61,6 +120,16 @@ test.describe("Architecture canvas", () => {
 		await expect(
 			page.getByRole("button", { name: "Add", exact: true }).first(),
 		).toBeVisible({ timeout: 60_000 });
+
+		// ARMED HERE, not earlier: creating the project legitimately posts the project form to
+		// `~/new`, and that request is this fixture's setup, not a finding.
+		boundary = watchPage(page);
+	});
+
+	test.afterEach(() => {
+		const crossed = boundary?.stop() ?? [];
+		boundary = null;
+		expect(crossed, breachMessage(crossed)).toHaveLength(0);
 	});
 
 	/**
@@ -347,5 +416,203 @@ test.describe("Architecture canvas", () => {
 		await expect(rail(page).getByPlaceholder("name", { exact: true })).toHaveValue(
 			renamed,
 		);
+	});
+	// ── journeys ──────────────────────────────────────────────────────────────────────────────────
+	//
+	// Each of these is one thing a person actually does on this board, driven end to end. They share
+	// the fixture above — one fresh project per test — so none of them can see another's nodes.
+
+	test("the Deploy control is present, is named Deploy, and this spec CANNOT press it", async ({
+		page,
+	}) => {
+		// Staging one change is what renders the bar Deploy lives on.
+		await addService(page, "Bucket");
+		await expect(pendingBar(page)).toBeVisible();
+
+		// The boundary exists and is reachable — that is the half worth asserting. A Deploy button
+		// that had quietly stopped rendering would make every "never clicked" claim in this file
+		// true and worthless.
+		const raw = pendingBar(page).getByRole("button", { name: "Deploy", exact: true });
+		await expect(raw).toBeVisible();
+		await expect(raw).toBeEnabled();
+
+		// …and the guarded handle this file uses everywhere refuses to fire. This is the POSITIVE
+		// CONTROL: it proves, inside the real run, that the guard is wired rather than merely
+		// present. `e2e/helpers/deploy-guard.ts` has the same proof per-verb without a browser.
+		let refusal: string | null = null;
+		try {
+			await deployControl(page).click({ timeout: 1_000 });
+		} catch (e) {
+			refusal = e instanceof Error ? e.message : String(e);
+		}
+		expect(
+			refusal,
+			"the guarded Deploy locator must refuse to be activated — if this is null the boundary is decorative",
+		).toContain("must NEVER be activated");
+	});
+
+	test("a card is a NAMED region — two buckets are told apart by name, not by a CSS class", async ({
+		page,
+	}) => {
+		await addService(page, "Bucket");
+		const first = rail(page).getByPlaceholder("name", { exact: true });
+		await first.fill("assets");
+		await first.blur();
+
+		await addService(page, "Bucket");
+		const second = rail(page).getByPlaceholder("name", { exact: true });
+		await second.fill("uploads");
+		await second.blur();
+
+		// THE ATTRIBUTE AS WELL AS THE NAME. An accessible name can come from a `title` — these cards
+		// carry one on their status badge — so a role-only query can pass on a tree that lost its
+		// `aria-label` entirely. Asserting the attribute is what makes this a test of the label.
+		await expect(card(page, "Bucket assets")).toHaveAttribute("aria-label", "Bucket assets");
+		await expect(card(page, "Bucket uploads")).toHaveAttribute("aria-label", "Bucket uploads");
+
+		// And the project root is named too, which is what makes it selectable below.
+		await expect(card(page, /^Project /)).toHaveCount(1);
+	});
+
+	test("⌘K → Add Bucket puts a card on the board and leaves no modal behind", async ({
+		page,
+	}) => {
+		await page.keyboard.press("ControlOrMeta+k");
+		const search = page.getByPlaceholder(/search services and actions/i);
+		await expect(search).toBeVisible();
+		await search.fill("Bucket");
+		await page.getByRole("option", { name: /add bucket/i }).first().click();
+
+		// Same two-part contract as the Add palette (#4589): the command menu CLOSES, and its overlay
+		// goes with it. A step change that merely hides the search box is what left six tests in this
+		// file clicking through a live modal.
+		await expect(search).toBeHidden();
+		await expect(page.locator("[data-slot=dialog-overlay]")).toHaveCount(0);
+		await expect(card(page, /^Bucket/)).toHaveCount(1);
+	});
+
+	test("⌘Z undoes an add and ⌘⇧Z puts it back", async ({ page }) => {
+		await addService(page, "Bucket");
+		await expect(card(page, /^Bucket/)).toHaveCount(1);
+
+		// The undo handler runs BEFORE the "is the user typing" check on purpose — the add leaves the
+		// caret in the card's name field, and an undo that only works when nothing is focused is an
+		// undo nobody can reach right after the action they want to undo.
+		await page.keyboard.press("ControlOrMeta+z");
+		await expect(card(page, /^Bucket/)).toHaveCount(0);
+
+		await page.keyboard.press("ControlOrMeta+Shift+z");
+		await expect(card(page, /^Bucket/)).toHaveCount(1);
+	});
+
+	test("⌘D duplicates the selected resource", async ({ page }) => {
+		await addService(page, "Bucket");
+		// Selection is what ⌘D operates on; clicking the card is how you make one.
+		await card(page, /^Bucket/).first().click();
+		await page.keyboard.press("ControlOrMeta+d");
+
+		await expect(card(page, /^Bucket/)).toHaveCount(2);
+	});
+
+	test("the card's danger zone deletes the resource, and ⌘Z brings it back", async ({
+		page,
+	}) => {
+		// `canvas.delete-resource` in apps/console/destructive-actions.yaml, whose recorded
+		// confirmation is `undo` rather than a dialog: the cost of the mistake is one keystroke, and
+		// a dialog on every resource delete would train people to dismiss dialogs. This test is what
+		// makes the undo half of that ruling true rather than asserted.
+		await addService(page, "Bucket");
+		await rail(page).getByRole("tab", { name: "Settings" }).click();
+		await rail(page).getByRole("button", { name: /danger zone/i }).click();
+		await rail(page).getByRole("button", { name: "Delete", exact: true }).click();
+
+		await expect(card(page, /^Bucket/)).toHaveCount(0);
+
+		await page.keyboard.press("ControlOrMeta+z");
+		await expect(card(page, /^Bucket/)).toHaveCount(1);
+	});
+
+	test("Discard asks first: Cancel keeps the staged changes, Discard clears them", async ({
+		page,
+	}) => {
+		await addService(page, "Bucket");
+		await expect(pendingBar(page)).toBeVisible();
+
+		await pendingBar(page).getByRole("button", { name: "Discard", exact: true }).click();
+		const confirm = page.getByRole("alertdialog");
+		await expect(confirm.getByText("Discard staged changes?")).toBeVisible();
+
+		// Cancel is not a no-op to assert: a confirmation that discards anyway is the exact defect
+		// `e2e/audit/destructive.spec.ts` exists to catch, and it is invisible from the dialog alone.
+		await confirm.getByRole("button", { name: "Cancel" }).click();
+		await expect(confirm).toHaveCount(0);
+		await expect(pendingBar(page)).toBeVisible();
+		await expect(card(page, /^Bucket/)).toHaveCount(1);
+
+		await pendingBar(page).getByRole("button", { name: "Discard", exact: true }).click();
+		await page.getByRole("alertdialog").getByRole("button", { name: "Discard", exact: true }).click();
+
+		// The bar diffs the draft against the server's baseline, so an emptied draft has no bar.
+		await expect(pendingBar(page)).toHaveCount(0);
+		await expect(card(page, /^Bucket/)).toHaveCount(0);
+	});
+
+	test("selecting the project node offers Destroy environment — and Cancel is all this spec presses", async ({
+		page,
+	}) => {
+		await card(page, /^Project /).click();
+		await rail(page).getByRole("tab", { name: "Settings" }).click();
+		await rail(page).getByRole("button", { name: "Destroy", exact: true }).click();
+
+		const confirm = page.getByRole("alertdialog");
+		await expect(confirm.getByText("Destroy this environment?")).toBeVisible();
+		// The confirm is located so it can be ASSERTED — its presence and its label are the evidence
+		// that `env.destroy` is gated — and wrapped so that this spec cannot fire it.
+		const destroy = neverActivated(
+			confirm.getByRole("button", { name: "Destroy environment" }),
+			"Destroy environment",
+		);
+		expect(await destroy.count(), "the destroy confirmation offers exactly one confirm").toBe(1);
+
+		await confirm.getByRole("button", { name: "Cancel" }).click();
+		await expect(confirm).toHaveCount(0);
+		// Nothing was queued and nothing left the board.
+		await expect(card(page, /^Project /)).toHaveCount(1);
+	});
+
+	test("the Run menu offers Plan / Audit / Detect drift / Probe cluster, and nothing is clicked", async ({
+		page,
+	}) => {
+		await page.getByRole("button", { name: "Run", exact: true }).click();
+
+		for (const item of ["Plan", "Audit", "Detect drift", "Probe cluster"]) {
+			await expect(page.getByRole("menuitem", { name: item })).toBeVisible();
+		}
+
+		// These four queue REAL jobs against the environment, and neither guard in this file reaches
+		// them: they post small-bodied server actions, which the payload watch cannot attribute. The
+		// menu is opened and closed; that is the whole journey.
+		await page.keyboard.press("Escape");
+		await expect(page.getByRole("menuitem", { name: "Plan" })).toHaveCount(0);
+	});
+
+	test("? opens the shortcuts sheet, and it advertises only gestures this board binds", async ({
+		page,
+	}) => {
+		await page.keyboard.press("?");
+		const sheet = page.getByRole("dialog");
+		await expect(sheet.getByRole("heading", { name: "Keyboard shortcuts" })).toBeVisible();
+		await expect(sheet.getByText("Command palette")).toBeVisible();
+		await expect(sheet.getByText("Add component")).toBeVisible();
+		await expect(sheet.getByText("Duplicate selection")).toBeVisible();
+		await expect(sheet.getByText("Undo / Redo")).toBeVisible();
+
+		// A LIVE project has no save shortcut to advertise — `buildShortcuts(isMac, canSave)` drops
+		// the row rather than promise a gesture that does nothing. This is the assertion that makes
+		// the sheet a contract instead of a list.
+		await expect(sheet.getByText("Save project")).toHaveCount(0);
+
+		await page.keyboard.press("Escape");
+		await expect(sheet).toHaveCount(0);
 	});
 });
