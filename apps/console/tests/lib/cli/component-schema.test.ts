@@ -68,16 +68,17 @@ function fieldNode(kind: string, field: string): Record<string, unknown> {
 	return asRecord(props[field]);
 }
 
-/** The `type` values a field node admits. A nullable column renders as
- *  `anyOf: [{type: T}, {type: "null"}]`, so the branches are flattened — this READS the emitted
- *  document, it does not recompute it. */
+/** The `type` values a field node admits, flattened across both valid nullable encodings. */
 function typesOf(kind: string, field: string): string[] {
 	const node = fieldNode(kind, field);
 	const branches = Array.isArray(node.anyOf) ? node.anyOf : [node];
-	return branches.map((b) => String(asRecord(b).type));
+	return branches.flatMap((branch) => {
+		const type = asRecord(branch).type;
+		return Array.isArray(type) ? type.map(String) : [String(type)];
+	});
 }
 
-/** The non-null branch of a nullable field node (where `minimum`/`items` live). */
+/** The branch carrying the nullable field's value constraints (`minimum`, `items`, and so on). */
 function valueBranch(kind: string, field: string): Record<string, unknown> {
 	const node = fieldNode(kind, field);
 	const branches = Array.isArray(node.anyOf) ? node.anyOf : [node];
