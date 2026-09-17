@@ -723,7 +723,7 @@
 				"env.destroy — declares confirm-dialog (confirmed)": "passed",
 				"canvas.discard-staged — declares confirm-dialog (confirmed)": "passed",
 				"canvas.delete-resource — declares undo (confirmed)": "passed",
-				"byo.chart.detach — declares none (missing)": "passed",
+				"byo.chart.detach — declares confirm-dialog (confirmed)": "passed",
 				"byo.iac.detach — declares confirm-dialog (confirmed)": "passed",
 				"addons.remove — declares confirm-dialog (confirmed)": "passed",
 				"connectors.disconnect — declares alert-dialog (confirmed)": "passed",

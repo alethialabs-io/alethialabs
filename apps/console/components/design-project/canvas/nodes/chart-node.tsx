@@ -13,11 +13,13 @@ import { useState } from "react";
 import { GitBranch, Loader2, RefreshCw, ShieldAlert, ShieldCheck, ShieldQuestion, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@repo/ui/utils";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { detachByoChart } from "@/app/server/actions/byo-charts";
 import { type CanvasNode, nodeOfKind } from "../graph/types";
 import type { VerifyReport } from "@/types/jsonb.types";
 import { useByoChartCanvas } from "@/components/design-project/byo/byo-chart-canvas-context";
+import { nodeAccessibleName } from "./node-name";
 
 const HANDLE_CLASS = "!h-2 !w-2 !rounded-none !border !border-border !bg-background";
 
@@ -69,12 +71,24 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 	const ctx = useByoChartCanvas();
 	const openCard = useCanvasStore((s) => s.openCard);
 	const [detaching, setDetaching] = useState(false);
+	const [confirmDetach, setConfirmDetach] = useState(false);
 	if (!node) return null;
 	const c = node.data.config;
 	const st = STATUS_META[chartStatus(c.health, c.status)];
 	const chip = scanChip(c.scanStatus, c.scanReport);
 	const ChipIcon = chip.Icon;
+	// Same contract as every other card (`nodes/node-name.ts`): the board's cards are named regions,
+	// so the audit can score them and a journey can reach THIS chart rather than "the first
+	// `.react-flow__node-chart`". A chart's own name is its release id.
+	const accessibleName = nodeAccessibleName("Helm chart", c.id);
 
+	/**
+	 * Detach the chart. Reached ONLY through the confirmation below — `detachByoChart` deletes the
+	 * ArgoCD Application and the `project_addons` row, and a chart is attached by pasting a repo
+	 * URL, a path and a ref, so an accidental 24x24 `×` costs the user all three. Every other
+	 * detach in the console (`byo.iac.detach`) already asks; this one was the registry's last
+	 * `confirm: none` on the canvas (#4279).
+	 */
 	const detach = async () => {
 		if (!ctx) return;
 		setDetaching(true);
@@ -90,6 +104,8 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 
 	return (
 		<div
+			role="group"
+			aria-label={accessibleName}
 			className={cn(
 				"min-w-[220px] cursor-pointer rounded-none border bg-card text-card-foreground transition-colors",
 				selected
@@ -141,9 +157,10 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 					{ctx && (
 						<button
 							type="button"
-							onClick={detach}
+							onClick={() => setConfirmDetach(true)}
 							disabled={detaching}
 							title="Detach chart"
+							aria-label="Detach chart"
 							className="ml-auto grid h-6 w-6 place-items-center rounded-none border border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
 						>
 							<X className="h-3 w-3" />
@@ -151,6 +168,20 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 					)}
 				</div>
 			</div>
+
+			{/* `confirmLabel` is "Detach", NOT "Detach chart": that second string is the TRIGGER's
+			    accessible name, and two buttons sharing one name make
+			    `getByRole("button", { name: "Detach chart" })` ambiguous the moment the dialog is open.
+			    The destructive-action registry reaches the trigger by `control.name` and the confirm by
+			    `confirm_action`, so the two must not collide. */}
+			<ConfirmDialog
+				open={confirmDetach}
+				onOpenChange={setConfirmDetach}
+				title="Detach this chart?"
+				description="The chart's ArgoCD Application and everything it deployed are removed from the cluster. Re-attaching means entering the repository, path and ref again."
+				confirmLabel="Detach"
+				onConfirm={() => void detach()}
+			/>
 		</div>
 	);
 }
