@@ -70,7 +70,10 @@ export function PendingChangesBar({
   if (changes.length === 0) return null;
 
   return (
-    <div className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2">
+    <div
+      data-testid="pending-changes-bar"
+      className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2"
+    >
       <div className="flex items-center gap-1 rounded-none border border-border bg-card/95 p-1 shadow-[0_2px_10px_rgba(0,0,0,0.10)] backdrop-blur">
         <Popover>
           <PopoverTrigger

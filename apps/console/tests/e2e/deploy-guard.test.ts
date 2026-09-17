@@ -26,8 +26,11 @@ import {
 	describeRequest,
 	designPayloadKeys,
 	neverActivated,
+	observe,
 	watchForDesignPayload,
+	watchPage,
 	type ObservedRequest,
+	type PlaywrightRequestLike,
 } from "../../e2e/helpers/deploy-guard";
 
 /** A board holding the project root and one bucket — the smallest thing a Deploy would send. */
@@ -158,6 +161,40 @@ describe("the watcher attaches, records and detaches", () => {
 		expect(page.size).toBe(0);
 		page.emit(request({ postData: DEPLOY_BODY }));
 		expect(watch.seen).toHaveLength(0);
+	});
+
+	it("the Playwright adapter reads methods, and the predicate still fires through it", () => {
+		// The seam between Playwright's method-shaped Request and the property-shaped predicate. A
+		// broken adapter is the quietest way for this guard to go permanently silent: every unit
+		// test above would stay green while the browser leg recorded nothing.
+		const handlers = new Set<(r: PlaywrightRequestLike) => void>();
+		const page = {
+			on: (_e: "request", h: (r: PlaywrightRequestLike) => void) => void handlers.add(h),
+			off: (_e: "request", h: (r: PlaywrightRequestLike) => void) => void handlers.delete(h),
+		};
+		const asPlaywright = (r: ObservedRequest): PlaywrightRequestLike => ({
+			method: () => r.method,
+			url: () => r.url,
+			postData: () => r.postData,
+		});
+
+		const watch = watchPage(page, KEYS);
+		handlers.forEach((h) => h(asPlaywright(request({ postData: JSON.stringify(["p", "e"]) }))));
+		expect(watch.seen).toHaveLength(0);
+		handlers.forEach((h) => h(asPlaywright(request({ postData: DEPLOY_BODY }))));
+		expect(watch.stop()).toHaveLength(1);
+		expect(handlers.size).toBe(0);
+	});
+
+	it("observe() copies every field the predicate reads", () => {
+		const source = request({ postData: DEPLOY_BODY });
+		expect(
+			observe({
+				method: () => source.method,
+				url: () => source.url,
+				postData: () => source.postData,
+			}),
+		).toEqual(source);
 	});
 
 	it("the breach message names the request rather than just counting", () => {

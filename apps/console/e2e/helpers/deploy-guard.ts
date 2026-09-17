@@ -156,6 +156,56 @@ export function watchForDesignPayload(
 	};
 }
 
+/**
+ * Playwright's `Request` reads its fields through METHODS, and this module reads them as
+ * properties so the predicate can be tested without a browser. This is the whole of the seam
+ * between the two — one adapter, rather than a runtime `typeof x.method === "function"` test that
+ * would make every call site guess which shape it holds.
+ */
+export interface PlaywrightRequestLike {
+	method(): string;
+	url(): string;
+	postData(): string | null;
+}
+
+/** The minimal Playwright `Page` surface `watchPage` needs. */
+export interface PlaywrightPageLike {
+	on(event: "request", handler: (request: PlaywrightRequestLike) => void): void;
+	off(event: "request", handler: (request: PlaywrightRequestLike) => void): void;
+}
+
+/** Read a Playwright request into the plain shape the predicate works on. */
+export function observe(request: PlaywrightRequestLike): ObservedRequest {
+	return { method: request.method(), url: request.url(), postData: request.postData() };
+}
+
+/**
+ * {@link watchForDesignPayload}, attached to a real Playwright page.
+ *
+ * @param page The page to watch. Attach AFTER the canvas is ready — creating the project posts the
+ *   form to `~/new`, and that request is the fixture, not a finding.
+ * @param keys The payload vocabulary; defaults to {@link designPayloadKeys}.
+ * @returns A handle whose `stop()` returns the offending requests (empty is the pass).
+ */
+export function watchPage(
+	page: PlaywrightPageLike,
+	keys: string[] = designPayloadKeys(),
+): DesignPayloadWatch {
+	const seen: ObservedRequest[] = [];
+	const onRequest = (request: PlaywrightRequestLike) => {
+		const observed = observe(request);
+		if (carriesDesignPayload(observed, keys)) seen.push(observed);
+	};
+	page.on("request", onRequest);
+	return {
+		seen,
+		stop() {
+			page.off("request", onRequest);
+			return seen;
+		},
+	};
+}
+
 /** The message a boundary breach prints. Shared so the assertion and its test cannot drift. */
 export function breachMessage(requests: ObservedRequest[]): string {
 	return (
