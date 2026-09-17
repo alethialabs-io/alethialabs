@@ -1993,14 +1993,62 @@ jobs:
       #
       # Two branches, and only two: a gate-OFF leg (run == 'false') publishes the inert marker the
       # `Record gate-off proof` step wrote — no cloud ran, no secret was in scope, nothing to scrub.
-      # A gate-ON leg publishes only if the capture step succeeded.
-      - name: Upload proof artifact
+      # A gate-ON leg publishes only if the capture step succeeded. That condition lives HERE now,
+      # on the resolver, and the upload below rides on this step's own outcome.
+      #
+      # WHICH DIRECTORY, AND WHY IT HAS TO BE ASKED (#4723). The upload used to name the provider
+      # DIRECTORY — `demos/proofs/<provider>/` — which is TRACKED: 55–95 committed historical
+      # bundles that a checkout puts there before this job runs a step. So its `if-no-files-found`
+      # could not fire on any path: it read as an assertion about this run's capture while asserting
+      # nothing about it. The artifact it built carried all of that history too, and a proof artifact
+      # holding a bundle from six days earlier is the exact tree that made run 30341785056 misreport
+      # four legs (#1613).
+      #
+      # The bundle is DERIVED, never guessed. capture-proof.sh names its directory with a UTC stamp
+      # it computes internally and stamps `run_tag` into the summary it writes; `Record gate-off
+      # proof` writes the same field into its own inert bundle. So the question "which bundle is
+      # THIS run's" is asked of the tree, keyed on the payload — the identical contract
+      # nightly-rollup.sh discovers on, and for the same reason (#1613: never on where a path says
+      # something is). Recomputing the stamp here with a second `date -u` would be a different
+      # answer across a UTC second boundary, and a hand-typed path would be a literal wearing a
+      # derivation.
+      #
+      # EXACTLY ONE, or this fails. Zero means the step that was supposed to write a bundle did not,
+      # which is a real finding and the thing the old `warn` could never report. Two means the
+      # identity this whole discovery rests on is not unique, and publishing either one would be a
+      # guess — so it says what it found rather than picking.
+      - name: Resolve this run's proof bundle
+        id: bundle
         if: always() && (steps.gate.outputs.run == 'false' || steps.capture.outcome == 'success')
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          RUN_TAG: nightly-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          found=""
+          n=0
+          for summary in "demos/proofs/${PROVIDER}"/*/provision-summary.json; do
+            [ -f "$summary" ] || continue
+            [ "$(jq -r '.run_tag // empty' "$summary" 2>/dev/null)" = "$RUN_TAG" ] || continue
+            found="$(dirname "$summary")"
+            n=$((n + 1))
+          done
+          if [ "$n" -ne 1 ]; then
+            echo "::error::expected exactly ONE bundle under demos/proofs/${PROVIDER}/ carrying run_tag ${RUN_TAG}; found ${n}. This run produced no publishable proof."
+            exit 1
+          fi
+          echo "dir=${found}" >>"$GITHUB_OUTPUT"
+          echo "→ this run's proof bundle: ${found}"
+
+      # `error` is reachable now and says something: the directory the step above resolved from this
+      # run's own `run_tag` must still hold at least one file when the upload runs. Over the tracked
+      # provider directory it could not have fired on any path.
+      - name: Upload proof artifact
+        if: always() && steps.bundle.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: e2e-proof-${{ matrix.provider }}-${{ github.run_id }}
-          path: demos/proofs/${{ matrix.provider }}/
-          if-no-files-found: warn
+          path: ${{ steps.bundle.outputs.dir }}
+          if-no-files-found: error
           retention-days: 30
 
       # …but a capture that ABORTED still has something worth publishing: the CAPTURE-ABORTED.txt
@@ -2329,7 +2377,11 @@ jobs:
       # failure rather than an inferred skip.
       actions: read
     steps:
+      # `id:` so the ledger upload at the bottom of this job can name it. That step is `always()`,
+      # and an `always()` step in a job whose checkout never landed runs against an EMPTY workspace
+      # (#4084) — see the comment there.
       - uses: actions/checkout@v7
+        id: checkout
       - name: Download all per-provider proof artifacts
         uses: actions/download-artifact@v8
         continue-on-error: true
@@ -2651,11 +2703,24 @@ jobs:
           done < "${OUT_DIR}/ledger.tsv"
           echo "::notice::appended provisioning-e2e ledger rows (dimension=${dim}) — upload for a maintainer to commit."
 
+      # CONJOINED ON THE CHECKOUT (#4084, #4723). `if: always()` alone reached this step in a job
+      # whose checkout never landed — a service container that fails to pull skips every real step —
+      # and it then globbed an EMPTY WORKSPACE, found nothing, and reported SUCCESS having uploaded
+      # nothing. `warn` is what made that silent, and `warn` could not have been anything else while
+      # the condition let that state through: the ledger is a TRACKED file, so on every path where
+      # the checkout DID land it is already there, and the setting had no reachable empty state left
+      # to describe.
+      #
+      # With the state that produces nothing removed from the condition rather than described by the
+      # setting, `error` is reachable and specific: the checkout landed and the path still names no
+      # file — the ledger was renamed or removed under this step. Absence then reads as a stale path
+      # here, which is a real finding, instead of as an empty artifact that scripts/e2e/commit-proof.sh
+      # only discovers at the far end.
       - name: Upload updated provisioning-e2e ledger
-        if: always()
+        if: always() && steps.checkout.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: provisioning-e2e-log-${{ github.run_id }}
           path: demos/proofs/provisioning-e2e-log.md
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
