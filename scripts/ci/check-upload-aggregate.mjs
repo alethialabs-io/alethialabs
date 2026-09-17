@@ -79,8 +79,11 @@
 //     `steps.checkout.outcome == 'success'` (#4084), so they deliberately run after an earlier step
 //     failed and the report was never written.
 //   * `ASSERTION_DEBT` is MEASURED DRIFT: absence would be a real finding, or the setting cannot
-//     fire at all, and a named board issue removes it. Both of today's entries are the latter —
-//     `if-no-files-found` over a path that TRACKED repo content makes non-empty on every run.
+//     fire at all, and a named board issue removes it. It is EMPTY today. The two entries it was
+//     born with were both the second kind — `if-no-files-found` over a path that TRACKED repo
+//     content makes non-empty on every run — and #4723 removed them by making both assert `error`
+//     over something the run produces, which is the only direction a debt entry is allowed to move
+//     in. Empty is the state to keep it in, not a sign the ledger is unused.
 //
 // The split is the one `apps/console/shared-surface-allowlist.yaml` draws between `reason:` and
 // `lifts:`, for the same measured reason: a `reason:` that means "we haven't got to it yet" turns
@@ -241,19 +244,17 @@ const NON_ASSERTING_UPLOADS = {
  * Checked in both directions exactly as the decisions are, plus the issue number. What is NOT
  * checked is whether that issue is open, or exists: this runs offline under plain `node`, and a
  * network call would make the guard fail for reasons that have nothing to do with the tree.
+ *
+ * EMPTY, as of #4723, and that is a measurement rather than a tidy-up. Both entries this ledger was
+ * born with named e2e-nightly.yml uploads whose `if-no-files-found` could not fire — the path was
+ * TRACKED repo content, non-empty the moment the checkout landed — and both now assert `error` over
+ * something the run itself produces: the proof upload over the bundle resolved from this run's own
+ * `run_tag`, the ledger upload over a path whose one empty state (#4084, no checkout) was removed
+ * from the condition instead of described by the setting. An empty debt ledger is the only state in
+ * which every non-asserting upload in the tree is a DECISION, so it is worth keeping empty; the
+ * stale-entry direction below is what makes leaving one behind a red rather than a comment.
  */
-const ASSERTION_DEBT = {
-	"e2e-nightly.yml:Upload proof artifact:e2e-proof-${{ matrix.provider }}-${{ github.run_id }}": {
-		setting: "warn",
-		issue: 4723,
-		reason: "The path is `demos/proofs/<provider>/`, a TRACKED directory — 73 files for hetzner, 95 for aws, 55 for gcp, 59 for azure — so it is never empty after a checkout, and the step's `if:` cannot be true without one. `warn` is unreachable on every path, and the assertion worth having is over the run-scoped bundle instead.",
-	},
-	"e2e-nightly.yml:Upload updated provisioning-e2e ledger:provisioning-e2e-log-${{ github.run_id }}": {
-		setting: "warn",
-		issue: 4723,
-		reason: "`demos/proofs/provisioning-e2e-log.md` is tracked, so the path always matches after a checkout. The only empty state is the #4084 shape — `if: always()` with no checkout conjunct, reached against an empty workspace — which every other upload in this repo fixed by conjoining the checkout rather than by downgrading.",
-	},
-};
+const ASSERTION_DEBT = {};
 
 /**
  * A LITERAL block indicator — `|`, `|-`, `|+`, `|2`. Every line of the block is its own entry, and
