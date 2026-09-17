@@ -882,6 +882,7 @@ export async function seedDestructiveFixtures(
  */
 const SEEDED_MARKER = path.resolve(process.cwd(), "e2e/.auth/audit-fixtures.json");
 
+/** The fixtures already written for this org, or an empty set when the marker is absent or another org's. */
 function readSeededMarker(orgSlug: string): Set<string> {
 	if (!existsSync(SEEDED_MARKER)) return new Set();
 	try {
@@ -897,6 +898,7 @@ function readSeededMarker(orgSlug: string): Set<string> {
 	}
 }
 
+/** Record which fixtures this org now has, for whichever worker runs next. */
 function writeSeededMarker(orgSlug: string, seeded: ReadonlySet<string>): void {
 	mkdirSync(path.dirname(SEEDED_MARKER), { recursive: true });
 	writeFileSync(SEEDED_MARKER, `${JSON.stringify({ orgSlug, seeded: [...seeded] }, null, 2)}\n`);
