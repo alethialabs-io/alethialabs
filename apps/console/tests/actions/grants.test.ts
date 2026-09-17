@@ -31,11 +31,16 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getPdp } from "@/lib/authz";
 import { recordActivity } from "@/lib/authz/activity";
 import { authorize } from "@/lib/authz/guard";
+import { INSTANCE_TYPES } from "@/lib/authz/fga-hierarchy";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import { ForbiddenError } from "@/lib/authz/types";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import { getServiceDb } from "@/lib/db";
+import {
+	GRANT_RESOURCE_TYPES,
+	UNKNOWN_RESOURCE_TYPE,
+} from "@/lib/validations/grants";
 import {
 	cloudIdentities,
 	projects,
@@ -318,6 +323,86 @@ describe("assignGrant validation", () => {
 				resourceId: "11111111-2222-3333-4444-555555555555",
 			}),
 		).rejects.toThrow(/cannot carry a resource id/);
+	});
+
+	// The kind half of the scope (#4734). `resourceType` is a bare `string` on the wire, and since
+	// #4584 an unrecognised kind is not inert: a DENY row whose scope resolves to nothing excludes
+	// the WHOLE ORG on both engines. So `"projects"` — one plural — widens "deny project:deploy on
+	// project P" to the entire organization, from a call that returns normally.
+	//
+	// Both directions are asserted: the refusal here, and every accepted kind in the walk below.
+	// A validator that refused everything would close this bug and break the product.
+	it("rejects an unrecognised resource kind and never inserts", async () => {
+		const { insertSpy } = mockDb();
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "deny",
+				permissionKey: "project:deploy",
+				resourceType: "projects",
+				resourceId: "11111111-2222-3333-4444-555555555555",
+			}),
+		).rejects.toThrow(UNKNOWN_RESOURCE_TYPE);
+		expect(insertSpy).not.toHaveBeenCalled();
+		expect(syncScopedGrant).not.toHaveBeenCalled();
+	});
+
+	it("names every accepted kind in that refusal", async () => {
+		mockDb();
+		const err = await assignGrant({
+			principalType: "user",
+			principalId: "u-1",
+			effect: "deny",
+			permissionKey: "project:deploy",
+			resourceType: "projects",
+			resourceId: "11111111-2222-3333-4444-555555555555",
+		}).catch((e: unknown) => e);
+		const message = err instanceof Error ? err.message : String(err);
+		for (const kind of GRANT_RESOURCE_TYPES) {
+			expect(message).toContain(kind);
+		}
+	});
+
+	// The id-less form is the quiet one: `resourceType` is collapsed to `"org"` when no id is
+	// given, so an unrefused typo becomes a real ORGANIZATION-WIDE grant rather than a scoped one.
+	it("rejects an unrecognised resource kind sent without a resource id", async () => {
+		const { insertSpy } = mockDb();
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				permissionKey: "project:view",
+				resourceType: "projects",
+			}),
+		).rejects.toThrow(UNKNOWN_RESOURCE_TYPE);
+		expect(insertSpy).not.toHaveBeenCalled();
+	});
+
+	it("accepts every kind the hierarchy table makes scopable, plus org", async () => {
+		// Derived from the same list the action validates against — which is itself derived from
+		// `INSTANCE_TYPES` — so a kind added to the hierarchy cannot leave this boundary untested.
+		expect([...GRANT_RESOURCE_TYPES]).toEqual(["org", ...INSTANCE_TYPES]);
+		for (const kind of GRANT_RESOURCE_TYPES) {
+			const { valuesSpy, insertSpy } = mockDb();
+			const scoped = kind !== "org";
+			await assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				permissionKey: "project:view",
+				resourceType: kind,
+				resourceId: scoped ? "11111111-2222-3333-4444-555555555555" : null,
+			});
+			expect(insertSpy).toHaveBeenCalledTimes(1);
+			expect(valuesSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					resource_type: kind,
+					resource_id: scoped ? "11111111-2222-3333-4444-555555555555" : null,
+				}),
+			);
+		}
 	});
 
 	it("rejects an unknown permission key", async () => {
