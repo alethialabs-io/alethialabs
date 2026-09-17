@@ -49,12 +49,24 @@ Worktrees are **de-hydrated** — no local `node_modules`. Run their checks with
 
 Nothing used to put one *back* into that state. A tree that is abandoned but whose branch never
 landed is invisible to `wt:prune` — which removes only LANDED, clean trees — so it sat there for
-good (#4580). `pnpm wt:dehydrate [--dry-run]` reaps `node_modules` and nothing else from every tree
-whose lease is not live: the tree, its tracked files and its uncommitted work all stay, which is
-why it can touch the trees `wt:prune` must refuse. The one other thing it clears is the reaped
-tree's own dead lease record, so a tree that read `stale` in `wt:who` reads `free` afterwards. It
-never touches a tree a live instance holds — *including yours*; `pnpm wt:release` first if you mean
-it. While it holds a tree the lock is a live foreign lease to everyone, so `git stash` — whose
+good (#4580). `pnpm wt:dehydrate [--dry-run]` reaps `node_modules` and nothing else: the tree, its
+tracked files and its uncommitted work all stay, which is why it can touch the trees `wt:prune`
+must refuse. The one other thing it clears is the reaped tree's own dead lease record, so a tree
+that read `stale` in `wt:who` reads `free` afterwards. It never touches a tree a live instance
+holds — *including yours*; `pnpm wt:release` first if you mean it.
+
+**A live lease is not the only thing that spares a tree, and it never was enough** (#4609). `free`
+means no lease was ever *taken*, not that nobody is there — leases are not taken outside
+Claude/Codex, so a person working a tree by hand all afternoon looked identical to one abandoned in
+July. And `stale` means the agent process is gone, not that nothing is running: an agent that exits
+over a `pnpm install` **it started** leaves a stale lease above a live install. So the sweep also
+asks how long ago the files were last written, and refuses a tree that is still warm: **1h for
+`stale`** (the agent is provably gone, so this only has to outlast an install's quietest moment)
+and **24h for `free`** (nothing has ruled out a person). `--min-idle-hours=N` replaces both with one
+number and `0` disables the floor — the documented operator override, named on the command line so
+it appears in whatever ran it. `wt:who` on this machine once listed a dozen trees as `LIVE` under a
+real `claude` process idle for 138 hours: the liveness answer was correct and still useless, which
+is why the question is now about the **files**. While it holds a tree the lock is a live foreign lease to everyone, so `git stash` — whose
 stack is repo-wide — is refused for the duration of the sweep.
 
 **Do not quote its byte figures as savings, and do not quote #4580's "~2 GB per tree" either — both
