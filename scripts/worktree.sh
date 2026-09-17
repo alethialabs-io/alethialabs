@@ -282,9 +282,17 @@ WT_MIN_IDLE_FREE=86400  # 24h — nothing has ruled out a person
 wt_mtime() { # <path> → epoch seconds, or nothing when it cannot be read
 	local t
 	[ -e "$1" ] || return 0
-	# BSD first, GNU second: `stat -f` on GNU means "file system" and fails, `stat -c` is unknown to
-	# BSD. Trying both in this order is the only form that answers on macOS and on the Linux box.
-	t="$(stat -f %m -- "$1" 2>/dev/null || stat -c %Y -- "$1" 2>/dev/null || true)"
+	# GNU FIRST, BSD second, and each answer validated on its own before the next is tried.
+	# The obvious form — `stat -f %m ... || stat -c %Y ...` — is wrong, and wrong SILENTLY on Linux:
+	# `-f` to GNU coreutils selects file-SYSTEM mode, so `stat -f %m -- FILE` prints a six-line
+	# filesystem report on stdout and exits ZERO. The `||` therefore never runs the GNU branch at
+	# all, `$t` holds that report, the digits check below rejects it, and this returns empty for
+	# every path on the box. Every caller reads empty as "refuse", so `wt:dehydrate` reaped nothing
+	# on Linux while passing on macOS (#4609: two recency cases FAILED in CI, `want 'reap' got
+	# 'busy'`, and both were green locally). BSD `stat -c` is safe to probe first: it exits 1 and
+	# writes nothing to stdout.
+	t="$(stat -c %Y -- "$1" 2>/dev/null)"
+	case "${t:-}" in '' | *[!0-9]*) t="$(stat -f %m -- "$1" 2>/dev/null)" ;; esac
 	case "${t:-}" in '' | *[!0-9]*) return 0 ;; esac
 	printf '%s' "$t"
 }
