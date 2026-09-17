@@ -1115,9 +1115,17 @@ test("self-test — withholding on a `missing` or `inert` entry stays GREEN", as
 	expect(owedFindings(controls, [withheldVerdict("byo.chart.detach"), withheldVerdict("account.delete")], SEEDABLE_FIXTURES, NO_LEDGER)).toEqual([]);
 });
 
-test("self-test — an entry whose fixture is UNSEEDABLE is not owed, so #4458's gap is not manufactured work", async () => {
-	const controls = [floorEntry("teams.member.remove", "confirmed", "team-with-a-member")];
-	expect(owedFindings(controls, [withheldVerdict("teams.member.remove")], SEEDABLE_FIXTURES, NO_LEDGER)).toEqual([]);
+test("self-test — an entry whose fixture is UNSEEDABLE is not owed, so a real gap is not manufactured work", async () => {
+	// ⚠ SYNTHETIC FIXTURE NAME, for the same reason as direction 3's test above — this is the SECOND
+	// time the coupling bit. It read `"team-with-a-member"`, a fixture that was genuinely unseeded
+	// when #4646 was written; #4458 wrote a seeder for it, the entry became owed, and this test
+	// failed for a reason that had nothing to do with the rule it guards.
+	//
+	// The lesson is general enough to state: a self-test for "what happens when X is ABSENT" must not
+	// name a real X that somebody's job is to add. Both sites now use a name no seeder will hold, so
+	// they assert the rule rather than a snapshot of today's coverage.
+	const controls = [floorEntry("a.delete", "confirmed", "a-fixture-no-seeder-writes")];
+	expect(owedFindings(controls, [withheldVerdict("a.delete")], SEEDABLE_FIXTURES, NO_LEDGER)).toEqual([]);
 });
 
 test("self-test — every OWED control measured is the pass", async () => {
@@ -1248,6 +1256,22 @@ function fixtureEntry(id: string, fixture?: string): ControlEntry {
 
 /** A seeder that writes nothing — these tests assert the ARITHMETIC, never a row. */
 const NO_OP_SEEDER: FixtureSeeder = { writes: "nothing", seed: async () => {} };
+
+test("self-test — SEEDABLE_FIXTURES is DERIVED, so a fixture with a seeder is never excluded from the floor", async () => {
+	// THE SEAM BETWEEN #4646 AND #4458, ASSERTED. The floor asks "can this spec seed what that claim
+	// needs?" and `SEEDABLE_FIXTURES` is the answer; while that answer was a hand-written literal,
+	// writing a seeder bought nothing until somebody also remembered to edit the set — and
+	// forgetting was silent in the direction that matters, because an unlisted fixture keeps its
+	// controls OUT of the floor and therefore green.
+	//
+	// This is the test that fails if the literal ever comes back. It is close to tautological
+	// against the one-line derivation, and that is the point: the mutation it exists to kill is a
+	// one-line edit.
+	for (const fixture of FIXTURE_SEEDERS.keys()) {
+		expect(SEEDABLE_FIXTURES.has(fixture), `"${fixture}" has a seeder but the floor does not count it as seedable`).toBe(true);
+	}
+	expect(SEEDABLE_FIXTURES.size, "the floor's seedable set and the seeder map must be the same list, not two").toBe(FIXTURE_SEEDERS.size);
+});
 
 test("self-test — a declared fixture with a seeder is SEEDABLE, and one with a reason is a DECISION", async () => {
 	const controls = [fixtureEntry("a", "alpha"), fixtureEntry("b", "beta")];
