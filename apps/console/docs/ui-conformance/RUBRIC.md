@@ -3,8 +3,8 @@
 
 # The console UI conformance rubric
 
-**34 predicates** over every **private** console route — S1–S4 (4), T1–T7 (7), H1–H9 (9), F1–F7
-(7), R1–R7 (7). This file is the contract: the static checks, the live Playwright `audit` project
+**35 predicates** over every **private** console route — S1–S4 (4), T1–T7 (7), H1–H9 (9), F1–F7
+(7), R1–R8 (8). This file is the contract: the static checks, the live Playwright `audit` project
 and the scoreboard generator all implement predicates defined *here*, and none of them may invent
 one.
 
@@ -289,6 +289,49 @@ H2: it hand-writes its own `<h2>`.
 | **R5** | axe reports zero serious or critical violations, **in both themes** | `scanRouteThemes()` returns none at `wcag2a`/`wcag2aa` in **light and dark**, each violation naming its theme, and both themes applied and painted differently | never |
 | **R6** | zero console errors, zero failed requests | nothing on `console.error`, no response ≥ 400 | never |
 | **R7** | interactive within budget | p95 under the route's recorded budget | never |
+| **R8** | every enabled control does something | every enabled `button`, same-origin `a[href]` and depth-1 `menuitem` in `main` — plus the shell chrome, measured once under `/[org]` — produces, within **1 000 ms** of activation, a navigation, a new overlay, a DOM mutation in `main`, an `aria-expanded\|pressed\|selected\|checked` flip, a network request, a download or a `role=status` toast | `redirect-only`, `no-enabled-controls` |
+
+**R8 IS MEASURED WITHOUT EVER PRESSING A CONFIRM.** `e2e/audit/inert.ts`'s `activate()` refuses to
+click while a dialog or an alertdialog is open, and a confirm button exists nowhere else — so the
+guarantee is a property of the code rather than a rule the next reader has to remember. Inside an
+overlay the only key pressed is Escape. A control **registered** in
+`apps/console/destructive-actions.yaml` for that route IS activated, because its declared
+confirmation is its effect and #4266 already proves that confirmation is real. A control the ledger
+does **not** declare whose accessible name reads destructive is never activated and is recorded
+**FAIL `unregistered-destructive`** — the live twin of the static census, and a finding either way:
+either the ledger is short an entry, or a control is wearing a verb it does not carry out.
+
+**R8 SCORES ONLY WHAT THE FIXTURE RENDERS, AND THAT BOUND DOES NOT CLOSE WITH MORE RUNS.** A control
+behind a conditional the audit's empty organisation never reaches — a row action needing a failed
+deployment, a button gated on a plan the run does not buy — is invisible to a live pass forever, not
+until the fixtures improve. It is not measured, not failed and not counted, so **"R8 passed" never
+means "every control in the console does something"**; it means every control this org rendered did.
+Closing that gap needs a STATIC matcher over the handlers, which is a different instrument in a
+different unit. The same reasoning is why H9 exists beside T5: one predicate per question.
+
+**ITS ERRORS ARE BIASED TOWARD PASS, deliberately.** Six of the seven effects are attributable to the
+click. The seventh — a DOM mutation anywhere in `main` — is not: an async re-render provoked by the
+PREVIOUS control can land inside this one's window. It is therefore checked LAST, after every
+attributable signal, and the page is reloaded after any control that moved it. And "a network
+request happened" is a signal the route has to EARN: `measureQuiescence()` watches the page for one
+window before anything is clicked and withholds the signal on a route that chatters, because on a
+page that polls, "a request happened" is true of every control and therefore evidence about none.
+
+**Three things are declared out of scope, each with its reason, none of them silent.** A **disabled**
+control is not scored — it is counted as `disabled-with-reason` / `disabled-no-reason` for a later
+R9, because "why is this greyed out" is a different question. An **external** link PASSES on a real
+`href` and is never clicked: activating it navigates the run out of the console, and whether the
+destination exists is not R8's question. A control that opens a **file chooser** is detected (via
+`page.on("filechooser")`, so the exclusion is reachable rather than vacuous) and excluded. So is the
+shell's **sign out**, and that one is a single spelled-out pattern: revoking the run's session would
+make every later verdict a measurement of the sign-in page wearing the route's name.
+
+**A route over the control budget is `NOT MEASURED` WITH THE COUNT, never a PASS over the first 60.**
+Sixty controls is what one leg can afford; a budget that silently truncates is a denominator nobody
+can see. That is a claim about the RUN, which is what `report.ts`'s `notMeasured()` is for — as
+against an N/A, which is a claim about the PAGE. `inert.spec.ts`'s last test fails when fewer than
+`MIN_MEASURED` routes produced a PASS or a FAIL, because a column of nothing but NOT MEASURED must
+not read as a clean board.
 
 **R2 is measured by hit-testing, and this is the whole reason the live half exists.** Open each
 dialog, sheet, popover, dropdown, tooltip and hover-card, then call

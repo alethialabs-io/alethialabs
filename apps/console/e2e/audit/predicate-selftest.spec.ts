@@ -17,6 +17,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { errorStateSignature, rendersSharedErrorState } from "./error-state";
+import { CONTROL_FIXTURE, emptinessProblems, endsTheSession, enumerateControls, interactionControl, isSameOrigin, namesDestructiveAction, preActivationExclusion } from "./inert";
 import { hitTest } from "./overlays";
 import {
 	controlFixture,
@@ -378,6 +379,205 @@ test.describe("the live predicates fail when the page is wrong", () => {
 			neverRepaints.join(" "),
 			"a class that toggles against a stylesheet that does not vary is still one paint measured twice",
 		).toMatch(/same background/);
+	});
+
+	// ── R8: every enabled control does something (#4277) ──────────────────────────────────────
+	//
+	// The control `inert.spec.ts` CONSULTS, driven here in both directions. It is not enough that it
+	// passes on a good page: a control that cannot fail is the thing it was built to refuse, and
+	// #3804 is the incident where a green-looking instrument published FAILs for real routes. So
+	// each arm is neutered in turn and the control must NAME the arm that stopped firing.
+
+	test("R8 — the interaction control passes on a page whose answers are known", async ({ page }) => {
+		expect(await interactionControl(page), "every arm answers on the control's own fixture").toEqual([]);
+	});
+
+	test("R8 — the control names the FAIL arm when a handler-less button stops reading as inert", async ({ page }) => {
+		// The mutant gives the inert button a handler that mutates `main`. If the instrument still
+		// reports it inert-free, then nothing in the console can ever be reported inert.
+		const mutant = CONTROL_FIXTURE.replace(
+			'document.getElementById("opener").addEventListener',
+			'document.getElementById("inert").addEventListener("click", function () { document.querySelector("main").appendChild(document.createTextNode("x")); });\n\tdocument.getElementById("opener").addEventListener',
+		);
+		const problems = await interactionControl(page, mutant);
+		expect(problems.join(" "), "the control says the FAIL arm stopped firing").toMatch(/handler-less button reported/);
+	});
+
+	test("R8 — the control names the PASS arm when the dialog opener opens nothing", async ({ page }) => {
+		const mutant = CONTROL_FIXTURE.replace('d.setAttribute("role", "dialog");', "");
+		const problems = await interactionControl(page, mutant);
+		expect(problems.join(" "), "the control says the PASS arm stopped firing").toMatch(/dialog opener reported/);
+	});
+
+	test("R8 — the control names the enumeration when a disabled control starts being scored", async ({ page }) => {
+		const mutant = CONTROL_FIXTURE.replace('aria-disabled="true" ', "");
+		const problems = await interactionControl(page, mutant);
+		expect(problems.join(" "), "an aria-disabled control must not be enumerated as enabled").toMatch(
+			/was not counted as `disabled-with-reason`|enumerated as enabled/,
+		);
+	});
+
+	test("R8 — a disabled control is COUNTED, with or without a reason, and never scored", async ({ page }) => {
+		await page.setContent(`<!doctype html><html lang="en"><head><title>t</title></head><body><main>
+			<button disabled title="Ask an owner">With a reason</button>
+			<button aria-disabled="true">With none</button>
+			<button>Enabled</button>
+		</main></body></html>`);
+		const found = await enumerateControls(page, "main", "main");
+		expect(found.controls.map((c) => c.name), "only the enabled control is scored").toEqual(["Enabled"]);
+		expect(found.disabled.map((d) => d.reason).sort(), "and both disabled ones are counted, split by whether they say why").toEqual([
+			"disabled-no-reason",
+			"disabled-with-reason",
+		]);
+	});
+
+	test("R8 — an external link PASSES on its href and is never enumerated for a click", async ({ page }) => {
+		await page.setContent(`<!doctype html><html lang="en"><head><title>t</title></head><body><main>
+			<a href="https://docs.example.invalid/x">Docs</a>
+			<a href="/[org]/settings">Settings</a>
+			<a href="#">Nowhere</a>
+		</main></body></html>`);
+		const found = await enumerateControls(page, "main", "main");
+		expect(found.external.map((e) => e.name), "the cross-origin link is external").toEqual(["Docs"]);
+		// A same-origin `href="#"` STAYS in `controls`: that is exactly the inert control R8 hunts,
+		// and only a click can say whether a handler does the work the href does not.
+		expect(found.controls.map((c) => c.name).sort()).toEqual(["Nowhere", "Settings"]);
+	});
+
+	test("R8 — a scope that is itself a LIST enumerates every part of it", async ({ page }) => {
+		// The shell chrome's scope is `header, aside`. Interpolating it naively yields
+		// `header, aside button`, which CSS reads as "every <header>, or every button inside an
+		// <aside>" — the header's own buttons vanish and the <header> element is enumerated as a
+		// control. The chrome pass would then have measured one unnamed thing and looked like it
+		// worked, which is why this is asserted rather than left to the selector's shape.
+		await page.setContent(`<!doctype html><html lang="en"><head><title>t</title></head><body>
+			<header><button>In the header</button></header>
+			<aside><button>In the sidebar</button></aside>
+			<main><button>In main</button></main>
+		</body></html>`);
+		const chrome = await enumerateControls(page, "header, aside", "chrome");
+		expect(chrome.controls.map((c) => c.name).sort(), "both halves of the scope, and nothing from main").toEqual([
+			"In the header",
+			"In the sidebar",
+		]);
+	});
+
+	test("R8 — the destructive-name matcher reads a verb with an object, and not a dialog's way out", () => {
+		// The census matches IDENTIFIERS (`cancelSubscription`) and requires a capital after the
+		// verb; a NAME has no such shape. A bare "Cancel" is every form's escape hatch and must not
+		// file a finding against every form in the console — but a bare "Delete" IS a real
+		// destructive control, because `SettingsDangerRow` labels every one of them exactly that.
+		expect(namesDestructiveAction("Delete"), "the shipped bare shape").toBe(true);
+		expect(namesDestructiveAction("Delete workspace")).toBe(true);
+		expect(namesDestructiveAction("Revoke API key")).toBe(true);
+		expect(namesDestructiveAction("Cancel"), "a bare Cancel is a way out, not a destruction").toBe(false);
+		expect(namesDestructiveAction("Cancel subscription"), "with an object it is one").toBe(true);
+		expect(namesDestructiveAction("Undelete"), "word-anchored at the front").toBe(false);
+		expect(namesDestructiveAction("Cancellation policy")).toBe(false);
+		expect(namesDestructiveAction("Open project")).toBe(false);
+	});
+
+	test("R8 — an UNDECLARED destructive name is tagged and never activated; a declared one is activated", () => {
+		// The fourth arm of the positive control, driven in both directions because each direction
+		// fails differently and neither is loud on its own. Stuck at "not registered", R8 files a
+		// FAIL against all 40 of the ledger's own confirmed buttons — a blind counter manufacturing
+		// work. Stuck at "registered", a delete nobody declared gets CLICKED, which is the one thing
+		// this predicate promises never to do. The route loop and the menu loop both ask this
+		// function, so the property holds for a menu item — where most of the console's deletes
+		// live — and not only for a button in `main`.
+		expect(preActivationExclusion("Delete workspace", false)).toBe("unregistered-destructive");
+		expect(preActivationExclusion("Delete workspace", true), "its declared confirmation IS its effect").toBeNull();
+		expect(preActivationExclusion("Delete", false), "the bare shape `SettingsDangerRow` ships").toBe("unregistered-destructive");
+		expect(preActivationExclusion("Cancel", false), "every form's way out is not a destruction").toBeNull();
+		expect(preActivationExclusion("Open project", false), "an exclusion that fires on an ordinary button measures nothing").toBeNull();
+		// Sign-out wins over the ledger: being declared does not make it safe to revoke the run's
+		// own session.
+		expect(preActivationExclusion("Sign out", true)).toBe("session-ending");
+	});
+
+	test("R8 — the interaction control NAMES the tag arm when the ledger join stops discriminating", async ({ page }) => {
+		// A join that answers the same way for everything passes every arm that only asks it once.
+		// `interactionControl()` asks it both ways, so the control is red under either stuck answer
+		// — and `inert.spec.ts` withholds R8 for the whole run rather than publishing the column.
+		expect(await interactionControl(page), "the shipped join discriminates").toEqual([]);
+		expect(
+			preActivationExclusion("Delete workspace", false) === preActivationExclusion("Delete workspace", true),
+			"a ledger join whose two answers agree is not a join",
+		).toBe(false);
+	});
+
+	test("R8 — same-origin is measured against the PAGE, not a hardcoded production host", () => {
+		// A constant base would read `https://alethialabs.io/pricing` as internal and CLICK it,
+		// navigating the run off the app it is measuring.
+		expect(isSameOrigin("/org/settings", "http://localhost:3000/org")).toBe(true);
+		expect(isSameOrigin("https://alethialabs.io/pricing", "http://localhost:3000/org")).toBe(false);
+		expect(isSameOrigin("http://localhost:3000/x", "http://localhost:3000/org")).toBe(true);
+		expect(isSameOrigin("mailto:support@example.invalid", "http://localhost:3000/org")).toBe(false);
+	});
+
+	test("R8 — the one control it may not press is the one that ends the run's own session", () => {
+		expect(endsTheSession("Sign out")).toBe(true);
+		expect(endsTheSession("Log out")).toBe(true);
+		expect(endsTheSession("Signout")).toBe(true);
+		expect(endsTheSession("Sign out of every device"), "one pattern, spelled out — not a prefix match").toBe(false);
+		expect(endsTheSession("Sign in")).toBe(false);
+	});
+
+	test("R8 — notMeasured() is a claim about the RUN, and an N/A is a claim about the PAGE", () => {
+		// The two must not share a column. An N/A counts as "asked, and does not apply"; a predicate
+		// escaped into it scores higher with nothing red anywhere, which is the rubric's own warning.
+		const report = createReport();
+		const withheld = report.notMeasured({
+			route: "/x",
+			url: "/x",
+			predicate: "R8",
+			reason: "control-budget-exceeded (140 enabled controls, budget 60)",
+		});
+		expect(withheld.verdict).toBe("NOT MEASURED");
+		expect(withheld.reason).toContain("budget");
+		expect(() => report.notMeasured({ route: "/y", url: "/y", predicate: "R8", reason: "   " })).toThrow(/no reason/);
+
+		// R8's two declared N/A reasons, and nothing else.
+		expect(NA_REASONS.R8).toEqual(["redirect-only", "no-enabled-controls"]);
+		expect(() =>
+			createReport().record({ route: "/x", url: "/x", predicate: "R8", verdict: "N/A", reason: "too-many-controls" }),
+		).toThrow(/not a declared N\/A reason/);
+
+		// A run-scoped withhold still WINS over a cell-scoped reason: if the predicate's own control
+		// is red, the reason this caller computed was computed by the broken instrument too.
+		const red = createReport();
+		red.withhold(["R8"], "positive control failed: the dialog opener reported null");
+		const overridden = red.notMeasured({ route: "/x", url: "/x", predicate: "R8", reason: "control-budget-exceeded" });
+		expect(overridden.verdict).toBe("NOT MEASURED");
+		expect(overridden.reason, "the instrument's failure is the reason, not the cell's").toContain("positive control failed");
+
+		// And a column of NOT MEASURED scores `null`, never 1.
+		expect(red.summarise().R8).toEqual({ pass: 0, fail: 0, na: 0, notMeasured: 1, score: null });
+	});
+
+	test("R8 — a full column of NOT MEASURED is not a clean board, and a WITHHELD one is not either", () => {
+		const forty = (verdict: string) => Array.from({ length: 40 }, (_, i) => ({ route: `/r${i}`, verdict }));
+
+		// The shape that reads green to any check that only counts records: forty cells, none
+		// missing, and not one of them a measurement.
+		expect(emptinessProblems(forty("NOT MEASURED"), undefined, 40, 1).join(" "), "forty NOT MEASURED is not a pass").toMatch(/produced a PASS or a FAIL/);
+
+		// And the nastier one: the instrument's own control was red, so every cell was REWRITTEN to
+		// NOT MEASURED by `withhold()`. The record count is perfect and the verdicts are uniform —
+		// an emptiness check that does not ask about the withhold cannot see this at all.
+		const withheldRun = emptinessProblems(forty("NOT MEASURED"), "the dialog opener reported null", 40, 1);
+		expect(withheldRun.join(" ")).toMatch(/positive control was red/);
+
+		// A route recorded NOWHERE shrinks the denominator to fit the answer.
+		expect(emptinessProblems([...forty("PASS").slice(0, 39)], undefined, 40, 1).join(" ")).toMatch(/39 of 40 routes/);
+
+		// N/A is a claim about the PAGE and leaves the denominator, but it is not a measurement: a
+		// board of nothing but N/A still has to clear the floor.
+		expect(emptinessProblems(forty("N/A"), undefined, 40, 1).join(" ")).toMatch(/produced a PASS or a FAIL/);
+
+		// The only shape that passes: every route accounted for, the control green, and something
+		// actually driven.
+		expect(emptinessProblems([...forty("NOT MEASURED").slice(0, 39), { route: "/r39", verdict: "PASS" }], undefined, 40, 1)).toEqual([]);
 	});
 
 	test("the report refuses the three ways an N/A goes wrong", () => {

@@ -39,7 +39,7 @@
 //
 // ── WHAT IS SCORED, AND WHAT IS EXPLICITLY NOT ───────────────────────────────────────────────
 //
-// The rubric defines 34 predicates in five families. This file now scores all 34 of them:
+// The rubric defines 35 predicates in five families. This file now scores all 35 of them:
 //
 //   S1–S4, T1–T4     STATIC, `scripts/check-route-states.mjs`.
 //   H1–H9            STATIC, `scripts/check-shared-surface.mjs`. All nine H rows. H3 was the
@@ -55,8 +55,9 @@
 //                    console's filter SURFACES, plus F7, whose verdict is the join between a
 //                    route's closure and the builders
 //                    `apps/console/tests/lib/queries/filter-standard-facets.test.ts` drives.
-//   T5–T7, R1–R7     LIVE. The Playwright `audit` project measures them in CI; this file joins
-//                    its committed records to the same route set. Ten predicates — #3634.
+//   T5–T7, R1–R8     LIVE. The Playwright `audit` and `audit-interaction` projects measure them
+//                    in CI; this file joins their committed records to the same route set. Eleven
+//                    predicates — #3634, plus R8 in #4277.
 //
 // NOTHING is left un-instrumented. The `kind: "none"` bucket, the table it renders and the
 // partition check that refuses a predicate in no bucket all STAY: the next rubric row lands in
@@ -178,14 +179,29 @@
 // file" — which is the entire join this report is built on. `scan()` and `parseAllowlist()` are
 // exported both before and after #3794.
 //
-// ── THE LIVE HALF — TWO ARTIFACTS, TWO PERSONAS, TWO ORGANISATIONS (#3634) ───────────────────
+// ── THE LIVE HALF — THREE ARTIFACTS, THREE QUESTIONS, NEVER POOLED (#3634, #4277) ────────────
 //
-// The live predicates are measured by the Playwright `audit` project, which writes TWO files:
+// The live predicates are measured by two Playwright projects, which write THREE files:
 //
 //   test-results/ui-audit.json              routes.spec.ts       T5, T6, R1–R7 · the run's owner,
 //                                                                in a fresh EMPTY organisation
 //   test-results/ui-audit-permissions.json  permissions.spec.ts  T7 · the `member` persona, in a
 //                                                                SECOND organisation of its own
+//   test-results/ui-audit-interaction.json  inert.spec.ts        R8 · the run's owner again, but
+//                                                                from the `audit-interaction`
+//                                                                project, which ACTIVATES controls
+//                                                                rather than reading rendered state
+//
+// THE THIRD SECTION IS DECLARED BEFORE IT IS MEASURED, and that is a deliberate, checked, temporary
+// state — `awaitingFirstImport` on the section below. R8's instrument landed in #4277; its artifact
+// exists only once the `audit-interaction` leg has run and somebody has imported it. The dishonest
+// alternatives were both available and both refused: leaving R8 out of the rubric would have shipped
+// an instrument scored by nothing (this file's own header calls that "implemented and UNMEASURED"),
+// and hand-writing plausible records would have poisoned a ledger with numbers no run produced.
+// So every R8 cell joins as NOT MEASURED carrying the marker's reason, R8 scores `null` rather than
+// 1, and the marker is checked in BOTH directions: a pending section that carries records RAISES,
+// naming the one-line edit that clears it. An exception that can outlive its subject is how a
+// ledger stops being true.
 //
 // **They are joined, never pooled**, and `apps/console/e2e/audit/report.ts`'s header records what
 // pooling them cost: both specs load into one process under `workers: 1`, and one module-level
@@ -366,6 +382,7 @@ export const NOT_SCORED_STATICALLY = /** @type {const} */ ({
 	R5: { kind: "live", section: "routes", why: "axe, at wcag2a/wcag2aa." },
 	R6: { kind: "live", section: "routes", why: "console errors and failed requests." },
 	R7: { kind: "live", section: "routes", why: "interactive within the route's budget." },
+	R8: { kind: "live", section: "interaction", why: "every enabled control, ACTIVATED — a rendered control is not a working one, and only a click knows." },
 });
 
 // ── the live half: two artifacts, two personas, two organisations ────────────────────────────
@@ -398,6 +415,29 @@ export const LIVE_SECTIONS = /** @type {const} */ ({
 		org: "a SECOND organisation, created by that spec and never touched by the primary run",
 		covers: "only the org-only routes; the parameterised ones need a project the persona cannot be given",
 	},
+	interaction: {
+		artifact: "test-results/ui-audit-interaction.json",
+		spec: "apps/console/e2e/audit/inert.spec.ts",
+		persona: "the run's own owner, in the `audit-interaction` project — which ACTIVATES controls and never presses a confirm",
+		org: "a fresh, empty organisation created for the run",
+		covers: "every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS",
+		// ── THE MARKER, AND WHAT CLEARS IT ────────────────────────────────────────────────
+		// Set while the instrument exists and no run has produced its artifact yet. It makes
+		// exactly two things legal that are otherwise errors: `runs.interaction.records` may be
+		// EMPTY, and R8 may have no record anywhere. Everything else still holds — every R8 cell
+		// joins as NOT MEASURED carrying `why`, and NOT MEASURED leaves the denominator, so the
+		// board scores R8 `null` and never 1.
+		//
+		// IT IS CHECKED IN BOTH DIRECTIONS. A ledger entry that outlives its subject fails
+		// SILENTLY and suppresses a real finding forever, so `parseLive()` raises the moment the
+		// section carries a record: the import has landed and this marker is now a lie that would
+		// let an empty re-import read as a pending one. Delete these three lines and re-run
+		// `--write`; that is the whole edit.
+		awaitingFirstImport: {
+			since: "#4277",
+			why: "R8's instrument landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for it yet",
+		},
+	},
 });
 
 /**
@@ -420,6 +460,7 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
 	R5: [],
 	R6: [],
 	R7: [],
+	R8: ["redirect-only", "no-enabled-controls"],
 	T5: ["no-empty-state"],
 	T6: ["redirect-only"],
 	T7: ["no-restricted-surface"],
@@ -768,6 +809,21 @@ export function summariseLiveEvidence(predicate, evidence, verdict = "FAIL") {
 			nonEmpty(Number(e.budgetMs) || 0, "budget");
 			return `p95 over the route's ${e.budgetMs}ms budget`;
 		}
+		if (predicate === "R8") {
+			// `inert.spec.ts` caps nothing — a route over the control budget is NOT MEASURED, not
+			// truncated — so these counts are of everything enumerated. What they are NOT counts of
+			// is everything that EXISTS: a control in a subtree the empty org never renders is
+			// invisible to a live pass, which is why the summary names what was enumerated rather
+			// than implying a denominator it does not have.
+			const e = asObject(evidence, predicate);
+			const inert = Array.isArray(e.inert) ? e.inert : [];
+			const undeclared = (Array.isArray(e.notActivated) ? e.notActivated : []).filter((n) => n?.why === "unregistered-destructive");
+			nonEmpty(inert.length + undeclared.length, "inert control and no undeclared destructive one");
+			const parts = [];
+			if (inert.length > 0) parts.push(`${plural(inert.length, "enabled control")} did nothing within 1000ms`);
+			if (undeclared.length > 0) parts.push(`${plural(undeclared.length, "control")} named a destructive verb the ledger does not declare`);
+			return `${parts.join(", ")} — of ${plural(Number(e.enumerated) || 0, "control")} enumerated on this route`;
+		}
 		if (predicate === "T5") {
 			const e = asObject(evidence, predicate);
 			nonEmpty((e.handRolled ?? []).length, "hand-rolled empty region");
@@ -889,6 +945,15 @@ export function importLive(raw, provenance) {
 	const runs = {};
 	for (const [key, section] of Object.entries(LIVE_SECTIONS)) {
 		const body = raw[key];
+		// A PENDING section whose artifact is not in the download is still pending — it is imported
+		// as the empty, declared section it already is. That keeps `--import-live` usable for the
+		// OTHER sections while R8's leg has not run yet; refusing would block every live refresh in
+		// the repo on one predicate's first measurement. An artifact that IS present is imported
+		// normally, and `parseLive` then refuses the stale marker (see it, for both directions).
+		if (body === undefined && section.awaitingFirstImport !== undefined) {
+			runs[key] = { runKey: "", records: [] };
+			continue;
+		}
 		if (typeof body !== "object" || body === null || !Array.isArray(body.records)) {
 			throw new Error(`${section.artifact}: no \`records\` array. That is a missing or truncated artifact, not an empty run.`);
 		}
@@ -957,6 +1022,43 @@ export function importLive(raw, provenance) {
 const VERDICTS = ["PASS", "FAIL", "N/A", "NOT MEASURED"];
 
 /**
+ * Has a section's `awaitingFirstImport` marker OUTLIVED ITS SUBJECT?
+ *
+ * The marker is how a live predicate whose INSTRUMENT has landed but whose LEG has not yet run gets
+ * DECLARED rather than hidden: its section is allowed to be empty, every cell it owns joins as NOT
+ * MEASURED carrying the marker's reason, and the predicate scores `null` rather than 1. R8 is the
+ * first (#4277). The alternatives were both worse and both available — leaving the predicate out of
+ * the rubric ships an instrument scored by nothing, and hand-writing plausible records poisons a
+ * ledger with numbers no run produced.
+ *
+ * THIS IS THE DIRECTION THAT FAILS SILENTLY, so it is the one that gets a function. An undeclared
+ * hit is loud; an entry that outlives its subject is not, and here it would be worse than noise: a
+ * stale marker makes a LATER EMPTY import read as "still pending" instead of as the vacuous
+ * artifact it is, suppressing forever the finding `liveVacuityProblems()` exists to raise.
+ *
+ * The forward direction — a section with no marker and no records — stays where it already lives,
+ * in `liveVacuityProblems()`, which is the vacuity control for the whole live half. Both directions
+ * are driven in `--self-test`; neither is checked only by the other.
+ *
+ * Pulled out of `parseLive()` so it can be driven against HAND-BUILT sections: the real
+ * `LIVE_SECTIONS` is one state of the world at a time, and a check that can only exercise today's
+ * state stops exercising anything the day the marker is deleted.
+ *
+ * @param {string} key section key
+ * @param {{artifact: string, awaitingFirstImport?: {since: string, why: string}}} section
+ * @param {number} records how many records the committed file carries for it
+ * @returns {string|null} the problem, or null
+ */
+export function staleImportMarkerProblem(key, section, records) {
+	if (section.awaitingFirstImport === undefined || records === 0) return null;
+	return (
+		`\`runs.${key}\` carries ${records} record(s), and LIVE_SECTIONS still marks the section ` +
+		`\`awaitingFirstImport\` (${section.awaitingFirstImport.since}). The import has landed: delete that marker ` +
+		`from LIVE_SECTIONS. Leaving it would let a later EMPTY import read as "still pending".`
+	);
+}
+
+/**
  * Read and validate `apps/console/ui-conformance-live.json`.
  *
  * Every rule the recorder enforces at the point a verdict is written is enforced again here, at the
@@ -989,6 +1091,8 @@ export function parseLive(text) {
 		if (typeof run !== "object" || run === null || !Array.isArray(run.records)) {
 			throw new Error(`${LIVE_JSON}: \`runs.${key}\` is missing or has no records. ${section.artifact} was never imported.`);
 		}
+		const stale = staleImportMarkerProblem(key, section, run.records.length);
+		if (stale !== null) throw new Error(`${LIVE_JSON}: ${stale}`);
 		// The file restates what its section is — which artifact, which persona, which organisation —
 		// so that a reader of the JSON alone knows. A restatement that can drift is worse than none,
 		// so it is CHECKED against LIVE_SECTIONS rather than trusted: change the constant and the
@@ -1050,9 +1154,18 @@ export function liveVacuityProblems(live, routeOrder) {
 	const problems = [];
 	const known = new Set(routeOrder);
 	const measured = new Set();
+	/** Predicates whose section has not been measured yet — declared, not silently absent. */
+	const pending = new Set();
 	for (const [key, section] of Object.entries(LIVE_SECTIONS)) {
 		const rows = live.sections[key].records;
 		if (rows.length === 0) {
+			// A PENDING section is empty BY DECLARATION — `sectionRecordsProblem()` owns that rule
+			// and refuses the other direction. Every cell it owns still joins as NOT MEASURED, so
+			// nothing here scores as a pass; what it must not do is read as "the artifact is gone".
+			if (section.awaitingFirstImport !== undefined) {
+				for (const [id, owner] of livePredicateSections()) if (owner === key) pending.add(id);
+				continue;
+			}
 			problems.push(`the \`${key}\` section (${section.artifact}) holds ZERO records — it measured nothing, which is not the same as finding nothing.`);
 			continue;
 		}
@@ -1065,6 +1178,7 @@ export function liveVacuityProblems(live, routeOrder) {
 		for (const r of rows) measured.add(r.predicate);
 	}
 	for (const id of livePredicateSections().keys()) {
+		if (pending.has(id)) continue;
 		if (!measured.has(id)) {
 			problems.push(`${id} has NO record in any section — the predicate was never measured, and a report that scored it 0/0 would say so as \`—\`.`);
 		}
@@ -1112,7 +1226,10 @@ export function joinLive(live, routeOrder) {
 				route,
 				predicate: id,
 				verdict: "NOT MEASURED",
-				reason: `the \`${key}\` run did not reach this route — it covers ${section.covers}`,
+				reason:
+					section.awaitingFirstImport === undefined
+						? `the \`${key}\` run did not reach this route — it covers ${section.covers}`
+						: `the \`${key}\` section has never been imported (${section.awaitingFirstImport.since}): ${section.awaitingFirstImport.why}`,
 			});
 		}
 	}
@@ -1915,11 +2032,11 @@ export function renderScoreboard(view) {
 	}
 
 	// ── the live half ─────────────────────────────────────────────────────────────────────────
-	L.push("## The live half — two artifacts, two personas, two organisations");
+	L.push("## The live half — three artifacts, three questions, never pooled");
 	L.push("");
-	L.push("T5–T7 and R1–R7 are measured in a browser, not read off the tree. The records below were");
+	L.push("T5–T7 and R1–R8 are measured in a browser, not read off the tree. The records below were");
 	L.push(`imported from **${view.live.source.run}** at commit \`${view.live.source.commit}\` and committed to`);
-	L.push(`\`${LIVE_JSON}\`; refresh them with \`--import-live\`. They come from **two files, joined and never`);
+	L.push(`\`${LIVE_JSON}\`; refresh them with \`--import-live\`. They come from **three files, joined and never`);
 	L.push("pooled** — `e2e/audit/report.ts` records what pooling them cost, and the split is checked here:");
 	L.push("each section declares the predicates it may carry, and a record in the wrong one refuses to parse.");
 	L.push("");
@@ -2462,15 +2579,15 @@ function selfTest() {
 	// THE REAL RUBRIC, because the fixture above proves the parser and not the file it will read.
 	const realRubric = parseRubric(readFileSync(path.join(REPO_ROOT, RUBRIC), "utf8"));
 	ok(
-		`the real ${RUBRIC} defines 34 predicates, in five families`,
-		realRubric.predicates.length === 34 &&
+		`the real ${RUBRIC} defines 35 predicates, in five families`,
+		realRubric.predicates.length === 35 &&
 			[...new Set(realRubric.predicates.map((p) => p.family))].sort().join("") === "FHRST",
 	);
 	const perFamily = {};
 	for (const p of realRubric.predicates) perFamily[p.family] = (perFamily[p.family] ?? 0) + 1;
 	ok(
-		"...S1-S4 (4), T1-T7 (7), H1-H9 (9), F1-F7 (7), R1-R7 (7)",
-		perFamily.S === 4 && perFamily.T === 7 && perFamily.H === 9 && perFamily.F === 7 && perFamily.R === 7,
+		"...S1-S4 (4), T1-T7 (7), H1-H9 (9), F1-F7 (7), R1-R8 (8)",
+		perFamily.S === 4 && perFamily.T === 7 && perFamily.H === 9 && perFamily.F === 7 && perFamily.R === 8,
 	);
 	ok("...including H9, the empty-state row #3798 asked for", realRubric.predicates.some((p) => p.id === "H9"));
 
@@ -2480,7 +2597,7 @@ function selfTest() {
 	ok("24 predicates are scored statically — S1-S4, T1-T4, all nine H rows and all seven F rows", part.scored.length === 24);
 	ok("...and family F is one of them now (#3796), not a column of dashes", ["F1", "F2", "F3", "F4", "F5", "F6", "F7"].every((id) => part.scored.includes(id)));
 	ok("...and so is H3 (#3797), which was the last predicate with no instrument", part.scored.includes("H3"));
-	ok("10 are live", part.live.length === 10 && part.live.sort().join(",") === "R1,R2,R3,R4,R5,R6,R7,T5,T6,T7");
+	ok("11 are live", part.live.length === 11 && part.live.sort().join(",") === "R1,R2,R3,R4,R5,R6,R7,R8,T5,T6,T7");
 	ok("0 have no instrument anywhere — the bucket is empty, and it is still a bucket", part.none.length === 0 && Array.isArray(part.none));
 	// The bucket's contract outlives its last occupant: a row that lands in it must name an owner.
 	// Proved on a fixture rather than on the live table, which is empty.
@@ -2713,6 +2830,11 @@ function selfTest() {
 					// /r is absent: `permissions.spec` drives only the org-only routes.
 				],
 			},
+			// EMPTY, because the section it stands for is declared `awaitingFirstImport`: R8's
+			// instrument landed in #4277 before any `audit-interaction` run produced its artifact.
+			// Every R8 cell must therefore join as NOT MEASURED naming that marker, and R8 must
+			// score `null` — asserted below, in both directions, against `sectionRecordsProblem()`.
+			interaction: { runKey: "", records: [] },
 		},
 	};
 	// ── family F's fixture ───────────────────────────────────────────────────────────────────
@@ -2923,9 +3045,10 @@ function selfTest() {
 
 	// ── the live half ────────────────────────────────────────────────────────────────────────
 	ok(
-		"the two sections partition the ten live predicates, disjointly",
-		livePredicateSections().size === 10 &&
-			[...livePredicateSections()].filter(([, k]) => k === "permissions").map(([id]) => id).join(",") === "T7",
+		"the three sections partition the eleven live predicates, disjointly",
+		livePredicateSections().size === 11 &&
+			[...livePredicateSections()].filter(([, k]) => k === "permissions").map(([id]) => id).join(",") === "T7" &&
+			[...livePredicateSections()].filter(([, k]) => k === "interaction").map(([id]) => id).join(",") === "R8",
 	);
 	raises(
 		"a live predicate declaring a section LIVE_SECTIONS does not define RAISES",
@@ -2952,7 +3075,7 @@ function selfTest() {
 	// The comparison is worthless if the parse found nothing, so that is asserted FIRST and
 	// separately — "the emitter's table is empty" and "the emitter's table matches" must not read
 	// the same.
-	ok(`the ${LIVE_REPORT_TS} NA_REASONS table parses, and is not empty`, naBlock !== null && Object.keys(mirrored).length === 10);
+	ok(`the ${LIVE_REPORT_TS} NA_REASONS table parses, and is not empty`, naBlock !== null && Object.keys(mirrored).length === 11);
 	ok(
 		"...and LIVE_NA_REASONS mirrors it exactly, key for key and reason for reason",
 		JSON.stringify(Object.entries(mirrored).sort()) === JSON.stringify(Object.entries(LIVE_NA_REASONS).map(([k, v]) => [k, [...v]]).sort()),
@@ -2961,6 +3084,36 @@ function selfTest() {
 		"...including the three that are NEVER N/A — an empty list is the assertion, not an omission",
 		LIVE_NA_REASONS.R5.length === 0 && LIVE_NA_REASONS.R6.length === 0 && LIVE_NA_REASONS.R7.length === 0,
 	);
+
+	// R8'S NAME MATCHER MIRRORS THE CENSUS'S VERB LIST. `scripts/check-destructive-actions.mjs` is
+	// the ONE definition of "this verb destroys something"; `e2e/audit/inert.ts` needs the same set
+	// to decide which UNREGISTERED control it must refuse to activate. A second hand-kept list is
+	// what stops matching silently, so both are parsed out of their own files and compared — and the
+	// "did the parse find anything" question is asked FIRST and separately, because an empty parse
+	// and a matching parse must not read the same.
+	const inertSrc = readFileSync(path.join(REPO_ROOT, "apps/console/e2e/audit/inert.ts"), "utf8");
+	const censusSrc = readFileSync(path.join(REPO_ROOT, "scripts/check-destructive-actions.mjs"), "utf8");
+	const inertVerbs = (inertSrc.match(/export const DESTRUCTIVE_VERBS = \[([\s\S]*?)\] as const;/)?.[1] ?? "").match(/"([a-z]+)"/g)?.map((v) => v.slice(1, -1)) ?? [];
+	const censusVerbs = censusSrc.match(/export const DESTRUCTIVE_VERB =\s*\/\^\(([a-z|]+)\)/)?.[1]?.split("|") ?? [];
+	ok("the destructive verb lists both PARSE, and neither is empty", inertVerbs.length > 0 && censusVerbs.length > 0);
+	ok(
+		"...and e2e/audit/inert.ts's R8 name matcher is the census's verb set, verb for verb",
+		inertVerbs.slice().sort().join(",") === censusVerbs.slice().sort().join(","),
+	);
+
+	// ── the `awaitingFirstImport` marker, in BOTH directions, on hand-built sections ──────────
+	// Hand-built rather than the real constant on purpose: `LIVE_SECTIONS` is one state of the world
+	// at a time, and a check that can only exercise today's state stops exercising anything the day
+	// the marker is deleted. The forward direction (a section with no marker and no records) is the
+	// vacuity control's, asserted with the rest of them below.
+	const pendingSection = { artifact: "test-results/x.json", awaitingFirstImport: { since: "#4277", why: "its leg has not run" } };
+	const settledSection = { artifact: "test-results/x.json" };
+	ok("a PENDING section with no records is legal — that is what the marker is for", staleImportMarkerProblem("x", pendingSection, 0) === null);
+	ok(
+		"...and a PENDING section that CARRIES records raises, naming the edit that clears it",
+		(staleImportMarkerProblem("x", pendingSection, 3) ?? "").includes("delete that marker"),
+	);
+	ok("a settled section is not the marker's business, with records or without", staleImportMarkerProblem("x", settledSection, 3) === null && staleImportMarkerProblem("x", settledSection, 0) === null);
 
 	// ── evidence summaries: hand-built shapes, hand-written expectations ──────────────────────
 	// Never a value the summariser computed. Each shape is the one `e2e/audit/routes.spec.ts` and
@@ -3250,6 +3403,35 @@ function selfTest() {
 		summariseLiveEvidence("T7", { redirectedAway: true }) === "the member is refused and is redirected away rather than shown a state" &&
 			summariseLiveEvidence("T7", { redirectedAway: false }) === "the member is refused and the page renders a blank, not a deliberate state",
 	);
+	// R8's three FAIL shapes. Hand-built, hand-expected — never a value the summariser computed.
+	const r8Evidence = (over) => ({ enumerated: 12, activated: 12, inert: [], notActivated: [], disabled: { withReason: 0, noReason: 0 }, external: 0, networkSignal: true, enumeratedFrom: ["main"], ...over });
+	ok(
+		"R8 names how many enabled controls did nothing, and out of how many were ENUMERATED",
+		summariseLiveEvidence("R8", r8Evidence({ inert: [{ control: 'button "Export"', origin: "main" }, { control: 'button "Retry"', origin: "main" }] })) ===
+			"2 enabled controls did nothing within 1000ms — of 12 controls enumerated on this route",
+	);
+	ok(
+		"...and an undeclared destructive control is its OWN half of the sentence, not folded into inert",
+		summariseLiveEvidence("R8", r8Evidence({ notActivated: [{ control: 'button "Delete runner"', why: "unregistered-destructive" }] })) ===
+			"1 control named a destructive verb the ledger does not declare — of 12 controls enumerated on this route",
+	);
+	ok(
+		"...and a route carrying both says both",
+		summariseLiveEvidence("R8", r8Evidence({ inert: [{ control: 'button "Export"', origin: "chrome" }], notActivated: [{ control: 'button "Revoke key"', why: "unregistered-destructive" }] })).startsWith(
+			"1 enabled control did nothing within 1000ms, 1 control named a destructive verb",
+		),
+	);
+	ok(
+		"...and an EXCLUDED control is not a finding — a file chooser and a sign-out are declared, not inert",
+		summariseLiveEvidence("R8", r8Evidence({ inert: [{ control: 'button "x"', origin: "main" }], notActivated: [{ control: 'button "Sign out"', why: "session-ending" }, { control: 'button "Upload"', why: "opens-file-chooser" }] })) ===
+			"1 enabled control did nothing within 1000ms — of 12 controls enumerated on this route",
+	);
+	raises(
+		"...and an R8 FAIL with nothing inert and nothing undeclared RAISES — a FAIL whose summary contradicts it",
+		() => summariseLiveEvidence("R8", r8Evidence({})),
+		"finds no inert control and no undeclared destructive one",
+	);
+
 	raises(
 		"an evidence shape the summariser does not know RAISES rather than summarising as nothing",
 		() => summariseLiveEvidence("R5", [{ id: "label" }]),
@@ -3323,15 +3505,25 @@ function selfTest() {
 		JSON.stringify({
 			version: 1,
 			source: fixtureLive.source,
-			runs: { routes: described("routes"), permissions: described("permissions"), ...Object.fromEntries(Object.entries(over ?? {}).map(([k, v]) => [k, described(k, v)])) },
+			runs: {
+				routes: described("routes"),
+				permissions: described("permissions"),
+				interaction: described("interaction"),
+				...Object.fromEntries(Object.entries(over ?? {}).map(([k, v]) => [k, described(k, v)])),
+			},
 		});
 	ok("a well-formed live file parses", parseLive(liveText({ routes: { runKey: "k", records: [liveRecord("/a", "R1", "PASS")] } })).sections.routes.records.length === 1);
 	raises("a version this file does not know RAISES", () => parseLive(JSON.stringify({ version: 2 })), "expected `version: 1`");
 	raises("a file with no provenance RAISES", () => parseLive(JSON.stringify({ version: 1, runs: {} })), "a baseline nobody can cite is not one");
 	raises("a missing section RAISES", () => parseLive(JSON.stringify({ version: 1, source: fixtureLive.source, runs: { routes: described("routes") } })), "runs.permissions");
 	raises(
+		"...including the interaction one, which is EMPTY but not absent — a section nobody declares is a section nobody reads",
+		() => parseLive(JSON.stringify({ version: 1, source: fixtureLive.source, runs: { routes: described("routes"), permissions: described("permissions") } })),
+		"runs.interaction",
+	);
+	raises(
 		"a section that describes an artifact LIVE_SECTIONS has moved RAISES rather than reading on",
-		() => parseLive(JSON.stringify({ version: 1, source: fixtureLive.source, runs: { routes: described("routes", { artifact: "test-results/old.json" }), permissions: described("permissions") } })),
+		() => parseLive(JSON.stringify({ version: 1, source: fixtureLive.source, runs: { routes: described("routes", { artifact: "test-results/old.json" }), permissions: described("permissions"), interaction: described("interaction") } })),
 		"describe a section that has moved",
 	);
 	raises(
@@ -3376,7 +3568,7 @@ function selfTest() {
 	);
 
 	// ── vacuity: "found nothing" must not be reachable from "was not run" ─────────────────────
-	const emptyLive = { source: fixtureLive.source, sections: { routes: { runKey: "k", records: [] }, permissions: { runKey: "k", records: [] } } };
+	const emptyLive = { source: fixtureLive.source, sections: { routes: { runKey: "k", records: [] }, permissions: { runKey: "k", records: [] }, interaction: { runKey: "", records: [] } } };
 	ok("a healthy live artifact is clean", liveVacuityProblems(fixtureLive, ["/a", "/b", "/r"]).length === 0);
 	ok(
 		"an EMPTY live artifact is a problem, not ten predicates nobody failed",
@@ -3385,6 +3577,28 @@ function selfTest() {
 	ok(
 		"...and every live predicate with no record anywhere is named",
 		liveVacuityProblems(emptyLive, ["/a"]).filter((p) => p.includes("has NO record in any section")).length === 10,
+	);
+	// R8 IS THE ELEVENTH LIVE PREDICATE AND IS NOT IN THAT TEN, because its section is declared
+	// `awaitingFirstImport` — the ONE thing the marker buys. The two assertions below are the two
+	// halves that keep it from becoming a hole: the pending section is not reported as a vacuous
+	// artifact, AND every cell it owns still joins as NOT MEASURED naming the marker, so the
+	// predicate scores `null` and never 1. Delete the marker and the first of these flips, which is
+	// the point.
+	ok(
+		"a PENDING section is not reported as a vacuous artifact — that is the marker's whole job",
+		!liveVacuityProblems(emptyLive, ["/a"]).some((p) => p.includes("`interaction`")) &&
+			!liveVacuityProblems(emptyLive, ["/a"]).some((p) => p.includes("R8 has NO record")),
+	);
+	ok(
+		"...and its cells still join as NOT MEASURED, naming the marker rather than a coverage gap",
+		joinLive(emptyLive, ["/a"]).filter((v) => v.predicate === "R8").every((v) => v.verdict === "NOT MEASURED" && v.reason.includes("has never been imported")),
+	);
+	ok(
+		"...so R8 scores null, never 1 — a column of withheld cells is not a clean board",
+		(() => {
+			const cells = joinLive(emptyLive, ["/a", "/b"]).filter((v) => v.predicate === "R8");
+			return cells.length === 2 && cells.filter((v) => v.verdict === "PASS").length === 0;
+		})(),
 	);
 	ok(
 		"a record naming a route the manifest does not define is a problem",
@@ -3585,7 +3799,7 @@ function selfTest() {
 	);
 	ok("...and no absolute path either", !md.includes(REPO_ROOT) && !renderJson(view).includes(REPO_ROOT));
 	const parsedJson = JSON.parse(renderJson(view));
-	ok("the JSON carries one record per (route, predicate) it scored — 24 static + 10 live, every predicate", parsedJson.verdicts.length === 3 * 34);
+	ok("the JSON carries one record per (route, predicate) it scored — 24 static + 11 live, every predicate", parsedJson.verdicts.length === 3 * 35);
 	ok("...in the shape e2e/audit/report.ts writes", parsedJson.verdicts.every((v) => "route" in v && "predicate" in v && "verdict" in v));
 
 	// ── splice ───────────────────────────────────────────────────────────────────────────────
@@ -3877,6 +4091,9 @@ if (invokedDirectly) {
 			// never arrived is the exact shape this whole job exists to stop — a summary that reads
 			// like good news because nothing was measured.
 			if (found === undefined) {
+				// A section still marked `awaitingFirstImport` has no artifact BY DECLARATION, and
+				// saying so is not the same as rendering it as zero failures.
+				if (section.awaitingFirstImport !== undefined) continue;
 				console.error(
 					`audit-report: could not find \`${leaf}\` under ${candidates.join(" or ")}. ` +
 						`Refusing to summarise: a section with no artifact would render as zero failures.`,
@@ -3919,10 +4136,13 @@ if (invokedDirectly) {
 				}
 			});
 			if (found === undefined) {
+				// Pending sections import as empty rather than blocking the refresh of the others —
+				// see `importLive()`, which is where that decision is argued and enforced.
+				if (section.awaitingFirstImport !== undefined) continue;
 				console.error(
 					`audit-report: could not find \`${leaf}\` under ${candidates.join(" or ")}.\n` +
 						`Download it with \`gh run download <run-id> -n ui-audit -D <dir>\`; the \`audit\` job ` +
-						`uploads both files with 14-day retention.`,
+						`uploads its files with 14-day retention.`,
 				);
 				process.exit(1);
 			}
