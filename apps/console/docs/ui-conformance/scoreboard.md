@@ -221,7 +221,7 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/[org]/[project]/settings/activity` | 279 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
 | `/[org]/~/settings/sso` | 213 | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 | **0.97** |
 | `/[org]` | 285 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
-| `/[org]/[project]/architecture` | 398 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
+| `/[org]/[project]/architecture` | 397 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/[project]/clusters` | 165 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/[project]/settings/general` | 216 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
 | `/[org]/[project]/settings/preview` | 143 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** |
