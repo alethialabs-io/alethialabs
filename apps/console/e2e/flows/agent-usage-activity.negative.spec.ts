@@ -4,12 +4,14 @@
 // E2E (negatives / gating / empty-state) for the insights surfaces — the paths that a plan boundary,
 // an unmatched filter, or an invalid input should block or narrow:
 //   • Activity CSV export is Enterprise-only → disabled on Hobby AND Pro (non-enterprise).
-//   • Activity time windows older than the plan's retention prompt an upgrade instead of applying.
+//   • Activity time windows older than the plan's retention prompt an upgrade INSTEAD of applying —
+//     and the filters must be provably untouched, which is a question for the URL, not the screen.
 //   • An unmatched search lands the feed on its empty state.
 //   • The project-scoped feed drops the org-only affordances (Export CSV + the Project facet).
-//   • The account dialog validates the display name (empty → error, no persist).
+//   • The account dialog: Save is inert until something changes, and an over-long name is refused.
 //
-// Personas: `owner` = Hobby (community, 7-day activity retention), `team` = Pro (30-day retention).
+// Personas: `owner` = Hobby (community, 7-day activity retention), `team` = Pro (30-day retention)
+// — `apps/console/lib/billing/plan.ts`, `activityRetentionDays`.
 
 import fs from "node:fs";
 import { seedProject } from "../helpers/seed";
@@ -54,18 +56,71 @@ test.describe("Activity — retention window gating (Hobby)", () => {
 	}) => {
 		await owner.page.goto(activityPath(owner.orgSlug));
 		await expect(
-			owner.page.getByRole("button", { name: /last 7 days/i }),
+			owner.page.getByRole("button", { name: /^Last 7 days$/i }),
 		).toBeVisible({ timeout: 30_000 });
 
-		await owner.page.getByRole("button", { name: /last 7 days/i }).click();
+		// Captured while the filters are provably pristine, so the assertion at the end can be
+		// an EQUALITY rather than a list of keys someone has to remember to extend.
+		const pristineUrl = owner.page.url();
+
+		await owner.page.getByRole("button", { name: /^Last 7 days$/i }).click();
 		await owner.page.getByRole("button", { name: "Last 30 days", exact: true }).click();
 
-		// The pick predates Hobby's 7-day retention → the upgrade sheet intercepts.
+		// The pick predates Hobby's 7-day retention → `applyRange` opens the upgrade sheet and
+		// returns WITHOUT patching the store (activity-log.tsx).
 		await expect(owner.page.getByRole("dialog")).toBeVisible({ timeout: 15_000 });
-		// The trigger label stays put (the range was NOT applied).
-		await expect(
-			owner.page.getByRole("button", { name: /last 7 days/i }),
-		).toBeVisible();
+
+		// WHY THE ASSERTION IS THE TRIGGER'S LABEL AND NOT A NEGATED `toHaveURL` (#4619 review).
+		//
+		// A web assertion — negated or not — retries until it holds and RETURNS ON THE FIRST
+		// PASSING POLL. The window starts with no `rangeLabel`/`from` in it, so
+		// `not.toHaveURL(/rangeLabel=/)` passed on its first evaluation whether or not the range
+		// was applied: had `applyRange` regressed to `patch({…}); setUpgradeOpen(true)`, the URL
+		// would only change AFTERWARDS, through `useFilterUrlSync`'s effect → `router.replace()`
+		// → a soft navigation, a few frames past the assertion that had already returned. The
+		// pair could not fail, which is the whole of what it was for.
+		//
+		// The trigger's label has no such window. It is rendered straight from the filter
+		// store's `rangeLabel`, and `patch` + `setUpgradeOpen(true)` would be batched into ONE
+		// React commit — so the sheet BEING VISIBLE, asserted above, already proves the label has
+		// been re-rendered from whatever the store now holds. There is no "not yet" state to be
+		// satisfied by.
+		//
+		// It is read with a CSS locator on purpose. The sheet is a modal, so the page behind it
+		// leaves the accessibility tree and `getByRole` resolves to nothing there — which is why
+		// the ORIGINAL label assertion was recorded `failed` on a page where nothing was wrong.
+		// `locator(...)` + `hasText` is a DOM query, not an a11y one, and `toHaveText` does not
+		// require visibility, so neither is affected by `aria-hidden`.
+		//
+		// `button[aria-expanded]` IS THE DISAMBIGUATION, and it is not decoration. This test has
+		// already opened the picker, and base-ui KEEPS THE CLOSED PANEL MOUNTED (2c9911d16, where
+		// a run resolved two buttons for one name) — so three of the five `RANGE_PRESETS`
+		// (packages/ui/src/range.ts) are still in the DOM behind it and every one of "Last 7
+		// days", "Last 14 days" and "Last 30 days" matches the text filter. The trigger is the
+		// only one of the four that is a DISCLOSURE control, and it carries `aria-expanded`
+		// because of what it is, not because of where the panel was portalled: the presets are
+		// plain `<button>`s without the attribute. Nothing else in the bar can collide — the
+		// other disclosure triggers label themselves "User", "Project", "Events", or, for
+		// `DateRangeFilter`, with formatted dates (`formatRangeLabel`).
+		//
+		// So NOT `.first()`, which would be an assertion about DOM ORDER — the same trap
+		// 2c9911d16 declined for the `getByRole` half of this lane. This resolves to exactly one
+		// node, and if it ever stops doing so Playwright's strict mode says so loudly rather
+		// than silently picking whichever the portal happened to put first.
+		//
+		// The text filter stays loose and the ASSERTION is what is exact: it must still select
+		// the trigger after a regression has relabelled it, or the test would fail by finding
+		// nothing and say the wrong thing about why.
+		const rangeTrigger = owner.page
+			.locator("button[aria-expanded]")
+			.filter({ hasText: /Last \d+ days/ });
+		await expect(rangeTrigger).toHaveText("Last 7 days");
+
+		// And the URL exactly, as a second, independent half: a rejected pick writes no key and
+		// `useFilterUrlSync` deletes every default-valued one, so a pristine window is the path
+		// with no query string at all. Equality fails on ANY key a regression might add, not only
+		// the two this test happened to name.
+		await expect(owner.page).toHaveURL(pristineUrl);
 	});
 });
 
@@ -125,18 +180,66 @@ test.describe("Activity — project scope drops org-only affordances (owner)", (
 });
 
 // ── Account settings — display-name validation ──────────────────────────────────────────────
+//
+// WHAT IS NOT HERE, AND WHY. "Clearing the display name surfaces a validation error" was recorded
+// `failed`, and rewriting it would not have fixed it: `Save Changes` is `disabled={!isDirty}` and
+// the form is built with react-hook-form `values: { name: user?.name ?? "" }`, so for a persona
+// whose display name is ALREADY empty, clearing the field returns the form to its own defaults —
+// not dirty, Save inert, no submit, no error. The `min(1)` branch is unreachable from that
+// starting state, which is correct behaviour, and a test that waits for a disabled button to
+// enable can only time out. Measuring it needs a persona with a display name, which global-setup's
+// OTP signup does not set; that is a seeding change, and this lane does not own `global-setup.ts`.
+// So this describe measures the two rules that ARE reachable from any starting state.
+//
+// BOTH CARRY `@needs:stripe` BECAUSE OF WHERE THEY STAND, NOT WHAT THEY ASSERT (#4619 review).
+// The account dialog needs a shell to open from and these two use `usagePath` for it, so the
+// Stripe-fronted `UsagePanel` renders behind the dialog either way — and the tag is a property
+// of the surface a test puts on screen, not of the assertion it happens to make. The rule and
+// its reason are stated once, in the `Usage —` header of agent-usage-activity.spec.ts.
 test.describe("Account settings — validation (owner)", () => {
-	test("clearing the display name surfaces a validation error", async ({ owner }) => {
-		await owner.page.goto(usagePath(owner.orgSlug));
-		await owner.page.getByRole("button", { name: /account menu/i }).click();
-		await owner.page.getByRole("button", { name: /account settings/i }).click();
+	test(
+		"Save Changes is inert until the profile actually changes",
+		{ tag: "@needs:stripe" },
+		async ({ owner }) => {
+			await owner.page.goto(usagePath(owner.orgSlug));
+			await owner.page.getByRole("button", { name: /account menu/i }).click();
+			await owner.page.getByRole("button", { name: /account settings/i }).click();
 
-		const dialog = owner.page.getByRole("dialog");
-		const name = dialog.getByLabel(/display name/i);
-		await expect(name).toBeVisible({ timeout: 15_000 });
-		await name.fill(""); // making it empty also marks the form dirty → Save enables
-		await dialog.getByRole("button", { name: /save changes/i }).click();
+			const dialog = owner.page.getByRole("dialog");
+			const name = dialog.getByLabel(/display name/i);
+			const save = dialog.getByRole("button", { name: /save changes/i });
+			await expect(name).toBeVisible({ timeout: 15_000 });
 
-		await expect(dialog.getByText(/enter a display name/i)).toBeVisible();
-	});
+			await expect(save).toBeDisabled();
+			await name.fill(`QA probe ${Date.now()}`);
+			// Enabling is what the edit uniquely produces — a control that never enables and one that
+			// is always enabled both fail here, which is why both halves are asserted.
+			await expect(save).toBeEnabled();
+		},
+	);
+
+	test(
+		"a display name past the 120-character limit is refused",
+		{ tag: "@needs:stripe" },
+		async ({ owner }) => {
+			await owner.page.goto(usagePath(owner.orgSlug));
+			await owner.page.getByRole("button", { name: /account menu/i }).click();
+			await owner.page.getByRole("button", { name: /account settings/i }).click();
+
+			const dialog = owner.page.getByRole("dialog");
+			const name = dialog.getByLabel(/display name/i);
+			await expect(name).toBeVisible({ timeout: 15_000 });
+
+			// 121 characters — one past `profileSchema`'s `.max(120)`. Reachable from ANY starting
+			// value, unlike the empty-name branch: it differs from every default, so the form is
+			// dirty and Save submits.
+			await name.fill("q".repeat(121));
+			await dialog.getByRole("button", { name: /save changes/i }).click();
+
+			// The message is zod's own for `max`, and its wording has changed between zod majors, so
+			// the LIMIT is what is asserted — the number the schema states — rather than a sentence
+			// this test would own a copy of.
+			await expect(dialog.getByText(/120/)).toBeVisible();
+		},
+	);
 });

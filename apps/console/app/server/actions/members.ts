@@ -286,7 +286,7 @@ export async function getInviteContext(): Promise<InviteContext> {
 					Array<{ memberEmail: string | null; inviteEmail: string | null }>(),
 				)
 			: db
-					.select({ memberEmail: user.email, inviteEmail: invitation.email })
+					.select({ memberEmail: user.email })
 					.from(member)
 					.innerJoin(user, eq(member.userId, user.id))
 					.where(eq(member.organizationId, actor.orgId))
