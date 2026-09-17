@@ -11,7 +11,7 @@
 // ⚠ WHY A TYPO IS NOT A COSMETIC DEFECT. Since #4584, an uninterpretable scope confers nothing and
 // — on a DENY row — excludes the WHOLE ORG (`EMPTY_SCOPE_DENIES`, lib/authz/grant-scope.ts). So an
 // access admin who means "deny project:deploy on project P" and writes `projects` (plural) posts a
-// request that returns 200 and denies `project:deploy` org-wide, on both PDPs. The quieter half is
+// request that returns 201 and denies `project:deploy` org-wide, on both PDPs. The quieter half is
 // the allow direction: a typo'd allow also returns success and confers nothing on either engine,
 // which reads to the admin as "granted".
 //
