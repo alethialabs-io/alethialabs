@@ -740,12 +740,21 @@ EOF
 #    this exit non-zero → the step goes RED.
 #
 #    DELETING the bundle is what makes "not uploading" true (#1937). The workflow's
-#    `Upload proof artifact` step is `if: always()` and uploads `demos/proofs/<provider>/`
+#    `Upload proof artifact` step was `if: always()` and uploaded `demos/proofs/<provider>/`
 #    whatever happened here — so exiting non-zero while leaving the bundle on disk published
 #    the exact bundle that had just failed its own secret tripwire, on a PUBLIC repo, with the
 #    job showing `Capture proof: failure` → `Upload proof artifact: success`. That is #1854's
 #    shape on the sibling path: scrub-runner-log.sh was taught to `rm -f` its output before
 #    failing, and this path was not.
+#
+#    The workflow has since been narrowed (#4723): `Resolve this run's proof bundle` runs only
+#    where THIS step succeeded, the upload rides on that step's outcome, and it now names one
+#    resolved bundle rather than the provider directory. So the workflow refuses an aborted capture
+#    on its own. THE DELETE STAYS, and not out of caution: the guarantee this script makes is about
+#    DISK — the marker it writes below says every captured file was deleted rather than uploaded,
+#    and that sentence is this file's to keep true. A fail-closed promise whose only enforcement
+#    lives in a condition in another file is one edit away from being false, and the edit would not
+#    look like it touched secret handling. Do not remove it on the strength of the workflow's gate.
 #
 #    Only THIS capture's directory goes. The provider dir also holds committed historical
 #    proofs, which are already scrubbed and are not ours to delete. The marker left behind says
