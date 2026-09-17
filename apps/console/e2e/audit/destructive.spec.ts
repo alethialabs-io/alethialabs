@@ -58,6 +58,26 @@
 // registry claim a confirmation here, and can this spec seed what that claim needs? If both, the
 // run OWES a measurement and a withheld verdict is a FAILURE NAMED BY ID. A withheld verdict on an
 // entry recorded `missing` or `inert` stays green — that is honest, not a claim.
+//
+// ── THE FIXTURES ARE SEEDED HERE, AND THAT IS WHAT MOVES THE FLOOR ──────────────────────────────
+//
+// The floor above asks two questions, and #4458 answers the SECOND one. "Can this spec seed what
+// that claim needs?" was `SEEDABLE_FIXTURES`, a hand-written set holding `none` and `project` —
+// because those were the only two fixtures anything wrote. 33 of the registry's 35 declared
+// fixtures had no seeder, so 42 of 47 controls were excluded from the floor by construction: not
+// owed, not measured, and green.
+//
+// Every registry entry declares a `fixture:` — "what the spec must seed for the control to render"
+// — and until #4458 NOTHING read that column. `e2e/audit/fixtures-destructive.ts` is the reader. It
+// maps a fixture name to the rows that make it true, declares the ones that genuinely cannot be
+// written (with what blocks each), and fails when a declared fixture has NEITHER.
+// `SEEDABLE_FIXTURES` is now DERIVED from that map rather than retyped beside it, so the floor
+// rises as seeders land and cannot drift from what the seeding pass actually does.
+//
+// The two changes are complements. #4646 decides WHEN a withheld verdict is owed; this makes the
+// rows exist so the measurement can happen — and, where it still cannot, `withholdWithFixture`
+// appends the fixture's own answer to the observation, so "the trigger is not rendered … for this
+// persona" stops being the only thing the reader is told.
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -66,6 +86,17 @@ import { expect, test, type Browser, type Locator, type Page, type Request } fro
 
 import { db, closeDb } from "../helpers/db";
 import { restoreContext, materialize, resolveOrgSlug, resolveOwner, saveContext, seedRouteFixtures, type AuditContext } from "./context";
+import {
+	controlsByCoverage,
+	declaredFixtures,
+	fixtureCoverage,
+	fixtureSeedFailureReason,
+	FIXTURE_SEEDERS,
+	seedDestructiveFixtures,
+	UNSEEDABLE,
+	type FixtureSeeder,
+	type FixtureSeedReport,
+} from "./fixtures-destructive";
 import { consoleRoutes } from "./manifest";
 
 // ── the ledger, through the census's reader ─────────────────────────────────────────────────────
@@ -118,24 +149,27 @@ function registry(): ControlEntry[] {
 const CONTROLS = registry();
 
 /**
- * The fixtures `e2e/audit/context.ts` → `seedRouteFixtures` ACTUALLY writes, named as the registry
- * names them. This is the spec's half of the floor below, and #4458 grows it one batch at a time.
+ * The fixtures this spec ACTUALLY seeds — DERIVED from the seeder map, never retyped beside it.
  *
- * Verified against the tree, not copied from the registry's `fixture:` column:
- *  · `none` — needs no seeding at all.
- *  · `project` — `seedProject` writes the project, its default environment and the network/cluster
- *    components, and `seedRouteFixtures` calls it.
+ * This is the spec's half of the floor below: `owedFindings` asks, per entry, "can this spec seed
+ * what that claim needs?", and this set is the answer. It held two literals — `none` and `project`
+ * — because those were the only two fixtures anything wrote, which excluded 42 of 47 controls from
+ * the floor by construction: not owed, not measured, and green (#4458).
  *
- * `active-job` is DELIBERATELY ABSENT and the absence is the finding. `seedRouteFixtures` does call
- * `seedJob`, but with no `status`, and `seedJob` defaults to a FINISHED deploy — so the row it
- * writes is not the fixture `jobs.cancel` declares. Listing `active-job` here would claim a
- * measurement the seeder cannot produce, which is the same over-claim one level down.
+ * ⚠ IT IS DERIVED BECAUSE A HAND-WRITTEN COPY IS A SECOND LIST THAT CANNOT BE KEPT TRUE. The
+ * literal version had to be edited by whoever added a seeder, and forgetting was silent in the
+ * direction that matters: a fixture seeded but unlisted keeps its controls out of the floor, so the
+ * work of writing the seeder buys nothing. Reading `FIXTURE_SEEDERS.keys()` makes the floor rise
+ * with the seeders themselves. Direction 3 of `owedFindings` still guards the other way round — a
+ * control the run REACHED whose fixture this set does not name is a named failure — and with the
+ * set derived, that finding now reads "write the seeder", which is the true remedy.
  *
- * ⚠ `fixture:` is DECLARED on every registry entry and, before this, was read by nothing — not this
- * spec, not `context.ts`, not `scripts/check-destructive-actions.mjs`. A column no instrument reads
- * cannot be wrong, which is why 35 distinct fixtures could be declared against two that are seeded.
+ * `active-job` used to be DELIBERATELY ABSENT here, and the note said so: `seedRouteFixtures` calls
+ * `seedJob` with no status, `seedJob` defaults to a FINISHED deploy, and the row it wrote was not
+ * the fixture `jobs.cancel` declares. That is fixed rather than excused — the `active-job` seeder
+ * flips the audit's own job to QUEUED, which is one of the three statuses that render Cancel.
  */
-const SEEDABLE_FIXTURES: ReadonlySet<string> = new Set(["none", "project"]);
+const SEEDABLE_FIXTURES: ReadonlySet<string> = new Set(FIXTURE_SEEDERS.keys());
 
 /**
  * Entries the registry records `confirmed`, whose fixture IS seedable, and which the run still
@@ -144,12 +178,27 @@ const SEEDABLE_FIXTURES: ReadonlySet<string> = new Set(["none", "project"]);
  * THIS LEDGER FAILS IN BOTH DIRECTIONS, and the second direction is the one that matters. An
  * undeclared withheld verdict on an owed control is loud. A ledger entry that OUTLIVES its subject
  * is silent, and would suppress a real measurement forever — so an entry here that the run DID
- * measure is also a failure, telling the reader to delete the line. The list can therefore only
- * shrink, and #4458's fixture work shrinks it.
+ * measure is also a failure, telling the reader to delete the line.
+ *
+ * ⚠ IT GREW FROM TWO TO FIFTEEN IN #4458, AND THE EARLIER NOTE THAT IT "CAN ONLY SHRINK" WAS
+ * WRONG — not about the rule, about the arithmetic. Membership is a function of what the run OWES,
+ * and #4458 took the owed set from 2 entries to 41 by writing the seeders. The thirteen added below
+ * are not new defects and this PR did not cause one of them: each is a registry entry that has
+ * always named a control the DOM does not have, invisible for exactly as long as its fixture went
+ * unseeded, because an entry whose fixture nothing writes is excluded from the floor before its
+ * `reach` or `control` is ever read. Making the rows exist is what made them answerable.
+ *
+ * So the honest rule is: it shrinks as the REGISTRY is fixed, and it grows when the owed set grows.
+ * What must never happen is a line added to quieten a control whose entry is correct — hence every
+ * line below cites the code that contradicts the entry, and the both-directions check means a line
+ * that is wrong fails on the first run that reaches its control.
  *
  * It is not a place to park work. Every line names a defect in the REGISTRY ENTRY or in the
  * product, not "no fixture yet" — an entry whose fixture is unseedable never reaches this list at
  * all, because `SEEDABLE_FIXTURES` already excludes it.
+ *
+ * ⚠ NONE OF THE THIRTEEN IS THIS UNIT'S TO FIX. `destructive-actions.yaml` is a shared registry and
+ * these are other units' entries, so they are cited here and reported on the PR rather than edited.
  */
 const UNREACHED: ReadonlyMap<string, string> = new Map([
 	[
@@ -163,6 +212,75 @@ const UNREACHED: ReadonlyMap<string, string> = new Map([
 		'its reach step is {open: "add a node so the pending-changes bar renders"} — a sentence of ' +
 			"prose where a control name belongs, so it can never match. The bar renders only once the " +
 			"canvas holds a staged change, which is a STATE the `project` fixture does not create.",
+	],
+
+	// ── the six connector entries: a menu that does not exist, and a role that is wrong ──────────
+	//
+	// All six declare `reach: {menu: "connector actions"}` and `control: {role: menuitem, name:
+	// "Disconnect"}`. Measured: `components/connectors/` contains NO `DropdownMenu`, no
+	// `role="menuitem"` and no context menu of any kind. The real controls are two BUTTONS in the
+	// detail sheet — the connector-level `Disconnect {integration.name}`
+	// (`connector-detail-sheet.tsx:194`) and the per-account icon button
+	// `aria-label={`Disconnect ${acc.name}`}` (`:390`) — reached by opening the connector's card.
+	// `triggerCandidates` looks up `getByRole("menuitem", …)`, which matches nothing on this page,
+	// so the verdict is withheld however many identities are seeded.
+	...(
+		[
+			"connectors.disconnect",
+			"connectors.disconnect.aws",
+			"connectors.disconnect.gcp",
+			"connectors.disconnect.azure",
+			"connectors.disconnect.extra",
+			"connectors.disconnect.api-key",
+		] as const
+	).map((id): [string, string] => [
+		id,
+		"the entry declares {menu: \"connector actions\"} and {role: menuitem, name: \"Disconnect\"}; " +
+			"`components/connectors/` renders no menu and no menuitem at all. The real control is a BUTTON named " +
+			"`Disconnect <name>` inside the connector detail sheet (connector-detail-sheet.tsx:194 for the " +
+			"connector-level one, :390 for the per-account one), reached by opening the connector's card. The fixture " +
+			"is seeded; the entry names a control the DOM does not have.",
+	]),
+
+	// ── the five agent entries: "Ask AI" opens the PANEL, and the panel has none of these ────────
+	//
+	// Measured: `ask-ai-button.tsx` calls `togglePanel`, which sets `view: "panel"`;
+	// `elench-conversation.tsx` then renders `ElenchPanel`, and `elench-panel.tsx` imports NO
+	// `ThreadRail`, no `WidgetGrid`, no gallery and no knowledge panel — all four are mounted only
+	// by `elench-modal.tsx` (its imports at :10-11). The step between them is the panel header's
+	// `aria-label="Expand to full screen"` (`elench-panel.tsx:83`), which no entry's reach names.
+	...(
+		[
+			"agent.thread.delete",
+			"agent.artifact.delete",
+			"agent.artifact.unshare",
+			"agent.knowledge.delete",
+			"agent.widget.remove",
+		] as const
+	).map((id): [string, string] => [
+		id,
+		'its reach chain starts at {open: "Ask AI"}, which opens the PANEL (`ask-ai-button.tsx` → `togglePanel` → ' +
+			"`view: \"panel\"`). `elench-panel.tsx` mounts no thread rail, no artifact gallery, no knowledge panel and " +
+			"no widget grid — every one of them is imported only by `elench-modal.tsx` (:10-11). The chain is missing " +
+			'the step {open: "Expand to full screen"} (`elench-panel.tsx:83`). The rows are seeded; the chain stops one ' +
+			"click short of the surface that renders them.",
+	]),
+
+	[
+		"env.delete",
+		'the entry declares {menu: "Environment actions"} and {role: menuitem, name: "Delete"}. ' +
+			"`components/environments/` renders no menu and no menuitem; the control is a bare icon " +
+			'`<Button title="Delete">` (`environment-card.tsx:253-264`), so its role is `button`. The second ' +
+			"environment is seeded and `!env.is_default` is the only condition on it — the entry's reach and role are " +
+			"what cannot resolve.",
+	],
+	[
+		"roles.delete",
+		'the entry declares {role: button, name: "Delete role"}; the trigger\'s accessible name is just ' +
+			'"Delete" (`roles-manager.tsx:364-372`), and "Delete role" is the AlertDialogAction inside the dialog ' +
+			"(`:312`). `triggerCandidates` matches the name as a substring of the accessible name, and " +
+			'"Delete role" is not a substring of "Delete", so the custom role is seeded and the trigger still ' +
+			"resolves to nothing.",
 	],
 ]);
 
@@ -450,6 +568,30 @@ async function resolveTrigger(page: Page, entry: ControlEntry, where: string): P
 let contextOnce: Promise<AuditContext> | null = null;
 
 /**
+ * What the fixture pass achieved, or null until it has run.
+ *
+ * Read by `withholdWithFixture` below so a control whose ROW was never written says so. Before this,
+ * every such control withheld with "the trigger is not rendered … for this persona" — which is true,
+ * and is not the whole truth: the trigger is absent because the row it acts on does not exist, and
+ * those are different findings with different fixes (#4458).
+ */
+let fixtureReport: FixtureSeedReport | null = null;
+
+/**
+ * Withhold, naming the FIXTURE when the fixture is what is missing.
+ *
+ * The page-level reason comes first because it is what the run observed; the fixture reason is
+ * appended because it is what has to change. Both, never one: a control can be un-rendered for a
+ * reason that has nothing to do with its fixture (a reach step that cannot resolve, a persona that
+ * cannot see the page), and replacing the observation with a guess about the cause is the
+ * mis-attribution this file's header calls the repo's most expensive recurring defect.
+ */
+function withholdWithFixture(entry: ControlEntry, observed: string): void {
+	const fixture = fixtureSeedFailureReason(entry, fixtureReport);
+	withhold(entry, fixture ? `${observed} — ${fixture}` : observed);
+}
+
+/**
  * The audit context — the org, its owner, and the rows the parameterised routes need.
  *
  * Established LAZILY, on the first control test that needs it, rather than in a file-level
@@ -479,6 +621,12 @@ function auditContext(browser: Browser): Promise<AuditContext> {
 				await seedRouteFixtures(ctx);
 				saveContext(ctx);
 			}
+			// THE FIXTURE PASS. It runs on every worker, not only the one that seeded the project:
+			// `seedDestructiveFixtures` keeps its own per-org marker of what it already wrote, so a
+			// worker restart re-reads that rather than writing a second copy of every row. It never
+			// throws — a seeder that fails is recorded against ITS fixture and withholds only the
+			// controls that declare it.
+			fixtureReport = await seedDestructiveFixtures(ctx);
 			return ctx;
 		} finally {
 			await page.close();
@@ -515,13 +663,13 @@ for (const entry of CONTROLS) {
 
 		const reachFailure = await walkReach(page, entry);
 		if (reachFailure) {
-			withhold(entry, reachFailure);
+			withholdWithFixture(entry, reachFailure);
 			return;
 		}
 
 		const resolved = await resolveTrigger(page, entry, url);
 		if ("withhold" in resolved) {
-			withhold(entry, resolved.withhold);
+			withholdWithFixture(entry, resolved.withhold);
 			return;
 		}
 		const trigger = resolved.locator;
@@ -1017,14 +1165,169 @@ test("self-test — SEEDABLE_FIXTURES cannot be EMPTIED to silence the floor", a
 	// The escape route a floor like this invites: drop a fixture from the seedable set and every
 	// finding about it disappears. Direction 3 closes it — a control the run reached whose fixture
 	// the set does not name is itself a failure, so the set can only understate reality loudly.
-	const controls = [floorEntry("a.delete", "confirmed", "fleet-pool")];
+	//
+	// ⚠ THE FIXTURE NAME IS SYNTHETIC, AND IT HAS TO BE. This read `"fleet-pool"` — a real fixture
+	// that was genuinely unseeded when the test was written — and #4458 wrote a seeder for it, which
+	// put it in `SEEDABLE_FIXTURES` and made direction 3 stop firing. The test then failed for a
+	// reason that had nothing to do with the rule it guards. A name no seeder will ever hold is the
+	// only input that keeps this assertion about the RULE rather than about today's coverage.
+	const controls = [floorEntry("a.delete", "confirmed", "a-fixture-no-seeder-writes")];
 	const findings = owedFindings(controls, [measuredVerdict("a.delete")], SEEDABLE_FIXTURES, NO_LEDGER);
 	expect(findings.join("\n")).toContain("understates what this");
-	expect(findings.join("\n")).toContain("fleet-pool");
+	expect(findings.join("\n")).toContain("a-fixture-no-seeder-writes");
 });
 
 test("self-test — a control that recorded NO verdict at all is a finding, not an absence", async () => {
 	const controls = [floorEntry("a.delete", "confirmed", "project")];
 	const findings = owedFindings(controls, [], SEEDABLE_FIXTURES, NO_LEDGER);
 	expect(findings.join("\n")).toContain("recorded no verdict at all");
+});
+
+// ── the fixture ledger's own test ───────────────────────────────────────────────────────────────
+//
+// `destructive-actions.yaml` declares a `fixture:` on every entry — "what must exist for this
+// control to render" — and until #4458 NOTHING read that column. Not this spec, not `context.ts`,
+// not `scripts/check-destructive-actions.mjs`. A column no instrument reads cannot be wrong, which
+// is how 35 distinct fixtures came to be declared against the two `seedRouteFixtures` writes, and
+// why 42 of the 47 controls could only ever be withheld. (42, measured — #4458's title says ~40 of
+// 46, which was one control out of date and did not count `active-job`, whose seeded job is a
+// FINISHED deploy and so is not the fixture `jobs.cancel` declares.)
+//
+// The test below is the reader. It is PURE — registry in, findings out, no page and no database —
+// so it reports the gap on a laptop, before an environment exists, which is the half of this unit
+// that could be established without one.
+//
+// ⚠ IT IS NOT A SUBSTITUTE FOR A RUN. It asks whether every declared fixture has a SEEDER, not
+// whether that seeder's rows make the control render. Those are different questions and the second
+// needs a browser and a database. The bound is stated here because a green fixture ledger over a
+// suite that still withholds 40 controls is exactly the "true assertion about the wrong thing" this
+// file's header calls the repo's most expensive defect — the run's own `not-measured` reasons, which
+// now NAME the fixture, are what answers the second question.
+
+test("every fixture the registry declares is seeded, or declared unseedable with its reason", async () => {
+	const coverage = fixtureCoverage(CONTROLS, FIXTURE_SEEDERS, UNSEEDABLE);
+	const controls = controlsByCoverage(CONTROLS, coverage);
+	// Printed on every run, pass or fail. The CONTROL counts, not the fixture counts: "33 of 35
+	// fixtures unseeded" and "40 of 47 controls unmeasurable" are the same fact, and the second is
+	// the one the gate reports and the one a reader acts on.
+	console.log(
+		`destructive fixtures: ${coverage.seedable.length} seeded, ${coverage.declaredUnseedable.length} declared unseedable, ` +
+			`${coverage.unaccounted.length} unaccounted of ${declaredFixtures(CONTROLS).length} declared ` +
+			`— covering ${controls.seedable}, ${controls.declaredUnseedable} and ${controls.unaccounted} of ${CONTROLS.length} controls.`,
+	);
+	// The lists are PRINTED, not counted. A boolean assertion about a structure that does not show
+	// the structure when it fails sends the reader back to the run log to reconstruct it.
+	expect(
+		coverage.unaccounted,
+		`${coverage.unaccounted.length} declared fixtures have neither a seeder nor a declared reason, so ` +
+			`${controls.unaccounted} controls can only ever be withheld:\n` +
+			coverage.unaccounted.map((f) => `  · ${f}`).join("\n") +
+			"\n\nWrite the seeder in e2e/audit/fixtures-destructive.ts, or add the fixture to UNSEEDABLE with what blocks it.",
+	).toEqual([]);
+	expect(
+		coverage.problems,
+		`the fixture ledgers no longer describe the registry:\n${coverage.problems.map((p) => `  · ${p}`).join("\n")}`,
+	).toEqual([]);
+});
+
+// ── the ledger arithmetic, driven in every direction ────────────────────────────────────────────
+//
+// `fixtureCoverage` is what decides whether an unseeded fixture is a FINDING or a recorded decision,
+// so a defect in it is invisible by construction: it does not make the suite red, it makes the suite
+// call a gap a decision. It takes both ledgers as PARAMETERS for exactly this reason — a version
+// reading the module's own maps could only be driven against whatever they happen to hold, and those
+// are the things under test.
+//
+// Six directions, and the last three are the ones that matter. Under-coverage is loud on its own; an
+// exception that OUTLIVES its subject is silent, and would suppress a real finding forever.
+
+/** A registry-shaped entry for the fixture ledger's self-tests. */
+function fixtureEntry(id: string, fixture?: string): ControlEntry {
+	return { id, route: "/self-test", surface: "apps/console/e2e/audit/destructive.spec.ts", mutation: "", fixture };
+}
+
+/** A seeder that writes nothing — these tests assert the ARITHMETIC, never a row. */
+const NO_OP_SEEDER: FixtureSeeder = { writes: "nothing", seed: async () => {} };
+
+test("self-test — a declared fixture with a seeder is SEEDABLE, and one with a reason is a DECISION", async () => {
+	const controls = [fixtureEntry("a", "alpha"), fixtureEntry("b", "beta")];
+	const coverage = fixtureCoverage(controls, new Map([["alpha", NO_OP_SEEDER]]), new Map([["beta", "it is a Stripe object"]]));
+	expect(coverage.seedable).toEqual(["alpha"]);
+	expect(coverage.declaredUnseedable).toEqual(["beta"]);
+	expect(coverage.unaccounted).toEqual([]);
+	expect(coverage.problems).toEqual([]);
+});
+
+test("self-test — a declared fixture with NEITHER is UNACCOUNTED, which is the finding #4458 records", async () => {
+	const controls = [fixtureEntry("a", "alpha"), fixtureEntry("b", "beta")];
+	const coverage = fixtureCoverage(controls, new Map([["alpha", NO_OP_SEEDER]]), new Map());
+	expect(coverage.unaccounted).toEqual(["beta"]);
+	// Distinguishable from a decision: "nobody wrote it" and "we decided not to" have different
+	// fixes, and a shared silence is how 33 unwritten fixtures read as a settled state for a month.
+	expect(coverage.declaredUnseedable).toEqual([]);
+});
+
+test("self-test — an entry with NO fixture contributes nothing, rather than a fixture named undefined", async () => {
+	const coverage = fixtureCoverage([fixtureEntry("a"), fixtureEntry("b", "  ")], new Map(), new Map());
+	expect(declaredFixtures([fixtureEntry("a"), fixtureEntry("b", "  ")])).toEqual([]);
+	expect(coverage.unaccounted).toEqual([]);
+	expect(coverage.problems).toEqual([]);
+});
+
+test("self-test — an UNSEEDABLE line that outlived its subject is a PROBLEM, not a silent no-op", async () => {
+	// The direction that matters. An undeclared gap is loud; a ledger line whose fixture the
+	// registry no longer declares suppresses nothing today and would suppress a real finding the
+	// moment the name came back. So it must only ever be able to shrink.
+	const coverage = fixtureCoverage([fixtureEntry("a", "alpha")], new Map([["alpha", NO_OP_SEEDER]]), new Map([["gone", "a reason"]]));
+	expect(coverage.problems.join("\n")).toContain('UNSEEDABLE names "gone"');
+	expect(coverage.problems.join("\n")).toContain("outlived its subject");
+});
+
+test("self-test — a SEEDER for a fixture nothing declares is a PROBLEM too", async () => {
+	const coverage = fixtureCoverage([fixtureEntry("a", "alpha")], new Map([["alpha", NO_OP_SEEDER], ["gone", NO_OP_SEEDER]]), new Map());
+	expect(coverage.problems.join("\n")).toContain('FIXTURE_SEEDERS writes "gone"');
+	expect(coverage.unaccounted).toEqual([]);
+});
+
+test("self-test — a fixture claimed by BOTH ledgers is a PROBLEM, and is counted as seeded", async () => {
+	// Without this the cheapest way past a failing seeder would be to add an UNSEEDABLE line beside
+	// it and leave both — a guard whose cheapest escape route deepens the defect is worse than none.
+	const coverage = fixtureCoverage([fixtureEntry("a", "alpha")], new Map([["alpha", NO_OP_SEEDER]]), new Map([["alpha", "a reason"]]));
+	expect(coverage.problems.join("\n")).toContain("BOTH seeded and declared unseedable");
+	expect(coverage.seedable).toEqual(["alpha"]);
+	expect(coverage.declaredUnseedable).toEqual([]);
+});
+
+test("self-test — the control counts are over CONTROLS, so one fixture serving five is counted five times", async () => {
+	// `connected-cloud-identity` is one fixture and five controls. A report in fixtures understates
+	// the gap by a factor of five on that row alone, which is why this is the number printed.
+	const controls = [
+		fixtureEntry("a", "shared"),
+		fixtureEntry("b", "shared"),
+		fixtureEntry("c", "shared"),
+		fixtureEntry("d", "lonely"),
+	];
+	const coverage = fixtureCoverage(controls, new Map(), new Map());
+	expect(coverage.unaccounted).toEqual(["shared", "lonely"]);
+	expect(controlsByCoverage(controls, coverage)).toEqual({ seedable: 0, declaredUnseedable: 0, unaccounted: 4 });
+});
+
+test("self-test — `fixtureSeedFailureReason` tells the three fixture failures apart", async () => {
+	const seeders = new Map([["alpha", NO_OP_SEEDER]]);
+	const unseedable = new Map([["beta", "it is a Stripe object"]]);
+	const report: FixtureSeedReport = { seeded: ["alpha"], failed: new Map([["gamma", "column \"nope\" does not exist"]]), entitlement: "granted" };
+
+	// 1. seeded and fine → no fixture reason at all, so the page-level observation stands alone.
+	expect(fixtureSeedFailureReason(fixtureEntry("a", "alpha"), report, seeders, unseedable)).toBeNull();
+	// 2. a declared decision → says so, and quotes the decision.
+	expect(fixtureSeedFailureReason(fixtureEntry("b", "beta"), report, seeders, unseedable)).toContain("by decision: it is a Stripe object");
+	// 3. nobody wrote a seeder → names the file the seeder belongs in.
+	expect(fixtureSeedFailureReason(fixtureEntry("c", "delta"), report, seeders, unseedable)).toContain("has no seeder in e2e/audit/fixtures-destructive.ts");
+	// 4. a seeder RAN and threw → quotes the database's own words, which is the only thing that
+	//    tells a renamed column from a missing persona.
+	expect(fixtureSeedFailureReason(fixtureEntry("d", "gamma"), { ...report, seeded: [] }, new Map([["gamma", NO_OP_SEEDER]]), unseedable)).toContain(
+		'could not be seeded: column "nope" does not exist',
+	);
+	// 5. the pass never ran at all → distinguishable from all four above.
+	expect(fixtureSeedFailureReason(fixtureEntry("a", "alpha"), null, seeders, unseedable)).toContain("the fixture pass did not run");
 });

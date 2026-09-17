@@ -47,6 +47,8 @@
 // the only artefact that states the post-rename truth (`jobs.spec_id` became `jobs.project_id` in
 // 0037, inside a `DO` block, and the schema file has said `projectId` ever since).
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { db } from "../helpers/db";
 import { grantOrganizationsEntitlement } from "../helpers/personas";
 import { seedCloudIdentity, type Owner } from "../helpers/seed";
@@ -608,15 +610,58 @@ export async function seedDestructiveFixtures(
 		report.entitlement = err instanceof Error ? err.message : String(err);
 	}
 	const scope = await resolveFixtureScope(ctx);
+	const already = readSeededMarker(ctx.orgSlug);
 	for (const [fixture, seeder] of seeders) {
+		if (already.has(fixture)) {
+			report.seeded.push(fixture);
+			continue;
+		}
 		try {
 			await seeder.seed(scope);
 			report.seeded.push(fixture);
+			already.add(fixture);
 		} catch (err) {
 			report.failed.set(fixture, err instanceof Error ? err.message : String(err));
 		}
 	}
+	writeSeededMarker(ctx.orgSlug, already);
 	return report;
+}
+
+/**
+ * Which fixtures this org has already had written, so a WORKER RESTART does not write them twice.
+ *
+ * The same hazard `context.ts` records and for the same reason: a single test timing out makes
+ * Playwright discard the worker and start the next test in a fresh one, where this module is a new
+ * instance with an empty map. Re-running the seeders there would put a SECOND member row and a
+ * SECOND alert channel in the org — and a second identically-named row is exactly the ambiguity
+ * `resolveTrigger` refuses to guess past, so the restart would silently withhold the controls it
+ * re-seeded for.
+ *
+ * Keyed on the ORG SLUG, again following `context.ts`: a leftover file from a previous run against
+ * a different org must never be read as this run's state. It records what SUCCEEDED, per fixture, so
+ * a seeder that threw is retried by the next worker rather than being written off.
+ */
+const SEEDED_MARKER = path.resolve(process.cwd(), "e2e/.auth/audit-fixtures.json");
+
+function readSeededMarker(orgSlug: string): Set<string> {
+	if (!existsSync(SEEDED_MARKER)) return new Set();
+	try {
+		const saved: unknown = JSON.parse(readFileSync(SEEDED_MARKER, "utf8"));
+		if (typeof saved !== "object" || saved === null) return new Set();
+		if (!("orgSlug" in saved) || saved.orgSlug !== orgSlug) return new Set();
+		if (!("seeded" in saved) || !Array.isArray(saved.seeded)) return new Set();
+		return new Set(saved.seeded.filter((f): f is string => typeof f === "string"));
+	} catch {
+		// An unreadable marker is not a reason to fail a run: the worst it costs is a re-seed, and
+		// the ambiguity that produces is REPORTED by `resolveTrigger` rather than silent.
+		return new Set();
+	}
+}
+
+function writeSeededMarker(orgSlug: string, seeded: ReadonlySet<string>): void {
+	mkdirSync(path.dirname(SEEDED_MARKER), { recursive: true });
+	writeFileSync(SEEDED_MARKER, `${JSON.stringify({ orgSlug, seeded: [...seeded] }, null, 2)}\n`);
 }
 
 /**
