@@ -41,14 +41,23 @@
 // does not materialise, the trigger is not rendered for the persona — is recorded as
 // `not-measured` WITH ITS REASON, never as a silent pass. That distinction is this repo's most
 // expensive recurring defect, so it is made twice: `test-results/destructive.json` carries the
-// reason per control, and the LAST test in the file fails when fewer than `MIN_MEASURED` controls
-// were actually driven. A suite whose fixtures all quietly stopped seeding would otherwise report
-// 46 green tests having asserted nothing.
+// reason per control, and the LAST test in the file fails when the run did not drive the controls
+// the registry says it OWES. A suite whose fixtures all quietly stopped seeding would otherwise
+// report 47 green tests having asserted nothing.
 //
-// ⚠ `MIN_MEASURED` is 1 on this first landing and that is deliberately weak: the honest number is
-// the one the FIRST REAL RUN produces, and a floor invented before the measurement would be a
-// number nobody could defend. Raise it to the observed count in this PR once the gate has run —
-// the run's step summary prints it — and treat any later fall as the finding it is.
+// ⚠ THE FLOOR IS DERIVED FROM THE REGISTRY. IT WAS A CONSTANT, AND A CONSTANT COULD NOT SEE THIS.
+//
+// It was `MIN_MEASURED = 1` — one measured control satisfied the floor for all 47 entries, so 46
+// of them could withhold and the suite still reported green. Each withheld control test passes on
+// its own too, because `withhold()` records and RETURNS before any `expect` runs. So the registry
+// could record `status: confirmed` for a control no instrument has ever opened, and every gate went
+// green on it (#4646, from #4610/#4598/#4588 — three entries in one wave claiming a confirmation
+// nothing opens).
+//
+// What replaces it is not a bigger number. `owedFindings()` below asks, per entry: does the
+// registry claim a confirmation here, and can this spec seed what that claim needs? If both, the
+// run OWES a measurement and a withheld verdict is a FAILURE NAMED BY ID. A withheld verdict on an
+// entry recorded `missing` or `inert` stays green — that is honest, not a claim.
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -108,8 +117,54 @@ function registry(): ControlEntry[] {
 
 const CONTROLS = registry();
 
-/** See the ⚠ above. Raise from the first real run; a fall is a finding. */
-const MIN_MEASURED = 1;
+/**
+ * The fixtures `e2e/audit/context.ts` → `seedRouteFixtures` ACTUALLY writes, named as the registry
+ * names them. This is the spec's half of the floor below, and #4458 grows it one batch at a time.
+ *
+ * Verified against the tree, not copied from the registry's `fixture:` column:
+ *  · `none` — needs no seeding at all.
+ *  · `project` — `seedProject` writes the project, its default environment and the network/cluster
+ *    components, and `seedRouteFixtures` calls it.
+ *
+ * `active-job` is DELIBERATELY ABSENT and the absence is the finding. `seedRouteFixtures` does call
+ * `seedJob`, but with no `status`, and `seedJob` defaults to a FINISHED deploy — so the row it
+ * writes is not the fixture `jobs.cancel` declares. Listing `active-job` here would claim a
+ * measurement the seeder cannot produce, which is the same over-claim one level down.
+ *
+ * ⚠ `fixture:` is DECLARED on every registry entry and, before this, was read by nothing — not this
+ * spec, not `context.ts`, not `scripts/check-destructive-actions.mjs`. A column no instrument reads
+ * cannot be wrong, which is why 35 distinct fixtures could be declared against two that are seeded.
+ */
+const SEEDABLE_FIXTURES: ReadonlySet<string> = new Set(["none", "project"]);
+
+/**
+ * Entries the registry records `confirmed`, whose fixture IS seedable, and which the run still
+ * cannot reach — each with the reason and the thing that has to change.
+ *
+ * THIS LEDGER FAILS IN BOTH DIRECTIONS, and the second direction is the one that matters. An
+ * undeclared withheld verdict on an owed control is loud. A ledger entry that OUTLIVES its subject
+ * is silent, and would suppress a real measurement forever — so an entry here that the run DID
+ * measure is also a failure, telling the reader to delete the line. The list can therefore only
+ * shrink, and #4458's fixture work shrinks it.
+ *
+ * It is not a place to park work. Every line names a defect in the REGISTRY ENTRY or in the
+ * product, not "no fixture yet" — an entry whose fixture is unseedable never reaches this list at
+ * all, because `SEEDABLE_FIXTURES` already excludes it.
+ */
+const UNREACHED: ReadonlyMap<string, string> = new Map([
+	[
+		"env.destroy",
+		"its reach chain opens with {select: \"the project node\"} — a canvas node, not an accessible " +
+			"name, so `walkReach`'s role/label lookup cannot resolve it. The entry needs a reach step naming " +
+			"a real control, or the canvas node needs an accessible name.",
+	],
+	[
+		"canvas.discard-staged",
+		'its reach step is {open: "add a node so the pending-changes bar renders"} — a sentence of ' +
+			"prose where a control name belongs, so it can never match. The bar renders only once the " +
+			"canvas holds a staged change, which is a STATE the `project` fixture does not create.",
+	],
+]);
 
 // ── the record ──────────────────────────────────────────────────────────────────────────────────
 
@@ -627,22 +682,115 @@ test.afterAll(async () => {
 	await closeDb();
 });
 
+/**
+ * Which entries the run OWED a measurement, given the registry and what this spec can seed.
+ *
+ * An entry is owed when the registry records `confirmed` — the claim that a confirmation exists —
+ * AND its fixture is one `seedRouteFixtures` writes. `missing` and `inert` are recorded DEFECTS, not
+ * claims, so withholding on one is honest.
+ */
+function owedIds(controls: ControlEntry[], seedable: ReadonlySet<string>, unreached: ReadonlyMap<string, string>): string[] {
+	return controls.filter((c) => c.status === "confirmed" && seedable.has(String(c.fixture)) && !unreached.has(c.id)).map((c) => c.id);
+}
+
+/**
+ * Everything wrong with this run's coverage, as a list of findings. Empty means the floor held.
+ *
+ * A PURE function of the registry and the verdicts — no page, no database, no clock — so the floor
+ * itself can be driven in both directions by the self-tests at the foot of this file. A floor that
+ * can only be exercised by a full gate run is a floor nobody can show is working, and #4646 is what
+ * that costs.
+ *
+ * It returns findings rather than asserting, and each finding NAMES AN ID. The constant it replaces
+ * compared two integers, so its failure message could say "only 1 of 47 were driven" and could not
+ * say WHICH — and a count is the one thing a reader cannot act on.
+ */
+function owedFindings(
+	controls: ControlEntry[],
+	vs: Verdict[],
+	seedable: ReadonlySet<string>,
+	unreached: ReadonlyMap<string, string>,
+): string[] {
+	const byId = new Map(vs.map((v) => [v.id, v]));
+	const measured = (id: string): boolean => {
+		const v = byId.get(id);
+		return v?.verdict === "match" || v?.verdict === "mismatch";
+	};
+	const findings: string[] = [];
+
+	// ── direction 1: an owed control that was not driven. The defect #4646 records.
+	for (const id of owedIds(controls, seedable, unreached)) {
+		const v = byId.get(id);
+		if (measured(id)) continue;
+		findings.push(
+			`${id}: the registry records "confirmed" and its fixture is seedable, so this run owed a measurement — ` +
+				`it ${v ? `${v.verdict}: ${v.reason ?? "no reason recorded"}` : "recorded no verdict at all"}. ` +
+				"A confirmation nothing opened is the registry asserting what no run has established.",
+		);
+	}
+
+	// ── direction 2: the ledger and the seedable set may not OUTLIVE their subjects.
+	for (const [id, why] of unreached) {
+		const entry = controls.find((c) => c.id === id);
+		if (!entry) {
+			findings.push(`UNREACHED names "${id}", which is not in the registry — delete the line, or fix the id.`);
+			continue;
+		}
+		if (entry.status !== "confirmed" || !seedable.has(String(entry.fixture))) {
+			findings.push(
+				`UNREACHED names "${id}", which is already excluded from what the run owes (status "${entry.status}", fixture "${entry.fixture}") — ` +
+					"the line suppresses nothing and must go, or it will hide a real finding when that changes.",
+			);
+			continue;
+		}
+		if (measured(id)) {
+			findings.push(`UNREACHED names "${id}" and the run MEASURED it — delete the line. It reads: ${why}`);
+		}
+	}
+
+	// ── direction 3: the seedable set may not UNDERSTATE the run either.
+	//
+	// Without this, `SEEDABLE_FIXTURES` could be emptied and every finding above would disappear —
+	// the cheapest escape from a red floor would be to deepen the defect. A fixture the run reached
+	// but the set does not name is a fixture that must be added, so the floor rises on its own as
+	// #4458 wires seeders, rather than waiting for someone to remember to raise it.
+	const understated = new Set<string>();
+	for (const c of controls) {
+		if (c.status !== "confirmed" || seedable.has(String(c.fixture))) continue;
+		if (measured(c.id)) understated.add(String(c.fixture));
+	}
+	for (const fixture of understated) {
+		findings.push(
+			`the run MEASURED a control whose fixture "${fixture}" is not in SEEDABLE_FIXTURES — the set understates what this ` +
+				"spec can reach, so the floor is lower than the truth. Add it.",
+		);
+	}
+	return findings;
+}
+
+// ⚠ THE TITLE IS A BASELINE KEY. `apps/console/e2e/gate-baseline.json` records this test by name,
+// and `scripts/e2e-ratchet.mjs` rule 4 fails the leg on "baseline names a test the run lacks" — a
+// rename is indistinguishable from a deletion there. What this test ASKS changed; what it is CALLED
+// must not, unless the baseline moves in the same commit.
 test("the run measured something — a withheld verdict is not a pass", async () => {
 	const measured = verdicts.filter((v) => v.verdict === "match" || v.verdict === "mismatch").length;
 	const withheld = verdicts.filter((v) => v.verdict === "withheld");
 	const errored = verdicts.filter((v) => v.verdict === "errored");
 	const summary = withheld.map((v) => `  · ${v.id}: ${v.reason}`).join("\n");
-	// Printed on every run, pass or fail: this number is what the next reader raises MIN_MEASURED to.
-	// The three counts MUST sum to the ledger — if they do not, a control went unrecorded, which is
-	// the failure this reconciliation exists to make impossible to miss.
+	const owed = owedIds(CONTROLS, SEEDABLE_FIXTURES, UNREACHED);
+	// Printed on every run, pass or fail. The three counts MUST sum to the ledger — if they do not, a
+	// control went unrecorded, which is the failure the reconciliation above exists to make
+	// impossible to miss. `owed` is printed beside them because the interesting number is no longer
+	// how many ran, it is how many SHOULD have.
 	console.log(
 		`destructive: ${measured} measured, ${withheld.length} withheld, ${errored.length} errored ` +
-			`= ${measured + withheld.length + errored.length} of ${CONTROLS.length} in the ledger.\n${summary}`,
+			`= ${measured + withheld.length + errored.length} of ${CONTROLS.length} in the ledger; ` +
+			`${owed.length} owed (${owed.join(", ") || "none"}), ${UNREACHED.size} declared unreached.\n${summary}`,
 	);
-	expect(
-		measured,
-		`only ${measured} of ${CONTROLS.length} controls were actually driven. A suite whose fixtures all stopped seeding reports green while asserting nothing, so this floor exists to make that loud.\n${summary}`,
-	).toBeGreaterThanOrEqual(MIN_MEASURED);
+	const findings = owedFindings(CONTROLS, verdicts, SEEDABLE_FIXTURES, UNREACHED);
+	// The findings are PRINTED in the message, not counted. A boolean assertion about a structure
+	// that does not show the structure when it fails sends the reader back to the run log.
+	expect(findings, `the run did not establish what the registry claims:\n${findings.map((f) => `  · ${f}`).join("\n")}\n\nwithheld:\n${summary}`).toEqual([]);
 });
 
 // ── the instrument's own test ───────────────────────────────────────────────────────────────────
@@ -754,4 +902,129 @@ test("self-test — `resolveTrigger` withholds `not rendered` when NOTHING match
 	// different findings with different fixes, and a shared reason is how #4639's collisions were
 	// reported as a missing fixture for as long as they were.
 	expect(resolved.withhold).not.toContain("ambiguous");
+});
+
+// ── the floor's own test ────────────────────────────────────────────────────────────────────────
+//
+// `owedFindings` is the whole of #4646: it is what decides whether a run that DROVE NOTHING is
+// allowed to be green. The constant it replaced could only be exercised by a full gate run — an app,
+// a database, a seeded org and a browser — so nothing ever demonstrated it working, and it did not.
+// These drive it directly, on synthetic verdicts, in both directions.
+//
+// They build their registry and their verdicts rather than reading the real ones on purpose. A
+// self-test that ran against `CONTROLS` would change meaning every time a lane flips an entry, and
+// would then be asserting whatever the registry happens to say — which is the thing under test.
+
+/** A registry-shaped entry for the floor's self-tests. */
+function floorEntry(id: string, status: string, fixture: string): ControlEntry {
+	return { id, route: "/self-test", surface: "apps/console/e2e/audit/destructive.spec.ts", mutation: "", status, fixture };
+}
+
+/**
+ * An EMPTY UNREACHED ledger, for the self-tests that build their own registry.
+ *
+ * Passing the real `UNREACHED` to a synthetic three-entry registry would make every real ledger
+ * line report "not in the registry" — which is direction 2 working correctly on the wrong input.
+ * This is why the ledger and the seedable set are PARAMETERS rather than module reads: the one
+ * test that must drive the REAL ledger passes it explicitly, and says so in its name.
+ */
+const NO_LEDGER: ReadonlyMap<string, string> = new Map();
+
+/** A verdict for `id` that counts as MEASURED. */
+function measuredVerdict(id: string): Verdict {
+	return { id, route: "/self-test", expected: "confirmed", observed: "confirmed", verdict: "match" };
+}
+
+/** A verdict for `id` that counts as WITHHELD — the shape that used to read as a pass. */
+function withheldVerdict(id: string): Verdict {
+	return { id, route: "/self-test", expected: "confirmed", observed: "not-measured", verdict: "withheld", reason: "the trigger is not rendered for this persona" };
+}
+
+test("self-test — a FULL array of withheld verdicts is not a pass, and the old floor let it be one", async () => {
+	// The exact shape #4646 records: one control measured, every other one withheld. `MIN_MEASURED`
+	// was 1, so `measured >= 1` held and the suite was GREEN with 46 of 47 controls asserting
+	// nothing — while each withheld control test passed on its own too, because `withhold()` returns
+	// before any `expect` runs.
+	const controls = [floorEntry("a.delete", "confirmed", "project"), floorEntry("b.delete", "confirmed", "project"), floorEntry("c.delete", "confirmed", "none")];
+	const vs = [measuredVerdict("a.delete"), withheldVerdict("b.delete"), withheldVerdict("c.delete")];
+
+	const measured = vs.filter((v) => v.verdict === "match" || v.verdict === "mismatch").length;
+	expect(measured, "the premise: the old constant floor of 1 is satisfied by this run").toBeGreaterThanOrEqual(1);
+
+	const findings = owedFindings(controls, vs, SEEDABLE_FIXTURES, NO_LEDGER);
+	expect(findings.length, `the derived floor must reject it and name both: ${findings.join(" | ")}`).toBe(2);
+	expect(findings.join("\n")).toContain("b.delete");
+	expect(findings.join("\n")).toContain("c.delete");
+	// The finding must NAME the id. A count is the one thing a reader cannot act on.
+	expect(findings.join("\n")).toContain("owed a measurement");
+});
+
+test("self-test — withholding on a `missing` or `inert` entry stays GREEN", async () => {
+	// A recorded DEFECT is not a claim. The floor must not manufacture work out of an entry that
+	// already says the confirmation is absent — that is the over-reporting direction, and it would
+	// push the next reader to silence the floor rather than seed a fixture.
+	const controls = [floorEntry("byo.chart.detach", "missing", "project"), floorEntry("account.delete", "inert", "none")];
+	expect(owedFindings(controls, [withheldVerdict("byo.chart.detach"), withheldVerdict("account.delete")], SEEDABLE_FIXTURES, NO_LEDGER)).toEqual([]);
+});
+
+test("self-test — an entry whose fixture is UNSEEDABLE is not owed, so #4458's gap is not manufactured work", async () => {
+	const controls = [floorEntry("teams.member.remove", "confirmed", "team-with-a-member")];
+	expect(owedFindings(controls, [withheldVerdict("teams.member.remove")], SEEDABLE_FIXTURES, NO_LEDGER)).toEqual([]);
+});
+
+test("self-test — every OWED control measured is the pass", async () => {
+	const controls = [floorEntry("a.delete", "confirmed", "project"), floorEntry("b.delete", "confirmed", "none")];
+	expect(owedFindings(controls, [measuredVerdict("a.delete"), measuredVerdict("b.delete")], SEEDABLE_FIXTURES, NO_LEDGER)).toEqual([]);
+});
+
+test("self-test — the UNREACHED ledger fails in BOTH directions, against the REAL registry", async () => {
+	// This one drives the REAL `UNREACHED` and the REAL `CONTROLS`, which is what makes it the
+	// ledger's own test rather than a test of a ledger shape. Every other floor self-test builds a
+	// synthetic registry and passes `NO_LEDGER`.
+	const declared = [...UNREACHED.keys()];
+	expect(declared.length, "an empty ledger would make this test vacuous").toBeGreaterThan(0);
+
+	// A ledger line that OUTLIVES its subject is the silent failure: it suppresses a real finding
+	// forever. So every declared id must still be a real entry that would otherwise be owed.
+	for (const id of declared) {
+		const entry = CONTROLS.find((c) => c.id === id);
+		expect(entry, `UNREACHED names "${id}", which is not in the registry — delete the line, or fix the id`).toBeTruthy();
+		expect(entry?.status, `UNREACHED names "${id}", which the registry does not record "confirmed" — it suppresses nothing`).toBe("confirmed");
+		expect(SEEDABLE_FIXTURES.has(String(entry?.fixture)), `UNREACHED names "${id}", whose fixture "${entry?.fixture}" is not seedable — it suppresses nothing`).toBe(true);
+	}
+
+	const owed = owedIds(CONTROLS, SEEDABLE_FIXTURES, UNREACHED);
+	expect(owed, "the floor must owe something, or it is a floor at zero").not.toEqual([]);
+
+	// Direction A — everything owed measured, everything declared withheld: silent, by design.
+	const honest = [...owed.map(measuredVerdict), ...declared.map(withheldVerdict)];
+	expect(owedFindings(CONTROLS, honest, SEEDABLE_FIXTURES, UNREACHED)).toEqual([]);
+
+	// Direction B — a declared entry the run MEASURED: loud, and it says to delete the line.
+	const flipped = [...owed.map(measuredVerdict), measuredVerdict(declared[0]), ...declared.slice(1).map(withheldVerdict)];
+	const findings = owedFindings(CONTROLS, flipped, SEEDABLE_FIXTURES, UNREACHED);
+	expect(findings.join("\n")).toContain("delete the line");
+	expect(findings.join("\n")).toContain(declared[0]);
+
+	// Direction C — an owed control withheld: the #4646 defect, on the real registry.
+	const dishonest = [...owed.slice(1).map(measuredVerdict), withheldVerdict(owed[0]), ...declared.map(withheldVerdict)];
+	const owedFail = owedFindings(CONTROLS, dishonest, SEEDABLE_FIXTURES, UNREACHED);
+	expect(owedFail.join("\n")).toContain("owed a measurement");
+	expect(owedFail.join("\n")).toContain(owed[0]);
+});
+
+test("self-test — SEEDABLE_FIXTURES cannot be EMPTIED to silence the floor", async () => {
+	// The escape route a floor like this invites: drop a fixture from the seedable set and every
+	// finding about it disappears. Direction 3 closes it — a control the run reached whose fixture
+	// the set does not name is itself a failure, so the set can only understate reality loudly.
+	const controls = [floorEntry("a.delete", "confirmed", "fleet-pool")];
+	const findings = owedFindings(controls, [measuredVerdict("a.delete")], SEEDABLE_FIXTURES, NO_LEDGER);
+	expect(findings.join("\n")).toContain("understates what this");
+	expect(findings.join("\n")).toContain("fleet-pool");
+});
+
+test("self-test — a control that recorded NO verdict at all is a finding, not an absence", async () => {
+	const controls = [floorEntry("a.delete", "confirmed", "project")];
+	const findings = owedFindings(controls, [], SEEDABLE_FIXTURES, NO_LEDGER);
+	expect(findings.join("\n")).toContain("recorded no verdict at all");
 });
