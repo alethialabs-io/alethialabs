@@ -284,3 +284,88 @@ describe("server status reaches the card", () => {
 		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
 	});
 });
+
+// ── the card is a NAMED region ───────────────────────────────────────────────────────────────────
+//
+// An unnamed node is unmeasurable by the a11y audit — an absence, which scores exactly like a
+// surface that never rendered — and unreachable by a role query, which left `.react-flow__node-
+// <kind>` as the only handle a test had. That is a selector on React Flow's renderer rather than on
+// the product, and it cannot tell two buckets apart.
+//
+// ⚠ EVERY ASSERTION BELOW CHECKS THE ATTRIBUTE AS WELL AS THE NAME, and that is not belt-and-braces.
+// jsdom's accname falls back to `title` when there is no `aria-label`, so a card that lost its label
+// and happens to carry a character-identical `title` still answers `getByRole(…, { name })` — a
+// role-only test then passes on a tree that is broken in precisely the way this is meant to catch.
+// These cards do carry `title` attributes (the status badge's), so the hazard is live, not theoretical.
+describe("every card carries an accessible name", () => {
+	it("a named bucket is `Bucket <name>` at the full tier", () => {
+		seedCanvas("bucket", "aws", { name: "assets" });
+		renderCard("node-under-test");
+
+		const card = screen.getByRole("group", { name: "Bucket assets" });
+		expect(card).toHaveAttribute("aria-label", "Bucket assets");
+	});
+
+	it("carries the same name at the dense tier", () => {
+		lodState.current = "compact";
+		seedCanvas("bucket", "aws", { name: "assets" });
+		renderCard("node-under-test");
+
+		expect(screen.getByRole("group", { name: "Bucket assets" })).toHaveAttribute(
+			"aria-label",
+			"Bucket assets",
+		);
+	});
+
+	it("carries the same name at the glyph tier — zoom is not a reason to go unnamed", () => {
+		lodState.current = "glyph";
+		seedCanvas("bucket", "aws", { name: "assets" });
+		renderCard("node-under-test");
+
+		expect(screen.getByRole("group", { name: "Bucket assets" })).toHaveAttribute(
+			"aria-label",
+			"Bucket assets",
+		);
+	});
+
+	it("a node with no name is the kind alone — never a trailing space", () => {
+		// A freshly-added node before anything has been typed into it. `getByRole` normalises
+		// whitespace, so the NAME cannot see a trailing space; the attribute can, and an exact-name
+		// query against a stale `"Bucket "` would miss silently.
+		seedCanvas("bucket", "aws", { name: "" });
+		renderCard("node-under-test");
+
+		expect(screen.getByRole("group", { name: "Bucket" })).toHaveAttribute(
+			"aria-label",
+			"Bucket",
+		);
+	});
+
+	it("two of the same kind are told apart — the point of naming them", () => {
+		seedCanvas("bucket", "aws", { name: "assets" });
+		const second = {
+			id: "second-bucket",
+			type: "bucket",
+			position: { x: 0, y: 0 },
+			data: {
+				kind: "bucket",
+				config: { ...NODE_REGISTRY.bucket.defaultData("aws"), name: "uploads" },
+				cloud_identity_id: null,
+				provider: "aws",
+			},
+		} as CanvasNode;
+		useCanvasStore.setState((s) => ({ nodes: [...s.nodes, second] }));
+
+		render(
+			<ReactFlowProvider>
+				<EnvironmentStatusProvider value={EMPTY_ENVIRONMENT_STATUS}>
+					<BaseNode id="node-under-test" />
+					<BaseNode id="second-bucket" />
+				</EnvironmentStatusProvider>
+			</ReactFlowProvider>,
+		);
+
+		expect(screen.getByRole("group", { name: "Bucket assets" })).toBeInTheDocument();
+		expect(screen.getByRole("group", { name: "Bucket uploads" })).toBeInTheDocument();
+	});
+});

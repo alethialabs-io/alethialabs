@@ -77,7 +77,7 @@
 # that a script could count all along. Nothing compared them, which is exactly why it went unnoticed
 # — it is prose, and prose is not measured. Now it is.
 #
-#   census: 47 controls — 45 confirmed, 1 missing, 1 inert
+#   census: 47 controls — 46 confirmed, 1 inert
 
 version: 1
 
@@ -214,11 +214,12 @@ controls:
     surface: apps/console/components/design-project/canvas/nodes/chart-node.tsx
     mutation: detachByoChart
     control: { role: button, name: "Detach chart" }
-    confirm: none
+    confirm: confirm-dialog
+    confirm_action: "Detach"
+    dialog_title: "Detach this chart?"
     fixture: byo-chart
     persona: owner
-    status: missing
-    issue: "#4279"
+    status: confirmed
     prod-qa: skip
     reason: needs an attached BYO chart
 
