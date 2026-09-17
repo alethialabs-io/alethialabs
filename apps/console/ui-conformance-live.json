@@ -5,7 +5,12 @@
 		"then regenerate the two derived files with `pnpm -C apps/console run audit:report --write`.",
 		"Apart from `source`, which cites the run: no wall clock, no run-local URL, no per-run org slug and no",
 		"generated element id. Every record below is a property of the TREE that was measured, so re-importing an",
-		"unchanged tree produces the same bytes."
+		"unchanged tree produces the same bytes.",
+		"`runs.interaction` is EMPTY ON PURPOSE and is declared so: R8's instrument landed in #4277 before any",
+		"`audit-interaction` run produced its artifact, so LIVE_SECTIONS marks the section `awaitingFirstImport` and",
+		"every R8 cell joins as NOT MEASURED naming that marker. It is NOT a pass and NOT an N/A: R8 scores `null`.",
+		"The first `--import-live` that finds `test-results/ui-audit-interaction.json` fills it, and the generator then",
+		"REFUSES to run until the marker is deleted — a records-carrying pending section raises, by design."
 	],
 	"version": 1,
 	"source": {
@@ -2074,6 +2079,15 @@
 					"reason": "no-restricted-surface"
 				}
 			]
+		},
+		"interaction": {
+			"artifact": "test-results/ui-audit-interaction.json",
+			"spec": "apps/console/e2e/audit/inert.spec.ts",
+			"persona": "the run's own owner, in the `audit-interaction` project — which ACTIVATES controls and never presses a confirm",
+			"org": "a fresh, empty organisation created for the run",
+			"covers": "every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS",
+			"runKey": "",
+			"records": []
 		}
 	}
 }
