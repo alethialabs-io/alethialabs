@@ -284,14 +284,71 @@ function gh(args) {
 	return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 }
 
-/** The files this PR changes, from the API rather than a local diff — the guards job is a shallow
- *  checkout, so `git diff base...head` has no base to reach. */
-function liveChangedFiles(pr) {
-	const out = gh(["pr", "diff", String(pr), "--name-only"]);
+/** The most files `pulls/<n>/files` will ever return, however many the PR really changed. A list
+ *  that reaches it is TRUNCATED, and a truncated list is the one input this guard must never treat
+ *  as whole: every file past the cut would read as "not in this PR", which is silently the same
+ *  shape as a clean measurement. */
+export const FILES_API_CAP = 3000;
+
+/** Refuse a file list that may have been cut off by the API's own ceiling.
+ *  @param {string[]} files
+ *  @param {number} cap
+ *  @returns {string[]} the same list, when it is provably whole */
+export function refuseIfTruncated(files, cap = FILES_API_CAP) {
+	if (files.length >= cap) {
+		throw new Error(
+			`pulls/<n>/files returned ${files.length} path(s), at or past its ${cap}-file ceiling, so the ` +
+				`list may be truncated. Refusing rather than measuring a PR against a partial view of ` +
+				`itself — an unseen file cannot collide with anything, which would read as clean.`,
+		);
+	}
+	return files;
+}
+
+/** @param {string} out @returns {string[]} */
+function lines(out) {
 	return out
 		.split("\n")
 		.map((s) => s.trim())
 		.filter(Boolean);
+}
+
+/** The files this PR changes, from the API rather than a local diff — the guards job is a shallow
+ *  checkout, so `git diff base...head` has no base to reach.
+ *
+ *  TWO reads, because `gh pr diff` alone cannot answer for a large PR. The diff endpoint refuses
+ *  past 20000 lines — `HTTP 406 … PullRequest.diff too_large` — and this guard fails CLOSED on a
+ *  read it could not make. That is right in general and was wrong here: a dev→staging PR carries
+ *  every commit since the last promotion, so it is over the limit essentially always, and
+ *  `protect-staging` requires `Authz / open-core guards` with no bypass actors. The promotion was
+ *  therefore unmergeable by anyone, for a reason that had nothing to do with scope — #4623 measured
+ *  NOT-APPLICABLE the moment its file list was fetched any other way (#4726).
+ *
+ *  `pulls/<n>/files` paginates and has no line limit. It has a DIFFERENT limit — 3000 files — and
+ *  that one is handled by refusing, not by falling back again: see `refuseIfTruncated`. */
+function liveChangedFiles(pr) {
+	try {
+		return lines(gh(["pr", "diff", String(pr), "--name-only"]));
+	} catch (err) {
+		// Fall through on ANY failure, not just `too_large`: the fallback is strictly better-informed
+		// than the primary, and if it fails too the error propagates and the guard still fails closed.
+		console.log(
+			`check-pr-scope: \`gh pr diff\` could not answer for #${pr} ` +
+				`(${err instanceof Error ? err.message.split("\n")[0] : String(err)}); ` +
+				`reading pulls/${pr}/files instead.`,
+		);
+	}
+	return refuseIfTruncated(
+		lines(
+			gh([
+				"api",
+				`repos/{owner}/{repo}/pulls/${pr}/files`,
+				"--paginate",
+				"--jq",
+				".[].filename",
+			]),
+		),
+	);
 }
 
 function main() {
@@ -395,6 +452,47 @@ function selfTest() {
 		body: globs === null ? "no scope here" : `scope: ${globs.join(" ")}`,
 	});
 	const scopeOf = (globs) => new Map([[1, { ...readScope(`scope: ${globs.join(" ")}`) }]]);
+
+	// ── the files-API ceiling is refused in ONE direction and allowed in the other (#4726) ──
+	//
+	// Both cases matter, and the passing one matters more. A cap check that only ever refuses is
+	// indistinguishable from a cap check wired to refuse unconditionally — which would fail every
+	// PR closed, the exact failure #4726 is about, moved one layer down.
+	ok(
+		"a file list AT the API ceiling is refused, not measured",
+		(() => {
+			try {
+				refuseIfTruncated(new Array(FILES_API_CAP).fill("a.ts"), FILES_API_CAP);
+				return false;
+			} catch (err) {
+				return err instanceof Error && /truncated/.test(err.message);
+			}
+		})(),
+		"a list that may be cut off must never be treated as whole",
+	);
+	ok(
+		"...and a list one BELOW the ceiling is returned untouched",
+		(() => {
+			const files = new Array(FILES_API_CAP - 1).fill("a.ts");
+			try {
+				return refuseIfTruncated(files, FILES_API_CAP) === files;
+			} catch {
+				return false;
+			}
+		})(),
+		"an ordinary large PR must still be measured",
+	);
+	ok(
+		"...and an EMPTY list is not refused here — blindness is analyse()'s call, not the reader's",
+		(() => {
+			try {
+				return refuseIfTruncated([], FILES_API_CAP).length === 0;
+			} catch {
+				return false;
+			}
+		})(),
+		"a zero-file PR is reported BLIND by analyse(); the reader must not pre-empt that verdict",
+	);
 
 	// ── the vocabulary is READ, and a file it cannot read is a refusal ──
 	ok(
