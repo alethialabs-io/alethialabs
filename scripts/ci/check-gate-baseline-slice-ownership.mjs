@@ -120,6 +120,7 @@
 // `pull-requests: read` for `check-pr-scope.mjs`) and never refuses to answer.
 
 import { execFileSync } from "node:child_process";
+import { changedFilesForPR } from "../lib/pr-changed-files.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -397,10 +398,9 @@ function fromPullRequest(pr) {
 			return null; // the file did not exist at that commit — a birth, handled as an all-new slice set
 		}
 	};
-	const changedFiles = gh(["pr", "diff", String(pr), "--name-only"])
-		.split("\n")
-		.map((s) => s.trim())
-		.filter(Boolean);
+	// NOT `gh pr diff` — it refuses past 20000 lines and this guard fails closed on the refusal,
+	// which took the dev→staging promotion down twice in one day (#4726, #4748). One shared read.
+	const changedFiles = changedFilesForPR(pr, gh);
 	return { before: blob(mergeBase), after: blob(meta.head.sha), changedFiles };
 }
 

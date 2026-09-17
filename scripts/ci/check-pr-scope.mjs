@@ -85,6 +85,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { globsOverlap, isWorkableBoardUnit, readScope } from "../lib/scope-overlap.mjs";
+import { FILES_API_CAP, refuseIfTruncated, changedFilesForPR } from "../lib/pr-changed-files.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BOARD_PR = "scripts/lib/board-pr.sh";
@@ -284,71 +285,15 @@ function gh(args) {
 	return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 }
 
-/** The most files `pulls/<n>/files` will ever return, however many the PR really changed. A list
- *  that reaches it is TRUNCATED, and a truncated list is the one input this guard must never treat
- *  as whole: every file past the cut would read as "not in this PR", which is silently the same
- *  shape as a clean measurement. */
-export const FILES_API_CAP = 3000;
-
-/** Refuse a file list that may have been cut off by the API's own ceiling.
- *  @param {string[]} files
- *  @param {number} cap
- *  @returns {string[]} the same list, when it is provably whole */
-export function refuseIfTruncated(files, cap = FILES_API_CAP) {
-	if (files.length >= cap) {
-		throw new Error(
-			`pulls/<n>/files returned ${files.length} path(s), at or past its ${cap}-file ceiling, so the ` +
-				`list may be truncated. Refusing rather than measuring a PR against a partial view of ` +
-				`itself — an unseen file cannot collide with anything, which would read as clean.`,
-		);
-	}
-	return files;
-}
-
-/** @param {string} out @returns {string[]} */
-function lines(out) {
-	return out
-		.split("\n")
-		.map((s) => s.trim())
-		.filter(Boolean);
-}
-
 /** The files this PR changes, from the API rather than a local diff — the guards job is a shallow
  *  checkout, so `git diff base...head` has no base to reach.
  *
- *  TWO reads, because `gh pr diff` alone cannot answer for a large PR. The diff endpoint refuses
- *  past 20000 lines — `HTTP 406 … PullRequest.diff too_large` — and this guard fails CLOSED on a
- *  read it could not make. That is right in general and was wrong here: a dev→staging PR carries
- *  every commit since the last promotion, so it is over the limit essentially always, and
- *  `protect-staging` requires `Authz / open-core guards` with no bypass actors. The promotion was
- *  therefore unmergeable by anyone, for a reason that had nothing to do with scope — #4623 measured
- *  NOT-APPLICABLE the moment its file list was fetched any other way (#4726).
- *
- *  `pulls/<n>/files` paginates and has no line limit. It has a DIFFERENT limit — 3000 files — and
- *  that one is handled by refusing, not by falling back again: see `refuseIfTruncated`. */
+ *  The read itself lives in `scripts/lib/pr-changed-files.mjs` because it is not specific to this
+ *  guard: `gh pr diff` refuses past 20000 lines, every guard that reads a PR's file list fails
+ *  CLOSED on that, and a promotion PR is over the limit essentially always. Keeping one
+ *  implementation is the point — see that file's header for why (#4726, #4748). */
 function liveChangedFiles(pr) {
-	try {
-		return lines(gh(["pr", "diff", String(pr), "--name-only"]));
-	} catch (err) {
-		// Fall through on ANY failure, not just `too_large`: the fallback is strictly better-informed
-		// than the primary, and if it fails too the error propagates and the guard still fails closed.
-		console.log(
-			`check-pr-scope: \`gh pr diff\` could not answer for #${pr} ` +
-				`(${err instanceof Error ? err.message.split("\n")[0] : String(err)}); ` +
-				`reading pulls/${pr}/files instead.`,
-		);
-	}
-	return refuseIfTruncated(
-		lines(
-			gh([
-				"api",
-				`repos/{owner}/{repo}/pulls/${pr}/files`,
-				"--paginate",
-				"--jq",
-				".[].filename",
-			]),
-		),
-	);
+	return changedFilesForPR(pr, gh);
 }
 
 function main() {
