@@ -324,16 +324,70 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 	[
 		"connected-cloud-identity",
 		{
-			writes: "connected `cloud_identities` rows for aws, gcp and azure — provider-shaped credentials, so identityWasConfigured() holds",
+			writes: "connected `cloud_identities` rows for aws, gcp, azure and hetzner — provider-shaped credentials, so identityWasConfigured() holds",
 			seed: async (scope) => {
-				// One row per provider, NOT one row. `identityWasConfigured()`
-				// (`lib/cloud-providers/identity-configured.ts`) is provider-aware, and the four
-				// `connectors.disconnect.*` entries each name their own tile. `seedCredentials`
-				// already shapes the credential per provider (#4708) — this passes the provider and
-				// lets that decide, rather than restating the shapes here.
-				for (const provider of ["aws", "gcp", "azure"] as const) {
+				// ONE ROW PER PROVIDER, NOT ONE ROW. `connectors.ts` filters the account list by the
+				// card's slug (`rows.filter((ci) => ci.provider === slug)`), so an AWS identity puts
+				// a Disconnect on the AWS card and on nothing else — and the four
+				// `connectors.disconnect.{aws,gcp,azure,extra}` entries each name their own card.
+				//
+				// `hetzner` covers `.extra`, whose mutation fires for `EXTRA_CLOUDS`
+				// (`use-cloud-connect.tsx` — digitalocean, hetzner, civo, alibaba). It is `active`
+				// in the catalog where digitalocean and civo are `coming_soon`, and self-managed, so
+				// `identityWasConfigured()` holds on `self_managed` without a ciphertext being
+				// invented.
+				//
+				// The credential shape is NOT restated here: `seedCredentials` already decides it
+				// per provider, and it does so because a one-shape-fits-all credential made every
+				// seeded GCP and Azure identity invisible to this exact filter (#4708) — the row
+				// inserted, the read succeeded, the predicate answered false, and a click did
+				// nothing for 120 seconds.
+				for (const provider of ["aws", "gcp", "azure", "hetzner"] as const) {
 					await seedCloudIdentity(scope.owner, { provider, name: `Audit ${provider.toUpperCase()} account` });
 				}
+			},
+		},
+	],
+	[
+		"connected-api-key-connector",
+		{
+			writes: "one org-scoped `connector_credentials` row against the `cloudflare` catalog connector",
+			seed: async (scope) => {
+				const sql = db();
+				// The catalog row is NOT written here. `connector_credentials.connector_id` is a FK
+				// into `connectors`, and that table is populated by `scripts/migrate.mjs` from
+				// `lib/db/seed/connectors.generated.sql` as part of `db:migrate` — so the id is
+				// LOOKED UP. Writing a catalog row would be this file inventing a product surface.
+				const rows = await sql<{ id: string }[]>`select id from connectors where slug = 'cloudflare' limit 1`;
+				const connectorId = rows[0]?.id;
+				if (!connectorId) {
+					throw new Error(
+						"no `cloudflare` row in the `connectors` catalog — it is seeded by scripts/migrate.mjs from lib/db/seed/connectors.generated.sql, so this database has not been migrated",
+					);
+				}
+				// `scope: "org"` and an explicit `org_id`: `programmables.sql`'s `scoped_all` policy
+				// on this table admits an org row only by `app.current_org`, and the owner-role
+				// seeder sets no such setting, so a `personal` row or an absent `org_id` inserts
+				// cleanly and is invisible to the page.
+				//
+				// The credential is written in the REAL `EncryptedSecret` shape with obviously-e2e
+				// values, not a made-up envelope. Nothing on this page decrypts it — `connectors.ts`
+				// selects four columns and `credentials` is not among them ("Secrets stay encrypted
+				// here — only `is_verified` is needed") — but a fixture whose shape lies about the
+				// wire format is the next reader's wrong answer.
+				await sql`
+					insert into connector_credentials ${sql({
+						user_id: scope.owner.userId,
+						org_id: scope.owner.orgId,
+						scope: "org",
+						connector_id: connectorId,
+						credentials: sql.json({
+							fields: {},
+							secret: { v: 1, kid: "e2e", iv: "e2e", tag: "e2e", data: "e2e" },
+						}),
+						is_verified: true,
+					})}
+					on conflict do nothing`;
 			},
 		},
 	],
