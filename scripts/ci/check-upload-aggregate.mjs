@@ -64,12 +64,33 @@
 // `go-floors-rerecord.yml` and `deploy-console.yml` already use — or an explicit pre-upload
 // assertion that each specific path is non-empty.
 //
-// WHAT THIS DOES NOT SAY. A multi-path step with `if-no-files-found` at `warn` or left unset is
-// NOT reported. Two of those exist here deliberately (ci.yml's `ui-audit`, release-gate.yml's
-// per-project report) and they are a different question — whether they should be asserting at all
-// — which this guard would only muddy by pre-judging. Nothing here checks that a single-path
-// upload is *right*, either: `if-no-files-found: error` on one path means what it says, and that
-// is the whole of what is being restored.
+// AND THE CHEAPER EDIT NEXT TO IT (#4605). Refusing a second `path:` blocks the instinct it names
+// and not the instinct beside it: faced with a red split step, the cheapest fix is to change
+// `if-no-files-found: error` to `warn`, or delete the key, which defaults to `warn`. That removes
+// the assertion outright and no guard fires. It is strictly weaker than the hole #4347 closed — the
+// downgrade leaves a diff ON the assertion, where a reviewer looking at the step can see it, while
+// adding a path left the assertion textually intact — but a guard whose cheapest escape route is to
+// deepen the defect is worse than no guard, so every non-asserting upload is now declared.
+//
+// TWO LEDGERS, AND THE DIFFERENCE IS THE POINT.
+//
+//   * `NON_ASSERTING_UPLOADS` is a DECISION: an empty capture is a legitimate state of the run, and
+//     the entry names that state. The console Playwright reports are the clean case — gated on
+//     `steps.checkout.outcome == 'success'` (#4084), so they deliberately run after an earlier step
+//     failed and the report was never written.
+//   * `ASSERTION_DEBT` is MEASURED DRIFT: absence would be a real finding, or the setting cannot
+//     fire at all, and a named board issue removes it. Both of today's entries are the latter —
+//     `if-no-files-found` over a path that TRACKED repo content makes non-empty on every run.
+//
+// The split is the one `apps/console/shared-surface-allowlist.yaml` draws between `reason:` and
+// `lifts:`, for the same measured reason: a `reason:` that means "we haven't got to it yet" turns
+// debt into policy the moment it is written, and nothing afterwards can tell the two apart. Each
+// ledger fails in BOTH directions — an undeclared non-asserting upload is red, and an entry whose
+// subject no longer exists is red, because an exception that outlives its subject suppresses the
+// next upload that reuses the identity and does it in silence.
+//
+// Nothing here proves a single-path upload points at the right file; it proves that its absence is
+// either loud or specifically accounted for.
 //
 // Line-based, because `yaml` is a dependency of apps/console and not of the root while this runs
 // under plain `node` — the same constraint and the same shape as check-workflow-shape.mjs, whose
@@ -114,8 +135,17 @@
 //     runtime rather than a silent downgrade — a different failure, already visible.
 //   * Reusable workflows and composite actions are invisible to a line scan, as they are to every
 //     other line-based check here.
-//   * `if-no-files-found: warn`, or the key left unset, is not read as a defect. See the note
-//     above; the escape it leaves open is real and named in #4347's follow-up.
+//   * `if-no-files-found: warn`, `ignore`, or the key left unset is accepted only when the upload
+//     AND its exact setting have an entry in `NON_ASSERTING_UPLOADS` or `ASSERTION_DEBT`.
+//   * A reason is measured by LENGTH and nothing else (`REASON_FLOOR`). No matcher separates an
+//     argument from a restatement, so this is a floor on effort, not a quality bar, and it is said
+//     here rather than implied by the failure text. The reasons themselves are the review's job.
+//   * A debt entry's `issue:` is checked for SHAPE — a positive integer — and not for existence or
+//     state. This runs offline under plain `node`; a network call would let the guard go red for
+//     reasons that have nothing to do with the tree it is reading.
+//   * The ledgers are keyed on file + step name + artifact name and are matched on that key alone.
+//     Moving a step between jobs in the same workflow is invisible to them, deliberately: the
+//     question each entry answers is about the step, not about where it sits.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -127,6 +157,103 @@ const DIR = ".github/workflows";
 
 /** The action this is about. Matched on the owner/repo, so any `@version` is covered. */
 const UPLOAD = /^actions\/upload-artifact@/;
+
+/**
+ * The subject key of a non-asserting upload: workflow filename, step name, resolved artifact name.
+ * Every side of it is load-bearing — rename the step, or re-point it at a different artifact, and
+ * the recorded decision stops matching and has to be taken again.
+ *
+ * @param {string} file
+ * @param {string} name
+ * @param {string} artifact
+ * @returns {string}
+ */
+function subjectKey(file, name, artifact) {
+	return `${file}:${name}:${artifact}`;
+}
+
+/**
+ * A minimum length for a recorded reason. A reason has to name the STATE in which no artifact is
+ * legitimate, and the shortest honest one written here runs to about 140 characters — but no
+ * matcher can tell an argument from a restatement, so this is a floor on effort and nothing more.
+ * It is stated as such rather than described as a quality bar it cannot enforce.
+ */
+const REASON_FLOOR = 90;
+
+/**
+ * DECISIONS. Uploads where an empty capture is a legitimate state of the run, with the concrete
+ * state named. Nothing here is "not got to yet" — that is what `ASSERTION_DEBT` below is for, and
+ * keeping the two apart is the whole point: the shared-surface allowlist splits `reason:` from
+ * `lifts:` for exactly this reason, because a `reason:` that means "later" silently converts debt
+ * into policy.
+ *
+ * The expected setting is pinned alongside, so `warn` → `ignore` is a policy change that has to be
+ * argued rather than churn that rides in unread.
+ */
+const NON_ASSERTING_UPLOADS = {
+	// The three console Playwright report uploads and the release-gate one share a shape: they are
+	// gated on `!cancelled() && steps.checkout.outcome == 'success'` (#4084), so they deliberately
+	// run after an earlier step in the same job failed — a build, a `--list` floor guard, or the
+	// Playwright command itself. In that state the report directory was never written.
+	"ci.yml:Upload Playwright report:playwright-report": {
+		setting: "unset",
+		reason: "Gated on the checkout, so it runs after the console build or the hero `--list` floor guard fails and the Playwright command never starts — leaving apps/console/playwright-report/ unwritten. Absence is the diagnostic, not a defect.",
+	},
+	"ci.yml:Upload the audit report:ui-audit": {
+		setting: "unset",
+		reason: "Same checkout gate, and it lists two independently optional Playwright outputs — the HTML report and the ui-audit JSON. Asserting `error` over both is the aggregate defect this file exists to refuse, so the assertion would have to be split first.",
+	},
+	"ci.yml:Upload Playwright report:playwright-report-elench-ai": {
+		setting: "unset",
+		reason: "Gated on the checkout, so it runs after the ee/dist guard, the console build or the elench-ai `--list` floor guard fails and the scripted suite never starts — leaving no HTML report to publish.",
+	},
+	"e2e-ai-nightly.yml:Upload Playwright report:playwright-report-elench-live": {
+		setting: "unset",
+		reason: "Gated on the checkout, so it runs after the console build or the elench-live `--list` floor guard fails and the real-model suite never starts — leaving no HTML report to publish.",
+	},
+	"release-gate.yml:Upload the report, traces and the JSON the ratchet read:release-gate-${{ matrix.project }}": {
+		setting: "unset",
+		reason: "Gated on the checkout, and it lists two independently optional paths — the HTML report and test-results/. A webServer that never boots writes neither, and the Ratchet step above has already failed the job on exactly that.",
+	},
+
+	// The e2e-nightly trio. Each of these is argued in a comment beside the step; the entry states
+	// the state, and the comment states the history.
+	"e2e-nightly.yml:Upload capture-abort marker:e2e-proof-${{ matrix.provider }}-${{ github.run_id }}": {
+		setting: "ignore",
+		reason: "The path is a glob for CAPTURE-ABORTED.txt alone, which capture-proof.sh writes only where it has already deleted an unsafe bundle. A capture that died before reaching that cleanup legitimately leaves nothing, and this step shares an artifact name with `Upload proof artifact`, so it must stay silent rather than warn.",
+	},
+	"e2e-nightly.yml:Upload runner log (scrubbed):t2-runner-log-${{ matrix.provider }}-${{ github.run_id }}": {
+		setting: "ignore",
+		reason: "scrub-runner-log.sh exits 0 having written nothing when the raw log is absent — a leg that green-skips or dies before the T2 harness runs, documented in that script's own header. Its refusal path is the other branch and exits 1, which skips this step outright rather than reaching it empty.",
+	},
+	"e2e-nightly.yml:Upload the post-teardown verification receipt:e2e-teardown-verify-${{ matrix.provider }}-${{ github.run_id }}": {
+		setting: "warn",
+		reason: "The receipt is written by a reporting step that always exits 0 and can legitimately produce none when the scrub refuses it. `warn` and not `ignore` is argued beside the step: a missing receipt makes the rollup read UNMEASURED for that leg, which is correct but silent about the cause, and the cause is here.",
+	},
+};
+
+/**
+ * DEBT. Uploads whose `if-no-files-found` setting is NOT a decision — absence would be a real
+ * finding, or the setting cannot fire at all — but whose fix lives outside this unit's scope. Each
+ * entry names the board issue that will remove it, so the two numbers move together and a debt
+ * entry cannot quietly become policy by sitting here.
+ *
+ * Checked in both directions exactly as the decisions are, plus the issue number. What is NOT
+ * checked is whether that issue is open, or exists: this runs offline under plain `node`, and a
+ * network call would make the guard fail for reasons that have nothing to do with the tree.
+ */
+const ASSERTION_DEBT = {
+	"e2e-nightly.yml:Upload proof artifact:e2e-proof-${{ matrix.provider }}-${{ github.run_id }}": {
+		setting: "warn",
+		issue: 4723,
+		reason: "The path is `demos/proofs/<provider>/`, a TRACKED directory — 73 files for hetzner, 95 for aws, 55 for gcp, 59 for azure — so it is never empty after a checkout, and the step's `if:` cannot be true without one. `warn` is unreachable on every path, and the assertion worth having is over the run-scoped bundle instead.",
+	},
+	"e2e-nightly.yml:Upload updated provisioning-e2e ledger:provisioning-e2e-log-${{ github.run_id }}": {
+		setting: "warn",
+		issue: 4723,
+		reason: "`demos/proofs/provisioning-e2e-log.md` is tracked, so the path always matches after a checkout. The only empty state is the #4084 shape — `if: always()` with no checkout conjunct, reached against an empty workspace — which every other upload in this repo fixed by conjoining the checkout rather than by downgrading.",
+	},
+};
 
 /**
  * A LITERAL block indicator — `|`, `|-`, `|+`, `|2`. Every line of the block is its own entry, and
@@ -423,7 +550,7 @@ export function resolveValue(lines, raw, inline) {
  * REPORTED; it is never scored as a step with one path.
  *
  * @param {string} text
- * @returns {{uploads: number, pathKeys: number, guarded: number, multi: number, problems: {line: number, name: string, artifact: string, entries: string[], excludes: string[], kind: string}[], unreadable: {line: number, name: string, artifact: string, why: string}[]}}
+ * @returns {{uploads: number, pathKeys: number, guarded: number, multi: number, problems: {line: number, name: string, artifact: string, entries: string[], excludes: string[], kind: string}[], unreadable: {line: number, name: string, artifact: string, why: string}[], nonAsserting: {line: number, name: string, artifact: string, setting: string}[]}}
  */
 export function scanUploads(text) {
 	// `\r` is stripped because a CRLF file otherwise scans to ZERO uploads — JS's `.` and `\s*$`
@@ -441,6 +568,7 @@ export function scanUploads(text) {
 	let multi = 0;
 	const problems = [];
 	const unreadable = [];
+	const nonAsserting = [];
 
 	for (let i = jobsAt + 1; i < lines.length; i++) {
 		// A sequence entry is EITHER `- <content>` or a dash alone with its mapping starting on the
@@ -617,16 +745,27 @@ export function scanUploads(text) {
 		}
 		const inffValue = inff === undefined ? undefined : inff.value.trim();
 		if (inffValue === "error") guarded += 1;
+		else nonAsserting.push({ line: inffKey?.line ?? pathKey.line, name, artifact, setting: inffValue ?? "unset" });
 		if (inffValue !== "error" || includes.length < 2) continue;
 
 		problems.push({ line: pathKey.line, name, artifact, entries: includes, excludes, kind: resolvedPath.kind });
 	}
 
-	return { uploads, pathKeys, guarded, multi, problems, unreadable };
+	return { uploads, pathKeys, guarded, multi, problems, unreadable, nonAsserting };
 }
 
 /** @returns {string[]} failures */
-export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.readFileSync(p, "utf8")) {
+export function check(
+	dir = DIR,
+	readdir = fs.readdirSync,
+	readFile = (p) => fs.readFileSync(p, "utf8"),
+	// The real ledgers apply to the real directory ONLY. A self-test fixture is a synthetic tree
+	// with synthetic step names, and running the repo's decisions against it would score entries as
+	// stale on every case — so a fixture run starts from empty ledgers and passes its own.
+	ledgers = dir === DIR ? { decisions: NON_ASSERTING_UPLOADS, debt: ASSERTION_DEBT } : { decisions: {}, debt: {} },
+) {
+	const decisions = ledgers.decisions ?? {};
+	const debt = ledgers.debt ?? {};
 	const out = [];
 	let files;
 	try {
@@ -642,6 +781,7 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 	let pathKeys = 0;
 	let guarded = 0;
 	let multi = 0;
+	const seenNonAsserting = new Set();
 	for (const f of files.sort()) {
 		const scan = scanUploads(readFile(path.join(dir, f)));
 		uploads += scan.uploads;
@@ -671,6 +811,63 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 					"all. It is refused rather than skipped: skipping one step among many is invisible to the repo-wide floors " +
 					"below, and a silent pass is the exact failure this check exists to remove. Write the `with:` block as ordinary " +
 					"indented keys with a plain or block-scalar `path:`, or teach this parser the shape.",
+			);
+		}
+		for (const u of scan.nonAsserting) {
+			const key = subjectKey(f, u.name, u.artifact);
+			seenNonAsserting.add(key);
+			const entry = decisions[key] ?? debt[key];
+			if (entry === undefined) {
+				out.push(
+					`${dir}/${f}:${u.line}: the upload step \`${u.name}\` (artifact \`${u.artifact}\`) reads ` +
+						`\`if-no-files-found: ${u.setting}\` and has no recorded decision. An upload that asserts nothing ` +
+						"promises nothing: either make its output mandatory with `error` over one path per step, or record " +
+						"WHY an empty capture is legitimate in NON_ASSERTING_UPLOADS — or, if it is not legitimate and the " +
+						"fix is elsewhere, in ASSERTION_DEBT with the issue that removes it.",
+				);
+			} else if (entry.setting !== u.setting) {
+				out.push(
+					`${dir}/${f}:${u.line}: the upload step \`${u.name}\` (artifact \`${u.artifact}\`) reads ` +
+						`\`if-no-files-found: ${u.setting}\`, but its recorded entry pins \`${entry.setting}\`. ` +
+						"The three settings are three different promises, so this is a policy change: argue it in the " +
+						"reason rather than letting the pin follow the code.",
+				);
+			}
+		}
+	}
+	for (const [label, ledger] of [
+		["NON_ASSERTING_UPLOADS", decisions],
+		["ASSERTION_DEBT", debt],
+	]) {
+		for (const key of Object.keys(ledger)) {
+			const entry = ledger[key];
+			if (typeof entry.reason !== "string" || entry.reason.trim().length < REASON_FLOOR) {
+				out.push(
+					`${label} entry \`${key}\` has a reason under the ${REASON_FLOOR}-character floor. Name the concrete ` +
+						"state of the run in which no artifact exists — a restatement of the setting is not an argument for it.",
+				);
+			}
+			if (label === "ASSERTION_DEBT" && !(Number.isInteger(entry.issue) && entry.issue > 0)) {
+				out.push(
+					`ASSERTION_DEBT entry \`${key}\` names no board issue. Debt that nobody has agreed to remove is a ` +
+						"decision wearing the wrong label; put it in NON_ASSERTING_UPLOADS and argue it, or file the issue.",
+				);
+			}
+			if (!seenNonAsserting.has(key)) {
+				out.push(
+					`${label} contains stale entry \`${key}\`, but no upload in ${dir} matches that ` +
+						"file, step name and artifact. Remove it: an entry that outlives its subject suppresses the next " +
+						"upload that happens to reuse the identity, and it does so silently — which is the failure this " +
+						"ledger exists to prevent, not a tidiness point.",
+				);
+			}
+		}
+	}
+	for (const key of Object.keys(debt)) {
+		if (decisions[key] !== undefined) {
+			out.push(
+				`\`${key}\` is in BOTH NON_ASSERTING_UPLOADS and ASSERTION_DEBT. It is one or the other: either the ` +
+					"empty capture is legitimate, or it is debt with an issue against it.",
 			);
 		}
 	}
@@ -780,8 +977,11 @@ function selfTest() {
 	ok("...and both count as guarded", scan(FIXED).guarded === 2, `guarded=${scan(FIXED).guarded}`);
 	ok("the fixtures really differ", SITE1 !== FIXED && !FIXED.includes("path: |"));
 
-	// THE OUT-OF-SCOPE SHAPES. Multi-path with `warn`, or with the key absent, is a different
-	// question and must not be pre-judged here — two such steps are deliberate in this repo.
+	// THE SHAPES `scanUploads` DOES NOT CALL A PROBLEM. Multi-path with `warn`, or with the key
+	// absent, is not the aggregate defect — `error` is the only setting that lies about an aggregate
+	// — so it is counted, not reported, and `check` asks the ledger question about it separately.
+	// These cases pin that division of labour: move the ledger check in here and a self-test fixture
+	// would start failing for a reason that has nothing to do with the paths it lists.
 	const WARN = SITE1.replace("if-no-files-found: error", "if-no-files-found: warn");
 	const UNSET = SITE1.replace("          if-no-files-found: error\n", "");
 	ok("the mutations to warn/unset applied", WARN !== SITE1 && UNSET !== SITE1);
@@ -1197,6 +1397,65 @@ function selfTest() {
 	ok("upload steps whose `path:` cannot be found fail", noPaths.some((p) => /read ZERO `path:` keys/.test(p)), JSON.stringify(noPaths));
 	const noGuarded = check("d", () => ["a.yml"], () => wf(UI_AUDIT));
 	ok("a tree where nothing reads as `error` fails", noGuarded.some((p) => /not one of them reading as/.test(p)), JSON.stringify(noGuarded));
+	// ── THE LEDGERS (#4605). Each case is asserted in BOTH directions: the defect goes red, and the
+	//    exception that outlives the defect goes red too. A ledger checked in one direction only is
+	//    the worse half — an undeclared subject is loud, while an entry whose subject is gone is
+	//    silent and suppresses the next upload that reuses the identity.
+	const REASON = "This fixture names the concrete diagnostic-only state of the run in which both optional report paths are legitimately absent.";
+	const decidedKey = "a.yml:Upload the audit report:ui-audit";
+	const led = (decisions = {}, debt = {}) => ({ decisions, debt });
+
+	// D1. The escape this unit exists to close: `error` → `warn` on an existing assertion.
+	const downgrade = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + WARN), led());
+	ok("an `error` to `warn` downgrade with no recorded entry fails", downgrade.some((p) => /has no recorded decision/.test(p)), JSON.stringify(downgrade));
+	// …and the same for deleting the key outright, which defaults to `warn` and leaves NO diff on
+	// the severity at all. This is the half a reviewer cannot see, so it must not be the half that
+	// only the other spelling catches.
+	const deletedKey = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + WARN.replace("\n          if-no-files-found: warn", "")), led());
+	ok("deleting `if-no-files-found` entirely fails the same way", deletedKey.some((p) => /reads `if-no-files-found: unset` and has no recorded decision/.test(p)), JSON.stringify(deletedKey));
+
+	// D2. A reasoned decision is accepted — the guard must not be un-satisfiable.
+	const decided = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "unset", reason: REASON } }));
+	ok("a reasoned non-asserting upload is accepted", decided.length === 0, JSON.stringify(decided));
+
+	// D3. The pin is on the SETTING, so `warn` → `ignore` under an existing entry is a policy change.
+	const changed = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "warn", reason: REASON } }));
+	ok("a setting that drifts from its recorded pin fails", changed.some((p) => /but its recorded entry pins/.test(p)), JSON.stringify(changed));
+
+	// D4. THE OTHER DIRECTION. The upload is gone; the entry is not.
+	const stale = check("d", () => ["a.yml"], () => wf(SINGLE), led({ [decidedKey]: { setting: "unset", reason: REASON } }));
+	ok("a decision that outlives its upload fails", stale.some((p) => /NON_ASSERTING_UPLOADS contains stale entry/.test(p)), JSON.stringify(stale));
+	const staleDebt = check("d", () => ["a.yml"], () => wf(SINGLE), led({}, { [decidedKey]: { setting: "unset", issue: 1, reason: REASON } }));
+	ok("a DEBT entry that outlives its upload fails too", staleDebt.some((p) => /ASSERTION_DEBT contains stale entry/.test(p)), JSON.stringify(staleDebt));
+
+	// D5. A reason under the floor. The floor is effort, not quality — but "optional" is neither.
+	const thin = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "unset", reason: "optional" } }));
+	ok("a reason under the floor fails", thin.some((p) => new RegExp(`under the ${REASON_FLOOR}-character floor`).test(p)), JSON.stringify(thin));
+	// A reason of exactly the floor passes: an off-by-one here would make the rule un-meetable at
+	// its own stated boundary, which is how a floor becomes a number nobody can reason about.
+	const atFloor = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "unset", reason: "x".repeat(REASON_FLOOR) } }));
+	ok("a reason of exactly the floor is accepted", atFloor.length === 0, JSON.stringify(atFloor));
+
+	// D6. DEBT is not a decision with a longer reason: it must name a board issue.
+	const debtOK = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({}, { [decidedKey]: { setting: "unset", issue: 4723, reason: REASON } }));
+	ok("debt with an issue number is accepted", debtOK.length === 0, JSON.stringify(debtOK));
+	const debtNoIssue = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({}, { [decidedKey]: { setting: "unset", reason: REASON } }));
+	ok("debt with no board issue fails", debtNoIssue.some((p) => /names no board issue/.test(p)), JSON.stringify(debtNoIssue));
+	// Not an integer, and not a positive one: `issue: "#4723"` and `issue: 0` are both a field
+	// filled in to get past the check rather than a subject anybody agreed to remove.
+	const debtBadIssue = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({}, { [decidedKey]: { setting: "unset", issue: "#4723", reason: REASON } }));
+	ok("a non-numeric issue reference fails", debtBadIssue.some((p) => /names no board issue/.test(p)), JSON.stringify(debtBadIssue));
+
+	// D7. One subject, one ledger. Listing it twice is how debt quietly becomes policy.
+	const both = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "unset", reason: REASON } }, { [decidedKey]: { setting: "unset", issue: 4723, reason: REASON } }));
+	ok("a subject in both ledgers fails", both.some((p) => /is in BOTH NON_ASSERTING_UPLOADS and ASSERTION_DEBT/.test(p)), JSON.stringify(both));
+
+	// D8. The key is file + step + artifact, so renaming the step re-opens the decision in both
+	//     directions at once: the renamed upload is undeclared AND the old entry is stale.
+	const renamed = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT.replace("Upload the audit report", "Upload the audit bundle")), led({ [decidedKey]: { setting: "unset", reason: REASON } }));
+	ok("renaming a declared step reports the new subject as undeclared", renamed.some((p) => /Upload the audit bundle.*has no recorded decision/.test(p)), JSON.stringify(renamed));
+	ok("…and reports the old entry as stale in the same run", renamed.some((p) => /contains stale entry/.test(p)), JSON.stringify(renamed));
+	ok("…and says both, not one of the two", renamed.length >= 2, JSON.stringify(renamed));
 
 	// End to end: the refusal must carry the file, the step, and the paths, or the next person
 	// cannot act on it.
@@ -1259,10 +1518,15 @@ if (!invokedDirectly()) {
 	const problems = check();
 	for (const p of problems) console.error(`::error::upload-aggregate: ${p}`);
 	if (problems.length > 0) {
+		// Each problem carries its own mechanism; this closer says what the two FAMILIES are, and
+		// says it in the plural on purpose. It used to attribute every finding to the aggregate
+		// defect, which is false for a ledger finding and read as though the guard had one rule.
 		console.error(
-			`\n${problems.length} problem(s). Each is an upload step that CANNOT fail the way it reads: ` +
+			`\n${problems.length} problem(s), in two families. An upload that CANNOT fail the way it reads: ` +
 				"`if-no-files-found: error` is aggregate, so one path matching lets every other path produce nothing and the step " +
-				"still reports success.",
+				"still reports success. And an upload that asserts NOTHING — `warn`, `ignore`, or no key at all — with no entry in " +
+				"NON_ASSERTING_UPLOADS saying why an empty capture is legitimate, or in ASSERTION_DEBT naming the issue that will " +
+				"make it assert. A stale entry in either is the same failure read backwards, and is reported the same way.",
 		);
 		process.exit(1);
 	}
@@ -1278,9 +1542,14 @@ if (!invokedDirectly()) {
 	}
 	// The quantities are printed because a green line that names none is indistinguishable from a
 	// green line produced by a scanner that matched nothing.
+	const decided = Object.keys(NON_ASSERTING_UPLOADS).length;
+	const owed = Object.keys(ASSERTION_DEBT).length;
 	console.log(
 		`upload-aggregate: ${files.length} workflow(s), ${uploads} \`actions/upload-artifact\` step(s), ` +
 			`${guarded} of them asserting \`if-no-files-found: error\`, ${multi} listing more than one path — ` +
-			"and no step is in both sets, so no `error` in this tree is satisfiable by a path other than the one it guards",
+			"and no step is in both sets, so no `error` in this tree is satisfiable by a path other than the one it guards.\n" +
+			`upload-aggregate: the remaining ${uploads - guarded} assert nothing, and every one of them is declared — ` +
+			`${decided} as decisions (an empty capture is a legitimate state) and ${owed} as debt against a board issue. ` +
+			"Both ledgers are checked in both directions, so this line cannot be produced by an entry that outlived its upload.",
 	);
 }
