@@ -146,9 +146,13 @@
 //   * A debt entry's `issue:` is checked for SHAPE — a positive integer — and not for existence or
 //     state. This runs offline under plain `node`; a network call would let the guard go red for
 //     reasons that have nothing to do with the tree it is reading.
-//   * The ledgers are keyed on file + step name + artifact name and are matched on that key alone.
-//     Moving a step between jobs in the same workflow is invisible to them, deliberately: the
-//     question each entry answers is about the step, not about where it sits.
+//   * The ledgers are KEYED on file + step name + artifact name. Moving a step between jobs in the
+//     same workflow is invisible to them, deliberately: the question each entry answers is about
+//     the step, not about where it sits. The key is not the whole match, though — the `setting:`
+//     and the `paths:` an entry pins are compared too, so a repoint of either is a policy change
+//     that has to be re-argued rather than churn that rides in under a still-matching key (#4723).
+//     A JOB name is not read, and a step whose `if:` changes is not noticed: the condition is what
+//     makes a setting reachable, and no matcher here evaluates one.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -176,6 +180,29 @@ function subjectKey(file, name, artifact) {
 }
 
 /**
+ * The PATH a recorded entry is about, as one comparable string: every inclusion pattern, then every
+ * exclusion, in the order the workflow writes them.
+ *
+ * WHY THE KEY IS NOT ENOUGH (#4723). The key is file + step name + artifact, and a `reason:` is an
+ * argument about a PATH — "the path is a glob for CAPTURE-ABORTED.txt alone", "gated on the
+ * checkout, so the report directory was never written". Re-point the step at a different path and
+ * every one of those sentences is about something that is no longer there, while the key still
+ * matches and the ledger stays silent. That is the same entry-outlives-its-subject failure the
+ * stale check below exists for, one field further in: the subject of the reason is the path, so the
+ * path is pinned alongside the setting and a change to it has to be re-argued rather than ridden in.
+ *
+ * Pinned as the WRITTEN patterns, `${{ … }}` and all, never as anything resolved against a run — the
+ * ledger is read offline against a tree, and an expression that expands at runtime has no value here.
+ *
+ * @param {string[]} includes
+ * @param {string[]} excludes
+ * @returns {string}
+ */
+function pathsOf(includes, excludes) {
+	return [...includes, ...excludes].join(" ");
+}
+
+/**
  * A minimum length for a recorded reason. A reason has to name the STATE in which no artifact is
  * legitimate, and the shortest honest one written here runs to about 140 characters — but no
  * matcher can tell an argument from a restatement, so this is a floor on effort and nothing more.
@@ -191,7 +218,10 @@ const REASON_FLOOR = 90;
  * into policy.
  *
  * The expected setting is pinned alongside, so `warn` → `ignore` is a policy change that has to be
- * argued rather than churn that rides in unread.
+ * argued rather than churn that rides in unread. So is the PATH: every reason below is an argument
+ * about a path — "a glob for CAPTURE-ABORTED.txt alone", "the report directory was never written" —
+ * and the key contains no path at all, so without the pin a step could be repointed at something
+ * else entirely and keep the entry that excuses it (#4723).
  */
 const NON_ASSERTING_UPLOADS = {
 	// The three console Playwright report uploads and the release-gate one share a shape: they are
@@ -200,22 +230,27 @@ const NON_ASSERTING_UPLOADS = {
 	// Playwright command itself. In that state the report directory was never written.
 	"ci.yml:Upload Playwright report:playwright-report": {
 		setting: "unset",
+		paths: "apps/console/playwright-report/",
 		reason: "Gated on the checkout, so it runs after the console build or the hero `--list` floor guard fails and the Playwright command never starts — leaving apps/console/playwright-report/ unwritten. Absence is the diagnostic, not a defect.",
 	},
 	"ci.yml:Upload the audit report:ui-audit": {
 		setting: "unset",
+		paths: "apps/console/playwright-report/ apps/console/test-results/ui-audit*.json",
 		reason: "Same checkout gate, and it lists two independently optional Playwright outputs — the HTML report and the ui-audit JSON. Asserting `error` over both is the aggregate defect this file exists to refuse, so the assertion would have to be split first.",
 	},
 	"ci.yml:Upload Playwright report:playwright-report-elench-ai": {
 		setting: "unset",
+		paths: "apps/console/playwright-report/",
 		reason: "Gated on the checkout, so it runs after the ee/dist guard, the console build or the elench-ai `--list` floor guard fails and the scripted suite never starts — leaving no HTML report to publish.",
 	},
 	"e2e-ai-nightly.yml:Upload Playwright report:playwright-report-elench-live": {
 		setting: "unset",
+		paths: "apps/console/playwright-report/",
 		reason: "Gated on the checkout, so it runs after the console build or the elench-live `--list` floor guard fails and the real-model suite never starts — leaving no HTML report to publish.",
 	},
 	"release-gate.yml:Upload the report, traces and the JSON the ratchet read:release-gate-${{ matrix.project }}": {
 		setting: "unset",
+		paths: "apps/console/playwright-report/ apps/console/test-results/",
 		reason: "Gated on the checkout, and it lists two independently optional paths — the HTML report and test-results/. A webServer that never boots writes neither, and the Ratchet step above has already failed the job on exactly that.",
 	},
 
@@ -223,14 +258,17 @@ const NON_ASSERTING_UPLOADS = {
 	// the state, and the comment states the history.
 	"e2e-nightly.yml:Upload capture-abort marker:e2e-proof-${{ matrix.provider }}-${{ github.run_id }}": {
 		setting: "ignore",
+		paths: "demos/proofs/${{ matrix.provider }}/**/CAPTURE-ABORTED.txt",
 		reason: "The path is a glob for CAPTURE-ABORTED.txt alone, which capture-proof.sh writes only where it has already deleted an unsafe bundle. A capture that died before reaching that cleanup legitimately leaves nothing, and this step shares an artifact name with `Upload proof artifact`, so it must stay silent rather than warn.",
 	},
 	"e2e-nightly.yml:Upload runner log (scrubbed):t2-runner-log-${{ matrix.provider }}-${{ github.run_id }}": {
 		setting: "ignore",
+		paths: "${{ runner.temp }}/runner-log-scrubbed/t2-runner.log",
 		reason: "scrub-runner-log.sh exits 0 having written nothing when the raw log is absent — a leg that green-skips or dies before the T2 harness runs, documented in that script's own header. Its refusal path is the other branch and exits 1, which skips this step outright rather than reaching it empty.",
 	},
 	"e2e-nightly.yml:Upload the post-teardown verification receipt:e2e-teardown-verify-${{ matrix.provider }}-${{ github.run_id }}": {
 		setting: "warn",
+		paths: "${{ runner.temp }}/teardown-verify/out/teardown-verify.json",
 		reason: "The receipt is written by a reporting step that always exits 0 and can legitimately produce none when the scrub refuses it. `warn` and not `ignore` is argued beside the step: a missing receipt makes the rollup read UNMEASURED for that leg, which is correct but silent about the cause, and the cause is here.",
 	},
 };
@@ -746,7 +784,9 @@ export function scanUploads(text) {
 		}
 		const inffValue = inff === undefined ? undefined : inff.value.trim();
 		if (inffValue === "error") guarded += 1;
-		else nonAsserting.push({ line: inffKey?.line ?? pathKey.line, name, artifact, setting: inffValue ?? "unset" });
+		// The PATH travels with the finding, because the recorded reason is an argument about a
+		// path and the key is not. See `pathsOf` and the ledger check below.
+		else nonAsserting.push({ line: inffKey?.line ?? pathKey.line, name, artifact, setting: inffValue ?? "unset", paths: pathsOf(includes, excludes) });
 		if (inffValue !== "error" || includes.length < 2) continue;
 
 		problems.push({ line: pathKey.line, name, artifact, entries: includes, excludes, kind: resolvedPath.kind });
@@ -832,6 +872,14 @@ export function check(
 						`\`if-no-files-found: ${u.setting}\`, but its recorded entry pins \`${entry.setting}\`. ` +
 						"The three settings are three different promises, so this is a policy change: argue it in the " +
 						"reason rather than letting the pin follow the code.",
+				);
+			} else if (entry.paths !== u.paths) {
+				out.push(
+					`${dir}/${f}:${u.line}: the upload step \`${u.name}\` (artifact \`${u.artifact}\`) uploads ` +
+						`\`${u.paths}\`, but its recorded entry is about \`${entry.paths ?? "(no path pinned)"}\`. The key is the ` +
+						"step and the artifact; the REASON is an argument about a path, so a repointed path leaves the entry " +
+						"describing something that is no longer there while still suppressing the finding. Re-argue it against " +
+						"the path the step actually uploads, and update the pin in the same edit.",
 				);
 			}
 		}
@@ -1405,6 +1453,9 @@ function selfTest() {
 	const REASON = "This fixture names the concrete diagnostic-only state of the run in which both optional report paths are legitimately absent.";
 	const decidedKey = "a.yml:Upload the audit report:ui-audit";
 	const led = (decisions = {}, debt = {}) => ({ decisions, debt });
+	// The path `UI_AUDIT` actually uploads, which every ACCEPTED fixture entry below must pin —
+	// the pin is fail-closed, so an entry with no `paths:` is a finding rather than a pass (D8).
+	const decidedPaths = "apps/console/playwright-report/ apps/console/test-results/ui-audit*.json";
 
 	// D1. The escape this unit exists to close: `error` → `warn` on an existing assertion.
 	const downgrade = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + WARN), led());
@@ -1416,44 +1467,65 @@ function selfTest() {
 	ok("deleting `if-no-files-found` entirely fails the same way", deletedKey.some((p) => /reads `if-no-files-found: unset` and has no recorded decision/.test(p)), JSON.stringify(deletedKey));
 
 	// D2. A reasoned decision is accepted — the guard must not be un-satisfiable.
-	const decided = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "unset", reason: REASON } }));
+	const decided = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "unset", paths: decidedPaths, reason: REASON } }));
 	ok("a reasoned non-asserting upload is accepted", decided.length === 0, JSON.stringify(decided));
 
 	// D3. The pin is on the SETTING, so `warn` → `ignore` under an existing entry is a policy change.
-	const changed = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "warn", reason: REASON } }));
+	const changed = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "warn", paths: decidedPaths, reason: REASON } }));
 	ok("a setting that drifts from its recorded pin fails", changed.some((p) => /but its recorded entry pins/.test(p)), JSON.stringify(changed));
 
 	// D4. THE OTHER DIRECTION. The upload is gone; the entry is not.
-	const stale = check("d", () => ["a.yml"], () => wf(SINGLE), led({ [decidedKey]: { setting: "unset", reason: REASON } }));
+	const stale = check("d", () => ["a.yml"], () => wf(SINGLE), led({ [decidedKey]: { setting: "unset", paths: decidedPaths, reason: REASON } }));
 	ok("a decision that outlives its upload fails", stale.some((p) => /NON_ASSERTING_UPLOADS contains stale entry/.test(p)), JSON.stringify(stale));
-	const staleDebt = check("d", () => ["a.yml"], () => wf(SINGLE), led({}, { [decidedKey]: { setting: "unset", issue: 1, reason: REASON } }));
+	const staleDebt = check("d", () => ["a.yml"], () => wf(SINGLE), led({}, { [decidedKey]: { setting: "unset", paths: decidedPaths, issue: 1, reason: REASON } }));
 	ok("a DEBT entry that outlives its upload fails too", staleDebt.some((p) => /ASSERTION_DEBT contains stale entry/.test(p)), JSON.stringify(staleDebt));
 
 	// D5. A reason under the floor. The floor is effort, not quality — but "optional" is neither.
-	const thin = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "unset", reason: "optional" } }));
+	const thin = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "unset", paths: decidedPaths, reason: "optional" } }));
 	ok("a reason under the floor fails", thin.some((p) => new RegExp(`under the ${REASON_FLOOR}-character floor`).test(p)), JSON.stringify(thin));
 	// A reason of exactly the floor passes: an off-by-one here would make the rule un-meetable at
 	// its own stated boundary, which is how a floor becomes a number nobody can reason about.
-	const atFloor = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "unset", reason: "x".repeat(REASON_FLOOR) } }));
+	const atFloor = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "unset", paths: decidedPaths, reason: "x".repeat(REASON_FLOOR) } }));
 	ok("a reason of exactly the floor is accepted", atFloor.length === 0, JSON.stringify(atFloor));
 
 	// D6. DEBT is not a decision with a longer reason: it must name a board issue.
-	const debtOK = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({}, { [decidedKey]: { setting: "unset", issue: 4723, reason: REASON } }));
+	const debtOK = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({}, { [decidedKey]: { setting: "unset", paths: decidedPaths, issue: 4723, reason: REASON } }));
 	ok("debt with an issue number is accepted", debtOK.length === 0, JSON.stringify(debtOK));
-	const debtNoIssue = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({}, { [decidedKey]: { setting: "unset", reason: REASON } }));
+	const debtNoIssue = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({}, { [decidedKey]: { setting: "unset", paths: decidedPaths, reason: REASON } }));
 	ok("debt with no board issue fails", debtNoIssue.some((p) => /names no board issue/.test(p)), JSON.stringify(debtNoIssue));
 	// Not an integer, and not a positive one: `issue: "#4723"` and `issue: 0` are both a field
 	// filled in to get past the check rather than a subject anybody agreed to remove.
-	const debtBadIssue = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({}, { [decidedKey]: { setting: "unset", issue: "#4723", reason: REASON } }));
+	const debtBadIssue = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({}, { [decidedKey]: { setting: "unset", paths: decidedPaths, issue: "#4723", reason: REASON } }));
 	ok("a non-numeric issue reference fails", debtBadIssue.some((p) => /names no board issue/.test(p)), JSON.stringify(debtBadIssue));
 
 	// D7. One subject, one ledger. Listing it twice is how debt quietly becomes policy.
-	const both = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "unset", reason: REASON } }, { [decidedKey]: { setting: "unset", issue: 4723, reason: REASON } }));
+	const both = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "unset", paths: decidedPaths, reason: REASON } }, { [decidedKey]: { setting: "unset", paths: decidedPaths, issue: 4723, reason: REASON } }));
 	ok("a subject in both ledgers fails", both.some((p) => /is in BOTH NON_ASSERTING_UPLOADS and ASSERTION_DEBT/.test(p)), JSON.stringify(both));
+
+	// D8. THE PATH PIN (#4723). The key carries no path, and every `reason:` in either ledger is an
+	//     argument about one. So an entry can outlive its subject WITHOUT the key ever going stale:
+	//     repoint the step, keep the step name and the artifact, and the reason now excuses a
+	//     different upload in silence. Both directions, and the missing-pin case with them, because
+	//     an unpinned entry is indistinguishable from a pinned one that happens to agree.
+	const REPOINTED = UI_AUDIT.replace("apps/console/test-results/ui-audit*.json", "apps/console/test-results/");
+	ok("the repoint mutation applied", REPOINTED !== UI_AUDIT);
+	const repointed = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + REPOINTED), led({ [decidedKey]: { setting: "unset", paths: decidedPaths, reason: REASON } }));
+	ok("an entry whose step was repointed at another path fails", repointed.some((p) => /but its recorded entry is about/.test(p)), JSON.stringify(repointed));
+	ok("...and it names BOTH paths, so the reader can see which way it moved", repointed.some((p) => p.includes("apps/console/test-results/ui-audit*.json") && p.includes("uploads `apps/console/playwright-report/ apps/console/test-results/`")), JSON.stringify(repointed));
+	// An entry with no pin at all is a FINDING, not a pass. The pin was added to a ledger that
+	// already had entries, and defaulting the absent field to "whatever the step says" would have
+	// made every one of them pass for free — a migration that silently re-derives the thing it is
+	// supposed to record is how a ledger becomes a mirror.
+	const unpinned = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "unset", reason: REASON } }));
+	ok("an entry with NO path pinned fails rather than defaulting", unpinned.some((p) => /\(no path pinned\)/.test(p)), JSON.stringify(unpinned));
+	// …and the pin is not satisfiable by a SUBSET. `error` is aggregate over the whole list, so an
+	// entry that named one of two paths would excuse a step uploading both.
+	const partial = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT), led({ [decidedKey]: { setting: "unset", paths: "apps/console/playwright-report/", reason: REASON } }));
+	ok("a pin naming only SOME of the step's paths fails", partial.some((p) => /but its recorded entry is about/.test(p)), JSON.stringify(partial));
 
 	// D8. The key is file + step + artifact, so renaming the step re-opens the decision in both
 	//     directions at once: the renamed upload is undeclared AND the old entry is stale.
-	const renamed = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT.replace("Upload the audit report", "Upload the audit bundle")), led({ [decidedKey]: { setting: "unset", reason: REASON } }));
+	const renamed = check("d", () => ["a.yml"], () => wf(SINGLE + "\n" + UI_AUDIT.replace("Upload the audit report", "Upload the audit bundle")), led({ [decidedKey]: { setting: "unset", paths: decidedPaths, reason: REASON } }));
 	ok("renaming a declared step reports the new subject as undeclared", renamed.some((p) => /Upload the audit bundle.*has no recorded decision/.test(p)), JSON.stringify(renamed));
 	ok("…and reports the old entry as stale in the same run", renamed.some((p) => /contains stale entry/.test(p)), JSON.stringify(renamed));
 	ok("…and says both, not one of the two", renamed.length >= 2, JSON.stringify(renamed));

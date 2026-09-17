@@ -224,6 +224,15 @@ const MUTATIONS = [
 		to: "if (false) {",
 		expect: /both ledgers/,
 	},
+	{
+		// #4723. The key carries no path, so this is the one way an entry outlives its subject
+		// WITHOUT the stale check (M23/M24) ever seeing it: repoint the step, keep its name and
+		// artifact, and the reason now excuses a different upload.
+		name: "M28 the path an entry is about is no longer compared",
+		from: "} else if (entry.paths !== u.paths) {",
+		to: "} else if (false) {",
+		expect: /repointed at another path|NO path pinned|only SOME of the step/,
+	},
 ];
 
 const ORIGINAL = fs.readFileSync(GUARD, "utf8");
