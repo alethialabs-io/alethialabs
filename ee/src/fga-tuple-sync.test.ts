@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: LicenseRef-Alethia-Commercial
 
-// The OpenFGA dual-write writer's one pure decision: WHERE a grant's tuples live.
+// The OpenFGA dual-write writer's two testable-in-isolation decisions: WHERE a grant's tuples
+// live (`grantObject`, below), and HOW MANY of them a read actually returns (`readAllTuples`,
+// at the foot of this file). Both are exported for this suite; the class itself is not
+// instantiated here — see the note above `readAllTuples`' block for why.
 //
 // Before #4584 this file had no test at all, and the console-side revoke tests
 // (tests/actions/grants.test.ts) `vi.mock` the whole tuple-sync seam — so `grantObject` never
@@ -23,10 +26,10 @@
 // is precisely the thing that was wrong: `grantObject` was a second, independent model of it.
 
 import { describe, expect, it } from "vitest";
-import { expandGrant } from "@/lib/authz/fga-tuples";
+import { type FgaTuple, expandGrant } from "@/lib/authz/fga-tuples";
 import { EMPTY_SCOPE_DENIES, targetForEffect } from "@/lib/authz/grant-scope";
 import { BUILT_IN_ROLES, PERMISSIONS } from "@/lib/authz/registry";
-import { grantObject } from "./fga-tuple-sync";
+import { type TupleReader, grantObject, readAllTuples } from "./fga-tuple-sync";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const PROJECT = "22222222-2222-4222-8222-222222222222";
@@ -192,5 +195,130 @@ describe("the specific rows the revoke leak was made of", () => {
 				resourceId: PROJECT,
 			}),
 		).toBe(`project:${PROJECT}`);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// The OpenFGA Read is PAGINATED, and every caller here reads in order to DELETE.
+//
+// `existingFor` used to be a single `client.read()` — ONE page, at most the server's `page_size`
+// tuples — under a docblock asserting it read EVERY tuple the subject had on that object.
+// @openfga/sdk 0.8.1 does not auto-paginate: `read()` takes
+// `continuationToken` in its OPTIONS argument and hands back the wire's `continuation_token`,
+// and until this fix that field was never read anywhere in the repo.
+//
+// The failure was silent in both halves. A revoke deleted the first page and left the rest, and
+// `deleteTuples`' `Promise.allSettled` reports nothing; a surviving `*_deny_*` tuple then keeps a
+// subject denied a permission no grant row denies any more. The density is ordinary, not
+// pathological: an org-wide allow is already ~one tuple per `PERMISSIONS` key on `org:<orgId>`,
+// and the #4584 ruling puts a scope-to-nothing DENY's tuples on that very object.
+//
+// `readAllTuples` is exported and tested directly for the same reason `grantObject` is: it is
+// this file's other pure-ish decision, and the suite may not instantiate `FgaTupleSync` at all —
+// `CoreContext.db` is `getServiceDb`, and vitest.config.ts's rule for this suite is that nothing
+// here pulls in core's runtime.
+
+/** A scripted OpenFGA Read: one entry per page, in order. */
+function fakeReader(
+	pages: { tuples?: { key?: FgaTuple }[]; continuation_token?: string }[],
+): TupleReader & { calls: ({ continuationToken?: string } | undefined)[] } {
+	const calls: ({ continuationToken?: string } | undefined)[] = [];
+	let i = 0;
+	return {
+		calls,
+		read(_body, options) {
+			calls.push(options);
+			const page = pages[Math.min(i, pages.length - 1)];
+			i += 1;
+			return Promise.resolve(page);
+		},
+	};
+}
+
+const tuple = (n: number): FgaTuple => ({
+	user: `user:${USER}`,
+	relation: n % 2 === 0 ? "viewer" : "deny_viewer",
+	object: `org:${ORG}`,
+});
+
+describe("readAllTuples walks Read's pagination to exhaustion", () => {
+	it("returns BOTH pages' tuples, not just the first", async () => {
+		// The regression, stated at the smallest size that shows it. A single `client.read()`
+		// returns page one and stops; the tuples on page two then survive every delete built on
+		// this read.
+		const first = [tuple(0), tuple(1)];
+		const second = [tuple(2)];
+		const client = fakeReader([
+			{ tuples: first.map((key) => ({ key })), continuation_token: "tok-1" },
+			{ tuples: second.map((key) => ({ key })), continuation_token: "" },
+		]);
+
+		const all = await readAllTuples(client, { user: `user:${USER}`, object: `org:${ORG}` });
+
+		expect(all).toEqual([...first, ...second]);
+		// And the second request carried the token the first page named — reading the response's
+		// field under the wrong (camelCase) spelling would send `undefined` here and re-read
+		// page one forever, which the non-advancing guard below would then catch.
+		expect(client.calls).toEqual([{}, { continuationToken: "tok-1" }]);
+	});
+
+	it("ends on an EMPTY token and on an ABSENT one alike", async () => {
+		// OpenFGA documents the empty string as "no more tuples". A server that omits the field
+		// has no next page to name either, and treating that as a missing page would hang.
+		const empty = fakeReader([{ tuples: [{ key: tuple(0) }], continuation_token: "" }]);
+		await expect(readAllTuples(empty, { object: `org:${ORG}` })).resolves.toHaveLength(1);
+		expect(empty.calls).toHaveLength(1);
+
+		const absent = fakeReader([{ tuples: [{ key: tuple(0) }] }]);
+		await expect(readAllTuples(absent, { object: `org:${ORG}` })).resolves.toHaveLength(1);
+		expect(absent.calls).toHaveLength(1);
+	});
+
+	it("crosses three pages, so the loop is not an unrolled second read", async () => {
+		// The control on the case above. A fix that simply read twice would pass "both pages"
+		// and lose page three — the same defect one page further out.
+		const client = fakeReader([
+			{ tuples: [{ key: tuple(0) }], continuation_token: "a" },
+			{ tuples: [{ key: tuple(1) }], continuation_token: "b" },
+			{ tuples: [{ key: tuple(2) }], continuation_token: "" },
+		]);
+		await expect(readAllTuples(client, { user: `user:${USER}` })).resolves.toHaveLength(3);
+		expect(client.calls).toEqual([{}, { continuationToken: "a" }, { continuationToken: "b" }]);
+	});
+
+	it("skips a page entry with no key rather than writing an undefined tuple", async () => {
+		const client = fakeReader([
+			{ tuples: [{ key: tuple(0) }, {}], continuation_token: "" },
+		]);
+		await expect(readAllTuples(client, { object: `org:${ORG}` })).resolves.toEqual([tuple(0)]);
+	});
+
+	it("THROWS on a non-advancing token instead of looping forever", async () => {
+		// A server that always names the same next page cannot terminate the walk. Refusing is
+		// the same choice as the bound below: a short read is what the caller cannot detect.
+		const client = fakeReader([{ tuples: [{ key: tuple(0) }], continuation_token: "same" }]);
+		await expect(readAllTuples(client, { user: `user:${USER}` })).rejects.toThrow(
+			/non-advancing continuation token/,
+		);
+	});
+
+	it("THROWS at the page bound rather than returning a short list", async () => {
+		// An ever-CHANGING token defeats the repeat check, so the hard page cap is a second,
+		// independent stop. Asserting the rejection is asserting the direction of the failure:
+		// returning what it had would be the original defect, re-entered through the guard.
+		let n = 0;
+		const client: TupleReader = {
+			read() {
+				n += 1;
+				return Promise.resolve({
+					tuples: [{ key: tuple(n) }],
+					continuation_token: `tok-${n}`,
+				});
+			},
+		};
+		await expect(readAllTuples(client, { user: `user:${USER}` })).rejects.toThrow(
+			/exceeded 1000 pages/,
+		);
+		expect(n).toBe(1000);
 	});
 });

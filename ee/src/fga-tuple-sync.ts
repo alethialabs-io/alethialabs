@@ -29,6 +29,92 @@ function grantSubject(g: { principalType: "user" | "team"; principalId: string }
 }
 
 /**
+ * The hard stop on `readAllTuples`' loop, counted in PAGES because the page SIZE is the server's
+ * and not ours — nothing here sends `page_size`. A correct server ends the walk by returning an
+ * empty `continuation_token`; this bounds a server that never does.
+ *
+ * A thousand pages is far beyond anything a grant expansion reaches at any page size OpenFGA
+ * serves: `PERMISSIONS` is under a hundred keys, so a subject's tuples on one object are in the
+ * tens, and even the whole-store-by-subject read in `revokeMemberGrant` is bounded by that times
+ * the objects one member is granted on. Reaching this means the server is misbehaving, not that
+ * the subject is unusually privileged.
+ */
+const MAX_READ_PAGES = 1000;
+
+/**
+ * The only capability `readAllTuples` needs of the client: OpenFGA's Read, with its pagination
+ * surface. Declared structurally rather than as `OpenFgaClient` so a test can hand it a page
+ * SEQUENCE without standing up the SDK's `$response` envelope — `OpenFgaClient` satisfies it.
+ *
+ * The asymmetric casing is the SDK's, not a typo, and getting it wrong is silent: the REQUEST
+ * takes `continuationToken` in the second (options) argument — @openfga/sdk 0.8.1 maps it onto
+ * the wire's `continuation_token` itself — while the RESPONSE carries the wire spelling
+ * `continuation_token`. Reading `res.continuationToken` would be `undefined` on every page and
+ * the loop would stop after the first one, which is precisely the bug this replaces.
+ */
+export interface TupleReader {
+	read(
+		body?: { user?: string; object?: string; relation?: string },
+		options?: { continuationToken?: string },
+	): Promise<{
+		tuples?: { key?: FgaTuple }[];
+		continuation_token?: string;
+	}>;
+}
+
+/**
+ * EVERY tuple matching the filter, walked to exhaustion across OpenFGA's Read pagination.
+ *
+ * ⚠ THE REASON THIS EXISTS. `client.read()` returns ONE PAGE — at most the server's `page_size`
+ * tuples, plus a `continuation_token` naming the next. @openfga/sdk 0.8.1 does NOT auto-paginate
+ * (`client.js` forwards `page_size`/`continuation_token` and returns the single response), and
+ * before this the token was read nowhere in the repo — so the one call this replaces returned a
+ * PAGE while its caller was written as though it returned the set.
+ *
+ * Every caller here reads in order to DELETE, so a partial read is a partial revoke: the surplus
+ * tuples survive, unattributable to any grant row, and `deleteTuples`' `Promise.allSettled`
+ * reports nothing. The density that reaches a page boundary is ordinary, not pathological: an
+ * org-wide `admin` allow is already about one tuple per `PERMISSIONS` key on `org:<orgId>`, and
+ * the #4584 ruling puts a scope-to-nothing DENY's tuples on that very object, on top of it. If
+ * the survivor is a `*_deny_*` tuple the subject stays denied a permission no row denies.
+ *
+ * The bound is now `MAX_READ_PAGES` pages, and exceeding it THROWS rather than returning what it
+ * has. A short read is what the caller cannot detect; a thrown error fails the revoke loudly and
+ * leaves Postgres — the source of truth — to be re-asserted by `backfill` at the next boot.
+ * A token that repeats is the same refusal for the same reason: it cannot terminate.
+ */
+export async function readAllTuples(
+	client: TupleReader,
+	filter: { user?: string; object?: string },
+): Promise<FgaTuple[]> {
+	const out: FgaTuple[] = [];
+	const seen = new Set<string>();
+	let token: string | undefined;
+
+	for (let page = 0; page < MAX_READ_PAGES; page++) {
+		const res = await client.read(filter, token === undefined ? {} : { continuationToken: token });
+		for (const t of res.tuples ?? []) {
+			if (t.key) out.push(t.key);
+		}
+		// An EMPTY token is the documented end of the walk, not a missing field — and an absent
+		// one is treated the same way, because a server that omits it has no next page to name.
+		const next = res.continuation_token;
+		if (!next) return out;
+		if (seen.has(next)) {
+			throw new Error(
+				`OpenFGA Read returned a non-advancing continuation token after ${page + 1} page(s) for ${JSON.stringify(filter)}; refusing to loop`,
+			);
+		}
+		seen.add(next);
+		token = next;
+	}
+
+	throw new Error(
+		`OpenFGA Read exceeded ${MAX_READ_PAGES} pages for ${JSON.stringify(filter)}; refusing to read further`,
+	);
+}
+
+/**
  * The OpenFGA object a grant's tuples LIVE on — or null when the grant expands to no tuples and
  * there is consequently nothing to read or delete.
  *
@@ -102,6 +188,14 @@ export class FgaTupleSync implements TupleSync {
 	 * because the #4584 ruling extends WHICH rows land on the org object (below), and it fails
 	 * closed and is re-asserted from Postgres by `backfill` at the next boot.
 	 *
+	 * ⚠ AND "EVERY" IS A CLAIM WITH A BOUND BEHIND IT, which is the only reason it may be written
+	 * here at all. An earlier version of this sentence asserted the totality while `existingFor`
+	 * issued ONE unpaginated `client.read()` — one page of however many tuples existed — so a
+	 * revoke on a dense org object was silently PARTIAL and a surviving `*_deny_*` tuple could
+	 * keep a subject denied a permission no row denied any more. `existingFor` now walks
+	 * `readAllTuples`, whose bound is `MAX_READ_PAGES` and whose behaviour AT the bound is to
+	 * throw, not to return a short list. A coarse delete is a decision; a short one is a leak.
+	 *
 	 * ⚠ AND THE TWO EFFECTS NOW BEHAVE DIFFERENTLY FOR A ROW THAT SCOPES TO NOTHING (#4584):
 	 *
 	 *   allow — `grantObject` returns null, so this is a no-op. It does NOT clear the tuples such
@@ -148,12 +242,13 @@ export class FgaTupleSync implements TupleSync {
 		}
 	}
 
-	/** Current tuples for a subject on an object (to replace a grant idempotently). */
+	/**
+	 * Every current tuple for a subject on an object (to replace a grant idempotently), walked
+	 * across Read pagination — see `readAllTuples` for what "every" is bounded by and what it
+	 * does instead of returning a short answer.
+	 */
 	private async existingFor(user: string, object: string): Promise<FgaTuple[]> {
-		const res = await this.client.read({ user, object });
-		return (res.tuples ?? [])
-			.map((t) => t.key)
-			.filter((k): k is FgaTuple => Boolean(k));
+		return readAllTuples(this.client, { user, object });
 	}
 
 	private async builtinRoleId(role: string): Promise<string | null> {
@@ -184,12 +279,11 @@ export class FgaTupleSync implements TupleSync {
 	}
 
 	async revokeMemberGrant(_orgId: string, userId: string): Promise<void> {
-		// Remove every tuple where this user is the subject (org-wide + any scoped).
-		const res = await this.client.read({ user: `user:${userId}` });
-		const tuples = (res.tuples ?? [])
-			.map((t) => t.key)
-			.filter((k): k is FgaTuple => Boolean(k));
-		await this.deleteTuples(tuples);
+		// Remove every tuple where this user is the subject (org-wide + any scoped). This one is
+		// filtered by SUBJECT ALONE, across every object in the store, so it is the call here most
+		// certain to exceed a page: a member with an org-wide role plus scoped grants on a few
+		// projects clears 50 tuples without being remarkable. It walks the pages for that reason.
+		await this.deleteTuples(await readAllTuples(this.client, { user: `user:${userId}` }));
 	}
 
 	async syncScopedGrant(grant: ScopedGrant): Promise<void> {
