@@ -9,6 +9,7 @@ import {
 	PROJECT_NAME_MAX_LENGTH,
 	helmRegistryProviderConfigSchema,
 	pickFreeProjectName,
+	projectSchema,
 } from "@/lib/validations/project-form.schema";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize, currentActor } from "@/lib/authz/guard";
@@ -188,6 +189,121 @@ function unsupportedKindGateError(
 	return new Error(
 		`Component "${name}" (${kind}) can't be provisioned on ${cloud}: ${detail}.`,
 	);
+}
+
+// ============================================================
+// Refusals — a reason the user can read, not a digest.
+// ============================================================
+
+/**
+ * A refusal the user is meant to READ, returned rather than thrown.
+ *
+ * `"use server"` compiles every export of this file into a POST-addressable Server Action, and in a
+ * PRODUCTION build (which is what the `qa` gate leg drives — `next build` + `next start`) Next
+ * **redacts a thrown `Error`'s message and substitutes a `digest`**. So `throw new Error("…already
+ * exists")` is not a way to tell anybody anything: the sentence the action wrote is replaced before
+ * it reaches the client, and `toast.error(e.message)` renders the redaction. That is #4644.
+ *
+ * Only a refusal — something the user did, and can undo — travels this way. An UNEXPECTED failure
+ * still throws: it may carry query text or infrastructure detail, the user cannot act on it, and
+ * the redaction is then the correct behaviour rather than the bug. A wrapper that turned every
+ * error into an `{ ok: false }` would present a defect as advice.
+ *
+ * The field is `error` and not `reason` because that is this console's existing shape —
+ * `ConnectorCredentialResult` (`actions/connectors.ts`) and `addChannel` (`actions/alerts.ts`)
+ * already return it, and their forms already narrow on `ok`. #4644's body says `reason`; a second
+ * spelling of one idea is the drift CLAUDE.md §6 exists to stop, so the house word wins.
+ *
+ * NOT exported. It is the shared arm of the three result unions below, which ARE — a client narrows
+ * on `res.ok` and never names this type. Exporting it only adds a row to `check:dead-code`'s unused
+ * list, and a name nobody imports is a name that drifts.
+ */
+type ProjectRefusal = { ok: false; error: string };
+
+/** {@link tryCreateProject}'s result: the created project, or a refusal to render. */
+export type CreateProjectResult =
+	| { ok: true; project: Project }
+	| ProjectRefusal;
+
+/** {@link updateProjectName}'s result: the persisted name, or a refusal to render. */
+export type UpdateProjectNameResult =
+	| { ok: true; project_name: string }
+	| ProjectRefusal;
+
+/** {@link deleteProject}'s result: the deletion, or a refusal to render. */
+export type DeleteProjectResult = { ok: true } | ProjectRefusal;
+
+/**
+ * The project-name rule, READ from `project-form.schema.ts` rather than retyped.
+ *
+ * `.refine(canSlugify)` and the `PROJECT_NAME_MAX_LENGTH` bound are the schema's, so widening or
+ * narrowing the rule there moves this with it. That matters here more than it usually would: the
+ * console's ONE create screen applies all three rules client-side (see `configure-project.tsx`) and
+ * the action applied NONE of them, which is the second half of #4644 — `projects.project_name` is
+ * an unbounded `text()` column, so the action was reachable with a name no schema had seen.
+ */
+const PROJECT_NAME_RULE = projectSchema.shape.project_name;
+
+/**
+ * Why this project name is refused, or `null` if it is fine.
+ *
+ * The PREDICATE is always the schema's — nothing here decides whether a name passes. What is
+ * decided here is the WORDING, and the mapping below is not a pass-through, so read it as three
+ * separate calls rather than one:
+ *
+ *   · `too_big` — the schema passes NO message to its `.max()`, so zod's default ("Too big:
+ *     expected string to have <=100 characters") is what a user would otherwise be shown. The
+ *     sentence written here is the one `updateProjectName` and the Configure form already show, and
+ *     its NUMBER is interpolated from `PROJECT_NAME_MAX_LENGTH` rather than typed.
+ *   · `too_small` — the schema's own message is "Project name is required"; the console's two name
+ *     fields both say "A project name is required", so that is what is returned. A deliberate
+ *     override of a message that exists, not a gap being filled.
+ *   · anything else — `issue.message` verbatim. Today that is only `.refine(canSlugify)`'s "Enter
+ *     at least one letter or number", which needs no help; a rule added to the schema later
+ *     therefore arrives here with its own wording instead of silently reading as a too-long name.
+ *
+ * `"Enter a valid project name"` is unreachable while zod reports at least one issue per failure,
+ * and exists so a `safeParse` that somehow failed with an empty `issues` array cannot return `null`
+ * — which would read as "this name is fine".
+ *
+ * @param name the display name as submitted
+ * @returns a sentence to show the user, or null when the name passes
+ */
+function projectNameProblem(name: unknown): string | null {
+	const parsed = PROJECT_NAME_RULE.safeParse(
+		typeof name === "string" ? name.trim() : name,
+	);
+	if (parsed.success) return null;
+	const issue = parsed.error.issues[0];
+	if (!issue) return "Enter a valid project name";
+	if (issue.code === "too_small") return "A project name is required";
+	if (issue.code === "too_big")
+		return `Project name must be ${PROJECT_NAME_MAX_LENGTH} characters or fewer`;
+	return issue.message;
+}
+
+/**
+ * A name `projectNameProblem` refuses, as something a caller can CATCH.
+ *
+ * `createProject` keeps the throwing shape (see its JSDoc), so the only way {@link tryCreateProject}
+ * can tell "the name broke a rule" apart from "the database fell over" is the error's TYPE. A bare
+ * `new Error(problem)` is indistinguishable from either.
+ *
+ * THIS CLASS IS THE REASON THE GUARD CAN STAY FIRST. Without a catchable type the wrapper would have
+ * to re-ask the rule before delegating — which means before `authorize`, since the wrapper is its own
+ * `"use server"` export — and an unauthenticated POST to that action id would get the validator's
+ * answer. With it, the rule is asked once, inside `createProject`, after its `authorize`, and the
+ * refusal travels back out as a value. It is caught in exactly one place; `grep ProjectNameInvalid`
+ * is the whole audit.
+ *
+ * NOT exported: in a `"use server"` file every runtime export becomes a POST-addressable action, so
+ * a class cannot be one. `instanceof` still works — `tryCreateProject` is in this module.
+ */
+class ProjectNameInvalidError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "ProjectNameInvalidError";
+	}
 }
 
 // ============================================================
@@ -481,8 +597,37 @@ async function clearComponents(
 		.where(envScope(projectServices, projectId, environmentId));
 }
 
+/**
+ * Creates a project, THROWING on a refusal.
+ *
+ * Kept as the throwing shape because every caller destructures `{ project }` from it and a
+ * `{ ok: false }` would reach them as `undefined` — a silent wrong answer where there is a loud one
+ * today. The three are NOT the same kind of caller, and the difference is the part worth writing
+ * down:
+ *
+ *   · {@link tryCreateProject} (just below) catches the throw and returns it, which is what makes
+ *     the guard-then-parse ordering possible at all. Read its JSDoc before adding a check here.
+ *   · `duplicateProjectForProvider` (below) is IN-PROCESS. No action boundary, no redaction; the
+ *     thrown message is the message it gets.
+ *   · the canvas's create-mode save
+ *     (`components/design-project/canvas/design-project-canvas.tsx`) is a `"use client"` component,
+ *     so its call IS a Server Action round trip and its `toast.error(e.message)` still renders a
+ *     digest in a production build. That is #4644's defect surviving on a second screen. It is not
+ *     fixed here because that file is #4279's scope; the remedy is one line — call
+ *     {@link tryCreateProject} and render `res.error` — and #4644 records it.
+ *
+ * Client callers that must SHOW the refusal use {@link tryCreateProject}.
+ *
+ * The name is parsed HERE and NOWHERE ELSE on the server, so every path — the three above and
+ * anything added later — gets the bound that `projects.project_name`'s unbounded `text()` column
+ * does not give it. It is parsed on the line AFTER `authorize`, and that order is load-bearing: a
+ * parse above the guard answers a question for a caller who has not cleared it. That is also why
+ * the wrapper below re-asks nothing.
+ */
 export async function createProject(data: CreateProjectInput) {
 	const actor = await authorize("create", { type: "project" });
+	const problem = projectNameProblem(data.project.project_name);
+	if (problem) throw new ProjectNameInvalidError(problem);
 	const owner = actor.userId;
 	// A project belongs to the ACTIVE ORG, not the creating user. In the community build these are the
 	// same value (`actor.orgId === userId`), so everything below is byte-identical there. They diverge
@@ -491,6 +636,10 @@ export async function createProject(data: CreateProjectInput) {
 	// (which filters `projects.org_id = actor.orgId`) missed the project and its own creator couldn't
 	// see it. Scope the whole transaction to the org and stamp the org id explicitly.
 	const orgId = actor.orgId;
+	// Stored trimmed, like `updateProjectName` does. Without it " api" and "api" are two DISTINCT
+	// rows under `projects_org_id_project_name_key` (UNIQUE on (org_id, lower(project_name))) — two
+	// projects the CLI's `alethia project get <name>` cannot tell apart.
+	const project_name = data.project.project_name.trim();
 
 	return withScope({ ownerId: owner, orgId }, async (tx) => {
 		// M1: environment_stage is no longer a project column — it seeds the default env.
@@ -500,7 +649,7 @@ export async function createProject(data: CreateProjectInput) {
 		// the shared front-door invariant — the SAME core the CLI route (POST /api/cli/projects)
 		// runs, so the two creation paths can never drift.
 		const { project, defaultEnv } = await insertProjectWithDefaultFabric(tx, {
-			project_name: projectFields.project_name,
+			project_name,
 			region: projectFields.region,
 			cloud_identity_id: projectFields.cloud_identity_id ?? null,
 			iac_version: projectFields.iac_version,
@@ -519,13 +668,68 @@ export async function createProject(data: CreateProjectInput) {
 			user_id: owner,
 			action: "CREATED",
 			changes: {
-				project_name: data.project.project_name,
+				project_name,
 				environment: data.project.environment_stage,
 			},
 		});
 
 		return { project };
 	});
+}
+
+/**
+ * Creates a project, RETURNING a refusal the caller can render.
+ *
+ * The user-facing half of #4644. `createProject` above throws, and a thrown message from a
+ * `"use server"` export is redacted to a `digest` in a production build — so a name that is already
+ * taken, or one no schema would accept, reached the user as a generic failure and the create simply
+ * appeared not to work. This returns that sentence instead.
+ *
+ * ONLY the two refusals are mapped — a name that breaks a `project_name` rule, and a name the org
+ * already holds. Anything else is rethrown on purpose: an unexpected error is a defect, not advice,
+ * and rendering its text as though the user could act on it is worse than the digest. Callers keep
+ * their `catch` for that case.
+ *
+ * **THIS FUNCTION ASKS NOTHING ABOUT THE INPUT BEFORE `createProject` DOES.** It is itself an export
+ * of a `"use server"` file, so it is a POST-addressable action id of its own; any statement it makes
+ * before delegating is a statement made before `authorize`. Validating here first — which is what
+ * this wrapper did when it was written — turns the action into an input oracle an unauthenticated
+ * POST can query: send a name, learn from the reply whether it is too long, unslugifiable or empty,
+ * with no session and nothing written to the audit log. The rule therefore lives exactly once, in
+ * `createProject`, BEHIND its guard, and reaches this wrapper as a caught {@link
+ * ProjectNameInvalidError}. The ordering that matters is `authorize` → parse → write.
+ *
+ * @param data the same `CreateProjectInput` `createProject` takes
+ * @returns the created project, or `{ ok: false, error }` with a sentence to show
+ */
+export async function tryCreateProject(
+	data: CreateProjectInput,
+): Promise<CreateProjectResult> {
+	try {
+		const { project } = await createProject(data);
+		return { ok: true, project };
+	} catch (err) {
+		// The name rule, asked by `createProject` AFTER its `authorize` (see above). Its message is
+		// already a sentence written for a user — `projectNameProblem` produced it.
+		if (err instanceof ProjectNameInvalidError) {
+			return { ok: false, error: err.message };
+		}
+		// The pre-check and the index race both land on this class (see
+		// `insertProjectWithDefaultFabric`); `isProjectNameTaken` covers a raw 23505 that reached
+		// here unmapped, and its sentence is REBUILT rather than read off the driver error, whose
+		// text is "Failed query: insert into …".
+		if (err instanceof ProjectNameTakenError) {
+			return { ok: false, error: err.message };
+		}
+		if (isProjectNameTaken(err)) {
+			return {
+				ok: false,
+				error: new ProjectNameTakenError(data.project.project_name.trim())
+					.message,
+			};
+		}
+		throw err;
+	}
 }
 
 /**
@@ -2250,8 +2454,14 @@ const LIVE_ENV_STATUSES = new Set([
  * cascade; jobs keep their history with a null project reference. This does NOT tear down
  * provisioned cloud infrastructure — it refuses while any environment is live/in-flight, so the
  * caller must destroy those environments first.
+ *
+ * That refusal is RETURNED, not thrown (#4644): it used to be a `throw new Error("This project has
+ * live or in-flight environments…")`, and a production build redacted it, so the Danger Zone closed
+ * its dialog and said nothing the user could act on. See {@link ProjectRefusal}.
  */
-export async function deleteProject(projectId: string) {
+export async function deleteProject(
+	projectId: string,
+): Promise<DeleteProjectResult> {
 	const actor = await authorize("destroy", { type: "project", id: projectId });
 	return withActorScope(actor, async (tx) => {
 		// Refuse while any environment is live/in-flight — deleting would orphan cloud resources.
@@ -2260,13 +2470,15 @@ export async function deleteProject(projectId: string) {
 			.from(projectEnvironments)
 			.where(eq(projectEnvironments.project_id, projectId));
 		if (envs.some((e) => LIVE_ENV_STATUSES.has(e.status))) {
-			throw new Error(
-				"This project has live or in-flight environments. Destroy them before deleting the project.",
-			);
+			return {
+				ok: false,
+				error:
+					"This project has live or in-flight environments. Destroy them before deleting the project.",
+			};
 		}
 		// CASCADE handles all component tables.
 		await tx.delete(projects).where(eq(projects.id, projectId));
-		return { success: true };
+		return { ok: true };
 	});
 }
 
@@ -2884,18 +3096,24 @@ export async function getProjectGeneral(
  * stable slug is what made that survivable, and what made it invisible. It is now refused, with the
  * same error and the same wording the create path uses, because "that name is taken" should not
  * depend on which screen you are standing on.
+ *
+ * All three refusals are RETURNED, not thrown (#4644). They were thrown, and a production build
+ * redacted every one of them, so the rename field reported a digest for a thing the user could fix
+ * in one keystroke. See {@link ProjectRefusal}.
+ *
+ * The rules are `projectNameProblem`'s — the same ones the create path applies — so a name accepted
+ * on one screen is accepted on the other. That is the third round of exactly this asymmetry: the
+ * comment beside the schema's `.max()` records create/rename disagreeing at 50 vs 100, and #4644
+ * records the create action applying no rule at all while this one applied two of the three.
  */
 export async function updateProjectName(
 	projectId: string,
 	name: string,
-): Promise<{ project_name: string }> {
+): Promise<UpdateProjectNameResult> {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const project_name = name.trim();
-	if (!project_name) throw new Error("A project name is required");
-	if (project_name.length > PROJECT_NAME_MAX_LENGTH)
-		throw new Error(
-			`Project name must be ${PROJECT_NAME_MAX_LENGTH} characters or fewer`,
-		);
+	const problem = projectNameProblem(project_name);
+	if (problem) return { ok: false, error: problem };
 	return withActorScope(actor, async (tx) => {
 		// Scoped on the project's OWN org rather than trusting the RLS session alone — the same
 		// reasoning insertProjectWithDefaultFabric records, and it keeps the predicate identical
@@ -2932,7 +3150,11 @@ export async function updateProjectName(
 					),
 				)
 				.limit(1);
-			if (clash.length > 0) throw new ProjectNameTakenError(project_name);
+			if (clash.length > 0)
+				return {
+					ok: false,
+					error: new ProjectNameTakenError(project_name).message,
+				};
 		}
 
 		try {
@@ -2942,11 +3164,17 @@ export async function updateProjectName(
 				.where(eq(projects.id, projectId))
 				.returning({ project_name: projects.project_name });
 			if (!row) notFound(); // stale/deleted id → 404, not a captured error
-			return row;
+			return { ok: true, project_name: row.project_name };
 		} catch (err) {
 			// The read above is optimistic at READ COMMITTED; the index is what enforces it. Map
-			// the loser of a concurrent rename onto the same error rather than a raw 23505.
-			if (isProjectNameTaken(err)) throw new ProjectNameTakenError(project_name);
+			// the loser of a concurrent rename onto the same refusal rather than a raw 23505 — the
+			// race and the ordinary case must read identically, which is what #3145 established and
+			// what a thrown-then-redacted message took away again.
+			if (isProjectNameTaken(err))
+				return {
+					ok: false,
+					error: new ProjectNameTakenError(project_name).message,
+				};
 			throw err;
 		}
 	});
