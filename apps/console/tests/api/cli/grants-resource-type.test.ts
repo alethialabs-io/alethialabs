@@ -40,9 +40,9 @@ import {
 	UNKNOWN_RESOURCE_TYPE,
 } from "@/lib/validations/grants";
 
-const PRINCIPAL = "11111111-1111-1111-1111-111111111111";
-const RESOURCE = "22222222-2222-2222-2222-222222222222";
-const GRANT_ID = "33333333-3333-3333-3333-333333333333";
+const PRINCIPAL = "11111111-1111-4111-8111-111111111111";
+const RESOURCE = "22222222-2222-4222-8222-222222222222";
+const GRANT_ID = "33333333-3333-4333-8333-333333333333";
 
 /**
  * A drizzle-ish chain: every builder returns the chain, and awaiting it resolves to the row the
@@ -166,6 +166,9 @@ describe("POST /api/cli/grants — an unrecognised resource_type is refused", ()
 	it("refuses a misspelled kind sent without a resource id", async () => {
 		const res = await POST(req(grantBody({ resource_type: "projects" })));
 		expect(res.status).toBe(400);
+		// The message, not only the status: a body this route refused for some OTHER reason — a
+		// malformed uuid, say — also answers 400, and asserting the status alone would pass on it.
+		expect(await res.json()).toEqual({ error: UNKNOWN_RESOURCE_TYPE });
 		expect(mock.insertSpy).not.toHaveBeenCalled();
 	});
 
