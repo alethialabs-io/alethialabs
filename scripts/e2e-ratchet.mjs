@@ -7,9 +7,10 @@
 // The browser suites were 39% green when the gate was built. That figure is ONE DATED RUN OF ONE
 // PROJECT — `--project=qa`, 346 tests, 2026-09-02, 136 passed / 192 failed / 1 skipped / 17 never
 // ran, written up in apps/console/docs/qa/findings.md — and it is NOT this ratchet's ledger, which
-// today spans six projects. Those two numbers sat adjacent here with nothing to tell them apart,
-// and were read as one (#4536); "17 never ran" in particular describes that run and no state the
-// ledger has ever had. So the ledger's own census is derived below rather than typed, and the
+// today spans every browser leg — `--census` says how many, and is now the only thing that says
+// so. Those two numbers sat adjacent here with nothing to tell them apart, and were read as one
+// (#4536); "17 never ran" in particular describes that run and no state the
+// ledger has ever had. So the ledger's own census is derived on demand rather than typed, and the
 // sentence you are reading is history that cannot go stale because it is dated.
 //
 // An absolute-green requirement would have blocked every promotion for weeks, so the gate could
@@ -19,21 +20,50 @@
 // (`ui-conformance-live.json`, `required-checks-divergence.json` — shrink-only, captured before
 // the fix, moved in the same PR as the code).
 //
-// ── THE LEDGER TODAY ─────────────────────────────────────────────────────────────────────────
+// ── THE LEDGER TODAY: ASK FOR IT. IT IS NOT WRITTEN DOWN ANYWHERE ────────────────────────────
 //
-// One line, and `--self-test` RECOUNTS it from apps/console/e2e/gate-baseline.json every time it
-// runs — in CI on every PR (`.github/workflows/ci.yml`, the `Authz / open-core guards` job). It
-// fails in BOTH directions: a ledger that moved without the line, and a line edited away from the
-// ledger. Do not retype it from memory — that is precisely what produced #4536. Move the ledger,
-// run `node scripts/e2e-ratchet.mjs --self-test`, and paste the line it names.
+//   node scripts/e2e-ratchet.mjs --census
 //
-// Exactly one line in this file may carry the marker, and a second one — in prose, say — is itself
-// a failure rather than a tie-break, because two censuses are no census.
+// recounts apps/console/e2e/gate-baseline.json and prints one line — tests, projects,
+// passed/failed/fixme/data-skip, and which projects are failing. No run, no network, no results
+// file: it reads the committed ledger and nothing else. `--self-test` prints the same line at the
+// end of its own run, so the required `Authz / open-core guards` job — which runs `--self-test` on
+// every PR — carries today's census in its log.
 //
-// LEDGER-CENSUS: 649 tests across 7 projects — 618 passed, 25 failed, 5 fixme, 1 data-skip; failing: console 5, qa 20
+// THAT LINE USED TO BE COMMITTED IN THIS HEADER, AND A COMMITTED SUM OVER A PARTITIONED LEDGER
+// CANNOT MERGE (#4648). The ledger partitions by project → file → title, so two lanes regenerating
+// different slices merge; a repo-wide sum over it partitions not at all, so every lane rewrote the
+// same line and they were mutually exclusive by construction. On 2026-09-10 six open PRs went
+// DIRTY on this one line within minutes of two merges, and four for four on the next merge — two
+// of them queued and conflict-free seconds earlier, dequeued by a merge unrelated to their content.
+//
+// The resolution was the worse half. The value is a SUM, so neither side of the conflict is true
+// once both land: measured on 2026-09-17, `dev` said `647 tests / 40 failed`, the branch said
+// `645 / 42`, and the true merged value was `649 / 25`. Taking ours or theirs commits a number
+// that was never true of any tree — and a wrong sum reds `Authz / open-core guards`, a REQUIRED
+// check, after the PR has already been dequeued. A whole class of correct-looking resolutions was
+// silently wrong, and the only way through it was arithmetic under time pressure.
+//
+// So the census is not stored, and `--self-test` refuses to let it come back: a committed census
+// line in this file is now a FAILURE rather than a value to compare. A number recomputed from the
+// ledger on demand cannot go stale, cannot conflict, and cannot be resolved into a value no tree
+// ever had — the wrong value is impossible rather than merely detected. #4536's reason for
+// deriving it becomes absolute rather than checked: there is no typed figure left here to be
+// misread as the ledger's state.
+//
+// What that gives up is the totals moving visibly inside a PR diff — and that is ALL it gave. The
+// line was only ever checked for AGREEMENT with the ledger, never for a direction, so a PR that
+// deleted entries and pasted the new line was green either way. What actually stops the ledger
+// shrinking is unchanged: rule 2 below reds a deleted `failed` entry at the next gate run (the
+// test returns as one the baseline does not know, and it does not pass), and in the very job that
+// runs this self-test, `scripts/ci/check-gate-baseline-slice-ownership.mjs` reds a slice the PR
+// did not earn the right to rewrite while `scripts/ci/check-gate-baseline-consistency.mjs` reds a
+// lost leg, a stale row, and a ledger that has fallen under its floor. None of the three ever read
+// the census line.
 //
 //   node scripts/e2e-ratchet.mjs --project=<name> --results=<playwright json> [--baseline=<file>]
 //   node scripts/e2e-ratchet.mjs --project=<name> --results=<json> --write [--only=<spec file>]...
+//   node scripts/e2e-ratchet.mjs --census [--baseline=<file>]
 //   node scripts/e2e-ratchet.mjs --self-test
 //
 // The results file is Playwright's `json` reporter output (`--reporter=json`, or
@@ -95,9 +125,10 @@ export function isSkipRecord(known) {
 // ── the ledger's own census ──────────────────────────────────────────────────────────────────
 
 /**
- * The marker for the single header line that states the ledger's census.
+ * The marker a census line carries when it is PRINTED — and the token `--self-test` refuses to
+ * find committed in this file.
  *
- * Held as a constant so the writer (`censusLine`) and the reader (`--self-test`) cannot come to
+ * Held as a constant so the writer (`censusLine`) and the reader (`censusLinesIn`) cannot come to
  * disagree about what they are looking for — the failure mode of a hand-copied token is that the
  * check quietly finds nothing and reports green.
  */
@@ -142,10 +173,14 @@ export function census(doc) {
 }
 
 /**
- * Render a census as the one header line `--self-test` pins, comment prefix and all.
+ * Render a census as one line, comment prefix and all — what `--census` prints.
+ *
+ * The `// ` prefix is kept so the line still reads as the thing it replaced, and so the guard
+ * below is asked about exactly the shape a reader might be tempted to paste back into a source
+ * file. It is printed, never committed.
  *
  * @param {ReturnType<typeof census>} c
- * @returns {string} the exact source line, ready to paste
+ * @returns {string} the rendered census line
  */
 export function censusLine(c) {
 	const failing = c.failedBy.length ? c.failedBy.map(([name, n]) => `${name} ${n}`).join(", ") : "none";
@@ -153,12 +188,19 @@ export function censusLine(c) {
 }
 
 /**
- * Every line of this file that carries the census marker at column 0.
+ * Every line of a source file that COMMITS a census — the marker as a comment at column 0.
  *
- * Returns the list rather than the first hit so the caller can fail on TWO of them — the marker in
- * prose re-declares the census, and a check that took the first match would read past it.
+ * `--self-test` requires this to be empty of this file. A stored census is a global aggregate over
+ * a partitioned ledger: every lane that moves any slice rewrites the same line, so the lanes are
+ * mutually exclusive, and because the value is a sum neither side of the resulting conflict is
+ * true of the merged tree (#4648). The list is returned rather than a boolean so the failure can
+ * name what it found — a guard that says only "no" sends the reader looking.
  *
- * @param {string} source this file's own text
+ * It matches the RENDERED shape, not the topic: a sentence about the census, or the marker inside
+ * backticks or mid-line, is prose and is left alone. Only a line that could be read as the value
+ * counts, which is the only thing that can be merged into a lie.
+ *
+ * @param {string} source the file's text
  * @returns {string[]}
  */
 export function censusLinesIn(source) {
@@ -406,9 +448,10 @@ export function stepSummary(project, perFile, failures) {
 // ── CLI ──────────────────────────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
-	const out = { project: "", results: "", baseline: path.join(ROOT, DEFAULT_BASELINE), write: false, only: [], summary: false, selfTest: false, help: false, unknown: [] };
+	const out = { project: "", results: "", baseline: path.join(ROOT, DEFAULT_BASELINE), write: false, only: [], summary: false, selfTest: false, censusOnly: false, help: false, unknown: [] };
 	for (const a of argv) {
 		if (a === "--self-test") out.selfTest = true;
+		else if (a === "--census") out.censusOnly = true;
 		else if (a === "--write") out.write = true;
 		else if (a === "--step-summary") out.summary = true;
 		else if (a === "--help" || a === "-h") out.help = true;
@@ -425,6 +468,7 @@ const USAGE = [
 	"usage:",
 	"  node scripts/e2e-ratchet.mjs --project=<name> --results=<playwright json> [--baseline=<file>] [--step-summary]",
 	"  node scripts/e2e-ratchet.mjs --project=<name> --results=<json> --write [--only=<spec file>]... [--baseline=<file>]",
+	"  node scripts/e2e-ratchet.mjs --census [--baseline=<file>]",
 	"  node scripts/e2e-ratchet.mjs --self-test",
 ].join("\n");
 
@@ -444,6 +488,15 @@ function main(argv) {
 		return 0;
 	}
 	if (args.selfTest) return selfTest();
+	if (args.censusOnly) {
+		// Read-only, and it reads the LEDGER — never a results file, never this file. That is the
+		// whole point: the census has exactly one source, so the printed number is true of the
+		// tree it was read from by construction. `census()` throws on an entry it cannot
+		// classify, and that throw is the answer — a smaller, quieter number is the defect the
+		// census exists to expose.
+		console.log(censusLine(census(readJson(args.baseline, "baseline"))));
+		return 0;
+	}
 	if (!args.project || !args.results) {
 		console.error(`e2e-ratchet: --project and --results are required.\n${USAGE}`);
 		return 2;
@@ -697,28 +750,63 @@ function selfTest() {
 
 	fs.rmSync(dir, { recursive: true, force: true });
 
-	// ── the header's census, against the REAL ledger ─────────────────────────────────────────
+	// ── the census: NOT committed, and the REAL ledger still countable ───────────────────────
 	//
-	// Every assertion above runs on a fixture. This one deliberately does not: it reads the real
-	// apps/console/e2e/gate-baseline.json and this file's real header, because a census pinned to
-	// a fixture is a census of the fixture. It reds in both directions — the ledger moving without
-	// the line, and the line edited away from the ledger — and names the line to paste, so the
-	// failure branch is the branch that does the work.
+	// Every assertion above runs on a fixture. These deliberately do not: they read the real
+	// apps/console/e2e/gate-baseline.json and this file's own text, because a census pinned to a
+	// fixture is a census of the fixture.
+	//
+	// THE INVARIANT INVERTED IN #4648. It used to be "the header's line equals the ledger,
+	// recounted" — a stored copy of a derived value, checked in both directions. That check was
+	// working; what it was asked to guard was the wrong shape. A repo-wide sum over a ledger that
+	// partitions by project → file → title is a shared counter: every lane that moves any slice
+	// rewrites the same line, so the lanes are mutually exclusive by construction, and because the
+	// value is a SUM neither side of the conflict is true once both land. So the assertion is now
+	// that the file commits NO census at all, and the number is recomputed by `--census`.
+	//
+	// The two assertions that survived the inversion are the two that never depended on a stored
+	// number: the ledger is there, and every entry in it can be classified.
 	const source = fs.readFileSync(fileURLToPath(import.meta.url), "utf8");
-	const stated = censusLinesIn(source);
-	ok(`the header carries exactly one census line (found ${stated.length})`, stated.length === 1);
+	const committed = censusLinesIn(source);
+	if (committed.length) {
+		for (const line of committed) console.error(`     committed: ${line}`);
+		console.error("     → a census over the whole ledger cannot merge (#4648): every lane that moves any slice rewrites this one line,");
+		console.error("       and because it is a sum, resolving that conflict commits a number no tree ever had. Delete it — `--census` prints it on demand.");
+	}
+	ok(`this file commits no census line (found ${committed.length})`, committed.length === 0);
+	// ...and that guard is not vacuous. It must FIND a re-introduced line — the direction it
+	// exists for — while leaving prose and code that merely name the marker alone, so the cheapest
+	// way past it stays "delete the line" rather than "rephrase around the matcher".
+	ok(
+		"censusLinesIn finds a re-introduced committed census, and does not match prose or code that names the marker",
+		(() => {
+			const reintroduced = censusLine(census({ projects: { qa: { "a.spec.ts": { one: "passed", two: "failed" } } } }));
+			const found = censusLinesIn(
+				[
+					"// ── a header ───",
+					reintroduced,
+					`// the marker is ${CENSUS_MARKER} when a line carries it in prose`,
+					`const MARKER = "${CENSUS_MARKER}";`,
+					`\t// ${CENSUS_MARKER}indented, so not a committed line either`,
+				].join("\n"),
+			);
+			return found.length === 1 && found[0] === reintroduced;
+		})(),
+	);
 	const ledgerFile = path.join(ROOT, DEFAULT_BASELINE);
 	const ledgerExists = fs.existsSync(ledgerFile);
 	ok(`the ledger ${DEFAULT_BASELINE} is there to be counted`, ledgerExists);
-	if (stated.length === 1 && ledgerExists) {
-		const derived = censusLine(census(readJson(ledgerFile, "baseline")));
-		const agree = stated[0] === derived;
-		if (!agree) {
-			console.error(`     header: ${stated[0]}`);
-			console.error(`     ledger: ${derived}`);
-			console.error(`     → the ledger moved. Paste the second line over the first in scripts/e2e-ratchet.mjs.`);
+	let live = null;
+	if (ledgerExists) {
+		let why = null;
+		try {
+			live = censusLine(census(readJson(ledgerFile, "baseline")));
+		} catch (err) {
+			why = err instanceof Error ? err.message : String(err);
+			console.error(`     ${why}`);
+			console.error("     → the ledger holds an entry the census cannot classify. That is the ledger's defect, not the census's.");
 		}
-		ok("the header's census equals the ledger's, recounted", agree);
+		ok("the real ledger counts — every entry is one of passed|failed|{fixme}|{skip}", live !== null);
 	}
 	// The census counter itself, on fixtures — including that it REFUSES an entry it cannot
 	// classify, rather than dropping it and reporting a smaller, quieter number.
@@ -761,6 +849,46 @@ function selfTest() {
 	);
 	ok("censusLine: a ledger with no failures says so, rather than trailing an empty list", censusLine(census({ projects: { qa: { "a.spec.ts": { one: "passed" } } } })).endsWith("failing: none"));
 
+	// ── `--census` through the CLI, on a fixture ledger ──────────────────────────────────────
+	//
+	// The flag replaces a committed line, so it has to be the thing a lane reaches for on a rebase
+	// with no run and no results file to hand. Asserted on what it PRINTS, not on its exit code
+	// alone: a census command that exits 0 and says nothing is the failure mode that would send
+	// somebody back to retyping the number from memory (#4536).
+	const cdir = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ratchet-census-"));
+	const cbase = path.join(cdir, "gate-baseline.json");
+	const cdoc = { version: 1, projects: { qa: { "a.spec.ts": { one: "passed", two: "failed" } }, hero: { "h.spec.ts": { one: "passed" } } } };
+	fs.writeFileSync(cbase, JSON.stringify(cdoc));
+	const printed = [];
+	const captured = () => {
+		const orig = console.log;
+		console.log = (...a) => printed.push(a.join(" "));
+		return () => {
+			console.log = orig;
+		};
+	};
+	let uncapture = captured();
+	const censusExit = main(["--census", `--baseline=${cbase}`]);
+	uncapture();
+	ok(
+		"CLI: --census exits 0 and prints exactly the ledger's census, recounted — no run, no results file",
+		censusExit === 0 && printed.length === 1 && printed[0] === censusLine(census(cdoc)) && /3 tests across 2 projects/.test(printed[0]),
+	);
+	fs.writeFileSync(cbase, JSON.stringify({ version: 1, projects: { qa: { "a.spec.ts": { one: "wobbly" } } } }));
+	let uncountable;
+	uncapture = captured();
+	try {
+		uncountable = main(["--census", `--baseline=${cbase}`]);
+	} catch {
+		uncountable = "threw";
+	}
+	uncapture();
+	ok("CLI: --census refuses an entry it cannot classify rather than printing a smaller, quieter number", uncountable === "threw");
+	fs.rmSync(cdir, { recursive: true, force: true });
+
+	// The census itself, last and derived, so the required job's log carries today's number on
+	// every PR — the visibility the committed line used to buy, at no merge cost.
+	if (live) console.log(`\n${DEFAULT_BASELINE}, recounted (derived, never committed — \`--census\` prints this line):\n${live}`);
 	console.log(failures === 0 ? "\nself-test: all passed" : `\nself-test: ${failures} FAILED`);
 	return failures === 0 ? 0 : 1;
 }
