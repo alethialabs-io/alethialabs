@@ -18,6 +18,10 @@ import {
 	orgScopeCarriesResourceId,
 	ORG_SCOPE_WITH_RESOURCE_ID,
 } from "@/lib/authz/fga-tuples";
+import {
+	isGrantResourceType,
+	UNKNOWN_RESOURCE_TYPE,
+} from "@/lib/validations/grants";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import type { Actor } from "@/lib/authz/types";
@@ -67,7 +71,13 @@ async function callerCanGrant(
 
 /** Body of POST /api/cli/grants — bind a principal to EXACTLY one of a role or a
  * single permission, at a resource scope, as allow or deny. resource_id omitted =
- * org-wide. */
+ * org-wide.
+ *
+ * `resource_type` stays `z.string()` HERE and is held against `GRANT_RESOURCE_TYPES` in the
+ * handler, not turned into a `z.enum`. A parse failure on this schema answers with a flat
+ * "Invalid request body" that names no field, and #4734 turns on the refusal NAMING the accepted
+ * set — an admin who wrote `projects` has to be able to see what the kinds are. The check in POST
+ * is the same shape as the `orgScopeCarriesResourceId` one below it, for the same reason. */
 const createGrantBody = z.object({
 	principal_type: z.enum(["user", "team"]),
 	principal_id: z.uuid(),
@@ -172,6 +182,16 @@ export async function POST(req: Request) {
 	if (orgScopeCarriesResourceId(input.resource_type, input.resource_id ?? null)) {
 		return NextResponse.json(
 			{ error: ORG_SCOPE_WITH_RESOURCE_ID },
+			{ status: 400 },
+		);
+	}
+	// An unrecognised kind is refused here rather than stored (#4734). It is checked BEFORE the
+	// `resource_id ? … : "org"` derivation below, so a kind that is merely misspelled cannot be
+	// laundered into a legitimate org-wide grant by omitting the id — `("projects", no id)` is an
+	// admin who meant a project scope, not one who meant the whole organization.
+	if (!isGrantResourceType(input.resource_type)) {
+		return NextResponse.json(
+			{ error: UNKNOWN_RESOURCE_TYPE },
 			{ status: 400 },
 		);
 	}

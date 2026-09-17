@@ -34,6 +34,10 @@ import {
 	user,
 } from "@/lib/db/schema";
 import {
+	isGrantResourceType,
+	UNKNOWN_RESOURCE_TYPE,
+} from "@/lib/validations/grants";
+import {
 	type AccessGrantQuery,
 	type AccessGrantsPage,
 	queryAccessGrantsPage,
@@ -109,10 +113,23 @@ export interface AssignGrantInput {
 	effect: "allow" | "deny";
 	roleId?: string | null;
 	permissionKey?: string | null;
+	/**
+	 * The kind half of the scope. Typed `string` and not `GrantResourceType` DELIBERATELY: a
+	 * server action's arguments arrive over the wire from a client bundle, so a union here would
+	 * be a claim the compiler cannot keep. `assignGrant` holds it against `GRANT_RESOURCE_TYPES`
+	 * at runtime instead, which is the only place the check can be true.
+	 */
 	resourceType: string;
 	resourceId?: string | null;
 }
 
+/**
+ * Writes one access grant, after refusing every request it cannot store faithfully: a caller
+ * without `member:manage_members` or the Enterprise entitlement, a role-and-permission pair (or
+ * neither), an unknown permission key, the org kind carrying a resource id, an unrecognised
+ * resource kind, and an allow-grant that exceeds the grantor's own permissions. Then syncs the
+ * grant's PDP tuples and records the security event.
+ */
 export async function assignGrant(input: AssignGrantInput): Promise<void> {
 	const actor = await requireAccessAdmin();
 	const hasRole = Boolean(input.roleId);
@@ -125,6 +142,12 @@ export async function assignGrant(input: AssignGrantInput): Promise<void> {
 	}
 	if (orgScopeCarriesResourceId(input.resourceType, input.resourceId ?? null)) {
 		throw new Error(ORG_SCOPE_WITH_RESOURCE_ID);
+	}
+	// An unrecognised kind is refused rather than stored (#4734), and refused BEFORE the
+	// `resourceId ? … : "org"` derivation below — so a misspelled kind sent without an id cannot
+	// be laundered into a legitimate org-wide grant.
+	if (!isGrantResourceType(input.resourceType)) {
+		throw new Error(UNKNOWN_RESOURCE_TYPE);
 	}
 	// Privilege ceiling: an allow-grant may not exceed the grantor's own effective permissions
 	// (a deny-grant only removes access, so it can never escalate the grantee — skip it).
