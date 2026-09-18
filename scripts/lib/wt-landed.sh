@@ -33,7 +33,110 @@
 #   wt_branch_landed "$worktree" "$branch" "$base"   # 0 = landed · 1 = not
 #   # WT_LANDED_WHY carries the human-readable reason either way, for the caller's message.
 #
+#   # Optional, for a caller about to ask about MANY branches (`--prune`, #4622):
+#   wt_landed_prefetch "$branch1" "$branch2" ...     # one gh round-trip per 40 branches
+#
 # Self-test: bash scripts/lib/wt-landed-test.sh
+
+# ── the batched lookup (#4622) ──────────────────────────────────────────────────────────────────
+#
+# WHY. `--prune` asks wt_branch_landed once per worktree, and each ask cost two serial gh calls
+# (`pr list --head`, then `pr view` for the commits): ~0.7s a tree, ~44s over 68 trees, measured
+# 2026-09-10 — nearly the whole runtime of a command CLAUDE.md §2 calls routine hygiene.
+#
+# WHAT. wt_landed_prefetch asks GitHub about every branch in ONE GraphQL request per 40 branches
+# (one aliased `pullRequests(headRefName:)` field per branch), and records the answer in
+# WT_LANDED_INDEX. wt_branch_landed reads that index before it reaches for gh.
+#
+# THE SAME QUESTION, NOT A CHEAPER ONE. Each alias asks exactly what `gh pr list --head <br>` did —
+# the newest PR on that head, any state — plus that PR's commit oids, which is what `gh pr view`
+# supplied. "Newest" is `orderBy: CREATED_AT DESC, first: 1`; the old code sorted by number, and a
+# PR's number is allocated when it is created, so the two orders are the same order. Clause (b) is
+# then checked by the SAME loop below against those oids — the index changes where the oids come
+# from, never whether they are checked.
+#
+# FAIL-SAFE, BY OMISSION. The index only ever holds a COMPLETE answer. A branch whose alias came back
+# null, a PR whose commit list is longer than the one page fetched (totalCount ≠ oids returned), a
+# chunk whose request failed or could not be parsed — none of those are recorded, and a branch with
+# no entry takes the old per-branch gh path, which fails safe on its own terms. So the worst a broken
+# batch can do is cost the old ~0.7s for that branch; it cannot turn a lookup failure into a verdict.
+# (The one verdict the index CAN hold without a PR is "this head has no PR at all": `nodes: []` on a
+# non-null alias, which is GitHub answering the question, not failing to.)
+#
+# One line per branch: <branch> TAB <pr number | -> TAB <state | -> TAB <space-separated oids>.
+# Git refuses control characters in ref names (git-check-ref-format), so a tab cannot occur in <branch>.
+WT_LANDED_INDEX=""
+
+# Record, for each <branch>, the newest PR on that head and its commits — batched. Never fails.
+wt_landed_prefetch() { # <branch>... → 0 always; fills WT_LANDED_INDEX with what it could answer
+	command -v gh >/dev/null 2>&1 || return 0
+	local -a all=() chunk=()
+	local b
+	for b in "$@"; do
+		[ -n "$b" ] || continue
+		all+=("$b")
+	done
+	local start=0 size=40
+	while [ "$start" -lt "${#all[@]}" ]; do
+		chunk=("${all[@]:start:size}")
+		_wt_landed_prefetch_chunk "${chunk[@]}" || true
+		start=$((start + size))
+	done
+	return 0
+}
+
+# One GraphQL request for up to 40 branches; appends every COMPLETE answer to WT_LANDED_INDEX.
+_wt_landed_prefetch_chunk() { # <branch>... → 1 when the request itself failed
+	local -a heads=("$@") args=()
+	local i decl="" fields="" out line idx number state total oids n
+	for i in "${!heads[@]}"; do
+		# Branch names travel as GraphQL VARIABLES, never spliced into the query text, so a name
+		# cannot change the query's shape.
+		decl="$decl,\$h$i:String!"
+		fields="$fields b$i:pullRequests(headRefName:\$h$i,states:[OPEN,CLOSED,MERGED],first:1,orderBy:{field:CREATED_AT,direction:DESC}){nodes{number state commits(first:100){totalCount nodes{commit{oid}}}}}"
+		args+=(-f "h$i=${heads[$i]}")
+	done
+	# `{owner}`/`{repo}` are filled in by gh from the current repository's remote.
+	# A null alias (GraphQL errored for that field) is dropped by `select`, so it gets no entry.
+	# shellcheck disable=SC2016  # $i/$n below are jq variables, single-quoted on purpose.
+	out="$(gh api graphql -F owner='{owner}' -F name='{repo}' "${args[@]}" \
+		-f query="query(\$owner:String!,\$name:String!$decl){repository(owner:\$owner,name:\$name){$fields}}" \
+		--jq '.data.repository | to_entries[] | select(.value != null) | .key[1:] as $i | .value.nodes[0] as $n
+			| if $n == null then "\($i)\t-\t-\t0\t"
+			  else "\($i)\t\($n.number)\t\($n.state)\t\($n.commits.totalCount)\t\([$n.commits.nodes[].commit.oid] | join(" "))"
+			  end' 2>/dev/null)" || return 1
+
+	while IFS=$'\t' read -r idx number state total oids; do
+		# Anything not in the exact expected shape is skipped, which leaves that branch unanswered
+		# and therefore on the per-branch path — never on a verdict built from a malformed line.
+		case "$idx" in '' | *[!0-9]*) continue ;; esac
+		[ "$idx" -lt "${#heads[@]}" ] || continue
+		case "$total" in '' | *[!0-9]*) continue ;; esac
+		n="$(printf '%s' "$oids" | wc -w | tr -d ' ')"
+		# Clause (b) needs EVERY commit of the PR; one page is 100. A longer PR is left unanswered.
+		[ "$n" = "$total" ] || continue
+		if [ "$number" = "-" ]; then
+			[ "$state" = "-" ] || continue
+		else
+			case "$number" in *[!0-9]*) continue ;; esac
+			[ -n "$state" ] || continue
+		fi
+		line="$(printf '%s\t%s\t%s\t%s' "${heads[$idx]}" "$number" "$state" "$oids")"
+		WT_LANDED_INDEX="${WT_LANDED_INDEX:+$WT_LANDED_INDEX
+}$line"
+	done <<EOF
+$out
+EOF
+	return 0
+}
+
+# Print the WT_LANDED_INDEX line for <branch>; 1 when the batch never answered it.
+_wt_landed_indexed() { # <branch> → the index line, or exit 1
+	[ -n "$WT_LANDED_INDEX" ] || return 1
+	# Compared as a plain string field, so a branch name is never read as a pattern. (`awk -v` does
+	# expand backslash escapes, but git-check-ref-format refuses a backslash in a ref name.)
+	printf '%s\n' "$WT_LANDED_INDEX" | awk -F'\t' -v b="$1" '$1 == b { print; found = 1; exit } END { exit !found }'
+}
 
 # Is <branch> already landed on <base>? Sets WT_LANDED_WHY for the caller's message.
 # shellcheck disable=SC2034  # WT_LANDED_WHY is read by callers, not here.
@@ -79,8 +182,17 @@ wt_branch_landed() { # <worktree> <branch> <base> → 0 landed, 1 not
 
 	# Newest PR wins: a branch can be reused across several PRs, and only the last one describes
 	# the commits the tree is holding now.
-	pr_line="$(gh pr list --state all --head "$br" --json number,state \
-		--jq 'sort_by(.number) | reverse | .[0] | "\(.number) \(.state)"' 2>/dev/null)" || pr_line=""
+	# The batched answer is used when wt_landed_prefetch recorded one; otherwise one gh call here.
+	local indexed="" indexed_oids=""
+	if indexed="$(_wt_landed_indexed "$br")"; then
+		local _ix_br _ix_num _ix_state
+		IFS=$'\t' read -r _ix_br _ix_num _ix_state indexed_oids <<<"$indexed"
+		if [ "$_ix_num" = "-" ]; then pr_line=""; else pr_line="$_ix_num $_ix_state"; fi
+	else
+		indexed=""
+		pr_line="$(gh pr list --state all --head "$br" --json number,state \
+			--jq 'sort_by(.number) | reverse | .[0] | "\(.number) \(.state)"' 2>/dev/null)" || pr_line=""
+	fi
 	# An EMPTY PR list makes jq's `.[0]` null, and the interpolation then yields the two-word
 	# string "null null" — not the bare "null" this used to test for. So a branch that never had a
 	# PR fell through to the state check below and reported "PR #null is null, not MERGED", which
@@ -107,7 +219,12 @@ wt_branch_landed() { # <worktree> <branch> <base> → 0 landed, 1 not
 		return 1
 	fi
 
-	pr_oids="$(gh pr view "$pr" --json commits --jq '.commits[].oid' 2>/dev/null)" || pr_oids=""
+	if [ -n "$indexed" ]; then
+		# One oid per line, the shape `gh pr view --jq '.commits[].oid'` prints and the loop reads.
+		pr_oids="$(printf '%s\n' "$indexed_oids" | tr ' ' '\n' | grep . || true)"
+	else
+		pr_oids="$(gh pr view "$pr" --json commits --jq '.commits[].oid' 2>/dev/null)" || pr_oids=""
+	fi
 	if [ -z "$pr_oids" ]; then
 		WT_LANDED_WHY="PR #$pr is MERGED but its commit list could not be read — refusing to guess"
 		return 1
