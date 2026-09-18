@@ -270,7 +270,7 @@
         "claimed"
       ],
       "number": 4315,
-      "title": "chore: `pnpm format` reformats the whole TypeScript tree — prettier has no config and the repo is tab-indented",
+      "title": "chore: pnpm format reformats the whole TypeScript tree — prettier has no config and the repo is tab-indented",
       "updatedAt": "2026-09-18T10:11:49Z"
     },
     {
