@@ -232,10 +232,11 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 	// what makes `teams.member.remove` measurable. Its reach opens the FIRST row's "Manage team" menu
 	// (the row trigger's accessible name does not carry the team's), and nothing orders that list:
 	// `getTeams()` (app/server/actions/teams.ts), which the page reads, selects with NO `orderBy`, so
-	// the first row is whichever team Postgres returns first. On run 35362045227 that was the `team`
-	// fixture's memberless team, the dialog said "No members yet.", and the control was withheld as
-	// not rendered. Seeding every audit team with the same one member makes the first row correct
-	// whichever it is. `teams.delete` is indifferent to the roster.
+	// the first row is whichever team Postgres returns first. On run 35362045227, when only the
+	// staffed team had a member, "Remove" was not rendered, which fits the first row being the
+	// `team` fixture's memberless team. On run 35368920880, with every audit team holding the
+	// viewer, the control was reached and measured. That makes the first row correct whichever team
+	// it is. `teams.delete` is indifferent to the roster.
 	[
 		"team",
 		{

@@ -112,6 +112,8 @@ interface ControlEntry {
 	confirm?: string;
 	confirm_action?: string;
 	dialog_title?: string;
+	/** For `confirm: undo`: the key chord that takes the action back (`Meta+Z`). */
+	undo?: { shortcut?: string };
 	fixture?: string;
 	persona?: string;
 	status?: string;
@@ -619,6 +621,32 @@ async function openOverlay(page: Page): Promise<Page | Locator> {
 }
 
 /**
+ * Measure a `confirm: undo` control: the click has already fired, so press the entry's undo chord
+ * and check that the thing it removed is back.
+ *
+ * For this shape the undo IS the confirmation, so a restore counts as `confirmed`, the status the
+ * registry records, and no restore counts as `missing`. The branch used to set `observed = "undo"`
+ * without pressing anything. No registry status is "undo", so `canvas.delete-resource` failed as a
+ * mismatch on the first run that reached it (35370286589, #4800). A label that no status can equal
+ * is not a measurement.
+ *
+ * "Back" is the element the chain's first `select:` step clicked. That step named the thing the
+ * control acts on, and it is the only name the entry gives it. An entry with no `select:` step
+ * cannot be checked this way, and it is `missing` with the reason in the assertion message.
+ */
+async function observeUndo(page: Page, entry: ControlEntry): Promise<Observed> {
+	const subject = (entry.reach ?? []).map((step) => step.select).find((name): name is string => typeof name === "string");
+	if (!subject) return "missing";
+	const node = page.getByLabel(new RegExp(escapeRe(subject), "i")).first();
+	// The removal itself is part of the evidence: a click that removed nothing leaves nothing to undo.
+	const removed = await node.waitFor({ state: "detached", timeout: 5_000 }).then(() => true).catch(() => false);
+	if (!removed) return "missing";
+	await page.keyboard.press(entry.undo?.shortcut ?? "ControlOrMeta+Z");
+	const restored = await node.waitFor({ state: "visible", timeout: 5_000 }).then(() => true).catch(() => false);
+	return restored ? "confirmed" : "missing";
+}
+
+/**
  * The dialog `dialog` resolves to NOW, as a locator that keeps naming that one element.
  *
  * `teams.member.remove` needs this (#4800). Its confirmation replaces the Manage members dialog,
@@ -919,7 +947,7 @@ for (const entry of CONTROLS) {
 			await expect(confirmation, `${entry.id}: Cancel should close the dialog`).toBeHidden({ timeout: 5_000 });
 			observed = "confirmed";
 		} else if (entry.confirm === "undo") {
-			observed = "undo";
+			observed = await observeUndo(page, entry);
 		} else {
 			// `none` / `popover`: the registry records that a bare click fires. The spec asserts the
 			// RECORDED state — a dialog appearing here is stale evidence, and the lane that added it
