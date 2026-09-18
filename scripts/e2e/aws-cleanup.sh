@@ -427,7 +427,41 @@ vpc_security_group_ids() {
 	printf '%s' "$out" | grep -v '^$' | sort -u || true
 }
 
-# cluster_volume_ids — EBS tagged kubernetes.io/cluster/<CLUSTER> (CSI fallback if extraVolumeTags
+# vpc_available_eni_ids — every UNATTACHED (`status=available`) network interface inside this run's
+# tagged VPC(s).
+#
+# The tag filter cannot reach these either. The VPC CNI (`amazon-vpc-cni`) creates a node's
+# secondary ENIs itself — description `aws-K8S-i-<instance>`, tags `cluster.k8s.amazonaws.com/name`
+# and `node.k8s.amazonaws.com/instance_id`, no `alethia:project-id` — and a node terminated while
+# the CNI held one detached leaves it `available` for good: the CNI's own leaked-ENI reaper runs
+# inside ipamd on the cluster's nodes, and by teardown there are none. That one ENI references the
+# node security group and sits in a subnet, so the group, the subnet and the VPC all refuse to
+# delete and verify_swept reds the run. Measured on #4771 (run 35323263469-1): eni-07b3bf0ba870b1bbb
+# held sg/subnet/vpc; the preflight orphan 34453355398-1 had been held the same way, by
+# eni-06fe8f6fca71cd23f, since 2026-09-10.
+#
+# discover_cluster cannot be leaned on to reach them through the cluster tag: on that run the EKS
+# cluster, its instances and its load balancers were already gone, so CLUSTER was empty.
+#
+# Same scope argument as vpc_security_group_ids: the VPC carries `alethia:project-id=e2e-<ENV>`, so
+# an interface inside it is this run's by construction. `available` only — an ATTACHED interface
+# belongs to something still running (an instance, a load balancer, an endpoint) whose own sweep
+# above removes it, and AWS refuses to delete an attached one anyway.
+vpc_available_eni_ids() {
+	assert_scope
+	local vpc out
+	out=""
+	while IFS= read -r vpc; do
+		[ -n "$vpc" ] || continue
+		out="${out}$(aws ec2 describe-network-interfaces \
+			--filters "Name=vpc-id,Values=${vpc}" "Name=status,Values=available" \
+			--query 'NetworkInterfaces[].NetworkInterfaceId' \
+			--output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)"$'\n'
+	done <<<"$(tagged_arns ec2:vpc | while read -r a; do arn_id "$a"; done)"
+	printf '%s' "$out" | grep -v '^$' | sort -u || true
+}
+
+# cluster_volume_ids —EBS tagged kubernetes.io/cluster/<CLUSTER> (CSI fallback if extraVolumeTags
 # didn't stamp project-id — grill F5). Empty when CLUSTER unknown.
 cluster_volume_ids() {
 	[ -z "$CLUSTER" ] && return 0
@@ -641,7 +675,10 @@ sweep_network() {
 	assert_scope
 	local vpcs vpc enis eni sgs sg subnets subnet rts rt igws igw main
 
-	enis="$(tagged_arns ec2:network-interface | while read -r a; do arn_id "$a"; done)"
+	# The union, not the tagged set: see vpc_available_eni_ids. BEFORE the security groups, because a
+	# CNI-leaked interface references the node group and holds its subnet.
+	enis="$( (tagged_arns ec2:network-interface | while read -r a; do arn_id "$a"; done
+		vpc_available_eni_ids) | grep -v '^$' | sort -u || true)"
 	while IFS= read -r eni; do
 		[ -n "$eni" ] || continue
 		retry_delete "eni ${eni}" aws ec2 delete-network-interface --network-interface-id "$eni"
@@ -1150,8 +1187,22 @@ net_by_tag() {
 		--query "$2" --output text | tr '\t' '\n' | grep -v '^$' || true
 }
 alive_network() {
+	local vpcs vpc
+	vpcs="$(net_by_tag describe-vpcs 'Vpcs[].VpcId')"
 	{
-		net_by_tag describe-vpcs 'Vpcs[].VpcId'
+		printf '%s\n' "$vpcs"
+		# Every interface still INSIDE a surviving tagged VPC, tagged or not. The by-tag ENI query
+		# below cannot see the ones the VPC CNI creates (see vpc_available_eni_ids), and those were
+		# exactly what held #4771's VPC — so without this line the leak report named the sg, subnet
+		# and VPC that were held and never the interface holding them. Only reached when the VPC
+		# itself survived, which is already a leak, so it adds a name to an existing red and can
+		# never create one.
+		while IFS= read -r vpc; do
+			[ -n "$vpc" ] || continue
+			probe_run "network(network-interfaces in ${vpc})" aws ec2 describe-network-interfaces \
+				--filters "Name=vpc-id,Values=${vpc}" \
+				--query 'NetworkInterfaces[].NetworkInterfaceId' --output text | tr '\t' '\n' | grep -v '^$' || true
+		done <<<"$vpcs"
 		net_by_tag describe-subnets 'Subnets[].SubnetId'
 		net_by_tag describe-internet-gateways 'InternetGateways[].InternetGatewayId'
 		net_by_tag describe-network-interfaces 'NetworkInterfaces[].NetworkInterfaceId'
@@ -1952,6 +2003,69 @@ if [ "$SELF_TEST" = "1" ]; then
 	}
 	st_sg_case "cluster-created groups in the run's VPC are swept" "sg-k8sing sg-k8straffic" "sg-k8sing sg-k8straffic"
 	st_sg_case "a VPC with no extra groups yields nothing" "" ""
+	st_aws_restore
+
+	# ── The VPC-scoped UNATTACHED-interface discovery (#4771). The stub answers $ST_ENIS only when the
+	# describe filters on BOTH the tagged VPC and `status=available`, and nothing otherwise — which is
+	# what AWS returns for a filter that matches nothing. So dropping the status filter (and with it
+	# the promise never to try an attached interface), or scoping to any VPC but this run's, turns a
+	# positive case red instead of passing on an unconditional answer.
+	st_eni_aws() {
+		case "$1 ${2:-}" in
+		"resourcegroupstaggingapi get-resources")
+			case "$*" in
+			*"Values=e2e-${ENV}"*"ec2:vpc"* | *"ec2:vpc"*"Values=e2e-${ENV}"*) printf '%s\n' "arn:aws:ec2:us-east-1:0:vpc/vpc-0abc" ;;
+			esac
+			;;
+		"ec2 describe-network-interfaces")
+			case "$*" in
+			*"Name=vpc-id,Values=vpc-0abc"*"Name=status,Values=available"*) printf '%s\n' "$ST_ENIS" ;;
+			esac
+			;;
+		"ec2 describe-security-groups")
+			case "$*" in
+			*"--group-ids"*) printf '%s\n' "eks-node" ;;
+			*) printf '%s\n' "sg-0node" ;;
+			esac
+			;;
+		*) : ;;
+		esac
+	}
+	aws() { st_eni_aws "$@"; }
+	st_eni_case() { # <name> <stubbed eni ids> <expected, space-joined>
+		ST_ENIS="$2"
+		local got
+		got="$(vpc_available_eni_ids 2>/dev/null | tr '\n' ' ')"
+		got="${got% }"
+		if [ "$got" = "$3" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected '$3', got '$got'" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_eni_case "a CNI-leaked interface in the run's VPC is swept (untagged, so the tag query misses it)" \
+		"eni-0cni" "eni-0cni"
+	st_eni_case "a VPC with no unattached interfaces yields nothing" "" ""
+	# And the sweep deletes it BEFORE it touches the security groups: the interface references the
+	# node group, so the other order is the one that failed on #4771. DRY_RUN, so retry_delete only
+	# announces; the stub answers nothing for a delete in any case. The positive control is the SG
+	# line itself — an absent eni line with no SG line would mean the sweep never ran, not that it
+	# skipped the interface.
+	ST_ENIS="eni-0cni"
+	st_prev_dry="$DRY_RUN"
+	DRY_RUN=1
+	st_net_out="$(sweep_network 2>/dev/null || true)"
+	DRY_RUN="$st_prev_dry"
+	st_eni_line="$(printf '%s\n' "$st_net_out" | grep -n "would delete eni eni-0cni" | head -n1 | cut -d: -f1 || true)"
+	st_sg_line="$(printf '%s\n' "$st_net_out" | grep -n "would revoke all rules on security-group sg-0node" | head -n1 | cut -d: -f1 || true)"
+	if [ -n "$st_eni_line" ] && [ -n "$st_sg_line" ] && [ "$st_eni_line" -lt "$st_sg_line" ]; then
+		echo "  ✓ sweep_network deletes the CNI-leaked interface before the security groups"
+	else
+		echo "  ✗ sweep_network did not delete the CNI-leaked interface before the groups (eni line='${st_eni_line}', sg line='${st_sg_line}')" >&2
+		st_fails=$((st_fails + 1))
+	fi
+	ST_ENIS=""
 	st_aws_restore
 
 	# ── classify_arn. The preflight spent ten weeks calling 28 non-leaks "UNSWEPT and BILLING"
