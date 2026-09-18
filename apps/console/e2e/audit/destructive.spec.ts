@@ -79,7 +79,7 @@
 // appends the fixture's own answer to the observation, so "the trigger is not rendered … for this
 // persona" stops being the only thing the reader is told.
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { expect, test, type Browser, type Locator, type Page, type Request } from "@playwright/test";
@@ -299,8 +299,72 @@ interface Verdict {
 
 const verdicts: Verdict[] = [];
 
+/**
+ * Every verdict this RUN recorded, one JSON line each — the copy that survives a worker restart.
+ *
+ * `verdicts` above is module state, and a test that FAILS makes Playwright discard its worker and
+ * run the rest of the file in a fresh one, where the array starts empty. The floor test runs last,
+ * so after one timed-out control it saw only the controls driven since: measured on the promotion
+ * PR's gate, "4 measured, 11 withheld = 15 of 47", and twenty controls that HAD been measured
+ * reported as "recorded no verdict at all". That is a false finding per control, and it buries the
+ * one real failure that caused the restart.
+ *
+ * Two things keep another run's lines out. The file lives in Playwright's `outputDir`, which the
+ * runner empties at the start of every run; and each line carries `run`, the RUNNER's pid (every
+ * worker's parent), so a file that survived anyway — a different `--output`, a crashed cleanup — is
+ * read as someone else's and ignored. A stale "match" would be a measurement no run made, which is
+ * the direction this whole file exists to refuse.
+ */
+const VERDICT_LOG = path.resolve(__dirname, "..", "..", "test-results", "destructive-verdicts.jsonl");
+const RUN_ID = process.ppid;
+
 function record(v: Verdict): void {
 	verdicts.push(v);
+	try {
+		mkdirSync(path.dirname(VERDICT_LOG), { recursive: true });
+		appendFileSync(VERDICT_LOG, `${JSON.stringify({ run: RUN_ID, verdict: v })}\n`);
+	} catch {
+		// The in-memory copy still holds this worker's verdicts; losing the file costs only what the
+		// file was added for — verdicts from before a restart — and the floor then names them.
+	}
+}
+
+const OBSERVED: readonly Observed[] = ["confirmed", "missing", "inert", "undo", "not-measured", "errored"];
+const VERDICT_KINDS: readonly Verdict["verdict"][] = ["match", "mismatch", "withheld", "errored"];
+
+/** Narrow one parsed log line to a {@link Verdict} recorded by THIS run, or null. */
+function thisRunsVerdict(line: unknown): Verdict | null {
+	if (typeof line !== "object" || line === null || !("run" in line) || line.run !== RUN_ID) return null;
+	if (!("verdict" in line)) return null;
+	const v: unknown = line.verdict;
+	if (typeof v !== "object" || v === null) return null;
+	if (!("id" in v) || typeof v.id !== "string" || !("route" in v) || typeof v.route !== "string") return null;
+	if (!("expected" in v) || typeof v.expected !== "string") return null;
+	if (!("observed" in v) || !("verdict" in v)) return null;
+	const observed = OBSERVED.find((o) => o === v.observed);
+	const verdict = VERDICT_KINDS.find((k) => k === v.verdict);
+	if (!observed || !verdict) return null;
+	const reason = "reason" in v && typeof v.reason === "string" ? v.reason : undefined;
+	return { id: v.id, route: v.route, expected: v.expected, observed, verdict, reason };
+}
+
+/**
+ * The run's verdicts across every worker it used: the log, then this worker's memory, one per id
+ * (the later write wins). Falls back to memory alone when the log cannot be read.
+ */
+function runVerdicts(): Verdict[] {
+	const byId = new Map<string, Verdict>();
+	try {
+		for (const line of readFileSync(VERDICT_LOG, "utf8").split("\n")) {
+			if (!line.trim()) continue;
+			const v = thisRunsVerdict(JSON.parse(line));
+			if (v) byId.set(v.id, v);
+		}
+	} catch {
+		// No log (nothing recorded yet, or unwritable) — memory is what there is.
+	}
+	for (const v of verdicts) byId.set(v.id, v);
+	return [...byId.values()];
 }
 
 /** A reason is REQUIRED — "not measured" with no cause is the shape that reads as a pass. */
@@ -436,21 +500,47 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 			// alerts channel and policy rails as `role="listbox"` of `role="option"`, precisely so a
 			// policy's rail row stops colliding by role with its "Used by" pill. A button-only
 			// opener would withhold every `select:` control on that route and blame the fixture.
+			//
+			// ⚠ THE LOOKUP IS SCOPED TO AN OPEN OVERLAY WHEN ONE IS UP. The previous step usually
+			// opened it — a menu, the node palette's `CommandDialog` — and the next step names
+			// something inside it. Unscoped, `.first()` took whichever match came first in DOCUMENT
+			// order, and since #4754 gave canvas cards `role="group"` + `aria-label`, `getByLabel`
+			// resolved `{open: "Prometheus + Grafana"}` to the canvas card BEHIND the palette: an
+			// element the modal overlay covers, so the click waited on actionability until the test
+			// timeout ate it (addons.remove, 118s, no reason recorded).
+			const root = await openOverlay(page);
 			const named = new RegExp(escapeRe(name), "i");
-			const opener = page
+			const opener = root
 				.getByRole("button", { name: named })
-				.or(page.getByRole("option", { name: named }))
-				.or(page.getByRole("menuitem", { name: named }))
-				.or(page.getByLabel(named))
+				.or(root.getByRole("option", { name: named }))
+				.or(root.getByRole("menuitem", { name: named }))
+				.or(root.getByLabel(named))
 				.first();
 			await opener.waitFor({ state: "visible", timeout: 8_000 });
-			await opener.click();
+			// An EXPLICIT timeout, same as the wait above. Without one the click inherits the test's
+			// 120s budget, so a step that resolves to something un-clickable (covered, clipped by an
+			// `overflow: clip` ancestor) hangs, times the test out and records NO verdict — where
+			// the catch below would have withheld it WITH the step that could not be taken.
+			await opener.click({ timeout: 8_000 });
 			await page.waitForTimeout(300);
 		} catch {
 			return `reach step {${kind}: "${name}"} could not be taken on ${entry.route}`;
 		}
 	}
 	return null;
+}
+
+/**
+ * The topmost open overlay — a dialog or a menu — or the page when none is up.
+ *
+ * Only surfaces that COVER the page count. A `role="listbox"` is deliberately not one: the alerts
+ * rails are always-visible listboxes (#4433), so treating one as an overlay would scope a first
+ * step to a rail it has nothing to do with. The LAST match is taken because a portal-mounted
+ * overlay opened later is appended later.
+ */
+async function openOverlay(page: Page): Promise<Page | Locator> {
+	const overlay = page.locator('[role="dialog"]:visible, [role="alertdialog"]:visible, [role="menu"]:visible').last();
+	return (await overlay.count()) > 0 ? overlay : page;
 }
 
 function escapeRe(s: string): string {
@@ -499,8 +589,21 @@ function triggerCandidates(page: Page, entry: ControlEntry): { locator: Locator 
 	}
 	// A name carrying a `<placeholder>` is a template; match its literal prefix.
 	const literal = name.split("<")[0].trim();
-	const matcher = literal ? new RegExp(escapeRe(literal), "i") : new RegExp(escapeRe(name), "i");
-	return { locator: page.getByRole(role, { name: matcher }) };
+	return { locator: page.getByRole(role, { name: controlNameMatcher(literal || name) }) };
+}
+
+/**
+ * The accessible-name matcher for a registry `control.name`: a case-insensitive SUBSTRING that may
+ * not end in the middle of a word.
+ *
+ * A substring, because a template's literal prefix must match the rendered name ("Delete" in
+ * "Delete production"). Not mid-word, because a bare substring made `{button: "Suspend"}` match
+ * the row trigger "Manage suspended member …" as well as the bulk bar's Suspend — two candidates,
+ * so `members.bulk-suspend` was withheld as ambiguous on every run. The guard applies only when the
+ * name ends in a word character; a name ending in punctuation already delimits itself.
+ */
+function controlNameMatcher(name: string): RegExp {
+	return new RegExp(`${escapeRe(name)}${/\w$/.test(name) ? "(?!\\w)" : ""}`, "i");
 }
 
 /** The single control to drive, or the reason no verdict can be attributed to any of them. */
@@ -543,9 +646,17 @@ type Resolution = { locator: Locator } | { withhold: string };
  * identically-named controls, a hidden duplicate (not ambiguity), and a zero-box duplicate
  * (ambiguity). The ⚠ above is a claim about behaviour, and an unasserted claim is what #4639 is.
  */
-async function resolveTrigger(page: Page, entry: ControlEntry, where: string): Promise<Resolution> {
+async function resolveTrigger(page: Page, entry: ControlEntry, where: string, settleMs = 8_000): Promise<Resolution> {
 	const candidates = triggerCandidates(page, entry);
 	if ("problem" in candidates) return { withhold: candidates.problem };
+	// WAIT FOR THE FIRST CANDIDATE BEFORE COUNTING. `count()` does not wait, and a control with no
+	// `reach` step is counted straight after `goto(…, "domcontentloaded")` — before a client-fetched
+	// page has rendered anything. The billing panel, the runner list and the job page all fetch
+	// their state in an effect, so `billing.subscription.cancel`, `runners.remove` and `jobs.cancel`
+	// were each counted against a skeleton in under a second and withheld as "not rendered" with
+	// their fixtures seeded. A timeout here is not a failure: the count below then reads 0 and the
+	// verdict is withheld with that reason, exactly as before — it just stops being a race.
+	await candidates.locator.first().waitFor({ state: "attached", timeout: settleMs }).catch(() => {});
 	const matches = await candidates.locator.count();
 	const named = `the trigger {${entry.control?.role}: "${entry.control?.name}"}`;
 	if (matches === 0) return { withhold: `${named} is not rendered at ${where} for this persona` };
@@ -798,10 +909,15 @@ test.afterAll(async () => {
 	//
 	// An absent row and a withheld one are different findings, so they get different words rather
 	// than a shared silence.
-	const seen = new Set(verdicts.map((v) => v.id));
+	//
+	// The reconciled rows go into a LOCAL list, never through `record()`: this hook also runs in a
+	// worker torn down mid-file, where every control it has not reached yet is "absent", and writing
+	// those to the run's log would put an `errored` row in front of the real verdict still to come.
+	const all = runVerdicts();
+	const seen = new Set(all.map((v) => v.id));
 	for (const c of CONTROLS) {
 		if (seen.has(c.id)) continue;
-		record({
+		all.push({
 			id: c.id,
 			route: c.route,
 			expected: String(c.status),
@@ -811,7 +927,7 @@ test.afterAll(async () => {
 		});
 	}
 
-	const measured = verdicts.filter((v) => v.verdict === "match" || v.verdict === "mismatch").length;
+	const measured = all.filter((v) => v.verdict === "match" || v.verdict === "mismatch").length;
 	writeFileSync(
 		path.join(dir, "destructive.json"),
 		`${JSON.stringify(
@@ -819,9 +935,9 @@ test.afterAll(async () => {
 				generatedAt: new Date().toISOString(),
 				ledgerCount: CONTROLS.length,
 				measured,
-				withheld: verdicts.filter((v) => v.verdict === "withheld").length,
-				errored: verdicts.filter((v) => v.verdict === "errored").length,
-				controls: verdicts,
+				withheld: all.filter((v) => v.verdict === "withheld").length,
+				errored: all.filter((v) => v.verdict === "errored").length,
+				controls: all,
 			},
 			null,
 			2,
@@ -921,9 +1037,11 @@ function owedFindings(
 // rename is indistinguishable from a deletion there. What this test ASKS changed; what it is CALLED
 // must not, unless the baseline moves in the same commit.
 test("the run measured something — a withheld verdict is not a pass", async () => {
-	const measured = verdicts.filter((v) => v.verdict === "match" || v.verdict === "mismatch").length;
-	const withheld = verdicts.filter((v) => v.verdict === "withheld");
-	const errored = verdicts.filter((v) => v.verdict === "errored");
+	// Read across WORKERS, not from this one's memory — see `VERDICT_LOG`.
+	const recorded = runVerdicts();
+	const measured = recorded.filter((v) => v.verdict === "match" || v.verdict === "mismatch").length;
+	const withheld = recorded.filter((v) => v.verdict === "withheld");
+	const errored = recorded.filter((v) => v.verdict === "errored");
 	const summary = withheld.map((v) => `  · ${v.id}: ${v.reason}`).join("\n");
 	const owed = owedIds(CONTROLS, SEEDABLE_FIXTURES, UNREACHED);
 	// Printed on every run, pass or fail. The three counts MUST sum to the ledger — if they do not, a
@@ -935,7 +1053,7 @@ test("the run measured something — a withheld verdict is not a pass", async ()
 			`= ${measured + withheld.length + errored.length} of ${CONTROLS.length} in the ledger; ` +
 			`${owed.length} owed (${owed.join(", ") || "none"}), ${UNREACHED.size} declared unreached.\n${summary}`,
 	);
-	const findings = owedFindings(CONTROLS, verdicts, SEEDABLE_FIXTURES, UNREACHED);
+	const findings = owedFindings(CONTROLS, recorded, SEEDABLE_FIXTURES, UNREACHED);
 	// The findings are PRINTED in the message, not counted. A boolean assertion about a structure
 	// that does not show the structure when it fails sends the reader back to the run log.
 	expect(findings, `the run did not establish what the registry claims:\n${findings.map((f) => `  · ${f}`).join("\n")}\n\nwithheld:\n${summary}`).toEqual([]);
@@ -949,9 +1067,11 @@ test("the run measured something — a withheld verdict is not a pass", async ()
 // the ambiguity branch stood for as long as the file existed and could not fire, because the locator
 // it counted had already been narrowed with `.first()`.
 //
-// So the decision is driven here against markup this file builds, in ALL FIVE directions: no match,
+// So the decision is driven here against markup this file builds, in ALL SIX directions: no match,
 // one match, two identically-named controls, a visible control beside an A11Y-HIDDEN duplicate (NOT
-// ambiguity), and a visible control beside a ZERO-BOX duplicate (ambiguity). Each drives the REAL
+// ambiguity), a visible control beside a ZERO-BOX duplicate (ambiguity), and a name that is a
+// mid-word PREFIX of another control's (not a candidate). A seventh test drives `walkReach`'s
+// overlay scoping, the step before it. Each drives the REAL
 // function, not a restatement of it — a self-test that re-implements the rule verifies a copy.
 //
 // The last two are not decoration. They are the only assertions on the ⚠ in `resolveTrigger`'s
@@ -1050,6 +1170,40 @@ test("self-test — `resolveTrigger` withholds `not rendered` when NOTHING match
 	// different findings with different fixes, and a shared reason is how #4639's collisions were
 	// reported as a missing fixture for as long as they were.
 	expect(resolved.withhold).not.toContain("ambiguous");
+});
+
+test("self-test — a name that is a mid-word PREFIX of another control's is not a candidate", async ({ page }) => {
+	// `members.bulk-suspend`'s shape, measured on the gate: `{button: "Suspend"}` beside a row
+	// trigger whose name CONTAINS "suspended". A bare substring counts both and withholds the bulk
+	// control as ambiguous on every run; the name may not end mid-word.
+	await page.setContent(`
+		<main>
+			<button aria-label="Manage suspended member Audit Colleague">…</button>
+			<button>Suspend</button>
+		</main>`);
+	const resolved = await resolveTrigger(page, selfTestEntry("Suspend"), "about:self-test");
+	expect("locator" in resolved, "`Suspend` must not match `suspended` — that is a different word, not a second candidate").toBe(true);
+	if (!("locator" in resolved)) return;
+	await expect(resolved.locator).toHaveText("Suspend");
+});
+
+test("self-test — `walkReach` resolves a step INSIDE the open overlay, not the labelled element behind it", async ({ page }) => {
+	// `addons.remove`'s shape, measured on the gate: the palette dialog is open and lists the add-on
+	// as an option, and the canvas behind it carries a `role="group"` card with the SAME label. The
+	// card comes first in document order, so an unscoped `.first()` picked it and the click hung on a
+	// covered element until the test timed out.
+	await page.setContent(`
+		<main>
+			<div role="group" aria-label="Prometheus + Grafana" onclick="document.body.dataset.hit='card'">card</div>
+			<div role="dialog" aria-label="Add a node">
+				<div role="listbox">
+					<div role="option" onclick="document.body.dataset.hit='option'">Prometheus + Grafana</div>
+				</div>
+			</div>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Remove"), reach: [{ open: "Prometheus + Grafana" }] };
+	expect(await walkReach(page, entry), "the step names a real option in the open dialog, so it must be taken").toBeNull();
+	await expect(page.locator("body")).toHaveAttribute("data-hit", "option");
 });
 
 // ── the floor's own test ────────────────────────────────────────────────────────────────────────
