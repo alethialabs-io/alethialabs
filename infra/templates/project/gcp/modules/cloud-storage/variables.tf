@@ -39,6 +39,14 @@ variable "buckets" {
     storage_class = optional(string, "STANDARD")
     versioning    = optional(bool, true)
     lifecycle_age = optional(number)
+    # Caller-defined lifecycle rules, each rendered as its own `lifecycle_rule` block in main.tf.
+    # The root declared this since the variable existed and it was dropped at this boundary until
+    # #4320 — no bucket has ever received one.
+    lifecycle_rules = optional(list(object({
+      action_type          = string
+      action_storage_class = optional(string)
+      condition_age        = optional(number)
+    })), [])
     # `public_access` is the switch the canvas shows. `location`, `force_destroy`, `cors_origins`
     # and `cors_methods` were dropped at this boundary in exactly the same way; all five are wired
     # to a resource argument in main.tf.
