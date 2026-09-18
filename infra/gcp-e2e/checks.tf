@@ -189,16 +189,24 @@ check "e2e_broker_binding_is_one_subject" {
   }
 }
 
+# The binding names the pool by a BUILT name so the enabling plan can be read (e2e-broker.tf). This
+# keeps that string honest by comparing it with the pool's real `name`. On the enabling plan the right
+# side is unknown, so this one reports at APPLY; on every plan after it, at plan.
+check "e2e_broker_pool_name_matches" {
+  assert {
+    condition     = !local.broker_enabled || google_iam_workload_identity_pool.e2e_broker[0].name == local.broker_pool_name
+    error_message = "the e2e broker SA binding names ${local.broker_pool_name}, but the broker pool's name is different — the binding would trust a pool that does not exist."
+  }
+}
+
 # The GitHub trust must survive the broker's arrival and departure. Separate pools are what make
-# that true (see e2e-broker.tf), so the tripwire is the pool IDs colliding.
+# that true (see e2e-broker.tf), so the tripwire is the pool IDs colliding. That is ALL this checks:
+# the GitHub provider and binding are separate resources whose arguments this change does not touch,
+# and e2e_provider_condition_applied / e2e_wif_binding_is_repo_scoped above already read them.
 check "e2e_broker_trust_is_additive" {
   assert {
-    condition = alltrue([
-      var.broker_pool_id != var.pool_id,
-      google_iam_workload_identity_pool_provider.e2e.attribute_condition == local.e2e_attr_condition,
-      google_service_account_iam_member.e2e_wif.member == local.e2e_principal,
-    ])
-    error_message = "the broker trust must live in its OWN pool (broker_pool_id '${var.broker_pool_id}' must differ from pool_id '${var.pool_id}') and leave the GitHub provider and binding exactly as they were."
+    condition     = var.broker_pool_id != var.pool_id
+    error_message = "the broker trust must live in its OWN pool — broker_pool_id '${var.broker_pool_id}' must differ from pool_id '${var.pool_id}', or the GitHub binding's principalSet would admit the broker's identities too."
   }
 }
 

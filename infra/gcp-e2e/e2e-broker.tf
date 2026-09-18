@@ -59,6 +59,16 @@ locals {
     "assertion.repository == \"${var.github_repo}\"",
     "assertion.workflow_ref in ${jsonencode(var.e2e_broker_workflow_refs)}",
   ])
+
+  # The pool's resource name, BUILT from plan-time values rather than read off the resource. `name`
+  # is computed, so a member that embedded google_iam_workload_identity_pool.e2e_broker[0].name
+  # would plan as `(known after apply)` on the very plan that enables the broker, and the
+  # e2e_broker_binding_is_one_subject check could not read it. GCP names a pool
+  # `projects/<project NUMBER>/locations/global/workloadIdentityPools/<pool id>`; the number comes
+  # from data.google_project.this, which is read at plan. The check `e2e_broker_pool_name_matches`
+  # (checks.tf) compares this with the resource's real `name` once it is known.
+  broker_pool_name = "projects/${data.google_project.this.number}/locations/global/workloadIdentityPools/${var.broker_pool_id}"
+  broker_principal = "principal://iam.googleapis.com/${local.broker_pool_name}/subject/${local.broker_subject}"
 }
 
 resource "google_iam_workload_identity_pool" "e2e_broker" {
@@ -111,5 +121,9 @@ resource "google_service_account_iam_member" "e2e_broker" {
 
   service_account_id = google_service_account.e2e.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principal://iam.googleapis.com/${google_iam_workload_identity_pool.e2e_broker[0].name}/subject/${local.broker_subject}"
+  member             = local.broker_principal
+
+  # The member names the pool by a BUILT name (local.broker_pool_name), which carries no dependency
+  # edge; this orders the pool and its provider before the binding that names them.
+  depends_on = [google_iam_workload_identity_pool_provider.e2e_broker]
 }

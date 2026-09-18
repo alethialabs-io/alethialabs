@@ -210,6 +210,16 @@ check "e2e_broker_trust_is_additive" {
   }
 }
 
+# The trust names the provider by a BUILT ARN so the enabling plan can be read (e2e-broker.tf). This
+# is what keeps that string honest: it is compared with the resource's real `arn`. On the enabling
+# plan the right side is unknown, so this one reports at APPLY; on every plan after it, at plan.
+check "e2e_broker_provider_arn_matches" {
+  assert {
+    condition     = !local.broker_enabled || aws_iam_openid_connect_provider.e2e_broker[0].arn == local.broker_provider_arn
+    error_message = "the e2e broker trust names ${local.broker_provider_arn}, but the broker OIDC provider's ARN is different — the trust would federate a provider that does not exist."
+  }
+}
+
 check "e2e_broker_trust_absent_when_unset" {
   assert {
     condition = local.broker_enabled || alltrue([

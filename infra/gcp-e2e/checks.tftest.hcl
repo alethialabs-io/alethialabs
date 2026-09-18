@@ -21,6 +21,18 @@ mock_provider "google" {
       name = "projects/123456789012/locations/global/workloadIdentityPools/mock-pool"
     }
   }
+  mock_data "google_project" {
+    defaults = { number = "123456789012" }
+  }
+}
+
+# The broker pool's real name, as GCP would return it. Every run that enables the broker compares the
+# BUILT name (local.broker_pool_name) with this, through check.e2e_broker_pool_name_matches.
+override_resource {
+  target = google_iam_workload_identity_pool.e2e_broker
+  values = {
+    name = "projects/123456789012/locations/global/workloadIdentityPools/alethia-e2e-broker"
+  }
 }
 
 variables {
@@ -66,6 +78,37 @@ run "set_pins_issuer_audience_subject_and_run" {
     condition     = google_iam_workload_identity_pool.e2e_broker[0].workload_identity_pool_id != google_iam_workload_identity_pool.e2e.workload_identity_pool_id
     error_message = "the broker must live in its own pool."
   }
+  assert {
+    # A literal built from the MOCKED DATA SOURCE (project number) and the pool id — not from the
+    # pool resource's computed `name`. A member built from `name` would be unknown on a real enabling
+    # plan; this is the value a maintainer reads there.
+    condition     = google_service_account_iam_member.e2e_broker[0].member == "principal://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/alethia-e2e-broker/subject/alethia-connector"
+    error_message = "the broker SA member must be the one contract subject in the broker pool, built from plan-time values."
+  }
+}
+
+# The built pool name disagrees with the pool GCP actually created: the binding would name a pool that
+# does not exist, and the check must say so.
+run "a_built_pool_name_that_drifts_is_reported" {
+  command = plan
+  variables {
+    e2e_broker_issuer_url = "https://alethia-e2e-issuer.example.workers.dev"
+  }
+  override_resource {
+    target = google_iam_workload_identity_pool.e2e_broker
+    values = {
+      name = "projects/999999999999/locations/global/workloadIdentityPools/alethia-e2e-broker"
+    }
+  }
+  # The member still carries the BUILT name, not the resource's. This is the assertion that fails if
+  # the member is ever built from google_iam_workload_identity_pool.e2e_broker[0].name again — the form
+  # that is `(known after apply)` on a real enabling plan. (In the run above both values agree, so it
+  # cannot tell them apart; here they differ.)
+  assert {
+    condition     = google_service_account_iam_member.e2e_broker[0].member == "principal://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/alethia-e2e-broker/subject/alethia-connector"
+    error_message = "the broker SA member must name the pool by the name built from plan-time values, not by the resource's computed name."
+  }
+  expect_failures = [check.e2e_broker_pool_name_matches]
 }
 
 run "an_issuer_with_a_path_is_refused" {
@@ -91,6 +134,13 @@ run "sharing_the_github_pool_is_reported" {
   variables {
     e2e_broker_issuer_url = "https://alethia-e2e-issuer.example.workers.dev"
     broker_pool_id        = "alethia-e2e-gh-pool"
+  }
+  # Keep the built pool name and the "real" one in agreement, so the only check that fires is the one under test.
+  override_resource {
+    target = google_iam_workload_identity_pool.e2e_broker
+    values = {
+      name = "projects/123456789012/locations/global/workloadIdentityPools/alethia-e2e-gh-pool"
+    }
   }
   expect_failures = [check.e2e_broker_trust_is_additive]
 }

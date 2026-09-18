@@ -151,6 +151,16 @@ check "e2e_broker_trust_is_additive" {
   }
 }
 
+# The broker statement names its provider by a BUILT ARN so the enabling plan can be read
+# (e2e-broker.tf). This keeps that string honest by comparing it with the resource's real `arn`. On
+# the enabling plan the right side is unknown, so this one reports at APPLY; after that, at plan.
+check "e2e_broker_provider_arn_matches" {
+  assert {
+    condition     = !local.broker_enabled || alicloud_ims_oidc_provider.e2e_broker[0].arn == local.broker_provider_arn
+    error_message = "the e2e broker trust statement names ${local.broker_provider_arn}, but the broker RAM OIDC provider's ARN is different — the statement would federate a provider that does not exist."
+  }
+}
+
 check "e2e_broker_trust_absent_when_unset" {
   assert {
     condition = local.broker_enabled || alltrue([

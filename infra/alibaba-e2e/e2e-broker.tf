@@ -49,10 +49,21 @@ locals {
     local.broker_enabled ? [for c in data.tls_certificate.e2e_broker[0].certificates : c.sha1_fingerprint] : []
   )
 
+  # The provider's ARN, BUILT from plan-time values rather than read off the resource. `arn` is
+  # computed-only in the alicloud schema, so a statement that referenced
+  # alicloud_ims_oidc_provider.e2e_broker[0].arn would make the whole assume_role_policy_document
+  # `(known after apply)` on the very plan that enables the broker — the maintainer could not read
+  # the trust being added, and every check reading local.trust_document would be unknown. RAM names
+  # an OIDC provider `acs:ram::<account>:oidc-provider/<name>`; the account comes from
+  # data.alicloud_caller_identity, which is read at plan. The check
+  # `e2e_broker_provider_arn_matches` (checks.tf) compares this with the resource's real `arn` once
+  # it is known, and alicloud_ram_role.e2e depends_on the provider for ordering.
+  broker_provider_arn = "acs:ram::${data.alicloud_caller_identity.current.account_id}:oidc-provider/${var.broker_oidc_provider_name}"
+
   broker_trust_statements = local.broker_enabled ? [{
     Effect    = "Allow"
     Action    = "sts:AssumeRole"
-    Principal = { Federated = [alicloud_ims_oidc_provider.e2e_broker[0].arn] }
+    Principal = { Federated = [local.broker_provider_arn] }
     Condition = {
       StringEquals = {
         "oidc:iss" = var.e2e_broker_issuer_url

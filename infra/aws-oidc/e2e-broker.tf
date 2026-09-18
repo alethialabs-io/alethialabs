@@ -47,6 +47,16 @@ locals {
   # IAM names a generic provider's condition keys by its URL without the scheme. The variable's
   # validation admits only a bare https origin, so this is a hostname.
   broker_issuer_host = local.broker_enabled ? trimprefix(var.e2e_broker_issuer_url, "https://") : ""
+
+  # The provider's ARN, BUILT from plan-time values rather than read off the resource. `arn` is
+  # computed, so a trust document that referenced aws_iam_openid_connect_provider.e2e_broker[0].arn
+  # would plan as `(known after apply)` on the very plan that enables the broker: the maintainer
+  # could not read the rendered trust, and every check in checks.tf that reads the trust JSON would
+  # evaluate to unknown. IAM names a generic OIDC provider `oidc-provider/<url without scheme>`, and
+  # the account id comes from data.aws_caller_identity, which is read at plan. The check
+  # `e2e_broker_provider_arn_matches` in checks.tf compares this string with the resource's real
+  # `arn` once it is known (at apply), so the two cannot drift silently.
+  broker_provider_arn = local.broker_enabled ? "arn:aws:iam::${local.account_id}:oidc-provider/${local.broker_issuer_host}" : ""
 }
 
 # The broker's IAM OIDC provider. No thumbprint_list: it is optional from provider 5.81 (measured —

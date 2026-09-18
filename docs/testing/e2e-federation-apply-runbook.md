@@ -248,14 +248,37 @@ issuer to plan against. If a plan shows anything else, stop and read it.
 
 | stack | expected plan | a sign something is wrong |
 |---|---|---|
-| `aws-oidc` | `1 to add` (the OIDC provider), `1 to change` (`alethia-e2e-nightly`'s `assume_role_policy`, gaining one statement) | any change to `GithubOIDCNightly`, or any other role |
-| `gcp-e2e` | `3 to add` (pool, provider, SA IAM member) | any change to `alethia-e2e-gh-pool`, its provider or `e2e_wif` |
+| `aws-oidc` | `1 to add` (the OIDC provider), `1 to change` (`alethia-e2e-nightly`'s `assume_role_policy`, gaining one statement, shown in full) | any change to `GithubOIDCNightly`, any other role, or an `assume_role_policy` shown as `(known after apply)` |
+| `gcp-e2e` | `3 to add` (pool, provider, SA IAM member, with the member's `principal://…` string shown in full) | any change to `alethia-e2e-gh-pool`, its provider or `e2e_wif`, or a member shown as `(known after apply)` |
 | `azure-e2e` | `1 to add` (the `e2e-assertion-broker` credential) | any change to `gh-oidc-ref` or `gh-oidc-env` |
-| `alibaba-e2e` | `1 to add` (the RAM OIDC provider), `1 to change` (the role's trust document, gaining a second statement) | any change to `Statement[0]` or to the `alethia-github-e2e` provider |
+| `alibaba-e2e` | `1 to add` (the RAM OIDC provider), `1 to change` (the role's trust document, gaining a second statement, shown in full) | any change to `Statement[0]`, to the `alethia-github-e2e` provider, or a trust document shown as `(known after apply)` |
 
-The checks added with this change report on every plan. Each stack has three: the broker trust is
-**exact**, it is **additive** (the GitHub trust is unchanged), and it is **absent** when unset. A
-check **warns**; it does not fail the plan. Read the warnings.
+**The enabling plan shows the whole new trust document, not `(known after apply)`.** Read it. On AWS
+and Alibaba the broker statement names its OIDC provider, and on GCP the SA member names its pool.
+The provider ARN and the pool name are computed by the cloud when the object is created, so a trust
+that read them off the resource would be unknown on exactly this plan. So each stack **builds** that
+name from values it has at plan time (the account ID or project number from a data source, and the
+provider name, issuer host or pool ID from a variable):
+
+| stack | built as |
+|---|---|
+| `aws-oidc` | `arn:aws:iam::<account>:oidc-provider/<issuer host>` |
+| `alibaba-e2e` | `acs:ram::<account>:oidc-provider/<broker_oidc_provider_name>` |
+| `gcp-e2e` | `projects/<project number>/locations/global/workloadIdentityPools/<broker_pool_id>` |
+
+`azure-e2e` needs none of this: its credential's issuer, subject and audience are all inputs.
+
+Because the name is built, it can disagree with the object the cloud creates. A check compares the
+two (`e2e_broker_provider_arn_matches` on AWS and Alibaba, `e2e_broker_pool_name_matches` on GCP).
+On the enabling plan the created object's name does not exist yet, so **that one check reports at
+apply**, not at plan. On every later plan it reports at plan. If it warns after the apply, the
+trust names an object that does not exist: roll back (below) and report it.
+
+The other broker checks report on the enabling plan. Every stack has three: the broker trust is
+**exact**, it is **additive** (the GitHub trust is unchanged), and it is **absent** when unset.
+`gcp-e2e` has a fourth, `e2e_broker_binding_is_one_subject`: the SA member is one principal, never a
+principal set. So `aws-oidc` and `alibaba-e2e` have four broker checks, `gcp-e2e` five and
+`azure-e2e` three. A check **warns**; it does not fail the plan. Read the warnings.
 
 `gcp-e2e`, `azure-e2e` and `alibaba-e2e` also include `checks.tftest.hcl`. It runs against mocked
 providers, so it needs no credentials, and no workflow runs it. Run it in each of those directories
@@ -265,7 +288,9 @@ before you plan:
 tofu init -backend=false && tofu test
 ```
 
-It checks the planned values against the literals in `broker.ts`, and that the guards fire.
+It checks the planned values against the literals in `broker.ts`, that the trust names the built
+provider ARN or pool name rather than the created object's, and that the guards fire. These tests were
+run with OpenTofu 1.12.3. CI pins 1.10.10, and the tests have never run on that version.
 `aws-oidc` has no such test: its trust document comes from a data source that a mock cannot
 render.
 
@@ -318,10 +343,16 @@ Alternatively, set a new `broker_pool_id`.
   issuer, so a key rotation happens entirely in the broker. Follow the procedure in
   `apps/e2e-issuer/README.md`: publish, wait 24 h, sign with the new key, wait 24 h, retire the old
   key. None of the four stacks pins a key.
-- **Alibaba certificate fingerprints.** The RAM provider pins the issuer's **CA** certificates, not
-  the leaf. A leaf renewal at Cloudflare needs no action. If the issuing CA changes, AssumeRoleWithOIDC
-  fails for the broker only. To fix it, plan and apply `alibaba-e2e` again: `data.tls_certificate`
-  reads the fingerprints again.
+- **Alibaba certificate fingerprints: expect this to break, and plan again when it does.** The RAM
+  provider pins the fingerprints of the CA certificates in the chain the issuer **presents**. A server
+  normally does not send its root, so in practice that is the **issuing intermediate**, not a root.
+  Cloudflare's edge certificates can change issuing CA, and a CA such as Let's Encrypt can pick a
+  different intermediate at each renewal. So a routine certificate renewal at Cloudflare **can**
+  change the pinned value. When it does, AssumeRoleWithOIDC fails for the broker only, and nothing
+  reports it until the nightly's Alibaba leg fails. To fix it, plan and apply `alibaba-e2e` again:
+  `data.tls_certificate` reads the fingerprints again. The GitHub provider in `oidc.tf` has the same
+  design and the same exposure. A plan whose only change is `fingerprints` on a provider is this
+  case.
 - **The issuer origin.** A new origin is a new issuer on every cloud. Change the origin in all four
   `terraform.tfvars` in one PR and plan each stack. Read whether each plan updates the issuer in
   place or replaces the object. This file does not predict which, because nobody has measured it.

@@ -96,9 +96,11 @@ data "aws_iam_policy_document" "e2e_nightly_trust" {
       sid     = "E2EBrokerAssertion"
       effect  = "Allow"
       actions = ["sts:AssumeRoleWithWebIdentity"]
+      # Built from plan-time values (see local.broker_provider_arn in e2e-broker.tf) so the
+      # enabling plan renders this whole document instead of `(known after apply)`.
       principals {
         type        = "Federated"
-        identifiers = [aws_iam_openid_connect_provider.e2e_broker[0].arn]
+        identifiers = [local.broker_provider_arn]
       }
       condition {
         test     = "StringEquals"
@@ -403,6 +405,12 @@ resource "aws_iam_role" "e2e_nightly" {
   # workflow's 60m job cap. The workflow requests the duration it needs at assume time.
   max_session_duration = 7200
   tags                 = local.tags
+
+  # The trust names the broker provider by a BUILT ARN (local.broker_provider_arn), which carries no
+  # dependency edge. This one orders the provider's creation before the trust that names it, and its
+  # removal after. On a resource, not the policy-document data source: depends_on on a data source
+  # defers its read to apply and would bring back the `(known after apply)` trust this avoids.
+  depends_on = [aws_iam_openid_connect_provider.e2e_broker]
 }
 
 resource "aws_iam_role_policy" "e2e_nightly" {
