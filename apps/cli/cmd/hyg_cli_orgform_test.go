@@ -1022,11 +1022,15 @@ func TestHygCliOrgForm_LooksLikeUUIDMatchesTheWireShape(t *testing.T) {
 }
 
 // TestHygCliOrgForm_ClosedSetsMirrorTheRoute pins --principal-type and --effect against the enums in
-// createGrantBody, in both directions, and pins that --resource-type is NOT validated.
+// createGrantBody, in both directions, and pins that --resource-type is NOT gated on the picker's
+// suggestion list.
 //
-// The last part is the one worth stating: `resource_type` is `z.string().min(1)` on the wire, so a
-// CLI that refused a kind outside its own suggestion list would be refusing something the control
-// plane stores. The suggestions exist to fill a picker, not to gate a flag.
+// The last part is the one worth stating. The server accepts `connector` (GRANT_RESOURCE_TYPES in
+// apps/console/lib/validations/grants.ts) and grantResourceTypeSuggestions does not offer it, so a
+// CLI that refused a kind outside its own suggestion list would be refusing a grant the control
+// plane takes. The suggestions exist to fill a picker, not to gate a flag. A kind outside the
+// server's set is refused by POST /api/cli/grants with a 400 naming the set (#4755); this CLI does
+// not pre-check it.
 func TestHygCliOrgForm_ClosedSetsMirrorTheRoute(t *testing.T) {
 	for _, v := range grantPrincipalTypes {
 		if err := requireOneOf("principal-type", v, grantPrincipalTypes); err != nil {
@@ -1051,13 +1055,105 @@ func TestHygCliOrgForm_ClosedSetsMirrorTheRoute(t *testing.T) {
 
 	s, run := orgFormEnv(t, orgFormDefaultPayloads())
 	code, out := run("grants", "add", "--principal", orgFormUserID, "--role", orgFormRoleID,
-		"--resource-type", "something_new", "--resource", orgFormGrantID, "--no-input", "--output", "json")
+		"--resource-type", "connector", "--resource", orgFormGrantID, "--no-input", "--output", "json")
 	if code != 0 {
-		t.Fatalf("a resource kind the CLI has never heard of must reach the server, which stores it; "+
-			"exit = %d, said %q", code, strings.TrimSpace(out))
+		t.Fatalf("a resource kind the server accepts and the picker does not offer must reach the "+
+			"server; exit = %d, said %q", code, strings.TrimSpace(out))
 	}
 	if !s.saw(http.MethodPost, "/api/cli/grants") {
 		t.Errorf("the grant was not sent; requests = %v", s.requests)
+	}
+}
+
+// grantAcceptedResourceTypesParse derives the kinds POST /api/cli/grants accepts from the two
+// TypeScript files that define them: `"org"` plus every key of `PARENTS` in fga-hierarchy.ts, and
+// only while validations/grants.ts still builds GRANT_RESOURCE_TYPES as `["org", ...INSTANCE_TYPES]`.
+//
+// It returns nil when either shape is not found, so the guard that calls it fails rather than
+// comparing against nothing. A FUNCTION so that its own fixture test and the guard run the same
+// code — a parser checked only against the file it parses cannot tell "they agree" from "I read
+// nothing".
+func grantAcceptedResourceTypesParse(hierarchy, validation string) []string {
+	if !grantResourceTypesShape.MatchString(validation) {
+		return nil
+	}
+	start := strings.Index(hierarchy, "export const PARENTS = {")
+	if start < 0 {
+		return nil
+	}
+	body := hierarchy[start:]
+	end := strings.Index(body, "\n}")
+	if end < 0 {
+		return nil
+	}
+	keys := grantParentsKey.FindAllStringSubmatch(body[:end], -1)
+	if len(keys) == 0 {
+		return nil
+	}
+	out := []string{"org"}
+	for _, k := range keys {
+		out = append(out, k[1])
+	}
+	return out
+}
+
+var (
+	// grantResourceTypesShape is the declaration of GRANT_RESOURCE_TYPES the parse above relies on.
+	grantResourceTypesShape = regexp.MustCompile(
+		`GRANT_RESOURCE_TYPES[^=]*=\s*\[\s*"org",\s*\.\.\.INSTANCE_TYPES,?\s*\]`)
+	// grantParentsKey matches one row of the PARENTS table: a key at one tab of indentation.
+	grantParentsKey = regexp.MustCompile(`(?m)^\t([a-z_]+):`)
+)
+
+// TestHygCliOrgForm_AcceptedResourceTypesParse pins the parser on a fixture, including both ways
+// it must refuse to answer.
+func TestHygCliOrgForm_AcceptedResourceTypesParse(t *testing.T) {
+	hierarchy := "x\nexport const PARENTS = {\n\tproject: [\"org\"],\n\tconnector: [\"org\"],\n} as const;\n\tlater: 1,\n"
+	validation := "export const GRANT_RESOURCE_TYPES: readonly GrantResourceType[] = [\n\t\"org\",\n\t...INSTANCE_TYPES,\n];"
+	got := grantAcceptedResourceTypesParse(hierarchy, validation)
+	if strings.Join(got, ",") != "org,project,connector" {
+		t.Errorf("parsed %v, want [org project connector] — a row after the table must not be read", got)
+	}
+	if got := grantAcceptedResourceTypesParse("nothing here", validation); got != nil {
+		t.Errorf("a hierarchy with no PARENTS table parses to nil, got %v", got)
+	}
+	if got := grantAcceptedResourceTypesParse(hierarchy, `GRANT_RESOURCE_TYPES = ["org", "project"]`); got != nil {
+		t.Errorf("a GRANT_RESOURCE_TYPES not built from INSTANCE_TYPES parses to nil, got %v", got)
+	}
+}
+
+// TestHygCliOrgForm_SuggestedKindsAreAccepted is the guard grantResourceTypeSuggestions' comment
+// leans on: every kind the resource-kind picker offers is one the server accepts, read from the
+// TypeScript that defines the accepted set rather than from a copy typed here.
+//
+// The direction is one way on purpose. The server accepts `connector` and the picker does not offer
+// it (no live list; TestOrgSelect_EverySuggestedKindIsListable), so "every accepted kind is
+// suggested" would be false today, and it is not a defect: the flag still reaches it.
+func TestHygCliOrgForm_SuggestedKindsAreAccepted(t *testing.T) {
+	root := authFormRepoRoot(t)
+	read := func(parts ...string) string {
+		path := filepath.Join(append([]string{root, "apps", "console"}, parts...)...)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			// A verdict this guard cannot reach is a FAILURE, never a skip.
+			t.Fatalf("read %s: %v — the suggestion list's verdict depends on this file", path, err)
+		}
+		return string(body)
+	}
+	accepted := grantAcceptedResourceTypesParse(
+		read("lib", "authz", "fga-hierarchy.ts"), read("lib", "validations", "grants.ts"))
+	if len(accepted) < 2 {
+		t.Fatalf("derived %v as the server's accepted kinds — a file's shape changed and the check "+
+			"below would pass having compared nothing", accepted)
+	}
+	set := map[string]bool{}
+	for _, k := range accepted {
+		set[k] = true
+	}
+	for _, kind := range grantResourceTypeSuggestions {
+		if !set[kind] {
+			t.Errorf("the picker offers %q, which POST /api/cli/grants refuses (accepted: %v)", kind, accepted)
+		}
 	}
 }
 
