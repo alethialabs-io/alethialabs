@@ -6,7 +6,8 @@
 // `grants.resource_type` is free `text` in Postgres and both writers reached it through a bare
 // string: `z.string().min(1).default("org")` on app/api/cli/grants/route.ts and an untyped
 // `resourceType: string` on app/server/actions/grants.ts. #4581's `orgScopeCarriesResourceId`
-// refuses only the `org`+id pair, so every OTHER unrecognised kind was accepted (#4734).
+// (since folded into `parseGrantResource`, #4582) refused only the `org`+id pair, so every OTHER
+// unrecognised kind was accepted (#4734).
 //
 // ⚠ WHY A TYPO IS NOT A COSMETIC DEFECT. Since #4584, an uninterpretable scope confers nothing and
 // — on a DENY row — excludes the WHOLE ORG (`EMPTY_SCOPE_DENIES`, lib/authz/grant-scope.ts). So an

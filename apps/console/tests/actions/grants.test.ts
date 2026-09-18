@@ -32,6 +32,7 @@ import { getPdp } from "@/lib/authz";
 import { recordActivity } from "@/lib/authz/activity";
 import { authorize } from "@/lib/authz/guard";
 import { INSTANCE_TYPES } from "@/lib/authz/fga-hierarchy";
+import { EMPTY_RESOURCE_ID } from "@/lib/authz/fga-tuples";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import { ForbiddenError } from "@/lib/authz/types";
@@ -380,6 +381,24 @@ describe("assignGrant validation", () => {
 		expect(insertSpy).not.toHaveBeenCalled();
 	});
 
+	// #4582: the kind used to be derived from the id's TRUTHINESS while the id was stored as given,
+	// so `("project", "")` was written as `("org", "")` — the contradictory pair without naming org.
+	it("rejects an empty resource id on a scoped kind and never inserts", async () => {
+		const { insertSpy } = mockDb();
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				permissionKey: "project:view",
+				resourceType: "project",
+				resourceId: "",
+			}),
+		).rejects.toThrow(EMPTY_RESOURCE_ID);
+		expect(insertSpy).not.toHaveBeenCalled();
+		expect(syncScopedGrant).not.toHaveBeenCalled();
+	});
+
 	it("accepts every kind the hierarchy table makes scopable, plus org", async () => {
 		// Derived from the same list the action validates against — which is itself derived from
 		// `INSTANCE_TYPES` — so a kind added to the hierarchy cannot leave this boundary untested.
@@ -448,11 +467,12 @@ describe("assignGrant persistence", () => {
 				orgId: "org-1",
 				principalId: "u-1",
 				resourceType: "org",
-				resourceId: null,
 				permissionKey: "project:view",
 				roleId: null,
 			}),
 		);
+		// The org arm of `GrantScope` has no resourceId field at all (#4582) — not even a null one.
+		expect(syncScopedGrant.mock.calls[0]?.[0]).not.toHaveProperty("resourceId");
 		expect(emitAlertEventSafe).toHaveBeenCalledWith(
 			"org-1",
 			"authz.grant.assign",
@@ -578,9 +598,56 @@ describe("revokeGrant", () => {
 				effect: "allow",
 				roleId: "role-3",
 				resourceType: "org",
-				resourceId: null,
 			}),
 		);
+		expect(removeScopedGrant.mock.calls[0]?.[0]).not.toHaveProperty("resourceId");
+	});
+
+	// #4582: a stored row is NARROWED to a `GrantScope` (the #4584 ruling), not spread into one.
+	it("does not call removeScopedGrant for an ALLOW row of the bad pair — it confers nothing", async () => {
+		const { deleteSpy } = mockDb([
+			{
+				id: "g-3",
+				org_id: "org-1",
+				principal_type: "user",
+				principal_id: "u-5",
+				effect: "allow",
+				role_id: null,
+				permission_key: "project:view",
+				resource_type: "org",
+				resource_id: "p-1",
+			},
+		]);
+		await revokeGrant("g-3");
+		// The row itself is still deleted — only the tuple removal has nothing to act on.
+		expect(deleteSpy).toHaveBeenCalledTimes(1);
+		expect(removeScopedGrant).not.toHaveBeenCalled();
+	});
+
+	it("removes a DENY row of the bad pair at the ORG scope — it excluded org-wide (#4584)", async () => {
+		mockDb([
+			{
+				id: "g-4",
+				org_id: "org-1",
+				principal_type: "user",
+				principal_id: "u-5",
+				effect: "deny",
+				role_id: null,
+				permission_key: "project:deploy",
+				resource_type: "org",
+				resource_id: "p-1",
+			},
+		]);
+		await revokeGrant("g-4");
+		expect(removeScopedGrant).toHaveBeenCalledWith({
+			orgId: "org-1",
+			principalType: "user",
+			principalId: "u-5",
+			effect: "deny",
+			resourceType: "org",
+			roleId: null,
+			permissionKey: "project:deploy",
+		});
 	});
 });
 
