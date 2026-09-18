@@ -9,7 +9,8 @@
 # strip, a stacking level, a table or a status instead of reaching for `@repo/format`,
 # `@repo/ui/section-heading`, a `--text-ui-*` rung, `@repo/ui/empty`, a `--z-*` token, `DataTable`
 # or `@repo/ui/status-badge` — and on any console page that gives itself a TITLE, which is the one
-# rule whose fix is deletion. Unless it is listed here.
+# rule whose fix is deletion — and on any `<Switch>` or `role="switch"` element that does not name
+# itself with `aria-labelledby` or `aria-label` (`switch_name`, #4352). Unless it is listed here.
 #
 # TWO KINDS OF ENTRY, and the file says which. They are counted separately, and neither can be
 # spent as the other — converting one into the other is a diff, which is the point.
