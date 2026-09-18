@@ -57,6 +57,7 @@ const summary = (over: Partial<BillingSummary> = {}): BillingSummary => ({
 	seats: 5,
 	memberCount: 3,
 	unitAmountUsd: 20,
+	currency: "usd",
 	...over,
 });
 

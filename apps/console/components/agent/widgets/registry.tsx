@@ -130,9 +130,11 @@ function rowsDetail(n: number): string {
  *
  * `overage_cost_usd` and `unit_amount_usd` are MAJOR units — dollars — and `formatMoney` takes
  * minor on purpose, so the conversion is spelled out once here rather than guessed at each caller.
+ * The currency is the one those wire fields are NAMED for; whether the name is true is #4176's
+ * part (b), which retires the `*_usd` fields — until then this says what they claim.
  */
 function usd(v: number | null | undefined): string {
-	return typeof v === "number" ? formatMoney(Math.round(v * 100)) : "—";
+	return typeof v === "number" ? formatMoney(Math.round(v * 100), "USD") : "—";
 }
 
 /** Projects list body. */

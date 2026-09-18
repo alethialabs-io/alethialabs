@@ -55,9 +55,12 @@ interface CreditPackDialogProps {
  *
  * `formatMoney` rather than a local `$${cents / 100}`: the hand-rolled form dropped a trailing
  * zero, so a $12.50 pack read `$12.5` here and `$12.50` on the invoice for the same purchase.
+ *
+ * USD because the pack's invoice is raised in USD: `createCreditPackIntent` pins `currency: "usd"`
+ * on both the draft invoice and its line (`app/server/actions/billing.ts`).
  */
 function usd(cents: number): string {
-	return formatMoney(cents);
+	return formatMoney(cents, "USD");
 }
 
 /** The pack with the lowest $/credit (the "Best value" badge). */

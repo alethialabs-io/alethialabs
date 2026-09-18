@@ -263,7 +263,7 @@ export const MONEY: MoneyCase[] = [
 	// after it, because `roundHalfAwayFromZero` rounds the magnitude and `-0 < 0` is false.
 	//
 	// A CALLER REACHES IT: `apps/console/components/agent/widgets/registry.tsx`'s `usd()` is
-	// `formatMoney(Math.round(v * 100))`, and `Math.round(-0.001 * 100)` IS `-0`, so any
+	// `formatMoney(Math.round(v * 100), "USD")`, and `Math.round(-0.001 * 100)` IS `-0`, so any
 	// `overage_cost_usd` in `[-0.005, 0)` lands here. "No caller produces -0" was written in this
 	// comment and was wrong. Pinning it needs a Go-side unit test and a decision about which answer
 	// is right; `$-0.00` is the one that is clearly not.
