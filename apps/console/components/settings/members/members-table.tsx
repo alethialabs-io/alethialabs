@@ -803,7 +803,12 @@ export function MembersTable() {
           }
         />
       ) : (
-        <DataTable columns={columns} data={filtered} pageSize={20} />
+        // `scroll`: the row-actions column (the "Manage …" trigger every per-row destructive
+        // control hangs off) is the LAST column, and a long monospace address in a
+        // `whitespace-nowrap` cell pushes it past the shell's `overflow-x: clip` edge. Measured on
+        // the release gate at 1280px: Status, Last active and the actions column were all clipped,
+        // unreachable by a person and by Playwright alike, so every row control timed out.
+        <DataTable columns={columns} data={filtered} pageSize={20} scroll />
       )}
 
       {/* The one confirmation every destructive control on this table passes through. It stays
