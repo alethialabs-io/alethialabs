@@ -58,5 +58,10 @@ module "gke" {
 
   master_authorized_cidr_blocks = var.gke_master_authorized_cidr_blocks
 
+  # Declared at the root and threaded nowhere before #4320; the module used literals equal to these
+  # defaults (private nodes on, public endpoint), so wiring them changes no existing cluster.
+  enable_private_nodes    = var.gke_enable_private_nodes
+  enable_private_endpoint = var.gke_enable_private_endpoint
+
   labels = local.gcp_default_labels
 }
