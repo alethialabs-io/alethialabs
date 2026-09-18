@@ -798,6 +798,20 @@ if [ "${1:-}" = "--prune" ]; then
 	removed=0
 	kept=0
 	hydrated=0
+	# #4622: ask GitHub about every tree's branch in one batched request up front, instead of two
+	# serial gh calls per tree inside the loop (~0.7s a tree, ~44s over 68 measured). The loop below
+	# is unchanged — wt_branch_landed still decides every tree, and still checks clause (b); it just
+	# finds the PR and its commits already fetched. A branch the batch could not answer completely
+	# falls back to the per-tree lookup (see wt_landed_prefetch in scripts/lib/wt-landed.sh).
+	prune_trees="$(git worktree list --porcelain | sed -n 's/^worktree //p')"
+	prune_branches=()
+	while IFS= read -r wt; do
+		case "$wt" in */wt-*) ;; *) continue ;; esac
+		prune_branches+=("$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')")
+	done <<EOF
+$prune_trees
+EOF
+	[ "${#prune_branches[@]}" -eq 0 ] || wt_landed_prefetch "${prune_branches[@]}"
 	while IFS= read -r wt; do
 		[ -n "$wt" ] || continue
 		case "$wt" in */wt-*) ;; *) continue ;; esac
@@ -852,11 +866,13 @@ if [ "${1:-}" = "--prune" ]; then
 			# UNFIXTURED, and not for want of trying: reaching this branch needs wt_branch_landed
 			# to answer "landed", which needs `gh`. Without it the function fails safe to "not
 			# landed" and the tree takes the skip above instead, so no hermetic fixture can get
-			# here. The self-test cannot cover this line; #4622's batching work will have to.
+			# here. The self-test cannot cover this line. #4622 batched the lookup without changing
+			# that: a "landed" answer still needs gh (or a stub of it on PATH), and no --prune
+			# fixture drives this script end to end yet.
 			wt_count_reachable_hydrated "$wt" && hydrated=$((hydrated + 1)) || true
 		fi
 	done <<EOF
-$(git worktree list --porcelain | sed -n 's/^worktree //p')
+$prune_trees
 EOF
 	echo ""
 	if [ "$dry" = 1 ]; then
