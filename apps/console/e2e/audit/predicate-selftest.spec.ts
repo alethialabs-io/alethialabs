@@ -433,8 +433,9 @@ test.describe("the live predicates fail when the page is wrong", () => {
 
 	test("R8 — an external link PASSES on its href and is never enumerated for a click", async ({ page }) => {
 		// Served from a real origin, NOT `setContent`. `setContent` leaves the page at `about:blank`,
-		// which is an opaque origin: every relative href fails to resolve against it, `isSameOrigin`
-		// answers false, and `/[org]/settings` reads as external while `#` drops out entirely. That
+		// which is an opaque origin: an absolute-path href such as `/[org]/settings` throws when
+		// resolved against it, `isSameOrigin` answers false, and the link reads as external. (`#`
+		// does resolve — to `about:blank#`, whose origin is `null` like the page's — so it stays.) That
 		// measures the fixture's URL, not the predicate — which is correct at the origin the audit
 		// actually runs on. The route is torn down with the page, and nothing leaves the browser.
 		const body = `<!doctype html><html lang="en"><head><title>t</title></head><body><main>

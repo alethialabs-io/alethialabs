@@ -57,6 +57,13 @@ export const EFFECT_WINDOW_MS = 1_000;
 const POLL_MS = 50;
 
 /**
+ * The most polls one in-window aria read may spend waiting for its element. Enough to absorb a slow
+ * read of a node that is still there; short enough that a node the click removed cannot consume the
+ * window and starve the url, overlay and toast checks of their turns.
+ */
+const ARIA_READ_POLLS = 4;
+
+/**
  * The longest a single element read may wait for its element.
  *
  * `locator.evaluate` AUTO-WAITS for the element to exist, and without a timeout it waits for the
@@ -303,6 +310,11 @@ export function namesDestructiveAction(name: string): boolean {
  * Resolved against the PAGE's own origin, never a hardcoded production host — the audit runs
  * against `localhost`, so a constant base would read `https://alethialabs.io/pricing` as internal
  * and CLICK it, navigating the run off the app it is measuring.
+ *
+ * An unparseable href or page URL answers false — "external" — which fails toward PASS (the link
+ * is never clicked, and passes on its href). A page at an opaque origin (`about:blank`, `data:`)
+ * therefore reads every absolute-path link as external, silently: nothing records that route as
+ * NOT MEASURED. The selftest avoids it by serving its fixture from a real origin.
  */
 export function isSameOrigin(href: string, pageUrl: string): boolean {
 	try {
@@ -464,8 +476,9 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 	}
 
 	const beforeUrl = page.url();
-	// Bounded so that a control which vanished after `resolve()` fails THIS read by name, rather
-	// than surfacing as the whole route's test timeout with nothing to say which control it was.
+	// Bounded so that a control which vanished after `resolve()` fails THIS read — a Playwright
+	// TimeoutError naming the locator's selector and index, which propagates out of the route as a
+	// test error — rather than surfacing as the whole route's test timeout with nothing said at all.
 	const ariaBefore = await locator.evaluate(
 		(el) => ({
 			expanded: el.getAttribute("aria-expanded"),
@@ -559,11 +572,12 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 					break;
 				}
 			}
-			// Bounded by what is left of the window (never less than one poll): the click being measured
-			// is what detaches this node when it navigates or re-renders, and an unbounded read would
-			// then wait the test out instead of letting the loop reach its url check and its deadline.
-			// Not one poll flat — a read of a PRESENT node that runs past 50ms on a loaded runner would
-			// then miss a real aria change and hand the verdict to the weaker mutation signal.
+			// Bounded at a few polls (never less than one, never past the window): the click being
+			// measured is what detaches this node when it navigates or re-renders, and a read waiting
+			// for it would otherwise spend the rest of the window in this one call — skipping the
+			// url, overlay and toast checks above for every turn it would have taken. Not one poll
+			// flat — a read of a PRESENT node that runs past 50ms on a loaded runner would then miss a
+			// real aria change and hand the verdict to the weaker mutation signal.
 			const ariaNow = await locator
 				.evaluate(
 					(el) => ({
@@ -573,7 +587,7 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 						checked: el.getAttribute("aria-checked"),
 					}),
 					undefined,
-					{ timeout: Math.max(POLL_MS, deadline - Date.now()) },
+					{ timeout: Math.max(POLL_MS, Math.min(ARIA_READ_POLLS * POLL_MS, deadline - Date.now())) },
 				)
 				.catch(() => null);
 			if (ariaNow !== null && JSON.stringify(ariaNow) !== JSON.stringify(ariaBefore)) {
@@ -581,7 +595,15 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 				break;
 			}
 			if (fileChooser) break;
-			if (Date.now() >= deadline) break;
+			// The read above can itself run the window out, so the deadline exit re-asks the two
+			// attributable questions that need no page read. A click that detaches the node by
+			// navigating is exactly the case that makes that read wait, and the fallback below cannot
+			// see it: it reads `mutated` on the NEW document, where the probe does not exist.
+			if (Date.now() >= deadline) {
+				if (page.url() !== beforeUrl) effect = "navigation";
+				else if (downloaded) effect = "download";
+				break;
+			}
 			await page.waitForTimeout(POLL_MS);
 		}
 
