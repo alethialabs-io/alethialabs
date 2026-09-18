@@ -8,11 +8,13 @@
 // ONE table, and this collection's tenancy used to live on a JOINED one: the route scoped itself
 // with `.innerJoin(projects, …).where(eq(projects.org_id, …))`, which `countScoped` cannot issue —
 // `SELECT 1 FROM project_cluster WHERE projects.org_id = $1` is a missing-FROM-clause ERROR.
+// #3672 restated it as a semijoin on `project_cluster.project_id`; #4116 gave the table its own
+// tenant column, derived by the database from the parent project, and the scope is now simply
+// `project_cluster.org_id = $1`.
 //
-// The conversion restates that scope as a semijoin on ONE column of `project_cluster`, and the
-// assertions below read the RENDERED SQL to prove it, because that is the only artifact that can
-// tell the two apart. A test that inspected a drizzle object graph, or that rebuilt the
-// expectation with the same `sql` template the route uses, would agree with the route by
+// The assertions below read the RENDERED SQL to prove it, because that is the only artifact that
+// can tell a one-column scope from a joined one. A test that inspected a drizzle object graph, or
+// that rebuilt the expectation with the same `eq` the route uses, would agree with the route by
 // construction — including when the route is wrong. `PgDialect.sqlToQuery` is the same rendering
 // postgres receives.
 //
@@ -20,16 +22,18 @@
 //
 //   1. THE COUNT AND THE ROWS ARE THE SAME PREDICATE. Not "equivalent" — the same fragment,
 //      rendered identically, with the keyset predicate the only thing the rows query adds. A count
-//      built through a join while the rows are built through a semijoin is two statements that can
+//      built through a join while the rows are built another way is two statements that can
 //      disagree, which is the defect the console's filter standard exists to prevent.
 //   2. THE TENANCY BOUNDARY IS ONE COLUMN. These routes read through `getServiceDb()`, whose role
 //      bypasses RLS, so this predicate is the whole of it. A boundary spanning two tables has a
 //      second place to widen: drop the join condition and the query still parses and still returns
-//      rows — another org's. A single-column `IN (subquery)` has no such shape.
+//      rows — another org's. An equality on the paged table's own column has no such shape.
 //
-// The sibling suite (tests/integration/cli-clusters-list-route.test.ts) drives this route against
-// real Postgres, where the semijoin is EXECUTED and the walk's gap-freeness is provable. A mock
-// cannot prove a keyset walk; this file does not try.
+// That the column EQUALS the parent's org is not this file's claim — a mock cannot see a trigger.
+// tests/integration/component-org-id.test.ts drives every write that could make it disagree. The
+// sibling suite (tests/integration/cli-clusters-list-route.test.ts) drives this route against real
+// Postgres, where the scope is EXECUTED and the walk's gap-freeness is provable. A mock cannot
+// prove a keyset walk; this file does not try.
 //
 // The refusals live here too. Every one returns before the first query, so they are real here
 // rather than DB-gated — which matters, because the integration tier SKIPS when Postgres is
@@ -76,8 +80,7 @@ const CURSOR_KEY = "2026-06-30T00:00:00.123456Z";
  * assertable — every character of the shape is here, including which table each identifier
  * belongs to.
  */
-const EXPECTED_SCOPE =
-	'"project_cluster"."project_id" in (select "projects"."id" from "projects" where "projects"."org_id" = $1)';
+const EXPECTED_SCOPE = '"project_cluster"."org_id" = $1';
 
 const dialect = new PgDialect();
 
@@ -97,7 +100,7 @@ function render(fragment: SQL | undefined): {
  * Collapses whitespace so an assertion reads the SHAPE of a clause rather than drizzle's spacing.
  *
  * Only whitespace: the identifier quoting, the parentheses and the `$n` numbering are all part of
- * what is being asserted, because they are what tell a semijoin from a join.
+ * what is being asserted, because they are what tell one table's column from a joined one.
  */
 function normalized(rendered: string): string {
 	return rendered.replace(/\s+/g, " ").trim();
@@ -238,7 +241,7 @@ async function driveOk(query: string) {
 	return bodySchema.parse(body);
 }
 
-describe("GET /api/cli/clusters — a joined scope restated on one column (#3672)", () => {
+describe("GET /api/cli/clusters — the scope is one column of the paged table (#3672, #4116)", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		captured = {
@@ -267,13 +270,12 @@ describe("GET /api/cli/clusters — a joined scope restated on one column (#3672
 		});
 	});
 
-	it("renders the scope as a semijoin on project_cluster.project_id and NOTHING else", async () => {
+	it("renders the scope as project_cluster.org_id and NOTHING else", async () => {
 		// The whole rendered clause, `toBe` rather than `toContain`: an extra ANDed arm is as much
 		// a defect as a missing one, and a containment check cannot see one.
 		//
-		// ONE COLUMN OF THE PAGED TABLE. `project_cluster` has no tenant column at all — no
-		// `org_id`, no `user_id` — so the boundary is this reference and the subquery behind it.
-		// What must NOT appear is `projects.org_id` compared at the TOP level, which is the join
+		// ONE COLUMN OF THE PAGED TABLE — `project_cluster.org_id`, which the database derives from
+		// the parent project (#4116). What must NOT appear is `projects.org_id`, which is the join
 		// predicate this replaced and the shape `countScoped` cannot issue.
 		await drive("");
 		expect(normalized(render(captured.rowsWhere).sql)).toBe(EXPECTED_SCOPE);
@@ -293,7 +295,7 @@ describe("GET /api/cli/clusters — a joined scope restated on one column (#3672
 
 	it("hands the count the SAME rendered predicate as the rows", async () => {
 		// The claim is not "the count is also scoped" — it is that the two are ONE fragment. A
-		// count built through a join while the rows are built through a semijoin would satisfy a
+		// count built through a join while the rows are built on the column would satisfy a
 		// weaker assertion and still be two statements that can drift apart.
 		await drive("");
 		expect(normalized(render(captured.countWhere).sql)).toBe(
