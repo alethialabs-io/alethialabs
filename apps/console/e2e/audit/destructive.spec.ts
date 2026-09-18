@@ -201,12 +201,23 @@ const SEEDABLE_FIXTURES: ReadonlySet<string> = new Set(FIXTURE_SEEDERS.keys());
  * these are other units' entries, so they are cited here and reported on the PR rather than edited.
  */
 const UNREACHED: ReadonlyMap<string, string> = new Map([
-	[
-		"env.destroy",
-		"its reach chain opens with {select: \"the project node\"} — a canvas node, not an accessible " +
-			"name, so `walkReach`'s role/label lookup cannot resolve it. The entry needs a reach step naming " +
-			"a real control, or the canvas node needs an accessible name.",
-	],
+	// ── the two alerts switches: reached, and one name for two controls ──────────────────────────
+	//
+	// #4800 removed their prose `select:` steps — each rail pre-selects its first row, so both
+	// details render on arrival — and that is exactly what makes them unmeasurable: the Policies and
+	// Channels sections are stacked on ONE route (`alerts-page.tsx`), each detail renders a switch
+	// whose accessible name is "Enabled" (`policies-panel.tsx:512`, `channels-panel.tsx:529`), and the
+	// audit seeds a policy AND a channel. `resolveTrigger` counts page-wide, so {switch: "Enabled"}
+	// matches two controls and is withheld as ambiguous, correctly. The fix is a distinguishing name
+	// on each switch ("Policy enabled" / "Channel enabled") with the registry following it; no reach
+	// step can narrow a page-wide count.
+	...(["alerts.channel.disable", "alerts.policy.disable"] as const).map((id): [string, string] => [
+		id,
+		'the trigger {switch: "Enabled"} names TWO controls on /[org]/~/alerts — the policy detail\'s ' +
+			"(`policies-panel.tsx:512`) and the channel detail's (`channels-panel.tsx:529`), both rendered on arrival " +
+			"because each rail pre-selects its first row and the audit seeds a policy and a channel. The entry is " +
+			"reached; the name cannot say which switch it means. Give each switch a distinguishing accessible name.",
+	]),
 	[
 		"canvas.discard-staged",
 		'its reach step is {open: "add a node so the pending-changes bar renders"} — a sentence of ' +
