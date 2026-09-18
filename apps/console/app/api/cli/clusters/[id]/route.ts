@@ -62,7 +62,7 @@ export async function GET(
 					eq(projectEnvironments.is_default, true),
 				),
 			)
-			.where(and(eq(projectCluster.id, id), eq(projects.org_id, actor.orgId)))
+			.where(and(eq(projectCluster.id, id), eq(projectCluster.org_id, actor.orgId)))
 			.limit(1);
 
 		if (!row) {

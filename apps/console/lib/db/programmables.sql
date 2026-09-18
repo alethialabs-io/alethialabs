@@ -889,6 +889,131 @@ UPDATE public.jobs j
  WHERE j.project_id = p.id
    AND j.org_id IS DISTINCT FROM p.org_id;
 
+-- ── The project component family: a tenant column the database owns (#4116) ─────────────────────
+--
+-- Every project-bearing table in lib/db/schema/project-components.ts carries `org_id`, a copy of its
+-- project's `projects.org_id`. Before #4116 none of them did (only project_changes had the column,
+-- and nothing wrote it), so every reader had to reach `project_id → projects.org_id` itself, and a
+-- reader that forgot got a query that worked and returned every tenant's rows.
+--
+-- A denormalized tenant column that can drift is worse than none, so this goes one step further than
+-- `jobs_set_org_id` above. That trigger fills org_id only when the caller left it NULL, and falls back
+-- to the session and then to user_id. Neither is acceptable here:
+--
+--   * An explicit stamp does NOT win. The trigger OVERWRITES org_id from the parent on every INSERT
+--     and on every UPDATE that names project_id or org_id, so a caller can neither forget it nor set
+--     it to anything but the parent's value.
+--   * There is no fallback. A component row belongs to its project's org or to nothing; if the parent
+--     yields no org the write RAISES (23502, the class a NOT NULL column would raise) rather than
+--     inventing one from session state.
+--
+-- DEFINER RIGHTS, AND WHY THEY ARE SAFE. `jobs_set_org_id` reads `projects` as the caller, and its
+-- comment says why that is enough there: an invisible project yields NULL and the session fallback
+-- takes over. Here there is no fallback, so an invoker-rights read would turn "project not visible to
+-- this RLS scope" into a failed write. Four tables of this family (project_addons,
+-- project_services, project_source_repos, project_iac_sources) have no RLS at all today, so for them
+-- nothing refused such a write before: an app-role insert under a scope that cannot see the parent —
+-- withOwnerScope on a teammate's project is the documented case (lib/db/index.ts) — would go from
+-- succeeding to raising. A derivation must not depend on which scope the writer happened to use. With
+-- definer rights the lookup always sees the one row the FK already names, and returns only its org.
+-- It widens what the DERIVATION can see, never what a caller can read: the value lands on the
+-- caller's own row, and on the RLS-enabled tables the policy below then checks that row's org —
+-- a write naming another tenant's project still fails WITH CHECK exactly as it did before.
+-- `SET row_security = off` is the belt, as for project_environments_require_one_default below: a
+-- no-op for the owning migration role, a loud error instead of silent filtering for any role that
+-- IS subject to RLS. `search_path` is pinned because a SECURITY DEFINER function must not resolve
+-- names through the caller's path.
+--
+-- Migration 0153 installs an identical copy of this function and its triggers in the same
+-- transaction that adds the CHECKs, so no instant exists at which NULL is refused and nothing fills
+-- it. From then on THIS file owns them; it re-creates both on every migrate.
+CREATE OR REPLACE FUNCTION public.derive_component_org_id()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+BEGIN
+  NEW.org_id := (SELECT p.org_id FROM public.projects p WHERE p.id = NEW.project_id);
+  IF NEW.org_id IS NULL THEN
+    RAISE EXCEPTION 'cannot derive %.org_id: project % does not exist or has no org',
+      TG_TABLE_NAME, NEW.project_id
+      USING ERRCODE = 'not_null_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- The family, stated ONCE: the trigger loop, the backfill and the propagation below all read this.
+-- tests/integration/component-org-id.test.ts compares it against the drizzle schema — every table
+-- in project-components.ts with a `project_id` column must be here and nothing else may be — so a
+-- new component table that forgets to join the family fails that suite instead of shipping without
+-- a tenant column.
+CREATE OR REPLACE FUNCTION public.project_component_tables()
+RETURNS text[]
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT ARRAY[
+    'project_addons', 'project_caches', 'project_changes', 'project_chart_workloads',
+    'project_cluster', 'project_container_registries', 'project_databases', 'project_dns',
+    'project_git_credentials', 'project_helm_registries', 'project_iac_sources', 'project_network',
+    'project_nosql_tables', 'project_observability', 'project_queues', 'project_repositories',
+    'project_secrets', 'project_services', 'project_source_repos', 'project_storage_buckets',
+    'project_topics'
+  ]::text[];
+$$;
+
+DO $$
+DECLARE tbl TEXT;
+BEGIN
+  FOREACH tbl IN ARRAY public.project_component_tables() LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS %1$s_set_org_id ON public.%1$I', tbl);
+    EXECUTE format(
+      'CREATE TRIGGER %1$s_set_org_id BEFORE INSERT OR UPDATE OF project_id, org_id ON public.%1$I
+         FOR EACH ROW EXECUTE FUNCTION public.derive_component_org_id()', tbl);
+    -- Idempotent + self-healing, like the jobs backfill above: after 0153 and with the trigger in
+    -- place it matches nothing. It is here so that a row which somehow disagrees with its project
+    -- (a restore, a replica-mode load that skipped triggers) is corrected on the next migrate.
+    EXECUTE format(
+      'UPDATE public.%I c SET org_id = p.org_id
+         FROM public.projects p
+        WHERE p.id = c.project_id AND c.org_id IS DISTINCT FROM p.org_id', tbl);
+  END LOOP;
+END $$;
+
+-- The other direction: a project that changes org takes its components with it. Without this, the
+-- child trigger above keeps new writes right while every EXISTING row keeps the old org — drift by
+-- omission. The child UPDATE this issues fires the child trigger, which re-derives from the row this
+-- statement just updated and so agrees. If the project's org is being set to NULL, that child
+-- trigger raises and the whole UPDATE of `projects` fails: a project cannot lose its org while it
+-- still has components. Definer rights for the same reason as above — the rewrite must reach every
+-- child row, not the subset the caller's scope can see.
+CREATE OR REPLACE FUNCTION public.propagate_project_org_id()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+DECLARE tbl TEXT;
+BEGIN
+  FOREACH tbl IN ARRAY public.project_component_tables() LOOP
+    EXECUTE format(
+      'UPDATE public.%I SET org_id = $1 WHERE project_id = $2 AND org_id IS DISTINCT FROM $1', tbl)
+      USING NEW.org_id, NEW.id;
+  END LOOP;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS projects_propagate_org_id ON public.projects;
+CREATE TRIGGER projects_propagate_org_id
+  AFTER UPDATE OF org_id ON public.projects
+  FOR EACH ROW WHEN (OLD.org_id IS DISTINCT FROM NEW.org_id)
+  EXECUTE FUNCTION public.propagate_project_org_id();
+
 -- ── Tenant RLS backstop. Coarse org-isolation (org_id = app.current_org) OR'd with
 -- the per-owner check (user_id = app.current_owner); both set per-transaction by
 -- withScope(). Community: org_id = user_id and current_org = current_owner, so the
@@ -1006,15 +1131,49 @@ CREATE POLICY runners_delete ON public.runners FOR DELETE
   USING (user_id = current_setting('app.current_owner', true)::uuid
          OR org_id = current_setting('app.current_org', true)::uuid);
 
--- Project child tables (ownership via the parent project)
+-- The project component family (#4116): the org arm binds to the row's OWN org_id column.
+--
+-- Same visibility as the join-through policy these tables had before, stated on the column the
+-- tables now carry. The old USING was `project_id IN (projects WHERE user_id = owner OR org_id =
+-- org)`; `org_id` here equals `projects.org_id` for every row (the derive/propagate triggers and the
+-- CHECK above make that structural, not a convention), so the org arm is the same set, and the
+-- owner arm still reaches through `projects` because these tables carry no user_id. WITH CHECK
+-- mirrors USING: the trigger fills org_id BEFORE the check runs, so a write naming another tenant's
+-- project arrives here carrying that tenant's org and is refused, as it was before.
+--
+-- NOT every table of the family is here, deliberately: project_addons, project_services,
+-- project_source_repos and project_iac_sources had NO policy before #4116 and still have none
+-- (tests/integration/rls.test.ts records that the backstop for them was deferred and that their
+-- boundary is each server action's org predicate). Enabling RLS on them changes what their existing
+-- app-role reads return, which is its own unit with its own tests — the column it needs now exists.
 DO $$
 DECLARE tbl TEXT;
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
-    'project_environments', 'project_fabrics', 'project_preview_config', 'project_network', 'project_cluster', 'project_dns', 'project_observability', 'project_repositories', 'project_databases',
-    'project_caches', 'project_queues', 'project_topics', 'project_nosql_tables',
-    'project_container_registries', 'project_helm_registries', 'project_secrets', 'project_git_credentials', 'project_storage_buckets',
-    'project_changes', 'project_chart_workloads',
+    'project_network', 'project_cluster', 'project_dns', 'project_observability', 'project_repositories',
+    'project_databases', 'project_caches', 'project_queues', 'project_topics', 'project_nosql_tables',
+    'project_container_registries', 'project_helm_registries', 'project_secrets', 'project_git_credentials',
+    'project_storage_buckets', 'project_changes', 'project_chart_workloads'
+  ]) LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
+    EXECUTE format(
+      'CREATE POLICY owner_all ON public.%I FOR ALL
+         USING (org_id = current_setting(''app.current_org'', true)::uuid
+                OR project_id IN (SELECT id FROM public.projects
+                   WHERE user_id = current_setting(''app.current_owner'', true)::uuid))
+         WITH CHECK (org_id = current_setting(''app.current_org'', true)::uuid
+                OR project_id IN (SELECT id FROM public.projects
+                   WHERE user_id = current_setting(''app.current_owner'', true)::uuid))', tbl);
+  END LOOP;
+END $$;
+
+-- Other project child tables (ownership via the parent project)
+DO $$
+DECLARE tbl TEXT;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY[
+    'project_environments', 'project_fabrics', 'project_preview_config',
     'environment_protection_rules', 'environment_promotions', 'promotion_approvals'
   ]) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
