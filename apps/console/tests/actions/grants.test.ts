@@ -381,8 +381,9 @@ describe("assignGrant validation", () => {
 		expect(insertSpy).not.toHaveBeenCalled();
 	});
 
-	// #4582: the kind used to be derived from the id's TRUTHINESS while the id was stored as given,
-	// so `("project", "")` was written as `("org", "")` — the contradictory pair without naming org.
+	// #4582: the kind used to be derived from the id's TRUTHINESS while the id was passed on as
+	// given, so `("project", "")` reached the insert as `("org", "")` and Postgres rejected it
+	// (resource_id is uuid) with an unnamed error. Nothing was stored; it is now refused by name.
 	it("rejects an empty resource id on a scoped kind and never inserts", async () => {
 		const { insertSpy } = mockDb();
 		await expect(

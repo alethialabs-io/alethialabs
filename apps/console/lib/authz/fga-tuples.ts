@@ -63,8 +63,12 @@ export type GrantScope = GrantPrincipal & GrantResource;
  * persisted before any expander runs, so a guard in the expander would leave the row in the table
  * for every other consumer to interpret — including the access UI, which joins nothing and renders
  * "organization" while carrying the id. Since #4582 the refusal lives in `parseGrantResource`,
- * and what makes both boundaries route through it is the compiler: `ScopedGrant` needs a
- * `GrantResource`, and a request's two strings become one only by being parsed.
+ * which both current write boundaries call. The compiler enforces only the TUPLE MIRROR half:
+ * `ScopedGrant` needs a `GrantResource`, so the FGA sync cannot be handed the pair. It does NOT
+ * guard the column — `db.insert(grants)` still takes free strings — so a new write boundary that
+ * skips `parseGrantResource` can still store `("org", <id>)` (the mirror would then read it through
+ * `grantScopeFromRow`, which applies the #4584 ruling rather than refusing). What would close the column is a DB CHECK constraint, not done here
+ * (gated on the #4583 audit of existing rows).
  *
  * A row of this shape that is ALREADY in the table confers nothing on allow and excludes org-wide
  * on deny, on both engines (`grantTarget`/`targetForEffect`, the #4584 ruling).
@@ -74,11 +78,13 @@ export const ORG_SCOPE_WITH_RESOURCE_ID =
 	"Name the resource's own type (project, runner, cloud_identity) with the id, or drop the id.";
 
 /**
- * The refusal for an empty-string resource id. The write boundaries used to derive the kind from
- * the id's TRUTHINESS (`resourceId ? kind : "org"`) while storing the id as given, so `("project",
- * "")` was stored as `("org", "")` — the contradictory pair, reached without naming `"org"`.
- * Reading `""` as "no id" instead would turn a project-scoped request into an org-wide grant, so
- * it is refused.
+ * The refusal for an empty-string resource id. The server action used to derive the kind from
+ * the id's TRUTHINESS (`resourceId ? kind : "org"`) while passing the id on as given, so
+ * `("project", "")` reached its insert as `("org", "")`. Nothing was stored: `grants.resource_id`
+ * is a Postgres `uuid` column, so the insert failed with an unnamed invalid-uuid error (22P02).
+ * The CLI route never saw `""` — its `resource_id` is `z.uuid()`. It is now refused up front with
+ * this named message. Reading `""` as "no id" instead would turn a project-scoped request into an
+ * org-wide grant, which is why it is refused rather than normalised.
  */
 export const EMPTY_RESOURCE_ID =
 	"A resource id cannot be empty. Omit it for an organization-wide grant.";
