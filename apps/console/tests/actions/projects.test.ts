@@ -48,14 +48,17 @@ import {
 	duplicateProjectForProvider,
 	getProject,
 	getProjectAsFormData,
+	getProjectDuplicateSummary,
 	getProjectEnvironments,
 	getProjects,
 	getProjectsList,
 	planProject,
 	provisionProject,
 	tryCreateProject,
+	tryDuplicateProjectForProvider,
 	updateProjectName,
 } from "@/app/server/actions/projects";
+import { PROJECT_NAME_MAX_LENGTH } from "@/lib/validations/project-form.schema";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
@@ -2731,6 +2734,272 @@ describe("duplicateProjectForProvider", () => {
 		await expect(
 			duplicateProjectForProvider("p1", "ci-missing", "europe-west1"),
 		).rejects.toThrow(/Target cloud identity not found/);
+	});
+});
+
+// ============================================================
+// #4162 — the name a cross-cloud clone gets, and the length that made the feature unreachable
+// ============================================================
+
+/**
+ * The same aws→gcp duplicate fixture the suite above uses, with the SOURCE NAME as a parameter.
+ *
+ * Extracted because #4162's subject is a length: every assertion below differs from its neighbour
+ * only in how long the source project's own name is, and a fixture that hard-codes "My App" cannot
+ * express that. `takenNames` and createProject's existing-project list both carry the source row,
+ * which is the shape production always has (see the first test's comment).
+ *
+ * @param sourceName the source project's display name
+ * @returns setupDb's spies, for asserting the persisted `.values()` payload
+ */
+function duplicateFixture(sourceName: string) {
+	let ciCall = 0;
+	const ciSeq: Rows[] = [
+		[{ provider: "aws" }],
+		[{ provider: "aws" }],
+		[{ provider: "gcp" }],
+	];
+	let projCall = 0;
+	const projSeq: Rows[] = [
+		[
+			{
+				id: "p1",
+				org_id: "org-1",
+				cloud_identity_id: "ci-src",
+				region: "us-east-1",
+				iac_version: "1.9.5",
+				project_name: sourceName,
+			},
+		],
+		[{ project_name: sourceName }],
+		[{ slug: "src", project_name: sourceName }],
+	];
+	return setupDb({
+		select: new Map<unknown, RowsResolver>([
+			[projects, () => projSeq[projCall++] ?? []],
+			[cloudIdentities, () => ciSeq[ciCall++] ?? [{ provider: "gcp" }]],
+			[
+				projectNetwork,
+				[
+					{
+						provision_network: true,
+						cidr_block: "10.0.0.0/16",
+						single_nat_gateway: true,
+					},
+				],
+			],
+			[
+				projectCluster,
+				[
+					{
+						cluster_version: "1.31",
+						instance_types: ["m5.large"],
+						provider_config: {},
+					},
+				],
+			],
+			[projectDns, [{ enabled: false }]],
+			[projectRepositories, [{ apps_destination_repo: "git@x" }]],
+			[projectDatabases, []],
+			[projectSecrets, []],
+			[projectCaches, []],
+			[
+				projectEnvironments,
+				[{ id: "env-1", name: "production", status: "DRAFT", is_default: true }],
+			],
+		]),
+		insert: new Map<unknown, RowsResolver>([
+			[projects, [{ id: "new-proj", slug: "new-proj", org_id: "org-1" }]],
+			[projectFabrics, [{ id: "fabric-1" }]],
+			[projectEnvironments, [{ id: "env-1" }, { id: "env-preview" }]],
+		]),
+	});
+}
+
+/** The cap sentence `projectNameProblem` writes — interpolated, never typed, like the action does. */
+const TOO_LONG = `Project name must be ${PROJECT_NAME_MAX_LENGTH} characters or fewer`;
+
+describe("duplicateProjectForProvider — the clone's name (#4162)", () => {
+	// THE REGRESSION, STATED AS A MEASUREMENT. #4738 gave `createProject` the name rule the action
+	// had never applied — its own header says it "applied NONE of them" against an unbounded
+	// `text()` column. The derived name is `${source} (${target})`, so the suffix is 6 characters
+	// for gcp and the cap is 100: a source project of 95 characters produces 101 and is refused.
+	// Before #4738 the same duplicate SUCCEEDED and persisted a 101-character name.
+	//
+	// 95 is therefore the exact aws/gcp threshold; it is 93 for azure (" (azure)") and 91 for
+	// alibaba/hetzner (" (alibaba)"), and two lower in each case once `pickFreeProjectName` adds
+	// " 2" for a collision. The names between there and PROJECT_NAME_MAX_LENGTH are legal to CREATE
+	// and legal to RENAME to — so this is a project the console lets you have and cannot duplicate.
+	it(`refuses a source name of 95 characters onto gcp — the derived name is over the cap`, () => {
+		const atThreshold = "a".repeat(95);
+		expect(`${atThreshold} (gcp)`.length).toBe(PROJECT_NAME_MAX_LENGTH + 1);
+		duplicateFixture(atThreshold);
+		return expect(
+			duplicateProjectForProvider("p1", "ci-target", "europe-west1"),
+		).rejects.toThrow(TOO_LONG);
+	});
+
+	it("still duplicates a source name of 94 characters — the bound is exact, not approximate", async () => {
+		const underThreshold = "a".repeat(94);
+		const { valuesSpy } = duplicateFixture(underThreshold);
+		await duplicateProjectForProvider("p1", "ci-target", "europe-west1");
+		expect(valuesFor(valuesSpy, projects)).toMatchObject({
+			project_name: `${underThreshold} (gcp)`,
+		});
+	});
+
+	// THE FIX. The name is a PARAMETER, so the dialog's field is what decides — which is the only
+	// remedy available for the case above: no derivation can shorten a name nobody was asked about.
+	it("persists the caller's name instead of the derivation when one is given", async () => {
+		const { valuesSpy } = duplicateFixture("a".repeat(95));
+		await duplicateProjectForProvider(
+			"p1",
+			"ci-target",
+			"europe-west1",
+			"Renamed for GCP",
+		);
+		expect(valuesFor(valuesSpy, projects)).toMatchObject({
+			project_name: "Renamed for GCP",
+		});
+	});
+
+	// The API does not depend on the dialog: a caller with no name field — the action is a
+	// POST-addressable id of its own — still gets the derived default.
+	it("falls back to the derivation when the name is absent", async () => {
+		const { valuesSpy } = duplicateFixture("My App");
+		await duplicateProjectForProvider("p1", "ci-target", "europe-west1");
+		expect(valuesFor(valuesSpy, projects)).toMatchObject({
+			project_name: "My App (gcp)",
+		});
+	});
+
+	// The caller's name is not exempt from the rule — `createProject` parses every name it is
+	// handed, after its `authorize`, and the action asks nothing ahead of it.
+	it("refuses the caller's name when IT breaks the rule", () => {
+		duplicateFixture("My App");
+		return expect(
+			duplicateProjectForProvider(
+				"p1",
+				"ci-target",
+				"europe-west1",
+				"b".repeat(PROJECT_NAME_MAX_LENGTH + 1),
+			),
+		).rejects.toThrow(TOO_LONG);
+	});
+});
+
+describe("tryDuplicateProjectForProvider", () => {
+	// #4644 ON THE DUPLICATE SCREEN. The dialog is a `"use client"` component, so a throw out of
+	// this `"use server"` module is redacted to an opaque `digest` in a production build — which is
+	// what the module comment above `createProject` used to DENY, calling the duplicate path
+	// "IN-PROCESS. No action boundary, no redaction". The refusal has to come back as a value or
+	// the name field the user is now offered has nothing to tell them.
+	it("returns the cap sentence instead of throwing it", async () => {
+		duplicateFixture("a".repeat(95));
+		const res = await tryDuplicateProjectForProvider(
+			"p1",
+			"ci-target",
+			"europe-west1",
+		);
+		expect(res).toEqual({ ok: false, error: TOO_LONG });
+	});
+
+	it("returns the taken-name sentence when the org already holds it", async () => {
+		duplicateFixture("My App");
+		vi.mocked(withScope).mockImplementation((() => {
+			throw new ProjectNameTakenError("My App (gcp)");
+		}) as never);
+		const res = await tryDuplicateProjectForProvider(
+			"p1",
+			"ci-target",
+			"europe-west1",
+		);
+		expect(res).toMatchObject({ ok: false });
+		expect(res).toHaveProperty(
+			"error",
+			expect.stringContaining('A project named "My App (gcp)" already exists'),
+		);
+	});
+
+	it("returns the clone on success", async () => {
+		duplicateFixture("My App");
+		const res = await tryDuplicateProjectForProvider(
+			"p1",
+			"ci-target",
+			"europe-west1",
+			"Fresh",
+		);
+		expect(res).toMatchObject({
+			ok: true,
+			newProjectId: "new-proj",
+			newProjectSlug: "new-proj",
+		});
+	});
+
+	// An unexpected error is a defect, not advice: rendering its text as though the user could act
+	// on it is worse than the digest it would replace.
+	it("rethrows anything that is not a name refusal", async () => {
+		duplicateFixture("My App");
+		vi.mocked(withScope).mockImplementation((() => {
+			throw new Error("the database fell over");
+		}) as never);
+		await expect(
+			tryDuplicateProjectForProvider("p1", "ci-target", "europe-west1"),
+		).rejects.toThrow("the database fell over");
+	});
+});
+
+describe("getProjectDuplicateSummary", () => {
+	// The dialog pre-fills its name field from THIS, so the default it shows and the default the
+	// action falls back to are one derivation rather than two. Keyed by target cloud because the
+	// suffix names that cloud.
+	it("suggests a per-cloud default name the org does not already hold", async () => {
+		let projCall = 0;
+		const projSeq: Rows[] = [
+			[
+				{
+					id: "p1",
+					org_id: "org-1",
+					cloud_identity_id: "ci-src",
+					region: "us-east-1",
+					iac_version: "1.9.5",
+					project_name: "My App",
+				},
+			],
+			// The org's names — "My App (gcp)" is ALREADY TAKEN, so the gcp suggestion must skip to
+			// " 2" while every other cloud is untouched. A fixture where nothing collides cannot
+			// tell a real de-duplication from a bare string concatenation.
+			[{ project_name: "My App" }, { project_name: "My App (gcp)" }],
+		];
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projects, () => projSeq[projCall++] ?? []],
+				[cloudIdentities, [{ provider: "aws" }]],
+				[projectNetwork, [{ provision_network: true, cidr_block: "10.0.0.0/16" }]],
+				[projectCluster, [{ cluster_version: "1.31", instance_types: ["m5.large"] }]],
+				[projectDns, [{ enabled: true }]],
+				[projectRepositories, [{ apps_destination_repo: "git@x" }]],
+				[projectDatabases, []],
+				[projectSecrets, []],
+				[projectCaches, []],
+				[
+					projectEnvironments,
+					[{ id: "env-1", name: "production", is_default: true }],
+				],
+			]),
+		});
+
+		const summary = await getProjectDuplicateSummary("p1");
+		expect(summary.provider).toBe("aws");
+		expect(summary.projectName).toBe("My App");
+		expect(summary.categories).toContain("dns");
+		expect(summary.suggestedNames).toEqual({
+			aws: "My App (aws)",
+			gcp: "My App (gcp) 2",
+			azure: "My App (azure)",
+			hetzner: "My App (hetzner)",
+			alibaba: "My App (alibaba)",
+		});
 	});
 });
 
