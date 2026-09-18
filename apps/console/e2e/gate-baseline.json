@@ -89,7 +89,17 @@
 				"Architecture canvas › right-click a card → Remove takes it off the board, and ⌘Z puts it back": "passed",
 				"Architecture canvas › a fresh environment says nothing about cost rather than \"Not priced\"": "passed",
 				"Architecture canvas › ⋯ → Activity is honest about an environment that has never run anything": "passed",
-				"Architecture canvas › an edit typed into a card survives a reload — the draft is the autosave": "passed"
+				"Architecture canvas › an edit typed into a card survives a reload — the draft is the autosave": "passed",
+				"Architecture canvas › the Deploy control is present, is named Deploy, and this spec CANNOT press it": "passed",
+				"Architecture canvas › a card is a NAMED region — two buckets are told apart by name, not by a CSS class": "passed",
+				"Architecture canvas › ⌘K → Add Bucket puts a card on the board and leaves no modal behind": "passed",
+				"Architecture canvas › ⌘Z undoes an add and ⌘⇧Z puts it back": "passed",
+				"Architecture canvas › ⌘D duplicates the selected resource": "passed",
+				"Architecture canvas › the card's danger zone deletes the resource, and ⌘Z brings it back": "passed",
+				"Architecture canvas › Discard asks first: Cancel keeps the staged changes, Discard clears them": "passed",
+				"Architecture canvas › ⋯ → Environment settings offers Destroy environment — and Cancel is all this spec presses": "passed",
+				"Architecture canvas › the Run menu offers Plan / Audit / Detect drift / Probe cluster, and nothing is clicked": "passed",
+				"Architecture canvas › ? opens the shortcuts sheet, and it advertises only gestures this board binds": "passed"
 			}
 		},
 		"qa": {

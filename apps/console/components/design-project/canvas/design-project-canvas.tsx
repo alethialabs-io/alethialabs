@@ -436,14 +436,26 @@ function CanvasInner({
 		}
 	}, [projectId, environmentId]);
 
+	// ⌘K is bound TWICE on this page: here (the canvas's own command menu) and by the shell's global
+	// palette (`components/shell/command-palette.tsx`, a `document` listener). Both used to fire, so
+	// one keystroke opened both dialogs and closing the canvas's left the global overlay over the
+	// board. On the canvas the canvas's menu wins: this listener runs in the CAPTURE phase on
+	// `window`, which is ahead of any `document` listener in either phase, and stops the event there.
+	useEffect(() => {
+		const onCmdK = (e: KeyboardEvent) => {
+			if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+				e.preventDefault();
+				e.stopPropagation();
+				setCmdOpen((o) => !o);
+			}
+		};
+		window.addEventListener("keydown", onCmdK, { capture: true });
+		return () => window.removeEventListener("keydown", onCmdK, { capture: true });
+	}, []);
+
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			const mod = e.metaKey || e.ctrlKey;
-			if (mod && e.key.toLowerCase() === "k") {
-				e.preventDefault();
-				setCmdOpen((o) => !o);
-				return;
-			}
 			if (mod && e.key.toLowerCase() === "s") {
 				// Swallowed in BOTH modes so the browser's own Save-page dialog never lands on the
 				// canvas. Create flow: create the project. Edit mode: save the design without deploying.

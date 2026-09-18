@@ -168,10 +168,13 @@ controls:
   # ── canvas ─────────────────────────────────────────────────────────────────────────────────
   - id: env.destroy
     route: /[org]/[project]/architecture
-    surface: apps/console/components/design-project/canvas/node-inspector.tsx
+    surface: apps/console/components/design-project/canvas/cards/env-settings-card.tsx
     mutation_surface: apps/console/components/design-project/canvas/design-project-canvas.tsx
     mutation: destroyProject
-    reach: [{ select: "the project node" }, { section: "Destroy environment" }]
+    # The ⋯ menu's button is named "More" (`aria-label`); its item docks the Environment settings
+    # card on the rail, which holds the danger zone (#4775 — it used to sit on the project node's
+    # inspector, and the project node is not rendered on the board).
+    reach: [{ menu: "More" }, { open: "Environment settings" }, { section: "Destroy environment" }]
     control: { role: button, name: "Destroy" }
     confirm: confirm-dialog
     confirm_action: "Destroy environment"
