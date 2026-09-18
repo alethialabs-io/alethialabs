@@ -70,7 +70,7 @@ function ControlCard({ ctl }: { ctl: VerifyControlResult }) {
 				<span className="shrink-0 rounded-full border px-1.5 py-0.5 font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary">
 					{ctl.severity}
 				</span>
-				<span className="shrink-0 font-mono text-ui-3xs text-text-disabled">
+				<span className="shrink-0 font-mono text-ui-3xs text-text-tertiary">
 					{ctl.provider}
 				</span>
 			</div>
@@ -174,7 +174,7 @@ export function ReportTab({
 					{report.provider} · {report.catalog_version}
 				</span>
 			</div>
-			<div className="font-mono text-ui-3xs uppercase tracking-[0.14em] text-text-disabled">
+			<div className="font-mono text-ui-3xs uppercase tracking-[0.14em] text-text-tertiary">
 				Controls
 			</div>
 			<div className="flex flex-col gap-2.5">
@@ -184,7 +184,7 @@ export function ReportTab({
 			</div>
 			{envWaivers.length > 0 && (
 				<>
-					<div className="font-mono text-ui-3xs uppercase tracking-[0.14em] text-text-disabled">
+					<div className="font-mono text-ui-3xs uppercase tracking-[0.14em] text-text-tertiary">
 						Active waivers touching this environment
 					</div>
 					<div className="flex flex-col gap-2">
