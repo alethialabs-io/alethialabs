@@ -57,6 +57,17 @@ interface DataTableProps<TData extends { id?: string }, TValue> {
 	onPageIndexChange?: (index: number) => void;
 	/** Tailwind height class (e.g. "h-[70vh]"). When set, wraps the table in a ScrollArea and makes the header sticky. */
 	scrollHeight?: string;
+	/**
+	 * Let a table WIDER than its container scroll sideways instead of clipping — forwarded to
+	 * `@repo/ui/table`'s `scroll`, which documents the trade. Off by default because the shell's
+	 * wrapper is `overflow-x: clip` on purpose; opt in when a column the user must reach (a row's
+	 * actions) can land past the right edge at an ordinary viewport width.
+	 *
+	 * With `scrollHeight` it drops the sticky header: the sideways-scrolling wrapper becomes the box
+	 * the header would stick to, and that box never scrolls vertically, so the header would claim a
+	 * behaviour it does not have (see `@repo/ui/table`).
+	 */
+	scroll?: boolean;
 	/** Message shown in the empty-state row when `data` is empty (default "No results."). */
 	emptyMessage?: string;
 	/**
@@ -99,6 +110,7 @@ export function DataTable<TData extends { id?: string }, TValue>({
 	pageIndex: externalPageIndex,
 	onPageIndexChange,
 	scrollHeight,
+	scroll = false,
 	emptyMessage = "No results.",
 	loadMore,
 }: DataTableProps<TData, TValue>) {
@@ -154,10 +166,10 @@ export function DataTable<TData extends { id?: string }, TValue>({
 	// `--z-raised` IS the 10 the sticky header used to hardcode (packages/brand/src/tokens.css).
 	// Naming the layer is deliberately not the moment to move it.
 	const tableEl = (
-		<Table>
+		<Table scroll={scroll}>
 			<TableHeader
 				className={
-					scrollHeight ? "sticky top-0 z-[var(--z-raised)] bg-background" : undefined
+					scrollHeight && !scroll ? "sticky top-0 z-[var(--z-raised)] bg-background" : undefined
 				}
 			>
 				{table.getHeaderGroups().map((headerGroup) => (
