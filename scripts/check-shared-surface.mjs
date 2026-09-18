@@ -263,6 +263,20 @@
 //                  half of the same idea is a STATED OMISSION below; a background or border alpha
 //                  is ordinary design and is not read at all.
 //
+//   a switch that NAMES ITSELF   a `<Switch>` element, or ANY element with `role="switch"`, whose
+//                  own opening tag carries neither `aria-label` nor `aria-labelledby` with a
+//                  non-empty value, in apps/console/{components,app,lib,hooks}, as the
+//                  `switch_name` rule (#4352). Not a §6 table row: an accessibility defect with the
+//                  same property that put the table rows here — the audit that found 39 of them
+//                  (#4337) can only score what it renders, and a switch behind a condition it never
+//                  opens is invisible to it for good. `role="switch"` is named by its author only,
+//                  and `@repo/ui/switch` renders a `<span role="switch">`, which is not labelable,
+//                  so a `<Label htmlFor>` beside it names nothing. Measured on `dev` before the
+//                  rule: seven unnamed switches in five files, all fixed in the same change, so it
+//                  landed with zero entries. It OVER-REPORTS a name supplied by a spread or a
+//                  wrapper component; that is one reviewed allowlist entry, never a wider matcher.
+//                  This is the ONE rule that is not a line-windowed regex — see HOW IT MATCHES.
+//
 // NOT guarded, and the omission is stated here rather than left for a reader to infer that the
 // whole table is enforced:
 //
@@ -343,6 +357,15 @@
 // `bytes /\n\t1024` is one edit away from any flagged division and a per-line matcher reads it as
 // clean — the direction that reports green. The same window is what lets `<h1` be found when the
 // className sits on the next line.
+//
+// ONE EXCEPTION, and it is a different mechanism rather than a wider window. `switch_name` asks
+// whether an ELEMENT carries a prop, and a prop can sit any number of lines below its `<`, so a
+// matcher there declares `find` instead of `re`: it reads the whole stripped file, walks each
+// opening tag to its own `>`/`/>` (tracking braces, strings and template literals, so the `>` of
+// an arrow inside a prop does not end the tag), and reports the line the element opens on. A tag
+// it cannot bound is a finding, never a pass. It is still not a parser — a regex literal holding
+// an unbalanced brace would mis-bound a tag — and `check()` refuses a matcher carrying both a
+// `re` and a `find`, or neither.
 //
 // The comment stripper is deliberately line-oriented: whole-line `//`, and block comments that
 // OPEN a line (`/*`, `/**`) plus JSX comments (`{/*`) anywhere quotes are balanced ahead of them.
@@ -598,6 +621,193 @@ export function statusMapMatcher({ tiers, statuses }) {
  */
 const VOCAB = statusVocabulary(fs.readFileSync(path.join(ROOT, STATUS_BADGE), "utf8"));
 const STATUS_MAP_RE = statusMapMatcher(VOCAB);
+
+// ── JSX opening tags, bounded by the ELEMENT (#4352) ──────────────────────────────────────────
+
+/**
+ * The index just past the `}` that closes the `{` at `open`, or -1 if it never closes.
+ *
+ * A stack, not a counter, because a template literal inside the expression holds `${…}` of its
+ * own and a `}` inside a string closes nothing: `className={cn("a}", `b ${x}`)}` has to end at its
+ * LAST brace. Regex literals are not recognised — one holding an unbalanced brace or quote would
+ * mis-bound the element, and the caller turns every unbounded read into a finding, never a pass.
+ *
+ * @param {string} text
+ * @param {number} open index of a `{`
+ * @returns {number}
+ */
+function skipBraces(text, open) {
+	/** @type {("brace" | "tmpl")[]} */
+	const stack = ["brace"];
+	let i = open + 1;
+	while (i < text.length && stack.length > 0) {
+		const c = text[i];
+		if (stack[stack.length - 1] === "tmpl") {
+			if (c === "\\") i += 2;
+			else if (c === "`") {
+				stack.pop();
+				i++;
+			} else if (c === "$" && text[i + 1] === "{") {
+				stack.push("brace");
+				i += 2;
+			} else i++;
+			continue;
+		}
+		if (c === '"' || c === "'") {
+			let j = i + 1;
+			while (j < text.length && text[j] !== c) j += text[j] === "\\" ? 2 : 1;
+			i = j + 1;
+		} else if (c === "`") {
+			stack.push("tmpl");
+			i++;
+		} else if (c === "{") {
+			stack.push("brace");
+			i++;
+		} else if (c === "}") {
+			stack.pop();
+			i++;
+		} else i++;
+	}
+	return stack.length === 0 ? i : -1;
+}
+
+/**
+ * Read the JSX opening tag whose `<` is at `start`: its name, its attributes, and where it ends.
+ *
+ * This is the element-aware half the #4352 matcher needs and the line windows above cannot give.
+ * A prop can sit ANY distance from its tag — measured: a named `<Switch>` in the console put its
+ * `aria-label` eleven lines below the `<`, and a switch whose label sat further than any window
+ * would have read as unnamed with nothing in the output to say so. Reading the tag's own
+ * attributes to its own `>` or `/>` has no distance parameter to be wrong about.
+ *
+ * Returns null when what follows the `<` is not an attribute list (a comparison, a type argument
+ * that is not shaped like one) or never closes — the caller decides whether that is noise or a
+ * finding. Attribute values are returned raw: a quoted string with its quotes, or an expression
+ * with its braces. A spread (`{...rest}`) is returned under the name `...`.
+ *
+ * @param {string} text
+ * @param {number} start index of a `<`
+ * @returns {{name: string, attrs: {name: string, value: string | null}[], end: number} | null}
+ */
+export function readOpeningTag(text, start) {
+	const head = /^<([A-Za-z][\w.:-]*)/.exec(text.slice(start, start + 200));
+	if (head === null) return null;
+	/** @type {{name: string, value: string | null}[]} */
+	const attrs = [];
+	let i = start + head[0].length;
+	const ws = () => {
+		while (i < text.length && /\s/.test(text[i])) i++;
+	};
+	while (i < text.length) {
+		ws();
+		if (text.startsWith("/>", i)) return { name: head[1], attrs, end: i + 2 };
+		if (text[i] === ">") return { name: head[1], attrs, end: i + 1 };
+		if (text[i] === "{") {
+			const j = skipBraces(text, i);
+			if (j === -1) return null;
+			attrs.push({ name: "...", value: text.slice(i, j) });
+			i = j;
+			continue;
+		}
+		const nm = /^[A-Za-z_$][\w$.:-]*/.exec(text.slice(i, i + 100));
+		if (nm === null) return null;
+		i += nm[0].length;
+		ws();
+		if (text[i] !== "=") {
+			attrs.push({ name: nm[0], value: null });
+			continue;
+		}
+		i++;
+		ws();
+		const q = text[i];
+		if (q === '"' || q === "'") {
+			const j = text.indexOf(q, i + 1);
+			if (j === -1) return null;
+			attrs.push({ name: nm[0], value: text.slice(i, j + 1) });
+			i = j + 1;
+		} else if (q === "{") {
+			const j = skipBraces(text, i);
+			if (j === -1) return null;
+			attrs.push({ name: nm[0], value: text.slice(i, j) });
+			i = j;
+		} else return null;
+	}
+	return null;
+}
+
+/**
+ * Every switch in `text` that does not name ITSELF: a `<Switch>` element, or any element carrying
+ * `role="switch"`, whose OWN opening tag has neither `aria-label` nor `aria-labelledby` with a
+ * non-empty value. The whole file is one string here, never a line window — see `readOpeningTag`.
+ *
+ * It over-reports on purpose. `role="switch"` takes its name from the author only, so the visible
+ * text beside it is not its name; a name supplied by a spread, a wrapping `<label>` or a wrapper
+ * component is invisible to a token read and earns one reviewed allowlist entry, because the
+ * precise question needs a rendered DOM and a rendered DOM is exactly the instrument that cannot
+ * see a switch behind a condition the audit never opens.
+ *
+ * A `<Switch` whose opening tag cannot be bounded is a finding too, with its own text: an element
+ * this function could not read is not an element it read and found named.
+ *
+ * @param {string} text comment-stripped source
+ * @returns {{index: number, text: string}[]}
+ */
+export function unnamedSwitches(text) {
+	/** @type {{index: number, text: string}[]} */
+	const out = [];
+	// Not after an identifier character, so a type argument (`Array<Switch…`) is not read as JSX.
+	const lt = /(?<![\w$.)\]])<(?=[A-Za-z])/g;
+	let m;
+	while ((m = lt.exec(text)) !== null) {
+		const tag = readOpeningTag(text, m.index);
+		const isSwitchTag = /^<Switch(?![\w.:-])/.test(text.slice(m.index, m.index + 12));
+		if (tag === null) {
+			if (isSwitchTag) out.push({ index: m.index, text: "<Switch … (opening tag could not be bounded)" });
+			continue;
+		}
+		const role = tag.attrs.find((a) => a.name === "role");
+		const isSwitchRole = role !== undefined && role.value !== null && /^\{?\s*["'`]switch["'`]\s*\}?$/.test(role.value);
+		if (!isSwitchTag && !isSwitchRole) continue;
+		const named = tag.attrs.some(
+			(a) => (a.name === "aria-label" || a.name === "aria-labelledby") && a.value !== null && !/^\{?\s*(["'`])\s*\1\s*\}?$/.test(a.value),
+		);
+		if (!named) {
+			const src = text.slice(m.index, tag.end).replace(/\s+/g, " ");
+			out.push({ index: m.index, text: src.length > 90 ? `${src.slice(0, 87)}…` : src });
+		}
+		// Past the tag's own attributes, but not past its children: a switch nested inside another
+		// switch-bearing element is still read.
+		lt.lastIndex = Math.max(lt.lastIndex, m.index + 1);
+	}
+	return out;
+}
+
+/**
+ * Every hit a matcher makes in one piece of source, whether it is a line-windowed `re` or an
+ * element-bounded `find`. Used by the permanent probe/anti-probe control, which has to exercise
+ * both kinds through the same door.
+ *
+ * @param {{re?: RegExp, find?: (text: string) => {index: number, text: string}[]}} matcher
+ * @param {string} src
+ * @returns {boolean}
+ */
+function matcherHits(matcher, src) {
+	if (typeof matcher.find === "function") return matcher.find(src).length > 0;
+	matcher.re.lastIndex = 0;
+	const hit = matcher.re.test(src);
+	matcher.re.lastIndex = 0;
+	return hit;
+}
+
+/**
+ * How a matcher names itself in a failure message: its regex, or its `find` function's name.
+ *
+ * @param {{re?: RegExp, find?: {name: string}}} matcher
+ * @returns {string}
+ */
+function matcherLabel(matcher) {
+	return matcher.re !== undefined ? String(matcher.re) : `${matcher.find?.name ?? "find"}()`;
+}
 
 /**
  * The guarded rows. `id` is also the allowlist's section name, so a section this file does not
@@ -1051,6 +1261,43 @@ const RULES = [
 			},
 		],
 	},
+	{
+		// A SWITCH THAT DOES NOT NAME ITSELF (#4352). `role="switch"` takes its accessible name from
+		// the AUTHOR only, and `@repo/ui/switch` renders a `<span role="switch">`, which is not a
+		// labelable element — so neither the text in the row beside it nor a `<Label htmlFor>`
+		// names it. #4337 fixed 39 of them in the permission matrix after the release gate's audit
+		// found them; the audit could only find those because it rendered them. axe scores what it
+		// renders, and a switch behind `editable ?`, a plan gate or a sheet the audit never opens is
+		// invisible to it permanently. A static read is the only instrument that reaches those.
+		//
+		// This is the ONE rule here that is not a line-windowed regex. It reads each opening tag to
+		// its own `>`/`/>` (`readOpeningTag`), because a prop can sit any distance from its `<`:
+		// measured, a named `<Switch>` put its `aria-label` eleven lines down, and that distance was
+		// read off switches a window had ALREADY classified as named — a sample that cannot contain
+		// the case that would refute any window size. Element-bounded, there is no size to be wrong.
+		//
+		// It OVER-REPORTS by design: a name arriving through a spread, a wrapping component or a
+		// label the name computation would find is invisible to a token read, and earns one reviewed
+		// allowlist entry. Its cheapest escape is to add the missing name, which is the fix. An
+		// EMPTY `aria-label=""` is not a name and is still a finding.
+		id: "switch_name",
+		surface: "a switch that names itself — `aria-labelledby` pointing at the visible label, or `aria-label`",
+		matchers: [
+			{
+				scope: "console_code",
+				find: unnamedSwitches,
+				say: "renders a switch with no accessible name of its own. `role=\"switch\"` is named by its author only: the text beside it is not its name, and a `<Label htmlFor>` cannot name the `<span role=\"switch\">` that `@repo/ui/switch` renders. Give the visible label an `id` and point `aria-labelledby` at it (the name is then the on-screen text by construction), or set `aria-label`.",
+				// The prop sits PAST any small line window, and a spread and an `htmlFor` label sit
+				// beside it — the three things a token read might be tempted to take as a name.
+				probe: '<Label htmlFor="x">Enabled</Label>\n<Switch\n\tid="x"\n\t{...rest}\n\tchecked={on}\n\tonCheckedChange={(v) => set(v > 0)}\n/>\n<div role="switch" aria-label="" />',
+				// Named twice over, by reference and by string, with the name eleven lines below the
+				// tag and an arrow's `>` in between — plus a type argument and a `Switcher` component,
+				// which share a prefix with the subject and are not switches.
+				antiProbe:
+					'const a: Array<Switch> = [];\n<Switcher />\n<Switch\n\tchecked={on}\n\tonCheckedChange={(v) => set(v > 0)}\n\tclassName={cn("a}", `b ${x}`)}\n\n\n\n\n\n\n\n\taria-labelledby={labelId}\n/>\n<span role="switch" aria-label="Enabled" tabIndex={0} />',
+			},
+		],
+	},
 ];
 
 // ── source scanning ───────────────────────────────────────────────────────────────────────────
@@ -1177,6 +1424,17 @@ export function scan(readFile, listDir) {
 					if (stripped.unterminated) unterminated.add(file);
 					lines = stripped.lines;
 					strippedCache.set(file, lines);
+				}
+				if (typeof matcher.find === "function") {
+					// ELEMENT-BOUNDED: the whole stripped file as one string, attributed to the line
+					// the element OPENS on. The stripper blanks comments in place and keeps every
+					// line, so a newline count before the index is the source line number.
+					const whole = lines.join("\n");
+					for (const hit of matcher.find(whole)) {
+						const line = whole.slice(0, hit.index).split("\n").length;
+						findings.push({ rule: rule.id, file, line, say: matcher.say, text: hit.text });
+					}
+					continue;
 				}
 				for (let i = 0; i < lines.length; i++) {
 					const head = lines[i];
@@ -1474,6 +1732,12 @@ export function check(readFile, listDir) {
 						`${Object.keys(SCOPES).join(", ")}. It would look at nothing.`,
 				);
 			}
+			// A matcher is a line-windowed `re` OR an element-bounded `find`, never both and never
+			// neither: `scan()` takes the `find` branch first, so a matcher carrying both would have its
+			// regex silently ignored, and one carrying neither would crash inside the scan.
+			if ((matcher.re instanceof RegExp) === (typeof matcher.find === "function")) {
+				problems.push(`the \`${rule.id}\` rule has a matcher with ${matcher.re instanceof RegExp ? "both a `re` and a `find`" : "neither a `re` nor a `find`"} — it must carry exactly one.`);
+			}
 			// The positive control below is `re.test(probe)` and `!re.test(antiProbe)`. A MISSING
 			// antiProbe passes that silently — `test(undefined)` matches almost nothing — so the
 			// widening half of the control would be absent and read exactly like a control that
@@ -1481,7 +1745,7 @@ export function check(readFile, listDir) {
 			for (const half of ["probe", "antiProbe"]) {
 				if (typeof matcher[half] !== "string" || matcher[half] === "") {
 					problems.push(
-						`the \`${rule.id}\` matcher ${matcher.re} declares no \`${half}\`. Every matcher carries ` +
+						`the \`${rule.id}\` matcher ${matcherLabel(matcher)} declares no \`${half}\`. Every matcher carries ` +
 							"both, because they are the only control that outlives the drift: once the ledgers " +
 							"reach 0 there is nothing else left to notice a matcher that has stopped matching.",
 					);
@@ -1606,15 +1870,12 @@ export function check(readFile, listDir) {
 	// matcher that has quietly stopped matching would report a clean console instead.
 	for (const rule of RULES) {
 		for (const matcher of rule.matchers) {
-			matcher.re.lastIndex = 0;
-			if (!matcher.re.test(matcher.probe)) {
-				problems.push(`the \`${rule.id}\` matcher ${matcher.re} no longer matches its own probe \`${matcher.probe}\` — it is dead, and a green run means nothing.`);
+			if (!matcherHits(matcher, matcher.probe)) {
+				problems.push(`the \`${rule.id}\` matcher ${matcherLabel(matcher)} no longer matches its own probe \`${matcher.probe}\` — it is dead, and a green run means nothing.`);
 			}
-			matcher.re.lastIndex = 0;
-			if (matcher.re.test(matcher.antiProbe)) {
-				problems.push(`the \`${rule.id}\` matcher ${matcher.re} has widened onto \`${matcher.antiProbe}\`, which is correct code — it will report drift that is not there.`);
+			if (matcherHits(matcher, matcher.antiProbe)) {
+				problems.push(`the \`${rule.id}\` matcher ${matcherLabel(matcher)} has widened onto \`${matcher.antiProbe}\`, which is correct code — it will report drift that is not there.`);
 			}
-			matcher.re.lastIndex = 0;
 		}
 	}
 	if (problems.length > 0) return { problems, census, perRule, allowed: 0, entries: list.entries.length, decisions: 0, debt: 0 };
@@ -2385,6 +2646,43 @@ function selfTest() {
 	const widened = run(tree, entry(1));
 	dead.re = realRe;
 	ok("a matcher that WIDENED onto correct code fails too", says(widened, /has widened onto/), JSON.stringify(widened.problems));
+
+	// The same control through the ELEMENT-BOUNDED door (#4352): a `find` matcher that went blind,
+	// and one that widened, must red exactly like a regex one — the control used to call `re.test`
+	// directly, and a matcher without a `re` would have crashed it rather than been judged by it.
+	const sw = RULES.find((r) => r.id === "switch_name").matchers[0];
+	const realFind = sw.find;
+	sw.find = () => [];
+	const blindFind = run(tree, entry(1));
+	sw.find = (text) => [{ index: 0, text }];
+	const wideFind = run(tree, entry(1));
+	sw.re = /x/g;
+	sw.find = realFind;
+	const both = run(tree, entry(1));
+	delete sw.re;
+	ok("an element matcher that stopped matching FAILS too", says(blindFind, /switch_name` matcher .* no longer matches its own probe/), JSON.stringify(blindFind.problems));
+	ok("...and one that widened", says(wideFind, /switch_name` matcher .* has widened onto/), JSON.stringify(wideFind.problems));
+	ok("a matcher carrying both a `re` and a `find` is refused, not half-run", says(both, /both a `re` and a `find`/), JSON.stringify(both.problems));
+
+	// The element rule on real-shaped content at ONE path, the same way the classifier above is
+	// proved: the distance of the name from the tag must not matter, in either direction.
+	const far = (n, prop) => `const a = <Switch\n${"\tchecked={on}\n".repeat(n)}${prop}/>;`;
+	ok("a bare <Switch /> is flagged", flags("const a = <Switch checked={on} onCheckedChange={(v) => set(v)} />;"));
+	ok("...and so is one named only by a <Label htmlFor>", flags('const a = <><Label htmlFor="x">On</Label><Switch id="x" /></>;'));
+	ok("...and one whose aria-label is EMPTY", flags('const a = <Switch aria-label="" />;'));
+	ok("...and any element with role=\"switch\"", flags('const a = <button role="switch" aria-checked={on} />;'));
+	ok("...and role={\"switch\"} in an expression", flags('const a = <span role={"switch"} />;'));
+	ok("a name 30 lines below the tag is still read as a name", !flags(far(30, '\taria-label="Enabled"\n')));
+	ok("...and aria-labelledby is a name too", !flags(far(30, "\taria-labelledby={labelId}\n")));
+	ok("...while 30 lines with NO name are still a finding", flags(far(30, "")));
+	ok("an arrow's `>` inside a prop does not end the tag early", flags("const a = <Switch onCheckedChange={(v) => v > 1}\n/>;") && !flags('const a = <Switch onCheckedChange={(v) => v > 1}\naria-label="On" />;'));
+	ok("a `}` inside a string or template inside a prop closes nothing", !flags('const a = <Switch className={cn("}", `${x}}`)} aria-label="On" />;'));
+	ok("a spread is read past, so a name after it counts", !flags('const a = <Switch {...rest} aria-label="On" />;'));
+	ok("...but a spread alone is not a name", flags("const a = <Switch {...rest} />;") && !flags('const a = <Switch {...rest} aria-label="On" />;'));
+	ok("a name inside a CHILD expression is not the switch's name", flags('const a = <Switch render={<span aria-label="On" />} />;'));
+	ok("a <Switch whose tag cannot be bounded is a finding, not a pass", flags('const a = <Switch className={"x"'));
+	ok("a type argument and a Switcher are not switches", !flags("const a: Array<Switch> = [];\nconst b = <Switcher />;"));
+	ok("a <Switch> in a JSX comment is not read", !flags("const a = (<div>{/* <Switch /> */}</div>);"));
 
 	// A matcher with NO anti-probe passes the widening half silently, because `re.test(undefined)`
 	// is false for every matcher here — a control that is absent and reads as a control that held.

@@ -276,9 +276,15 @@ export function AddonConfigForm({
       return (
         <div key={path} className="space-y-2">
           <div className="flex items-center justify-between">
-            <Label htmlFor={path}>{f.label}</Label>
+            {/* `htmlFor` does not name the switch: `@repo/ui/switch` renders a
+                `<span role="switch">`, which is not labelable, so the label is
+                pointed at by reference instead (#4352). */}
+            <Label id={`${path}-label`} htmlFor={path}>
+              {f.label}
+            </Label>
             <Switch
               id={path}
+              aria-labelledby={`${path}-label`}
               defaultChecked={Boolean(stored ?? f.default)}
               onCheckedChange={(v) => form.setValue(path, v)}
             />
