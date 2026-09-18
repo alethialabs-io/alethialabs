@@ -120,3 +120,50 @@ run "public_access_is_decided_per_bucket" {
     error_message = "Each bucket must get its own answer; got ${jsonencode(output.cloud_storage_public_access_prevention)} / ${jsonencode(output.cloud_storage_publicly_readable_buckets)}."
   }
 }
+
+################################################################################
+# 4. lifecycle_rules — reaches a lifecycle_rule block since #4320, and is refused when malformed
+################################################################################
+
+# The wiring itself is measured by `check:template-knobs` (the knob left the ledger's `dead:` list
+# only because a resource argument now reads it). What that guard cannot see is the validation that
+# keeps a malformed rule from reaching Cloud Storage as an empty `condition` — these two runs pin it.
+run "a_well_formed_lifecycle_rule_plans" {
+  command = plan
+
+  variables {
+    cloud_storage_buckets = [
+      {
+        name_suffix = "assets"
+        lifecycle_rules = [
+          { action_type = "Delete", condition_age = 30 },
+          { action_type = "SetStorageClass", action_storage_class = "NEARLINE", condition_age = 7 },
+        ]
+      },
+    ]
+  }
+}
+
+run "a_lifecycle_rule_without_an_age_is_refused" {
+  command = plan
+
+  variables {
+    cloud_storage_buckets = [
+      { name_suffix = "assets", lifecycle_rules = [{ action_type = "Delete" }] },
+    ]
+  }
+
+  expect_failures = [var.cloud_storage_buckets]
+}
+
+run "set_storage_class_without_a_class_is_refused" {
+  command = plan
+
+  variables {
+    cloud_storage_buckets = [
+      { name_suffix = "assets", lifecycle_rules = [{ action_type = "SetStorageClass", condition_age = 7 }] },
+    ]
+  }
+
+  expect_failures = [var.cloud_storage_buckets]
+}

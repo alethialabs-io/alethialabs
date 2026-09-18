@@ -25,6 +25,10 @@ module "cloud_sql" {
   iam_auth = var.cloud_sql_iam_auth
   port     = var.cloud_sql_port
 
+  # Declared at the root and threaded nowhere before #4320. Default [] adds no flag, so every
+  # existing instance keeps exactly the IAM-auth flag it has; the module appends, never replaces.
+  database_flags = var.cloud_sql_database_flags
+
   # Keyless app DB user (#722): when IAM auth is on, register the app GSA as a
   # CLOUD_IAM_SERVICE_ACCOUNT database user so the workload logs in with an IAM token, no password.
   app_iam_sa_email = local.enable_app_db_iam ? one(data.google_service_account.app_db_adopted[*].email) : null
