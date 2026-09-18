@@ -97,13 +97,30 @@ export function EvIcon({
 	return <Cmp width={size} height={size} className={className} />;
 }
 
-/** Tone → text color utility (grayscale; `bad` → destructive). */
+/**
+ * Tone → text color utility (grayscale; `bad` → destructive).
+ *
+ * `muted` IS NOT `disabled`. It used to be `text-text-disabled`, and that tier is reserved for a
+ * control WCAG 1.4.3 exempts because it is inactive — `--text-disabled` is `--gray-400`, 1.95:1 on
+ * `--surface` and 1.77:1 on `--surface-sunken` in the light theme, 2.48:1 / 2.64:1 in the dark one,
+ * against a 4.5:1 bar. What `muted` actually paints is `verifyMark`/`driftMark`/`securityMark`/
+ * `receiptMark`'s "Not verified" / "Not scanned": the ANSWER to the column's question on the page
+ * whose whole job is to say what is and is not proven. Nothing about it is disabled, so it takes
+ * the dimmest tier that is still readable — `--text-tertiary` clears the bar on every surface token
+ * in both themes (worst case 4.73:1, dark `--surface-raised`/`--surface-muted`). #4612.
+ *
+ * It now shares a tier with `unknown`, and that is the honest outcome rather than a collision to
+ * design around: `muted` and `unknown` are both "we do not know", and the four named tiers hold no
+ * fifth rung between tertiary and disabled. An alpha would be that fifth rung and is banned —
+ * `pnpm check:shared-surface`'s `ink_alpha` rule, #4197. The ICON and the LABEL still separate the
+ * two marks, so nothing that was said by colour alone is lost.
+ */
 export const TONE_TEXT: Record<Tone, string> = {
 	good: "text-text-secondary",
 	warn: "text-text-secondary",
 	bad: "text-destructive",
 	unknown: "text-text-tertiary",
-	muted: "text-text-disabled",
+	muted: "text-text-tertiary",
 };
 
 /** Tone → segmented-bar fill. `bad` is brightest (draws the eye); healthy stays calm. */
@@ -193,7 +210,16 @@ export function receiptMark(verify: EvidenceVerify | null): Mark {
 	return { iconKey: "file-minus", label: "Unsigned", tone: "unknown" };
 }
 
-/** Stage text weight — production carries the most ink (plain mono text, no chip). */
+/**
+ * Stage text weight — production carries the most ink (plain mono text, no chip).
+ *
+ * LEFT ON `text-text-disabled` for the `default` rung, deliberately, and #4612 does not name it.
+ * This is a three-rung EMPHASIS LADDER (production → staging → everything else), not a tier picked
+ * for one string: collapsing its bottom rung to tertiary makes `development` and `staging` the same
+ * ink and is a design decision nobody has recorded. It is also the one site in this directory that
+ * only renders inside the drawer, which the a11y sweep does not open, so nothing measured it. Its
+ * ladder wants its own issue and its own ruling — not a sweep of the token.
+ */
 export function stageTextClass(stage: string): string {
 	switch (stage) {
 		case "production":
