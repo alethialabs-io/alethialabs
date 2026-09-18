@@ -2285,8 +2285,8 @@ jobs:
           GOWORK=off go vet -tags=e2e_t2 ./...
           GOWORK=off go vet -tags=e2e_b6 ./...
           # -count=1 as in the module legs above (#4768). No untagged test here was found reading
-          # outside the module (grep for go.work / ../../); this keeps "no Go test result on a PR comes from the cache" true
-          # for all four modules instead of three.
+          # outside the module (grep for go.work / ../../); this keeps "no Go test result on a PR
+          # comes from the cache" true for all four modules instead of three.
           GOWORK=off go test -count=1 -coverprofile=cover.out ./...
       # test/e2e is the FOURTH Go module and has no matrix leg of its own — it is exercised from
       # inside the packages/core leg above, which is why its 2,193 statements have never been
