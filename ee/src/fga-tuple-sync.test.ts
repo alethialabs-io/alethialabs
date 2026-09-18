@@ -13,21 +13,31 @@
 //
 // The property asserted here is the one that was violated, stated directly:
 //
-//     every tuple expandGrant(...) produces sits on the object grantObject(...) names.
+//     for every stored row that narrows to a scope (grantScopeFromRow), every tuple
+//     expandGrant(scope) produces sits on the object grantObject(scope) names.
 //
-// ⚠ ONE DIRECTION ONLY. The converse — "null exactly when expandGrant produces none" — is FALSE,
-// and this file asserted it until a review caught it: `expandGrant` also produces nothing when the
-// scope is fine and every key is org-level (`isOrgLevel` is true for every `create`). The
-// `project:create` row in the table below is that case, and it is here so the gap is pinned rather
-// than absent — the suite used to pass only because every scope was exercised with VIEWER_KEYS.
+// Since #4582 both functions take the typed `GrantScope`, and a row that resolves to nothing never
+// becomes one — so "nothing to delete" is now `grantScopeFromRow` returning null, asserted below
+// for exactly the rows the #4584 ruling says confer nothing.
+//
+// ⚠ ONE DIRECTION ONLY. An empty expansion does NOT imply a null scope: `expandGrant` also
+// produces nothing when the scope is fine and every key is org-level (`isOrgLevel` is true for
+// every `create`). The `project:create` row below is that case, and it is here so the gap is
+// pinned rather than absent.
 //
 // Both halves come from the REAL core helpers (the `@` alias in vitest.config.ts), not from
 // stand-ins. A hand-written expander here would prove this file's model of tuple expansion, which
 // is precisely the thing that was wrong: `grantObject` was a second, independent model of it.
 
 import { describe, expect, it } from "vitest";
-import { type FgaTuple, expandGrant } from "@/lib/authz/fga-tuples";
-import { EMPTY_SCOPE_DENIES, targetForEffect } from "@/lib/authz/grant-scope";
+import {
+	type FgaTuple,
+	type GrantScope,
+	type GrantScopeRow,
+	expandGrant,
+	grantScopeFromRow,
+} from "@/lib/authz/fga-tuples";
+import { EMPTY_SCOPE_DENIES } from "@/lib/authz/grant-scope";
 import { BUILT_IN_ROLES, PERMISSIONS } from "@/lib/authz/registry";
 import { type TupleReader, grantObject, readAllTuples } from "./fga-tuple-sync";
 
@@ -47,8 +57,8 @@ const principal = {
 };
 const denying = { ...principal, effect: "deny" as const };
 
-/** The scopes a `grants` row can present, including the two that confer nothing. */
-const scopes = [
+/** The rows a `grants` table can hold, including the two shapes that confer nothing. */
+const scopes: readonly { name: string; scope: GrantScopeRow }[] = [
 	{
 		name: "org-wide (resource_id NULL, 'org' kind — what ensureMemberGrant writes)",
 		scope: { ...principal, resourceType: "org", resourceId: null },
@@ -92,43 +102,50 @@ const scopes = [
 		name: "DENY, an unrecognised resource kind carrying an id",
 		scope: { ...denying, resourceType: "banana", resourceId: PROJECT },
 	},
-] as const;
+];
+
+/** A row narrowed the way every production caller narrows it; the test fails if it is null. */
+function narrowed(row: GrantScopeRow): GrantScope {
+	const scope = grantScopeFromRow(row);
+	if (scope === null) throw new Error(`expected ${JSON.stringify(row)} to narrow to a scope`);
+	return scope;
+}
 
 /**
  * The case that breaks the CONVERSE: a perfectly good project scope whose only permission is
  * `create`, which `isOrgLevel` sends org-wide and a scoped grant therefore never confers. The
- * expansion is empty and the object is NOT null.
+ * expansion is empty and the scope is NOT null.
  */
 const CREATE_ONLY = {
 	scope: { ...principal, resourceType: "project", resourceId: PROJECT },
 	keys: ["project:create"],
-} as const;
+} as const satisfies { scope: GrantScope; keys: readonly string[] };
 
 describe("grantObject names the object expandGrant actually writes to", () => {
-	for (const { name, scope } of scopes) {
+	for (const { name, scope: row } of scopes) {
 		it(name, () => {
-			const tuples = expandGrant(scope, VIEWER_KEYS);
-			const object = grantObject(targetForEffect, scope);
-
-			if (tuples.length === 0) {
-				// Nothing was written, so there is nothing to read or delete. Returning an
-				// object here is how the leak happened: the delete went somewhere real (or
-				// somewhere impossible) while the write had gone elsewhere.
-				expect(object).toBeNull();
+			const scope = grantScopeFromRow(row);
+			if (scope === null) {
+				// Nothing is written, so there is nothing to read or delete. Only an ALLOW row of
+				// an uninterpretable shape may land here (#4584); a deny row of that shape
+				// excludes org-wide and must narrow to the org arm, or its revoke would delete
+				// nothing — the leak this file exists to pin, on the other effect.
+				expect(row.effect).toBe("allow");
+				expect(row.resourceId).not.toBeNull();
 				return;
 			}
-			expect(object).not.toBeNull();
-			expect(new Set(tuples.map((t) => t.object))).toEqual(new Set([object]));
+			const tuples = expandGrant(scope, VIEWER_KEYS);
+			expect(tuples.length).toBeGreaterThan(0);
+			expect(new Set(tuples.map((t) => t.object))).toEqual(new Set([grantObject(scope)]));
 		});
 	}
 });
 
 describe("the invariant runs one way, and this is the row that proves it", () => {
-	it("an empty expansion does NOT imply a null object — the scope is fine, the KEY is org-level", () => {
+	it("an empty expansion does NOT imply a null scope — the scope is fine, the KEY is org-level", () => {
 		const tuples = expandGrant(CREATE_ONLY.scope, CREATE_ONLY.keys);
-		const object = grantObject(targetForEffect, CREATE_ONLY.scope);
 		expect(tuples).toEqual([]);
-		expect(object).toBe(`project:${PROJECT}`);
+		expect(grantObject(CREATE_ONLY.scope)).toBe(`project:${PROJECT}`);
 		// The forward direction still holds vacuously (no tuples to sit anywhere), which is
 		// exactly why the property table above could not see this.
 	});
@@ -139,7 +156,7 @@ describe("the invariant runs one way, and this is the row that proves it", () =>
 		const tuples = expandGrant(CREATE_ONLY.scope, ["project:view"]);
 		expect(tuples.length).toBeGreaterThan(0);
 		expect(new Set(tuples.map((t) => t.object))).toEqual(
-			new Set([grantObject(targetForEffect, CREATE_ONLY.scope)]),
+			new Set([grantObject(CREATE_ONLY.scope)]),
 		);
 	});
 });
@@ -147,53 +164,37 @@ describe("the invariant runs one way, and this is the row that proves it", () =>
 describe("the specific rows the revoke leak was made of", () => {
 	// The precise defect: `${resourceType}:${resourceId}` whenever the id was truthy gave
 	// `org:<project-uuid>` — an object type/id pair that does not exist — while the tuples had
-	// gone to `org:<orgId>`. Named as its own case because the property test above would still
-	// pass if BOTH sides moved to the same wrong place.
-	it("the bad pair yields null, never org:<resource-uuid>", () => {
-		const scope = { ...principal, resourceType: "org", resourceId: PROJECT };
-		expect(grantObject(targetForEffect, scope)).toBeNull();
-		expect(grantObject(targetForEffect, scope)).not.toBe(`org:${PROJECT}`);
-		expect(expandGrant(scope, VIEWER_KEYS)).toEqual([]);
+	// gone to `org:<orgId>`. Since #4582 the ALLOW row of that shape never becomes a scope at all.
+	it("the bad pair (allow) narrows to null — it has no scope to expand or revoke", () => {
+		expect(grantScopeFromRow({ ...principal, resourceType: "org", resourceId: PROJECT })).toBeNull();
 	});
 
 	// The direction that would be far worse than the bug: if a genuine org-wide grant stopped
 	// resolving to `org:<orgId>`, every member revoke would silently leave every capability
-	// behind. `resource_id NULL` is org-wide whatever the kind column says, and both writers of
-	// that shape are covered above.
+	// behind. `resource_id NULL` is org-wide whatever the kind column says.
 	it("a genuine org-wide grant still points at the org object", () => {
+		expect(grantObject(narrowed({ ...principal, resourceType: "org", resourceId: null }))).toBe(
+			`org:${ORG}`,
+		);
 		expect(
-			grantObject(targetForEffect, {
-				...principal,
-				resourceType: "org",
-				resourceId: null,
-			}),
+			grantObject(narrowed({ ...principal, resourceType: "project", resourceId: null })),
 		).toBe(`org:${ORG}`);
 	});
 
 	// RULED (#4584): a scope-to-nothing DENY excludes the whole org. Asserted as a literal, not
 	// read from the constant — a derived expectation would let the decision be reverted silently.
-	//
-	// This is also the case that would leak if the two effects shared one answer: the deny row's
-	// tuples DO live on `org:<orgId>` under the ruling, so a `grantObject` that returned null for
-	// it would delete nothing on revoke — the very defect this file exists to pin, reappearing on
-	// the other effect.
 	it("RULED: a DENY row that scopes to nothing points at the ORG object", () => {
 		expect(EMPTY_SCOPE_DENIES).toBe("the_whole_org");
-		const scope = { ...denying, resourceType: "org", resourceId: PROJECT };
-		expect(grantObject(targetForEffect, scope)).toBe(`org:${ORG}`);
-		// And the ALLOW row of the same shape still confers nothing, so it still has no object.
-		expect(
-			grantObject(targetForEffect, { ...principal, resourceType: "org", resourceId: PROJECT }),
-		).toBeNull();
+		expect(grantObject(narrowed({ ...denying, resourceType: "org", resourceId: PROJECT }))).toBe(
+			`org:${ORG}`,
+		);
+		// And the ALLOW row of the same shape still confers nothing, so it still has no scope.
+		expect(grantScopeFromRow({ ...principal, resourceType: "org", resourceId: PROJECT })).toBeNull();
 	});
 
 	it("a normal scoped grant still points at the resource instance", () => {
 		expect(
-			grantObject(targetForEffect, {
-				...principal,
-				resourceType: "project",
-				resourceId: PROJECT,
-			}),
+			grantObject(narrowed({ ...principal, resourceType: "project", resourceId: PROJECT })),
 		).toBe(`project:${PROJECT}`);
 	});
 });
