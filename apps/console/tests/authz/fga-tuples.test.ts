@@ -3,11 +3,17 @@
 
 import { describe, expect, it } from "vitest";
 import {
+	EMPTY_RESOURCE_ID,
 	expandGrant,
+	type GrantScope,
+	grantScopeFromRow,
 	hierarchyTuple,
-	orgScopeCarriesResourceId,
+	ORG_SCOPE_WITH_RESOURCE_ID,
+	parseGrantResource,
 	teamMemberTuple,
 } from "@/lib/authz/fga-tuples";
+import { resourceIdOf } from "@/lib/authz/grant-scope";
+import { UNKNOWN_RESOURCE_TYPE } from "@/lib/validations/grants";
 import { BUILT_IN_ROLES, PERMISSIONS } from "@/lib/authz/registry";
 
 const ALL_KEYS: string[] = PERMISSIONS.map((p) => p.key);
@@ -20,7 +26,7 @@ const base = { orgId: "O", principalType: "user" as const, principalId: "U" };
 describe("expandGrant (role → permission tuples)", () => {
 	it("org-wide allow writes one org capability per permission key", () => {
 		const tuples = expandGrant(
-			{ ...base, effect: "allow", resourceType: "org", resourceId: null },
+			{ ...base, effect: "allow", resourceType: "org" },
 			ownerKeys,
 		);
 		expect(tuples).toHaveLength(ownerKeys.length);
@@ -34,7 +40,7 @@ describe("expandGrant (role → permission tuples)", () => {
 
 	it("team principal uses the team#member userset", () => {
 		const [t] = expandGrant(
-			{ orgId: "O", principalType: "team", principalId: "T", effect: "allow", resourceType: "org", resourceId: null },
+			{ orgId: "O", principalType: "team", principalId: "T", effect: "allow", resourceType: "org" },
 			["project:view"],
 		);
 		expect(t).toEqual({ user: "team:T#member", relation: "project_view", object: "org:O" });
@@ -68,7 +74,7 @@ describe("expandGrant (role → permission tuples)", () => {
 
 	it("viewer role expands to view tuples plus own-support create/reply", () => {
 		const tuples = expandGrant(
-			{ ...base, effect: "allow", resourceType: "org", resourceId: null },
+			{ ...base, effect: "allow", resourceType: "org" },
 			viewerKeys,
 		);
 		expect(
@@ -94,7 +100,7 @@ describe("expandGrant (role → permission tuples)", () => {
 
 		// org-wide deny → the org deny capability
 		const orgDeny = expandGrant(
-			{ ...base, effect: "deny", resourceType: "org", resourceId: null },
+			{ ...base, effect: "deny", resourceType: "org" },
 			["project:view"],
 		);
 		expect(orgDeny).toContainEqual({ user: "user:U", relation: "project_deny_view", object: "org:O" });
@@ -114,67 +120,126 @@ describe("hierarchy + team tuples", () => {
 	});
 });
 
-// The pair `GrantScope` cannot represent honestly. `"org"` is the DEFAULT resource kind at both
-// write boundaries, so a caller who names a resource and forgets its kind would otherwise get an
-// ORGANIZATION-WIDE grant while the call reads as scoped to one project. Both directions are
-// asserted: over-refusing here would break every legitimate grant, which is the failure a
-// bad-pair-only test cannot see.
-describe("orgScopeCarriesResourceId (the org-kind + resource-id refusal)", () => {
-	it("is true for an org kind carrying a resource id — the silent widening", () => {
-		expect(orgScopeCarriesResourceId("org", "11111111-2222-3333-4444-555555555555")).toBe(true);
+// ── #4582: the pair is not a value of the type ─────────────────────────────────────────────────
+// These are COMPILE-TIME assertions. `tsc` over this file is what checks them: each
+// `@ts-expect-error` fails the type-check if the line beneath it ever COMPILES — which is exactly
+// what would happen if `GrantScope` went back to `resourceType: string; resourceId: string | null`.
+// The runtime `expect`s only keep the values from being unused.
+describe("GrantScope cannot hold the org kind with an id, or an unrecognised kind", () => {
+	it("refuses them at compile time, fresh literal or not", () => {
+		// @ts-expect-error — the org arm has no resourceId (typed `never`).
+		const fresh: GrantScope = { ...base, effect: "allow", resourceType: "org", resourceId: "P" };
+
+		// The case a plain `{ resourceType: "org" }` arm would have let through: a NON-fresh object
+		// is checked structurally, and extra properties are allowed there. `resourceId?: never` is
+		// what closes it.
+		const widened = { ...base, effect: "allow" as const, resourceType: "org" as const, resourceId: "P" };
+		// @ts-expect-error — the same pair, arriving as a variable rather than a literal.
+		const nonFresh: GrantScope = widened;
+
+		// @ts-expect-error — a scoped arm needs an id; null is not one.
+		const nullId: GrantScope = { ...base, effect: "allow", resourceType: "project", resourceId: null };
+
+		// @ts-expect-error — the kind is the closed PARENTS-derived union, not free text.
+		const banana: GrantScope = { ...base, effect: "allow", resourceType: "banana", resourceId: "P" };
+
+		// The controls: the two shapes a grant can mean DO compile.
+		const org: GrantScope = { ...base, effect: "allow", resourceType: "org" };
+		const connector: GrantScope = { ...base, effect: "allow", resourceType: "connector", resourceId: "C" };
+
+		expect([fresh, nonFresh, nullId, banana, org, connector]).toHaveLength(6);
+	});
+});
+
+// The write boundaries' refusal, now the only way a request's two strings become a `GrantResource`.
+// Both directions are asserted: over-refusing here would break every legitimate grant, which is
+// the failure a bad-pair-only test cannot see.
+describe("parseGrantResource (the write boundaries' one parse)", () => {
+	it("refuses the org kind carrying a resource id — the silent widening #4581 closed", () => {
+		expect(parseGrantResource("org", "11111111-2222-3333-4444-555555555555")).toEqual({
+			ok: false,
+			error: ORG_SCOPE_WITH_RESOURCE_ID,
+		});
+		// An empty id under the org kind is still an id the request supplied.
+		expect(parseGrantResource("org", "")).toEqual({ ok: false, error: ORG_SCOPE_WITH_RESOURCE_ID });
 	});
 
-	it("is false for a genuine org-wide grant — org kind, no id", () => {
-		expect(orgScopeCarriesResourceId("org", null)).toBe(false);
+	it("refuses an unrecognised kind, with an id AND without one (#4734)", () => {
+		expect(parseGrantResource("projects", "P")).toEqual({ ok: false, error: UNKNOWN_RESOURCE_TYPE });
+		// Without an id it would otherwise read as org-wide — the laundering the order prevents.
+		expect(parseGrantResource("projects", null)).toEqual({ ok: false, error: UNKNOWN_RESOURCE_TYPE });
 	});
 
-	it("is false for a scoped grant — a real kind carrying its own id", () => {
-		for (const kind of ["project", "runner", "cloud_identity"]) {
-			expect(orgScopeCarriesResourceId(kind, "11111111-2222-3333-4444-555555555555")).toBe(false);
+	it("refuses an empty id on a scoped kind rather than storing it as ('org', '')", () => {
+		expect(parseGrantResource("project", "")).toEqual({ ok: false, error: EMPTY_RESOURCE_ID });
+	});
+
+	it("parses a genuine org-wide grant — org kind, no id — to the org arm, with no resourceId", () => {
+		const parsed = parseGrantResource("org", null);
+		expect(parsed).toEqual({ ok: true, resource: { resourceType: "org" } });
+		expect(parsed.ok && "resourceId" in parsed.resource).toBe(false);
+	});
+
+	it("parses a scopable kind with no id as org-wide, which is what both boundaries stored", () => {
+		for (const kind of ["project", "runner", "cloud_identity", "connector"]) {
+			expect(parseGrantResource(kind, null)).toEqual({ ok: true, resource: { resourceType: "org" } });
 		}
 	});
 
-	it("is false for a kind with no id — the write boundaries collapse that to org themselves", () => {
-		expect(orgScopeCarriesResourceId("project", null)).toBe(false);
+	it("parses every scopable kind carrying its own id — connector included (PARENTS, not GRANT_SCOPES)", () => {
+		for (const kind of ["project", "runner", "cloud_identity", "connector"]) {
+			const parsed = parseGrantResource(kind, "11111111-2222-3333-4444-555555555555");
+			expect(parsed).toEqual({
+				ok: true,
+				resource: { resourceType: kind, resourceId: "11111111-2222-3333-4444-555555555555" },
+			});
+			// And it is stored with that id, not collapsed.
+			expect(parsed.ok && resourceIdOf(parsed.resource)).toBe("11111111-2222-3333-4444-555555555555");
+		}
+	});
+});
+
+// A row already in the table cannot be refused, so it is narrowed — under the #4584 ruling, which
+// `grantScopeFromRow` applies through `targetForEffect` rather than restating. Until #4584 the
+// expander took the bad pair as ORGANIZATION-WIDE while the Postgres PDP read it as scoped to the
+// id; the ruling is that it confers nothing on allow and excludes org-wide on deny.
+describe("grantScopeFromRow (a stored row → the typed scope)", () => {
+	const row = { ...base, effect: "allow" as const };
+	const denyRow = { ...base, effect: "deny" as const };
+
+	it("an ALLOW row of the bad pair is null — it confers nothing, neither org-wide nor scoped", () => {
+		expect(grantScopeFromRow({ ...row, resourceType: "org", resourceId: "S" })).toBeNull();
 	});
 
-	// Guards the reason the refusal exists rather than the refusal itself. Until #4584 this
-	// asserted that `expandGrant` took ORG-WIDE for the refused pair and dropped the id — which
-	// is exactly what made such a row organization-wide in OpenFGA while the Postgres PDP read
-	// the same row as scoped to that id. The ruling is that a non-null `resource_id` is never
-	// org-wide, and `"org"` is not a kind a grant can be scoped to, so the pair now confers
-	// nothing at all. Both engines answer that from `grantTarget`.
-	it("expandGrant confers NOTHING for the refused pair — neither org-wide nor scoped", () => {
-		expect(
-			expandGrant(
-				{ ...base, effect: "allow", resourceType: "org", resourceId: "S" },
-				viewerKeys,
-			),
-		).toEqual([]);
+	it("an ALLOW row of an unrecognised kind is null — `resource_type` is free text in Postgres", () => {
+		expect(grantScopeFromRow({ ...row, resourceType: "banana", resourceId: "S" })).toBeNull();
 	});
 
-	// The same fail-closed answer for a resource_type nothing recognises. `resource_type` is free
-	// `text` in Postgres and two writers insert it with raw SQL, so this is reachable without
-	// going through any TypeScript construction site. It used to produce zero tuples HERE while
-	// the Postgres PDP treated the row as an ordinary scoped grant — the same divergence in a
-	// second costume.
-	it("expandGrant confers NOTHING for an unrecognised resource kind", () => {
-		expect(
-			expandGrant(
-				{ ...base, effect: "allow", resourceType: "banana", resourceId: "S" },
-				viewerKeys,
-			),
-		).toEqual([]);
+	// RULED (#4584): a DENY row that scopes to nothing excludes ORG-WIDE. Asserted as a literal so
+	// a reversal of `EMPTY_SCOPE_DENIES` cannot pass silently.
+	it("a DENY row of either shape is the ORG arm — an ambiguous exclusion is not a licence", () => {
+		for (const resourceType of ["org", "banana"]) {
+			const scope = grantScopeFromRow({ ...denyRow, resourceType, resourceId: "S" });
+			expect(scope).toEqual({ ...denyRow, resourceType: "org" });
+			expect(scope === null ? [] : expandGrant(scope, ["project:view"])).toEqual([
+				{ user: "user:U", relation: "project_deny_view", object: "org:O" },
+			]);
+		}
 	});
 
-	// The union of scopable kinds is derived from the hierarchy table (`PARENTS`), NOT from the
-	// read-side `GRANT_SCOPES` facet list, which omits `connector`. Taking the facet list would
-	// have made this working case confer nothing.
-	it("a connector-scoped grant still expands — the scopable set is PARENTS, not GRANT_SCOPES", () => {
-		const tuples = expandGrant(
-			{ ...base, effect: "allow", resourceType: "connector", resourceId: "C" },
-			ALL_KEYS,
-		);
+	it("a null id is org-wide whatever the kind column says (the column's own contract)", () => {
+		for (const resourceType of ["org", "project", "banana"]) {
+			expect(grantScopeFromRow({ ...row, resourceType, resourceId: null })).toEqual({
+				...row,
+				resourceType: "org",
+			});
+		}
+	});
+
+	it("a scoped row keeps its kind and id — connector included", () => {
+		const scope = grantScopeFromRow({ ...row, resourceType: "connector", resourceId: "C" });
+		expect(scope).toEqual({ ...row, resourceType: "connector", resourceId: "C" });
+		const tuples = scope === null ? [] : expandGrant(scope, ALL_KEYS);
 		expect(tuples.length).toBeGreaterThan(0);
 		expect(tuples.every((t) => t.object === "connector:C")).toBe(true);
 	});

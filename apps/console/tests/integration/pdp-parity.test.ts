@@ -22,7 +22,13 @@ import { z } from "zod";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { checksFor, denyChecksFor } from "@/lib/authz/fga-mapping";
 import { buildAuthorizationModel } from "@/lib/authz/fga-model";
-import { expandGrant, hierarchyTuple, teamMemberTuple, type FgaTuple } from "@/lib/authz/fga-tuples";
+import {
+	expandGrant,
+	grantScopeFromRow,
+	hierarchyTuple,
+	teamMemberTuple,
+	type FgaTuple,
+} from "@/lib/authz/fga-tuples";
 import { EMPTY_SCOPE_DENIES } from "@/lib/authz/grant-scope";
 import { PostgresRbacPDP } from "@/lib/authz/postgres-rbac-pdp";
 import type { Action, Resource } from "@/lib/authz/registry";
@@ -268,19 +274,21 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 			);
 		}
 		const tuples: FgaTuple[] = [
-			...seeded.flatMap((row) =>
-				expandGrant(
-					{
-						orgId: row.org_id,
-						principalType: principalTypeOf(row.principal_type),
-						principalId: row.principal_id,
-						effect: effectOf(row.effect),
-						resourceType: row.resource_type,
-						resourceId: row.resource_id,
-					},
-					permissionKeysOf(row.permission_key),
-				),
-			),
+			// Narrowed through `grantScopeFromRow` exactly as ee's `backfill` narrows a row: a row
+			// that resolves to nothing for its effect is skipped, the rest are expanded.
+			...seeded.flatMap((row) => {
+				const scope = grantScopeFromRow({
+					orgId: row.org_id,
+					principalType: principalTypeOf(row.principal_type),
+					principalId: row.principal_id,
+					effect: effectOf(row.effect),
+					resourceType: row.resource_type,
+					resourceId: row.resource_id,
+				});
+				return scope === null
+					? []
+					: expandGrant(scope, permissionKeysOf(row.permission_key));
+			}),
 			...edges.map((e) => hierarchyTuple(e)),
 			// Team membership is a fact about the org, not about a grant, so it is not something
 			// `expandGrant` can derive from a `grants` row — the dual-write mirrors it separately
