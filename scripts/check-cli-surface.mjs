@@ -2,15 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// THE CLI SURFACE CENSUS — REPORT MODE ONLY (#4373).
+// THE CLI SURFACE CENSUS — ENFORCING (#3664; built in report mode by #4373).
 //
-// #3664 is written as though this script and `apps/cli/cli-surface-allowlist.yaml` already run in
-// report mode and need promoting to enforcing. Measured 2026-09-08 on `dev`, neither existed and
-// `package.json` had no `cli-surface` entry, so there was no report mode to flip and #3664's four
-// target figures had no source. This is that source. It REPORTS. It is not wired into any required
-// check, and it does not ratchet: #3664 flips it, on numbers this has produced on real PRs first.
-// A ratchet armed on its own first census enforces whatever that census happened to measure —
-// including its bugs.
+// #4373 built this as a report, deliberately: a ratchet armed on its own first census enforces
+// whatever that census happened to measure, including its bugs. It then reported on real PRs while
+// #3663's lanes drained the CLI, and #4513 fixed two defects in its own reachability walk that the
+// reports exposed. Measured on `dev` 2026-09-18 (after #4820 landed #3663's last leaves) all four
+// counters read their target — 0 handoffs, 92 / 92 form coverage, 0 allowlist rows, 0 unlocked
+// mirrors — so #3664 flips it: ANY non-zero gap now exits 1, and the job it runs in
+// (`.github/workflows/ci.yml`, the shared-surface steps) fails with it. The allowlist
+// `apps/cli/cli-surface-allowlist.yaml` is DELETED rather than left at zero rows, and its presence
+// is now itself a violation — see counter 3.
 //
 //   node scripts/check-cli-surface.mjs              # the census (pnpm check:cli-surface)
 //   node scripts/check-cli-surface.mjs --json       # the same census as a machine-readable record
@@ -29,14 +31,20 @@
 //
 //   handoffs          refuses when it parses ZERO docs pages, or collects zero examples from them
 //   form coverage     refuses when it discovers ZERO commands, or zero runnable ones
-//   allowlist rows    refuses when the allowlist FILE IS MISSING, or carries no ledger keys
+//   allowlist rows    refuses when `apps/cli/cmd` itself is missing — an absence check run
+//                     against a tree that is not there proves nothing (see counter 3)
 //   unlocked mirrors  refuses when it finds ZERO `Mirrors the Go X` claims to check
 //
 // Bare zero is the floor, not the whole control. A counter that reads 3 of 35 docs pages is also
-// broken, and a bare-zero refusal cannot see that — so the allowlist additionally carries
-// `scanned:` FLOORS, the same census-floor mechanism `apps/console/shared-surface-allowlist.yaml`
-// uses, and a scope that reads fewer files than its floor is refused as well. The floors sit under
-// the live counts so an ordinary edit need not touch them; a DROP is the thing review stops.
+// broken, and a bare-zero refusal cannot see that — so each corpus also has a CENSUS FLOOR
+// (`CENSUS_FLOORS` below; they lived in the allowlist's `scanned:` block until #3664 deleted it),
+// and a scope that reads fewer files than its floor is refused as well. The floors sit under the
+// live counts so an ordinary edit need not touch them; a DROP is the thing review stops.
+//
+// A REFUSAL AND A VIOLATION ARE DIFFERENT EXITS OF THE SAME CODE, and are printed differently. A
+// refusal says the instrument could not measure; a violation says it measured a non-zero GAP
+// (`Census.gap`) where the target is zero. Both exit 1. Neither is excusable by a ledger row any
+// more: the only way past a violation is to fix the CLI or the docs it names.
 //
 // `--self-test` drives BOTH directions of every counter, the vacuity refusals included: for each
 // one there is a fixture that produces a finding and a fixture that produces a clean zero, and a
@@ -135,13 +143,13 @@
 //     with a Run and no subcommands, and a subcommands-only walk cannot see them), minus cobra's
 //     generated `help`/`completion` and anything Hidden.
 //
-// 3 · ALLOWLIST ROWS. Entries in `apps/cli/cli-surface-allowlist.yaml`, split into the same two
-//     ledgers the console's allowlist carries: `reason:` is a DECISION and counts against
-//     `baseline`, `lifts:` is measured drift a named board issue removes and counts against
-//     `debt`. The file is present and its ledgers are empty TODAY, and that is not a bug: a row is
-//     a recorded decision, and pre-seeding ~110 fake ones to make the number look like #3664's
-//     "whole CLI" would empty the word "decision" before the ratchet ever ran. The CLI's
-//     unconverted surface is what counter 2 measures.
+// 3 · ALLOWLIST ROWS. `apps/cli/cli-surface-allowlist.yaml` held the two ledgers the console's
+//     allowlist carries (`reason:` a DECISION, `lifts:` measured DEBT). It shipped empty in #4373
+//     on purpose and stayed empty — no command was ever excused — so #3664 deleted it. Its target
+//     was 0 rows AND no file: a file with zero rows is an invitation to add the first one. The
+//     counter is therefore now an ABSENCE check: the file reappearing is a violation whatever it
+//     contains, because re-opening an exception ledger for the CLI is a decision that belongs in a
+//     reviewed change to THIS script, not in a new YAML row.
 //
 // 4 · UNLOCKED MIRRORS. `Mirrors the Go X` claims with no mechanism behind them. The mechanism is
 //     `packages/core/jsonbmirror/jsonb_mirror_test.go`: it enrols exactly one file (its
@@ -160,7 +168,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 //
 // Every census below takes an `io` rather than touching `node:fs`, so the self-test can hand it a
 // tree held as strings in this file — including the trees that DO NOT EXIST, which is the only way
-// to drive a "the allowlist file is missing" refusal without deleting a committed file.
+// to drive a "the CLI package is missing" refusal without deleting a committed directory.
 
 /**
  * @typedef {object} Io
@@ -238,6 +246,9 @@ function listRecursive(dir, ext) {
  * @property {string} method      how the number below was derived; printed beside it, always
  * @property {string|null} refusal  non-null when the census came back empty; makes the run exit 1
  * @property {number} value       the counter
+ * @property {number} gap         how far the counter is from its target; ENFORCED at zero. Equal
+ *                                to `value` for the three count-down counters, and the uncovered
+ *                                commands for form coverage, whose `value` is the numerator
  * @property {string} rendered    the counter as a human reads it (a ratio is not one number)
  * @property {string[]} notes     corroborating derivations, deltas, and stated blind spots
  * @property {string[]} findings  the individual items behind `value`, for a reader to audit
@@ -256,7 +267,7 @@ function listRecursive(dir, ext) {
  * @returns {Census}
  */
 function refused(name, method, refusal) {
-	return { name, method, refusal, value: Number.NaN, rendered: "REFUSED", notes: [], findings: [] };
+	return { name, method, refusal, value: Number.NaN, gap: Number.NaN, rendered: "REFUSED", notes: [], findings: [] };
 }
 
 // ── counter 1 · handoffs ──────────────────────────────────────────────────────────────────────
@@ -420,7 +431,7 @@ function censusHandoffs(io, pagesFloor) {
 			name,
 			method,
 			`read ${pages.length} docs pages, below the census floor of ${pagesFloor} in ` +
-				`${ALLOWLIST_PATH}. Either the corpus shrank (raise nothing — find out why) or this ` +
+				`CENSUS_FLOORS. Either the corpus shrank (raise nothing — find out why) or this ` +
 				`counter stopped seeing most of it. Bare zero would not have caught this.`,
 		);
 	}
@@ -503,7 +514,7 @@ function censusHandoffs(io, pagesFloor) {
 			`Its docsPlaceholderToken is the WIDER rule — it still counts both exclusions above — so on ` +
 			`an enrolled page the two numbers differ BY CONSTRUCTION and this one is the smaller.`,
 	];
-	return { name, method, refusal: null, value: tokens, rendered: String(tokens), notes, findings };
+	return { name, method, refusal: null, value: tokens, gap: tokens, rendered: String(tokens), notes, findings };
 }
 
 // ── counter 2 · form coverage ─────────────────────────────────────────────────────────────────
@@ -949,7 +960,7 @@ function censusFormCoverage(io, filesFloor) {
 			name,
 			method,
 			`read ${files.length} command files, below the census floor of ${filesFloor} in ` +
-				`${ALLOWLIST_PATH}. The package moved, or this counter stopped seeing most of it.`,
+				`CENSUS_FLOORS. The package moved, or this counter stopped seeing most of it.`,
 		);
 	}
 
@@ -1122,6 +1133,7 @@ function censusFormCoverage(io, filesFloor) {
 		method,
 		refusal: null,
 		value: interactive,
+		gap: takingInput - interactive,
 		rendered: `${interactive} / ${takingInput} (${pct}%)`,
 		notes,
 		findings,
@@ -1131,129 +1143,56 @@ function censusFormCoverage(io, filesFloor) {
 
 // ── counter 3 · allowlist rows ────────────────────────────────────────────────────────────────
 
-/** The CLI's shared-surface allowlist. Its ABSENCE is a refusal, not a zero. */
+/** The CLI's former shared-surface allowlist, deleted by #3664. Its PRESENCE is the violation. */
 const ALLOWLIST_PATH = "apps/cli/cli-surface-allowlist.yaml";
 
-/** The ledger keys the file must declare. A file with none of them is a parse failure, not a zero. */
-const LEDGER_KEYS = ["baseline", "debt"];
+/**
+ * The fewest files each corpus may read before its counter is REFUSED. Moved here verbatim from
+ * the deleted allowlist's `scanned:` block (measured 2026-09-09: 35 CLI docs pages, 109 non-test
+ * files in apps/cli/cmd). The corpora only grow, so these may be raised freely; lowering one is
+ * the change review stops.
+ */
+const CENSUS_FLOORS = { cli_docs: 30, cli_cmd: 100 };
 
 /**
- * Counter 3, and the census floors the other counters read.
+ * Counter 3: the deleted allowlist must stay deleted.
  *
- * A line parser, not a YAML library: `yaml` is a dependency of apps/console, not of the root, and
- * this runs under plain `node` — the same constraint check-pnpm-script-refs.mjs and
- * check-workflow-shape.mjs work under. The shape it reads is fixed by this file's own header.
+ * An absence check reads nothing, so its vacuity refusal is about WHERE it looks: when the CLI's
+ * own command package is not in the tree, "the file is absent" is true of a repository that has
+ * no CLI at all, and is refused rather than reported as 0.
  * @param {Io} io
- * @returns {{census: Census, floors: Record<string, number>}}
+ * @returns {Census}
  */
 function censusAllowlist(io) {
 	const name = "allowlist entries";
 	const method =
-		`rows in ${ALLOWLIST_PATH}, counted as \`reason:\` (a DECISION → baseline) and \`lifts:\` ` +
-		`(measured drift a board issue removes → debt), cross-checked against the file's own ` +
-		`\`baseline:\`/\`debt:\` counters`;
+		`${ALLOWLIST_PATH} was deleted by #3664 once its two ledgers had stayed empty; the counter is ` +
+		`1 when that file exists (whatever it contains) and 0 when it does not`;
 
-	if (!io.exists(ALLOWLIST_PATH)) {
-		return {
-			census: refused(
-				name,
-				method,
-				`${ALLOWLIST_PATH} IS MISSING. An absent allowlist is not an allowlist with no entries: ` +
-					`nothing is recording what the CLI is excused from, so a count of 0 would read as ` +
-					`"the whole CLI conforms". Create it — the header of this script says what it holds.`,
-			),
-			floors: {},
-		};
-	}
-	/** @type {string} */
-	let raw;
-	try {
-		raw = io.read(ALLOWLIST_PATH);
-	} catch (err) {
-		return {
-			census: refused(name, method, `${ALLOWLIST_PATH} exists but could not be read: ${String(err)}`),
-			floors: {},
-		};
-	}
-
-	const lines = raw.split("\n");
-	/** @type {Record<string, number>} */
-	const declared = {};
-	for (const key of LEDGER_KEYS) {
-		const m = new RegExp(`^${key}:\\s*(\\d+)\\s*$`, "m").exec(raw);
-		if (m !== null) declared[key] = Number(m[1]);
-	}
-	const missingKeys = LEDGER_KEYS.filter((k) => !(k in declared));
-	if (missingKeys.length > 0) {
-		return {
-			census: refused(
-				name,
-				method,
-				`${ALLOWLIST_PATH} declares no ${missingKeys.join(" and no ")} counter. The file is ` +
-					`present but this parser understood none of it, which is a broken read reported as a ` +
-					`clean zero unless it is refused here.`,
-			),
-			floors: {},
-		};
-	}
-
-	let baseline = 0;
-	let debt = 0;
-	/** @type {string[]} */
-	const findings = [];
-	/** @type {Record<string, number>} */
-	const floors = {};
-	let scope = "";
-	for (const line of lines) {
-		if (/^\s*#/.test(line)) continue;
-		const reason = /^\s*(?:-\s*)?reason:\s*\S/.exec(line);
-		if (reason !== null) {
-			baseline++;
-			findings.push(`baseline row: ${line.trim().slice(0, 120)}`);
-			continue;
-		}
-		if (/^\s*(?:-\s*)?lifts:\s*\S/.test(line)) {
-			debt++;
-			findings.push(`debt row: ${line.trim().slice(0, 120)}`);
-			continue;
-		}
-		const scopeM = /^\s*-\s*scope:\s*([A-Za-z0-9_]+)\s*$/.exec(line);
-		if (scopeM !== null) {
-			scope = scopeM[1];
-			continue;
-		}
-		const floorM = /^\s*floor:\s*(\d+)\s*$/.exec(line);
-		if (floorM !== null && scope !== "") {
-			floors[scope] = Number(floorM[1]);
-			scope = "";
-		}
-	}
-
-	const notes = [
-		`baseline (decisions) ${baseline}, debt (measured drift) ${debt}.`,
-		`the file's own counters say baseline ${declared.baseline}, debt ${declared.debt}` +
-			`${declared.baseline === baseline && declared.debt === debt ? " — they agree with the rows." : " — THEY DISAGREE WITH THE ROWS above; one of the two is wrong and neither may be believed."}`,
-		`census floors declared: ${Object.keys(floors).length === 0 ? "NONE" : Object.entries(floors).map(([k, v]) => `${k}=${v}`).join(", ")}.`,
-		`zero rows is a legitimate reading and a missing FILE is not: report mode has recorded no ` +
-			`decisions yet, and pre-seeding the CLI's unconverted surface as ~110 fake "decisions" ` +
-			`would empty the word before the ratchet ran. Counter 2 measures that surface.`,
-	];
-	return {
-		census: {
+	if (!io.exists(CLI_CMD_DIR)) {
+		return refused(
 			name,
 			method,
-			refusal:
-				declared.baseline === baseline && declared.debt === debt
-					? null
-					: `${ALLOWLIST_PATH}'s counters disagree with its rows (declared baseline ` +
-						`${declared.baseline}/debt ${declared.debt}, counted ${baseline}/${debt}). ` +
-						`Fix the counters; do not fix the rows to suit them.`,
-			value: baseline + debt,
-			rendered: `${baseline + debt} (baseline ${baseline} + debt ${debt})`,
-			notes,
-			findings,
-		},
-		floors,
+			`${CLI_CMD_DIR} IS MISSING, so the absence of ${ALLOWLIST_PATH} says nothing about the CLI ` +
+				`— there is no CLI here to be excused. The tree moved; point this counter at it.`,
+		);
+	}
+	const present = io.exists(ALLOWLIST_PATH);
+	return {
+		name,
+		method,
+		refusal: null,
+		value: present ? 1 : 0,
+		gap: present ? 1 : 0,
+		rendered: present ? "1 (the deleted allowlist is back)" : "0 (no allowlist file)",
+		notes: [
+			`the ledger this replaced shipped with zero rows in #4373 and never gained one, so no CLI ` +
+				`command has ever been excused from counters 1, 2 or 4. Re-introducing an exception ` +
+				`mechanism is a change to this script, reviewed as one — not a YAML row.`,
+		],
+		findings: present
+			? [`${ALLOWLIST_PATH} exists. Delete it; if a command genuinely needs an exception, change this script and say why in its header.`]
+			: [],
 	};
 }
 
@@ -1542,41 +1481,51 @@ function censusMirrors(io) {
 		} carry the phrase at all; ${claimCount + proseCount} phrase occurrences in total.`,
 		...(unexportedFindings.length > 0 ? [`unlockable, reported not counted: ${unexportedFindings.join("; ")}`] : []),
 	];
-	return { name, method, refusal: null, value: unlocked, rendered: String(unlocked), notes, findings };
+	return { name, method, refusal: null, value: unlocked, gap: unlocked, rendered: String(unlocked), notes, findings };
 }
 
 // ── the run ───────────────────────────────────────────────────────────────────────────────────
 
 /**
- * Run all four counters. The allowlist is censused FIRST because it carries the census floors the
- * other two read — and a missing allowlist therefore leaves them with no floor, which is why an
- * absent floor means "bare zero only" rather than "pass".
+ * Run all four counters, with the corpus floors from CENSUS_FLOORS.
  * @param {Io} io
  * @returns {Census[]}
  */
 function runCensus(io) {
-	const { census: allowlist, floors } = censusAllowlist(io);
 	return [
-		censusHandoffs(io, floors.cli_docs ?? 0),
-		censusFormCoverage(io, floors.cli_cmd ?? 0),
-		allowlist,
+		censusHandoffs(io, CENSUS_FLOORS.cli_docs),
+		censusFormCoverage(io, CENSUS_FLOORS.cli_cmd),
+		censusAllowlist(io),
 		censusMirrors(io),
 	];
 }
 
 /**
- * Print the census and return the process exit code. A REFUSAL is printed in place of the number
- * it would otherwise have replaced, never beside one.
+ * The counters that measured a non-zero gap. A refused counter is NOT listed here — it has no
+ * gap to report, and it fails the run through its refusal instead.
+ * @param {Census[]} censuses
+ * @returns {Census[]}
+ */
+function violations(censuses) {
+	return censuses.filter((c) => c.refusal === null && c.gap !== 0);
+}
+
+/**
+ * Print the census and return the process exit code: 1 when any counter REFUSED or measured a
+ * non-zero gap, 0 only when all four measured zero over a non-empty census. A refusal is printed in
+ * place of the number it would otherwise have replaced, never beside one.
  * @param {Census[]} censuses
  * @param {boolean} asJson
  * @returns {number}
  */
 function report(censuses, asJson) {
+	const refusals = censuses.filter((c) => c.refusal !== null);
+	const violated = violations(censuses);
 	if (asJson) {
 		console.log(JSON.stringify({ generated: "check-cli-surface.mjs", censuses }, null, 2));
-		return censuses.some((c) => c.refusal !== null) ? 1 : 0;
+		return refusals.length > 0 || violated.length > 0 ? 1 : 0;
 	}
-	console.log("CLI surface census — REPORT MODE (#4373). Nothing here fails a required check.\n");
+	console.log("CLI surface census — ENFORCING (#3664). Every counter's target is a zero gap.\n");
 	for (const c of censuses) {
 		if (c.refusal !== null) {
 			console.log(`✗ ${c.name}: REFUSED`);
@@ -1584,7 +1533,7 @@ function report(censuses, asJson) {
 			console.log(`    method: ${c.method}\n`);
 			continue;
 		}
-		console.log(`· ${c.name}: ${c.rendered}`);
+		console.log(`${c.gap === 0 ? "·" : "✗"} ${c.name}: ${c.rendered}${c.gap === 0 ? "" : ` — GAP ${c.gap}, target 0`}`);
 		console.log(`    method: ${c.method}`);
 		for (const n of c.notes) console.log(`    note: ${n}`);
 		if (c.findings.length > 0) {
@@ -1596,15 +1545,21 @@ function report(censuses, asJson) {
 		}
 		console.log("");
 	}
-	const refusals = censuses.filter((c) => c.refusal !== null);
 	if (refusals.length > 0) {
 		console.error(
 			`check-cli-surface: ${refusals.length} of ${censuses.length} counters REFUSED to report a ` +
 				`number. An empty census is not a clean one.`,
 		);
-		return 1;
 	}
-	console.log("All four counters reported a number over a non-empty census.");
+	if (violated.length > 0) {
+		console.error(
+			`check-cli-surface: ${violated.map((c) => `${c.name} (gap ${c.gap})`).join(", ")} ` +
+				`above target. There is no allowlist to add a row to (#3664 deleted it): fix what the ` +
+				`findings above name.`,
+		);
+	}
+	if (refusals.length > 0 || violated.length > 0) return 1;
+	console.log("All four counters measured a zero gap over a non-empty census.");
 	return 0;
 }
 
@@ -1629,11 +1584,6 @@ function ok(label, pass) {
 	}
 	failures++;
 	console.log(`  FAIL ${label}`);
-}
-
-/** A minimal allowlist fixture with both ledgers at zero and no census floors. @returns {string} */
-function fixtureAllowlist(baseline = 0, debt = 0, rows = "") {
-	return `# fixture\nbaseline: ${baseline}\ndebt: ${debt}\n\nscanned:\n  - scope: cli_docs\n    floor: 1\n  - scope: cli_cmd\n    floor: 1\n\nformat:\n${rows}`;
 }
 
 /**
@@ -1668,6 +1618,25 @@ function fixtureMechanism() {
 	].join("\n");
 }
 
+/**
+ * Run `fn` with console output discarded, so a self-test that drives report() for its exit code
+ * does not print a whole census per assertion. Output is restored even when `fn` throws.
+ * @template T
+ * @param {() => T} fn
+ * @returns {T}
+ */
+function silently(fn) {
+	const { log, error } = console;
+	console.log = () => {};
+	console.error = () => {};
+	try {
+		return fn();
+	} finally {
+		console.log = log;
+		console.error = error;
+	}
+}
+
 /** Drive every counter in all three directions. Exits 1 on any failure. */
 function selfTest() {
 	console.log("check-cli-surface self-test\n");
@@ -1677,7 +1646,6 @@ function selfTest() {
 	{
 		const dirty = memoryIo({
 			[`${CLI_DOCS_DIR}/a.mdx`]: "```bash\nalethia jobs logs <job-id>\n```\n",
-			[ALLOWLIST_PATH]: fixtureAllowlist(),
 		});
 		const c = censusHandoffs(dirty, 1);
 		ok("a `<job-id>` example is a finding", c.refusal === null && c.value === 1 && c.findings.length === 1);
@@ -2166,34 +2134,19 @@ function selfTest() {
 	// ── counter 3 · allowlist rows ────────────────────────────────────────────────────────────
 	console.log("\ncounter 3 · allowlist rows");
 	{
-		const empty = censusAllowlist(memoryIo({ [ALLOWLIST_PATH]: fixtureAllowlist(0, 0) }));
-		ok("an empty ledger is a legitimate zero", empty.census.refusal === null && empty.census.value === 0);
-		ok("...and its census floors are read", empty.floors.cli_docs === 1 && empty.floors.cli_cmd === 1);
+		const cli = { [`${CLI_CMD_DIR}/root.go`]: "package cmd\n" };
+		const absent = censusAllowlist(memoryIo(cli));
+		ok("no allowlist file is a clean zero", absent.refusal === null && absent.value === 0 && absent.gap === 0);
 
-		const rows = fixtureAllowlist(1, 1, "  - path: x\n    reason: A decision.\n  - path: y\n    lifts: \"#1 removes it\"\n");
-		const two = censusAllowlist(memoryIo({ [ALLOWLIST_PATH]: rows }));
-		ok("a reason row counts against baseline and a lifts row against debt", two.census.value === 2 && two.census.rendered.includes("baseline 1 + debt 1"));
+		const back = censusAllowlist(memoryIo({ ...cli, [ALLOWLIST_PATH]: "baseline: 0\ndebt: 0\n" }));
+		ok("the deleted allowlist coming back is a violation, even with zero rows", back.refusal === null && back.gap === 1);
+		ok("...and it names the file", back.findings.length === 1 && back.findings[0].includes(ALLOWLIST_PATH));
 
-		const skewed = censusAllowlist(memoryIo({ [ALLOWLIST_PATH]: fixtureAllowlist(7, 0) }));
-		ok("counters that disagree with the rows are a refusal", skewed.census.refusal !== null);
-
-		// The refusal this counter exists for.
-		ok("a MISSING allowlist file is a refusal, not a zero", censusAllowlist(memoryIo({})).census.refusal !== null);
+		// The vacuity refusal: an absence check against a tree with no CLI in it proves nothing.
+		ok("a tree with NO apps/cli/cmd is a refusal, not a zero", censusAllowlist(memoryIo({})).refusal !== null);
 		ok(
-			"...and the refusal says the file is missing rather than reporting 0 rows",
-			(censusAllowlist(memoryIo({})).census.refusal ?? "").includes("IS MISSING"),
-		);
-		ok(
-			"a present file this parser understands NONE of is a refusal",
-			censusAllowlist(memoryIo({ [ALLOWLIST_PATH]: "# just a comment\n" })).census.refusal !== null,
-		);
-		ok(
-			"a commented-out row is not a row",
-			censusAllowlist(memoryIo({ [ALLOWLIST_PATH]: `${fixtureAllowlist(0, 0)}  # - path: x\n  #   reason: nope\n` })).census.value === 0,
-		);
-		ok(
-			"a missing allowlist leaves the other counters with NO floor rather than a passing one",
-			censusAllowlist(memoryIo({})).floors.cli_docs === undefined,
+			"a tree with other files but no apps/cli/cmd is still a refusal",
+			censusAllowlist(memoryIo({ "README.md": "x" })).refusal !== null,
 		);
 	}
 
@@ -2497,7 +2450,35 @@ function selfTest() {
 		const anyRefusal = runCensus(memoryIo({}));
 		ok("an empty repository refuses ALL FOUR counters", anyRefusal.every((c) => c.refusal !== null));
 		ok("...and none of them renders a number", anyRefusal.every((c) => c.rendered === "REFUSED"));
-		ok("a refused run reports a non-zero exit code", report(anyRefusal, true) === 1);
+		ok("a refused run reports a non-zero exit code", silently(() => report(anyRefusal, true)) === 1);
+
+		// ENFORCEMENT (#3664). Report mode exited 0 whatever the counters said; these are the
+		// assertions that it no longer does, driven through report() — the function whose return
+		// value IS the process exit code — rather than through violations() alone.
+		/** @param {string} name @param {number} gap @returns {Census} */
+		const measured = (name, gap) => ({ name, method: "fixture", refusal: null, value: gap, gap, rendered: String(gap), notes: [], findings: [] });
+		const clean = ["handoffs", "form coverage", "allowlist entries", "unlocked mirrors"].map((n) => measured(n, 0));
+		ok("four zero gaps exit 0", silently(() => report(clean, true)) === 0);
+		for (const i of [0, 1, 2, 3]) {
+			const one = clean.map((c, k) => (k === i ? measured(c.name, 1) : c));
+			ok(`a gap of 1 in ${clean[i].name} exits 1`, silently(() => report(one, true)) === 1 && violations(one).length === 1);
+		}
+		ok("a refused counter is not ALSO listed as a violation", violations(anyRefusal).length === 0);
+
+		// Each real counter sets its gap from the thing its target names, not from `value` blindly:
+		// form coverage's value is the NUMERATOR, so a gap equal to it would enforce 0% coverage.
+		const handoff = censusHandoffs(memoryIo({ [`${CLI_DOCS_DIR}/a.mdx`]: "```bash\nalethia jobs logs <job-id>\n```\n" }), 1);
+		ok("a handoff finding is a gap of 1", handoff.gap === 1);
+		const uncovered = censusFormCoverage(
+			memoryIo({
+				[`${CLI_CMD_DIR}/root.go`]:
+					'package cmd\nvar rootCmd = &cobra.Command{Use: "alethia"}\n' +
+					'var aCmd = &cobra.Command{\n\tUse: "create [name]",\n\tRun: func() { fmt.Println(1) },\n}\n' +
+					"func init() { rootCmd.AddCommand(aCmd) }\n",
+			}),
+			1,
+		);
+		ok("an input-taking command with no form is a gap of 1 (value 0 — the numerator)", uncovered.refusal === null && uncovered.value === 0 && uncovered.gap === 1);
 
 		// The mode parser. `process.argv.includes("--self-test")` is how a typo silently becomes a
 		// full scan reported as green — check-shared-surface.mjs records that one, so this parser
@@ -2521,12 +2502,12 @@ function selfTest() {
 const USAGE = [
 	"Usage: node scripts/check-cli-surface.mjs [--json|--self-test|--help]",
 	"",
-	"  (no flag)      run the census and print the four counters with their methods",
+	"  (no flag)      run the census, print the four counters with their methods, enforce them",
 	"  --json         the same census as a machine-readable record, findings included",
 	"  --self-test    run the fixture suite; exit 1 on any failure",
 	"  --help         this text",
 	"",
-	"Report mode (#4373). #3664 flips it to enforcing; do not add it to a required check here.",
+	"Enforcing (#3664): exit 1 when any counter refuses or measures a non-zero gap.",
 ].join("\n");
 
 /**
