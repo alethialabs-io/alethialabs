@@ -656,6 +656,21 @@ func (g *GIT) ClearRepoContents() error {
 }
 
 // Bootstrap bootstraps the infrastructure-as-code repository. ctx bounds the push it ends with.
+//
+// It has no production caller, and that is deliberate: it is kept as groundwork
+// for the starter-template flow of epic #2766 (maintainer ruling B on #4109,
+// 2026-09-18). It copies a template repository into a project's IaC repository,
+// skipping ".git" and the "variable-template" directory, then copies each
+// template file named in repoFilesMap to its destination path. That
+// template-instantiation contract is what a scaffold-from-template flow needs,
+// so do not delete this as dead code because nothing calls it; wire it into
+// #2766 instead, or ask the maintainer to reverse the ruling on #4109.
+//
+// No checker flags it today, so it carries no suppression. golangci-lint's
+// `unused` linter (.golangci.yml) does not report exported identifiers, and the
+// repo's dead-code check (apps/console `check:dead-code`) reads only the console's
+// TypeScript. Only the tests in this package call it: git_ops_test.go,
+// git_more_test.go and cov_git_test.go.
 func (g *GIT) Bootstrap(ctx context.Context, templateRepo *GIT, repoFilesMap map[string]string, updateRepo bool, logger *utils.Logger) error {
 	logger.Info(fmt.Sprintf("Bootstrapping infrastructure-as-code git repository into %s...", g.LocalPath), "git")
 	changes := false
