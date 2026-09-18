@@ -7,19 +7,23 @@
 # The CLI is a thin client over the Alethia control plane. Its LOGIC — the HTTP
 # wire client, output rendering (table/json/csv), data projections, formatting
 # helpers, config + active-org persistence, and the auth-token lifecycle — is
-# unit-tested. The irreducible INTERACTIVE / IO layer is excluded from the badge,
-# exactly as the web app excludes vendored UI from its coverage scope:
+# unit-tested. Files whose bodies are still partly INTERACTIVE / IO glue that the
+# tests do not reach are excluded from the badge, exactly as the web app excludes
+# vendored UI from its coverage scope:
 #
-#   * Bubble Tea views/models   (table.go, stepper.go, the paginated job table)
-#   * huh selectors & spinners  (selectors.go, the interactive org/runner pickers)
-#   * lipgloss pretty-printers   (config_printer.go)
+#   * Bubble Tea / lipgloss renderers (table.go — both of them — and config_printer.go)
 #   * device-code browser login  (login.go) + the `init` onboarding wizard
 #   * interactive runners        (interactive.go: RunSpinner / AuthRequiredPrompt)
-#   * logout / banner / version wiring
-#   * cloud-account + provisioning command adapters that are pure network/TTY glue
-#     (connector{,_aws,_gcp,_azure,_alibaba,_remove}.go, runner_{deploy,destroy,remove}.go,
-#      project_{plan,apply,destroy,get}.go, jobs_{logs,cancel}.go, job_wait.go)
+#   * version wiring, main.go, and connector_remove.go (39 of 40 statements covered)
 #   * system exec (internal/cloudshell) and embedded assets (internal/connector)
+#
+# THIS LIST ONLY SHRINKS, and it is a measurement, not a category. It once also named
+# stepper, selectors, helpers, jobs_table, logout, root, job_wait, jobs_{logs,cancel},
+# connector{,_aws,_gcp,_azure,_alibaba}, runner_{deploy,destroy,remove} and
+# project_{plan,apply,destroy,get} as "irreducible glue"; #3663's lanes put every one of
+# them at 100% statement coverage (measured 2026-09-18), so excluding them only hid a
+# future regression from the badge. #3664 removed them. When a file here reaches 100%,
+# take it out; nothing checks that for you.
 #
 # Everything else — the files that hold real branching logic — stays IN scope and
 # must carry its weight. Run from anywhere: apps/cli/scripts/coverage.sh
@@ -32,8 +36,8 @@ trap 'rm -f "$PROFILE" "$FILTERED"' EXIT
 
 go test ./... -coverprofile="$PROFILE" -covermode=set >/dev/null
 
-# Files whose bodies are predominantly interactive/IO glue (see header).
-EXCLUDE_FILES='/(table|stepper|config_printer|selectors|helpers|jobs_table|interactive|init|login|logout|root|main|version|job_wait|jobs_logs|jobs_cancel|connector|connector_aws|connector_gcp|connector_azure|connector_alibaba|connector_remove|runner_deploy|runner_destroy|runner_remove|project_plan|project_apply|project_destroy|project_get)\.go:'
+# Files whose bodies are still partly interactive/IO glue the tests do not reach (see header).
+EXCLUDE_FILES='/(table|config_printer|interactive|init|login|main|version|connector_remove)\.go:'
 EXCLUDE_DIRS='/(internal/cloudshell|internal/connector|internal/version)/'
 
 head -1 "$PROFILE" >"$FILTERED"

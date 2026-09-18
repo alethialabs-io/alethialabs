@@ -931,12 +931,13 @@ jobs:
       # Folded into a job that already runs, it costs ZERO additional slots, which is why it can
       # afford to run on every PR rather than nightly.
       #
-      # IT REPORTS; IT DOES NOT GATE ON ITS FINDINGS. The census exits 0 whatever the four counters
-      # say, and non-zero only when a counter cannot honestly measure — an emptied docs tree, a
-      # missing allowlist, a census below its floor. So being inside a REQUIRED job blocks a broken
-      # INSTRUMENT and never a finding, which is what report mode has to mean if #3664 is ever to
-      # flip on a series of real numbers instead of one hand-run snapshot.
-      - name: CLI surface census (reports four numbers; fails only if it cannot measure)
+      # IT ENFORCES (#3664). #4373 shipped it in report mode — exit 0 whatever the counters said —
+      # so the numbers could be watched on real PRs before a ratchet was armed on them. All four
+      # reached target on dev (0 handoffs, 92/92 form coverage, 0 allowlist rows, 0 unlocked
+      # mirrors), so any non-zero gap now exits 1 and fails this job, as does a counter that
+      # cannot measure. apps/cli/cli-surface-allowlist.yaml was deleted, and its return is itself
+      # a violation: there is no ledger to excuse a finding with.
+      - name: CLI surface census (four counters, each enforced at a zero gap)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:cli-surface
       - name: ...and that census is not silently blind
