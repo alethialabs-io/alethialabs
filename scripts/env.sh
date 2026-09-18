@@ -185,10 +185,6 @@ box_exists() {
   [ -n "$(box_ip)" ] && hc server describe "$SERVER_NAME" >/dev/null 2>&1
 }
 
-# Is an agent driving? Same signal scripts/lib/wt-lease.sh uses. Outside Claude this is
-# unset, so a human is never gated by it.
-agent_driving() { [ -n "${CLAUDE_PID:-}" ] && [ "${ALETHIA_ALLOW_IAC:-}" != "1" ]; }
-
 require_box() {
   local ip
 
@@ -220,19 +216,13 @@ MSG
   It was either never created, or env:reap snapshotted and deleted it (which is the
   normal idle state — a stopped Hetzner server still bills, a deleted one does not).
 MSG
-    if agent_driving; then
-      cat >&2 <<'MSG'
+    # Agents and humans get the same answer: restoring THIS box is agent-runnable by the
+    # maintainer's ruling on #4483 (2026-09-18), and so is reaping it again afterwards.
+    cat >&2 <<'MSG'
 
-  ASK THE MAINTAINER to bring it back. Restoring runs `tofu apply`, which is a human
-  action in this repo (infra/README.md) and is refused for agents by
-  .claude/hooks/guard-iac.sh. Do not try to route around that.
+  Bring it back with:   pnpm env:box        (from the main checkout — it writes the state)
+  Reap it when done:    pnpm env:reap --now (or pnpm env:timer — the box bills while it exists)
 MSG
-    else
-      cat >&2 <<'MSG'
-
-  Bring it back with:   pnpm env:box
-MSG
-    fi
     exit 1
   fi
   printf '%s' "$ip"
@@ -336,23 +326,17 @@ preflight_capacity() {
   fi
 }
 
-# The two commands that MUTATE infrastructure. Both are gated twice on purpose.
+# The two commands that MUTATE infrastructure: `env:box` (tofu apply) and `env:reap` (tofu
+# destroy). Both are agent-runnable by the maintainer's ruling on #4483 (2026-09-18): the
+# cost model needs the box restored and reaped without waiting for a human. Raw tofu
+# apply/destroy is still refused by .claude/hooks/guard-iac.sh, so "an agent can apply
+# arbitrary infrastructure" stays false — this opens only the two commands that manage THIS
+# box, against THIS state.
 #
-# `.claude/hooks/guard-iac.sh` blocks the tofu command text — but `pnpm env:box` contains
-# no "tofu" at all, and the real apply is spawned inside this script where no PreToolUse
-# hook can see it. THE WRAPPER WAS THE BYPASS, and require_box used to point agents
-# straight at it. A hook list of wrapper names can never be proven exhaustive, so the
-# wrapped script refuses too — that check cannot be dodged by finding another wrapper.
-#
-# They also have to run where the state file is: a worktree writing the main checkout's
-# state through a TF_DIR pointer is state mutation across trees.
-# The lifecycle wrappers are agent-runnable by decision: the cost model needs the box
-# reaped and restored without waiting for a human. Raw tofu apply/destroy is still refused
-# by .claude/hooks/guard-iac.sh, so "an agent can apply arbitrary infrastructure" stays
-# false — this only opens the two commands that manage THIS box.
-#
-# They still have to run where the state file is: a worktree writing the main checkout's
-# state through a TF_DIR pointer is state mutation across trees.
+# What still guards them is WHERE they run, enforced below: a worktree has no state (it is
+# gitignored and lives only in the main checkout), so an apply from one would build a SECOND
+# server plus duplicate tunnel and DNS records. require_main_checkout refuses that, and
+# require_box refuses to read "no state" as "no box".
 require_main_checkout() { # <command>
   if [ "$ROOT" != "$MAIN_CHECKOUT" ]; then
     die "\`$1\` must run in the main checkout ($MAIN_CHECKOUT) — it writes OpenTofu state."
