@@ -97,8 +97,9 @@ pnpm env:down    # RELEASE the slot when you're finished with the branch
 The box is **shared** with every other instance and the maintainer: 2 environments (a
 measured memory ceiling — an env needs 5–7 GB). Take a slot only when you need a *running*
 app — build, type-check, lint and unit tests do not need one — and release it when you are
-done. Nothing is reclaimed automatically. If the box is down, **ask the maintainer**;
-restoring it runs `tofu apply`, which agents are refused.
+done. Nothing is reclaimed automatically. If the box is down, restore it with `pnpm env:box`
+**from the main checkout** and reap it when you finish — agents may, by ruling on #4483. Raw
+`tofu apply` stays refused; only these two wrappers are open.
 
 **Ask `pnpm env:status` what is there; do not assume a free slot.** This paragraph used to
 promise that "`dev` permanently holds one as the integration env, leaving one branch slot",
