@@ -244,9 +244,14 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 	[
 		"team-with-a-member",
 		{
-			writes: "one `team` row plus a `team_member` row — the Manage members dialog needs a row to offer Remove on",
+			writes:
+				"one `team` row with the audit's OWN user as its one `team_member` — the only member the Manage members dialog can list to a viewer",
 			seed: async (scope) => {
 				const sql = db();
+				// "Audit Staffed Team …" sorts before the `team` fixture's "Audit Team …", and the list
+				// is ordered by name (lib/queries/teams.ts → `orderBy(asc(team.name))`). That order is
+				// load-bearing: `teams.member.remove`'s reach opens the FIRST row's "Manage team" menu,
+				// because the row trigger's accessible name does not carry the team's.
 				const [team] = await sql<{ id: string }[]>`
 					insert into team ${sql({
 						organization_id: scope.owner.orgId,
@@ -254,12 +259,20 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 					})}
 					returning id`;
 				if (!team) throw new Error("insert into team returned no row");
-				const colleague = await seedOrgMember(scope.owner, {
-					label: `audit-team-member-${unique()}`,
-					name: "Audit Team Colleague",
-				});
+				// THE MEMBER IS THE VIEWER, not a seeded colleague (#4800). `ManageTeamDialog` reads
+				// its roster through `authClient.organization.listTeamMembers`, and Better Auth's
+				// handler (better-auth 1.7.3, plugins/organization/routes/crud-team) refuses unless
+				// the CALLER is on the team: `findTeamMember({ userId: session.user.id, teamId })`,
+				// else USER_IS_NOT_A_MEMBER_OF_THE_TEAM. The dialog drops that error
+				// (`res.data ?? []`), so a team holding only a colleague rendered "No members yet."
+				// to its org owner and `{button: "Remove"}` was withheld as not rendered. The owner
+				// is the viewer here because `resolveOwner` takes the org's earliest owner/admin,
+				// which is the e2e user whose session created the org.
+				//
+				// ONE member, so the dialog holds exactly one "Remove …" — a colleague added beside
+				// the owner would make the trigger ambiguous, and `resolveTrigger` would withhold it.
 				await sql`
-					insert into team_member ${sql({ team_id: team.id, user_id: colleague.userId })}`;
+					insert into team_member ${sql({ team_id: team.id, user_id: scope.owner.userId })}`;
 				// `team.member_count` is a denormalised counter the list renders; a team seeded
 				// straight into the table would otherwise read 0 members while holding one.
 				await sql`update team set member_count = 1 where id = ${team.id}`;
