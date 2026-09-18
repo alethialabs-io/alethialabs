@@ -307,6 +307,12 @@ Two further checks back up the section rather than restating it: `pnpm -F consol
 fails on an unreferenced module or an unused dependency, and `pnpm -F console check:action-boundary`
 on a server action that escapes its boundary.
 
+**The CLI has its own shared-surface check, and it has no allowlist.** `pnpm check:cli-surface`
+fails on any `<placeholder>` a CLI docs example makes the reader copy from another command, any
+input-taking command with no interactive form, any `Mirrors the Go X` claim no test locks, and on
+`apps/cli/cli-surface-allowlist.yaml` existing at all — #3664 deleted it, so a finding is fixed in
+the command or the page, never excused.
+
 ## 7. The harness itself
 
 Eight hooks run around every session (`.claude/settings.json`) — five of them gate a tool call,
