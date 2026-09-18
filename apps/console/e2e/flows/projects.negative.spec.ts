@@ -71,9 +71,13 @@ test.describe("Projects — create validation", () => {
 		await create.click();
 		// `project-form.schema.ts` states this rule as `.min(1, "Project name is required")`, and
 		// #4269 made the Configure step say it in those words rather than "Name your project.".
-		await expect(owner.page.getByText(/project name is required/i)).toBeVisible({
-			timeout: 15_000,
-		});
+		// The sentence is shown twice — inline beside the field (#4738) and once as a toast — so a
+		// page-wide `getByText` resolves two elements. Read it where it belongs: the name input's
+		// accessible description, which `aria-describedby="project_name_error"` points at.
+		await expect(owner.page.getByLabel(/project name/i)).toHaveAccessibleDescription(
+			/project name is required/i,
+			{ timeout: 15_000 },
+		);
 		await expect(owner.page).toHaveURL(/\/~\/new/);
 	});
 
@@ -87,10 +91,11 @@ test.describe("Projects — create validation", () => {
 		await owner.page.getByRole("button", { name: /create project/i }).click();
 		// The schema's second rule — `.refine(canSlugify, "Enter at least one letter or number")`.
 		// Before #4269 the Configure step ran neither, and this name created a project whose slug
-		// came from `slugify`'s FALLBACK: `/{org}/project`.
-		await expect(
-			owner.page.getByText(/enter at least one letter or number/i),
-		).toBeVisible({ timeout: 15_000 });
+		// came from `slugify`'s FALLBACK: `/{org}/project`. Read from the field's description for
+		// the same reason as above: the toast repeats the sentence.
+		await expect(name).toHaveAccessibleDescription(/enter at least one letter or number/i, {
+			timeout: 15_000,
+		});
 		expect(await projectCount(owner.orgId!, "!!! @@@ ###")).toBe(0);
 	});
 

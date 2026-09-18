@@ -298,12 +298,16 @@ test.describe("Projects — the template path", () => {
 			.getByRole("group", { name: AWS_CONNECTOR })
 			.getByText("Connected", { exact: true })
 			.click({ timeout: 30_000 });
-		await expect(owner.page.getByText("eu-west-1")).toBeVisible({ timeout: 15_000 });
+		// The region is read off the Select's TRIGGER (base-ui gives it `role="combobox"`): the
+		// option list carries every region code too, so a page-wide `getByText` resolves two.
+		const regionTrigger = (code: string) =>
+			owner.page.getByRole("combobox").filter({ hasText: code });
+		await expect(regionTrigger("eu-west-1")).toBeVisible({ timeout: 15_000 });
 		await owner.page
 			.getByRole("group", { name: GCP_CONNECTOR })
 			.getByText("Connected", { exact: true })
 			.click();
-		await expect(owner.page.getByText("europe-west1")).toBeVisible({ timeout: 15_000 });
+		await expect(regionTrigger("europe-west1")).toBeVisible({ timeout: 15_000 });
 		await expect(owner.page.getByText("eu-west-1")).toHaveCount(0);
 
 		const create = owner.page.getByRole("button", { name: /create project/i });
