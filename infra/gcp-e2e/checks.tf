@@ -158,3 +158,65 @@ check "e2e_region_not_prod" {
     error_message = "region must not be a prod-adjacent region (us-central1 / us-east1)."
   }
 }
+
+# ── The E2E assertion broker trust (#4226): exact, additive, and absent unless asked for ──────────
+check "e2e_broker_trust_is_exact" {
+  assert {
+    condition = local.broker_enabled ? alltrue([
+      google_iam_workload_identity_pool_provider.e2e_broker[0].attribute_condition == local.broker_attr_condition,
+      google_iam_workload_identity_pool_provider.e2e_broker[0].oidc[0].issuer_uri == var.e2e_broker_issuer_url,
+      google_iam_workload_identity_pool_provider.e2e_broker[0].oidc[0].allowed_audiences == tolist([local.broker_audience]),
+      local.broker_audience == "alethia-gcp-wif",
+      strcontains(local.broker_attr_condition, "assertion.sub == \"${local.broker_subject}\""),
+      strcontains(local.broker_attr_condition, "assertion.repository == \"${var.github_repo}\""),
+      strcontains(local.broker_attr_condition, "assertion.workflow_ref in "),
+      !strcontains(local.broker_attr_condition, "*"),
+      !strcontains(local.broker_attr_condition, "startsWith"),
+    ]) : true
+    error_message = "the e2e broker WIF provider must pin issuer ${coalesce(var.e2e_broker_issuer_url, "<unset>")}, audience alethia-gcp-wif, and an exact sub/provider/repository/workflow_ref condition with no prefix or wildcard — got: ${local.broker_attr_condition}."
+  }
+}
+
+check "e2e_broker_binding_is_one_subject" {
+  assert {
+    condition = local.broker_enabled ? alltrue([
+      google_service_account_iam_member.e2e_broker[0].role == "roles/iam.workloadIdentityUser",
+      startswith(google_service_account_iam_member.e2e_broker[0].member, "principal://"),
+      endswith(google_service_account_iam_member.e2e_broker[0].member, "/subject/${local.broker_subject}"),
+      !strcontains(google_service_account_iam_member.e2e_broker[0].member, "*"),
+    ]) : true
+    error_message = "the broker may impersonate the e2e SA only as ONE principal (principal://…/subject/${local.broker_subject}), never a principalSet or a wildcard."
+  }
+}
+
+# The binding names the pool by a BUILT name so the enabling plan can be read (e2e-broker.tf). This
+# keeps that string honest by comparing it with the pool's real `name`. On the enabling plan the right
+# side is unknown, so this one reports at APPLY; on every plan after it, at plan.
+check "e2e_broker_pool_name_matches" {
+  assert {
+    condition     = !local.broker_enabled || google_iam_workload_identity_pool.e2e_broker[0].name == local.broker_pool_name
+    error_message = "the e2e broker SA binding names ${local.broker_pool_name}, but the broker pool's name is different — the binding would trust a pool that does not exist."
+  }
+}
+
+# The GitHub trust must survive the broker's arrival and departure. Separate pools are what make
+# that true (see e2e-broker.tf), so the tripwire is the pool IDs colliding. That is ALL this checks:
+# the GitHub provider and binding are separate resources whose arguments this change does not touch,
+# and e2e_provider_condition_applied / e2e_wif_binding_is_repo_scoped above already read them.
+check "e2e_broker_trust_is_additive" {
+  assert {
+    condition     = var.broker_pool_id != var.pool_id
+    error_message = "the broker trust must live in its OWN pool — broker_pool_id '${var.broker_pool_id}' must differ from pool_id '${var.pool_id}', or the GitHub binding's principalSet would admit the broker's identities too."
+  }
+}
+
+check "e2e_broker_trust_absent_when_unset" {
+  assert {
+    condition = local.broker_enabled || alltrue([
+      length(google_iam_workload_identity_pool.e2e_broker) == 0,
+      length(google_iam_workload_identity_pool_provider.e2e_broker) == 0,
+      length(google_service_account_iam_member.e2e_broker) == 0,
+    ])
+    error_message = "with e2e_broker_issuer_url unset there must be no broker pool, provider or SA binding."
+  }
+}
