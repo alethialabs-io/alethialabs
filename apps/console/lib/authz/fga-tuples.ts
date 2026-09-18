@@ -26,7 +26,7 @@ export interface FgaTuple {
 }
 
 /** Who a grant is for, and whether it confers or excludes. */
-export interface GrantPrincipal {
+interface GrantPrincipal {
 	orgId: string;
 	principalType: "user" | "team";
 	principalId: string;
