@@ -30,3 +30,9 @@ output "e2e_budget_action_group_id" {
   description = "The monitor action group the e2e budget alerts publish to (hang a kill-switch here later)."
   value       = azurerm_monitor_action_group.e2e_budget.id
 }
+
+# ── E2E assertion broker trust (#4226) ────────────────────────────────────────
+output "e2e_broker_credential_id" {
+  description = "The federated identity credential trusting the E2E assertion broker, or null while e2e_broker_issuer_url is unset. A broker assertion is exchanged for the SAME application (e2e_azure_client_id)."
+  value       = one(azuread_application_federated_identity_credential.e2e_broker[*].credential_id)
+}

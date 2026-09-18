@@ -179,3 +179,53 @@ check "cli_release_sub_does_not_reach_the_write_roles" {
     error_message = "the ${local.cli_release_sub} subject must NOT be in the shared deployer_trust - it would widen alethia-cp-deployer (state + secret write) and alethia-runner-release-deployer (ECR + ECS) to anyone who can push a cli-v* tag."
   }
 }
+
+# ── The E2E assertion broker trust (#4226): exact, additive, and absent unless asked for ──────────
+# Three ways it can rot silently, one assertion each. (1) The broker statement could be relaxed —
+# a StringLike, a dropped aud, or a sub that is not the contract's. (2) Enabling it could REPLACE
+# the GitHub statement instead of adding to it; a gcp-e2e apply has already dropped a dispatch trust
+# that way. (3) With the issuer unset, a statement could still render and trust nothing in particular.
+check "e2e_broker_trust_is_exact" {
+  assert {
+    condition = !local.broker_enabled || alltrue([
+      strcontains(data.aws_iam_policy_document.e2e_nightly_trust.json, "E2EBrokerAssertion"),
+      strcontains(data.aws_iam_policy_document.e2e_nightly_trust.json, "${local.broker_issuer_host}:aud"),
+      strcontains(data.aws_iam_policy_document.e2e_nightly_trust.json, "${local.broker_issuer_host}:sub"),
+      local.broker_audience == "sts.amazonaws.com",
+      local.broker_subject != "" && !strcontains(local.broker_subject, "*"),
+      !strcontains(data.aws_iam_policy_document.e2e_nightly_trust.json, "StringLike"),
+    ])
+    error_message = "the e2e broker trust must pin ${local.broker_issuer_host}:aud = sts.amazonaws.com and ${local.broker_issuer_host}:sub = '${local.broker_subject}' (exact, from packages/workload-identity/src/broker.ts) with StringEquals, never StringLike."
+  }
+}
+
+check "e2e_broker_trust_is_additive" {
+  assert {
+    # The GitHub statement and its exact subjects survive whether or not the broker is trusted.
+    condition = alltrue(concat(
+      [strcontains(data.aws_iam_policy_document.e2e_nightly_trust.json, "GithubOIDCNightly")],
+      [for s in local.e2e_subs : strcontains(data.aws_iam_policy_document.e2e_nightly_trust.json, s)],
+    ))
+    error_message = "enabling the e2e broker trust must ADD a statement, never replace GithubOIDCNightly — every subject in ${jsonencode(local.e2e_subs)} must still be trusted."
+  }
+}
+
+# The trust names the provider by a BUILT ARN so the enabling plan can be read (e2e-broker.tf). This
+# is what keeps that string honest: it is compared with the resource's real `arn`. On the enabling
+# plan the right side is unknown, so this one reports at APPLY; on every plan after it, at plan.
+check "e2e_broker_provider_arn_matches" {
+  assert {
+    condition     = !local.broker_enabled || aws_iam_openid_connect_provider.e2e_broker[0].arn == local.broker_provider_arn
+    error_message = "the e2e broker trust names ${local.broker_provider_arn}, but the broker OIDC provider's ARN is different — the trust would federate a provider that does not exist."
+  }
+}
+
+check "e2e_broker_trust_absent_when_unset" {
+  assert {
+    condition = local.broker_enabled || alltrue([
+      !strcontains(data.aws_iam_policy_document.e2e_nightly_trust.json, "E2EBrokerAssertion"),
+      length(aws_iam_openid_connect_provider.e2e_broker) == 0,
+    ])
+    error_message = "with e2e_broker_issuer_url unset there must be no E2EBrokerAssertion statement and no broker OIDC provider."
+  }
+}

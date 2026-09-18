@@ -5,8 +5,10 @@ terraform {
   required_version = ">= 1.10"
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
+      source = "hashicorp/aws"
+      # >= 5.81: the first release whose aws_iam_openid_connect_provider takes no thumbprint_list
+      # (e2e-broker.tf relies on that). Measured against the 5.80.0 and 5.81.0 schemas.
+      version = "~> 5.81"
     }
   }
 }
