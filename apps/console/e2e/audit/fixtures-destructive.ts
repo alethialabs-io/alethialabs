@@ -406,21 +406,34 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 	[
 		"project-with-a-node",
 		{
-			// ⚠ ALREADY SATISFIED, and that is a finding rather than a convenience. #4458 counts
-			// this among the 33 fixtures nobody wrote; the tree disagrees. `seedProject` writes a
-			// `project_network` AND a `project_cluster` row (`e2e/helpers/seed.ts`); `formToGraph`
-			// makes a node for each; `makeNode` sets `deletable: kind !== "project"`; and
-			// `DangerZone` renders "Delete resource" for any node that is deletable and not in
-			// `OUT_OF_BAND` (chart, chart_workload, addon, external). Neither `network` nor
-			// `cluster` is in that set.
+			// ONE DATABASE ROW, because the board draws no node the seeded project already has.
+			// This fixture used to write nothing, on the claim that `seedProject`'s `project_network`
+			// and `project_cluster` rows render deletable canvas nodes. They do not: since W2 the board
+			// draws neither the cluster nor the network (canvas-flow.tsx, the `CanvasFlow` doc: "the
+			// cluster/network aren't drawn as containers or cards — they're env settings"). The
+			// screenshot from run 35368920880 shows one card, the Prometheus + Grafana add-on, and an
+			// add-on is `OUT_OF_BAND`, so `DangerZone` renders nothing for it (#4800).
 			//
-			// So the seeder writes nothing and ASSERTS the project is there. A second component row
-			// would add a second "Delete" with the same accessible name, which `resolveTrigger`
-			// correctly refuses to attribute a verdict to — the fixture would make the control LESS
-			// measurable, not more.
-			writes: "nothing — seedProject's project_network and project_cluster rows already render deletable canvas nodes",
+			// A database is an `array` kind that the board draws as a card named "Database <name>"
+			// (base-node.tsx → nodeAccessibleName). Its danger zone renders "Delete resource". It is
+			// read per project and environment (lib/queries/project-components-read.ts), so it lands on
+			// the DEFAULT environment (`resolveFixtureScope` picks `is_default` first), which is the
+			// one the architecture route opens. The name is fixed because the reach names the card by
+			// it, and `on conflict do nothing` covers a re-run after a lost marker.
+			writes: "one `project_databases` row named `audit-db` on the audit project's environment — the canvas card whose danger zone holds Delete",
 			seed: async (scope) => {
-				requireProject(scope);
+				const project = requireProject(scope);
+				const sql = db();
+				await sql`
+					insert into project_databases ${sql({
+						project_id: project.projectId,
+						org_id: scope.owner.orgId,
+						environment_id: project.envId,
+						name: "audit-db",
+						engine_family: "postgres",
+						status: "PENDING",
+					})}
+					on conflict do nothing`;
 			},
 		},
 	],
