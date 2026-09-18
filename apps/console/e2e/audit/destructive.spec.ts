@@ -107,7 +107,7 @@ interface ControlEntry {
 	surface: string;
 	mutation: string;
 	mutation_surface?: string;
-	reach?: { menu?: string; section?: string; select?: string; open?: string }[];
+	reach?: { menu?: string; section?: string; select?: string; open?: string; tab?: string }[];
 	control?: { role?: string; name?: string };
 	confirm?: string;
 	confirm_action?: string;
@@ -528,6 +528,21 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 				const target = (await heading.count()) > 0 ? heading : label;
 				await target.waitFor({ state: "visible", timeout: 8_000 });
 				await target.scrollIntoViewIfNeeded();
+				continue;
+			}
+			if (kind === "tab") {
+				// A TAB is its own step kind, not one more role in the opener union below. That union
+				// matches a SUBSTRING and takes the first match in document order, which is right for
+				// a menu item named inside an open overlay and wrong for "Settings": the canvas
+				// inspector is a docked rail, not an overlay, so an unscoped /settings/i would also
+				// reach any button on the page whose name contains the word. A tab is matched by its
+				// EXACT accessible name and its role, so it resolves to the tab or to nothing.
+				// `canvas.delete-resource` needs it: the inspector's danger zone sits on its Settings
+				// tab (node-inspector.tsx), and a card opens on Overview (or the kind's last tab).
+				const tab = (await openOverlay(page)).getByRole("tab", { name, exact: true }).first();
+				await tab.waitFor({ state: "visible", timeout: 8_000 });
+				await tab.click({ timeout: 8_000 });
+				await page.waitForTimeout(300);
 				continue;
 			}
 			// menu / open / select all resolve to "activate the thing named, then wait for it".

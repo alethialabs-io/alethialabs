@@ -206,10 +206,12 @@ controls:
     # "Cluster" is the seeded cluster card's accessible name: base-node.tsx labels every card
     # `role="group"` with nodeAccessibleName(eyebrow, title), `configName` has no case for a
     # cluster so its title is the registry label, and eyebrow == title collapses to "Cluster".
-    # Clicking it opens the inspector (canvas-flow.tsx `onNodeClick`), whose
-    # "Danger zone" is a COLLAPSIBLE (inspector/danger-zone.tsx) — "Delete resource" is not in the
-    # DOM until it is opened, so the chain names that trigger too.
-    reach: [{ select: "Cluster" }, { open: "Danger zone" }, { section: "Delete resource" }]
+    # Clicking it opens the inspector (canvas-flow.tsx `onNodeClick`) on the rail. The danger zone
+    # is on the inspector's SETTINGS tab (node-inspector.tsx), not on Overview where a card opens,
+    # and it is a COLLAPSIBLE (inspector/danger-zone.tsx), so "Delete resource" is not in the DOM
+    # until both are opened. Run 35362045227 took "Cluster" and stopped at "Danger zone", which was
+    # on the unselected tab.
+    reach: [{ select: "Cluster" }, { tab: "Settings" }, { open: "Danger zone" }, { section: "Delete resource" }]
     control: { role: button, name: "Delete" }
     confirm: undo
     undo: { shortcut: "Meta+Z" }
