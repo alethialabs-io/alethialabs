@@ -227,17 +227,22 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 	],
 
 	// ── teams ──────────────────────────────────────────────────────────────────────────────────
+	//
+	// BOTH team fixtures write the SAME shape — a team whose one member is the viewer — and that is
+	// what makes `teams.member.remove` measurable. Its reach opens the FIRST row's "Manage team" menu
+	// (the row trigger's accessible name does not carry the team's), and nothing orders that list:
+	// `getTeams()` (app/server/actions/teams.ts), which the page reads, selects with NO `orderBy`, so
+	// the first row is whichever team Postgres returns first. On run 35362045227, when only the
+	// staffed team had a member, "Remove" was not rendered, which fits the first row being the
+	// `team` fixture's memberless team. On run 35368920880, with every audit team holding the
+	// viewer, the control was reached and measured. That makes the first row correct whichever team
+	// it is. `teams.delete` is indifferent to the roster.
 	[
 		"team",
 		{
-			writes: "one `team` row",
+			writes: "one `team` row whose one `team_member` is the audit's own user (see seedTeamOfOne)",
 			seed: async (scope) => {
-				const sql = db();
-				await sql`
-					insert into team ${sql({
-						organization_id: scope.owner.orgId,
-						name: `Audit Team ${unique()}`,
-					})}`;
+				await seedTeamOfOne(scope, `Audit Team ${unique()}`);
 			},
 		},
 	],
@@ -247,35 +252,7 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 			writes:
 				"one `team` row with the audit's OWN user as its one `team_member` — the only member the Manage members dialog can list to a viewer",
 			seed: async (scope) => {
-				const sql = db();
-				// "Audit Staffed Team …" sorts before the `team` fixture's "Audit Team …", and the list
-				// is ordered by name (lib/queries/teams.ts → `orderBy(asc(team.name))`). That order is
-				// load-bearing: `teams.member.remove`'s reach opens the FIRST row's "Manage team" menu,
-				// because the row trigger's accessible name does not carry the team's.
-				const [team] = await sql<{ id: string }[]>`
-					insert into team ${sql({
-						organization_id: scope.owner.orgId,
-						name: `Audit Staffed Team ${unique()}`,
-					})}
-					returning id`;
-				if (!team) throw new Error("insert into team returned no row");
-				// THE MEMBER IS THE VIEWER, not a seeded colleague (#4800). `ManageTeamDialog` reads
-				// its roster through `authClient.organization.listTeamMembers`, and Better Auth's
-				// handler (better-auth 1.7.3, plugins/organization/routes/crud-team) refuses unless
-				// the CALLER is on the team: `findTeamMember({ userId: session.user.id, teamId })`,
-				// else USER_IS_NOT_A_MEMBER_OF_THE_TEAM. The dialog drops that error
-				// (`res.data ?? []`), so a team holding only a colleague rendered "No members yet."
-				// to its org owner and `{button: "Remove"}` was withheld as not rendered. The owner
-				// is the viewer here because `resolveOwner` takes the org's earliest owner/admin,
-				// which is the e2e user whose session created the org.
-				//
-				// ONE member, so the dialog holds exactly one "Remove …" — a colleague added beside
-				// the owner would make the trigger ambiguous, and `resolveTrigger` would withhold it.
-				await sql`
-					insert into team_member ${sql({ team_id: team.id, user_id: scope.owner.userId })}`;
-				// `team.member_count` is a denormalised counter the list renders; a team seeded
-				// straight into the table would otherwise read 0 members while holding one.
-				await sql`update team set member_count = 1 where id = ${team.id}`;
+				await seedTeamOfOne(scope, `Audit Staffed Team ${unique()}`);
 			},
 		},
 	],
@@ -430,21 +407,34 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 	[
 		"project-with-a-node",
 		{
-			// ⚠ ALREADY SATISFIED, and that is a finding rather than a convenience. #4458 counts
-			// this among the 33 fixtures nobody wrote; the tree disagrees. `seedProject` writes a
-			// `project_network` AND a `project_cluster` row (`e2e/helpers/seed.ts`); `formToGraph`
-			// makes a node for each; `makeNode` sets `deletable: kind !== "project"`; and
-			// `DangerZone` renders "Delete resource" for any node that is deletable and not in
-			// `OUT_OF_BAND` (chart, chart_workload, addon, external). Neither `network` nor
-			// `cluster` is in that set.
+			// ONE DATABASE ROW, because the board draws no node the seeded project already has.
+			// This fixture used to write nothing, on the claim that `seedProject`'s `project_network`
+			// and `project_cluster` rows render deletable canvas nodes. They do not: since W2 the board
+			// draws neither the cluster nor the network (canvas-flow.tsx, the `CanvasFlow` doc: "the
+			// cluster/network aren't drawn as containers or cards — they're env settings"). The
+			// screenshot from run 35368920880 shows one card, the Prometheus + Grafana add-on, and an
+			// add-on is `OUT_OF_BAND`, so `DangerZone` renders nothing for it (#4800).
 			//
-			// So the seeder writes nothing and ASSERTS the project is there. A second component row
-			// would add a second "Delete" with the same accessible name, which `resolveTrigger`
-			// correctly refuses to attribute a verdict to — the fixture would make the control LESS
-			// measurable, not more.
-			writes: "nothing — seedProject's project_network and project_cluster rows already render deletable canvas nodes",
+			// A database is an `array` kind that the board draws as a card named "Database <name>"
+			// (base-node.tsx → nodeAccessibleName). Its danger zone renders "Delete resource". It is
+			// read per project and environment (lib/queries/project-components-read.ts), so it lands on
+			// the DEFAULT environment (`resolveFixtureScope` picks `is_default` first), which is the
+			// one the architecture route opens. The name is fixed because the reach names the card by
+			// it, and `on conflict do nothing` covers a re-run after a lost marker.
+			writes: "one `project_databases` row named `audit-db` on the audit project's environment — the canvas card whose danger zone holds Delete",
 			seed: async (scope) => {
-				requireProject(scope);
+				const project = requireProject(scope);
+				const sql = db();
+				await sql`
+					insert into project_databases ${sql({
+						project_id: project.projectId,
+						org_id: scope.owner.orgId,
+						environment_id: project.envId,
+						name: "audit-db",
+						engine_family: "postgres",
+						status: "PENDING",
+					})}
+					on conflict do nothing`;
 			},
 		},
 	],
@@ -807,6 +797,33 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
  * `{select: "a dimension"}` ambiguous, which `resolveTrigger` correctly refuses to guess past. So
  * this is idempotent on the dimension's `key`.
  */
+/**
+ * Write one team in the audit's org whose single member is the audit's own user, the viewer.
+ *
+ * THE MEMBER IS THE VIEWER, not a seeded colleague (#4800). `ManageTeamDialog` reads its roster
+ * through `authClient.organization.listTeamMembers`, and Better Auth's handler (better-auth 1.7.3,
+ * plugins/organization/routes/crud-team) refuses unless the CALLER is on the team:
+ * `findTeamMember({ userId: session.user.id, teamId })`, else USER_IS_NOT_A_MEMBER_OF_THE_TEAM. The
+ * dialog drops that error (`res.data ?? []`), so a team holding only a colleague rendered "No members
+ * yet." to its org owner. The owner is the viewer because `resolveOwner` (e2e/audit/context.ts) takes
+ * the org's earliest owner/admin, which is the user `fixtures/auth.setup.ts` signed up and whose
+ * onboarding created the org.
+ *
+ * ONE member, so the dialog holds exactly one "Remove …": a colleague beside the owner would make the
+ * trigger ambiguous, and `resolveTrigger` would withhold it.
+ */
+async function seedTeamOfOne(scope: FixtureScope, name: string): Promise<void> {
+	const sql = db();
+	const [team] = await sql<{ id: string }[]>`
+		insert into team ${sql({ organization_id: scope.owner.orgId, name })}
+		returning id`;
+	if (!team) throw new Error("insert into team returned no row");
+	await sql`insert into team_member ${sql({ team_id: team.id, user_id: scope.owner.userId })}`;
+	// `team.member_count` is a denormalised counter; a team seeded straight into the table would
+	// otherwise carry 0 while holding one member.
+	await sql`update team set member_count = 1 where id = ${team.id}`;
+}
+
 /**
  * The project's SECOND environment, written once however many fixtures ask for it.
  *

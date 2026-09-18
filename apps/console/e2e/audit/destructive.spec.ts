@@ -107,11 +107,13 @@ interface ControlEntry {
 	surface: string;
 	mutation: string;
 	mutation_surface?: string;
-	reach?: { menu?: string; section?: string; select?: string; open?: string }[];
+	reach?: { menu?: string; section?: string; select?: string; open?: string; tab?: string }[];
 	control?: { role?: string; name?: string };
 	confirm?: string;
 	confirm_action?: string;
 	dialog_title?: string;
+	/** For `confirm: undo`: the key chord that takes the action back (`Meta+Z`). */
+	undo?: { shortcut?: string };
 	fixture?: string;
 	persona?: string;
 	status?: string;
@@ -530,6 +532,21 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 				await target.scrollIntoViewIfNeeded();
 				continue;
 			}
+			if (kind === "tab") {
+				// A TAB is its own step kind, not one more role in the opener union below. That union
+				// matches a SUBSTRING and takes the first match in document order, which is right for
+				// a menu item named inside an open overlay and wrong for "Settings": the canvas
+				// inspector is a docked rail, not an overlay, so an unscoped /settings/i would also
+				// reach any button on the page whose name contains the word. A tab is matched by its
+				// EXACT accessible name and its role, so it resolves to the tab or to nothing.
+				// `canvas.delete-resource` needs it: the inspector's danger zone sits on its Settings
+				// tab (node-inspector.tsx), and a card opens on Overview (or the kind's last tab).
+				const tab = (await openOverlay(page)).getByRole("tab", { name, exact: true }).first();
+				await tab.waitFor({ state: "visible", timeout: 8_000 });
+				await tab.click({ timeout: 8_000 });
+				await page.waitForTimeout(300);
+				continue;
+			}
 			// menu / open / select all resolve to "activate the thing named, then wait for it".
 			//
 			// `option` is in the list because a rail row is not always a button: #4433 rebuilt the
@@ -560,10 +577,34 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 			await opener.click({ timeout: 8_000 });
 			await page.waitForTimeout(300);
 		} catch {
+			await attachReachEvidence(page, entry.id, `${kind}: ${name}`);
 			return `reach step {${kind}: "${name}"} could not be taken on ${entry.route}`;
 		}
 	}
 	return null;
+}
+
+/**
+ * Attach what the page looked like when a reach step could not be taken: a screenshot and the
+ * accessibility tree of the scope the step searched.
+ *
+ * A withheld control does not fail its test, so Playwright keeps no screenshot or error context
+ * for it. The only record is the reason string, and "could not be taken" says which step failed
+ * but not what was there instead. `canvas.delete-resource` failed on two consecutive runs
+ * (35362045227 on `open: Danger zone`, 35367271014 on `tab: Settings`) with no way to tell whether
+ * the inspector had opened at all (#4800). Attachments are written into the HTML report, which the
+ * leg uploads. Best effort: evidence that cannot be captured never changes the verdict.
+ */
+async function attachReachEvidence(page: Page, id: string, step: string): Promise<void> {
+	try {
+		const info = test.info();
+		await info.attach(`reach-${id}.png`, { body: await page.screenshot({ timeout: 5_000 }), contentType: "image/png" });
+		const root = await openOverlay(page);
+		const tree = await (root === page ? page.locator("body") : root).ariaSnapshot({ timeout: 5_000 });
+		await info.attach(`reach-${id}.aria.yml`, { body: `# step {${step}} could not be taken\n${tree}`, contentType: "text/plain" });
+	} catch {
+		// No evidence is still a withheld verdict with its reason; the capture is a diagnostic.
+	}
 }
 
 /**
@@ -577,6 +618,50 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 async function openOverlay(page: Page): Promise<Page | Locator> {
 	const overlay = page.locator('[role="dialog"]:visible, [role="alertdialog"]:visible, [role="menu"]:visible').last();
 	return (await overlay.count()) > 0 ? overlay : page;
+}
+
+/**
+ * Measure a `confirm: undo` control: the click has already fired, so press the entry's undo chord
+ * and check that the thing it removed is back.
+ *
+ * For this shape the undo IS the confirmation, so a restore counts as `confirmed`, the status the
+ * registry records, and no restore counts as `missing`. The branch used to set `observed = "undo"`
+ * without pressing anything. No registry status is "undo", so `canvas.delete-resource` failed as a
+ * mismatch on the first run that reached it (35370286589, #4800). A label that no status can equal
+ * is not a measurement.
+ *
+ * "Back" is the element the chain's first `select:` step clicked. That step named the thing the
+ * control acts on, and it is the only name the entry gives it. An entry with no `select:` step
+ * cannot be checked this way, and it is `missing` with the reason in the assertion message.
+ */
+async function observeUndo(page: Page, entry: ControlEntry): Promise<Observed> {
+	const subject = (entry.reach ?? []).map((step) => step.select).find((name): name is string => typeof name === "string");
+	if (!subject) return "missing";
+	const node = page.getByLabel(new RegExp(escapeRe(subject), "i")).first();
+	// The removal itself is part of the evidence: a click that removed nothing leaves nothing to undo.
+	const removed = await node.waitFor({ state: "detached", timeout: 5_000 }).then(() => true).catch(() => false);
+	if (!removed) return "missing";
+	await page.keyboard.press(entry.undo?.shortcut ?? "ControlOrMeta+Z");
+	const restored = await node.waitFor({ state: "visible", timeout: 5_000 }).then(() => true).catch(() => false);
+	return restored ? "confirmed" : "missing";
+}
+
+/**
+ * The dialog `dialog` resolves to NOW, as a locator that keeps naming that one element.
+ *
+ * `teams.member.remove` needs this (#4800). Its confirmation replaces the Manage members dialog,
+ * which returns once the confirmation is answered (manage-team-dialog.tsx: `open={open &&
+ * pendingRemoval === null}`). The unpinned `.first()` therefore resolved to the returning team
+ * dialog and reported "Cancel should close the dialog" against a confirmation that had closed (run
+ * 35367271014). Pinning keeps the failure it exists for: a Cancel that leaves THIS confirmation up
+ * still fails.
+ *
+ * It pins by the element's `id`, which base-ui gives every popup. With no id, it returns the
+ * lazy locator unchanged, which is the old behaviour.
+ */
+async function pinDialog(page: Page, dialog: Locator): Promise<Locator> {
+	const id = await dialog.getAttribute("id").catch(() => null);
+	return id ? page.locator(`[id="${id.replace(/["\\]/g, "\\$&")}"]`) : dialog;
 }
 
 function escapeRe(s: string): string {
@@ -855,11 +940,14 @@ for (const entry of CONTROLS) {
 			// The ONLY button this file ever presses.
 			const cancel = dialog.getByRole("button", { name: /^(cancel|no|keep|nevermind|never mind)\b/i }).first();
 			await expect(cancel, `${entry.id}: a confirmation with no way out is worse than none`).toBeVisible();
+			// Pinned BEFORE the click: `dialog` is a lazy `.first()` over every dialog on the page,
+			// re-resolved on each poll, so after Cancel it can bind to a DIFFERENT dialog.
+			const confirmation = await pinDialog(page, dialog);
 			await cancel.click();
-			await expect(dialog, `${entry.id}: Cancel should close the dialog`).toBeHidden({ timeout: 5_000 });
+			await expect(confirmation, `${entry.id}: Cancel should close the dialog`).toBeHidden({ timeout: 5_000 });
 			observed = "confirmed";
 		} else if (entry.confirm === "undo") {
-			observed = "undo";
+			observed = await observeUndo(page, entry);
 		} else {
 			// `none` / `popover`: the registry records that a bare click fires. The spec asserts the
 			// RECORDED state — a dialog appearing here is stale evidence, and the lane that added it
