@@ -7,7 +7,8 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/authz/guard", () => ({ currentActor: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn(), currentActor: vi.fn() }));
+vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
 vi.mock("@/lib/authz/entitlements", () => ({ getEntitlements: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 
@@ -28,9 +29,16 @@ vi.mock("drizzle-orm", async (importOriginal) => {
 });
 
 import { eq, gte, ilike, inArray, lt, lte, or } from "drizzle-orm";
-import { getActivityExportCsv, getActivityLog } from "@/app/server/actions/activity";
+import {
+	getActivityExportCsv,
+	getActivityLog,
+	getActivityPermissions,
+} from "@/app/server/actions/activity";
+import { getPdp } from "@/lib/authz";
 import { getEntitlements } from "@/lib/authz/entitlements";
-import { currentActor } from "@/lib/authz/guard";
+import { authorize, currentActor } from "@/lib/authz/guard";
+import type { Action } from "@/lib/authz/registry";
+import { ForbiddenError, type ResourceRef } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 
 interface DbRow {
@@ -86,9 +94,44 @@ function dbRow(over: Partial<DbRow> = {}): DbRow {
 	};
 }
 
+/** A PDP stub: `enforce` throws ForbiddenError for the actions in `denied`; `can` answers the same. */
+function mockPdp(denied: readonly Action[] = []) {
+	const pdp = {
+		enforce: vi.fn(async (_actor: unknown, action: Action, resource: ResourceRef) => {
+			if (denied.includes(action)) throw new ForbiddenError(action, resource, "no grant");
+		}),
+		can: vi.fn(async (_actor: unknown, action: Action) => ({
+			allowed: !denied.includes(action),
+		})),
+	};
+	vi.mocked(getPdp).mockReturnValue(pdp as never);
+	return pdp;
+}
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(currentActor).mockResolvedValue({ orgId: "org-1" } as never);
+	vi.mocked(authorize).mockResolvedValue({ orgId: "org-1" } as never);
+	mockPdp();
+});
+
+// #3932: the console read the whole org log for ANY member while the CLI route refused them.
+describe("getActivityLog — authorization", () => {
+	it("enforces activity:view_activity on the activity resource", async () => {
+		mockDb([dbRow()]);
+		await getActivityLog();
+		expect(vi.mocked(authorize)).toHaveBeenCalledWith("view_activity", { type: "activity" });
+	});
+
+	it("reads nothing when the permission is refused", async () => {
+		vi.mocked(authorize).mockRejectedValue(
+			new ForbiddenError("view_activity", { type: "activity" }, "no grant"),
+		);
+		const db = vi.fn();
+		vi.mocked(getServiceDb).mockImplementation(db);
+		await expect(getActivityLog()).rejects.toBeInstanceOf(ForbiddenError);
+		expect(db).not.toHaveBeenCalled();
+	});
 });
 
 describe("getActivityLog — pagination", () => {
@@ -163,9 +206,34 @@ describe("getActivityLog — filters", () => {
 });
 
 describe("getActivityExportCsv", () => {
-	it("rejects callers without the activityExport entitlement", async () => {
+	it("rejects callers without the activityExport entitlement, before asking the PDP", async () => {
 		vi.mocked(getEntitlements).mockReturnValue({ activityExport: false } as never);
+		const pdp = mockPdp();
 		await expect(getActivityExportCsv()).rejects.toThrow(/Enterprise/);
+		// An allowed export_activity is RECORDED, so enforcing first would log an export that
+		// was then refused.
+		expect(pdp.enforce).not.toHaveBeenCalled();
+	});
+
+	it("enforces activity:export_activity for an entitled caller", async () => {
+		vi.mocked(getEntitlements).mockReturnValue({ activityExport: true } as never);
+		const pdp = mockPdp();
+		mockDb([dbRow()]);
+		await getActivityExportCsv();
+		expect(pdp.enforce).toHaveBeenCalledWith(
+			{ orgId: "org-1" },
+			"export_activity",
+			{ type: "activity" },
+		);
+	});
+
+	it("exports nothing when an entitled caller lacks export_activity (#3932)", async () => {
+		vi.mocked(getEntitlements).mockReturnValue({ activityExport: true } as never);
+		mockPdp(["export_activity"]);
+		const db = vi.fn();
+		vi.mocked(getServiceDb).mockImplementation(db);
+		await expect(getActivityExportCsv()).rejects.toBeInstanceOf(ForbiddenError);
+		expect(db).not.toHaveBeenCalled();
 	});
 
 	it("emits a CSV with a header and one row per entry", async () => {
@@ -177,5 +245,27 @@ describe("getActivityExportCsv", () => {
 		expect(lines).toHaveLength(2);
 		expect(lines[1]).toContain('"deploy"');
 		expect(lines[1]).toContain('"deny"');
+	});
+});
+
+describe("getActivityPermissions", () => {
+	it("answers both decisions through can(), which records nothing", async () => {
+		const pdp = mockPdp(["export_activity"]);
+		await expect(getActivityPermissions()).resolves.toEqual({
+			canView: true,
+			canExport: false,
+		});
+		expect(pdp.can).toHaveBeenCalledWith({ orgId: "org-1" }, "view_activity", {
+			type: "activity",
+		});
+		expect(pdp.enforce).not.toHaveBeenCalled();
+	});
+
+	it("reports a caller with neither permission", async () => {
+		mockPdp(["view_activity", "export_activity"]);
+		await expect(getActivityPermissions()).resolves.toEqual({
+			canView: false,
+			canExport: false,
+		});
 	});
 });

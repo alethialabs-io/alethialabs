@@ -112,6 +112,10 @@ const MATRIX: Partial<Record<Resource, readonly Action[]>> = {
 /** Customer-facing support actions every org member holds on their own cases. */
 const SUPPORT_MEMBER_ACTIONS: readonly Action[] = ["view", "create", "reply"];
 
+/** Activity-log actions an operator holds: read the log and export it (#3932). Export is still
+ *  refused without the `activityExport` entitlement — `getActivityExportCsv` checks both. */
+const OPERATOR_ACTIVITY_ACTIONS: readonly Action[] = ["view_activity", "export_activity"];
+
 /** The full permission registry, derived from the matrix. */
 export const PERMISSIONS: PermissionDef[] = RESOURCES.flatMap((resource) =>
 	(MATRIX[resource] ?? []).map((action) => ({
@@ -153,7 +157,11 @@ export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 	// Everything except billing.
 	admin: ALL_KEYS.filter((k) => !k.startsWith("billing:")),
 	// Operate infrastructure (plan/deploy/destroy + view); not identities/members/billing.
-	// Also read alert config (operators care about ops alerts) but not mutate it.
+	// Also read alert config (operators care about ops alerts) but not mutate it, and read +
+	// export the org's Activity log (#3932 — the actions are spelled `view_activity` /
+	// `export_activity`, so the `view` selector above never reached them). The `activity`
+	// exclusion in the resource list is kept: it keeps any future activity action that happens
+	// to be spelled `view`/`edit`/... out of this role until someone decides it belongs here.
 	operator: PERMISSIONS.filter(
 		(p) =>
 			(arrayIncludes(
@@ -162,16 +170,23 @@ export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 			) &&
 				!["cloud_identity", "member", "billing", "activity", "fleet"].includes(p.resource)) ||
 			p.action === "view_alerts" ||
+			(p.resource === "activity" && OPERATOR_ACTIVITY_ACTIONS.includes(p.action)) ||
 			(p.resource === "support_case" && SUPPORT_MEMBER_ACTIONS.includes(p.action)),
 	).map((p) => p.key),
-	// Read-only (including alert config), PLUS opening/replying to their OWN support cases —
-	// support is a right, not a privilege, so even a read-only teammate can ask for help.
-	// The tiered support RLS keeps a viewer's visibility to cases they opened; `manage_support`
-	// (see-all + triage) stays owner/admin-only.
+	// Read-only (including alert config and the Activity log), PLUS opening/replying to their
+	// OWN support cases — support is a right, not a privilege, so even a read-only teammate can
+	// ask for help. The tiered support RLS keeps a viewer's visibility to cases they opened;
+	// `manage_support` (see-all + triage) stays owner/admin-only.
+	//
+	// `activity:view_activity` is here by maintainer ruling (#3932): a viewer reads the Activity
+	// log, as `toPdpRole`'s doc in org-access-control.ts always said. `activity:export_activity` is
+	// NOT — a viewer's bundle is `view*` actions plus own-case support, and two suites pin exactly
+	// that (tests/lib/authz/authz.test.ts, tests/authz/fga-tuples.test.ts).
 	viewer: PERMISSIONS.filter(
 		(p) =>
 			p.action === "view" ||
 			p.action === "view_alerts" ||
+			p.action === "view_activity" ||
 			(p.resource === "support_case" && SUPPORT_MEMBER_ACTIONS.includes(p.action)),
 	).map((p) => p.key),
 };
