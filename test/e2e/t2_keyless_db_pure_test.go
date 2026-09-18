@@ -7,6 +7,10 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -444,5 +448,136 @@ func TestKeylessSummary_CarriesNoSecrets(t *testing.T) {
 	}
 	if !strings.Contains(s, `"rotation_dwell_seconds": 960`) {
 		t.Errorf("the dwell must be recorded so a run cannot claim a proof it did not perform, got %s", s)
+	}
+}
+
+// readAzureDBModule reads the COMMITTED azure-db module, resolved from this file's own location
+// (test/e2e/<file> ⇒ ../.. is the repository root).
+func readAzureDBModule(t *testing.T) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	path := filepath.Join(filepath.Dir(thisFile), "..", "..", filepath.FromSlash(azureDBModulePath))
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(b)
+}
+
+// TestAzureMySQLPublicNetworkAccessDisabled pins #1450's offline half: the azure-db module STATES
+// that both servers are private — MySQL as `public_network_access = "Disabled"`, PostgreSQL as
+// `public_network_access_enabled = false` — at the top level of each server block, next to a
+// delegated subnet. Before #1450 the MySQL server set nothing and relied on the delegated subnet.
+func TestAzureMySQLPublicNetworkAccessDisabled(t *testing.T) {
+	if problems := azureDBPrivacyProblems(readAzureDBModule(t)); len(problems) > 0 {
+		t.Fatalf("the azure-db module does not state that its servers are private:\n  %s", strings.Join(problems, "\n  "))
+	}
+}
+
+// TestAzureDBPrivacyCoversEveryServer: every `*_flexible_server` resource TYPE the module declares
+// is one azureDBPrivacyAttrs names. Without this, a third engine added to the module would be
+// checked by nothing, and the test above would stay green about the two it knows.
+func TestAzureDBPrivacyCoversEveryServer(t *testing.T) {
+	src := readAzureDBModule(t)
+	known := map[string]bool{}
+	for _, p := range azureDBPrivacyAttrs {
+		known[p.resourceType] = true
+	}
+	found := regexp.MustCompile(`(?m)^resource[ \t]+"(azurerm_[a-z0-9_]+_flexible_server)"`).FindAllStringSubmatch(src, -1)
+	if len(found) == 0 {
+		t.Fatalf("found no *_flexible_server resource in %s — the matcher no longer sees the module's servers", azureDBModulePath)
+	}
+	for _, m := range found {
+		if !known[m[1]] {
+			t.Errorf("%s declares %s, which azureDBPrivacyAttrs does not pin — add its public-access attribute", azureDBModulePath, m[1])
+		}
+	}
+}
+
+// azureDBFixture renders a two-server module whose MySQL body is the argument, so each mutation below
+// changes exactly one thing. The PostgreSQL half is fixed and correct.
+func azureDBFixture(mysqlBody string) string {
+	return `resource "azurerm_postgresql_flexible_server" "this" {
+  delegated_subnet_id           = var.subnet_id
+  public_network_access_enabled = false
+}
+
+resource "azurerm_mysql_flexible_server" "this" {
+  delegated_subnet_id = var.subnet_id
+` + mysqlBody + `
+}
+`
+}
+
+// TestAzureDBPrivacyProblems_Mutations: each way the MySQL server can fail to state its privacy is
+// reported, and the correct shape is not. The mutations are the ones a text reader gets wrong most
+// easily — the attribute in a comment, in a string, only under a dynamic block, or spelled with
+// PostgreSQL's `_enabled` suffix.
+func TestAzureDBPrivacyProblems_Mutations(t *testing.T) {
+	if p := azureDBPrivacyProblems(azureDBFixture(`  public_network_access = "Disabled"`)); len(p) > 0 {
+		t.Fatalf("the correct shape must pass, got %v", p)
+	}
+	cases := map[string]string{
+		"absent":                 ``,
+		"enabled":                `  public_network_access = "Enabled"`,
+		"unquoted":               `  public_network_access = var.public_access`,
+		"postgres spelling":      `  public_network_access_enabled = false`,
+		"only in a # comment":    `  # public_network_access = "Disabled"`,
+		"only in a // comment":   `  // public_network_access = "Disabled"`,
+		"only in a /* comment":   "  /*\n  public_network_access = \"Disabled\"\n  */",
+		"only in a string":       `  tags = { note = "public_network_access = \"Disabled\"" }`,
+		"only in an interp":      `  name = "${join("", ["public_network_access = x"])}"`,
+		"only in a dynamic":      "  dynamic \"x\" {\n    content {\n      public_network_access = \"Disabled\"\n    }\n  }",
+		"assigned twice":         "  public_network_access = \"Disabled\"\n  public_network_access = \"Disabled\"",
+		"trailing comment lying": `  public_network_access = "Enabled" # "Disabled"`,
+	}
+	for name, body := range cases {
+		if p := azureDBPrivacyProblems(azureDBFixture(body)); len(p) == 0 {
+			t.Errorf("%s: reported no problem for a MySQL server that does not state it is private:\n%s", name, azureDBFixture(body))
+		}
+	}
+}
+
+// TestAzureDBPrivacyProblems_StructuralRefusals: a missing, duplicated or unreadable server is a
+// problem of its own, never a silent pass — "found no block" must not read as "nothing to fix".
+func TestAzureDBPrivacyProblems_StructuralRefusals(t *testing.T) {
+	good := azureDBFixture(`  public_network_access = "Disabled"`)
+	cases := map[string]string{
+		"no mysql server":       strings.Replace(good, `resource "azurerm_mysql_flexible_server"`, `resource "azurerm_mysql_flexible_database"`, 1),
+		"header only commented": strings.Replace(good, `resource "azurerm_mysql_flexible_server"`, `# resource "azurerm_mysql_flexible_server" "x" {}`+"\n"+`resource "azurerm_mysql_flexible_database"`, 1),
+		"two mysql servers":     good + azureDBFixture(`  public_network_access = "Disabled"`),
+		"no delegated subnet":   strings.Replace(good, "resource \"azurerm_mysql_flexible_server\" \"this\" {\n  delegated_subnet_id = var.subnet_id\n", "resource \"azurerm_mysql_flexible_server\" \"this\" {\n", 1),
+		"heredoc":               good + "locals {\n  x = <<EOT\n}\nEOT\n}\n",
+		"unterminated block":    strings.TrimSuffix(strings.TrimSpace(good), "}"),
+		"unterminated comment":  good + "/* never closed",
+		"unterminated string":   good + `x = "never closed`,
+	}
+	for name, src := range cases {
+		if p := azureDBPrivacyProblems(src); len(p) == 0 {
+			t.Errorf("%s: reported no problem:\n%s", name, src)
+		}
+	}
+}
+
+// TestHCLResourceTopLevelAttrs_ValuesAndNesting pins the reader's two load-bearing behaviours
+// directly: a value is read up to (not including) a trailing comment, and an attribute one block down
+// is not top-level.
+func TestHCLResourceTopLevelAttrs_ValuesAndNesting(t *testing.T) {
+	src := "resource \"t\" \"a\" {\n  x = \"v\" # note {\n  storage {\n    y = 1\n  }\n  z = \"${a[\"}\"]}\"\n}\n"
+	attrs, blocks, err := hclResourceTopLevelAttrs(src, "t")
+	if err != nil || blocks != 1 {
+		t.Fatalf("blocks=%d err=%v, want 1 block and no error", blocks, err)
+	}
+	if got := attrs["x"]; len(got) != 1 || got[0] != `"v"` {
+		t.Errorf("x = %v, want [\"v\"] — the trailing comment (and its brace) must not be read as the value", got)
+	}
+	if _, ok := attrs["y"]; ok {
+		t.Error("y sits inside a nested block and must not be reported as top-level")
+	}
+	if got := attrs["z"]; len(got) != 1 {
+		t.Errorf("z = %v — a brace inside an interpolated string must not end the block early", got)
 	}
 }
