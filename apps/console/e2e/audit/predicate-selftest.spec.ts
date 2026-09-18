@@ -432,11 +432,18 @@ test.describe("the live predicates fail when the page is wrong", () => {
 	});
 
 	test("R8 — an external link PASSES on its href and is never enumerated for a click", async ({ page }) => {
-		await page.setContent(`<!doctype html><html lang="en"><head><title>t</title></head><body><main>
+		// Served from a real origin, NOT `setContent`. `setContent` leaves the page at `about:blank`,
+		// which is an opaque origin: every relative href fails to resolve against it, `isSameOrigin`
+		// answers false, and `/[org]/settings` reads as external while `#` drops out entirely. That
+		// measures the fixture's URL, not the predicate — which is correct at the origin the audit
+		// actually runs on. The route is torn down with the page, and nothing leaves the browser.
+		const body = `<!doctype html><html lang="en"><head><title>t</title></head><body><main>
 			<a href="https://docs.example.invalid/x">Docs</a>
 			<a href="/[org]/settings">Settings</a>
 			<a href="#">Nowhere</a>
-		</main></body></html>`);
+		</main></body></html>`;
+		await page.route("http://app.test/**", (route) => route.fulfill({ contentType: "text/html", body }));
+		await page.goto("http://app.test/org");
 		const found = await enumerateControls(page, "main", "main");
 		expect(found.external.map((e) => e.name), "the cross-origin link is external").toEqual(["Docs"]);
 		// A same-origin `href="#"` STAYS in `controls`: that is exactly the inert control R8 hunts,
