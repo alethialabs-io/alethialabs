@@ -141,9 +141,9 @@ function CardBody({
 }) {
 	switch (card.kind) {
 		case "inspector":
-			return <InspectorPanel onDestroyEnvironment={onDestroyEnvironment} />;
+			return <InspectorPanel />;
 		case "env-settings":
-			return <EnvSettingsCard />;
+			return <EnvSettingsCard onDestroyEnvironment={onDestroyEnvironment} />;
 		case "addon":
 			// `isRailOpen` declines this card without a project, so the rail never opens for it —
 			// this branch keeps the types honest rather than describing a reachable state.
