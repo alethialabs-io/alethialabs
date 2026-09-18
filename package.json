@@ -19,7 +19,6 @@
     "dev:stack:logs": "docker compose -f docker-compose.dev.yml logs -f --tail=120",
     "dev:stack:down": "docker compose -f docker-compose.dev.yml down --remove-orphans; rm -rf /tmp/alethia-dev-stack.lock",
     "lint": "turbo run lint",
-    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
     "db:up": "bash scripts/db-bootstrap.sh",
     "db:reset": "docker compose down -v && bash scripts/db-bootstrap.sh",
