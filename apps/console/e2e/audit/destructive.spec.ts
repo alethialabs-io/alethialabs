@@ -167,8 +167,7 @@ const CONTROLS = registry();
  * `active-job` used to be DELIBERATELY ABSENT here, and the note said so: `seedRouteFixtures` calls
  * `seedJob` with no status, `seedJob` defaults to a FINISHED deploy, and the row it wrote was not
  * the fixture `jobs.cancel` declares. That is fixed rather than excused — the `active-job` seeder
- * flips the audit's own job to PROCESSING, one of the three statuses that render Cancel (the
- * seeder says why not QUEUED).
+ * flips the audit's own job to QUEUED, which is one of the three statuses that render Cancel.
  */
 const SEEDABLE_FIXTURES: ReadonlySet<string> = new Set(FIXTURE_SEEDERS.keys());
 
@@ -455,11 +454,36 @@ async function fingerprint(): Promise<Map<string, number>> {
 	return counts;
 }
 
+/**
+ * Tables the console's own BACKGROUND WORK grows while a dialog is open, with who grows them.
+ *
+ * The fingerprint is table-agnostic, so it also counts writes nobody clicked for. Measured on this
+ * PR's gate runs: once the controls were actually reached, `jobs.cancel` and then
+ * `runners.pool.delete` each failed with "Cancel was pressed and rows still moved: fleet_actions
+ * 3→4, runner_bootstrap_tokens 3→4" — two different controls, the same two tables, the same +1. The
+ * server log prints "hetzner: would create a runner" once a minute through the whole run: the fleet
+ * scaler, which the seeded `fleet-pool` warm pool and the QUEUED `active-job` both give something to
+ * answer, and whose pass writes a decision row and mints a bootstrap token (`lib/fleet/controller.ts`
+ * → `mintBootstrapToken`; nothing else in the console inserts into either table but the runner
+ * bootstrap API). A pass that lands inside a dialog's window is not the control mutating anything.
+ *
+ * Only GROWTH is excused, and only here. A destructive mutation removes rows, so a count that FALLS
+ * in one of these tables still fails the control; what this cannot see is a control whose mutation
+ * would INSERT into one of them — none in the registry does today, and the bound is stated rather
+ * than implied.
+ */
+const AMBIENT_GROWTH: ReadonlyMap<string, string> = new Map([
+	["fleet_actions", "the fleet scaler records each pass's decision (lib/fleet)"],
+	["runner_bootstrap_tokens", "the fleet scaler mints a token for each runner it would create (lib/fleet)"],
+]);
+
 function diffFingerprints(before: Map<string, number>, after: Map<string, number>): string[] {
 	const moved: string[] = [];
 	for (const [table, n] of before) {
 		const m = after.get(table);
-		if (m !== undefined && m !== n) moved.push(`${table} ${n}→${m}`);
+		if (m === undefined || m === n) continue;
+		if (m > n && AMBIENT_GROWTH.has(table)) continue;
+		moved.push(`${table} ${n}→${m}`);
 	}
 	return moved;
 }
