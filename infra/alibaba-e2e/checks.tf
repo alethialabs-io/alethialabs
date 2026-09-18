@@ -117,3 +117,46 @@ check "e2e_applies_in_expected_account" {
     error_message = "this bootstrap is being applied in account ${data.alicloud_caller_identity.current.account_id}, but account_id pins ${var.account_id}."
   }
 }
+
+# ── The E2E assertion broker trust (#4226): exact, additive, and absent unless asked for ──────────
+check "e2e_broker_trust_is_exact" {
+  assert {
+    condition = local.broker_enabled ? alltrue([
+      length(local.trust_document.Statement) == 2,
+      contains(keys(local.trust_document.Statement[1].Condition), "StringEquals"),
+      !contains(keys(local.trust_document.Statement[1].Condition), "StringLike"),
+      lookup(local.trust_document.Statement[1].Condition.StringEquals, "oidc:iss", "") == var.e2e_broker_issuer_url,
+      lookup(local.trust_document.Statement[1].Condition.StringEquals, "oidc:aud", "") == "sts.aliyuncs.com",
+      lookup(local.trust_document.Statement[1].Condition.StringEquals, "oidc:sub", []) == [local.broker_subject],
+      !strcontains(local.broker_subject, "*"),
+      alicloud_ims_oidc_provider.e2e_broker[0].issuance_limit_time == 1,
+      length(local.broker_fingerprints) > 0,
+    ]) : true
+    error_message = "the e2e broker trust must be a second statement pinning oidc:iss = ${coalesce(var.e2e_broker_issuer_url, "<unset>")}, oidc:aud = sts.aliyuncs.com and oidc:sub = ['${local.broker_subject}'] with StringEquals, on a provider with issuance_limit_time = 1 and a non-empty fingerprint set."
+  }
+}
+
+# Statement[0] is the GitHub statement every other check here reads. The broker statement must be
+# APPENDED after it, never take its place — a gcp-e2e apply has already dropped a dispatch trust by
+# writing a second trust as a replacement.
+check "e2e_broker_trust_is_additive" {
+  assert {
+    condition = alltrue([
+      local.trust_document.Statement[0].Principal.Federated == [alicloud_ims_oidc_provider.github.arn],
+      lookup(local.trust_document.Statement[0].Condition.StringEquals, "oidc:iss", "") == var.github_issuer_url,
+      lookup(local.trust_document.Statement[0].Condition.StringEquals, "oidc:sub", []) == local.e2e_subs,
+      var.broker_oidc_provider_name != var.oidc_provider_name,
+    ])
+    error_message = "the broker trust must be APPENDED after the GitHub statement (Statement[0]) on its own RAM OIDC provider — Statement[0] must still trust ${var.github_issuer_url} for ${jsonencode(local.e2e_subs)}."
+  }
+}
+
+check "e2e_broker_trust_absent_when_unset" {
+  assert {
+    condition = local.broker_enabled || alltrue([
+      length(local.trust_document.Statement) == 1,
+      length(alicloud_ims_oidc_provider.e2e_broker) == 0,
+    ])
+    error_message = "with e2e_broker_issuer_url unset the trust must hold only the GitHub statement and there must be no broker OIDC provider."
+  }
+}

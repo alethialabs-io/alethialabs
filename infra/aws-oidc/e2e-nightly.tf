@@ -86,6 +86,34 @@ data "aws_iam_policy_document" "e2e_nightly_trust" {
     }
   }
 
+  # Optional (#4226): the E2E assertion broker, a SECOND issuer beside GitHub. Rendered only when
+  # e2e_broker_issuer_url is set; see e2e-broker.tf for what it pins and why that is all IAM can
+  # pin. A separate statement rather than a widened one, so removing it leaves the GitHub statement
+  # byte-identical.
+  dynamic "statement" {
+    for_each = local.broker_enabled ? [1] : []
+    content {
+      sid     = "E2EBrokerAssertion"
+      effect  = "Allow"
+      actions = ["sts:AssumeRoleWithWebIdentity"]
+      principals {
+        type        = "Federated"
+        identifiers = [aws_iam_openid_connect_provider.e2e_broker[0].arn]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "${local.broker_issuer_host}:aud"
+        values   = [local.broker_audience]
+      }
+      # EXACT subject — the one workload subject the broker is allowed to mint. Never StringLike.
+      condition {
+        test     = "StringEquals"
+        variable = "${local.broker_issuer_host}:sub"
+        values   = [local.broker_subject]
+      }
+    }
+  }
+
   # Optional: let an admin principal assume the role for a local apply/import/debug. Empty
   # admin_principal_arns (the default) ⇒ OIDC-only, no human assume path.
   dynamic "statement" {
