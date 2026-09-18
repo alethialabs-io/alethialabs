@@ -95,6 +95,22 @@ resource "google_storage_bucket" "this" {
     }
   }
 
+  # The caller's own rules (root `cloud_storage_buckets[*].lifecycle_rules`). The root variable's
+  # validation guarantees every rule carries an age and that SetStorageClass names its class, so no
+  # rule reaches the API with an empty condition. Default [] renders nothing.
+  dynamic "lifecycle_rule" {
+    for_each = each.value.lifecycle_rules
+    content {
+      condition {
+        age = lifecycle_rule.value.condition_age
+      }
+      action {
+        type          = lifecycle_rule.value.action_type
+        storage_class = lifecycle_rule.value.action_storage_class
+      }
+    }
+  }
+
   # Keep only the latest noncurrent version if versioning is enabled
   dynamic "lifecycle_rule" {
     for_each = each.value.versioning ? [1] : []
