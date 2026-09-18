@@ -469,9 +469,6 @@ test.describe("Architecture canvas", () => {
 		// `aria-label` entirely. Asserting the attribute is what makes this a test of the label.
 		await expect(card(page, "Bucket assets")).toHaveAttribute("aria-label", "Bucket assets");
 		await expect(card(page, "Bucket uploads")).toHaveAttribute("aria-label", "Bucket uploads");
-
-		// And the project root is named too, which is what makes it selectable below.
-		await expect(card(page, /^Project /)).toHaveCount(1);
 	});
 
 	test("⌘K → Add Bucket puts a card on the board and leaves no modal behind", async ({
@@ -557,11 +554,13 @@ test.describe("Architecture canvas", () => {
 		await expect(card(page, /^Bucket/)).toHaveCount(0);
 	});
 
-	test("selecting the project node offers Destroy environment — and Cancel is all this spec presses", async ({
+	test("⋯ → Environment settings offers Destroy environment — and Cancel is all this spec presses", async ({
 		page,
 	}) => {
-		await card(page, /^Project /).click();
-		await rail(page).getByRole("tab", { name: "Settings" }).click();
+		// The environment's settings card is where it is destroyed. This used to live on the project
+		// node's inspector, and the project node is not rendered on the board (canvas-flow.tsx filters
+		// it), so the control was unreachable — the defect #4775 fixed.
+		await moreMenu(page, "Environment settings");
 		await rail(page).getByRole("button", { name: "Destroy", exact: true }).click();
 
 		const confirm = page.getByRole("alertdialog");
@@ -576,8 +575,8 @@ test.describe("Architecture canvas", () => {
 
 		await confirm.getByRole("button", { name: "Cancel" }).click();
 		await expect(confirm).toHaveCount(0);
-		// Nothing was queued and nothing left the board.
-		await expect(card(page, /^Project /)).toHaveCount(1);
+		// Cancel closed the dialog and nothing else: the settings card is still docked.
+		await expect(rail(page)).toHaveAttribute("data-open", "true");
 	});
 
 	test("the Run menu offers Plan / Audit / Detect drift / Probe cluster, and nothing is clicked", async ({
