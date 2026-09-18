@@ -607,8 +607,15 @@ async function clearComponents(
  *
  *   · {@link tryCreateProject} (just below) catches the throw and returns it, which is what makes
  *     the guard-then-parse ordering possible at all. Read its JSDoc before adding a check here.
- *   · `duplicateProjectForProvider` (below) is IN-PROCESS. No action boundary, no redaction; the
- *     thrown message is the message it gets.
+ *   · `duplicateProjectForProvider` (below) is NOT in-process, which is what this bullet used to
+ *     claim. It is an export of THIS `"use server"` file, so it is a POST-addressable action id of
+ *     its own, and its one caller — `components/projects/duplicate-project-dialog.tsx` — is a
+ *     `"use client"` component: every call is a Server Action round trip and every throw crosses
+ *     the boundary. The comment's consequence ("no redaction; the thrown message is the message it
+ *     gets") was therefore false in a production build, where the dialog's
+ *     `toast.error(err.message)` rendered a digest. The remedy is the same one this bullet
+ *     recommends for the canvas below — {@link tryDuplicateProjectForProvider} returns the refusal
+ *     as a value, and the dialog renders it beside the name field (#4162).
  *   · the canvas's create-mode save
  *     (`components/design-project/canvas/design-project-canvas.tsx`) is a `"use client"` component,
  *     so its call IS a Server Action round trip and its `toast.error(e.message)` still renders a
@@ -2688,17 +2695,64 @@ export async function getProjectAsFormData(
 	return { formData, provider };
 }
 
-/** Duplicates a project config for a different cloud provider, mapping provider-specific values. */
-export async function duplicateProjectForProvider(
-	sourceProjectId: string,
-	targetCloudIdentityId: string,
-	targetRegion: string,
-): Promise<{
+/** {@link duplicateProjectForProvider}'s success shape, shared with its `try` wrapper. */
+export interface DuplicatedProject {
 	newProjectId: string;
 	/** Slug of the new project, for navigating into its canvas (`/{org}/{slug}`). */
 	newProjectSlug: string;
 	warnings: ConversionWarning[];
-}> {
+}
+
+/** {@link tryDuplicateProjectForProvider}'s result: the clone, or a refusal to render. */
+export type DuplicateProjectResult =
+	| ({ ok: true } & DuplicatedProject)
+	| ProjectRefusal;
+
+/**
+ * The name a cross-cloud clone gets when the user does not choose one.
+ *
+ * ` (${targetProvider})` is 6–10 characters and `pickFreeProjectName` adds up to " N" more, all of
+ * it against `PROJECT_NAME_MAX_LENGTH` (100) — which `createProject` has ENFORCED since #4738.
+ * Before that the column was an unbounded `text()` and an over-long derived name simply persisted;
+ * now it throws, so a project whose own name is within the suffix of the cap became impossible to
+ * duplicate at all (aws/gcp: 95 chars, azure: 93, alibaba/hetzner: 91 — two fewer each once a
+ * collision adds " 2"). That is why the dialog needs a name FIELD and not just a better default:
+ * no derivation can shorten a name the user has not been asked about.
+ *
+ * Kept as one function with exactly one caller-visible behaviour so the default shown in the dialog
+ * and the default the action falls back to cannot drift into two answers.
+ *
+ * @param sourceName the source project's display name
+ * @param targetProvider the cloud being duplicated onto
+ * @param takenNames every project name already in the org
+ * @returns a name the org does not hold — which may exceed the cap, and is not checked here
+ */
+function deriveDuplicateName(
+	sourceName: string,
+	targetProvider: CloudProviderSlug,
+	takenNames: string[],
+): string {
+	return pickFreeProjectName(`${sourceName} (${targetProvider})`, takenNames);
+}
+
+/**
+ * Duplicates a project config for a different cloud provider, mapping provider-specific values.
+ *
+ * THROWS on a refusal, like `createProject` does — see its JSDoc for why, and use
+ * {@link tryDuplicateProjectForProvider} from a client component that must SHOW the refusal.
+ *
+ * @param sourceProjectId the project being copied
+ * @param targetCloudIdentityId the verified cloud account the clone is created against
+ * @param targetRegion the clone's region on the target cloud
+ * @param projectName the clone's display name; when absent the derived default is used, so the
+ *   action keeps a correct answer for a caller that does not have a name field (#4162)
+ */
+export async function duplicateProjectForProvider(
+	sourceProjectId: string,
+	targetCloudIdentityId: string,
+	targetRegion: string,
+	projectName?: string,
+): Promise<DuplicatedProject> {
 	const actor = await authorize("create", { type: "project" });
 	const owner = actor.userId;
 
@@ -2733,13 +2787,24 @@ export async function duplicateProjectForProvider(
 	// THE CLONE NEEDS ITS OWN NAME. `convertProjectConfig` translates services and never touches
 	// `project_name`, and the same-provider branch is a bare `structuredClone` — so without this the
 	// name handed to `createProject` is the SOURCE project's, in the source project's own org, and
-	// #3145's uniqueness check matches the source row itself. The dialog has no name field, so the
-	// cross-cloud duplicate would end in "A project named … already exists" every single time and no
-	// project would ever be created.
-	converted.project.project_name = pickFreeProjectName(
-		`${formData.project.project_name} (${targetProvider})`,
-		takenNames,
-	);
+	// #3145's uniqueness check matches the source row itself — "A project named … already exists"
+	// every single time, and no project ever created. The dialog now HAS a name field (#4162), but
+	// the derivation stays: it is the field's pre-filled default, and it is what a caller without a
+	// field — the action is a POST-addressable id of its own — still gets.
+	//
+	// The user's name WINS when the dialog sent one — that is #4162's whole point, and it is also
+	// the only way past the cap for a source project whose own name is within the suffix of it.
+	// Nothing is asked about it here: `createProject` parses every name it is handed, after its
+	// `authorize`, and a bad one comes back as the catchable `ProjectNameInvalidError` the wrapper
+	// below renders. Re-asking here would put a validator in front of an action id that an
+	// unauthenticated POST can reach — the ordering #4644 records.
+	converted.project.project_name =
+		projectName ??
+		deriveDuplicateName(
+			formData.project.project_name,
+			targetProvider,
+			takenNames,
+		);
 
 	const { project } = await createProject(converted);
 	if (!project.slug) throw new Error("Duplicated project is missing a slug");
@@ -2749,6 +2814,68 @@ export async function duplicateProjectForProvider(
 		newProjectSlug: project.slug,
 		warnings,
 	};
+}
+
+/**
+ * Duplicates a project, RETURNING a refusal the caller can render.
+ *
+ * Exactly {@link tryCreateProject}'s shape, for exactly its reason, on the second screen that needs
+ * it. The duplicate dialog is a `"use client"` component, so its call is a Server Action round trip
+ * and a thrown message is redacted to a `digest` in a production build. That is the whole reason
+ * #4162's name field would otherwise be useless: the user could edit the name, but the sentence
+ * saying WHY the old one was refused — too long, or already held by the org — never reached them.
+ *
+ * ONLY the two name refusals are mapped; anything else is rethrown, because an unexpected error is
+ * a defect rather than advice and the dialog's `catch` is what handles it. `ProjectNameInvalidError`
+ * is module-private (a `"use server"` file may export nothing but async functions), and this wrapper
+ * lives in the same module for that reason.
+ *
+ * **IT ASKS NOTHING ABOUT THE INPUT BEFORE DELEGATING.** It is its own action id, so any check here
+ * is a check made before `authorize` — an input oracle an unauthenticated POST can query. The rule
+ * lives once, in `createProject`, behind its guard.
+ *
+ * @param sourceProjectId the project being copied
+ * @param targetCloudIdentityId the verified cloud account the clone is created against
+ * @param targetRegion the clone's region on the target cloud
+ * @param projectName the clone's display name; absent falls back to the derived default
+ * @returns the clone, or `{ ok: false, error }` with a sentence to show beside the name field
+ */
+export async function tryDuplicateProjectForProvider(
+	sourceProjectId: string,
+	targetCloudIdentityId: string,
+	targetRegion: string,
+	projectName?: string,
+): Promise<DuplicateProjectResult> {
+	try {
+		const duplicated = await duplicateProjectForProvider(
+			sourceProjectId,
+			targetCloudIdentityId,
+			targetRegion,
+			projectName,
+		);
+		return { ok: true, ...duplicated };
+	} catch (err) {
+		if (err instanceof ProjectNameInvalidError) {
+			return { ok: false, error: err.message };
+		}
+		if (err instanceof ProjectNameTakenError) {
+			return { ok: false, error: err.message };
+		}
+		// `ProjectNameTakenError` above ALREADY covers the index race that `pickFreeProjectName`'s
+		// JSDoc describes — `takenNames` is read in one transaction and the insert happens in
+		// another, so two concurrent duplicates can derive the same name and
+		// `projects_org_id_project_name_key` refuses the loser. `insertProjectWithDefaultFabric`
+		// maps every 23505 on that index onto the class, on both the first insert and the slug
+		// retry, so it arrives here typed.
+		//
+		// There is deliberately NO `isProjectNameTaken(err)` fallback, which is where this wrapper
+		// differs from `tryCreateProject`. That fallback rebuilds the sentence from the name the
+		// CALLER passed, and this caller may pass none: the name would then be the derived default,
+		// which is computed inside `duplicateProjectForProvider` and is not a value this scope
+		// holds. Naming the wrong project in "A project named … already exists" is worse than the
+		// digest it would replace, so an unmapped error stays an unexpected one.
+		throw err;
+	}
 }
 
 /**
@@ -2768,11 +2895,28 @@ export type DuplicateCategory =
 	| "topics"
 	| "secrets";
 
-/** Source provider + the service categories present, for the cross-cloud duplicate preview. */
+/**
+ * Source provider, the service categories present, and the per-target default NAME, for the
+ * cross-cloud duplicate preview.
+ *
+ * `suggestedNames` is what pre-fills the dialog's name field, and it is keyed by target cloud
+ * because the suffix NAMES that cloud — a field still reading " (aws)" after the user switched the
+ * target to GCP is a wrong default, not a stale one. It is computed HERE, by the same
+ * `deriveDuplicateName` the action falls back to, rather than in the client: a second derivation in
+ * the dialog would be a second source of truth, and the client has no business reading the org's
+ * project names to de-duplicate against. Only the source project's own name reaches the client, in
+ * five pre-composed strings.
+ *
+ * It is a SUGGESTION and nothing here checks it against `PROJECT_NAME_MAX_LENGTH`: when the source
+ * name is long enough the suggestion is over the cap and the form says so on the first render —
+ * which is the honest reading, because that is precisely the project #4738 made un-duplicatable and
+ * the field the user must now shorten.
+ */
 export async function getProjectDuplicateSummary(projectId: string): Promise<{
 	provider: CloudProviderSlug;
 	projectName: string;
 	categories: DuplicateCategory[];
+	suggestedNames: Record<CloudProviderSlug, string>;
 }> {
 	const { formData, provider } = await getProjectAsFormData(projectId);
 	const categories: DuplicateCategory[] = ["network", "cluster"];
@@ -2783,7 +2927,30 @@ export async function getProjectDuplicateSummary(projectId: string): Promise<{
 	if (formData.queues?.length) categories.push("queues");
 	if (formData.topics?.length) categories.push("topics");
 	if (formData.secrets?.length) categories.push("secrets");
-	return { provider, projectName: formData.project.project_name, categories };
+
+	const actor = await currentActor();
+	const takenNames = await withActorScope(actor, async (tx) => {
+		const names = await tx
+			.select({ project_name: projects.project_name })
+			.from(projects)
+			.where(eq(projects.org_id, actor.orgId));
+		return names.map((n) => n.project_name);
+	});
+	const sourceName = formData.project.project_name;
+	// A literal annotated `Record<CloudProviderSlug, string>` rather than a fold over
+	// `CLOUD_PROVIDER_SLUGS`: the annotation is checked in BOTH directions, so a cloud added to the
+	// slug union fails to compile here until it is given a suggestion, and one removed fails too. A
+	// fold would need an `as` on its seed to type an accumulator that is briefly incomplete — and
+	// that cast is exactly the thing that would let a missing key through silently.
+	const suggestedNames: Record<CloudProviderSlug, string> = {
+		aws: deriveDuplicateName(sourceName, "aws", takenNames),
+		gcp: deriveDuplicateName(sourceName, "gcp", takenNames),
+		azure: deriveDuplicateName(sourceName, "azure", takenNames),
+		hetzner: deriveDuplicateName(sourceName, "hetzner", takenNames),
+		alibaba: deriveDuplicateName(sourceName, "alibaba", takenNames),
+	};
+
+	return { provider, projectName: sourceName, categories, suggestedNames };
 }
 
 // ============================================================
