@@ -9,7 +9,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Bell } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -85,6 +85,10 @@ export function PolicySheet({
 }: PolicySheetProps) {
 	const { categories, channels, advancedAlerting, conditionOptions } = bootstrap;
 	const wasOpen = useRef(false);
+	// The switch's name is the visible row title, by reference — `role="switch"` takes its name
+	// from the author only, so the text beside it names nothing unless it is pointed at (#4352).
+	const enableLabelId = useId();
+	const enableDescId = useId();
 
 	const form = useForm<WizardValues>({
 		resolver: zodResolver(wizardSchema),
@@ -181,12 +185,16 @@ export function PolicySheet({
 						</div>
 						<div className="flex items-center justify-between rounded-lg border border-border/60 px-3 py-2.5">
 							<div>
-								<div className="text-sm">Enable on create</div>
-								<div className="text-muted-foreground text-xs">
+								<div id={enableLabelId} className="text-sm">
+									Enable on create
+								</div>
+								<div id={enableDescId} className="text-muted-foreground text-xs">
 									Start routing matching events immediately.
 								</div>
 							</div>
 							<Switch
+								aria-labelledby={enableLabelId}
+								aria-describedby={enableDescId}
 								checked={v.enabled}
 								onCheckedChange={(c) => form.setValue("enabled", c)}
 							/>
