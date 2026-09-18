@@ -8,7 +8,7 @@
 
 import { OpenFgaClient } from "@openfga/sdk";
 import { sql } from "drizzle-orm";
-import type { FgaTuple } from "@/lib/authz/fga-tuples";
+import type { FgaTuple, GrantScope } from "@/lib/authz/fga-tuples";
 import type { HierarchyEdge, ScopedGrant, TupleSync } from "@/lib/authz/tuple-sync";
 import type { CoreContext } from "@/lib/enterprise";
 
@@ -115,60 +115,42 @@ export async function readAllTuples(
 }
 
 /**
- * The OpenFGA object a grant's tuples LIVE on — or null when the grant expands to no tuples and
- * there is consequently nothing to read or delete.
+ * The OpenFGA object a grant's tuples LIVE on.
  *
- * THE INVARIANT: every tuple `expandGrant` produces for the same scope AND EFFECT sits on the
- * object this returns. It is therefore derived from the very predicate the expander expands
- * through, taken as an argument rather than reached for, so the two cannot be given different
- * ones — and it takes the effect for the same reason the expander does: an allow row is asked
- * what it confers, a deny row what it excludes, and those come apart for a row that scopes to
- * nothing (`EMPTY_SCOPE_DENIES` in apps/console/lib/authz/grant-scope.ts).
+ * THE INVARIANT: every tuple `expandGrant` produces for the same scope sits on the object this
+ * returns. Both read the same typed `GrantScope` (#4582) — org arm → `org:<orgId>`, resource arm
+ * → `<resourceType>:<resourceId>` — and that type is the only way a scope reaches either of them.
+ * The effect is not an input here, and does not need to be: the #4584 ruling that an allow row
+ * and a deny row of the same contradictory shape resolve differently is applied BEFORE a
+ * `GrantScope` exists, by `grantScopeFromRow` (via `targetForEffect`), and a row that resolves to
+ * nothing never becomes a `GrantScope` at all — its callers skip it, so there is nothing here to
+ * return null for.
  *
- * ⚠ THE CONVERSE DOES NOT HOLD, and an earlier version of this docblock claimed it did ("null
- * exactly when `expandGrant` produces none"). `expandGrant` also produces nothing when the SCOPE
- * is fine but every permission key is org-level — `isOrgLevel` is true for EVERY `create` action —
- * so `expandGrant({resourceType:"project", resourceId:P}, ["project:create"])` is `[]` while this
- * returns `project:P`. That combination is writable today. This returns null when the ROW SCOPES
- * TO NOTHING, which is what it can answer from the scope alone; it does not and cannot know the
- * permission keys.
+ * ⚠ THE CONVERSE DOES NOT HOLD. `expandGrant` also produces nothing when every permission key is
+ * org-level — `isOrgLevel` is true for EVERY `create` action — so
+ * `expandGrant({resourceType:"project", resourceId:P}, ["project:create"])` is `[]` while this
+ * returns `project:P`. That combination is writable today.
  *
- * ⚠ The consequence is real and PRE-EXISTING (the old two-column expression returned `project:P`
- * for that row too): `clearGrantTuples` will clear the subject's tuples on `project:P` and then
- * write nothing back. Narrowing that would mean taking the keys here and returning null on an
- * empty expansion — which trades this wipe for stale tuples when a role's bundle becomes entirely
- * org-level, so it is a design question rather than a typo, and it is recorded rather than
- * decided. See the note on `clearGrantTuples`.
+ * ⚠ The consequence is real and PRE-EXISTING: `clearGrantTuples` will clear the subject's tuples
+ * on `project:P` and then write nothing back. Narrowing that would mean taking the keys here and
+ * skipping on an empty expansion — which trades this wipe for stale tuples when a role's bundle
+ * becomes entirely org-level, so it is a design question rather than a typo, and it is recorded
+ * rather than decided. See the note on `clearGrantTuples`.
  *
  * It used to be `resourceId ? \`${resourceType}:${resourceId}\` : \`org:${orgId}\`` — the two
  * columns read independently of the expander. For an `('org', <resource-uuid>)` row that produced
  * `org:<resource-uuid>`, an object type/id pair that does not exist, while `expandGrant` had
  * written the tuples on `org:<orgId>`. The pre-write delete and `removeScopedGrant` both looked
- * there and found nothing, so REVOKING SUCH A GRANT REMOVED THE ROW AND LEFT THE ACCESS —
- * unrevokable privilege through the supported path, silent, with the UI showing the grant gone
- * (#4584). Two readers deciding separately where a grant's tuples are is the defect; one predicate
- * feeding both is the fix.
+ * there and found nothing, so REVOKING SUCH A GRANT REMOVED THE ROW AND LEFT THE ACCESS (#4584).
+ * That pair is no longer a `GrantScope`, so it cannot reach this function.
  *
- * Exported because that invariant is a PURE property and is unit-tested as one: for each scope
- * shape, expand the grant for real and assert every tuple's object equals what this returns (and
- * that an expansion of nothing returns null). Null is not an error — a row that confers nothing
- * wrote nothing.
+ * Exported because the invariant is a PURE property and is unit-tested as one: for each row
+ * shape, narrow it, expand it for real, and assert every tuple's object equals what this returns.
  */
-export function grantObject(
-	targetForEffect: CoreContext["fga"]["targetForEffect"],
-	g: {
-		orgId: string;
-		effect: "allow" | "deny";
-		resourceType: string;
-		resourceId: string | null;
-	},
-): string | null {
-	const target = targetForEffect(g.effect, g.resourceType, g.resourceId);
-	if (target.kind === "org") return `org:${g.orgId}`;
-	if (target.kind === "resource") {
-		return `${target.resourceType}:${target.resourceId}`;
-	}
-	return null;
+export function grantObject(g: GrantScope): string {
+	return g.resourceType === "org"
+		? `org:${g.orgId}`
+		: `${g.resourceType}:${g.resourceId}`;
 }
 
 export class FgaTupleSync implements TupleSync {
@@ -198,9 +180,10 @@ export class FgaTupleSync implements TupleSync {
 	 *
 	 * ⚠ AND THE TWO EFFECTS NOW BEHAVE DIFFERENTLY FOR A ROW THAT SCOPES TO NOTHING (#4584):
 	 *
-	 *   allow — `grantObject` returns null, so this is a no-op. It does NOT clear the tuples such
-	 *     a row wrote under the PRE-#4584 reading: those sit on `org:<orgId>`, indistinguishable
-	 *     from a legitimate org-wide grant's, and deleting them blind would revoke real access.
+	 *   allow — `grantScopeFromRow` returns null, so no caller reaches this and nothing is
+	 *     cleared — including the tuples such a row wrote under the PRE-#4584 reading: those sit
+	 *     on `org:<orgId>`, indistinguishable from a legitimate org-wide grant's, and deleting
+	 *     them blind would revoke real access.
 	 *   deny — the ruling is that it excludes ORG-WIDE, so its tuples genuinely DO live on
 	 *     `org:<orgId>` and this clears them — together with everything else the subject has
 	 *     there, per the coarseness above.
@@ -209,18 +192,8 @@ export class FgaTupleSync implements TupleSync {
 	 * any exist, and whether removing them takes access from anyone, is what the #4583 audit
 	 * answers per row (docs/ops/grants-scope-contradictions.sql).
 	 */
-	private async clearGrantTuples(
-		subject: string,
-		grant: {
-			orgId: string;
-			effect: "allow" | "deny";
-			resourceType: string;
-			resourceId: string | null;
-		},
-	): Promise<void> {
-		const object = grantObject(this.core.fga.targetForEffect, grant);
-		if (object === null) return;
-		await this.deleteTuples(await this.existingFor(subject, object));
+	private async clearGrantTuples(subject: string, grant: GrantScope): Promise<void> {
+		await this.deleteTuples(await this.existingFor(subject, grantObject(grant)));
 	}
 
 	private async writeTuples(tuples: FgaTuple[]): Promise<void> {
@@ -269,7 +242,6 @@ export class FgaTupleSync implements TupleSync {
 				principalId: userId,
 				effect: "allow",
 				resourceType: "org",
-				resourceId: null,
 			},
 			keys,
 		);
@@ -292,17 +264,9 @@ export class FgaTupleSync implements TupleSync {
 			: grant.roleId
 				? await this.core.fga.rolePermissionKeys(grant.roleId)
 				: [];
-		const tuples = this.core.fga.expandGrant(
-			{
-				orgId: grant.orgId,
-				principalType: grant.principalType,
-				principalId: grant.principalId,
-				effect: grant.effect,
-				resourceType: grant.resourceType,
-				resourceId: grant.resourceId,
-			},
-			keys,
-		);
+		// `ScopedGrant` IS a `GrantScope` (plus what it grants), so there is no scope to rebuild
+		// here — and no way to rebuild one from free strings, which is the point (#4582).
+		const tuples = this.core.fga.expandGrant(grant, keys);
 		await this.clearGrantTuples(grantSubject(grant), grant);
 		await this.writeTuples(tuples);
 	}
@@ -345,14 +309,19 @@ export class FgaTupleSync implements TupleSync {
 			// copy of the object expression and its own `g.resource_id ? g.resource_type : "org"`
 			// normalisation — a structural duplicate that a fix to `grantObject` alone would have
 			// left wrong, which is the shape where the second renderer never gets the fix.
-			const scope = {
+			//
+			// The row is raw columns, so it is NARROWED, not spread: an allow row that confers
+			// nothing is null and has no tuples to clear or write (#4582, applying the #4584 ruling
+			// through `targetForEffect`; a deny row of that shape comes back org-wide).
+			const scope = this.core.fga.grantScopeFromRow({
 				orgId: g.org_id,
 				principalType: g.principal_type,
 				principalId: g.principal_id,
 				effect: g.effect,
 				resourceType: g.resource_type,
 				resourceId: g.resource_id,
-			};
+			});
+			if (scope === null) continue;
 			await this.clearGrantTuples(grantSubject(scope), scope);
 			await this.writeTuples(this.core.fga.expandGrant(scope, keys));
 		}
@@ -379,24 +348,23 @@ export class FgaTupleSync implements TupleSync {
 		`);
 		const tuples: FgaTuple[] = [];
 		for (const g of grants) {
+			// Narrowed, not spread — see `resyncRole`. A null scope writes nothing, as it always
+			// did; it just no longer reaches the expander to find that out.
+			const scope = this.core.fga.grantScopeFromRow({
+				orgId: g.org_id,
+				principalType: g.principal_type,
+				principalId: g.principal_id,
+				effect: g.effect,
+				resourceType: g.resource_type,
+				resourceId: g.resource_id,
+			});
+			if (scope === null) continue;
 			const keys = g.permission_key
 				? [g.permission_key]
 				: g.role_id
 					? await this.core.fga.rolePermissionKeys(g.role_id)
 					: [];
-			tuples.push(
-				...this.core.fga.expandGrant(
-					{
-						orgId: g.org_id,
-						principalType: g.principal_type,
-						principalId: g.principal_id,
-						effect: g.effect,
-						resourceType: g.resource_type,
-						resourceId: g.resource_id,
-					},
-					keys,
-				),
-			);
+			tuples.push(...this.core.fga.expandGrant(scope, keys));
 		}
 
 		// 3. Hierarchy edges → parent tuples.

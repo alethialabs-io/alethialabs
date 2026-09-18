@@ -10,10 +10,8 @@ import { recordActivity } from "@/lib/authz/activity";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { actorCanGrant } from "@/lib/authz/ceiling";
 import { getEntitlements } from "@/lib/authz/entitlements";
-import {
-	orgScopeCarriesResourceId,
-	ORG_SCOPE_WITH_RESOURCE_ID,
-} from "@/lib/authz/fga-tuples";
+import { grantScopeFromRow, parseGrantResource } from "@/lib/authz/fga-tuples";
+import { resourceIdOf } from "@/lib/authz/grant-scope";
 import { authorize } from "@/lib/authz/guard";
 import {
 	BUILTIN_ROLE_IDS,
@@ -33,10 +31,6 @@ import {
 	team,
 	user,
 } from "@/lib/db/schema";
-import {
-	isGrantResourceType,
-	UNKNOWN_RESOURCE_TYPE,
-} from "@/lib/validations/grants";
 import {
 	type AccessGrantQuery,
 	type AccessGrantsPage,
@@ -116,8 +110,9 @@ export interface AssignGrantInput {
 	/**
 	 * The kind half of the scope. Typed `string` and not `GrantResourceType` DELIBERATELY: a
 	 * server action's arguments arrive over the wire from a client bundle, so a union here would
-	 * be a claim the compiler cannot keep. `assignGrant` holds it against `GRANT_RESOURCE_TYPES`
-	 * at runtime instead, which is the only place the check can be true.
+	 * be a claim the compiler cannot keep. `assignGrant` parses it with `parseGrantResource`
+	 * instead, which is the only place the check can be true — and the only way to obtain the
+	 * `GrantResource` that the insert and `syncScopedGrant` are built from.
 	 */
 	resourceType: string;
 	resourceId?: string | null;
@@ -140,15 +135,12 @@ export async function assignGrant(input: AssignGrantInput): Promise<void> {
 	if (input.permissionKey && !VALID_KEYS.has(input.permissionKey)) {
 		throw new Error("Unknown permission.");
 	}
-	if (orgScopeCarriesResourceId(input.resourceType, input.resourceId ?? null)) {
-		throw new Error(ORG_SCOPE_WITH_RESOURCE_ID);
-	}
-	// An unrecognised kind is refused rather than stored (#4734), and refused BEFORE the
-	// `resourceId ? … : "org"` derivation below — so a misspelled kind sent without an id cannot
-	// be laundered into a legitimate org-wide grant.
-	if (!isGrantResourceType(input.resourceType)) {
-		throw new Error(UNKNOWN_RESOURCE_TYPE);
-	}
+	// The org kind with an id, an unrecognised kind (#4734) and an empty id are all refused here,
+	// and what comes back is the typed scope everything below is built from — so there is no
+	// second derivation of the kind from the id to launder one of those into an org-wide grant.
+	const parsed = parseGrantResource(input.resourceType, input.resourceId ?? null);
+	if (!parsed.ok) throw new Error(parsed.error);
+	const scope = parsed.resource;
 	// Privilege ceiling: an allow-grant may not exceed the grantor's own effective permissions
 	// (a deny-grant only removes access, so it can never escalate the grantee — skip it).
 	if (
@@ -161,9 +153,8 @@ export async function assignGrant(input: AssignGrantInput): Promise<void> {
 			"exceeds_grantor_privilege",
 		);
 	}
-	const resourceId = input.resourceId ?? null;
-	// Org-wide grants are stored on the org resource type.
-	const resourceType = resourceId ? input.resourceType : "org";
+	const resourceId = resourceIdOf(scope);
+	const resourceType = scope.resourceType;
 
 	await getServiceDb()
 		.insert(grants)
@@ -184,8 +175,7 @@ export async function assignGrant(input: AssignGrantInput): Promise<void> {
 			principalType: input.principalType,
 			principalId: input.principalId,
 			effect: input.effect,
-			resourceType,
-			resourceId,
+			...scope,
 			roleId: input.roleId ?? null,
 			permissionKey: input.permissionKey ?? null,
 		})
@@ -214,18 +204,22 @@ export async function revokeGrant(id: string): Promise<void> {
 	if (!g) return;
 	await db.delete(grants).where(and(eq(grants.id, id), eq(grants.org_id, actor.orgId)));
 
-	void getTupleSync()
-		.removeScopedGrant({
-			orgId: g.org_id,
-			principalType: g.principal_type === "team" ? "team" : "user",
-			principalId: g.principal_id,
-			effect: g.effect === "deny" ? "deny" : "allow",
-			resourceType: g.resource_type,
-			resourceId: g.resource_id,
-			roleId: g.role_id,
-			permissionKey: g.permission_key,
-		})
-		.catch((err) => console.error("[authz] grant tuple removal failed:", err));
+	// The row is raw columns, so it is narrowed rather than spread into a `ScopedGrant`. A null
+	// scope is an ALLOW row that confers nothing (the #4584 ruling, via `targetForEffect`); it has
+	// no object to clear, which is what ee's writer already did for it (a no-op).
+	const scope = grantScopeFromRow({
+		orgId: g.org_id,
+		principalType: g.principal_type === "team" ? "team" : "user",
+		principalId: g.principal_id,
+		effect: g.effect === "deny" ? "deny" : "allow",
+		resourceType: g.resource_type,
+		resourceId: g.resource_id,
+	});
+	if (scope !== null) {
+		void getTupleSync()
+			.removeScopedGrant({ ...scope, roleId: g.role_id, permissionKey: g.permission_key })
+			.catch((err) => console.error("[authz] grant tuple removal failed:", err));
+	}
 
 	// Security event: an access grant was revoked (gated to advancedAlerting in emit).
 	emitAlertEventSafe(actor.orgId, "authz.grant.revoke", {
