@@ -2203,12 +2203,33 @@ jobs:
         if: matrix.module == 'packages/core' || matrix.module == 'apps/runner'
         with:
           tofu_version: "1.9.0"
+      # `-count=1` is what makes the TS-vs-Go mirror locks run on a console-only PR (#4768).
+      #
+      # Several tests read files OUTSIDE their Go module through the monorepo root: the
+      # `Mirrors the Go X` lock in packages/core/jsonbmirror (#4455), and the mirror/coupling tests
+      # in argocd, categories, cloud, compat, format, manifests and validate, plus
+      # apps/runner/internal/agent/override_expiry_wire_test.go. The Go test cache does not key on
+      # the console files the jsonbmirror lock reads. Measured on go1.27 with this exact command:
+      # renaming a mirrored field in apps/console/lib/addons/types.ts left
+      # `go test -coverprofile=… ./jsonbmirror/` at `ok … (cached)`, exit 0, and `-count=1` on the
+      # same tree FAILED. `-coverprofile` does not disable caching.
+      #
+      # setup-go restores GOCACHE, and CI does serve hits: dev run 35286108684 printed `(cached)`
+      # for 16 packages/core packages, categories, format and manifests among them. A `(cached)`
+      # line means the test binary never ran, so a console-only PR (a TS change, no Go change,
+      # a warm cache) is exactly the PR these locks existed for and exactly the one they skipped.
+      #
+      # Applied to the whole run rather than a list of packages, because a hand-written list of
+      # "the tests that read outside the module" is a list the next such test is missing from.
+      # The cost is small: seven of the eight most recent green runs before this change printed
+      # zero `(cached)` lines in any Go leg, so today's timings are mostly uncached ones already.
+      # The job still reports on every PR; only the cache lookup changes.
       - name: Build · vet · test (with coverage)
         working-directory: ${{ matrix.module }}
         run: |
           go build ./...
           go vet ./...
-          go test -coverprofile=cover.out ./...
+          go test -count=1 -coverprofile=cover.out ./...
       # Per-package statement-coverage RATCHET: coverage may rise, never fall. Reads the cover.out
       # written directly above — it does NOT re-run the suite.
       #
@@ -2263,7 +2284,10 @@ jobs:
           GOWORK=off go vet -tags=e2e_t1 ./...
           GOWORK=off go vet -tags=e2e_t2 ./...
           GOWORK=off go vet -tags=e2e_b6 ./...
-          GOWORK=off go test -coverprofile=cover.out ./...
+          # -count=1 as in the module legs above (#4768). No untagged test here was found reading
+          # outside the module (grep for go.work / ../../); this keeps "no Go test result on a PR comes from the cache" true
+          # for all four modules instead of three.
+          GOWORK=off go test -count=1 -coverprofile=cover.out ./...
       # test/e2e is the FOURTH Go module and has no matrix leg of its own — it is exercised from
       # inside the packages/core leg above, which is why its 2,193 statements have never been
       # coverage-measured. Its ratchet is therefore an explicit step here rather than a matrix
