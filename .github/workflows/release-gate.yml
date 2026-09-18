@@ -55,6 +55,9 @@ name: Release gate
 #     reports on every non-draft PR event, because a check that sometimes reports `skipped` cannot
 #     be required without wedging the queue.
 #   · workflow_dispatch, with an optional comma-separated `legs` input.
+#   · an UNLABELLED non-draft dev PR that changes a leg's own spec (a path the picker's RULES table
+#     matches) runs THAT leg, narrowed to the legs those specs imply (#4777). See the note above the
+#     `pick` step.
 # Never `merge_group` (Mergify replaced it), never `paths:` (a filtered-out required workflow reports
 # nothing and wedges every PR — validate-console.yml's header has the incident).
 #
@@ -63,8 +66,8 @@ name: Release gate
 # surface a leg exists to protect merged with the leg never having executed, and the red landed days
 # later on someone else's promotion (#4333 → #4389). So the `legs` job now goes RED when a dev PR
 # changes something the gate BOOTS and carries neither `release-gate:*` label, naming the paths, the
-# legs they imply and the label that is missing. The seven legs still run only on a promotion, a
-# dispatch, or a labelled PR.
+# legs they imply and the label that is missing. Every leg runs only on a promotion, a dispatch
+# or a labelled PR. An unlabelled PR runs just the legs its own changed specs imply (#4777).
 #
 # THE PRICE, MEASURED, AND IT IS NOT THE SMALL HALF. Two costs, and the second is the one that
 # decides whether this check should be binding.
@@ -352,7 +355,8 @@ jobs:
       # matters: the PR would carry `release-gate:run`, this workflow would not re-fire, and the gate
       # would still never run — now wearing a label that reads as the fix. A PAT or App token does
       # retrigger, at the price of a stored credential that can write to any PR, to save one click.
-      # The red check also spends ZERO gate minutes until a human decides to spend them. There is
+      # The red check also spends ZERO gate minutes until a human decides to spend them — for the
+      # paths that imply EVERY leg. A leg's own spec is the exception below (#4777). There is
       # deliberately no `release-gate:skip` escape label: a guard whose cheapest escape route is a
       # second label is a guard nobody ever pays.
       #
@@ -360,6 +364,30 @@ jobs:
       # them — one mapping, two questions, so "which legs" and "whether any" cannot drift apart. What
       # this step CANNOT answer is which directories the console is compiled from; that is derived
       # from the tree in the `require-label` step below, which is also where the failure is raised.
+      #
+      # ── A LEG'S OWN SPEC RUNS THAT LEG WITHOUT THE LABEL (#4777) ─────────────────────────────
+      #
+      # The red check alone did not work, and it was measured. #4742, #4752, #4753 and #4754 are
+      # four spec-heavy PRs. Each went red here, nobody added the label, and each merged with ZERO
+      # browser runs, because nothing requires this check (see the note on the `legs` job's `if:`).
+      # Their spec reds first appeared on the dev→staging promotion #4623. A red that asks a person to spend
+      # the gate is a memory step again, one level up.
+      #
+      # So when an unlabelled dev PR changes a path that RULES maps to specific legs, `pick` runs
+      # those legs and ONLY those. It asks for no label and fails nothing. That is the cheap case,
+      # one or two legs, because RULES only ever narrows. It is also the one where "never ran"
+      # is least defensible: the change IS the measurement. SEAMS and console source still imply
+      # every leg, and those still go red and ask. That is the ~3,000 runner-minute decision
+      # the header leaves to the maintainer, and this does not take it. A mixed diff gets both. Its spec legs
+      # run, and `require-label` stays red for the paths those legs do not cover. It names the
+      # legs that did run, so the red does not read as "nothing measured this". Replayed on the four
+      # PRs: audit-interaction · audit + audit-interaction · audit + audit-interaction (red for the
+      # rest) · canvas (red for the rest).
+      #
+      # WHAT THIS DOES NOT DO: make any of it binding. A red auto-run leg on a dev PR is as advisory
+      # as this check, because no `Release gate (<leg>)` context is required on dev. What it changes
+      # is that the verdict EXISTS on the PR that caused it, not two days later on someone else's
+      # promotion.
       #
       # STATED OMISSIONS, because an unstated one reads as coverage. `pnpm-lock.yaml` and the root
       # config are NOT on the surface, though a dependency bump can certainly break a flow — every
@@ -611,11 +639,8 @@ jobs:
           }
 
           const decision = decide();
-          const chosen = legs.filter((l) => decision.legs.includes(l.project));
-          if (chosen.length === 0) { console.error("::error::no legs selected"); process.exit(1); }
-          emit("include", JSON.stringify(chosen));
-          console.log(`legs: ${chosen.map((l) => l.project).join(", ")}`);
-          console.log(`why: ${decision.rule}`);
+          const labelled = legs.filter((l) => decision.legs.includes(l.project));
+          if (labelled.length === 0) { console.error("::error::no legs selected"); process.exit(1); }
 
           // WHETHER THE GATE RUNS AT ALL (#4466). The reasons live in the YAML comments above this
           // step, where prose costs the expression budget nothing; the CHECK lives in the next step,
@@ -625,16 +650,32 @@ jobs:
           const promotion = env.BASE_REF === "main" || env.BASE_REF === "staging";
           const asked = RUN_LABELS.some((l) => prLabels.includes(l));
           const gateRuns = env.EVENT_NAME === "workflow_dispatch" || promotion || asked;
-          emit("run", gateRuns ? "yes" : "no");
+
+          // A LEG'S OWN SPEC RUNS THAT LEG, LABEL OR NOT (#4777). Why is in the YAML above this step.
+          const implied = [];
+          const specLegs = new Set();
           if (!gateRuns) {
-            const implied = [];
             for (const f of changedPaths() ?? []) {
               if (SEAMS.some((re) => re.test(f))) { implied.push({ f, l: "every leg", w: "a shared seam — this file IS the gate's instrument" }); continue; }
               const rule = RULES.find((r) => r.when.test(f));
-              if (rule !== undefined) implied.push({ f, l: rule.legs.join(", "), w: rule.why });
+              if (rule === undefined) continue;
+              implied.push({ f, l: rule.legs.join(", "), w: rule.why });
+              for (const l of rule.legs) specLegs.add(l);
             }
+          }
+          const auto = !gateRuns && specLegs.size > 0;
+          const chosen = auto ? legs.filter((l) => specLegs.has(l.project)) : labelled;
+          const rule = auto
+            ? `an unlabelled dev PR that changes a leg's own spec runs that leg (#4777) — the label would run: ${labelled.map((l) => l.project).join(", ")} (${decision.rule})`
+            : decision.rule;
+          emit("include", JSON.stringify(chosen));
+          console.log(`legs: ${chosen.map((l) => l.project).join(", ")}`);
+          console.log(`why: ${rule}`);
+          emit("run", gateRuns || auto ? "yes" : "no");
+          if (!gateRuns) {
+            emit("auto", auto ? chosen.map((l) => l.project).join(",") : "");
             emit("implied", JSON.stringify(implied));
-            emit("would", `${chosen.map((l) => l.project).join(", ")} — ${decision.rule}`);
+            emit("would", `${labelled.map((l) => l.project).join(", ")} — ${decision.rule}`);
           }
 
           // A LEG THAT SILENTLY DOES NOT RUN READS AS A LEG THAT PASSED. So the selection is
@@ -644,7 +685,7 @@ jobs:
           const md = [
             "## Release gate — which legs run",
             "",
-            `**Rule:** ${decision.rule}`,
+            `**Rule:** ${rule}`,
             "",
             `**Running (${ran.length}/${ALL.length}):** ${ran.map((p) => `\`${p}\``).join(", ")}`,
             "",
@@ -699,6 +740,7 @@ jobs:
         name: A leg's verdict must exist for every PR that changes what it measures
         env:
           GATE_RUNS: ${{ steps.pick.outputs.run }}
+          AUTO_LEGS: ${{ steps.pick.outputs.auto }}
           IMPLIED: ${{ steps.pick.outputs.implied }}
           WOULD_RUN: ${{ steps.pick.outputs.would }}
           CHANGED_READ: ${{ steps.changed.outputs.read }}
@@ -714,7 +756,10 @@ jobs:
             console.log(md.join("\n"));
           };
 
-          if (env.GATE_RUNS === "yes") {
+          // The legs `pick` runs WITHOUT the label because this PR changed their specs (#4777). A
+          // path whose implied legs all run is measured; a path implying any other leg still asks.
+          const autoLegs = (env.AUTO_LEGS || "").split(",").map((s) => s.trim()).filter(Boolean);
+          if (env.GATE_RUNS === "yes" && autoLegs.length === 0) {
             console.log("the gate runs on this PR — a dispatch, a promotion, or the label. Nothing to demand.");
             process.exit(0);
           }
@@ -762,15 +807,23 @@ jobs:
           const implied = new Map((JSON.parse(env.IMPLIED || "[]") || []).map((r) => [r.f, r]));
           const rows = [];
           const exempted = [];
+          const measured = [];
           for (const f of changed) {
             const off = EXEMPT.find((e) => e.path === f);
             if (off !== undefined) { exempted.push(off); continue; }
             const hit = implied.get(f);
+            if (hit !== undefined && hit.l.split(", ").every((l) => autoLegs.includes(l))) { measured.push(f); continue; }
             if (hit !== undefined) { rows.push({ file: f, legs: hit.l, why: hit.w }); continue; }
             const dir = surface.find((d) => f.startsWith(`${d}/`));
             if (dir !== undefined) rows.push({ file: f, legs: "every leg", why: `\`${dir}/\` is compiled into the console every leg boots, and no rule narrows a source path` });
           }
 
+          const ranMd = autoLegs.length > 0 ? ["", `The legs its specs imply run without the label (#4777): \`${autoLegs.join("`, `")}\` — measuring ${measured.length} changed path(s).`] : [];
+          if (rows.length === 0 && autoLegs.length > 0) {
+            summarise(["## Release gate — running the legs this PR's specs imply", ...ranMd]);
+            console.log(`every changed path on the gate's surface is measured by a leg that runs: ${autoLegs.join(", ")}`);
+            process.exit(0);
+          }
           if (rows.length === 0) {
             summarise([
               "## Release gate — not running, and nothing it measures changed",
@@ -785,7 +838,8 @@ jobs:
           // A BOOLEAN ABOUT A STRUCTURE MUST PRINT THE STRUCTURE: every path, the legs it implies
           // and the rule that says so — as annotations in the log AND as a table in the summary.
           const SHOWN = 25;
-          console.error(`::error::${rows.length} of this PR's ${changed.length} changed path(s) are on the release gate's surface, and it carries neither \`release-gate:run\` nor \`release-gate:all\` — so NOT ONE leg runs on the change that needs it. A leg's verdict should exist for every PR that changes what it measures.`);
+          const partial = autoLegs.length > 0 ? `only \`${autoLegs.join("`, `")}\` run (its specs imply them), not the legs these paths need` : "so NOT ONE leg runs on the change that needs it";
+          console.error(`::error::${rows.length} of this PR's ${changed.length} changed path(s) are on the release gate's surface, and it carries neither \`release-gate:run\` nor \`release-gate:all\` — ${partial}. A leg's verdict should exist for every PR that changes what it measures.`);
           for (const r of rows.slice(0, SHOWN)) console.error(`::error file=${r.file}::${r.file} → ${r.legs} (${r.why})`);
           if (rows.length > SHOWN) console.error(`::error::…and ${rows.length - SHOWN} further path(s) on the surface, listed in the job summary.`);
           console.error(`::error::Add \`release-gate:run\` to this PR and it runs: ${env.WOULD_RUN}. \`release-gate:all\` runs every leg.`);
@@ -793,6 +847,7 @@ jobs:
             "## Release gate — a leg would never run on what this PR changes",
             "",
             `**${rows.length} of ${changed.length} changed path(s)** are on the gate's surface, and this PR carries neither \`release-gate:run\` nor \`release-gate:all\`.`,
+            ...ranMd,
             "",
             `**Add \`release-gate:run\`** and the gate runs: ${env.WOULD_RUN}. \`release-gate:all\` runs every leg.`,
             "",
@@ -813,8 +868,9 @@ jobs:
     # decides whether the runner-hours are spent.
     #
     #   · `run` is `yes` for a dispatch, a promotion PR and a labelled PR — the exact set the old
-    #     job-level clause admitted, and the `legs` job FAILS rather than saying `no` when a dev PR
-    #     changes what a leg measures without asking for one.
+    #     job-level clause admitted — and, since #4777, for an unlabelled dev PR that changes a
+    #     leg's own spec, with `include` narrowed to those legs. The `legs` job FAILS rather than
+    #     saying `no` when a dev PR changes what a leg measures and nothing runs it.
     #   · the `labeled` clause is the one that was always about THIS job: `labeled` fires for ANY
     #     label, and a `qa:prod` or a triage label added to a promotion PR must not restart an hour
     #     of browser legs. It is not a second copy — it left the `legs` job when it moved here.
