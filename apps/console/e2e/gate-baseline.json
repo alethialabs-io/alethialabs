@@ -772,7 +772,31 @@
 				"agent.knowledge.delete — declares confirm-dialog (confirmed)": "passed",
 				"agent.widget.remove — declares confirm-dialog (confirmed)": "passed",
 				"account.delete — declares none (inert)": "passed",
-				"the run measured something — a withheld verdict is not a pass": "passed"
+				"the run measured something — a withheld verdict is not a pass": "failed",
+				"self-test — `resolveTrigger` withholds on AMBIGUITY rather than picking one of N": "passed",
+				"self-test — `resolveTrigger` resolves a SINGLE match, and the template's prefix is what matches": "passed",
+				"self-test — an A11Y-HIDDEN duplicate is NOT a candidate, so one visible control still resolves": "passed",
+				"self-test — a ZERO-BOX duplicate IS counted, so it reports ambiguity rather than `not rendered`": "passed",
+				"self-test — `resolveTrigger` withholds `not rendered` when NOTHING matches": "passed",
+				"self-test — a name that is a mid-word PREFIX of another control's is not a candidate": "passed",
+				"self-test — `walkReach` resolves a step INSIDE the open overlay, not the labelled element behind it": "passed",
+				"self-test — a FULL array of withheld verdicts is not a pass, and the old floor let it be one": "passed",
+				"self-test — withholding on a `missing` or `inert` entry stays GREEN": "passed",
+				"self-test — an entry whose fixture is UNSEEDABLE is not owed, so a real gap is not manufactured work": "passed",
+				"self-test — every OWED control measured is the pass": "passed",
+				"self-test — the UNREACHED ledger fails in BOTH directions, against the REAL registry": "passed",
+				"self-test — SEEDABLE_FIXTURES cannot be EMPTIED to silence the floor": "passed",
+				"self-test — a control that recorded NO verdict at all is a finding, not an absence": "passed",
+				"every fixture the registry declares is seeded, or declared unseedable with its reason": "passed",
+				"self-test — SEEDABLE_FIXTURES is DERIVED, so a fixture with a seeder is never excluded from the floor": "passed",
+				"self-test — a declared fixture with a seeder is SEEDABLE, and one with a reason is a DECISION": "passed",
+				"self-test — a declared fixture with NEITHER is UNACCOUNTED, which is the finding #4458 records": "passed",
+				"self-test — an entry with NO fixture contributes nothing, rather than a fixture named undefined": "passed",
+				"self-test — an UNSEEDABLE line that outlived its subject is a PROBLEM, not a silent no-op": "passed",
+				"self-test — a SEEDER for a fixture nothing declares is a PROBLEM too": "passed",
+				"self-test — a fixture claimed by BOTH ledgers is a PROBLEM, and is counted as seeded": "passed",
+				"self-test — the control counts are over CONTROLS, so one fixture serving three is counted three times": "passed",
+				"self-test — `fixtureSeedFailureReason` tells the three fixture failures apart": "passed"
 			}
 		}
 	}
