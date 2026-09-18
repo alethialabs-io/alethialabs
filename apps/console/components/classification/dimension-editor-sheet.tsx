@@ -22,7 +22,7 @@ import { Switch } from "@repo/ui/switch";
 import { Textarea } from "@repo/ui/textarea";
 import { cn } from "@repo/ui/utils";
 import { Plus, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import type { DimensionDTO } from "@/app/server/actions/classification/dimensions";
@@ -64,6 +64,8 @@ export function DimensionEditorSheet({
 	const [staged, setStaged] = useState<SeedValue[]>([]);
 	const [templateKey, setTemplateKey] = useState<string | null>(null);
 	const [addLabel, setAddLabel] = useState("");
+	// The switch is named by its visible row title, by reference (#4352).
+	const multiLabelId = useId();
 
 	const form = useForm<DimensionInput>({
 		resolver: zodResolver(dimensionInputSchema),
@@ -260,7 +262,9 @@ export function DimensionEditorSheet({
 
 						<div className="flex items-center justify-between gap-4 rounded-md border p-3">
 							<div className="flex items-center gap-1.5">
-								<div className="text-ui-sm font-medium">Allow multiple values</div>
+								<div id={multiLabelId} className="text-ui-sm font-medium">
+									Allow multiple values
+								</div>
 								<InfoHint>
 									Off: a resource holds one value on this axis (assigning a new one
 									replaces the old). On: a resource may carry several (e.g. a service
@@ -268,6 +272,7 @@ export function DimensionEditorSheet({
 								</InfoHint>
 							</div>
 							<Switch
+								aria-labelledby={multiLabelId}
 								checked={multi}
 								onCheckedChange={(v) => form.setValue("multi", v)}
 							/>
