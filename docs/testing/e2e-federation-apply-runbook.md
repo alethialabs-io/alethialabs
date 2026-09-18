@@ -257,6 +257,18 @@ The checks added with this change report on every plan. Each stack has three: th
 **exact**, it is **additive** (the GitHub trust is unchanged), and it is **absent** when unset. A
 check **warns**; it does not fail the plan. Read the warnings.
 
+`gcp-e2e`, `azure-e2e` and `alibaba-e2e` also include `checks.tftest.hcl`. It runs against mocked
+providers, so it needs no credentials, and no workflow runs it. Run it in each of those directories
+before you plan:
+
+```bash
+tofu init -backend=false && tofu test
+```
+
+It checks the planned values against the literals in `broker.ts`, and that the guards fire.
+`aws-oidc` has no such test: its trust document comes from a data source that a mock cannot
+render.
+
 ```bash
 # the per-stack pattern; add the same -var inputs part one uses for that stack
 tofu plan -input=false -out=tfplan
