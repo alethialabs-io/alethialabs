@@ -42,17 +42,15 @@
 // free: `expandGrant` already produced zero tuples for one (no object type to write on), while the
 // Postgres PDP read it as an ordinary scoped grant on that id.
 //
-// `resource_type` is free `text` in Postgres, and TWO WRITE BOUNDARIES CAN STILL PRODUCE THIS:
-//   · `app/api/cli/grants/route.ts` — `resource_type: z.string().min(1)`
-//   · `app/server/actions/grants.ts` — `assignGrant` types `resourceType: string`, no enum check
-// #4581's `orgScopeCarriesResourceId` refuses only the `org` pair at both, so any other
-// unrecognised kind plus an id is accepted today.
-//
-// (An earlier version of this comment named `lib/authz/grants.ts` and `lib/authz/seed.ts` as the
-// reachable surface. Both are false: each inserts a hardcoded `resource_type = 'org'` and does not
-// supply the `resource_id` column at all, so neither can write a non-null id, let alone an
-// unrecognised kind. A reader following that sentence would have checked two safe files and never
-// looked at the server action, which is the one with no validation.)
+// `resource_type` is free `text` in Postgres, so the COLUMNS can still hold either shape. The two
+// write boundaries (`app/api/cli/grants/route.ts`, `app/server/actions/grants.ts`) no longer write
+// one: both build their row from `parseGrantResource` (lib/authz/fga-tuples.ts), which refuses the
+// `org` pair (#4581), an unrecognised kind (#4734) and an empty id, and returns a `GrantResource`
+// — the type below, which cannot hold either shape (#4582). What that does NOT cover: rows already
+// in the table (the #4583 audit), and any raw-SQL writer. `lib/authz/grants.ts` and
+// `lib/authz/seed.ts` are raw-SQL writers, and are safe for a different reason — each inserts a
+// hardcoded `resource_type = 'org'` and does not supply `resource_id` at all. A DB CHECK
+// constraint is what would close the column itself; it is a migration, gated on that audit.
 //
 // ⚠ THAT REASONING IS ABOUT `effect = 'allow'`. THE DENY DIRECTION IS A SEPARATE, RULED QUESTION.
 //
@@ -173,9 +171,8 @@ export const EMPTY_SCOPE_DENIES: "nothing" | "the_whole_org" = "the_whole_org";
  * rather than assumed: `deploy_change` in docs/ops/grants-scope-contradictions.sql reports it per
  * row, and `also_allowed_anywhere` says whether the wider exclusion has anything to bite.
  *
- * These rows are still writeable: neither `app/api/cli/grants/route.ts` (`z.string().min(1)`) nor
- * `app/server/actions/grants.ts` (a bare `string`) validates `resource_type` against
- * `ScopableType`. #4581 refuses only the org pair.
+ * Neither write boundary produces these rows any more (`parseGrantResource`, #4581/#4734/#4582);
+ * the ones this reaches were written before those refusals, or by raw SQL.
  */
 export function denyTarget(
 	resourceType: string,
@@ -220,4 +217,51 @@ export function grantTarget(
 				? "org_kind_with_resource_id"
 				: "unscopable_resource_kind",
 	};
+}
+
+/**
+ * The resource half of a grant's scope, in the only two shapes a grant can MEAN (#4582).
+ *
+ * - `{ resourceType: "org" }` — organization-wide. It has NO `resourceId`: the field is typed
+ *   `never`, so a value carrying one is not assignable to this arm even when it is not a fresh
+ *   literal (a plain object type would accept the extra property structurally).
+ * - `{ resourceType: ScopableType; resourceId: string }` — one instance; the id is required and
+ *   never null, and the kind is the closed `PARENTS`-derived union, not free text.
+ *
+ * So `("org", <id>)` — the pair #4581 refused at runtime — and `(<unknown kind>, <id>)` are not
+ * values of this type at all; `tsc` refuses a construction of either. The `grants` COLUMNS still
+ * admit both (free `text`, nullable id; the CHECK constraint is a separate, migration-bearing
+ * unit gated on the #4583 audit), which is why every raw row reaches this type through
+ * `grantResourceForEffect` and never by spreading the columns.
+ */
+export type GrantResource =
+	| { readonly resourceType: "org"; readonly resourceId?: never }
+	| { readonly resourceType: ScopableType; readonly resourceId: string };
+
+/**
+ * Narrows a raw `grants` row's two scope columns to a `GrantResource` for the given effect, or
+ * null when the row confers/excludes nothing and so has no tuples and no object.
+ *
+ * DERIVED from `targetForEffect`, not a second reading of the columns: `org` → the org arm,
+ * `resource` → the resource arm, `none` → null. The #4584 ruling therefore carries over
+ * unchanged — the contradictory pair is null for an ALLOW row and the org arm for a DENY row
+ * (`EMPTY_SCOPE_DENIES`) — and this function adds no opinion of its own. Its only job is to give
+ * that answer a type the expander and the tuple writer can consume without re-classifying it.
+ */
+export function grantResourceForEffect(
+	effect: "allow" | "deny",
+	resourceType: string,
+	resourceId: string | null,
+): GrantResource | null {
+	const target = targetForEffect(effect, resourceType, resourceId);
+	if (target.kind === "org") return { resourceType: "org" };
+	if (target.kind === "resource") {
+		return { resourceType: target.resourceType, resourceId: target.resourceId };
+	}
+	return null;
+}
+
+/** The `resource_id` column value a `GrantResource` is stored as — null for the org arm. */
+export function resourceIdOf(resource: GrantResource): string | null {
+	return resource.resourceType === "org" ? null : resource.resourceId;
 }
