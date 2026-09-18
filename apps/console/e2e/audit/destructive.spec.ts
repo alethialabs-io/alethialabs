@@ -167,7 +167,8 @@ const CONTROLS = registry();
  * `active-job` used to be DELIBERATELY ABSENT here, and the note said so: `seedRouteFixtures` calls
  * `seedJob` with no status, `seedJob` defaults to a FINISHED deploy, and the row it wrote was not
  * the fixture `jobs.cancel` declares. That is fixed rather than excused — the `active-job` seeder
- * flips the audit's own job to QUEUED, which is one of the three statuses that render Cancel.
+ * flips the audit's own job to PROCESSING, one of the three statuses that render Cancel (the
+ * seeder says why not QUEUED).
  */
 const SEEDABLE_FIXTURES: ReadonlySet<string> = new Set(FIXTURE_SEEDERS.keys());
 

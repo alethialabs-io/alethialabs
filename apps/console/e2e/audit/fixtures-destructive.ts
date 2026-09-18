@@ -530,20 +530,36 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 			// `seedRouteFixtures` calls `seedJob` with no status, and `seedJob` defaults to
 			// `SUCCESS` — a finished deploy, which renders Re-run, not Cancel. The three statuses
 			// that render Cancel are QUEUED, CLAIMED and PROCESSING (`isActive` on the job page, and
-			// `cancellable` in `cancelJob` — the two agree). QUEUED is the cheapest: its `runner_id`
-			// is null, so `cancelJob` skips `notifyRunnerCancel` and no runner is needed.
+			// `cancellable` in `cancelJob` — the two agree). Any of them with a NULL `runner_id`
+			// makes `cancelJob` skip `notifyRunnerCancel`, so no runner is needed.
 			//
-			// `completed_at` is cleared with it. A row that is QUEUED and completed is a state the
+			// `completed_at` is cleared with it. An active row that is also completed is a state the
 			// product cannot produce, and a fixture that invents one teaches the next reader a lie.
-			writes: "flips the audit's own `jobs` row to QUEUED (completed_at cleared) — the only job id this suite's route resolves",
+			//
+			// ⚠ IT IS PROCESSING, NOT QUEUED, AND QUEUED WAS WHAT THIS SEEDER FIRST WROTE. A QUEUED
+			// job is DEMAND: the fleet scaler reads the QUEUED backlog on every pass
+			// (`lib/fleet/queue.ts`), and the server log of that run prints "would create a runner"
+			// once a minute. The first run that actually REACHED `jobs.cancel` failed it with "Cancel
+			// was pressed and rows still moved: fleet_actions 3→4, runner_bootstrap_tokens 3→4" —
+			// the shape of a scaler pass landing inside the dialog's window, which the spec's
+			// row-count fingerprint cannot tell from the click. PROCESSING renders the same Cancel and
+			// is not in that backlog, and with `runner_id` NULL `cancelJob` takes the same no-runner
+			// path. `claimed_at` stays NULL on purpose: the dead-runner reaper (`programmables.sql`,
+			// `claimed_at < now() - 15 minutes`) never matches a NULL, so the row is not requeued
+			// mid-suite. Processing-but-never-claimed is a state the product does not produce; the
+			// ones it does produce need either a queue the scaler answers or a runner the reaper
+			// expects to heartbeat, and this says so here so nobody reads the fixture as real.
+			writes:
+				"flips the audit's own `jobs` row to PROCESSING with no runner and no claim (completed_at cleared) — the only job id this suite's route resolves",
 			seed: async (scope) => {
 				if (!scope.jobId) {
 					throw new Error("the audit has no seeded job (e2e/audit/context.ts → seedRouteFixtures), so /[org]/~/jobs/[id] has nothing to visit");
 				}
 				const sql = db();
 				await sql`
-					update jobs set status = 'QUEUED', completed_at = null, updated_at = now()
-					where id = ${scope.jobId}`;
+					update jobs
+					   set status = 'PROCESSING', runner_id = null, claimed_at = null, completed_at = null, updated_at = now()
+					 where id = ${scope.jobId}`;
 			},
 		},
 	],

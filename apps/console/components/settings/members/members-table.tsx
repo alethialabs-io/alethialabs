@@ -550,8 +550,16 @@ export function MembersTable() {
             <span className="flex size-8 shrink-0 items-center justify-center rounded-full border bg-muted font-mono text-ui-xs text-muted-foreground">
               {r.avatar}
             </span>
-            <div className="flex min-w-0 flex-col">
-              <span className="flex items-center gap-1.5 text-foreground">
+            {/* THE MEMBER CELL WRAPS, so the row's LAST column stays on screen. Table cells are
+                `whitespace-nowrap`, and the shell's table wrapper is `overflow-x: clip` (no scroll
+                container, by design — `@repo/ui/table`), so one long monospace address used to set
+                this column's width and push Status, Last active and the "Manage …" trigger every
+                per-row destructive control hangs off past the clip edge. Measured on the release
+                gate at 1280px: all three clipped, unreachable by a person and by Playwright alike.
+                `break-all` on the address gives the column a small min-content width, so the
+                table's auto layout shrinks this column instead of overflowing. */}
+            <div className="flex min-w-0 flex-col whitespace-normal">
+              <span className="flex items-center gap-1.5 break-words text-foreground">
                 {r.name}
                 {r.isYou && (
                   <span className="rounded-full border px-1.5 py-px font-mono text-ui-3xs uppercase tracking-wide text-muted-foreground">
@@ -559,7 +567,7 @@ export function MembersTable() {
                   </span>
                 )}
               </span>
-              <span className="font-mono text-ui-2xs text-muted-foreground">
+              <span className="break-all font-mono text-ui-2xs text-muted-foreground">
                 {r.meta}
               </span>
               {/* Classification (Workstream B) — members only (not invites). */}
@@ -803,12 +811,7 @@ export function MembersTable() {
           }
         />
       ) : (
-        // `scroll`: the row-actions column (the "Manage …" trigger every per-row destructive
-        // control hangs off) is the LAST column, and a long monospace address in a
-        // `whitespace-nowrap` cell pushes it past the shell's `overflow-x: clip` edge. Measured on
-        // the release gate at 1280px: Status, Last active and the actions column were all clipped,
-        // unreachable by a person and by Playwright alike, so every row control timed out.
-        <DataTable columns={columns} data={filtered} pageSize={20} scroll />
+        <DataTable columns={columns} data={filtered} pageSize={20} />
       )}
 
       {/* The one confirmation every destructive control on this table passes through. It stays
