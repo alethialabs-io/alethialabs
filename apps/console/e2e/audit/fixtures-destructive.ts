@@ -227,17 +227,21 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 	],
 
 	// ── teams ──────────────────────────────────────────────────────────────────────────────────
+	//
+	// BOTH team fixtures write the SAME shape — a team whose one member is the viewer — and that is
+	// what makes `teams.member.remove` measurable. Its reach opens the FIRST row's "Manage team" menu
+	// (the row trigger's accessible name does not carry the team's), and nothing orders that list:
+	// `getTeams()` (app/server/actions/teams.ts), which the page reads, selects with NO `orderBy`, so
+	// the first row is whichever team Postgres returns first. On run 35362045227 that was the `team`
+	// fixture's memberless team, the dialog said "No members yet.", and the control was withheld as
+	// not rendered. Seeding every audit team with the same one member makes the first row correct
+	// whichever it is. `teams.delete` is indifferent to the roster.
 	[
 		"team",
 		{
-			writes: "one `team` row",
+			writes: "one `team` row whose one `team_member` is the audit's own user (see seedTeamOfOne)",
 			seed: async (scope) => {
-				const sql = db();
-				await sql`
-					insert into team ${sql({
-						organization_id: scope.owner.orgId,
-						name: `Audit Team ${unique()}`,
-					})}`;
+				await seedTeamOfOne(scope, `Audit Team ${unique()}`);
 			},
 		},
 	],
@@ -247,35 +251,7 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 			writes:
 				"one `team` row with the audit's OWN user as its one `team_member` — the only member the Manage members dialog can list to a viewer",
 			seed: async (scope) => {
-				const sql = db();
-				// "Audit Staffed Team …" sorts before the `team` fixture's "Audit Team …", and the list
-				// is ordered by name (lib/queries/teams.ts → `orderBy(asc(team.name))`). That order is
-				// load-bearing: `teams.member.remove`'s reach opens the FIRST row's "Manage team" menu,
-				// because the row trigger's accessible name does not carry the team's.
-				const [team] = await sql<{ id: string }[]>`
-					insert into team ${sql({
-						organization_id: scope.owner.orgId,
-						name: `Audit Staffed Team ${unique()}`,
-					})}
-					returning id`;
-				if (!team) throw new Error("insert into team returned no row");
-				// THE MEMBER IS THE VIEWER, not a seeded colleague (#4800). `ManageTeamDialog` reads
-				// its roster through `authClient.organization.listTeamMembers`, and Better Auth's
-				// handler (better-auth 1.7.3, plugins/organization/routes/crud-team) refuses unless
-				// the CALLER is on the team: `findTeamMember({ userId: session.user.id, teamId })`,
-				// else USER_IS_NOT_A_MEMBER_OF_THE_TEAM. The dialog drops that error
-				// (`res.data ?? []`), so a team holding only a colleague rendered "No members yet."
-				// to its org owner and `{button: "Remove"}` was withheld as not rendered. The owner
-				// is the viewer here because `resolveOwner` takes the org's earliest owner/admin,
-				// which is the e2e user whose session created the org.
-				//
-				// ONE member, so the dialog holds exactly one "Remove …" — a colleague added beside
-				// the owner would make the trigger ambiguous, and `resolveTrigger` would withhold it.
-				await sql`
-					insert into team_member ${sql({ team_id: team.id, user_id: scope.owner.userId })}`;
-				// `team.member_count` is a denormalised counter the list renders; a team seeded
-				// straight into the table would otherwise read 0 members while holding one.
-				await sql`update team set member_count = 1 where id = ${team.id}`;
+				await seedTeamOfOne(scope, `Audit Staffed Team ${unique()}`);
 			},
 		},
 	],
@@ -807,6 +783,33 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
  * `{select: "a dimension"}` ambiguous, which `resolveTrigger` correctly refuses to guess past. So
  * this is idempotent on the dimension's `key`.
  */
+/**
+ * Write one team in the audit's org whose single member is the audit's own user, the viewer.
+ *
+ * THE MEMBER IS THE VIEWER, not a seeded colleague (#4800). `ManageTeamDialog` reads its roster
+ * through `authClient.organization.listTeamMembers`, and Better Auth's handler (better-auth 1.7.3,
+ * plugins/organization/routes/crud-team) refuses unless the CALLER is on the team:
+ * `findTeamMember({ userId: session.user.id, teamId })`, else USER_IS_NOT_A_MEMBER_OF_THE_TEAM. The
+ * dialog drops that error (`res.data ?? []`), so a team holding only a colleague rendered "No members
+ * yet." to its org owner. The owner is the viewer because `resolveOwner` (e2e/audit/context.ts) takes
+ * the org's earliest owner/admin, which is the user `fixtures/auth.setup.ts` signed up and whose
+ * onboarding created the org.
+ *
+ * ONE member, so the dialog holds exactly one "Remove …": a colleague beside the owner would make the
+ * trigger ambiguous, and `resolveTrigger` would withhold it.
+ */
+async function seedTeamOfOne(scope: FixtureScope, name: string): Promise<void> {
+	const sql = db();
+	const [team] = await sql<{ id: string }[]>`
+		insert into team ${sql({ organization_id: scope.owner.orgId, name })}
+		returning id`;
+	if (!team) throw new Error("insert into team returned no row");
+	await sql`insert into team_member ${sql({ team_id: team.id, user_id: scope.owner.userId })}`;
+	// `team.member_count` is a denormalised counter; a team seeded straight into the table would
+	// otherwise carry 0 while holding one member.
+	await sql`update team set member_count = 1 where id = ${team.id}`;
+}
+
 /**
  * The project's SECOND environment, written once however many fixtures ask for it.
  *
