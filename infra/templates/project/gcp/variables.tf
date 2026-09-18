@@ -399,6 +399,11 @@ variable "memorystore_transit_encryption_mode" {
   type        = string
   default     = "DISABLED"
   description = "Transit encryption mode for Memorystore (DISABLED or SERVER_AUTHENTICATION)"
+
+  validation {
+    condition     = contains(["DISABLED", "SERVER_AUTHENTICATION"], var.memorystore_transit_encryption_mode)
+    error_message = "memorystore_transit_encryption_mode must be DISABLED or SERVER_AUTHENTICATION."
+  }
 }
 
 #########################################################################
@@ -571,6 +576,21 @@ variable "cloud_storage_buckets" {
   }))
   default     = []
   description = "List of Cloud Storage buckets to create"
+
+  # `lifecycle_rules` reaches a real `lifecycle_rule` block since #4320. A rule with no age would
+  # render an empty `condition`, and SetStorageClass without a class is rejected by the API — both
+  # fail here, at plan, naming the knob, instead of at apply against Cloud Storage.
+  validation {
+    condition = alltrue(flatten([
+      for b in var.cloud_storage_buckets : [
+        for r in b.lifecycle_rules :
+        contains(["Delete", "SetStorageClass", "AbortIncompleteMultipartUpload"], r.action_type) &&
+        r.condition_age != null &&
+        (r.action_type != "SetStorageClass" || r.action_storage_class != null)
+      ]
+    ]))
+    error_message = "Each cloud_storage_buckets[*].lifecycle_rules entry needs condition_age, an action_type of Delete, SetStorageClass or AbortIncompleteMultipartUpload, and action_storage_class when the action is SetStorageClass."
+  }
 }
 
 #########################################################################
