@@ -477,10 +477,21 @@ var (
 	grantEffects        = []string{"allow", "deny"}
 )
 
-// grantResourceTypeSuggestions are the resource kinds the picker offers. They are SUGGESTIONS and
-// nothing validates against them: `resource_type` is `z.string().min(1)` on the wire, so a kind
-// this list does not know is stored, not refused, and a CLI that rejected it would be refusing
-// something the server accepts.
+// grantResourceTypeSuggestions are the resource kinds the picker offers. They are a SUBSET of the
+// kinds the server accepts, not the accepted set itself, and nothing in this CLI validates a
+// `--resource-type` flag against them.
+//
+// The server's set is `GRANT_RESOURCE_TYPES` in apps/console/lib/validations/grants.ts — `"org"`
+// plus every INSTANCE_TYPES row of apps/console/lib/authz/fga-hierarchy.ts, today `org, project,
+// runner, cloud_identity, connector`. POST /api/cli/grants refuses any other kind with a 400 that
+// names that set (#4755), and the CLI relays the refusal. TestHygCliOrgForm_SuggestedKindsAreAccepted
+// reads both TypeScript files and fails on a suggestion outside it.
+//
+// `connector` is accepted and NOT offered: grantsAddClient carries no connector lister, and
+// TestOrgSelect_EverySuggestedKindIsListable refuses a suggestion with no live list behind it. A
+// connector grant is still reachable as `--resource-type connector --resource <id>`. That gap is
+// why this list must never be promoted to a closed set that gates the flag — it would refuse a
+// grant the server takes.
 var grantResourceTypeSuggestions = []string{"org", "project", "runner", "cloud_identity"}
 
 // grantResourceTypeOrg is the kind that means "the whole organization", and the ONE kind that takes
@@ -638,10 +649,10 @@ type grantResourceKind struct {
 // minus `connector`, which grantResourceTypeSuggestions does not offer either.
 //
 // ok is false for a kind this CLI holds no list for, and the caller answers that with the typed-id
-// input rather than a refusal. `resource_type` is `z.string().min(1)` on the wire, so a kind this
-// switch does not know is STORED rather than refused, and a form that could only offer what it can
-// list would be removing a grant the server accepts — the same provable-subset rule the closed sets
-// above are validated under, applied in the direction that keeps the surface whole.
+// input rather than a refusal. The server accepts kinds this switch has no arm for — `connector`
+// today — so a form that could only offer what it can list would be removing a grant the server
+// takes. The provable-subset rule the closed sets above are validated under, applied in the
+// direction that keeps the surface whole: refuse only what the server refuses for certain.
 func grantResourceScope(c grantsAddClient, resourceType string) (grantResourceKind, bool) {
 	switch resourceType {
 	case "project":
