@@ -71,13 +71,32 @@ describe("built-in role templates", () => {
 		expect(admin).toContain("project:deploy");
 	});
 
-	it("operator excludes identities/members/billing/activity", () => {
+	it("operator excludes identities/members/billing", () => {
 		const operator = BUILT_IN_ROLES.operator;
 		if (operator === "*") throw new Error("operator should be an explicit set");
-		for (const blocked of ["cloud_identity:", "member:", "billing:", "activity:"]) {
+		for (const blocked of ["cloud_identity:", "member:", "billing:"]) {
 			expect(operator.some((k) => k.startsWith(blocked))).toBe(false);
 		}
 		expect(operator).toContain("project:deploy");
+	});
+
+	// #3932 (maintainer ruling 2026-09-18): the console gates the Activity log on these, so a role
+	// that lacks them loses the page. Pinned as literals, not derived from the filter they test.
+	it("operator reads and exports the Activity log — and holds no other activity key", () => {
+		const operator = BUILT_IN_ROLES.operator;
+		if (operator === "*") throw new Error("operator should be an explicit set");
+		expect(operator.filter((k) => k.startsWith("activity:")).sort()).toEqual([
+			"activity:export_activity",
+			"activity:view_activity",
+		]);
+	});
+
+	it("viewer reads the Activity log but does not export it", () => {
+		const viewer = BUILT_IN_ROLES.viewer;
+		if (viewer === "*") throw new Error("viewer should be an explicit set");
+		expect(viewer.filter((k) => k.startsWith("activity:"))).toEqual([
+			"activity:view_activity",
+		]);
 	});
 
 	it("viewer is read-only, apart from opening/replying to their own support cases", () => {

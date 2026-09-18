@@ -4,7 +4,8 @@
 
 import { and, desc, eq, gte, ilike, inArray, lt, lte, or, type SQL } from "drizzle-orm";
 import { getEntitlements } from "@/lib/authz/entitlements";
-import { currentActor } from "@/lib/authz/guard";
+import { getPdp } from "@/lib/authz";
+import { authorize, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { likeTerm } from "@/lib/db/like";
 import { authzActivityLog, user } from "@/lib/db/schema";
@@ -78,9 +79,14 @@ function activitySelect() {
  * A filtered, cursor-paginated page of the active org's Activity log — every recorded action +
  * denial — newest first (by insertion id). Community-real (the PDP writes it). Scoped by
  * `org_id`; all filtering happens here so paging stays correct across pages.
+ *
+ * Gated on `activity:view_activity`, the same permission `app/api/cli/activity/route.ts`
+ * enforces (#3932) — before this, any org member read the whole log here while the CLI refused
+ * them. A successful `view_activity` is not recorded (READ_ONLY in lib/authz/activity.ts), so
+ * paging the feed does not write rows into the log it is reading; a denial is recorded.
  */
 export async function getActivityLog(query: ActivityQuery = {}): Promise<ActivityPage> {
-	const actor = await currentActor();
+	const actor = await authorize("view_activity", { type: "activity" });
 	const limit = query.limit ?? PAGE_SIZE;
 
 	const conditions: (SQL | undefined)[] = [
@@ -130,6 +136,27 @@ export async function getActivityLog(query: ActivityQuery = {}): Promise<Activit
 	};
 }
 
+/** What the caller may do with the Activity log: read it, and export it. */
+export interface ActivityPermissions {
+	canView: boolean;
+	canExport: boolean;
+}
+
+/**
+ * The caller's `activity:view_activity` / `activity:export_activity` decisions, for the Activity
+ * pages to decide what to render (#3932). Uses `can()`, so asking records nothing; the actions
+ * above enforce the same permissions themselves, so this is presentation, not the gate.
+ */
+export async function getActivityPermissions(): Promise<ActivityPermissions> {
+	const actor = await currentActor();
+	const pdp = getPdp();
+	const [view, exp] = await Promise.all([
+		pdp.can(actor, "view_activity", { type: "activity" }),
+		pdp.can(actor, "export_activity", { type: "activity" }),
+	]);
+	return { canView: view.allowed, canExport: exp.allowed };
+}
+
 /** Escapes a value as a CSV cell (always quoted, doubled inner quotes). */
 function csvCell(value: string | boolean | null): string {
 	const s = value === null ? "" : String(value);
@@ -138,13 +165,19 @@ function csvCell(value: string | boolean | null): string {
 
 /**
  * Exports the org's Activity log as CSV. Enforces the `activityExport` entitlement
- * server-side (not just in the UI) — community/unlicensed callers are rejected.
+ * server-side (not just in the UI) — community/unlicensed callers are rejected — AND the
+ * `activity:export_activity` permission (#3932), which the entitlement alone never checked.
+ *
+ * The entitlement is checked FIRST so an unlicensed call is refused without touching the PDP:
+ * an allowed `export_activity` is recorded in the Activity log (it is not READ_ONLY), and a row
+ * saying "exported the activity log" must not be written for an export that was then refused.
  */
 export async function getActivityExportCsv(): Promise<string> {
 	const actor = await currentActor();
 	if (!getEntitlements(actor).activityExport) {
 		throw new Error("Activity export requires an Enterprise license.");
 	}
+	await getPdp().enforce(actor, "export_activity", { type: "activity" });
 	const rows = await getServiceDb()
 		.select(activitySelect())
 		.from(authzActivityLog)

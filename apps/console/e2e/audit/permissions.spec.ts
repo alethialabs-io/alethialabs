@@ -14,28 +14,32 @@
 // MEASURED against `lib/authz/registry.ts` — whose role bundles are DERIVED below rather than
 // re-typed here, so a registry edit moves this file's answer instead of silently outdating it:
 //
-//   · The console refuses a route at RENDER TIME in exactly three places. Each is a server
-//     component that awaits a bootstrap, catches `ForbiddenError`, and renders a deliberate
-//     no-access `Alert` — which is precisely the thing T7 exists to measure:
+//   · The console refuses an org-level route at RENDER TIME in exactly four places. Each is a
+//     server component that asks the PDP before rendering and shows a deliberate no-access
+//     `Alert` — which is precisely the thing T7 exists to measure:
 //
-//         app/(private)/[org]/~/alerts/page.tsx           needs `alert:view_alerts`
-//         app/(private)/[org]/~/settings/roles/page.tsx   needs `member:view`
-//         app/(private)/[org]/~/settings/sso/page.tsx     needs `member:view`
+//         app/(private)/[org]/~/alerts/page.tsx             needs `alert:view_alerts`
+//         app/(private)/[org]/~/settings/roles/page.tsx     needs `member:view`
+//         app/(private)/[org]/~/settings/sso/page.tsx       needs `member:view`
+//         app/(private)/[org]/~/settings/activity/page.tsx  needs `activity:view_activity` (#3932)
+//
+//     (The project-level `[project]/settings/activity` page carries the same activity gate; it is
+//     not in ROUTE_LEVEL_GATES because this audit drives org-level routes.)
 //
 //     Everywhere else the console authorizes at the ACTION level: the page renders for anybody in
 //     the org and a capability flag (`canManage`, `canManageCaps`, `seeAll`, `canInvite`) takes
-//     affordances away rather than refusing the route. `~/settings/billing` and `~/settings/activity`
-//     are client panels whose read actions resolve `currentActor()` and enforce nothing at all.
+//     affordances away rather than refusing the route. `~/settings/billing` is a client panel whose
+//     read actions resolve `currentActor()` and enforce nothing at all.
 //
-//   · A `viewer` holds BOTH `member:view` and `alert:view_alerts`, so it is refused none of the
-//     three — which is the whole of #3898's `—`. An `operator` holds neither of the member-
+//   · A `viewer` holds `member:view`, `alert:view_alerts` and `activity:view_activity`, so it is
+//     refused none of the four — which is the whole of #3898's `—`. An `operator` holds neither of the member-
 //     management ones, so it is refused TWO of them. The two roles are INCOMPARABLE, and
 //     `org-access-control.ts` says so in `toPdpRole`'s own doc ("a viewer may read members and
 //     activity; an operator may deploy"): "least privileged" is not a total order here, and the
 //     least-privileged actor for the console's route-level gates is the operator, not the viewer.
 //
-//   · `~/alerts` is refused to NO built-in role. Only a custom (Enterprise) role or a member left
-//     with zero grants (#3754) can reach that branch, and neither is a persona this spec builds.
+//   · `~/alerts` and `~/settings/activity` are refused to NO built-in role. Only a custom (Enterprise) role or a member left
+//     with zero grants (#3754) can reach those branches, and neither is a persona this spec builds.
 //     Recorded, not measured — see the arithmetic test below, which counts the subjects it has.
 //
 // So the persona is an `operator` (PERSONA_ROLE), invited through the same endpoint the console's
@@ -132,6 +136,13 @@ const ROUTE_LEVEL_GATES: readonly { route: string; permission: PermissionKey; fi
 		route: "/[org]/~/settings/sso",
 		permission: "member:view",
 		file: "app/(private)/[org]/~/settings/sso/page.tsx",
+	},
+	// #3932. Every built-in role holds it (viewer and operator by that ruling), so like `~/alerts`
+	// it is refused to no persona this spec builds — listed so the gate is counted, not measured.
+	{
+		route: "/[org]/~/settings/activity",
+		permission: "activity:view_activity",
+		file: "app/(private)/[org]/~/settings/activity/page.tsx",
 	},
 ];
 

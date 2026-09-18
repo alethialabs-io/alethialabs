@@ -1037,7 +1037,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 281,
+			"surfaceFiles": 282,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1863,7 +1863,7 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 280,
+			"surfaceFiles": 281,
 			"families": {
 				"S": {
 					"instrumented": 4,

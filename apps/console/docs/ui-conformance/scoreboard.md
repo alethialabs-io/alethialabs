@@ -213,7 +213,7 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/[org]/[project]/environments` | 239 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 · 1 withheld | **0.96** |
 | `/[org]/~/jobs/[id]` | 226 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 · 1 withheld | **0.96** |
 | `/[org]/~/connectors` | 214 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 · 1 withheld | **0.97** |
-| `/[org]/~/settings/activity` | 280 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 · 1 withheld | **0.97** |
+| `/[org]/~/settings/activity` | 281 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 · 1 withheld | **0.97** |
 | `/[org]/~/settings/billing/invoices` | 196 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 · 1 withheld | **0.97** |
 | `/[org]/[project]/jobs` | 223 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 · 1 withheld | **0.97** |
 | `/[org]/~/evidence` | 153 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 · 1 withheld | **0.97** |
@@ -221,7 +221,7 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 | `/[org]/~/settings/access` | 215 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 · 1 withheld | **0.97** |
 | `/[org]/~/settings/roles` | 226 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 · 1 withheld | **0.97** |
 | `/[org]/[project]/settings/access` | 216 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 · 1 withheld | **0.97** |
-| `/[org]/[project]/settings/activity` | 281 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 · 1 withheld | **0.97** |
+| `/[org]/[project]/settings/activity` | 282 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 · 1 withheld | **0.97** |
 | `/[org]/~/settings/sso` | 215 | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 7/7 · 1.00 · 1 withheld | **0.97** |
 | `/[org]` | 287 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 · 1 withheld | **1.00** |
 | `/[org]/[project]/architecture` | 400 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 · 1 withheld | **1.00** |
