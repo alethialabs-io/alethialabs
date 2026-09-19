@@ -97,8 +97,9 @@ pnpm env:down    # RELEASE the slot when you're finished with the branch
 The box is **shared** with every other instance and the maintainer: 2 environments (a
 measured memory ceiling — an env needs 5–7 GB). Take a slot only when you need a *running*
 app — build, type-check, lint and unit tests do not need one — and release it when you are
-done. Nothing is reclaimed automatically. If the box is down, **ask the maintainer**;
-restoring it runs `tofu apply`, which agents are refused.
+done. Nothing is reclaimed automatically. If the box is down, restore it with `pnpm env:box`
+**from the main checkout** and reap it when you finish — agents may, by ruling on #4483. Raw
+`tofu apply` stays refused; only these two wrappers are open.
 
 **Ask `pnpm env:status` what is there; do not assume a free slot.** This paragraph used to
 promise that "`dev` permanently holds one as the integration env, leaving one branch slot",
@@ -305,6 +306,12 @@ silently. A `reason:` that means "we haven't got to it yet" is what the split ex
 Two further checks back up the section rather than restating it: `pnpm -F console check:dead-code`
 fails on an unreferenced module or an unused dependency, and `pnpm -F console check:action-boundary`
 on a server action that escapes its boundary.
+
+**The CLI has its own shared-surface check, and it has no allowlist.** `pnpm check:cli-surface`
+fails on any `<placeholder>` a CLI docs example makes the reader copy from another command, any
+input-taking command with no interactive form, any `Mirrors the Go X` claim no test locks, and on
+`apps/cli/cli-surface-allowlist.yaml` existing at all — #3664 deleted it, so a finding is fixed in
+the command or the page, never excused.
 
 ## 7. The harness itself
 

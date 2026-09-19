@@ -133,7 +133,7 @@ describeIfDb("authz registry seed (seedAuthz)", () => {
 		expect(admin.has("org:manage_billing")).toBe(true);
 
 		// Operator = infra view/create/edit/plan/deploy/destroy (not identities/members/billing/
-		// activity/fleet) + view_alerts; no manage.
+		// fleet) + view_alerts + read/export the Activity log (#3932); no manage.
 		expect(operator.has("project:deploy")).toBe(true);
 		expect(operator.has("runner:destroy")).toBe(true);
 		expect(operator.has("alert:view_alerts")).toBe(true);
@@ -142,11 +142,16 @@ describeIfDb("authz registry seed (seedAuthz)", () => {
 		expect(operator.has("billing:manage_billing")).toBe(false);
 		expect(operator.has("fleet:create")).toBe(false);
 		expect(operator.has("alert:manage_alerts")).toBe(false);
+		expect(operator.has("activity:view_activity")).toBe(true);
+		expect(operator.has("activity:export_activity")).toBe(true);
 
-		// Viewer = read-only, EXCEPT opening/replying to their own support cases
-		// (support is a right; the tiered RLS keeps a viewer to their own cases).
+		// Viewer = read-only (including the Activity log, #3932 — but not its export), EXCEPT
+		// opening/replying to their own support cases (support is a right; the tiered RLS keeps a
+		// viewer to their own cases).
 		expect(viewer.has("org:view")).toBe(true);
 		expect(viewer.has("alert:view_alerts")).toBe(true);
+		expect(viewer.has("activity:view_activity")).toBe(true);
+		expect(viewer.has("activity:export_activity")).toBe(false);
 		expect(viewer.has("support_case:create")).toBe(true);
 		expect(viewer.has("support_case:reply")).toBe(true);
 		expect(viewer.has("project:create")).toBe(false);
@@ -154,7 +159,8 @@ describeIfDb("authz registry seed (seedAuthz)", () => {
 		expect(viewer.has("member:manage_members")).toBe(false);
 		for (const key of viewer) {
 			const [resource, action] = key.split(":");
-			const readOnly = action === "view" || action === "view_alerts";
+			const readOnly =
+				action === "view" || action === "view_alerts" || action === "view_activity";
 			const ownSupport =
 				resource === "support_case" &&
 				(action === "create" || action === "reply");

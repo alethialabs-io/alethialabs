@@ -203,7 +203,15 @@ controls:
     route: /[org]/[project]/architecture
     surface: apps/console/components/design-project/canvas/inspector/danger-zone.tsx
     mutation: removeNodes
-    reach: [{ select: "a resource node" }, { section: "Delete resource" }]
+    # "Database audit-db" is the accessible name of the card the `project-with-a-node` seeder
+    # writes (e2e/audit/fixtures-destructive.ts). base-node.tsx labels every card `role="group"`
+    # with nodeAccessibleName(eyebrow, title). The board draws no cluster or network card
+    # (canvas-flow.tsx), so the "Cluster" this step named on run 35368920880 was not a board node.
+    # Clicking the card opens the inspector (canvas-flow.tsx `onNodeClick`) on the rail. The danger
+    # zone is on the inspector's SETTINGS tab (node-inspector.tsx), not on Overview where a card
+    # opens, and it is a COLLAPSIBLE (inspector/danger-zone.tsx), so "Delete resource" is not in the
+    # DOM until both are opened.
+    reach: [{ select: "Database audit-db" }, { tab: "Settings" }, { open: "Danger zone" }, { section: "Delete resource" }]
     control: { role: button, name: "Delete" }
     confirm: undo
     undo: { shortcut: "Meta+Z" }
@@ -378,7 +386,9 @@ controls:
     route: /[org]/~/alerts
     surface: apps/console/components/alerts/channels-panel.tsx
     mutation: deleteChannel
-    reach: [{ select: "a channel row" }]  # role=option since #4433
+    # NO reach step. The rail pre-selects its first row (channels-panel.tsx: `channels.find(…) ??
+    # channels[0]`), so the detail holding this control renders on arrival. The prose step this
+    # replaced ("a channel row") named no control and withheld the entry on every run (#4800).
     control: { role: button, name: "Delete channel" }
     confirm: confirm-dialog
     confirm_action: "Delete channel"
@@ -392,7 +402,12 @@ controls:
     route: /[org]/~/alerts
     surface: apps/console/components/alerts/channels-panel.tsx
     mutation: setChannelEnabled
-    reach: [{ select: "a channel row" }]  # role=option since #4433
+    # NO reach step. The rail pre-selects its first row (channels-panel.tsx: `channels.find(…) ??
+    # channels[0]`), so the detail holding this control renders on arrival. The prose step this
+    # replaced ("a channel row") named no control and withheld the entry on every run (#4800).
+    # ⚠ Reached, and still not measurable: the Policies and Channels details sit on ONE page and
+    # each renders a switch named "Enabled", so the trigger matches two controls. Declared in
+    # UNREACHED (e2e/audit/destructive.spec.ts) with the lines that collide.
     control: { role: switch, name: "Enabled" }
     confirm: confirm-dialog
     confirm_action: "Disable"
@@ -406,7 +421,9 @@ controls:
     route: /[org]/~/alerts
     surface: apps/console/components/alerts/policies-panel.tsx
     mutation: deletePolicy
-    reach: [{ select: "a policy row" }]  # role=option since #4433
+    # NO reach step. The rail pre-selects its first row (policies-panel.tsx: `policies.find(…) ??
+    # policies[0]`), so the detail holding this control renders on arrival. The prose step this
+    # replaced ("a policy row") named no control and withheld the entry on every run (#4800).
     control: { role: button, name: "Delete policy" }
     confirm: confirm-dialog
     confirm_action: "Delete policy"
@@ -421,7 +438,12 @@ controls:
     route: /[org]/~/alerts
     surface: apps/console/components/alerts/policies-panel.tsx
     mutation: togglePolicy
-    reach: [{ select: "a policy row" }]
+    # NO reach step. The rail pre-selects its first row (policies-panel.tsx: `policies.find(…) ??
+    # policies[0]`), so the detail holding this control renders on arrival. The prose step this
+    # replaced ("a policy row") named no control and withheld the entry on every run (#4800).
+    # ⚠ Reached, and still not measurable: the Policies and Channels details sit on ONE page and
+    # each renders a switch named "Enabled", so the trigger matches two controls. Declared in
+    # UNREACHED (e2e/audit/destructive.spec.ts) with the lines that collide.
     control: { role: switch, name: "Enabled" }
     confirm: confirm-dialog
     confirm_action: "Disable"
@@ -436,7 +458,10 @@ controls:
     route: /[org]/~/settings/classification
     surface: apps/console/components/classification/classification-manager.tsx
     mutation: deleteDimension
-    reach: [{ select: "a dimension" }]
+    # NO reach step. The dimension rail's rows are bare `<div onClick>` with no role and no label
+    # (dimension-rail.tsx), so no step could name one — and none is needed: the manager pre-selects
+    # the first dimension (classification-manager.tsx: `dims.find(…) ?? dims[0]`), and the audit
+    # seeds exactly one (e2e/audit/fixtures-destructive.ts → seedClassification).
     control: { role: button, name: "Delete dimension" }
     confirm: alert-dialog
     confirm_action: "Delete"
@@ -450,7 +475,11 @@ controls:
     route: /[org]/~/settings/classification
     surface: apps/console/components/classification/classification-manager.tsx
     mutation: deleteValue
-    reach: [{ select: "a dimension" }, { select: "a value" }]
+    # NO reach step. The dimension rail's rows are bare `<div onClick>` with no role and no label
+    # (dimension-rail.tsx), so no step could name one — and none is needed: the manager pre-selects
+    # the first dimension (classification-manager.tsx: `dims.find(…) ?? dims[0]`), and its detail
+    # renders every value row with its own "Delete value" (dimension-detail.tsx) — there was never
+    # a value to "select". The audit seeds one dimension holding one value (seedClassification).
     control: { role: button, name: "Delete value" }
     confirm: alert-dialog
     confirm_action: "Delete"

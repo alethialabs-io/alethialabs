@@ -67,10 +67,17 @@ const DEFAULT_RANGE_LABEL =
 	RANGE_PRESETS.find((p) => p.id === DEFAULT_PRESET)?.label ?? "Last 7 days";
 
 /** The org Activity feed. Pass `projectId` (a project id) to scope it to a single project's
- * events — used by `/{org}/{project}/settings/activity`; the Project facet is then hidden. */
-export function ActivityLog({ projectId }: { projectId?: string } = {}) {
+ * events — used by `/{org}/{project}/settings/activity`; the Project facet is then hidden.
+ * `exportPermitted` is the caller's `activity:export_activity` decision, resolved server-side by
+ * the page (#3932); it only decides whether the button is offered — `getActivityExportCsv`
+ * enforces the permission itself, so a stale `true` here still ends in a refusal. */
+export function ActivityLog({
+	projectId,
+	exportPermitted = false,
+}: { projectId?: string; exportPermitted?: boolean } = {}) {
 	const orgSlug = useActiveOrgSlug();
-	const canExport = useEntitlement("activityExport");
+	const exportEntitled = useEntitlement("activityExport");
+	const canExport = exportEntitled && exportPermitted;
 	const retentionDays = useWorkspaceStore(
 		(s) => s.entitlements?.quotas.activityRetentionDays ?? 7,
 	);
@@ -250,7 +257,11 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 							size="sm"
 							disabled={!canExport || exporting}
 							title={
-								canExport ? undefined : "Activity export requires the Enterprise plan"
+								!exportEntitled
+									? "Activity export requires the Enterprise plan"
+									: !exportPermitted
+										? "Your role does not include exporting the Activity log"
+										: undefined
 							}
 							onClick={() => void onExport()}
 						>
