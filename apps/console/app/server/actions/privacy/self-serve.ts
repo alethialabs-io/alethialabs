@@ -20,14 +20,22 @@ import { getInjectedActor } from "@/lib/authz/actor-context";
 import { getServiceDb } from "@/lib/db";
 import { privacyCase } from "@/lib/db/schema";
 import type { PrivacyCaseState } from "@/lib/db/schema/enums";
+import { notifyPrivacyInbox, privacyInbox } from "./inbox";
 import { newReference, recordEvent, subjectHash } from "./ledger";
 import { PRIVACY_RESPONSE_DAYS } from "./response-period";
 
 /** The states in which a case is finished — decided, or withdrawn. Anything else is still open. */
 const CLOSED_STATES: PrivacyCaseState[] = ["fulfilled", "refused", "withdrawn"];
 
+/** What pressing "Request deletion" did. Only `opened` created a case. */
+export type ErasureRequestResult =
+	| { outcome: "opened"; reference: string }
+	| { outcome: "already_open"; reference: string }
+	| { outcome: "no_privacy_contact" };
+
 /**
- * Opens an ERASURE request about the signed-in user, from their own console session.
+ * Opens an ERASURE request about the signed-in user, from their own console session, and emails it
+ * to the privacy inbox.
  *
  * This is the account dialog's "Request deletion" button. It OPENS A CASE and erases nothing. It
  * does not call `fulfilErasure` — a person fulfils the case through the steps in `cases.ts`, and
@@ -53,6 +61,18 @@ const CLOSED_STATES: PrivacyCaseState[] = ["fulfilled", "refused", "withdrawn"];
  *     schema prevents that; the dialog disabling its button while a press is in flight only
  *     narrows it.
  *
+ * And the reason a person hears about it (#4875): the case row reaches nobody by itself. So:
+ *
+ *   · NO INBOX, NO CASE. When `privacyInbox()` has no address — a self-managed deployment with no
+ *     `PRIVACY_EMAIL` — nothing is written and the result says so. A case nobody is told about
+ *     would start the one-month response clock where nobody can see it.
+ *   · THE EMAIL IS PART OF OPENING THE CASE. The insert, both ledger events and the send run in
+ *     one transaction, so a send that throws rolls the case back and the user is told to try again.
+ *     The reverse gap remains: if the commit fails AFTER the send succeeded, the inbox holds an
+ *     email about a reference that was never stored. That is the side a person can notice.
+ *   · A case that is already open is NOT emailed again. Every case this action opens was emailed
+ *     when it was opened, by the rule above.
+ *
  * `organizationId` is null on purpose. The subject is the ACCOUNT — data Alethia controls, not a
  * tenant's records — and the column's doc comment in `lib/db/schema/privacy.ts` is that distinction.
  *
@@ -60,10 +80,7 @@ const CLOSED_STATES: PrivacyCaseState[] = ["fulfilled", "refused", "withdrawn"];
  * called from the browser with arguments the browser chooses, and a caller-supplied clock would let
  * the caller move the statutory deadline.
  */
-export async function requestMyErasure(): Promise<{
-	reference: string;
-	alreadyOpen: boolean;
-}> {
+export async function requestMyErasure(): Promise<ErasureRequestResult> {
 	if (getInjectedActor()) {
 		throw new Error(
 			"An erasure request about yourself can only be opened from a signed-in console session.",
@@ -72,6 +89,7 @@ export async function requestMyErasure(): Promise<{
 	const session = await auth.api.getSession({ headers: await headers() });
 	if (!session?.user) throw new Error("Unauthorized");
 	const userId = session.user.id;
+	const email = session.user.email;
 	const now = new Date();
 	const db = getServiceDb();
 
@@ -86,47 +104,62 @@ export async function requestMyErasure(): Promise<{
 			),
 		)
 		.limit(1);
-	if (open) return { reference: open.reference, alreadyOpen: true };
+	if (open) return { outcome: "already_open", reference: open.reference };
+
+	const inbox = privacyInbox();
+	if (!inbox) return { outcome: "no_privacy_contact" };
 
 	const reference = newReference();
-	const [row] = await db
-		.insert(privacyCase)
-		.values({
-			reference,
-			kind: "erasure",
-			// `in_review`, the state `verifyPrivacyCaseIdentity` moves a case to: identity is settled
-			// at receipt here, so the case starts where a verified one stands.
-			state: "in_review",
-			subjectUserId: userId,
-			subjectEmailSha256: subjectHash(session.user.email),
-			organizationId: null,
-			receivedAt: now,
-			dueAt: new Date(now.getTime() + PRIVACY_RESPONSE_DAYS * 86_400_000),
-			identityVerifiedAt: now,
-		})
-		.returning({ id: privacyCase.id });
-	if (!row) throw new Error("Could not open the request.");
+	const dueAt = new Date(now.getTime() + PRIVACY_RESPONSE_DAYS * 86_400_000);
+	await db.transaction(async (tx) => {
+		const [row] = await tx
+			.insert(privacyCase)
+			.values({
+				reference,
+				kind: "erasure",
+				// `in_review`, the state `verifyPrivacyCaseIdentity` moves a case to: identity is
+				// settled at receipt here, so the case starts where a verified one stands.
+				state: "in_review",
+				subjectUserId: userId,
+				subjectEmailSha256: subjectHash(email),
+				organizationId: null,
+				receivedAt: now,
+				dueAt,
+				identityVerifiedAt: now,
+			})
+			.returning({ id: privacyCase.id });
+		if (!row) throw new Error("Could not open the request.");
 
-	await recordEvent(
-		row.id,
-		"received",
-		{
-			summary:
-				"Request received (erasure), opened by the subject from the console's account settings. " +
-				`Response due within ${PRIVACY_RESPONSE_DAYS} days.`,
-		},
-		userId,
-	);
-	await recordEvent(
-		row.id,
-		"identity_verified",
-		{
-			summary:
-				"Identity verified by the subject's own authenticated console session (a self-serve request: " +
-				"the requester and the subject are the same signed-in account). Nothing has been erased; the " +
-				"request may now be acted on.",
-		},
-		userId,
-	);
-	return { reference, alreadyOpen: false };
+		await recordEvent(
+			row.id,
+			"received",
+			{
+				summary:
+					"Request received (erasure), opened by the subject from the console's account settings " +
+					`and emailed to the privacy inbox. Response due within ${PRIVACY_RESPONSE_DAYS} days.`,
+			},
+			userId,
+			tx,
+		);
+		await recordEvent(
+			row.id,
+			"identity_verified",
+			{
+				summary:
+					"Identity verified by the subject's own authenticated console session (a self-serve request: " +
+					"the requester and the subject are the same signed-in account). Nothing has been erased; the " +
+					"request may now be acted on.",
+			},
+			userId,
+			tx,
+		);
+		await notifyPrivacyInbox(inbox, {
+			reference,
+			subjectUserId: userId,
+			subjectEmail: email,
+			receivedAt: now,
+			dueAt,
+		});
+	});
+	return { outcome: "opened", reference };
 }

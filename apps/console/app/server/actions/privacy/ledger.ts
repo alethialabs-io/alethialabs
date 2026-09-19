@@ -10,7 +10,7 @@
 
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
-import { getServiceDb } from "@/lib/db";
+import { getServiceDb, type Tx } from "@/lib/db";
 import { privacyCaseEvent } from "@/lib/db/schema";
 import type { PrivacyCaseEventKind } from "@/lib/db/schema/enums";
 import type { PrivacyEventDetail } from "@/types/jsonb.types";
@@ -34,14 +34,18 @@ export function newReference(): string {
 /**
  * Appends to the ledger. Never updates — the trigger in programmables.sql refuses UPDATE and DELETE,
  * so this is the only way anything is recorded and the history cannot be revised afterwards.
+ *
+ * `tx` writes the event inside a caller's transaction, so it commits or rolls back with the case it
+ * describes. Without it the event is written on the service connection on its own.
  */
 export async function recordEvent(
 	caseId: string,
 	kind: PrivacyCaseEventKind,
 	detail: PrivacyEventDetail,
 	actorUserId: string | null,
+	tx?: Tx,
 ): Promise<void> {
-	await getServiceDb().insert(privacyCaseEvent).values({
+	await (tx ?? getServiceDb()).insert(privacyCaseEvent).values({
 		caseId,
 		kind,
 		actorUserId,

@@ -37,7 +37,7 @@
 				"Account settings dialog › opens from the sidebar account menu and shows the user email": "passed",
 				"Account settings dialog › Save Changes is inert until the display name is edited": "passed",
 				"Account settings dialog › Request deletion asks first, and Cancel opens nothing and ends no session": "passed",
-				"Account settings dialog › confirming opens ONE erasure request with a reference, and the account survives it": "passed"
+				"Account settings dialog › confirming opens ONE erasure request, or none when no privacy contact is set, and the account survives it": "passed"
 			},
 			"activity.spec.ts": {
 				"Activity page (a brand-new org) › renders the filter bar and gates export on a fresh plan": "passed",
