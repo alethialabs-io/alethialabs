@@ -910,15 +910,19 @@ UPDATE public.jobs j
 -- DEFINER RIGHTS, AND WHY THEY ARE SAFE. `jobs_set_org_id` reads `projects` as the caller, and its
 -- comment says why that is enough there: an invisible project yields NULL and the session fallback
 -- takes over. Here there is no fallback, so an invoker-rights read would turn "project not visible to
--- this RLS scope" into a failed write. Four tables of this family (project_addons,
--- project_services, project_source_repos, project_iac_sources) have no RLS at all today, so for them
--- nothing refused such a write before: an app-role insert under a scope that cannot see the parent —
--- withOwnerScope on a teammate's project is the documented case (lib/db/index.ts) — would go from
--- succeeding to raising. A derivation must not depend on which scope the writer happened to use. With
--- definer rights the lookup always sees the one row the FK already names, and returns only its org.
--- It widens what the DERIVATION can see, never what a caller can read: the value lands on the
--- caller's own row, and on the RLS-enabled tables the policy below then checks that row's org —
--- a write naming another tenant's project still fails WITH CHECK exactly as it did before.
+-- this RLS scope" into this function's "cannot derive … does not exist" — a false statement about a
+-- project that does exist. With definer rights the lookup always sees the one row the FK already
+-- names, and returns only its org; the derivation does not depend on which scope the writer used.
+-- It widens what the DERIVATION can see, never what a caller can read or write: the value lands on
+-- the caller's own row, and EVERY table of the family then answers to the owner_all policy below
+-- (that loop reads project_component_tables() itself, and tests/integration/component-org-id.test.ts
+-- asserts each family table has RLS enabled and that policy — so a new component table cannot get
+-- this trigger without it). The trigger runs BEFORE the policy's WITH CHECK, so a write naming
+-- another tenant's project arrives there carrying that tenant's org and is refused as a
+-- row-level-security violation; the INSERT … RETURNING org_id that would otherwise hand the caller
+-- another tenant's org id never returns a row. The test drives that refusal on all four tables that
+-- had no policy until #4848 (project_addons, project_services, project_source_repos,
+-- project_iac_sources).
 -- `SET row_security = off` is the belt, as for project_environments_require_one_default below: a
 -- no-op for the owning migration role, a loud error instead of silent filtering for any role that
 -- IS subject to RLS. `search_path` is pinned because a SECURITY DEFINER function must not resolve
@@ -945,7 +949,8 @@ BEGIN
 END;
 $$;
 
--- The family, stated ONCE: the trigger loop, the backfill and the propagation below all read this.
+-- The family, stated ONCE: the trigger loop, the backfill, the propagation and the RLS loop below all
+-- read this.
 -- tests/integration/component-org-id.test.ts compares it against the drizzle schema — every table
 -- in project-components.ts with a `project_id` column must be here and nothing else may be — so a
 -- new component table that forgets to join the family fails that suite instead of shipping without
@@ -1133,28 +1138,31 @@ CREATE POLICY runners_delete ON public.runners FOR DELETE
 
 -- The project component family (#4116): the org arm binds to the row's OWN org_id column.
 --
--- Same visibility as the join-through policy these tables had before, stated on the column the
--- tables now carry. The old USING was `project_id IN (projects WHERE user_id = owner OR org_id =
+-- Same visibility as the join-through policy the tables that had one carried before #4116, stated
+-- on the column the tables now carry. The old USING was `project_id IN (projects WHERE user_id = owner OR org_id =
 -- org)`; `org_id` here equals `projects.org_id` for every row (the derive/propagate triggers and the
 -- CHECK above make that structural, not a convention), so the org arm is the same set, and the
 -- owner arm still reaches through `projects` because these tables carry no user_id. WITH CHECK
 -- mirrors USING: the trigger fills org_id BEFORE the check runs, so a write naming another tenant's
 -- project arrives here carrying that tenant's org and is refused, as it was before.
 --
--- NOT every table of the family is here, deliberately: project_addons, project_services,
--- project_source_repos and project_iac_sources had NO policy before #4116 and still have none
--- (tests/integration/rls.test.ts records that the backstop for them was deferred and that their
--- boundary is each server action's org predicate). Enabling RLS on them changes what their existing
--- app-role reads return, which is its own unit with its own tests — the column it needs now exists.
+-- The list is the FAMILY ITSELF — project_component_tables(), the function the derivation trigger,
+-- the backfill and the propagation above all read — so no table can carry the derived column without
+-- this policy. Until #4848 this loop had its own 17-name literal, and four tables of the family
+-- (project_addons, project_services, project_source_repos, project_iac_sources) carried no policy at
+-- all: an app-role INSERT naming another tenant's project_id with RETURNING org_id got that tenant's
+-- org id back. There is no exception set: tests/integration/component-org-id.test.ts states it as an
+-- empty list and fails if any family table lacks RLS or this policy.
+--
+-- What enabling it on those four changed, as of #4848: every app-role read and write of them runs
+-- under withActorScope or withScope with the actor's real org (the rest go through getServiceDb, which
+-- bypasses RLS), so the org arm admits every project of that org, as it already did for the other
+-- seventeen in the same actions. No withOwnerScope caller touches them; one that did would now be
+-- refused on a teammate's project, exactly as it already was on the other seventeen.
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY[
-    'project_network', 'project_cluster', 'project_dns', 'project_observability', 'project_repositories',
-    'project_databases', 'project_caches', 'project_queues', 'project_topics', 'project_nosql_tables',
-    'project_container_registries', 'project_helm_registries', 'project_secrets', 'project_git_credentials',
-    'project_storage_buckets', 'project_changes', 'project_chart_workloads'
-  ]) LOOP
+  FOREACH tbl IN ARRAY public.project_component_tables() LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(
