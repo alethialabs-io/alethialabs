@@ -328,27 +328,40 @@ async function openProbe(page: Page, probe: FacetProbe): Promise<boolean> {
 	return true;
 }
 
+/** Whether a facet offers an unselected option that would NARROW a list of `full` rows. */
+function narrows(options: readonly FacetOption[], full: number | null): boolean {
+	return options.some((o) => !o.pressed && o.count > 0 && full !== null && o.count < full);
+}
+
 /**
- * Find the first facet on the page and leave its options OPEN and marked.
+ * Find the facet to drive and leave its options OPEN and marked.
  *
  * Chips first — they need no opener. Then each opener in turn, and one panel deep for a
- * `FunnelFilter`, whose first panel lists facets rather than options. Returns null when nothing in
- * the budget revealed a counted option.
+ * `FunnelFilter`, whose first panel lists facets rather than options. The first facet with an option
+ * that NARROWS the list wins — an author facet on a one-author org selects every row and proves
+ * nothing about the round trip — and failing that, the first facet with any option at all. Returns
+ * null when nothing in the budget revealed a counted option.
  */
-export async function discoverFacet(page: Page): Promise<{ probe: FacetProbe; options: FacetOption[] } | null> {
+export async function discoverFacet(page: Page, full: number | null): Promise<{ probe: FacetProbe; options: FacetOption[] } | null> {
 	const always = (await markFacetOptions(page)).filter((o) => o.inMain);
-	if (always.some((o) => !o.pressed)) return { probe: { opener: null, descend: false }, options: always };
+	if (narrows(always, full)) return { probe: { opener: null, descend: false }, options: always };
+	let fallback: FacetProbe | null = always.some((o) => !o.pressed) ? { opener: null, descend: false } : null;
 	const n = Math.min(await markOpeners(page), OPENER_BUDGET);
 	for (let i = 0; i < n; i += 1) {
 		for (const descend of [false, true]) {
 			const probe = { opener: i, descend };
 			if (!(await openProbe(page, probe))) continue;
 			const options = await markFacetOptions(page);
-			if (options.some((o) => !o.pressed)) return { probe, options };
+			if (narrows(options, full)) return { probe, options };
+			if (fallback === null && options.some((o) => !o.pressed)) fallback = probe;
 			await closeOverlays(page);
 		}
 	}
-	return null;
+	if (fallback === null) return null;
+	// Re-open the fallback so its options are the ones marked, exactly as a narrowing find leaves them.
+	if (!(await openProbe(page, fallback))) return null;
+	const options = await markFacetOptions(page);
+	return { probe: fallback, options: fallback.opener === null ? options.filter((o) => o.inMain) : options };
 }
 
 /** Every non-empty URL param among `params`, as `name=value`. */
@@ -400,7 +413,7 @@ export async function measureRoundTrip(
 ): Promise<{ F8: Outcome; F9: Outcome }> {
 	const allParams = [...new Set(surfaces.flatMap((s) => s.params.map((p) => p.param)))];
 	const facetParams = [...new Set(surfaces.flatMap((s) => s.params.filter((p) => p.array).map((p) => p.param)))];
-	const found = await discoverFacet(page);
+	const found = await discoverFacet(page, full.value);
 	if (found === null) {
 		const reason = "no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one";
 		return { F8: { kind: "not-measured", reason }, F9: { kind: "not-measured", reason } };
