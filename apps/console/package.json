@@ -62,6 +62,7 @@
     "stripe:setup": "tsx scripts/stripe-setup.ts",
     "org:set-plan": "node scripts/set-org-plan.mjs",
     "audit:grant-scopes": "node scripts/audit-grant-scopes.mjs",
+    "authz:grant-ungranted": "tsx scripts/grant-ungranted-members.ts",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
