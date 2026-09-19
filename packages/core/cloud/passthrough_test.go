@@ -367,6 +367,81 @@ func TestProviderTfvars_NodeShapeKnobsAbsentByDefault(t *testing.T) {
 	}
 }
 
+// TestProviderTfvars_StandingIdentityAdoptionIsReachable pins the product path #1268 depends on: a
+// cluster can ADOPT a standing external-secrets identity instead of creating a per-run one, which is
+// the only way a cross-account grant applied once in account B can survive the cluster being
+// recreated (GCP rewrites a deleted GSA's binding to `deleted:serviceAccount:…`; Azure's role
+// assignment binds an object id regenerated on every create).
+//
+// The adoption variables have no typed Go field, and need none: the cluster component's generic
+// provider_config passthrough carries them to tofu, and the console renders them as controls in the
+// cluster card's generated Advanced section (template-knobs-section.ts, driven by the knob manifest).
+// That passthrough is the whole emitter, so what can break it is a provider RESERVING the key, or the
+// template renaming the variable — both of which this test fails on. The t2 harness writes the GCP key
+// by exactly this route (adoptStandingIdentity in test/e2e/t2_secrets_xacct.go).
+func TestProviderTfvars_StandingIdentityAdoptionIsReachable(t *testing.T) {
+	cases := []struct {
+		cloud    string
+		provider CloudProvider
+		values   map[string]any
+	}{
+		{
+			cloud:    "gcp",
+			provider: &gcpProvider{},
+			values: map[string]any{
+				"external_secrets_service_account_email": "alethia-eso@proj-a.iam.gserviceaccount.com",
+			},
+		},
+		{
+			cloud:    "azure",
+			provider: &azureProvider{},
+			values: map[string]any{
+				"external_secrets_identity_name":           "alethia-eso",
+				"external_secrets_identity_resource_group": "rg-identities",
+			},
+		},
+	}
+
+	root := templateRepoRoot(t)
+
+	for _, tc := range cases {
+		t.Run(tc.cloud, func(t *testing.T) {
+			// The template declares every name — otherwise the passthrough would carry a key tofu
+			// refuses as undeclared, and this test would pass for any string at all.
+			rel := "infra/templates/project/" + tc.cloud + "/variables.tf"
+			src := readTemplateSource(t, root, rel)
+			for k := range tc.values {
+				if !regexp.MustCompile(`(?m)^variable "` + regexp.QuoteMeta(k) + `"`).MatchString(src) {
+					t.Errorf("%s: %s declares no `variable %q`", tc.cloud, rel, k)
+				}
+			}
+
+			// Set: each value lands on the same-named tfvar, unchanged.
+			cfg := &types.ProjectConfig{
+				ProjectName: "p",
+				Cluster:     types.ProjectClusterConfig{ProviderConfig: tc.values},
+			}
+			tf := tc.provider.ProviderTfvars(cfg)
+			for k, want := range tc.values {
+				if tf[k] != want {
+					t.Errorf("%s: cluster provider_config %q did not reach tofu (got %v, want %v) — the "+
+						"cluster cannot adopt a standing identity, so no cross-account grant survives a recreate",
+						tc.cloud, k, tf[k], want)
+				}
+			}
+
+			// Unset: nothing is emitted, so the template's own default (create a per-deploy identity)
+			// applies and every existing deploy plans exactly as before.
+			bare := tc.provider.ProviderTfvars(&types.ProjectConfig{ProjectName: "p"})
+			for k := range tc.values {
+				if v, ok := bare[k]; ok {
+					t.Errorf("%s: %q emitted (%v) although nothing set it", tc.cloud, k, v)
+				}
+			}
+		})
+	}
+}
+
 // The cache allow-list the canvas collects reaches the ElastiCache security
 // group's tfvar, an unset list leaves the base empty default untouched (so
 // existing deploys are unchanged), and valkey — whose serverless module
