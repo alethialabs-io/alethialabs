@@ -342,11 +342,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 35323263469 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 35323263469 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 35323263469 |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 35323263469 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 35323263469 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 35430876309 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 35430876309 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 35430876309 |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 35430876309 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 35430876309 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -399,6 +399,8 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 
 ### Blocked on a human
 
+- #4854 — security(privacy): fulfilErasure erases nothing — build the erasure executor, and make the register match the schema
+- #4771 — e2e nightly: aws RED (floor · after proof capture)
 - #4740 — cost(e2e): 10 orphan pvc-* disks have stood in gcp europe-west3 since 2026-08-29 — 158 GB the reaper never reclaimed
 - #4642 — infra(github): the live rulesets enforce 10 of the 19 contexts protect-main declares — all seven release-gate legs are unenforced
 - #4583 — audit(grants): find existing rows with an org kind and a resource id — grants someone believed were scoped, and are not
@@ -414,7 +416,6 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 - #4112 — templates: create the three public starter repos and set is_template — ORG ADMIN, not agent-buildable
 - #3907 — legal(assets): the nine third-party marks already shipping were never cleared — and the test that disqualified harbor applies to them
 - #3855 — e2e nightly: gcp RED (floor)
-- #3754 — fix(authz): members stuck ungranted by the toOrgRole gap are not backfilled — and a naive backfill would restore revoked access
 - #3549 — ci: the live branch rulesets do not require what infra/github says they do
 - #3524 — e2e(addons): remove external-dns from addOnExclusions once a paid gcp/azure addons run is green
 - #3438 — release(runner): `release-runner` has never once succeeded — the ECR repo it pushes to does not exist, and nothing creates it
@@ -452,7 +453,7 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-09-18T11:18:57Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-09-19T10:48:19Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
