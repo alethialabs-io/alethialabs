@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "./avatar";
+import { CountFigure } from "./count-pill";
 import { cn } from "./utils";
 
 export interface ComboboxOption {
@@ -190,9 +191,9 @@ export function MultiCombobox({
                       {o.label}
                     </span>
                     {o.hint && (
-                      <span className="shrink-0 truncate font-mono text-[10.5px] text-muted-foreground">
+                      <CountFigure className="shrink-0 truncate">
                         {o.hint}
-                      </span>
+                      </CountFigure>
                     )}
                     {/* Reserved check slot — present always so selecting never reflows the row. */}
                     <span className="flex size-3.5 shrink-0 items-center justify-center">

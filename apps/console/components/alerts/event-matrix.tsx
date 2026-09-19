@@ -48,10 +48,10 @@ export function EventMatrix({
             <CollapsibleTrigger className="group flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-muted/40">
               <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[panel-open]:rotate-90" />
               <Icon className="size-4 shrink-0 text-muted-foreground" />
-              <span className="font-mono text-[10px] uppercase tracking-wider text-foreground/80">
+              <span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
                 {cat.label}
               </span>
-              <span className="ml-auto font-mono text-[10px] text-muted-foreground">
+              <span className="ml-auto font-mono text-ui-2xs text-muted-foreground">
                 {onCount}/{cat.events.length}
               </span>
             </CollapsibleTrigger>
@@ -61,23 +61,27 @@ export function EventMatrix({
                   const on = set.has(e.key);
                   const locked = isSecurityKey(e.key) && !advancedAlerting;
                   return (
+                    // Not a table and not a grid: one label and one control per row, which is
+                    // what a flex row is for. Spelling the same two tracks out as
+                    // `grid-cols-[1fr_auto]` claimed a column structure that has no header
+                    // row, no third column and nothing for a screen reader to associate.
                     <div
                       key={e.id}
-                      className="grid grid-cols-[1fr_auto] items-center gap-4 px-4 py-2.5 pl-11 hover:bg-muted/30"
+                      className="flex items-center gap-4 px-4 py-2.5 pl-11 hover:bg-muted/30"
                     >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 text-[13px]">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 text-ui-md">
                           {e.label}
-                          <span className="rounded-full border border-border/60 px-1.5 py-0 font-mono text-[8.5px] uppercase tracking-wide text-muted-foreground">
+                          <span className="rounded-full border border-border/60 px-1.5 py-0 font-mono text-ui-3xs uppercase tracking-wide text-muted-foreground">
                             {e.severity}
                           </span>
                           {!e.live && (
-                            <span className="font-mono text-[9px] text-muted-foreground/60">
+                            <span className="font-mono text-ui-3xs text-text-tertiary">
                               soon
                             </span>
                           )}
                         </div>
-                        <div className="truncate font-mono text-[10px] text-muted-foreground/60">
+                        <div className="truncate font-mono text-ui-2xs text-text-tertiary">
                           {e.key}
                         </div>
                       </div>
@@ -85,7 +89,7 @@ export function EventMatrix({
                         <Tooltip>
                           <TooltipTrigger
                             render={
-                              <span className="inline-flex cursor-default items-center gap-1.5 font-mono text-[10px] uppercase text-muted-foreground/60">
+                              <span className="inline-flex cursor-default items-center gap-1.5 font-mono text-ui-2xs uppercase text-text-tertiary">
                                 <Lock className="size-3" />
                                 Ent
                               </span>
@@ -99,15 +103,28 @@ export function EventMatrix({
                           </TooltipContent>
                         </Tooltip>
                       ) : editable ? (
+                        // The row's text is not associated with its control by anything, so
+                        // without a name every one of the ~50 switches in this matrix announced
+                        // only "switch". The key rides along because two categories can carry the
+                        // same human label, and the key is what identifies the event everywhere
+                        // else in the product.
                         <Switch
+                          aria-label={`${e.label} (${e.key})`}
                           checked={on}
                           onCheckedChange={() => onToggle(e.key)}
                         />
                       ) : (
                         <span
                           className={cn(
-                            "flex items-center gap-1.5 font-mono text-[10px] uppercase",
-                            on ? "text-foreground" : "text-muted-foreground/50",
+                            "flex items-center gap-1.5 font-mono text-ui-2xs uppercase",
+                            // A NAMED TIER, never an alpha over one: the banned spelling here was
+                            // `text-muted-foreground/50`, which composites to 2.33:1 over the page
+                            // — the same failure #4197 removed from the filter bars. It passed
+                            // review only because the audit seeds no alert policy, so this subtree
+                            // never renders, which is an unmeasured defect rather than an absent
+                            // one. The other 49 sites of that shape are gone with #4309 and the
+                            // `ink_alpha` matcher (#4328) now refuses the next one.
+                            on ? "text-foreground" : "text-text-tertiary",
                           )}
                         >
                           <span

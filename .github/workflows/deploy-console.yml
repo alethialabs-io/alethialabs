@@ -22,6 +22,20 @@ on:
       - '.github/workflows/deploy-console.yml'
   workflow_dispatch:
 
+# SERIALIZE deploys; never cancel one. Two merges to `main` in quick succession currently run two
+# full 15-job deploys concurrently, racing the same `compose pull && up -d` on the box — which is
+# how a green deploy ships a half-updated stack.
+#
+# ⚠ `cancel-in-progress: FALSE`, deliberately, and this is the one place the default is wrong. Every
+# other group added alongside this one cancels, because a superseded CI run is not evidence and
+# holding a runner is its only cost. THIS workflow ssh's into the box and restarts containers:
+# cancelling it mid-flight leaves the deploy half-applied, which is strictly worse than the race it
+# was meant to fix. The running deploy survives; GitHub keeps only the newest pending run, so an
+# intermediate push or manual redeploy can still be cancelled before it starts.
+concurrency:
+  group: deploy-console
+  cancel-in-progress: false
+
 permissions:
   contents: read
   packages: write
@@ -51,13 +65,244 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     permissions:
-      contents: read
+      contents: read # checkout, and the gate receipt's read of release-gate.yml AT THE GRADED HEAD
       id-token: write # same read-only vault role the deploy uses; no stored secrets
+      checks: read # the gate receipt reads the PR head's check-runs
+      pull-requests: read # …and has to resolve which PR produced this commit
     env:
       ASM_SECRET_ID: alethia/prod/env
       ASM_REGION: eu-central-1
     steps:
       - uses: actions/checkout@v7
+
+      # THE GATE RECEIPT. Production may only receive a commit whose PR went green through the
+      # browser release gate.
+      #
+      # This is a RECEIPT, not a re-run, and that is deliberate. Re-running the gate here is not
+      # available and would not be wanted: cross-workflow `needs:` does not exist, `workflow_run`
+      # changes what `github.sha` means, and it would spend a second hour on a commit already
+      # validated. What it catches instead is the gap a re-run cannot see — an admin bypass, or a
+      # ruleset that drifted from infra/github and stopped requiring the contexts it declares. That
+      # is the #3180 shape: written-down requirements that nothing enforced, for a month.
+      #
+      # THE EXPECTED LEG LIST IS DERIVED, never typed. release-gate.yml's `const legs` table is the
+      # one place that decides which legs exist; the repo already carries two hand-written copies of
+      # it (infra/github/variables.tf's required contexts, and scripts/merge-signal-health.sh's
+      # `for leg in …` loop), and a third would be the copy that decays. It is read through
+      # `parseGateLegTable` from scripts/ci/check-required-checks.mjs rather than a fourth inline
+      # regex: a duplicated PARSER decays the same way a duplicated list does, and that one is
+      # already self-tested in CI (ci.yml runs `pnpm check:required-checks -- --self-test`). It
+      # refuses an empty parse, a table it cannot find, and a duplicated leg, so "found nothing"
+      # can never render here as "no legs required".
+      #
+      # WHICH REF EACH HALF READS — and why that is the whole design (#4476). This receipt asks two
+      # questions, and they are questions about two different commits:
+      #
+      #   MEASUREMENT — the check-runs at `pr.head.sha`, the head of the staging→main promotion PR.
+      #   EXPECTATION — the leg table at `pr.head.sha` TOO, fetched over the contents API. A
+      #                 `pull_request` run resolves its workflow from the PR's HEAD (CONTRIBUTING.md
+      #                 states this under the promotion checklist), so the legs that could possibly
+      #                 have reported are the ones the HEAD's table defines. Reading any other ref
+      #                 asks about a different file than the one that produced the answers.
+      #   FLOORED BY  — the leg table in the CHECKED-OUT tree, at `github.sha` on `main`. Read from
+      #                 disk, and it may only ADD to the requirement, never remove one.
+      #
+      # WHY NOT THE LOCAL TREE ALONE — and NOT because it lags. An earlier draft of this block
+      # claimed a one-promotion lag ("main's tree is the promotion BEFORE the one that introduced
+      # the leg, so a newly added leg goes ungraded for exactly one promotion"). That is FALSE and
+      # is recorded here so nobody re-derives it: this workflow runs on `push: branches: [main]` and
+      # `actions/checkout` carries no `ref:`, so it checks out `github.sha` — the commit the
+      # promotion CREATED, not the one it replaced. A path modified only on the `staging` side
+      # resolves to `staging`'s content in that tree, so the checkout already carries the head's
+      # table. Walk #4266's seventh leg through it: the local-tree read required 7, not 6. The lag
+      # exists only for a read of `main` WHILE the promotion PR is open, which is not this step.
+      #
+      # The gap that IS real is which commit the local tree is a statement about. The merge takes
+      # `staging`'s copy of any path only `staging` touched, so the two trees separate exactly when
+      # `main` ALSO moved release-gate.yml since the fork point — a change that reached `main`
+      # outside this promotion, e.g. a hotfix merged straight into it. Then the deployed tree can
+      # name a leg the head never ran; and a conflict on that file resolved toward `main`'s side can
+      # DROP a leg the head did run, which is the lenient direction and is invisible to a
+      # local-tree-only read. So the expectation is read at the ref that produced the answers, and
+      # the deployed tree is kept as a floor that may only ADD: a leg `main` declares that the head
+      # never ran is still a refusal, and the graded ref cannot shrink the requirement below what
+      # the tree being deployed asks for. Both directions are loud, instead of assuming the two
+      # trees are one.
+      #
+      # NOT the route, though it reads like one: the emergency cherry-pick CONTRIBUTING.md sanctions
+      # targets `staging` — the head itself — so the merge carries it to `main` intact and the two
+      # trees still agree. Naming it here would be a plausible-sounding cause that nothing produces.
+      #
+      # Normally they ARE one tree, and the run says so; requiring the union is the fail-closed
+      # reading of the window in which they are not.
+      #
+      # LATEST RUN PER CONTEXT, not any run. A PR that was a draft has SKIPPED gate check-runs from
+      # that period (release-gate.yml's `legs` job requires `draft == false`), and `ready_for_review`
+      # then fires a real one. Both are in the list under the same name, so "did it pass" must read
+      # the most recent, or an early skip either masks a later failure or a later success is ignored.
+      - name: The commit being deployed went green through the release gate
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          node - <<'EOF'
+          const { execFileSync } = require("node:child_process");
+          const { readFileSync } = require("node:fs");
+          const { resolve } = require("node:path");
+          const { pathToFileURL } = require("node:url");
+          const sh = (a) => execFileSync("gh", a, { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+          const repo = process.env.REPO, sha = process.env.SHA;
+          const GATE = ".github/workflows/release-gate.yml";
+
+          const receipt = async () => {
+          // The parser, not a copy of it. See the header: every one of its failure modes is a THROW,
+          // and each is caught below and turned into a refusal that names the ref it was reading.
+          //
+          // ASSERT THE SYMBOL RATHER THAN ASSUME IT. A dynamic `import()` does not link-check named
+          // bindings, so a module that stopped exporting `parseGateLegTable` is not an import error:
+          // the binding is `undefined` and the first call throws a TypeError inside `legsAt`, where
+          // it renders as "could not read the leg table out of release-gate.yml at the graded head".
+          // That verdict is right and every noun in it is wrong — release-gate.yml is intact at both
+          // refs and the missing thing is in THIS tree — so the reader goes and inspects a healthy
+          // file. Nothing in CI can catch the rename that causes it: check-pnpm-script-refs.mjs
+          // models `pnpm` invocations and check-docs-contract.mjs models docs, neither reads an
+          // `import()` written inside a workflow heredoc, and this workflow only ever runs from
+          // `main` — so such a rename lands green on dev and staging and first speaks as a refused
+          // production deploy. This check is the only thing that can name what actually happened.
+          const PARSER = "scripts/ci/check-required-checks.mjs";
+          const mod = await import(pathToFileURL(resolve(PARSER)).href);
+          if (typeof mod.parseGateLegTable !== "function") {
+            console.error(`::error::${PARSER} in the deployed tree ${sha} does not export \`parseGateLegTable\` (it is ${typeof mod.parseGateLegTable}). This receipt's PARSER is missing from the tree being deployed; that is NOT a statement about ${GATE}, and not a statement about the release gate at all. Land the parser alongside this workflow — a deploy-console.yml-only cherry-pick has to carry ${PARSER} too.`);
+            process.exit(1);
+          }
+          const { parseGateLegTable } = mod;
+
+          // ── which PR produced this commit ─────────────────────────────────────────────────────
+          // ONLY a PR whose base is `main` is a receipt for a commit on main. `commits/<sha>/pulls`
+          // also returns the dev PR that originally authored the change — measured: for a commit on
+          // dev it returns both the merged dev PR and the open dev→staging promotion. Falling back to
+          // "any merged PR" would quietly grade a DEV pr's head, where the gate does not run at all
+          // (release-gate.yml fires on a dev PR only with the `release-gate:run` label), and refuse
+          // the deploy while naming the wrong PR. Fail closed AND say what was found.
+          //
+          // It is resolved FIRST now, because its head is the ref the expectation is read from.
+          const pulls = JSON.parse(sh(["api", `repos/${repo}/commits/${sha}/pulls`]));
+          const pr = pulls.find((p) => p.base?.ref === "main" && p.merged_at);
+          if (!pr) {
+            const seen = pulls.length
+              ? pulls.map((p) => `#${p.number} (base ${p.base?.ref}, ${p.merged_at ? "merged" : "open"})`).join(", ")
+              : "none";
+            console.error(`::error::no MERGED pull request into main contains ${sha}, so nothing can show it passed the release gate. PRs containing this commit: ${seen}. A commit that reached main outside a promotion PR is exactly the bypass this receipt exists to refuse — promote through a PR into main, or dispatch this workflow deliberately.`);
+            process.exit(1);
+          }
+          const head = pr.head.sha;
+          console.log(`commit ${sha} came from #${pr.number} (${pr.base.ref} ← ${pr.head.ref}), head ${head}`);
+
+          // ── the leg table, named at each of the two refs ──────────────────────────────────────
+          // Both reads fail CLOSED and say which ref they were reading, because "could not see the
+          // gate definition" and "the gate requires nothing" are the same silence otherwise.
+          //
+          // The second `catch` may say "the leg table did not parse at <ref>" only because the
+          // parser's existence was asserted above. Without that assertion an `undefined` callee
+          // throws a TypeError here too, and this message would blame a healthy release-gate.yml at
+          // the other ref for a symbol missing from the deployed tree.
+          const legsAt = (where, read) => {
+            let text;
+            try {
+              text = read();
+            } catch (e) {
+              console.error(`::error::could not read ${GATE} at ${where} — refusing to deploy on a gate definition this receipt cannot see. ${e.message}`);
+              process.exit(1);
+            }
+            try {
+              return parseGateLegTable(text).legs;
+            } catch (e) {
+              console.error(`::error::could not read the leg table out of ${GATE} at ${where} — refusing to deploy on an unknown gate. A parse that finds nothing must not read as "no legs required". ${e.message}`);
+              process.exit(1);
+            }
+          };
+          const contentsAt = (ref) => {
+            const body = JSON.parse(sh(["api", `repos/${repo}/contents/${GATE}?ref=${ref}`]));
+            if (body.encoding !== "base64" || typeof body.content !== "string") {
+              throw new Error(`the contents API answered with encoding ${JSON.stringify(body.encoding)} rather than a base64 \`content\` string, so there is nothing to decode.`);
+            }
+            return Buffer.from(body.content, "base64").toString("utf8");
+          };
+          // EXPECTATION: the tree that RAN the gate. MEASUREMENT (below): the check-runs on the
+          // same commit. FLOOR: the tree being deployed, which may only add.
+          const graded = legsAt(`the graded head ${head}`, () => contentsAt(head));
+          const deployed = legsAt(`the deployed tree ${sha}`, () => readFileSync(GATE, "utf8"));
+          const legs = [...graded, ...deployed.filter((l) => !graded.includes(l))];
+          const onlyGraded = graded.filter((l) => !deployed.includes(l));
+          const onlyDeployed = deployed.filter((l) => !graded.includes(l));
+          if (onlyGraded.length === 0 && onlyDeployed.length === 0) {
+            console.log(`gate legs derived from ${GATE}, the same table at both refs (graded head ${head}, deployed tree ${sha}): ${legs.join(", ")}`);
+          } else {
+            // A promotion window. Not an error — but never silent, because it is the state in which
+            // the two halves of this receipt could have disagreed.
+            console.log(`::warning::${GATE} differs between the two refs this receipt reads. Graded head ${head} names: ${graded.join(", ")}. Deployed tree ${sha} names: ${deployed.join(", ")}. Requiring the union — ${legs.join(", ")} — so neither ref can lower the bar the other sets.`);
+            if (onlyGraded.length) console.log(`  legs the graded head added and the deployed tree does not yet name (these are the ones a local-tree-only read would have skipped): ${onlyGraded.join(", ")}`);
+            if (onlyDeployed.length) console.log(`  legs the deployed tree names that the graded head never ran: ${onlyDeployed.join(", ")}`);
+          }
+
+          // ── the latest check-run per context on that head ─────────────────────────────────────
+          const runs = JSON.parse(sh(["api", `repos/${repo}/commits/${head}/check-runs?per_page=100`, "--paginate", "--slurp"]))
+            .flatMap((page) => page.check_runs ?? []);
+          const latest = new Map();
+          for (const r of runs) {
+            const prev = latest.get(r.name);
+            const at = r.completed_at ?? r.started_at ?? "";
+            if (!prev || at >= prev.at) latest.set(r.name, { at, conclusion: r.conclusion, url: r.html_url });
+          }
+
+          let bad = 0;
+          for (const leg of legs) {
+            const name = `Release gate (${leg})`;
+            const got = latest.get(name);
+            if (!got) {
+              // Say WHICH ref asked for it, and name a remedy that CLEARS the state it is printed
+              // for. A leg named at the graded head and still missing means the gate did not run.
+              //
+              // A leg named ONLY by the deployed tree never had a run to find, and "promote again"
+              // is the one instruction that cannot fix it: `deployed` is the post-promotion tree, so
+              // a leg only it names reached `main` outside the promotion being graded — a hotfix
+              // merged straight into `main`, say. The next promotion's head is the same `staging`,
+              // which still does not name the leg, so re-promoting REPRODUCES this refusal — one
+              // full promotion cycle spent to learn that. The action that actually clears it moves
+              // the leg onto the head.
+              const from = graded.includes(leg)
+                ? `${GATE} at the graded head ${head} names this leg`
+                : `${GATE} names this leg only in the deployed tree ${sha}, not at the graded head ${head}, so the gate could not have produced it. It reached \`main\` outside the promotion this receipt grades, which means PROMOTING AGAIN REPRODUCES THIS — the next head is that same \`staging\`, still without the leg. Back-merge \`main\` into \`staging\` (or land the leg on \`dev\` and promote it forward) so the head carries the leg and the gate reports it`;
+              console.error(`::error::${name} never reported on #${pr.number} (head ${head}). ${from}. Nothing measured it.`);
+              bad++;
+            } else if (got.conclusion !== "success") {
+              console.error(`::error::${name} is "${got.conclusion}" on #${pr.number}, not success. ${got.url}`);
+              bad++;
+            } else {
+              console.log(`✓ ${name}`);
+            }
+          }
+          if (bad > 0) {
+            // No blanket "re-promote" here either: for a leg the deployed tree alone names, that is
+            // the instruction that reproduces the refusal. Each line above carries the remedy for
+            // ITS leg, and they are not the same remedy.
+            console.error(`::error::${bad} of ${legs.length} release-gate leg(s) did not pass for #${pr.number}. Production is not receiving this commit. Each ::error:: above names the remedy for its own leg — they differ, and none of them is a bypass.`);
+            process.exit(1);
+          }
+          console.log(`✓ all ${legs.length} release-gate legs passed for #${pr.number} — expectation read at ${head}, measured at ${head}, floored by the deployed tree ${sha}`);
+          };
+
+          // A receipt that THREW has not said "pass". Without this an unhandled rejection is a
+          // failure mode whose exit code depends on the node version, and this step's whole job is
+          // to be the one thing between an unmeasured commit and production.
+          receipt().catch((e) => {
+            console.error(`::error::the gate receipt threw before it reached a verdict: ${(e && e.stack) || e}. That is a REFUSAL, not a pass — production is not receiving this commit.`);
+            process.exit(1);
+          });
+          EOF
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -772,6 +1017,7 @@ jobs:
       id-token: write # assume the read-only vault role via GitHub OIDC — no stored secrets
     env:
       IMAGE_TAG: ${{ github.sha }}
+      APPS_CHANGED: ${{ needs.changes.outputs.apps }}
       ASM_SECRET_ID: alethia/prod/env
       ASM_REGION: eu-central-1
     steps:
@@ -841,7 +1087,7 @@ jobs:
             # To ROTATE the credential key with no downtime: add the previous active key to the vault as
             # ALETHIA_CRED_ENCRYPTION_KEY_<oldkid>, add an `emit ALETHIA_CRED_ENCRYPTION_KEY_<oldkid>`
             # line here, set the new active key + bump ALETHIA_CRED_ENCRYPTION_KID, deploy, then run
-            # `pnpm -F console db:reencrypt` on the box. Drop the retired key + its emit line once every
+            # `pnpm -C apps/console run db:reencrypt` on the box. Drop the retired key + its emit line once every
             # row has been re-encrypted. See lib/crypto/secrets.ts for the runbook + ordering.
             echo "ALETHIA_DB_USER=alethia"
             echo "ALETHIA_DB_NAME=alethia"
@@ -995,8 +1241,6 @@ jobs:
             emit RESEND_API_KEY
             # Support: staff Slack ping on a new case/reply (lib/support/slack-notify.ts). Unset → no-op.
             emit SUPPORT_SLACK_WEBHOOK_URL
-            # Community card link on the support page (app/(private)/[org]/~/support). Unset → "coming soon".
-            emit NEXT_PUBLIC_COMMUNITY_URL
             # Admin staff dashboard @ admin.alethialabs.io (apps/admin): the Cloudflare-Access allowlist
             # (apps/admin/lib/auth/staff.ts) + the console URL its case deep-links target. COMPOSE_PROFILES
             # activates the profiled `admin` service on the box (docker compose reads it from this .env).
@@ -1042,8 +1286,8 @@ jobs:
 
           # On the box: checkout the built SHA, swap in .env, render s3.json from the
           # same storage creds (checkout -f resets that tracked file), compose up behind
-          # the tunnel. `bash -s` gets IMAGE_TAG from the ssh env.
-          ssh $SSHOPTS "root@${HOST}" "IMAGE_TAG='${IMAGE_TAG}' bash -s" <<'REMOTE'
+          # the tunnel. `bash -s` gets IMAGE_TAG + the apps build verdict from the ssh env.
+          ssh $SSHOPTS "root@${HOST}" "IMAGE_TAG='${IMAGE_TAG}' APPS_CHANGED='${APPS_CHANGED}' bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/alethia
           git fetch origin main
@@ -1078,6 +1322,22 @@ jobs:
             echo "::endgroup::"
             exit 1
           fi
+          # A SHA tag is only a registry label. Read provenance from the running app container so a
+          # stale image tagged as this commit cannot turn the production deploy green (#2746). An
+          # apps build must name this exact SHA. A runner-only release legitimately retags the older,
+          # code-equivalent console image; `retag-unchanged` already diff-gated that source commit.
+          app_id="$(docker compose $cf ps -q app)"
+          deployed_commit="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$app_id" \
+            | sed -n 's/^ALETHIA_SOURCE_COMMIT=//p' | head -n1)"
+          if [ -z "$deployed_commit" ]; then
+            echo "::error::Running console carries no ALETHIA_SOURCE_COMMIT provenance."
+            exit 1
+          fi
+          if [ "$APPS_CHANGED" = true ] && [ "$deployed_commit" != "$IMAGE_TAG" ]; then
+            echo "::error::Running console provenance '${deployed_commit:-missing}' does not match promoted SHA '$IMAGE_TAG'."
+            exit 1
+          fi
+          echo "✓ running console carries ALETHIA_SOURCE_COMMIT=$deployed_commit (apps changed: $APPS_CHANGED)"
           # `git checkout` replaces tracked files atomically. Caddy bind-mounts one
           # tracked file, so its existing mount can stay attached to the old inode
           # even though /opt/alethia now shows the new routes. Compose cannot detect
@@ -1149,6 +1409,80 @@ jobs:
             exit 1
           fi
 
+  # DID THE DEPLOY ACTUALLY SERVE? A green `deploy` job proves the box accepted the images; it does
+  # not prove the public URL answers, and `retag-unchanged` can report success while shipping a stale
+  # image. So this runs ten checks against https://alethialabs.io itself, including "the served build
+  # id equals the promoted SHA" — the one assertion that separates a deploy from a deploy that
+  # landed.
+  #
+  # A SEPARATE JOB, not extra steps on `deploy`, deliberately: `deploy` holds the SSH key, and
+  # Chromium plus a pnpm install do not belong in the job that holds it. The blast radius of a
+  # compromised browser dependency should not include the production host key.
+  #
+  # `SMOKE_EXPECTED_SHA` is set only when the apps group actually rebuilt. On a runner-only push the
+  # console images are re-tagged rather than rebuilt, so the served build id is the PREVIOUS commit
+  # and asserting equality would red every runner-only deploy. Empty means "do not compare", which
+  # the smoke script reads as a skip with its reason, never as a pass.
+  smoke:
+    name: Post-deploy smoke (the public URL, and the build it serves)
+    needs: [changes, deploy]
+    if: ${{ needs.deploy.result == 'success' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SMOKE_BASE_URL: ${{ vars.PUBLIC_APP_URL || 'https://alethialabs.io' }}
+      SMOKE_EXPECTED_SHA: ${{ needs.changes.outputs.apps == 'true' && github.sha || '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: bash scripts/ci/playwright-install.sh
+
+      # THE FLOOR. `--list` prints the manifest length, and this asserts it — the same shape as the
+      # release gate's per-leg floor. A suite that silently shrank to two checks and passed is the
+      # failure this catches; without it, "smoke green" would be compatible with a smoke that
+      # measured almost nothing.
+      - name: The smoke manifest still holds every check it is supposed to
+        run: |
+          set -euo pipefail
+          out="$(pnpm -C apps/console run smoke:prod -- --list)"
+          printf '%s\n' "$out"
+          printf '%s' "$out" | grep -qE '^post-deploy smoke — 10 checks:$' || {
+            echo "::error::the post-deploy smoke manifest is not 10 checks. If a check was added or removed deliberately, move this number in the same PR; if not, the suite shrank and would have reported green on almost nothing."
+            exit 1
+          }
+
+      - name: Smoke the deployed site
+        id: smoke
+        run: pnpm -C apps/console run smoke:prod
+
+      # #4084: a step that must run after a failure carries the conjunct, or it reports on a run that
+      # never got far enough to produce anything.
+      #
+      # `if-no-files-found: error`, and gated on the smoke step having actually RUN. The script writes
+      # `smoke-report.json` from a `finally`, so once the run started the file exists on the pass and
+      # the fail path alike — an empty artifact would mean the report vanished, which is worth a red.
+      # But if `playwright install` died first the smoke never ran and there is legitimately nothing
+      # to upload, so `outcome != 'skipped'` keeps that from becoming a second, misleading failure.
+      # The path is `smoke-results/`, which is where the script writes — NOT `test-results/`, which is
+      # the Playwright convention this script does not use. #4347 is the standing instance of an
+      # upload that succeeded having captured nothing it exists for.
+      - name: Upload the smoke report
+        if: ${{ !cancelled() && steps.smoke.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-deploy-smoke
+          path: apps/console/smoke-results/
+          if-no-files-found: error
+          retention-days: 14
+
   # A red production deploy must never again be discovered by someone happening to read a buildx log.
   # It has happened three times: #2244 (ten days), #2485 (closed on half the diagnosis), and the
   # TS2307 underneath it that nothing ever named while main shipped nothing for 26 days.
@@ -1162,7 +1496,7 @@ jobs:
   report-failure:
     needs: [changes, build-amd64, runner-base-amd64, runner-base-arm64, merge-runner-base,
             build-runner-amd64, build-runner-arm64, merge-runner-images, runner-amd64,
-            runner-arm64, merge-runner, retag-unchanged, deploy]
+            runner-arm64, merge-runner, retag-unchanged, deploy, smoke]
     if: ${{ (failure() || cancelled()) && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:

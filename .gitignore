@@ -80,6 +80,8 @@ apps/runner/argocd-templates/
 
 apps/console/playwright-report/
 apps/console/test-results/
+# The post-deploy smoke's report + one screenshot per failed check (scripts/e2e/post-deploy-smoke.ts).
+apps/console/smoke-results/
 apps/console/e2e/.auth/
 
 # Claude Code harness — local-only state. These were previously ignored ONLY via this

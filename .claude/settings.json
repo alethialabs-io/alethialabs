@@ -52,6 +52,26 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-runtime.sh\"",
             "statusMessage": "Runtime status"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-cleanup.sh\"",
+            "async": true,
+            "timeout": 900,
+            "statusMessage": "Sweeping worktrees and branches"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-cleanup.sh\" --quick",
+            "async": true,
+            "timeout": 330,
+            "statusMessage": "Sweeping landed worktrees"
           }
         ]
       }

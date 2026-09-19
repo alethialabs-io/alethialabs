@@ -88,7 +88,7 @@ variable "network_id" {
 variable "subnet_ids" {
   type        = list(string)
   default     = []
-  description = "Self-links of user-selected existing subnetworks for a brownfield network (provision_network = false, #1352). Empty = auto-discover the subnetwork in var.region. Only the first entry is used (GKE attaches to one subnetwork). Replaces the former write-only subnetwork_id variable."
+  description = "Self-links of user-selected existing subnetworks for a brownfield network (provision_network = false, #1352). Empty = auto-discover the subnetwork in the region derived from var.region. Only the first entry is used (GKE attaches to one subnetwork). Replaces the former write-only subnetwork_id variable."
 }
 
 variable "single_cloud_nat" {
@@ -399,6 +399,11 @@ variable "memorystore_transit_encryption_mode" {
   type        = string
   default     = "DISABLED"
   description = "Transit encryption mode for Memorystore (DISABLED or SERVER_AUTHENTICATION)"
+
+  validation {
+    condition     = contains(["DISABLED", "SERVER_AUTHENTICATION"], var.memorystore_transit_encryption_mode)
+    error_message = "memorystore_transit_encryption_mode must be DISABLED or SERVER_AUTHENTICATION."
+  }
 }
 
 #########################################################################
@@ -446,7 +451,7 @@ variable "firestore_database_type" {
 variable "firestore_location_id" {
   type        = string
   default     = ""
-  description = "Location for Firestore database (defaults to var.region if empty)"
+  description = "Location for Firestore database (defaults to the region derived from var.region if empty)"
 }
 
 # `firestore_delete_protection_state` used to be declared here, defaulting to
@@ -571,6 +576,21 @@ variable "cloud_storage_buckets" {
   }))
   default     = []
   description = "List of Cloud Storage buckets to create"
+
+  # `lifecycle_rules` reaches a real `lifecycle_rule` block since #4320. A rule with no age would
+  # render an empty `condition`, and SetStorageClass without a class is rejected by the API — both
+  # fail here, at plan, naming the knob, instead of at apply against Cloud Storage.
+  validation {
+    condition = alltrue(flatten([
+      for b in var.cloud_storage_buckets : [
+        for r in b.lifecycle_rules :
+        contains(["Delete", "SetStorageClass", "AbortIncompleteMultipartUpload"], r.action_type) &&
+        r.condition_age != null &&
+        (r.action_type != "SetStorageClass" || r.action_storage_class != null)
+      ]
+    ]))
+    error_message = "Each cloud_storage_buckets[*].lifecycle_rules entry needs condition_age, an action_type of Delete, SetStorageClass or AbortIncompleteMultipartUpload, and action_storage_class when the action is SetStorageClass."
+  }
 }
 
 #########################################################################

@@ -1,132 +1,162 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Runners domain — permission / gate / error paths.
-//   • Hobby (community) org is gated behind the byoRunners entitlement in hosted mode → upsell.
-//   • Destroy queues a DESTROY_RUNNER job for a deployed runner (stops at QUEUED — no real tofu).
+// Runners domain — gate / tenancy / destructive-confirmation paths.
+//
+// THE ENTITLEMENT GATE IS NOT MEASURABLE ON THIS LEG, and pretending otherwise is what the two
+// tests this file used to open with did. `runners-client.tsx` renders `<FeatureUpsell feature="byoRunners" />`
+// only when `isHosted && !canByoRunners`; `isHosted` comes from `deploymentMode()`, which answers
+// "hosted" only for a literal `ALETHIA_DEPLOYMENT_MODE=hosted`. `.github/workflows/release-gate.yml`
+// sets that variable NOWHERE and says why it must not ("packages/email then refuses the OTP log
+// fallback and nothing can sign in") — so the console every leg drives is SELF-MANAGED, the gate is
+// inert, and a Hobby org sees the runner surface. The old spec asserted the upsell copy and had been
+// red in gate-baseline.json ever since it was captured.
+//
+// So the first test below asserts what the deployment ACTUALLY does, and says so in its name. The
+// upsell branch needs a `hosted` capability promise on some leg before it can be a test rather than
+// a wish; that lives in the workflow + helpers/capabilities.ts, which this lane does not own.
 
 import { test, expect } from "../fixtures/qa";
-import { db } from "../helpers/db";
+import {
+	destroyJobCount,
+	purgeSeededRunners,
+	purgeSeededIdentity,
+	seedDeployedRunner,
+	seedRunner,
+} from "../helpers/seed-runners";
 
-// Cold-compiled Next dev bundle on first hit — give navigation-heavy flows headroom over the 30s default.
+// Cold-compiled bundle on first hit — give navigation-heavy flows headroom over the 30s default.
 test.describe.configure({ timeout: 90_000 });
 
-/** Seeds a connected cloud identity for the team org so a deployed runner can reference it. */
-async function seedIdentity(teamUserId: string, teamOrgId: string): Promise<{ id: string }> {
-	const sql = db();
-	const [row] = await sql<{ id: string }[]>`
-		insert into cloud_identities ${sql({
-			user_id: teamUserId,
-			org_id: teamOrgId,
-			scope: "org",
-			provider: "aws",
-			name: `e2e-runner-destroy-${Date.now()}`,
-			credentials: sql.json({ role_arn: "arn:aws:iam::123456789012:role/e2e" }),
-			is_verified: true,
-			status: "connected",
-			verified_account_id: "123456789012",
-		})}
-		returning id`;
-	return row;
-}
+const RUNNERS_PATH = (slug: string) => `/${slug}/~/runners`;
 
-/** Seeds a self-operated, deployed runner with a cloud identity + deploy_config → shows Destroy. */
-async function seedDeployedRunner(
-	teamUserId: string,
-	teamOrgId: string,
-	name: string,
-	cloudIdentityId: string,
-): Promise<{ id: string }> {
-	const sql = db();
-	const [row] = await sql<{ id: string }[]>`
-		insert into runners ${sql({
-			user_id: teamUserId,
-			org_id: teamOrgId,
-			name,
-			operator: "self",
-			provisioning: "deployed",
-			token_hash: `e2e-hash-${Math.random().toString(36).slice(2)}`,
-			status: "ONLINE",
-			cloud_identity_id: cloudIdentityId,
-			metadata: sql.json({
-				deploy_config: {
-					region: "eu-central-1",
-					cloud_provider: "aws",
-					image_tag: "latest",
-					runner_token: "e2e-token",
-				},
-			}),
-		})}
-		returning id`;
-	return row;
-}
+/** A runner card, located by the name printed in its header. */
+const cardFor = (page: import("@playwright/test").Page, name: string) =>
+	page.locator('[data-slot="card"]').filter({ hasText: name });
 
-test.describe("Runners — entitlement gate (Hobby)", () => {
-	test("Hobby org is gated and shown the byoRunners upsell instead of the runner surface", async ({
+/**
+ * The open destroy popover.
+ *
+ * Scoped to `[data-slot="popover-content"]` (packages/ui/popover.tsx puts it on the base-ui Popup)
+ * rather than reached as `getByRole("button", { name: "Destroy" }).last()`. The confirm shares its
+ * label with every card's trigger, and `.last()` only meant "the portal, appended after the grid"
+ * while exactly ONE deployed runner existed in the org. Two specs in this file now seed one each and
+ * the suite is fullyParallel, so `.last()` had become a bet on DOM order between two cards.
+ */
+const destroyPopover = (page: import("@playwright/test").Page) =>
+	page.locator('[data-slot="popover-content"]');
+
+test.describe("Runners — the byoRunners gate is deployment-mode scoped", () => {
+	test("a Hobby org reaches the runner surface, because the upsell is hosted-only", async ({
 		owner,
 	}) => {
-		await owner.page.goto(`/${owner.orgSlug}/~/runners`);
+		await owner.page.goto(RUNNERS_PATH(owner.orgSlug));
 		await expect(owner.page).not.toHaveURL(/\/login/);
-		await expect(owner.page.getByText("Bring your own runners")).toBeVisible({ timeout: 15_000 });
-		// The team plan surfaces as "Pro" in the plan catalog.
-		await expect(owner.page.getByText(/Available on the Pro plan\./)).toBeVisible();
+		// The surface, not the panel: `FeatureUpsell` would replace the whole page with its title.
+		await expect(owner.page.getByRole("button", { name: "Add runner" }).first()).toBeVisible({
+			timeout: 15_000,
+		});
+		await expect(owner.page.getByText("Bring your own runners")).toHaveCount(0);
 	});
 
-	test("the gated Hobby surface offers no Add runner action", async ({ owner }) => {
-		await owner.page.goto(`/${owner.orgSlug}/~/runners`);
-		await expect(owner.page.getByText("Bring your own runners")).toBeVisible({ timeout: 15_000 });
-		await expect(owner.page.getByRole("button", { name: "Add runner" })).toHaveCount(0);
+	test("a runner in another org never appears in this org's grid", async ({ owner, team }) => {
+		// The tenancy assertion the entitlement tests were standing in for. Both halves are
+		// asserted — a denial only counts where somebody else DOES see the row, otherwise an empty
+		// grid passes this vacuously (flows/_persona-integrity.spec.ts).
+		//
+		// SEEDED INTO THE *TEAM* ORG, NEVER THE HOBBY ONE, and the direction is load-bearing. The
+		// sidebar's Runners entry is gated on `orgHasSelfRunners(orgId)` ([org]/layout.tsx), so a
+		// self runner in an org makes that nav link APPEAR. Three navigation-shell tests are
+		// recorded `failed` in gate-baseline.json precisely because the Hobby org has none; seeding
+		// one there — even inside a try/finally — opens a window in which those three can pass, and
+		// the ratchet is shrink-only, so it would fail the whole leg naming a file this lane does
+		// not own and cannot re-baseline. Every other runners spec already seeds into the team org,
+		// so this direction adds no window that was not already open.
+		const name = `e2e-tenancy-${Date.now()}`;
+		await seedRunner({ userId: team.userId!, orgId: team.orgId! }, { name });
+		try {
+			await team.page.goto(RUNNERS_PATH(team.orgSlug));
+			await expect(cardFor(team.page, name)).toBeVisible({ timeout: 15_000 });
+
+			await owner.page.goto(RUNNERS_PATH(owner.orgSlug));
+			await expect(owner.page.getByRole("button", { name: "Add runner" }).first()).toBeVisible({
+				timeout: 15_000,
+			});
+			await expect(cardFor(owner.page, name)).toHaveCount(0);
+		} finally {
+			await purgeSeededRunners();
+		}
 	});
 });
 
-test.describe("Runners — destroy queues a job", () => {
+test.describe("Runners — destroy", () => {
 	let identityId: string | null = null;
-	let runnerId: string | null = null;
 
-	test.afterEach(async ({ team }) => {
-		const sql = db();
-		if (runnerId) await sql`delete from runners where id = ${runnerId}`;
-		if (identityId) {
-			await sql`delete from jobs where cloud_identity_id = ${identityId}`;
-			await sql`delete from cloud_identities where id = ${identityId}`;
-		}
-		await sql`delete from runners where user_id = ${team.userId!} and name like 'e2e-%'`;
+	test.afterEach(async () => {
+		if (identityId) await purgeSeededIdentity(identityId);
 		identityId = null;
-		runnerId = null;
+		await purgeSeededRunners();
+	});
+
+	test("the destroy confirmation opens, warns, and dismissing it queues nothing", async ({
+		team,
+	}) => {
+		// The registry's `runners.destroy` — `confirm: popover`, `confirm_action: "Destroy"`. A
+		// popover has no Cancel button, so the dismissal is Escape; the assertion that matters is
+		// the one after it, that no job was enqueued. A dialog that merely closed is not evidence.
+		const name = `e2e-destroy-cancel-${Date.now()}`;
+		const { runner, identityId: id } = await seedDeployedRunner(
+			{ userId: team.userId!, orgId: team.orgId! },
+			{ name },
+		);
+		identityId = id;
+
+		await team.page.goto(RUNNERS_PATH(team.orgSlug));
+		const card = cardFor(team.page, name);
+		await expect(card).toBeVisible({ timeout: 15_000 });
+
+		await card.getByRole("button", { name: "Destroy" }).click();
+		const popover = destroyPopover(team.page);
+		await expect(popover.getByText("Select runner")).toBeVisible();
+		await expect(
+			popover.getByText(new RegExp(`This will tear down all cloud resources for "${name}"`)),
+		).toBeVisible();
+
+		await team.page.keyboard.press("Escape");
+		await expect(popover).toHaveCount(0);
+		expect(await destroyJobCount(runner.id)).toBe(0);
 	});
 
 	test("destroying a deployed runner queues a DESTROY_RUNNER job", async ({ team }) => {
+		// The unit this issue is named for. Destroy renders only for a self-operated runner that is
+		// `provisioning: "deployed"` AND carries both a cloud identity and a `deploy_config`
+		// (`RunnerActions.hasCloudResources`) — a state no UI flow in this suite can reach, because
+		// producing it means running a real DEPLOY_RUNNER job against a real cloud account. So it
+		// is seeded, by the ONE helper that knows the full conjunction. Stops at "job QUEUED": no
+		// tofu runs here (AUTHORING.md → "What NOT to test end-to-end").
 		const name = `e2e-destroy-${Date.now()}`;
-		const identity = await seedIdentity(team.userId!, team.orgId!);
-		identityId = identity.id;
-		const runner = await seedDeployedRunner(team.userId!, team.orgId!, name, identity.id);
-		runnerId = runner.id;
+		const { runner, identityId: id } = await seedDeployedRunner(
+			{ userId: team.userId!, orgId: team.orgId! },
+			{ name },
+		);
+		identityId = id;
 
-		await team.page.goto(`/${team.orgSlug}/~/runners`);
-		const card = team.page.locator('[data-slot="card"]').filter({ hasText: name });
+		await team.page.goto(RUNNERS_PATH(team.orgSlug));
+		const card = cardFor(team.page, name);
 		await expect(card).toBeVisible({ timeout: 15_000 });
 
-		// Open the destroy popover from the card, then confirm.
+		// Open the destroy popover from the card, then confirm. The confirm control shares the
+		// "Destroy" label with its trigger, so it is reached inside the popover, never positionally.
 		await card.getByRole("button", { name: "Destroy" }).click();
-		await expect(team.page.getByText("Select runner")).toBeVisible();
-		// The Confirm control shares the "Destroy" label; it is the one inside the popover (last in DOM).
-		await team.page.getByRole("button", { name: "Destroy" }).last().click();
+		const popover = destroyPopover(team.page);
+		await expect(popover.getByText("Select runner")).toBeVisible();
+		await popover.getByRole("button", { name: "Destroy" }).click();
 
-		// A DESTROY_RUNNER job is enqueued for this runner (it's inserted QUEUED; a live shared-DB
-		// runner may then claim + fail it against the fake creds, so assert the job exists rather
-		// than pin a transient status — we stop at "job was queued", per the authoring contract).
+		// The job is inserted QUEUED. Assert only that it EXISTS — a live runner sharing this
+		// database could claim and then fail it against the fake credentials, and pinning a
+		// transient status would make this test a race.
 		await expect
-			.poll(
-				async () => {
-					const rows = await db()<{ id: string }[]>`
-						select id from jobs
-						where cloud_identity_id = ${identity.id}
-						  and job_type = 'DESTROY_RUNNER'
-						  and config_snapshot->>'runner_id' = ${runner.id}`;
-					return rows.length;
-				},
-				{ timeout: 15_000 },
-			)
+			.poll(() => destroyJobCount(runner.id), { timeout: 15_000 })
 			.toBeGreaterThanOrEqual(1);
 	});
 });

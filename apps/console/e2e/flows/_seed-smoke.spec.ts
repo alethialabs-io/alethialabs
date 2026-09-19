@@ -5,7 +5,7 @@
 // confirm it surfaces in the UI (project overview + clusters). Also exercises cleanup.
 
 import { test, expect } from "../fixtures/qa";
-import { cleanupOrg, seedCloudIdentity, seedFinishedDeploy, seedJob, seedProject } from "../helpers/seed";
+import { seedCloudIdentity, seedFinishedDeploy, seedJob, seedProject } from "../helpers/seed";
 
 test.describe("QA seed smoke", () => {
 	test("seeded finished-deploy project renders across the console", async ({ owner }) => {
@@ -29,15 +29,9 @@ test.describe("QA seed smoke", () => {
 		await expect(owner.page.getByText(/jobs/i).first()).toBeVisible({ timeout: 15_000 });
 	});
 
-	test.afterAll(async ({}, testInfo) => {
-		// Best-effort cleanup so seeded rows don't accumulate across runs.
-		try {
-			const meta = JSON.parse(
-				require("node:fs").readFileSync(require("node:path").resolve(process.cwd(), "e2e/.auth/personas.json"), "utf8"),
-			);
-			if (meta.ownerHobby?.orgId) await cleanupOrg(meta.ownerHobby.orgId);
-		} catch {
-			// ignore
-		}
-	});
+	// NO afterAll cleanup, deliberately. This file used to call `cleanupOrg(ownerHobby.orgId)`, which
+	// deletes that org's jobs, projects and cloud identities — while the suite is `fullyParallel`
+	// and other files were still driving the same persona (findings.md P0 §2). `cross-cutting` and
+	// `navigation-shell` state in their headers that they do not clean up, for exactly this reason;
+	// one file disagreed with two. The personas are per-run accounts in a throwaway CI database.
 });

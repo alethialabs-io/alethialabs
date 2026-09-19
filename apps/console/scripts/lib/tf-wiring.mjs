@@ -51,8 +51,13 @@ import { dirname, join, normalize } from "node:path";
 const CONSUMER_BLOCKS = new Set(["resource", "module", "locals", "data", "provider", "import"]);
 
 /** The `{ … }` block starting at or after `from`, brace-matched, WITH its braces. Returns the span
- * so the caller can carve the body out of the file and keep the rest. */
-function bracedSpanAt(src, from) {
+ * so the caller can carve the body out of the file and keep the rest.
+ *
+ * Exported, with `typeExpressionOf` and `objectAttributesIn`, for `lib/tf-variables.mjs` — which
+ * reads the same grammar to answer a different question (what a variable DECLARES, rather than
+ * whether it is read). Three primitives shared beats a second HCL parser: two readers of one file
+ * format drift, and the one that drifts quietly is the one nothing pins to a fixture. */
+export function bracedSpanAt(src, from) {
 	const open = src.indexOf("{", from);
 	if (open === -1) return null;
 	let depth = 0;
@@ -73,7 +78,7 @@ function lineAt(src, offset) {
  * Brace/paren-matched from the `=`, because the expression that matters most here nests several
  * levels deep (`list(object({ … optional(list(object({ … }))) … }))`) and a line-oriented read of it
  * stops at the first newline, which is where the interesting attributes start. */
-function typeExpressionOf(body) {
+export function typeExpressionOf(body) {
 	const m = body.match(/(^|\n)\s*type\s*=\s*/);
 	if (!m) return "";
 	let i = m.index + m[0].length;
@@ -95,7 +100,7 @@ function typeExpressionOf(body) {
  * also why this cannot be a bare `\w+` sweep of the type expression. Over-collecting here (a nested
  * object's own attributes land in the same flat set) can only make this guard quieter, never
  * noisier, which is the direction the rest of the file already chose. */
-function objectAttributesIn(typeExpr) {
+export function objectAttributesIn(typeExpr) {
 	const out = new Set();
 	for (const m of typeExpr.matchAll(/(^|[\n,{(])\s*([A-Za-z_]\w*)\s*=/g)) out.add(m[2]);
 	return out;
@@ -303,14 +308,27 @@ export function readTfWiring(files, rootDir) {
 		 * because it is reached as `each.value.<name>`, `try(x.<name>, …)` or `lookup(x, "<name>")`.
 		 */
 		isReadOnChain(root, key, varsOnly = false) {
-			const dirs = new Set(carriersOf(root).map((c) => normalize(dirname(c.path))));
-			for (const dir of dirs) {
+			return this.readDirsOf(root, key, varsOnly).length > 0;
+		},
+		/**
+		 * WHICH directories on `root`'s chain read `key` — `isReadOnChain`'s answer with the evidence
+		 * kept instead of collapsed to a boolean.
+		 *
+		 * The carrier guards only ever need the boolean, and that is why this was not here: an unused
+		 * member cannot be wrong today and nothing reds when it drifts. `gen-template-knobs.mjs`
+		 * consumes the list — a knob's manifest entry names the modules that read it, because "read by
+		 * nothing" is the finding and a reader deserves to be shown the non-empty case to compare it
+		 * against. `isReadOnChain` is now expressed in terms of this rather than beside it, so the two
+		 * answers cannot disagree.
+		 */
+		readDirsOf(root, key, varsOnly = false) {
+			const out = [];
+			for (const dir of new Set(carriersOf(root).map((c) => normalize(dirname(c.path))))) {
 				const reads = readsByDir.get(dir);
 				if (!reads) continue;
-				if (reads.vars.has(key)) return true;
-				if (!varsOnly && reads.attrs.has(key)) return true;
+				if (reads.vars.has(key) || (!varsOnly && reads.attrs.has(key))) out.push(dir);
 			}
-			return false;
+			return out.sort();
 		},
 		carriersOf,
 		/**

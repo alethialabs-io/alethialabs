@@ -110,3 +110,230 @@ func TestCLIDemoBeatsApplyBeforeTheStepsThatReadIt(t *testing.T) {
 		}
 	}
 }
+
+// ── THE CLOUD AXIS (#4083) ────────────────────────────────────────────────────────────────────
+//
+// Every test above builds each beat's argv against a ZERO run, and a zero run has no provider. That
+// is not a gap in one test; it is a whole axis nothing in the pure half varied, and it is the axis
+// `connector` differs on. A `connector` beat that hardcoded hetzner's `--token-stdin` for all five
+// clouds passed this entire file for as long as it existed.
+//
+// These tests vary it. What they cannot ask is whether a flag is REGISTERED — that needs the binary
+// and is asked before spend by AssertCLIDemoBeatFlagsAreRegistered.
+
+// cliDemoBeatByID returns the named beat. Fatal when it is missing: a test that silently examined no
+// beat is the "nothing found" branch reporting as the "nothing wrong" one.
+func cliDemoBeatByID(t *testing.T, id string) CLIDemoBeat {
+	t.Helper()
+	for _, b := range CLIDemoBeats {
+		if b.StepID == id {
+			return b
+		}
+	}
+	t.Fatalf("no beat %q in CLIDemoBeats — this test examined nothing", id)
+	return CLIDemoBeat{}
+}
+
+// cliDemoConnectorFlagNames returns the flag NAMES one cloud's connector row emits. Values are
+// dropped: they come from the ambient environment and are empty in a pure test, which is fine —
+// nothing here is about the values.
+func cliDemoConnectorFlagNames(t *testing.T, provider string) []string {
+	t.Helper()
+	build, ok := cliDemoConnectorFlags[provider]
+	if !ok {
+		t.Fatalf("cliDemoConnectorFlags has no row for %q", provider)
+	}
+	var names []string
+	for _, tok := range build() {
+		if strings.HasPrefix(tok, "--") {
+			names = append(names, tok)
+		}
+	}
+	return names
+}
+
+// TestCLIDemoConnectorBeatIsPerCloud pins the shape of the fix rather than its contents: on every
+// cloud the harness can dispatch, the connector beat must name THAT cloud's command and carry at
+// least one flag that is not the global `--no-input`.
+//
+// The provider list is derived from t2ProviderTable, so a sixth cloud fails here — which is the
+// point. `connector <newcloud> --no-input` would parse, reach the command, and die naming a flag
+// nobody had written; this says so first, for free.
+func TestCLIDemoConnectorBeatIsPerCloud(t *testing.T) {
+	beat := cliDemoBeatByID(t, "connector")
+	providers := t2ProviderNames()
+	if len(providers) < 2 {
+		t.Fatalf("t2ProviderTable holds %d provider(s) — there is no cloud axis to vary, and this test "+
+			"would pass having compared nothing", len(providers))
+	}
+	for _, provider := range providers {
+		argv := beat.Args(&CLIDemoRun{Provider: provider})
+		if len(argv) < 2 || argv[0] != "connector" || argv[1] != provider {
+			t.Errorf("the connector beat on %s builds `alethia %s` — it must name `connector %s`",
+				provider, strings.Join(argv, " "), provider)
+			continue
+		}
+		specific := 0
+		for _, tok := range argv[2:] {
+			if strings.HasPrefix(tok, "--") && tok != "--no-input" {
+				specific++
+			}
+		}
+		if specific == 0 {
+			t.Errorf("the connector beat on %s carries no cloud-specific flag (`alethia %s`). Under "+
+				"--no-input that command refuses, naming a flag this table never passed.",
+				provider, strings.Join(argv, " "))
+		}
+	}
+}
+
+// TestCLIDemoConnectorRowsDoNotBorrowAnotherCloudsFlag is the #4083 regression, stated as the class
+// rather than as the instance.
+//
+// The forbidden set is DERIVED from the other rows of cliDemoConnectorFlags, not typed here, so it
+// grows with the table: any flag that belongs to a different cloud's connector — today
+// `--token-stdin`, `--wif-config`, `--tenant-id` — reds the row that borrowed it. A hand-written
+// `--token-stdin` check would have covered exactly the one mistake already made.
+//
+// A flag genuinely shared by two clouds (aws and alibaba both take `--role-arn`) is not a borrowing,
+// so a name that appears in the row under test is never held against it.
+func TestCLIDemoConnectorRowsDoNotBorrowAnotherCloudsFlag(t *testing.T) {
+	providers := t2ProviderNames()
+	if len(providers) < 2 {
+		t.Fatalf("only %d provider(s) — nothing to cross-check", len(providers))
+	}
+	// The ARGV is what reaches cobra, so the argv is what is checked — not the row it was built
+	// from. A beat that appended a flag of its own would be invisible to a row-vs-row comparison.
+	beat := cliDemoBeatByID(t, "connector")
+	for _, provider := range providers {
+		own := map[string]bool{}
+		for _, name := range cliDemoConnectorFlagNames(t, provider) {
+			own[name] = true
+		}
+		foreign := map[string]string{}
+		for _, other := range providers {
+			if other == provider {
+				continue
+			}
+			for _, name := range cliDemoConnectorFlagNames(t, other) {
+				if !own[name] {
+					foreign[name] = other
+				}
+			}
+		}
+		for _, tok := range beat.Args(&CLIDemoRun{Provider: provider}) {
+			if owner, bad := foreign[tok]; bad {
+				t.Errorf("the connector beat on %s passes %s, which `connector %s` registers and "+
+					"`connector %s` does not — cobra rejects an unknown flag and the beat dies "+
+					"before it performs anything", provider, tok, owner, provider)
+			}
+		}
+	}
+}
+
+// TestCLIDemoIssuerTrustAnswersForEveryCloud holds the refusal table to the provider table.
+//
+// Three ways it fails, and the third is the one that matters: a table where EVERY cloud is blocked
+// would refuse every dispatch and read as "there is nothing to run here" rather than as a broken
+// table. A guard's all-clear and its all-stop must both be reachable, or neither carries a signal.
+func TestCLIDemoIssuerTrustAnswersForEveryCloud(t *testing.T) {
+	providers := t2ProviderNames()
+	if len(providers) == 0 {
+		t.Fatal("no providers — this test compared nothing")
+	}
+	drivable := 0
+	for _, provider := range providers {
+		why, ok := cliDemoConnectorIssuerTrust[provider]
+		if !ok {
+			t.Errorf("cliDemoConnectorIssuerTrust has no key for %q — an absent answer and \"this cloud "+
+				"is fine\" must not be the same map lookup", provider)
+			continue
+		}
+		if why == "" {
+			drivable++
+			continue
+		}
+		if len(strings.Fields(why)) < 8 {
+			t.Errorf("cliDemoConnectorIssuerTrust[%q] is %q — too short to be a reason anyone could "+
+				"argue with", provider, why)
+		}
+	}
+	if drivable == 0 {
+		t.Error("every cloud is recorded as blocked — the dimension could then never drive its connector " +
+			"beat anywhere, and the refusal would be indistinguishable from the dimension being off")
+	}
+}
+
+// captureIdentityID reads the connector beat's read-back. It is the only place the run learns
+// which account it attached, and every later beat addresses that account BY LABEL — so an
+// unlabelled connector is a beat failure with a reason rather than a project created against
+// an empty `--cloud-account`.
+func TestCaptureIdentityIDTakesTheLabelAndRefusesWithoutOne(t *testing.T) {
+	t.Run("matches on provider, not position", func(t *testing.T) {
+		// A demo org may hold connectors for several clouds. "The first one" would attach the
+		// wrong account to the project — which provisions successfully, into somebody else's cloud.
+		run := &CLIDemoRun{Provider: "gcp"}
+		out := `[{"id":"ci-aws","label":"aws-prod","provider":"aws"},` +
+			`{"id":"ci-gcp","label":"gcp-prod","provider":"GCP"}]`
+		if err := captureIdentityID(run, out); err != nil {
+			t.Fatalf("captureIdentityID: %v", err)
+		}
+		if run.IdentityID != "ci-gcp" || run.IdentityLabel != "gcp-prod" {
+			t.Errorf("captured %q/%q, want the gcp row", run.IdentityID, run.IdentityLabel)
+		}
+	})
+
+	t.Run("an unlabelled connector is refused, naming what needs the label", func(t *testing.T) {
+		run := &CLIDemoRun{Provider: "aws"}
+		err := captureIdentityID(run, `[{"id":"ci-aws","label":"","provider":"aws"}]`)
+		if err == nil {
+			t.Fatal("an unlabelled connector was accepted — `project create --cloud-account` would send an empty string")
+		}
+		if !strings.Contains(err.Error(), "label") || !strings.Contains(err.Error(), "ci-aws") {
+			t.Errorf("the refusal names neither the missing label nor the identity: %v", err)
+		}
+	})
+
+	t.Run("the failure branches", func(t *testing.T) {
+		run := &CLIDemoRun{Provider: "aws"}
+		for name, out := range map[string]string{
+			"no array":       "connector list printed a table\n",
+			"not json":       "[not json]",
+			"another cloud":  `[{"id":"ci-gcp","label":"gcp-prod","provider":"gcp"}]`,
+			"an empty array": `[]`,
+		} {
+			if err := captureIdentityID(run, out); err == nil {
+				t.Errorf("%s was accepted", name)
+			}
+		}
+	})
+}
+
+// A second connector for one cloud makes the demo's `--cloud-account <label>` ambiguous, because
+// the label is DERIVED (`provider.toUpperCase()`) rather than chosen. Taking the first would
+// attach whichever the server listed first; the beat refuses and says how to fix the org.
+func TestCaptureIdentityIDRefusesTwoConnectorsForOneCloud(t *testing.T) {
+	run := &CLIDemoRun{Provider: "hetzner"}
+	out := `[{"id":"ci-a","label":"HETZNER","provider":"hetzner"},` +
+		`{"id":"ci-b","label":"HETZNER","provider":"hetzner"}]`
+	err := captureIdentityID(run, out)
+	if err == nil {
+		t.Fatal("two connectors for one cloud were accepted — the demo would attach whichever was listed first")
+	}
+	for _, want := range []string{"ci-a", "ci-b", "connector remove"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q, so it is not actionable: %v", want, err)
+		}
+	}
+	if run.IdentityID != "" {
+		t.Errorf("it captured %q anyway", run.IdentityID)
+	}
+	// One connector for this cloud, beside another cloud's two, is still unambiguous.
+	run = &CLIDemoRun{Provider: "gcp"}
+	if err := captureIdentityID(run, `[{"id":"ci-a","label":"HETZNER","provider":"hetzner"},{"id":"ci-b","label":"HETZNER","provider":"hetzner"},{"id":"ci-g","label":"GCP","provider":"gcp"}]`); err != nil {
+		t.Fatalf("another cloud's duplicate must not block this one: %v", err)
+	}
+	if run.IdentityID != "ci-g" {
+		t.Errorf("captured %q", run.IdentityID)
+	}
+}

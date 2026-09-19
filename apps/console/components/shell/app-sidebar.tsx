@@ -6,6 +6,7 @@ import { PanelLeftClose } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 import { OrgSwitcher } from "@/components/org-switcher";
+import { SHELL_HEADER } from "@/components/shell/shell-metrics";
 import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import {
@@ -81,7 +82,7 @@ export function AppSidebar({
 
   return (
     <div className="flex h-full w-full flex-col bg-background">
-      <div className="flex h-[53px] shrink-0 items-center gap-1 border-b px-2.5">
+      <div className={cn("flex shrink-0 items-center gap-1 border-b px-2.5", SHELL_HEADER)}>
         <div className="min-w-0 flex-1">
           <OrgSwitcher />
         </div>

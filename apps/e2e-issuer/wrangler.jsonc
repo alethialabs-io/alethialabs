@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "alethia-e2e-issuer",
+  // The Worker serves ONLY at ISSUER_URL (a deploy `--var`); it refuses every other origin with
+  // `issuer_origin_mismatch`, and the deploy workflow probes discovery at that origin afterwards.
+  // A custom domain or route added here must therefore be the same string as E2E_ISSUER_URL.
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [{ "name": "REPLAY_GUARD", "class_name": "ReplayGuard" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ReplayGuard"] }],
+  "observability": { "enabled": true },
+}

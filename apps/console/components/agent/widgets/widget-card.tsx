@@ -7,6 +7,7 @@ import { GripVertical, RefreshCw, Snowflake, Trash2, Zap } from "lucide-react";
 import { useState } from "react";
 import { formatRelative } from "@repo/format";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { cn } from "@repo/ui/utils";
 import type { ThreadWidget } from "@/lib/db/schema";
 import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
@@ -44,7 +45,7 @@ export function WidgetBody({ widget }: { widget: WidgetPayload }) {
     return <def.Body output={widget.data.output} />;
   }
   return (
-    <div className="flex h-full items-center justify-center text-[11px] text-muted-foreground">
+    <div className="flex h-full items-center justify-center text-ui-xs text-muted-foreground">
       No renderer for this widget.
     </div>
   );
@@ -75,6 +76,10 @@ export function WidgetCard({
   const setMode = useWidgetGridStore((s) => s.setMode);
   const widgets = useWidgetGridStore((s) => s.widgets);
   const [kb, setKb] = useState<{ mode: DragMode; rect: GridRect } | null>(null);
+  // Whether a remove has been REQUESTED. The trash sits two icons from Refresh in a hover-revealed
+  // strip, and removing a widget deletes its row — there is no undo — so the click asks first
+  // (#4280).
+  const [confirmRemove, setConfirmRemove] = useState(false);
   // Pointer move is handled by dnd-kit: the grip is the drag handle and a DragOverlay
   // (owned by the grid) follows the cursor, so the source card just dims while active.
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({
@@ -190,7 +195,7 @@ export function WidgetCard({
         </button>
         <span
           title={widget.title}
-          className="min-w-0 flex-1 truncate font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+          className="min-w-0 flex-1 truncate font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground"
         >
           {widget.title}
         </span>
@@ -212,10 +217,10 @@ export function WidgetCard({
                     )
                   }
                   className={cn(
-                    "flex flex-none items-center gap-1 font-mono text-[9px] uppercase transition-colors hover:text-foreground",
+                    "flex flex-none items-center gap-1 font-mono text-ui-3xs uppercase transition-colors hover:text-foreground",
                     widget.mode === "live"
                       ? "text-foreground"
-                      : "text-muted-foreground/70",
+                      : "text-text-tertiary",
                   )}
                 >
                   {widget.mode === "live" ? (
@@ -238,7 +243,7 @@ export function WidgetCard({
           </Tooltip>
         ) : (
           widget.mode === "frozen" && (
-            <span className="flex flex-none items-center gap-1 font-mono text-[9px] uppercase text-muted-foreground/70">
+            <span className="flex flex-none items-center gap-1 font-mono text-ui-3xs uppercase text-text-tertiary">
               <Snowflake className="h-2.5 w-2.5" />
               Frozen
             </span>
@@ -265,7 +270,7 @@ export function WidgetCard({
             type="button"
             aria-label={`Remove ${widget.title}`}
             className="flex h-5 w-5 items-center justify-center text-muted-foreground hover:text-foreground"
-            onClick={() => remove(widget.id)}
+            onClick={() => setConfirmRemove(true)}
           >
             <Trash2 className="h-3 w-3" />
           </button>
@@ -280,6 +285,15 @@ export function WidgetCard({
         aria-label={`Resize ${widget.title}`}
         className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize border-l border-t border-border bg-background opacity-0 transition-opacity group-hover/widget:opacity-100"
         onPointerDown={(e) => onDragStart(e, widget.id, "resize")}
+      />
+
+      <ConfirmDialog
+        open={confirmRemove}
+        onOpenChange={setConfirmRemove}
+        title={`Remove ${widget.title}?`}
+        description="This takes the widget off this conversation's grid and deletes it. Artifacts you already saved keep their own copy. This cannot be undone."
+        confirmLabel="Remove widget"
+        onConfirm={() => remove(widget.id)}
       />
     </div>
   );

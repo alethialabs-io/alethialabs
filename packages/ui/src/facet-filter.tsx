@@ -19,6 +19,7 @@ import {
   CommandItem,
   CommandList,
 } from "./command";
+import { CountFigure } from "./count-pill";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover";
 import { cn } from "./utils";
 
@@ -112,9 +113,9 @@ export function FacetFilter({
                       {o.label}
                     </span>
                     {o.hint && (
-                      <span className="ml-auto truncate font-mono text-[10.5px] text-text-tertiary">
+                      <CountFigure className="ml-auto truncate">
                         {o.hint}
-                      </span>
+                      </CountFigure>
                     )}
                   </CommandItem>
                 );

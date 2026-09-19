@@ -3,106 +3,55 @@
 
 // Runners domain — the org-scoped Runners/Fleet page (/${org}/~/runners).
 //
-// Deployment note: this QA console runs in HOSTED mode. The runner surface is gated behind the
-// `byoRunners` entitlement (Pro+), so ALL interactive runner tests use the `team` persona (Pro
-// card-less trial → byoRunners=true). The Hobby `owner` persona is intentionally gated and is
-// exercised in runners.negative.spec.ts. In hosted mode managed fleet runners are hidden from
-// tenants and the left-column Pools section is not rendered, so the team org's baseline is 0
-// runners → a deterministic empty state.
+// DEPLOYMENT MODE IS THE FIRST THING TO KNOW HERE, because two whole surfaces hang off it and the
+// previous version of this header got it backwards. `deploymentMode()` reads
+// `ALETHIA_DEPLOYMENT_MODE` and answers "self-managed" for anything that is not the literal
+// "hosted" (lib/billing/config.ts). The release gate NEVER sets it — `.github/workflows/release-gate.yml`
+// says why in so many words ("NEVER `ALETHIA_DEPLOYMENT_MODE=hosted` here — packages/email then
+// refuses the OTP log fallback and nothing can sign in"). So on the leg that measures this file the
+// console is SELF-MANAGED, and therefore:
 //
-// Isolation: the team org has no real runners, so every test seeds/creates uniquely-named
-// `e2e-*` runners and afterEach removes them by name prefix (never touches sibling data).
+//   · the byoRunners entitlement gate is INERT. `runners-client.tsx` renders `<FeatureUpsell>` only
+//     when `isHosted && !canByoRunners`, so the Hobby persona is not gated — see runners.negative.spec.ts.
+//   · the warm-Pools column IS rendered (`{!isHosted && …}`) and `getFleetPoolViews()` returns rows,
+//     so `PoolCard` and its delete confirmation are reachable. On hosted they are not.
+//
+// Isolation: every runner a test creates is swept in `afterEach` BY ITS OWN ID (or, for the two the
+// Add-runner sheet creates, by the name handed to `trackUiRunner`) — never by emptying the org, and
+// no longer by a `name like 'e2e-%'` sweep, which under fullyParallel deleted a sibling worker's
+// fixture mid-assertion. The warm pool is the one exception: it is a GLOBAL platform row, seeded
+// once and left in place; see `seedFleetPool`'s contract in helpers/seed-runners.ts.
 
 import { test, expect } from "../fixtures/qa";
-import { db } from "../helpers/db";
+import {
+	purgeSeededRunners,
+	runnerIsDefault,
+	runnerExists,
+	seedFleetPool,
+	seedRunner,
+	trackUiRunner,
+	type SeededFleetPool,
+} from "../helpers/seed-runners";
 
-// The runners route is a cold-compiled Next dev bundle on first hit (navigation p95 ≈ 25s), so the
-// default 30s test budget is too tight for the multi-navigation flows. Give every test headroom.
+// The runners route is a cold-compiled bundle on first hit (navigation p95 ≈ 25s), so the default
+// 30s test budget is too tight for the multi-navigation flows. Give every test headroom.
 test.describe.configure({ timeout: 90_000 });
-
-/** Retries a DB write on transient Postgres deadlocks (40P01) — the shared QA DB has a live runner
- *  heartbeating on the `runners` table, so seed/purge writes can occasionally deadlock with it. */
-async function withDeadlockRetry<T>(fn: () => Promise<T>): Promise<T> {
-	for (let attempt = 0; ; attempt++) {
-		try {
-			return await fn();
-		} catch (err) {
-			const code = (err as { code?: string }).code;
-			if (code === "40P01" && attempt < 4) {
-				await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
-				continue;
-			}
-			throw err;
-		}
-	}
-}
-
-/** Seeds a self-operated runner directly (RLS-bypassing owner role); sets both user_id + org_id
- *  so the app's RLS-scoped queries surface it. Registered runners show a Remove action; deployed
- *  ones (with a cloud identity + deploy_config) show Destroy. */
-async function seedRunner(
-	teamUserId: string,
-	teamOrgId: string,
-	opts: {
-		name: string;
-		provisioning?: "registered" | "deployed";
-		status?: string;
-		cloudIdentityId?: string | null;
-		version?: string | null;
-		isDefault?: boolean;
-	},
-): Promise<{ id: string }> {
-	const sql = db();
-	const provisioning = opts.provisioning ?? "registered";
-	const deployConfig =
-		provisioning === "deployed"
-			? sql.json({
-					deploy_config: {
-						region: "eu-central-1",
-						cloud_provider: "aws",
-						image_tag: "latest",
-					},
-				})
-			: sql.json({});
-	const [row] = await withDeadlockRetry(
-		() => sql<{ id: string }[]>`
-			insert into runners ${sql({
-				user_id: teamUserId,
-				org_id: teamOrgId,
-				name: opts.name,
-				operator: "self",
-				provisioning,
-				token_hash: `e2e-hash-${Math.random().toString(36).slice(2)}`,
-				status: opts.status ?? "OFFLINE",
-				cloud_identity_id: opts.cloudIdentityId ?? null,
-				version: opts.version ?? null,
-				is_default: opts.isDefault ?? false,
-				metadata: deployConfig,
-			})}
-			returning id`,
-	);
-	return row;
-}
-
-/** Removes every e2e-prefixed runner for the team user — the per-test isolation sweep. */
-async function purgeE2ERunners(teamUserId: string): Promise<void> {
-	const sql = db();
-	await withDeadlockRetry(
-		() => sql`delete from runners where user_id = ${teamUserId} and name like 'e2e-%'`,
-	);
-}
 
 const RUNNERS_PATH = (slug: string) => `/${slug}/~/runners`;
 
+/** A runner card, located by the name printed in its header. */
+const cardFor = (page: import("@playwright/test").Page, name: string) =>
+	page.locator('[data-slot="card"]').filter({ hasText: name });
+
 test.describe("Runners — page & entitlement", () => {
-	test.afterEach(async ({ team }) => {
-		await purgeE2ERunners(team.userId!);
+	test.afterEach(async () => {
+		await purgeSeededRunners();
 	});
 
 	test("Pro org loads the runner surface without bouncing to /login", async ({ team }) => {
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
 		await expect(team.page).not.toHaveURL(/\/login/);
-		// The runner surface (not the upsell) — the Add runner CTA is present for Pro.
+		// The runner surface (not the upsell) — the Add runner CTA is present.
 		await expect(team.page.getByRole("button", { name: "Add runner" }).first()).toBeVisible({
 			timeout: 15_000,
 		});
@@ -120,29 +69,24 @@ test.describe("Runners — page & entitlement", () => {
 		await expect(team.page.getByRole("heading", { name: "No runners yet" })).toBeVisible({
 			timeout: 15_000,
 		});
-		await expect(
-			team.page.getByText(/Runners execute provisioning jobs\./),
-		).toBeVisible();
+		await expect(team.page.getByText(/Runners execute provisioning jobs\./)).toBeVisible();
 	});
 
 	test("the grid renders one card per runner in the org", async ({ team }) => {
 		const stamp = Date.now();
-		await seedRunner(team.userId!, team.orgId!, { name: `e2e-count-a-${stamp}` });
-		await seedRunner(team.userId!, team.orgId!, { name: `e2e-count-b-${stamp}` });
+		const id = { userId: team.userId!, orgId: team.orgId! };
+		await seedRunner(id, { name: `e2e-count-a-${stamp}` });
+		await seedRunner(id, { name: `e2e-count-b-${stamp}` });
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
 		// Both seeded runners surface as their own cards.
-		await expect(
-			team.page.locator('[data-slot="card"]').filter({ hasText: `e2e-count-a-${stamp}` }),
-		).toBeVisible({ timeout: 15_000 });
-		await expect(
-			team.page.locator('[data-slot="card"]').filter({ hasText: `e2e-count-b-${stamp}` }),
-		).toBeVisible();
+		await expect(cardFor(team.page, `e2e-count-a-${stamp}`)).toBeVisible({ timeout: 15_000 });
+		await expect(cardFor(team.page, `e2e-count-b-${stamp}`)).toBeVisible();
 	});
 });
 
 test.describe("Runners — Add runner sheet", () => {
-	test.afterEach(async ({ team }) => {
-		await purgeE2ERunners(team.userId!);
+	test.afterEach(async () => {
+		await purgeSeededRunners();
 	});
 
 	test("opens to a path chooser with Deploy + Register options and a managed-pools hint", async ({
@@ -188,6 +132,8 @@ test.describe("Runners — Add runner sheet", () => {
 		team,
 	}) => {
 		const name = `e2e-reg-${Date.now()}`;
+		// Created through the UI, so the sweep has no id for it — hand it the name.
+		trackUiRunner(team.userId!, name);
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
 		await team.page.getByRole("button", { name: "Add runner" }).first().click();
 		await team.page.getByRole("button", { name: /Register your own/ }).click();
@@ -204,6 +150,8 @@ test.describe("Runners — Add runner sheet", () => {
 
 	test("a registered runner appears in the grid after the sheet closes", async ({ team }) => {
 		const name = `e2e-appears-${Date.now()}`;
+		// Created through the UI, so the sweep has no id for it — hand it the name.
+		trackUiRunner(team.userId!, name);
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
 		await team.page.getByRole("button", { name: "Add runner" }).first().click();
 		await team.page.getByRole("button", { name: /Register your own/ }).click();
@@ -211,48 +159,45 @@ test.describe("Runners — Add runner sheet", () => {
 		await team.page.getByRole("button", { name: "Register runner" }).click();
 		await team.page.getByRole("button", { name: "Done" }).click();
 
-		// The new runner shows as a card. router.refresh() during register updates the list.
-		await expect(
-			team.page.locator('[data-slot="card"]').filter({ hasText: name }),
-		).toBeVisible({ timeout: 15_000 });
+		// The new runner shows as a card — the mutation invalidates the runners query.
+		await expect(cardFor(team.page, name)).toBeVisible({ timeout: 15_000 });
 	});
 
-	test("Deploy sub-view renders its deploy description (form or connect-a-cloud state)", async ({
+	test("Deploy sub-view names the clouds a runner can actually be deployed into", async ({
 		team,
 	}) => {
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
 		await team.page.getByRole("button", { name: "Add runner" }).first().click();
 		await team.page.getByRole("button", { name: /Deploy to a cloud/ }).click();
-		// Deterministic regardless of whether a cloud is connected: the sheet description.
+		// The sheet description is DERIVED from RUNNER_DEPLOY_PROVIDERS_LABEL
+		// (lib/runners/deploy-providers.ts), so the assertion is written against the sentence's
+		// SHAPE rather than today's one-cloud list — adding GCP to that array must not turn this
+		// red. The old spec pinned the literal "your cloud account", which the derived copy has
+		// never said, and it had been failing on that ever since.
 		await expect(
-			team.page.getByText(/Provision a runner into your cloud account/),
-		).toBeVisible();
+			team.page.getByText(/Provision a runner into your .+ account/),
+		).toBeVisible({ timeout: 15_000 });
 	});
 });
 
 test.describe("Runners — lifecycle actions", () => {
-	test.afterEach(async ({ team }) => {
-		await purgeE2ERunners(team.userId!);
+	test.afterEach(async () => {
+		await purgeSeededRunners();
 	});
 
 	test("toggling the default star marks a runner as default", async ({ team }) => {
 		const name = `e2e-default-${Date.now()}`;
-		const seeded = await seedRunner(team.userId!, team.orgId!, { name });
+		const seeded = await seedRunner(
+			{ userId: team.userId!, orgId: team.orgId! },
+			{ name },
+		);
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
-		const card = team.page.locator('[data-slot="card"]').filter({ hasText: name });
+		const card = cardFor(team.page, name);
 		await expect(card).toBeVisible({ timeout: 15_000 });
-		// The star is the first (icon-only) button in the card's action row — see testid-gap finding.
-		await card.getByRole("button").first().click();
+		await card.getByRole("button", { name: "Set as default runner" }).click();
 		// Assert the persisted outcome (the toast is transient / unreliable to await).
 		await expect
-			.poll(
-				async () => {
-					const rows = await db()<{ is_default: boolean }[]>`
-						select is_default from runners where id = ${seeded.id}`;
-					return rows[0]?.is_default ?? null;
-				},
-				{ timeout: 10_000 },
-			)
+			.poll(() => runnerIsDefault(seeded.id), { timeout: 10_000 })
 			.toBe(true);
 	});
 
@@ -260,68 +205,71 @@ test.describe("Runners — lifecycle actions", () => {
 		team,
 	}) => {
 		const name = `e2e-remove-${Date.now()}`;
-		const seeded = await seedRunner(team.userId!, team.orgId!, { name });
+		const seeded = await seedRunner(
+			{ userId: team.userId!, orgId: team.orgId! },
+			{ name },
+		);
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
-		const card = team.page.locator('[data-slot="card"]').filter({ hasText: name });
+		const card = cardFor(team.page, name);
 		await expect(card).toBeVisible({ timeout: 15_000 });
 
 		await card.getByRole("button", { name: "Remove" }).click();
-		// AlertDialog confirmation.
+		// The registry's `runners.remove`: an alert-dialog naming the runner.
 		await expect(team.page.getByRole("alertdialog")).toBeVisible();
 		await expect(team.page.getByText(new RegExp(`Remove runner .*${name}`))).toBeVisible();
+		// Confirmed on purpose, and ONLY here: this deletes a row THIS test seeded — the registry's
+		// `prod-qa: own-rows-only` case. Every other destructive control in this domain is opened
+		// and cancelled.
 		await team.page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
 
-		// The card leaves the grid and the row is gone from the DB.
 		await expect(card).toHaveCount(0, { timeout: 15_000 });
-		await expect
-			.poll(
-				async () => {
-					const rows = await db()<{ id: string }[]>`
-						select id from runners where id = ${seeded.id}`;
-					return rows.length;
-				},
-				{ timeout: 10_000 },
-			)
-			.toBe(0);
+		await expect.poll(() => runnerExists(seeded.id), { timeout: 10_000 }).toBe(false);
 	});
 
 	test("the remove confirmation can be cancelled, leaving the runner in place", async ({ team }) => {
 		const name = `e2e-cancel-${Date.now()}`;
-		await seedRunner(team.userId!, team.orgId!, { name });
+		const seeded = await seedRunner(
+			{ userId: team.userId!, orgId: team.orgId! },
+			{ name },
+		);
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
-		const card = team.page.locator('[data-slot="card"]').filter({ hasText: name });
+		const card = cardFor(team.page, name);
 		await expect(card).toBeVisible({ timeout: 15_000 });
 
 		await card.getByRole("button", { name: "Remove" }).click();
 		await team.page.getByRole("button", { name: "Cancel" }).click();
 		await expect(team.page.getByRole("alertdialog")).toHaveCount(0);
+		// The row is still there — a dialog that closes is not proof that nothing mutated.
+		expect(await runnerExists(seeded.id)).toBe(true);
 		await expect(card).toBeVisible();
 	});
 });
 
-test.describe("Runners — search & filters", () => {
-	test.afterEach(async ({ team }) => {
-		await purgeE2ERunners(team.userId!);
+test.describe("Runners — the console filter standard", () => {
+	test.afterEach(async () => {
+		await purgeSeededRunners();
 	});
 
 	test("search narrows the grid to the matching runner", async ({ team }) => {
 		const stamp = Date.now();
 		const alpha = `e2e-alpha-${stamp}`;
 		const bravo = `e2e-bravo-${stamp}`;
-		await seedRunner(team.userId!, team.orgId!, { name: alpha });
-		await seedRunner(team.userId!, team.orgId!, { name: bravo });
+		const id = { userId: team.userId!, orgId: team.orgId! };
+		await seedRunner(id, { name: alpha });
+		await seedRunner(id, { name: bravo });
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
-		await expect(
-			team.page.locator('[data-slot="card"]').filter({ hasText: alpha }),
-		).toBeVisible({ timeout: 15_000 });
+		await expect(cardFor(team.page, alpha)).toBeVisible({ timeout: 15_000 });
 
 		await team.page.getByPlaceholder("Search runners by name…").fill("alpha");
-		await expect(team.page.locator('[data-slot="card"]').filter({ hasText: alpha })).toBeVisible();
-		await expect(team.page.locator('[data-slot="card"]').filter({ hasText: bravo })).toHaveCount(0);
+		await expect(cardFor(team.page, alpha)).toBeVisible();
+		await expect(cardFor(team.page, bravo)).toHaveCount(0);
 	});
 
 	test("a non-matching search shows the 'no runners match' message", async ({ team }) => {
-		await seedRunner(team.userId!, team.orgId!, { name: `e2e-filtermiss-${Date.now()}` });
+		await seedRunner(
+			{ userId: team.userId!, orgId: team.orgId! },
+			{ name: `e2e-filtermiss-${Date.now()}` },
+		);
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
 		await team.page.getByPlaceholder("Search runners by name…").fill("zzz-nonexistent-xyz");
 		await expect(team.page.getByText("No runners match your filters.")).toBeVisible({
@@ -329,13 +277,99 @@ test.describe("Runners — search & filters", () => {
 		});
 	});
 
-	test("the filters popover exposes status and operator chip groups", async ({ team }) => {
-		await seedRunner(team.userId!, team.orgId!, { name: `e2e-facets-${Date.now()}` });
+	test("the bar carries all six axes the runner filter store declares", async ({ team }) => {
+		// `use-runner-filters.ts` declares search + clouds + statuses + operators + regions +
+		// versions. The previous spec looked for a "Filters" POPOVER holding status and operator —
+		// a shape `runners-toolbar.tsx` has not had since the chip groups were promoted to
+		// @repo/ui/filter-chip and inlined (`FilterChipGroup inline`). There is no Filters button
+		// on this page, so that test could only ever have been red.
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
-		await team.page.getByRole("button", { name: "Filters" }).click();
-		await expect(team.page.getByText("Status", { exact: true })).toBeVisible();
-		await expect(team.page.getByText("Operator", { exact: true })).toBeVisible();
-		// Status chips are actionable.
+		await expect(team.page.getByPlaceholder("Search runners by name…")).toBeVisible({
+			timeout: 15_000,
+		});
+		await expect(team.page.getByPlaceholder("All clouds")).toBeVisible();
+		// Status + operator are always-visible chips, not a popover.
 		await expect(team.page.getByRole("button", { name: "Online", exact: true })).toBeVisible();
+		await expect(team.page.getByRole("button", { name: "Draining", exact: true })).toBeVisible();
+		await expect(
+			team.page.getByRole("button", { name: "Self · Registered", exact: true }),
+		).toBeVisible();
+		// Region + version are facet popovers.
+		await expect(team.page.getByRole("button", { name: "Region" })).toBeVisible();
+		await expect(team.page.getByRole("button", { name: "Version" })).toBeVisible();
+	});
+
+	test("a chip selection mirrors into the URL and Reset clears both", async ({ team }) => {
+		// The standard's client half (lib/query/README.md): the store is the source of truth and
+		// `useFilterUrlSync` mirrors non-default values into the query string, so a filtered view
+		// is shareable. Asserting the URL is what makes that half testable at all.
+		await team.page.goto(RUNNERS_PATH(team.orgSlug));
+		const online = team.page.getByRole("button", { name: "Online", exact: true });
+		await expect(online).toBeVisible({ timeout: 15_000 });
+
+		await online.click();
+		await expect(team.page).toHaveURL(/statuses=ONLINE/);
+		await expect(online).toHaveAttribute("aria-pressed", "true");
+
+		await team.page.getByRole("button", { name: /^Reset/ }).click();
+		await expect(team.page).not.toHaveURL(/statuses=/);
+		await expect(online).toHaveAttribute("aria-pressed", "false");
+	});
+
+	test("a pasted filter URL hydrates the bar and narrows the grid", async ({ team }) => {
+		const stamp = Date.now();
+		const id = { userId: team.userId!, orgId: team.orgId! };
+		const live = `e2e-urlon-${stamp}`;
+		const down = `e2e-urloff-${stamp}`;
+		await seedRunner(id, { name: live, status: "ONLINE" });
+		await seedRunner(id, { name: down, status: "OFFLINE" });
+
+		await team.page.goto(`${RUNNERS_PATH(team.orgSlug)}?statuses=ONLINE`);
+		// Non-vacuous by construction: the ONLINE runner must be PRESENT for the OFFLINE one's
+		// absence to mean the filter ran rather than the list simply not having loaded.
+		await expect(cardFor(team.page, live)).toBeVisible({ timeout: 15_000 });
+		await expect(cardFor(team.page, down)).toHaveCount(0);
+		await expect(
+			team.page.getByRole("button", { name: "Online", exact: true }),
+		).toHaveAttribute("aria-pressed", "true");
+	});
+});
+
+test.describe("Runners — warm pools (self-managed only)", () => {
+	let pool: SeededFleetPool;
+
+	test.beforeAll(async () => {
+		pool = await seedFleetPool();
+	});
+
+	test("a configured pool renders its card in the left column", async ({ team }) => {
+		await team.page.goto(RUNNERS_PATH(team.orgSlug));
+		await expect(team.page.getByText("Pools", { exact: true })).toBeVisible({ timeout: 15_000 });
+		await expect(
+			team.page.locator('[data-slot="card"]').filter({ hasText: pool.label }),
+		).toBeVisible();
+	});
+
+	test("the pool delete confirmation opens, names the pool, and Cancel leaves it alone", async ({
+		team,
+	}) => {
+		// The registry's `runners.pool.delete`: reach the "Pool actions" menu, the `Delete`
+		// menuitem, the alert-dialog titled "Delete the <label> pool?". CANCEL ONLY — confirming
+		// would set `deleting = true` on a GLOBAL platform row that no test owns and that the
+		// fleet controller would then drain.
+		await team.page.goto(RUNNERS_PATH(team.orgSlug));
+		const card = team.page.locator('[data-slot="card"]').filter({ hasText: pool.label });
+		await expect(card).toBeVisible({ timeout: 15_000 });
+
+		await card.getByRole("button", { name: "Pool actions" }).click();
+		await team.page.getByRole("menuitem", { name: "Delete" }).click();
+
+		const dialog = team.page.getByRole("alertdialog");
+		await expect(dialog).toBeVisible();
+		await expect(dialog.getByText(`Delete the ${pool.label} pool?`)).toBeVisible();
+
+		await dialog.getByRole("button", { name: "Cancel" }).click();
+		await expect(team.page.getByRole("alertdialog")).toHaveCount(0);
+		await expect(card).toBeVisible();
 	});
 });

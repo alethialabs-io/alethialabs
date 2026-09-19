@@ -63,6 +63,14 @@ export function useLivePlanPrice(
 
 	useEffect(() => {
 		let active = true;
+		// THE PREVIOUS ROW IS DROPPED BEFORE THE NEW ONE IS FETCHED, and that is a correctness fix
+		// rather than tidiness. Without it a plan that CHANGES on a live component keeps the old
+		// row in state while the new one is in flight, so the hook reports `loading: false` — its
+		// contract for "this is the authoritative price" — beside another plan's amount. The
+		// console does exactly that transition: ai-usage-section renders
+		// `useLiveAiPrice(ai?.tier ?? "ai_free")`, so every visit shows a paid tier priced "Free"
+		// for at least one render once the summary resolves.
+		setData(null);
 		loadPrices()
 			.then((m: LivePlanPriceMap) => {
 				if (active) setData(m[plan]);
@@ -118,6 +126,14 @@ export function useLiveAiPrice(
 
 	useEffect(() => {
 		let active = true;
+		// THE PREVIOUS ROW IS DROPPED BEFORE THE NEW ONE IS FETCHED, and that is a correctness fix
+		// rather than tidiness. Without it a tier that CHANGES on a live component keeps the old
+		// row in state while the new one is in flight, so the hook reports `loading: false` — its
+		// contract for "this is the authoritative price" — beside another tier's amount. The
+		// console does exactly that transition: ai-usage-section renders
+		// `useLiveAiPrice(ai?.tier ?? "ai_free")`, so every visit shows a paid tier priced "Free"
+		// for at least one render once the summary resolves.
+		setData(null);
 		loadAiPrices()
 			.then((m: LiveAiPriceMap) => {
 				if (active) setData(m[tier]);

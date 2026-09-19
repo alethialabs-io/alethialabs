@@ -29,6 +29,10 @@ export const qk = {
 		["addons", projectId, environmentId ?? "default"] as const,
 	environmentStatus: (projectId: string, environmentId?: string | null) =>
 		["environment-status", projectId, environmentId ?? "default"] as const,
+	/** The environment's job history (the activity card); the page cursor is the pageParam, never
+	 * part of the key. */
+	environmentJobs: (projectId: string, environmentId?: string | null) =>
+		["environment-jobs", projectId, environmentId ?? "default"] as const,
 	projects: (org: string) => ["projects", org] as const,
 	projectUsage: (projectId: string) => ["project-usage", projectId] as const,
 	projectUsageOverTime: (projectId: string, from: string, to: string) =>

@@ -299,6 +299,11 @@ func covListEnvFormat(t *testing.T, mode covListMode, format string) func(args .
 	t.Cleanup(covListResetFlags)
 
 	return func(args ...string) (code int) {
+		// BOTH ends. Resetting only on the way out protects the next invocation but leaves this
+		// one at the mercy of whichever file `go test` reached first: TestList_ProjectScopedListsRequireProject
+		// drops --project from each command's arguments and asserts the refusal, and under
+		// `-shuffle` it found `addon list` still carrying a --project set two files earlier.
+		covListResetFlags()
 		defer func() {
 			covListResetFlags()
 			if r := recover(); r != nil {
@@ -309,7 +314,7 @@ func covListEnvFormat(t *testing.T, mode covListMode, format string) func(args .
 				code = e.code
 			}
 		}()
-		rootCmd.SetArgs(append(args, "--output", format))
+		execRootArgs(append(args, "--output", format))
 		if err := rootCmd.Execute(); err != nil {
 			t.Errorf("%v: %v", args, err)
 		}
@@ -329,8 +334,13 @@ type covListCase struct {
 
 // covListCommands is every list command whose interactive-table arm this file
 // exercises, with the arguments each one needs to resolve its target.
+// `activity` and `repo list` NAME their one value here, and that is not decoration. This file
+// forces a TTY, and both now ask for a defaulted field on a terminal (#4454) — so left bare they
+// would open a real huh form, which a headless test terminal refuses, and every case would fail on
+// the harness instead of on the interactive-table arm it is testing. Naming the value is the same
+// thing `--project web` does for the eight project-scoped commands below.
 var covListCommands = []covListCase{
-	{args: []string{"activity"}},
+	{args: []string{"activity", "-n", "50"}},
 	{args: []string{"addon", "list", "--project", "web"}},
 	{args: []string{"agent", "list"}},
 	{args: []string{"alerts", "list"}},
@@ -351,7 +361,7 @@ var covListCommands = []covListCase{
 	{args: []string{"project", "list"}, fatalOnTableError: true},
 	{args: []string{"promotion", "list", "--project", "web"}},
 	{args: []string{"protection", "list", "--project", "web"}},
-	{args: []string{"repo", "list"}},
+	{args: []string{"repo", "list", "--provider", "github"}},
 	{args: []string{"roles", "list"}},
 	{args: []string{"runner", "list"}, fatalOnTableError: true},
 	{args: []string{"sso", "list"}},
@@ -459,7 +469,7 @@ func TestList_UnauthenticatedListIsFatal(t *testing.T) {
 				code = e.code
 			}
 		}()
-		rootCmd.SetArgs(append(args, "--output", "table"))
+		execRootArgs(append(args, "--output", "table"))
 		if err := rootCmd.Execute(); err != nil {
 			t.Errorf("%v: %v", args, err)
 		}
@@ -507,8 +517,10 @@ func TestList_ProjectGetOpensBrowserWhenConfirmed(t *testing.T) {
 
 	run("project", "get", "web")
 
-	if !strings.HasSuffix(got, "/dashboard") {
-		t.Errorf("openBrowser url = %q, want the dashboard URL", got)
+	// The project's own page. `/dashboard` was the legacy catch-all this command used to open
+	// after printing the project — see packages/core/routing.
+	if !strings.HasSuffix(got, "/acme/web") {
+		t.Errorf("openBrowser url = %q, want the project's page under its org", got)
 	}
 	if !strings.HasPrefix(got, os.Getenv("ALETHIA_WEB_ORIGIN")) {
 		t.Errorf("openBrowser url = %q, want it rooted at the configured web origin", got)

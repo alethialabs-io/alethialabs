@@ -85,10 +85,15 @@ be the same machine. Browsers and their OS libraries install on first run, then 
   maintainer.** It caps at **2** environments. That is a hard memory budget, not a
   policy: an env floors at **5.2 GB** and reaches **~7 GB** after a browser run (measured
   on the box; the earlier "~2–3 GB" was a guess, and wrong by 3x), against 15.6 GB of
-  RAM. A third env OOMs the box. **`dev` permanently holds one** as the integration env
-  at `dev.alethialabs.io`, so there is **one branch slot** for everyone else. The next
-  one is refused with a list of who holds it — nothing is ever evicted automatically,
-  because a silent swap kills someone else's run.
+  RAM. A third env OOMs the box. The next one is refused with a list of who holds it —
+  nothing is ever evicted automatically, because a silent swap kills someone else's run.
+  **There is no standing integration env, so do not assume a slot is free** — this bullet
+  used to promise that "`dev` permanently holds one as the integration env at
+  `dev.alethialabs.io`, so there is one branch slot for everyone else", and on 2026-09-08
+  `dev` held none, `dev.alethialabs.io` 404'd, and BOTH slots were branch envs — one of
+  them a registration with nothing running behind it (#4350). Ask `pnpm env:status`, which
+  now separates an env that is merely slow (`?-no-answer`) from one with no session at all
+  (`?-not-running`).
 - **Take a slot only when you need a RUNNING app** — reproducing a bug, checking UI,
   testing auth. Building, type-checking, linting and unit tests do not need one. With
   one shared branch slot this is now a courtesy to whoever is waiting, not just tidiness.
@@ -98,6 +103,22 @@ be the same machine. Browsers and their OS libraries install on first run, then 
   `pnpm env:reap --now` when you finish for the day, and if the box is up and idle it is
   costing money right now. `pnpm env:timer` installs a launchd job that reaps it after
   90 idle minutes; the session banner warns once the box has been up 12h.
+- **REAPING DELETES THE BOX FOR EVERYONE — check `pnpm env:status` first.** Every
+  environment on it goes: the slot, the database, the OpenFGA store, the tunnel. `env:box`
+  restores the *box*, not the envs. `env:reap` prints what it is about to destroy, and
+  then refuses in two cases:
+  - **someone else's env was touched in the last 60 minutes** — refused, and `--now` is
+    not a way around it. Ask them to `pnpm env:down`, or wait for it to go idle.
+  - **your own env is still live** — also refused, because it dies too. Release it with
+    `pnpm env:down` and reap, or say you meant both: `pnpm env:reap --now --include-mine`.
+
+  `pnpm env:reap --dry-run` decides and prints without touching anything, and works from a
+  worktree. Until 2026-09-02 that first refusal could not fire between two instances on one
+  Mac: ownership was recorded as `user@host`, which every agent, worktree and shell here
+  shares. It is now the same instance identity `pnpm wt:who` uses, so `env:status` marks
+  which env is **← you**, and an environment written before the fix carries a bare
+  `user@host` owner that is deliberately counted as **someone else's** — `pnpm env:up`
+  rewrites it, `pnpm env:down` releases it (#3841).
 - **Never `docker compose down -v` or `pnpm db:reset`.** `docker-compose.yml` pins
   `name: alethia`, so those delete the volumes *every* window is using. Blocked.
 - **Never run `docker compose` from an env's tree on the box.** Each env is a different
@@ -121,11 +142,13 @@ be the same machine. Browsers and their OS libraries install on first run, then 
 - **The address is stable across the cycle.** A Primary IP is held separately from the
   server, so a restored box comes back on the same address — no DNS change, no
   `known_hosts` surprise. That 0.50 EUR is what makes routine teardown safe.
-- **If the box is down, an agent cannot fix it — ask the maintainer.** `pnpm env:box`
-  runs `tofu apply`, which is a human action here; both `.claude/hooks/guard-iac.sh` and
-  `scripts/env.sh` itself refuse it for agents. Do not look for a way around that: from a
-  worktree it would apply against empty state and build a **second** box, breaking
-  `dev.alethialabs.io`.
+- **If the box is down, restore it: `pnpm env:box`, from the main checkout.** Agents may,
+  by the maintainer's ruling on #4483 (2026-09-18) — and must reap it again when finished
+  (`pnpm env:reap --now`, or `pnpm env:timer`), because it bills while it exists. Only the
+  two wrappers are open; raw `tofu apply` is still refused by `.claude/hooks/guard-iac.sh`.
+  Run it from the main checkout and nowhere else: from a worktree it would apply against
+  empty state and build a **second** box, breaking `dev.alethialabs.io` —
+  `require_main_checkout` in `scripts/env.sh` refuses that.
 - **"box: down" from a worktree used to be a lie.** State is gitignored and lives only in
   the main checkout; `env.sh` now resolves it there. If you ever see a state-read error,
   that is a bug in the script, not something to work around.

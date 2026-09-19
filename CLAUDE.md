@@ -32,7 +32,8 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
 
 `pnpm wt <name>` creates `../wt-<name>` on `feat/<name>` off `dev`. Commit there, push, open a
 PR into `dev`. `pnpm wt:ls` lists them · `pnpm wt:who` shows holders · `pnpm wt:rm <name>` ·
-`pnpm wt:prune` sweeps landed ones (`--dry-run` previews) · `pnpm wt:release` · `pnpm wt:steal <name>`.
+`pnpm wt:prune` sweeps landed ones (`--dry-run` previews) · `pnpm wt:dehydrate` gives back the
+`node_modules` of the ones nobody holds · `pnpm wt:release` · `pnpm wt:steal <name>`.
 `pnpm branch:prune` does the same for the *branches* they leave behind (also `--dry-run`); plain
 `git branch -d` cannot, because it asks an ancestry question that a squash merge always answers "no".
 
@@ -45,6 +46,41 @@ reuse, remove, edit, or commit from it — it is told who holds it. Reads stay a
 it") and committed the first instance's **uncommitted** work under its own message (#1247).
 
 Worktrees are **de-hydrated** — no local `node_modules`. Run their checks with `pnpm env:check`.
+
+Nothing used to put one *back* into that state. A tree that is abandoned but whose branch never
+landed is invisible to `wt:prune` — which removes only LANDED, clean trees — so it sat there for
+good (#4580). `pnpm wt:dehydrate [--dry-run]` reaps `node_modules` and nothing else: the tree, its
+tracked files and its uncommitted work all stay, which is why it can touch the trees `wt:prune`
+must refuse. The one other thing it clears is the reaped tree's own dead lease record, so a tree
+that read `stale` in `wt:who` reads `free` afterwards. It never touches a tree a live instance
+holds — *including yours*; `pnpm wt:release` first if you mean it.
+
+**A live lease is not the only thing that spares a tree, and it never was enough** (#4609). `free`
+means no lease was ever *taken*, not that nobody is there — leases are not taken outside
+Claude/Codex, so a person working a tree by hand all afternoon looked identical to one abandoned in
+July. And `stale` means the agent process is gone, not that nothing is running: an agent that exits
+over a `pnpm install` **it started** leaves a stale lease above a live install. So the sweep also
+asks how long ago the files were last written, and refuses a tree that is still warm: **1h for
+`stale`** (the agent is provably gone, so this only has to outlast an install's quietest moment)
+and **24h for `free`** (nothing has ruled out a person). `--min-idle-hours=N` replaces both with one
+number and `0` disables the floor — the documented operator override, named on the command line so
+it appears in whatever ran it. `wt:who` on this machine once listed a dozen trees as `LIVE` under a
+real `claude` process idle for 138 hours: the liveness answer was correct and still useless, which
+is why the question is now about the **files**. While it holds a tree the lock is a live foreign lease to everyone, so `git stash` — whose
+stack is repo-wide — is refused for the duration of the sweep.
+
+**Do not quote its byte figures as savings, and do not quote #4580's "~2 GB per tree" either — both
+are `du`'s numbers.** pnpm here uses APFS clones, so a tree's `node_modules` is mostly references
+into the pnpm store and a block is freed only when its **last** reference goes. Measured on one real
+tree: `du` said 1996 MB, `df` moved **52 MB** — 38× out. That is the argument *for* the sweep, not
+against it: dropping the last reference is the only thing that frees the shared blocks, and an
+abandoned, un-prunable tree holds one forever. Run it across the dead trees, then `pnpm store
+prune`, then read `df -h /` — which is the only thing that answers "did that help".
+
+If you do have to install one — a generator such as `gen:go-enums` needs a real `node_modules` —
+pass **`--frozen-lockfile`**. pnpm enables it in CI and leaves it OFF everywhere else, so a bare
+`pnpm install` in a worktree re-resolves the dependency graph and can rewrite `pnpm-lock.yaml`.
+That diff then rides into an unrelated PR, where nobody reviewing it is looking at the lockfile.
 
 ## 3. Running the app — the Mac is not a runtime
 
@@ -59,11 +95,21 @@ pnpm env:down    # RELEASE the slot when you're finished with the branch
 ```
 
 The box is **shared** with every other instance and the maintainer: 2 environments (a
-measured memory ceiling — an env needs 5–7 GB), and `dev` permanently holds one as the
-integration env, leaving **one branch slot**. Take it only when you need a *running* app
-— build, type-check, lint and unit tests do not need one — and release it when you are
-done. Nothing is reclaimed automatically. If the box is down, **ask the maintainer**;
-restoring it runs `tofu apply`, which agents are refused.
+measured memory ceiling — an env needs 5–7 GB). Take a slot only when you need a *running*
+app — build, type-check, lint and unit tests do not need one — and release it when you are
+done. Nothing is reclaimed automatically. If the box is down, restore it with `pnpm env:box`
+**from the main checkout** and reap it when you finish — agents may, by ruling on #4483. Raw
+`tofu apply` stays refused; only these two wrappers are open.
+
+**Ask `pnpm env:status` what is there; do not assume a free slot.** This paragraph used to
+promise that "`dev` permanently holds one as the integration env, leaving one branch slot",
+and on 2026-09-08 that was false in both halves: `dev` held none, `https://dev.alethialabs.io`
+404'd, and BOTH slots were taken by branch envs — one of them a registration with no session
+behind it (#4350). An instance reading the old sentence would reason that one slot was free
+when zero were, and would also treat `dev.alethialabs.io` as somewhere to check something
+against. There is no standing integration env; whether one exists is a question for
+`env:status`, which now distinguishes an env that is merely slow (`?-no-answer`) from a
+registration with nothing running behind it (`?-not-running`).
 
 The box bills by the hour it **exists**, running or idle — deleting it is the only thing
 that stops the meter, so a box left up costs €69.49/mo against €0.72 reaped. Run
@@ -84,6 +130,15 @@ conflict-free dev PR **with no unresolved review threads**, and squash-merges it
 **required checks** pass, validating each PR on its own branch — so you never merge against a
 `dev` that moved under you. Keep WIP as a draft. On a conflict, rebase onto `origin/dev` and push;
 it re-queues itself.
+
+**The one exception: a `class:ui` implementation PR opens as a DRAFT and stays one.** The
+maintainer marks it ready after accepting the design decision; you never run `gh pr ready`.
+`.claude/COORDINATION.md` is where that rule and its reason live — this line exists because the
+paragraph above is otherwise unconditional, and draft state is the *entire* mechanism. Mergify
+reads no class label (`.mergify.yml` conditions on `-draft` alone), so a `class:ui` PR opened
+non-draft queues and lands with the design decision still open — with no warning and no red check.
+`pnpm check:docs-contract` cannot catch this: it verifies that referenced paths and scripts exist,
+not that two documents agree.
 
 **An unresolved review finding keeps a PR out of the queue, and RESOLVING IS A SEPARATE STEP FROM
 FIXING.** A review is not a required check, so before #3498 the review and the merge raced by
@@ -154,14 +209,31 @@ product is two products.**
 | Need | Use | Never |
 |---|---|---|
 | A duration, date, size, quota or amount | `@repo/format` | a local `formatDate`, `toFixed`, or `/ 1024` |
-| A page or section heading | `@repo/ui/page-header` — `PageHeader`, with `level` | a bespoke `<h1>` + description block |
+| A page **title** | nothing — the sidebar entry and the breadcrumb already say it. `@repo/ui/page-toolbar` — `PageToolbar` — carries the count, the description and the actions | an `<h1>` naming the page |
+| A **section** heading inside a page | `@repo/ui/section-heading` — `SectionHeading`, with `level` for the outline | a bespoke `<h2>` at whatever size that file chose |
+| A font size | a `--text-ui-*` rung from `packages/brand/src/tokens.css` | `text-[13px]`, or the same number in any other unit |
 | An empty list, tab or panel | `@repo/ui/empty` — `EmptyState` | a one-off centred div |
 | A status pill | `@repo/ui/status-badge` | a `<Badge>` plus a local colour map |
 | A table | `DataTable`, or `@repo/ui/table` for shapes it cannot express | a `<div className="grid">` |
 | A layer above the page | a `--z-*` token from `packages/brand/src/tokens.css` | a bare `z-50` or `z-[95]` |
 | A list-page filter | the console filter standard, **both halves** | a per-page filter language |
 
-Three of those deserve their reason stated, because the reason is what makes them stick:
+Four of those deserve their reason stated, because the reason is what makes them stick:
+
+**The console has no page titles.** The sidebar entry you clicked and the breadcrumb above the
+content both say the page's name; a third saying earns nothing. What the breadcrumb does NOT carry
+is the count, the description and the buttons — that is `PageToolbar`. A heading *inside* a page is
+a separate, smaller thing and keeps its component. The test for the exceptions is **does anything
+else on screen already name this?** — not "is there a breadcrumb": some are outside the shell where
+there is neither breadcrumb nor sidebar (sign-in, the CLI hand-off, buying a plan), and the rest are
+in-shell headings that say something other than the route's name (a question, an invitation, an
+error). Each is a recorded decision in `apps/console/shared-surface-allowlist.yaml`.
+
+**The type scale is derived, not designed.** The console carried hardcoded `text-[Npx]` across 23
+values against a token file with no UI scale in it at all — the shared-surface guard measures how
+many are left; the seven rungs are the seven bands those sites cluster into. The `ui-` prefix is
+load-bearing — this ladder is denser than Tailwind's and must not be read as it: `text-ui-sm` is
+12px, `text-sm` is 14px.
 
 **Minutes are read by a person.** `0.943 minutes / 200 minutes` is a number the code happens to
 hold, not an answer to "how much have I used". `formatMinutes` / `formatQuota` decide once —
@@ -179,22 +251,72 @@ just picked disappears, which makes the filter bar un-un-selectable.
 
 No stat-card strips.
 
-`pnpm check:shared-surface` mechanises PART of the first two rows, and the part matters: it fails
-on `toFixed(`, `toLocaleDateString`, `toLocaleTimeString`, a hand-written `$` in front of an
-interpolation, and a byte division by 1024; and on a raw `<h1>` — not on a hand-rolled `<h2>`
-section heading, and not on a direct `date-fns` import. Every exception is a line in
-`apps/console/shared-surface-allowlist.yaml` carrying its reason, and that list only shrinks.
-**Everything else in the table is prose** — `scripts/check-shared-surface.mjs` states exactly which
-token shapes and which console directories it covers, because an unstated exception is how the next
-reader concludes the whole table is enforced.
+`pnpm check:shared-surface` mechanises **seven of the nine rows above, plus the stat-card ban**. It
+fails on `toFixed(`, `toLocaleDateString`, `toLocaleTimeString`, a hand-written `$` in front of an
+interpolation (including one built from a variable or taken as a `prefix` prop), and a byte division
+by 1024; on a raw `<h1>`, which is now a defect to DELETE rather than one to convert, and on a
+hand-rolled `<h2>` through `<h6>` section heading; on a hardcoded font size (`text-[13px]`, any
+length unit, variant prefix or not); on a centred one-off empty state (`text-center` with `py-6` or
+more); on a `<Stat` cell and the `Stat` primitive behind it; on a raw stacking level of 40 or more,
+variant prefix or not; and on a `grid-cols-[…]` used as a table.
+
+It also fails on **an alpha applied to a text colour** — `text-muted-foreground/60`, `text-red-500/70`,
+`text-foreground/[0.7]`, variant prefix or not — which is not one of the nine rows: the design system
+has four named ink tiers and an alpha is a fifth that nobody chose, and at α=0.5 over the page
+background the darkest reachable composite is 3.94:1, so the node cannot pass 4.5:1 from any
+foreground (#4197). Use a named tier at full strength. An alpha on a **background** or a **border** is
+ordinary design and is not read, and neither is `text-ui-sm/5` — that is a rung with its line height,
+not an ink tier. This is also the **one rule that reads a file outside `apps/console`**: it runs over
+`packages/ui/src` too, because the primitives every console filter bar renders through carried the
+defect where no console-rooted scope could see it.
+
+Three of those are stated precisely on purpose, because the imprecise version is wrong. **The
+`<h1>` rule inverted in #3733** — it used to say "use `PageHeader`", it now says delete the heading,
+and the eleven recorded decisions under it are the pages with no breadcrumb. **The font-size rule is
+not "no `text-[…]`"** — that bracket also carries a colour, and `text-[color:var(--text-primary)]`
+and `text-[var(--text-ui-lg)]` are both correct; what is matched is a value that STARTS with a
+number and ends in a length unit. **The z-index rule is not "no bare `z-*`"** — `packages/brand/src/tokens.css` puts its in-flow lifts at 10/20/30
+and its chrome at 100, so `z-10` is a real rung written without its name while `z-40`/`z-50` name a
+level in the gap the scale leaves empty. **And the table rule is a SHAPE test, not a class-name
+match**: a bracketed column template that is NOT behind a breakpoint, plus a row marker. A table's
+columns are the same at every width, so `lg:grid-cols-[280px_1fr]` is a two-pane layout stacking on
+a phone and is not a table.
+
+Where each of those bounds runs to the edge of the rule rather than to the edge of what was measured,
+that is deliberate: a guard whose cheapest escape route is to deepen the defect — demote the `<h2>`,
+raise the padding, add a `md:` prefix, rewrite `text-[13px]` as `text-[0.8125rem]` — is worse than no
+guard. The font-size matcher reads `rem`, `em`, `pt`, `ch` and `%` for exactly that reason, though
+the console today uses none of them.
+
+**Two rows stay prose, and the file says why**: `StatusBadge`, which has no negative form to match
+("a page that should have shown a status pill and showed a `<Badge>`" is not a grep), and the filter
+standard's server half, which is a behaviour and needs a unit test. A direct `date-fns` import, a
+bare `.toLocaleString(`, an inline `fontSize:` and a class list split across two `cn()` arguments are
+also unmatched, deliberately and each for its own stated reason. **Read the omissions in `scripts/check-shared-surface.mjs` rather than inferring
+them from this list**: it states every one of them, with the exact token shape and the exact console
+directories each matcher reaches, because an unstated exception is how the next reader concludes the
+whole table is enforced.
+
+The allowlist carries **two ledgers, and the difference is load-bearing**. `reason:` is a decision —
+this surface is genuinely a different thing — and counts against `baseline`. `lifts:` is measured
+drift that a named board issue will remove, and counts against `debt`. Both are checked in both
+directions, so converting drift into a fix moves two numbers in one diff, and neither list may grow
+silently. A `reason:` that means "we haven't got to it yet" is what the split exists to prevent.
 
 Two further checks back up the section rather than restating it: `pnpm -F console check:dead-code`
 fails on an unreferenced module or an unused dependency, and `pnpm -F console check:action-boundary`
 on a server action that escapes its boundary.
 
+**The CLI has its own shared-surface check, and it has no allowlist.** `pnpm check:cli-surface`
+fails on any `<placeholder>` a CLI docs example makes the reader copy from another command, any
+input-taking command with no interactive form, any `Mirrors the Go X` claim no test locks, and on
+`apps/cli/cli-surface-allowlist.yaml` existing at all — #3664 deleted it, so a finding is fixed in
+the command or the page, never excused.
+
 ## 7. The harness itself
 
-Four hooks gate every session (`.claude/settings.json`):
+Eight hooks run around every session (`.claude/settings.json`) — five of them gate a tool call,
+one reports after an edit, and two run at the session boundary:
 
 | Hook | Event | What it does |
 |---|---|---|
@@ -205,6 +327,22 @@ Four hooks gate every session (`.claude/settings.json`):
 | `.claude/hooks/guard-iac.sh` | PreToolUse · Bash | Refuses `tofu`/`terraform` apply, destroy and `plan -destroy` — including the flag-first forms a permission rule cannot match |
 | `.claude/hooks/check-migration-chain.sh` | PostToolUse · edits | Reports a forked drizzle snapshot chain at edit time, not at commit time |
 | `.claude/hooks/session-runtime.sh` | SessionStart | Runtime banner, and warns when the harness you are running is stale |
+| `.claude/hooks/session-cleanup.sh` | SessionStart · SessionEnd | Fast-forwards the main checkout, then sweeps landed worktrees and branches |
+
+`session-cleanup.sh` is the hook that *acts* on what `session-runtime.sh` only warns about. It is
+**async on both events** — the worktree sweep is ~65s and the branch sweep runs into minutes, and a
+session that will not start because a prune is walking 200 branches is worse than a tree swept one
+session later. It adds no opinion about what is safe to delete: `worktree.sh --prune` and
+`branch-prune.sh` make every such judgement, and both already refuse uncommitted work, unlanded
+branches and trees a live instance holds. What it adds is a **census of what they refused** — those
+trees are never reclaimed by any sweep, so a count is the only thing that keeps them visible.
+
+At SessionEnd it runs `--quick`: the worktree sweep only. The branch sweep is skipped there because
+nothing is waiting on the result and an async hook whose process is being torn down may not finish —
+and a prune killed mid-flight can leave behind the lease it took. Two consequences worth knowing:
+**Ctrl+C that interrupts a turn fires nothing** (no hook event exists for it; Ctrl+C that *exits* is
+SessionEnd), and this must never be registered on `Stop`, which fires at the end of **every turn** —
+that would prune worktrees out from under lanes that are still building in them.
 
 Beyond the hooks, `.claude/settings.json` carries a **permission policy**. `deny` is absolute
 — it beats any allow rule and any hook — and covers the things that cannot be undone:

@@ -7,13 +7,20 @@
 #   reclaim  stale leases (a dead instance's claim → freed, like #534 orphan-reclaim)
 #   unblock  recompute the `blocked` label from each issue's `blocked-by:` line
 #   report   per-wave board status + collisions to eyeball + UI units awaiting the human +
-#            possibly-shipped units (open, but a merged PR references them — de-stale the board)
+#            possibly-shipped units (open, but a MERGED PR ALREADY EDITED FILES THE UNIT'S `scope:`
+#            CLAIMS — de-stale the board; a mention alone is suppressed, and counted, not reported)
+#
+#            Collisions are BOTH halves COORDINATION.md promises: >1 claimed `mutex:migration`, and
+#            overlapping `scope:` globs among the units workable at once. Each prints a verdict
+#            either way, in THREE states — found · compared and clean · could not compare — because
+#            until #4115 the scope half did not exist and its silence read as an all-clear.
 #
 # Usage:
 #   scripts/coordinate.sh                 # reclaim + unblock + report
 #   scripts/coordinate.sh --report        # report only (no mutations)
 #   scripts/coordinate.sh --close-shipped # close open board units a MERGED PR CLOSES (kw + #n)
 #   scripts/coordinate.sh --init-labels   # create/refresh the board's label set (once)
+#   scripts/coordinate.sh --self-test     # offline: board-body parser + scope/shipped report wiring
 #
 # --close-shipped is the manual BACKSTOP for the close-on-dev-merge Action: it reclaims/unblocks
 # NOTHING, but for each open, still-claimable board unit that a MERGED PR CLOSES — a closing
@@ -26,29 +33,633 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-command -v gh >/dev/null || { echo "gh (GitHub CLI) required" >&2; exit 1; }
-command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
-
 LEASE_TTL="${ALETHIA_LEASE_TTL:-3600}"
 MODE="full"
 case "${1:-}" in
   --report) MODE="report" ;;
   --close-shipped) MODE="close-shipped" ;;
   --init-labels) MODE="init" ;;
+  --self-test) MODE="self-test" ;;
   "" ) MODE="full" ;;
-  -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
   *) echo "unknown arg: $1" >&2; exit 2 ;;
 esac
 
-# Portable ISO-8601(Z) → epoch seconds (macOS BSD date vs GNU date).
-# Prints NOTHING on a parse failure — deliberately not `echo 0`, which made `now - 0` ≈ now, so an
-# unparseable stamp looked infinitely old and its lease was reclaimed INSTANTLY. A timestamp we
-# can't read is a reason to leave the claim alone, not to take it.
-to_epoch() {
-  local ts="$1"
-  date -u -d "$ts" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null || true
+command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
+
+# Read dependency issue numbers only from the machine-readable declaration line.
+#
+# THE ANCHOR IS RIGHT; DROPPING MARKDOWN DECORATION IS NOT. Anchoring to the start of a line is what
+# stops a `blocked-by: #42` quoted mid-sentence in prose from being read as a declaration, and that
+# is the bug this file exists to fix. But the anchor as first written also dropped `- blocked-by:
+# #12` and `**blocked-by:** #12`, which the previous parser accepted and which are what a human
+# hand-filing an issue actually types.
+#
+# That direction is the dangerous one. The unblock pass below treats an empty `deps` as "this issue
+# has no dependencies" and REMOVES the `blocked` label — so a dropped declaration does not fail
+# closed and leave a lane blocked, it fails OPEN and marks the lane READY while its seams issue is
+# still open. Someone then claims work that is not ready to start. The old parser's failure was
+# noisy; this one is silent.
+#
+# So the decoration is stripped and the anchor is kept: a leading list marker and any `**` come off
+# first, then the same start-of-line match runs. A mid-sentence mention still does not match,
+# because stripping decoration does not move it to the start of its line.
+#
+# A FENCED BLOCK IS NOT A DECLARATION, and the anchor alone cannot tell the difference — inside a
+# fence the quoted line genuinely starts at column 0. That is the #3639 symptom exactly: the
+# seeding snippet in .claude/skills/decompose/SKILL.md prints `blocked-by: #$SEAMS` at column 0
+# inside a ```bash fence, so an issue body pasting that snippet with a real number acquires a
+# phantom dependency and a permanent `blocked` label with nothing in its prose to explain it. So
+# closed fenced blocks (``` or ~~~, delimiters included) are dropped before the match runs.
+#
+# CLOSED, deliberately. An UNTERMINATED fence leaves the rest of the body in play rather than
+# swallowing it, because dropping it would fail OPEN — the unblock pass reads an empty `deps` as
+# "no dependencies" and removes the `blocked` label — and one unclosed backtick run in a hand-typed
+# body would silently mark a lane READY. Keeping those lines can only over-report, which fails
+# closed and is visible.
+blocked_by_from_body() {
+  awk '
+    { line[NR] = $0; drop[NR] = 0 }
+    /^[[:space:]]*(```|~~~)/ {
+      if (open) { for (i = start; i <= NR; i++) drop[i] = 1; open = 0 }
+      else { open = 1; start = NR }
+    }
+    END { for (i = 1; i <= NR; i++) if (!drop[i]) print line[i] }
+  ' \
+    | sed -e 's/^[[:space:]]*[-*+][[:space:]]\{1,\}/ /' -e 's/\*\*//g' \
+    | sed -n 's/^[[:space:]]*[Bb]locked-by:[[:space:]]*\(.*\)$/\1/p' \
+    | grep -oE '#[0-9]+' | tr -d '#' | sort -nu || true
 }
-now="$(date -u +%s)"
+
+# ── scope collisions: the anti-tangle invariant, asked CONTINUOUSLY ──────────
+#
+# COORDINATION.md has always said this report flags "any collisions to eyeball (two claimed issues
+# sharing `mutex:migration` OR AN OVERLAPPING `scope:`)". The second half was never written: until
+# #4115 the whole collision check was the `mutex:migration` count below, and there was no `scope:`
+# parsing anywhere in this file. So the ABSENCE of a warning line meant "at most one claimed
+# migration unit" while reading as "no two claimed units share a scope" — a guard whose
+# "nothing found" branch is indistinguishable from its "nothing wrong" branch.
+#
+# The predicate is NOT reimplemented here. scripts/lib/scope-overlap.mjs holds the one matcher (lifted
+# out of decompose-validate.mjs, where it was module-private), so the seed-time check, this report
+# and the dashboard cannot drift into three different answers — the hazard scripts/lib/board-pr.sh
+# was created for. This function's only job is to CALL it and to make sure the reader can tell the
+# three outcomes apart: overlap found · compared and clean · could not compare.
+#
+# Every branch prints. A `node` that is missing, a matcher that is absent from the checkout, a
+# matcher that dies — each says so in the report rather than passing for silence.
+SCOPE_MATCHER="${ALETHIA_SCOPE_MATCHER:-scripts/lib/scope-overlap.mjs}"
+scope_collision_report() {
+  local rc=0 out
+  if ! command -v node >/dev/null 2>&1; then
+    echo "  ── scope collisions (the anti-tangle invariant) ──"
+    echo "  ⚠ scope collisions NOT CHECKED: node is not on PATH, so $SCOPE_MATCHER could not run."
+    return 0
+  fi
+  if [ ! -f "$SCOPE_MATCHER" ]; then
+    echo "  ── scope collisions (the anti-tangle invariant) ──"
+    echo "  ⚠ scope collisions NOT CHECKED: $SCOPE_MATCHER is missing from this checkout."
+    return 0
+  fi
+  # 0 clean · 3 collisions · 4 nothing comparable · 5 clean but some units unreadable. Anything
+  # else is the matcher itself failing, and that is the third outcome too — not an all-clear.
+  out="$(node "$SCOPE_MATCHER" --report 2>&1)" || rc=$?
+  case "$rc" in
+    0|3|4|5) printf '%s\n' "$out" ;;
+    *)
+      echo "  ── scope collisions (the anti-tangle invariant) ──"
+      echo "  ⚠ scope collisions NOT CHECKED: $SCOPE_MATCHER exited $rc."
+      [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/      /'
+      ;;
+  esac
+  return 0
+}
+
+# ── the possibly-shipped advisory: the SAME matcher, asked the delivery question ──
+#
+# The predicate is not written here either, and for the same reason (#4523). This function's whole
+# job is to CALL `--shipped-report` with the report's inputs on stdin and to make sure the reader
+# can tell "examined and found nothing" from "never ran" — a matcher that is missing, that node
+# cannot run, or that dies must each SAY so, exactly as the collision half above does.
+#
+# Reads `{board, merged, closingKeywords, debt}` as one JSON object on stdin.
+shipped_report() {
+  local rc=0 out
+  if ! command -v node >/dev/null 2>&1; then
+    echo "  ── possibly-shipped (merged-PR evidence, held against each unit's own \`scope:\`) ──"
+    echo "  ⚠ possibly-shipped NOT CHECKED: node is not on PATH, so $SCOPE_MATCHER could not run."
+    return 0
+  fi
+  if [ ! -f "$SCOPE_MATCHER" ]; then
+    echo "  ── possibly-shipped (merged-PR evidence, held against each unit's own \`scope:\`) ──"
+    echo "  ⚠ possibly-shipped NOT CHECKED: $SCOPE_MATCHER is missing from this checkout."
+    return 0
+  fi
+  # 0 ran (whatever it found) · 4 could not evaluate its input. Anything else is the matcher
+  # itself failing, and that is "could not check" too — never an all-clear.
+  out="$(node "$SCOPE_MATCHER" --shipped-report 2>&1)" || rc=$?
+  case "$rc" in
+    0|4) printf '%s\n' "$out" ;;
+    *)
+      echo "  ── possibly-shipped (merged-PR evidence, held against each unit's own \`scope:\`) ──"
+      echo "  ⚠ possibly-shipped NOT CHECKED: $SCOPE_MATCHER exited $rc."
+      [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/      /'
+      ;;
+  esac
+  return 0
+}
+
+# The closing-keyword vocabulary as a JSON array, READ from scripts/lib/board-pr.sh's
+# BOARD_PR_CLOSING_KW rather than retyped. That file exists because there were two copies and one
+# of them expanded to `fixs`/`fixd`, so "Fixes #n" matched nothing for as long as nobody looked.
+# Prints `[]` if the vocabulary is unreadable — the matcher then reports the closing-keyword half
+# as NOT CHECKED rather than silently answering "no keyword" for every unit.
+closing_keywords_json() {
+  printf '%s' "${BOARD_PR_CLOSING_KW:-}" \
+    | sed -E 's/^\(//; s/\)[ +]*$//' \
+    | tr '|' '\n' \
+    | jq -Rn '[inputs | gsub("^[[:space:]]+|[[:space:]]+$";"") | select(length > 0)]' 2>/dev/null \
+    || printf '[]'
+}
+
+# Exercise the shell parser against the contract shared with the dashboard parser.
+run_board_body_self_test() {
+  local fixtures="scripts/lib/board-body-fixtures.json" fails=0 checks=0 cases fixture name body expected actual
+  [ -f "$fixtures" ] || { echo "missing $fixtures" >&2; exit 1; }
+
+  # READ THE CASES BEFORE THE LOOP. This was `done < <(jq -c '.cases[]' "$fixtures")`, and a jq
+  # failure inside a PROCESS SUBSTITUTION is invisible to both `set -e` and `pipefail` — the shell
+  # never sees its exit status. A fixtures file missing the `cases` key made jq write to stderr and
+  # exit non-zero, the loop ran zero times, and the function printed "self-test: all passed" and
+  # exited 0. Assigning to a variable puts the exit status back where the shell can act on it.
+  cases="$(jq -c '.cases[]' "$fixtures")" || {
+    echo "self-test: could not read .cases[] from $fixtures — the fixtures are unreadable, which is" >&2
+    echo "  a failure, not an empty suite." >&2
+    exit 1
+  }
+
+  while IFS= read -r fixture; do
+    [ -n "$fixture" ] || continue
+    name="$(jq -r '.name' <<<"$fixture")"
+    body="$(jq -r '.body' <<<"$fixture")"
+    expected="$(jq -r '.blockedBy | join(" ")' <<<"$fixture")"
+    actual="$(printf '%s\n' "$body" | blocked_by_from_body | paste -sd' ' -)"
+    checks=$((checks + 1))
+    if [ "$actual" = "$expected" ]; then
+      echo "ok   - $name"
+    else
+      echo "FAIL - $name: want '$expected' got '$actual'" >&2
+      fails=$((fails + 1))
+    fi
+  done <<<"$cases"
+
+  # AN EMPTY SUITE IS A FAILURE. `{"cases":[]}` ran zero checks and reported "all passed" — the
+  # exact shape this guard is written to catch one level down, in its own reporting. A self-test
+  # whose "nothing found" branch is indistinguishable from "nothing wrong" is not a self-test.
+  [ "$checks" -gt 0 ] || {
+    echo "self-test: $fixtures contains NO cases — asserting nothing is not passing." >&2
+    exit 1
+  }
+
+  [ "$fails" -eq 0 ] || { echo "self-test: $fails of $checks check(s) FAILED" >&2; exit 1; }
+  echo "self-test: all $checks passed"
+}
+
+# Exercise the SHELL half of the scope-collision check: that this file actually calls the matcher,
+# renders whatever it says, and still prints a verdict when it cannot call it at all.
+#
+# The matcher's own semantics are proved by `node scripts/lib/scope-overlap.mjs --self-test` against
+# the same fixture file. What THAT cannot see is the wiring — a guard that exists but is never
+# invoked, or one whose failure branch prints nothing, looks exactly like a guard that is holding.
+run_scope_wiring_self_test() {
+  local fixtures="scripts/lib/board-body-fixtures.json" fails=0 checks=0 cases fixture name verdict board out want stub
+
+  command -v node >/dev/null 2>&1 || {
+    echo "self-test: node is required to exercise the scope-collision wiring" >&2
+    exit 1
+  }
+  cases="$(jq -c '.boardCases[]' "$fixtures")" || {
+    echo "self-test: could not read .boardCases[] from $fixtures — unreadable fixtures are a" >&2
+    echo "  FAILURE, not an empty suite." >&2
+    exit 1
+  }
+
+  while IFS= read -r fixture; do
+    [ -n "$fixture" ] || continue
+    name="$(jq -r '.name' <<<"$fixture")"
+    verdict="$(jq -r '.verdict' <<<"$fixture")"
+    board="$(jq -c '.board' <<<"$fixture")"
+    out="$(printf '%s' "$board" | scope_collision_report)"
+
+    case "$verdict" in
+      COLLISIONS) want="⚠ SCOPE COLLISION" ;;
+      NOT-CHECKED) want="NOT CHECKED" ;;
+      CLEAN|CLEAN-WITH-GAPS) want="✓ compared, no overlap" ;;
+      *) echo "self-test: fixture '$name' declares unknown verdict '$verdict'" >&2; exit 1 ;;
+    esac
+
+    checks=$((checks + 1))
+    if printf '%s\n' "$out" | grep -qF "$want"; then
+      echo "ok   - report renders $verdict: $name"
+    else
+      echo "FAIL - report renders $verdict: $name — no '$want' in:" >&2
+      printf '%s\n' "$out" | sed 's/^/    /' >&2
+      fails=$((fails + 1))
+    fi
+
+    # THE FAILING CASE THIS SUITE EXISTS FOR: a board nothing could be compared on must never
+    # render the clean marker, and must never render as an empty block either. Both of those are
+    # the silence #4115 was filed for, one level down.
+    checks=$((checks + 1))
+    if [ "$verdict" = "NOT-CHECKED" ] && printf '%s\n' "$out" | grep -qF "✓ compared, no overlap"; then
+      echo "FAIL - a NOT-CHECKED board claimed a clean comparison: $name" >&2
+      fails=$((fails + 1))
+    elif [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
+      echo "FAIL - the report block was EMPTY for $verdict: $name" >&2
+      fails=$((fails + 1))
+    else
+      echo "ok   - $verdict is distinguishable from a clean pass: $name"
+    fi
+  done <<<"$cases"
+
+  # The two ways the shell half itself can fail to check anything. Both must still SAY so.
+  # Both run inside `$( … )`, a SUBSHELL, so overriding SCOPE_MATCHER for the call cannot leak
+  # back into this function — a bash variable assignment prefixed to a FUNCTION persists, unlike
+  # one prefixed to an external command, and a leaked override would silently disarm every check
+  # that ran after it.
+  # `-t` template needs X's: GNU mktemp REFUSES a template with fewer than three ("too few X's
+  # in template"), while BSD/macOS accepts it — so the bare name passed locally and failed only
+  # in CI, at the last two checks of this very suite.
+  stub="$(mktemp -t alethia-scope-stub.XXXXXX)"
+  checks=$((checks + 1))
+  out="$(printf '[]' | SCOPE_MATCHER="$stub-does-not-exist.mjs" scope_collision_report)" || true
+  if printf '%s\n' "$out" | grep -qF "NOT CHECKED"; then
+    echo "ok   - an absent matcher reports NOT CHECKED, not silence"
+  else
+    echo "FAIL - an absent matcher printed no verdict" >&2; fails=$((fails + 1))
+  fi
+
+  # A matcher that dies with an unexpected status is also "could not check".
+  printf '%s\n' '#!/usr/bin/env node' 'process.exit(9);' >"$stub.mjs"
+  checks=$((checks + 1))
+  out="$(printf '[]' | SCOPE_MATCHER="$stub.mjs" scope_collision_report)" || true
+  if printf '%s\n' "$out" | grep -qF "NOT CHECKED"; then
+    echo "ok   - a matcher that dies reports NOT CHECKED, not silence"
+  else
+    echo "FAIL - a dying matcher printed no verdict" >&2; fails=$((fails + 1))
+  fi
+  rm -f "$stub" "$stub.mjs"
+
+  [ "$checks" -gt 0 ] || {
+    echo "self-test: $fixtures contains NO boardCases — asserting nothing is not passing." >&2
+    exit 1
+  }
+  [ "$fails" -eq 0 ] || { echo "self-test: $fails of $checks scope-wiring check(s) FAILED" >&2; exit 1; }
+  echo "self-test: all $checks scope-wiring checks passed"
+}
+
+# Exercise the SHELL half of the possibly-shipped advisory: that this file calls the matcher with
+# the right SHAPE, renders whatever it says, still prints a verdict when it cannot call it at all —
+# and that the vocabulary it hands over is the one board-pr.sh owns.
+#
+# The matcher's own semantics (which mention is suppressed, which scope hit is reported, and what
+# each row is allowed to claim) are proved by `node scripts/lib/scope-overlap.mjs --self-test`
+# against fixtures taken from the 42 hand-verified advisories on #4523. What THAT cannot see is the
+# wiring: an advisory that exists but is never invoked, or one whose failure branch prints nothing,
+# looks exactly like an advisory that is holding. That is the shape this file was already bitten by
+# — a jq the kernel refused to exec read as "found nothing" on every run for weeks.
+run_shipped_wiring_self_test() {
+  local fails=0 checks=0 out stub input
+
+  command -v node >/dev/null 2>&1 || {
+    echo "self-test: node is required to exercise the possibly-shipped wiring" >&2
+    exit 1
+  }
+
+  # THE VOCABULARY HANDED TO THE MATCHER IS THE ONE board-pr.sh OWNS. If this ever yields `[]`,
+  # every unit's closing-keyword half silently becomes "no keyword" — the failure that made
+  # "Fixes #n" invisible to the guard for as long as nobody looked.
+  local kw
+  kw="$(closing_keywords_json)"
+  checks=$((checks + 1))
+  if printf '%s' "$kw" | jq -e 'index("fixes") and index("resolved") and index("closes")' >/dev/null 2>&1; then
+    echo "ok   - the closing vocabulary reaches the matcher, tenses and all"
+  else
+    echo "FAIL - closing_keywords_json produced '$kw' — the keyword half would be unmeasured" >&2
+    fails=$((fails + 1))
+  fi
+
+  # A board whose unit is named by a merged PR that touched NOTHING it owns: the 40-for-40 case.
+  # It must be counted and NOT listed. `#4109` and `#4308` are the real pair.
+  input='{"board":[{"number":4109,"title":"git.Bootstrap has no caller","labels":[{"name":"class:backend"}],"body":"scope: packages/core/git/**"}],
+          "merged":[{"number":4308,"title":"feat(cli): deep links","body":"Ordered behind #4109.","files":[{"path":"apps/cli/cmd/links.go"}]}],
+          "closingKeywords":["close","closes","fixes"],"debt":{}}'
+  out="$(printf '%s' "$input" | shipped_report)"
+  checks=$((checks + 1))
+  if printf '%s\n' "$out" | grep -qF "1 mention-only (suppressed)" && ! printf '%s\n' "$out" | grep -q "^  #4109"; then
+    echo "ok   - a mention with no file in scope is SUPPRESSED and COUNTED, not listed"
+  else
+    echo "FAIL - a bare mention was not suppressed-and-counted:" >&2
+    printf '%s\n' "$out" | sed 's/^/    /' >&2
+    fails=$((fails + 1))
+  fi
+
+  # …and the same board with the PR touching a file the unit owns must render the unit AND its
+  # `check:` line, and must never invite closing it. #3348/#4419: a scope hit whose defect survived.
+  input='{"board":[{"number":3348,"title":"the deployed runner runs as self","labels":[{"name":"class:backend"}],"body":"scope: apps/runner/internal/agent/runner.go\ncheck: go -C apps/runner test ./internal/agent/..."}],
+          "merged":[{"number":4419,"title":"fix(runner): a better error","body":"Surfaced by #3348.","files":[{"path":"apps/runner/internal/agent/runner.go"}]}],
+          "closingKeywords":["close","closes","fixes"],"debt":{}}'
+  out="$(printf '%s' "$input" | shipped_report)"
+  checks=$((checks + 1))
+  if printf '%s\n' "$out" | grep -q "#3348" \
+    && printf '%s\n' "$out" | grep -qF "go -C apps/runner test ./internal/agent/..." \
+    && ! printf '%s\n' "$out" | grep -qiF "close if delivered"; then
+    echo "ok   - a scope hit is rendered with the unit's own check, and nothing says 'close if delivered'"
+  else
+    echo "FAIL - the scope-hit row did not render its unit + check, or invited a close:" >&2
+    printf '%s\n' "$out" | sed 's/^/    /' >&2
+    fails=$((fails + 1))
+  fi
+
+  # The three ways the shell half itself can fail to check anything. Every one must still SAY so
+  # — the same three-valued rule the scope-collision wiring above is built on. Each runs inside
+  # `$( … )`, a SUBSHELL, so an overridden SCOPE_MATCHER cannot leak into the checks after it.
+  stub="$(mktemp -t alethia-shipped-stub.XXXXXX)"
+  checks=$((checks + 1))
+  out="$(printf '{}' | SCOPE_MATCHER="$stub-does-not-exist.mjs" shipped_report)" || true
+  if printf '%s\n' "$out" | grep -qF "NOT CHECKED"; then
+    echo "ok   - an absent matcher reports NOT CHECKED, not silence"
+  else
+    echo "FAIL - an absent matcher printed no verdict" >&2; fails=$((fails + 1))
+  fi
+
+  printf '%s\n' '#!/usr/bin/env node' 'process.exit(9);' >"$stub.mjs"
+  checks=$((checks + 1))
+  out="$(printf '{}' | SCOPE_MATCHER="$stub.mjs" shipped_report)" || true
+  if printf '%s\n' "$out" | grep -qF "NOT CHECKED"; then
+    echo "ok   - a matcher that dies reports NOT CHECKED, not silence"
+  else
+    echo "FAIL - a dying matcher printed no verdict" >&2; fails=$((fails + 1))
+  fi
+  rm -f "$stub" "$stub.mjs"
+
+  # An input the matcher cannot evaluate (exit 4) is rendered, not swallowed — it is the third
+  # state, and it must not read as "examined and found nothing".
+  checks=$((checks + 1))
+  out="$(printf '{"board":null,"merged":[]}' | shipped_report)"
+  if printf '%s\n' "$out" | grep -qF "NOT CHECKED" && ! printf '%s\n' "$out" | grep -qF "examined"; then
+    echo "ok   - an unevaluatable input renders as NOT CHECKED, never as a clean examination"
+  else
+    echo "FAIL - an unevaluatable input did not render as NOT CHECKED:" >&2
+    printf '%s\n' "$out" | sed 's/^/    /' >&2
+    fails=$((fails + 1))
+  fi
+
+  # ZERO CHECKS IS A FAILURE, not a pass — the rule the three suites above already enforce.
+  [ "$checks" -gt 0 ] || {
+    echo "self-test: the possibly-shipped wiring suite asserted NOTHING — that is a failure, not a pass." >&2
+    exit 1
+  }
+  [ "$fails" -eq 0 ] || { echo "self-test: $fails of $checks shipped-wiring check(s) FAILED" >&2; exit 1; }
+  echo "self-test: all $checks shipped-wiring checks passed"
+}
+
+# has_closing_pr / has_active_pr / board_lease_age_seconds — evidence that a holder is alive despite
+# a stale lease. All fail CLOSED (a gh failure reads as "yes, taken"): here a false "no" STRIPS a
+# live instance's claim. Shared with claim-work.sh, which needs the identical predicates — this file
+# used to carry a verbatim copy of has_closing_pr, and one protocol duplicated across call sites is
+# how the xacct gate diverged three ways. See scripts/lib/board-pr.sh.
+#
+# SOURCED ABOVE THE SELF-TEST DISPATCH, deliberately. It used to be sourced ~40 lines further down,
+# past the `exit 0` below, which meant the self-test could not reach a single one of these — the
+# lease read was therefore untestable here, and that is half of why #4480's duplicate survived.
+# Sourcing costs nothing at self-test time: every function in it defers its `gh` call to the caller.
+# shellcheck source=scripts/lib/board-pr.sh
+. scripts/lib/board-pr.sh
+
+# ── the lease read: the contract the reclaim loop now depends on ──────────────
+#
+# `board_lease_age_seconds` replaced an inline copy here (#4480), and the reclaim loop's behaviour
+# now rests entirely on ONE property of it: every "cannot tell" prints NOTHING. If any of those arms
+# ever printed `0` instead, `[ -z "$age" ]` would be false, the age would read as zero seconds, and
+# — depending on the comparison — a live instance's claim could be stripped. That is the #1247
+# mechanism, so it is worth a test rather than a comment.
+#
+# The `gh` call is STUBBED, the same technique the scope-wiring test above uses for the matcher.
+# What is under test is the CONTRACT and its direction, not GitHub.
+#
+# Each case runs inside `( … )`, a SUBSHELL, so it must RETURN a status rather than touch `fails` —
+# a subshell's `fails=$((fails+1))` never reaches the parent, which is how a suite printed FAIL and
+# still summarised "all passed". Mutate one of these and confirm the RUN goes non-zero before
+# believing it: the exit code is the test, the text is only a report.
+run_lease_read_self_test() {
+  local fails=0 checks=0
+
+  # A stub answers the question the real function answers. `board_lease_age_seconds` shells out to
+  # `gh issue view --json comments --jq …`, whose output is the LAST lease comment body — so that is
+  # what these return, regardless of the issue number they are handed.
+  _stub_gh_body() { _BODY="$1"; gh() { printf '%s' "$_BODY"; }; }
+  _stub_gh_fail() { gh() { return 1; }; }
+
+  _empty() { # <label>  — the "cannot tell" contract
+    local got; got="$(board_lease_age_seconds X)"
+    if [ -z "$got" ]; then echo "ok   - lease age is EMPTY (leave the claim): $1"; else
+      echo "FAIL - lease age should be empty but was '$got': $1" >&2; return 1; fi
+  }
+  _number() { # <label> — a readable stamp yields an age
+    local got; got="$(board_lease_age_seconds X)"
+    case "$got" in
+      ''|*[!0-9]*) echo "FAIL - lease age should be a number but was '$got': $1" >&2; return 1 ;;
+      *) if [ "$got" -gt 100000000 ]; then echo "ok   - lease age reads a stamp: $1"; else
+           echo "FAIL - lease age '$got' is implausible for a 2020 stamp: $1" >&2; return 1; fi ;;
+    esac
+  }
+
+  # A stamp we CAN read. Fixed at 2020 rather than computed, so the case carries no clock arithmetic
+  # of its own and cannot rot the way a pinned recent instant does.
+  ( _stub_gh_body '```lease
+instance: i
+pid: 1
+branch: b
+stamped_at: 2020-01-01T00:00:00Z
+```'; _number "stamped_at" ) || fails=$((fails + 1)); checks=$((checks + 1))
+
+  # `--heartbeat` re-stamps only `stamped_at`, so a never-heartbeated claim has only `claimed_at`.
+  ( _stub_gh_body '```lease
+instance: i
+claimed_at: 2020-01-01T00:00:00Z
+```'; _number "falls back to claimed_at when stamped_at is absent" ) || fails=$((fails + 1)); checks=$((checks + 1))
+
+  # The three "cannot tell" arms. Each of these previously had its own inline branch here.
+  ( _stub_gh_body ''; _empty "no lease comment at all (the hand-claim shape)" ) || fails=$((fails + 1)); checks=$((checks + 1))
+  ( _stub_gh_body '```lease
+instance: i
+```'; _empty "a lease block carrying neither timestamp" ) || fails=$((fails + 1)); checks=$((checks + 1))
+  ( _stub_gh_body '```lease
+stamped_at: not-a-timestamp
+```'; _empty "an UNPARSEABLE stamp — never 0, which would read as infinitely old" ) || fails=$((fails + 1)); checks=$((checks + 1))
+  ( _stub_gh_fail; _empty "gh itself failed — could not look is not 'lease is fresh'" ) || fails=$((fails + 1)); checks=$((checks + 1))
+
+  # ZERO CHECKS IS A FAILURE, not a pass — the rule run_board_body_self_test already enforces one
+  # level up. This arm is not hypothetical: the first version of this function incremented `checks`
+  # INSIDE the `( … )` subshells, so it printed six `ok` lines and then summarised "all 0 checks
+  # passed". The counter is the thing that noticed. `fails` was never affected — it is incremented
+  # in the parent by `|| fails=$((fails + 1))` — but a suite that cannot count what it ran is one
+  # edit away from being a suite that runs nothing.
+  [ "$checks" -eq 0 ] && { echo "self-test: the lease-read suite asserted NOTHING — that is a failure, not a pass." >&2; exit 1; }
+  [ "$fails" -eq 0 ] || { echo "self-test: $fails of $checks lease-read check(s) FAILED" >&2; exit 1; }
+  echo "self-test: all $checks lease-read checks passed"
+}
+
+# ── temp files: ONE registry, ONE EXIT trap, and the registry must reach the PARENT ──────────
+#
+# One EXIT trap for every temp file this script makes. A second `trap … EXIT` REPLACES the first
+# rather than adding to it, and that is what used to happen here: the debt-register map installed
+# its own trap further down and the merged-PR corpus — the biggest file this script writes —
+# stopped being cleaned up at all.
+#
+# THE HELPER RETURNS ITS PATH THROUGH A NAMED VARIABLE, NOT ON STDOUT. The first version of this
+# printed the path, so every caller was `X="$(coordinate_tmpfile …)"` — and command substitution is
+# a SUBSHELL. `COORDINATE_TMPFILES+=("$f")` ran in that subshell and never reached the parent, so
+# the trap fired against an empty array and removed NOTHING: ~4.8 MB of `alethia-*` left in $TMPDIR
+# per pass, on a script whose header offers it as a `/loop` candidate. That is strictly worse than
+# the trap-overwrite bug the paragraph above describes, under which the second trap at least
+# cleaned one file. `printf -v` writes into the caller's own shell, which is the whole point.
+#
+# It is the same class as the counter that never left a `( … )` in run_lease_read_self_test below,
+# and it is defended the same way: by a test that reads the registry IN THE PARENT.
+#
+# DEFINED ABOVE THE SELF-TEST DISPATCH, deliberately — the reason scripts/lib/board-pr.sh is
+# sourced above it too. Left where it used to live, past the `exit 0` below, the self-test could
+# not reach this function at all and the registry's one load-bearing property was untestable.
+COORDINATE_TMPFILES=()
+_coordinate_cleanup() { [ ${#COORDINATE_TMPFILES[@]} -gt 0 ] && rm -f "${COORDINATE_TMPFILES[@]}"; return 0; }
+trap _coordinate_cleanup EXIT
+# <varname> <name> — set <varname> to a fresh temp path and register it for cleanup.
+# The local is named defensively: `printf -v` resolves <varname> in this function's scope first, so
+# a caller passing a name this function also uses locally would be handed a path the parent cannot
+# see — the very failure the out-parameter exists to remove.
+coordinate_tmpfile() {
+  local __coordinate_tmpfile_path
+  # `.XXXXXX` IS REQUIRED, and its absence is invisible on this laptop. GNU mktemp refuses a `-t`
+  # template with fewer than three X's ("too few X's in template"); BSD/macOS accepts a bare name
+  # and appends its own suffix. This suite's own scope-stub call already carries the X's and says
+  # why — that note was written when the bare form "passed locally and failed only in CI" — but the
+  # two production call sites it did not touch (`alethia-merged-prs`, `alethia-debt-map`) never had
+  # them, so `--report` and `--close-shipped` have been dead on any Linux host since they were
+  # written. Nothing caught it because the self-test used to exit before reaching this function:
+  # the fix that made the registry testable is what finally ran this line on a runner.
+  __coordinate_tmpfile_path="$(mktemp -t "alethia-$2.XXXXXX")"
+  COORDINATE_TMPFILES+=("$__coordinate_tmpfile_path")
+  printf -v "$1" %s "$__coordinate_tmpfile_path"
+}
+
+# The registry's ONE load-bearing property: a registration made by the helper is visible to the
+# EXIT trap, which runs in the parent shell. The bug this replaces satisfied every other property
+# — the path was valid, the file existed, callers worked — and failed only this one, silently.
+#
+# So the assertion is made IN THE PARENT, never inside `( … )`: a subshell is precisely the thing
+# under test, and a suite that measured the registry from inside one would agree with the defect.
+# Mutate `COORDINATE_TMPFILES+=(…)` above (delete it, or wrap it in a subshell) and confirm the RUN
+# exits non-zero before believing this: the exit code is the test, the text is only a report.
+run_tmpfile_self_test() {
+  local fails=0 checks=0 before after first second
+  before=${#COORDINATE_TMPFILES[@]}
+  coordinate_tmpfile first tmpfile-selftest-a
+  coordinate_tmpfile second tmpfile-selftest-b
+
+  checks=$((checks + 1))
+  if [ -n "$first" ] && [ -n "$second" ] && [ "$first" != "$second" ]; then
+    echo "ok   - tmpfile: the out-parameter carries two distinct paths back to the caller"
+  else
+    fails=$((fails + 1))
+    echo "FAIL - tmpfile: the caller's variables were not set (first='$first' second='$second')" >&2
+  fi
+
+  checks=$((checks + 1))
+  if [ -f "$first" ] && [ -f "$second" ]; then
+    echo "ok   - tmpfile: both files exist"
+  else
+    fails=$((fails + 1))
+    echo "FAIL - tmpfile: mktemp did not produce readable files" >&2
+  fi
+
+  # THE REGRESSION. Read in the PARENT: under the printing version this reads 0 however many
+  # times the helper is called, and nothing is ever cleaned up.
+  after=${#COORDINATE_TMPFILES[@]}
+  checks=$((checks + 1))
+  if [ "$((after - before))" -eq 2 ]; then
+    echo "ok   - tmpfile: both registrations reached the PARENT shell's registry"
+  else
+    fails=$((fails + 1))
+    echo "FAIL - tmpfile: the registry grew by $((after - before)), not 2 — registration is not reaching" >&2
+    echo "       the shell the EXIT trap runs in, so the trap will remove nothing." >&2
+  fi
+
+  # …and the registry is what the trap actually acts on. Registered-but-not-removed would be a
+  # second, quieter way to leak.
+  _coordinate_cleanup
+  checks=$((checks + 1))
+  if [ ! -e "$first" ] && [ ! -e "$second" ]; then
+    echo "ok   - tmpfile: the cleanup the EXIT trap runs removes every registered file"
+  else
+    fails=$((fails + 1))
+    echo "FAIL - tmpfile: _coordinate_cleanup left a registered file behind" >&2
+  fi
+  rm -f "$first" "$second"
+
+  # THE `-t` TEMPLATE RULE, ASKED OF THE SOURCE — because the runtime cannot be asked here.
+  # GNU mktemp refuses a template with fewer than three X's; BSD/macOS accepts a bare name and
+  # appends its own suffix. So a missing `.XXXXXX` is GREEN on every laptop in this fleet and RED
+  # on every runner, which is precisely how it shipped twice: the note at the scope-stub call above
+  # was written the FIRST time it happened, and the two production templates beside it
+  # (`alethia-merged-prs`, `alethia-debt-map`) were left bare anyway.
+  #
+  # A behavioural check cannot catch that here — this machine's mktemp is the lenient one — so the
+  # question is asked of the text instead. It must therefore match an INVOCATION and not PROSE
+  # ABOUT one: the first version of this check matched its own failure message and reported the
+  # file as broken. So a template ARGUMENT is required — `-t` followed by a space and a non-backtick
+  # — which the `\`mktemp -t\`` written in comments and echo strings does not have. Over-reporting
+  # is the safe direction here: a false hit is loud, and a miss is green on every laptop.
+  local bad
+  bad="$(grep -nE 'mktemp -t +[^ `]' scripts/coordinate.sh | grep -vE '^[0-9]+:[[:space:]]*#' | grep -v 'XXX' || true)"
+  checks=$((checks + 1))
+  if [ -z "$bad" ]; then
+    echo "ok   - tmpfile: every \`mktemp -t\` template in this file carries X's (GNU refuses fewer than three)"
+  else
+    fails=$((fails + 1))
+    echo "FAIL - tmpfile: a \`mktemp -t\` template has no X's. GNU mktemp REFUSES it ('too few X's in" >&2
+    echo "       template'); this machine's BSD mktemp does not, so this is green here and red on" >&2
+    echo "       every runner. Offending line(s):" >&2
+    printf '%s\n' "$bad" | sed 's/^/         /' >&2
+  fi
+
+  [ "$checks" -eq 0 ] && { echo "self-test: the tmpfile suite asserted NOTHING — that is a failure, not a pass." >&2; exit 1; }
+  [ "$fails" -eq 0 ] || { echo "self-test: $fails of $checks tmpfile check(s) FAILED" >&2; exit 1; }
+  echo "self-test: all $checks tmpfile checks passed"
+}
+
+if [ "$MODE" = "self-test" ]; then
+  run_board_body_self_test
+  run_scope_wiring_self_test
+  run_shipped_wiring_self_test
+  run_lease_read_self_test
+  run_tmpfile_self_test
+  exit 0
+fi
+
+command -v gh >/dev/null || { echo "gh (GitHub CLI) required" >&2; exit 1; }
+
+# `to_epoch` lived here and was `_board_pr_epoch` in scripts/lib/board-pr.sh character for
+# character (#4480). The copy is gone; the shared one is reached through `board_lease_age_seconds`,
+# which is the only thing this script parsed a timestamp for. Its no-`echo 0` contract is unchanged
+# and still load-bearing: `echo 0` made `now - 0` ≈ now, so an unparseable stamp looked infinitely
+# old and its lease was reclaimed INSTANTLY. A timestamp we cannot read is a reason to leave a claim
+# alone, not to take it.
+#
+# The script-level `now` went with it. Its only reader was the `now - stamp_epoch` this replaced;
+# board_lease_age_seconds takes its own clock reading, so a second one here would be an unreferenced
+# assignment that still LOOKS like shared state to the next person adding a timing check.
 
 # ── init-labels ──────────────────────────────────────────────────────────────
 if [ "$MODE" = "init" ]; then
@@ -71,14 +682,6 @@ fi
 board="$(gh issue list --state open --limit 300 --json number,title,labels,body,assignees)"
 have() { echo "$board" | jq -e --arg n "$1" --arg l "$2" '.[]|select(.number==($n|tonumber))|.labels|map(.name)|index($l)' >/dev/null 2>&1; }
 
-# has_closing_pr / has_active_pr — evidence that a holder is alive despite a stale lease. Both fail
-# CLOSED (a gh failure reads as "yes, taken"): here a false "no" STRIPS a live instance's claim.
-# Shared with claim-work.sh, which needs the identical predicates — this file used to carry a
-# verbatim copy of has_closing_pr, and one protocol duplicated across call sites is how the xacct
-# gate diverged three ways. See scripts/lib/board-pr.sh.
-# shellcheck source=scripts/lib/board-pr.sh
-. scripts/lib/board-pr.sh
-
 # ── the merged-PR corpus, passed on DISK and never through argv ───────────────
 # Both consumers below (the close-shipped closer and the possibly-shipped advisory) need the
 # recent merged PRs. Both used to receive it as `jq --argjson merged "$merged"` — roughly 1 MB of
@@ -92,12 +695,30 @@ have() { echo "$board" | jq -e --arg n "$1" --arg l "$2" '.[]|select(.number==($
 # has been over the line. Neither had a failure mode that said anything.
 #
 # A file has no size ceiling, and `--slurpfile` reads it directly. Keep it that way.
+#
+# `files` IS PART OF THE CORPUS NOW (#4523). The possibly-shipped advisory below no longer asks
+# whether a PR body says `#n`; it asks whether the PR CHANGED A FILE the unit's `scope:` claims,
+# and that question needs each PR's changed-file list. It costs roughly 5 KB per PR — ~1.7 MB at
+# `--limit 300` — which is exactly why it goes to the file the paragraph above insists on.
+#
+# `gh` pages that field at 100 files per PR, so a list of exactly 100 may be truncated. The matcher
+# is told about the cap and reports such a PR as NOT COMPARABLE rather than as "no intersection":
+# a truncated list can prove a hit and can never prove its absence.
 MERGED_PRS=""
+MERGED_PRS_OK=0
 fetch_merged_prs() {
-  MERGED_PRS="$(mktemp -t alethia-merged-prs)"
-  trap 'rm -f "$MERGED_PRS"' EXIT
-  gh pr list --state merged --limit 300 --json number,title,body >"$MERGED_PRS" 2>/dev/null \
-    || echo '[]' >"$MERGED_PRS"
+  coordinate_tmpfile MERGED_PRS merged-prs
+  # NOT `2>/dev/null || echo '[]'` and nothing else. An empty corpus and a corpus we could not
+  # fetch produce the same silence downstream — "no unit is possibly shipped" — and that silent
+  # -empty is the exact shape the ARG_MAX break above hid behind for weeks. Say which it is.
+  if gh pr list --state merged --limit 300 --json number,title,body,files >"$MERGED_PRS" 2>/dev/null; then
+    MERGED_PRS_OK=1
+  else
+    echo '[]' >"$MERGED_PRS"
+    MERGED_PRS_OK=0
+    echo "  ⚠ merged-PR corpus: \`gh pr list\` FAILED — the corpus is EMPTY, not clean. Every merge-based" >&2
+    echo "    verdict below (close-shipped, possibly-shipped) is therefore unmeasured, not negative." >&2
+  fi
 }
 
 # ── close-shipped: the manual backstop for the close-on-dev-merge Action ──────
@@ -110,6 +731,18 @@ fetch_merged_prs() {
 # units are in `board`). See .claude/COORDINATION.md.
 if [ "$MODE" = "close-shipped" ]; then
   fetch_merged_prs
+  # AN UNFETCHED CORPUS IS NOT AN EMPTY ONE, and this path is the one that MUTATES the board.
+  # `fetch_merged_prs` falls back to `[]` and warns on STDERR; the jq below then evaluates that
+  # empty corpus perfectly happily, matches nothing, and prints "Nothing to close." on STDOUT with
+  # exit 0. Any caller capturing stdout — or any log that separates the two streams — reads that
+  # as a measured all-clear over a corpus that was never fetched. That is the degradation the
+  # comment below forbids, arriving through the door the report path already closed: the signal
+  # existed and only the reporting half consulted it.
+  [ "$MERGED_PRS_OK" -eq 1 ] || {
+    echo "✗ close-shipped: the merged-PR corpus could not be fetched, so the board is UNMEASURED," >&2
+    echo "  not clean. Closing NOTHING." >&2
+    exit 1
+  }
   # Emit "<issue> <pr-list>" pairs for every claimable unit a merged PR CLOSES (keyword + #n in
   # title or body — the same signal GitHub honours and the Action parses).
   #
@@ -173,19 +806,22 @@ reclaimed=0
 # three writes are gated separately, further down.
 if [ "$MODE" = "full" ] || [ "$MODE" = "report" ]; then
   for n in $(echo "$board" | jq -r '.[]|select(.labels|map(.name)|index("claimed"))|.number'); do
-    stamp="$(gh issue view "$n" --json comments \
-      --jq '[.comments[].body|select(startswith("```lease"))]|last // ""' \
-      | sed -n 's/^stamped_at: //p' | tail -1)"
-    [ -z "$stamp" ] && stamp="$(gh issue view "$n" --json comments \
-      --jq '[.comments[].body|select(startswith("```lease"))]|last // ""' | sed -n 's/^claimed_at: //p' | tail -1)"
-    if [ -z "$stamp" ]; then continue; fi
-    stamp_epoch="$(to_epoch "$stamp")"
-    # Unparseable stamp → leave it alone (see to_epoch).
-    if [ -z "$stamp_epoch" ]; then
-      echo "· #$n has an unreadable lease timestamp ('$stamp') — leaving the claim in place." >&2
+    # ONE lease reader, shared with claim-work.sh (#4480). This was an inline copy of the same
+    # two-`gh`-reads-plus-fallback that board_lease_age_seconds performs; board-pr.sh's own header
+    # says why two copies of a board protocol is a setup rather than a tidiness question — this
+    # protocol already had two copies once and one of them was wrong (`fixs`/`fixd`), so `Fixes #n`
+    # matched nothing for as long as nobody looked.
+    age="$(board_lease_age_seconds "$n")"
+    # The shared reader prints NOTHING for every "cannot tell" — no lease comment, no `stamped_at`
+    # or `claimed_at`, an unparseable stamp, or a `gh` that failed. The inline version distinguished
+    # a missing lease (skipped in SILENCE) from an unreadable one (warned). Collapsing them is
+    # deliberate and is the safer of the two: both mean we cannot say how old this claim is, and a
+    # `claimed` unit with no readable lease at all is the #1247 hand-claim shape — the one thing on
+    # this board worth naming out loud, not skipping quietly. Either way the claim STAYS.
+    if [ -z "$age" ]; then
+      echo "· #$n has no readable lease timestamp — leaving the claim in place." >&2
       continue
     fi
-    age=$(( now - stamp_epoch ))
     if [ "$age" -gt "$LEASE_TTL" ]; then
       # The docs promised this checked "PR/branch activity" and it never did — it reclaimed purely
       # on elapsed time, so a unit being actively built for over an hour without a heartbeat was
@@ -224,7 +860,7 @@ if [ "$MODE" = "full" ]; then
     body="$(echo "$board" | jq -r --arg n "$n" '.[]|select(.number==($n|tonumber))|.body // ""')"
     # `|| true`: grep exits 1 when an issue has no blocked-by; under `set -e` + pipefail that
     # non-zero command substitution would abort the whole pass on the first unblocked issue.
-    deps="$(printf '%s' "$body" | sed -n 's/.*[Bb]locked-by:\([^\n]*\).*/\1/p' | grep -oE '#[0-9]+' | tr -d '#' | sort -u || true)"
+    deps="$(printf '%s\n' "$body" | blocked_by_from_body)"
     [ -z "$deps" ] && { have "$n" blocked && gh issue edit "$n" --remove-label blocked >/dev/null 2>&1 || true; continue; }
     open_dep=0
     for d in $deps; do
@@ -240,7 +876,7 @@ if [ "$MODE" = "full" ]; then
 fi
 
 # Refresh the board after mutations for an accurate report.
-[ "$MODE" = "full" ] && board="$(gh issue list --state open --limit 300 --json number,title,labels,assignees)"
+[ "$MODE" = "full" ] && board="$(gh issue list --state open --limit 300 --json number,title,labels,body,assignees)"
 
 # ── report ───────────────────────────────────────────────────────────────────
 echo
@@ -264,26 +900,37 @@ echo "$board" | jq -r '
   + "   epics: \(map(select(.labels|map(.name)|index("epic")))|length)"
 '
 
-# Collisions to eyeball: >1 claimed mutex:migration.
+# Collisions to eyeball, BOTH halves of what COORDINATION.md promises: >1 claimed
+# mutex:migration, and overlapping `scope:` globs among the units that can be worked at once.
+# Each prints its verdict either way — "no line" was the whole defect (#4115).
 migc="$(echo "$board" | jq '[.[]|select((.labels|map(.name)|index("claimed")) and (.labels|map(.name)|index("mutex:migration")))]|length')"
-[ "$migc" -gt 1 ] && echo "  ⚠ COLLISION: $migc claimed migration units at once — only one may generate migrations."
+if [ "$migc" -gt 1 ]; then
+  echo "  ⚠ COLLISION: $migc claimed migration units at once — only one may generate migrations."
+else
+  echo "  ✓ mutex:migration: $migc claimed (a collision needs 2 or more)."
+fi
+printf '%s' "$board" | scope_collision_report
 
 # UI awaiting the human.
 uis="$(echo "$board" | jq -r '[.[]|select(.labels|map(.name)|index("class:ui"))|select(.labels|map(.name)|index("needs:design") or (.labels|map(.name)|index("needs:human")))|"#\(.number) \(.title)"][]' 2>/dev/null || true)"
 if [ -n "$uis" ]; then echo "  ── UI awaiting you ──"; echo "$uis" | sed 's/^/  /'; fi
 
-# ── possibly-shipped: open board units a MERGED PR references but that never closed ──
-# The stale-open failure mode: a multi-issue PR closes several units in one merge but omits
-# the per-issue `Closes #n`, so GitHub creates no closing linkage and the issue never
-# auto-closes — a future instance then re-claims finished work. Surface them to eyeball
-# (heuristic — a reference is not a delivery; verify vs origin/dev before closing). Advisory
-# only, never mutates, like the COLLISION flag above. See .claude/COORDINATION.md.
+# ── possibly-shipped: open board units a MERGED PR already edited ────────────
+# The stale-open failure mode this exists for: a multi-issue PR closes several units in one merge
+# but omits the per-issue `Closes #n`, so GitHub creates no closing linkage and the issue never
+# auto-closes — a future instance then re-claims finished work.
+#
+# A REFERENCE IS NOT A DELIVERY, and after #4523 this section no longer pretends otherwise: it holds
+# each merged PR's CHANGED FILES against the unit's own `scope:`, tiers the evidence, and prints the
+# unit's `check:` line as the thing that settles it. Advisory only, never mutates, like the COLLISION
+# flag above. See .claude/COORDINATION.md.
 fetch_merged_prs
 
 # ── DEBT REGISTERS: where a mention means the debt was NOT paid ──────────────
 #
-# possibly-shipped below asks "does a merged PR mention this number?" and reads a hit as evidence
-# the unit shipped. For one whole class of PR that inference is exactly BACKWARDS.
+# For one whole class of PR, "a merged PR touched this unit's files" points BACKWARDS — and it is a
+# class the file question below cannot separate on its own, because a ratchet PR genuinely edits the
+# files it excludes.
 #
 # A ratchet/guard PR records the debt it chose NOT to pay by naming the issue in an exclusion file.
 # Fourteen of these were verified by hand against origin/dev and NOT ONE had shipped: #3290/#3291
@@ -303,8 +950,7 @@ infra/template-parity-exclusions.yaml
 scripts/addons/render-nondeterministic.txt
 scripts/addons/published-defaults-allowed.txt
 "
-DEBT_MAP="$(mktemp -t alethia-debt-map)"
-trap 'rm -f "$DEBT_MAP"' EXIT
+coordinate_tmpfile DEBT_MAP debt-map
 debt_registers_read=0
 : >"$DEBT_MAP"
 for _reg in $DEBT_REGISTERS; do
@@ -323,70 +969,65 @@ if [ "$debt_registers_read" -eq 0 ]; then
   echo "  ⚠ debt-registers: none of the $(echo "$DEBT_REGISTERS" | grep -c .) declared register files exist here — debt inversion SKIPPED, so possibly-shipped below is un-filtered." >&2
 fi
 
-# Advisory, so a failure warns and continues rather than aborting the report — but it must SAY so.
-# The previous `2>/dev/null || true` turned a jq that could not even be exec'd into a silent
-# "no hits", which is why this section never printed once (see fetch_merged_prs).
-if ! ship="$(jq -r --slurpfile _m "$MERGED_PRS" '
-  ($_m[0] // []) as $merged
-  | [ .[]
-    # EXACTLY the READY predicate used by the counts below — not a stricter one. The hazard is a
-    # unit that still LOOKS claimable, so the set to police is by definition the set READY
-    # publishes. This additionally required a `class:` label and excluded needs:human/needs:design,
-    # neither of which READY does — so a unit with no class label (#1207, #1046, #1050, #1058) or a
-    # needs:human one (#1268, #1065) was counted claimable on the dashboard and invisible here.
-    # Worst case was #1207: two merged PRs named it in their TITLES — the strongest signal this
-    # heuristic has — suppressed because the issue happened to carry only `wave:connectors-v2`.
-    | select(.labels|map(.name)|any(. == "claimed" or . == "blocked" or . == "epic")|not)
-    | .number as $n
-    | ($merged | map(select((.title|test("#\($n)\\b")) or (.body|test("#\($n)\\b"))))) as $refs
-    | select($refs|length > 0)
-    | { n: $n, title: .title[0:46],
-        strong: ($refs|map(select(.title|test("#\($n)\\b")))|length > 0),          # named in a PR title = likely closed
-        prs: ($refs|map("#\(.number)")|join(",")) } ]
-  | sort_by(.n)[]
-  | "  #\(.n)  \(if .strong then "LIKELY" else "verify" end)  (merged \(.prs))  \(.title)"
-' <<<"$board")"; then
-  echo "  ⚠ possibly-shipped: could not evaluate (jq failed) — advisory SKIPPED, the board may be stale." >&2
-  ship=""
-fi
-# Partition the rendered rows: a unit a register names is DEBT-RECORDED, and belongs under its own
-# heading saying so, not under a heading inviting somebody to close it.
-debt_rows=""; ship_rows=""
-if [ -n "$ship" ]; then
-  while IFS= read -r _row; do
-    [ -n "$_row" ] || continue
-    _n="$(printf '%s' "$_row" | sed -n 's/^  #\([0-9][0-9]*\) .*/\1/p')"
-    _reg=""
-    [ -n "$_n" ] && _reg="$(awk -F'\t' -v n="$_n" '$1 == n { print $2; exit }' "$DEBT_MAP")"
-    if [ -n "$_reg" ]; then
-      debt_rows="$debt_rows  #$_n  debt-recorded  ($_reg)$(printf '%s' "$_row" | sed 's/^  #[0-9]*  [A-Za-z]*  ([^)]*)//')
-"
-    else
-      ship_rows="$ship_rows$_row
-"
-    fi
-  done <<EOF
-$ship
-EOF
-fi
-if [ -n "$debt_rows" ]; then
-  echo "  ── debt-recorded (a merged PR named it — to RECORD the debt, not to pay it; do NOT close) ──"
-  printf '%s' "$debt_rows"
-  echo "     An exclusion file naming an issue is a reviewed statement that the debt STANDS."
-fi
-if [ -n "$ship_rows" ]; then
-  echo "  ── ⚠ possibly-shipped (open, but a MERGED PR references it — verify vs origin/dev, close if delivered) ──"
-  printf '%s' "$ship_rows"
+# THE ADVISORY ITSELF LIVES IN THE MATCHER (#4523). What used to be here was a jq expression asking
+# "does a merged PR mention `#n`?", rendered under a heading that said "verify vs origin/dev, close
+# if delivered". That predicate was wrong 28 times out of 28 on 2026-09-09 and 12 of the 14 then
+# live on 2026-09-10 — 40 wrong · 2 partial · 0 right — because a PR body writes `#n` to say
+# "ordered behind #n" as readily as to deliver it. At 0/40 the cheapest way to clear the section was
+# to close 40 live units, one of them a production blocker.
+#
+# The question the matcher asks instead is a fact about two file sets: did a merged PR change a file
+# this unit's own `scope:` claims? That cannot be asked in jq without a second glob implementation,
+# which is the drift scripts/lib/scope-overlap.mjs exists to end — so the whole computation moved
+# there, INCLUDING the debt-register partition that used to be done here by rewriting rendered rows
+# with sed. This block now only assembles the inputs.
+#
+# What the advisory claims, and where it stops, is stated in scope-overlap.mjs's header: a scope hit
+# says a merged PR has already edited files this unit owns. It is NOT a delivery — #3348, #3907,
+# #4176 and #4455 each had their cited PR land inside the unit's own subject matter with the defect
+# still live — so every reported row prints the unit's own `check:` line, and no heading here invites
+# anyone to close anything.
+# Declared before the call: `coordinate_tmpfile` assigns them through `printf -v`, an indirection
+# the linter cannot trace, so without this it reads both as referenced-but-never-assigned (SC2154).
+# (Keep "shellcheck" off the start of a comment line here — that is read as a directive, not prose.)
+shipped_input=""
+board_file=""
+coordinate_tmpfile shipped_input shipped-input
+coordinate_tmpfile board_file board
+printf '%s' "$board" >"$board_file"
+if [ "$MERGED_PRS_OK" -ne 1 ]; then
+  # An EMPTY corpus and a corpus we could not fetch produce the same "nothing is possibly shipped".
+  # Since the corpus is the evidence, an unfetched one makes this section unmeasured, not clean.
+  echo "  ── possibly-shipped (merged-PR evidence, held against each unit's own \`scope:\`) ──"
+  echo "  ⚠ possibly-shipped NOT CHECKED: the merged-PR corpus could not be fetched, so there is no"
+  echo "    evidence to hold anything against. This is unmeasured, not a clean board."
+elif jq -n \
+     --slurpfile board "$board_file" \
+     --slurpfile merged "$MERGED_PRS" \
+     --argjson kw "$(closing_keywords_json)" \
+     --rawfile debt "$DEBT_MAP" \
+     '{ board: ($board[0] // []),
+        merged: ($merged[0] // []),
+        closingKeywords: $kw,
+        debt: ($debt | split("\n") | map(select(length > 0) | split("\t"))
+                     | map(select(length == 2) | {key: .[0], value: .[1]}) | from_entries) }' \
+     >"$shipped_input" 2>/dev/null; then
+  shipped_report <"$shipped_input"
+else
+  # Composing the input is the one step with no verdict of its own, so it needs one here.
+  echo "  ── possibly-shipped (merged-PR evidence, held against each unit's own \`scope:\`) ──"
+  echo "  ⚠ possibly-shipped NOT CHECKED: could not compose the matcher's input (jq failed)."
 fi
 
 # ── superseded nightly REDs: the board carrying an ANSWERED cell as open work ────
 #
-# A DIFFERENT AND STRONGER QUESTION than possibly-shipped above. That one asks "does a merged PR
-# mention this number?", which is text proximity — it cannot tell a PR that FIXED an issue from one
-# that merely named it as still-red or deliberately deferred it. This asks the proof ledger whether
-# a run that PROVED the cell has landed since the red was filed, and answers with the committed
-# bundle path. An `e2e nightly:` issue does not close on a merge at all; it closes on a green run,
-# so a merge-based verifier is structurally wrong for the whole `from:e2e-nightly` class.
+# A DIFFERENT QUESTION from possibly-shipped above, and the only one this class can be asked. An
+# `e2e nightly:` issue does not close on a merge at all; it closes on a green RUN, so a merge-based
+# verifier is structurally wrong for the whole `from:e2e-nightly` class. That used to be prose here
+# while the advisory above listed #2384 and #3855 on every run; since #4523 the code enforces it —
+# the matcher exempts the label outright and reports how many it exempted, and this section is where
+# those units are actually answered. It asks the proof ledger whether a run that PROVED the cell has
+# landed since the red was filed, and answers with the committed bundle path.
 #
 # Read-only, and it mutates nothing: only a human can confirm the later run really answered the red
 # rather than merely postdating it. `--superseded-reds` exits non-zero only if the rollup's own
@@ -407,7 +1048,7 @@ fi
 if [ -n "$stalled_units" ]; then
   echo "  ── ⚠ stalled (claimed, lease dead, and the PR holding it is stuck — needs a human) ──"
   printf '%s' "$stalled_units"
-  echo "     take one over with:  scripts/claim-work.sh --issue <n>   (then rebase or close its PR)"
+  echo "     take one over with:  scripts/claim-work.sh --issue <n> --takeover   (then rebase or close its PR)"
 fi
 
 # `if`, not `[ … ] && echo` — as the script's LAST command, a short-circuited `&&` becomes the exit

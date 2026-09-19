@@ -36,6 +36,9 @@ vi.mock("@/lib/cloud-providers/unsupported-kinds", async (importOriginal) => {
 	return { ...actual, unsupportedKindsFor: vi.fn(actual.unsupportedKindsFor) };
 });
 
+import { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { ProjectNameTakenError } from "@/lib/queries/projects";
 import {
 	addEnvironment,
 	createProject,
@@ -45,12 +48,17 @@ import {
 	duplicateProjectForProvider,
 	getProject,
 	getProjectAsFormData,
+	getProjectDuplicateSummary,
 	getProjectEnvironments,
 	getProjects,
 	getProjectsList,
 	planProject,
 	provisionProject,
+	tryCreateProject,
+	tryDuplicateProjectForProvider,
+	updateProjectName,
 } from "@/app/server/actions/projects";
+import { PROJECT_NAME_MAX_LENGTH } from "@/lib/validations/project-form.schema";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
@@ -152,6 +160,9 @@ type RowsResolver = Rows | (() => Rows);
 function setupDb(cfg: {
 	select?: Map<unknown, RowsResolver>;
 	insert?: Map<unknown, RowsResolver>;
+	/** Per-table result for `tx.update(...)`. A resolver that THROWS models a constraint violation
+	 *  on the write — the only way to reach a catch branch that maps a driver error. */
+	update?: Map<unknown, RowsResolver>;
 	default?: Rows;
 	/** Result of the env-status CAS RPC (set_env_status via tx.execute). true = env moved. */
 	envCasUpdated?: boolean;
@@ -206,7 +217,9 @@ function setupDb(cfg: {
 						? resolve(cfg.insert, from)
 						: op === "select"
 							? resolve(cfg.select, from)
-							: def,
+							: op === "update"
+								? resolve(cfg.update, from)
+								: def,
 				),
 		});
 		return c;
@@ -318,7 +331,13 @@ describe("createProject", () => {
 
 	it("derives a collision-free slug, seeds the default env + hierarchy edge, persists components, and audits", async () => {
 		const { valuesSpy, insertSpy } = setupDb({
-			select: new Map([[projects, [{ slug: "my-app" }]]]), // an existing project already owns "my-app"
+			// An existing project already owns the SLUG "my-app" — but is named something else, so
+			// the create is a slug collision (de-duplicated to `my-app-2`) and NOT a name
+			// collision (which #3145 now refuses outright). The row carries `project_name`
+			// because insertProjectWithDefaultFabric selects it: a fixture missing a column the
+			// query asks for is not a smaller version of the wire shape, it is a different one,
+			// and the production code reading it crashed rather than being "leniently" typed.
+			select: new Map([[projects, [{ slug: "my-app", project_name: "Some Other Project" }]]]),
 			insert: new Map<unknown, RowsResolver>([
 				[
 					projects,
@@ -503,6 +522,188 @@ describe("createProject", () => {
 			/forbidden/,
 		);
 		expect(withActorScope).not.toHaveBeenCalled();
+	});
+
+	// ── #4644: the action parses its input, and does it AFTER the guard ──
+	//
+	// Before this, `createProject` re-parsed NOTHING. `projects.project_name` is an unbounded
+	// `text()` column and the three `project_name` rules lived only in the Configure form, so the
+	// action id was reachable with a name no schema had seen.
+
+	it.each([
+		["", "A project name is required"],
+		["   ", "A project name is required"],
+		["!!!", "Enter at least one letter or number"],
+		["x".repeat(101), "Project name must be 100 characters or fewer"],
+	])(
+		"refuses %j server-side with the sentence the form shows, writing nothing",
+		async (project_name, message) => {
+			const { insertSpy } = setupDb({});
+			await expect(
+				createProject({
+					...baseInput,
+					project: { ...baseInput.project, project_name },
+				} as never),
+			).rejects.toThrow(message);
+			// The refusal is decided before any write — `withScope` runs the transaction body.
+			expect(insertSpy).not.toHaveBeenCalled();
+		},
+	);
+
+	// THE ORDERING IS THE SECURITY PROPERTY. `authorize` must answer first, or the action becomes an
+	// input oracle: POST a name with no session and learn from the reply whether it is too long,
+	// unslugifiable or empty. Asserted by giving it BOTH problems at once — a forbidden caller and a
+	// name that breaks a rule — and requiring the GUARD's error, not the validator's.
+	it("asks the guard BEFORE the validator, so a refused caller never gets the rule's answer", async () => {
+		vi.mocked(authorize).mockRejectedValue(new Error("forbidden"));
+		setupDb({});
+		// ONE call, both assertions off the SAME error — `mockRejectedValueOnce` is spent by the
+		// first invocation, so a second `createProject(...)` here would run under a RESOLVED guard
+		// and reach the validator legitimately. That is the shape this test exists to detect, so it
+		// must not be the shape the test itself has.
+		const err = await createProject({
+			...baseInput,
+			project: { ...baseInput.project, project_name: "x".repeat(400) },
+		} as never).catch((e: unknown) => e);
+		if (!(err instanceof Error))
+			throw new Error(`expected a rejection, got ${String(err)}`);
+		expect(err.message).toMatch(/forbidden/);
+		// Not merely "some error": the validator's sentence must be ABSENT. Flip the two lines in
+		// `createProject` and this is the assertion that goes red.
+		expect(err.message).not.toMatch(/characters or fewer/);
+	});
+
+	it("stores the name TRIMMED, so ' api' and 'api' cannot both exist under the case-insensitive index", async () => {
+		const { valuesSpy } = setupDb({
+			select: new Map([[projects, []]]),
+			insert: new Map<unknown, RowsResolver>([
+				[projects, [{ id: "p1", org_id: "org-1" }]],
+				[projectFabrics, [{ id: "fabric-1" }]],
+				[projectEnvironments, [{ id: "env-1" }, { id: "env-preview" }]],
+			]),
+		});
+		await createProject({
+			...baseInput,
+			project: { ...baseInput.project, project_name: "  Padded  " },
+			databases: [],
+			secrets: [],
+		} as never);
+		expect(valuesFor(valuesSpy, projects).project_name).toBe("Padded");
+		// The audit row records what was STORED, not what was typed.
+		expect(valuesFor(valuesSpy, auditLog)).toMatchObject({
+			changes: { project_name: "Padded" },
+		});
+	});
+});
+
+// ============================================================
+// tryCreateProject — #4644's user-facing half
+// ============================================================
+//
+// A `throw` out of a `"use server"` export is redacted to a `digest` in a production build, so the
+// sentence `createProject` writes never reaches the screen. This wrapper returns it instead.
+
+describe("tryCreateProject", () => {
+	const baseInput = {
+		project: {
+			project_name: "My App",
+			environment_stage: "production",
+			region: "us-east-1",
+			cloud_identity_id: "ci-1",
+			iac_version: "1.9.5",
+		},
+		network: { provision_network: true, cidr_block: "10.0.0.0/16" },
+		cluster: {
+			cluster_version: "1.31",
+			instance_types: ["m5.large"],
+			node_min_size: 2,
+			node_max_size: 5,
+			node_desired_size: 2,
+			cluster_admins: [],
+			provider_config: {},
+		},
+		dns: { enabled: false },
+		repositories: { apps_destination_repo: "git@x" },
+		databases: [],
+		secrets: [],
+	};
+
+	it("returns the project on the happy path", async () => {
+		setupDb({
+			select: new Map([[projects, []]]),
+			insert: new Map<unknown, RowsResolver>([
+				[projects, [{ id: "p1", org_id: "org-1", slug: "my-app" }]],
+				[projectFabrics, [{ id: "fabric-1" }]],
+				[projectEnvironments, [{ id: "env-1" }, { id: "env-preview" }]],
+			]),
+		});
+		const res = await tryCreateProject(baseInput as never);
+		expect(res).toEqual({
+			ok: true,
+			project: { id: "p1", org_id: "org-1", slug: "my-app" },
+		});
+	});
+
+	it("RETURNS the name-rule refusal as a readable sentence instead of throwing", async () => {
+		setupDb({});
+		const res = await tryCreateProject({
+			...baseInput,
+			project: { ...baseInput.project, project_name: "x".repeat(101) },
+		} as never);
+		expect(res).toEqual({
+			ok: false,
+			error: "Project name must be 100 characters or fewer",
+		});
+	});
+
+	// The defect #4644 names, end to end: the user typed a name a teammate already holds.
+	it("RETURNS the duplicate-name refusal, naming the name", async () => {
+		setupDb({
+			select: new Map([
+				[projects, [{ slug: "other", project_name: "My App" }]],
+			]),
+		});
+		const res = await tryCreateProject(baseInput as never);
+		expect(res.ok).toBe(false);
+		if (res.ok) throw new Error("unreachable");
+		expect(res.error).toMatch(/A project named "My App" already exists/);
+		expect(res.error).toMatch(/without regard to case/);
+	});
+
+	// THE WRAPPER MUST NOT ASK ANYTHING BEFORE `createProject` DOES. A validation run here would sit
+	// above `authorize` — this wrapper is its own POST-addressable action id — and answer a caller
+	// who never cleared the guard. Same construction as the `createProject` ordering test: both
+	// problems at once, and the GUARD must be the one that answers.
+	it("makes no statement about the input before the guard has run", async () => {
+		// `mockRejectedValue`, not `…Once`: the top-level `beforeEach` uses `vi.clearAllMocks()`,
+		// which clears CALLS but not a queued one-shot. A wrapper that answers before the guard
+		// never consumes a `…Once`, so it would leak a rejection into the NEXT test and report the
+		// regression somewhere other than here. A persistent implementation is replaced by the next
+		// `beforeEach`'s `mockResolvedValue`.
+		vi.mocked(authorize).mockRejectedValue(new Error("forbidden"));
+		setupDb({});
+		await expect(
+			tryCreateProject({
+				...baseInput,
+				project: { ...baseInput.project, project_name: "" },
+			} as never),
+		).rejects.toThrow(/forbidden/);
+		// The guard was REACHED. Without this, a wrapper that pre-validated and returned
+		// `{ ok: false }` would fail only on the `rejects` line, which reads as "it didn't throw"
+		// rather than "it answered a caller who never cleared authz".
+		expect(authorize).toHaveBeenCalledWith("create", { type: "project" });
+	});
+
+	// An unexpected failure is a DEFECT, not advice. Turning it into `{ ok: false, error }` would
+	// render a stack-shaped sentence as though the user could act on it — worse than the digest.
+	it("RETHROWS anything that is not a refusal", async () => {
+		setupDb({
+			select: new Map([[projects, []]]),
+			insert: new Map([[projects, []]]), // insert returns nothing → "Failed to create project"
+		});
+		await expect(tryCreateProject(baseInput as never)).rejects.toThrow(
+			/Failed to create project/,
+		);
 	});
 });
 
@@ -2052,7 +2253,121 @@ describe("deleteProject", () => {
 			id: "p1",
 		});
 		expect(deleteSpy).toHaveBeenCalledWith(projects);
-		expect(r).toEqual({ success: true });
+		// `{ ok: true }`, not `{ success: true }` — one discriminant across all three actions, so a
+		// form narrows the same way everywhere (#4644).
+		expect(r).toEqual({ ok: true });
+	});
+
+	// #4644: this refusal used to be a `throw new Error(...)`, redacted to a digest in a production
+	// build. The Danger Zone then closed its dialog and said nothing the user could act on.
+	it("RETURNS the live-environment refusal instead of throwing, and deletes nothing", async () => {
+		const { deleteSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projectEnvironments, [{ status: "ACTIVE" }]],
+			]),
+		});
+		const r = await deleteProject("p1");
+		expect(r).toEqual({
+			ok: false,
+			error:
+				"This project has live or in-flight environments. Destroy them before deleting the project.",
+		});
+		expect(deleteSpy).not.toHaveBeenCalled();
+	});
+});
+
+// ============================================================
+// updateProjectName — the RENAME half of #3145's uniqueness guarantee
+// ============================================================
+//
+// The rename path had no test at all, while create had several. That asymmetry is the defect:
+// #3145's promise is "project names are unique per org", and a rename is the other way to break it
+// — the one that takes a name a teammate is already using rather than minting a new collision.
+
+describe("updateProjectName", () => {
+	it("REFUSES a name another project in the org already holds", async () => {
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				// 1. the project being renamed, 2. the case-insensitive clash probe finds a rival
+				[projects, (() => { let n = 0; return () => (n++ === 0 ? [{ org_id: "org-1" }] : [{ id: "other" }]); })()],
+			]),
+		});
+		// RETURNED, not thrown (#4644) — but it must still be the SAME sentence
+		// `ProjectNameTakenError` writes, or create and rename start disagreeing again.
+		const r = await updateProjectName("p1", "Taken");
+		expect(r).toEqual({
+			ok: false,
+			error: new ProjectNameTakenError("Taken").message,
+		});
+	});
+
+	it("...and allows a name only this project holds — re-saving must not collide with itself", async () => {
+		const { setSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([
+				// The clash probe excludes `ne(projects.id, projectId)`, so it comes back empty.
+				[projects, (() => { let n = 0; return () => (n++ === 0 ? [{ org_id: "org-1" }] : []); })()],
+			]),
+			default: [{ project_name: "Renamed" }],
+		});
+		expect(await updateProjectName("p1", "Renamed")).toEqual({ ok: true, project_name: "Renamed" });
+		expect(setSpy).toHaveBeenCalledWith(projects, expect.objectContaining({ project_name: "Renamed" }));
+	});
+
+	// THE PRE-CHECK IS OPTIMISTIC; THE INDEX IS THE AUTHORITY. Two concurrent renames both read an
+	// empty clash probe at READ COMMITTED and both proceed — the loser gets a 23505, and mapping it
+	// here is what makes the race and the ordinary case give the user the same message instead of a
+	// raw Postgres error.
+	it("maps a 23505 the pre-check could not see onto the same friendly error", async () => {
+		const violation = Object.assign(new Error("Failed query: update projects"), {
+			cause: { code: "23505", constraint_name: "projects_org_id_project_name_key" },
+		});
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projects, (() => { let n = 0; return () => (n++ === 0 ? [{ org_id: "org-1" }] : []); })()],
+			]),
+			update: new Map<unknown, RowsResolver>([[projects, () => { throw violation; }]]),
+		});
+		const r = await updateProjectName("p1", "Racy");
+		expect(r).toEqual({
+			ok: false,
+			error: new ProjectNameTakenError("Racy").message,
+		});
+	});
+
+	// #4644's second half on this path: the rename field applied two of the three `project_name`
+	// rules and the create path applied none, so `!!!` was refusable on one screen and storable on
+	// the other. Both now ask `projectNameProblem`, which reads the schema.
+	it.each([
+		["", "A project name is required"],
+		["   ", "A project name is required"],
+		["!!!", "Enter at least one letter or number"],
+		["x".repeat(101), "Project name must be 100 characters or fewer"],
+	])("REFUSES %j with the same sentence the create path gives", async (name, error) => {
+		const { setSpy } = setupDb({});
+		expect(await updateProjectName("p1", name)).toEqual({ ok: false, error });
+		expect(setSpy).not.toHaveBeenCalled();
+	});
+
+	it("asks the guard before the name rule, so a refused caller gets the guard's answer", async () => {
+		vi.mocked(authorize).mockRejectedValue(new Error("forbidden"));
+		setupDb({});
+		await expect(updateProjectName("p1", "")).rejects.toThrow(/forbidden/);
+		expect(authorize).toHaveBeenCalledWith("edit", {
+			type: "project",
+			id: "p1",
+		});
+	});
+
+	// The null-org branch mirrors the INDEX rather than being tidier than it: a btree unique treats
+	// NULLs as DISTINCT, so a row with no org is not constrained by that index and pre-checking it
+	// would refuse a rename Postgres would accept.
+	it("skips the friendly pre-check when the row carries no org, because the index does too", async () => {
+		const { setSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([[projects, () => [{ org_id: null }]]]),
+			default: [{ project_name: "Orphan" }],
+		});
+		expect(await updateProjectName("p1", "Orphan")).toEqual({ ok: true, project_name: "Orphan" });
+		expect(setSpy).toHaveBeenCalledWith(projects, expect.objectContaining({ project_name: "Orphan" }));
 	});
 });
 
@@ -2295,7 +2610,16 @@ describe("duplicateProjectForProvider", () => {
 					project_name: "My App",
 				},
 			],
-			[{ slug: "my-app" }], // createProject's existing-slug list
+			// The org's project names, read to derive a free name for the clone. THE SOURCE PROJECT
+			// IS IN THIS LIST, because it is in the org being duplicated within — the shape
+			// production always has, and the one an earlier fixture here did not.
+			[{ project_name: "My App" }],
+			// createProject's existing-project list: slug + project_name, the two columns
+			// insertProjectWithDefaultFabric selects (#3145). It carries the SOURCE project's own
+			// name for the same reason. An earlier version of this fixture said "Some Other
+			// Project" — a shape that cannot occur — and that is why it went green while the
+			// cross-cloud duplicate threw `ProjectNameTakenError` on every single attempt.
+			[{ slug: "my-app", project_name: "My App" }],
 		];
 
 		const { valuesSpy } = setupDb({
@@ -2376,6 +2700,11 @@ describe("duplicateProjectForProvider", () => {
 			cloud_identity_id: "ci-target",
 			user_id: "user-1",
 		});
+		// AND WITH A NAME THE ORG DOES NOT ALREADY HOLD. `convertProjectConfig` never touches
+		// `project_name` and the dialog has no name field, so without a derived name this is the
+		// source project's own name in the source project's own org — which #3145's uniqueness
+		// check refuses, making the duplicate fail 100% of the time.
+		expect(projVals).toMatchObject({ project_name: "My App (gcp)" });
 	});
 
 	it("throws when the target cloud identity is missing", async () => {
@@ -2409,6 +2738,272 @@ describe("duplicateProjectForProvider", () => {
 });
 
 // ============================================================
+// #4162 — the name a cross-cloud clone gets, and the length that made the feature unreachable
+// ============================================================
+
+/**
+ * The same aws→gcp duplicate fixture the suite above uses, with the SOURCE NAME as a parameter.
+ *
+ * Extracted because #4162's subject is a length: every assertion below differs from its neighbour
+ * only in how long the source project's own name is, and a fixture that hard-codes "My App" cannot
+ * express that. `takenNames` and createProject's existing-project list both carry the source row,
+ * which is the shape production always has (see the first test's comment).
+ *
+ * @param sourceName the source project's display name
+ * @returns setupDb's spies, for asserting the persisted `.values()` payload
+ */
+function duplicateFixture(sourceName: string) {
+	let ciCall = 0;
+	const ciSeq: Rows[] = [
+		[{ provider: "aws" }],
+		[{ provider: "aws" }],
+		[{ provider: "gcp" }],
+	];
+	let projCall = 0;
+	const projSeq: Rows[] = [
+		[
+			{
+				id: "p1",
+				org_id: "org-1",
+				cloud_identity_id: "ci-src",
+				region: "us-east-1",
+				iac_version: "1.9.5",
+				project_name: sourceName,
+			},
+		],
+		[{ project_name: sourceName }],
+		[{ slug: "src", project_name: sourceName }],
+	];
+	return setupDb({
+		select: new Map<unknown, RowsResolver>([
+			[projects, () => projSeq[projCall++] ?? []],
+			[cloudIdentities, () => ciSeq[ciCall++] ?? [{ provider: "gcp" }]],
+			[
+				projectNetwork,
+				[
+					{
+						provision_network: true,
+						cidr_block: "10.0.0.0/16",
+						single_nat_gateway: true,
+					},
+				],
+			],
+			[
+				projectCluster,
+				[
+					{
+						cluster_version: "1.31",
+						instance_types: ["m5.large"],
+						provider_config: {},
+					},
+				],
+			],
+			[projectDns, [{ enabled: false }]],
+			[projectRepositories, [{ apps_destination_repo: "git@x" }]],
+			[projectDatabases, []],
+			[projectSecrets, []],
+			[projectCaches, []],
+			[
+				projectEnvironments,
+				[{ id: "env-1", name: "production", status: "DRAFT", is_default: true }],
+			],
+		]),
+		insert: new Map<unknown, RowsResolver>([
+			[projects, [{ id: "new-proj", slug: "new-proj", org_id: "org-1" }]],
+			[projectFabrics, [{ id: "fabric-1" }]],
+			[projectEnvironments, [{ id: "env-1" }, { id: "env-preview" }]],
+		]),
+	});
+}
+
+/** The cap sentence `projectNameProblem` writes — interpolated, never typed, like the action does. */
+const TOO_LONG = `Project name must be ${PROJECT_NAME_MAX_LENGTH} characters or fewer`;
+
+describe("duplicateProjectForProvider — the clone's name (#4162)", () => {
+	// THE REGRESSION, STATED AS A MEASUREMENT. #4738 gave `createProject` the name rule the action
+	// had never applied — its own header says it "applied NONE of them" against an unbounded
+	// `text()` column. The derived name is `${source} (${target})`, so the suffix is 6 characters
+	// for gcp and the cap is 100: a source project of 95 characters produces 101 and is refused.
+	// Before #4738 the same duplicate SUCCEEDED and persisted a 101-character name.
+	//
+	// 95 is therefore the exact aws/gcp threshold; it is 93 for azure (" (azure)") and 91 for
+	// alibaba/hetzner (" (alibaba)"), and two lower in each case once `pickFreeProjectName` adds
+	// " 2" for a collision. The names between there and PROJECT_NAME_MAX_LENGTH are legal to CREATE
+	// and legal to RENAME to — so this is a project the console lets you have and cannot duplicate.
+	it(`refuses a source name of 95 characters onto gcp — the derived name is over the cap`, () => {
+		const atThreshold = "a".repeat(95);
+		expect(`${atThreshold} (gcp)`.length).toBe(PROJECT_NAME_MAX_LENGTH + 1);
+		duplicateFixture(atThreshold);
+		return expect(
+			duplicateProjectForProvider("p1", "ci-target", "europe-west1"),
+		).rejects.toThrow(TOO_LONG);
+	});
+
+	it("still duplicates a source name of 94 characters — the bound is exact, not approximate", async () => {
+		const underThreshold = "a".repeat(94);
+		const { valuesSpy } = duplicateFixture(underThreshold);
+		await duplicateProjectForProvider("p1", "ci-target", "europe-west1");
+		expect(valuesFor(valuesSpy, projects)).toMatchObject({
+			project_name: `${underThreshold} (gcp)`,
+		});
+	});
+
+	// THE FIX. The name is a PARAMETER, so the dialog's field is what decides — which is the only
+	// remedy available for the case above: no derivation can shorten a name nobody was asked about.
+	it("persists the caller's name instead of the derivation when one is given", async () => {
+		const { valuesSpy } = duplicateFixture("a".repeat(95));
+		await duplicateProjectForProvider(
+			"p1",
+			"ci-target",
+			"europe-west1",
+			"Renamed for GCP",
+		);
+		expect(valuesFor(valuesSpy, projects)).toMatchObject({
+			project_name: "Renamed for GCP",
+		});
+	});
+
+	// The API does not depend on the dialog: a caller with no name field — the action is a
+	// POST-addressable id of its own — still gets the derived default.
+	it("falls back to the derivation when the name is absent", async () => {
+		const { valuesSpy } = duplicateFixture("My App");
+		await duplicateProjectForProvider("p1", "ci-target", "europe-west1");
+		expect(valuesFor(valuesSpy, projects)).toMatchObject({
+			project_name: "My App (gcp)",
+		});
+	});
+
+	// The caller's name is not exempt from the rule — `createProject` parses every name it is
+	// handed, after its `authorize`, and the action asks nothing ahead of it.
+	it("refuses the caller's name when IT breaks the rule", () => {
+		duplicateFixture("My App");
+		return expect(
+			duplicateProjectForProvider(
+				"p1",
+				"ci-target",
+				"europe-west1",
+				"b".repeat(PROJECT_NAME_MAX_LENGTH + 1),
+			),
+		).rejects.toThrow(TOO_LONG);
+	});
+});
+
+describe("tryDuplicateProjectForProvider", () => {
+	// #4644 ON THE DUPLICATE SCREEN. The dialog is a `"use client"` component, so a throw out of
+	// this `"use server"` module is redacted to an opaque `digest` in a production build — which is
+	// what the module comment above `createProject` used to DENY, calling the duplicate path
+	// "IN-PROCESS. No action boundary, no redaction". The refusal has to come back as a value or
+	// the name field the user is now offered has nothing to tell them.
+	it("returns the cap sentence instead of throwing it", async () => {
+		duplicateFixture("a".repeat(95));
+		const res = await tryDuplicateProjectForProvider(
+			"p1",
+			"ci-target",
+			"europe-west1",
+		);
+		expect(res).toEqual({ ok: false, error: TOO_LONG });
+	});
+
+	it("returns the taken-name sentence when the org already holds it", async () => {
+		duplicateFixture("My App");
+		vi.mocked(withScope).mockImplementation((() => {
+			throw new ProjectNameTakenError("My App (gcp)");
+		}) as never);
+		const res = await tryDuplicateProjectForProvider(
+			"p1",
+			"ci-target",
+			"europe-west1",
+		);
+		expect(res).toMatchObject({ ok: false });
+		expect(res).toHaveProperty(
+			"error",
+			expect.stringContaining('A project named "My App (gcp)" already exists'),
+		);
+	});
+
+	it("returns the clone on success", async () => {
+		duplicateFixture("My App");
+		const res = await tryDuplicateProjectForProvider(
+			"p1",
+			"ci-target",
+			"europe-west1",
+			"Fresh",
+		);
+		expect(res).toMatchObject({
+			ok: true,
+			newProjectId: "new-proj",
+			newProjectSlug: "new-proj",
+		});
+	});
+
+	// An unexpected error is a defect, not advice: rendering its text as though the user could act
+	// on it is worse than the digest it would replace.
+	it("rethrows anything that is not a name refusal", async () => {
+		duplicateFixture("My App");
+		vi.mocked(withScope).mockImplementation((() => {
+			throw new Error("the database fell over");
+		}) as never);
+		await expect(
+			tryDuplicateProjectForProvider("p1", "ci-target", "europe-west1"),
+		).rejects.toThrow("the database fell over");
+	});
+});
+
+describe("getProjectDuplicateSummary", () => {
+	// The dialog pre-fills its name field from THIS, so the default it shows and the default the
+	// action falls back to are one derivation rather than two. Keyed by target cloud because the
+	// suffix names that cloud.
+	it("suggests a per-cloud default name the org does not already hold", async () => {
+		let projCall = 0;
+		const projSeq: Rows[] = [
+			[
+				{
+					id: "p1",
+					org_id: "org-1",
+					cloud_identity_id: "ci-src",
+					region: "us-east-1",
+					iac_version: "1.9.5",
+					project_name: "My App",
+				},
+			],
+			// The org's names — "My App (gcp)" is ALREADY TAKEN, so the gcp suggestion must skip to
+			// " 2" while every other cloud is untouched. A fixture where nothing collides cannot
+			// tell a real de-duplication from a bare string concatenation.
+			[{ project_name: "My App" }, { project_name: "My App (gcp)" }],
+		];
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projects, () => projSeq[projCall++] ?? []],
+				[cloudIdentities, [{ provider: "aws" }]],
+				[projectNetwork, [{ provision_network: true, cidr_block: "10.0.0.0/16" }]],
+				[projectCluster, [{ cluster_version: "1.31", instance_types: ["m5.large"] }]],
+				[projectDns, [{ enabled: true }]],
+				[projectRepositories, [{ apps_destination_repo: "git@x" }]],
+				[projectDatabases, []],
+				[projectSecrets, []],
+				[projectCaches, []],
+				[
+					projectEnvironments,
+					[{ id: "env-1", name: "production", is_default: true }],
+				],
+			]),
+		});
+
+		const summary = await getProjectDuplicateSummary("p1");
+		expect(summary.provider).toBe("aws");
+		expect(summary.projectName).toBe("My App");
+		expect(summary.categories).toContain("dns");
+		expect(summary.suggestedNames).toEqual({
+			aws: "My App (aws)",
+			gcp: "My App (gcp) 2",
+			azure: "My App (azure)",
+			hetzner: "My App (hetzner)",
+			alibaba: "My App (alibaba)",
+		});
+	});
+});
+
+// ============================================================
 // Environments
 // ============================================================
 
@@ -2436,7 +3031,7 @@ describe("getProjectEnvironments", () => {
 });
 
 describe("addEnvironment", () => {
-	it("slugifies the name, inherits the org, and persists a non-default DRAFT env", async () => {
+	it("slugifies the name, inherits the org, and derives is_default rather than hard-coding it", async () => {
 		const { valuesSpy } = setupDb({
 			select: new Map([[projects, [{ org_id: "org-1" }]]]),
 			insert: new Map([
@@ -2454,16 +3049,36 @@ describe("addEnvironment", () => {
 			type: "project",
 			id: "p1",
 		});
-		expect(valuesFor(valuesSpy, projectEnvironments)).toEqual({
+		const { is_default: isDefault, ...literals } = valuesFor(
+			valuesSpy,
+			projectEnvironments,
+		);
+		expect(literals).toEqual({
 			project_id: "p1",
 			user_id: "user-1",
 			org_id: "org-1",
 			name: "my-staging",
 			stage: "staging",
 			status: "DRAFT",
-			is_default: false,
 			region: null,
 		});
+
+		// `is_default` IS NO LONGER A LITERAL `false`, and asserting the rendered predicate is the
+		// point rather than pedantry (#4127). `project_environments_one_default_check` refuses a
+		// commit in which a project has environments and none is the default, and a project can
+		// legitimately hold zero environments — so a hard-coded `false` made THIS action, the only
+		// one that could repair such a project, the one insert the database rejects. Asserting
+		// merely "some SQL object" would pass for any expression at all, including the wrong one.
+		if (!(isDefault instanceof SQL)) {
+			throw new Error("addEnvironment no longer derives is_default in SQL");
+		}
+		const rendered = new PgDialect().sqlToQuery(isDefault);
+		expect(rendered.sql).toContain("NOT EXISTS");
+		expect(rendered.sql).toContain("is_default");
+		// Scoped to THIS project — a predicate that forgot the parameter would be true whenever any
+		// project anywhere still lacked a default.
+		expect(rendered.params).toEqual(["p1"]);
+
 		expect(r).toEqual({ environment: { id: "env-2", name: "my-staging" } });
 	});
 
@@ -2471,7 +3086,18 @@ describe("addEnvironment", () => {
 		setupDb({});
 		await expect(
 			addEnvironment("p1", { name: "!!!", stage: "staging" }),
-		).rejects.toThrow(/name is required/);
+		).rejects.toThrow(/at least one letter or number/);
+		expect(withActorScope).not.toHaveBeenCalled();
+	});
+
+	it("rejects a name a console route would shadow, and normalizes one it accepts", async () => {
+		// The SHARED env-name rule (lib/validations/names.ts), which `project env add` on the CLI
+		// route now applies too — the two used to disagree about `Prod`, and only this path knew
+		// that `settings` is unreachable forever.
+		setupDb({});
+		await expect(
+			addEnvironment("p1", { name: "Settings", stage: "staging" }),
+		).rejects.toThrow(/reserved by the console/);
 		expect(withActorScope).not.toHaveBeenCalled();
 	});
 

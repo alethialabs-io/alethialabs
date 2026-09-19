@@ -32,6 +32,7 @@ variable "bucket_configuration" {
     versioning_enabled      = bool
     sse_algorithm           = string
     store_access_key_in_ssm = bool
+    logging_bucket_name     = optional(string)
     block_public_acls       = optional(bool)
     block_public_policy     = optional(bool)
     ignore_public_acls      = optional(bool)

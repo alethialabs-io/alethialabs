@@ -141,10 +141,19 @@ describe("nothing that resolves an org from a CLI token bypasses the pin", () =>
 		expect(orgResolvingCliCallers().length).toBeGreaterThan(0);
 	});
 
+	// TWO SPELLINGS, ONE QUESTION — does this file honour the pin? Reading the raw claim
+	// (`service_token_org_id`) is one way; going through `credentialOf`, which is the only thing
+	// that reads it in `lib/cli/providers.ts` and hands back the closed `CliCredential` union with
+	// the pin attached, is the other and is now the preferred one (#4468). `app/api/jobs/route.ts`
+	// stopped naming the claim in that change without stopping honouring it, so a scan for the
+	// field alone would have reported a regression that had not happened — and, worse, would push
+	// the next author back to re-deriving the kind from a string's truthiness, which is the defect
+	// #4468 removed.
 	it.each(orgResolvingCliCallers())(
-		"%s reads service_token_org_id (else a token minted for one org acts on another)",
+		"%s honours the pin — reads service_token_org_id, or derives it with credentialOf",
 		(file) => {
-			expect(readFileSync(file, "utf8").includes("service_token_org_id")).toBe(true);
+			const src = readFileSync(file, "utf8");
+			expect(src.includes("service_token_org_id") || src.includes("credentialOf(")).toBe(true);
 		},
 	);
 });

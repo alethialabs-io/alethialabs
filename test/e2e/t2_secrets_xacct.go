@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -43,7 +44,22 @@ const (
 	envSecretsXacctService   = "ALETHIA_E2E_SECRETS_XACCT_SERVICE"         // the service whose binding materializes the secret
 	envSecretsXacctSecret    = "ALETHIA_E2E_SECRETS_XACCT_SECRET_NAME"     // the PROJECT secret name (== remote key by contract)
 	envSecretsXacctProbeNS   = "ALETHIA_E2E_SECRETS_XACCT_PROBE_NAMESPACE" // where the product-rendered ExternalSecret lands
+	envSecretsXacctESOGSA    = "ALETHIA_E2E_SECRETS_XACCT_ESO_GSA_EMAIL"   // gcp: the STANDING external-secrets GSA the cluster adopts
 )
+
+// secretsXacctGCPAdoptKey is the GCP project template variable that makes the cluster ADOPT a standing
+// external-secrets GSA instead of creating a per-run one (infra/templates/project/gcp/variables.tf).
+// It reaches tofu through the cluster's generic provider_config passthrough —
+// mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, …) in packages/core/cloud/gcp_provider.go —
+// which is the same path the console's generated "Advanced" cluster control writes. The key being
+// reachable, and NOT reserved, is pinned by TestProviderTfvars_StandingIdentityAdoptionIsReachable
+// (packages/core/cloud) against its own literal; THIS constant naming a real template variable is
+// pinned by TestSecretsXacct_GCPAdoptKeyAndPatternMatchTemplate, which reads variables.tf.
+const secretsXacctGCPAdoptKey = "external_secrets_service_account_email"
+
+// gcpSAEmail is the same pattern the GCP template validates that variable against;
+// TestSecretsXacct_GCPAdoptKeyAndPatternMatchTemplate extracts the template's regex and compares.
+var gcpSAEmail = regexp.MustCompile(`^[^@]+@[^@]+\.iam\.gserviceaccount\.com$`)
 
 // The ExternalSecret the PRODUCT renders lands in the generated app manifests' namespace. Kept as a
 // constant mirror of provisioner.appNamespace (unexported there) rather than guessed — the run half
@@ -75,6 +91,7 @@ type secretsXacctConfig struct {
 	probeNS      string
 	expectSHA256 string
 	summaryPath  string
+	esoGSAEmail  string // gcp: the standing GSA account B's grant names (infra/gcp-secrets-e2e)
 	enabled      bool
 }
 
@@ -87,19 +104,18 @@ func secretsXacctEnabled() bool { return t2Truthy(os.Getenv(envSecretsXacct)) }
 // scripts/e2e/secrets-e2e.sh, so a lane's status cannot rot in one place while looking green in
 // another.
 //
-// The blocker in every non-AWS case is the same shape: the cross-account grant in account B must
-// name the CLUSTER's external-secrets identity, and that identity is recreated on every provision.
-// GCP/Azure are unblocked by ADOPTING a standing identity (the external_secrets_* template
-// variables) — until an adopted identity is actually wired into the nightly, the lane records
-// BLOCKED rather than pretending to cover the cloud.
+// The blocker in every non-AWS case starts from the same shape: the cross-account grant in account B
+// must name the CLUSTER's external-secrets identity, and that identity is recreated on every
+// provision. GCP is runnable because the harness makes the cluster ADOPT a standing GSA
+// (adoptStandingIdentity) — decide() refuses a gcp run that names account B's project without one,
+// since the grant would then be certain to name a different identity. Azure's adoption variables reach tofu the same way,
+// but its lane stays BLOCKED on a second subscription nobody has provided.
 func secretsXacctLane(provider string) (ok bool, blocked string) {
 	switch provider {
-	case "aws":
+	case "aws", "gcp":
 		return true, ""
-	case "gcp":
-		return false, "GCP: the per-run external-secrets GSA cannot carry a pre-applied cross-project grant — GCP rewrites a deleted SA's binding to `deleted:serviceAccount:...?uid=` and a same-named recreation does not inherit it, and GCP IAM has no principal-pattern condition. Unblocked by adopting a standing GSA (external_secrets_service_account_email); enable this lane once the nightly supplies one."
 	case "azure":
-		return false, "Azure: the cross-subscription Key Vault role assignment binds the managed identity's OBJECT ID, regenerated on every create, so a pre-applied grant dies with the identity. Unblocked by adopting a standing identity (external_secrets_identity_name/_resource_group); additionally needs a SECOND subscription in the same tenant, which is not available today."
+		return false, "Azure: the cross-subscription Key Vault role assignment binds the managed identity's OBJECT ID, regenerated on every create, so a pre-applied grant dies with the identity. Adopting a standing identity (external_secrets_identity_name/_resource_group, reachable through the cluster's provider_config) removes that half; the lane still needs a SECOND subscription in the same tenant, which is not available today, and no account-B stack exists for it."
 	case "alibaba":
 		return false, "Alibaba: ESO's RRSA performs a single AssumeRoleWithOIDC, so account B must host a RAM OIDC provider registered against THIS cluster's ACK issuer — inherently per-cluster, with no stable form. The alibaba e2e role also grants no ram:*. Honest exclusion, not a gap."
 	default:
@@ -129,6 +145,7 @@ func secretsXacctFromEnv(provider string) secretsXacctConfig {
 		serviceName:  t2Env(envSecretsXacctService, "xacct-probe"),
 		probeNS:      t2Env(envSecretsXacctProbeNS, secretsXacctDefaultNS),
 		summaryPath:  t2Env(envSecretsXacctSummary, ""),
+		esoGSAEmail:  strings.TrimSpace(t2Env(envSecretsXacctESOGSA, "")), // gcp-only, so no per-cloud sibling (TestPerCloudSiblingsReachTheNightly)
 	}
 	// By product contract the project secret's NAME is its remote key (the same contract the SaaS
 	// lane adopted in #1207), so default them together rather than making the caller repeat it.
@@ -151,6 +168,14 @@ func (c secretsXacctConfig) decide() (bool, string, error) {
 	if ok, blocked := secretsXacctLane(c.provider); !ok {
 		return false, blocked, nil
 	}
+	// The opt-in and most of its variables are SHARED by every leg of the nightly matrix, so a
+	// maintainer enabling the scenario for aws alone sets none of gcp's two. That is "gcp was not
+	// wired", not "gcp was wired wrong": it resolves to off with a reason, exactly as a blocked lane
+	// does, rather than redding the gcp leg. Setting EITHER one is intent, and the half-wired case
+	// below still refuses.
+	if c.provider == "gcp" && strings.TrimSpace(c.projectID) == "" && c.esoGSAEmail == "" {
+		return false, fmt.Sprintf("GCP: no account-B project or standing external-secrets GSA supplied (%s, %s) — apply infra/gcp-secrets-e2e and set both to run this lane.", envSecretsXacctProjectID, envSecretsXacctESOGSA), nil
+	}
 	var missing []string
 	need := func(key, v string) {
 		if strings.TrimSpace(v) == "" {
@@ -166,6 +191,9 @@ func (c secretsXacctConfig) decide() (bool, string, error) {
 		need(envSecretsXacctRoleARN, c.roleARN)
 	case "gcp":
 		need(envSecretsXacctProjectID, c.projectID)
+		// Without a standing GSA the cluster creates a per-run one, account B's grant names a
+		// different identity, and the run could only ever fail — after buying a cluster.
+		need(envSecretsXacctESOGSA, c.esoGSAEmail)
 	case "azure":
 		need(envSecretsXacctAccount, c.account)
 		need(envSecretsXacctVaultURL, c.vaultURL)
@@ -178,6 +206,12 @@ func (c secretsXacctConfig) decide() (bool, string, error) {
 	if len(missing) > 0 {
 		sort.Strings(missing)
 		return false, "", fmt.Errorf("%s is enabled for %s but these are unset: %s", envSecretsXacct, c.provider, strings.Join(missing, ", "))
+	}
+	// Mirrors the template's own validation (infra/templates/project/gcp/variables.tf, on
+	// external_secrets_service_account_email) so a bare account id fails here, in seconds, rather
+	// than at plan time after the run has started buying infrastructure.
+	if c.provider == "gcp" && !gcpSAEmail.MatchString(c.esoGSAEmail) {
+		return false, "", fmt.Errorf("%s must be a full service-account email (name@project.iam.gserviceaccount.com), got %q", envSecretsXacctESOGSA, c.esoGSAEmail)
 	}
 	if len(c.expectSHA256) != 64 {
 		return false, "", fmt.Errorf("%s must be a 64-char hex sha256 of the canary value, got %d chars", envSecretsXacctExpectSHA, len(c.expectSHA256))
@@ -198,6 +232,16 @@ func (c secretsXacctConfig) connectorSlug() string {
 		return "alibaba-kms-xacct"
 	}
 	return ""
+}
+
+// targetRef names the account-B target this run read from, for the proof summary: the role ARN on
+// the clouds whose cross-account hop is an assumed role, the project id on gcp (whose hop is a grant
+// on a standing GSA, so there is no role to name). Empty when the cloud has no target configured.
+func (c secretsXacctConfig) targetRef() string {
+	if c.provider == "gcp" {
+		return c.projectID
+	}
+	return c.roleARN
 }
 
 // storeName is the ClusterSecretStore the deploy must render. Delegates to the product SSOT so a
@@ -276,6 +320,40 @@ func (c secretsXacctConfig) applyToSnapshot(snap map[string]any) error {
 		return err
 	}
 	snap["services"] = append(services, svc)
+	return nil
+}
+
+// adoptStandingIdentity makes the cluster ADOPT the standing external-secrets identity account B's
+// grant was written against, by setting the adoption variable in cluster.provider_config — the key the
+// provider's generic passthrough carries to tofu. A no-op on every cloud but gcp (aws needs none: its
+// IRSA role name is deterministic and account B trusts a principal pattern).
+//
+// It MERGES into cluster.provider_config and must run AFTER t2MergeClusterJSON, which assigns every
+// top-level key of ALETHIA_E2E_CLUSTER_JSON wholesale: a shape fixture carrying its own
+// provider_config would otherwise replace this map and the cluster would silently create a per-run GSA.
+// It refuses to overwrite a DIFFERENT value already present, for the same reason: two identities for
+// one cluster means one of them is not the one account B trusts.
+func (c secretsXacctConfig) adoptStandingIdentity(snap map[string]any) error {
+	if c.provider != "gcp" {
+		return nil
+	}
+	if c.esoGSAEmail == "" {
+		return fmt.Errorf("%s is empty — decide() should have refused this gcp run", envSecretsXacctESOGSA)
+	}
+	cluster, _ := snap["cluster"].(map[string]any)
+	if cluster == nil {
+		cluster = map[string]any{}
+	}
+	pc, _ := cluster["provider_config"].(map[string]any)
+	if pc == nil {
+		pc = map[string]any{}
+	}
+	if prev, ok := pc[secretsXacctGCPAdoptKey].(string); ok && prev != "" && prev != c.esoGSAEmail {
+		return fmt.Errorf("cluster.provider_config.%s is already %q, but %s is %q — refusing to pick one", secretsXacctGCPAdoptKey, prev, envSecretsXacctESOGSA, c.esoGSAEmail)
+	}
+	pc[secretsXacctGCPAdoptKey] = c.esoGSAEmail
+	cluster["provider_config"] = pc
+	snap["cluster"] = cluster
 	return nil
 }
 

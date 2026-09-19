@@ -6,7 +6,7 @@
 // (adds/updates/removes) and an opt-in for applying removals, then queues the gated promotion.
 
 import { ArrowRight, Loader2, MinusCircle, PencilLine, PlusCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 import { previewPromotion, promoteEnvironment } from "@/app/server/actions/promotions";
 import type { ComponentChange, PromotionDiff } from "@/types/jsonb.types";
@@ -55,6 +55,10 @@ export function PromoteDialog({
 	envs: EnvOption[];
 	onPromoted: () => void | Promise<void>;
 }) {
+	const sourceLabelId = useId();
+	const targetLabelId = useId();
+	const removalsLabelId = useId();
+	const removalsDescId = useId();
 	const [sourceId, setSourceId] = useState("");
 	const [targetId, setTargetId] = useState("");
 	const [includeRemovals, setIncludeRemovals] = useState(false);
@@ -118,9 +122,14 @@ export function PromoteDialog({
 
 				<div className="flex items-end gap-2">
 					<div className="flex-1 space-y-1.5">
-						<label className="text-xs font-medium">From</label>
+						{/* The label carries an id and the trigger points at it: base-ui's Select renders a
+						    button, and a `<label>` that neither wraps it nor names it in `htmlFor` names
+						    nothing at all. */}
+						<label id={sourceLabelId} className="text-xs font-medium">
+							From
+						</label>
 						<Select value={sourceId} onValueChange={setSourceId}>
-							<SelectTrigger className="h-9 text-sm">
+							<SelectTrigger aria-labelledby={sourceLabelId} className="h-9 text-sm">
 								<SelectValue placeholder="Source" />
 							</SelectTrigger>
 							<SelectContent>
@@ -134,9 +143,11 @@ export function PromoteDialog({
 					</div>
 					<ArrowRight className="mb-2 h-4 w-4 shrink-0 text-muted-foreground" />
 					<div className="flex-1 space-y-1.5">
-						<label className="text-xs font-medium">To</label>
+						<label id={targetLabelId} className="text-xs font-medium">
+							To
+						</label>
 						<Select value={targetId} onValueChange={setTargetId}>
-							<SelectTrigger className="h-9 text-sm">
+							<SelectTrigger aria-labelledby={targetLabelId} className="h-9 text-sm">
 								<SelectValue placeholder="Target" />
 							</SelectTrigger>
 							<SelectContent>
@@ -164,10 +175,10 @@ export function PromoteDialog({
 						) : (
 							<div>
 								<div className="mb-2 flex items-baseline justify-between">
-									<span className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-tertiary">
+									<span className="font-mono text-ui-2xs uppercase tracking-[0.14em] text-text-tertiary">
 										Plan preview
 									</span>
-									<span className="font-mono text-[11px] text-text-secondary">
+									<span className="font-mono text-ui-xs text-text-secondary">
 										{diff.summary.join(" · ")}
 									</span>
 								</div>
@@ -180,7 +191,7 @@ export function PromoteDialog({
 											<li key={`${c.component_type}-${c.key}-${i}`} className="flex items-start gap-2.5 p-2.5">
 												<Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
 												<div className="min-w-0 text-xs">
-													<span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+													<span className="font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground">
 														{meta.label}
 													</span>{" "}
 													<span className="text-foreground">{c.component_type}</span>{" "}
@@ -207,17 +218,29 @@ export function PromoteDialog({
 					)}
 				</div>
 
-				{/* Removals opt-in — only relevant when the target has components the source lacks. */}
+				{/*
+				  Removals opt-in — only relevant when the target has components the source lacks.
+
+				  A `<div>`, not a `<label>`: `@repo/ui/switch` renders a `<span role="switch">`, which
+				  is not a labelable element, so the `<label>` that used to wrap this row named nothing
+				  and the switch reached a screen reader unnamed — the same defect as the three
+				  promotion gates in protection-rules-dialog.tsx (#4630).
+				*/}
 				{diff && diff.changes.some((c) => c.op === "DELETE") && (
-					<label className="flex items-center justify-between rounded-md border border-border p-2.5">
+					<div className="flex items-center justify-between rounded-md border border-border p-2.5">
 						<span className="text-xs">
-							Apply removals
-							<span className="block text-[11px] text-muted-foreground">
+							<span id={removalsLabelId}>Apply removals</span>
+							<span id={removalsDescId} className="block text-ui-xs text-muted-foreground">
 								Delete target components the source no longer has (destructive).
 							</span>
 						</span>
-						<Switch checked={includeRemovals} onCheckedChange={setIncludeRemovals} />
-					</label>
+						<Switch
+							aria-labelledby={removalsLabelId}
+							aria-describedby={removalsDescId}
+							checked={includeRemovals}
+							onCheckedChange={setIncludeRemovals}
+						/>
+					</div>
 				)}
 
 				<DialogFooter>

@@ -14,6 +14,23 @@
 # NOT to be confused with the two Hetzner DNS cells that ARE excluded: a managed certificate
 # is issued in-cluster by cert-manager and Hetzner sells no WAF at all. Those are ceilings.
 # This one was just missing.
+#
+# NO RECORD RESOURCE LIVES HERE, deliberately, and that is parity rather than the second half of a
+# half-built feature (#4461). The only DNS record resource under infra/templates/project/ on ANY
+# cloud is aws/modules/acm's cert-validation CNAME, which exists because ACM demands one. Every
+# platform hostname is published in-cluster by external-dns (infra/templates/argocd/external-dns.yaml)
+# — on Hetzner through the official webhook provider, driven by a Cloud API token the deploy path
+# seeds — into the zone below when Alethia owns it, and into the caller's zone when
+# var.dns_hosted_zone names one instead. tofu could not publish the interesting record in any case:
+# the ingress address is a load balancer the in-cluster hcloud CCM creates after this apply has
+# finished, so nothing here knows it.
+#
+# That is why var.dns_hosted_zone is read only by outputs.tf, and why nothing here should read it.
+# `check:template-knobs` still counts it as a dead knob, recorded in
+# infra/templates/project/knob-exclusions.yaml under `dead:` — a section that can only express a
+# DEFECT. #4531 is the unit that gives that ledger a category for a knob whose correct reader is an
+# output, and it owns those rows; do not resolve the guard from here. Adding a resource that reads
+# the variable would turn the check green by inventing the very thing it exists to find.
 
 resource "hcloud_zone" "this" {
   # Create the zone only when the user wants Alethia to own it (the console sets this when DNS

@@ -5,10 +5,12 @@
 import { Check, ShieldCheck, X } from "lucide-react";
 import { useState } from "react";
 import { planProject, provisionProject } from "@/app/server/actions/projects";
+import { formatMonthlyRate } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { track } from "@/lib/analytics/track";
 import type { OperationProposal } from "@/lib/ai/operation";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
+import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { cn } from "@repo/ui/utils";
 
 type Phase = "idle" | "running" | "done" | "rejected" | "denied";
@@ -18,6 +20,11 @@ type Phase = "idle" | "running" | "done" | "rejected" | "denied";
  * planProject/provisionProject (the M1 placement + usage gates run inside them) and opens
  * the artifact Logs tab on the returned job; a denial (Forbidden / usage cap) shows
  * the "held back" note from the action's error message.
+ *
+ * The operation runs against the ENVIRONMENT the proposal names, falling back to the one the
+ * Elench surface is scoped to (`ctx.environmentId`, the topbar switcher's). Only when neither
+ * knows does the action reach its own default — before this the card passed no environment at
+ * all, so on any non-default environment it planned and deployed the default one.
  */
 export function ApprovalCard({
 	proposal,
@@ -28,6 +35,7 @@ export function ApprovalCard({
 	onResolve?: (output: unknown) => void;
 }) {
 	const open = useArtifactStore((s) => s.open);
+	const ctx = useElenchStore((s) => s.ctx);
 	const [phase, setPhase] = useState<Phase>("idle");
 	const [reason, setReason] = useState<string | null>(null);
 
@@ -39,16 +47,21 @@ export function ApprovalCard({
 		setReason(null);
 		try {
 			const op = proposal.operation;
+			const envId =
+				op.environmentId ??
+				(ctx.kind === "project" ? ctx.environmentId : null) ??
+				undefined;
 			const { jobId } =
 				op.operation === "plan_project"
-					? await planProject(op.projectId)
-					: await provisionProject(op.projectId, op.planJobId);
+					? await planProject(op.projectId, undefined, envId)
+					: await provisionProject(op.projectId, op.planJobId, undefined, envId);
 			open({ projectId: op.projectId, jobId }, "logs");
 			setPhase("done");
 			onResolve?.({
 				status: "approved",
 				operation: op.operation,
 				projectId: op.projectId,
+				environmentId: envId ?? null,
 				jobId,
 			});
 		} catch (err) {
@@ -77,8 +90,8 @@ export function ApprovalCard({
 					<ShieldCheck className="h-3.5 w-3.5" />
 				</span>
 				<div className="min-w-0">
-					<div className="truncate text-[13px] font-medium">{proposal.label}</div>
-					<div className="vx-eyebrow text-[9px]">
+					<div className="truncate text-ui-md font-medium">{proposal.label}</div>
+					<div className="vx-eyebrow text-ui-3xs">
 						{isDeploy ? "Provisions live infrastructure" : "Queues a plan"}
 					</div>
 				</div>
@@ -86,23 +99,54 @@ export function ApprovalCard({
 
 			<div className="space-y-3 px-3.5 py-3">
 				{proposal.stats && (
-					<div className="flex gap-5">
-						<Stat n={proposal.stats.add ?? 0} l="to add" />
-						<Stat n={proposal.stats.change ?? 0} l="to change" />
-						<Stat n={proposal.stats.destroy ?? 0} l="to destroy" />
+					/* One mono line, not a stat strip. §6 bans the strips with no qualifier, and
+					   the reason is this card exactly: it asks for a decision, and a row of four
+					   18px numbers takes the space above the Approve button to tell you what is
+					   countable instead of what you are agreeing to. The same four facts read in
+					   a sentence, at the weight of the sentence beside them. The money goes
+					   through `formatMonthlyRate` in the `"exact"` register, so this card and the
+					   plan panel's Est. cannot disagree about the symbol, the separators or the
+					   cents. `"exact"` and not the default `"estimate"` because this IS the plan
+					   panel's total — the agent is told to copy `costSummary.totalMonthlyCost`
+					   into `stats.monthly`, and `artifact-panel` renders that same number exact.
+					   On the default the two read `<$1/mo` against `$0.75/mo`, and `$0/mo`
+					   against `$0.00/mo`, for one plan.
+
+					   What `"exact"` does NOT buy is the sign: it clamps `<= 0`, so a negative
+					   `monthly` renders `$0.00/mo` and a teardown's saving reads as nothing.
+					   `stats.monthly` is declared to the model as an absolute total for that
+					   reason (`lib/ai/operation.ts`); showing a saving would need a credit
+					   register in `@repo/format`, which does not exist in either language. */
+					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-ui-xs text-muted-foreground">
+						<span className="text-foreground">
+							{proposal.stats.add ?? 0} to add
+						</span>
+						<span aria-hidden>·</span>
+						<span className="text-foreground">
+							{proposal.stats.change ?? 0} to change
+						</span>
+						<span aria-hidden>·</span>
+						<span className="text-foreground">
+							{proposal.stats.destroy ?? 0} to destroy
+						</span>
 						{proposal.stats.monthly != null && (
-							<Stat n={proposal.stats.monthly} l="est / mo" prefix="$" />
+							<>
+								<span aria-hidden>·</span>
+								<span className="text-foreground">
+									{formatMonthlyRate(proposal.stats.monthly, "exact")} est.
+								</span>
+							</>
 						)}
 					</div>
 				)}
 
 				{phase === "done" ? (
-					<div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+					<div className="flex items-center gap-2 font-mono text-ui-xs text-muted-foreground">
 						<span className="h-1.5 w-1.5 rounded-full bg-foreground" />
 						{isDeploy ? "Approved · deploying…" : "Planning…"} — logs in the panel.
 					</div>
 				) : phase === "rejected" ? (
-					<div className="font-mono text-[11px] text-muted-foreground">
+					<div className="font-mono text-ui-xs text-muted-foreground">
 						Rejected.
 					</div>
 				) : phase === "denied" ? (
@@ -110,7 +154,7 @@ export function ApprovalCard({
 						<span className="mt-0.5 flex h-5 w-5 flex-none items-center justify-center border border-foreground">
 							<X className="h-3 w-3" />
 						</span>
-						<div className="text-[12px] leading-relaxed text-muted-foreground">
+						<div className="text-ui-sm leading-relaxed text-muted-foreground">
 							<span className="font-medium text-foreground">
 								Operation held back.
 							</span>{" "}
@@ -119,7 +163,7 @@ export function ApprovalCard({
 					</div>
 				) : (
 					<div className="flex items-center justify-between gap-3">
-						<span className="text-[11px] text-muted-foreground">
+						<span className="text-ui-xs text-muted-foreground">
 							{isDeploy
 								? "The agent will apply the plan exactly as shown."
 								: "Review the plan in the panel after it runs."}
@@ -147,26 +191,6 @@ export function ApprovalCard({
 					</div>
 				)}
 			</div>
-		</div>
-	);
-}
-
-function Stat({
-	n,
-	l,
-	prefix,
-}: {
-	n: number;
-	l: string;
-	prefix?: string;
-}) {
-	return (
-		<div>
-			<div className="font-mono text-lg font-semibold tracking-tight">
-				{prefix}
-				{n}
-			</div>
-			<div className="vx-eyebrow text-[8px]">{l}</div>
 		</div>
 	);
 }

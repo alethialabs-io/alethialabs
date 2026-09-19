@@ -1,0 +1,26 @@
+{
+  "name": "orders-api",
+  "bindings": [
+    {
+      "target": {
+        "kind": "database",
+        "name": "orders-db",
+        "address": "module.db.aws_db_instance.main",
+        "output_keys": {
+          "endpoint": "db_writer_endpoint",
+          "port": "db_port",
+          "credential_secret": "db_master_secret_arn"
+        }
+      },
+      "inject": [
+        {
+          "env": "DATABASE_URL",
+          "from": "endpoint"
+        }
+      ]
+    }
+  ],
+  "valuePaths": {
+    "bind:database:orders-db:credential": "postgresql.auth.existingSecret"
+  }
+}

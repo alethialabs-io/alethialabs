@@ -29,9 +29,10 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@repo/ui/utils";
-import { detachIacSource, scanIacSource, type IacSourceState } from "@/app/server/actions/byo-iac";
-import { IacScanSheet } from "@/components/design-project/byo/iac-scan-sheet";
+import { detachIacSource, type IacSourceState } from "@/app/server/actions/byo-iac";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { useIacSourceCanvas } from "@/components/design-project/byo/iac-source-canvas-context";
+import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import type { IacScanReport } from "@/types/jsonb.types";
 
 /** The scan-status chip — label + tone + icon, derived from the scan lifecycle + the report's
@@ -54,7 +55,7 @@ function scanChip(
 			Icon: ShieldAlert,
 		};
 	}
-	return { label: "Not scanned", cls: "text-muted-foreground/60", Icon: ShieldQuestion };
+	return { label: "Not scanned", cls: "text-text-tertiary", Icon: ShieldQuestion };
 }
 
 /** Short 7-char sha for display (git-style); empty string passes through. */
@@ -65,9 +66,20 @@ function shortSha(sha: string | null): string {
 /** The read-only external-IaC source card, driven by IacSourceCanvasContext. */
 export function IacNode({ source }: { source: IacSourceState }) {
 	const ctx = useIacSourceCanvas();
+	const openCard = useCanvasStore((s) => s.openCard);
 	const [detaching, setDetaching] = useState(false);
-	const [sheetOpen, setSheetOpen] = useState(false);
+	// Detaching is not undoable from this card — the environment silently reverts to the built-in
+	// template and the module's `external` cards leave the board — so the click OPENS a confirm
+	// rather than firing the server action (#4281).
+	const [confirmDetach, setConfirmDetach] = useState(false);
 
+	// `detachIacSource` REFUSES a detach that would drop the handle to live BYO infra
+	// (app/server/actions/byo-iac.ts): a source with a deployed commit, or an environment whose
+	// status means template state exists or is in flight. The card can see the first of those —
+	// it already renders it as DEPLOYED — so the trigger is gated on it rather than offering a
+	// confirmation whose only possible outcome is an error toast (#4600 review). The env-status
+	// half is not on this card, so the dialog's copy names the precondition too.
+	const holdsDeployedState = source.deployedCommitSha !== null;
 	const chip = scanChip(source.scanStatus, source.scanReport);
 	const ChipIcon = chip.Icon;
 	const repoLabel = source.repoUrl.replace(/^https?:\/\/(www\.)?/, "").replace(/\.git$/, "");
@@ -87,26 +99,12 @@ export function IacNode({ source }: { source: IacSourceState }) {
 		}
 	};
 
-	const rescan = async () => {
-		if (!ctx) return;
-		try {
-			await scanIacSource({ projectId: ctx.projectId, environmentId: ctx.environmentId });
-			toast.message("Scanning module…");
-			ctx.refresh();
-			// Nudge a couple of refreshes as the runner finishes (best-effort — no live socket).
-			setTimeout(ctx.refresh, 4000);
-			setTimeout(ctx.refresh, 10000);
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Could not start the scan.");
-		}
-	};
-
 	return (
 		<div className="min-w-[240px] rounded-none border border-border bg-card text-card-foreground">
 			<div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
 				<Boxes className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
 				<span className="vx-eyebrow">External IaC</span>
-				<span className="ml-auto flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+				<span className="ml-auto flex items-center gap-1.5 font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground">
 					<span
 						className={cn(
 							"h-1.5 w-1.5 shrink-0 rounded-full",
@@ -119,70 +117,81 @@ export function IacNode({ source }: { source: IacSourceState }) {
 
 			<div className="flex flex-col gap-2 px-3 py-2.5">
 				<div className="text-sm font-semibold text-foreground">{source.name}</div>
-				<div className="flex items-center gap-1.5 self-start border border-border px-2 py-1 font-mono text-[10px] text-muted-foreground">
+				<div className="flex items-center gap-1.5 self-start border border-border px-2 py-1 font-mono text-ui-2xs text-muted-foreground">
 					<GitBranch className="h-3 w-3" />
 					{repoLabel}
 				</div>
-				<div className="flex gap-3 font-mono text-[10px] text-muted-foreground">
+				<div className="flex gap-3 font-mono text-ui-2xs text-muted-foreground">
 					<span>
-						path <span className="text-foreground/80">/{source.path.replace(/^\/+/, "") || ""}</span>
+						path <span className="text-foreground">/{source.path.replace(/^\/+/, "") || ""}</span>
 					</span>
 					<span>
-						ref <span className="text-foreground/80">{source.ref ?? "HEAD"}</span>
+						ref <span className="text-foreground">{source.ref ?? "HEAD"}</span>
 					</span>
 				</div>
 
 				{/* Pinned + deployed commits */}
-				<div className="flex flex-wrap gap-2 font-mono text-[10px] text-muted-foreground">
+				<div className="flex flex-wrap gap-2 font-mono text-ui-2xs text-muted-foreground">
 					<span className="flex items-center gap-1.5">
 						<GitCommitHorizontal className="h-3 w-3" />
-						pinned <span className="text-foreground/80">{pinned || "—"}</span>
+						pinned <span className="text-foreground">{pinned || "—"}</span>
 					</span>
 					{deployed && (
 						<span className="flex items-center gap-1.5">
 							<Rocket className="h-3 w-3" />
-							deployed <span className="text-foreground/80">{deployed}</span>
+							deployed <span className="text-foreground">{deployed}</span>
 						</span>
 					)}
 				</div>
 
-				{/* Scan chip — opens the findings sheet. */}
+				{/* Scan chip — opens the findings card on the workspace rail. */}
 				<button
 					type="button"
-					onClick={() => setSheetOpen(true)}
+					onClick={() => openCard({ kind: "iac-scan" })}
 					title="IaC safety scan"
-					className="flex items-center gap-1.5 self-start rounded-none border border-border px-2 py-1 font-mono text-[10px] transition-colors hover:bg-muted"
+					className="flex items-center gap-1.5 self-start rounded-none border border-border px-2 py-1 font-mono text-ui-2xs transition-colors hover:bg-muted"
 				>
 					<ChipIcon className={cn("h-3 w-3", chip.cls, chip.spin && "animate-spin")} />
 					<span className={chip.cls}>{chip.label}</span>
 				</button>
 
 				{ctx && (
-					<div className="flex items-center gap-2 border-t border-border/60 pt-2">
-						<span className="font-mono text-[10px] text-muted-foreground">replace mode</span>
-						<button
-							type="button"
-							onClick={detach}
-							disabled={detaching}
-							title="Detach IaC source"
-							className="ml-auto grid h-6 w-6 place-items-center rounded-none border border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-						>
-							<X className="h-3 w-3" />
-						</button>
+					<div className="flex flex-col gap-1.5 border-t border-border/60 pt-2">
+						<div className="flex items-center gap-2">
+							<span className="font-mono text-ui-2xs text-muted-foreground">replace mode</span>
+							{/* `title` is this button's ACCESSIBLE NAME (the label is an icon), and the
+							    destructive-action registry locates it by that name — so it stays the same
+							    string in both states, and the reason for a disabled X is a visible line
+							    below rather than a swapped title. */}
+							<button
+								type="button"
+								onClick={() => setConfirmDetach(true)}
+								disabled={detaching || holdsDeployedState}
+								title="Detach IaC source"
+								className="ml-auto grid h-6 w-6 place-items-center rounded-none border border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+							>
+								<X className="h-3 w-3" />
+							</button>
+						</div>
+						{holdsDeployedState && (
+							<p className="text-ui-2xs text-muted-foreground">
+								Destroy this environment before detaching — it has infrastructure deployed
+								from this source.
+							</p>
+						)}
 					</div>
 				)}
 			</div>
 
-			<IacScanSheet
-				open={sheetOpen}
-				onOpenChange={setSheetOpen}
-				repoUrl={source.repoUrl}
-				path={source.path}
-				scanRef={source.ref ?? "HEAD"}
-				scanStatus={source.scanStatus}
-				report={source.scanReport}
-				scanning={source.scanStatus === "scanning"}
-				onRescan={rescan}
+			<ConfirmDialog
+				open={confirmDetach}
+				onOpenChange={setConfirmDetach}
+				title="Detach this IaC source?"
+				description="This environment falls back to the built-in template and the module's resources leave the board. The module itself is untouched, and the next deploy applies the template rather than your module. Detaching is refused while the environment holds live infrastructure — destroy it first."
+				confirmLabel="Detach source"
+				onConfirm={() => {
+					void detach();
+				}}
 			/>
 		</div>
 	);

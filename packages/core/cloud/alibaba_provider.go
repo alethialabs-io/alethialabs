@@ -45,6 +45,47 @@ func (p *alibabaProvider) ValidateConfig(config *types.ProjectConfig) error {
 	return validateNetworkCIDR(config, "network_cidr", alibabaMaxNetworkPrefix)
 }
 
+// The keys each ROOT-level component's typed mapping owns on Alibaba, and the union every root
+// merge is passed. `application_waf` is the withdrawn offer here: reserved on the DNS site, and
+// without the union re-openable from the cache or the cluster. See aws_provider.go.
+var (
+	alibabaDatabaseReserved = []string{"log_exports"}
+	alibabaCacheReserved    = []string{
+		"create_kvstore", "kvstore_engine_version", "kvstore_instance_class", "kvstore_multi_az",
+		"kvstore_shard_count", "kvstore_security_ips",
+	}
+	alibabaDNSReserved = []string{"managed_certificate", "application_waf"}
+
+	// Every key this file assigns to root tfvars — the KEYS THE TYPED MAPPING WRITES, whether
+	// unconditionally or only when the canvas asked. All of them are reserved, because
+	// merge-if-absent protects only the unconditional ones: a key written inside an `if` leaves a
+	// gap exactly when the canvas declined to fill it, which is the moment a passthrough must not.
+	// Cluster node sizing and the brownfield network selectors are the whole reason this list
+	// exists rather than the per-component lists alone — none of them appeared in any reservation,
+	// so on every cloud a database's provider_config could set the cluster's disk size, and on
+	// Alibaba its `network_id` and `subnet_ids`. Found in review.
+	//
+	// Generated once from the assignments below it and kept honest by
+	// TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads them: a new `tfvars[...]`
+	// assignment fails the suite until it is listed here.
+	alibabaTypedTfvars = []string{
+		"ack_cluster_version", "ack_disk_size_gb", "ack_instance_types", "ack_node_desired_size",
+		"ack_node_max_size", "ack_node_min_size", "alibaba_account", "alidns_domain", "alidns_enabled",
+		"alidns_managed_certificate", "alidns_zone_name", "classification_tags", "cr_repos",
+		"create_kvstore", "create_mns", "create_oss", "create_ots", "create_rds", "custom_secrets",
+		"environment", "kvstore_engine_version", "kvstore_instance_class", "kvstore_multi_az",
+		"kvstore_security_ips", "kvstore_shard_count", "mns_queues", "mns_topics",
+		"network_allowed_cidr_blocks", "network_cidr", "network_id", "oss_buckets", "ots_tables",
+		"project_name", "provision_ack", "provision_cr", "provision_network",
+		"rds_backup_retention_days", "rds_engine", "rds_engine_version", "rds_instance_type",
+		"rds_port", "rds_serverless_max_capacity", "rds_serverless_min_capacity", "region",
+		"single_cloud_nat", "subnet_ids",
+	}
+
+	alibabaRootReserved = unionReserved(alibabaTypedTfvars, alibabaDatabaseReserved, alibabaCacheReserved,
+		alibabaDNSReserved)
+)
+
 func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
 	managedCert := config.DNS.ManagedCertificate
@@ -164,7 +205,7 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		// Alibaba has no keyless DB cell (ApsaraDB exposes no data-plane token login we could find), so
 		// db.IamAuth is never emitted here and the offer-parity baseline records the gap. `log_exports`
 		// is AWS-only — no Alibaba template variable declares a log-export set.
-		mergeProviderConfig(tfvars, db.ProviderConfig, "log_exports")
+		mergeProviderConfig(tfvars, db.ProviderConfig, alibabaRootReserved...)
 	}
 
 	if len(config.Caches) > 0 {
@@ -196,6 +237,11 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		if len(cache.AllowedCidrBlocks) > 0 {
 			tfvars["kvstore_security_ips"] = cache.AllowedCidrBlocks
 		}
+		// Generic passthrough — see mergeProviderConfig (aws_provider.go). Every typed emit above is
+		// reserved unconditionally; all four conditional ones render NOTHING when unset so an
+		// existing instance keeps its own topology and whitelist, and a provider_config key must not
+		// become the value the canvas deliberately left out.
+		mergeProviderConfig(tfvars, cache.ProviderConfig, alibabaRootReserved...)
 	}
 
 	if inst := resolveInstanceTypes("alibaba", config.Cluster); len(inst) > 0 {
@@ -232,12 +278,13 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	// provider_config can't shadow it. Consumed by the classification_tags var (B1.3).
 	tfvars["classification_tags"] = classificationTags(config, alibabaTagStyle)
 
-	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig)
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, alibabaRootReserved...)
 	// `application_waf` stays RESERVED even though nothing consumes it any more. The offer is
 	// withdrawn (#1841), so unreserving it would let a legacy provider_config key pass through
 	// verbatim as a tfvar the root template no longer declares — a value silently dropped at plan
 	// time, which reads to the user exactly like a switch that worked.
-	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "managed_certificate", "application_waf")
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, alibabaRootReserved...)
+	mergeProviderConfig(tfvars, config.Network.ProviderConfig, alibabaRootReserved...)
 
 	return tfvars
 }
@@ -321,6 +368,8 @@ func alibabaOutputString(outputs map[string]interface{}, key string) string {
 	return ""
 }
 
+// buildMNSQueues maps each canvas queue onto one entry of the `mns_queues` tfvar; a queue's
+// provider_config merges into its own entry.
 func buildMNSQueues(queues []types.ProjectQueueConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, q := range queues {
@@ -331,11 +380,14 @@ func buildMNSQueues(queues []types.ProjectQueueConfig) map[string]interface{} {
 		if q.MessageRetention != nil {
 			cfg["message_retention_period"] = *q.MessageRetention
 		}
+		mergeItemProviderConfig(cfg, q.ProviderConfig, "visibility_timeout", "message_retention_period")
 		result[q.Name] = cfg
 	}
 	return result
 }
 
+// buildMNSTopics maps each canvas topic onto one entry of the `mns_topics` tfvar, subscriptions
+// included; a topic's provider_config merges into its own entry.
 func buildMNSTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
@@ -346,7 +398,9 @@ func buildMNSTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 				"endpoint": s.Endpoint,
 			})
 		}
-		result[t.Name] = map[string]interface{}{"subscriptions": subs}
+		entry := map[string]interface{}{"subscriptions": subs}
+		mergeItemProviderConfig(entry, t.ProviderConfig, "subscriptions")
+		result[t.Name] = entry
 	}
 	return result
 }
@@ -375,6 +429,10 @@ func buildOTSTables(tables []types.ProjectNosqlConfig) []map[string]interface{} 
 				},
 			},
 		}
+		// `primary_key` / `primary_key_type` are the WRONG spellings this builder used to emit
+		// (#1836); reserving them keeps a stale provider_config from re-emitting the pair the
+		// module's `try` would once again swallow.
+		mergeItemProviderConfig(entry, t.ProviderConfig, "name", "primary_keys", "primary_key", "primary_key_type")
 		result = append(result, entry)
 	}
 	return result
@@ -430,11 +488,16 @@ func buildCRRepos(config *types.ProjectConfig) map[string]interface{} {
 		// default here is NO scan rule — before #1845 the module created none, so an older
 		// snapshot must keep planning none.
 		scanning := r.VulnerabilityScanning != nil && *r.VulnerabilityScanning
-		out[r.Name] = map[string]interface{}{
+		entry := map[string]interface{}{
 			"summary":                "Container images for " + r.Name,
 			"immutable_tags":         immutable,
 			"vulnerability_scanning": scanning,
 		}
+		// The registry is an ITEM on Alibaba, as on GCP: the template declares no root `cr_*` knob
+		// beyond the provision flag and this map, and — per the note above — the instance's own
+		// arguments are never a place for a per-registry value to land.
+		mergeItemProviderConfig(entry, r.ProviderConfig, "summary", "immutable_tags", "vulnerability_scanning")
+		out[r.Name] = entry
 	}
 	return out
 }
@@ -495,23 +558,30 @@ func buildOSSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]in
 			"cors_origins":  b.CorsOrigins,
 			"sse_algorithm": sseAlgorithm,
 		}
+		// `encryption_algorithm` is reserved because ossSSEAlgorithm consumes it under `sse_algorithm`.
+		mergeItemProviderConfig(entry, b.ProviderConfig,
+			"name_suffix", "acl", "versioning", "cors_origins", "sse_algorithm", "encryption_algorithm")
 		result = append(result, entry)
 	}
 	return result
 }
 
+// buildAlibabaSecrets maps each NATIVELY provisioned secret onto one entry of the `custom_secrets`
+// tfvar (KMS); a secret's provider_config merges into its own entry.
 func buildAlibabaSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
 		if !secretProvisionedNatively(s.Provider) {
 			continue // read via ESO from its pluggable/cross-account store, not created here
 		}
-		result = append(result, map[string]interface{}{
+		entry := map[string]interface{}{
 			"name":          s.Name,
 			"generate":      s.Generate,
 			"length":        s.Length,
 			"special_chars": s.SpecialChars,
-		})
+		}
+		mergeItemProviderConfig(entry, s.ProviderConfig, "name", "generate", "length", "special_chars")
+		result = append(result, entry)
 	}
 	return result
 }

@@ -29,6 +29,23 @@ locals {
     "repo:${var.github_repo}:ref:refs/heads/${var.github_branch}",
     "repo:${var.github_repo}:environment:${var.github_environment}",
   ]
+
+  # ONE additional subject, and it is granted to the read-only vault reader ALONE.
+  #
+  # The CLI release runs on a `cli-v*` tag push, so its jobs present `...:ref:refs/tags/cli-vX.Y.Z`.
+  # A tag ref cannot be trusted with an exact StringEquals (the version moves every release) and a
+  # `StringLike` wildcard is refused by this stack on principle, so the release job selects the
+  # `cli-release` GitHub environment instead (infra/github/environments.tf) and presents this sub.
+  #
+  # It is NOT added to `oidc_subs`, because that list feeds `deployer_trust`, which is shared by
+  # `alethia-cp-deployer` (S3 state + secret WRITE) and `alethia-runner-release-deployer` (ECR push
+  # + ECS roll). Widening those to a tag-reachable subject to fix a READ of one bearer token is the
+  # trade this design exists to avoid — see the environment's own comment.
+  cli_release_sub = "repo:${var.github_repo}:environment:${var.cli_release_environment}"
+
+  # Every subject the reader admits, in one place, so checks.tf can assert over the whole set
+  # rather than over the half it happens to know about.
+  deploy_reader_subs = concat(local.oidc_subs, [local.cli_release_sub])
 }
 
 data "aws_caller_identity" "current" {}

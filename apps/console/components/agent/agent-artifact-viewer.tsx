@@ -5,9 +5,11 @@
 import { ChevronLeft, Loader2, MessageSquarePlus, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { ArtifactSharePopover } from "@/components/agent/artifact-share-popover";
+import { GALLERY_EMPTY } from "@/components/agent/gallery-empty";
 import type { AgentArtifact } from "@/lib/db/schema";
 import { WidgetBody } from "@/components/agent/widgets/widget-card";
 import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
 import { ScrollArea } from "@repo/ui/scroll-area";
 
 /** Fixed row height (px) — matches the live grid so a saved artifact previews at true scale. */
@@ -29,6 +31,7 @@ export function AgentArtifactViewer({
 	onAddToChat,
 	onOpenInNewChat,
 	onDelete,
+	deleting = false,
 }: {
 	artifact: AgentArtifact;
 	/** Whether a conversation is open to add this to (otherwise that action is disabled). */
@@ -38,12 +41,29 @@ export function AgentArtifactViewer({
 	onBack: () => void;
 	onAddToChat: () => Promise<void>;
 	onOpenInNewChat: () => Promise<void>;
-	onDelete: () => Promise<void>;
+	/**
+	 * REQUESTS the delete — it does not perform one, and it does not wait. The gallery owns the
+	 * confirmation and the mutation (#4280); `deleting` is how it says the request is outstanding,
+	 * because nothing this component can await covers that window.
+	 */
+	onDelete: () => void;
+	/**
+	 * True from the moment the confirmation is raised until the delete has settled (either answer).
+	 *
+	 * It is a PROP rather than local `busy` state on purpose. Wrapping `onDelete` in `run()` gated
+	 * only the microtask that raised the dialog: `busy` was back to `null` before the question was
+	 * answered and for the whole time `deleteArtifact()` was in flight, so a second click could
+	 * re-open the dialog and fire a second delete, and "Add to this chat" could materialise widgets
+	 * from a row that was already going away.
+	 */
+	deleting?: boolean;
 }) {
-	const [busy, setBusy] = useState<null | "add" | "new" | "delete">(null);
+	const [busy, setBusy] = useState<null | "add" | "new">(null);
+	/** Every side-effect button is off while ANY of them is in flight — the delete included. */
+	const gated = busy !== null || deleting;
 
 	/** Run one explicit action, keeping the button in a busy state until it settles. */
-	const run = async (kind: "add" | "new" | "delete", fn: () => Promise<void>) => {
+	const run = async (kind: "add" | "new", fn: () => Promise<void>) => {
 		setBusy(kind);
 		try {
 			await fn();
@@ -64,7 +84,7 @@ export function AgentArtifactViewer({
 				<button
 					type="button"
 					onClick={onBack}
-					className="flex items-center gap-1 rounded-none px-1.5 py-1 text-[13px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+					className="flex items-center gap-1 rounded-none px-1.5 py-1 text-ui-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 				>
 					<ChevronLeft className="h-4 w-4" />
 					Artifacts
@@ -76,7 +96,7 @@ export function AgentArtifactViewer({
 				>
 					{artifact.name}
 				</div>
-				<span className="flex-none font-mono text-[10px] uppercase text-muted-foreground">
+				<span className="flex-none font-mono text-ui-2xs uppercase text-muted-foreground">
 					{artifact.kind} · {widgets.length}{" "}
 					{widgets.length === 1 ? "widget" : "widgets"}
 				</span>
@@ -88,7 +108,7 @@ export function AgentArtifactViewer({
 								size="sm"
 								variant="outline"
 								className="gap-1.5 rounded-none"
-								disabled={!hasActiveChat || busy !== null}
+								disabled={!hasActiveChat || gated}
 								title={
 									hasActiveChat
 										? "Add these widgets to the open conversation's grid"
@@ -107,7 +127,7 @@ export function AgentArtifactViewer({
 								size="sm"
 								variant="outline"
 								className="gap-1.5 rounded-none"
-								disabled={busy !== null}
+								disabled={gated}
 								onClick={() => void run("new", onOpenInNewChat)}
 							>
 								{busy === "new" ? (
@@ -120,16 +140,20 @@ export function AgentArtifactViewer({
 							<ArtifactSharePopover artifactId={artifact.id} />
 							<button
 								type="button"
-								aria-label={`Delete ${artifact.name}`}
-								disabled={busy !== null}
-								onClick={() => void run("delete", onDelete)}
+								aria-label={`Delete artifact ${artifact.name}`}
+								disabled={gated}
+								onClick={onDelete}
 								className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
 							>
-								<Trash2 className="h-4 w-4" />
+								{deleting ? (
+									<Loader2 className="h-4 w-4 animate-spin" />
+								) : (
+									<Trash2 className="h-4 w-4" />
+								)}
 							</button>
 						</>
 					) : (
-						<span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+						<span className="font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground">
 							Shared with you
 						</span>
 					)}
@@ -139,9 +163,10 @@ export function AgentArtifactViewer({
 			<ScrollArea className="min-h-0 flex-1">
 				<div className="p-5">
 					{widgets.length === 0 ? (
-						<p className="py-16 text-center text-sm text-muted-foreground">
-							This artifact has no widgets.
-						</p>
+						<EmptyState
+							className={GALLERY_EMPTY}
+							title="This artifact has no widgets."
+						/>
 					) : (
 						<div
 							className="grid grid-cols-5 gap-2"
@@ -162,7 +187,7 @@ export function AgentArtifactViewer({
 									<div className="flex h-7 flex-none items-center border-b border-border px-2">
 										<span
 											title={w.title}
-											className="min-w-0 flex-1 truncate font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+											className="min-w-0 flex-1 truncate font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground"
 										>
 											{w.title}
 										</span>

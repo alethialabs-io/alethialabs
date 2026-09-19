@@ -9,7 +9,7 @@ module "cloud_sql" {
   environment  = var.environment
   project_name = var.project_name
 
-  network_self_link = var.provision_network ? module.vpc_network[0].network_self_link : var.network_id
+  network_self_link = try(module.vpc_network[0].network_self_link, null) != null ? module.vpc_network[0].network_self_link : var.network_id
 
   engine         = var.cloud_sql_engine
   engine_version = var.cloud_sql_engine_version
@@ -25,9 +25,13 @@ module "cloud_sql" {
   iam_auth = var.cloud_sql_iam_auth
   port     = var.cloud_sql_port
 
+  # Declared at the root and threaded nowhere before #4320. Default [] adds no flag, so every
+  # existing instance keeps exactly the IAM-auth flag it has; the module appends, never replaces.
+  database_flags = var.cloud_sql_database_flags
+
   # Keyless app DB user (#722): when IAM auth is on, register the app GSA as a
   # CLOUD_IAM_SERVICE_ACCOUNT database user so the workload logs in with an IAM token, no password.
-  app_iam_sa_email = local.enable_app_db_iam ? data.google_service_account.app_db_adopted[0].email : null
+  app_iam_sa_email = local.enable_app_db_iam ? one(data.google_service_account.app_db_adopted[*].email) : null
 
   authorized_networks = var.cloud_sql_authorized_networks
 

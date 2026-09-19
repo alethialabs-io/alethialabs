@@ -6,6 +6,23 @@ on:
       - 'infra/status/**'
   workflow_dispatch:
 
+# A superseded run is not evidence about the head of the branch, and while it keeps a runner it is
+# denying one to the run that is. `ci.yml`, `addon-render-determinism.yml` and the four workflows
+# fixed on 2026-09-02 carry this; these nine did not.
+#
+# MEASURED 2026-09-03 over 500 runs / 6h24m: jobs spend 5,376 minutes WAITING for a runner against
+# 1,802 executing, and 77 of 500 runs (15 percent) were cancelled — started, took a slot, thrown
+# away. The currency is slots REQUESTED, so a superseded run costs the same as a useful one until
+# it dies.
+#
+# `github.ref` and NOT `github.event.pull_request.number || github.ref`: this workflow also fires on
+# `push`, where the number renders EMPTY and every push to `main` would collapse into one group,
+# cancelling a real deploy-path run. `cla.yml` records that trap; it is PR-only, so it can use the
+# number. `github.ref` is distinct for both events here.
+concurrency:
+  group: infra-status-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write
@@ -75,6 +92,25 @@ jobs:
           load TF_VAR_hcloud_token   HCLOUD_TOKEN
           load TF_VAR_ssh_public_key DEPLOY_SSH_PUBLIC_KEY
           load TF_VAR_acme_email     ACME_EMAIL
+
+      # ssh_allowed_cidrs has no default since #3292 — the open allowlist must not be reachable by
+      # leaving an input out. An SSH allowlist is not a secret, so it comes from a repository
+      # variable rather than the Secrets Manager blob above; that also means it is visible in this
+      # log, which is fine and is the point.
+      #
+      # The explicit emptiness check is here because the failure it replaces is unreadable: an unset
+      # `vars.*` renders as the empty string, and `TF_VAR_ssh_allowed_cidrs=` makes tofu report an
+      # HCL parse error against a list(string) rather than naming the missing input.
+      - name: Resolve the SSH allowlist
+        env:
+          STATUS_SSH_ALLOWED_CIDRS: ${{ vars.STATUS_SSH_ALLOWED_CIDRS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${STATUS_SSH_ALLOWED_CIDRS:-}" ]; then
+            echo "::error::Repository variable STATUS_SSH_ALLOWED_CIDRS is unset. infra/status's ssh_allowed_cidrs has no default (#3292), so this apply has no SSH allowlist to apply. Set it to an HCL list of the ranges that reach the status box, e.g. [\"203.0.113.4/32\"]. Nothing in CI SSHes to this box, so it is a human-access list."
+            exit 1
+          fi
+          echo "TF_VAR_ssh_allowed_cidrs=${STATUS_SSH_ALLOWED_CIDRS}" >> "$GITHUB_ENV"
 
       - name: OpenTofu Init
         working-directory: ${{ env.TF_DIR }}

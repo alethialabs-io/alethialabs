@@ -14,6 +14,8 @@ import {
 	type PermissionKey,
 	PERMISSIONS,
 } from "@/lib/authz/registry";
+import { parseGrantResource } from "@/lib/authz/fga-tuples";
+import { resourceIdOf } from "@/lib/authz/grant-scope";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import type { Actor } from "@/lib/authz/types";
@@ -63,7 +65,13 @@ async function callerCanGrant(
 
 /** Body of POST /api/cli/grants — bind a principal to EXACTLY one of a role or a
  * single permission, at a resource scope, as allow or deny. resource_id omitted =
- * org-wide. */
+ * org-wide.
+ *
+ * `resource_type` stays `z.string()` HERE and is parsed by `parseGrantResource` in the handler,
+ * not turned into a `z.enum`. A parse failure on this schema answers with a flat "Invalid request
+ * body" that names no field, and #4734 turns on the refusal NAMING the accepted set — an admin who
+ * wrote `projects` has to be able to see what the kinds are. The org-kind-with-an-id refusal is
+ * returned from the same parse, for the same reason. */
 const createGrantBody = z.object({
 	principal_type: z.enum(["user", "team"]),
 	principal_id: z.uuid(),
@@ -165,6 +173,15 @@ export async function POST(req: Request) {
 	if (input.permission_key && !VALID_KEYS.has(input.permission_key)) {
 		return NextResponse.json({ error: "Unknown permission." }, { status: 400 });
 	}
+	// The org kind with an id and an unrecognised kind (#4734) are refused here, and what comes
+	// back is the typed scope the insert and the tuple sync are built from. The kind is checked
+	// before a missing id is read as org-wide, so `("projects", no id)` — an admin who meant a
+	// project scope — is refused rather than laundered into an org-wide grant.
+	const scopeParse = parseGrantResource(input.resource_type, input.resource_id ?? null);
+	if (!scopeParse.ok) {
+		return NextResponse.json({ error: scopeParse.error }, { status: 400 });
+	}
+	const scope = scopeParse.resource;
 	// Privilege ceiling: an allow-grant may not exceed the caller's own effective permissions
 	// (a deny only removes access, so it can't escalate the grantee — skip it).
 	if (
@@ -177,9 +194,8 @@ export async function POST(req: Request) {
 		);
 	}
 
-	const resourceId = input.resource_id ?? null;
-	// Org-wide grants are stored on the org resource type.
-	const resourceType = resourceId ? input.resource_type : "org";
+	const resourceId = resourceIdOf(scope);
+	const resourceType = scope.resourceType;
 
 	try {
 		const db = getServiceDb();
@@ -213,8 +229,7 @@ export async function POST(req: Request) {
 				principalType: input.principal_type,
 				principalId: input.principal_id,
 				effect: input.effect,
-				resourceType,
-				resourceId,
+				...scope,
 				roleId: input.role_id ?? null,
 				permissionKey: input.permission_key ?? null,
 			})

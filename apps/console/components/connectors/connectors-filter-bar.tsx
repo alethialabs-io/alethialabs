@@ -65,18 +65,13 @@ export function ConnectorsFilterBar({
 
 			{/* `title` is deliberately omitted: FilterChipGroup renders it as a stacked mono
 			    header, which is a popover treatment. Inline in a bar the chips speak for
-			    themselves. */}
+			    themselves. The facet `count` rides on the option and the chip renders it in
+			    its own ink — no `render` callback, so no call-site alpha (#4197). */}
 			<FilterChipGroup
 				inline
 				options={facets.health}
 				selected={filters.health}
 				onToggle={(value) => set("health", toggled(filters.health, value))}
-				render={(opt) => (
-					<>
-						{opt.label}
-						<span className="font-mono text-[10px] opacity-60">{opt.count}</span>
-					</>
-				)}
 			/>
 
 			<FacetFilter

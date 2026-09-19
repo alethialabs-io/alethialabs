@@ -15,7 +15,7 @@
 //   • audit-this-environment — `queueAudit` took a plan JSON you had to supply yourself. There was
 //     no way to say "audit what I have".
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, or } from "drizzle-orm";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize } from "@/lib/authz/guard";
@@ -230,18 +230,47 @@ export interface EnvironmentJob {
 	error: string | null;
 }
 
+/** One page of an environment's jobs, newest first, with the cursor for the page after it. */
+export interface EnvironmentJobsPage {
+	jobs: EnvironmentJob[];
+	/** Pass back as `before` for the next page; null when this was the last one. */
+	nextCursor: string | null;
+}
+
+/** The keyset cursor: the last row's `created_at` (ISO) and id, joined so ties on time are stable. */
+function encodeCursor(job: { created_at: Date; id: string }): string {
+	return `${job.created_at.toISOString()}|${job.id}`;
+}
+
+/** Parse a cursor back into its two keys; a malformed one reads as "no cursor" (first page). */
+function decodeCursor(cursor: string | undefined): { at: Date; id: string } | null {
+	if (!cursor) return null;
+	const sep = cursor.lastIndexOf("|");
+	if (sep <= 0) return null;
+	const at = new Date(cursor.slice(0, sep));
+	if (Number.isNaN(at.getTime())) return null;
+	return { at, id: cursor.slice(sep + 1) };
+}
+
 /**
- * The environment's recent jobs — the activity rail. Scoped to ONE environment, because the board
- * only ever shows one, and a project-wide list would attribute another environment's failure to the
+ * The environment's jobs — the activity card. Scoped to ONE environment, because the board only
+ * ever shows one, and a project-wide list would attribute another environment's failure to the
  * design you're looking at.
+ *
+ * Keyset-paginated on `(created_at, id)`: the floating rail this used to feed took the newest
+ * eight and stopped, so an environment's history ended wherever the list did. `before` is the
+ * cursor the previous page returned; a page fetches one row past `limit` to know whether there
+ * is another, and never returns that extra row.
  */
 export async function getEnvironmentJobs(
 	projectId: string,
 	environmentId: string,
-	limit = 8,
-): Promise<EnvironmentJob[]> {
+	opts: { limit?: number; before?: string } = {},
+): Promise<EnvironmentJobsPage> {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	await assertEnvInOrg(projectId, environmentId, actor.orgId);
+	const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
+	const before = decodeCursor(opts.before);
 
 	const db = getServiceDb();
 	const rows = await db
@@ -258,16 +287,27 @@ export async function getEnvironmentJobs(
 				eq(jobs.project_id, projectId),
 				eq(jobs.environment_id, environmentId),
 				eq(jobs.org_id, actor.orgId),
+				before
+					? or(
+							lt(jobs.created_at, before.at),
+							and(eq(jobs.created_at, before.at), lt(jobs.id, before.id)),
+						)
+					: undefined,
 			),
 		)
-		.orderBy(desc(jobs.created_at))
-		.limit(limit);
+		.orderBy(desc(jobs.created_at), desc(jobs.id))
+		.limit(limit + 1);
 
-	return rows.map((r) => ({
-		id: r.id,
-		type: r.job_type,
-		status: r.status,
-		createdAt: r.created_at.toISOString(),
-		error: r.error_message,
-	}));
+	const page = rows.slice(0, limit);
+	const last = page.at(-1);
+	return {
+		jobs: page.map((r) => ({
+			id: r.id,
+			type: r.job_type,
+			status: r.status,
+			createdAt: r.created_at.toISOString(),
+			error: r.error_message,
+		})),
+		nextCursor: rows.length > limit && last ? encodeCursor(last) : null,
+	};
 }

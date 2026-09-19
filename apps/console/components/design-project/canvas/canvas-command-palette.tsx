@@ -82,6 +82,12 @@ interface CanvasCommandPaletteProps {
 	onToggleView?: () => void;
 	onFitView: () => void;
 	onAskAi: () => void;
+	/** Auto-arrange the board (shared with the ⋯ menu and the pane context menu). */
+	onArrange: () => void;
+	/** Open the environment-settings card; absent while a BYO-IaC source governs the env. */
+	onEnvSettings?: () => void;
+	/** Open the activity card (edit mode only). */
+	onActivity?: () => void;
 	/** Opens the "bring your own Helm chart" flow. Omitted when the feature is off / no project. */
 	onAttachChart?: () => void;
 	/** Opens the "bring your own IaC" flow. Omitted when the feature is off / no project / a source
@@ -103,6 +109,9 @@ export function CanvasCommandPalette({
 	onToggleView,
 	onFitView,
 	onAskAi,
+	onArrange,
+	onEnvSettings,
+	onActivity,
 	onAttachChart,
 	onAttachIac,
 	disableComponentAdd,
@@ -112,6 +121,9 @@ export function CanvasCommandPalette({
 	const openInspector = useCanvasStore((s) => s.openInspector);
 	const undo = useCanvasStore((s) => s.undo);
 	const redo = useCanvasStore((s) => s.redo);
+	const repairOverlaps = useCanvasStore((s) => s.repairOverlaps);
+	const showConnections = useCanvasStore((s) => s.showConnections);
+	const toggleConnections = useCanvasStore((s) => s.toggleConnections);
 	const nodes = useCanvasStore((s) => s.nodes);
 	const coreProvider =
 		useCanvasStore((s) => s.getEffectiveProvider(PROJECT_NODE_ID)) ?? "aws";
@@ -137,7 +149,7 @@ export function CanvasCommandPalette({
 				<Icon className="h-4 w-4" />
 				<span>Add {def.label}</span>
 				{serviceName && serviceName !== "—" && (
-					<span className="ml-auto font-mono text-[11px] text-muted-foreground">
+					<span className="ml-auto font-mono text-ui-xs text-muted-foreground">
 						{serviceName}
 					</span>
 				)}
@@ -170,7 +182,7 @@ export function CanvasCommandPalette({
 							>
 								<GitBranch className="h-4 w-4" />
 								<span>Bring your own Helm chart</span>
-								<span className="ml-auto font-mono text-[11px] text-muted-foreground">
+								<span className="ml-auto font-mono text-ui-xs text-muted-foreground">
 									Helm · GitOps
 								</span>
 								<ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
@@ -184,7 +196,7 @@ export function CanvasCommandPalette({
 							>
 								<Boxes className="h-4 w-4" />
 								<span>Bring your own IaC</span>
-								<span className="ml-auto font-mono text-[11px] text-muted-foreground">
+								<span className="ml-auto font-mono text-ui-xs text-muted-foreground">
 									OpenTofu · replace
 								</span>
 								<ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
@@ -224,7 +236,7 @@ export function CanvasCommandPalette({
 								>
 									<Icon className="h-4 w-4" />
 									<span>{name}</span>
-									<span className="ml-auto font-mono text-[11px] text-muted-foreground">
+									<span className="ml-auto font-mono text-ui-xs text-muted-foreground">
 										{def.label}
 									</span>
 								</CommandItem>
@@ -242,8 +254,27 @@ export function CanvasCommandPalette({
 							Save project
 						</CommandItem>
 					)}
+					{onEnvSettings && (
+						<CommandItem value="environment-settings" onSelect={() => run(onEnvSettings)}>
+							Environment settings
+						</CommandItem>
+					)}
+					{onActivity && (
+						<CommandItem value="activity" onSelect={() => run(onActivity)}>
+							Activity
+						</CommandItem>
+					)}
 					<CommandItem value="fit-view" onSelect={() => run(onFitView)}>
 						Fit view
+					</CommandItem>
+					<CommandItem value="auto-arrange" onSelect={() => run(onArrange)}>
+						Auto-arrange
+					</CommandItem>
+					<CommandItem value="repair-overlaps" onSelect={() => run(repairOverlaps)}>
+						Repair overlaps
+					</CommandItem>
+					<CommandItem value="toggle-connections" onSelect={() => run(toggleConnections)}>
+						{showConnections ? "Hide connections" : "Show connections"}
 					</CommandItem>
 					<CommandItem value="undo" onSelect={() => run(undo)}>
 						Undo

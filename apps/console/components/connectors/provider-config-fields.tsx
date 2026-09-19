@@ -58,11 +58,15 @@ export function ProviderConfigFields({
 					<div key={field.key} className="flex flex-col gap-1.5">
 						{field.type === "boolean" ? (
 							<div className="flex items-center justify-between gap-3">
-								<Label htmlFor={id} className="font-normal">
+								{/* `htmlFor` does not name the switch: `@repo/ui/switch` renders a
+								    `<span role="switch">`, which is not labelable, so the label is
+								    pointed at by reference instead (#4352). */}
+								<Label id={`${id}-label`} htmlFor={id} className="font-normal">
 									{field.label}
 								</Label>
 								<Switch
 									id={id}
+									aria-labelledby={`${id}-label`}
 									checked={typeof raw === "boolean" ? raw : Boolean(field.default)}
 									onCheckedChange={(next) => onChange(field.key, next)}
 									disabled={disabled}
@@ -73,7 +77,7 @@ export function ProviderConfigFields({
 								<div className="flex items-center gap-1.5">
 									<Label htmlFor={id}>{field.label}</Label>
 									{field.required ? (
-										<span className="vx-eyebrow text-[10px] text-muted-foreground">
+										<span className="vx-eyebrow text-ui-2xs text-muted-foreground">
 											required
 										</span>
 									) : null}

@@ -194,9 +194,10 @@ DECLARE
     v_providers public.cloud_provider[];
     v_status public.runner_status;
     v_runner_org_id UUID;
+    v_runner_user_id UUID;
 BEGIN
-    SELECT operator, supported_providers, status, org_id
-      INTO v_operator, v_providers, v_status, v_runner_org_id
+    SELECT operator, supported_providers, status, org_id, user_id
+      INTO v_operator, v_providers, v_status, v_runner_org_id, v_runner_user_id
       FROM public.runners
       WHERE id = p_runner_id AND token_hash = p_runner_token_hash;
     IF v_operator IS NULL THEN
@@ -223,7 +224,20 @@ BEGIN
     WHERE id = (
         SELECT j.id FROM public.jobs j
         WHERE j.status = 'QUEUED' AND j.assigned_runner_id = p_runner_id
-          AND (v_operator = 'managed' OR j.org_id = v_runner_org_id)
+          AND (
+            v_operator = 'managed'
+            OR j.org_id = v_runner_org_id
+            -- Pre-#3874 CLI runners were stamped into their owner's personal org.
+            -- Admit only that exact legacy shape, only for lifecycle work created by
+            -- the owner. The job remains in its active tenant for quota, visibility,
+            -- evidence and serialization; arbitrary cross-tenant work stays closed.
+            OR (
+              v_operator = 'self'
+              AND v_runner_org_id = v_runner_user_id
+              AND j.user_id = v_runner_user_id
+              AND j.job_type IN ('DEPLOY_RUNNER', 'UPDATE_RUNNER', 'DESTROY_RUNNER')
+            )
+          )
           -- Never open a state file another job is actively writing (see state_object_busy).
           AND NOT public.state_object_busy(j.project_id, j.environment_id, j.id)
         ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -308,7 +322,14 @@ BEGIN
             WHERE id = (
                 SELECT j.id FROM public.jobs j
                 WHERE j.status = 'QUEUED' AND j.assigned_runner_id IS NULL
-                  AND j.org_id = v_runner_org_id
+                  AND (
+                    j.org_id = v_runner_org_id
+                    OR (
+                      v_runner_org_id = v_runner_user_id
+                      AND j.user_id = v_runner_user_id
+                      AND j.job_type IN ('DEPLOY_RUNNER', 'UPDATE_RUNNER', 'DESTROY_RUNNER')
+                    )
+                  )
                   AND (p_cloud_identity_id IS NULL OR j.cloud_identity_id = p_cloud_identity_id)
                   AND (v_providers IS NULL OR j.provider IS NULL OR j.provider = ANY(v_providers))
                   -- Never open a state file another job is actively writing (see state_object_busy).
@@ -868,6 +889,136 @@ UPDATE public.jobs j
  WHERE j.project_id = p.id
    AND j.org_id IS DISTINCT FROM p.org_id;
 
+-- ── The project component family: a tenant column the database owns (#4116) ─────────────────────
+--
+-- Every project-bearing table in lib/db/schema/project-components.ts carries `org_id`, a copy of its
+-- project's `projects.org_id`. Before #4116 none of them did (only project_changes had the column,
+-- and nothing wrote it), so every reader had to reach `project_id → projects.org_id` itself, and a
+-- reader that forgot got a query that worked and returned every tenant's rows.
+--
+-- A denormalized tenant column that can drift is worse than none, so this goes one step further than
+-- `jobs_set_org_id` above. That trigger fills org_id only when the caller left it NULL, and falls back
+-- to the session and then to user_id. Neither is acceptable here:
+--
+--   * An explicit stamp does NOT win. The trigger OVERWRITES org_id from the parent on every INSERT
+--     and on every UPDATE that names project_id or org_id, so a caller can neither forget it nor set
+--     it to anything but the parent's value.
+--   * There is no fallback. A component row belongs to its project's org or to nothing; if the parent
+--     yields no org the write RAISES (23502, the class a NOT NULL column would raise) rather than
+--     inventing one from session state.
+--
+-- DEFINER RIGHTS, AND WHY THEY ARE SAFE. `jobs_set_org_id` reads `projects` as the caller, and its
+-- comment says why that is enough there: an invisible project yields NULL and the session fallback
+-- takes over. Here there is no fallback, so an invoker-rights read would turn "project not visible to
+-- this RLS scope" into this function's "cannot derive … does not exist" — a false statement about a
+-- project that does exist. With definer rights the lookup always sees the one row the FK already
+-- names, and returns only its org; the derivation does not depend on which scope the writer used.
+-- It widens what the DERIVATION can see, never what a caller can read or write: the value lands on
+-- the caller's own row, and EVERY table of the family then answers to the owner_all policy below
+-- (that loop reads project_component_tables() itself, and tests/integration/component-org-id.test.ts
+-- asserts each family table has RLS enabled and that policy — so a new component table cannot get
+-- this trigger without it). The trigger runs BEFORE the policy's WITH CHECK, so a write naming
+-- another tenant's project arrives there carrying that tenant's org and is refused as a
+-- row-level-security violation; the INSERT … RETURNING org_id that would otherwise hand the caller
+-- another tenant's org id never returns a row. The test drives that refusal on all four tables that
+-- had no policy until #4848 (project_addons, project_services, project_source_repos,
+-- project_iac_sources).
+-- `SET row_security = off` is the belt, as for project_environments_require_one_default below: a
+-- no-op for the owning migration role, a loud error instead of silent filtering for any role that
+-- IS subject to RLS. `search_path` is pinned because a SECURITY DEFINER function must not resolve
+-- names through the caller's path.
+--
+-- Migration 0153 installs an identical copy of this function and its triggers in the same
+-- transaction that adds the CHECKs, so no instant exists at which NULL is refused and nothing fills
+-- it. From then on THIS file owns them; it re-creates both on every migrate.
+CREATE OR REPLACE FUNCTION public.derive_component_org_id()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+BEGIN
+  NEW.org_id := (SELECT p.org_id FROM public.projects p WHERE p.id = NEW.project_id);
+  IF NEW.org_id IS NULL THEN
+    RAISE EXCEPTION 'cannot derive %.org_id: project % does not exist or has no org',
+      TG_TABLE_NAME, NEW.project_id
+      USING ERRCODE = 'not_null_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- The family, stated ONCE: the trigger loop, the backfill, the propagation and the RLS loop below all
+-- read this.
+-- tests/integration/component-org-id.test.ts compares it against the drizzle schema — every table
+-- in project-components.ts with a `project_id` column must be here and nothing else may be — so a
+-- new component table that forgets to join the family fails that suite instead of shipping without
+-- a tenant column.
+CREATE OR REPLACE FUNCTION public.project_component_tables()
+RETURNS text[]
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT ARRAY[
+    'project_addons', 'project_caches', 'project_changes', 'project_chart_workloads',
+    'project_cluster', 'project_container_registries', 'project_databases', 'project_dns',
+    'project_git_credentials', 'project_helm_registries', 'project_iac_sources', 'project_network',
+    'project_nosql_tables', 'project_observability', 'project_queues', 'project_repositories',
+    'project_secrets', 'project_services', 'project_source_repos', 'project_storage_buckets',
+    'project_topics'
+  ]::text[];
+$$;
+
+DO $$
+DECLARE tbl TEXT;
+BEGIN
+  FOREACH tbl IN ARRAY public.project_component_tables() LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS %1$s_set_org_id ON public.%1$I', tbl);
+    EXECUTE format(
+      'CREATE TRIGGER %1$s_set_org_id BEFORE INSERT OR UPDATE OF project_id, org_id ON public.%1$I
+         FOR EACH ROW EXECUTE FUNCTION public.derive_component_org_id()', tbl);
+    -- Idempotent + self-healing, like the jobs backfill above: after 0153 and with the trigger in
+    -- place it matches nothing. It is here so that a row which somehow disagrees with its project
+    -- (a restore, a replica-mode load that skipped triggers) is corrected on the next migrate.
+    EXECUTE format(
+      'UPDATE public.%I c SET org_id = p.org_id
+         FROM public.projects p
+        WHERE p.id = c.project_id AND c.org_id IS DISTINCT FROM p.org_id', tbl);
+  END LOOP;
+END $$;
+
+-- The other direction: a project that changes org takes its components with it. Without this, the
+-- child trigger above keeps new writes right while every EXISTING row keeps the old org — drift by
+-- omission. The child UPDATE this issues fires the child trigger, which re-derives from the row this
+-- statement just updated and so agrees. If the project's org is being set to NULL, that child
+-- trigger raises and the whole UPDATE of `projects` fails: a project cannot lose its org while it
+-- still has components. Definer rights for the same reason as above — the rewrite must reach every
+-- child row, not the subset the caller's scope can see.
+CREATE OR REPLACE FUNCTION public.propagate_project_org_id()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+DECLARE tbl TEXT;
+BEGIN
+  FOREACH tbl IN ARRAY public.project_component_tables() LOOP
+    EXECUTE format(
+      'UPDATE public.%I SET org_id = $1 WHERE project_id = $2 AND org_id IS DISTINCT FROM $1', tbl)
+      USING NEW.org_id, NEW.id;
+  END LOOP;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS projects_propagate_org_id ON public.projects;
+CREATE TRIGGER projects_propagate_org_id
+  AFTER UPDATE OF org_id ON public.projects
+  FOR EACH ROW WHEN (OLD.org_id IS DISTINCT FROM NEW.org_id)
+  EXECUTE FUNCTION public.propagate_project_org_id();
+
 -- ── Tenant RLS backstop. Coarse org-isolation (org_id = app.current_org) OR'd with
 -- the per-owner check (user_id = app.current_owner); both set per-transaction by
 -- withScope(). Community: org_id = user_id and current_org = current_owner, so the
@@ -985,15 +1136,52 @@ CREATE POLICY runners_delete ON public.runners FOR DELETE
   USING (user_id = current_setting('app.current_owner', true)::uuid
          OR org_id = current_setting('app.current_org', true)::uuid);
 
--- Project child tables (ownership via the parent project)
+-- The project component family (#4116): the org arm binds to the row's OWN org_id column.
+--
+-- Same visibility as the join-through policy the tables that had one carried before #4116, stated
+-- on the column the tables now carry. The old USING was `project_id IN (projects WHERE user_id = owner OR org_id =
+-- org)`; `org_id` here equals `projects.org_id` for every row (the derive/propagate triggers and the
+-- CHECK above make that structural, not a convention), so the org arm is the same set, and the
+-- owner arm still reaches through `projects` because these tables carry no user_id. WITH CHECK
+-- mirrors USING: the trigger fills org_id BEFORE the check runs, so a write naming another tenant's
+-- project arrives here carrying that tenant's org and is refused, as it was before.
+--
+-- The list is the FAMILY ITSELF — project_component_tables(), the function the derivation trigger,
+-- the backfill and the propagation above all read — so no table can carry the derived column without
+-- this policy. Until #4848 this loop had its own 17-name literal, and four tables of the family
+-- (project_addons, project_services, project_source_repos, project_iac_sources) carried no policy at
+-- all: an app-role INSERT naming another tenant's project_id with RETURNING org_id got that tenant's
+-- org id back. There is no exception set: tests/integration/component-org-id.test.ts states it as an
+-- empty list and fails if any family table lacks RLS or this policy.
+--
+-- What enabling it on those four changed, as of #4848: every app-role read and write of them runs
+-- under withActorScope or withScope with the actor's real org (the rest go through getServiceDb, which
+-- bypasses RLS), so the org arm admits every project of that org, as it already did for the other
+-- seventeen in the same actions. No withOwnerScope caller touches them; one that did would now be
+-- refused on a teammate's project, exactly as it already was on the other seventeen.
+DO $$
+DECLARE tbl TEXT;
+BEGIN
+  FOREACH tbl IN ARRAY public.project_component_tables() LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
+    EXECUTE format(
+      'CREATE POLICY owner_all ON public.%I FOR ALL
+         USING (org_id = current_setting(''app.current_org'', true)::uuid
+                OR project_id IN (SELECT id FROM public.projects
+                   WHERE user_id = current_setting(''app.current_owner'', true)::uuid))
+         WITH CHECK (org_id = current_setting(''app.current_org'', true)::uuid
+                OR project_id IN (SELECT id FROM public.projects
+                   WHERE user_id = current_setting(''app.current_owner'', true)::uuid))', tbl);
+  END LOOP;
+END $$;
+
+-- Other project child tables (ownership via the parent project)
 DO $$
 DECLARE tbl TEXT;
 BEGIN
   FOR tbl IN SELECT unnest(ARRAY[
-    'project_environments', 'project_fabrics', 'project_preview_config', 'project_network', 'project_cluster', 'project_dns', 'project_observability', 'project_repositories', 'project_databases',
-    'project_caches', 'project_queues', 'project_topics', 'project_nosql_tables',
-    'project_container_registries', 'project_helm_registries', 'project_secrets', 'project_git_credentials', 'project_storage_buckets',
-    'project_changes', 'project_chart_workloads',
+    'project_environments', 'project_fabrics', 'project_preview_config',
     'environment_protection_rules', 'environment_promotions', 'promotion_approvals'
   ]) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
@@ -1008,6 +1196,186 @@ BEGIN
                    OR org_id = current_setting(''app.current_org'', true)::uuid))', tbl);
   END LOOP;
 END $$;
+
+-- ── project_environments: EXACTLY one default, enforced at COMMIT (#4127) ────────────────────────
+--
+-- `project_environments_one_default` (the partial unique index in the drizzle schema) says "no two
+-- rows with is_default = true". It says nothing about ZERO — so a project whose environments carry
+-- no default was legal, and three readers carried a silent fallback for it
+-- (`envs.find(is_default) ?? envs[0]` in lib/queries/cli-config.ts, the `desc(is_default)` sort in
+-- lib/cli/resolve-project.ts, and the same `?? environments[0]` in server/actions/projects.ts).
+-- Each is an arbitrary pick presented as an answer. The index gives at-most-one; this gives
+-- at-least-one, and together they are the "exactly one" the schema header has claimed all along.
+--
+-- ── WHY A CONSTRAINT TRIGGER, AND WHY DEFERRED ──
+--
+-- Every legitimate write reaches the correct state only at COMMIT, never statement by statement:
+--
+--   * `insertProjectWithDefaultFabric` inserts the `projects` row FIRST and its environments in a
+--     later statement of the same transaction. Between them the project has zero environments —
+--     legitimately.
+--   * `projects → project_environments` is ON DELETE CASCADE. An immediate AFTER DELETE check would
+--     fire while a project is being deleted, see its environments gone, and block every project
+--     deletion. Deferred, the parent row is gone too by the time the check runs, and the
+--     `NOT EXISTS (SELECT 1 FROM projects …)` probe below skips.
+--   * A future "make this env the default" flow must clear the old flag before setting the new one;
+--     the partial unique index forbids doing it in the other order.
+--
+-- A CHECK constraint cannot express a cross-row predicate, and a plain (non-constraint) trigger
+-- cannot be deferred. `CONSTRAINT TRIGGER … DEFERRABLE INITIALLY DEFERRED` is the only shape that
+-- judges the END STATE. drizzle-kit does not model constraint triggers, which is why this lives
+-- here rather than in a generated migration — scripts/migrate.mjs re-applies this file after the
+-- DDL on every migrate, so it is re-asserted on every deploy.
+--
+-- ── THE PROBE RUNS UNDER THE INVOKING ROLE UNLESS WE SAY OTHERWISE ──
+--
+-- Every console write arrives on the least-privileged `alethia_app` connection, and both `projects`
+-- and `project_environments` are RLS-protected. A SECURITY INVOKER check would ask its two
+-- questions through those policies: "does the parent exist" and "how many defaults does it have".
+-- If a policy hid either answer the check would silently SKIP — the invariant becomes decorative,
+-- and a fail-open invariant is worse than none, because the readers above will have been rewritten
+-- to trust it. So the function is SECURITY DEFINER (owned by the migration role, which owns these
+-- tables and is not subject to their policies) and it measures the real rows.
+--
+-- Today an invoker-rights version would happen to agree — `project_environments`'s `owner_all`
+-- policy is derived from `projects` visibility, so a caller who may write a child can always see
+-- the parent. That equivalence is a property of one policy pair, not of the design, and this
+-- function must not depend on it.
+--
+-- `SET row_security = off` is the belt: for the owner it is a NO-OP (no policy applies to them),
+-- but should this file ever be applied by a role that IS subject to RLS — or should these tables
+-- gain FORCE ROW LEVEL SECURITY — Postgres raises rather than quietly filtering. That asymmetry is
+-- the point: it converts the exact fail-open described above into a loud error.
+--
+-- Definer rights read across tenants, so the OTHER direction was checked too: the RAISE below puts a
+-- project id and two counts into a message the caller sees. It can only ever be the caller's OWN
+-- project. To make this fire for project P a caller must INSERT, UPDATE or DELETE a
+-- project_environments row carrying P — and `owner_all`'s WITH CHECK/USING resolve P through
+-- `projects` visibility first, so a write naming someone else's project is rejected before the
+-- trigger is ever queued. That includes the move case (`SET project_id = <other tenant>`), where
+-- WITH CHECK tests the NEW row. So the definer rights widen what the CHECK can see, never what the
+-- caller can learn.
+--
+-- ── SCOPE: this does NOT require a project to have any environments ──
+--
+-- The predicate is "a project's environments, IF IT HAS ANY, contain exactly one default". A
+-- project with no environments at all never fires this trigger (it only fires on
+-- project_environments DML) and is deliberately left alone: "every project has at least one
+-- environment" is a strictly larger invariant — 33 call sites create a bare project today, and the
+-- readers this issue is about already treat "no environments" as its own distinct, reported outcome
+-- (`CliEnvTarget.no-environments`), never as a guess. Enforcing it belongs to its own unit, with a
+-- trigger on `projects` and the fixtures to match.
+
+-- Trigger first, then the function: DROP FUNCTION refuses while a trigger depends on it, and this
+-- file's convention (see the 42P13 note in .claude/skills/db-pipeline/SKILL.md) is an explicit drop
+-- rather than CREATE OR REPLACE, so a changed signature does not fail the whole migrate.
+--
+-- AND BOTH DROPS PRECEDE THE REPAIR BELOW, which is not cosmetic ordering. The trigger is
+-- DEFERRABLE INITIALLY DEFERRED and `migrate.mjs:114` applies this whole file through one
+-- `sql.unsafe()` — a single implicit transaction. On a RE-APPLY over a database that already holds
+-- the trigger AND a violating project, a repair written after this point queues deferred
+-- after-trigger events, the DROP then removes the trigger those queued events name, and Postgres
+-- raises at COMMIT — failing the programmables phase and the deploy. That is exactly the recovery
+-- case the repair exists to serve, so the repair must run with no trigger present at all.
+DROP TRIGGER IF EXISTS project_environments_one_default_check ON public.project_environments;
+DROP FUNCTION IF EXISTS public.project_environments_require_one_default();
+
+-- The repair, re-asserted. This is the SAME expression migration 0150 ran (Step 3), kept here for
+-- the same reason 0150 duplicated the org_id backfill from this file: a constraint trigger does NOT
+-- validate existing rows, so creating it over a database holding a violation enforces nothing until
+-- something next touches that project — and then it raises on an unrelated write. Idempotent: after
+-- 0150 (and after the trigger below exists) it matches nothing. It runs AFTER both DROPs and BEFORE
+-- the CREATE, so no trigger exists while it runs — see the note above the drops for why "before the
+-- CREATE" alone was not enough.
+WITH needing AS (
+  SELECT project_id
+    FROM public.project_environments
+   GROUP BY project_id
+  HAVING bool_or(is_default) IS NOT TRUE
+), pick AS (
+  SELECT DISTINCT ON (e.project_id) e.id
+    FROM public.project_environments e
+    JOIN needing n ON n.project_id = e.project_id
+   ORDER BY e.project_id, e.created_at, e.id
+)
+UPDATE public.project_environments
+   SET is_default = true,
+       updated_at = now()
+ WHERE id IN (SELECT id FROM pick);
+
+CREATE FUNCTION public.project_environments_require_one_default()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+SET row_security = off
+AS $$
+DECLARE
+  pids     uuid[];
+  pid      uuid;
+  total    integer;
+  defaults integer;
+BEGIN
+  -- An UPDATE that MOVES an environment between projects can break the invariant at both ends, so
+  -- both are checked. NEW is unassigned on DELETE and OLD on INSERT — referencing the wrong one
+  -- raises inside plpgsql, hence the explicit TG_OP branch rather than a COALESCE.
+  IF TG_OP = 'INSERT' THEN
+    pids := ARRAY[NEW.project_id];
+  ELSIF TG_OP = 'DELETE' THEN
+    pids := ARRAY[OLD.project_id];
+  ELSIF NEW.project_id IS DISTINCT FROM OLD.project_id THEN
+    pids := ARRAY[OLD.project_id, NEW.project_id];
+  ELSE
+    pids := ARRAY[NEW.project_id];
+  END IF;
+
+  FOREACH pid IN ARRAY pids LOOP
+    CONTINUE WHEN pid IS NULL;
+
+    -- The parent is gone: a cascade delete, or the whole project rolled away in this transaction.
+    -- There is nothing left to hold a default, so the invariant is vacuous. THIS is the branch that
+    -- keeps project deletion working, and the reason the check has to be deferred to see it.
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM public.projects WHERE id = pid);
+
+    SELECT count(*), count(*) FILTER (WHERE is_default)
+      INTO total, defaults
+      FROM public.project_environments
+     WHERE project_id = pid;
+
+    -- total = 0 → the project has no environments; see the SCOPE note above.
+    -- defaults > 1 is already impossible (project_environments_one_default), but it is reported
+    -- rather than assumed away, so dropping that index degrades this check instead of blinding it.
+    IF total > 0 AND defaults <> 1 THEN
+      RAISE EXCEPTION
+        'project % has % environment(s) but % default: exactly one must have is_default = true',
+        pid, total, defaults
+        USING ERRCODE = 'integrity_constraint_violation',
+              HINT = 'Set is_default = true on exactly one project_environments row for this project.';
+    END IF;
+  END LOOP;
+
+  RETURN NULL;
+END;
+$$;
+
+-- NO `REVOKE ... FROM PUBLIC` on this function, deliberately — the usual SECURITY DEFINER hygiene
+-- would be a risk here with nothing to buy. `RETURNS TRIGGER` already forbids an ordinary call
+-- ("trigger functions can only be called as triggers", 0A000), so PUBLIC's default EXECUTE grant is
+-- not a definer-rights entry point; and every other trigger function in this file relies on that
+-- same default, because the EXECUTE check happens at CREATE TRIGGER against the CREATOR, not on the
+-- role whose write fires it. Revoking here would be the only place in the file betting on that.
+--
+-- What the app role cannot do is turn the check off: `ALTER TABLE … DISABLE TRIGGER` needs table
+-- ownership and `session_replication_role` needs superuser, and alethia_app is neither. It can call
+-- SET CONSTRAINTS, which only moves the check EARLIER (to the statement) — never away.
+
+-- `UPDATE OF is_default, project_id` and not a bare UPDATE: (total, defaults) can only move when one
+-- of those two columns is written, and environment `status` is updated on every job transition. The
+-- narrow event list keeps the hot path free of a per-row count at commit.
+CREATE CONSTRAINT TRIGGER project_environments_one_default_check
+  AFTER INSERT OR DELETE OR UPDATE OF is_default, project_id ON public.project_environments
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION public.project_environments_require_one_default();
 
 -- topic_subscriptions: normalized child of project_topics (no direct project_id), so tenancy flows
 -- through the parent topic → project — the same join-through shape as the support-case child tables.

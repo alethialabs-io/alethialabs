@@ -137,7 +137,13 @@ These are not per-cloud gates, but legs depend on them:
   azure, alibaba and hetzner are unpriced, so dispatch them one at a time and watch them.
 
 Region defaults per cloud when the `region` input is blank: hetzner `nbg1`, aws `us-east-1`,
-gcp `europe-west3`, azure `westeurope`, alibaba `eu-central-1`.
+gcp `europe-west3-a`, azure `westeurope`, alibaba `eu-central-1`.
+
+**gcp takes a ZONE, not a region.** A bare `europe-west3` makes the GKE cluster *regional*, and that
+changes two things at once: the capacity preflight is skipped (it asks a zonal question), and a node
+pool's `initial_node_count` and autoscaling min/max are applied **per zone** — so a floor configured
+for 1 node silently provisions one per zone and is billed accordingly. Overriding `region` with a
+bare region re-creates both.
 
 The matrix runs at most **3 real provisions concurrently** (`max-parallel: 3`), and a per-provider
 concurrency group serializes same-cloud runs.
@@ -184,6 +190,14 @@ All **variables**, not secrets (a role ARN, an account id, a region, a secret na
 
 Optional: `E2E_SECRETS_XACCT_EXTERNAL_ID` (only if you set `external_id` on the stack),
 `E2E_SECRETS_XACCT_SERVICE` / `_SECRET_NAME` / `_PROBE_NAMESPACE` (defaults are fine).
+
+**GCP leg (#1268).** Two more variables, from `infra/gcp-secrets-e2e`: `E2E_SECRETS_XACCT_PROJECT_ID`
+(`tofu output target_project_id`) and `E2E_SECRETS_XACCT_ESO_GSA_EMAIL` — the standing
+external-secrets GSA in the cluster's project that the stack granted (`tofu output
+granted_service_account`). The harness makes the gcp cluster adopt that GSA. With neither set, the gcp
+leg records the lane as not wired and runs without the scenario; with only one set, it fails before
+provisioning. `_REMOTE_KEY` and `_EXPECT_SHA256` are shared by every leg, so running aws and gcp
+together needs the same secret name and the same canary value in both account-B stacks.
 
 The region is **account B's**, where the canary lives — it need not match the cluster's, and is
 required explicitly rather than defaulted so a mismatch cannot surface as a puzzling
@@ -290,9 +304,8 @@ before enabling a second cell on the same leg.
 ### Dispatch from `main`
 
 Real applies are main-gated, so a dispatch from `dev` provisions nothing. Run the workflow with the
-target `provider` from `main`, then record the bundle. The parity table in
-`docs/testing/provisioning-e2e-parity.md` flips **only** on a real-apply artifact in
-`demos/proofs/provisioning-e2e-log.md` — never on a green harness.
+target `provider` from `main`, then record the bundle. The proof grid derived in `PROGRAMME.md` moves
+**only** on a real-apply artifact in `demos/proofs/provisioning-e2e-log.md` — never on a green harness.
 
 ## Related
 

@@ -13,8 +13,19 @@ test.describe("QA harness smoke", () => {
 		expect(["onboarding", "login", "signup"]).not.toContain(owner.orgSlug);
 		await owner.page.goto(`/${owner.orgSlug}`);
 		await expect(owner.page).toHaveURL(new RegExp(`/${owner.orgSlug}(\\?|/|$)`));
-		// The org overview offers a create-project affordance.
-		await expect(owner.page.getByRole("link", { name: /create.*project/i }).first()).toBeVisible({
+		// The overview's create affordance, asserted in the ONE form that does not depend on what
+		// is in the org. The EmptyState's "Create a Project" LINK renders only while the org has
+		// no projects at all (overview-client.tsx:134-147); the toolbar's Create menu renders in
+		// every state (overview-toolbar.tsx:94).
+		//
+		// Asserting the link made a HARNESS smoke test depend on org CONTENTS, and the suite is
+		// `fullyParallel` over a shared persona: `_seed-smoke.spec.ts` seeds a project into this
+		// same ownerHobby org and — correctly, and with its reason written down — does not clean
+		// up. So the two files disagreed about whether this org is empty, and the loser was
+		// whichever ran second. Measured on run 34251055671: this failed on both attempts with
+		// `seed-check-1788886367846` on screen, which reads as "the create affordance broke" and
+		// is nothing of the kind.
+		await expect(owner.page.getByRole("button", { name: /^create$/i }).first()).toBeVisible({
 			timeout: 15_000,
 		});
 	});

@@ -149,6 +149,58 @@ EOF
   return 0
 }
 
+# ── THE LEASE HALF OF "STALLED", so a caller does not have to reimplement it ─────────────────────
+#
+# `stalled_pr_ref` above answers "is the PR holding this unit stuck". That is only half of what
+# `.claude/COORDINATION.md` means by a stalled unit: the other half is that the ISSUE LEASE is long
+# dead. Until #4428 the lease half lived only inline in coordinate.sh, so anything else that wanted
+# the composite had to grow a second copy of it — which is what this file exists to prevent.
+#
+# ⚠ THERE IS STILL ONE DUPLICATE HERE, and it is pre-existing rather than introduced: coordinate.sh
+# carries `to_epoch` (:285) which is `_board_pr_epoch` (:111 of this file) character for character,
+# and its own inline lease read. Adopting these two functions there removes both — #4480, filed rather
+# than done in this unit, because the reclaim path is the one place a subtle change hands a live
+# instance's work to a second one, and it should not be refactored without a human watching.
+
+# board_lease_age_seconds <issue-number>: how old the unit's most recent lease stamp is, in seconds.
+#
+# Prints NOTHING when the age cannot be determined — no lease comment, or a timestamp neither `date`
+# accepts. That is the same instinct as `board_pr_is_stalled`'s unparseable-timestamp arm and as
+# coordinate.sh's "unreadable lease timestamp — leaving the claim in place": when we cannot tell how
+# old a claim is, we must not be the one to say it is dead.
+#
+# `stamped_at` is preferred over `claimed_at` because `--heartbeat` re-stamps only the former; a unit
+# being actively built refreshes `stamped_at` and keeps `claimed_at` from its first claim.
+board_lease_age_seconds() { # <n> -> prints seconds, or nothing
+  local n="$1" body stamp now
+  body="$(gh issue view "$n" --json comments \
+    --jq '[.comments[].body|select(startswith("```lease"))]|last // ""' 2>/dev/null)" || return 0
+  [ -z "$body" ] && return 0
+  stamp="$(printf '%s\n' "$body" | sed -n 's/^stamped_at: //p' | tail -1)"
+  [ -z "$stamp" ] && stamp="$(printf '%s\n' "$body" | sed -n 's/^claimed_at: //p' | tail -1)"
+  [ -z "$stamp" ] && return 0
+  local epoch
+  epoch="$(_board_pr_epoch "$stamp")"
+  [ -z "$epoch" ] && return 0
+  now="$(date -u +%s)"
+  printf '%s' $(( now - epoch ))
+}
+
+# board_unit_is_stalled <n> <lease-ttl> <pr-idle-ttl>: BOTH halves, as COORDINATION.md defines them —
+# the lease is older than the lease TTL, AND a PR holding the unit is itself stuck.
+#
+# FAIL-CLOSED, and the direction matters: "not stalled" is the answer whenever either half cannot be
+# established. A caller uses this to justify overriding a guard that exists to prevent the #1247
+# double-claim, so an unknown must never read as permission.
+board_unit_is_stalled() { # <n> <lease-ttl> <pr-idle-ttl> -> 0 = stalled · 1 = not, or cannot tell
+  local n="$1" lease_ttl="$2" pr_ttl="$3" age
+  age="$(board_lease_age_seconds "$n")"
+  [ -z "$age" ] && return 1
+  [ "$age" -gt "$lease_ttl" ] || return 1
+  [ -n "$(stalled_pr_ref "$n" "$pr_ttl")" ] || return 1
+  return 0
+}
+
 # active_pr_ref <issue-number>: the "#<pr> (<state>)" of the first OPEN PR building this issue, for
 # a diagnostic that names what to go look at. Best-effort — empty when unknown, never fails the
 # caller (the DECISION belongs to has_active_pr; this is only how we describe it).

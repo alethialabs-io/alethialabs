@@ -242,7 +242,7 @@ export function InviteMemberDialog({
                             {...f}
                           />
                         </FormControl>
-                        <FormMessage className="text-[11px]" />
+                        <FormMessage className="text-ui-xs" />
                       </FormItem>
                     )}
                   />
@@ -253,7 +253,15 @@ export function InviteMemberDialog({
                       <FormItem className="w-32 shrink-0">
                         <Select value={f.value} onValueChange={f.onChange}>
                           <FormControl>
-                            <SelectTrigger className="h-9 w-full">
+                            {/* The picker carries its own accessible name. Without one the only way
+                                to reach it is by position among the dialog's comboboxes, and a
+                                spec that says `.first()` is asserting about whichever control
+                                happens to be first — a test that keeps passing when the row it
+                                meant to read has moved. */}
+                            <SelectTrigger
+                              aria-label={`Role for invite ${i + 1}`}
+                              className="h-9 w-full"
+                            >
                               <SelectValue />
                             </SelectTrigger>
                           </FormControl>
@@ -295,7 +303,7 @@ export function InviteMemberDialog({
             </Button>
 
             {/* Role legend — what each role grants (descriptions, no overflow). */}
-            <ul className="space-y-0.5 border-t pt-2.5 text-[11px] text-muted-foreground">
+            <ul className="space-y-0.5 border-t pt-2.5 text-ui-xs text-muted-foreground">
               {roles.map((r) => (
                 <li key={r.value}>
                   <span className="font-medium text-foreground">{r.label}</span>{" "}

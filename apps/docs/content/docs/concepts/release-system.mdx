@@ -82,6 +82,32 @@ flowchart TD
 - `docker run --rm ghcr.io/alethialabs-io/alethia --version`
 - Direct binary download from GitHub Releases
 
+### Telling the console about the new version
+
+Publishing binaries is not the end of a CLI release. The console serves the canonical version at
+`/api/releases/cli`, and that is what the updater and the download surfaces read — so a release whose
+metadata never lands is invisible to every user who does not browse GitHub.
+
+`release-cli.yml`'s `publish-metadata` job does that publish, and it is the only job in the release
+that holds a credential. It reads one bearer token from Secrets Manager, POSTs the version, release
+notes, release URL and source commit, then polls the public read path until it agrees — so an
+incomplete release fails loudly instead of finishing quietly.
+
+The credential is short-lived and minted by OIDC, which needs the job to present a subject AWS
+trusts. A `cli-v*` tag push presents `…:ref:refs/tags/cli-vX.Y.Z`, which nothing trusts. The job
+therefore selects the **`cli-release`** GitHub environment, making its subject
+`…:environment:cli-release`; that environment is restricted to the `cli-v*` **tag** pattern, and the
+only role that trusts it is the read-only vault reader. Nothing else in the release path — and no
+branch — can reach a credential this way.
+
+That tag scope is also why `publish-metadata` runs on tag pushes only: a manual `release-cli.yml`
+dispatch runs on a branch, which the environment refuses by design.
+
+So if a release publishes binaries but the console does not catch up — a failed publish, or a manual
+re-release — repair it without re-releasing: run the **Publish CLI release metadata** workflow
+against `main` with the stable version. It reaches the same role through the branch subject, and it
+re-verifies both the public release and the monorepo source tag before publishing anything.
+
 ### CLI repo (`alethialabs-io/alethia-cli`)
 
 `alethia-cli` is the CLI's public home — both the **release/binary home** (above) and a browsable

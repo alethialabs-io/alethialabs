@@ -85,6 +85,16 @@ REGION="${ALETHIA_E2E_REGION:-}"
 PROJECT="${ALETHIA_E2E_PROJECT:-}"
 DRY_RUN="${DRY_RUN:-0}"
 PREFLIGHT="${PREFLIGHT:-0}"
+# ── VERIFY_ONLY (#4398) — ask the cloud, change nothing. The same scope-locked verification the
+# normal path ends with, with every sweep skipped: the only cloud calls it makes are the
+# LIST/DESCRIBE calls verify_swept already makes. Refused alongside DRY_RUN/PREFLIGHT because both
+# exit 0 WITHOUT verifying, and this script's exit status is read as a cloud verdict by
+# `sweep-probe.sh --record-verdict`. The reasoning in full is in aws-cleanup.sh.
+VERIFY_ONLY="${VERIFY_ONLY:-0}"
+if [ "$VERIFY_ONLY" = "1" ] && { [ "$DRY_RUN" = "1" ] || [ "$PREFLIGHT" = "1" ]; }; then
+	echo "::error::VERIFY_ONLY=1 with DRY_RUN=1 or PREFLIGHT=1 — both exit 0 WITHOUT verifying, and this exit status is read as a cloud verdict. Refusing." >&2
+	exit 2
+fi
 DELETE_RETRIES="${DELETE_RETRIES:-5}"
 DETACH_TIMEOUT="${DETACH_TIMEOUT:-180}"
 # ── PREFLIGHT budget (#2257, ported from aws-cleanup.sh by #2330). The preflight's "never blocks
@@ -151,6 +161,7 @@ ali() { aliyun "$@" --region "$REGION"; }
 # The per-run banner is for the normal (belt-and-suspenders) path; PREFLIGHT prints its own below.
 if [ "$PREFLIGHT" != "1" ] && [ "$SELF_TEST" != "1" ]; then
 	echo "→ alibaba belt-and-suspenders cleanup in ${REGION}, scope ${TAGK}=${PROJECT_ID_TAG}"
+	[ "$VERIFY_ONLY" = "1" ] && echo "  (VERIFY_ONLY=1 — re-listing the cloud, sweeping nothing, deleting nothing)"
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 fi
 
@@ -700,6 +711,19 @@ if [ "$PREFLIGHT" = "1" ]; then
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 	orphans="$(list_orphan_envs || true)"
 	if [ -z "$orphans" ]; then
+		# ── REPORT BEFORE THE EARLY RETURN. ────────────────────────────────────────────────────
+		#
+		# This branch is reached BOTH when discovery answered "nothing" and when discovery never
+		# answered at all — an expired session or a throttled API yields an empty orphan list, and
+		# the ✓ line below then prints over an account nobody looked at, exit 0, with the
+		# `probe_warn_unverifiable` call at the bottom of this block never reached. That log is
+		# byte-identical to a genuinely empty account, and scripts/e2e/reaper-result.mjs recorded it
+		# as `clean` — evidence about resources that BILL.
+		#
+		# hcloud-cleanup.sh has always reported here; the other four did not. See
+		# scripts/e2e/lib/sweep-probe.sh's probe_report_discovery header for why the marker is
+		# positive rather than another warning.
+		probe_report_discovery alibaba "the preflight orphan scan in ${REGION}"
 		echo "✓ preflight: no prior-run e2e orphans in ${REGION} — nothing to sweep"
 		exit 0
 	fi
@@ -744,7 +768,7 @@ if [ "$PREFLIGHT" = "1" ]; then
 		# ⚠️ Not "the account is clean" — "every orphan this preflight could SEE is swept". The
 		# cluster inventory can fail too, and preflight is explicitly non-blocking, so the honest
 		# report here is a warning; the always() teardown is what gates.
-		probe_warn_unverifiable alibaba "the preflight orphan scan in ${REGION}"
+		probe_report_discovery alibaba "the preflight orphan scan in ${REGION}"
 		echo "✓ preflight complete — all prior-run e2e orphans in ${REGION} swept"
 	fi
 	exit 0 # preflight never blocks the provisioning run
@@ -867,11 +891,15 @@ fi
 
 # ── Orchestrate, in strict dependency order. ──
 discover_cluster
-sweep_load_balancers
-sweep_cluster
-sweep_instances
-sweep_disks
-sweep_network
+# VERIFY_ONLY (#4398) skips every mutating pass and drops straight to the verification below.
+# discover_cluster stays: it resolves the handle the scoped probes read, and it only describes.
+if [ "$VERIFY_ONLY" != "1" ]; then
+	sweep_load_balancers
+	sweep_cluster
+	sweep_instances
+	sweep_disks
+	sweep_network
+fi
 
 if [ "$DRY_RUN" = "1" ]; then
 	echo "✓ alibaba DRY RUN complete for ${TAGK}=${PROJECT_ID_TAG} (nothing deleted, nothing verified)"

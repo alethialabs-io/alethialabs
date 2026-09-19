@@ -6,6 +6,17 @@
 // 500, a hang, or a leaked authed shell). Uses the `owner` persona ONLY to borrow a real org slug,
 // then drives a fresh no-storageState context so no session cookie is present.
 //
+// THE LEAK ASSERTION IS THE SHELL, NOT A LINK IN IT. It used to be "there is no `Overview` link",
+// which is one row of one component: a bounce that rendered the whole authenticated sidebar but
+// happened to have renamed that row would have passed. The `complementary` landmark IS the org
+// sidebar — the same handle `helpers/shell.ts` waits on for the positive case — so the two
+// directions of the same fact are now measured against the same thing.
+//
+// There is no middleware here: every private route redirects from its own page guard
+// (`app/(private)/layout.tsx` says so explicitly and deliberately does not duplicate it). That is
+// why the list below is a LIST — a per-page guard is a set that the next page forgets to join, and
+// this spec is the only thing that would notice.
+//
 // Unknown-route (404) negatives are covered by navigation-shell.negative.spec.ts and are NOT
 // duplicated here.
 //
@@ -30,12 +41,30 @@ async function withAnonPage(
 	}
 }
 
+/** The bounce, asserted the same way everywhere: no 5xx, lands on /login, no authed shell painted. */
+async function expectBounced(page: Page, url: string, label: string): Promise<void> {
+	const resp = await page.goto(url, { waitUntil: "domcontentloaded" });
+	if (resp) expect(resp.status(), `document status for ${label}`).toBeLessThan(500);
+	await page.waitForURL(/\/login/, { timeout: 20_000 });
+	await expect(page, `landed on /login for ${label}`).toHaveURL(/\/login/);
+	// The authed shell must NOT have leaked to an anonymous visitor.
+	await expect(page.getByRole("complementary"), `org sidebar for ${label}`).toHaveCount(0);
+}
+
+test.beforeEach(() => {
+	test.setTimeout(120_000);
+});
+
 test.describe("Cross-cutting — unauthenticated access is bounced to /login", () => {
-	// A representative set of protected surfaces: an org overview, an org-global page, and a settings
-	// tab. All three sit behind the (private) layout's getOwner() gate.
+	// A representative set of protected surfaces: the org root, two org-global pages this wave's
+	// domain owns (jobs, evidence), a connector surface, and a settings tab. All of them sit behind
+	// their own page guard.
 	const PROTECTED: { label: string; path: (slug: string) => string }[] = [
 		{ label: "org overview", path: (s) => `/${s}` },
 		{ label: "org connectors", path: (s) => `/${s}/~/connectors` },
+		{ label: "org jobs", path: (s) => `/${s}/~/jobs` },
+		{ label: "org clusters", path: (s) => `/${s}/~/clusters` },
+		{ label: "org evidence", path: (s) => `/${s}/~/evidence` },
 		{ label: "org billing settings", path: (s) => `/${s}/~/settings/billing` },
 	];
 
@@ -46,12 +75,7 @@ test.describe("Cross-cutting — unauthenticated access is bounced to /login", (
 		}) => {
 			const slug = owner.orgSlug;
 			await withAnonPage(browser, async (page) => {
-				const resp = await page.goto(route.path(slug), { waitUntil: "domcontentloaded" });
-				if (resp) expect(resp.status(), `document status for ${route.label}`).toBeLessThan(500);
-				await page.waitForURL(/\/login/, { timeout: 20_000 });
-				await expect(page).toHaveURL(/\/login/);
-				// The authed shell must NOT have leaked to an anonymous visitor.
-				await expect(page.getByRole("link", { name: "Overview", exact: true })).toHaveCount(0);
+				await expectBounced(page, route.path(slug), route.label);
 			});
 		});
 	}
@@ -59,9 +83,37 @@ test.describe("Cross-cutting — unauthenticated access is bounced to /login", (
 	test("anon visitor to a project route also bounces to /login", async ({ owner, browser }) => {
 		const slug = owner.orgSlug;
 		await withAnonPage(browser, async (page) => {
-			await page.goto(`/${slug}/any-project/jobs`, { waitUntil: "domcontentloaded" });
-			await page.waitForURL(/\/login/, { timeout: 20_000 });
-			await expect(page).toHaveURL(/\/login/);
+			await expectBounced(page, `/${slug}/any-project/jobs`, "project jobs");
+		});
+	});
+
+	test("anon visitor to a job detail page bounces before the job is resolved", async ({
+		owner,
+		browser,
+	}) => {
+		// A well-formed uuid that resolves to nothing. The point is that the bounce happens on the
+		// session, not on the lookup: an anonymous visitor must not be able to tell a job that
+		// exists from one that does not.
+		const slug = owner.orgSlug;
+		// THE BOUNCE IS THE WHOLE ASSERTION, and `expectBounced` already carries the failing input.
+		// This test used to add `expect(getByText("Job not found.")).toHaveCount(0)` after it, which
+		// could not fail: `expectBounced` has already awaited `waitForURL(/\/login/)`, so the job
+		// page is gone by construction and that count is 0 either way. The check that DOES bite is
+		// `waitForURL` itself — `deploy-jobs.negative.spec.ts` pins that an AUTHED visitor to this
+		// exact uuid gets the "Job not found." heading, so a guard that resolved the job before
+		// checking the session would render that state to an anonymous visitor and never reach
+		// /login, and this test would time out there.
+		//
+		// What is deliberately NOT claimed: a guard that resolved the job and THEN redirected is
+		// indistinguishable from this one to a client, and no assertion here can separate them. The
+		// user-facing property — an anonymous visitor cannot tell a job that exists from one that
+		// does not — is what the bounce measures, and it is measured.
+		await withAnonPage(browser, async (page) => {
+			await expectBounced(
+				page,
+				`/${slug}/~/jobs/00000000-0000-4000-8000-000000000000`,
+				"job detail",
+			);
 		});
 	});
 });

@@ -4,7 +4,7 @@
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { jobLogs, jobs } from "@/lib/db/schema";
-import { and, asc, eq, gt } from "drizzle-orm";
+import { and, asc, eq, gt, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliJobLogsResponse } from "@/lib/validations/cli-contract";
@@ -29,7 +29,16 @@ export async function GET(
 		const [job] = await db
 			.select({ id: jobs.id })
 			.from(jobs)
-			.where(and(eq(jobs.id, jobId), eq(jobs.org_id, actor.orgId)))
+			// THE SAME ORG LIST `GET /api/jobs` USES, from the guard rather than re-derived here.
+			// It was `eq(jobs.org_id, actor.orgId)`, one element narrower than the list — so a
+			// session member of a Teams org could LIST a pre-#3942 runner job (whose `org_id` is
+			// their own personal org) and then 404 trying to follow the logs of the id it had just been
+			// shown. `alethia jobs logs --latest` reaches exactly that.
+			//
+			// It is `auth.orgScope` and not a ternary on `auth.credential`: the values are the
+			// whole of #4154, and a per-route derivation is how the wide arm gets copied into a
+			// fourth file.
+			.where(and(eq(jobs.id, jobId), inArray(jobs.org_id, [...auth.orgScope])))
 			.limit(1);
 
 		if (!job) {

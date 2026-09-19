@@ -103,6 +103,23 @@ check "primary_ip_survives_the_server" {
   }
 }
 
+# go.dev/dl has no MINOR-only tarball — every release since 1.21 is published as
+# go1.NN.P, so a rendered URL without a patch 404s. curl -f then fails inside a `||`
+# group and cloud-init moves on: the box comes up with NO Go at all, and the first
+# `pnpm env:runner --native` is where you find out.
+#
+# This asserts the DEFAULTING in server.tf worked, not that go.work carries a patch.
+# The earlier version asserted the latter and failed the whole plan over `go 1.28`, a
+# legal directive meaning 1.28.0 — blocking the sandbox to avoid a URL that appending
+# ".0" fixes. It can now only fire if local.go_version's construction is broken, which
+# is the thing worth guarding.
+check "go_version_carries_a_patch" {
+  assert {
+    condition     = can(regex("^[0-9]+[.][0-9]+[.][0-9]+$", local.go_version))
+    error_message = "local.go_version is `${local.go_version}`, which has no patch — the box's download URL needs a full go1.NN.P. The defaulting in server.tf did not apply; fix it there rather than pinning a patch in go.work."
+  }
+}
+
 # The env cap and the port pools in scripts/box/env-registry.sh are sized together;
 # a cap the pools cannot satisfy fails at allocation time with a confusing
 # "registry is inconsistent" rather than here.

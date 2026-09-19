@@ -187,6 +187,14 @@ resource "azurerm_mysql_flexible_server" "this" {
   private_dns_zone_id    = one(azurerm_private_dns_zone.mysql[*].id)
   zone                   = "1"
 
+  # Stated, not inherited. A VNet-integrated server is private because of the delegated subnet
+  # above, and the attribute is optional+computed in azurerm 4.81.0 — so leaving it unset read back
+  # whatever the service chose, and nothing in this module SAID the server is private (#1450). The
+  # PostgreSQL server above states it as `public_network_access_enabled = false`. The literal is
+  # pinned by TestAzureMySQLPublicNetworkAccessDisabled (test/e2e/t2_keyless_db_pure_test.go); what
+  # a real server reports is only observed by the maintainer-run azure·mysql keyless apply.
+  public_network_access = "Disabled"
+
   # Storage is a block here, and auto-grow is REQUIRED when high availability is on (the service
   # rejects the combination otherwise), so it follows the HA flag rather than being hardcoded.
   storage {

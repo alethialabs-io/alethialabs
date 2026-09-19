@@ -186,6 +186,15 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 	if err := t2MergeClusterJSON(full); err != nil {
 		return nil, nil, err
 	}
+	// #1268: make the cluster ADOPT the standing external-secrets identity account B's grant names
+	// (gcp only; a no-op elsewhere). AFTER the cluster-json merge, which assigns top-level cluster
+	// keys wholesale and would replace a provider_config written any earlier. On `full` ONLY (never
+	// `base`, the A0.5 fidelity target).
+	if xacctEnabled {
+		if err := xacct.adoptStandingIdentity(full); err != nil {
+			return nil, nil, fmt.Errorf("#1268 cross-account secrets: %w", err)
+		}
+	}
 	// A2.2: append the Azure AKS admin-group object id (self-admin) into cluster.provider_config
 	// when ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID is set (azure only) — AFTER the cluster-json
 	// merge so it augments, never clobbers, any id supplied there. On `full` ONLY (never `base`,

@@ -22,6 +22,7 @@ import { proposeOperationInputSchema } from "@/lib/ai/operation";
 import { proposeChangesInputSchema } from "@/lib/ai/proposal";
 import type { Artifact, ArtifactTab } from "@/lib/stores/use-artifact-store";
 import { Button } from "@repo/ui/button";
+import { StatusBadge } from "@repo/ui/status-badge";
 
 const scanResultSchema = z.object({ openInCanvasUrl: z.string().optional() });
 
@@ -106,15 +107,12 @@ export function projectRenderToolPart({
 						<div className="flex items-center justify-between px-2.5 py-1.5">
 							<span className="font-mono text-xs">{proposal.label}</span>
 							{isAccepted ? (
-								<span className="vx-status vx-status--active">
-									<span className="vx-status__dot" />
-									Applied
-								</span>
+								<StatusBadge status="active" label="Applied" />
 							) : (
 								<Button
 									type="button"
 									size="sm"
-									className="h-6 px-2 text-[11px]"
+									className="h-6 px-2 text-ui-xs"
 									onClick={() => {
 										applyProposal(proposal);
 										setAccepted((a) => ({ ...a, [proposal.id]: true }));
@@ -193,7 +191,7 @@ export function projectRenderToolPart({
 							<Button
 								variant="outline"
 								size="sm"
-								className="h-6 gap-1.5 rounded-none px-2 text-[11px]"
+								className="h-6 gap-1.5 rounded-none px-2 text-ui-xs"
 								nativeButton={false}
 								render={<Link href={parsed.data.openInCanvasUrl} />}
 							>

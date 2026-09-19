@@ -14,6 +14,7 @@
 import Link from "next/link";
 import { formatRelative } from "@repo/format";
 import { CountPill } from "@repo/ui/count-pill";
+import { SectionHeading } from "@repo/ui/section-heading";
 import { EmptyState } from "@repo/ui/empty";
 import { FieldHelp } from "@repo/ui/field-help";
 import { StatusBadge } from "@repo/ui/status-badge";
@@ -36,7 +37,7 @@ const CELL = "px-3 py-3.5 align-top first:pl-4 last:pr-4";
 /** The header cell treatment — mono micro-caps, shared with the posture table. */
 const HEAD = cn(
 	CELL,
-	"h-auto py-2.5 font-mono text-[9px] font-normal uppercase tracking-[0.13em] text-text-tertiary",
+	"h-auto py-2.5 font-mono text-ui-3xs font-normal uppercase tracking-[0.13em] text-text-tertiary",
 );
 
 /** The recorded-waivers panel below the posture table. */
@@ -52,26 +53,27 @@ export function EvidenceWaivers({
 		<div className="overflow-hidden rounded-lg border bg-surface shadow-sm">
 			<div className="flex items-center gap-2.5 border-b px-4 py-3.5">
 				<EvIcon name="scroll" size={15} className="text-text-secondary" />
-				<h3 className="font-display text-[14px] font-semibold text-text-primary">
-					Recorded waivers
-				</h3>
+				<SectionHeading level={3} title="Recorded waivers" />
 				<FieldHelp
 					title={EVIDENCE_HELP.waiver.title}
 					docsHref={EVIDENCE_HELP.waiver.docsHref}
 					side="bottom"
-					className="text-text-disabled hover:text-text-secondary"
+					// Same active control, same tier, same reason as the table's header help. #4612.
+					className="text-text-tertiary hover:text-text-secondary"
 				>
 					{EVIDENCE_HELP.waiver.body}
 				</FieldHelp>
 				{/* The count pill beside the section heading, per the filter standard. It counts
 				    the ACTIVE waivers, not every recorded one, so the word stays. */}
-				<span className="flex items-center gap-1.5 font-mono text-[10px] text-text-tertiary">
+				<span className="flex items-center gap-1.5 font-mono text-ui-2xs text-text-tertiary">
 					<CountPill count={active} />
 					active
 				</span>
 				<span className="flex-1" />
 				{waivers.length >= 100 && (
-					<span className="font-mono text-[10px] text-text-disabled">
+					// The truncation notice is the only thing that says the list is not the whole
+					// list. Nothing about it is a disabled control. #4612.
+					<span className="font-mono text-ui-2xs text-text-tertiary">
 						Showing the 100 most recent
 					</span>
 				)}
@@ -108,7 +110,7 @@ export function EvidenceWaivers({
 							>
 								<TableCell className={cn(CELL, "whitespace-normal")}>
 									<div className="flex min-w-0 flex-col gap-1.5">
-										<div className="text-[12.5px] font-medium text-text-primary">
+										<div className="text-ui-sm font-medium text-text-primary">
 											{w.projectName ?? "—"}
 											{w.environmentName ? (
 												<span className="text-text-tertiary">
@@ -121,7 +123,7 @@ export function EvidenceWaivers({
 											{w.controls.map((c) => (
 												<span
 													key={c}
-													className="rounded-xs border bg-surface-sunken px-1.5 py-0.5 font-mono text-[10px] text-text-secondary"
+													className="rounded-xs border bg-surface-sunken px-1.5 py-0.5 font-mono text-ui-2xs text-text-secondary"
 												>
 													{c}
 												</span>
@@ -132,13 +134,13 @@ export function EvidenceWaivers({
 								<TableCell
 									className={cn(
 										CELL,
-										"whitespace-normal text-[12px] leading-relaxed text-text-secondary",
+										"whitespace-normal text-ui-sm leading-relaxed text-text-secondary",
 									)}
 								>
 									{w.reason}
 								</TableCell>
 								<TableCell className={CELL}>
-									<div className="flex flex-col gap-0.5 font-mono text-[10.5px] text-text-tertiary">
+									<div className="flex flex-col gap-0.5 font-mono text-ui-2xs text-text-tertiary">
 										<span className="text-text-secondary">{w.by}</span>
 										<span>{formatRelative(w.createdAt)}</span>
 										<Link
@@ -155,9 +157,15 @@ export function EvidenceWaivers({
 											status={w.active ? "active" : "expired"}
 											tier={w.active ? "active" : "disabled"}
 											label={w.active ? "Active" : "Expired"}
-											className="text-[9.5px]"
+											className="text-ui-3xs"
 										/>
-										<span className="font-mono text-[10px] text-text-disabled">
+										{/*
+										  * The expiry line under the pill. An EXPIRED waiver is not
+										  * a disabled control — the word the row exists to deliver
+										  * is "No expiry", and that is the loudest of the three
+										  * things this cell can say, not the quietest. #4612.
+										  */}
+										<span className="font-mono text-ui-2xs text-text-tertiary">
 											{w.expiry
 												? `Expires ${formatRelative(w.expiry)}`
 												: "No expiry"}

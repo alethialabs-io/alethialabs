@@ -43,6 +43,7 @@ import {
 	jobMinutesByProvider,
 	provisionedHoursByProvider,
 } from "@/lib/queries/runner-usage";
+import { hourlyRateEur } from "@/lib/fleet/costs";
 import { wakeFleetScaler } from "@/lib/fleet/scaler";
 import { revalidatePath } from "next/cache";
 
@@ -363,7 +364,10 @@ describe("getFleetEconomics", () => {
 		const r = await getFleetEconomics();
 		expect(authorize).toHaveBeenCalledWith("create", { type: "fleet" });
 		expect(r.serverType).toBe("cax21");
-		const rate = 6.49 / 730;
+		// Read from the module, never re-typed. This line WAS `6.49 / 730` — a second copy of the
+		// price that went stale independently of the first (#4412), so the two could disagree and
+		// only this test would notice, by failing for a reason that looks like a rounding bug.
+		const rate = hourlyRateEur("cax21");
 		expect(r.hourlyRateEur).toBeCloseTo(rate, 10);
 
 		const aws = r.pools.find((p) => p.provider === "aws")!;

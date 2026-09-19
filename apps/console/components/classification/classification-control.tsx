@@ -26,6 +26,14 @@ export function ClassificationControl({
 	className,
 	/** Compact icon-only picker trigger (for dense list rows). */
 	compact = false,
+	/**
+	 * Names the compact trigger's row for a caller that renders several `ClassificationControl`s
+	 * on one screen (e.g. a per-account or per-runner list) — the accessible name becomes
+	 * `Classify ${label}` instead of the bare "Classify" every row would otherwise share.
+	 * Optional and additive: every existing `compact` call site keeps the bare "Classify" name
+	 * unchanged.
+	 */
+	label,
 }: {
 	kind: ResourceKind;
 	id: string;
@@ -34,6 +42,7 @@ export function ClassificationControl({
 	align?: "start" | "center" | "end";
 	className?: string;
 	compact?: boolean;
+	label?: string;
 }) {
 	// Show the picker only when the caller can edit THIS resource AND holds `org:edit` (the
 	// server gate for assign/clear). The AND keeps a custom-role user who can edit the
@@ -69,7 +78,7 @@ export function ClassificationControl({
 						<Button
 							variant="ghost"
 							size="icon"
-							aria-label="Classify"
+							aria-label={label ? `Classify ${label}` : "Classify"}
 							className="size-6 text-muted-foreground"
 						>
 							<Tags className="size-3.5" />

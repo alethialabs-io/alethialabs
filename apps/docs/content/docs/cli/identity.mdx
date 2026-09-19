@@ -89,25 +89,65 @@ org argument, …) or the command fails with a clear error. See [TUI Components]
 
 ### `alethia version`
 
-Print the CLI version. If a newer release is known (from the daily background check), it also prints
-the latest available version.
+Print the CLI version and check the control plane for the latest available release. If the network
+is unavailable, the command falls back to the last successful daily check.
 
 ```bash
 alethia version
 # alethia v1.4.0
 ```
 
+### `alethia update`
+
+Update the CLI through its detected installation channel. Homebrew and Scoop remain responsible for
+their installations; writable standalone binaries are downloaded and checksum-verified directly.
+Linux packages, Docker images, and non-writable installations receive an exact manual command.
+
+```bash
+alethia update
+```
+
+The command does not elevate privileges. See [Installation](/cli/installation#alethia-update) for
+the behavior of each install channel.
+
 ### `alethia open`
 
 Open the Alethia web console (default) or the docs in your browser. Aliases: `docs`, `dashboard`.
 
 ```bash
-alethia open            # opens the console
-alethia open docs       # opens the documentation
-alethia open console    # explicit
+alethia open                        # opens the active organization's page
+alethia open --project boutique     # opens that project
+alethia open docs                   # opens the documentation
+alethia open console                # explicit
 ```
 
-`alethia docs` (the alias) defaults to the docs target.
+| Argument / Flag | Default | Description |
+|----------|---------|-------------|
+| `[console\|docs]` | `console` | Which surface to open. Defaults to the console; the `docs` alias defaults to the documentation. |
+| `--project` | — | Open a project's page instead of the organization's, by project name or id. The URL is built from the console's own route tree, so a route rename fails the build rather than the link. |
+
+`alethia docs` (the alias) defaults to the docs target. The argument is optional and has a default,
+so `alethia open --no-input` opens the console rather than asking — this is the one shell value a
+person supplies, and it is answered rather than prompted for.
+
+The console target opens the **active organization's** page, and `--project` opens a project under
+it. Both URLs are built from the route tree the console itself declares
+(`packages/core/routing`, generated from `apps/console/app/(private)/**` and checked by
+`pnpm check:route-parity`), rather than from a path written out in the CLI: the one link the CLI
+used to build was `/dashboard`, a legacy catch-all, so `alethia project get <name> --open` printed
+a project and then opened the organization root.
+
+`--project` takes a project name or id, and the CLI resolves it against the organization's own
+projects before it builds the link. Only a miss asks anything: a name or id the organization has
+becomes a link directly. A reference the organization does not have is refused, and the refusal
+names the projects it does have — on a terminal, a picker replaces the retype. With `--no-input`,
+or when the prompt has no terminal to draw on, the miss stays a refusal. Before this, an unknown
+reference was passed through unchanged and built a console link to a page that does not exist,
+which reads exactly like a command that worked.
+
+Choosing an organization with [`alethia org switch`](/cli/commands/organizations) records its slug,
+so the link costs no request; a machine that has authenticated but never switched resolves it once
+through `whoami`.
 
 ### `alethia completion`
 

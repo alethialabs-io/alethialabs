@@ -157,6 +157,17 @@ type ProjectNetworkConfig struct {
 	// which is also what keeps it from locking the external runner out of a cluster it
 	// still has to provision.
 	AllowedCidrBlocks []string `json:"allowed_cidr_blocks,omitempty"`
+	// ProviderConfig carries per-cloud NETWORK knobs the typed fields above do not model, merged
+	// into tfvars by name (mergeProviderConfig), the same shape #4259 landed for the seven leaf
+	// kinds. Its absence is what #4319 found: the template-knob manifest measures which
+	// `(cloud, component)` cells a `provider_config` can reach, and `network` reached NOTHING on
+	// every cloud — each one declares network variables and no field existed to carry a value to
+	// them. That is a gap and not a ceiling: the resource exists and the knobs are declared.
+	//
+	// Reserved keys are the per-cloud root lists (`awsRootReserved` and friends), consulted at every
+	// root-level merge rather than only at this one — a key a typed field above already owns must not
+	// arrive again under its own name as an undeclared duplicate.
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 // NodeSize is a cloud-indifferent node capability; the catalog resolver maps it to the
@@ -217,12 +228,22 @@ type ProjectObservabilityConfig struct {
 type ProjectRepositoriesConfig struct {
 	AppsDestinationRepo string `json:"apps_destination_repo"`
 	// AppsPath is the subpath within AppsDestinationRepo that a PLACED environment's ArgoCD
-	// Application syncs — the per-tier Kustomize overlay ("overlays/dev") that makes a
-	// namespace/vcluster placement deliver its own tier instead of the whole repository.
+	// Application syncs — the per-tier Kustomize overlay ("overlays/dev") that makes a placed
+	// environment deliver its own tier instead of the whole repository.
 	//
 	// EMPTY MEANS THE REPOSITORY ROOT: unset renders `path: '.'`, byte-identical to every deploy
-	// that predates this field, so no existing tenant's Application moves. Ignored on the
-	// `dedicated` path, which discovers overlays through the apps-overlays ApplicationSet instead.
+	// that predates this field, so no existing tenant's Application moves.
+	//
+	// IT APPLIES ON ALL THREE PLACEMENT MODES, `dedicated` included. This comment used to say the
+	// dedicated path ignored it, and that was true of the defect rather than of the field: the
+	// value was read only by the namespace and vcluster paths, so a dedicated environment
+	// delivered the repo root no matter what it declared. infra/templates/argocd/user-apps.yaml
+	// renders `path` from this value with no placement branch.
+	//
+	// Naming a path also turns overlay DISCOVERY off — user-apps-overlays.yaml renders only when
+	// this is empty, because a glob anchored at the repo root would adopt the very overlays the
+	// named path is placing, and both Applications would claim the same Deployments with
+	// selfHeal: true. So the two are alternatives, not layers: an explicit path, or discovery.
 	AppsPath string `json:"apps_path,omitempty"`
 }
 
@@ -274,6 +295,10 @@ type ProjectCacheConfig struct {
 	// this field json.Unmarshal dropped the value on every cloud and the cache
 	// was provisioned with the template's default access rules only (#1981).
 	AllowedCidrBlocks []string `json:"allowed_cidr_blocks"`
+	// ProviderConfig carries per-cloud cache knobs the typed fields above do not model
+	// (redis_*/valkey_*, memorystore_*, azure_cache_*, kvstore_*), merged into tfvars by
+	// name by each provider's passthrough. Same contract as the database's.
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 type ProjectQueueConfig struct {
@@ -289,6 +314,9 @@ type ProjectTopicConfig struct {
 	Placement
 	Name          string              `json:"name"`
 	Subscriptions []TopicSubscription `json:"subscriptions"`
+	// ProviderConfig carries per-cloud topic knobs (SNS / Pub/Sub / Service Bus / MNS)
+	// the typed fields do not model, merged into the topic's tfvars item by name.
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 type TopicSubscription struct {
@@ -311,6 +339,11 @@ type ProjectNosqlConfig struct {
 	// dropped the value and a global table got the template's default replica
 	// set, not the regions the user chose (#1982).
 	GlobalReplicas []string `json:"global_replicas"`
+	// ProviderConfig carries per-cloud table knobs (DynamoDB / Firestore / Cosmos / OTS).
+	// The column has existed on project_nosql_tables since the connectors phase; without
+	// this field json.Unmarshal dropped it, so a value the console stored never reached
+	// the runner.
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 type ProjectSecretConfig struct {

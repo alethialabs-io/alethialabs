@@ -140,9 +140,10 @@ printf '%s' "$cmd" | grep -Eq '^[[:space:]]*(grep|egrep|rg|ag|sed|awk|cat|echo|p
 # `pnpm env:box`, and from a worktree (empty tofu state) that apply would have created a
 # SECOND server plus duplicate tunnel and DNS records, breaking dev.alethialabs.io.
 #
-# So the wrappers are named explicitly. scripts/env.sh ALSO refuses these two commands
-# when an agent is driving — a guard the wrapped script enforces itself cannot be dodged
-# by finding yet another wrapper, and this list cannot be kept exhaustive by inspection.
+# The two lifecycle wrappers are agent-runnable by the maintainer's ruling on #4483
+# (2026-09-18) and this hook lets them through; what keeps them safe is scripts/env.sh's
+# require_main_checkout, which refuses to apply or destroy from a tree with no state. This
+# hook still refuses RAW tofu/terraform apply, destroy and plan -destroy, below.
 if printf '%s' "$cmd" | grep -Eq '(^|[^a-zA-Z0-9_./-])(tofu|terraform)\b[^&;|]*[[:space:]](apply|destroy)\b' ||
 	printf '%s' "$cmd" | grep -Eq '(^|[^a-zA-Z0-9_./-])(tofu|terraform)\b[^&;|]*[[:space:]]plan\b[^&;|]*[[:space:]]-destroy\b' ||
 	false; then

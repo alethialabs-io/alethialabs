@@ -1,0 +1,96 @@
+[
+  {
+    "QUERY PLAN": [
+      {
+        "Plan": {
+          "Node Type": "Nested Loop",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Join Type": "Inner",
+          "Startup Cost": 0.42,
+          "Total Cost": 20.5,
+          "Plan Rows": 1,
+          "Plan Width": 33,
+          "Inner Unique": false,
+          "Plans": [
+            {
+              "Node Type": "Nested Loop",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Join Type": "Inner",
+              "Startup Cost": 0.29,
+              "Total Cost": 16.34,
+              "Plan Rows": 1,
+              "Plan Width": 16,
+              "Inner Unique": false,
+              "Plans": [
+                {
+                  "Node Type": "Index Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Scan Direction": "Forward",
+                  "Index Name": "idx_project_environments_project",
+                  "Relation Name": "project_environments",
+                  "Alias": "project_environments",
+                  "Startup Cost": 0.14,
+                  "Total Cost": 8.16,
+                  "Plan Rows": 1,
+                  "Plan Width": 32,
+                  "Index Cond": "(project_id = '64c49066-0754-4a85-b917-9909ebc5e550'::uuid)"
+                },
+                {
+                  "Node Type": "Index Scan",
+                  "Parent Relationship": "Inner",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Scan Direction": "Forward",
+                  "Index Name": "projects_pkey",
+                  "Relation Name": "projects",
+                  "Alias": "projects",
+                  "Startup Cost": 0.15,
+                  "Total Cost": 8.17,
+                  "Plan Rows": 1,
+                  "Plan Width": 16,
+                  "Index Cond": "(id = '64c49066-0754-4a85-b917-9909ebc5e550'::uuid)",
+                  "Filter": "(org_id = '65e72869-1af3-4e90-a3ec-8cb2808a50e5'::uuid)"
+                }
+              ]
+            },
+            {
+              "Node Type": "Limit",
+              "Parent Relationship": "Inner",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 0.13,
+              "Total Cost": 4.15,
+              "Plan Rows": 1,
+              "Plan Width": 17,
+              "Plans": [
+                {
+                  "Node Type": "Index Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Scan Direction": "Forward",
+                  "Index Name": "idx_environment_probes_env_time",
+                  "Relation Name": "environment_probes",
+                  "Alias": "environment_probes",
+                  "Startup Cost": 0.13,
+                  "Total Cost": 8.17,
+                  "Plan Rows": 2,
+                  "Plan Width": 17,
+                  "Index Cond": "(environment_id = project_environments.id)"
+                }
+              ]
+            }
+          ]
+        },
+        "Planning Time": 0.283,
+        "Triggers": [],
+        "Execution Time": 0.061
+      }
+    ]
+  }
+]

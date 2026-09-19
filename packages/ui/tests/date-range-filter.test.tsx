@@ -4,6 +4,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { formatInTimeZone } from "date-fns-tz";
+import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { DateRangeFilter } from "../src/date-range-filter";
 import { localTimeZone, presetRange } from "../src/range";
@@ -23,6 +24,23 @@ describe("DateRangeFilter", () => {
 		renderFilter();
 		// The CalendarDays trigger's accessible name is the formatted range (has an en-dash).
 		expect(screen.getByRole("button", { name: /–|—/ })).toBeInTheDocument();
+	});
+
+	// THE OTHER DIRECTION, and the one that was a live bug: the label must be absent from the
+	// SERVER's HTML. `formatRangeLabel` reads the viewer's zone and, through `presetRange`, the
+	// wall clock to the minute — neither of which the server shares with the browser. Rendered
+	// during hydration it is React #418 ("text content did not match"), which the release gate's
+	// audit leg fails the route on. Intermittent in CI, where both halves share a clock and a
+	// zone and must straddle a minute boundary; near-constant against a UTC server.
+	it("does not put the clock/zone-derived label in the server-rendered HTML", () => {
+		const html = renderToString(
+			<DateRangeFilter value={presetRange("7d")} onChange={() => {}} />,
+		);
+		// No range separator and no meridiem — the two halves of `formatRangeLabel`'s output.
+		expect(html).not.toMatch(/–|—/);
+		expect(html).not.toMatch(/\d(am|pm)/i);
+		// It still renders a trigger the reader can see and click.
+		expect(html).toMatch(/Date range/);
 	});
 
 	it("opens to a calendar + start/end date+time inputs", async () => {

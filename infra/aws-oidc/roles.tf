@@ -123,10 +123,39 @@ resource "aws_iam_role_policy" "runner_release_deployer" {
 # ── Deploy-console read-only vault role ──────────────────────────────────────
 # deploy-console fetches the prod secret to assemble .env on the box. Read-only on
 # the one secret — nothing else (no state, no ECR/ECS).
+# The reader is the one role with its OWN trust document, because it is the one role the CLI
+# release path needs. It admits everything `deployer_trust` admits (the apply branch, the
+# production environment, the admin escape hatch) PLUS the `cli-release` environment sub - as a
+# second StringEquals statement, never a wildcard. Concatenation rather than a rewritten document
+# so the shared trust stays the single definition of the branch/environment/admin grants.
+data "aws_iam_policy_document" "deploy_reader_trust" {
+  source_policy_documents = [data.aws_iam_policy_document.deployer_trust.json]
+
+  statement {
+    sid     = "GithubOIDCCliRelease"
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [local.oidc_provider_arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = [local.cli_release_sub]
+    }
+  }
+}
+
 resource "aws_iam_role" "deploy_reader" {
   name               = "alethia-deploy-reader"
-  description        = "Least-priv OIDC role for deploy-console - read the prod secret only."
-  assume_role_policy = data.aws_iam_policy_document.deployer_trust.json
+  description        = "Least-priv OIDC role for deploy-console + the CLI release metadata publish - read the prod secret only."
+  assume_role_policy = data.aws_iam_policy_document.deploy_reader_trust.json
   tags               = local.tags
 }
 
