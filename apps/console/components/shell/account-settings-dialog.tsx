@@ -95,19 +95,25 @@ export function AccountSettingsDialog({
 
 	/**
 	 * Opens the erasure request for the signed-in user and says what happened — a request with a
-	 * reference, never a deletion. A second press while one is open gets the existing reference back.
+	 * reference that was sent to the privacy inbox, never a deletion. A second press while one is
+	 * open gets the existing reference back. A deployment with no privacy contact opens nothing, and
+	 * the toast says so rather than implying anyone was told.
 	 */
 	const onRequestErasure = async () => {
 		setRequesting(true);
 		try {
-			const { reference, alreadyOpen } = await requestMyErasure();
-			if (alreadyOpen) {
+			const result = await requestMyErasure();
+			if (result.outcome === "already_open") {
 				toast.info(
-					`You already have an open erasure request (${reference}). Nothing has been deleted yet.`,
+					`You already have an open erasure request (${result.reference}). Nothing has been deleted yet.`,
+				);
+			} else if (result.outcome === "opened") {
+				toast.success(
+					`Erasure request ${result.reference} opened. Nothing has been deleted yet — the request was sent to the privacy team.`,
 				);
 			} else {
-				toast.success(
-					`Erasure request ${reference} opened. Nothing has been deleted yet — a person will act on it.`,
+				toast.error(
+					"No request was opened: this deployment has no privacy contact configured. Ask your administrator to erase your account.",
 				);
 			}
 		} catch {
@@ -240,7 +246,9 @@ export function AccountSettingsDialog({
 
 					    The maintainer's ruling (2026-09-18, revised on #4273): this button opens an ERASURE
 					    PRIVACY CASE about the signed-in user, with identity recorded as verified by the session,
-					    and a person fulfils it. It does not call `fulfilErasure`, which today writes a
+					    and a person fulfils it. The case is emailed to the privacy inbox as it is opened, or it
+					    is not opened at all (#4875) — which is what lets the copy say it was "sent to the
+					    privacy team". It does not call `fulfilErasure`, which today writes a
 					    tombstone and deletes no row (#4854 tracks the executor). So the copy says a request is
 					    opened and never that anything was deleted — if the executor lands and this becomes a
 					    real erasure, the copy, `account.delete` in `destructive-actions.yaml` and
@@ -254,7 +262,7 @@ export function AccountSettingsDialog({
 						<SectionHeading
 							title="Delete account"
 							level={4}
-							description={`Ask us to erase your account and the personal data tied to it. Pressing the button opens an erasure request — nothing is deleted at that moment. A person reviews it and is due to answer within ${PRIVACY_RESPONSE_DAYS} days.`}
+							description={`Ask for your account and the personal data tied to it to be erased. Pressing the button opens an erasure request and sends it to the privacy team — nothing is deleted at that moment. A response is due within ${PRIVACY_RESPONSE_DAYS} days of the request.`}
 							actions={
 								<Button
 									variant="destructive"
@@ -277,7 +285,7 @@ export function AccountSettingsDialog({
 				open={confirmOpen}
 				onOpenChange={setConfirmOpen}
 				title="Request deletion of your account?"
-				description={`This opens an erasure request for ${user?.email ?? "your account"}. Nothing is deleted now: a person reviews the request and carries out the erasure, and your account keeps working until then.`}
+				description={`This opens an erasure request for ${user?.email ?? "your account"} and sends it to the privacy team. Nothing is deleted now, and your account keeps working while the request is handled.`}
 				confirmLabel="Open erasure request"
 				onConfirm={onRequestErasure}
 			/>
