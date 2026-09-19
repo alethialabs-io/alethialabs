@@ -1488,9 +1488,12 @@ jobs:
           #    so the value never enters CI config, logs or the proof bundle) and that a placed
           #    tenant is still refused (#1306).
           #
-          #    AWS-ONLY today. gcp/azure/alibaba resolve to a recorded BLOCKED reason and skip —
-          #    their ESO identity cannot be pre-trusted (see docs/testing/xacct-secrets-parity.md).
-          #    Account B's read grant is applied ONCE, out of band, by infra/aws-secrets-e2e.
+          #    AWS and GCP. azure/alibaba resolve to a recorded BLOCKED reason and skip (see
+          #    docs/testing/xacct-secrets-parity.md). Account B's read grant is applied ONCE, out of
+          #    band, by infra/aws-secrets-e2e / infra/gcp-secrets-e2e. GCP additionally needs the
+          #    STANDING external-secrets GSA that grant names (E2E_SECRETS_XACCT_ESO_GSA_EMAIL): the
+          #    harness makes the cluster adopt it. A gcp leg with neither PROJECT_ID nor the GSA set
+          #    records the lane as unwired and runs without the scenario; one without the other fails.
           #
           #    All plain VARIABLES, not secrets: a role ARN, an account id, a region, a secret name
           #    and a digest are not sensitive — which is exactly why the canary is compared by hash.
@@ -1508,6 +1511,7 @@ jobs:
           ALETHIA_E2E_SECRETS_XACCT_SERVICE: ${{ vars.E2E_SECRETS_XACCT_SERVICE }}
           ALETHIA_E2E_SECRETS_XACCT_PROBE_NAMESPACE: ${{ vars.E2E_SECRETS_XACCT_PROBE_NAMESPACE }}
           ALETHIA_E2E_SECRETS_XACCT_EXPECT_SHA256: ${{ vars.E2E_SECRETS_XACCT_EXPECT_SHA256 }}
+          ALETHIA_E2E_SECRETS_XACCT_ESO_GSA_EMAIL: ${{ vars.E2E_SECRETS_XACCT_ESO_GSA_EMAIL }}
           ALETHIA_E2E_SECRETS_XACCT_SUMMARY: ${{ runner.temp }}/secrets-xacct-summary.json
           # ── KEYLESS DATABASE AUTH (#1511) — the ship gate for epic #1500.
           #

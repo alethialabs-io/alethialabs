@@ -191,6 +191,14 @@ All **variables**, not secrets (a role ARN, an account id, a region, a secret na
 Optional: `E2E_SECRETS_XACCT_EXTERNAL_ID` (only if you set `external_id` on the stack),
 `E2E_SECRETS_XACCT_SERVICE` / `_SECRET_NAME` / `_PROBE_NAMESPACE` (defaults are fine).
 
+**GCP leg (#1268).** Two more variables, from `infra/gcp-secrets-e2e`: `E2E_SECRETS_XACCT_PROJECT_ID`
+(`tofu output target_project_id`) and `E2E_SECRETS_XACCT_ESO_GSA_EMAIL` — the standing
+external-secrets GSA in the cluster's project that the stack granted (`tofu output
+granted_service_account`). The harness makes the gcp cluster adopt that GSA. With neither set, the gcp
+leg records the lane as not wired and runs without the scenario; with only one set, it fails before
+provisioning. `_REMOTE_KEY` and `_EXPECT_SHA256` are shared by every leg, so running aws and gcp
+together needs the same secret name and the same canary value in both account-B stacks.
+
 The region is **account B's**, where the canary lives — it need not match the cluster's, and is
 required explicitly rather than defaulted so a mismatch cannot surface as a puzzling
 `ResourceNotFound` at sync time.
