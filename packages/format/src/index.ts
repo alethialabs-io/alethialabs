@@ -222,10 +222,16 @@ export function formatBytes(bytes: number): string {
  * third currency reaches a Stripe charge today. `invoices.currency` is free `text()` mirrored from
  * Stripe, so the day one is added, it reaches here.
  *
+ * CURRENCY IS REQUIRED (#4176). It used to default to `"USD"`, and nine call sites took that
+ * default without saying so — among them the billing page's plan price, which rendered a EUR
+ * subscription with a dollar sign. The type checker is what enforces this now: a call with one
+ * argument does not compile, so a caller has to name where its currency came from, even when the
+ * answer is a literal `"USD"` read off a field that is USD by construction.
+ *
  * @param cents amount in minor units, as Stripe quotes a charge in this currency.
- * @param currency ISO 4217 code; defaults to USD.
+ * @param currency ISO 4217 code, either case — the one the amount was quoted in.
  */
-export function formatMoney(cents: number, currency = "USD"): string {
+export function formatMoney(cents: number, currency: string): string {
 	const amount = Number.isFinite(cents) ? cents / stripeChargeDivisor(currency) : 0;
 	// No explicit decimals: a billed amount keeps the currency's own (2 for USD, 0 for JPY).
 	return money(amount, currency);
@@ -256,7 +262,7 @@ export type MonthlyRateStyle = "estimate" | "exact";
  * tables, where money is stored in minor units. This takes major units because a monthly estimate
  * comes from `projects.estimated_monthly_cost` and the plan's cost result, which are `numeric`
  * columns holding dollars. Passing one to the other is off by 100 either way, so the two names
- * carry the unit — `formatMoney(1250)` and `formatMonthlyRate(12.5)` are the same money.
+ * carry the unit — `formatMoney(1250, "USD")` and `formatMonthlyRate(12.5)` are the same money.
  *
  * CENTS ARE ALWAYS SHOWN. The first cut of this function dropped them above $100, on the argument
  * that they are fake precision on an estimate. That argument is true of a lone headline and false
