@@ -9,11 +9,16 @@
 //   · the dialog reads the SESSION (email, provider badges, the dirty-gated Save), so a broken
 //     `authClient.useSession()` shows up as a dialog full of "Not set" rather than as a green
 //     render;
-//   · the Delete Account button is INERT — see the note at its call site. That is a recorded
-//     decision awaiting a maintainer ruling (#4273), not drift, so the spec pins the current
-//     behaviour in BOTH directions: the control exists and is enabled (nobody has quietly
-//     deleted it), and pressing it opens no confirmation and ends no session (nobody has
-//     quietly wired it). Whichever way the ruling goes, this file moves in that PR.
+//   · "Request deletion" OPENS AN ERASURE REQUEST AND DELETES NOTHING (#4273, ruled 2026-09-18) —
+//     see the note at its call site. So the spec proves both halves: the control asks first and
+//     Cancel leaves no trace, and confirming opens a request with a `DSR-` reference while the
+//     account and its session survive. A second confirmation returns the SAME reference rather
+//     than opening a second case. If the erasure executor (#4854) ever lands behind this button,
+//     the "session survives" assertion is the one that has to move, and it will fail first.
+//
+// Confirming is safe here and nowhere else: every test signs up its own throwaway account, so the
+// request it opens is about a user no other test uses. `audit/destructive.spec.ts` only ever
+// cancels, and the production pass never opens this control at all (`prod-qa: skip`).
 //
 // `console` project, not `qa`: this spec drives its own email-OTP signup through
 // `fixtures/auth.ts` rather than a persona from `global-setup`. Every test here therefore costs
@@ -66,70 +71,67 @@ test.describe("Account settings dialog", () => {
 		await expect(save).toBeEnabled();
 	});
 
-	// ── the inert Delete Account button (#4273) ────────────────────────────────────────
+	// ── Request deletion: an erasure REQUEST, never a deletion (#4273) ─────────────────────────
 
-	test("the danger zone offers Delete Account", async ({ authedPage: page }) => {
-		const dialog = await openAccountSettings(page);
-		const del = dialog.getByRole("button", { name: /^delete account$/i });
-		await expect(del).toBeVisible();
-		// Enabled, and that is deliberate: it LOOKS like a working control, which is precisely
-		// why the ruling in #4273 matters and why the next test exists.
-		await expect(del).toBeEnabled();
-	});
-
-	test("Delete Account is INERT — pressing it opens no confirmation and ends no session", async ({
+	test("Request deletion asks first, and Cancel opens nothing and ends no session", async ({
 		authedPage: page,
 	}) => {
 		const dialog = await openAccountSettings(page);
 		const emailBefore = await dialog.locator("#account-email").inputValue();
 		expect(emailBefore).toMatch(/.+@.+/);
 
-		const del = dialog.getByRole("button", { name: /^delete account$/i });
-		// Proves the control was really there to press, so the negative half below cannot be
-		// satisfied by a button that never rendered.
-		await expect(del).toBeEnabled();
-		await del.click();
+		// The copy promises a request, not a deletion. The old copy said "permanently deleted",
+		// which is the claim the ruling forbids while nothing is deleted.
+		await expect(dialog.getByText(/opens an erasure request/i)).toBeVisible();
+		await expect(dialog.getByText(/permanently deleted/i)).toHaveCount(0);
 
-		// The confirmation shapes are matched by their PRIMITIVE (`alert-dialog-content` /
-		// role=alertdialog), never by role=dialog: the account-settings dialog is itself a
-		// role=dialog and its own copy contains "permanently deleted", so either of those would
-		// match the surface under test and report a confirmation that does not exist. Both shapes
-		// the console actually ships land on this selector — a raw `AlertDialogContent` carries
-		// `data-slot="alert-dialog-content"` (packages/ui/src/alert-dialog.tsx:62), and the
-		// `ConfirmDialog` every other destructive control uses renders through that same component
-		// (components/alerts/confirm-dialog.tsx:39).
-		const confirmation = page.locator('[data-slot="alert-dialog-content"], [role="alertdialog"]');
+		await dialog.getByRole("button", { name: /^request deletion$/i }).click();
 
-		// THE POSITIVE FIRST: the surface under test is still mounted, so the absence below is an
-		// absence ON it rather than the whole dialog having gone away.
-		await expect(
-			dialog.getByRole("heading", { name: /account settings/i }),
-		).toBeVisible();
+		// Matched by the alert-dialog PRIMITIVE, never by role=dialog: the settings dialog is
+		// itself a role=dialog, so a role=dialog match could report the surface under test as
+		// the confirmation.
+		const confirmation = page.locator('[data-slot="alert-dialog-content"], [role="alertdialog"]').first();
+		await expect(confirmation).toBeVisible();
+		await expect(confirmation).toContainText(/request deletion of your account\?/i);
+		await expect(confirmation).toContainText(emailBefore);
+		await expect(confirmation).toContainText(/nothing is deleted now/i);
+		await expect(confirmation.getByRole("button", { name: /open erasure request/i })).toBeVisible();
 
-		// AND THEN AN ABSENCE THAT SPENDS ITS WINDOW. `toHaveCount(0, { timeout: 3_000 })` was the
-		// wrong instrument for it: a count that is already 0 when `click()` returns satisfies the
-		// matcher at t=0 and the 3s is never spent, so a confirmation that mounts one `await` later
-		// — the shape ANY wiring of this button would have, since every candidate path in the call
-		// site's note is a server action — appeared to a green test. `waitFor` inverts it: the wait
-		// resolves early the moment a confirmation is visible and rejects only when the window is
-		// out, so appearing is the observation and the absence is what must survive all 3 seconds.
-		const appeared = await confirmation
-			.first()
-			.waitFor({ state: "visible", timeout: 3_000 })
-			.then(
-				() => true,
-				() => false,
-			);
-		expect(
-			appeared,
-			"pressing Delete Account opened a confirmation — the control has been wired, so destructive-actions.yaml and this spec must move with it (#4273)",
-		).toBe(false);
-		await expect(dialog.locator("#account-email")).toHaveValue(emailBefore);
+		await confirmation.getByRole("button", { name: /^cancel$/i }).click();
+		await expect(confirmation).toBeHidden();
+		await expect(page.getByText(/DSR-[0-9A-F]{8}/)).toHaveCount(0);
 
-		// And the ACCOUNT survives — the half a count-zero assertion can never reach. A reload
-		// still finds an authenticated console rather than a bounce to /login.
+		// And the ACCOUNT survives: a reload still finds an authenticated console.
 		await page.reload();
 		await expect(page).not.toHaveURL(/\/login/);
 		await expect(page.getByRole("button", { name: /account menu/i })).toBeVisible();
+	});
+
+	test("confirming opens ONE erasure request with a reference, and the account survives it", async ({
+		authedPage: page,
+	}) => {
+		/** Opens the settings, presses Request deletion, confirms, and returns the toast's reference. */
+		async function confirmRequest(expected: RegExp): Promise<string> {
+			const dialog = await openAccountSettings(page);
+			await dialog.getByRole("button", { name: /^request deletion$/i }).click();
+			const confirmation = page.locator('[data-slot="alert-dialog-content"], [role="alertdialog"]').first();
+			await confirmation.getByRole("button", { name: /open erasure request/i }).click();
+			const toast = page.getByText(expected).first();
+			await expect(toast).toBeVisible({ timeout: 15_000 });
+			const reference = (await toast.textContent())?.match(/DSR-[0-9A-F]{8}/)?.[0];
+			expect(reference, "the toast should quote the request's DSR- reference").toBeTruthy();
+			return reference ?? "";
+		}
+
+		const first = await confirmRequest(/erasure request DSR-[0-9A-F]{8} opened\. nothing has been deleted yet/i);
+
+		// The request is about THIS account and deleted nothing: the session is intact.
+		await page.reload();
+		await expect(page).not.toHaveURL(/\/login/);
+		await expect(page.getByRole("button", { name: /account menu/i })).toBeVisible();
+
+		// A second press while the first is open returns the SAME case, not a second one.
+		const second = await confirmRequest(/you already have an open erasure request \(DSR-[0-9A-F]{8}\)/i);
+		expect(second).toBe(first);
 	});
 });
