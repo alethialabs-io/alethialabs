@@ -54,7 +54,7 @@ func runT2SecretsXacct(t *testing.T, ctx context.Context, kc string, p secretsXa
 		Provider:  p.cfg.provider,
 		Slug:      p.cfg.connectorSlug(),
 		Store:     p.cfg.storeName(),
-		TargetRef: p.cfg.roleARN,
+		TargetRef: p.cfg.targetRef(),
 		RemoteKey: p.cfg.remoteKey,
 		Verdict:   "FAIL",
 	}
