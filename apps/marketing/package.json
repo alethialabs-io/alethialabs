@@ -18,7 +18,7 @@
 		"@repo/plan-catalog": "workspace:*",
 		"@repo/privacy": "workspace:*",
 		"@repo/ui": "workspace:*",
-		"@aws-sdk/client-sesv2": "^3.1133.0",
+		"@aws-sdk/client-sesv2": "^3.1134.0",
 		"@hookform/resolvers": "^5.9.1",
 		"@react-email/components": "^1.0.12",
 		"libphonenumber-js": "^1.13.13",

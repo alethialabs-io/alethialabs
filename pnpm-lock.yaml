@@ -32,8 +32,8 @@ importers:
   apps/admin:
     dependencies:
       '@aws-sdk/client-s3':
-        specifier: ^3.1133.0
-        version: 3.1133.0
+        specifier: ^3.1134.0
+        version: 3.1134.0
       '@react-email/components':
         specifier: ^1.0.12
         version: 1.0.12(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -225,38 +225,38 @@ importers:
         specifier: ^7.3.2
         version: 7.3.2
       '@aws-sdk/client-dynamodb':
-        specifier: ^3.1133.0
-        version: 3.1133.0
+        specifier: ^3.1134.0
+        version: 3.1134.0
       '@aws-sdk/client-ec2':
-        specifier: ^3.1133.0
-        version: 3.1133.0
+        specifier: ^3.1134.0
+        version: 3.1134.0
       '@aws-sdk/client-eks':
-        specifier: ^3.1133.0
-        version: 3.1133.0
+        specifier: ^3.1134.0
+        version: 3.1134.0
       '@aws-sdk/client-elastic-load-balancing-v2':
-        specifier: ^3.1133.0
-        version: 3.1133.0
+        specifier: ^3.1134.0
+        version: 3.1134.0
       '@aws-sdk/client-elasticache':
-        specifier: ^3.1133.0
-        version: 3.1133.0
+        specifier: ^3.1134.0
+        version: 3.1134.0
       '@aws-sdk/client-rds':
-        specifier: ^3.1133.0
-        version: 3.1133.0
+        specifier: ^3.1134.0
+        version: 3.1134.0
       '@aws-sdk/client-resource-groups-tagging-api':
-        specifier: ^3.1133.0
-        version: 3.1133.0
+        specifier: ^3.1134.0
+        version: 3.1134.0
       '@aws-sdk/client-s3':
-        specifier: ^3.1133.0
-        version: 3.1133.0
+        specifier: ^3.1134.0
+        version: 3.1134.0
       '@aws-sdk/client-service-quotas':
-        specifier: ^3.1133.0
-        version: 3.1133.0
+        specifier: ^3.1134.0
+        version: 3.1134.0
       '@aws-sdk/client-sesv2':
-        specifier: ^3.1133.0
-        version: 3.1133.0
+        specifier: ^3.1134.0
+        version: 3.1134.0
       '@aws-sdk/client-sts':
-        specifier: ^3.1133.0
-        version: 3.1133.0
+        specifier: ^3.1134.0
+        version: 3.1134.0
       '@azure/identity':
         specifier: ^4.13.3
         version: 4.13.3
@@ -438,8 +438,8 @@ importers:
         specifier: ^3.4.9
         version: 3.4.9
       posthog-js:
-        specifier: ^1.433.5
-        version: 1.433.5(@types/react@19.2.8)(react@19.2.8)
+        specifier: ^1.433.7
+        version: 1.433.7(@types/react@19.2.8)(react@19.2.8)
       posthog-node:
         specifier: ^5.52.4
         version: 5.52.4(rxjs@7.8.2)
@@ -658,8 +658,8 @@ importers:
   apps/marketing:
     dependencies:
       '@aws-sdk/client-sesv2':
-        specifier: ^3.1133.0
-        version: 3.1133.0
+        specifier: ^3.1134.0
+        version: 3.1134.0
       '@hookform/resolvers':
         specifier: ^5.9.1
         version: 5.9.1(@standard-schema/spec@1.1.0)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(react-hook-form@7.88.0(react@19.2.8))(zod@4.5.4)
@@ -837,8 +837,8 @@ importers:
   packages/email:
     dependencies:
       '@aws-sdk/client-sesv2':
-        specifier: ^3.1133.0
-        version: 3.1133.0
+        specifier: ^3.1134.0
+        version: 3.1134.0
       '@react-email/components':
         specifier: ^1.0.12
         version: 1.0.12(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -1342,48 +1342,48 @@ packages:
     resolution: {integrity: sha512-6uTniZc87q+B5eXouGTl+7Tmc482rEeCcvxpsvREP8EfF0gvloRZ41UOA9sbSJlyy8TbqIBXb3kKfKarEArUQA==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-dynamodb@3.1133.0':
-    resolution: {integrity: sha512-oFgJwU1ODcQYuz4eeOzilfhtr1VOEicumIe7eAEkzkOpF24QOUbOaexUz/up6DVCycC1ysxI9SS2HS6waANOAg==}
+  '@aws-sdk/client-dynamodb@3.1134.0':
+    resolution: {integrity: sha512-i2FzVUVQWT0fEPE7/CxIP0620svDeNZKw4yU7VAa1s3otwXJ7CP2hgblvbPD6H3p+mTNSPfHoEyxK0iZDmBODQ==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-ec2@3.1133.0':
-    resolution: {integrity: sha512-wDO6GPH3LVWQn3Pq6VDNcbmwY2UEp3UbJHweBPD2NvbU5bzHtU1zpLkMzImnfL92QS8my/NavQKudKnoQaeaeA==}
+  '@aws-sdk/client-ec2@3.1134.0':
+    resolution: {integrity: sha512-DTG9guEM6l8VDffqpmqOXICfPGmsAqfSItx6OBJnLLIohj59G//5xIvWvCoOKDro0cOuzV9Hk96TMp3dMIbYew==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-eks@3.1133.0':
-    resolution: {integrity: sha512-12cMQ9yl4R7RQ8to9A/LeTb+1WIL5tSPr0xCRskUZ2Xp5Q9oJflh2TcTdJwgvKrhAN9tqwEg38arqudjhY7fPg==}
+  '@aws-sdk/client-eks@3.1134.0':
+    resolution: {integrity: sha512-Q9NEI6xhc701uM1pwRjYIUQ2G/elghID/OA2GLpKrl7QphxaokPCzYL4V+ydmelDQcfKSwIsFrHSPshHsgwQLw==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-elastic-load-balancing-v2@3.1133.0':
-    resolution: {integrity: sha512-y0/cI+ZIuV2qFxnCO7pl6cmdyrg1K5eOAfS8umQneXJN99QsHXQmQSpQUufxykm16jfWVkNB09QMBbU8dpeITg==}
+  '@aws-sdk/client-elastic-load-balancing-v2@3.1134.0':
+    resolution: {integrity: sha512-DT2Ymqpx8H3jT2gB43QTt0plwkcmxDiueYCwOs4ZRzme6R+Xsc+LFBroZJCfQz8fPzK098B1LUs8oy4PXSzy+A==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-elasticache@3.1133.0':
-    resolution: {integrity: sha512-XjnMZLhdA4ZMJuTO7BhUKWoKOswfSdCaQgyphr+bFLSRi9Cm3Sx6fwm6Yg9CP93RbQFD8x7XXrGX4/WVB0ujag==}
+  '@aws-sdk/client-elasticache@3.1134.0':
+    resolution: {integrity: sha512-gmwhWgPQ70d6ZXqbWXo/A04D4ccLQspgIlwdJmDig9okILATAvvhsHC9jEmn4qDhhtMkNjW1RGVebk4RcIyVzA==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-rds@3.1133.0':
-    resolution: {integrity: sha512-W897Sa1UOBscgKv0AJYRMzvx686+R9ICZp1hbljhSTUFq579DUxa7q/UlWI415vtGRyV9FIas3yMToT+klqtIg==}
+  '@aws-sdk/client-rds@3.1134.0':
+    resolution: {integrity: sha512-TDITqs1CsHMtFrpnneT0uSS+wKr2toFczRz9yuDTd/B8pCDirc436i1wW8k+e/fIf3+G54DCCm3Yk/Q74QzZmw==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-resource-groups-tagging-api@3.1133.0':
-    resolution: {integrity: sha512-XlStQFnI1+B45jiS4tkivKyAZ6lGx0Ofp4HLo+jQCZF1ZjEzKeKcmMliTOsW5hsP7dpHyrn0LASiUg8Ac9dwcA==}
+  '@aws-sdk/client-resource-groups-tagging-api@3.1134.0':
+    resolution: {integrity: sha512-MfsDK9+UOOyZO9EfHCQtOtbiOFE5pVlqFwvCHd5OBj7QQ6zbtoBsiQZfCtPLt1FcBwFird9SlBekDfJobaK4Lg==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-s3@3.1133.0':
-    resolution: {integrity: sha512-b7IVvFjNxNt6i//qUr2tWQC1JhUY0HpIiM41vvXv30br/nuXjYtKAADrMFluxGYX0X7LQB5GvzUcFDxNOoLMLg==}
+  '@aws-sdk/client-s3@3.1134.0':
+    resolution: {integrity: sha512-dHgbuWMkladVNpR5gEQ7K9ub20w/hcf9IJXtMr+S3/rYpr6Z4gWUEX1seAPj00nAxJqtAaYvX3wdr2BVukZXXQ==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-service-quotas@3.1133.0':
-    resolution: {integrity: sha512-Al1FiRZkF40EkSspdFDlw4om4uv2Thgu2ICWyut+TKNOFI+4RJzhIbdGoGgpaPTNqCnpyuMmDHQP1rfayiZblA==}
+  '@aws-sdk/client-service-quotas@3.1134.0':
+    resolution: {integrity: sha512-IgLAVAPhGRGcGw0OEdHp3cHMZysXmZ0TBBqoxgRpjtaFbkfeITcgrRmGJqd9+2TiR1sHUr5jnwd7UJI7EWSvzw==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-sesv2@3.1133.0':
-    resolution: {integrity: sha512-oYY2uiJF8myrGErOngDEt9/++D7ilw0SOb8skFW+IXlrmX0DxhEnhATsRuWo6+sb2/AFJNAWvX4n+XostJBe2A==}
+  '@aws-sdk/client-sesv2@3.1134.0':
+    resolution: {integrity: sha512-nf9/szNMojnhevNbdpYVTJwCJuIlWupjk/2RshxUhbmsdXKptXJh1x+/sx3AuZrQCLdbwuo0PIIrF/ZnYUxHzg==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-sts@3.1133.0':
-    resolution: {integrity: sha512-TB24UGL+yzO08y/4kYEpCSs3njl+PZbyxqhGphi2ZRR7f7w7wewKqzLv/MtZ9m0zuO3ugXu+c4jIlQa30xy0aQ==}
+  '@aws-sdk/client-sts@3.1134.0':
+    resolution: {integrity: sha512-y3H216ZCfzVGGirfZWCF0u6ycQRdEVGWNpxH9IRmAIVSQebIIP84MCjhGP2l5u1AQf+fW0TZh1W2QgSCZBO4uA==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/core@3.978.0':
@@ -4140,8 +4140,8 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
-  '@posthog/browser-common@0.8.3':
-    resolution: {integrity: sha512-4Hlbwyn+Hioc2+pjqSGWMTDrA5XsDshssPnGfv34khPKoJaeBe2YvPvsEPoH78jezOS6Wo3LJvCPhqyolg3S8w==}
+  '@posthog/browser-common@0.9.0':
+    resolution: {integrity: sha512-EWoVzs1vVY7ihpn8yOjj3jyjriHUEEMVSBNL/TW3hk09fTriWRe76vJXrRg0G0yjTYxHmtlSkNn4mOV24ZEzzA==}
 
   '@posthog/cli@0.16.2':
     resolution: {integrity: sha512-h8bpf9ffBUH/Z9IoyGV+wiI+vS8rIPorKT3eKQXuzuwawO0G7Qvy+hDd7HQ9YJjHByYZ77yPPQvrSs4WsqTUCg==}
@@ -9412,8 +9412,8 @@ packages:
     resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
     engines: {node: '>=12'}
 
-  posthog-js@1.433.5:
-    resolution: {integrity: sha512-fu8UAeXIExR2oCT4U2IOUknp7iJ6k2Sc07oSZQzXD6cSJM6VxMkjT4TgMIsC8emcl9ha6Two+dMUmUOzZ/909w==}
+  posthog-js@1.433.7:
+    resolution: {integrity: sha512-AUZWqx85NtrRoFZUZzdU5eBsHdC7swcZq/Vd+NH9yZL1jaKJlfxbdJyHXrRZXFFd0c3bzvc5w9YbmqGrESWoIw==}
     peerDependencies:
       '@types/react': 19.2.8
       react: 19.2.8
@@ -11119,7 +11119,7 @@ snapshots:
       '@smithy/types': 4.18.0
       tslib: 2.8.1
 
-  '@aws-sdk/client-dynamodb@3.1133.0':
+  '@aws-sdk/client-dynamodb@3.1134.0':
     dependencies:
       '@aws-sdk/core': 3.978.0
       '@aws-sdk/credential-provider-node': 3.972.83
@@ -11132,7 +11132,7 @@ snapshots:
       '@smithy/types': 4.18.0
       tslib: 2.8.1
 
-  '@aws-sdk/client-ec2@3.1133.0':
+  '@aws-sdk/client-ec2@3.1134.0':
     dependencies:
       '@aws-sdk/core': 3.978.0
       '@aws-sdk/credential-provider-node': 3.972.83
@@ -11144,7 +11144,7 @@ snapshots:
       '@smithy/types': 4.18.0
       tslib: 2.8.1
 
-  '@aws-sdk/client-eks@3.1133.0':
+  '@aws-sdk/client-eks@3.1134.0':
     dependencies:
       '@aws-sdk/core': 3.978.0
       '@aws-sdk/credential-provider-node': 3.972.83
@@ -11155,7 +11155,7 @@ snapshots:
       '@smithy/types': 4.18.0
       tslib: 2.8.1
 
-  '@aws-sdk/client-elastic-load-balancing-v2@3.1133.0':
+  '@aws-sdk/client-elastic-load-balancing-v2@3.1134.0':
     dependencies:
       '@aws-sdk/core': 3.978.0
       '@aws-sdk/credential-provider-node': 3.972.83
@@ -11166,7 +11166,7 @@ snapshots:
       '@smithy/types': 4.18.0
       tslib: 2.8.1
 
-  '@aws-sdk/client-elasticache@3.1133.0':
+  '@aws-sdk/client-elasticache@3.1134.0':
     dependencies:
       '@aws-sdk/core': 3.978.0
       '@aws-sdk/credential-provider-node': 3.972.83
@@ -11177,7 +11177,7 @@ snapshots:
       '@smithy/types': 4.18.0
       tslib: 2.8.1
 
-  '@aws-sdk/client-rds@3.1133.0':
+  '@aws-sdk/client-rds@3.1134.0':
     dependencies:
       '@aws-sdk/core': 3.978.0
       '@aws-sdk/credential-provider-node': 3.972.83
@@ -11189,7 +11189,7 @@ snapshots:
       '@smithy/types': 4.18.0
       tslib: 2.8.1
 
-  '@aws-sdk/client-resource-groups-tagging-api@3.1133.0':
+  '@aws-sdk/client-resource-groups-tagging-api@3.1134.0':
     dependencies:
       '@aws-sdk/core': 3.978.0
       '@aws-sdk/credential-provider-node': 3.972.83
@@ -11200,7 +11200,7 @@ snapshots:
       '@smithy/types': 4.18.0
       tslib: 2.8.1
 
-  '@aws-sdk/client-s3@3.1133.0':
+  '@aws-sdk/client-s3@3.1134.0':
     dependencies:
       '@aws-sdk/checksums': 3.1001.0
       '@aws-sdk/core': 3.978.0
@@ -11214,7 +11214,7 @@ snapshots:
       '@smithy/types': 4.18.0
       tslib: 2.8.1
 
-  '@aws-sdk/client-service-quotas@3.1133.0':
+  '@aws-sdk/client-service-quotas@3.1134.0':
     dependencies:
       '@aws-sdk/core': 3.978.0
       '@aws-sdk/credential-provider-node': 3.972.83
@@ -11225,7 +11225,7 @@ snapshots:
       '@smithy/types': 4.18.0
       tslib: 2.8.1
 
-  '@aws-sdk/client-sesv2@3.1133.0':
+  '@aws-sdk/client-sesv2@3.1134.0':
     dependencies:
       '@aws-sdk/core': 3.978.0
       '@aws-sdk/credential-provider-node': 3.972.83
@@ -11237,7 +11237,7 @@ snapshots:
       '@smithy/types': 4.18.0
       tslib: 2.8.1
 
-  '@aws-sdk/client-sts@3.1133.0':
+  '@aws-sdk/client-sts@3.1134.0':
     dependencies:
       '@aws-sdk/core': 3.978.0
       '@aws-sdk/credential-provider-node': 3.972.83
@@ -13668,7 +13668,7 @@ snapshots:
     dependencies:
       playwright: 1.63.0
 
-  '@posthog/browser-common@0.8.3':
+  '@posthog/browser-common@0.9.0':
     dependencies:
       '@posthog/core': 1.55.0
       '@posthog/types': 1.412.2
@@ -19754,9 +19754,9 @@ snapshots:
 
   postgres@3.4.9: {}
 
-  posthog-js@1.433.5(@types/react@19.2.8)(react@19.2.8):
+  posthog-js@1.433.7(@types/react@19.2.8)(react@19.2.8):
     dependencies:
-      '@posthog/browser-common': 0.8.3
+      '@posthog/browser-common': 0.9.0
       '@posthog/core': 1.55.0
       '@posthog/types': 1.412.2
       core-js: 3.50.0
