@@ -145,7 +145,7 @@ func secretsXacctFromEnv(provider string) secretsXacctConfig {
 		serviceName:  t2Env(envSecretsXacctService, "xacct-probe"),
 		probeNS:      t2Env(envSecretsXacctProbeNS, secretsXacctDefaultNS),
 		summaryPath:  t2Env(envSecretsXacctSummary, ""),
-		esoGSAEmail:  strings.TrimSpace(t2ArgoEnvForProvider(envSecretsXacctESOGSA, provider, "")),
+		esoGSAEmail:  strings.TrimSpace(t2Env(envSecretsXacctESOGSA, "")), // gcp-only, so no per-cloud sibling (TestPerCloudSiblingsReachTheNightly)
 	}
 	// By product contract the project secret's NAME is its remote key (the same contract the SaaS
 	// lane adopted in #1207), so default them together rather than making the caller repeat it.
