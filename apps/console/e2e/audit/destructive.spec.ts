@@ -592,18 +592,27 @@ const MENU_OPEN_ATTEMPTS = 3;
  * Make sure a `menu:` step's click actually OPENED the menu, re-clicking a trigger that still
  * reports itself closed.
  *
- * The step's opener is visible from the server-rendered HTML, so `waitFor({ state: "visible" })`
- * can pass before the page is interactive, and a click that lands before the menu's handlers are
- * attached is lost. Nothing then fails: the next thing that looks is `resolveTrigger`, which waits
- * 8s for a menu item that was never rendered and withholds with "not rendered … for this persona" —
- * true about the page, silent about the reason. That fits `members.suspend` on promotion job
- * 105748557794 (#4852): the reach step was TAKEN (a reach failure words its reason differently),
- * the test took 9.3s where its five siblings took 2.6s — the 8s settle in `resolveTrigger` — and
- * `members.remove`, which opens the SAME "Manage member" menu and reads an item rendered beside
- * Suspend in it (members-table.tsx renders Suspend for every non-suspended member row), was measured
- * twelve seconds earlier. The lost click is the likeliest reading, not an observed one: the job kept
- * no trace of the page. What is ruled out is a member changing state between the two: this file
- * never presses a confirm, and the leg runs one worker, in file order, with no retries.
+ * A click that leaves the trigger reporting itself closed did nothing, and nothing fails when that
+ * happens: the next thing that looks is `resolveTrigger`, which waits 8s for a menu item that was
+ * never rendered and withholds with "not rendered … for this persona" — true about the page, silent
+ * about the reason. This check turns that one case into a second click. It is generic: every `menu:`
+ * step in destructive-actions.yaml opens a Base UI `DropdownMenuTrigger`.
+ *
+ * It is NOT an explanation of `members.suspend` withholding on promotion job 105748557794 (#4852).
+ * What that job shows: the reach step was TAKEN (a reach failure words its reason differently), the
+ * test took 9.3s where its five siblings took 2.6s — the 8s settle in `resolveTrigger` — and
+ * `members.remove`, which opens the same "Manage member" menu and reads an item rendered beside
+ * Suspend in it (members-table.tsx renders Suspend for every non-suspended, non-owner member row),
+ * was measured twelve seconds earlier. What it does not show is why the menu was shut: the job kept
+ * no trace of the page. A click landing before hydration is NOT a candidate on this route —
+ * members/page.tsx prefetches nothing, `MembersTable` fetches its rows client-side with `useQuery`,
+ * so no "Manage member" trigger exists until React has hydrated and the fetch has resolved. Still
+ * open, and NOT covered here: the table's rows are keyed by index (`DataTable` sets no `getRowId`)
+ * and re-render as the invites, collaboration and session queries resolve at different times, so a
+ * re-render or remount between the click and the read could drop a menu that DID open. This loop
+ * sees that only if the trigger still reads "false" when first checked; a menu that opens and closes
+ * later still withholds, with its old reason. Ruled out: a member changing state between tests —
+ * this file never presses a confirm, and the leg runs one worker, in file order, with no retries.
  *
  * The signal is the trigger's own `aria-expanded`. Base UI's menu trigger renders it as the STRING
  * "false" while closed and "true" while open (floating-ui-react/hooks/useRole.js, role "menu"), so
@@ -1376,9 +1385,9 @@ test("self-test — `walkReach` resolves a step INSIDE the open overlay, not the
 });
 
 test("self-test — a `menu:` step re-clicks a trigger whose first click was LOST, so the item is measured", async ({ page }) => {
-	// `members.suspend`'s shape on job 105748557794 (#4852): the trigger is visible, the first click
-	// does nothing, and the trigger still says `aria-expanded="false"`. Without the re-click the item
-	// is never rendered and `resolveTrigger` withholds "not rendered".
+	// A trigger whose first click does nothing and which still says `aria-expanded="false"`. Without
+	// the re-click the item is never rendered and `resolveTrigger` withholds "not rendered". This pins
+	// the loop's behaviour; it is not a reproduction of #4852, whose cause is unobserved.
 	await page.setContent(`
 		<main>
 			<button aria-label="Manage member Audit Active Colleague" aria-haspopup="menu" aria-expanded="false"
@@ -1404,11 +1413,11 @@ test("self-test — a `menu:` step does NOT re-click a trigger that carries no `
 	// click would close it again. The re-click is licensed only by an explicit "false".
 	await page.setContent(`
 		<main>
-			<button aria-label="Pool actions" onclick="this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1)">…</button>
+			<button aria-label="Stateless toggle" onclick="this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1)">…</button>
 		</main>`);
-	const entry: ControlEntry = { ...selfTestEntry("Delete"), reach: [{ menu: "Pool actions" }] };
+	const entry: ControlEntry = { ...selfTestEntry("Delete"), reach: [{ menu: "Stateless toggle" }] };
 	expect(await walkReach(page, entry)).toBeNull();
-	await expect(page.getByRole("button", { name: "Pool actions" })).toHaveAttribute("data-clicks", "1");
+	await expect(page.getByRole("button", { name: "Stateless toggle" })).toHaveAttribute("data-clicks", "1");
 });
 
 // ── the floor's own test ────────────────────────────────────────────────────────────────────────
