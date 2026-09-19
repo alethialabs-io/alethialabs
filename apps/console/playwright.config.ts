@@ -318,11 +318,11 @@ const projects = [
 		// path, and a checkout or worktree whose directory name merely contains "audit" must not
 		// pull unrelated specs in. The segment has to be exactly `audit`.
 		testMatch: /(^|\/)audit\/[^/]*\.spec\.ts$/,
-		// `destructive.spec.ts` lives in this directory but not in this project: it is the only
-		// audit spec that ACTIVATES controls rather than reading rendered state, so it runs in
-		// `audit-interaction` with its own leg, its own capability promise and no retries. Without
-		// this ignore the file would be selected by both projects and run twice per gate.
-		testIgnore: /(^|\/)audit\/(destructive|inert)\.spec\.ts$/,
+		// `destructive.spec.ts`, `inert.spec.ts` (R8) and `filters.spec.ts` (F8–F10) live in this
+		// directory but not in this project: they ACTIVATE controls rather than reading rendered
+		// state, so they run in `audit-interaction` with its own leg, its own capability promise and
+		// no retries. Without this ignore each would be selected by both projects and run twice per gate.
+		testIgnore: /(^|\/)audit\/(destructive|filters|inert)\.spec\.ts$/,
 		fullyParallel: false,
 		// One route test loads the page at FOUR viewport widths, runs axe, opens every overlay the
 		// page offers and hit-tests each one, then reloads it once more with an injected fault. The
@@ -358,9 +358,11 @@ const projects = [
 	// other audit project it MUTATES the page rather than reading it. Serial and un-retried on
 	// purpose: the suite takes a database fingerprint around each click, so two workers would read
 	// each other's rows, and a retry would let a control that confirms only sometimes report green.
+	// `inert.spec.ts` (R8, #4277) and `filters.spec.ts` (F8–F10, #4278) share it for the same reason:
+	// both activate controls, and both write `test-results/ui-audit-interaction.json` under one org.
 	{
 		name: "audit-interaction",
-		testMatch: /(^|\/)audit\/(destructive|inert)\.spec\.ts$/,
+		testMatch: /(^|\/)audit\/(destructive|filters|inert)\.spec\.ts$/,
 		fullyParallel: false,
 		workers: 1,
 		retries: 0,

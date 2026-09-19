@@ -143,6 +143,17 @@
 // failure this arrangement could hide is a builder that quietly leaves the driven set, and that
 // is exactly what is checked in both directions.
 //
+// ── F8–F10 ARE LIVE, AND THIS FILE IS THEIR SUBJECT SET (#4278) ───────────────────────────────
+//
+// F8–F10 ask what the bar DOES in a browser — the URL round-trip, facet counts that do not move,
+// a debounce you can count requests against — and `apps/console/e2e/audit/filters.spec.ts`
+// measures them. What it measures them OVER comes from here: `--json` carries, per surface, the
+// `params` its `useFilterUrlSync` call writes (the defaults' keys, renamed by the call's third
+// argument) and its `searchParam`. Read from the call F2 already locates, through the caller's own
+// imports — never typed per surface, because a hand-kept list of fifteen surfaces' params is the
+// list that decays. A URL sync that EXISTS and cannot be followed is a problem here, not an empty
+// param list: the live pass would read that as a surface that writes nothing.
+//
 // ── WHAT THIS FILE FAILS ON, AND WHAT IT ONLY REPORTS ────────────────────────────────────────
 //
 // It exits 1 on a BROKEN DERIVATION — no surfaces, no builders, a store nobody reads, a builder
@@ -546,6 +557,219 @@ export function deriveDrivenBuilders(io) {
 	return names;
 }
 
+// ── the URL params a surface writes (for F8–F10, the live half) ──────────────────────────────
+
+/**
+ * The params one surface's `useFilterUrlSync` call writes into the URL.
+ *
+ * @typedef {object} UrlParam
+ * @property {string} key    the filter field, e.g. `statuses`
+ * @property {string} param  the query-string name it is written under — the key, unless the call's
+ *                           third argument renames it (`alerts-filters.ts` writes `search` as `channel`)
+ * @property {boolean} array whether the default is an array, which is what makes it a FACET (comma-joined
+ *                           in the URL by `hooks/use-filter-url-sync.ts`'s `encode`) rather than free text
+ */
+
+/**
+ * The index just past the brace that closes the one opening at `open`, or -1 if it never closes.
+ *
+ * @param {string} text
+ * @param {number} open index of a `{`
+ */
+function closingBrace(text, open) {
+	let depth = 0;
+	for (let i = open; i < text.length; i += 1) {
+		if (text[i] === "{") depth += 1;
+		else if (text[i] === "}") {
+			depth -= 1;
+			if (depth === 0) return i + 1;
+		}
+	}
+	return -1;
+}
+
+/**
+ * The top-level `key: value` entries of an object literal's body, keys unquoted.
+ *
+ * Split on commas at depth 0 only, so `groups: []` and a nested `{ a, b }` stay one entry. A
+ * SHORTHAND entry (`search,`) has no value and is returned with `value: null` — the callers here
+ * treat that as "not provably an array", never as "no entry", because dropping a key would drop a
+ * URL param the live pass then never asks about.
+ *
+ * @param {string} body the text between the literal's braces
+ * @returns {{key: string, value: string|null}[]}
+ */
+function objectEntries(body) {
+	/** @type {string[]} */
+	const parts = [];
+	let depth = 0;
+	let start = 0;
+	for (let i = 0; i < body.length; i += 1) {
+		const c = body[i];
+		if (c === "{" || c === "[" || c === "(") depth += 1;
+		else if (c === "}" || c === "]" || c === ")") depth -= 1;
+		else if (c === "," && depth === 0) {
+			parts.push(body.slice(start, i));
+			start = i + 1;
+		}
+	}
+	parts.push(body.slice(start));
+	/** @type {{key: string, value: string|null}[]} */
+	const out = [];
+	for (const raw of parts) {
+		const part = raw.trim();
+		if (part === "" || part.startsWith("...")) continue;
+		const m = part.match(/^["']?([A-Za-z_$][\w$]*)["']?\s*(?::\s*([\s\S]*))?$/);
+		if (m === null) continue;
+		out.push({ key: m[1], value: m[2] === undefined ? null : m[2].trim() });
+	}
+	return out;
+}
+
+/**
+ * Resolve an import specifier from `fromFile` to a console module the scan has read.
+ *
+ * Only the two shapes the console uses are followed — `@/…` (the console root) and a relative
+ * `./`/`../` — and a specifier that resolves to nothing the scan read returns null rather than a
+ * guess. The caller turns null into a named problem.
+ *
+ * @param {string} fromFile repo-relative
+ * @param {string} spec
+ * @param {Map<string, string>} sources
+ */
+function resolveImport(fromFile, spec, sources) {
+	/** @type {string} */
+	let base;
+	if (spec.startsWith("@/")) base = `apps/console/${spec.slice(2)}`;
+	else if (spec.startsWith(".")) base = path.posix.normalize(path.posix.join(path.posix.dirname(fromFile), spec));
+	else return null;
+	for (const candidate of [base, `${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`]) {
+		if (sources.has(candidate)) return candidate;
+	}
+	return null;
+}
+
+/**
+ * The object literal an identifier is bound to, as seen from `fromFile`.
+ *
+ * Resolved THROUGH THE CALLER'S OWN IMPORT, never by searching the tree for the name — and that is
+ * measured, not cautious: `DEFAULT_ACTIVITY_FILTERS` is declared twice in the console
+ * (`components/settings/activity/activity-filters.ts` and `components/alerts/alerts-query.ts`),
+ * with DIFFERENT keys. A tree-wide search would hand the alerts activity tab the settings log's
+ * params, and the live pass would then drive a param the page never writes and report the page.
+ *
+ * @param {string} ident
+ * @param {string} fromFile repo-relative
+ * @param {Map<string, string>} sources comment-stripped
+ * @returns {{file: string, body: string}|null}
+ */
+function resolveObjectLiteral(ident, fromFile, sources) {
+	/** @param {string} file */
+	const declaredIn = (file) => {
+		const text = sources.get(file) ?? "";
+		const m = new RegExp(`(?:^|\\n)\\s*(?:export\\s+)?const\\s+${ident}\\b[^=]*=\\s*\\{`).exec(text);
+		if (m === null) return null;
+		const open = m.index + m[0].length - 1;
+		const close = closingBrace(text, open);
+		if (close === -1) return null;
+		return { file, body: text.slice(open + 1, close - 1) };
+	};
+	const local = declaredIn(fromFile);
+	if (local !== null) return local;
+	const text = sources.get(fromFile) ?? "";
+	for (const m of text.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)) {
+		const names = m[1].split(",").map((n) => n.trim().replace(/^type\s+/, ""));
+		for (const n of names) {
+			const [imported, local] = n.split(/\s+as\s+/).map((s) => s.trim());
+			if ((local ?? imported) !== ident) continue;
+			const target = resolveImport(fromFile, m[2], sources);
+			if (target === null) return null;
+			return declaredIn(target) ?? (imported === ident ? null : resolveObjectLiteral(imported, target, sources));
+		}
+	}
+	return null;
+}
+
+/**
+ * The URL params a surface writes, read from its `useFilterUrlSync(<symbol>, <defaults>, <names>?)`
+ * call — the one F2 already locates.
+ *
+ * The params are the DEFAULTS' keys, because that is exactly what `hooks/use-filter-url-sync.ts`
+ * iterates (`Object.keys(defaults)`), each renamed by the optional third argument. Nothing here is
+ * typed per surface: a hand-kept map of fifteen surfaces' params is the list that decays.
+ *
+ * Returns `{params: []}` with a `problem` when the call exists and its arguments cannot be
+ * followed — that is a READ failure, and the caller reports it rather than handing the live pass a
+ * surface with no params, which would score as a surface that writes nothing.
+ *
+ * @param {Surface} surface
+ * @param {Map<string, string>} sources comment-stripped
+ * @returns {{params: UrlParam[], search: string|null, caller: string|null, defaults: string|null, problem?: string}}
+ */
+export function deriveUrlParams(surface, sources) {
+	const neighbourhood = [surface.file, ...surface.consumers];
+	const call = new RegExp(`useFilterUrlSync\\(\\s*${surface.symbol}\\s*,\\s*([A-Za-z_$][\\w$]*)\\s*(?:,\\s*(\\{[^}]*\\}|[A-Za-z_$][\\w$]*)\\s*)?,?\\s*\\)`);
+	for (const file of neighbourhood) {
+		const m = call.exec(sources.get(file) ?? "");
+		if (m === null) continue;
+		const defaults = resolveObjectLiteral(m[1], file, sources);
+		if (defaults === null) {
+			return {
+				params: [],
+				search: null,
+				caller: file,
+				defaults: null,
+				problem: `${file}: \`useFilterUrlSync(${surface.symbol}, ${m[1]}, …)\` — \`${m[1]}\` does not resolve to an object literal through this module's own imports, so the params this surface writes are UNREAD`,
+			};
+		}
+		/** @type {Map<string, string>} */
+		const renames = new Map();
+		if (m[2] !== undefined) {
+			const namesBody = m[2].startsWith("{") ? m[2].slice(1, -1) : resolveObjectLiteral(m[2], file, sources)?.body;
+			if (namesBody === undefined) {
+				return {
+					params: [],
+					search: null,
+					caller: file,
+					defaults: defaults.file,
+					problem: `${file}: the param-name map \`${m[2]}\` handed to \`useFilterUrlSync(${surface.symbol}, …)\` does not resolve to an object literal, so which names reach the URL is UNREAD`,
+				};
+			}
+			for (const e of objectEntries(namesBody)) {
+				const lit = e.value?.match(/^["']([^"']+)["']$/);
+				if (lit) renames.set(e.key, lit[1]);
+			}
+		}
+		const params = objectEntries(defaults.body).map((e) => ({
+			key: e.key,
+			param: renames.get(e.key) ?? e.key,
+			array: e.value !== null && e.value.startsWith("["),
+		}));
+		if (params.length === 0) {
+			return { params, search: null, caller: file, defaults: defaults.file, problem: `${defaults.file}: the defaults \`${m[1]}\` carry no keys — a surface that writes nothing to the URL` };
+		}
+		return { params, search: params.find((p) => p.key === "search")?.param ?? null, caller: file, defaults: defaults.file };
+	}
+	return { params: [], search: null, caller: null, defaults: null };
+}
+
+/**
+ * The surfaces a route OWNS: its page closure reaches both the store module and a module that
+ * names the store's symbol.
+ *
+ * ONE definition, used by the static route join below AND by `apps/console/scripts/audit-report.mjs
+ * --filter-surfaces`, which hands the live F8–F10 pass its subject set. Two copies of "which
+ * surfaces live on this page" is how the live half would come to measure a different set of pages
+ * than the static half scores.
+ *
+ * @param {Surface[]} surfaces
+ * @param {Set<string>} closure repo-relative files
+ * @returns {Surface[]}
+ */
+export function ownedSurfaces(surfaces, closure) {
+	return surfaces.filter((s) => closure.has(s.file) && s.consumers.some((c) => closure.has(c)));
+}
+
 // ── the predicates ───────────────────────────────────────────────────────────────────────────
 
 /** A JSX region: `<Tag …>` through its closing tag, or to EOF if it never closes. */
@@ -797,7 +1021,18 @@ export function scan(io, undriven = F7_UNDRIVEN) {
 	const perSurface = {};
 	for (const s of surfaces) perSurface[s.symbol] = scoreSurface(s, sources, barPrimitives);
 
-	return { sources, census, surfaces, builders, driven, barPrimitives, perSurface, problems };
+	// The params each surface writes — the live F8–F10 pass's subject detail. A surface whose URL
+	// sync EXISTS and cannot be followed is a broken read and is reported; one with no URL sync at
+	// all is F2's finding, already scored, and simply carries no params.
+	/** @type {Record<string, ReturnType<typeof deriveUrlParams>>} */
+	const urlParams = {};
+	for (const s of surfaces) {
+		const derived = deriveUrlParams(s, sources);
+		if (derived.problem !== undefined) problems.push(derived.problem);
+		urlParams[s.symbol] = derived;
+	}
+
+	return { sources, census, surfaces, builders, driven, barPrimitives, perSurface, urlParams, problems };
 }
 
 // ── the route join ───────────────────────────────────────────────────────────────────────────
@@ -829,7 +1064,7 @@ export function scoreRoutes(scanned, pageClosures, routeOrder) {
 
 	for (const route of routeOrder) {
 		const closure = pageClosures.get(route) ?? new Set();
-		const owned = scanned.surfaces.filter((s) => closure.has(s.file) && s.consumers.some((c) => closure.has(c)));
+		const owned = ownedSurfaces(scanned.surfaces, closure);
 
 		if (owned.length === 0) {
 			for (const id of PREDICATES) verdicts.push({ route, predicate: id, verdict: "N/A", reason: "not-a-list-page" });
@@ -904,6 +1139,7 @@ function fixtureIo(overrides = {}) {
 			'export const useWidgetFilters = createFilterStore({ name: "w", defaults: { search: "" } });',
 		"apps/console/components/widgets-client.tsx": [
 			"import { useWidgetFilters } from '@/lib/stores/use-widgets-filters';",
+			'const DEFAULTS = { search: "", kinds: [] };',
 			"useFilterUrlSync(useWidgetFilters, DEFAULTS);",
 			"const q = useMemo(() => normalizeWidgetsQuery({ ...filters, search }), []);",
 			"const search = useDebouncedValue(filters.search, 300);",
@@ -1119,6 +1355,41 @@ export function positiveControl() {
 		if (!/is missing/.test(String(err.message))) problems.push(`a missing F7 test raised the wrong error: ${err.message}`);
 	}
 
+	// ── the URL params a surface writes, for the live F8–F10 pass ─────────────────────────────
+	// Hand-expected: the fixture's defaults are `{ search: "", kinds: [] }`, so the answer is two
+	// params, one of them a facet and one the free text — written here, not computed.
+	const params = (io) => scan(io, {}).urlParams.useWidgetFilters;
+	const cleanParams = params(clean);
+	if (JSON.stringify(cleanParams.params) !== JSON.stringify([{ key: "search", param: "search", array: false }, { key: "kinds", param: "kinds", array: true }]) || cleanParams.search !== "search") {
+		problems.push(`the clean fixture's URL params read as ${JSON.stringify(cleanParams)} — expected search + kinds[], with \`search\` the free-text param.`);
+	}
+	const renamed = params(
+		fixtureIo({ [CLIENT]: clean.readFile(CLIENT).replace("useFilterUrlSync(useWidgetFilters, DEFAULTS);", 'useFilterUrlSync(useWidgetFilters, DEFAULTS, {\n\tsearch: "q",\n\tkinds: "kind",\n});') }),
+	);
+	if (renamed.search !== "q" || renamed.params.find((p) => p.key === "kinds")?.param !== "kind") {
+		problems.push(`a third-argument RENAME was not followed — the live pass would drive \`search\` on a page that writes \`q\`: ${JSON.stringify(renamed)}`);
+	}
+	// Through an IMPORT, and past a same-named constant elsewhere with different keys: the console
+	// declares `DEFAULT_ACTIVITY_FILTERS` twice, so resolving by name alone picks the wrong one.
+	const imported = params(
+		fixtureIo({
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace('const DEFAULTS = { search: "", kinds: [] };', "import { DEFAULTS } from './widgets-query';"),
+			// FIRST, and alphabetically first, so a by-name search meets the decoy before the real one.
+			"apps/console/components/a-decoy-query.ts": 'export const DEFAULTS = { unrelated: [] };',
+			"apps/console/components/widgets-query.ts": 'export const DEFAULTS: WidgetFilters = {\n\tsearch: "",\n\tsizes: [],\n};',
+		}),
+	);
+	if (imported.params.map((p) => p.key).join(",") !== "search,sizes") {
+		problems.push(`the defaults were not resolved THROUGH THE CALLER'S IMPORT: ${JSON.stringify(imported.params)}`);
+	}
+	refuses(
+		"a URL sync whose defaults resolve to nothing",
+		{ [CLIENT]: clean.readFile(CLIENT).replace('const DEFAULTS = { search: "", kinds: [] };', "") },
+		/does not resolve to an object literal/,
+	);
+
 	// The route join: a page with no surface must be N/A, and a list page must not be.
 	const joined = scoreRoutes(
 		base,
@@ -1189,7 +1460,16 @@ function main() {
 			JSON.stringify(
 				{
 					census: scanned.census,
-					surfaces: scanned.surfaces.map((s) => ({ symbol: s.symbol, file: s.file, factory: s.factory, consumers: s.consumers })),
+					surfaces: scanned.surfaces.map((s) => ({
+						symbol: s.symbol,
+						file: s.file,
+						factory: s.factory,
+						consumers: s.consumers,
+						// The URL half, for the live F8–F10 pass: every param this surface's
+						// `useFilterUrlSync` call writes, and which of them is the free-text one.
+						params: scanned.urlParams[s.symbol]?.params ?? [],
+						searchParam: scanned.urlParams[s.symbol]?.search ?? null,
+					})),
 					builders: scanned.builders,
 					driven: [...scanned.driven].sort(),
 					undriven: Object.keys(F7_UNDRIVEN).sort(),
