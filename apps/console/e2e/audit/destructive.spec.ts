@@ -575,6 +575,7 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 			// `overflow: clip` ancestor) hangs, times the test out and records NO verdict — where
 			// the catch below would have withheld it WITH the step that could not be taken.
 			await opener.click({ timeout: 8_000 });
+			if (kind === "menu") await confirmMenuOpened(page, opener);
 			await page.waitForTimeout(300);
 		} catch {
 			await attachReachEvidence(page, entry.id, `${kind}: ${name}`);
@@ -582,6 +583,50 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 		}
 	}
 	return null;
+}
+
+/** How many times a `menu:` step clicks a trigger that still reports itself closed. */
+const MENU_OPEN_ATTEMPTS = 3;
+
+/**
+ * Make sure a `menu:` step's click actually OPENED the menu, re-clicking a trigger that still
+ * reports itself closed.
+ *
+ * The step's opener is visible from the server-rendered HTML, so `waitFor({ state: "visible" })`
+ * can pass before the page is interactive, and a click that lands before the menu's handlers are
+ * attached is lost. Nothing then fails: the next thing that looks is `resolveTrigger`, which waits
+ * 8s for a menu item that was never rendered and withholds with "not rendered … for this persona" —
+ * true about the page, silent about the reason. That fits `members.suspend` on promotion job
+ * 105748557794 (#4852): the reach step was TAKEN (a reach failure words its reason differently),
+ * the test took 9.3s where its five siblings took 2.6s — the 8s settle in `resolveTrigger` — and
+ * `members.remove`, which opens the SAME "Manage member" menu and reads an item rendered beside
+ * Suspend in it (members-table.tsx renders Suspend for every non-suspended member row), was measured
+ * twelve seconds earlier. The lost click is the likeliest reading, not an observed one: the job kept
+ * no trace of the page. What is ruled out is a member changing state between the two: this file
+ * never presses a confirm, and the leg runs one worker, in file order, with no retries.
+ *
+ * The signal is the trigger's own `aria-expanded`. Base UI's menu trigger renders it as the STRING
+ * "false" while closed and "true" while open (floating-ui-react/hooks/useRole.js, role "menu"), so
+ * "false" after a click is positive evidence the menu is shut and a second click can only open it.
+ * A trigger with no `aria-expanded` at all is some other widget: it is left alone rather than
+ * clicked again, because a second click on an unknown toggle may close what the first one opened.
+ * This never throws — a menu that never opens still reaches `resolveTrigger` and is withheld there,
+ * with the reason it had before.
+ */
+async function confirmMenuOpened(page: Page, trigger: Locator): Promise<void> {
+	// null when the trigger cannot be read — including when an open modal menu has hidden the page
+	// behind it from the accessibility tree — and null is never "false", so it ends the loop.
+	const expanded = (): Promise<string | null> => trigger.getAttribute("aria-expanded", { timeout: 1_000 }).catch(() => null);
+	for (let attempt = 1; attempt <= MENU_OPEN_ATTEMPTS; attempt++) {
+		const deadline = Date.now() + 2_000;
+		let state = await expanded();
+		while (state === "false" && Date.now() < deadline) {
+			await page.waitForTimeout(100);
+			state = await expanded();
+		}
+		if (state !== "false" || attempt === MENU_OPEN_ATTEMPTS) return;
+		await trigger.click({ timeout: 8_000 }).catch(() => {});
+	}
 }
 
 /**
@@ -1328,6 +1373,42 @@ test("self-test — `walkReach` resolves a step INSIDE the open overlay, not the
 	const entry: ControlEntry = { ...selfTestEntry("Remove"), reach: [{ open: "Prometheus + Grafana" }] };
 	expect(await walkReach(page, entry), "the step names a real option in the open dialog, so it must be taken").toBeNull();
 	await expect(page.locator("body")).toHaveAttribute("data-hit", "option");
+});
+
+test("self-test — a `menu:` step re-clicks a trigger whose first click was LOST, so the item is measured", async ({ page }) => {
+	// `members.suspend`'s shape on job 105748557794 (#4852): the trigger is visible, the first click
+	// does nothing, and the trigger still says `aria-expanded="false"`. Without the re-click the item
+	// is never rendered and `resolveTrigger` withholds "not rendered".
+	await page.setContent(`
+		<main>
+			<button aria-label="Manage member Audit Active Colleague" aria-haspopup="menu" aria-expanded="false"
+				onclick="
+					this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1);
+					if (this.dataset.clicks === '1') return;
+					this.setAttribute('aria-expanded', 'true');
+					const menu = document.createElement('div');
+					menu.setAttribute('role', 'menu');
+					menu.innerHTML = '<div role=&quot;menuitem&quot; tabindex=&quot;-1&quot;>Suspend</div>';
+					document.body.appendChild(menu);
+				">…</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Suspend"), control: { role: "menuitem", name: "Suspend" }, reach: [{ menu: "Manage member" }] };
+	expect(await walkReach(page, entry), "the trigger exists, so the step must be taken").toBeNull();
+	const resolved = await resolveTrigger(page, entry, "about:self-test", 1_000);
+	expect("locator" in resolved, `a lost first click must not withhold the item: ${"withhold" in resolved ? resolved.withhold : ""}`).toBe(true);
+	await expect(page.getByRole("button", { name: /Manage member/ })).toHaveAttribute("data-clicks", "2");
+});
+
+test("self-test — a `menu:` step does NOT re-click a trigger that carries no `aria-expanded`", async ({ page }) => {
+	// A toggle that states nothing about its own state may have opened on the first click; a second
+	// click would close it again. The re-click is licensed only by an explicit "false".
+	await page.setContent(`
+		<main>
+			<button aria-label="Pool actions" onclick="this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1)">…</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Delete"), reach: [{ menu: "Pool actions" }] };
+	expect(await walkReach(page, entry)).toBeNull();
+	await expect(page.getByRole("button", { name: "Pool actions" })).toHaveAttribute("data-clicks", "1");
 });
 
 // ── the floor's own test ────────────────────────────────────────────────────────────────────────
