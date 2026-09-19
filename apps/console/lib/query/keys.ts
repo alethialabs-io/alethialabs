@@ -48,8 +48,18 @@ export const qk = {
 	/** Activity log, parameterized by the normalized filter query (sans cursor — the
 	 * cursor is the infinite query's pageParam, never part of the key). */
 	activity: (org: string, query: unknown) => ["activity", org, query] as const,
-	/** Org member rows (filter facets + name resolution on activity). */
-	members: (org: string) => ["members", org] as const,
+	/**
+	 * Org member rows.
+	 *
+	 * Two shapes under one prefix, exactly as `jobs` / `jobsPage`: with no `query` this is the
+	 * UNFILTERED universe read (`getMembers()`) that the activity log's name resolution and the
+	 * manage-team dialog share; WITH one it is the members PAGE (`getMembersPage(q)` → rows,
+	 * invitations and facets over the unfiltered universe). The page always passes its
+	 * normalized query — `{}` when pristine — so the two payload shapes can never land on the
+	 * same key, while `["members", org]` still invalidates both.
+	 */
+	members: (org: string, query?: unknown) =>
+		query ? (["members", org, query] as const) : (["members", org] as const),
 	ssoProviders: (org: string, filter?: unknown) =>
 		filter
 			? (["sso", "providers", org, filter] as const)

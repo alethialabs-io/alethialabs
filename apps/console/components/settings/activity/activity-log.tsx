@@ -156,6 +156,12 @@ export function ActivityLog({
 	const nextCursor = activity.data?.pages.at(-1)?.nextCursor ?? null;
 	const loading = activity.isPending;
 	const loadingMore = activity.isFetchingNextPage;
+	// The other half of `keepPreviousData` (lib/query/README.md, step 5). Keeping the rows is
+	// only half the standard: without the dim the feed renders the PREVIOUS filter's rows as
+	// though they were the answer to the one you just picked, which is a worse lie than a
+	// skeleton. `isPlaceholderData` is true for exactly the window between the filter change
+	// and the new page landing.
+	const stale = activity.isPlaceholderData;
 
 	/** Fetch the next page (older rows); TanStack appends it to `pages`. */
 	const onLoadMore = useCallback(async () => {
@@ -341,13 +347,15 @@ export function ActivityLog({
 					<Skeleton className="h-10 w-full" />
 				</div>
 			) : (
-				<ActivityFeed
-					rows={rows}
-					ctx={ctx}
-					onLoadMore={() => void onLoadMore()}
-					hasMore={nextCursor != null}
-					loadingMore={loadingMore}
-				/>
+				<div className={stale ? "opacity-60 transition-opacity" : undefined}>
+					<ActivityFeed
+						rows={rows}
+						ctx={ctx}
+						onLoadMore={() => void onLoadMore()}
+						hasMore={nextCursor != null}
+						loadingMore={loadingMore}
+					/>
+				</div>
 			)}
 
 			<UpgradeOrgSheet

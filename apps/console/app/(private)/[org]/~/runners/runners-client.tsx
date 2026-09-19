@@ -30,6 +30,7 @@ import {
 	useRunnerFilters,
 } from "@/lib/stores/use-runner-filters";
 import { PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
+import { SectionHeading } from "@repo/ui/section-heading";
 import { useRunnersQuery, type ActiveJob } from "@/lib/query/use-runners-query";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
@@ -280,16 +281,16 @@ export function RunnersClient() {
 
 				{/* Right column — runners. */}
 				<div className="min-w-0 space-y-4">
-					<div className="flex items-center justify-between gap-3">
-						<div className="flex items-baseline gap-2">
-								<span className="font-display text-ui-lg font-semibold tracking-tight">Runners</span>
-							{/* The count pill shows the RESULT count (the standard) — never "N of M" prose. */}
-								<span className="rounded-full border px-2 py-0.5 font-mono text-ui-2xs text-muted-foreground">
-								{filtered.length}
-							</span>
-						</div>
-						<AddRunnerButton />
-					</div>
+					{/* The section heading and its result count come from the shared primitives. Both
+					    were hand-rolled here — a `font-display text-ui-lg` span for the heading and a
+					    bordered `rounded-full` span for the pill, the latter under a comment claiming
+					    it WAS "the count pill (the standard)". A second copy of a primitive is how two
+					    list pages come to disagree about what a count looks like. */}
+					<SectionHeading
+						title="Runners"
+						count={isLoading && runners.length === 0 ? null : filtered.length}
+						actions={<AddRunnerButton />}
+					/>
 
 					<RunnersToolbar
 						cloudOptions={facets.clouds}

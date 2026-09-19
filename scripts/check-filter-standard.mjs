@@ -415,6 +415,43 @@ export function deriveSurfaces(sources) {
 				if (sources.has(hop) && !s.consumers.includes(hop)) s.consumers.push(hop);
 			}
 		}
+		// THE SECOND HOP, upwards: the module that RENDERS what a neighbourhood module resolved.
+		//
+		// Measured on `dev` (#4890): the alerts hub's three surfaces were scored FAIL on F5 — "no
+		// result count renders through `CountPill`" — while `components/alerts/alerts-page.tsx`
+		// renders `<SectionHeading count={policiesView.rows.length}>` for all three. The count was
+		// there, one module above the neighbourhood, and the verdict was about the scan.
+		//
+		// The console's convention is a view hook: a neighbourhood module exports
+		// `use<Resource>View(...)`, whose body reads the store, and the PAGE imports that hook and
+		// renders its rows and its count. So the hop is derived from that fact and nothing looser:
+		// an exported function in a neighbourhood module whose OWN BODY names this surface's store
+		// symbol, and then the modules that import THAT name from THAT module.
+		//
+		// Both halves are load-bearing. Without the body check, `alerts-filters.ts` would hand
+		// every importer of any of its exports to all three of its surfaces. Without the import
+		// check it would be a tree-wide search for a common name. Together they reach exactly the
+		// module that renders this surface's rows — measured: one module per alerts surface, and
+		// none at all for the twelve surfaces whose consumers export no such hook.
+		for (const file of [...s.consumers]) {
+			const text = sources.get(file) ?? "";
+			/** @type {string[]} */
+			const viewHooks = [];
+			for (const m of text.matchAll(/export (?:async )?function (\w+)\s*\(/g)) {
+				const body = functionBody(text, m.index, text.length);
+				if (new RegExp(`\\b${s.symbol}\\b`).test(body)) viewHooks.push(m[1]);
+			}
+			if (viewHooks.length === 0) continue;
+			for (const [other, otherText] of sources) {
+				if (other === file || s.consumers.includes(other) || other === s.file) continue;
+				for (const imp of otherText.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)) {
+					if (resolveImport(other, imp[2], sources) !== file) continue;
+					const named = imp[1].split(",").map((n) => n.trim().split(/\s+as\s+/)[0].trim());
+					if (named.some((n) => viewHooks.includes(n))) s.consumers.push(other);
+				}
+			}
+		}
+		s.consumers = [...new Set(s.consumers)];
 		s.consumers.sort();
 	}
 	return surfaces;
@@ -789,6 +826,55 @@ const BANNED_IN_BAR = [
 /** "N of M" prose: two interpolations either side of a bare `of`. */
 const N_OF_M = /\{[^{}]+\}\s*of\s*\{[^{}]+\}/;
 
+/** A per-resource query hook — `lib/query/use-<resource>-query.ts`, the README's own table row. */
+const QUERY_HOP = /^apps\/console\/lib\/query\/use-[a-z0-9-]+-query\.ts$/;
+
+/**
+ * Does THIS module build a TanStack key that carries the surface's normalized query?
+ *
+ * This is one fact, used twice: it is F3's clause (b), and it is also what decides WHICH question
+ * F6 asks (see `scoreSurface`). It replaces "some `qk.*()` call in the neighbourhood takes more
+ * than one argument", which is a rendering of the thing and is wrong in both directions — measured
+ * on `dev`, both ways, in one scan:
+ *
+ *   * UNDER-reports. `components/support/cases/case-list.tsx` keys `qk.supportCases(query.bucket)`
+ *     — ONE argument, and it is the whole of what that surface sends the server (the other three
+ *     fields are a documented client-side refinement over the bucket's rows). Counting arguments
+ *     called the reference-quality surface a cache-sharing defect.
+ *   * OVER-reports. `components/settings/access/access-manager.tsx` keys
+ *     `qk.accessGrants(org, projectId ? { projectId } : undefined)` — two arguments, neither of
+ *     them the query. That surface fetches the scope's whole universe and narrows it in memory, so
+ *     every filtered view really does share one cache entry, and the arg count said PASS.
+ *
+ * So the test is PROVENANCE: an argument of the key call must be an identifier — or a member of
+ * one — bound from this module's own `normalize*Query(` call.
+ *
+ * The one place provenance cannot be read is the hop module, and it is admitted in its own terms:
+ * inside `lib/query/use-*-query.ts` the normalized object arrives as a PARAMETER with whatever
+ * name that hook chose (`qk.jobsPage(org, query)`, `qk.roles(org, q)`), the caller having
+ * normalized it a module away. That is the README's own division of labour — the page normalizes,
+ * the hook keys — and the surface only reaches such a module through the name-matched hop above,
+ * so a sibling resource's hook cannot lend its key here.
+ *
+ * @param {string} file repo-relative
+ * @param {string} text comment-stripped source
+ */
+export function keysOnQuery(file, text) {
+	const normalized = new Set(
+		[...text.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*(?:useMemo\s*\(\s*\(\s*\)\s*=>)?\s*normalize\w*Query\s*\(/g)].map((m) => m[1]),
+	);
+	const hop = QUERY_HOP.test(file);
+	for (const m of text.matchAll(/qk\.\w+\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)) {
+		const args = m[1].split(",").map((a) => a.trim()).filter((a) => a !== "");
+		if (hop && args.length > 1) return true;
+		// Every identifier the argument list mentions; `query.bucket` and `active ? filter :
+		// undefined` both reduce to their roots, so a member read and a conditional both count.
+		const roots = [...m[1].matchAll(/([A-Za-z_$][\w$]*)/g)].map((i) => i[1]);
+		if (roots.some((r) => normalized.has(r))) return true;
+	}
+	return false;
+}
+
 /**
  * Score F1–F6 for one surface over its neighbourhood.
  *
@@ -840,11 +926,7 @@ export function scoreSurface(surface, sources, barPrimitives) {
 	// distinction the standard actually draws — "unsorted arrays fragment the cache" is about
 	// what is IN the key — and it survives the rename.
 	const normalizes = has(/normalize\w*Query\s*\(/);
-	const parameterisedKey = neighbourhood.some((file) =>
-		[...(sources.get(file) ?? "").matchAll(/qk\.\w+\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)].some(
-			(m) => m[1].split(",").filter((a) => a.trim() !== "").length > 1,
-		),
-	);
+	const parameterisedKey = neighbourhood.some((file) => keysOnQuery(file, sources.get(file) ?? ""));
 	verdict(
 		"F3",
 		debounced && normalizes && parameterisedKey,
@@ -885,15 +967,36 @@ export function scoreSurface(surface, sources, barPrimitives) {
 			: "no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`)",
 	);
 
-	// F6 — keepPreviousData plus the dim. The URL→RSC variant is admitted in the README's own terms.
+	// F6 — a filter change must not blank the list.
+	//
+	// The predicate is asked of the surfaces that CAN blank, and that is derived, not declared:
+	// a surface blanks on a filter change only if the filter change refetches, and it refetches
+	// only if its normalized query is in the TanStack key — `parameterisedKey`, the same fact F3
+	// clause (b) is about. Where it holds, `keepPreviousData` + the `opacity-60` dim on
+	// `isPlaceholderData` is required (or the URL→RSC variant `lib/query/README.md` blesses, which
+	// is admitted in the README's own terms: `useTransition`'s `isPending` "plays the
+	// keepPreviousData dim"). Where it does not, the rows are derived synchronously from an
+	// already-loaded universe, no fetch stands between the click and the new rows, and the list
+	// PROVABLY cannot blank.
+	//
+	// The old form asked every surface the same question and its negative form was false on seven
+	// of the fifteen — "the list unmounts to a skeleton on every filter change" was printed against
+	// surfaces where nothing refetches at all, which is what #4890 was written from. A guard that
+	// names a defect a page does not have is not a strict guard; it is a wrong one, and the fix it
+	// asks for (a `keepPreviousData` on a key the filters never touch) is dead code.
+	//
+	// THE ESCAPE IS CLOSED BY F3, and that is why the two are wired to one fact. The cheapest way
+	// to make F6 stop applying is to take the query out of the key — which is exactly what F3
+	// fails on, with the sharper finding ("every filtered view shares one cache entry"). A surface
+	// cannot buy silence here without buying a red there.
 	const kept = has(/keepPreviousData/);
 	const dimmed = has(/isPlaceholderData/) && has(/opacity-60/);
 	const rscVariant = has(/useTransition\s*\(/) && has(/\bisPending\b/) && has(/opacity-60/);
 	verdict(
 		"F6",
-		(kept && dimmed) || rscVariant,
+		!parameterisedKey || (kept && dimmed) || rscVariant,
 		!kept
-			? "no `keepPreviousData` — the list unmounts to a skeleton on every filter change"
+			? "no `keepPreviousData` — this surface's filters ARE in its TanStack key, so a filter change refetches and the list unmounts to a skeleton while it does"
 			: "`keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one",
 	);
 
