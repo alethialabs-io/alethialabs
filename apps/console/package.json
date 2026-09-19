@@ -206,7 +206,7 @@
     "tsx": "^4.23.13",
     "tw-animate-css": "^1.3.6",
     "typescript": "^5",
-    "vitest": "^3.2.6"
+    "vitest": "^5.0.1"
   },
   "optionalDependencies": {
     "@alethia/ee": "workspace:*"
