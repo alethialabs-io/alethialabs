@@ -17,6 +17,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { errorStateSignature, rendersSharedErrorState } from "./error-state";
+import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
 import { CONTROL_FIXTURE, emptinessProblems, endsTheSession, enumerateControls, interactionControl, isSameOrigin, namesDestructiveAction, preActivationExclusion } from "./inert";
 import { hitTest } from "./overlays";
 import {
@@ -586,6 +587,51 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		// The only shape that passes: every route accounted for, the control green, and something
 		// actually driven.
 		expect(emptinessProblems([...forty("NOT MEASURED").slice(0, 39), { route: "/r39", verdict: "PASS" }], undefined, 40, 1)).toEqual([]);
+	});
+
+	// ── F8–F10: the filter standard, observed (#4278) ─────────────────────────────────────────
+	//
+	// The control `filters.spec.ts` CONSULTS, driven here in both directions. `filtersControl()`
+	// already asks every arm both ways — the good bar must PASS, each bad bar must FAIL the one
+	// predicate it breaks — so what these add is the proof that each arm can go RED: neuter the defect
+	// a bad bar carries and the control must NAME that arm, or an instrument that cannot fail would
+	// read as working.
+
+	test("F8–F10 — the filters control passes on bars whose answers are known", async ({ page }) => {
+		// Four fixture bars end to end: ~50 s on a laptop, over this project's 180 s on a slow runner.
+		test.setTimeout(300_000);
+		expect(await filtersControl(page), "every arm answers on the control's own fixtures").toEqual([]);
+	});
+
+	test("F8 — the control names the arm when the URL-less bar starts writing the URL", async ({ page }) => {
+		test.setTimeout(300_000);
+		const mutant = FILTERS_FIXTURE.replace('if (MODE === "no-url") return;', "");
+		expect(mutant, "the mutation must apply").not.toBe(FILTERS_FIXTURE);
+		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/never writes the URL reported F8 PASS/);
+	});
+
+	test("F9 — the control names the arm when the moving-counts bar holds its counts still", async ({ page }) => {
+		test.setTimeout(300_000);
+		const mutant = FILTERS_FIXTURE.replace('var universe = MODE === "moving-counts" ? rows : ', "var universe = ");
+		expect(mutant, "the mutation must apply").not.toBe(FILTERS_FIXTURE);
+		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/counts move reported F9 PASS/);
+	});
+
+	test("F10 — the control names the arm when the per-keystroke bar starts debouncing", async ({ page }) => {
+		test.setTimeout(300_000);
+		const mutant = FILTERS_FIXTURE.replace('if (MODE === "per-keystroke") {', 'if (MODE === "never") {');
+		expect(mutant, "the mutation must apply").not.toBe(FILTERS_FIXTURE);
+		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/fetches per keystroke reported F10 PASS/);
+	});
+
+	test("F8–F10 — N/A is structural: `not-a-list-page` everywhere, `no-search-field` on F10 only", () => {
+		expect(NA_REASONS.F8).toEqual(["not-a-list-page"]);
+		expect(NA_REASONS.F9).toEqual(["not-a-list-page"]);
+		expect(NA_REASONS.F10).toEqual(["not-a-list-page", "no-search-field"]);
+		// "the list had one row" is a claim about the RUN — NOT MEASURED, never an N/A.
+		expect(() => createReport().record({ route: "/x", url: "/x", predicate: "F8", verdict: "N/A", reason: "too-few-rows" })).toThrow(/not a declared N\/A reason/);
+		expect(() => createReport().record({ route: "/x", url: "/x", predicate: "F8", verdict: "N/A", reason: "no-search-field" })).toThrow(/not a declared N\/A reason/);
+		expect(createReport().notMeasured({ route: "/x", url: "/x", predicate: "F9", reason: "the list rendered 1 row(s)" }).verdict).toBe("NOT MEASURED");
 	});
 
 	test("the report refuses the three ways an N/A goes wrong", () => {

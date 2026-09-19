@@ -39,7 +39,7 @@
 //
 // ── WHAT IS SCORED, AND WHAT IS EXPLICITLY NOT ───────────────────────────────────────────────
 //
-// The rubric defines 35 predicates in five families. This file now scores all 35 of them:
+// The rubric defines 38 predicates in five families. This file now scores all 38 of them:
 //
 //   S1–S4, T1–T4     STATIC, `scripts/check-route-states.mjs`.
 //   H1–H9            STATIC, `scripts/check-shared-surface.mjs`. All nine H rows. H3 was the
@@ -55,9 +55,12 @@
 //                    console's filter SURFACES, plus F7, whose verdict is the join between a
 //                    route's closure and the builders
 //                    `apps/console/tests/lib/queries/filter-standard-facets.test.ts` drives.
-//   T5–T7, R1–R8     LIVE. The Playwright `audit` and `audit-interaction` projects measure them
-//                    in CI; this file joins their committed records to the same route set. Eleven
-//                    predicates — #3634, plus R8 in #4277.
+//   T5–T7, R1–R8,    LIVE. The Playwright `audit` and `audit-interaction` projects measure them
+//   F8–F10           in CI; this file joins their committed records to the same route set.
+//                    Fourteen predicates — #3634, plus R8 in #4277 and F8–F10 in #4278. Family F
+//                    is therefore SPLIT: its static rows are scored here and its live rows are
+//                    joined, and `buildView()` takes the static F ids as the rubric's F rows MINUS
+//                    the ones `NOT_SCORED_STATICALLY` declares live — never "every F row".
 //
 // NOTHING is left un-instrumented. The `kind: "none"` bucket, the table it renders and the
 // partition check that refuses a predicate in no bucket all STAY: the next rubric row lands in
@@ -188,9 +191,15 @@
 //   test-results/ui-audit-permissions.json  permissions.spec.ts  T7 · the `member` persona, in a
 //                                                                SECOND organisation of its own
 //   test-results/ui-audit-interaction.json  inert.spec.ts        R8 · the run's owner again, but
-//                                                                from the `audit-interaction`
+//                                           filters.spec.ts      F8–F10 · from the `audit-interaction`
 //                                                                project, which ACTIVATES controls
 //                                                                rather than reading rendered state
+//
+// The third file has TWO writers, and that is a merge on the run key, not a pool. `report.ts`'s
+// `write()` merges only records carrying the same `runKey` — the run's org slug — and keys each on
+// (route, predicate), and the two specs own disjoint predicates (R8 and F8–F10). What pooling cost
+// the first time was one BUFFER shared across two questions; here each spec keeps its own
+// `createReport()` and the file is the union of two disjoint answers about one organisation.
 //
 // THE THIRD SECTION IS DECLARED BEFORE IT IS MEASURED, and that is a deliberate, checked, temporary
 // state — `awaitingFirstImport` on the section below. R8's instrument landed in #4277; its artifact
@@ -256,6 +265,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
 	fsIo as filterStandardIo,
+	ownedSurfaces,
 	positiveControl as filterStandardControl,
 	scan as scanFilterStandard,
 	scoreRoutes as scoreFilterRoutes,
@@ -382,6 +392,9 @@ export const NOT_SCORED_STATICALLY = /** @type {const} */ ({
 	R5: { kind: "live", section: "routes", why: "axe, at wcag2a/wcag2aa." },
 	R6: { kind: "live", section: "routes", why: "console errors and failed requests." },
 	R7: { kind: "live", section: "routes", why: "interactive within the route's budget." },
+	F8: { kind: "live", section: "interaction", why: "the URL round-trip, DRIVEN: a facet applied reaches the URL, survives a reload, and Reset clears it — only a browser knows the hydration order." },
+	F9: { kind: "live", section: "interaction", why: "facet counts that do not move under a filter — F7's unfiltered facet pass, observed end to end on the rendered bar." },
+	F10: { kind: "live", section: "interaction", why: "a debounce you can count requests against, and a nonsense search that lands in the shared empty state." },
 	R8: { kind: "live", section: "interaction", why: "every enabled control, ACTIVATED — a rendered control is not a working one, and only a click knows." },
 });
 
@@ -417,7 +430,7 @@ export const LIVE_SECTIONS = /** @type {const} */ ({
 	},
 	interaction: {
 		artifact: "test-results/ui-audit-interaction.json",
-		spec: "apps/console/e2e/audit/inert.spec.ts",
+		spec: "apps/console/e2e/audit/inert.spec.ts + apps/console/e2e/audit/filters.spec.ts",
 		persona: "the run's own owner, in the `audit-interaction` project — which ACTIVATES controls and never presses a confirm",
 		org: "a fresh, empty organisation created for the run",
 		covers: "every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS",
@@ -435,7 +448,7 @@ export const LIVE_SECTIONS = /** @type {const} */ ({
 		// `--write`; that is the whole edit.
 		awaitingFirstImport: {
 			since: "#4277",
-			why: "R8's instrument landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for it yet",
+			why: "R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet",
 		},
 	},
 });
@@ -464,6 +477,9 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
 	T5: ["no-empty-state"],
 	T6: ["redirect-only"],
 	T7: ["no-restricted-surface"],
+	F8: ["not-a-list-page"],
+	F9: ["not-a-list-page"],
+	F10: ["not-a-list-page", "no-search-field"],
 });
 
 /**
@@ -823,6 +839,51 @@ export function summariseLiveEvidence(predicate, evidence, verdict = "FAIL") {
 			if (inert.length > 0) parts.push(`${plural(inert.length, "enabled control")} did nothing within 1000ms`);
 			if (undeclared.length > 0) parts.push(`${plural(undeclared.length, "control")} named a destructive verb the ledger does not declare`);
 			return `${parts.join(", ")} — of ${plural(Number(e.enumerated) || 0, "control")} enumerated on this route`;
+		}
+		if (predicate === "F8") {
+			// `filters.spec.ts` records the round-trip as five STEPS, driven in this order. A step is
+			// `true` or `false` when it was asked and `null` when an earlier failure meant it could not
+			// be — and `null` is rendered as NOT REACHED, never as a pass. Counts and option labels are
+			// left out on purpose: labels carry seeded names, and the steps alone say what broke.
+			const e = asObject(evidence, predicate);
+			const steps = asObject(e.steps, predicate);
+			const order = [
+				["applied", "applying the first facet option never put a param this surface writes into the URL"],
+				["survivedReload", "reload() dropped the filter param from the URL"],
+				["restoredList", "reload() kept the param but not the narrowed list"],
+				["resetUrl", "Reset left a filter param in the URL"],
+				["resetCount", "Reset did not return the count to the full count"],
+			];
+			const failed = order.filter(([k]) => steps[k] === false);
+			nonEmpty(failed.length, "failed round-trip step");
+			const unreached = order.filter(([k]) => steps[k] === null).length;
+			return (
+				failed.map(([, why]) => why).join("; ") +
+				(unreached > 0 ? ` — ${plural(unreached, "later step")} not reached` : "")
+			);
+		}
+		if (predicate === "F9") {
+			const e = asObject(evidence, predicate);
+			const moved = Array.isArray(e.moved) ? e.moved.length : 0;
+			const vanished = Array.isArray(e.vanished) ? e.vanished.length : 0;
+			nonEmpty(moved + vanished, "facet option whose count moved or that vanished");
+			const parts = [];
+			if (moved > 0) parts.push(`${plural(moved, "facet option count")} moved`);
+			if (vanished > 0) parts.push(`${plural(vanished, "facet option")} vanished`);
+			return `${parts.join(" and ")} when the first option was applied — of ${plural(Number(e.compared) || 0, "option")} compared`;
+		}
+		if (predicate === "F10") {
+			const e = asObject(evidence, predicate);
+			const debounce = asObject(e.debounce, predicate);
+			const empty = asObject(e.empty, predicate);
+			const data = Number(debounce.dataRequests);
+			const outside = Number(empty.handRolledOutside) || 0;
+			const parts = [];
+			if (Number.isFinite(data) && data > 1) parts.push(`${plural(data, "data request")} carried the search within 500ms of six keystrokes (at most 1)`);
+			if (empty.rendered !== true) parts.push("a nonsense search rendered no `[data-slot=\"empty\"]` inside `main`");
+			if (outside > 0) parts.push(`${plural(outside, "hand-rolled \"no results\" message")} outside the shared empty state`);
+			nonEmpty(parts.length, "undebounced request, missing empty state or hand-rolled message");
+			return parts.join("; ");
 		}
 		if (predicate === "T5") {
 			const e = asObject(evidence, predicate);
@@ -1561,7 +1622,11 @@ export function buildView({ run, rubricPredicates, surface, pageClosures, chrome
 	// The F ids come from the RUBRIC, not from a constant. `check-filter-standard.mjs` exports its
 	// own F1–F7 list and using it here would make this file agree with that one instead of with the
 	// rubric — and the rubric is the predicate universe every other family is partitioned against.
-	const filterIds = rubricPredicates.filter((p) => p.family === "F").map((p) => p.id);
+	//
+	// MINUS the live rows (#4278). F8–F10 are family F and are measured in a browser, so they are
+	// joined from the live file like every other live predicate; taking "every F row" here would hand
+	// them to the static join, which has no verdict for them and would refuse the whole report.
+	const filterIds = rubricPredicates.filter((p) => p.family === "F" && !(p.id in NOT_SCORED_STATICALLY)).map((p) => p.id);
 	const scoredIds = [...ROUTE_STATE_PREDICATES, ...Object.values(RULE_PREDICATE), ...filterIds];
 	partitionPredicates(rubricPredicates, scoredIds, NOT_SCORED_STATICALLY);
 	const liveIds = livePredicateSections();
@@ -2309,6 +2374,66 @@ export function splice(existing, generated) {
 // ── the run ──────────────────────────────────────────────────────────────────────────────────
 
 /**
+ * The filesystem half of `moduleClosure()`'s io, rooted at one tree. Shared by `runReport()` and
+ * `filterSurfaceRoutes()` so the live F8–F10 pass and the static F1–F6 join walk the same closures.
+ *
+ * @param {string} repoRoot
+ */
+function closureIo(repoRoot) {
+	const readFile = (p) => readFileSync(p, "utf8");
+	/** @param {string} p @returns {"file"|"dir"|null} */
+	const kindOf = (p) => {
+		try {
+			const s = statSync(p);
+			return s.isDirectory() ? "dir" : "file";
+		} catch {
+			return null;
+		}
+	};
+	return { readFile, kindOf, repoRoot, consoleDir: path.join(repoRoot, "apps", "console") };
+}
+
+/**
+ * The live F8–F10 pass's SUBJECT SET: for every manifest route, the filter surfaces it owns and the
+ * URL params each one writes. `--filter-surfaces` prints it; `e2e/audit/filters.spec.ts` reads it.
+ *
+ * One join, not two. Ownership is `check-filter-standard.mjs`'s `ownedSurfaces()` over the same
+ * page closures F1–F6 are scored through, so the live half cannot come to measure a different set of
+ * list pages than the static half scores. It RAISES — through the filter scan's own problems, its
+ * positive control, and the manifest's zero-route refusal — rather than printing an empty subject
+ * set, which a spec would read as a console with no list pages.
+ *
+ * @param {string} repoRoot
+ * @returns {{version: 1, surfaces: number, routes: {route: string, isRedirectOnly: boolean, surfaces: {symbol: string, params: {key: string, param: string, array: boolean}[], searchParam: string|null}[]}[]}}
+ */
+export function filterSurfaceRoutes(repoRoot) {
+	const control = filterStandardControl();
+	if (control.length > 0) {
+		throw new Error(`the filter-standard positive control is BROKEN — refusing to name a subject set.\n  ${control.join("\n  ")}`);
+	}
+	const run = runOver(repoRoot);
+	if (run.manifest.routes.length === 0) throw new Error("the route manifest returned zero routes — a broken scan, not an empty app.");
+	const scanned = scanFilterStandard(filterStandardIo(repoRoot));
+	if (scanned.problems.length > 0) {
+		throw new Error(`the filter-standard scan did not read the console:\n  - ${scanned.problems.join("\n  - ")}`);
+	}
+	const io = closureIo(repoRoot);
+	return {
+		version: 1,
+		surfaces: scanned.surfaces.length,
+		routes: run.manifest.routes.map((r) => ({
+			route: r.route,
+			isRedirectOnly: r.isRedirectOnly === true,
+			surfaces: ownedSurfaces(scanned.surfaces, moduleClosure([path.join(repoRoot, r.file)], io)).map((s) => ({
+				symbol: s.symbol,
+				params: scanned.urlParams[s.symbol]?.params ?? [],
+				searchParam: scanned.urlParams[s.symbol]?.search ?? null,
+			})),
+		})),
+	};
+}
+
+/**
  * Score one tree. Raises rather than reporting a clean board on any broken input — the manifest's
  * own zero-route raise passes straight through, and the four controls below are checked first.
  *
@@ -2335,17 +2460,7 @@ export function runReport(repoRoot) {
 	}
 
 	const abs = (rel) => path.join(repoRoot, rel);
-	const consoleDir = path.join(repoRoot, "apps", "console");
-	const readFile = (p) => readFileSync(p, "utf8");
-	/** @param {string} p @returns {"file"|"dir"|null} */
-	const kindOf = (p) => {
-		try {
-			const s = statSync(p);
-			return s.isDirectory() ? "dir" : "file";
-		} catch {
-			return null;
-		}
-	};
+	const { readFile, kindOf, consoleDir } = closureIo(repoRoot);
 
 	const rubric = parseRubric(readFile(abs(RUBRIC)));
 	const run = runOver(repoRoot);
@@ -2579,25 +2694,28 @@ function selfTest() {
 	// THE REAL RUBRIC, because the fixture above proves the parser and not the file it will read.
 	const realRubric = parseRubric(readFileSync(path.join(REPO_ROOT, RUBRIC), "utf8"));
 	ok(
-		`the real ${RUBRIC} defines 35 predicates, in five families`,
-		realRubric.predicates.length === 35 &&
+		`the real ${RUBRIC} defines 38 predicates, in five families`,
+		realRubric.predicates.length === 38 &&
 			[...new Set(realRubric.predicates.map((p) => p.family))].sort().join("") === "FHRST",
 	);
 	const perFamily = {};
 	for (const p of realRubric.predicates) perFamily[p.family] = (perFamily[p.family] ?? 0) + 1;
 	ok(
-		"...S1-S4 (4), T1-T7 (7), H1-H9 (9), F1-F7 (7), R1-R8 (8)",
-		perFamily.S === 4 && perFamily.T === 7 && perFamily.H === 9 && perFamily.F === 7 && perFamily.R === 8,
+		"...S1-S4 (4), T1-T7 (7), H1-H9 (9), F1-F10 (10), R1-R8 (8)",
+		perFamily.S === 4 && perFamily.T === 7 && perFamily.H === 9 && perFamily.F === 10 && perFamily.R === 8,
 	);
 	ok("...including H9, the empty-state row #3798 asked for", realRubric.predicates.some((p) => p.id === "H9"));
 
 	// ── the partition: every predicate lands in exactly one bucket ───────────────────────────
-	const scoredIds = [...ROUTE_STATE_PREDICATES, ...Object.values(RULE_PREDICATE), ...realRubric.predicates.filter((p) => p.family === "F").map((p) => p.id)];
+	// The static F rows only — the SAME expression `buildView()` uses, so the partition asserted here
+	// is the partition the report runs on. F8–F10 are family F and live (#4278).
+	const scoredIds = [...ROUTE_STATE_PREDICATES, ...Object.values(RULE_PREDICATE), ...realRubric.predicates.filter((p) => p.family === "F" && !(p.id in NOT_SCORED_STATICALLY)).map((p) => p.id)];
 	const part = partitionPredicates(realRubric.predicates, scoredIds, NOT_SCORED_STATICALLY);
 	ok("24 predicates are scored statically — S1-S4, T1-T4, all nine H rows and all seven F rows", part.scored.length === 24);
 	ok("...and family F is one of them now (#3796), not a column of dashes", ["F1", "F2", "F3", "F4", "F5", "F6", "F7"].every((id) => part.scored.includes(id)));
 	ok("...and so is H3 (#3797), which was the last predicate with no instrument", part.scored.includes("H3"));
-	ok("11 are live", part.live.length === 11 && part.live.sort().join(",") === "R1,R2,R3,R4,R5,R6,R7,R8,T5,T6,T7");
+	ok("14 are live", part.live.length === 14 && part.live.sort().join(",") === "F10,F8,F9,R1,R2,R3,R4,R5,R6,R7,R8,T5,T6,T7");
+	ok("...and F8-F10 are family F AND live — the one family split across both halves (#4278)", ["F8", "F9", "F10"].every((id) => part.live.includes(id) && !part.scored.includes(id)));
 	ok("0 have no instrument anywhere — the bucket is empty, and it is still a bucket", part.none.length === 0 && Array.isArray(part.none));
 	// The bucket's contract outlives its last occupant: a row that lands in it must name an owner.
 	// Proved on a fixture rather than on the live table, which is empty.
@@ -2842,7 +2960,8 @@ function selfTest() {
 	// one predicate FAILING on it, a second list page whose F7 is WITHHELD because the only builder
 	// it reaches is declared undriven, and a page with no filter store at all — N/A on all seven,
 	// with the ONE reason RUBRIC.md declares for this family.
-	const F_IDS = fixtureRubric.filter((p) => p.family === "F").map((p) => p.id);
+	// The STATIC F rows — the live ones (F8–F10, #4278) are joined from the live fixture below.
+	const F_IDS = fixtureRubric.filter((p) => p.family === "F" && !(p.id in NOT_SCORED_STATICALLY)).map((p) => p.id);
 	const fixtureFilter = [
 		...F_IDS.map((id) =>
 			id === "F3"
@@ -2943,10 +3062,23 @@ function selfTest() {
 	);
 	ok("a live predicate IS scored — from the committed records, not from the tree", view.predicates.R2.instrument === "live" && view.predicates.R2.pass === 1 && view.predicates.R2.na === 2);
 	ok(
-		"the F column is instrumented on all seven rows, and carries a number",
-		view.routes.every((r) => r.families.F.instrumented === 7 && r.families.F.of === 7) && view.routes[0].families.F.score !== null,
+		"the F column is instrumented on all ten rows — seven static, three live — and carries a number",
+		view.routes.every((r) => r.families.F.instrumented === 10 && r.families.F.of === 10) && view.routes[0].families.F.score !== null,
 	);
-	ok("...and a page with no filter store still reads `all N/A`, not `—`", cell(view.routes.find((r) => r.route === "/r").families.F) === "all N/A");
+	// The fixture's interaction section is EMPTY and pending, exactly as the committed file is until the
+	// first `audit-interaction` import — so F8–F10 are WITHHELD on every route, never N/A. A page with
+	// no filter store therefore reads `all N/A or withheld`: its seven static rows are N/A (a claim
+	// about the page) and its three live rows were not measured (a claim about the run), and the cell
+	// must not fold the second into the first.
+	ok(
+		"...and a page with no filter store reads `all N/A or withheld` while F8-F10's section is pending, not `all N/A`",
+		cell(view.routes.find((r) => r.route === "/r").families.F) === "all N/A or withheld",
+	);
+	ok(
+		"...because F8-F10 join as NOT MEASURED naming the marker, on every route",
+		view.verdicts.filter((v) => ["F8", "F9", "F10"].includes(v.predicate)).every((v) => v.verdict === "NOT MEASURED" && v.reason.includes("has never been imported")) &&
+			view.verdicts.filter((v) => ["F8", "F9", "F10"].includes(v.predicate)).length === 3 * 3,
+	);
 	ok("...and the T column is now 7 of 7 — 4 static plus 3 live", view.routes[0].families.T.instrumented === 7 && view.routes[0].families.T.of === 7);
 
 	// RECONCILIATION: every finding is accounted for on both axes, and the two axes agree.
@@ -3045,10 +3177,10 @@ function selfTest() {
 
 	// ── the live half ────────────────────────────────────────────────────────────────────────
 	ok(
-		"the three sections partition the eleven live predicates, disjointly",
-		livePredicateSections().size === 11 &&
+		"the three sections partition the fourteen live predicates, disjointly",
+		livePredicateSections().size === 14 &&
 			[...livePredicateSections()].filter(([, k]) => k === "permissions").map(([id]) => id).join(",") === "T7" &&
-			[...livePredicateSections()].filter(([, k]) => k === "interaction").map(([id]) => id).join(",") === "R8",
+			[...livePredicateSections()].filter(([, k]) => k === "interaction").map(([id]) => id).sort().join(",") === "F10,F8,F9,R8",
 	);
 	raises(
 		"a live predicate declaring a section LIVE_SECTIONS does not define RAISES",
@@ -3075,7 +3207,7 @@ function selfTest() {
 	// The comparison is worthless if the parse found nothing, so that is asserted FIRST and
 	// separately — "the emitter's table is empty" and "the emitter's table matches" must not read
 	// the same.
-	ok(`the ${LIVE_REPORT_TS} NA_REASONS table parses, and is not empty`, naBlock !== null && Object.keys(mirrored).length === 11);
+	ok(`the ${LIVE_REPORT_TS} NA_REASONS table parses, and is not empty`, naBlock !== null && Object.keys(mirrored).length === 14);
 	ok(
 		"...and LIVE_NA_REASONS mirrors it exactly, key for key and reason for reason",
 		JSON.stringify(Object.entries(mirrored).sort()) === JSON.stringify(Object.entries(LIVE_NA_REASONS).map(([k, v]) => [k, [...v]]).sort()),
@@ -3426,6 +3558,43 @@ function selfTest() {
 		summariseLiveEvidence("R8", r8Evidence({ inert: [{ control: 'button "x"', origin: "main" }], notActivated: [{ control: 'button "Sign out"', why: "session-ending" }, { control: 'button "Upload"', why: "opens-file-chooser" }] })) ===
 			"1 enabled control did nothing within 1000ms — of 12 controls enumerated on this route",
 	);
+	// F8-F10's FAIL shapes (#4278). Hand-built, hand-expected — never a value the summariser computed.
+	const f8Steps = (over) => ({ surface: "useJobsFilters", param: "statuses", countSource: "count-pill", steps: { applied: true, survivedReload: true, restoredList: true, resetUrl: true, resetCount: true, ...over } });
+	ok(
+		"F8 names the step that broke, and says the later ones were NOT REACHED rather than passing them",
+		summariseLiveEvidence("F8", f8Steps({ applied: false, survivedReload: null, restoredList: null, resetUrl: null, resetCount: null })) ===
+			"applying the first facet option never put a param this surface writes into the URL — 4 later steps not reached",
+	);
+	ok(
+		"...and a reload that loses the selection is its own sentence",
+		summariseLiveEvidence("F8", f8Steps({ survivedReload: false, restoredList: null })) === "reload() dropped the filter param from the URL — 1 later step not reached",
+	);
+	ok(
+		"...and two independent failures both appear",
+		summariseLiveEvidence("F8", f8Steps({ resetUrl: false, resetCount: false })) === "Reset left a filter param in the URL; Reset did not return the count to the full count",
+	);
+	raises("...and an F8 FAIL whose five steps all passed RAISES", () => summariseLiveEvidence("F8", f8Steps({})), "failed round-trip step");
+	ok(
+		"F9 counts moved and vanished options separately, out of how many were compared",
+		summariseLiveEvidence("F9", { surface: "s", compared: 5, moved: [{ option: "a", before: 2, after: 1 }], vanished: ["b", "c"] }) ===
+			"1 facet option count moved and 2 facet options vanished when the first option was applied — of 5 options compared",
+	);
+	raises("...and an F9 FAIL with nothing moved and nothing vanished RAISES", () => summariseLiveEvidence("F9", { compared: 5, moved: [], vanished: [] }), "facet option whose count moved");
+	ok(
+		"F10 names a per-keystroke fetch, and does not blame the RSC refetch the URL rewrite causes",
+		summariseLiveEvidence("F10", { debounce: { keystrokes: 6, windowMs: 500, dataRequests: 6, rscRequests: 6 }, empty: { rendered: true, handRolledOutside: 0 } }) ===
+			"6 data requests carried the search within 500ms of six keystrokes (at most 1)",
+	);
+	ok(
+		"...and the empty-state half separately",
+		summariseLiveEvidence("F10", { debounce: { dataRequests: 1, rscRequests: 6 }, empty: { rendered: false, handRolledOutside: 1 } }) ===
+			'a nonsense search rendered no `[data-slot="empty"]` inside `main`; 1 hand-rolled "no results" message outside the shared empty state',
+	);
+	raises(
+		"...and an F10 FAIL that is debounced, empty-stated and clean RAISES",
+		() => summariseLiveEvidence("F10", { debounce: { dataRequests: 1, rscRequests: 0 }, empty: { rendered: true, handRolledOutside: 0 } }),
+		"undebounced request",
+	);
 	raises(
 		"...and an R8 FAIL with nothing inert and nothing undeclared RAISES — a FAIL whose summary contradicts it",
 		() => summariseLiveEvidence("R8", r8Evidence({})),
@@ -3767,6 +3936,34 @@ function selfTest() {
 	ok("--run without --import-live means nothing and says so", parseCliArgs(["--run=r"]).error?.includes("only mean something with --import-live"));
 	ok("--import-live and --write cannot both be asked for", parseCliArgs(["--import-live=x", "--run=r", "--commit=c", "--write"]).error?.includes("cannot both"));
 	ok("...and the existing modes are unchanged", parseCliArgs([]).mode === "check" && parseCliArgs(["--write"]).mode === "write" && parseCliArgs(["--nope"]).error?.includes("unrecognised"));
+	ok("--filter-surfaces parses, and cannot be combined with another mode", parseCliArgs(["--filter-surfaces"]).mode === "filter-surfaces" && parseCliArgs(["--filter-surfaces", "--write"]).error?.includes("cannot both"));
+
+	// THE LIVE F8-F10 SUBJECT SET, on the REAL tree. What `filters.spec.ts` measures over must be the
+	// set the static F1-F6 join scores: every route that owns a surface here must be a route whose
+	// static F1 cell is not N/A, and the reverse. Asked through `scoreFilterRoutes`, the static join's
+	// own function, so the property compared is the two joins agreeing — not this code agreeing with
+	// itself. And every surface a route owns must carry at least one param, or F8 has nothing to ask.
+	const subject = filterSurfaceRoutes(REPO_ROOT);
+	ok(`the real subject set derives at least 15 surfaces (${subject.surfaces})`, subject.surfaces >= 15);
+	const staticListRoutes = (() => {
+		const scanned = scanFilterStandard(filterStandardIo(REPO_ROOT));
+		const io = closureIo(REPO_ROOT);
+		const routes = runOver(REPO_ROOT).manifest.routes;
+		const closures = new Map(routes.map((r) => [r.route, moduleClosure([path.join(REPO_ROOT, r.file)], io)]));
+		return scoreFilterRoutes(scanned, closures, routes.map((r) => r.route))
+			.filter((v) => v.predicate === "F1" && v.verdict !== "N/A")
+			.map((v) => v.route)
+			.sort();
+	})();
+	const liveListRoutes = subject.routes.filter((r) => r.surfaces.length > 0).map((r) => r.route).sort();
+	ok(
+		`...and its list routes are EXACTLY the routes the static F join scores (${liveListRoutes.length})`,
+		liveListRoutes.length > 0 && JSON.stringify(liveListRoutes) === JSON.stringify(staticListRoutes),
+	);
+	ok(
+		"...and every owned surface carries at least one URL param",
+		subject.routes.every((r) => r.surfaces.every((sf) => sf.params.length > 0)),
+	);
 
 	// ── rendering ────────────────────────────────────────────────────────────────────────────
 	const md = renderScoreboard(view);
@@ -3799,7 +3996,7 @@ function selfTest() {
 	);
 	ok("...and no absolute path either", !md.includes(REPO_ROOT) && !renderJson(view).includes(REPO_ROOT));
 	const parsedJson = JSON.parse(renderJson(view));
-	ok("the JSON carries one record per (route, predicate) it scored — 24 static + 11 live, every predicate", parsedJson.verdicts.length === 3 * 35);
+	ok("the JSON carries one record per (route, predicate) it scored — 24 static + 14 live, every predicate", parsedJson.verdicts.length === 3 * 38);
 	ok("...in the shape e2e/audit/report.ts writes", parsedJson.verdicts.every((v) => "route" in v && "predicate" in v && "verdict" in v));
 
 	// ── splice ───────────────────────────────────────────────────────────────────────────────
@@ -3971,13 +4168,15 @@ export function renderStepSummary(fresh, baseline, liveDebt = LIVE_DEBT) {
 }
 
 export const USAGE = [
-	"Usage: node apps/console/scripts/audit-report.mjs [--write|--json|--self-test|--import-live=<dir>|--help]",
+	"Usage: node apps/console/scripts/audit-report.mjs [--write|--json|--self-test|--filter-surfaces|--import-live=<dir>|--help]",
 	"",
 	"  (no argument)  check the generated files are in sync with the tree; exit 2 if not",
 	"  --write        regenerate apps/console/docs/ui-conformance/scoreboard.md and",
 	"                 apps/console/ui-conformance-baseline.json",
 	"  --json         print the derived view; write nothing",
 	"  --self-test    run the fixture suite; exit 1 on any failure",
+	"  --filter-surfaces  print, per route, the filter surfaces it owns and the URL params",
+	"                 each writes — the subject set e2e/audit/filters.spec.ts measures F8-F10 over",
 	"",
 	"  --step-summary=<dir>  print the per-predicate failure table for a run's `ui-audit`",
 	"                        artifact, against the committed baseline. Writes nothing;",
@@ -4001,7 +4200,7 @@ export const USAGE = [
  * the shape that silently imports a baseline with no provenance.
  */
 export function parseCliArgs(argv) {
-	const MODES = { "--write": "write", "--json": "json", "--self-test": "self-test", "--help": "help", "-h": "help" };
+	const MODES = { "--write": "write", "--json": "json", "--self-test": "self-test", "--filter-surfaces": "filter-surfaces", "--help": "help", "-h": "help" };
 	const VALUED = ["--import-live", "--run", "--commit", "--step-summary"];
 	if (argv.length === 0) return { mode: "check", error: null };
 
@@ -4068,6 +4267,16 @@ if (invokedDirectly) {
 			console.error("self-test: 1 FAILED");
 			process.exit(1);
 		}
+	}
+
+	if (parsed.mode === "filter-surfaces") {
+		try {
+			console.log(JSON.stringify(filterSurfaceRoutes(REPO_ROOT), null, "\t"));
+		} catch (err) {
+			console.error(`audit-report: ${err instanceof Error ? err.message : String(err)}`);
+			process.exit(1);
+		}
+		process.exit(0);
 	}
 
 	if (parsed.mode === "step-summary") {
