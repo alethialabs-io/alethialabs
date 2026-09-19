@@ -245,7 +245,7 @@
 				"Usage — Pro trial (team) › the spend-control hard-cap toggle flips and can be restored": "passed",
 				"Usage — Pro trial (team) › resources section surfaces spend-under-management": "passed",
 				"Usage — Pro trial (team) › usage-over-time metric tabs switch the summary metric": "passed",
-				"Usage — Pro trial (team) › the quick-range filter changes the active window": "failed",
+				"Usage — Pro trial (team) › the quick-range filter changes the active window": "passed",
 				"Usage — Pro trial (team) › AI usage section shows the weekly window, balance and top-up link": "failed",
 				"Usage — Pro trial (team) › usage page has no serious accessibility violations": "passed",
 				"Usage — Hobby (owner) › community org shows the Hobby standing and an inline upgrade CTA": "passed",

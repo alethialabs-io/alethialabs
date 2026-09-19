@@ -640,11 +640,26 @@ test.describe("Usage — Pro trial (team)", () => {
 
 	test("the quick-range filter changes the active window", { tag: "@needs:stripe" }, async ({ team }) => {
 		await team.page.goto(usagePath(team.orgSlug));
-		await team.page.getByRole("button", { name: /last 7 days/i }).click();
-		await team.page.getByRole("button", { name: "Last 30 days" }).click();
-		await expect(
-			team.page.getByRole("button", { name: /last 30 days/i }),
-		).toBeVisible();
+		// THE TRIGGER IS LOCATED BY `expanded`, and that is the fix for #4853, not a nicety. After a
+		// preset is picked, `@repo/ui/quick-range-filter` sets the popover closed and the trigger's
+		// label to "Last 30 days" at once — but base-ui keeps the popup MOUNTED while its exit
+		// transition runs, and the picked preset inside it is also a button named "Last 30 days".
+		// A bare `getByRole("button", { name: /last 30 days/i })` therefore resolved to two elements
+		// for as long as the animation lasted, and whether the assertion's first poll landed inside
+		// that window decided pass or strict-mode failure (measured on run 35374308674: the trigger
+		// already read `aria-expanded="false"` while the preset was still in the DOM). Of those two,
+		// only the trigger carries `aria-expanded` — the preset rows are plain buttons — and
+		// Playwright's `expanded` filter drops an element with no such attribute (its
+		// `getAriaExpanded` returns undefined, which never equals `false`), so this names one
+		// element whatever the popup's lifecycle is doing.
+		const trigger = (name: RegExp) =>
+			team.page.getByRole("button", { name, expanded: false });
+		await trigger(/last 7 days/i).click();
+		await team.page.getByRole("button", { name: "Last 30 days", exact: true }).click();
+		await expect(trigger(/last 30 days/i)).toBeVisible();
+		// A second consequence of the pick rather than a restatement of the first: the over-time
+		// card captions its figure with the window it was asked for ("runner time · last 30 days").
+		await expect(team.page.getByText(/· last 30 days/i)).toBeVisible();
 	});
 
 	test("AI usage section shows the weekly window, balance and top-up link", { tag: "@needs:stripe" }, async ({ team }) => {
