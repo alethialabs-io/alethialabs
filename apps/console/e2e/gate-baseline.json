@@ -36,8 +36,8 @@
 			"account-settings.spec.ts": {
 				"Account settings dialog › opens from the sidebar account menu and shows the user email": "passed",
 				"Account settings dialog › Save Changes is inert until the display name is edited": "passed",
-				"Account settings dialog › the danger zone offers Delete Account": "passed",
-				"Account settings dialog › Delete Account is INERT — pressing it opens no confirmation and ends no session": "passed"
+				"Account settings dialog › Request deletion asks first, and Cancel opens nothing and ends no session": "passed",
+				"Account settings dialog › confirming opens ONE erasure request with a reference, and the account survives it": "passed"
 			},
 			"activity.spec.ts": {
 				"Activity page (a brand-new org) › renders the filter bar and gates export on a fresh plan": "passed",
@@ -769,7 +769,7 @@
 				"agent.thread.delete — declares confirm-dialog (confirmed)": "passed",
 				"agent.knowledge.delete — declares confirm-dialog (confirmed)": "passed",
 				"agent.widget.remove — declares confirm-dialog (confirmed)": "passed",
-				"account.delete — declares none (inert)": "passed",
+				"account.delete — declares confirm-dialog (confirmed)": "passed",
 				"the run measured something — a withheld verdict is not a pass": "passed",
 				"self-test — `resolveTrigger` withholds on AMBIGUITY rather than picking one of N": "passed",
 				"self-test — `resolveTrigger` resolves a SINGLE match, and the template's prefix is what matches": "passed",
