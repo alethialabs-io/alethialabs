@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -402,6 +403,30 @@ func TestSecretsXacctGCPRequiresAStandingGSA(t *testing.T) {
 		})
 	}
 
+	// The opt-in is shared by every nightly leg, so a gcp leg with NEITHER gcp var set was not wired:
+	// off with a reason (the run half logs it and secrets-e2e.sh records BLOCKED from that line), not
+	// an error. Setting either one is intent, and the "missing" cases above refuse it.
+	t.Run("neither project nor GSA set is off with a reason, not an error", func(t *testing.T) {
+		withXacctEnv(t, gcpComplete)
+		t.Setenv(envSecretsXacctProjectID, "")
+		t.Setenv(envSecretsXacctESOGSA, "")
+		on, blocked, err := secretsXacctFromEnv("gcp").decide()
+		if on || err != nil {
+			t.Fatalf("unwired gcp ⇒ off without error; got on=%v err=%v", on, err)
+		}
+		if !strings.Contains(blocked, envSecretsXacctProjectID) || !strings.Contains(blocked, envSecretsXacctESOGSA) {
+			t.Fatalf("the reason must name both vars that would wire the lane, got %q", blocked)
+		}
+	})
+
+	// The proof summary's target is account B's PROJECT on gcp — there is no role ARN to name.
+	t.Run("the summary target is the account-B project", func(t *testing.T) {
+		withXacctEnv(t, gcpComplete)
+		if got := secretsXacctFromEnv("gcp").targetRef(); got != gcpComplete[envSecretsXacctProjectID] {
+			t.Fatalf("gcp targetRef = %q, want the project id %q", got, gcpComplete[envSecretsXacctProjectID])
+		}
+	})
+
 	// The template rejects a bare account id at plan time; the harness must reject it before spend.
 	t.Run("a bare account id is refused", func(t *testing.T) {
 		withXacctEnv(t, gcpComplete)
@@ -462,4 +487,36 @@ func TestSecretsXacctAdoptStandingIdentity(t *testing.T) {
 			t.Fatalf("aws adopts nothing; got err=%v snap=%+v", err, snap)
 		}
 	})
+}
+
+// The harness's adopt key and its GSA-email pattern are copies of facts owned by the GCP project
+// template. packages/core pins the key's reachability against its OWN literal, so without this a
+// rename or typo of secretsXacctGCPAdoptKey alone would fail nothing — and the nightly would quietly
+// create a per-run GSA that account B's grant never names. Read the template and compare.
+func TestSecretsXacct_GCPAdoptKeyAndPatternMatchTemplate(t *testing.T) {
+	path := filepath.Join(e2ePackageDir(t), "..", "..", "infra", "templates", "project", "gcp", "variables.tf")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	tf := string(raw)
+	decl := `variable "` + secretsXacctGCPAdoptKey + `" {`
+	start := strings.Index(tf, decl)
+	if start < 0 {
+		t.Fatalf("%s declares no %s — the harness would write a key tofu never reads", path, decl)
+	}
+	// Bound the search to THIS variable's block: up to the next top-level `variable "` declaration.
+	block := tf[start+len(decl):]
+	if next := strings.Index(block, "\nvariable \""); next >= 0 {
+		block = block[:next]
+	}
+	m := regexp.MustCompile(`can\(regex\("((?:[^"\\]|\\.)*)"`).FindStringSubmatch(block)
+	if m == nil {
+		t.Fatalf("no can(regex(\"…\")) validation found in the %s block — the harness's pre-spend check has nothing to mirror", secretsXacctGCPAdoptKey)
+	}
+	// HCL string escapes: `\\` is one backslash. The template's pattern is otherwise plain RE2.
+	tmpl := strings.ReplaceAll(m[1], `\\`, `\`)
+	if tmpl != gcpSAEmail.String() {
+		t.Fatalf("gcpSAEmail = %q but the template validates %q — they must be the same pattern", gcpSAEmail.String(), tmpl)
+	}
 }

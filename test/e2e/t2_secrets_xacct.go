@@ -52,10 +52,13 @@ const (
 // It reaches tofu through the cluster's generic provider_config passthrough —
 // mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, …) in packages/core/cloud/gcp_provider.go —
 // which is the same path the console's generated "Advanced" cluster control writes. The key being
-// reachable, and NOT reserved, is pinned by TestProviderTfvars_StandingIdentityAdoptionIsReachable.
+// reachable, and NOT reserved, is pinned by TestProviderTfvars_StandingIdentityAdoptionIsReachable
+// (packages/core/cloud) against its own literal; THIS constant naming a real template variable is
+// pinned by TestSecretsXacct_GCPAdoptKeyAndPatternMatchTemplate, which reads variables.tf.
 const secretsXacctGCPAdoptKey = "external_secrets_service_account_email"
 
-// gcpSAEmail is the same pattern the GCP template validates that variable against.
+// gcpSAEmail is the same pattern the GCP template validates that variable against;
+// TestSecretsXacct_GCPAdoptKeyAndPatternMatchTemplate extracts the template's regex and compares.
 var gcpSAEmail = regexp.MustCompile(`^[^@]+@[^@]+\.iam\.gserviceaccount\.com$`)
 
 // The ExternalSecret the PRODUCT renders lands in the generated app manifests' namespace. Kept as a
@@ -142,7 +145,7 @@ func secretsXacctFromEnv(provider string) secretsXacctConfig {
 		serviceName:  t2Env(envSecretsXacctService, "xacct-probe"),
 		probeNS:      t2Env(envSecretsXacctProbeNS, secretsXacctDefaultNS),
 		summaryPath:  t2Env(envSecretsXacctSummary, ""),
-		esoGSAEmail:  strings.TrimSpace(t2Env(envSecretsXacctESOGSA, "")),
+		esoGSAEmail:  strings.TrimSpace(t2ArgoEnvForProvider(envSecretsXacctESOGSA, provider, "")),
 	}
 	// By product contract the project secret's NAME is its remote key (the same contract the SaaS
 	// lane adopted in #1207), so default them together rather than making the caller repeat it.
@@ -229,6 +232,16 @@ func (c secretsXacctConfig) connectorSlug() string {
 		return "alibaba-kms-xacct"
 	}
 	return ""
+}
+
+// targetRef names the account-B target this run read from, for the proof summary: the role ARN on
+// the clouds whose cross-account hop is an assumed role, the project id on gcp (whose hop is a grant
+// on a standing GSA, so there is no role to name). Empty when the cloud has no target configured.
+func (c secretsXacctConfig) targetRef() string {
+	if c.provider == "gcp" {
+		return c.projectID
+	}
+	return c.roleARN
 }
 
 // storeName is the ClusterSecretStore the deploy must render. Delegates to the product SSOT so a

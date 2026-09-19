@@ -22,7 +22,8 @@
 # with the reason from secretsXacctLane
 # (test/e2e/t2_secrets_xacct.go) — the SAME text the parity board quotes, so a lane cannot look
 # covered here while being blocked there. A run that can't proceed is recorded as BLOCKED, never
-# skipped silently: a SKIPPED test is classified BLOCKED, never PASS.
+# skipped silently: a SKIPPED test is classified BLOCKED, never PASS — and PASS is read from the
+# scenario's own summary file, so a base T2 pass with the scenario turned off cannot become one.
 #
 # The caller exports the target env (see docs/testing/e2e-nightly-enablement.md):
 #   ALETHIA_E2E_SECRETS_XACCT=1 ALETHIA_E2E_SECRETS_XACCT_{ACCOUNT,REGION,ROLE_ARN,REMOTE_KEY,EXPECT_SHA256}
@@ -45,6 +46,12 @@ log="$outdir/run.log"
 
 case "$cloud" in aws|gcp|azure|alibaba) ;; *) echo "unknown cloud $cloud" >&2; exit 2 ;; esac
 case "$stage" in cluster|strict) ;; *) echo "unknown stage $stage" >&2; exit 2 ;; esac
+# `strict` is an AWS trust-shape run (exact-ARN trust vs the nightly's pattern-bound trust). The run
+# command below does not depend on the stage, so `gcp strict` would record a SECOND row for the very
+# same run as `gcp cluster`. Refuse it rather than let one run count twice.
+if [[ "$stage" == "strict" && "$cloud" != "aws" ]]; then
+  echo "stage strict is aws-only: it closes the AWS exact-ARN trust divergence; $cloud has none to close" >&2; exit 2
+fi
 
 # ── the lane gate. AWS and GCP can be proven; the others record WHY, never a silent skip.
 #    The authoritative reasons live in secretsXacctLane (test/e2e/t2_secrets_xacct.go) — a pure test
@@ -70,11 +77,30 @@ if [[ -n "${BLOCKED:-}" ]]; then
   printf 'BLOCKED: %s\n' "$BLOCKED" | tee "$log" >/dev/null
 else
   echo "▶ xacct-secrets $cloud/$stage @ $sha → $bundle" >&2
-  ( cd "$root/$dir" && ALETHIA_E2E_SECRETS_XACCT=1 GOWORK=off "${run[@]}" ) >"$log" 2>&1
+  # PASS is read from the SCENARIO's own summary, never from `go test`'s exit code alone. The test
+  # this runs is the BASE T2 proof; the cross-account read is one scenario inside it, and decide()
+  # (test/e2e/t2_secrets_xacct.go) can turn that scenario OFF with a logged reason — a blocked
+  # lane, or a gcp run with neither PROJECT_ID nor ESO_GSA_EMAIL set — while the base proof passes
+  # and the process exits 0. Reading the exit code recorded exactly that as PASS for a read that
+  # never ran. runT2SecretsXacct writes this file ONLY when the scenario actually ran, and its
+  # verdict starts as FAIL and becomes PASS only after the last assertion; so "no file" means "did
+  # not run" and the file's verdict is the scenario's own. Removed first so a stale file from an
+  # earlier run in the same bundle dir can never be read as this run's.
+  summary="$outdir/secrets-xacct-summary.json"
+  rm -f "$summary"
+  ( cd "$root/$dir" && ALETHIA_E2E_SECRETS_XACCT=1 ALETHIA_E2E_SECRETS_XACCT_SUMMARY="$summary" GOWORK=off "${run[@]}" ) >"$log" 2>&1
   rc=$?
-  if [[ $rc -eq 0 ]] && grep -q "^ok\|^--- PASS\|^PASS" "$log"; then verdict="PASS"
-  elif grep -q "^--- SKIP\|^ok.*\[no tests to run\]\|SKIP:" "$log" && ! grep -q "FAIL" "$log"; then
+  scenario="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("verdict",""))' "$summary" 2>/dev/null || true)"
+  off_line="$(grep -m1 -oE '#1268: cross-account keyless secrets (BLOCKED|SKIPPED).*' "$log" | sed 's/|/;/g' || true)"
+  if [[ $rc -eq 0 && "$scenario" == "PASS" ]]; then verdict="PASS"
+  elif [[ $rc -eq 0 && -n "$off_line" ]]; then
+    verdict="BLOCKED"; detail="scenario did not run: $off_line"
+  elif [[ $rc -eq 0 ]] && grep -q "^--- SKIP\|^ok.*\[no tests to run\]\|SKIP:" "$log" && ! grep -q "FAIL" "$log"; then
     verdict="BLOCKED"; detail="test SKIPPED (env not set)"
+  elif [[ $rc -eq 0 ]]; then
+    # go test passed and nothing says the scenario was turned off, yet it left no PASS summary.
+    # That is not a proof of anything, so it is not recorded as one.
+    verdict="FAIL"; detail="go test exited 0 but the scenario recorded no PASS summary (verdict='${scenario:-none}')"
   else verdict="FAIL"; fi
   # Prefer the scenario's own verdict line when present.
   detail="${detail:-$(grep -E "xacct: |FAIL:|Error:|--- (PASS|FAIL)" "$log" | tail -1 | sed 's/|/;/g')}"
