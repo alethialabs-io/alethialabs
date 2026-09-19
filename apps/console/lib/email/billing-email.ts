@@ -9,7 +9,7 @@
 // an attachment (Stripe stays the source of truth for the invoice document).
 
 import type Stripe from "stripe";
-import { formatDate } from "@repo/format";
+import { formatDate, formatMoney } from "@repo/format";
 import { planMeta } from "@repo/plan-catalog";
 import { getEmailConfig } from "@repo/email/config";
 import type { EmailAttachment } from "@repo/email/send";
@@ -41,12 +41,17 @@ import { sendGuardedEmail } from "./guard";
 
 // ── Formatting helpers ──────────────────────────────────────────────────────
 
-/** Formats a Stripe smallest-unit amount as currency, e.g. (5800, "usd") → "$58.00". */
+/**
+ * Formats a Stripe smallest-unit amount as currency, e.g. (5800, "usd") → "$58.00".
+ *
+ * Through `@repo/format`'s `formatMoney` rather than its own `Intl.NumberFormat` (#4176). The local
+ * copy divided by 100 unconditionally, so a zero-decimal invoice (¥124,000 is `amount_paid: 124000`)
+ * would have been emailed as `¥1,240` — and on `en-US` against the billing page's `en-GB`, so the
+ * one money surface a customer keeps could disagree with the console about the same invoice.
+ * `formatMoney` takes the divisor from Stripe's own zero-decimal list (`minor-units.ts`).
+ */
 function money(amountMinor: number, currency: string): string {
-	return new Intl.NumberFormat("en-US", {
-		style: "currency",
-		currency: currency.toUpperCase(),
-	}).format(amountMinor / 100);
+	return formatMoney(amountMinor, currency);
 }
 
 /**

@@ -140,8 +140,19 @@ export interface BillingSummary {
 	 * subscription's Stripe price (so a grandfathered sub shows its real amount), or the
 	 * live plan price when there's no sub. null = custom/unknown. Stripe is authoritative;
 	 * never compute the displayed amount from the catalog.
+	 *
+	 * DESPITE THE NAME, the live-subscription branch reads the price in whatever currency the
+	 * subscription was created in — a EUR subscription puts euros here. {@link currency} says which;
+	 * retiring the `*Usd` name is #4176's part (b), not this field's doc.
 	 */
 	unitAmountUsd: number | null;
+	/**
+	 * ISO 4217 code (Stripe's lower case) that {@link unitAmountUsd} is quoted in: the live
+	 * subscription price's own `currency` when that branch set the amount, otherwise `"usd"` — the
+	 * plan-price fallback reads `LivePlanPrice.unitAmountUsd`, which is the price's USD option.
+	 * Rendering the amount without this is how a EUR plan showed a dollar sign (#4176).
+	 */
+	currency: string;
 }
 
 /** Resolves the active org's billing state for display (read-only; any member). */
@@ -171,6 +182,7 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 	// Authoritative price: the subscription's OWN flat (non-metered) Stripe price — this
 	// reflects what the org is actually charged, including grandfathered amounts.
 	let unitAmountUsd: number | null = null;
+	let currency = "usd";
 	if (billing?.stripeSubscriptionId && isStripeConfigured()) {
 		try {
 			const sub = await getStripe().subscriptions.retrieve(
@@ -188,6 +200,7 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 			const live = status === "active" || status === "trialing";
 			if (live && typeof flat?.price.unit_amount === "number") {
 				unitAmountUsd = flat.price.unit_amount / 100;
+				currency = flat.price.currency;
 			}
 			currentPeriodEnd =
 				live && flat?.current_period_end
@@ -214,6 +227,7 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 		seats: billing?.seats ?? null,
 		memberCount,
 		unitAmountUsd,
+		currency,
 	};
 }
 
