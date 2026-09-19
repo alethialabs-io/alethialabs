@@ -264,7 +264,7 @@ absence of a `lib/stores/use-*-filters.ts` store, not from how the page looks. F
 | **F7** | the server builder issues a rows pass **and a separate unfiltered facet pass** |
 | **F8** | a filtered view survives the URL round-trip, **observed in a browser** | applying the first facet option that narrows puts one of the surface's params in the URL; the URL reloaded in a **fresh tab** (its own sessionStorage, so only the URL can restore it) keeps the param and the narrowed list; Reset clears every param the surface writes and the count returns to the full count |
 | **F9** | facet counts do not move under a filter, **observed in a browser** | every option of the facet driven keeps its count, and no option vanishes, between before and after the first option is applied — F7 observed end to end |
-| **F10** | search is debounced and lands in the shared empty state, **observed in a browser** | six keystrokes produce **at most one** data request carrying the search within 500 ms of the last one, and a nonsense token renders `[data-slot="empty"]` inside `main` with no hand-rolled "No results" outside it |
+| **F10** | search is debounced and lands in the shared empty state, **observed in a browser** | the data requests six keystrokes produce carry **at most one distinct** search value within 500 ms of the last one (a poll repeating the debounced value is the same value, not a second fetch), and a nonsense token renders `[data-slot="empty"]` inside `main` with no hand-rolled "No results" outside it |
 
 The subject is a **surface**, not a page: one `createFilterStore` call site.
 `lib/stores/use-settings-filters.ts` holds seven of them and `use-alerts-filters.ts` three, so a
@@ -289,14 +289,17 @@ fewer than two rows is **NOT MEASURED with the count** — a filter over one row
 anything, and scoring it PASS would be a measurement of nothing. That is a claim about the RUN, never
 an N/A.
 
-Its positive control runs before any route is scored, over three fixture bars with known answers —
-one that never writes the URL, one whose counts move, one that fetches per keystroke — and a red
-control withholds all three predicates for the run. The jobs surface is the known PASS the first real
+Its positive control runs before any route is scored, over four fixture bars with known answers —
+one that never writes the URL, one whose counts move, one that fetches per keystroke, and one whose
+rows share a single facet value so no option can narrow it, which must read NOT MEASURED on F8 and
+F9 — and a red control withholds all three predicates for the run. The jobs surface is the known PASS the first real
 run is read against.
 
 **What F8–F10 cannot see is stated, not implied.** F8 and F9 drive the FIRST facet option the bar
-offers, not every one; F10's "data request" is a server-action POST or a fetch carrying the typed
-token, and the App Router's RSC refetch that `useFilterUrlSync`'s URL rewrite triggers is COUNTED in
+offers that narrows the list, not every one. When no facet found has such an option, or the list does
+not narrow once it is applied, both are **NOT MEASURED with the counts** — never PASS, because with the
+list unchanged F9's before/after comparison and F8's restore and reset steps cannot fail. F10's "data request" is a server-action POST or a fetch carrying the
+typed token, and the App Router's RSC refetch that `useFilterUrlSync`'s URL rewrite triggers is COUNTED in
 the evidence but is not the debounce's question — so a surface can PASS F10 while its URL half still
 round-trips per keystroke, and the evidence says how many times it did.
 
