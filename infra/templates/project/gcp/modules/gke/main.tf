@@ -78,11 +78,14 @@ resource "google_container_cluster" "cluster" {
     services_secondary_range_name = var.service_ip_range_name
   }
 
-  # Private cluster: nodes have no public IPs, but the control plane endpoint
-  # is publicly accessible (restricted by master_authorized_networks_config).
+  # Private cluster. By default nodes have no public IPs and the control plane endpoint is publicly
+  # reachable (restricted by master_authorized_networks_config). Both switches were literals until
+  # #4320 while the root declared `gke_enable_private_nodes` / `gke_enable_private_endpoint` and
+  # threaded neither; the defaults below equal the old literals, so a caller who never set them gets
+  # the same cluster. A Standard cluster with public nodes is REFUSED by the precondition below.
   private_cluster_config {
-    enable_private_nodes    = true
-    enable_private_endpoint = false
+    enable_private_nodes    = var.enable_private_nodes
+    enable_private_endpoint = var.enable_private_endpoint
     master_ipv4_cidr_block  = "172.16.0.0/28"
   }
 
@@ -154,6 +157,15 @@ resource "google_container_cluster" "cluster" {
       # Node count is managed by the autoscaler
       initial_node_count,
     ]
+
+    # The root's `check "gke_private_nodes_when_standard"` states this invariant, but a `check`
+    # block only WARNS — it cannot stop an apply. While the knob was unwired that did not matter,
+    # because nothing could turn private nodes off. Now that it is honoured, this is what makes a
+    # Standard cluster with public nodes a plan-time error rather than a warning.
+    precondition {
+      condition     = var.enable_autopilot || var.enable_private_nodes
+      error_message = "Standard GKE clusters must keep private nodes (gke_enable_private_nodes = true); only Autopilot may turn them off."
+    }
   }
 }
 

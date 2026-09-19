@@ -129,7 +129,10 @@ function HeaderCol({
 				title={h.title}
 				docsHref={h.docsHref}
 				side="bottom"
-				className="text-text-disabled hover:text-text-secondary"
+				// An ACTIVE control, so WCAG 1.4.3's inactive-component exemption does not reach it
+				// and neither does 1.4.11's for a decorative glyph. `text-text-disabled` was 1.95:1
+				// at rest and a hover colour is not a resting state. #4612.
+				className="text-text-tertiary hover:text-text-secondary"
 			>
 				{h.body}
 			</FieldHelp>
@@ -200,17 +203,36 @@ function EnvRow({
 				<PostureCell mark={receiptMark(row.verify)} />
 			</TableCell>
 			<TableCell className={CELL}>
-				<div
-					className={cn(
-						"flex items-center justify-end gap-1.5 font-mono text-ui-xs",
-						stale ? "text-text-tertiary" : "text-text-disabled",
-					)}
-				>
+				{/*
+				  * The Checked timestamp is ONE tier, not two. It was
+				  * `stale ? "text-text-tertiary" : "text-text-disabled"` — the ordinary, FRESH row
+				  * drawn at 1.95:1 and the exceptional one at 5.35:1, which is backwards on its own
+				  * terms as well as illegible. Inverting it is not the fix either: `--text-disabled`
+				  * fails 4.5:1 on every surface token in both themes (1.77–2.64:1), so whichever
+				  * branch keeps it is the unreadable one, and the conditional's only legible
+				  * assignment is tertiary on both. So it is DELETED rather than inverted: with both
+				  * branches equal it is dead code, and giving one branch a different readable tier
+				  * would be a NEW emphasis decision nobody has made — this issue is a decided rule
+				  * being applied, not a design ruling.
+				  *
+				  * Nothing is lost by dropping it. The difference was carried by ink tier ALONE,
+				  * which WCAG 1.4.1 already refuses as a sole signal; staleness is still said by the
+				  * clock glyph and by the relative time the cell prints. #4612.
+				  */}
+				<div className="flex items-center justify-end gap-1.5 font-mono text-ui-xs text-text-tertiary">
 					{stale && <EvIcon name="clock" size={11} className="shrink-0" />}
 					{formatRelative(lastChecked(row))}
 				</div>
 			</TableCell>
 			<TableCell className={CELL}>
+				{/*
+				  * DELIBERATELY still `text-text-disabled`, and the only site in this file that is.
+				  * This `→` is decorative: it is `opacity-0` at rest, it duplicates the row's own
+				  * click target and the environment-name `<button>` beside it, and it carries no
+				  * text. WCAG 1.4.3 and 1.4.11 both exempt it, so raising it would spend ink on the
+				  * one mark on this row that says nothing. #4612 lists it for exactly this reason —
+				  * so a sweep of the tier does not take it by accident.
+				  */}
 				<div className="grid place-items-center text-text-disabled opacity-0 transition-opacity group-hover/row:opacity-100">
 					<EvIcon name="arrow-right" size={14} />
 				</div>

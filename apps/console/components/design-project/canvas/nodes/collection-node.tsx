@@ -14,6 +14,7 @@ import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { NODE_STATUS_META, resolveNodeStatusFor } from "@/lib/canvas/node-status";
 import { useCanvasLod } from "@/lib/canvas/use-canvas-lod";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { nodeAccessibleName } from "./node-name";
 
 const HANDLE_CLASS = "!h-2 !w-2 !rounded-none !border !border-border !bg-background";
 
@@ -61,10 +62,18 @@ export function CollectionNode({
 	const meta = NODE_STATUS_META[worst.state];
 	const title = def.collection?.title ?? def.label;
 	const count = members.length;
+	// A vault has no name of its own — it stands for N resources, and the count IS what tells one
+	// board's vault from another's. So the "<kind> <name>" shape resolves here to the plural title
+	// and the count, which is also exactly what the glyph tier prints.
+	const accessibleName = nodeAccessibleName(title, String(count));
 
 	if (lod === "glyph") {
 		return (
-			<div className="flex w-[76px] flex-col items-center gap-1.5">
+			<div
+				role="group"
+				aria-label={accessibleName}
+				className="flex w-[76px] flex-col items-center gap-1.5"
+			>
 				<Handle type="target" position={Position.Top} className={HANDLE_CLASS} />
 				<span
 					className={cn(
@@ -92,6 +101,8 @@ export function CollectionNode({
 
 	return (
 		<div
+			role="group"
+			aria-label={accessibleName}
 			className={cn(
 				"relative rounded-none border bg-card text-card-foreground transition-colors",
 				// A collection is periphery-classed like its members, so it carries the same rule.

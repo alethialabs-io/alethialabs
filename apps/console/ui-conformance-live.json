@@ -2,15 +2,21 @@
 	"$comment": [
 		"IMPORTED — the live half of apps/console/docs/ui-conformance/RUBRIC.md, measured by the Playwright `audit` project in CI.",
 		"Refresh with `node apps/console/scripts/audit-report.mjs --import-live=<dir> --run=<url> --commit=<sha>`,",
-		"then regenerate the two derived files with `pnpm -F console audit:report --write`.",
+		"then regenerate the two derived files with `pnpm -C apps/console run audit:report --write`.",
 		"Apart from `source`, which cites the run: no wall clock, no run-local URL, no per-run org slug and no",
 		"generated element id. Every record below is a property of the TREE that was measured, so re-importing an",
-		"unchanged tree produces the same bytes."
+		"unchanged tree produces the same bytes.",
+		"`runs.interaction` is EMPTY ON PURPOSE and is declared so: R8's instrument landed in #4277, and F8–F10's in",
+		"#4278, before any `audit-interaction` run produced its artifact, so LIVE_SECTIONS marks the section",
+		"`awaitingFirstImport` and every R8 and F8–F10 cell joins as NOT MEASURED naming that marker. It is NOT a pass",
+		"and NOT an N/A: all four score `null`.",
+		"The first `--import-live` that finds `test-results/ui-audit-interaction.json` fills it, and the generator then",
+		"REFUSES to run until the marker is deleted — a records-carrying pending section raises, by design."
 	],
 	"version": 1,
 	"source": {
-		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/33623272631",
-		"commit": "1a3bdeb73a36d488a238dfe2d2e4235b35105832"
+		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/34851361970",
+		"commit": "e48ff5213e9b5b4fca3452031d28907ee61942b6"
 	},
 	"runs": {
 		"routes": {
@@ -19,7 +25,7 @@
 			"persona": "the run's own owner",
 			"org": "a fresh, empty organisation created for the run",
 			"covers": "every route the manifest names",
-			"runKey": "e2e-e2e-1788350508586-48574",
+			"runKey": "e2e-e2e-1789393864347-542399",
 			"records": [
 				{
 					"route": "/[org]",
@@ -44,7 +50,8 @@
 				{
 					"route": "/[org]",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]",
@@ -92,7 +99,8 @@
 				{
 					"route": "/[org]/[project]",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/[project]",
@@ -134,16 +142,16 @@
 				{
 					"route": "/[org]/[project]/architecture",
 					"predicate": "R4",
-					"verdict": "FAIL",
-					"detail": "1 overlapping pair of interactive elements at 768w"
-				},
-				{
-					"route": "/[org]/[project]/architecture",
-					"predicate": "R5",
 					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/architecture",
+					"predicate": "R5",
+					"verdict": "PASS",
+					"detail": "themes dark, light"
+				},
+				{
+					"route": "/[org]/[project]/architecture",
 					"predicate": "R6",
 					"verdict": "PASS"
 				},
@@ -186,7 +194,8 @@
 				{
 					"route": "/[org]/[project]/clusters",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/[project]/clusters",
@@ -221,20 +230,18 @@
 				{
 					"route": "/[org]/[project]/environments",
 					"predicate": "R3",
-					"verdict": "FAIL",
-					"detail": "1 scroll container that is not the shell's at 768w, 1280w, 1440w, 1920w"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/environments",
 					"predicate": "R4",
-					"verdict": "FAIL",
-					"detail": "1 overlapping pair of interactive elements at 768w"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/environments",
 					"predicate": "R5",
-					"verdict": "FAIL",
-					"detail": "color-contrast (serious) ×1"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/[project]/environments",
@@ -280,7 +287,8 @@
 				{
 					"route": "/[org]/[project]/jobs",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/[project]/jobs",
@@ -329,8 +337,8 @@
 				{
 					"route": "/[org]/[project]/settings",
 					"predicate": "R5",
-					"verdict": "FAIL",
-					"detail": "color-contrast (serious) ×2, label (critical) ×1"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/[project]/settings",
@@ -372,13 +380,13 @@
 				{
 					"route": "/[org]/[project]/settings/access",
 					"predicate": "R4",
-					"verdict": "FAIL",
-					"detail": "1 overlapping pair of interactive elements at 768w"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/settings/access",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/[project]/settings/access",
@@ -418,13 +426,13 @@
 				{
 					"route": "/[org]/[project]/settings/activity",
 					"predicate": "R4",
-					"verdict": "FAIL",
-					"detail": "1 overlapping pair of interactive elements at 768w"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/settings/activity",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/[project]/settings/activity",
@@ -464,14 +472,13 @@
 				{
 					"route": "/[org]/[project]/settings/general",
 					"predicate": "R4",
-					"verdict": "FAIL",
-					"detail": "1 overlapping pair of interactive elements at 768w"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/settings/general",
 					"predicate": "R5",
-					"verdict": "FAIL",
-					"detail": "color-contrast (serious) ×2, label (critical) ×1"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/[project]/settings/general",
@@ -512,14 +519,13 @@
 				{
 					"route": "/[org]/[project]/settings/preview",
 					"predicate": "R4",
-					"verdict": "FAIL",
-					"detail": "1 overlapping pair of interactive elements at 768w"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/settings/preview",
 					"predicate": "R5",
-					"verdict": "FAIL",
-					"detail": "color-contrast (serious) ×4"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/[project]/settings/preview",
@@ -565,8 +571,8 @@
 				{
 					"route": "/[org]/[project]/usage",
 					"predicate": "R5",
-					"verdict": "FAIL",
-					"detail": "color-contrast (serious) ×1, link-in-text-block (serious) ×1"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/[project]/usage",
@@ -612,7 +618,8 @@
 				{
 					"route": "/[org]/~/alerts",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/alerts",
@@ -657,7 +664,8 @@
 				{
 					"route": "/[org]/~/clusters",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/clusters",
@@ -702,14 +710,13 @@
 				{
 					"route": "/[org]/~/connectors",
 					"predicate": "R5",
-					"verdict": "FAIL",
-					"detail": "color-contrast (serious) ×9"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/connectors",
 					"predicate": "R6",
-					"verdict": "FAIL",
-					"detail": "5 console errors, 5 failed requests (400), of the first 10 recorded"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/connectors",
@@ -750,7 +757,8 @@
 				{
 					"route": "/[org]/~/evidence",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/evidence",
@@ -795,7 +803,8 @@
 				{
 					"route": "/[org]/~/jobs",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/jobs",
@@ -840,7 +849,8 @@
 				{
 					"route": "/[org]/~/jobs/[id]",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/jobs/[id]",
@@ -855,8 +865,7 @@
 				{
 					"route": "/[org]/~/jobs/[id]",
 					"predicate": "T5",
-					"verdict": "N/A",
-					"reason": "no-empty-state"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/jobs/[id]",
@@ -886,7 +895,8 @@
 				{
 					"route": "/[org]/~/new",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/new",
@@ -932,7 +942,8 @@
 				{
 					"route": "/[org]/~/runners",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/runners",
@@ -980,8 +991,8 @@
 				{
 					"route": "/[org]/~/settings",
 					"predicate": "R5",
-					"verdict": "FAIL",
-					"detail": "color-contrast (serious) ×3, label (critical) ×3"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/settings",
@@ -1028,7 +1039,8 @@
 				{
 					"route": "/[org]/~/settings/access",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/settings/access",
@@ -1073,8 +1085,8 @@
 				{
 					"route": "/[org]/~/settings/activity",
 					"predicate": "R5",
-					"verdict": "FAIL",
-					"detail": "color-contrast (serious) ×1"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/settings/activity",
@@ -1120,7 +1132,8 @@
 				{
 					"route": "/[org]/~/settings/billing",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/settings/billing",
@@ -1166,7 +1179,8 @@
 				{
 					"route": "/[org]/~/settings/billing/invoices",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/settings/billing/invoices",
@@ -1212,8 +1226,8 @@
 				{
 					"route": "/[org]/~/settings/classification",
 					"predicate": "R5",
-					"verdict": "FAIL",
-					"detail": "color-contrast (serious) ×12"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/settings/classification",
@@ -1259,8 +1273,8 @@
 				{
 					"route": "/[org]/~/settings/general",
 					"predicate": "R5",
-					"verdict": "FAIL",
-					"detail": "color-contrast (serious) ×3, label (critical) ×3"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/settings/general",
@@ -1306,8 +1320,8 @@
 				{
 					"route": "/[org]/~/settings/members",
 					"predicate": "R5",
-					"verdict": "FAIL",
-					"detail": "color-contrast (serious) ×1"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/settings/members",
@@ -1353,8 +1367,8 @@
 				{
 					"route": "/[org]/~/settings/roles",
 					"predicate": "R5",
-					"verdict": "FAIL",
-					"detail": "aria-toggle-field-name (serious) ×39, color-contrast (serious) ×1"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/settings/roles",
@@ -1400,7 +1414,8 @@
 				{
 					"route": "/[org]/~/settings/sso",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/settings/sso",
@@ -1445,7 +1460,8 @@
 				{
 					"route": "/[org]/~/settings/teams",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/settings/teams",
@@ -1490,7 +1506,8 @@
 				{
 					"route": "/[org]/~/support",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/support",
@@ -1536,7 +1553,8 @@
 				{
 					"route": "/[org]/~/support/abuse",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/support/abuse",
@@ -1572,8 +1590,7 @@
 				{
 					"route": "/[org]/~/support/ask",
 					"predicate": "R3",
-					"verdict": "FAIL",
-					"detail": "1 scroll container that is not the shell's at 768w, 1280w, 1440w, 1920w"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/support/ask",
@@ -1583,7 +1600,8 @@
 				{
 					"route": "/[org]/~/support/ask",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/support/ask",
@@ -1624,19 +1642,18 @@
 				{
 					"route": "/[org]/~/support/cases/[id]",
 					"predicate": "R4",
-					"verdict": "FAIL",
-					"detail": "1 overlapping pair of interactive elements at 768w"
-				},
-				{
-					"route": "/[org]/~/support/cases/[id]",
-					"predicate": "R5",
 					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/support/cases/[id]",
+					"predicate": "R5",
+					"verdict": "PASS",
+					"detail": "themes dark, light"
+				},
+				{
+					"route": "/[org]/~/support/cases/[id]",
 					"predicate": "R6",
-					"verdict": "FAIL",
-					"detail": "4 console errors, 4 failed requests (404), of the first 10 recorded"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/support/cases/[id]",
@@ -1677,7 +1694,8 @@
 				{
 					"route": "/[org]/~/support/my-cases",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/support/my-cases",
@@ -1722,7 +1740,8 @@
 				{
 					"route": "/[org]/~/support/submit",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/support/submit",
@@ -1768,7 +1787,8 @@
 				{
 					"route": "/[org]/~/usage",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/[org]/~/usage",
@@ -1815,7 +1835,8 @@
 				{
 					"route": "/cli/login",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/cli/login",
@@ -1864,7 +1885,8 @@
 				{
 					"route": "/dashboard/[[...rest]]",
 					"predicate": "R5",
-					"verdict": "PASS"
+					"verdict": "PASS",
+					"detail": "themes dark, light"
 				},
 				{
 					"route": "/dashboard/[[...rest]]",
@@ -1895,7 +1917,7 @@
 			"persona": "the `member` persona, compared against the owner of the same org",
 			"org": "a SECOND organisation, created by that spec and never touched by the primary run",
 			"covers": "only the org-only routes; the parameterised ones need a project the persona cannot be given",
-			"runKey": "e2e-e2e-audit-owner-1788350512918-1",
+			"runKey": "e2e-e2e-audit-owner-1789393868414-1",
 			"records": [
 				{
 					"route": "/[org]",
@@ -1996,14 +2018,12 @@
 				{
 					"route": "/[org]/~/settings/roles",
 					"predicate": "T7",
-					"verdict": "N/A",
-					"reason": "no-restricted-surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/sso",
 					"predicate": "T7",
-					"verdict": "N/A",
-					"reason": "no-restricted-surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/teams",
@@ -2060,6 +2080,15 @@
 					"reason": "no-restricted-surface"
 				}
 			]
+		},
+		"interaction": {
+			"artifact": "test-results/ui-audit-interaction.json",
+			"spec": "apps/console/e2e/audit/inert.spec.ts + apps/console/e2e/audit/filters.spec.ts",
+			"persona": "the run's own owner, in the `audit-interaction` project — which ACTIVATES controls and never presses a confirm",
+			"org": "a fresh, empty organisation created for the run",
+			"covers": "every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS",
+			"runKey": "",
+			"records": []
 		}
 	}
 }

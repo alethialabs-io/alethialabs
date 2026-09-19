@@ -67,6 +67,14 @@ alethia login --force
 
 Re-authenticates even if a valid token already exists. Useful when switching accounts.
 
+On a terminal you do not need the flag. If you are already signed in, `alethia login` names the account
+and asks whether to keep that session or sign in again. **Keep this session** is the first option, so
+pressing Enter changes nothing. With `--no-input`, or with no terminal, the command asks nothing: it
+prints the account, keeps the session and exits 0. Pass `--force` to sign in again from a script.
+
+A first sign-in asks no question. The control-plane URL is not asked for here: pass `--web-origin`, or
+use `alethia init` for the guided first-run setup.
+
 ## Logout
 
 ```bash

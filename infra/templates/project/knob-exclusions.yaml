@@ -208,25 +208,13 @@ dead:
     knob: alidns_managed_certificate
     reason: "Declared and read by no resource on any code path."
   - cloud: aws
-    component: bucket
-    knob: logging_bucket_name
-    reason: "`bucket_configuration` declares an access-logging target the S3 module never wires."
-  - cloud: aws
-    component: bucket
-    knob: store_access_key_in_ssm
-    reason: "Emitted by the provider into every bucket entry and read by nothing in the S3 module."
-  - cloud: aws
     component: cache
     knob: redis_cloudwatch_logs_enabled
-    reason: "Declared and read by nothing; ElastiCache log delivery is never configured from it."
+    reason: "Declared and read by nothing; ElastiCache log delivery is never configured from it. NOT a mechanical wire (#4320): the root variable has no default and the console sends `false` (aws_provider.go), while modules/redis defaults `cloudwatch_logs_enabled = true` — so every AWS cache ships logs to CloudWatch TODAY, and threading the root value would turn that off and destroy the log group. Needs a ruling on which side is intended."
   - cloud: aws
     component: cache
     knob: redis_cluster_mode_enabled
     reason: "Declared and read by nothing; cluster mode is not wired into the ElastiCache module."
-  - cloud: aws
-    component: database
-    knob: rds_extra_credentials
-    reason: "Declared and read by nothing; no extra credential is provisioned from it."
   - cloud: aws
     component: dns
     knob: waf_rate_limit_rules
@@ -248,33 +236,13 @@ dead:
     knob: billing_mode
     reason: "`cosmos_db_collections` declares the attribute AWS's DynamoDB module reads; nothing on the Cosmos chain reads it."
   - cloud: gcp
-    component: bucket
-    knob: lifecycle_rules
-    reason: "`cloud_storage_buckets` declares it; the Cloud Storage module wires no lifecycle rule."
-  - cloud: gcp
     component: cache
     knob: memorystore_auth_enabled
     reason: "Declared and read by no resource or module argument on the Memorystore chain."
   - cloud: gcp
-    component: cache
-    knob: memorystore_transit_encryption_mode
-    reason: "Declared and read by no resource or module argument on the Memorystore chain."
-  - cloud: gcp
-    component: cluster
-    knob: gke_enable_private_endpoint
-    reason: "Named by CUSTOMIZABILITY-PARITY.md as declared-and-dead — read by no resource on any code path."
-  - cloud: gcp
-    component: cluster
-    knob: gke_enable_private_nodes
-    reason: "Same family as `gke_enable_private_endpoint`: the private-cluster switches are declared and consumed by nothing."
-  - cloud: gcp
     component: cluster
     knob: gke_log_retention_days
     reason: "Named by CUSTOMIZABILITY-PARITY.md as declared-and-dead — read by no resource on any code path."
-  - cloud: gcp
-    component: database
-    knob: cloud_sql_database_flags
-    reason: "Declared and read by nothing; no `database_flags` block is built from it."
   - cloud: gcp
     component: database
     knob: cloud_sql_default_username

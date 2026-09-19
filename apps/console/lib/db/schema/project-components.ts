@@ -9,6 +9,7 @@
 
 import { sql } from "drizzle-orm";
 import {
+	type AnyPgColumn,
 	bigint,
 	boolean,
 	check,
@@ -98,6 +99,33 @@ const envRef = () =>
 const cost = () => numeric({ precision: 12, scale: 2, mode: "number" });
 const ts = () => timestamp({ withTimezone: true }).defaultNow().notNull();
 
+// ── Tenancy (#4116) ───────────────────────────────────────────────────────────────
+//
+// Every project-bearing table in this file carries `org_id` — the org that owns its project. It is
+// a DENORMALIZED copy of `projects.org_id`, and a copy that can drift is worse than no column, so
+// the app never writes it. Three things in the database keep it equal to the parent, and each is
+// named here because each is what a reader would otherwise have to take on trust:
+//
+//   1. `derive_component_org_id()` (programmables.sql) — a BEFORE INSERT OR UPDATE OF project_id,
+//      org_id trigger on every table below. It OVERWRITES `org_id` from `projects.org_id` on every
+//      insert and every move between projects, whatever the caller supplied, and raises when there
+//      is nothing to derive. It runs with definer rights so the value is the parent's real org,
+//      never the subset of `projects` the caller's RLS happens to show.
+//   2. `propagate_project_org_id()` (programmables.sql) — an AFTER UPDATE OF org_id trigger on
+//      `projects` that rewrites every child row, so a project changing org cannot strand them.
+//   3. The `<table>_org_id_nn` CHECK below — so no path that skips the triggers (a replica-mode
+//      session, a disabled trigger) can leave a row with no tenant at all.
+//
+// The column is NULLABLE in the drizzle type on purpose: that is what keeps `org_id` optional in
+// every `$inferInsert` (the trigger fills it), and the CHECK is what makes NULL unstorable.
+// `topic_subscriptions`, `cluster_admins`, `service_bindings` and `service_binding_injections` carry
+// no `project_id` and still take their tenancy through their parent row; `audit_log` is an audit
+// trail, not a component, and keeps its own user-scoped policies.
+const tenantOrg = () => uuid();
+/** The storage-level "every component row has a tenant" guarantee for one table (see above). */
+const tenantOrgRequired = (table: string, orgId: AnyPgColumn) =>
+	check(`${table}_org_id_nn`, sql`${orgId} IS NOT NULL`);
+
 // ── Singletons (1:1 per project environment) ────────────────────────────────────
 
 export const projectNetwork = pgTable(
@@ -105,6 +133,7 @@ export const projectNetwork = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
@@ -126,6 +155,7 @@ export const projectNetwork = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_network", t.org_id),
 		unique("project_network_project_id_environment_id_key").on(
 			t.project_id,
 			t.environment_id,
@@ -138,6 +168,7 @@ export const projectCluster = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		// The environment that OWNS this cluster row. For a `dedicated` placement this is the env
 		// itself (env↔Fabric 1:1, the legacy env=cluster shape). For a shared Fabric the owning env is
 		// the `dedicated`/first env that provisioned it; `namespace`/`vcluster` envs placed on the same
@@ -180,6 +211,7 @@ export const projectCluster = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_cluster", t.org_id),
 		// Legacy per-env uniqueness. KEPT during the transition: the generic CLI singleton upsert
 		// (lib/cli/project-components.ts) and the createProject insert still name this composite as
 		// their conflict target. A `dedicated` env owns its Fabric 1:1, so this stays 1 row per env.
@@ -226,6 +258,7 @@ export const projectDns = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
@@ -246,6 +279,7 @@ export const projectDns = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_dns", t.org_id),
 		unique("project_dns_project_id_environment_id_key").on(
 			t.project_id,
 			t.environment_id,
@@ -260,6 +294,7 @@ export const projectObservability = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
 		cloud_identity_id: ownerRef(),
@@ -274,6 +309,7 @@ export const projectObservability = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_observability", t.org_id),
 		unique("project_observability_project_id_environment_id_key").on(
 			t.project_id,
 			t.environment_id,
@@ -292,6 +328,7 @@ export const projectAddons = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		// Catalog id (lib/addons/catalog.ts) — e.g. "kube-prometheus-stack" — for source='catalog'.
 		// For source='byo' it's a per-env slug for the user's chart (e.g. its release name). Not a
@@ -339,6 +376,7 @@ export const projectAddons = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_addons", t.org_id),
 		unique("project_addons_project_id_environment_id_addon_id_key").on(
 			t.project_id,
 			t.environment_id,
@@ -352,6 +390,7 @@ export const projectRepositories = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		apps_destination_repo: text(),
 		// Subdirectory of apps_destination_repo that ArgoCD syncs for THIS environment —
@@ -365,6 +404,7 @@ export const projectRepositories = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_repositories", t.org_id),
 		unique("project_repositories_project_id_environment_id_key").on(
 			t.project_id,
 			t.environment_id,
@@ -380,6 +420,7 @@ export const projectSourceRepos = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		repo_url: text().notNull(),
 		// Branch/tag/sha; NULL = the repo's default branch.
@@ -396,6 +437,7 @@ export const projectSourceRepos = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_source_repos", t.org_id),
 		unique(
 			"project_source_repos_project_env_repo_path_key",
 		).on(t.project_id, t.environment_id, t.repo_url, t.scan_path),
@@ -413,6 +455,7 @@ export const projectIacSources = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		// The environment the source was attached THROUGH (informational). Ownership moved to the
 		// Fabric in #839 — the single-stack ceiling + snapshot resolution key on `fabric_id`, not this.
 		environment_id: envRef(),
@@ -455,6 +498,7 @@ export const projectIacSources = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_iac_sources", t.org_id),
 		// #839: the single-stack ceiling is now per-Fabric (one BYO-IaC source per Fabric). For a
 		// `dedicated` placement (env owns its Fabric 1:1) this is equivalent to the old per-env ceiling;
 		// for a shared placement, co-Fabric envs share the one source. Nullable fabric_id → NULLs are
@@ -473,6 +517,7 @@ export const projectDatabases = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		name: text().notNull(),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
@@ -516,6 +561,7 @@ export const projectDatabases = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_databases", t.org_id),
 		unique("project_databases_project_id_environment_id_name_key").on(
 			t.project_id,
 			t.environment_id,
@@ -529,6 +575,7 @@ export const projectCaches = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		name: text().notNull(),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
@@ -568,6 +615,7 @@ export const projectCaches = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_caches", t.org_id),
 		unique("project_caches_project_id_environment_id_name_key").on(
 			t.project_id,
 			t.environment_id,
@@ -581,6 +629,7 @@ export const projectQueues = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		name: text().notNull(),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
@@ -610,6 +659,7 @@ export const projectQueues = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_queues", t.org_id),
 		unique("project_queues_project_id_environment_id_name_key").on(
 			t.project_id,
 			t.environment_id,
@@ -623,6 +673,7 @@ export const projectTopics = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		name: text().notNull(),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
@@ -637,6 +688,7 @@ export const projectTopics = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_topics", t.org_id),
 		unique("project_topics_project_id_environment_id_name_key").on(
 			t.project_id,
 			t.environment_id,
@@ -671,6 +723,7 @@ export const projectNosqlTables = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		name: text().notNull(),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
@@ -692,6 +745,7 @@ export const projectNosqlTables = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_nosql_tables", t.org_id),
 		unique("project_nosql_tables_project_id_environment_id_name_key").on(
 			t.project_id,
 			t.environment_id,
@@ -705,6 +759,7 @@ export const projectContainerRegistries = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		name: text().notNull(),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
@@ -734,6 +789,7 @@ export const projectContainerRegistries = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_container_registries", t.org_id),
 		unique("project_container_registries_project_id_environment_id_name_key").on(
 			t.project_id,
 			t.environment_id,
@@ -753,6 +809,7 @@ export const projectHelmRegistries = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		name: text().notNull(),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
@@ -768,6 +825,7 @@ export const projectHelmRegistries = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_helm_registries", t.org_id),
 		unique("project_helm_registries_project_id_environment_id_name_key").on(
 			t.project_id,
 			t.environment_id,
@@ -781,6 +839,7 @@ export const projectSecrets = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		name: text().notNull(),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
@@ -800,6 +859,7 @@ export const projectSecrets = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_secrets", t.org_id),
 		unique("project_secrets_project_id_environment_id_name_key").on(
 			t.project_id,
 			t.environment_id,
@@ -813,6 +873,7 @@ export const projectStorageBuckets = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		name: text().notNull(),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
@@ -832,6 +893,7 @@ export const projectStorageBuckets = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_storage_buckets", t.org_id),
 		unique("project_storage_buckets_project_id_environment_id_name_key").on(
 			t.project_id,
 			t.environment_id,
@@ -849,6 +911,7 @@ export const projectServices = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		name: text().notNull(),
 		// Per-resource cloud placement — NULL inherits projects.cloud_identity_id / region.
@@ -884,6 +947,7 @@ export const projectServices = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_services", t.org_id),
 		unique("project_services_project_id_environment_id_name_key").on(
 			t.project_id,
 			t.environment_id,
@@ -904,6 +968,7 @@ export const projectChartWorkloads = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		// The owning BYO chart addon (project_addons.id, source='byo') — the deploy unit. ON DELETE
 		// CASCADE so detaching the chart removes its described workloads.
@@ -930,6 +995,7 @@ export const projectChartWorkloads = pgTable(
 		updated_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_chart_workloads", t.org_id),
 		unique("project_chart_workloads_project_env_addon_name_key").on(
 			t.project_id,
 			t.environment_id,
@@ -1000,6 +1066,7 @@ export const projectGitCredentials = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		project_id: projectRef(),
+		org_id: tenantOrg(),
 		environment_id: envRef(),
 		purpose: gitCredentialPurpose().notNull(),
 		method: gitCredentialMethod().notNull(),
@@ -1008,6 +1075,7 @@ export const projectGitCredentials = pgTable(
 		created_at: ts(),
 	},
 	(t) => [
+		tenantOrgRequired("project_git_credentials", t.org_id),
 		check(
 			"project_git_credentials_source_ck",
 			sql`${t.provider_identity_id} IS NOT NULL OR ${t.secret_ref} IS NOT NULL`,
@@ -1028,7 +1096,8 @@ export const projectChanges = pgTable(
 			onDelete: "cascade",
 		}),
 		user_id: uuid().notNull(),
-		org_id: uuid(),
+		// The owning project's org — derived by the database, never by the app. See `tenantOrg`.
+		org_id: tenantOrg(),
 		// Canvas node kind (database, cache, cluster, …) the change applies to.
 		component_type: text().notNull(),
 		// Target component row for UPDATE/DELETE; NULL for CREATE.
@@ -1038,7 +1107,10 @@ export const projectChanges = pgTable(
 		payload: jsonb().$type<StagedChangePayload>(),
 		created_at: ts(),
 	},
-	(t) => [index("idx_project_changes_project").on(t.project_id)],
+	(t) => [
+		tenantOrgRequired("project_changes", t.org_id),
+		index("idx_project_changes_project").on(t.project_id),
+	],
 );
 
 // Append-only audit trail (user-readable; runners write via the service role).

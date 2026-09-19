@@ -62,9 +62,31 @@ type Config = Record<string, unknown>;
  * A half-typed value now lives HERE — a react-hook-form buffer over the node's config — and reaches
  * the store once, on blur, as one patch. Discrete controls (a switch, a select, a picker) have no
  * half-typed state, so they commit immediately.
+ *
+ * ── WHAT THE BUFFER MAY DEFER, AND WHAT IT MAY NOT (#4445) ───────────────────────────────────────
+ *
+ * It defers the WRITE. It must not defer the TRUTH. A node's readiness badge — "Needs setup" on the
+ * board, the status strip on the card — is derived by `useNodeReadiness` from the STORE, so for as
+ * long as a cleared required field sat only in the buffer the card went on saying the design was
+ * deployable over a config the deploy would reject. The inline error under the field already read
+ * the buffer (`errors`, below), so the card and the field two inches from it disagreed, and the one
+ * that was wrong was the one a user acts on.
+ *
+ * So a TEXT write commits early — and only — on the keystroke that CHANGES whether the schema
+ * accepts the field: the clear that breaks it, and the first character that fixes it. Everything in
+ * between still buffers, so the per-keystroke store write this buffer exists to remove stays gone
+ * (an edit session costs at most one extra patch in each direction).
+ *
+ * Deliberately TEXT only, and that bound is the whole design rather than a convenience. A `number`
+ * field holds raw TEXT while you type — including the `""` you pass through on the way from 20 to
+ * 200 — and `flushNumber` deliberately RESTORES the committed value there rather than writing the
+ * empty; a `list` holds blank rows that `flush` deliberately DROPS on the way out. Both of those are
+ * states the schema rejects, so a blanket commit-on-invalid would write precisely the two values
+ * #4256 was built to withhold, and would undo it while appearing to fix this.
  */
 export interface FieldBuffer {
-	/** Buffer a value without touching the store — keystroke-level edits. */
+	/** Buffer a value without touching the store — keystroke-level edits. A text write that flips
+	 * the field between valid and invalid commits with it, so readiness can never lag the buffer. */
 	write: (field: FieldDef, value: unknown) => void;
 	/** Buffer AND commit — for controls whose every change is a whole value. */
 	set: (field: FieldDef, value: unknown) => void;
@@ -809,6 +831,10 @@ export function ConfigFields({
 	// the user emptied. A ref, because the restore happens inside a blur handler.
 	const committed = useRef(config);
 	committed.current = config;
+	// The kind, for the early-commit rule below. A ref because the buffer is memoized on `form` and
+	// `onChange` — the rule must not rebuild every control each time a parent re-renders.
+	const kindRef = useRef(kind);
+	kindRef.current = kind;
 
 	const buffer: FieldBuffer = useMemo(() => {
 		/** Buffer a field's value; returns the config keys it wrote (a `set` field spans several). */
@@ -841,9 +867,32 @@ export function ConfigFields({
 		const restore = (field: FieldDef) => {
 			write(field, read(field, committed.current));
 		};
+		/**
+		 * Which of `keys` the schema currently rejects in `cfg`, as a comparable string.
+		 *
+		 * The SAME `validateNodeConfig` the inline errors use, so "the field is showing an error" and
+		 * "the store must hear about it" cannot answer differently — the disagreement in #4445 was
+		 * exactly two notions of validity, one reading the buffer and one reading the store.
+		 * Answers "" when there is no kind: a surface that opted out of inline validation has no
+		 * schema to ask, so nothing is ever early-committed there.
+		 */
+		const rejected = (cfg: Config, keys: string[]): string => {
+			const k = kindRef.current;
+			if (!k) return "";
+			const errs = validateNodeConfig(k, cfg);
+			return keys.map((key) => (errs[key] ? "1" : "0")).join("");
+		};
 		return {
 			write: (field, value) => {
-				write(field, value);
+				const keys = write(field, value);
+				// See FieldBuffer's doc: TEXT only, and only on a change of validity. `committed.current`
+				// is what readiness is reading right now; `form.getValues()` is what the user has just
+				// said. When those two disagree about whether this field is acceptable, the store is
+				// holding a claim the card would render as truth.
+				if (field.type !== "text") return;
+				if (rejected(committed.current, keys) !== rejected(form.getValues(), keys)) {
+					commit(keys);
+				}
 			},
 			set: (field, value) => {
 				commit(write(field, value));

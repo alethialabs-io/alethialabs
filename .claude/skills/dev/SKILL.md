@@ -142,11 +142,13 @@ be the same machine. Browsers and their OS libraries install on first run, then 
 - **The address is stable across the cycle.** A Primary IP is held separately from the
   server, so a restored box comes back on the same address — no DNS change, no
   `known_hosts` surprise. That 0.50 EUR is what makes routine teardown safe.
-- **If the box is down, an agent cannot fix it — ask the maintainer.** `pnpm env:box`
-  runs `tofu apply`, which is a human action here; both `.claude/hooks/guard-iac.sh` and
-  `scripts/env.sh` itself refuse it for agents. Do not look for a way around that: from a
-  worktree it would apply against empty state and build a **second** box, breaking
-  `dev.alethialabs.io`.
+- **If the box is down, restore it: `pnpm env:box`, from the main checkout.** Agents may,
+  by the maintainer's ruling on #4483 (2026-09-18) — and must reap it again when finished
+  (`pnpm env:reap --now`, or `pnpm env:timer`), because it bills while it exists. Only the
+  two wrappers are open; raw `tofu apply` is still refused by `.claude/hooks/guard-iac.sh`.
+  Run it from the main checkout and nowhere else: from a worktree it would apply against
+  empty state and build a **second** box, breaking `dev.alethialabs.io` —
+  `require_main_checkout` in `scripts/env.sh` refuses that.
 - **"box: down" from a worktree used to be a lie.** State is gitignored and lives only in
   the main checkout; `env.sh` now resolves it there. If you ever see a state-read error,
   that is a bug in the script, not something to work around.

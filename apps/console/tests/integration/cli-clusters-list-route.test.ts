@@ -5,11 +5,15 @@
 //
 // WHY THIS ROUTE NEEDED ITS OWN SUITE AND IS NOT A COPY OF THE JOBS ONE. `countScoped` counts ONE
 // table. `jobs` carries `org_id`, so `/api/jobs` could hand a single fragment to both its rows
-// query and its count (#3857). `project_cluster` HAS NO TENANT COLUMN — its scope lived on the
+// query and its count (#3857). `project_cluster` had NO TENANT COLUMN — its scope lived on the
 // JOINED `projects` table, and `SELECT 1 FROM project_cluster WHERE projects.org_id = $1` is a
-// missing-FROM-clause ERROR, not a slow query. The conversion restates the scope as a semijoin on
-// `project_cluster.project_id`; whether that restatement counts the SAME rows it returns is a
-// claim only a real database can settle, which is what this file is for.
+// missing-FROM-clause ERROR, not a slow query. #3672 restated the scope as a semijoin on
+// `project_cluster.project_id`; #4116 gave the table an `org_id` the database derives from the
+// parent, and the scope is now that column. Whether it counts the SAME rows it returns is a claim
+// only a real database can settle, which is what this file is for. (That the column always equals
+// the parent's org is tests/integration/component-org-id.test.ts's claim, not this file's — the
+// fixtures below insert clusters WITHOUT an org_id, so every row here is also one the trigger
+// derived.)
 //
 // The mocked sibling (tests/api/cli/clusters/list-route.test.ts) proves the two queries are built
 // from ONE fragment by reading the rendered SQL. That is a statement about construction. Here the
@@ -26,7 +30,7 @@
 //
 // Plus the property every converted list owes: a cursor is A NEW WAY TO ADDRESS ROWS, so it is a
 // new way to address someone else's. The route reads through getServiceDb(), whose role BYPASSES
-// row-level security, so the handler's semijoin is the entire tenancy boundary. Org B is seeded
+// row-level security, so the handler's org_id predicate is the entire tenancy boundary. Org B is seeded
 // with rows that WOULD come back if it were dropped, and every walk assertion is written as
 // "exactly org A's id set", never "at least N rows".
 //

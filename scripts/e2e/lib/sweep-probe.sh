@@ -92,20 +92,69 @@ PROBE_ERR_DIR="${PROBE_ERR_DIR:-}"
 # regression this file now tests for in both directions.
 PROBE_UNATTRIB_LEDGER="${PROBE_UNATTRIB_LEDGER:-}"
 
+# ── THE ATTESTATION AND THE RECEIPT (#4398). Both empty by default, so every existing caller —
+#    the always() teardown, the out-of-band reaper's PREFLIGHT, a hand-run sweep — behaves exactly
+#    as it did. They exist so a SEPARATE PROCESS can read what this one measured. ──
+#
+# PROBE_ATTEST_FILE is the POSITIVE marker that the cloud was asked and answered nothing. Same
+# argument as probe_report_discovery's, applied to the exit code rather than to the log: a sweeper
+# that exits 0 having never reached its verification is byte-identical, to its PARENT, to one that
+# verified a genuinely empty account. `0` is what a DRY_RUN prints "nothing deleted, nothing
+# verified" and exits with; it is also what a script exits with if someone adds an early return
+# above finalize_verification. Only probe_gate writes this line, and only on the path where every
+# probe answered, so its presence is a claim no absence can fake.
+PROBE_ATTEST_FILE="${PROBE_ATTEST_FILE:-}"
+# PROBE_VERDICT_FILE is where --record-verdict writes the JSON receipt. Written by the PARENT of a
+# sweeper run, never by the sweeper itself — see the `--record-verdict` block at the bottom.
+PROBE_VERDICT_FILE="${PROBE_VERDICT_FILE:-}"
+
 # probe_reset — begin (or restart) the verification ledgers. Idempotent.
 #
 # Called once at startup. It is deliberately NOT called again before verify_swept: a discovery call
 # that failed DURING the sweep means this script may have failed to delete something it never saw,
 # and re-listing it later through a different API is not proof that it did. Any probe that could not
 # answer, at any point in the run, leaves the run unverified.
+#
+# ⚠️ IT RETURNS 4, NEVER 1, AND NEVER DIES. Every sweeper runs under `set -euo pipefail` and calls
+# this bare at startup, so ANY failing command in here kills the process with exit 1 — and since
+# #4398 exit 1 is the RESIDUAL verdict, i.e. "we asked the cloud and found something still billing".
+# A full disk, a read-only RUNNER_TEMP or an exhausted inode table would therefore be published as a
+# CONFIRMED LEAKED RESOURCE. That is the precise inversion this file exists to prevent, in the
+# function that defines the verdicts.
+#
+# The `&&` form hid it: `set -e` exempts the non-final commands of an `&&` list, and the redirect is
+# the FINAL one. Measured — `set -e; [ -n "$X" ] && : >/bad/path` exits 1.
+#
+# So every write is guarded and every failure resolves to 4, which probe_verdict_from_rc reads as
+# UNVERIFIABLE: nobody could record anything, so nothing here proves the account is empty. Returning
+# 4 from a bare call under `set -e` exits the sweeper with 4 — no per-cloud edit needed.
 probe_reset() {
 	if [ -z "$PROBE_LEDGER" ]; then
-		PROBE_ERR_DIR="$(mktemp -d "${TMPDIR:-/tmp}/alethia-sweep-probe.XXXXXX")"
+		PROBE_ERR_DIR="$(mktemp -d "${TMPDIR:-/tmp}/alethia-sweep-probe.XXXXXX")" || {
+			echo "::error::could not create the probe scratch directory — refusing to sweep with nowhere to record the result. Exiting 4 (UNVERIFIABLE); exit 1 would be read as a CONFIRMED LEAK." >&2
+			return 4
+		}
 		PROBE_LEDGER="${PROBE_ERR_DIR}/ledger"
 	fi
+	# The scratch dir probe_run writes each attempt's stderr into. It must be set even when
+	# PROBE_LEDGER arrived from the ENVIRONMENT — which is how the post-teardown verification hands
+	# a sweeper somewhere durable to write (#4398). Left empty, probe_run's `errf` resolves to
+	# `/err.<pid>`, the redirect fails, and EVERY probe records itself UNVERIFIABLE for a reason that
+	# has nothing to do with the cloud: a verification that can only ever say "I could not look".
+	[ -n "$PROBE_ERR_DIR" ] || PROBE_ERR_DIR="$(dirname "$PROBE_LEDGER")"
 	[ -n "$PROBE_UNATTRIB_LEDGER" ] || PROBE_UNATTRIB_LEDGER="${PROBE_LEDGER}.unattributable"
-	: >"$PROBE_LEDGER"
-	: >"$PROBE_UNATTRIB_LEDGER"
+	local reset_rc=0
+	: >"$PROBE_LEDGER" 2>/dev/null || reset_rc=4
+	: >"$PROBE_UNATTRIB_LEDGER" 2>/dev/null || reset_rc=4
+	# A stale attestation is worse than none: it is a positive claim about a cloud this process has
+	# not looked at yet. Truncated with the ledgers, at the one point that starts a run.
+	if [ -n "$PROBE_ATTEST_FILE" ]; then
+		: >"$PROBE_ATTEST_FILE" 2>/dev/null || reset_rc=4
+	fi
+	if [ "$reset_rc" -ne 0 ]; then
+		echo "::error::the probe ledgers could not be created (${PROBE_LEDGER}) — refusing to sweep with nowhere to record the result. Exiting 4 (UNVERIFIABLE); exit 1 would be read as a CONFIRMED LEAK." >&2
+	fi
+	return "$reset_rc"
 }
 
 # probe_note_unverifiable <type> <reason> — record that <type> could NOT be looked at.
@@ -341,7 +390,13 @@ probe_confirm_re() {
 probe_gate() {
 	local cloud="$1" scope="$2"
 	probe_report_unattributable "$cloud" "$scope"
-	probe_has_unverifiable || return 0
+	if ! probe_has_unverifiable; then
+		# The one place that may attest. Reached only when verify_swept already returned clean
+		# (finalize_verification calls it first and returns 1 without ever getting here on a leak)
+		# AND every probe answered. That conjunction is exactly "CLEAN" in this file's taxonomy.
+		probe_attest "$cloud" "$scope"
+		return 0
+	fi
 	echo "  ✗ verification INCOMPLETE — these probes could not answer:" >&2
 	probe_unverifiable_detail >&2
 	echo "::error::${cloud} cleanup UNVERIFIED for ${scope} — $(probe_unverifiable_types)could not be checked, so nothing here proves the account is empty. A failed probe and an empty account look identical; treat this as a possible leak and confirm by hand." >&2
@@ -393,6 +448,272 @@ probe_report_discovery() {
 	probe_warn_unverifiable "$1" "$2"
 	printf '✓ preflight discovery reported for %s: %s\n' "$1" "$2"
 }
+
+# ── THE VERDICT RECEIPT (#4398) — carrying a CLOUD MEASUREMENT out of the job that took it. ──────
+#
+# scripts/e2e/nightly-rollup.sh's teardown_outcome() asked the GitHub Actions jobs API whether the
+# `Guaranteed teardown` STEP reported a conclusion, and mapped every non-empty conclusion to `done`.
+# That is not a measurement of the cloud, and it cannot become one: a step conclusion is a boolean
+# with a fourth state (missing), and this file's whole thesis is that
+#
+#     CLEAN (we asked, nothing is there)  and  UNVERIFIABLE (we could not ask)
+#
+# must never be the same value. Collapsed into `success`/`failure` they are, in BOTH directions —
+# a sweeper that exits 4 because a credential expired reads `failure`, exactly like a leak, and the
+# rollup called both of them `done`, i.e. "swept".
+#
+# So the verdict travels as DATA. The exit status of a sweeper's `finalize_verification` is already
+# three-valued and already tested (0 clean · 1 leak · 4 unverifiable); the receipt is that status
+# plus the two ledgers plus the attestation, written as JSON that another job can download and read.
+#
+# ⚠️ THE DEFAULT DIRECTION IS UNVERIFIABLE, AND THAT IS THE WHOLE DESIGN. Only the literal exit 0
+# WITH an attestation is CLEAN. A timeout (124), a kill (137/143), a scope refusal (2), a missing
+# interpreter (126/127), an exit 0 from some path that never verified — every one of them is
+# "nothing here proves the account is empty", which is UNVERIFIABLE, never clean. An error reported
+# as absence is precisely how this repo has been bitten before.
+
+# probe_attest <cloud> <scope> — record the positive marker. No-op when PROBE_ATTEST_FILE is unset,
+# which is every caller that does not want a receipt. Never fails the caller: an unwritable path
+# yields no marker, which resolves to UNVERIFIABLE — the safe direction.
+probe_attest() {
+	[ -n "$PROBE_ATTEST_FILE" ] || return 0
+	printf 'CLEAN\t%s\t%s\t%s\n' "$1" "$2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		>>"$PROBE_ATTEST_FILE" 2>/dev/null || true
+	return 0
+}
+
+# probe_has_attestation — did the sweep this receipt is about reach probe_gate's clean path?
+probe_has_attestation() {
+	[ -n "$PROBE_ATTEST_FILE" ] && [ -s "$PROBE_ATTEST_FILE" ]
+}
+
+# probe_verdict_from_rc <rc> — the sweeper's exit status as one of the three reportable states.
+#
+# Echoes `<verdict>\t<reason>`. Separated from probe_write_verdict so the mapping — the part a
+# mutation must be able to red — is testable on its own, with no filesystem and no jq.
+probe_verdict_from_rc() {
+	case "${1:-}" in
+	0)
+		if probe_has_attestation; then
+			printf 'CLEAN\tthe cloud was re-listed after the sweep and listed nothing for this run\n'
+		else
+			# Exit 0 is the ONE status a caller is tempted to read as "fine". It is not, on its own:
+			# every early return in these sweepers (DRY_RUN, PREFLIGHT with nothing to do, a guard
+			# that decided there was nothing to do) also exits 0 without ever asking the cloud.
+			printf 'UNVERIFIABLE\tthe sweeper exited 0 WITHOUT reaching its verification (no attestation) — an early return, not an empty account\n'
+		fi
+		;;
+	1)
+		# ⚠️ RESIDUAL IS THE ONE VERDICT THAT ACCUSES THE CLOUD, so it gets a precondition. Exit 1
+		# is BOTH "verify_swept listed something still standing" AND the status of every `set -e`
+		# death in these scripts — an unwritable path, a failed builtin, a typo in a new sweep
+		# function. probe_reset TRUNCATES the ledger at startup, so the file EXISTING is a positive
+		# marker that the sweeper got past its own setup; missing means it died before it could
+		# record anything, and a process that died before it started has not seen a leak.
+		#
+		# The same shape as the attestation above, for the opposite verdict, and the same rule: a
+		# state that must never be inferred gets a marker an absence cannot fake.
+		if [ -n "$PROBE_LEDGER" ] && [ -e "$PROBE_LEDGER" ]; then
+			printf 'RESIDUAL\tthe cloud was re-listed after the sweep and STILL LISTS billable resources for this run\n'
+		else
+			printf 'UNVERIFIABLE\tthe sweeper exited 1 with no probe ledger on disk — it died before its verification could run, so this is not a leak finding\n'
+		fi
+		;;
+	4) printf 'UNVERIFIABLE\tat least one probe did not answer, so nothing here proves the account is empty\n' ;;
+	124) printf 'UNVERIFIABLE\tthe verification pass hit its wall-clock budget and was cut off — it did not finish asking\n' ;;
+	# 125 is NOT a timeout. GNU `timeout` returns it when TIMEOUT ITSELF failed and the command
+	# never started at all — a different fact with the same verdict, and a sentence a human reads
+	# has to be true even when the verdict it justifies is unchanged.
+	125) printf 'UNVERIFIABLE\t`timeout` itself failed, so the verification never started\n' ;;
+	126 | 127) printf 'UNVERIFIABLE\tthe sweeper could not be executed (exit %s) — nothing asked the cloud\n' "$1" ;;
+	130 | 137 | 143) printf 'UNVERIFIABLE\tthe verification pass was KILLED (exit %s) before it could answer\n' "$1" ;;
+	*) printf 'UNVERIFIABLE\tthe sweeper exited %s, which is not a verification verdict — it did not get to ask\n' "${1:-<none>}" ;;
+	esac
+}
+
+# probe_write_verdict <cloud> <run-tag> <scope> <rc> — render the receipt to $PROBE_VERDICT_FILE.
+#
+# `run_tag` is carried IN THE PAYLOAD and not in the path, for the reason nightly-rollup.sh's header
+# gives at length (#1613): the rollup keys on what a bundle SAYS it is, never on where the artifact
+# downloader happened to put it.
+probe_write_verdict() {
+	local cloud="$1" run_tag="$2" scope="$3" rc="$4" verdict reason pair rc_json
+	[ -n "$PROBE_VERDICT_FILE" ] || {
+		echo "probe_write_verdict: PROBE_VERDICT_FILE is unset — refusing to write a receipt nowhere" >&2
+		return 2
+	}
+	pair="$(probe_verdict_from_rc "$rc")"
+	# `cut` with its default TAB delimiter, not a literal tab inside a parameter expansion: an editor
+	# that retabs this file would silently turn that into a no-op split, and a silently wrong split
+	# is the class of defect this whole file exists to remove.
+	verdict="$(printf '%s' "$pair" | cut -f1)"
+	reason="$(printf '%s' "$pair" | cut -f2-)"
+	# A non-numeric status cannot enter the JSON as a number. `null` is honest — the verdict above
+	# has already read it as "not a verification verdict" — and it keeps jq from failing the receipt.
+	case "$rc" in
+	'' | *[!0-9]*) rc_json=null ;;
+	*) rc_json="$rc" ;;
+	esac
+	mkdir -p "$(dirname "$PROBE_VERDICT_FILE")" 2>/dev/null || true
+	jq -n \
+		--arg cloud "$cloud" --arg run_tag "$run_tag" --arg scope "$scope" \
+		--arg verdict "$verdict" --arg reason "$reason" \
+		--argjson exit_code "$rc_json" \
+		--arg unver "$(probe_unverifiable_types)" --arg unattr "$(probe_unattributable_types)" \
+		--arg detail "$(probe_unverifiable_detail | sed -E 's/^ *· //')" \
+		--arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		'{schema: "alethia.e2e.teardown-verify/1",
+		  provider: $cloud, run_tag: $run_tag, scope: $scope,
+		  verdict: $verdict, reason: $reason, exit_code: $exit_code,
+		  unverifiable: ($unver | split(" ") | map(select(length > 0))),
+		  unattributable: ($unattr | split(" ") | map(select(length > 0))),
+		  unverifiable_detail: ($detail | split("\n") | map(select(length > 0))),
+		  measured_at: $at}' >"$PROBE_VERDICT_FILE" || return 1
+	printf '✓ teardown verification receipt for %s: %s (exit %s) → %s\n' \
+		"$cloud" "$verdict" "$rc" "$PROBE_VERDICT_FILE"
+}
+
+# ── THE RECEIPT IS PUBLISHED, SO IT IS SCRUBBED. ────────────────────────────────────────────────
+#
+# `unverifiable_detail[]` carries up to 200 characters of VERBATIM provider-CLI stderr per resource
+# type, and the receipt is uploaded as an artifact with 30-day retention on a PUBLIC repo and
+# printed into the job summary. That is #1854's exact shape: a verbatim upload from this same
+# workflow published a live HCLOUD_TOKEN, which is why `Scrub the runner log before upload` exists
+# four steps above the one that writes this file.
+#
+# So the published receipt goes through the same fail-closed library, and "fail closed" here means
+# something specific: the VERDICT is never lost — it carries no secret and it is the whole point of
+# the file — but the DETAIL is dropped the moment anything looks unsafe, and the receipt is deleted
+# outright if even that is not enough. A withheld detail costs a reader one click into the run; a
+# published credential costs a rotation.
+#
+# It lives on the `--record-verdict` path and NOT inside probe_write_verdict, deliberately: the
+# five sweepers source this file on every run and must not acquire a load-time dependency on
+# demos/proofs/. The entry point that PUBLISHES is the one that scrubs.
+
+# probe_withhold_detail <why> — rewrite the receipt with its CLI-derived text removed. Everything
+# else survives: the type names are this file's own vocabulary, and `reason` is our own sentence.
+#
+# ⚠️ IT REPORTS WHAT ACTUALLY HAPPENED. The first cut printed "WITHHELD" unconditionally, including
+# on the path where its own `jq … && mv` had failed — a success message over a failed action, which
+# is the same defect class as everything else in this file. The caller reads the return status.
+probe_withhold_detail() {
+	local tmp
+	tmp="${PROBE_VERDICT_FILE}.withheld"
+	if jq --arg why "$1" '.unverifiable_detail = [] | .detail_withheld = $why' \
+		"$PROBE_VERDICT_FILE" >"$tmp" 2>/dev/null && mv "$tmp" "$PROBE_VERDICT_FILE"; then
+		echo "::warning::the teardown verification receipt's detail was WITHHELD (${1}) — the verdict stands; open the run's log for the probe reasons." >&2
+		return 0
+	fi
+	rm -f "$tmp"
+	echo "::warning::could NOT withhold the teardown receipt's detail (${1}) — the rewrite failed, so nothing was removed. The caller must re-render or delete it." >&2
+	return 1
+}
+
+# probe_scrub_verdict — scrub the published receipt, then re-grep it, fail closed. Returns non-zero
+# only when the receipt had to be DELETED, which the rollup then reads as UNMEASURED.
+probe_scrub_verdict() { # <cloud> <run-tag> <scope> <exit-code>
+	local cloud="$1" tag="$2" scope="$3" rc="$4" dir scrub
+	dir="$(dirname "$PROBE_VERDICT_FILE")"
+
+	# ── THE RECEIPT MUST NOT SHARE A DIRECTORY WITH THE LEDGERS. ────────────────────────────────
+	#
+	# assert_grep_clean greps a DIRECTORY, and the ledgers hold RAW provider-CLI stderr — so a
+	# caller that points PROBE_VERDICT_FILE beside them makes the tripwire fire on text nobody
+	# publishes, and every receipt is deleted on any run where a probe failed. The invariant used to
+	# live only in a workflow comment; refused here instead, where it is enforceable.
+	local led_dir="" un_dir=""
+	[ -n "$PROBE_LEDGER" ] && led_dir="$(dirname "$PROBE_LEDGER")"
+	[ -n "$PROBE_UNATTRIB_LEDGER" ] && un_dir="$(dirname "$PROBE_UNATTRIB_LEDGER")"
+	if [ "$dir" = "$led_dir" ] || [ "$dir" = "$un_dir" ]; then
+		echo "::error::PROBE_VERDICT_FILE is in the same directory as the probe ledgers (${dir}). The published receipt is scrubbed and re-grepped by directory, and the ledgers carry raw CLI stderr — sharing one would delete every receipt on any run where a probe failed. Give the receipt its own directory." >&2
+		return 2
+	fi
+
+	scrub="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/demos/proofs/scrub.sh"
+	if [ ! -r "$scrub" ]; then
+		probe_withhold_detail "demos/proofs/scrub.sh could not be read — nothing verified the text" || true
+		return 0
+	fi
+	# shellcheck source=demos/proofs/scrub.sh
+	if ! . "$scrub" 2>/dev/null; then
+		probe_withhold_detail "demos/proofs/scrub.sh could not be sourced" || true
+		return 0
+	fi
+	scrub_literals_from_env
+	scrub_file "$PROBE_VERDICT_FILE"
+
+	# ⚠️ THE SCRUB CAN CORRUPT THE RECEIPT, AND THE TRIPWIRE CANNOT SEE THAT.
+	#
+	# scrub_stream is a TEXT rewriter over log lines, not a JSON transform. Two of its rules
+	# routinely run past the end of a JSON string: rule 5's value class does not stop at `)` or `"`,
+	# so a reason ending in a denylisted `key=value` — routine, because probe_run truncates stderr
+	# at 200 characters and lands mid-value — eats the string's own closing `)",`; and the PEM rule
+	# replaces a BEGIN line wholesale and swallows everything up to an END marker.
+	#
+	# In BOTH cases the secret really is gone, so assert_grep_clean passes and every check below
+	# reports success — over a file that is no longer JSON. The rollup's reader then swallows the
+	# parse error (`jq … 2>/dev/null || true`) and the leg reads UNMEASURED: a RESIDUAL silently
+	# downgraded to "nobody measured", which is exactly the conversion this whole change exists to
+	# prevent, arriving through its own safety mechanism. So VALIDITY is checked directly, and the
+	# recovery re-renders from the ledger WITHOUT the CLI-derived text that caused it.
+	if ! jq -e . "$PROBE_VERDICT_FILE" >/dev/null 2>&1; then
+		echo "::warning::the scrub rewrote the teardown receipt into invalid JSON — re-rendering it without the CLI-derived detail, which is what it was rewriting." >&2
+		probe_write_verdict "$cloud" "$tag" "$scope" "$rc" >/dev/null 2>&1
+		probe_withhold_detail "the scrub rewrote the receipt into invalid JSON" >/dev/null 2>&1 || true
+		scrub_file "$PROBE_VERDICT_FILE"
+		if ! jq -e . "$PROBE_VERDICT_FILE" >/dev/null 2>&1; then
+			rm -f "$PROBE_VERDICT_FILE"
+			echo "::error::the teardown verification receipt is still invalid JSON with its detail removed — DELETED rather than published. The rollup will report this leg UNMEASURED." >&2
+			return 1
+		fi
+	fi
+
+	# The tripwire is a SECOND pair of eyes over the finished file — deliberately independent of the
+	# scrubber, exactly as capture-proof.sh uses it. `dir` holds only the receipt (enforced above),
+	# so this greps what is actually uploaded and nothing else.
+	if ! assert_grep_clean "$dir" >/dev/null 2>&1; then
+		probe_withhold_detail "a secret shape survived the scrub" >/dev/null 2>&1 || true
+		if ! assert_grep_clean "$dir" >/dev/null 2>&1 || ! jq -e . "$PROBE_VERDICT_FILE" >/dev/null 2>&1; then
+			rm -f "$PROBE_VERDICT_FILE"
+			echo "::error::the teardown verification receipt STILL carried a secret shape after its detail was withheld — DELETED rather than published. The rollup will report this leg UNMEASURED, which is the honest answer: the measurement exists but could not be shipped safely." >&2
+			return 1
+		fi
+	fi
+	# Last word: whatever path got here, what is about to be uploaded must parse. A receipt the
+	# reader cannot read is a measurement that did not survive, however clean its text is.
+	if ! jq -e . "$PROBE_VERDICT_FILE" >/dev/null 2>&1; then
+		rm -f "$PROBE_VERDICT_FILE"
+		echo "::error::the teardown verification receipt is not valid JSON — DELETED rather than published." >&2
+		return 1
+	fi
+	return 0
+}
+
+# ── `--record-verdict` — the PARENT-side entry point (#4398). ───────────────────────────────────
+#
+#   PROBE_LEDGER=… PROBE_UNATTRIB_LEDGER=… PROBE_ATTEST_FILE=… PROBE_VERDICT_FILE=… \
+#     bash scripts/e2e/lib/sweep-probe.sh --record-verdict <cloud> <run-tag> <scope> <exit-code>
+#
+# It runs in the process that INVOKED a sweeper, after that sweeper exited, and reads the three
+# files the sweeper wrote through the env paths the parent handed it. That indirection is the whole
+# reason the ledgers were files in the first place (see the header): a sweeper's shell variables die
+# with it, and every one of its probes runs in a subshell anyway.
+#
+# It deliberately does NOT call probe_reset — that truncates the very evidence it is here to read.
+if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--record-verdict" ]; then
+	set -uo pipefail
+	if [ "$#" -ne 5 ]; then
+		echo "usage: sweep-probe.sh --record-verdict <cloud> <run-tag> <scope> <exit-code>" >&2
+		exit 2
+	fi
+	probe_write_verdict "$2" "$3" "$4" "$5" || exit "$?"
+	# Written, then made publishable. Never the other way round: the scrub reads the finished file,
+	# and it takes the same four arguments because its recovery path RE-RENDERS the receipt from the
+	# ledger when the text rewrite has left it unparseable.
+	probe_scrub_verdict "$2" "$3" "$4" "$5"
+	exit "$?"
+fi
 
 # ── Self-test. Runs only when this file is EXECUTED, never when it is sourced. ──
 if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
@@ -639,6 +960,324 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
 	*) bad "…and the unverifiable warning travels with it" "got '${st_out}'" ;;
 	esac
 	if [ "$st_rc" -eq 0 ]; then ok "reporting discovery never gates — preflight does not block its caller"; else bad "reporting discovery never gates" "got rc=${st_rc}"; fi
+
+	# ── THE VERDICT RECEIPT (#4398). ────────────────────────────────────────────────────────────
+	#
+	# The property under test is one sentence: an exit status that is not a verification verdict
+	# must never render as CLEAN. Every case below is a way of NOT having asked the cloud, and every
+	# one of them has to come out UNVERIFIABLE — because the consumer of this receipt is a rollup
+	# that will otherwise publish "nothing is standing" about an account nobody looked at.
+	PROBE_ATTEST_FILE="${PROBE_ERR_DIR}/attest"
+	PROBE_VERDICT_FILE="${PROBE_ERR_DIR}/verdict.json"
+
+	st_verdict() { printf '%s' "$(probe_verdict_from_rc "$1")" | cut -f1; }
+	st_case() { # <name> <rc> <expected verdict>
+		local got
+		got="$(st_verdict "$2")"
+		if [ "$got" = "$3" ]; then ok "$1"; else bad "$1" "expected $3, got ${got}"; fi
+	}
+
+	# An exit 0 with NO attestation. This is the DRY_RUN shape — "nothing deleted, nothing verified",
+	# exit 0 — and every other early return above finalize_verification. It is the single most
+	# dangerous input this function takes, because 0 is what a caller reads as "fine".
+	probe_reset
+	st_case "exit 0 with NO attestation is UNVERIFIABLE, never CLEAN" 0 UNVERIFIABLE
+
+	# …and with one, from the ONLY thing allowed to write it.
+	probe_reset
+	probe_gate aws "run e2e-1-1" >/dev/null 2>&1
+	if probe_has_attestation; then ok "probe_gate's clean path writes the attestation"; else bad "probe_gate's clean path writes the attestation" "no marker in $PROBE_ATTEST_FILE"; fi
+	st_case "exit 0 WITH an attestation is CLEAN" 0 CLEAN
+
+	# The gating state must also withhold the attestation — otherwise a run with a dead credential
+	# could exit 0 from somewhere and still read clean. Both halves, or neither means anything.
+	probe_reset
+	probe_note_unverifiable ec2-instance "exit 255 — ExpiredToken"
+	probe_gate aws "run e2e-1-1" >/dev/null 2>&1 || true
+	if probe_has_attestation; then bad "an unverifiable probe withholds the attestation" "probe_gate attested over a failed probe"; else ok "an unverifiable probe withholds the attestation"; fi
+	st_case "…so its exit 4 is UNVERIFIABLE" 4 UNVERIFIABLE
+
+	# A stale marker is a positive claim about a cloud this process has not looked at.
+	probe_reset
+	probe_gate aws "run e2e-1-1" >/dev/null 2>&1
+	probe_reset
+	if probe_has_attestation; then bad "probe_reset clears a stale attestation" "the previous run's marker survived"; else ok "probe_reset clears a stale attestation"; fi
+
+	# ── A SETUP FAILURE MUST NOT BE PUBLISHED AS A CONFIRMED LEAK. ──────────────────────────────
+	#
+	# Every sweeper runs `probe_reset` bare under `set -euo pipefail`. A write it cannot perform —
+	# a full disk, a read-only RUNNER_TEMP, an exhausted inode table — used to kill the process with
+	# exit 1, and exit 1 is RESIDUAL: "we asked the cloud and something is still billing". Driven
+	# through a real unwritable path, in a fresh `set -e` shell, because the property IS the
+	# interaction between `set -e` and the return value and neither can be tested without the other.
+	st_ext="$(mktemp -d "${TMPDIR:-/tmp}/alethia-probe-nowrite.XXXXXX")"
+	st_rc=0
+	PROBE_LEDGER="$st_ext/no/such/dir/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/no/such/dir/unattr" \
+		PROBE_ERR_DIR="$st_ext" \
+		bash -c '
+			set -euo pipefail
+			. "$1"
+			probe_reset
+			echo "REACHED"
+		' _ "${BASH_SOURCE[0]}" >"$st_ext/out" 2>/dev/null || st_rc=$?
+	if [ "$st_rc" -eq 4 ]; then
+		ok "a ledger that cannot be written exits 4, not 1 — a full disk is UNVERIFIABLE, not a leak"
+	else
+		bad "a ledger that cannot be written exits 4, not 1" \
+			"got rc=${st_rc}$([ "$st_rc" = "1" ] && echo ' — a disk failure would be published as a CONFIRMED BILLING LEAK')"
+	fi
+	# …and the mapping agrees: 4 is UNVERIFIABLE, which is what that exit code now means end to end.
+	probe_reset
+	st_case "…and that exit code reads as UNVERIFIABLE" 4 UNVERIFIABLE
+
+	# THE ATTEST FILE ON ITS OWN, because it is the line that was reported and because the case
+	# above cannot reach it: with the LEDGER unwritable the first guard already returns 4, so a
+	# regression on the attest line would hide behind it. Ledgers writable, attest path not — the
+	# shape of a receipt directory that vanished, or a per-file permission problem.
+	st_rc=0
+	PROBE_LEDGER="$st_ext/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/unattr" \
+		PROBE_ATTEST_FILE="$st_ext/no/such/dir/attest" PROBE_ERR_DIR="$st_ext" \
+		bash -c '
+			set -euo pipefail
+			. "$1"
+			probe_reset
+			echo "REACHED"
+		' _ "${BASH_SOURCE[0]}" >"$st_ext/out2" 2>/dev/null || st_rc=$?
+	if [ "$st_rc" -eq 4 ]; then
+		ok "an ATTEST file that cannot be written exits 4 too — the AND-list form here died with 1"
+	else
+		bad "an ATTEST file that cannot be written exits 4 too" \
+			"got rc=${st_rc}$([ "$st_rc" = "1" ] && echo ' — an AND-list makes the redirect the FINAL command, so set -e kills the sweeper and 1 reads as RESIDUAL')"
+	fi
+
+	# The BACKSTOP, for every other way a sweeper can die with 1 before it ever verified. The ledger
+	# existing is what separates "verify_swept found a leak" from "the process died at setup".
+	st_prev_ledger="$PROBE_LEDGER"
+	PROBE_LEDGER="$st_ext/never-created"
+	st_case "exit 1 with NO ledger on disk is UNVERIFIABLE, not RESIDUAL" 1 UNVERIFIABLE
+	PROBE_LEDGER="$st_prev_ledger"
+	probe_reset
+	st_case "…while exit 1 WITH one is still RESIDUAL — the leak finding is not weakened" 1 RESIDUAL
+	rm -rf "$st_ext"
+
+	# The leak. RESIDUAL is its own word: it is not "we could not look", and it is not clean.
+	probe_reset
+	probe_gate aws "run e2e-1-1" >/dev/null 2>&1
+	st_case "exit 1 is RESIDUAL — the API answered and something is still standing" 1 RESIDUAL
+	# ⚠️ and it must NOT be reachable from the attestation. A leak returns before probe_gate.
+	st_case "a timeout (124) is UNVERIFIABLE even with an attestation present" 124 UNVERIFIABLE
+	st_case "a kill (137) is UNVERIFIABLE" 137 UNVERIFIABLE
+	st_case "a scope refusal (2) is UNVERIFIABLE" 2 UNVERIFIABLE
+	st_case "a missing interpreter (127) is UNVERIFIABLE" 127 UNVERIFIABLE
+	st_case "\`timeout\` failing to start the command (125) is UNVERIFIABLE" 125 UNVERIFIABLE
+
+	# The verdict for 124 and 125 is the same; the SENTENCE must not be. GNU timeout returns 125
+	# when timeout ITSELF failed and the command never ran — calling that "hit its wall-clock
+	# budget" is a true-looking sentence about a thing that did not happen, which is the one defect
+	# class no test, type or linter catches.
+	probe_reset
+	case "$(probe_verdict_from_rc 125)" in
+	*"never started"*) ok "…and it says the command never STARTED, not that it timed out" ;;
+	*) bad "…and it says the command never STARTED" "got '$(probe_verdict_from_rc 125 | cut -f2-)'" ;;
+	esac
+	case "$(probe_verdict_from_rc 124)" in
+	*"wall-clock budget"*) ok "…while a real timeout still says it ran out of budget" ;;
+	*) bad "…while a real timeout still says it ran out of budget" "got '$(probe_verdict_from_rc 124 | cut -f2-)'" ;;
+	esac
+
+	# The rendered receipt. The consumer is nightly-rollup.sh in another JOB, so what is asserted is
+	# the PAYLOAD, not a log line: provider and run_tag are what it keys on (never the path, #1613),
+	# and the ledger has to survive into the receipt or the detail is lost at the job boundary.
+	probe_reset
+	probe_note_unverifiable ec2-instance "exit 255 — ExpiredToken"
+	probe_note_unattributable imager-upload-helpers "unlabelled, cannot attribute"
+	probe_write_verdict aws "nightly-777-1" "run 777-1" 4 >/dev/null 2>&1
+	st_out="$(jq -r '[.provider, .run_tag, .verdict, (.exit_code|tostring), (.unverifiable|join(",")), (.unattributable|join(","))] | join("|")' "$PROBE_VERDICT_FILE" 2>/dev/null || echo BROKEN)"
+	if [ "$st_out" = "aws|nightly-777-1|UNVERIFIABLE|4|ec2-instance|imager-upload-helpers" ]; then
+		ok "the receipt carries provider, run_tag, verdict, exit code and BOTH ledgers"
+	else
+		bad "the receipt carries provider, run_tag, verdict, exit code and BOTH ledgers" "got '${st_out}'"
+	fi
+	case "$(jq -r '.unverifiable_detail | join(" ")' "$PROBE_VERDICT_FILE" 2>/dev/null)" in
+	*ExpiredToken*) ok "…and the REASON, so the next reader does not have to open the run's logs" ;;
+	*) bad "…and the REASON" "got '$(jq -r '.unverifiable_detail|join(" ")' "$PROBE_VERDICT_FILE" 2>/dev/null)'" ;;
+	esac
+
+	# THE DISTINCTION, end to end, from two runs that differ in NOTHING a log could show: same
+	# empty resource list, same silence, different verdict.
+	probe_reset
+	probe_gate aws "run e2e-1-1" >/dev/null 2>&1
+	probe_write_verdict aws "nightly-777-1" "run 777-1" 0 >/dev/null 2>&1
+	st_out="$(jq -r .verdict "$PROBE_VERDICT_FILE" 2>/dev/null)"
+	probe_reset
+	probe_note_unverifiable orphan-scan "exit 255 — ExpiredToken"
+	probe_gate aws "run e2e-1-1" >/dev/null 2>&1 || true
+	probe_write_verdict aws "nightly-777-1" "run 777-1" 4 >/dev/null 2>&1
+	st_out2="$(jq -r .verdict "$PROBE_VERDICT_FILE" 2>/dev/null)"
+	if [ "$st_out" = "CLEAN" ] && [ "$st_out2" = "UNVERIFIABLE" ]; then
+		ok "an empty account and an unaskable one produce DIFFERENT receipts"
+	else
+		bad "an empty account and an unaskable one produce DIFFERENT receipts" "got '${st_out}' and '${st_out2}'"
+	fi
+
+	# AN EXTERNALLY-SUPPLIED LEDGER PATH MUST STILL LEAVE THE PROBES ABLE TO RUN. The verification
+	# step hands these paths in through the environment so the receipt survives the sweeper's exit;
+	# before #4398 that left PROBE_ERR_DIR empty, probe_run's stderr redirect resolved to
+	# `/err.<pid>`, and every probe failed to execute at all — reporting UNVERIFIABLE about a cloud
+	# it never called. A probe that cannot run is the loudest possible false negative.
+	# Run in a FRESH bash, not a subshell: the condition under test is PROBE_ERR_DIR being genuinely
+	# absent from the environment, which is how the workflow invokes a sweeper. Unsetting it in a
+	# subshell of this script would also be a local modification shellcheck rightly complains about,
+	# and it would leave the assertion depending on this file's own state rather than on the env.
+	st_ext="$(mktemp -d "${TMPDIR:-/tmp}/alethia-probe-ext.XXXXXX")"
+	if PROBE_LEDGER="$st_ext/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/unattr" \
+		bash -c '
+			. "$1"
+			probe_reset
+			ext_stub() { printf "i-0abc\n"; }
+			out="$(probe_run widget ext_stub)" || exit 9
+			[ "$out" = "i-0abc" ] || exit 9
+			probe_has_unverifiable && exit 9
+			exit 0
+		' _ "${BASH_SOURCE[0]}" 2>/dev/null; then
+		ok "an env-supplied PROBE_LEDGER still leaves probes runnable (PROBE_ERR_DIR derived)"
+	else
+		bad "an env-supplied PROBE_LEDGER still leaves probes runnable" "probe_run could not execute, or recorded a false UNVERIFIABLE"
+	fi
+	rm -rf "$st_ext"
+
+	# ── THE PUBLISHED RECEIPT CARRIES NO SECRET (#1854's shape). ────────────────────────────────
+	#
+	# `unverifiable_detail[]` is verbatim provider-CLI stderr, and the receipt is uploaded from a
+	# PUBLIC repo with 30-day retention. Driven through the real `--record-verdict` entry point in a
+	# fresh process — the scrub lives there, not in probe_write_verdict — with a fake credential
+	# planted in the ledger the way a real CLI would echo one back.
+	#
+	# Both halves are asserted: the literal is GONE, and the verdict SURVIVES. A scrub that threw
+	# the measurement away to be safe would be its own defect — the verdict carries no secret and it
+	# is the entire reason the file exists.
+	st_ext="$(mktemp -d "${TMPDIR:-/tmp}/alethia-probe-scrub.XXXXXX")"
+	mkdir -p "$st_ext/out"
+	st_fake_token="hcloud-fake-token-4398-DO-NOT-PUBLISH"
+	# ⚠️ The ledger is filled by THIS shell's already-loaded probe_note_unverifiable — the real
+	# producer — with the globals pointed at the temp dir and restored after. NOT by sourcing this
+	# file in a subshell: `$0` and `${BASH_SOURCE[0]}` are the same path while the self-test runs,
+	# so a `. "${BASH_SOURCE[0]}"` re-enters this very block and recurses until the process is
+	# killed. It is the same trap the header names, arriving from inside the tests.
+	st_prev_ledger="$PROBE_LEDGER"
+	st_prev_unattr="$PROBE_UNATTRIB_LEDGER"
+	PROBE_LEDGER="$st_ext/ledger"
+	PROBE_UNATTRIB_LEDGER="$st_ext/unattr"
+	probe_reset
+	probe_note_unverifiable load-balancer "exit 1 — unauthorized (token ${st_fake_token})"
+	PROBE_LEDGER="$st_prev_ledger"
+	PROBE_UNATTRIB_LEDGER="$st_prev_unattr"
+	PROBE_LEDGER="$st_ext/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/unattr" \
+		PROBE_ATTEST_FILE="$st_ext/attest" PROBE_VERDICT_FILE="$st_ext/out/teardown-verify.json" \
+		HCLOUD_TOKEN="$st_fake_token" \
+		bash "${BASH_SOURCE[0]}" --record-verdict hetzner "nightly-777-1" "run 777-1" 4 >/dev/null 2>&1 || true
+	if grep -qF "$st_fake_token" "$st_ext/ledger" 2>/dev/null; then
+		ok "the fixture is real: the raw ledger DOES carry the credential"
+	else
+		bad "the fixture is real: the raw ledger carries the credential" "it does not, so the next assertion proves nothing"
+	fi
+	if grep -qF "$st_fake_token" "$st_ext/out/teardown-verify.json" 2>/dev/null; then
+		bad "the PUBLISHED receipt does not carry the credential" "the literal survived into the uploaded artifact"
+	else
+		ok "the PUBLISHED receipt does not carry the credential"
+	fi
+	if [ "$(jq -r .verdict "$st_ext/out/teardown-verify.json" 2>/dev/null)" = "UNVERIFIABLE" ]; then
+		ok "…and the VERDICT survives the scrub — the measurement is not thrown away to be safe"
+	else
+		bad "…and the VERDICT survives the scrub" "got '$(jq -r .verdict "$st_ext/out/teardown-verify.json" 2>/dev/null)'"
+	fi
+	# ── THE SCRUB CAN CORRUPT THE RECEIPT, AND THAT MUST NOT SILENTLY LOSE THE VERDICT. ─────────
+	#
+	# scrub_stream is a TEXT rewriter, not a JSON transform. Its bare-key rule's value class
+	# (`[^\s,}\]]+`) does not stop at `)` or `"`, so a reason ending in a denylisted `key=value`
+	# eats the JSON string's own closing `)",`. That is a ROUTINE input, not a contrived one:
+	# probe_run truncates CLI stderr at 200 characters and lands mid-value all the time.
+	#
+	# The secret really is gone afterwards, so assert_grep_clean passes and every check reports
+	# success over a file that is no longer JSON. The rollup's reader swallows the parse error and
+	# calls the leg UNMEASURED — a RESIDUAL silently downgraded to "nobody measured", which is the
+	# exact conversion this change exists to prevent, arriving through its own safety mechanism.
+	#
+	# Fixture is the real shape, produced by the real producer, and BOTH halves are asserted: the
+	# published file PARSES, and it still carries the verdict.
+	st_ext="$(mktemp -d "${TMPDIR:-/tmp}/alethia-probe-corrupt.XXXXXX")"
+	mkdir -p "$st_ext/out"
+	st_prev_ledger="$PROBE_LEDGER"
+	st_prev_unattr="$PROBE_UNATTRIB_LEDGER"
+	PROBE_LEDGER="$st_ext/ledger"
+	PROBE_UNATTRIB_LEDGER="$st_ext/unattr"
+	probe_reset
+	probe_note_unverifiable load-balancer "exit 255 — RequestError: send request failed access_key_id=AKIAXXXXEXAMPLE"
+	PROBE_LEDGER="$st_prev_ledger"
+	PROBE_UNATTRIB_LEDGER="$st_prev_unattr"
+	PROBE_LEDGER="$st_ext/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/unattr" \
+		PROBE_ATTEST_FILE="$st_ext/attest" PROBE_VERDICT_FILE="$st_ext/out/teardown-verify.json" \
+		bash "${BASH_SOURCE[0]}" --record-verdict aws "nightly-777-1" "run 777-1" 4 >/dev/null 2>&1 || true
+	# ⚠️ `|| true`, and it is load-bearing: this block runs under `set -e`, and --record-verdict
+	# returns NON-ZERO on exactly the failure being tested (it deletes a receipt it cannot make
+	# safe). Without it the harness DIES here instead of reporting — the run stops mid-list, prints
+	# no ✗, and a reader scanning for failures sees none. A test that cannot fail out loud is the
+	# defect this file exists to remove, arriving inside its own tests.
+	if [ -s "$st_ext/out/teardown-verify.json" ] && jq -e . "$st_ext/out/teardown-verify.json" >/dev/null 2>&1; then
+		ok "a receipt the scrub rewrote is still valid JSON when it is published"
+	else
+		bad "a receipt the scrub rewrote is still valid JSON when it is published" \
+			"got '$(head -c 200 "$st_ext/out/teardown-verify.json" 2>/dev/null)' — the rollup would read this leg as UNMEASURED"
+	fi
+	if [ "$(jq -r .verdict "$st_ext/out/teardown-verify.json" 2>/dev/null)" = "UNVERIFIABLE" ]; then
+		ok "…and the VERDICT survived the rewrite — a corrupt receipt must not become 'nobody measured'"
+	else
+		bad "…and the VERDICT survived the rewrite" "got '$(jq -r .verdict "$st_ext/out/teardown-verify.json" 2>/dev/null)'"
+	fi
+	if grep -qF "AKIAXXXXEXAMPLE" "$st_ext/out/teardown-verify.json" 2>/dev/null; then
+		bad "…and the credential-shaped value is gone" "it survived into the published receipt"
+	else
+		ok "…and the credential-shaped value is gone"
+	fi
+	rm -rf "$st_ext"
+
+	# A receipt sharing a directory with the ledgers is REFUSED, not silently deleted on the first
+	# failed probe. assert_grep_clean greps a directory, and the ledgers hold raw CLI stderr.
+	st_ext="$(mktemp -d "${TMPDIR:-/tmp}/alethia-probe-samedir.XXXXXX")"
+	st_rc=0
+	PROBE_LEDGER="$st_ext/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/unattr" \
+		PROBE_ATTEST_FILE="$st_ext/attest" PROBE_VERDICT_FILE="$st_ext/teardown-verify.json" \
+		bash "${BASH_SOURCE[0]}" --record-verdict aws "nightly-777-1" "run 777-1" 0 >/dev/null 2>&1 || st_rc=$?
+	if [ "$st_rc" -eq 2 ]; then
+		ok "a receipt written BESIDE the ledgers is refused — the tripwire greps a directory"
+	else
+		bad "a receipt written beside the ledgers is refused" "got rc=${st_rc}; every receipt would be deleted on any run with a failed probe"
+	fi
+	rm -rf "$st_ext"
+
+	# The WITHHOLDING path itself, driven directly — the happy path above never reaches it, so
+	# without this the fail-closed branch is code nothing runs. What it must do is narrow: remove
+	# the CLI-derived text, say so, and KEEP the verdict.
+	probe_reset
+	PROBE_VERDICT_FILE="$st_ext/out/teardown-verify.json"
+	probe_note_unverifiable load-balancer "exit 1 — unauthorized"
+	probe_write_verdict hetzner "nightly-777-1" "run 777-1" 4 >/dev/null 2>&1
+	probe_withhold_detail "a secret shape survived the scrub" 2>/dev/null
+	st_out="$(jq -r '[.verdict, (.unverifiable_detail|length|tostring), (.detail_withheld // ""), (.unverifiable|join(","))] | join("|")' "$PROBE_VERDICT_FILE" 2>/dev/null || echo BROKEN)"
+	if [ "$st_out" = "UNVERIFIABLE|0|a secret shape survived the scrub|load-balancer" ]; then
+		ok "withholding the detail keeps the verdict, the type and a stated reason"
+	else
+		bad "withholding the detail keeps the verdict, the type and a stated reason" "got '${st_out}'"
+	fi
+	PROBE_VERDICT_FILE="${PROBE_ERR_DIR}/verdict.json"
+	rm -rf "$st_ext"
+
+	# A receipt with nowhere to go is refused rather than silently skipped: the caller asked for a
+	# measurement to be carried and it would not have been.
+	probe_reset
+	st_rc=0
+	PROBE_VERDICT_FILE="" probe_write_verdict aws "nightly-777-1" "run 777-1" 0 >/dev/null 2>&1 || st_rc=$?
+	if [ "$st_rc" -ne 0 ]; then ok "an unset PROBE_VERDICT_FILE is an error, not a quiet no-op"; else bad "an unset PROBE_VERDICT_FILE is an error" "returned 0"; fi
 
 	rm -rf "$PROBE_ERR_DIR"
 	if [ "$st_fails" -ne 0 ]; then

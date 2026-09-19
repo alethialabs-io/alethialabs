@@ -175,9 +175,10 @@ list and which are `forbidden by blast radius` here too → l. all fifteen filte
 URL round-trip, facet counts that do not move when a facet is picked, debounced search.
 
 Then the cross-cutting set: `⌘K`, theme switch, Ask AI, the setup guide, the CLI download,
-notifications, feedback, the account dialog — including the **known-inert Delete Account**
-button, which is **recorded from the registry, not clicked** (`account.delete` is `inert` and
-`prod-qa: skip`): a known defect, not rediscovered as a surprise.
+notifications, feedback, the account dialog — including its **Request deletion** button, which
+is **recorded from the registry, not clicked** (`account.delete` is `prod-qa: skip`): confirming it
+opens a real erasure request about the QA account that a person then acts on, and pressing it
+without confirming still leaves the dialog one click from that.
 
 ### Phase 4 · The destructive sweep
 

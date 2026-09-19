@@ -2,8 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ArrowLeft, Settings2 } from "lucide-react";
-import { useMemo } from "react";
+import { ArrowLeft, Settings2, TriangleAlert } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { Button } from "@repo/ui/button";
 import { Label } from "@repo/ui/label";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
@@ -38,8 +40,19 @@ import { SheetCard } from "./sheet-card";
  *
  * A docked card on the workspace rail, not a modal Sheet: you can change the cluster's version and
  * keep dragging cards on the board while it is open.
+ *
+ * It is also where the environment is DESTROYED (#4775). That action used to live on the project
+ * node's inspector, and the project node has not been rendered on the board since #536 — so the
+ * only control that tears an environment down was unreachable. It belongs here for the same reason
+ * the cluster does: it acts on the environment as a whole, not on any one card.
  */
-export function EnvSettingsCard() {
+export function EnvSettingsCard({
+	onDestroyEnvironment,
+}: {
+	/** Edit mode only: tear down the active environment (queues a DESTROY job). Absent in the
+	 * create flow, where there is no provisioned environment to destroy. */
+	onDestroyEnvironment?: () => void;
+}) {
 	const envStatus = useEnvironmentStatus();
 	// A BYO-IaC source in replace mode OWNS the substrate: the cluster's version and the VPC come
 	// from the module, and a deploy ignores anything staged here. The toolbar button that used to be
@@ -248,7 +261,49 @@ export function EnvSettingsCard() {
 						</>
 					)}
 				</section>
+				{/* Not gated on `iacGoverned`: an environment whose substrate comes from a BYO-IaC
+				    module is still one that can be torn down. */}
+				{onDestroyEnvironment && (
+					<DestroyEnvironmentZone onDestroy={onDestroyEnvironment} />
+				)}
 			</div>
 		</SheetCard>
+	);
+}
+
+/** Environment-level danger action: tear down the active environment's provisioned infra. */
+function DestroyEnvironmentZone({ onDestroy }: { onDestroy: () => void }) {
+	const [confirm, setConfirm] = useState(false);
+	return (
+		<div className="rounded-none border border-destructive/30">
+			<div className="flex items-center gap-2 border-b border-destructive/20 px-4 py-3">
+				<TriangleAlert className="h-4 w-4 text-destructive" />
+				<p className="text-sm font-medium text-destructive">Danger zone</p>
+			</div>
+			<div className="flex items-center justify-between gap-4 px-4 py-4">
+				<div className="min-w-0">
+					<p className="text-sm font-medium">Destroy environment</p>
+					<p className="text-xs text-muted-foreground">
+						Queue a teardown of the provisioned infrastructure for this environment.
+					</p>
+				</div>
+				<Button
+					type="button"
+					variant="destructive"
+					size="sm"
+					onClick={() => setConfirm(true)}
+				>
+					Destroy
+				</Button>
+			</div>
+			<ConfirmDialog
+				open={confirm}
+				onOpenChange={setConfirm}
+				title="Destroy this environment?"
+				description="This queues a DESTROY job that tears down the environment's provisioned cloud infrastructure. This cannot be undone."
+				confirmLabel="Destroy environment"
+				onConfirm={onDestroy}
+			/>
+		</div>
 	);
 }

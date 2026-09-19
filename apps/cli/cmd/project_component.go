@@ -853,14 +853,28 @@ func runComponentRemove(c apiClient, v componentVocabulary, out io.Writer, proje
 	return nil
 }
 
+// The usage strings for the two scope flags, shared by list/add/remove so the three cannot drift.
+const (
+	componentProjectFlagUsage = "Project name or id"
+	componentEnvFlagUsage     = "Environment id, name or stage — writes default to the project's default environment, `list` defaults to all"
+)
+
 func init() {
 	addYesFlag(projectComponentRemoveCmd, &componentRemoveYes)
-	projectComponentCmd.PersistentFlags().String("project", "", "Project name or id")
-	// PERSISTENT, so add/remove can name an environment too. It used to exist on `list` alone,
-	// labelled "(reserved)", and the server discarded it — so the CLI could only ever author into
-	// the default environment, which made a two-tier project (dev and staging pointing at different
-	// overlays) impossible to build from the terminal.
-	projectComponentCmd.PersistentFlags().String("env", "", "Environment id, name or stage — writes default to the project's default environment, `list` defaults to all")
+	// --project and --env are registered on the three verbs that USE them, not persistently on the
+	// group. They used to be persistent, which put them on `kinds` too: `kinds` answers from the
+	// server's registry and reads neither, so `kinds --project web` was accepted and ignored, and
+	// `kinds --help` offered two inputs the command has no use for. The CLI-surface census
+	// (scripts/check-cli-surface.mjs) counted those inherited flags as input and reported `kinds` as
+	// a leaf "with no form" — there is no question for a form to ask, so the fix is the flags, not a
+	// form. `--env` still reaches add/remove as well as list: it existed on `list` alone once,
+	// labelled "(reserved)", and the CLI could only author into the default environment.
+	projectComponentListCmd.Flags().String("project", "", componentProjectFlagUsage)
+	projectComponentListCmd.Flags().String("env", "", componentEnvFlagUsage)
+	projectComponentAddCmd.Flags().String("project", "", componentProjectFlagUsage)
+	projectComponentAddCmd.Flags().String("env", "", componentEnvFlagUsage)
+	projectComponentRemoveCmd.Flags().String("project", "", componentProjectFlagUsage)
+	projectComponentRemoveCmd.Flags().String("env", "", componentEnvFlagUsage)
 
 	projectComponentListCmd.Flags().StringVar(&componentListKind, "kind", "", "Filter by component kind")
 

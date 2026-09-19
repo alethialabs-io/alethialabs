@@ -44,23 +44,52 @@ async function filterTo(page: Page, term: string, rows: number): Promise<void> {
 }
 
 test.describe("Connectors — a cloud this instance cannot connect", () => {
-	// WHY AZURE, UNCONDITIONALLY. `computePlatformConfigured()` gates aws/gcp/azure/alibaba on the
-	// OIDC signing key, which the release-gate job does not set, so all four read "unavailable"
-	// WHEN NOT CONNECTED. Azure additionally cannot BE connected in this run: `helpers/seed.ts`
-	// writes `credentials: {role_arn}` for every provider, and `identityWasConfigured("azure", …)`
-	// demands a subscription or tenant id — so a seeded Azure identity is filtered out of the board
-	// as a never-configured placeholder. That is what makes this assertion unconditional rather
-	// than the `test.skip(connected > 0, …)` it used to carry: an unset condition that skips is the
-	// `HAVE_MEMBER` shape, and the skip was reading a page-wide Manage count that said nothing
-	// about Azure anyway.
+	// THE SUBJECT IS `connectorState()`'s `unavailable` BRANCH, whose condition is
+	// `!platformConfigured && !connected`. `computePlatformConfigured()` gates aws/gcp/azure/alibaba
+	// on the OIDC signing key, which the release-gate job does not set, so the FIRST half holds for
+	// all four clouds in this run. Azure is the one picked because its catalog neighbours make the
+	// row count below unambiguous.
+	//
+	// THE SECOND HALF IS A PROPERTY OF THIS ORG, NOT OF THE CATALOG, so this spec proves it instead
+	// of assuming it — see `expectNoConnectedAccount`. The persona org is shared with every other QA
+	// worker, they seed cloud identities into it, and nothing cleans up; "Azure is not connected
+	// here" is therefore a precondition, and an unstated precondition is how a test starts passing
+	// for a reason it never claimed.
+	//
+	// It USED to be justified by a defect (#4708): `helpers/seed.ts` wrote `{role_arn}` for every
+	// provider, so a seeded Azure identity was filtered out by `identityWasConfigured` as a
+	// never-configured placeholder, and the comment here reasoned from that. Two things were wrong
+	// with it. It was never load-bearing — nothing in this suite seeds Azure at all, so the filter
+	// it named had nothing to filter — and it recorded a BUG as the reason a test was sound, which
+	// is the shape that makes fixing the bug look like breaking the test. The seeder now writes a
+	// provider-shaped credential, and this describe depends on nothing it does.
+	//
 	// "Microsoft Azure" matches three catalog rows — the cloud itself by name, and the ACR and Key
 	// Vault cross-account connectors by vendor. Only the cloud is `active`; the other two are
 	// coming-soon, so exactly one row can carry the unavailable wording.
 	const AZURE_MATCHES = 3;
+	const AZURE = "Microsoft Azure";
+
+	/**
+	 * Proves the half of the subject that is about THIS ORG rather than this instance: no account is
+	 * connected for the connector.
+	 *
+	 * `Manage <name>` is the affordance `ConnectorCard` renders for a connected connector and for no
+	 * other state — and the `unavailable` branch it would have to displace is checked BEFORE it in
+	 * that card, so a connected Azure would show Manage and no Unavailable pill. Asserting its
+	 * absence here means a future spec that seeds an Azure identity reds THIS line, which names what
+	 * changed, rather than the status-wording count below, which would read as a catalog regression.
+	 */
+	async function expectNoConnectedAccount(page: Page, connector: string): Promise<void> {
+		await expect(
+			page.getByRole("button", { name: `Manage ${connector}`, exact: true }),
+		).toHaveCount(0);
+	}
 
 	test("a managed cloud with no platform credentials says so in words", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await filterTo(owner.page, "Microsoft Azure", AZURE_MATCHES);
+		await filterTo(owner.page, AZURE, AZURE_MATCHES);
+		await expectNoConnectedAccount(owner.page, AZURE);
 		// `exact` throughout this describe: `getByText` defaults to a CASE-INSENSITIVE SUBSTRING
 		// match, which on this board reaches two things that are not a card's status — the health
 		// filter chip, whose text is the label plus its facet count, and a connector's own
@@ -72,10 +101,11 @@ test.describe("Connectors — a cloud this instance cannot connect", () => {
 
 	test("…and offers an Unavailable pill instead of a doomed connect", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await filterTo(owner.page, "Microsoft Azure", AZURE_MATCHES);
+		await filterTo(owner.page, AZURE, AZURE_MATCHES);
+		await expectNoConnectedAccount(owner.page, AZURE);
 		await expect(owner.page.getByText("Unavailable", { exact: true })).toHaveCount(1);
 		await expect(
-			owner.page.getByRole("button", { name: "Connect Microsoft Azure", exact: true }),
+			owner.page.getByRole("button", { name: `Connect ${AZURE}`, exact: true }),
 		).toHaveCount(0);
 	});
 

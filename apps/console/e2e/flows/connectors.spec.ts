@@ -74,7 +74,8 @@ async function facetCount(page: Page, label: string): Promise<number> {
 const groupHeading = (page: Page, label: string) =>
 	page.getByRole("heading", { name: label, exact: true });
 
-/** Seeds a connected AWS account (the one provider `helpers/seed.ts` writes real credentials for). */
+/** Seeds a connected AWS account. (`helpers/seed.ts` writes a provider-shaped credential for each
+ *  cloud since #4708; this stays AWS because the assertions below name AWS's catalog row.) */
 async function seedAwsAccount(
 	owner: { userId?: string; orgId?: string },
 	name: string,

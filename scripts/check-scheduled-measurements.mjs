@@ -72,7 +72,14 @@
 //
 //   * PRESENCE IS NOT EXECUTION. S2/D1 read for an `upload-artifact` name. A step behind an
 //     always-false `if:`, a step whose predecessor failed, or `if-no-files-found` flipped from
-//     `error` to `warn`, all pass. #4347 is a live instance of that last one.
+//     `error` to `warn`, all pass.
+//   * AN ASSERTION THAT CANNOT FAIL READS EXACTLY LIKE ONE THAT PASSES. `if-no-files-found` is
+//     AGGREGATE — the action globs every `path:` entry together and asks `filesToUpload.length
+//     === 0` once — so a step listing several paths under `error` succeeds if ANY ONE matched,
+//     having captured nothing it exists for. #4347 was two such steps in ci.yml; neither had been
+//     flipped to `warn`, which is why the sentence above never described it. That class now has
+//     its own check (`scripts/ci/check-upload-aggregate.mjs`), which is a guard on the SHAPE of
+//     the upload rather than on what any measurement declares — this file still cannot see it.
 //   * SEMANTIC DRIFT BEHIND A STABLE FILENAME is invisible. This is the LARGEST blind spot and it
 //     is precisely the shape of #4395's second half: `reaper-result.mjs` present on both refs but
 //     its log regexes no longer matching the sweeper's output, so artifacts arrive and every row

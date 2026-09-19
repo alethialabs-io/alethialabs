@@ -39,7 +39,7 @@
 //
 // ── WHAT IS SCORED, AND WHAT IS EXPLICITLY NOT ───────────────────────────────────────────────
 //
-// The rubric defines 34 predicates in five families. This file now scores all 34 of them:
+// The rubric defines 38 predicates in five families. This file now scores all 38 of them:
 //
 //   S1–S4, T1–T4     STATIC, `scripts/check-route-states.mjs`.
 //   H1–H9            STATIC, `scripts/check-shared-surface.mjs`. All nine H rows. H3 was the
@@ -55,8 +55,12 @@
 //                    console's filter SURFACES, plus F7, whose verdict is the join between a
 //                    route's closure and the builders
 //                    `apps/console/tests/lib/queries/filter-standard-facets.test.ts` drives.
-//   T5–T7, R1–R7     LIVE. The Playwright `audit` project measures them in CI; this file joins
-//                    its committed records to the same route set. Ten predicates — #3634.
+//   T5–T7, R1–R8,    LIVE. The Playwright `audit` and `audit-interaction` projects measure them
+//   F8–F10           in CI; this file joins their committed records to the same route set.
+//                    Fourteen predicates — #3634, plus R8 in #4277 and F8–F10 in #4278. Family F
+//                    is therefore SPLIT: its static rows are scored here and its live rows are
+//                    joined, and `buildView()` takes the static F ids as the rubric's F rows MINUS
+//                    the ones `NOT_SCORED_STATICALLY` declares live — never "every F row".
 //
 // NOTHING is left un-instrumented. The `kind: "none"` bucket, the table it renders and the
 // partition check that refuses a predicate in no bucket all STAY: the next rubric row lands in
@@ -178,14 +182,35 @@
 // file" — which is the entire join this report is built on. `scan()` and `parseAllowlist()` are
 // exported both before and after #3794.
 //
-// ── THE LIVE HALF — TWO ARTIFACTS, TWO PERSONAS, TWO ORGANISATIONS (#3634) ───────────────────
+// ── THE LIVE HALF — THREE ARTIFACTS, THREE QUESTIONS, NEVER POOLED (#3634, #4277) ────────────
 //
-// The live predicates are measured by the Playwright `audit` project, which writes TWO files:
+// The live predicates are measured by two Playwright projects, which write THREE files:
 //
 //   test-results/ui-audit.json              routes.spec.ts       T5, T6, R1–R7 · the run's owner,
 //                                                                in a fresh EMPTY organisation
 //   test-results/ui-audit-permissions.json  permissions.spec.ts  T7 · the `member` persona, in a
 //                                                                SECOND organisation of its own
+//   test-results/ui-audit-interaction.json  inert.spec.ts        R8 · the run's owner again, but
+//                                           filters.spec.ts      F8–F10 · from the `audit-interaction`
+//                                                                project, which ACTIVATES controls
+//                                                                rather than reading rendered state
+//
+// The third file has TWO writers, and that is a merge on the run key, not a pool. `report.ts`'s
+// `write()` merges only records carrying the same `runKey` — the run's org slug — and keys each on
+// (route, predicate), and the two specs own disjoint predicates (R8 and F8–F10). What pooling cost
+// the first time was one BUFFER shared across two questions; here each spec keeps its own
+// `createReport()` and the file is the union of two disjoint answers about one organisation.
+//
+// THE THIRD SECTION IS DECLARED BEFORE IT IS MEASURED, and that is a deliberate, checked, temporary
+// state — `awaitingFirstImport` on the section below. R8's instrument landed in #4277; its artifact
+// exists only once the `audit-interaction` leg has run and somebody has imported it. The dishonest
+// alternatives were both available and both refused: leaving R8 out of the rubric would have shipped
+// an instrument scored by nothing (this file's own header calls that "implemented and UNMEASURED"),
+// and hand-writing plausible records would have poisoned a ledger with numbers no run produced.
+// So every R8 cell joins as NOT MEASURED carrying the marker's reason, R8 scores `null` rather than
+// 1, and the marker is checked in BOTH directions: a pending section that carries records RAISES,
+// naming the one-line edit that clears it. An exception that can outlive its subject is how a
+// ledger stops being true.
 //
 // **They are joined, never pooled**, and `apps/console/e2e/audit/report.ts`'s header records what
 // pooling them cost: both specs load into one process under `workers: 1`, and one module-level
@@ -240,6 +265,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
 	fsIo as filterStandardIo,
+	ownedSurfaces,
 	positiveControl as filterStandardControl,
 	scan as scanFilterStandard,
 	scoreRoutes as scoreFilterRoutes,
@@ -366,6 +392,10 @@ export const NOT_SCORED_STATICALLY = /** @type {const} */ ({
 	R5: { kind: "live", section: "routes", why: "axe, at wcag2a/wcag2aa." },
 	R6: { kind: "live", section: "routes", why: "console errors and failed requests." },
 	R7: { kind: "live", section: "routes", why: "interactive within the route's budget." },
+	F8: { kind: "live", section: "interaction", why: "the URL round-trip, DRIVEN: a facet applied reaches the URL, survives a reload, and Reset clears it — only a browser knows the hydration order." },
+	F9: { kind: "live", section: "interaction", why: "facet counts that do not move under a filter — F7's unfiltered facet pass, observed end to end on the rendered bar." },
+	F10: { kind: "live", section: "interaction", why: "a debounce you can count requests against, and a nonsense search that lands in the shared empty state." },
+	R8: { kind: "live", section: "interaction", why: "every enabled control, ACTIVATED — a rendered control is not a working one, and only a click knows." },
 });
 
 // ── the live half: two artifacts, two personas, two organisations ────────────────────────────
@@ -398,6 +428,29 @@ export const LIVE_SECTIONS = /** @type {const} */ ({
 		org: "a SECOND organisation, created by that spec and never touched by the primary run",
 		covers: "only the org-only routes; the parameterised ones need a project the persona cannot be given",
 	},
+	interaction: {
+		artifact: "test-results/ui-audit-interaction.json",
+		spec: "apps/console/e2e/audit/inert.spec.ts + apps/console/e2e/audit/filters.spec.ts",
+		persona: "the run's own owner, in the `audit-interaction` project — which ACTIVATES controls and never presses a confirm",
+		org: "a fresh, empty organisation created for the run",
+		covers: "every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS",
+		// ── THE MARKER, AND WHAT CLEARS IT ────────────────────────────────────────────────
+		// Set while the instrument exists and no run has produced its artifact yet. It makes
+		// exactly two things legal that are otherwise errors: `runs.interaction.records` may be
+		// EMPTY, and R8 may have no record anywhere. Everything else still holds — every R8 cell
+		// joins as NOT MEASURED carrying `why`, and NOT MEASURED leaves the denominator, so the
+		// board scores R8 `null` and never 1.
+		//
+		// IT IS CHECKED IN BOTH DIRECTIONS. A ledger entry that outlives its subject fails
+		// SILENTLY and suppresses a real finding forever, so `parseLive()` raises the moment the
+		// section carries a record: the import has landed and this marker is now a lie that would
+		// let an empty re-import read as a pending one. Delete these three lines and re-run
+		// `--write`; that is the whole edit.
+		awaitingFirstImport: {
+			since: "#4277",
+			why: "R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet",
+		},
+	},
 });
 
 /**
@@ -420,9 +473,13 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
 	R5: [],
 	R6: [],
 	R7: [],
+	R8: ["redirect-only", "no-enabled-controls"],
 	T5: ["no-empty-state"],
 	T6: ["redirect-only"],
 	T7: ["no-restricted-surface"],
+	F8: ["not-a-list-page"],
+	F9: ["not-a-list-page"],
+	F10: ["not-a-list-page", "no-search-field"],
 });
 
 /**
@@ -433,42 +490,21 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
  * directions — a live predicate with a FAIL and no row here raises, and a row here for a predicate
  * that no longer fails raises too. The second direction is the one that matters over time: a debt
  * ledger nobody is forced to shrink is a ledger that stops being true.
+ *
+ * IT IS EMPTY, AND EMPTY IS A MEASUREMENT — not a table nobody has filled in yet. Run
+ * 34851361970 @ `e48ff5213` measured all 387 live records with ZERO failures, and the four rows
+ * that used to live here (R3 #3885 · R4, R5, R6 #3805) were deleted in the same commit as the
+ * import that cleared them, which is what the second direction of the check forces. The evidence
+ * that this is not an emptiness artefact is in the import itself: the artifact carries the same
+ * key set as the file it replaced — 360 route records over 40 routes, 27 permission records over
+ * 27 routes, no key added and none dropped — so a withheld measurement would have arrived as
+ * `NOT MEASURED`, which is never a pass, rather than as silence.
+ *
+ * Do NOT read an empty table as "the live half is finished". It means every predicate the last
+ * imported run measured passed on every route it reached; the next import can refill it, and a
+ * FAIL with no row here still raises.
  */
-export const LIVE_DEBT = /** @type {const} */ ({
-	R3: {
-		owner: "#3885",
-		why:
-			"two nested scroll containers that are not the shell's — a chip `ScrollArea` on " +
-			"`~/support/ask` and a `@repo/ui/table` wrapper on `[project]/environments` — each " +
-			"overflowing by 3px at all four widths. Trustworthy for the first time now that #3804 " +
-			"has made R3's own positive control green.",
-	},
-	R4: {
-		owner: "#3805",
-		why:
-			"ONE shell defect, not N page defects: `components/shell/topbar.tsx` centres the " +
-			"breadcrumb out of flow (`absolute left-1/2`) beside an `ml-auto` action cluster that " +
-			"nothing reserves space for, so the two collide from `md:` up. #3805 keeps it " +
-			"deliberately rather than folding it into #3619 — the fix is a layout decision, and only " +
-			"R4's geometry can prove either answer.",
-	},
-	R5: {
-		owner: "#3805",
-		why:
-			"the axe residue. `color-contrast` fails EVERY failing route on its own, so R5 cannot " +
-			"move at all until that clears — `button-name` went 3 → 0 in #3756 and the score did not " +
-			"budge. The console is dark-first and grayscale by design, so each node is a judgement " +
-			"between a token fix in `packages/brand/src/tokens.css` and a recorded decision.",
-	},
-	R6: {
-		owner: "#3805",
-		why:
-			"two routes. `~/connectors` fires 400s from `/_next/image` for connector icons that do " +
-			"not exist (#3802, fixed by #3876); `[project]/…/support/cases/[id]` 404s the parent " +
-			"list route's RSC prefetch ~70 times in one visit, which is a prefetch storm as well as " +
-			"a 404.",
-	},
-});
+export const LIVE_DEBT = /** @type {const} */ ({});
 
 /**
  * Which section owns which live predicate, checked in both directions.
@@ -789,6 +825,66 @@ export function summariseLiveEvidence(predicate, evidence, verdict = "FAIL") {
 			nonEmpty(Number(e.budgetMs) || 0, "budget");
 			return `p95 over the route's ${e.budgetMs}ms budget`;
 		}
+		if (predicate === "R8") {
+			// `inert.spec.ts` caps nothing — a route over the control budget is NOT MEASURED, not
+			// truncated — so these counts are of everything enumerated. What they are NOT counts of
+			// is everything that EXISTS: a control in a subtree the empty org never renders is
+			// invisible to a live pass, which is why the summary names what was enumerated rather
+			// than implying a denominator it does not have.
+			const e = asObject(evidence, predicate);
+			const inert = Array.isArray(e.inert) ? e.inert : [];
+			const undeclared = (Array.isArray(e.notActivated) ? e.notActivated : []).filter((n) => n?.why === "unregistered-destructive");
+			nonEmpty(inert.length + undeclared.length, "inert control and no undeclared destructive one");
+			const parts = [];
+			if (inert.length > 0) parts.push(`${plural(inert.length, "enabled control")} did nothing within 1000ms`);
+			if (undeclared.length > 0) parts.push(`${plural(undeclared.length, "control")} named a destructive verb the ledger does not declare`);
+			return `${parts.join(", ")} — of ${plural(Number(e.enumerated) || 0, "control")} enumerated on this route`;
+		}
+		if (predicate === "F8") {
+			// `filters.spec.ts` records the round-trip as five STEPS, driven in this order. A step is
+			// `true` or `false` when it was asked and `null` when an earlier failure meant it could not
+			// be — and `null` is rendered as NOT REACHED, never as a pass. Counts and option labels are
+			// left out on purpose: labels carry seeded names, and the steps alone say what broke.
+			const e = asObject(evidence, predicate);
+			const steps = asObject(e.steps, predicate);
+			const order = [
+				["applied", "applying the first facet option never put a param this surface writes into the URL"],
+				["survivedReload", "reload() dropped the filter param from the URL"],
+				["restoredList", "reload() kept the param but not the narrowed list"],
+				["resetUrl", "Reset left a filter param in the URL"],
+				["resetCount", "Reset did not return the count to the full count"],
+			];
+			const failed = order.filter(([k]) => steps[k] === false);
+			nonEmpty(failed.length, "failed round-trip step");
+			const unreached = order.filter(([k]) => steps[k] === null).length;
+			return (
+				failed.map(([, why]) => why).join("; ") +
+				(unreached > 0 ? ` — ${plural(unreached, "later step")} not reached` : "")
+			);
+		}
+		if (predicate === "F9") {
+			const e = asObject(evidence, predicate);
+			const moved = Array.isArray(e.moved) ? e.moved.length : 0;
+			const vanished = Array.isArray(e.vanished) ? e.vanished.length : 0;
+			nonEmpty(moved + vanished, "facet option whose count moved or that vanished");
+			const parts = [];
+			if (moved > 0) parts.push(`${plural(moved, "facet option count")} moved`);
+			if (vanished > 0) parts.push(`${plural(vanished, "facet option")} vanished`);
+			return `${parts.join(" and ")} when the first option was applied — of ${plural(Number(e.compared) || 0, "option")} compared`;
+		}
+		if (predicate === "F10") {
+			const e = asObject(evidence, predicate);
+			const debounce = asObject(e.debounce, predicate);
+			const empty = asObject(e.empty, predicate);
+			const data = Number(debounce.dataRequests);
+			const outside = Number(empty.handRolledOutside) || 0;
+			const parts = [];
+			if (Number.isFinite(data) && data > 1) parts.push(`${plural(data, "data request")} carried the search within 500ms of six keystrokes (at most 1)`);
+			if (empty.rendered !== true) parts.push("a nonsense search rendered no `[data-slot=\"empty\"]` inside `main`");
+			if (outside > 0) parts.push(`${plural(outside, "hand-rolled \"no results\" message")} outside the shared empty state`);
+			nonEmpty(parts.length, "undebounced request, missing empty state or hand-rolled message");
+			return parts.join("; ");
+		}
 		if (predicate === "T5") {
 			const e = asObject(evidence, predicate);
 			nonEmpty((e.handRolled ?? []).length, "hand-rolled empty region");
@@ -910,6 +1006,15 @@ export function importLive(raw, provenance) {
 	const runs = {};
 	for (const [key, section] of Object.entries(LIVE_SECTIONS)) {
 		const body = raw[key];
+		// A PENDING section whose artifact is not in the download is still pending — it is imported
+		// as the empty, declared section it already is. That keeps `--import-live` usable for the
+		// OTHER sections while R8's leg has not run yet; refusing would block every live refresh in
+		// the repo on one predicate's first measurement. An artifact that IS present is imported
+		// normally, and `parseLive` then refuses the stale marker (see it, for both directions).
+		if (body === undefined && section.awaitingFirstImport !== undefined) {
+			runs[key] = { runKey: "", records: [] };
+			continue;
+		}
 		if (typeof body !== "object" || body === null || !Array.isArray(body.records)) {
 			throw new Error(`${section.artifact}: no \`records\` array. That is a missing or truncated artifact, not an empty run.`);
 		}
@@ -978,6 +1083,43 @@ export function importLive(raw, provenance) {
 const VERDICTS = ["PASS", "FAIL", "N/A", "NOT MEASURED"];
 
 /**
+ * Has a section's `awaitingFirstImport` marker OUTLIVED ITS SUBJECT?
+ *
+ * The marker is how a live predicate whose INSTRUMENT has landed but whose LEG has not yet run gets
+ * DECLARED rather than hidden: its section is allowed to be empty, every cell it owns joins as NOT
+ * MEASURED carrying the marker's reason, and the predicate scores `null` rather than 1. R8 is the
+ * first (#4277). The alternatives were both worse and both available — leaving the predicate out of
+ * the rubric ships an instrument scored by nothing, and hand-writing plausible records poisons a
+ * ledger with numbers no run produced.
+ *
+ * THIS IS THE DIRECTION THAT FAILS SILENTLY, so it is the one that gets a function. An undeclared
+ * hit is loud; an entry that outlives its subject is not, and here it would be worse than noise: a
+ * stale marker makes a LATER EMPTY import read as "still pending" instead of as the vacuous
+ * artifact it is, suppressing forever the finding `liveVacuityProblems()` exists to raise.
+ *
+ * The forward direction — a section with no marker and no records — stays where it already lives,
+ * in `liveVacuityProblems()`, which is the vacuity control for the whole live half. Both directions
+ * are driven in `--self-test`; neither is checked only by the other.
+ *
+ * Pulled out of `parseLive()` so it can be driven against HAND-BUILT sections: the real
+ * `LIVE_SECTIONS` is one state of the world at a time, and a check that can only exercise today's
+ * state stops exercising anything the day the marker is deleted.
+ *
+ * @param {string} key section key
+ * @param {{artifact: string, awaitingFirstImport?: {since: string, why: string}}} section
+ * @param {number} records how many records the committed file carries for it
+ * @returns {string|null} the problem, or null
+ */
+export function staleImportMarkerProblem(key, section, records) {
+	if (section.awaitingFirstImport === undefined || records === 0) return null;
+	return (
+		`\`runs.${key}\` carries ${records} record(s), and LIVE_SECTIONS still marks the section ` +
+		`\`awaitingFirstImport\` (${section.awaitingFirstImport.since}). The import has landed: delete that marker ` +
+		`from LIVE_SECTIONS. Leaving it would let a later EMPTY import read as "still pending".`
+	);
+}
+
+/**
  * Read and validate `apps/console/ui-conformance-live.json`.
  *
  * Every rule the recorder enforces at the point a verdict is written is enforced again here, at the
@@ -1010,6 +1152,8 @@ export function parseLive(text) {
 		if (typeof run !== "object" || run === null || !Array.isArray(run.records)) {
 			throw new Error(`${LIVE_JSON}: \`runs.${key}\` is missing or has no records. ${section.artifact} was never imported.`);
 		}
+		const stale = staleImportMarkerProblem(key, section, run.records.length);
+		if (stale !== null) throw new Error(`${LIVE_JSON}: ${stale}`);
 		// The file restates what its section is — which artifact, which persona, which organisation —
 		// so that a reader of the JSON alone knows. A restatement that can drift is worse than none,
 		// so it is CHECKED against LIVE_SECTIONS rather than trusted: change the constant and the
@@ -1071,9 +1215,18 @@ export function liveVacuityProblems(live, routeOrder) {
 	const problems = [];
 	const known = new Set(routeOrder);
 	const measured = new Set();
+	/** Predicates whose section has not been measured yet — declared, not silently absent. */
+	const pending = new Set();
 	for (const [key, section] of Object.entries(LIVE_SECTIONS)) {
 		const rows = live.sections[key].records;
 		if (rows.length === 0) {
+			// A PENDING section is empty BY DECLARATION — `sectionRecordsProblem()` owns that rule
+			// and refuses the other direction. Every cell it owns still joins as NOT MEASURED, so
+			// nothing here scores as a pass; what it must not do is read as "the artifact is gone".
+			if (section.awaitingFirstImport !== undefined) {
+				for (const [id, owner] of livePredicateSections()) if (owner === key) pending.add(id);
+				continue;
+			}
 			problems.push(`the \`${key}\` section (${section.artifact}) holds ZERO records — it measured nothing, which is not the same as finding nothing.`);
 			continue;
 		}
@@ -1086,6 +1239,7 @@ export function liveVacuityProblems(live, routeOrder) {
 		for (const r of rows) measured.add(r.predicate);
 	}
 	for (const id of livePredicateSections().keys()) {
+		if (pending.has(id)) continue;
 		if (!measured.has(id)) {
 			problems.push(`${id} has NO record in any section — the predicate was never measured, and a report that scored it 0/0 would say so as \`—\`.`);
 		}
@@ -1133,7 +1287,10 @@ export function joinLive(live, routeOrder) {
 				route,
 				predicate: id,
 				verdict: "NOT MEASURED",
-				reason: `the \`${key}\` run did not reach this route — it covers ${section.covers}`,
+				reason:
+					section.awaitingFirstImport === undefined
+						? `the \`${key}\` run did not reach this route — it covers ${section.covers}`
+						: `the \`${key}\` section has never been imported (${section.awaitingFirstImport.since}): ${section.awaitingFirstImport.why}`,
 			});
 		}
 	}
@@ -1465,7 +1622,11 @@ export function buildView({ run, rubricPredicates, surface, pageClosures, chrome
 	// The F ids come from the RUBRIC, not from a constant. `check-filter-standard.mjs` exports its
 	// own F1–F7 list and using it here would make this file agree with that one instead of with the
 	// rubric — and the rubric is the predicate universe every other family is partitioned against.
-	const filterIds = rubricPredicates.filter((p) => p.family === "F").map((p) => p.id);
+	//
+	// MINUS the live rows (#4278). F8–F10 are family F and are measured in a browser, so they are
+	// joined from the live file like every other live predicate; taking "every F row" here would hand
+	// them to the static join, which has no verdict for them and would refuse the whole report.
+	const filterIds = rubricPredicates.filter((p) => p.family === "F" && !(p.id in NOT_SCORED_STATICALLY)).map((p) => p.id);
 	const scoredIds = [...ROUTE_STATE_PREDICATES, ...Object.values(RULE_PREDICATE), ...filterIds];
 	partitionPredicates(rubricPredicates, scoredIds, NOT_SCORED_STATICALLY);
 	const liveIds = livePredicateSections();
@@ -1936,11 +2097,11 @@ export function renderScoreboard(view) {
 	}
 
 	// ── the live half ─────────────────────────────────────────────────────────────────────────
-	L.push("## The live half — two artifacts, two personas, two organisations");
+	L.push("## The live half — three artifacts, three questions, never pooled");
 	L.push("");
-	L.push("T5–T7 and R1–R7 are measured in a browser, not read off the tree. The records below were");
+	L.push("T5–T7 and R1–R8 are measured in a browser, not read off the tree. The records below were");
 	L.push(`imported from **${view.live.source.run}** at commit \`${view.live.source.commit}\` and committed to`);
-	L.push(`\`${LIVE_JSON}\`; refresh them with \`--import-live\`. They come from **two files, joined and never`);
+	L.push(`\`${LIVE_JSON}\`; refresh them with \`--import-live\`. They come from **three files, joined and never`);
 	L.push("pooled** — `e2e/audit/report.ts` records what pooling them cost, and the split is checked here:");
 	L.push("each section declares the predicates it may carry, and a record in the wrong one refuses to parse.");
 	L.push("");
@@ -2213,6 +2374,66 @@ export function splice(existing, generated) {
 // ── the run ──────────────────────────────────────────────────────────────────────────────────
 
 /**
+ * The filesystem half of `moduleClosure()`'s io, rooted at one tree. Shared by `runReport()` and
+ * `filterSurfaceRoutes()` so the live F8–F10 pass and the static F1–F6 join walk the same closures.
+ *
+ * @param {string} repoRoot
+ */
+function closureIo(repoRoot) {
+	const readFile = (p) => readFileSync(p, "utf8");
+	/** @param {string} p @returns {"file"|"dir"|null} */
+	const kindOf = (p) => {
+		try {
+			const s = statSync(p);
+			return s.isDirectory() ? "dir" : "file";
+		} catch {
+			return null;
+		}
+	};
+	return { readFile, kindOf, repoRoot, consoleDir: path.join(repoRoot, "apps", "console") };
+}
+
+/**
+ * The live F8–F10 pass's SUBJECT SET: for every manifest route, the filter surfaces it owns and the
+ * URL params each one writes. `--filter-surfaces` prints it; `e2e/audit/filters.spec.ts` reads it.
+ *
+ * One join, not two. Ownership is `check-filter-standard.mjs`'s `ownedSurfaces()` over the same
+ * page closures F1–F6 are scored through, so the live half cannot come to measure a different set of
+ * list pages than the static half scores. It RAISES — through the filter scan's own problems, its
+ * positive control, and the manifest's zero-route refusal — rather than printing an empty subject
+ * set, which a spec would read as a console with no list pages.
+ *
+ * @param {string} repoRoot
+ * @returns {{version: 1, surfaces: number, routes: {route: string, isRedirectOnly: boolean, surfaces: {symbol: string, params: {key: string, param: string, array: boolean}[], searchParam: string|null}[]}[]}}
+ */
+export function filterSurfaceRoutes(repoRoot) {
+	const control = filterStandardControl();
+	if (control.length > 0) {
+		throw new Error(`the filter-standard positive control is BROKEN — refusing to name a subject set.\n  ${control.join("\n  ")}`);
+	}
+	const run = runOver(repoRoot);
+	if (run.manifest.routes.length === 0) throw new Error("the route manifest returned zero routes — a broken scan, not an empty app.");
+	const scanned = scanFilterStandard(filterStandardIo(repoRoot));
+	if (scanned.problems.length > 0) {
+		throw new Error(`the filter-standard scan did not read the console:\n  - ${scanned.problems.join("\n  - ")}`);
+	}
+	const io = closureIo(repoRoot);
+	return {
+		version: 1,
+		surfaces: scanned.surfaces.length,
+		routes: run.manifest.routes.map((r) => ({
+			route: r.route,
+			isRedirectOnly: r.isRedirectOnly === true,
+			surfaces: ownedSurfaces(scanned.surfaces, moduleClosure([path.join(repoRoot, r.file)], io)).map((s) => ({
+				symbol: s.symbol,
+				params: scanned.urlParams[s.symbol]?.params ?? [],
+				searchParam: scanned.urlParams[s.symbol]?.search ?? null,
+			})),
+		})),
+	};
+}
+
+/**
  * Score one tree. Raises rather than reporting a clean board on any broken input — the manifest's
  * own zero-route raise passes straight through, and the four controls below are checked first.
  *
@@ -2239,17 +2460,7 @@ export function runReport(repoRoot) {
 	}
 
 	const abs = (rel) => path.join(repoRoot, rel);
-	const consoleDir = path.join(repoRoot, "apps", "console");
-	const readFile = (p) => readFileSync(p, "utf8");
-	/** @param {string} p @returns {"file"|"dir"|null} */
-	const kindOf = (p) => {
-		try {
-			const s = statSync(p);
-			return s.isDirectory() ? "dir" : "file";
-		} catch {
-			return null;
-		}
-	};
+	const { readFile, kindOf, consoleDir } = closureIo(repoRoot);
 
 	const rubric = parseRubric(readFile(abs(RUBRIC)));
 	const run = runOver(repoRoot);
@@ -2432,6 +2643,31 @@ function selfTest() {
 			() => renderStepSummary(run(base), run([])),
 			"the committed baseline",
 		);
+
+		// ── THE FOOTER IS DERIVED FROM `LIVE_DEBT`, NOT WRITTEN IN PROSE ─────────────────────
+		// It used to be the literal sentence "R3, R5 and R6 carry debt `LIVE_DEBT` owns", which was
+		// true when it was written and would have kept printing into every run summary after the
+		// import that cleared all four rows. Nothing tests a sentence, so the sentence is gone and
+		// both directions are pinned here: which ids it names, and what it says when there are none.
+		ok(
+			"the footer names the predicates the debt table actually carries",
+			renderStepSummary(run(base), run(base), { R4: { owner: "#1", why: "x" }, R3: { owner: "#2", why: "y" } }).includes(
+				"honestly red: **R3**, **R4** carry debt `LIVE_DEBT` owns.",
+			),
+			renderStepSummary(run(base), run(base), { R4: { owner: "#1", why: "x" }, R3: { owner: "#2", why: "y" } }),
+		);
+		ok(
+			"...agreeing with itself for a single row",
+			renderStepSummary(run(base), run(base), { R4: { owner: "#1", why: "x" } }).includes("**R4** carries debt"),
+		);
+		ok(
+			"...and an EMPTY table says a FAIL would be a regression, not that the job is fine",
+			renderStepSummary(run(base), run(base), {}).includes("`LIVE_DEBT` is empty — no live predicate carries recorded debt. A FAIL here is a REGRESSION"),
+		);
+		ok(
+			"...naming no predicate at all when none carries debt",
+			!/carry debt|carries debt/.test(renderStepSummary(run(base), run(base), {})),
+		);
 	}
 
 	// ── the rubric is the predicate universe ─────────────────────────────────────────────────
@@ -2458,25 +2694,28 @@ function selfTest() {
 	// THE REAL RUBRIC, because the fixture above proves the parser and not the file it will read.
 	const realRubric = parseRubric(readFileSync(path.join(REPO_ROOT, RUBRIC), "utf8"));
 	ok(
-		`the real ${RUBRIC} defines 34 predicates, in five families`,
-		realRubric.predicates.length === 34 &&
+		`the real ${RUBRIC} defines 38 predicates, in five families`,
+		realRubric.predicates.length === 38 &&
 			[...new Set(realRubric.predicates.map((p) => p.family))].sort().join("") === "FHRST",
 	);
 	const perFamily = {};
 	for (const p of realRubric.predicates) perFamily[p.family] = (perFamily[p.family] ?? 0) + 1;
 	ok(
-		"...S1-S4 (4), T1-T7 (7), H1-H9 (9), F1-F7 (7), R1-R7 (7)",
-		perFamily.S === 4 && perFamily.T === 7 && perFamily.H === 9 && perFamily.F === 7 && perFamily.R === 7,
+		"...S1-S4 (4), T1-T7 (7), H1-H9 (9), F1-F10 (10), R1-R8 (8)",
+		perFamily.S === 4 && perFamily.T === 7 && perFamily.H === 9 && perFamily.F === 10 && perFamily.R === 8,
 	);
 	ok("...including H9, the empty-state row #3798 asked for", realRubric.predicates.some((p) => p.id === "H9"));
 
 	// ── the partition: every predicate lands in exactly one bucket ───────────────────────────
-	const scoredIds = [...ROUTE_STATE_PREDICATES, ...Object.values(RULE_PREDICATE), ...realRubric.predicates.filter((p) => p.family === "F").map((p) => p.id)];
+	// The static F rows only — the SAME expression `buildView()` uses, so the partition asserted here
+	// is the partition the report runs on. F8–F10 are family F and live (#4278).
+	const scoredIds = [...ROUTE_STATE_PREDICATES, ...Object.values(RULE_PREDICATE), ...realRubric.predicates.filter((p) => p.family === "F" && !(p.id in NOT_SCORED_STATICALLY)).map((p) => p.id)];
 	const part = partitionPredicates(realRubric.predicates, scoredIds, NOT_SCORED_STATICALLY);
 	ok("24 predicates are scored statically — S1-S4, T1-T4, all nine H rows and all seven F rows", part.scored.length === 24);
 	ok("...and family F is one of them now (#3796), not a column of dashes", ["F1", "F2", "F3", "F4", "F5", "F6", "F7"].every((id) => part.scored.includes(id)));
 	ok("...and so is H3 (#3797), which was the last predicate with no instrument", part.scored.includes("H3"));
-	ok("10 are live", part.live.length === 10 && part.live.sort().join(",") === "R1,R2,R3,R4,R5,R6,R7,T5,T6,T7");
+	ok("14 are live", part.live.length === 14 && part.live.sort().join(",") === "F10,F8,F9,R1,R2,R3,R4,R5,R6,R7,R8,T5,T6,T7");
+	ok("...and F8-F10 are family F AND live — the one family split across both halves (#4278)", ["F8", "F9", "F10"].every((id) => part.live.includes(id) && !part.scored.includes(id)));
 	ok("0 have no instrument anywhere — the bucket is empty, and it is still a bucket", part.none.length === 0 && Array.isArray(part.none));
 	// The bucket's contract outlives its last occupant: a row that lands in it must name an owner.
 	// Proved on a fixture rather than on the live table, which is empty.
@@ -2709,6 +2948,11 @@ function selfTest() {
 					// /r is absent: `permissions.spec` drives only the org-only routes.
 				],
 			},
+			// EMPTY, because the section it stands for is declared `awaitingFirstImport`: R8's
+			// instrument landed in #4277 before any `audit-interaction` run produced its artifact.
+			// Every R8 cell must therefore join as NOT MEASURED naming that marker, and R8 must
+			// score `null` — asserted below, in both directions, against `sectionRecordsProblem()`.
+			interaction: { runKey: "", records: [] },
 		},
 	};
 	// ── family F's fixture ───────────────────────────────────────────────────────────────────
@@ -2716,7 +2960,8 @@ function selfTest() {
 	// one predicate FAILING on it, a second list page whose F7 is WITHHELD because the only builder
 	// it reaches is declared undriven, and a page with no filter store at all — N/A on all seven,
 	// with the ONE reason RUBRIC.md declares for this family.
-	const F_IDS = fixtureRubric.filter((p) => p.family === "F").map((p) => p.id);
+	// The STATIC F rows — the live ones (F8–F10, #4278) are joined from the live fixture below.
+	const F_IDS = fixtureRubric.filter((p) => p.family === "F" && !(p.id in NOT_SCORED_STATICALLY)).map((p) => p.id);
 	const fixtureFilter = [
 		...F_IDS.map((id) =>
 			id === "F3"
@@ -2817,10 +3062,23 @@ function selfTest() {
 	);
 	ok("a live predicate IS scored — from the committed records, not from the tree", view.predicates.R2.instrument === "live" && view.predicates.R2.pass === 1 && view.predicates.R2.na === 2);
 	ok(
-		"the F column is instrumented on all seven rows, and carries a number",
-		view.routes.every((r) => r.families.F.instrumented === 7 && r.families.F.of === 7) && view.routes[0].families.F.score !== null,
+		"the F column is instrumented on all ten rows — seven static, three live — and carries a number",
+		view.routes.every((r) => r.families.F.instrumented === 10 && r.families.F.of === 10) && view.routes[0].families.F.score !== null,
 	);
-	ok("...and a page with no filter store still reads `all N/A`, not `—`", cell(view.routes.find((r) => r.route === "/r").families.F) === "all N/A");
+	// The fixture's interaction section is EMPTY and pending, exactly as the committed file is until the
+	// first `audit-interaction` import — so F8–F10 are WITHHELD on every route, never N/A. A page with
+	// no filter store therefore reads `all N/A or withheld`: its seven static rows are N/A (a claim
+	// about the page) and its three live rows were not measured (a claim about the run), and the cell
+	// must not fold the second into the first.
+	ok(
+		"...and a page with no filter store reads `all N/A or withheld` while F8-F10's section is pending, not `all N/A`",
+		cell(view.routes.find((r) => r.route === "/r").families.F) === "all N/A or withheld",
+	);
+	ok(
+		"...because F8-F10 join as NOT MEASURED naming the marker, on every route",
+		view.verdicts.filter((v) => ["F8", "F9", "F10"].includes(v.predicate)).every((v) => v.verdict === "NOT MEASURED" && v.reason.includes("has never been imported")) &&
+			view.verdicts.filter((v) => ["F8", "F9", "F10"].includes(v.predicate)).length === 3 * 3,
+	);
 	ok("...and the T column is now 7 of 7 — 4 static plus 3 live", view.routes[0].families.T.instrumented === 7 && view.routes[0].families.T.of === 7);
 
 	// RECONCILIATION: every finding is accounted for on both axes, and the two axes agree.
@@ -2919,9 +3177,10 @@ function selfTest() {
 
 	// ── the live half ────────────────────────────────────────────────────────────────────────
 	ok(
-		"the two sections partition the ten live predicates, disjointly",
-		livePredicateSections().size === 10 &&
-			[...livePredicateSections()].filter(([, k]) => k === "permissions").map(([id]) => id).join(",") === "T7",
+		"the three sections partition the fourteen live predicates, disjointly",
+		livePredicateSections().size === 14 &&
+			[...livePredicateSections()].filter(([, k]) => k === "permissions").map(([id]) => id).join(",") === "T7" &&
+			[...livePredicateSections()].filter(([, k]) => k === "interaction").map(([id]) => id).sort().join(",") === "F10,F8,F9,R8",
 	);
 	raises(
 		"a live predicate declaring a section LIVE_SECTIONS does not define RAISES",
@@ -2948,7 +3207,7 @@ function selfTest() {
 	// The comparison is worthless if the parse found nothing, so that is asserted FIRST and
 	// separately — "the emitter's table is empty" and "the emitter's table matches" must not read
 	// the same.
-	ok(`the ${LIVE_REPORT_TS} NA_REASONS table parses, and is not empty`, naBlock !== null && Object.keys(mirrored).length === 10);
+	ok(`the ${LIVE_REPORT_TS} NA_REASONS table parses, and is not empty`, naBlock !== null && Object.keys(mirrored).length === 14);
 	ok(
 		"...and LIVE_NA_REASONS mirrors it exactly, key for key and reason for reason",
 		JSON.stringify(Object.entries(mirrored).sort()) === JSON.stringify(Object.entries(LIVE_NA_REASONS).map(([k, v]) => [k, [...v]]).sort()),
@@ -2957,6 +3216,36 @@ function selfTest() {
 		"...including the three that are NEVER N/A — an empty list is the assertion, not an omission",
 		LIVE_NA_REASONS.R5.length === 0 && LIVE_NA_REASONS.R6.length === 0 && LIVE_NA_REASONS.R7.length === 0,
 	);
+
+	// R8'S NAME MATCHER MIRRORS THE CENSUS'S VERB LIST. `scripts/check-destructive-actions.mjs` is
+	// the ONE definition of "this verb destroys something"; `e2e/audit/inert.ts` needs the same set
+	// to decide which UNREGISTERED control it must refuse to activate. A second hand-kept list is
+	// what stops matching silently, so both are parsed out of their own files and compared — and the
+	// "did the parse find anything" question is asked FIRST and separately, because an empty parse
+	// and a matching parse must not read the same.
+	const inertSrc = readFileSync(path.join(REPO_ROOT, "apps/console/e2e/audit/inert.ts"), "utf8");
+	const censusSrc = readFileSync(path.join(REPO_ROOT, "scripts/check-destructive-actions.mjs"), "utf8");
+	const inertVerbs = (inertSrc.match(/export const DESTRUCTIVE_VERBS = \[([\s\S]*?)\] as const;/)?.[1] ?? "").match(/"([a-z]+)"/g)?.map((v) => v.slice(1, -1)) ?? [];
+	const censusVerbs = censusSrc.match(/export const DESTRUCTIVE_VERB =\s*\/\^\(([a-z|]+)\)/)?.[1]?.split("|") ?? [];
+	ok("the destructive verb lists both PARSE, and neither is empty", inertVerbs.length > 0 && censusVerbs.length > 0);
+	ok(
+		"...and e2e/audit/inert.ts's R8 name matcher is the census's verb set, verb for verb",
+		inertVerbs.slice().sort().join(",") === censusVerbs.slice().sort().join(","),
+	);
+
+	// ── the `awaitingFirstImport` marker, in BOTH directions, on hand-built sections ──────────
+	// Hand-built rather than the real constant on purpose: `LIVE_SECTIONS` is one state of the world
+	// at a time, and a check that can only exercise today's state stops exercising anything the day
+	// the marker is deleted. The forward direction (a section with no marker and no records) is the
+	// vacuity control's, asserted with the rest of them below.
+	const pendingSection = { artifact: "test-results/x.json", awaitingFirstImport: { since: "#4277", why: "its leg has not run" } };
+	const settledSection = { artifact: "test-results/x.json" };
+	ok("a PENDING section with no records is legal — that is what the marker is for", staleImportMarkerProblem("x", pendingSection, 0) === null);
+	ok(
+		"...and a PENDING section that CARRIES records raises, naming the edit that clears it",
+		(staleImportMarkerProblem("x", pendingSection, 3) ?? "").includes("delete that marker"),
+	);
+	ok("a settled section is not the marker's business, with records or without", staleImportMarkerProblem("x", settledSection, 3) === null && staleImportMarkerProblem("x", settledSection, 0) === null);
 
 	// ── evidence summaries: hand-built shapes, hand-written expectations ──────────────────────
 	// Never a value the summariser computed. Each shape is the one `e2e/audit/routes.spec.ts` and
@@ -3246,6 +3535,72 @@ function selfTest() {
 		summariseLiveEvidence("T7", { redirectedAway: true }) === "the member is refused and is redirected away rather than shown a state" &&
 			summariseLiveEvidence("T7", { redirectedAway: false }) === "the member is refused and the page renders a blank, not a deliberate state",
 	);
+	// R8's three FAIL shapes. Hand-built, hand-expected — never a value the summariser computed.
+	const r8Evidence = (over) => ({ enumerated: 12, activated: 12, inert: [], notActivated: [], disabled: { withReason: 0, noReason: 0 }, external: 0, networkSignal: true, enumeratedFrom: ["main"], ...over });
+	ok(
+		"R8 names how many enabled controls did nothing, and out of how many were ENUMERATED",
+		summariseLiveEvidence("R8", r8Evidence({ inert: [{ control: 'button "Export"', origin: "main" }, { control: 'button "Retry"', origin: "main" }] })) ===
+			"2 enabled controls did nothing within 1000ms — of 12 controls enumerated on this route",
+	);
+	ok(
+		"...and an undeclared destructive control is its OWN half of the sentence, not folded into inert",
+		summariseLiveEvidence("R8", r8Evidence({ notActivated: [{ control: 'button "Delete runner"', why: "unregistered-destructive" }] })) ===
+			"1 control named a destructive verb the ledger does not declare — of 12 controls enumerated on this route",
+	);
+	ok(
+		"...and a route carrying both says both",
+		summariseLiveEvidence("R8", r8Evidence({ inert: [{ control: 'button "Export"', origin: "chrome" }], notActivated: [{ control: 'button "Revoke key"', why: "unregistered-destructive" }] })).startsWith(
+			"1 enabled control did nothing within 1000ms, 1 control named a destructive verb",
+		),
+	);
+	ok(
+		"...and an EXCLUDED control is not a finding — a file chooser and a sign-out are declared, not inert",
+		summariseLiveEvidence("R8", r8Evidence({ inert: [{ control: 'button "x"', origin: "main" }], notActivated: [{ control: 'button "Sign out"', why: "session-ending" }, { control: 'button "Upload"', why: "opens-file-chooser" }] })) ===
+			"1 enabled control did nothing within 1000ms — of 12 controls enumerated on this route",
+	);
+	// F8-F10's FAIL shapes (#4278). Hand-built, hand-expected — never a value the summariser computed.
+	const f8Steps = (over) => ({ surface: "useJobsFilters", param: "statuses", countSource: "count-pill", steps: { applied: true, survivedReload: true, restoredList: true, resetUrl: true, resetCount: true, ...over } });
+	ok(
+		"F8 names the step that broke, and says the later ones were NOT REACHED rather than passing them",
+		summariseLiveEvidence("F8", f8Steps({ applied: false, survivedReload: null, restoredList: null, resetUrl: null, resetCount: null })) ===
+			"applying the first facet option never put a param this surface writes into the URL — 4 later steps not reached",
+	);
+	ok(
+		"...and a reload that loses the selection is its own sentence",
+		summariseLiveEvidence("F8", f8Steps({ survivedReload: false, restoredList: null })) === "reload() dropped the filter param from the URL — 1 later step not reached",
+	);
+	ok(
+		"...and two independent failures both appear",
+		summariseLiveEvidence("F8", f8Steps({ resetUrl: false, resetCount: false })) === "Reset left a filter param in the URL; Reset did not return the count to the full count",
+	);
+	raises("...and an F8 FAIL whose five steps all passed RAISES", () => summariseLiveEvidence("F8", f8Steps({})), "failed round-trip step");
+	ok(
+		"F9 counts moved and vanished options separately, out of how many were compared",
+		summariseLiveEvidence("F9", { surface: "s", compared: 5, moved: [{ option: "a", before: 2, after: 1 }], vanished: ["b", "c"] }) ===
+			"1 facet option count moved and 2 facet options vanished when the first option was applied — of 5 options compared",
+	);
+	raises("...and an F9 FAIL with nothing moved and nothing vanished RAISES", () => summariseLiveEvidence("F9", { compared: 5, moved: [], vanished: [] }), "facet option whose count moved");
+	ok(
+		"F10 names a per-keystroke fetch, and does not blame the RSC refetch the URL rewrite causes",
+		summariseLiveEvidence("F10", { debounce: { keystrokes: 6, windowMs: 500, dataRequests: 6, rscRequests: 6 }, empty: { rendered: true, handRolledOutside: 0 } }) ===
+			"6 data requests carried the search within 500ms of six keystrokes (at most 1)",
+	);
+	ok(
+		"...and the empty-state half separately",
+		summariseLiveEvidence("F10", { debounce: { dataRequests: 1, rscRequests: 6 }, empty: { rendered: false, handRolledOutside: 1 } }) ===
+			'a nonsense search rendered no `[data-slot="empty"]` inside `main`; 1 hand-rolled "no results" message outside the shared empty state',
+	);
+	raises(
+		"...and an F10 FAIL that is debounced, empty-stated and clean RAISES",
+		() => summariseLiveEvidence("F10", { debounce: { dataRequests: 1, rscRequests: 0 }, empty: { rendered: true, handRolledOutside: 0 } }),
+		"undebounced request",
+	);
+	raises(
+		"...and an R8 FAIL with nothing inert and nothing undeclared RAISES — a FAIL whose summary contradicts it",
+		() => summariseLiveEvidence("R8", r8Evidence({})),
+		"finds no inert control and no undeclared destructive one",
+	);
+
 	raises(
 		"an evidence shape the summariser does not know RAISES rather than summarising as nothing",
 		() => summariseLiveEvidence("R5", [{ id: "label" }]),
@@ -3319,15 +3674,25 @@ function selfTest() {
 		JSON.stringify({
 			version: 1,
 			source: fixtureLive.source,
-			runs: { routes: described("routes"), permissions: described("permissions"), ...Object.fromEntries(Object.entries(over ?? {}).map(([k, v]) => [k, described(k, v)])) },
+			runs: {
+				routes: described("routes"),
+				permissions: described("permissions"),
+				interaction: described("interaction"),
+				...Object.fromEntries(Object.entries(over ?? {}).map(([k, v]) => [k, described(k, v)])),
+			},
 		});
 	ok("a well-formed live file parses", parseLive(liveText({ routes: { runKey: "k", records: [liveRecord("/a", "R1", "PASS")] } })).sections.routes.records.length === 1);
 	raises("a version this file does not know RAISES", () => parseLive(JSON.stringify({ version: 2 })), "expected `version: 1`");
 	raises("a file with no provenance RAISES", () => parseLive(JSON.stringify({ version: 1, runs: {} })), "a baseline nobody can cite is not one");
 	raises("a missing section RAISES", () => parseLive(JSON.stringify({ version: 1, source: fixtureLive.source, runs: { routes: described("routes") } })), "runs.permissions");
 	raises(
+		"...including the interaction one, which is EMPTY but not absent — a section nobody declares is a section nobody reads",
+		() => parseLive(JSON.stringify({ version: 1, source: fixtureLive.source, runs: { routes: described("routes"), permissions: described("permissions") } })),
+		"runs.interaction",
+	);
+	raises(
 		"a section that describes an artifact LIVE_SECTIONS has moved RAISES rather than reading on",
-		() => parseLive(JSON.stringify({ version: 1, source: fixtureLive.source, runs: { routes: described("routes", { artifact: "test-results/old.json" }), permissions: described("permissions") } })),
+		() => parseLive(JSON.stringify({ version: 1, source: fixtureLive.source, runs: { routes: described("routes", { artifact: "test-results/old.json" }), permissions: described("permissions"), interaction: described("interaction") } })),
 		"describe a section that has moved",
 	);
 	raises(
@@ -3372,7 +3737,7 @@ function selfTest() {
 	);
 
 	// ── vacuity: "found nothing" must not be reachable from "was not run" ─────────────────────
-	const emptyLive = { source: fixtureLive.source, sections: { routes: { runKey: "k", records: [] }, permissions: { runKey: "k", records: [] } } };
+	const emptyLive = { source: fixtureLive.source, sections: { routes: { runKey: "k", records: [] }, permissions: { runKey: "k", records: [] }, interaction: { runKey: "", records: [] } } };
 	ok("a healthy live artifact is clean", liveVacuityProblems(fixtureLive, ["/a", "/b", "/r"]).length === 0);
 	ok(
 		"an EMPTY live artifact is a problem, not ten predicates nobody failed",
@@ -3381,6 +3746,28 @@ function selfTest() {
 	ok(
 		"...and every live predicate with no record anywhere is named",
 		liveVacuityProblems(emptyLive, ["/a"]).filter((p) => p.includes("has NO record in any section")).length === 10,
+	);
+	// R8 IS THE ELEVENTH LIVE PREDICATE AND IS NOT IN THAT TEN, because its section is declared
+	// `awaitingFirstImport` — the ONE thing the marker buys. The two assertions below are the two
+	// halves that keep it from becoming a hole: the pending section is not reported as a vacuous
+	// artifact, AND every cell it owns still joins as NOT MEASURED naming the marker, so the
+	// predicate scores `null` and never 1. Delete the marker and the first of these flips, which is
+	// the point.
+	ok(
+		"a PENDING section is not reported as a vacuous artifact — that is the marker's whole job",
+		!liveVacuityProblems(emptyLive, ["/a"]).some((p) => p.includes("`interaction`")) &&
+			!liveVacuityProblems(emptyLive, ["/a"]).some((p) => p.includes("R8 has NO record")),
+	);
+	ok(
+		"...and its cells still join as NOT MEASURED, naming the marker rather than a coverage gap",
+		joinLive(emptyLive, ["/a"]).filter((v) => v.predicate === "R8").every((v) => v.verdict === "NOT MEASURED" && v.reason.includes("has never been imported")),
+	);
+	ok(
+		"...so R8 scores null, never 1 — a column of withheld cells is not a clean board",
+		(() => {
+			const cells = joinLive(emptyLive, ["/a", "/b"]).filter((v) => v.predicate === "R8");
+			return cells.length === 2 && cells.filter((v) => v.verdict === "PASS").length === 0;
+		})(),
 	);
 	ok(
 		"a record naming a route the manifest does not define is a problem",
@@ -3549,6 +3936,34 @@ function selfTest() {
 	ok("--run without --import-live means nothing and says so", parseCliArgs(["--run=r"]).error?.includes("only mean something with --import-live"));
 	ok("--import-live and --write cannot both be asked for", parseCliArgs(["--import-live=x", "--run=r", "--commit=c", "--write"]).error?.includes("cannot both"));
 	ok("...and the existing modes are unchanged", parseCliArgs([]).mode === "check" && parseCliArgs(["--write"]).mode === "write" && parseCliArgs(["--nope"]).error?.includes("unrecognised"));
+	ok("--filter-surfaces parses, and cannot be combined with another mode", parseCliArgs(["--filter-surfaces"]).mode === "filter-surfaces" && parseCliArgs(["--filter-surfaces", "--write"]).error?.includes("cannot both"));
+
+	// THE LIVE F8-F10 SUBJECT SET, on the REAL tree. What `filters.spec.ts` measures over must be the
+	// set the static F1-F6 join scores: every route that owns a surface here must be a route whose
+	// static F1 cell is not N/A, and the reverse. Asked through `scoreFilterRoutes`, the static join's
+	// own function, so the property compared is the two joins agreeing — not this code agreeing with
+	// itself. And every surface a route owns must carry at least one param, or F8 has nothing to ask.
+	const subject = filterSurfaceRoutes(REPO_ROOT);
+	ok(`the real subject set derives at least 15 surfaces (${subject.surfaces})`, subject.surfaces >= 15);
+	const staticListRoutes = (() => {
+		const scanned = scanFilterStandard(filterStandardIo(REPO_ROOT));
+		const io = closureIo(REPO_ROOT);
+		const routes = runOver(REPO_ROOT).manifest.routes;
+		const closures = new Map(routes.map((r) => [r.route, moduleClosure([path.join(REPO_ROOT, r.file)], io)]));
+		return scoreFilterRoutes(scanned, closures, routes.map((r) => r.route))
+			.filter((v) => v.predicate === "F1" && v.verdict !== "N/A")
+			.map((v) => v.route)
+			.sort();
+	})();
+	const liveListRoutes = subject.routes.filter((r) => r.surfaces.length > 0).map((r) => r.route).sort();
+	ok(
+		`...and its list routes are EXACTLY the routes the static F join scores (${liveListRoutes.length})`,
+		liveListRoutes.length > 0 && JSON.stringify(liveListRoutes) === JSON.stringify(staticListRoutes),
+	);
+	ok(
+		"...and every owned surface carries at least one URL param",
+		subject.routes.every((r) => r.surfaces.every((sf) => sf.params.length > 0)),
+	);
 
 	// ── rendering ────────────────────────────────────────────────────────────────────────────
 	const md = renderScoreboard(view);
@@ -3581,7 +3996,7 @@ function selfTest() {
 	);
 	ok("...and no absolute path either", !md.includes(REPO_ROOT) && !renderJson(view).includes(REPO_ROOT));
 	const parsedJson = JSON.parse(renderJson(view));
-	ok("the JSON carries one record per (route, predicate) it scored — 24 static + 10 live, every predicate", parsedJson.verdicts.length === 3 * 34);
+	ok("the JSON carries one record per (route, predicate) it scored — 24 static + 14 live, every predicate", parsedJson.verdicts.length === 3 * 38);
 	ok("...in the shape e2e/audit/report.ts writes", parsedJson.verdicts.every((v) => "route" in v && "predicate" in v && "verdict" in v));
 
 	// ── splice ───────────────────────────────────────────────────────────────────────────────
@@ -3599,17 +4014,24 @@ function selfTest() {
 /**
  * The per-predicate line the `ui-audit` job prints to its own run summary.
  *
- * WHY THIS EXISTS. The job is legitimately, permanently RED — R3, R5 and R6 carry real debt that
- * `LIVE_DEBT` owns and that this wave has not paid yet — so "did the check go green" answers
- * nothing about any single lane. #3893 is the case that made it concrete: it removed the topbar
- * overlap, its check was red before and red after, and the only way to see that it had worked was
- * to break the run down by predicate BY HAND. `R4 7 → 0, nothing else moved` is a clean, strong
- * result the check itself did not surface, and nobody does that arithmetic per lane.
+ * WHY THIS EXISTS. The job was legitimately, permanently RED for as long as `LIVE_DEBT` carried
+ * rows — so "did the check go green" answered nothing about any single lane. #3893 is the case
+ * that made it concrete: it removed the topbar overlap, its check was red before and red after,
+ * and the only way to see that it had worked was to break the run down by predicate BY HAND.
+ * `R4 7 → 0, nothing else moved` is a clean, strong result the check itself did not surface, and
+ * nobody does that arithmetic per lane.
  *
- * So this is a RENDERING of numbers that already exist, not a new measurement. It is NOT a case
- * for making the job required: it cannot be, while it is honestly red, and forcing it green by
- * suppressing the debt is the failure this whole wave exists to prevent. The point is to make an
- * honest red READABLE.
+ * `LIVE_DEBT` is EMPTY as of the import at run 34851361970 @ `e48ff5213`, so the footer below is
+ * derived from it rather than naming predicates in prose. The sentence it used to carry was
+ * "R3, R5 and R6 carry debt `LIVE_DEBT` owns" — and the table it claimed to summarise held FOUR
+ * rows, R3, R4, R5 and R6, so it was already out of step with its own subject before this import
+ * emptied the table under it. Nothing tests a sentence; the check in `buildView()` that forces
+ * this table to shrink cannot reach a string literal in a different function.
+ *
+ * So this is a RENDERING of numbers that already exist, not a new measurement. It is not on its
+ * own a case for making the job required: an empty debt table is one run's measurement, not a
+ * standing guarantee, and forcing the job green by suppressing debt is the failure this whole
+ * wave exists to prevent. The point is to make the result READABLE either way.
  *
  * COUNTS COME FROM THE ARTIFACT, and this function's signature is how that is enforced: it takes
  * parsed records and has no access to a log. Grepping the job's console output over-counts —
@@ -3618,9 +4040,10 @@ function selfTest() {
  *
  * @param {Record<string, {records: {predicate: string, verdict: string}[]}>} fresh  this run
  * @param {Record<string, {records: {predicate: string, verdict: string}[]}>} baseline  committed
+ * @param {typeof LIVE_DEBT} [liveDebt]  injectable for the same reason `buildView()` takes it
  * @returns {string} markdown
  */
-export function renderStepSummary(fresh, baseline) {
+export function renderStepSummary(fresh, baseline, liveDebt = LIVE_DEBT) {
 	// A MISSING OR EMPTY `records` ARRAY RAISES — it is never treated as "no failures". This is the
 	// same refusal `importLive` makes, for the same reason, and it is the whole defect class this
 	// summary exists to fix: a truncated artifact rendering as a clean board is worse than no
@@ -3722,6 +4145,13 @@ export function renderStepSummary(fresh, baseline) {
 			]
 		: [];
 
+	// DERIVED FROM THE TABLE, never written in prose. The predicates that carry debt change; a
+	// sentence naming them does not, and this one is printed into every run summary.
+	const debtIds = Object.keys(liveDebt ?? {}).sort();
+	const footer = debtIds.length
+		? `This job is **not required** and is honestly red: ${debtIds.map((id) => `**${id}**`).join(", ")} ${debtIds.length === 1 ? "carries" : "carry"} debt \`LIVE_DEBT\` owns.`
+		: "This job is **not required**, and `LIVE_DEBT` is empty — no live predicate carries recorded debt. A FAIL here is a REGRESSION, not a known one.";
+
 	return [
 		"### UI conformance audit — failures per predicate",
 		"",
@@ -3732,19 +4162,21 @@ export function renderStepSummary(fresh, baseline) {
 		"|---|---:|---:|---|",
 		...rows,
 		"",
-		"This job is **not required** and is honestly red: R3, R5 and R6 carry debt `LIVE_DEBT` owns.",
+		footer,
 		"A red total says nothing about one lane; the column that moved does.",
 	].join("\n");
 }
 
 export const USAGE = [
-	"Usage: node apps/console/scripts/audit-report.mjs [--write|--json|--self-test|--import-live=<dir>|--help]",
+	"Usage: node apps/console/scripts/audit-report.mjs [--write|--json|--self-test|--filter-surfaces|--import-live=<dir>|--help]",
 	"",
 	"  (no argument)  check the generated files are in sync with the tree; exit 2 if not",
 	"  --write        regenerate apps/console/docs/ui-conformance/scoreboard.md and",
 	"                 apps/console/ui-conformance-baseline.json",
 	"  --json         print the derived view; write nothing",
 	"  --self-test    run the fixture suite; exit 1 on any failure",
+	"  --filter-surfaces  print, per route, the filter surfaces it owns and the URL params",
+	"                 each writes — the subject set e2e/audit/filters.spec.ts measures F8-F10 over",
 	"",
 	"  --step-summary=<dir>  print the per-predicate failure table for a run's `ui-audit`",
 	"                        artifact, against the committed baseline. Writes nothing;",
@@ -3768,7 +4200,7 @@ export const USAGE = [
  * the shape that silently imports a baseline with no provenance.
  */
 export function parseCliArgs(argv) {
-	const MODES = { "--write": "write", "--json": "json", "--self-test": "self-test", "--help": "help", "-h": "help" };
+	const MODES = { "--write": "write", "--json": "json", "--self-test": "self-test", "--filter-surfaces": "filter-surfaces", "--help": "help", "-h": "help" };
 	const VALUED = ["--import-live", "--run", "--commit", "--step-summary"];
 	if (argv.length === 0) return { mode: "check", error: null };
 
@@ -3837,6 +4269,16 @@ if (invokedDirectly) {
 		}
 	}
 
+	if (parsed.mode === "filter-surfaces") {
+		try {
+			console.log(JSON.stringify(filterSurfaceRoutes(REPO_ROOT), null, "\t"));
+		} catch (err) {
+			console.error(`audit-report: ${err instanceof Error ? err.message : String(err)}`);
+			process.exit(1);
+		}
+		process.exit(0);
+	}
+
 	if (parsed.mode === "step-summary") {
 		// Same discovery as --import-live: both layouts a person or a CI step actually has in front
 		// of them — the unpacked `ui-audit` artifact, which contains `test-results/`, and that
@@ -3858,6 +4300,9 @@ if (invokedDirectly) {
 			// never arrived is the exact shape this whole job exists to stop — a summary that reads
 			// like good news because nothing was measured.
 			if (found === undefined) {
+				// A section still marked `awaitingFirstImport` has no artifact BY DECLARATION, and
+				// saying so is not the same as rendering it as zero failures.
+				if (section.awaitingFirstImport !== undefined) continue;
 				console.error(
 					`audit-report: could not find \`${leaf}\` under ${candidates.join(" or ")}. ` +
 						`Refusing to summarise: a section with no artifact would render as zero failures.`,
@@ -3900,10 +4345,13 @@ if (invokedDirectly) {
 				}
 			});
 			if (found === undefined) {
+				// Pending sections import as empty rather than blocking the refresh of the others —
+				// see `importLive()`, which is where that decision is argued and enforced.
+				if (section.awaitingFirstImport !== undefined) continue;
 				console.error(
 					`audit-report: could not find \`${leaf}\` under ${candidates.join(" or ")}.\n` +
 						`Download it with \`gh run download <run-id> -n ui-audit -D <dir>\`; the \`audit\` job ` +
-						`uploads both files with 14-day retention.`,
+						`uploads its files with 14-day retention.`,
 				);
 				process.exit(1);
 			}

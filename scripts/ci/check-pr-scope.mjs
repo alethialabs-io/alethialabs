@@ -85,6 +85,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { globsOverlap, isWorkableBoardUnit, readScope } from "../lib/scope-overlap.mjs";
+import { FILES_API_CAP, refuseIfTruncated, changedFilesForPR } from "../lib/pr-changed-files.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BOARD_PR = "scripts/lib/board-pr.sh";
@@ -285,13 +286,14 @@ function gh(args) {
 }
 
 /** The files this PR changes, from the API rather than a local diff — the guards job is a shallow
- *  checkout, so `git diff base...head` has no base to reach. */
+ *  checkout, so `git diff base...head` has no base to reach.
+ *
+ *  The read itself lives in `scripts/lib/pr-changed-files.mjs` because it is not specific to this
+ *  guard: `gh pr diff` refuses past 20000 lines, every guard that reads a PR's file list fails
+ *  CLOSED on that, and a promotion PR is over the limit essentially always. Keeping one
+ *  implementation is the point — see that file's header for why (#4726, #4748). */
 function liveChangedFiles(pr) {
-	const out = gh(["pr", "diff", String(pr), "--name-only"]);
-	return out
-		.split("\n")
-		.map((s) => s.trim())
-		.filter(Boolean);
+	return changedFilesForPR(pr, gh);
 }
 
 function main() {
@@ -395,6 +397,47 @@ function selfTest() {
 		body: globs === null ? "no scope here" : `scope: ${globs.join(" ")}`,
 	});
 	const scopeOf = (globs) => new Map([[1, { ...readScope(`scope: ${globs.join(" ")}`) }]]);
+
+	// ── the files-API ceiling is refused in ONE direction and allowed in the other (#4726) ──
+	//
+	// Both cases matter, and the passing one matters more. A cap check that only ever refuses is
+	// indistinguishable from a cap check wired to refuse unconditionally — which would fail every
+	// PR closed, the exact failure #4726 is about, moved one layer down.
+	ok(
+		"a file list AT the API ceiling is refused, not measured",
+		(() => {
+			try {
+				refuseIfTruncated(new Array(FILES_API_CAP).fill("a.ts"), FILES_API_CAP);
+				return false;
+			} catch (err) {
+				return err instanceof Error && /truncated/.test(err.message);
+			}
+		})(),
+		"a list that may be cut off must never be treated as whole",
+	);
+	ok(
+		"...and a list one BELOW the ceiling is returned untouched",
+		(() => {
+			const files = new Array(FILES_API_CAP - 1).fill("a.ts");
+			try {
+				return refuseIfTruncated(files, FILES_API_CAP) === files;
+			} catch {
+				return false;
+			}
+		})(),
+		"an ordinary large PR must still be measured",
+	);
+	ok(
+		"...and an EMPTY list is not refused here — blindness is analyse()'s call, not the reader's",
+		(() => {
+			try {
+				return refuseIfTruncated([], FILES_API_CAP).length === 0;
+			} catch {
+				return false;
+			}
+		})(),
+		"a zero-file PR is reported BLIND by analyse(); the reader must not pre-empt that verdict",
+	);
 
 	// ── the vocabulary is READ, and a file it cannot read is a refusal ──
 	ok(

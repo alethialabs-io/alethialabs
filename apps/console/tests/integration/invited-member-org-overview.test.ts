@@ -125,7 +125,7 @@ describeIfDb("an invited member can load /{org} (#3730)", () => {
 		// This is also the answer to "is it only /{org}, or every org-scoped route?" — an ungranted
 		// member was denied EVERY permission in the matrix, so every route under `[org]` that awaits
 		// an `authorize()`-gated action threw into the same shared `[org]/error.tsx`. What is left
-		// after the fix is a real permission boundary (a viewer holds no `activity:view_activity`,
+		// after the fix is a real permission boundary (a viewer holds no `activity:export_activity`,
 		// no `billing:manage_billing`), which is exactly what T7 exists to score.
 		const expected = new Set(
 			BUILT_IN_ROLES.viewer === "*" ? PERMISSIONS.map((p) => p.key) : BUILT_IN_ROLES.viewer,

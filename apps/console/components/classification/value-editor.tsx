@@ -19,7 +19,7 @@ import {
 import { Input } from "@repo/ui/input";
 import { Switch } from "@repo/ui/switch";
 import { Check, ShieldCheck } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useId } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import type { ValueDTO } from "@/app/server/actions/classification/dimensions";
@@ -51,6 +51,11 @@ export function ValueEditor({
 	onSaved: () => void;
 }) {
 	const isEdit = Boolean(value);
+	// Each switch is named by its visible row title, by reference (#4352). The title's `<span>`
+	// stops short of the `InfoHint` beside it, so the hint's trigger is not read into the name.
+	const enforceLabelId = useId();
+	const approvalLabelId = useId();
+	const verifyLabelId = useId();
 	const form = useForm<ValueInput>({
 		resolver: zodResolver(valueInputSchema),
 		defaultValues: {
@@ -149,7 +154,7 @@ export function ValueEditor({
 								<ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-text-tertiary" />
 								<div>
 									<div className="flex items-center gap-1.5 text-ui-sm font-medium">
-										Enforce promotion gates
+										<span id={enforceLabelId}>Enforce promotion gates</span>
 										<InfoHint>
 											When an environment is tagged with this value, promotions{" "}
 											<em>into</em> that environment require these gates — on top of the
@@ -162,14 +167,21 @@ export function ValueEditor({
 									</p>
 								</div>
 							</div>
-							<Switch checked={enforceOn} onCheckedChange={setEnforce} />
+							<Switch
+								aria-labelledby={enforceLabelId}
+								checked={enforceOn}
+								onCheckedChange={setEnforce}
+							/>
 						</div>
 
 						{enforceOn && enforcement && (
 							<div className="space-y-3 border-t p-3">
 								<div className="flex items-center justify-between gap-4">
-									<div className="text-ui-sm">Require manual approval</div>
+									<div id={approvalLabelId} className="text-ui-sm">
+										Require manual approval
+									</div>
 									<Switch
+										aria-labelledby={approvalLabelId}
 										checked={enforcement.require_approval}
 										onCheckedChange={(v) =>
 											form.setValue("enforcement.require_approval", v, {
@@ -180,13 +192,14 @@ export function ValueEditor({
 								</div>
 								<div className="flex items-center justify-between gap-4">
 									<div className="flex items-center gap-1.5 text-ui-sm">
-										Require verify pass
+										<span id={verifyLabelId}>Require verify pass</span>
 										<InfoHint>
 											The elench verify gate must pass on the promotion{"'"}s plan (no
 											unwaived hard control failures).
 										</InfoHint>
 									</div>
 									<Switch
+										aria-labelledby={verifyLabelId}
 										checked={enforcement.require_verify_pass}
 										onCheckedChange={(v) =>
 											form.setValue("enforcement.require_verify_pass", v, {

@@ -46,3 +46,9 @@ output "e2e_budget_sns_topic_arn" {
   description = "SNS topic the e2e AWS Budget alerts publish to (hang a kill-switch here later)."
   value       = aws_sns_topic.e2e_budget.arn
 }
+
+# ── E2E assertion broker trust (#4226) ────────────────────────────────────────
+output "e2e_broker_oidc_provider_arn" {
+  description = "The IAM OIDC provider trusting the E2E assertion broker, or null while e2e_broker_issuer_url is unset. The role the broker's assertion is exchanged for is e2e_nightly_role_arn."
+  value       = one(aws_iam_openid_connect_provider.e2e_broker[*].arn)
+}

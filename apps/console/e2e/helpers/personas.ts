@@ -59,12 +59,28 @@ export function personaEmail(name: PersonaName, stamp: number, attempt = 1): str
 	return `e2e-${name.toLowerCase()}-${stamp}-${attempt}@alethia.test`;
 }
 
+/** How patient a walk is prepared to be about the code reaching the dev-server log. */
+export interface OtpPatience {
+	/**
+	 * Overrides waitForOtp's 30s default. A spec that walks a signup INSIDE a longer journey needs
+	 * this: the OTP wait is the binding constraint, and `test.setTimeout` cannot reach it — the
+	 * helper throws "No sign-in code appeared … within 30000ms" long before the test's own budget
+	 * is anywhere near spent, so raising the test timeout alone buys nothing at all.
+	 */
+	otpTimeoutMs?: number;
+}
+
 /**
  * Requests an email-OTP code for `email` on /signup (or /login) and submits it, landing the account
  * on whatever comes next (/onboarding for new accounts, the app for returning ones). Shared by every
  * persona flow; the caller captures the log cursor timing via waitForOtp internally.
  */
-export async function emailOtpSignIn(page: Page, email: string, mode: "signup" | "login"): Promise<void> {
+export async function emailOtpSignIn(
+	page: Page,
+	email: string,
+	mode: "signup" | "login",
+	{ otpTimeoutMs }: OtpPatience = {},
+): Promise<void> {
 	const cursor = await logCursor();
 	await page.goto(`/${mode}`);
 	await dismissConsentBanner(page);
@@ -74,7 +90,9 @@ export async function emailOtpSignIn(page: Page, email: string, mode: "signup" |
 	// Per-RECIPIENT, not "the newest code in the log". global-setup is serial, but the QA env is
 	// shared with whatever else is signing in on it (the audit project, a person in a browser), and
 	// a generic match would hand this persona somebody else's code and fail on a valid stack.
-	const code = await waitForOtp(cursor, { email });
+	// `timeoutMs: undefined` takes waitForOtp's own default, so an unopinionated caller — every
+	// global-setup persona — keeps the 30s it has always had.
+	const code = await waitForOtp(cursor, { email, timeoutMs: otpTimeoutMs });
 	await page.locator("input[data-input-otp]").first().fill(code);
 }
 
@@ -171,9 +189,16 @@ function orgNameFor(kind: string, email: string): string {
 /**
  * Signs up a fresh account and completes onboarding on the Hobby (free) plan, landing on the org
  * overview at /{slug}. Returns the resolved org slug.
+ *
+ * `otpTimeoutMs` is forwarded to the OTP wait, and a spec walking this signup as one leg of a
+ * longer journey should pass it: the inner wait — not the test's timeout — is what gives up first.
  */
-export async function signUpHobby(page: Page, email: string): Promise<{ orgSlug: string }> {
-	await emailOtpSignIn(page, email, "signup");
+export async function signUpHobby(
+	page: Page,
+	email: string,
+	patience: OtpPatience = {},
+): Promise<{ orgSlug: string }> {
+	await emailOtpSignIn(page, email, "signup", patience);
 	await page.waitForURL(/\/onboarding/, { timeout: 30_000 });
 	await page.locator("#org-name").fill(orgNameFor("Hobby", email));
 	// Hobby (community) tile is selected by default; click it for determinism, then create.

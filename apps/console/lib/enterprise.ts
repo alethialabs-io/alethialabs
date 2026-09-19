@@ -21,6 +21,7 @@ import { checksFor, denyChecksFor } from "@/lib/authz/fga-mapping";
 import { buildAuthorizationModel } from "@/lib/authz/fga-model";
 import {
   expandGrant,
+  grantScopeFromRow,
   hierarchyTuple,
   teamMemberTuple,
 } from "@/lib/authz/fga-tuples";
@@ -93,6 +94,19 @@ export interface CoreContext {
   fga: {
     buildModel: typeof buildAuthorizationModel;
     expandGrant: typeof expandGrant;
+    /**
+     * Narrows a raw `grants` row to the typed `GrantScope` `expandGrant` takes — or null when the
+     * row resolves to nothing for its effect (under `EMPTY_SCOPE_DENIES = "the_whole_org"`, only
+     * an ALLOW row can). Injected here rather than imported in ee/, on
+     * the same seam as `expandGrant`, because the two must never be able to disagree: ee's tuple
+     * writer decides where a grant's tuples LIVE and `expandGrant` decides what they ARE, and if
+     * those two read the scope separately a revoke deletes from an object the write never touched.
+     *
+     * It applies `targetForEffect` (lib/authz/grant-scope.ts), the one predicate both PDP engines
+     * answer "what does this row scope to?" with — effect-aware because an allow row is asked what
+     * it CONFERS and a deny row what it EXCLUDES (see `EMPTY_SCOPE_DENIES`).
+     */
+    grantScopeFromRow: typeof grantScopeFromRow;
     hierarchyTuple: typeof hierarchyTuple;
     teamMemberTuple: typeof teamMemberTuple;
     rolePermissionKeys: typeof rolePermissionKeys;
@@ -200,6 +214,7 @@ function loadEnterprise(): void {
       fga: {
         buildModel: buildAuthorizationModel,
         expandGrant,
+        grantScopeFromRow,
         hierarchyTuple,
         teamMemberTuple,
         rolePermissionKeys,

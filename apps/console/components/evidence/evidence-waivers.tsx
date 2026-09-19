@@ -58,7 +58,8 @@ export function EvidenceWaivers({
 					title={EVIDENCE_HELP.waiver.title}
 					docsHref={EVIDENCE_HELP.waiver.docsHref}
 					side="bottom"
-					className="text-text-disabled hover:text-text-secondary"
+					// Same active control, same tier, same reason as the table's header help. #4612.
+					className="text-text-tertiary hover:text-text-secondary"
 				>
 					{EVIDENCE_HELP.waiver.body}
 				</FieldHelp>
@@ -70,7 +71,9 @@ export function EvidenceWaivers({
 				</span>
 				<span className="flex-1" />
 				{waivers.length >= 100 && (
-					<span className="font-mono text-ui-2xs text-text-disabled">
+					// The truncation notice is the only thing that says the list is not the whole
+					// list. Nothing about it is a disabled control. #4612.
+					<span className="font-mono text-ui-2xs text-text-tertiary">
 						Showing the 100 most recent
 					</span>
 				)}
@@ -156,7 +159,13 @@ export function EvidenceWaivers({
 											label={w.active ? "Active" : "Expired"}
 											className="text-ui-3xs"
 										/>
-										<span className="font-mono text-ui-2xs text-text-disabled">
+										{/*
+										  * The expiry line under the pill. An EXPIRED waiver is not
+										  * a disabled control — the word the row exists to deliver
+										  * is "No expiry", and that is the loudest of the three
+										  * things this cell can say, not the quietest. #4612.
+										  */}
+										<span className="font-mono text-ui-2xs text-text-tertiary">
 											{w.expiry
 												? `Expires ${formatRelative(w.expiry)}`
 												: "No expiry"}

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { type SQL, and, eq, sql } from "drizzle-orm";
+import { type SQL, and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { authorizeCli } from "@/lib/authz/guard";
 import {
@@ -24,50 +24,30 @@ const CLUSTERS_LIST = "clusters";
  * region and the project's default environment. Wire-locked: the flat `project_*` keys are the
  * frozen CLI contract.
  *
- * ── THE TENANCY PREDICATE, WHICH IS THE WHOLE POINT OF THIS CONVERSION ─────────────────────────
+ * ── THE TENANCY PREDICATE: ONE COLUMN OF THE TABLE BEING PAGED ─────────────────────────────────
  *
- * `project_cluster` HAS NO TENANT COLUMN. `jobs` has `org_id`, so `/api/jobs` could state its
- * scope as `org_id IN (…)` and hand that same fragment to both the rows query and the count
- * (#3857). This table's schema (`lib/db/schema/project-components.ts`) carries `project_id`,
- * `environment_id`, `fabric_id` and `cloud_identity_id` and nothing else that names a tenant — a
- * cluster belongs to the org that owns its project, and to no column.
+ *     project_cluster.org_id = $1
  *
- * The route used to express that as a JOIN predicate: `.innerJoin(projects, …).where(
- * eq(projects.org_id, actor.orgId))`. That reads correctly and it is why the count could not
- * simply follow: `countScoped` issues `SELECT 1 FROM <table> WHERE <scope>` over ONE table, so a
- * scope naming `projects.org_id` renders `SELECT 1 FROM project_cluster WHERE projects.org_id =
- * $1` — a missing-FROM-clause ERROR, not a slow query. A count and a rows query that reach the
- * same rows through two DIFFERENT constructions are two statements that can disagree, and the
- * console's filter standard exists because they eventually do.
+ * `countScoped` issues `SELECT 1 FROM <table> WHERE <scope>` over ONE table, so the scope has to be
+ * expressible on a column of `project_cluster` itself — a scope naming `projects.org_id` renders
+ * `SELECT 1 FROM project_cluster WHERE projects.org_id = $1`, a missing-FROM-clause ERROR. #3672
+ * met that with a semijoin (`project_id IN (SELECT id FROM projects WHERE org_id = $1)`) because
+ * the table had no tenant column. #4116 gave it one: `project_cluster.org_id` is a copy of the
+ * parent's `projects.org_id` that the DATABASE keeps equal — a trigger overwrites it from the parent
+ * on every insert and move, a trigger on `projects` rewrites it when the project changes org, and a
+ * CHECK makes NULL unstorable (see the tenancy note in lib/db/schema/project-components.ts). So the
+ * predicate is now the column, and the count and the rows query receive the identical fragment;
+ * `paginate` hands it to both, and the rows query adds only the keyset predicate on top.
  *
- * SO THE SCOPE IS RESTATED AS A SEMIJOIN ON ONE COLUMN of `project_cluster`:
- *
- *     project_cluster.project_id IN (SELECT projects.id FROM projects WHERE projects.org_id = $1)
- *
- * That is the same row set — `project_id` is `NOT NULL` and references `projects.id`, so the
- * innerJoin the rows query still needs for `project_name`/`region` is 1:1 and drops nothing the
- * semijoin counted — and it is expressible on a single column of the table being paged. The
- * count and the rows query now use the IDENTICAL fragment; `paginate` hands it to both, and the
- * rows query adds only the keyset predicate on top.
- *
- * WHY THAT DISTINCTION IS NOT PEDANTRY. These routes read through `getServiceDb()`, whose role
- * bypasses RLS, so this predicate is the entire tenancy boundary. A boundary that spans two
- * tables is a boundary with a second place to widen it: drop the join condition, or leave the
- * join and lose the `WHERE`, and the query still parses and still returns rows — another org's.
- * A single-column `IN` has no such shape. It also takes exactly one subject, `actor.orgId`; the
- * caller's identity never enters it, which is the failure `/api/jobs` shipped and reverted when
- * it copied the `owner_all` RLS policy into a service-role query (see that route's doc — RLS
- * binds `app.current_owner` to the session's human, while a service token's `actor.userId` is
- * whoever MINTED it).
- *
- * WHAT IS STILL NOT EXPRESSIBLE ON A TENANT COLUMN, AND IS A FINDING RATHER THAN A DETAIL: this
- * predicate re-derives the tenancy on every request. It is correct, but it is correct BECAUSE
- * `projects.org_id` is consulted, not because `project_cluster` records who owns the row. There
- * is no `org_id` on this table for an RLS policy to bind to, and no way to write one; every
- * reader of `project_cluster` has to know to reach through `projects`, and a reader that forgets
- * gets a query that works. The durable fix is a denormalized `project_cluster.org_id` stamped by
- * the same trigger family as `jobs_set_org_id`, which is a migration and belongs to its own unit
- * — see the PR that ships this.
+ * WHY ONE COLUMN MATTERS HERE. These routes read through `getServiceDb()`, whose role bypasses
+ * RLS, so this predicate is the entire tenancy boundary. A boundary that spans two tables has a
+ * second place to widen it: drop the join condition, or leave the join and lose the `WHERE`, and the
+ * query still parses and still returns rows — another org's. An equality on the paged table's own
+ * column has no such shape. It also takes exactly one subject, `actor.orgId`; the caller's identity
+ * never enters it, which is the failure `/api/jobs` shipped and reverted when it copied the
+ * `owner_all` RLS policy into a service-role query (see that route's doc — RLS binds
+ * `app.current_owner` to the session's human, while a service token's `actor.userId` is whoever
+ * MINTED it).
  *
  * ── ORDERING: `created_at`, NOT `updated_at` ───────────────────────────────────────────────────
  *
@@ -149,16 +129,12 @@ export async function GET(req: Request) {
 	try {
 		const db = getServiceDb();
 
-		// The tenancy boundary, on ONE column of the table being paged. See the doc above for why
-		// the join predicate it replaces could not be handed to the count.
-		//
-		// Written as a `sql` template rather than `inArray(projectCluster.project_id, db.select(…))`
-		// so the fragment carries no `db` — it is a pure predicate the mocked suite can render and
-		// read, and it is the SAME object the count and the rows query receive. The embedded `eq()`
-		// keeps the org id bound through the column's own drizzle type mapper; a bare
-		// `${actor.orgId}` would hand postgres-js a plain string for a `uuid` column.
-		const orgScope: SQL = sql`${projectCluster.project_id} in (select ${projects.id} from ${projects} where ${eq(projects.org_id, actor.orgId)})`;
-		const scope: [SQL, ...(SQL | undefined)[]] = [orgScope];
+		// The tenancy boundary, on ONE column of the table being paged — the column the database
+		// derives from the parent project (#4116). It is the SAME object the count and the rows
+		// query receive.
+		const scope: [SQL, ...(SQL | undefined)[]] = [
+			eq(projectCluster.org_id, actor.orgId),
+		];
 
 		const { items, page } = await paginate({
 			db,
@@ -194,7 +170,7 @@ export async function GET(req: Request) {
 						region: projects.region,
 					})
 					.from(projectCluster)
-					// PROJECTION JOINS, NOT SCOPE JOINS — the scope is the semijoin above.
+					// PROJECTION JOINS, NOT SCOPE JOINS — the scope is `org_id` above.
 					// `project_id` is NOT NULL and references `projects.id`, so this innerJoin is
 					// 1:1 and cannot drop a row the count included. The leftJoin cannot duplicate
 					// one either: `project_environments_one_default` is a partial UNIQUE index on

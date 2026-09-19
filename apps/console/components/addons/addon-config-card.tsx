@@ -15,12 +15,13 @@
 
 import { asRecord } from "@/lib/records";
 import { ChevronsUpDown } from "lucide-react";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { Badge } from "@repo/ui/badge";
 import { addonCompat } from "@/lib/compat";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { SheetCard } from "@/components/design-project/canvas/cards/sheet-card";
 import { EmptyState } from "@repo/ui/empty";
 import { Button } from "@repo/ui/button";
@@ -186,6 +187,10 @@ export function AddonConfigForm({
 }) {
   const enable = useEnableAddon(projectId, environmentId);
   const disable = useDisableAddon(projectId, environmentId);
+  // Remove is not undoable and its effect lands on the next Deploy — the chart is uninstalled and
+  // whatever it owns in the cluster goes with it — so the click OPENS a confirm rather than firing
+  // the mutation (#4281).
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const form = useForm<FormShape>({
     values: initialValues(item),
   });
@@ -271,9 +276,15 @@ export function AddonConfigForm({
       return (
         <div key={path} className="space-y-2">
           <div className="flex items-center justify-between">
-            <Label htmlFor={path}>{f.label}</Label>
+            {/* `htmlFor` does not name the switch: `@repo/ui/switch` renders a
+                `<span role="switch">`, which is not labelable, so the label is
+                pointed at by reference instead (#4352). */}
+            <Label id={`${path}-label`} htmlFor={path}>
+              {f.label}
+            </Label>
             <Switch
               id={path}
+              aria-labelledby={`${path}-label`}
               defaultChecked={Boolean(stored ?? f.default)}
               onCheckedChange={(v) => form.setValue(path, v)}
             />
@@ -384,7 +395,7 @@ export function AddonConfigForm({
               type="button"
               variant="ghost"
               className="text-muted-foreground hover:text-destructive"
-              onClick={onRemove}
+              onClick={() => setConfirmRemove(true)}
               disabled={disable.isPending}
             >
               Remove
@@ -512,6 +523,17 @@ export function AddonConfigForm({
               </CollapsibleContent>
             </Collapsible>
         </form>
+
+        <ConfirmDialog
+          open={confirmRemove}
+          onOpenChange={setConfirmRemove}
+          title="Remove this add-on?"
+          description={`${item.name} is uninstalled from this environment on your next Deploy, along with anything its chart owns in the cluster. Its configuration is not kept — re-enabling it starts from the defaults.`}
+          confirmLabel="Remove add-on"
+          onConfirm={() => {
+            void onRemove();
+          }}
+        />
       </div>
     </SheetCard>
   );

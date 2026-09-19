@@ -6,18 +6,19 @@
 # what the guard re-reads; this header records only what is true HERE.
 #
 # THE EXCLUSION IS AN `include:` ALLOWLIST, AND THAT IS WHY THIS FILE IS LONG. vitest.config.ts
-# hand-lists TWELVE files as the coverage scope while `src/` holds SIXTY. An `include` allowlist is
-# an exclusion with the sign flipped: the other 48 files are excluded exactly as surely as a named
+# hand-lists TWENTY files as the coverage scope while `src/` holds SIXTY-ONE. An `include` allowlist
+# is an exclusion with the sign flipped: the other 41 files are excluded exactly as surely as a named
 # `exclude:` entry, and the `exclude:` sweep — which walks `coverage.exclude` — sees none of them.
-# The ratchet is armed at 98.83% over the twelve somebody picked. Every one of the 48 is recorded
-# below, with all 180 of its runtime exports in `symbols:` or in `baseline:`.
+# The ratchet is armed at the widened scope's Linux CI measurement: 1642/1795 statements.
+# Every excluded file is recorded below, with every runtime export accounted for in
+# `symbols:` or in `baseline:`.
 #
-# WHAT "EVERY ONE OF THE 48" IS A CLAIM ABOUT, and it is not the future. D3's peer sweep CLASSIFIES
+# WHAT "EVERY EXCLUDED FILE" IS A CLAIM ABOUT, and it is not the future. D3's peer sweep CLASSIFIES
 # a project non-recursively — recursing there reclassifies apps/marketing as an allowlist over 42
 # files under `app/**`, which is the one thing that rule exists to avoid — but once the verdict is
 # in it ENUMERATES recursively, so a file added under `src/chart/` next month is hidden, named, and
 # owed an entry here exactly as a flat one is. That second pass is what makes this sentence hold
-# past today's layout rather than only while `src/` happens to be flat (60 files, 0 nested); before
+# past today's layout rather than only while `src/` happens to be flat; before
 # it, such a file was outside `coverage.include`, no peer of any literal, owed nothing, and let the
 # guard print ✓ over a floor armed at 98.83% across a scope that had silently shrunk.
 #
@@ -25,44 +26,28 @@
 # (scripts/check-coverage-exclusions.mjs), which resolves each named suite's imports the way vitest
 # resolves them and requires a VALUE import of the module and of each listed symbol.
 #
-# WHAT THE MEASUREMENT SAID, and it is not what the config's comment says. That comment describes
-# the 48 as "vendored shadcn/Radix primitives … presentational re-exports covered by e2e". Read
-# against the package's own suites:
+# #4104 found seven excluded files with their own dedicated suites: filter-bar.tsx,
+# filter-chip.tsx, filter-search.tsx, multi-combobox.tsx, popover.tsx, select.tsx and utils.ts.
+# They are now in the coverage scope. The eleven remaining tier entries are ten vendored
+# primitives reached through composed-component suites plus the count helper those suites render;
+# their weaker tier-separation claim remains explicit and machine-checked. The primitives are
+# named by considered `exclude:` lines, so that decision survives independently of this prose.
 #
-#   17 files (43 exports) are EXECUTED by a named suite in tests/ — the composed filters mount real
-#      primitives, so Button, Dialog, Command, Popover, Select and Sheet all run for real.
-#   SEVEN of those 17 have their OWN DEDICATED SUITE and are excluded anyway:
-#      filter-bar.tsx, filter-chip.tsx, filter-search.tsx, multi-combobox.tsx, popover.tsx,
-#      select.tsx and utils.ts. Four of them are not vendored primitives at all — they are this
-#      package's composed filter surface, tested here, and absent from the include list.
-#   31 files (115 exports) are named by NOTHING in tests/ — no import, not even a mock.
-#   22 further exports of the 17 are hidden behind a module a suite does execute.
-#
-# So the config's sentence is true of 31 of the 48 and false of 17, and the seven with dedicated
-# suites are the sharpest half of that: their exclusion is not a tier decision, it is an allowlist
-# that fell behind the tests. Recording it is this unit; WIDENING the allowlist is deliberately
-# NOT — a scope change moves the published number, and the two must not ship together or nobody
-# can tell which one moved it.
-#
-# THAT FOLLOW-UP IS #4349, AND IT IS NAMED IN A FIELD, NOT IN THIS PARAGRAPH. Every one of the 17
-# `tier_separation:` entries below carries `issue: "#4349"`, and the guard REQUIRES that field on
+# The count helper remains coverage-epic debt under #2649. The guard REQUIRES an `issue:` field on
 # any `tier_separation:` entry D3 reports as allowlist-hidden. The reason is that this section has
-# neither an owning issue nor a shrink-only rule — both of which `baseline:` has — so 43 exports
-# across 17 files recorded here under a heading this header has just argued they do not belong to
+# neither an owning issue nor a shrink-only rule — both of which `baseline:` has — so exports
+# recorded here under a heading this header has just argued they do not belong to
 # would have been an amnesty nothing came back to collect, with the only record being prose whose
-# deletion fails no check. #4104 and #4105 both close with this file, so pointing at them would
-# have been worse than pointing nowhere.
+# deletion fails no check.
 #
 # ON `tier_separation:` IN THIS PACKAGE, stated plainly because the word is doing less work here
 # than it does in the console. There the other tier is a different RUNNER — real Postgres, its own
 # config, `pnpm test:integration`. Here it is the composed-component suites in this same package
 # (and, for the primitives, the console's browser tier, which this guard cannot read). What the
 # entries below claim is only the checkable half: a named `*.test.tsx` value-imports the module and
-# these exports, and jsdom mounts them. They are kept out of the unit badge's denominator by the
-# allowlist, not by a considered separation — which is the finding, and the reason the seven
-# dedicated-suite entries are called out by name above rather than left to look ordinary, and the
-# reason every entry in the section carries `issue:` where a tier separation elsewhere in the tree
-# carries none.
+# these exports, and jsdom mounts them. The ten vendored wrappers are kept out of the unit badge's
+# denominator by considered `exclude:` lines. The authored count helper remains allowlist-hidden
+# and therefore carries `issue:` where a permanent tier separation carries none.
 #
 # `state:` in `baseline:` is one of `mock-only`, `no-test` and `untested-export`, verified PER
 # SYMBOL by the guard. Only two occur here — nothing in this package mocks a sibling module.
@@ -81,59 +66,11 @@ infrastructural:
     reason: Type declarations — no runtime statements exist to be covered.
 
 tier_separation:
-  # ── this package's OWN composed filter surface, each with its own dedicated suite ─────────────
-  #
-  # Four components and one helper that are not vendored anything: they are the console filter
-  # standard's shared implementation, they have a `*.test.tsx` apiece, and they are outside the
-  # coverage scope. Their exclusion is the allowlist falling behind, not a tier.
-  - path: src/filter-bar.tsx
-    suite: [tests/filter-bar.test.tsx]
-    symbols: [FilterBar, FilterBarReset]
-    issue: "#4349"
-    reason: The filter bar shell and its reset control, mounted and asserted by their own suite in this package.
-
   - path: src/count-pill.tsx
     suite: [tests/filter-chip.test.tsx, tests/facet-filter.test.tsx, tests/multi-combobox.test.tsx]
     symbols: [CountFigure]
-    issue: "#4349"
+    issue: "#2649"
     reason: The mono count figure, executed for real by the composed filter suites — filter-chip, facet-filter and multi-combobox each render it as their count. It has no dedicated suite of its own, being a span with a class.
-
-  - path: src/filter-chip.tsx
-    suite: [tests/filter-chip.test.tsx]
-    symbols: [FilterChip, FilterChipGroup]
-    issue: "#4349"
-    reason: The applied-filter chips and their group, mounted and asserted by their own suite in this package.
-
-  - path: src/filter-search.tsx
-    suite: [tests/filter-search.test.tsx]
-    symbols: [FilterSearch]
-    issue: "#4349"
-    reason: The debounced filter search input, mounted and asserted by its own suite in this package.
-
-  - path: src/multi-combobox.tsx
-    suite: [tests/multi-combobox.test.tsx]
-    symbols: [MultiCombobox]
-    issue: "#4349"
-    reason: The multi-select combobox, mounted and asserted by its own suite in this package.
-
-  - path: src/utils.ts
-    suite: [tests/utils.test.ts]
-    symbols: [cn]
-    issue: "#4349"
-    reason: The class-merge helper every component in this package calls — asserted by its own suite, including the tailwind-merge rung behaviour of #4066.
-
-  # ── vendored primitives with a dedicated suite of their own ───────────────────────────────────
-  - path: src/popover.tsx
-    suite: [tests/popover.test.tsx]
-    symbols: [Popover, PopoverContent, PopoverTrigger]
-    issue: "#4349"
-    reason: The popover root, trigger and content, mounted in jsdom by their own suite as well as by every filter that opens one.
-
-  - path: src/select.tsx
-    suite: [tests/select.test.tsx]
-    symbols: [Select, SelectContent, SelectItem, SelectTrigger, SelectValue]
-    issue: "#4349"
-    reason: The select root, trigger, value and item, mounted in jsdom by their own suite and by the date-range filter's granularity control.
 
   # ── vendored primitives the composed-filter suites mount for real ─────────────────────────────
   #
@@ -143,61 +80,51 @@ tier_separation:
   - path: src/button.tsx
     suite: [tests/date-range-filter.test.tsx]
     symbols: [Button, buttonVariants]
-    issue: "#4349"
     reason: Every filter control renders a real Button; the date-range suite mounts it and its variant table in jsdom.
 
   - path: src/dialog.tsx
     suite: [tests/country-select.test.tsx]
     symbols: [Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle]
-    issue: "#4349"
     reason: The country-select and facet-filter suites open a real dialog, mounting the root, content, header, title and description.
 
   - path: src/command.tsx
     suite: [tests/country-select.test.tsx]
     symbols: [Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList]
-    issue: "#4349"
     reason: The searchable command list inside country-select, facet-filter and phone-input — root, input, list, group, item and the empty branch.
 
   - path: src/sheet.tsx
     suite: [tests/grouped-filter-sheet.test.tsx]
     symbols: [Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle]
-    issue: "#4349"
     reason: The grouped-filter sheet suite opens a real sheet, mounting the root, content, header, title and description.
 
   - path: src/collapsible.tsx
     suite: [tests/grouped-filter-sheet.test.tsx]
     symbols: [Collapsible, CollapsibleContent, CollapsibleTrigger]
-    issue: "#4349"
     reason: Each group inside the grouped filter sheet is a real collapsible, expanded and collapsed by that suite.
 
   - path: src/calendar.tsx
     suite: [tests/date-range-filter.test.tsx]
     symbols: [Calendar]
-    issue: "#4349"
     reason: The date-range filter mounts a real calendar and picks days through it.
 
   - path: src/avatar.tsx
     suite: [tests/multi-combobox.test.tsx]
     symbols: [Avatar, AvatarFallback, AvatarImage]
-    issue: "#4349"
     reason: The multi-combobox option rows render a real avatar, exercising the image and its fallback.
 
   - path: src/badge.tsx
     suite: [tests/facet-filter.test.tsx]
     symbols: [Badge]
-    issue: "#4349"
     reason: Facet counts and applied-filter markers render a real Badge in the facet, grouped-sheet and quick-range suites.
 
   - path: src/input.tsx
     suite: [tests/phone-input.test.tsx]
     symbols: [Input]
-    issue: "#4349"
     reason: The phone-input and quick-range suites type into a real Input.
 
   - path: src/label.tsx
     suite: [tests/date-range-filter.test.tsx]
     symbols: [Label]
-    issue: "#4349"
     reason: The date-range and quick-range filters label their controls with a real Label.
 
 baseline:
@@ -230,18 +157,6 @@ baseline:
     issue: "#2649"
     state: untested-export
     reason: The dialog's trigger, portal, overlay, footer and close are rendered by no suite — the filters open their dialogs programmatically.
-
-  - path: src/popover.tsx
-    symbols: [PopoverAnchor, PopoverDescription, PopoverHeader, PopoverTitle]
-    issue: "#2649"
-    state: untested-export
-    reason: The popover's anchor and its titled-header trio are rendered by no suite.
-
-  - path: src/select.tsx
-    symbols: [SelectGroup, SelectLabel, SelectScrollDownButton, SelectScrollUpButton, SelectSeparator]
-    issue: "#2649"
-    state: untested-export
-    reason: Grouped and scrollable selects are rendered by no suite; the tested selects are flat and short.
 
   - path: src/sheet.tsx
     symbols: [SheetClose, SheetFooter, SheetTrigger]

@@ -4,10 +4,25 @@
 
 // Per-environment protection rules editor, as a right-side drawer. Each gate is individually
 // toggleable; evaluated when a promotion into this environment is planned (lib/promotions/gates.ts).
+//
+// EVERY GATE CONTROL IN HERE IS NAMED BY THE TEXT ALREADY BESIDE IT, AND THE ROWS ARE `<div>`s.
+//
+// They used to be `<label>`s wrapping their text and their control, on the assumption that implicit
+// label association would do the naming. It cannot: implicit association reaches a LABELABLE
+// element only, and `@repo/ui/switch` is base-ui, which renders a `<span role="switch">`. So the
+// three gates reached a screen reader as three identical unnamed switches, and
+// `getByRole("switch", { name: … })` matched nothing — which is how the defect was found, by an
+// e2e lane whose click hung to the 180s timeout (#4630).
+//
+// An `id`/`htmlFor` pair is NOT the fix and is worth saying out loud, because it is the obvious
+// one: `htmlFor` is the explicit half of the same mechanism and is equally inert against a
+// `<span>`. The name has to be authored — `aria-labelledby` pointing at the rendered title.
+// That is the shape `PermissionRow` in components/settings/roles/permission-matrix.tsx already
+// uses, and this file follows it rather than inventing a second one.
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useId } from "react";
 import { type Control, Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -50,6 +65,7 @@ export function ProtectionRulesDialog({
 	envId: string;
 	envName: string;
 }) {
+	const minCountLabelId = useId();
 	const { control, handleSubmit, reset, watch, formState } = useForm<RulesForm>({
 		resolver: zodResolver(rulesSchema),
 		defaultValues: DEFAULTS,
@@ -153,7 +169,7 @@ export function ProtectionRulesDialog({
 						/>
 						{requireApproval && (
 							<div className="flex items-center justify-between gap-3 pl-[26px] pr-3.5">
-								<span className="text-ui-sm text-text-secondary">
+								<span id={minCountLabelId} className="text-ui-sm text-text-secondary">
 									Approvals required
 								</span>
 								<Controller
@@ -164,6 +180,7 @@ export function ProtectionRulesDialog({
 											type="number"
 											min={1}
 											max={10}
+											aria-labelledby={minCountLabelId}
 											className="h-[34px] w-[84px] text-sm"
 											value={field.value}
 											onChange={(e) =>
@@ -204,7 +221,14 @@ export function ProtectionRulesDialog({
 	);
 }
 
-/** A labelled boolean gate toggle bound to the form. */
+/**
+ * A named boolean gate toggle bound to the form.
+ *
+ * The switch takes its accessible name from the row's title, and the sentence under it is the
+ * switch's DESCRIPTION rather than a second `aria-labelledby` id: a whole sentence read out as a
+ * control's name is not a name. Ids come from `useId`, so two drawers rendered at once cannot
+ * point every switch at the first one's title.
+ */
 function ToggleRow({
 	control,
 	name,
@@ -216,24 +240,42 @@ function ToggleRow({
 	title: string;
 	desc: string;
 }) {
+	const titleId = useId();
+	const descId = useId();
 	return (
-		<label className="flex items-center justify-between gap-3 rounded-lg border px-3.5 py-3">
+		<div className="flex items-center justify-between gap-3 rounded-lg border px-3.5 py-3">
 			<span className="min-w-0">
-				<span className="text-ui-md font-medium text-text-primary">{title}</span>
-				<span className="mt-0.5 block text-ui-xs text-text-tertiary">{desc}</span>
+				<span id={titleId} className="text-ui-md font-medium text-text-primary">
+					{title}
+				</span>
+				<span id={descId} className="mt-0.5 block text-ui-xs text-text-tertiary">
+					{desc}
+				</span>
 			</span>
 			<Controller
 				control={control}
 				name={name}
 				render={({ field }) => (
-					<Switch checked={field.value} onCheckedChange={field.onChange} />
+					<Switch
+						aria-labelledby={titleId}
+						aria-describedby={descId}
+						checked={field.value}
+						onCheckedChange={field.onChange}
+					/>
 				)}
 			/>
-		</label>
+		</div>
 	);
 }
 
-/** A nullable-number gate input bound to the form (blank = null = off). */
+/**
+ * A named nullable-number gate input bound to the form (blank = null = off).
+ *
+ * `<Input>` IS a labelable element, so an `htmlFor` pair would have worked here — but these two
+ * rows sat in the same drawer as the three unnamed switches and were unnamed for the plainer
+ * reason that nothing named them at all. They are given the same `aria-labelledby` shape as
+ * `ToggleRow` so one drawer names its controls one way.
+ */
 function NumberRow({
 	control,
 	name,
@@ -245,11 +287,17 @@ function NumberRow({
 	title: string;
 	desc: string;
 }) {
+	const titleId = useId();
+	const descId = useId();
 	return (
 		<div className="flex items-center justify-between gap-3 rounded-lg border px-3.5 py-3">
 			<span className="min-w-0">
-				<span className="text-ui-md font-medium text-text-primary">{title}</span>
-				<span className="mt-0.5 block text-ui-xs text-text-tertiary">{desc}</span>
+				<span id={titleId} className="text-ui-md font-medium text-text-primary">
+					{title}
+				</span>
+				<span id={descId} className="mt-0.5 block text-ui-xs text-text-tertiary">
+					{desc}
+				</span>
 			</span>
 			<Controller
 				control={control}
@@ -259,6 +307,8 @@ function NumberRow({
 						type="number"
 						min={0}
 						placeholder="off"
+						aria-labelledby={titleId}
+						aria-describedby={descId}
 						className="h-[34px] w-[92px] font-mono text-sm"
 						value={field.value ?? ""}
 						onChange={(e) =>

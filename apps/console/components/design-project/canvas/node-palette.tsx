@@ -21,6 +21,7 @@ import {
 	CommandSeparator,
 } from "@repo/ui/command";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useInspectorPrefsStore } from "@/lib/stores/use-inspector-prefs-store";
 import {
 	addableKindsFor,
 	NODE_REGISTRY,
@@ -29,7 +30,6 @@ import {
 	variantOptionsFor,
 } from "./graph/node-registry";
 import type { NodeKind } from "./graph/types";
-import { NodeQuickConfig } from "./inspector/node-quick-config";
 
 interface NodePaletteProps {
 	open: boolean;
@@ -92,9 +92,24 @@ function serviceGroupsFor(
 
 /**
  * The Add-service command palette: a searchable, grouped menu over every provisionable
- * service. Selecting one drops its node on the canvas and opens its config sheet. Kinds with
- * variants (e.g. Database → engine) route through a second step first. Singletons already on
- * the canvas are disabled; roadmap items (no module yet) show "Soon".
+ * service. Selecting one drops its node on the canvas, CLOSES the palette, and leaves that node's
+ * card open on the workspace rail. Kinds with variants (e.g. Database → engine) route through a
+ * second step first. Singletons already on the canvas are disabled; roadmap items (no module yet)
+ * show "Soon".
+ *
+ * The palette used to stay open on an inline "Configure service" step (W5) instead of closing, and
+ * that is the shape #4589 removed. Two things were wrong with it, and only the second is a test
+ * problem. The wave's claim — written on `cards/workspace-rail.tsx` and asserted in
+ * `e2e/architecture-canvas.spec.ts` — is that NOTHING on this page opens a modal over the board; an add
+ * flow that parks a `CommandDialog` over the canvas is that modal, and it also meant the quick
+ * config and the rail's Settings tab were two editors for one config. And because the second step
+ * has no search box, the spec's `await expect(search).toBeHidden()` was satisfied by the STEP
+ * CHANGE: the helper returned with the dialog still mounted, and its overlay then intercepted every
+ * later click on the board — six gate tests timing out at their full 180s budget.
+ *
+ * So there is no second step here any more. The store's `addNode`/`addNodeWithConfig` already put
+ * the new node's card on the rail (`card: { kind: "inspector", nodeId }`), which is where its
+ * config now lives — one editor, not two, and the board stays clickable behind it.
  */
 export function NodePalette({
 	open,
@@ -106,8 +121,12 @@ export function NodePalette({
 }: NodePaletteProps) {
 	const addNode = useCanvasStore((s) => s.addNode);
 	const addNodeWithConfig = useCanvasStore((s) => s.addNodeWithConfig);
-	const openInspector = useCanvasStore((s) => s.openInspector);
 	const nodes = useCanvasStore((s) => s.nodes);
+	// Which tab a kind's card opens on. Adding a service records "settings" for that kind: the
+	// inline step this palette used to show WAS that form, and picking a service is a statement that
+	// you intend to configure it. Written through the preference the tabs already keep, rather than a
+	// second, parallel notion of "which tab is this card on" that could disagree with it.
+	const setInspectorTab = useInspectorPrefsStore((s) => s.setTab);
 	// The env's Kubernetes minor, for the add-on compat badges. Read defensively: a design may
 	// have no cluster yet, and an unset version is an honest `not_evaluable`, never a pass.
 	const clusterK8s = useCanvasStore((s) => {
@@ -120,19 +139,21 @@ export function NodePalette({
 	const coreProvider = useCanvasStore((s) =>
 		s.getEffectiveProvider(PROJECT_NODE_ID),
 	);
-	// When set, the palette shows the variant step for this kind (e.g. pick a DB engine).
+	// When set, the palette shows the variant step for this kind (e.g. pick a DB engine). The ONLY
+	// nested step left: it is part of naming WHICH service you are adding, so it still precedes the
+	// add. Everything after the add happens on the rail.
 	const [variantKind, setVariantKind] = useState<NodeKind | null>(null);
-	// W5: after a service is added the palette stays open and swaps to the inline config step for
-	// this node id — so adding + configuring is one flow (the palette never closes underneath you).
-	const [configuringId, setConfiguringId] = useState<string | null>(null);
 
-	/** Reset the nested steps whenever the dialog closes. */
+	/** Reset the nested step whenever the dialog closes. */
 	const handleOpenChange = (o: boolean) => {
-		if (!o) {
-			setVariantKind(null);
-			setConfiguringId(null);
-		}
+		if (!o) setVariantKind(null);
 		onOpenChange(o);
+	};
+
+	/** Land on the new node's card, on the tab that holds its config, and get out of the way. */
+	const handOffToRail = (kind: NodeKind) => {
+		setInspectorTab(kind, "settings");
+		handleOpenChange(false);
 	};
 
 	const add = (entry: ServiceEntry) => {
@@ -141,16 +162,17 @@ export function NodePalette({
 			setVariantKind(entry.kind);
 			return;
 		}
-		// Add the node and stay open on its inline config step (W5).
-		setConfiguringId(addNode(entry.kind, dropPosition?.()));
+		// `addNode` opens the new node's card on the rail; the palette closes behind it.
+		addNode(entry.kind, dropPosition?.());
+		handOffToRail(entry.kind);
 	};
 
-	/** Commit a variant choice: add the node pre-filled for it, then drop into its config step. */
+	/** Commit a variant choice: add the node pre-filled for it, then hand off to its rail card. */
 	const pickVariant = (kind: NodeKind, value: string) => {
 		const { key } = NODE_REGISTRY[kind].variants ?? { key: "" };
-		const id = addNodeWithConfig(kind, { [key]: value }, null, dropPosition?.());
+		addNodeWithConfig(kind, { [key]: value }, null, dropPosition?.());
 		setVariantKind(null);
-		setConfiguringId(id);
+		handOffToRail(kind);
 	};
 
 	const noCloud = identities.length === 0;
@@ -162,26 +184,14 @@ export function NodePalette({
 			open={open}
 			onOpenChange={handleOpenChange}
 			title={
-				configuringId
-					? "Configure service"
-					: variantDef
-						? `Choose ${variantDef.label.toLowerCase()} type`
-						: "Add a service"
+				variantDef
+					? `Choose ${variantDef.label.toLowerCase()} type`
+					: "Add a service"
 			}
 			description="Search and add infrastructure to your project."
 			className="sm:max-w-xl"
 		>
-			{configuringId ? (
-				<NodeQuickConfig
-					nodeId={configuringId}
-					onBack={() => setConfiguringId(null)}
-					onFullSettings={() => {
-						openInspector(configuringId);
-						handleOpenChange(false);
-					}}
-					onDone={() => handleOpenChange(false)}
-				/>
-			) : variantDef && variantKind ? (
+			{variantDef && variantKind ? (
 				<>
 					<CommandInput
 						placeholder={`Choose a ${variantDef.label.toLowerCase()} type…`}

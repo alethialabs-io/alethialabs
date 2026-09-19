@@ -18,9 +18,9 @@ provisioned.
 | Cloud | knobs | reachable | settable (offered) | declared-and-dead |
 |---|---:|---:|---:|---:|
 | alibaba | 63 | 45 | 11 | 1 |
-| aws | 159 | 122 | 52 | 7 |
+| aws | 159 | 122 | 52 | 4 |
 | azure | 90 | 64 | 24 | 4 |
-| gcp | 104 | 84 | 34 | 8 |
+| gcp | 104 | 84 | 34 | 3 |
 | hetzner | 37 | 27 | 4 | 3 |
 
 **knobs** = root variables the root module declares, plus the object attributes a leaf component's item
@@ -63,24 +63,16 @@ Each cell is **settable / declared**. A `—` means the cloud declares nothing t
 | Cloud | Component | Knob | Declared at |
 |---|---|---|---|
 | alibaba | dns | `alidns_managed_certificate` | infra/templates/project/alibaba/variables.tf:240 |
-| aws | bucket | `logging_bucket_name` | infra/templates/project/aws/variables.tf:888 |
-| aws | bucket | `store_access_key_in_ssm` | infra/templates/project/aws/variables.tf:888 |
 | aws | cache | `redis_cloudwatch_logs_enabled` | infra/templates/project/aws/variables.tf:631 |
 | aws | cache | `redis_cluster_mode_enabled` | infra/templates/project/aws/variables.tf:591 |
-| aws | database | `rds_extra_credentials` | infra/templates/project/aws/variables.tf:332 |
 | aws | dns | `waf_rate_limit_rules` | infra/templates/project/aws/variables.tf:420 |
 | aws | secret | `keepers` | infra/templates/project/aws/variables.tf:739 |
 | azure | cache | `azure_cache_capacity` | infra/templates/project/azure/variables.tf:362 |
 | azure | cache | `azure_cache_family` | infra/templates/project/azure/variables.tf:356 |
 | azure | dns | `azure_dns_zone_name` | infra/templates/project/azure/variables.tf:477 |
 | azure | nosql | `billing_mode` | infra/templates/project/azure/variables.tf:432 |
-| gcp | bucket | `lifecycle_rules` | infra/templates/project/gcp/variables.tf:550 |
 | gcp | cache | `memorystore_auth_enabled` | infra/templates/project/gcp/variables.tf:392 |
-| gcp | cache | `memorystore_transit_encryption_mode` | infra/templates/project/gcp/variables.tf:398 |
-| gcp | cluster | `gke_enable_private_endpoint` | infra/templates/project/gcp/variables.tf:261 |
-| gcp | cluster | `gke_enable_private_nodes` | infra/templates/project/gcp/variables.tf:255 |
 | gcp | cluster | `gke_log_retention_days` | infra/templates/project/gcp/variables.tf:267 |
-| gcp | database | `cloud_sql_database_flags` | infra/templates/project/gcp/variables.tf:340 |
 | gcp | database | `cloud_sql_default_username` | infra/templates/project/gcp/variables.tf:358 |
 | hetzner | bucket | `cors_origins` | infra/templates/project/hetzner/variables.tf:258 |
 | hetzner | bucket | `encryption_enabled` | infra/templates/project/hetzner/variables.tf:258 |

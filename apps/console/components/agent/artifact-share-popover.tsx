@@ -12,6 +12,7 @@ import {
   shareArtifact,
   unshareArtifact,
 } from "@/app/server/actions/artifact-shares";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { track } from "@/lib/analytics/track";
 import { Button } from "@repo/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
@@ -60,7 +61,16 @@ export function ArtifactSharePopover({ artifactId }: { artifactId: string }) {
       .finally(() => setLoading(false));
   }, [open, artifactId]);
 
-  const toggle = useCallback(
+  // The share target an UNSHARE has been requested for. Turning a target off revokes every
+  // teammate's access to the artifact in one optimistic click with nothing to undo it, so it asks
+  // first (#4280). Turning one ON grants access and is not destructive — it stays a bare click.
+  const [pendingUnshare, setPendingUnshare] = useState<{
+    scopeType: ShareScopeType;
+    scopeId: string | null;
+    label: string;
+  } | null>(null);
+
+  const applyToggle = useCallback(
     async (scopeType: ShareScopeType, scopeId: string | null) => {
       const k = keyOf(scopeType, scopeId);
       const isOn = shared.has(k);
@@ -95,68 +105,99 @@ export function ArtifactSharePopover({ artifactId }: { artifactId: string }) {
     [artifactId, shared],
   );
 
+  /** Grant immediately; ask before revoking. */
+  const toggle = useCallback(
+    (scopeType: ShareScopeType, scopeId: string | null, label: string) => {
+      if (shared.has(keyOf(scopeType, scopeId))) {
+        setPendingUnshare({ scopeType, scopeId, label });
+        return;
+      }
+      void applyToggle(scopeType, scopeId);
+    },
+    [applyToggle, shared],
+  );
+
   if (!access?.canShare) return null;
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={
-          <Button size="sm" variant="outline" className="gap-1.5 rounded-none">
-            <Share2 className="h-3.5 w-3.5" />
-            Share
-          </Button>
-        }
+    <>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          render={
+            <Button size="sm" variant="outline" className="gap-1.5 rounded-none">
+              <Share2 className="h-3.5 w-3.5" />
+              Share
+            </Button>
+          }
+        />
+        <PopoverContent align="end" className="w-72 rounded-none p-0">
+          <div className="border-b border-border px-3 py-2.5">
+            <div className="text-ui-md font-medium text-foreground">
+              Share artifact
+            </div>
+            <div className="text-ui-xs text-muted-foreground">
+              Choose who in your org can open this. Private to you otherwise.
+            </div>
+          </div>
+          {loading ? (
+            <div className="flex items-center gap-2 px-3 py-4 text-ui-sm text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Loading…
+            </div>
+          ) : (
+            <div className="max-h-[320px] overflow-y-auto py-1">
+              <ShareRow
+                icon={<Building2 className="h-3.5 w-3.5" />}
+                label="Everyone in org"
+                sub="All members"
+                checked={shared.has(keyOf("org", null))}
+                busy={busy === keyOf("org", null)}
+                onClick={() => toggle("org", null, "everyone in your org")}
+              />
+              {access.teams.length > 0 && <SectionLabel>Teams</SectionLabel>}
+              {access.teams.map((t) => (
+                <ShareRow
+                  key={t.id}
+                  icon={<Users className="h-3.5 w-3.5" />}
+                  label={t.name}
+                  checked={shared.has(keyOf("team", t.id))}
+                  busy={busy === keyOf("team", t.id)}
+                  onClick={() => toggle("team", t.id, t.name)}
+                />
+              ))}
+              {access.roles.length > 0 && <SectionLabel>Roles</SectionLabel>}
+              {access.roles.map((r) => (
+                <ShareRow
+                  key={r.id}
+                  icon={<Shield className="h-3.5 w-3.5" />}
+                  label={r.name}
+                  checked={shared.has(keyOf("role", r.id))}
+                  busy={busy === keyOf("role", r.id)}
+                  onClick={() => toggle("role", r.id, r.name)}
+                />
+              ))}
+            </div>
+          )}
+        </PopoverContent>
+      </Popover>
+
+      {/* OUTSIDE the popover on purpose: opening the dialog moves focus, which closes the popover,
+          and a confirmation that unmounts with its trigger cannot be answered. */}
+      <ConfirmDialog
+        open={pendingUnshare !== null}
+        onOpenChange={(o) => {
+          if (!o) setPendingUnshare(null);
+        }}
+        title={`Stop sharing with ${pendingUnshare?.label ?? "this target"}?`}
+        description="They lose access to this artifact immediately. Anything they already copied into their own conversations stays with them."
+        confirmLabel="Stop sharing"
+        onConfirm={() => {
+          if (pendingUnshare)
+            void applyToggle(pendingUnshare.scopeType, pendingUnshare.scopeId);
+          setPendingUnshare(null);
+        }}
       />
-      <PopoverContent align="end" className="w-72 rounded-none p-0">
-        <div className="border-b border-border px-3 py-2.5">
-          <div className="text-ui-md font-medium text-foreground">
-            Share artifact
-          </div>
-          <div className="text-ui-xs text-muted-foreground">
-            Choose who in your org can open this. Private to you otherwise.
-          </div>
-        </div>
-        {loading ? (
-          <div className="flex items-center gap-2 px-3 py-4 text-ui-sm text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Loading…
-          </div>
-        ) : (
-          <div className="max-h-[320px] overflow-y-auto py-1">
-            <ShareRow
-              icon={<Building2 className="h-3.5 w-3.5" />}
-              label="Everyone in org"
-              sub="All members"
-              checked={shared.has(keyOf("org", null))}
-              busy={busy === keyOf("org", null)}
-              onClick={() => void toggle("org", null)}
-            />
-            {access.teams.length > 0 && <SectionLabel>Teams</SectionLabel>}
-            {access.teams.map((t) => (
-              <ShareRow
-                key={t.id}
-                icon={<Users className="h-3.5 w-3.5" />}
-                label={t.name}
-                checked={shared.has(keyOf("team", t.id))}
-                busy={busy === keyOf("team", t.id)}
-                onClick={() => void toggle("team", t.id)}
-              />
-            ))}
-            {access.roles.length > 0 && <SectionLabel>Roles</SectionLabel>}
-            {access.roles.map((r) => (
-              <ShareRow
-                key={r.id}
-                icon={<Shield className="h-3.5 w-3.5" />}
-                label={r.name}
-                checked={shared.has(keyOf("role", r.id))}
-                busy={busy === keyOf("role", r.id)}
-                onClick={() => void toggle("role", r.id)}
-              />
-            ))}
-          </div>
-        )}
-      </PopoverContent>
-    </Popover>
+    </>
   );
 }
 
@@ -188,6 +229,16 @@ function ShareRow({
   return (
     <button
       type="button"
+      // The name carries the ACT, and the act depends on the state. The check box is a bare
+      // <span> with no semantics, so "Everyone in org" told a screen reader nothing about whether
+      // this row was on or off — and it told the destructive-action audit even less: one name for
+      // both directions means the audit can locate a row it is about to SHARE and click it, which
+      // performs a `shareArtifact` mutation from a suite whose contract is to open, assert, cancel
+      // and prove nothing changed. Only the OFF direction is destructive, so only the OFF
+      // direction answers to "Stop sharing with …"; an unshared row cannot be resolved by that
+      // entry at all, and the audit withholds instead of mutating. Both forms contain the visible
+      // label, so WCAG 2.5.3 holds.
+      aria-label={checked ? `Stop sharing with ${label}` : `Share with ${label}`}
       disabled={busy}
       onClick={onClick}
       className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-muted disabled:opacity-60"

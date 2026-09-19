@@ -72,8 +72,16 @@ interface KindDef {
 
 // Columns never surfaced in `config` (server-managed envelope + secrets). Name + status +
 // cloud_identity_id are surfaced as dedicated wire fields; everything else is config.
+//
+// This is a DENY list, so a column added to a component table surfaces in `config` unless it is
+// named here — nothing else fails when one is missed. `org_id` (#4823 put the tenancy column on
+// every table this registry reads) is server-managed, cannot be `--set` (no kind's pick schema
+// below includes it), and was riding every list/add/upsert response as if it were user config
+// (#4847).
+// tests/lib/cli/project-components-wire.test.ts pins it absent on all three shapes.
 const WIRE_EXCLUDE = new Set<string>([
 	"id",
+	"org_id",
 	"project_id",
 	"created_at",
 	"updated_at",

@@ -2,12 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ArrowLeft, TriangleAlert } from "lucide-react";
-import { useState } from "react";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { ArrowLeft } from "lucide-react";
 import { formatMonthlyRate } from "@repo/format";
 import { Alert, AlertDescription } from "@repo/ui/alert";
-import { Button } from "@repo/ui/button";
 import { CopyButton } from "@repo/ui/copy-button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
 import { StatusBadge } from "@repo/ui/status-badge";
@@ -48,12 +45,6 @@ import { ConfigFields } from "./inspector/config-fields";
 import { DangerZone } from "./inspector/danger-zone";
 import { useNodeCapabilities } from "./inspector/use-node-capabilities";
 
-interface InspectorPanelProps {
-	/** Edit mode only: tear down the active environment (queues a DESTROY job). Surfaced as a
-	 * danger action on the project settings panel. */
-	onDestroyEnvironment?: () => void;
-}
-
 /**
  * The service-config body of the canvas's inline docked side panel. Configures the selected node:
  * a header (resource icon, editable name, type badge, live one-line summary, close) over
@@ -66,7 +57,7 @@ interface InspectorPanelProps {
  * cloud selector. The effective provider is still resolved (it drives facts, zones, and the schema
  * summary), just never edited on the board.
  */
-export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
+export function InspectorPanel() {
 	const inspectorNodeId = useCanvasStore(selectInspectorNodeId);
 	const node = useCanvasStore((s) =>
 		inspectorNodeId ? s.nodes.find((n) => n.id === inspectorNodeId) : undefined,
@@ -267,10 +258,6 @@ export function InspectorPanel({ onDestroyEnvironment }: InspectorPanelProps) {
 						/>
 					)}
 
-					{node.data.kind === "project" && onDestroyEnvironment && (
-						<DestroyEnvironmentZone onDestroy={onDestroyEnvironment} />
-					)}
-
 					<DangerZone node={node} />
 				</TabsContent>
 			</Tabs>
@@ -324,43 +311,6 @@ function EnvironmentBlock({ env }: { env: EnvironmentInfo }) {
 				<dt className="text-muted-foreground">Stage</dt>
 				<dd className="capitalize">{env.stage}</dd>
 			</dl>
-		</div>
-	);
-}
-
-/** Project-panel danger action: tear down the active environment's provisioned infra. */
-function DestroyEnvironmentZone({ onDestroy }: { onDestroy: () => void }) {
-	const [confirm, setConfirm] = useState(false);
-	return (
-		<div className="rounded-none border border-destructive/30">
-			<div className="flex items-center gap-2 border-b border-destructive/20 px-4 py-3">
-				<TriangleAlert className="h-4 w-4 text-destructive" />
-				<p className="text-sm font-medium text-destructive">Danger zone</p>
-			</div>
-			<div className="flex items-center justify-between gap-4 px-4 py-4">
-				<div className="min-w-0">
-					<p className="text-sm font-medium">Destroy environment</p>
-					<p className="text-xs text-muted-foreground">
-						Queue a teardown of the provisioned infrastructure for this environment.
-					</p>
-				</div>
-				<Button
-					type="button"
-					variant="destructive"
-					size="sm"
-					onClick={() => setConfirm(true)}
-				>
-					Destroy
-				</Button>
-			</div>
-			<ConfirmDialog
-				open={confirm}
-				onOpenChange={setConfirm}
-				title="Destroy this environment?"
-				description="This queues a DESTROY job that tears down the environment's provisioned cloud infrastructure. This cannot be undone."
-				confirmLabel="Destroy environment"
-				onConfirm={onDestroy}
-			/>
 		</div>
 	);
 }

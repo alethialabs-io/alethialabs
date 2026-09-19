@@ -184,11 +184,14 @@ describeIfDb("RLS tenant isolation", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cross-tenant read of RLS-less project-child tables (drift + addons). Unlike
-// `projects`/`jobs` above, `environment_drift` and `project_addons` carry NO
-// per-tenant RLS policy — the belt-and-suspenders backstop is deferred to a later
-// wave — so the ONLY thing stopping one org from reading another's rows is each
-// server action's own org predicate. The PDP is org-blind on resource ownership: an
+// Cross-tenant read of project-child tables (drift + addons). When this was written
+// neither `environment_drift` nor `project_addons` carried a per-tenant RLS policy,
+// so the ONLY thing stopping one org from reading another's rows was each server
+// action's own org predicate. `project_addons` has had the component family's
+// owner_all policy since #4848 (tested in component-org-id.test.ts); these cases
+// still pin the app-layer predicate, which must hold on its own — for
+// `environment_drift`, and for any read that goes through getServiceDb, which
+// bypasses RLS. The PDP is org-blind on resource ownership: an
 // org-wide `project:view` grant makes authorize("view", { project, id: ANY_UUID })
 // succeed for ANY project UUID, so without the org join these reads leak another
 // org's drift detail (recon-grade resource addresses) and addon/GitOps config.
@@ -197,9 +200,9 @@ describeIfDb("RLS tenant isolation", () => {
 // action for ORG_B's project, and assert nothing comes back. The same-org and
 // Teams-shaped cases prove the org filter doesn't over-restrict (a naive RLS-only
 // fix under withOwnerScope(actor.userId) would wrongly hide a teammate's project;
-// the explicit actor.orgId filter returns it). The leak is gated solely by the
-// app-layer org join here (APP_ROLE_DISTINCT is irrelevant — these tables have no
-// RLS), which is exactly the fix under test.
+// the explicit actor.orgId filter returns it). For `environment_drift` the leak is
+// gated solely by the app-layer org join; for `project_addons` RLS now also refuses
+// it when the app role is distinct, and the org join is what holds when it is not.
 describeIfDb("Cross-tenant read of project-child tables (drift + addons)", () => {
 	const DRIFT_ORG_A = randomUUID();
 	const DRIFT_ORG_B = randomUUID();

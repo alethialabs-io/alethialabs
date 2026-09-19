@@ -18,3 +18,10 @@
 
 e2e_github_environment = "e2e-dev"
 account_id             = "5767983785483306"
+
+# ---- E2E assertion broker trust (#4226) ----
+# null = NOT trusted yet, and deliberately written down rather than left to the default: once the
+# maintainer has chosen the broker's origin (#4547) and deployed it, THIS line is where the origin
+# goes, in a reviewed PR. Passing it with -var at apply time instead would leave the next bare apply
+# reading null — which removes the trust. See docs/testing/e2e-federation-apply-runbook.md.
+e2e_broker_issuer_url = null

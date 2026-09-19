@@ -169,6 +169,43 @@ wt_lease_is_mine() {
 	[ -n "$me" ] && [ "${WT_L_PID:-}" = "$me" ] && [ "${WT_L_HOST:-}" = "$(wt_host)" ]
 }
 
+# ── ownership state, as one word ────────────────────────────────────────────────────────────────
+
+# The tree's ownership state:  main | free | stale | live | mine
+#
+#   main  — the shared main checkout. Not leasable, and never a target of anything destructive.
+#   free  — a linked worktree with no lease at all.
+#   stale — a lease whose holder process is gone. `wt:who` renders this "stale (holder gone)".
+#   live  — a LIVE lease held by another instance.
+#   mine  — a LIVE lease held by this instance.
+#
+# ONE ladder, for the reason this whole file exists: a staleness rule that drifts between call sites
+# is a silent false-allow. `wt:who` RENDERS this classification and `wt:dehydrate` DELETES on the
+# strength of it, so the two must be answering the same question rather than two similar ones.
+#
+# Populates WT_L_* as a side effect, which the callers' messages read — so call it directly, not
+# through a pipeline, when you want those.
+wt_lease_state() { # <worktree-path> → one of main|free|stale|live|mine
+	local ld
+	ld="$(wt_lease_dir "${1:-.}" 2>/dev/null)" || {
+		printf 'main'
+		return 0
+	}
+	[ -n "$ld" ] || {
+		printf 'main'
+		return 0
+	}
+	if ! wt_lease_read "$ld" 2>/dev/null; then
+		printf 'free'
+		return 0
+	fi
+	if ! wt_lease_live; then
+		printf 'stale'
+		return 0
+	fi
+	if wt_lease_is_mine; then printf 'mine'; else printf 'live'; fi
+}
+
 # ADVISORY ONLY. `seen` feeds the "last active 4m ago" line in the deny message so a human can judge
 # a live-but-abandoned holder. It MUST NOT influence allow/deny — the moment it does, this becomes a
 # TTL and inherits every failure mode (a 40-minute build with no tool calls gets its tree stolen)
@@ -205,8 +242,16 @@ wt_lease_acquire() { # <worktree-path>
 				return 0
 			fi
 			wt_lease_live && return 1
-			# Holder is gone. Drop the lease and re-loop; the mkdir above arbitrates the race, so
-			# two reclaimers can't both believe they won.
+			# Holder is gone. Drop the lease and re-loop.
+			#
+			# The old comment here claimed "the mkdir above arbitrates the race, so two reclaimers
+			# can't both believe they won". That is TRUE for the fresh-lease path and FALSE for this
+			# one: two acquirers can read the SAME stale owner, both fall through to this `rm -rf`,
+			# and both then succeed at `mkdir` — the second one's mkdir arbitrates nothing, because
+			# the first one's directory was already removed. Demonstrated by widening this window
+			# deliberately; at real speed it did not reproduce in 60 attempts, so it is narrow, not
+			# absent. Worth knowing before anything is built on "acquire is a mutex": against a
+			# LIVE holder it is exact, and STALE RECLAIM IS BEST-EFFORT.
 			rm -rf "$ld" 2>/dev/null || true
 		else
 			# Dir exists but owner isn't readable yet — a racer mid-acquire. Give it a moment.
@@ -397,6 +442,41 @@ wt_self_test() {
 	} >"$ld/owner"
 	(CLAUDE_PID="$me" ALETHIA_ALLOW_FOREIGN_WT=1 wt_lease_acquire "$tmp/wt" >/dev/null 2>&1)
 	_a "0" "$?" "ALETHIA_ALLOW_FOREIGN_WT=1 overrides"
+
+	# ── wt_lease_state ─────────────────────────────────────────────────────────────────────────
+	# The five-word ladder `wt:who` renders and `wt:dehydrate` DELETES on. All five arms are pinned
+	# here, in this file, because the deleting caller lives in another one: if the two ever disagree
+	# about which word a dead-looking holder earns, the reaper walks into a live instance's tree.
+	# Note both directions of "never touched": a foreign live lease AND my own.
+	_a "main" "$(wt_lease_state "$tmp/main")" "state: the main checkout is 'main' — never leasable, never a target"
+	rm -rf "$ld"
+	_a "free" "$(wt_lease_state "$tmp/wt")" "state: a worktree with no lease at all is 'free'"
+	mkdir -p "$ld"
+	{
+		echo "pid: 999999"
+		echo "procStart: Thu Jan  1 00:00:00 1970"
+		echo "host: $(wt_host)"
+	} >"$ld/owner"
+	_a "stale" "$(wt_lease_state "$tmp/wt")" "state: a dead holder is 'stale' — the abandoned tree the reaper exists for"
+	{
+		echo "pid: 1"
+		echo "procStart: $(wt_procstart 1)"
+		echo "host: $(wt_host)"
+	} >"$ld/owner"
+	_a "live" "$(CLAUDE_PID="$me" wt_lease_state "$tmp/wt")" "state: a LIVE foreign holder is 'live'"
+	{
+		echo "pid: $me"
+		echo "procStart: $(wt_procstart "$me")"
+		echo "host: $(wt_host)"
+	} >"$ld/owner"
+	_a "mine" "$(CLAUDE_PID="$me" wt_lease_state "$tmp/wt")" "state: my own LIVE lease is 'mine', not 'live'"
+	# A lease stamped by another HOST is live by construction — we cannot see that box's ps.
+	{
+		echo "pid: $me"
+		echo "procStart: x"
+		echo "host: some-other-box"
+	} >"$ld/owner"
+	_a "live" "$(CLAUDE_PID="$me" wt_lease_state "$tmp/wt")" "state: another host is 'live', never 'stale' — we cannot see its ps"
 
 	# Longest-prefix root matching (the nested-worktree trap).
 	WT_ROOTS_CACHE="$(printf '%s\n%s' "/a/app" "/a/app/.claude/worktrees/x")"

@@ -67,10 +67,10 @@ Roles are bundles of permissions. There are four built-in templates:
     Everything **except billing**. Can manage members, identities, integrations, and all infrastructure — but not the subscription.
   </Card>
   <Card title="operator">
-    Operate infrastructure: full control of projects (`view` / `create` / `edit` / `plan` / `deploy` / `destroy`), runners (the same minus `plan`, which runners don't have), and jobs (`view` / `create` / `edit`), plus `view` / `edit` on the org, `view` on connectors, and read access to alerts (`view_alerts`). **Cannot** manage cloud identities, members, billing, the managed fleet, or the Activity log.
+    Operate infrastructure: full control of projects (`view` / `create` / `edit` / `plan` / `deploy` / `destroy`), runners (the same minus `plan`, which runners don't have), and jobs (`view` / `create` / `edit`), plus `view` / `edit` on the org, `view` on connectors, read access to alerts (`view_alerts`), and the Activity log (`view_activity` / `export_activity`; export also needs Enterprise). **Cannot** manage cloud identities, members, billing, or the managed fleet.
   </Card>
   <Card title="viewer">
-    Read-only. Can `view` everything (including alert config) but change nothing — plus open/reply to their own support cases.
+    Read-only. Can `view` everything (including alert config and the Activity log) but change nothing and cannot export the Activity log — plus open/reply to their own support cases.
   </Card>
 </Cards>
 
@@ -78,8 +78,8 @@ Roles are bundles of permissions. There are four built-in templates:
 |---|---|---|---|---|---|---|---|---|
 | **owner** | full | manage | manage | manage | manage | manage | view + export | manage |
 | **admin** | full | manage | manage | manage | manage | manage | view + export | — |
-| **operator** | full | — | view | — | view | — | — | — |
-| **viewer** | view only | view | view | view | view | view | — | — |
+| **operator** | full | — | view | — | view | — | view + export | — |
+| **viewer** | view only | view | view | view | view | view | view | — |
 
 Every role also holds `view` / `create` / `reply` on its own support cases; `manage_support` (see-all + triage) stays owner/admin. These summaries are derived by `BUILT_IN_ROLES` in `registry.ts` — `owner` = every permission, `admin` = everything except the `billing:` keys, `operator` and `viewer` as above.
 

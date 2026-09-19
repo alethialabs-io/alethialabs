@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Copy, FileStack } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 import { addEnvironment, duplicateEnvironment } from "@/app/server/actions/projects";
 import type { SwitcherEnv } from "@/app/server/actions/resolve";
@@ -57,6 +57,10 @@ export function NewEnvironmentDialog({
 	/** Called with the created environment's name after a successful create. */
 	onCreated: (name: string) => void | Promise<void>;
 }) {
+	// `@repo/ui/select`'s trigger is base-ui and renders a `<button role="combobox">`, so the
+	// `<Label>` above it names it only if something associates the two. It carried neither an
+	// `htmlFor` nor an id, so the base picker was an unnamed combobox (#4630).
+	const baseLabelId = useId();
 	const defaultBase = envs.find((e) => e.is_default) ?? envs[0];
 	const [name, setName] = useState("");
 	const [mode, setMode] = useState<Mode>("duplicate");
@@ -157,11 +161,11 @@ export function NewEnvironmentDialog({
 						>
 							{mode === "duplicate" && (
 								<div className="mt-3 space-y-1.5">
-									<Label className="text-ui-xs text-muted-foreground">
+									<Label id={baseLabelId} className="text-ui-xs text-muted-foreground">
 										Base environment
 									</Label>
 									<Select value={baseId} onValueChange={setBaseId}>
-										<SelectTrigger className="h-8 text-sm">
+										<SelectTrigger aria-labelledby={baseLabelId} className="h-8 text-sm">
 											<SelectValue placeholder="Select an environment" />
 										</SelectTrigger>
 										<SelectContent>

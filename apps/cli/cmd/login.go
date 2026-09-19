@@ -446,16 +446,19 @@ var (
 	loginWebOrigin string
 )
 
-// `alethia login` takes no interactive field, and that is a decision rather than
-// an omission.
+// `alethia login` asks ONE question, and only when there is something to decide.
 //
-// Every OTHER leaf in this group that needs a value asks for it. Login needs
-// none: it works with zero input, and the one value it CAN carry — the
-// control-plane URL — is a once-per-machine setting, not a per-login question.
-// Asking for it on every sign-in would put a form in front of the single most
-// frequent command in the product to collect an answer that almost never
-// changes. `alethia init` is the guided form for that value; `--web-origin`
-// below is the flag, so the contract stays complete either way.
+// A first sign-in asks nothing: login works with zero input, and putting a form in front of the
+// single most frequent command in the product would cost every user a keystroke to collect an
+// answer that almost never changes. The control-plane URL stays flag-only here — it is a
+// once-per-machine setting, `alethia init` is the guided form for it, and `--web-origin` below is
+// the flag, so the contract stays complete either way.
+//
+// The question is `--force`'s, asked when a session ALREADY exists. That is the one moment login
+// needs a decision from the person, and it used to answer it by refusing: it printed "Use --force to
+// log in again" and exited, so switching accounts meant retyping the command with a flag. On a
+// terminal it now offers the choice (askLoginAgain); with prompting disabled it prints that same
+// line and exits 0, exactly as before, so a script's behaviour is unchanged.
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate with the platform",
@@ -482,8 +485,16 @@ first, or 'alethia token create' for a credential a pipeline can use.`,
 				_ = json.Unmarshal(file, &creds)
 
 				fmt.Println(ui.TextStyle.Render(fmt.Sprintf("You are already logged in as: %s", ui.CyanStyle.Render(creds.UserEmail))))
-				fmt.Println(ui.TextStyle.Render("Use --force to log in again."))
-				return
+				again, err := askLoginAgain(creds.UserEmail)
+				if err != nil {
+					fail(err)
+				}
+				if !again {
+					if !promptsEnabled() {
+						fmt.Println(ui.TextStyle.Render("Use --force to log in again."))
+					}
+					return
+				}
 			}
 		}
 
@@ -492,6 +503,30 @@ first, or 'alethia token create' for a credential a pipeline can use.`,
 			fail(err)
 		}
 	},
+}
+
+// askLoginAgain is `--force` asked as a question: with a session already stored, it offers to keep
+// it or to sign in again. It returns false without asking when prompting is disabled (--no-input, or
+// no terminal) — the headless answer is "keep the session", the same one login gave before this
+// question existed. "Keep" is the first option, so pressing enter changes nothing.
+func askLoginAgain(email string) (bool, error) {
+	if !promptsEnabled() {
+		return false, nil
+	}
+	again := false
+	if err := runHuhForm(huh.NewGroup(
+		huh.NewSelect[bool]().
+			Title(fmt.Sprintf("Signed in as %s. Sign in again?", email)).
+			Description("Signing in again replaces the stored session — to switch accounts, for instance.").
+			Options(
+				huh.NewOption("Keep this session", false),
+				huh.NewOption("Sign in again (same as --force)", true),
+			).
+			Value(&again),
+	)); err != nil {
+		return false, err
+	}
+	return again, nil
 }
 
 func init() {

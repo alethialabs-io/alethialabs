@@ -47,7 +47,7 @@ export function EvidenceDrawer({
 				{row && (
 					<>
 						<div className="shrink-0 border-b px-5 pb-3.5 pt-5">
-							<div className="mb-1.5 font-mono text-ui-3xs uppercase tracking-[0.16em] text-text-disabled">
+							<div className="mb-1.5 font-mono text-ui-3xs uppercase tracking-[0.16em] text-text-tertiary">
 								Evidence detail
 							</div>
 							<div className="flex items-center gap-2.5">

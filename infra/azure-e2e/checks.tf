@@ -77,3 +77,36 @@ check "budget_is_cost_capped" {
     error_message = "the e2e budget must be a Monthly consumption budget with a 0 < amount <= 500 cap."
   }
 }
+
+# ── The E2E assertion broker trust (#4226): exact, additive, and absent unless asked for ──────────
+check "e2e_broker_credential_is_exact" {
+  assert {
+    condition = local.broker_enabled ? alltrue([
+      azuread_application_federated_identity_credential.e2e_broker[0].issuer == var.e2e_broker_issuer_url,
+      azuread_application_federated_identity_credential.e2e_broker[0].subject == local.broker_subject,
+      azuread_application_federated_identity_credential.e2e_broker[0].audiences == tolist([local.broker_audience]),
+      local.broker_audience == local.token_audience,
+      local.broker_subject != "" && !strcontains(local.broker_subject, "*"),
+    ]) : true
+    error_message = "the e2e broker federated credential must pin issuer ${coalesce(var.e2e_broker_issuer_url, "<unset>")}, subject '${local.broker_subject}' and audience ${local.token_audience} exactly."
+  }
+}
+
+# The broker credential must never be keyed into the GitHub map (where it would share a for_each
+# and a display-name family with gh-oidc-*), and the ref credential must survive its arrival.
+check "e2e_broker_credential_is_additive" {
+  assert {
+    condition = alltrue([
+      contains(keys(azuread_application_federated_identity_credential.github), "ref"),
+      alltrue([for c in azuread_application_federated_identity_credential.github : c.issuer == local.github_oidc_issuer]),
+    ])
+    error_message = "the broker credential must be ADDED beside the GitHub credentials, never replace one — every gh-oidc-* credential must still trust ${local.github_oidc_issuer} and the ref credential must exist."
+  }
+}
+
+check "e2e_broker_credential_absent_when_unset" {
+  assert {
+    condition     = local.broker_enabled || length(azuread_application_federated_identity_credential.e2e_broker) == 0
+    error_message = "with e2e_broker_issuer_url unset there must be no broker federated credential."
+  }
+}

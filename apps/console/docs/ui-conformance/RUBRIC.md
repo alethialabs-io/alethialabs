@@ -3,8 +3,8 @@
 
 # The console UI conformance rubric
 
-**34 predicates** over every **private** console route — S1–S4 (4), T1–T7 (7), H1–H9 (9), F1–F7
-(7), R1–R7 (7). This file is the contract: the static checks, the live Playwright `audit` project
+**38 predicates** over every **private** console route — S1–S4 (4), T1–T7 (7), H1–H9 (9), F1–F10
+(10), R1–R8 (8). This file is the contract: the static checks, the live Playwright `audit` project
 and the scoreboard generator all implement predicates defined *here*, and none of them may invent
 one.
 
@@ -246,10 +246,12 @@ this rubric states everywhere else — one predicate per question. The count mov
 fire on either. A predicate that only tests the shapes the current guard can see would score both
 pages PASS, which is worse than not asking.
 
-## Family F — the filter standard  ·  static, plus one unit test
+## Family F — the filter standard  ·  F1–F6 static, F7 a unit test, F8–F10 live
 
 N/A for every page that is not a list page — declared reason `not-a-list-page`, derivable from the
-absence of a `lib/stores/use-*-filters.ts` store, not from how the page looks.
+absence of a `lib/stores/use-*-filters.ts` store, not from how the page looks. F10 declares one more,
+`no-search-field`, and it is structural in the same way: none of the page's surfaces carries a
+`search` key in its store's defaults. Never "no search box rendered" — that is what F10 measures.
 
 | id | predicate | PASS when |
 |---|---|---|
@@ -260,6 +262,9 @@ absence of a `lib/stores/use-*-filters.ts` store, not from how the page looks.
 | **F5** | the result count is a `CountPill` beside the heading — never "N of M" prose in the bar |
 | **F6** | `keepPreviousData` plus the `opacity-60` dim on `isPlaceholderData` |
 | **F7** | the server builder issues a rows pass **and a separate unfiltered facet pass** |
+| **F8** | a filtered view survives the URL round-trip, **observed in a browser** | applying the first facet option that narrows puts one of the surface's params in the URL; the URL reloaded in a **fresh tab** (its own sessionStorage, so only the URL can restore it) keeps the param and the narrowed list; Reset clears every param the surface writes and the count returns to the full count |
+| **F9** | facet counts do not move under a filter, **observed in a browser** | every option of the facet driven keeps its count, and no option vanishes, between before and after the first option is applied — F7 observed end to end |
+| **F10** | search is debounced and lands in the shared empty state, **observed in a browser** | the data requests six keystrokes produce carry **at most one distinct** search value within 500 ms of the last one (a poll repeating the debounced value is the same value, not a second fetch), and a nonsense token renders `[data-slot="empty"]` inside `main` with no hand-rolled "No results" outside it |
 
 The subject is a **surface**, not a page: one `createFilterStore` call site.
 `lib/stores/use-settings-filters.ts` holds seven of them and `use-alerts-filters.ts` three, so a
@@ -272,6 +277,31 @@ on the same page that is.
 in memory and the option you just picked disappears from the list, which makes the filter bar
 un-un-selectable. "A facet pass sees only the scope predicates" is a behaviour, and the only honest
 way to assert it is to run the builder against a fixture and check the second query's predicates.
+
+**F8–F10 are the live half, and they are measured over a DERIVED subject set** (#4278).
+`e2e/audit/filters.spec.ts`, in the `audit-interaction` project, asks
+`apps/console/scripts/audit-report.mjs --filter-surfaces` which surfaces each route owns — the same
+`ownedSurfaces()` join F1–F6 are scored through — and `scripts/check-filter-standard.mjs` which URL
+params each surface writes, read from its `useFilterUrlSync` call rather than typed per page. It
+refuses to run over fewer than 15 surfaces. What it drives is a seeded list: `e2e/helpers/seed-filters.ts`
+writes at least two rows with differing facet values where it can, and a list that still renders
+fewer than two rows is **NOT MEASURED with the count** — a filter over one row cannot narrow
+anything, and scoring it PASS would be a measurement of nothing. That is a claim about the RUN, never
+an N/A.
+
+Its positive control runs before any route is scored, over four fixture bars with known answers —
+one that never writes the URL, one whose counts move, one that fetches per keystroke, and one whose
+rows share a single facet value so no option can narrow it, which must read NOT MEASURED on F8 and
+F9 — and a red control withholds all three predicates for the run. The jobs surface is the known PASS the first real
+run is read against.
+
+**What F8–F10 cannot see is stated, not implied.** F8 and F9 drive the FIRST facet option the bar
+offers that narrows the list, not every one. When no facet found has such an option, or the list does
+not narrow once it is applied, both are **NOT MEASURED with the counts** — never PASS, because with the
+list unchanged F9's before/after comparison and F8's restore and reset steps cannot fail. F10's "data request" is a server-action POST or a fetch carrying the
+typed token, and the App Router's RSC refetch that `useFilterUrlSync`'s URL rewrite triggers is COUNTED in
+the evidence but is not the debounce's question — so a surface can PASS F10 while its URL half still
+round-trips per keystroke, and the evidence says how many times it did.
 
 The reference implementation is the evidence page —
 `components/evidence/{evidence-client,evidence-filter-bar}.tsx` and `evidence-query.ts`, plus
@@ -289,6 +319,49 @@ H2: it hand-writes its own `<h2>`.
 | **R5** | axe reports zero serious or critical violations, **in both themes** | `scanRouteThemes()` returns none at `wcag2a`/`wcag2aa` in **light and dark**, each violation naming its theme, and both themes applied and painted differently | never |
 | **R6** | zero console errors, zero failed requests | nothing on `console.error`, no response ≥ 400 | never |
 | **R7** | interactive within budget | p95 under the route's recorded budget | never |
+| **R8** | every enabled control does something | every enabled `button`, same-origin `a[href]` and depth-1 `menuitem` in `main` — plus the shell chrome, measured once under `/[org]` — produces, within **1 000 ms** of activation, a navigation, a new overlay, a DOM mutation in `main`, an `aria-expanded\|pressed\|selected\|checked` flip, a network request, a download or a `role=status` toast | `redirect-only`, `no-enabled-controls` |
+
+**R8 IS MEASURED WITHOUT EVER PRESSING A CONFIRM.** `e2e/audit/inert.ts`'s `activate()` refuses to
+click while a dialog or an alertdialog is open, and a confirm button exists nowhere else — so the
+guarantee is a property of the code rather than a rule the next reader has to remember. Inside an
+overlay the only key pressed is Escape. A control **registered** in
+`apps/console/destructive-actions.yaml` for that route IS activated, because its declared
+confirmation is its effect and #4266 already proves that confirmation is real. A control the ledger
+does **not** declare whose accessible name reads destructive is never activated and is recorded
+**FAIL `unregistered-destructive`** — the live twin of the static census, and a finding either way:
+either the ledger is short an entry, or a control is wearing a verb it does not carry out.
+
+**R8 SCORES ONLY WHAT THE FIXTURE RENDERS, AND THAT BOUND DOES NOT CLOSE WITH MORE RUNS.** A control
+behind a conditional the audit's empty organisation never reaches — a row action needing a failed
+deployment, a button gated on a plan the run does not buy — is invisible to a live pass forever, not
+until the fixtures improve. It is not measured, not failed and not counted, so **"R8 passed" never
+means "every control in the console does something"**; it means every control this org rendered did.
+Closing that gap needs a STATIC matcher over the handlers, which is a different instrument in a
+different unit. The same reasoning is why H9 exists beside T5: one predicate per question.
+
+**ITS ERRORS ARE BIASED TOWARD PASS, deliberately.** Six of the seven effects are attributable to the
+click. The seventh — a DOM mutation anywhere in `main` — is not: an async re-render provoked by the
+PREVIOUS control can land inside this one's window. It is therefore checked LAST, after every
+attributable signal, and the page is reloaded after any control that moved it. And "a network
+request happened" is a signal the route has to EARN: `measureQuiescence()` watches the page for one
+window before anything is clicked and withholds the signal on a route that chatters, because on a
+page that polls, "a request happened" is true of every control and therefore evidence about none.
+
+**Three things are declared out of scope, each with its reason, none of them silent.** A **disabled**
+control is not scored — it is counted as `disabled-with-reason` / `disabled-no-reason` for a later
+R9, because "why is this greyed out" is a different question. An **external** link PASSES on a real
+`href` and is never clicked: activating it navigates the run out of the console, and whether the
+destination exists is not R8's question. A control that opens a **file chooser** is detected (via
+`page.on("filechooser")`, so the exclusion is reachable rather than vacuous) and excluded. So is the
+shell's **sign out**, and that one is a single spelled-out pattern: revoking the run's session would
+make every later verdict a measurement of the sign-in page wearing the route's name.
+
+**A route over the control budget is `NOT MEASURED` WITH THE COUNT, never a PASS over the first 60.**
+Sixty controls is what one leg can afford; a budget that silently truncates is a denominator nobody
+can see. That is a claim about the RUN, which is what `report.ts`'s `notMeasured()` is for — as
+against an N/A, which is a claim about the PAGE. `inert.spec.ts`'s last test fails when fewer than
+`MIN_MEASURED` routes produced a PASS or a FAIL, because a column of nothing but NOT MEASURED must
+not read as a clean board.
 
 **R2 is measured by hit-testing, and this is the whole reason the live half exists.** Open each
 dialog, sheet, popover, dropdown, tooltip and hover-card, then call

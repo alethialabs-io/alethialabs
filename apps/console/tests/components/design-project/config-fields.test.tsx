@@ -14,7 +14,12 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ConfigFields } from "@/components/design-project/canvas/inspector/config-fields";
-import type { KindConfig } from "@/components/design-project/canvas/inspector/config-schema";
+import {
+	getKindConfig,
+	type KindConfig,
+} from "@/components/design-project/canvas/inspector/config-schema";
+import { nodeReadiness } from "@/lib/canvas/node-status";
+import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 const SCHEMA: KindConfig = {
 	sections: [
@@ -131,5 +136,169 @@ describe("ConfigFields — number fields", () => {
 		);
 		const [storage] = screen.getAllByRole("spinbutton");
 		expect(storage).toHaveValue(null);
+	});
+});
+
+// ── #4445 — the buffer defers the WRITE, never the TRUTH ─────────────────────────────────────────
+//
+// A node's readiness ("Needs setup" on the board, the status strip on its card) is derived by
+// `nodeReadiness` from the STORE. While a cleared required field sat only in the buffer, the card
+// went on saying the design was deployable over a config the deploy would reject — and the inline
+// error two inches below it, which already read the buffer, said the opposite.
+//
+// These tests drive the REAL nosql schema through the REAL store and ask the REAL readiness
+// function, rather than asserting that `onChange` fired: `onChange` firing is the mechanism, and the
+// thing the gate spec asserts — and the thing a user acts on — is the state the card ends up in.
+// They are the browser-free proof of `architecture-canvas.spec.ts`'s "a card goes Needs-setup the
+// moment its config stops being deployable", whose own subject is `fill("")`, i.e. no blur.
+
+describe("ConfigFields — readiness cannot lag the buffer", () => {
+	/** A canvas holding one project root and one NoSQL table, with the table's id. */
+	function seedTable(): string {
+		useCanvasStore.setState({ nodes: [], card: null });
+		const id = useCanvasStore.getState().addNode("nosql");
+		return id;
+	}
+
+	/** The table node's current config, straight from the store. */
+	function tableConfig(id: string): Record<string, unknown> {
+		const node = useCanvasStore.getState().nodes.find((n) => n.id === id);
+		if (!node) throw new Error(`no node ${id}`);
+		return node.data.config;
+	}
+
+	/** Readiness as the board and the card read it — from the store, never from the form. */
+	function stateOf(id: string) {
+		const s = useCanvasStore.getState();
+		return nodeReadiness(s.nodes, s.getCoreIdentity(), id).state;
+	}
+
+	/** Renders the table's real Settings body, wired to the store the way the inspector wires it. */
+	function renderTable(id: string) {
+		const schema = getKindConfig("nosql");
+		if (!schema) throw new Error("nosql has no config schema");
+		const view = render(
+			<ConfigFields
+				schema={schema}
+				config={tableConfig(id)}
+				provider="aws"
+				kind="nosql"
+				onChange={(patch) => useCanvasStore.getState().updateNodeConfig(id, patch)}
+			/>,
+		);
+		// The card is re-rendered from the store on every commit, as the inspector does — otherwise
+		// the buffer would go on comparing itself against the config it was first handed.
+		return () =>
+			view.rerender(
+				<ConfigFields
+					schema={schema}
+					config={tableConfig(id)}
+					provider="aws"
+					kind="nosql"
+					onChange={(patch) => useCanvasStore.getState().updateNodeConfig(id, patch)}
+				/>,
+			);
+	}
+
+	it("a freshly added table is ready — it defaults its partition key", () => {
+		const id = seedTable();
+		expect(stateOf(id)).toBe("ready");
+	});
+
+	it("clearing a required text field flips the node WITHOUT a blur", () => {
+		const id = seedTable();
+		renderTable(id);
+
+		fireEvent.change(screen.getByLabelText("Partition key"), {
+			target: { value: "" },
+		});
+
+		expect(tableConfig(id).partition_key).toBe("");
+		expect(stateOf(id)).toBe("needs-setup");
+	});
+
+	it("the first character that makes it valid again flips it back, also without a blur", () => {
+		const id = seedTable();
+		const rerender = renderTable(id);
+
+		fireEvent.change(screen.getByLabelText("Partition key"), {
+			target: { value: "" },
+		});
+		// Asserted, not assumed: without this the test would read "ready" at the end because the
+		// clear never reached the store, and would pass on exactly the defect it is here to catch.
+		expect(stateOf(id)).toBe("needs-setup");
+
+		rerender();
+		fireEvent.change(screen.getByLabelText("Partition key"), {
+			target: { value: "p" },
+		});
+
+		expect(tableConfig(id).partition_key).toBe("p");
+		expect(stateOf(id)).toBe("ready");
+	});
+
+	// The BOUND, asserted rather than described. #4256 built two deliberate withholdings that a
+	// blanket commit-on-invalid would delete: `flushNumber` RESTORES a required number the user
+	// emptied (writing 0 both trips the min(1) bounds and fights a backspace), and `flush` DROPS a
+	// list's blank rows on the way out. Both of those intermediate states are states the schema
+	// rejects, so the rule is scoped to `text` — and this is the test that fails if that scope is
+	// widened. Same key, same validity transition, declared as a number: withheld.
+	it("the same clear on a NUMBER field is still withheld — the bound is the field type", () => {
+		const id = seedTable();
+		const real = getKindConfig("nosql");
+		if (!real) throw new Error("nosql has no config schema");
+		const asNumber: KindConfig = {
+			...real,
+			sections: [
+				{
+					id: "schema",
+					title: "Schema",
+					defaultOpen: true,
+					fields: [{ key: "partition_key", type: "number", label: "Partition key" }],
+				},
+			],
+		};
+		const onChange = vi.fn();
+		render(
+			<ConfigFields
+				schema={asNumber}
+				config={tableConfig(id)}
+				provider="aws"
+				kind="nosql"
+				onChange={onChange}
+			/>,
+		);
+
+		fireEvent.change(screen.getByLabelText("Partition key"), {
+			target: { value: "" },
+		});
+
+		expect(onChange).not.toHaveBeenCalled();
+		expect(stateOf(id)).toBe("ready");
+	});
+
+	it("keystrokes that change nothing about validity still cost no store write", () => {
+		const id = seedTable();
+		const schema = getKindConfig("nosql");
+		if (!schema) throw new Error("nosql has no config schema");
+		const onChange = vi.fn();
+		render(
+			<ConfigFields
+				schema={schema}
+				config={tableConfig(id)}
+				provider="aws"
+				kind="nosql"
+				onChange={onChange}
+			/>,
+		);
+
+		// "u" → "us" → "use" — valid throughout, so this is the case the buffer exists for and the
+		// early commit must stay out of.
+		const key = screen.getByLabelText("Partition key");
+		fireEvent.change(key, { target: { value: "u" } });
+		fireEvent.change(key, { target: { value: "us" } });
+		fireEvent.change(key, { target: { value: "use" } });
+
+		expect(onChange).not.toHaveBeenCalled();
 	});
 });

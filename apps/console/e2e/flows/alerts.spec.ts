@@ -22,11 +22,11 @@
 //     counts come from the UNFILTERED universe, so the option you just selected does not
 //     vanish and the bar stays un-un-selectable.
 //   · The destructive controls are opened, READ against apps/console/destructive-actions.yaml,
-//     and — for the disable switch — CANCELLED, so the registry's claim about them is tested
-//     rather than restated. The switch is deliberately asymmetric: `onToggle` confirms only on
-//     the disabling branch (`if (!next) setDisableConfirm(true); else applyEnabled(true)`), so
-//     both directions are asserted and a spec that expected one confirm would be wrong half the
-//     time.
+//     and — for the disable switches — CANCELLED, so the registry's claim about them is tested
+//     rather than restated. BOTH switches are deliberately asymmetric and both are covered here:
+//     the channel's `onToggle` and the policy's `onToggleEnabled` confirm only on the disabling
+//     branch (`if (!next) set…Target(…); else applyEnabled(…, true)`), so each direction gets its
+//     own test and a spec that expected one confirm would be wrong half the time.
 //
 // `mode: "default"` — THE FILE RUNS SEQUENTIALLY IN ONE WORKER. The config is `fullyParallel`,
 // and this file's fixtures are ORG-WIDE: `cleanAlerts()` wipes every alerting row for the team
@@ -170,10 +170,15 @@ test.describe("Alerts — the guided add-a-channel sheet", () => {
 		).toBeVisible();
 	});
 
-	// The transport gallery drives which credential field the form renders. Note what this test
-	// does NOT do: submit the webhook form. A secret-bearing transport needs
-	// ALETHIA_CRED_ENCRYPTION_KEY, which the release-gate leg does not set, so its "Add channel"
-	// button is disabled by design — that fail-closed path is asserted in alerts.negative.spec.ts.
+	// The transport gallery drives which credential field the form renders — this test asserts the
+	// FIELDS, and deliberately does not submit. Until #4456 it could not have: the `qa` leg set no
+	// ALETHIA_CRED_ENCRYPTION_KEY, so a secret-bearing transport's "Add channel" was disabled and
+	// the only reachable assertion was the fail-closed one. The leg now promises `encryption`, and
+	// the submit paths that unlocked — the live button, and a webhook whose endpoint cannot be
+	// verified — are asserted in alerts.negative.spec.ts, tagged `@needs:encryption`.
+	//
+	// This test stays a field-shape test because that is a different question, and because the
+	// happy path it would otherwise need is a channel this file's describes do not clean up.
 	test("picking a transport swaps the credential field", async ({ team }) => {
 		const sheet = await openSheet(team.page, team.orgSlug!);
 		await sheet.getByRole("button", { name: "Email SES relay" }).click();
@@ -589,14 +594,53 @@ test.describe("Alerts — a policy's detail", () => {
 		await expect(policies.getByText("Throttle", { exact: true })).toBeVisible();
 	});
 
-	test("the enable switch turns the policy off", async ({ team }) => {
+	// registry: alerts.policy.disable — confirm: confirm-dialog, confirm_action "Disable".
+	// Opened and CANCELLED: the point of the entry is that nothing mutates on a bare click.
+	// This test seeds its OWN row rather than editing the describe's, for the same reason the
+	// channel twin does — a failure here cannot then cascade into the rename test below through
+	// a policy whose enabled state moved.
+	test("disabling asks for confirmation, and Cancel leaves the policy enabled", async ({
+		team,
+	}) => {
+		const subject = `e2e-dis-pol-${Date.now()}`;
+		await seedRule(
+			{ userId: team.userId!, orgId: team.orgId! },
+			{ name: subject, eventPatterns: ["system.job.failed"], enabled: true },
+		);
 		await gotoAlerts(team.page, team.orgSlug!);
 		const { policies } = sections(team.page);
-		await policies.getByRole("option", { name: policyName }).click();
+		await policies.getByRole("option", { name: subject }).click();
 		const toggle = policies.getByRole("switch", { name: "Enabled" });
 		await expect(toggle).toBeChecked();
+
 		await toggle.click();
-		await expect(toggle).not.toBeChecked({ timeout: 15_000 });
+		const dialog = team.page.getByRole("alertdialog");
+		await expect(dialog.getByText("Disable this policy?")).toBeVisible();
+		await expect(dialog.getByRole("button", { name: "Disable" })).toBeVisible();
+
+		await dialog.getByRole("button", { name: "Cancel" }).click();
+		await expect(dialog).toBeHidden();
+		await expect(toggle).toBeChecked();
+	});
+
+	// The other half of the asymmetry, exactly as for channels: `onToggleEnabled` is
+	// `if (!next) setDisableTarget(p); else applyEnabled(p, true)`, so ENABLING mutates on a bare
+	// click by design. A spec that asserted a confirm for "the switch" would be wrong half the time.
+	test("enabling a paused policy fires with no confirmation", async ({ team }) => {
+		const paused = `e2e-paused-pol-${Date.now()}`;
+		await seedRule(
+			{ userId: team.userId!, orgId: team.orgId! },
+			{ name: paused, eventPatterns: ["system.job.failed"], enabled: false },
+		);
+		await gotoAlerts(team.page, team.orgSlug!);
+		const { policies } = sections(team.page);
+		await policies.getByRole("option", { name: paused }).click();
+		const toggle = policies.getByRole("switch", { name: "Enabled" });
+		await expect(toggle).not.toBeChecked();
+
+		await toggle.click();
+		await expect(toggle).toBeChecked({ timeout: 15_000 });
+		await expect(team.page.getByRole("alertdialog")).toHaveCount(0);
 	});
 
 	test("editing renames it through the labelled name field", async ({ team }) => {

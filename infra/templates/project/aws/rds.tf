@@ -59,6 +59,10 @@ module "rds_maindb" {
 
   rds_iam_auth_enabled = var.rds_iam_auth_enabled
   rds_default_username = var.rds_default_username
+  # Threaded since #4320: it was declared here and in modules/rds with byte-identical defaults but
+  # never passed, so the module's copy of the default always won and a caller's value was dropped.
+  # Because the two defaults are identical, wiring it changes nothing for a caller who never set it.
+  rds_extra_credentials = var.rds_extra_credentials
 
   rds_logs_exports = var.rds_logs_exports
 

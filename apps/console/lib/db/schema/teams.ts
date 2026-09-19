@@ -7,15 +7,16 @@
 // (grants.principal_type = 'team'); both PDP engines resolve team membership →
 // team_member here. camelCase keys (casing→snake_case columns), uuid ids.
 //
-// Best-effort match to better-auth 1.6.19; reconcile vs `@better-auth/cli generate`.
+// Matches the Better Auth organization-plugin schema used by the console.
 
-import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { user } from "./auth";
 import { organization } from "./organizations";
 
 export const team = pgTable("team", {
 	id: uuid().primaryKey().defaultRandom(),
 	name: text().notNull(),
+	memberCount: integer().default(0).notNull(),
 	organizationId: uuid()
 		.notNull()
 		.references(() => organization.id, { onDelete: "cascade" }),
@@ -31,6 +32,7 @@ export const teamMember = pgTable("team_member", {
 	userId: uuid()
 		.notNull()
 		.references(() => user.id, { onDelete: "cascade" }),
+	membershipKey: text().unique(),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });
 

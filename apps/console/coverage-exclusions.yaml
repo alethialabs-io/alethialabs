@@ -330,16 +330,16 @@ baseline:
     reason: The per-user credit sum and the usage-window reads are only ever named through a mock of this module.
 
   - path: lib/billing/queries.ts
-    symbols: [upsertOrgAiSubscription, claimPlanWelcome]
+    symbols: [claimPlanWelcome]
     issue: "#2649"
     state: untested-export
-    reason: The AI-subscription upsert and the plan-welcome claim are asserted by no suite.
+    reason: The plan-welcome claim is asserted by no suite.
 
   - path: lib/billing/queries.ts
-    symbols: [resolveOrgEntitlements, upsertOrgBilling]
+    symbols: [resolveOrgEntitlements, upsertOrgBilling, upsertOrgAiSubscription]
     issue: "#2649"
     state: mock-only
-    reason: Entitlement resolution and the billing upsert are only ever named through a mock of this module.
+    reason: Entitlement resolution and the two billing upserts are only ever named through a mock of this module — the AI upsert since #4631, whose sync tests assert the AI columns are written through it.
 
   - path: lib/fleet/queue.ts
     symbols: [countLiveManagedInstances, setRunnerObserved, markRunnerDraining, recentReapDeadCount, disableFleetPool]
