@@ -13,25 +13,25 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-sesv2": "^3.1128.0",
+    "@aws-sdk/client-sesv2": "^3.1133.0",
     "@react-email/components": "^1.0.12",
     "next-runtime-env": "^3.3.0",
     "nodemailer": "^9.1.1",
-    "resend": "^6.26.0"
+    "resend": "^6.28.1"
   },
   "peerDependencies": {
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "^20",
     "@types/nodemailer": "^8.0.1",
-    "@types/react": "19.2.18",
+    "@types/react": "19.3.0",
     "eslint": "^9.39.5",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "typescript": "5.9.3"
   }
 }
