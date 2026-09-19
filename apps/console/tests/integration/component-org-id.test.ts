@@ -19,16 +19,30 @@
 // programmables.sql's trigger loop, backfill and propagation all read. A hand-written list here
 // would agree with a hand-written list there and both could miss the next component table.
 //
-// The RLS half needs the distinct app role (the migration role is BYPASSRLS, so an isolation test
-// run through it passes by construction) and skips without one — see APP_ROLE_DISTINCT in ./db.
+// THE RLS LIST IS DERIVED TOO (#4848). programmables.sql's owner_all loop reads the same function,
+// and a catalog test below asserts every family table has RLS enabled and that policy, minus
+// RLS_EXCEPTIONS — a named set that is empty today and is checked in both directions, so an entry
+// cannot outlive its table and a table cannot quietly join it. Until #4848 that loop had its own
+// 17-name literal and four tables of the family had no policy at all.
+//
+// The RLS behaviour half needs the distinct app role (the migration role is BYPASSRLS, so an
+// isolation test run through it passes by construction) and skips without one — see
+// APP_ROLE_DISTINCT in ./db. The catalog half reads pg_class/pg_policy and runs everywhere.
 
 import { randomUUID } from "node:crypto";
 import { eq, inArray, is, sql } from "drizzle-orm";
 import { PgTable, getTableConfig } from "drizzle-orm/pg-core";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { z } from "zod";
-import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
-import { projectAddons, projectCluster, projects } from "@/lib/db/schema";
+import { type Tx, getServiceDb, withOwnerScope, withScope } from "@/lib/db";
+import {
+	projectAddons,
+	projectCluster,
+	projectIacSources,
+	projectServices,
+	projectSourceRepos,
+	projects,
+} from "@/lib/db/schema";
 import * as components from "@/lib/db/schema/project-components";
 import { APP_ROLE_DISTINCT, describeIfDb, refusalText } from "./db";
 
@@ -48,6 +62,95 @@ const idRows = z.array(z.object({ id: z.string() }));
 const orgRows = z.array(z.object({ org_id: z.string().nullable() }));
 const familyRow = z.array(z.object({ tables: z.array(z.string()) }));
 const nameRows = z.array(z.object({ name: z.string() }));
+const policyRows = z.array(
+	z.object({
+		name: z.string(),
+		rls: z.boolean(),
+		cmd: z.string().nullable(),
+		qual: z.string().nullable(),
+		check: z.string().nullable(),
+	}),
+);
+const insertedRows = z.array(z.object({ id: z.string(), org_id: z.string().nullable() }));
+
+/**
+ * Family tables deliberately WITHOUT the owner_all tenant policy. Empty: every table that carries the
+ * derived org_id answers to it. An entry here must name a family table that really has no policy —
+ * the catalog test fails in both directions, so the set cannot drift from the database.
+ */
+const RLS_EXCEPTIONS: readonly string[] = [];
+
+/** One table's app-role insert and read, so the same RLS assertions can drive each table. */
+interface RlsCase {
+	table: string;
+	/** Inserts one minimal row for `projectId` and returns its id and the org_id the DB stored. */
+	insert: (tx: Tx, projectId: string) => Promise<unknown>;
+	/** Selects the row by id; RLS decides whether it comes back. */
+	read: (tx: Tx, id: string) => Promise<unknown>;
+}
+
+/** A short unique suffix, so each insert clears the tables' per-env UNIQUE keys. */
+function tag(): string {
+	return randomUUID().slice(0, 8);
+}
+
+/**
+ * The four tables that had no RLS policy until #4848. Each gets the full behavioural drive below: a
+ * cross-tenant INSERT … RETURNING org_id is refused, a same-org write returns the parent's org, and
+ * another org reads nothing.
+ */
+const NEWLY_POLICED: readonly RlsCase[] = [
+	{
+		table: "project_addons",
+		insert: (tx, projectId) =>
+			tx
+				.insert(projectAddons)
+				.values({ project_id: projectId, addon_id: `a-${tag()}` })
+				.returning({ id: projectAddons.id, org_id: projectAddons.org_id }),
+		read: (tx, id) =>
+			tx.select({ id: projectAddons.id }).from(projectAddons).where(eq(projectAddons.id, id)),
+	},
+	{
+		table: "project_services",
+		insert: (tx, projectId) =>
+			tx
+				.insert(projectServices)
+				.values({
+					project_id: projectId,
+					name: `s-${tag()}`,
+					source: { kind: "image", image: "nginx:1.27" },
+				})
+				.returning({ id: projectServices.id, org_id: projectServices.org_id }),
+		read: (tx, id) =>
+			tx.select({ id: projectServices.id }).from(projectServices).where(eq(projectServices.id, id)),
+	},
+	{
+		table: "project_source_repos",
+		insert: (tx, projectId) =>
+			tx
+				.insert(projectSourceRepos)
+				.values({ project_id: projectId, repo_url: `https://example.com/${tag()}.git` })
+				.returning({ id: projectSourceRepos.id, org_id: projectSourceRepos.org_id }),
+		read: (tx, id) =>
+			tx
+				.select({ id: projectSourceRepos.id })
+				.from(projectSourceRepos)
+				.where(eq(projectSourceRepos.id, id)),
+	},
+	{
+		table: "project_iac_sources",
+		insert: (tx, projectId) =>
+			tx
+				.insert(projectIacSources)
+				.values({ project_id: projectId, repo_url: `https://example.com/${tag()}.git` })
+				.returning({ id: projectIacSources.id, org_id: projectIacSources.org_id }),
+		read: (tx, id) =>
+			tx
+				.select({ id: projectIacSources.id })
+				.from(projectIacSources)
+				.where(eq(projectIacSources.id, id)),
+	},
+];
 
 /** Every table in project-components.ts that carries a `project_id` column, by SQL name. */
 function schemaFamily(): string[] {
@@ -214,22 +317,90 @@ describeIfDb("project component family: org_id is derived, never written (#4116)
 		expect(text).toMatch(/cannot derive project_\w+\.org_id/);
 	});
 
+	it("every family table has RLS and the owner_all tenant policy, minus RLS_EXCEPTIONS (#4848)", async () => {
+		const family = schemaFamily().filter((t) => t !== "audit_log");
+		// Non-vacuity: the four tables #4848 added a policy to must be IN the family this walks.
+		for (const c of NEWLY_POLICED) expect(family).toContain(c.table);
+		const res = await getServiceDb().execute(sql`
+			select c.relname as name,
+			       c.relrowsecurity as rls,
+			       p.polcmd::text as cmd,
+			       pg_get_expr(p.polqual, p.polrelid) as qual,
+			       pg_get_expr(p.polwithcheck, p.polrelid) as "check"
+			  from pg_class c
+			  left join pg_policy p on p.polrelid = c.oid and p.polname = 'owner_all'
+			 where c.relnamespace = 'public'::regnamespace
+			   and c.relname = any(public.project_component_tables())
+		`);
+		const rows = policyRows.parse(res);
+		expect(rows.map((r) => r.name).sort()).toEqual(family);
+		// The exception set names real family tables and nothing else.
+		for (const t of RLS_EXCEPTIONS) expect(family).toContain(t);
+		// The policy is the org-COLUMN form: USING and WITH CHECK both bind the row's own org_id to the
+		// session org, for every command. Anchored at the start of the deparsed expression, where
+		// pg_get_expr puts the OR's first operand; a join-through policy starts `(project_id IN` and a
+		// USING-only one has no WITH CHECK, so neither matches.
+		const orgArm = /^\(*org_id = \(*current_setting\('app\.current_org'/;
+		const policed = rows
+			.filter((r) => r.rls && r.cmd === "*" && orgArm.test(r.qual ?? "") && orgArm.test(r.check ?? ""))
+			.map((r) => r.name)
+			.sort();
+		expect(policed).toEqual(family.filter((t) => !RLS_EXCEPTIONS.includes(t)));
+		// And an exception really is one: listed tables carry no owner_all at all.
+		const unpoliced = rows.filter((r) => r.qual === null).map((r) => r.name).sort();
+		expect(unpoliced).toEqual([...RLS_EXCEPTIONS].sort());
+	});
+
 	it.skipIf(!APP_ROLE_DISTINCT)(
-		"derives the parent's org even when the writer's scope cannot see the parent",
+		"a writer whose scope cannot see the parent is refused by the POLICY, not by the derivation",
 		async () => {
-			// project_addons has no RLS policy, and withOwnerScope scopes the org GUC to the USER id,
-			// so the teammate's scope cannot see ORG_A's project row. An invoker-rights derivation would
-			// read nothing and refuse this insert — which succeeded before #4116. Definer rights keep it
-			// succeeding, stamped with the org that actually owns the project.
-			const rows = await withOwnerScope(TEAMMATE_A, (tx) =>
-				tx
-					.insert(projectAddons)
-					.values({ project_id: projectA, addon_id: "external-dns" })
-					.returning({ org_id: projectAddons.org_id }),
+			// withOwnerScope scopes the org GUC to the USER id, so the teammate's scope cannot see ORG_A's
+			// project row. The definer-rights derivation still reads it and stamps ORG_A; the owner_all
+			// WITH CHECK then refuses a row of an org the scope does not hold. An invoker-rights
+			// derivation would instead raise "cannot derive … does not exist" about a project that does.
+			const text = await refusalText(() =>
+				withOwnerScope(TEAMMATE_A, (tx) =>
+					tx.insert(projectAddons).values({ project_id: projectA, addon_id: "external-dns" }),
+				),
 			);
-			expect(orgRows.parse(rows)[0].org_id).toBe(ORG_A);
+			expect(text).toMatch(/row-level security/);
+			expect(text).not.toMatch(/cannot derive/);
 		},
 	);
+
+	for (const c of NEWLY_POLICED) {
+		it.skipIf(!APP_ROLE_DISTINCT)(
+			`${c.table}: a cross-tenant INSERT … RETURNING org_id is refused, never answered (#4848)`,
+			async () => {
+				// The leak #4848 closed: naming another tenant's project_id and asking for org_id back.
+				const text = await refusalText(() =>
+					withScope({ ownerId: TEAMMATE_A, orgId: ORG_A }, (tx) => c.insert(tx, projectB)),
+				);
+				expect(text).toMatch(/row-level security/);
+			},
+		);
+
+		it.skipIf(!APP_ROLE_DISTINCT)(
+			`${c.table}: a same-org writer gets the parent's org; another org reads nothing (#4848)`,
+			async () => {
+				// The teammate did not create the project: the ORG arm is what admits the write.
+				const row = insertedRows.parse(
+					await withScope({ ownerId: TEAMMATE_A, orgId: ORG_A }, (tx) => c.insert(tx, projectA)),
+				)[0];
+				expect(row.org_id).toBe(ORG_A);
+
+				const asTeammate = idRows.parse(
+					await withScope({ ownerId: TEAMMATE_A, orgId: ORG_A }, (tx) => c.read(tx, row.id)),
+				);
+				expect(asTeammate).toHaveLength(1);
+
+				const asOtherOrg = idRows.parse(
+					await withScope({ ownerId: OWNER_B, orgId: ORG_B }, (tx) => c.read(tx, row.id)),
+				);
+				expect(asOtherOrg).toHaveLength(0);
+			},
+		);
+	}
 
 	it.skipIf(!APP_ROLE_DISTINCT)(
 		"RLS binds the org arm to the row's own org_id: a teammate sees it, another org does not",
