@@ -3,8 +3,8 @@
 
 # The console UI conformance rubric
 
-**35 predicates** over every **private** console route — S1–S4 (4), T1–T7 (7), H1–H9 (9), F1–F7
-(7), R1–R8 (8). This file is the contract: the static checks, the live Playwright `audit` project
+**38 predicates** over every **private** console route — S1–S4 (4), T1–T7 (7), H1–H9 (9), F1–F10
+(10), R1–R8 (8). This file is the contract: the static checks, the live Playwright `audit` project
 and the scoreboard generator all implement predicates defined *here*, and none of them may invent
 one.
 
@@ -246,10 +246,12 @@ this rubric states everywhere else — one predicate per question. The count mov
 fire on either. A predicate that only tests the shapes the current guard can see would score both
 pages PASS, which is worse than not asking.
 
-## Family F — the filter standard  ·  static, plus one unit test
+## Family F — the filter standard  ·  F1–F6 static, F7 a unit test, F8–F10 live
 
 N/A for every page that is not a list page — declared reason `not-a-list-page`, derivable from the
-absence of a `lib/stores/use-*-filters.ts` store, not from how the page looks.
+absence of a `lib/stores/use-*-filters.ts` store, not from how the page looks. F10 declares one more,
+`no-search-field`, and it is structural in the same way: none of the page's surfaces carries a
+`search` key in its store's defaults. Never "no search box rendered" — that is what F10 measures.
 
 | id | predicate | PASS when |
 |---|---|---|
@@ -260,6 +262,9 @@ absence of a `lib/stores/use-*-filters.ts` store, not from how the page looks.
 | **F5** | the result count is a `CountPill` beside the heading — never "N of M" prose in the bar |
 | **F6** | `keepPreviousData` plus the `opacity-60` dim on `isPlaceholderData` |
 | **F7** | the server builder issues a rows pass **and a separate unfiltered facet pass** |
+| **F8** | a filtered view survives the URL round-trip, **observed in a browser** | applying the first facet option that narrows puts one of the surface's params in the URL; the URL reloaded in a **fresh tab** (its own sessionStorage, so only the URL can restore it) keeps the param and the narrowed list; Reset clears every param the surface writes and the count returns to the full count |
+| **F9** | facet counts do not move under a filter, **observed in a browser** | every option of the facet driven keeps its count, and no option vanishes, between before and after the first option is applied — F7 observed end to end |
+| **F10** | search is debounced and lands in the shared empty state, **observed in a browser** | six keystrokes produce **at most one** data request carrying the search within 500 ms of the last one, and a nonsense token renders `[data-slot="empty"]` inside `main` with no hand-rolled "No results" outside it |
 
 The subject is a **surface**, not a page: one `createFilterStore` call site.
 `lib/stores/use-settings-filters.ts` holds seven of them and `use-alerts-filters.ts` three, so a
@@ -272,6 +277,28 @@ on the same page that is.
 in memory and the option you just picked disappears from the list, which makes the filter bar
 un-un-selectable. "A facet pass sees only the scope predicates" is a behaviour, and the only honest
 way to assert it is to run the builder against a fixture and check the second query's predicates.
+
+**F8–F10 are the live half, and they are measured over a DERIVED subject set** (#4278).
+`e2e/audit/filters.spec.ts`, in the `audit-interaction` project, asks
+`apps/console/scripts/audit-report.mjs --filter-surfaces` which surfaces each route owns — the same
+`ownedSurfaces()` join F1–F6 are scored through — and `scripts/check-filter-standard.mjs` which URL
+params each surface writes, read from its `useFilterUrlSync` call rather than typed per page. It
+refuses to run over fewer than 15 surfaces. What it drives is a seeded list: `e2e/helpers/seed-filters.ts`
+writes at least two rows with differing facet values where it can, and a list that still renders
+fewer than two rows is **NOT MEASURED with the count** — a filter over one row cannot narrow
+anything, and scoring it PASS would be a measurement of nothing. That is a claim about the RUN, never
+an N/A.
+
+Its positive control runs before any route is scored, over three fixture bars with known answers —
+one that never writes the URL, one whose counts move, one that fetches per keystroke — and a red
+control withholds all three predicates for the run. The jobs surface is the known PASS the first real
+run is read against.
+
+**What F8–F10 cannot see is stated, not implied.** F8 and F9 drive the FIRST facet option the bar
+offers, not every one; F10's "data request" is a server-action POST or a fetch carrying the typed
+token, and the App Router's RSC refetch that `useFilterUrlSync`'s URL rewrite triggers is COUNTED in
+the evidence but is not the debounce's question — so a surface can PASS F10 while its URL half still
+round-trips per keystroke, and the evidence says how many times it did.
 
 The reference implementation is the evidence page —
 `components/evidence/{evidence-client,evidence-filter-bar}.tsx` and `evidence-query.ts`, plus
