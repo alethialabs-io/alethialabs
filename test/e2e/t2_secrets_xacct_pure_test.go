@@ -80,7 +80,8 @@ func TestSecretsXacctDecide(t *testing.T) {
 	})
 
 	// A BLOCKED lane resolves to OFF carrying its reason — never a silent skip, and never an error
-	// (the maintainer enabling the scenario globally should not red every non-AWS leg).
+	// (the maintainer enabling the scenario globally should not red every non-AWS leg). gcp is here
+	// too, for a different reason: the env is AWS-only, so gcp's lane is runnable but UNWIRED.
 	for _, provider := range []string{"gcp", "azure", "alibaba", "hetzner"} {
 		t.Run(provider+" is blocked with a reason", func(t *testing.T) {
 			withXacctEnv(t, awsComplete)
@@ -101,10 +102,12 @@ func TestSecretsXacctDecide(t *testing.T) {
 // The lane verdicts are the SSOT the parity board, the recording script and the run half all quote.
 // Keep them from rotting into a bare "not supported".
 func TestSecretsXacctLaneReasonsAreSubstantive(t *testing.T) {
-	if ok, reason := secretsXacctLane("aws"); !ok || reason != "" {
-		t.Fatalf("aws must be the runnable lane, got ok=%v reason=%q", ok, reason)
+	for _, p := range []string{"aws", "gcp"} {
+		if ok, reason := secretsXacctLane(p); !ok || reason != "" {
+			t.Fatalf("%s must be a runnable lane, got ok=%v reason=%q", p, ok, reason)
+		}
 	}
-	for _, p := range []string{"gcp", "azure", "alibaba"} {
+	for _, p := range []string{"azure", "alibaba"} {
 		ok, reason := secretsXacctLane(p)
 		if ok {
 			t.Fatalf("%s is not provable today", p)
@@ -366,4 +369,97 @@ func TestXacctSummaryCarriesNoSecrets(t *testing.T) {
 			t.Errorf("summary must not carry %q:\n%s", forbidden, b)
 		}
 	}
+}
+
+// GCP runs only against an ADOPTED standing GSA — the identity account B's grant names. A gcp run
+// without one would create a per-run GSA the grant has never heard of and could only fail, after the
+// cluster has been bought, so decide() must refuse it up front and name the missing variable.
+func TestSecretsXacctGCPRequiresAStandingGSA(t *testing.T) {
+	gcpComplete := map[string]string{
+		envSecretsXacct:          "1",
+		envSecretsXacctProjectID: "alethia-secrets-b",
+		envSecretsXacctRemoteKey: "alethia-e2e-xacct-canary",
+		envSecretsXacctExpectSHA: testSHA,
+		envSecretsXacctESOGSA:    "alethia-eso@alethia-e2e-a.iam.gserviceaccount.com",
+	}
+
+	t.Run("complete is on", func(t *testing.T) {
+		withXacctEnv(t, gcpComplete)
+		on, blocked, err := secretsXacctFromEnv("gcp").decide()
+		if !on || blocked != "" || err != nil {
+			t.Fatalf("complete gcp config ⇒ on; got on=%v blocked=%q err=%v", on, blocked, err)
+		}
+	})
+
+	for _, missing := range []string{envSecretsXacctProjectID, envSecretsXacctESOGSA, envSecretsXacctRemoteKey, envSecretsXacctExpectSHA} {
+		t.Run("missing "+missing, func(t *testing.T) {
+			withXacctEnv(t, gcpComplete)
+			t.Setenv(missing, "")
+			on, _, err := secretsXacctFromEnv("gcp").decide()
+			if on || err == nil || !strings.Contains(err.Error(), missing) {
+				t.Fatalf("must refuse and name %s; got on=%v err=%v", missing, on, err)
+			}
+		})
+	}
+
+	// The template rejects a bare account id at plan time; the harness must reject it before spend.
+	t.Run("a bare account id is refused", func(t *testing.T) {
+		withXacctEnv(t, gcpComplete)
+		t.Setenv(envSecretsXacctESOGSA, "alethia-eso")
+		if on, _, err := secretsXacctFromEnv("gcp").decide(); on || err == nil || !strings.Contains(err.Error(), envSecretsXacctESOGSA) {
+			t.Fatalf("a non-email GSA must be refused naming %s; got on=%v err=%v", envSecretsXacctESOGSA, on, err)
+		}
+	})
+}
+
+// adoptStandingIdentity must land the GSA on the key the GCP provider's cluster passthrough carries
+// to tofu, MERGE into whatever provider_config the shape fixture already set, and refuse a
+// conflicting value rather than silently picking one.
+func TestSecretsXacctAdoptStandingIdentity(t *testing.T) {
+	const gsa = "alethia-eso@alethia-e2e-a.iam.gserviceaccount.com"
+	gcp := secretsXacctConfig{provider: "gcp", esoGSAEmail: gsa}
+
+	t.Run("merges into an existing cluster provider_config", func(t *testing.T) {
+		snap := map[string]any{"cluster": map[string]any{
+			"instance_types":  []any{"e2-standard-2"},
+			"provider_config": map[string]any{"gke_spot": true},
+		}}
+		if err := gcp.adoptStandingIdentity(snap); err != nil {
+			t.Fatal(err)
+		}
+		cluster := snap["cluster"].(map[string]any)
+		pc := cluster["provider_config"].(map[string]any)
+		if pc[secretsXacctGCPAdoptKey] != gsa {
+			t.Fatalf("%s = %v, want %s", secretsXacctGCPAdoptKey, pc[secretsXacctGCPAdoptKey], gsa)
+		}
+		if pc["gke_spot"] != true || cluster["instance_types"] == nil {
+			t.Fatalf("the shape fixture's keys must survive: %+v", cluster)
+		}
+	})
+
+	t.Run("creates the cluster block when absent", func(t *testing.T) {
+		snap := map[string]any{}
+		if err := gcp.adoptStandingIdentity(snap); err != nil {
+			t.Fatal(err)
+		}
+		if got := snap["cluster"].(map[string]any)["provider_config"].(map[string]any)[secretsXacctGCPAdoptKey]; got != gsa {
+			t.Fatalf("got %v, want %s", got, gsa)
+		}
+	})
+
+	t.Run("refuses a conflicting identity", func(t *testing.T) {
+		snap := map[string]any{"cluster": map[string]any{
+			"provider_config": map[string]any{secretsXacctGCPAdoptKey: "other@p.iam.gserviceaccount.com"},
+		}}
+		if err := gcp.adoptStandingIdentity(snap); err == nil {
+			t.Fatal("two identities for one cluster must be refused, not resolved silently")
+		}
+	})
+
+	t.Run("is a no-op on aws", func(t *testing.T) {
+		snap := map[string]any{}
+		if err := (secretsXacctConfig{provider: "aws"}).adoptStandingIdentity(snap); err != nil || len(snap) != 0 {
+			t.Fatalf("aws adopts nothing; got err=%v snap=%+v", err, snap)
+		}
+	})
 }

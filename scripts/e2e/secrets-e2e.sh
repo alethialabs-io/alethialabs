@@ -18,13 +18,15 @@
 #                     trust is pattern-bound (infra/aws-secrets-e2e) because the cluster is
 #                     ephemeral; this stage proves the SHIPPED module's shape works too.
 #
-# Only AWS can run today. gcp/azure/alibaba record BLOCKED with the reason from secretsXacctLane
+# AWS and GCP can run (GCP against an ADOPTED standing GSA, #1268). azure/alibaba record BLOCKED
+# with the reason from secretsXacctLane
 # (test/e2e/t2_secrets_xacct.go) — the SAME text the parity board quotes, so a lane cannot look
 # covered here while being blocked there. A run that can't proceed is recorded as BLOCKED, never
 # skipped silently: a SKIPPED test is classified BLOCKED, never PASS.
 #
 # The caller exports the target env (see docs/testing/e2e-nightly-enablement.md):
 #   ALETHIA_E2E_SECRETS_XACCT=1 ALETHIA_E2E_SECRETS_XACCT_{ACCOUNT,REGION,ROLE_ARN,REMOTE_KEY,EXPECT_SHA256}
+#   (gcp: ALETHIA_E2E_SECRETS_XACCT_{PROJECT_ID,REMOTE_KEY,EXPECT_SHA256,ESO_GSA_EMAIL} instead)
 #   plus the provider creds the base T2 proof needs.
 #
 # Env knobs: NO_ISSUE=1 (don't file a GH issue on fail) · BLOCKED="<reason>" (force a BLOCKED record).
@@ -44,14 +46,13 @@ log="$outdir/run.log"
 case "$cloud" in aws|gcp|azure|alibaba) ;; *) echo "unknown cloud $cloud" >&2; exit 2 ;; esac
 case "$stage" in cluster|strict) ;; *) echo "unknown stage $stage" >&2; exit 2 ;; esac
 
-# ── the lane gate. Only AWS can be proven today; the others record WHY, never a silent skip.
+# ── the lane gate. AWS and GCP can be proven; the others record WHY, never a silent skip.
 #    The authoritative reasons live in secretsXacctLane (test/e2e/t2_secrets_xacct.go) — a pure test
 #    asserts they stay substantive, and docs/testing/xacct-secrets-parity.md carries them in full.
 #    These are the one-line summaries; keep them pointing at that board rather than restating it.
-if [[ -z "${BLOCKED:-}" && "$cloud" != "aws" ]]; then
+if [[ -z "${BLOCKED:-}" ]]; then
   case "$cloud" in
-    gcp)     BLOCKED="gcp: the per-run external-secrets GSA cannot carry a pre-applied cross-project grant (a same-named recreation is a new identity; GCP IAM has no principal-pattern condition). Unblocked by adopting a standing GSA — see docs/testing/xacct-secrets-parity.md." ;;
-    azure)   BLOCKED="azure: the cross-subscription role assignment binds the managed identity's object id, regenerated on every create; also needs a second subscription in the same tenant. Unblocked by adopting a standing identity — see docs/testing/xacct-secrets-parity.md." ;;
+    azure)   BLOCKED="azure: the cross-subscription role assignment binds the managed identity's object id, regenerated on every create (adopting a standing identity removes that half); still needs a second subscription in the same tenant and an account-B stack — see docs/testing/xacct-secrets-parity.md." ;;
     alibaba) BLOCKED="alibaba: ESO's RRSA needs a RAM OIDC provider registered against THIS cluster's ACK issuer — inherently per-cluster. Honest exclusion; see docs/testing/xacct-secrets-parity.md." ;;
   esac
 fi
